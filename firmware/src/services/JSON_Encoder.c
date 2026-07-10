@@ -16,6 +16,7 @@
 #include "../HAL/ADC.h"
 #include "../HAL/TimerApi/TimerApi.h"
 #include "streaming.h"
+#include "services/daqifi_settings.h"
 
 #ifndef min
 #define min(x,y) x <= y ? x : y
@@ -329,8 +330,23 @@ size_t Json_Encode(tBoardData* state,
                 break;
             }
             case DaqifiOutMessage_friendly_device_name_tag:
-                //TODO:  message.friendly_device_name[32];
+            {
+                // #14: emit the user-defined friendly name when set.
+                const char* friendlyName = daqifi_settings_GetFriendlyName();
+                if (friendlyName[0] == '\0') {
+                    break;  // unset — omit the field
+                }
+                int written = snprintf(charBuffer + startIndex,
+                        buffSize - startIndex,
+                        "\"friendlyName\":\"%s\",\n",
+                        friendlyName);
+                if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                    // Optional field - skip on buffer full, continue processing
+                    break;
+                }
+                startIndex += written;
                 break;
+            }
             default:
                 // Skip unknown fields
                 break;
@@ -416,6 +432,7 @@ size_t Json_Encode(tBoardData* state,
         StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
                 BOARDRUNTIME_STREAMING_CONFIGURATION);
         uint8_t precision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
+        bool rawMode = (pStreamCfg != NULL) ? pStreamCfg->RawOutputMode : false;   /* #158/#270 */
         while (((buffSize - startIndex) >= 65) && (qSize > 0)) {
             if (!AInSampleList_PopFront(&pPublicSampleList)) {
                 break;
@@ -453,9 +470,22 @@ size_t Json_Encode(tBoardData* state,
                     timestampAdded = true;
                 }
 
+                // #158/#270: raw mode emits the ADC code directly (no cal /
+                // no voltage conversion / no double math).
+                int written;
+                if (rawMode) {
+                    // #620: AD7609 (18-bit bipolar) negative codes are
+                    // sign-extended two's-complement int32 (e.g. -4096 =
+                    // 0xFFFFF000); emit SIGNED (%d) to match the PB sint32
+                    // raw path (unsigned misprinted negatives as ~4.29e9).
+                    written = snprintf(charBuffer + startIndex,
+                            buffSize - startIndex,
+                            "{\"ch\":%u, \"val\":%d},\n",
+                            channelId,
+                            (int32_t)rawValue);
+                } else
                 // Convert raw ADC value to voltage by board config index
                 // directly (#268/#269). Skips O(N) channel-ID search.
-                int written;
                 if (precision == 0) {
                     // Integer millivolts (backwards compatible)
                     double voltage_mv = ADC_ConvertToVoltageByIndex(

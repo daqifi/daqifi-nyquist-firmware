@@ -3049,6 +3049,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "WifiListenReopens=%u\r\n", (unsigned)listenReopens);
         scpi_printf(context, "WifiListenHardResets=%u\r\n", (unsigned)listenHardResets);
     }
+    scpi_printf(context, "UsbBytesSent=%llu\r\n", (unsigned long long)UsbCdc_GetWireBytesSent());
     scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);
     scpi_printf(context, "SdDroppedBytesSteady=%u\r\n", (unsigned)s.sdDroppedBytesSteady);
     {
@@ -3714,6 +3715,68 @@ static scpi_result_t SCPI_LoadDataPrecision(scpi_t * context) {
             pStreamCfg->VoltagePrecision = savedPrec;
         }
     }
+    return SCPI_RES_OK;
+}
+
+// #14: user-definable device friendly name (emitted in the PB/JSON info
+// message). Runtime cache lives in daqifi_settings; persisted into the
+// TopLevelSettings NVM blob (same page as voltagePrecision) via
+// SYSTem:DEVice:NAME:SAVE.
+static scpi_result_t SCPI_SetDeviceName(scpi_t * context) {
+    char nameBuf[FRIENDLY_DEVICE_NAME_SIZE];
+    size_t nameLen = 0;
+    // maxLen excludes the NUL terminator so SCPI_ParamCopyText's write at
+    // index nameLen stays inside nameBuf.
+    if (!SCPI_ParamCopyText(context, nameBuf, sizeof(nameBuf), &nameLen,
+            TRUE)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
+        return SCPI_RES_ERR;
+    }
+    // #625: reject control chars, non-ASCII, and the JSON-structural
+    // characters '"' / '\\' — an unescaped name in the JSON info message
+    // ("friendlyName":"%s") would otherwise emit malformed JSON. Rejecting
+    // at the setter keeps every downstream encoder safe without per-encoder
+    // escaping, and the cache/NVM never hold an unsafe name.
+    if (!daqifi_settings_FriendlyNameIsValid(nameBuf)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    daqifi_settings_SetFriendlyName(nameBuf);
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_GetDeviceName(scpi_t * context) {
+    SCPI_ResultText(context, daqifi_settings_GetFriendlyName());
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_SaveDeviceName(scpi_t * context) {
+    DaqifiSettings settings;
+    memset(&settings, 0, sizeof(DaqifiSettings));
+    // Load existing NVM to preserve other TopLevelSettings fields.
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,
+            &settings)) {
+        daqifi_settings_LoadFactoryDeafult(DaqifiSettings_TopLevelSettings,
+                &settings);
+    }
+    settings.type = DaqifiSettings_TopLevelSettings;
+    // SaveToNvm captures the current friendly name from the runtime cache
+    // automatically (same pattern as voltagePrecision).
+    if (!daqifi_settings_SaveToNvm(&settings)) {
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_LoadDeviceName(scpi_t * context) {
+    DaqifiSettings settings;
+    memset(&settings, 0, sizeof(DaqifiSettings));
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,
+            &settings)) {
+        return SCPI_RES_ERR;
+    }
+    daqifi_settings_SetFriendlyName(
+            settings.settings.topLevelSettings.friendlyDeviceName);
     return SCPI_RES_OK;
 }
 
@@ -4946,6 +5009,84 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
  * (sick SD card holding MISO with no chip select asserted).
  * Response: CLEAR | JAMMED | BUSY | INDETERMINATE, plus ",QUARANTINED".
  */
+// #285: human/machine name for each onboard diagnostic (monitoring) channel.
+// The monitoring set is hardware-identical across NQ1/NQ2/NQ3 (defined once in
+// CommonMonitoringChannels.h), so this map is variant-independent.
+static const char* SCPI_DiagAdcChannelName(uint8_t channelId)
+{
+    switch (channelId) {
+        case ADC_CHANNEL_3_3V:    return "3.3V";
+        case ADC_CHANNEL_2_5VREF: return "2.5VREF";
+        case ADC_CHANNEL_VBATT:   return "VBATT";
+        case ADC_CHANNEL_5V:      return "5V";
+        case ADC_CHANNEL_10V:     return "10V";
+        case ADC_CHANNEL_TEMP:    return "TEMP";
+        case ADC_CHANNEL_5VREF:   return "5VREF";
+        case ADC_CHANNEL_VSYS:    return "VSYS";
+        default:                  return NULL;
+    }
+}
+
+// #285: SYSTem:DIAGnostic:ADC? — on-demand snapshot of the onboard diagnostic
+// (MODULE7 monitoring) channels: rails/refs/battery. Grouped under the existing
+// SYSTem:DIAGnostic:* namespace (alongside SPIBus health) per the lean-command
+// rule. Returns the last-known BOARDDATA monitoring values (continuously
+// refreshed by ADC_Tasks/MC12bADC_EosInterruptTask when idle) as
+// comma-separated NAME=VOLTS pairs, terminated by AGE=<seconds since last diag
+// scan> and STALE=<0|1>. Per the "inform on stale data" principle we never hide
+// values — staleness is surfaced via AGE/STALE rather than an error. STALE=1
+// when a scan-armed OBDiag=0 stream is freezing the monitoring channels.
+static scpi_result_t SCPI_DiagADCGet(scpi_t * context)
+{
+    AInArray* pAInConfig = BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS, 0);
+    AInRuntimeArray* pAInRuntime = BoardRunTimeConfig_Get(
+            BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    size_t* pAInLatestSize = BoardData_Get(BOARDDATA_AIN_LATEST_SIZE, 0);
+    size_t sampleCount = pAInLatestSize ? *pAInLatestSize : 0;
+
+    char out[192];
+    int len = 0;
+
+    for (size_t i = 0; i < sampleCount && len < (int)sizeof(out); i++) {
+        // Only enabled monitoring channels (ID >= ADC_CHANNEL_3_3V). TEMP is
+        // runtime-disabled (PIC32MZ silicon errata) so it is skipped, giving a
+        // deterministic set of rails across every variant.
+        if (i >= pAInConfig->Size || i >= pAInRuntime->Size) break;
+        uint8_t channelId = pAInConfig->Data[i].DaqifiAdcChannelId;
+        if (channelId < ADC_CHANNEL_3_3V) continue;
+        if (!pAInRuntime->Data[i].IsEnabled) continue;
+
+        const char* name = SCPI_DiagAdcChannelName(channelId);
+        if (name == NULL) continue;
+
+        AInSample* sample = BoardData_Get(BOARDDATA_AIN_LATEST, i);
+        double voltage = sample ? ADC_ConvertToVoltageByIndex(i, sample->Value)
+                                : 0.0;
+        len += snprintf(out + len, sizeof(out) - (size_t)len, "%s%s=%.4f",
+                        (len > 0) ? "," : "", name, voltage);
+    }
+
+    // Age of the monitoring snapshot (seconds since the last completed diag
+    // scan). -1 when no scan has run since boot.
+    uint32_t lastDiagTick = ADC_GetLastDiagScanTick();
+    long ageSec = -1;
+    if (lastDiagTick > 0) {
+        ageSec = (long)((xTaskGetTickCount() - lastDiagTick) / configTICK_RATE_HZ);
+    }
+    bool stale = (pStreamCfg != NULL) && pStreamCfg->Running &&
+                 !pStreamCfg->OnboardDiagEnabled;
+    if (len < (int)sizeof(out)) {
+        len += snprintf(out + len, sizeof(out) - (size_t)len,
+                        "%sAGE=%ld,STALE=%d",
+                        (len > 0) ? "," : "", ageSec, stale ? 1 : 0);
+    }
+
+    SCPI_ResultText(context, out);
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
 {
     extern void DRV_SPI_GetRejectCounters(uint32_t *stale, uint32_t *exclusive,
@@ -5097,9 +5238,13 @@ static const scpi_command_t scpi_commands[] = {
     //    // Wifi
     {.pattern = "SYSTem:COMMunicate:LAN:ENAbled?", .callback = SCPI_LANEnabledGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:ENAbled", .callback = SCPI_LANEnabledSet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:POWer?", .callback = SCPI_LANPowerGet,},  // #334
+    {.pattern = "SYSTem:COMMunicate:LAN:POWer", .callback = SCPI_LANPowerSet,},   // #334
     {.pattern = "SYSTem:COMMunicate:LAN:NETType?", .callback = SCPI_LANNetModeGet,},
     //    {.pattern = "SYSTem:COMMunicate:LAN:AvNETType?", .callback = SCPI_LANAVNetTypeGet, },
     {.pattern = "SYSTem:COMMunicate:LAN:NETType", .callback = SCPI_LANNetModeSet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:HIDden?", .callback = SCPI_LANHiddenGet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:HIDden", .callback = SCPI_LANHiddenSet,},
     //    {.pattern = "SYSTem:COMMunicate:LAN:IPV6?", .callback = SCPI_LANIpv6Get, },
     //    {.pattern = "SYSTem:COMMunicate:LAN:IPV6", .callback = SCPI_LANIpv6Set, },
     {.pattern = "SYSTem:COMMunicate:LAN:ADDRess?", .callback = SCPI_LANAddrGet,},
@@ -5180,6 +5325,10 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:VOLTage:PRECision?", .callback = SCPI_GetDataPrecision,},
     {.pattern = "CONFigure:VOLTage:SAVE", .callback = SCPI_SaveDataPrecision,},
     {.pattern = "CONFigure:VOLTage:LOAD", .callback = SCPI_LoadDataPrecision,},
+    {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_SetDeviceName,},          // #14
+    {.pattern = "SYSTem:DEVice:NAME?", .callback = SCPI_GetDeviceName,},
+    {.pattern = "SYSTem:DEVice:NAME:SAVE", .callback = SCPI_SaveDeviceName,},
+    {.pattern = "SYSTem:DEVice:NAME:LOAD", .callback = SCPI_LoadDeviceName,},
     //
     // DAC
     {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_DACVoltageSet,},
@@ -5259,11 +5408,14 @@ static const scpi_command_t scpi_commands[] = {
     //
     {.pattern = "SYSTem:STORage:SD:FILE", .callback = SCPI_StorageSDLoggingSet,},
     {.pattern = "SYSTem:STORage:SD:GET", .callback = SCPI_StorageSDGetData},
+    {.pattern = "SYSTem:STORage:SD:CRC", .callback = SCPI_StorageSDCrcStart,},
+    {.pattern = "SYSTem:STORage:SD:CRC?", .callback = SCPI_StorageSDCrcGet,},
     {.pattern = "SYSTem:STORage:SD:LISt?", .callback = SCPI_StorageSDListDir},
     {.pattern = "SYSTem:DIAGnostic:SPIBus:STATs?", .callback = SCPI_DiagSpiBusStatsGet,},
     {.pattern = "SYSTem:DIAGnostic:SPIBus:MISOFight?", .callback = SCPI_DiagSpiBusMisoFightGet,},
     {.pattern = "SYSTem:DIAGnostic:SPIBus:CROSScs?", .callback = SCPI_DiagSpiBusCrossCsGet,},
     {.pattern = "SYSTem:DIAGnostic:SPIBus?", .callback = SCPI_DiagSpiBusGet,},
+    {.pattern = "SYSTem:DIAGnostic:ADC?", .callback = SCPI_DiagADCGet,},
     {.pattern = "SYSTem:STORage:SD:ENAble", .callback = SCPI_StorageSDEnableSet},
     {.pattern = "SYSTem:STORage:SD:ENAble?", .callback = SCPI_StorageSDEnableGet},
     {.pattern = "SYSTem:STORage:SD:DELete", .callback = SCPI_StorageSDDelete},

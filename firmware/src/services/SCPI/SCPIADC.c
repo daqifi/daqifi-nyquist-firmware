@@ -653,10 +653,47 @@ scpi_result_t SCPI_ADCUseCalSet(scpi_t * context) {
     DaqifiSettings tmpTopLevelSettings;
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    // #158/#270: this command also switches the encoder output format
+    // (value 2 = raw codes), so changing it mid-stream would alter the wire
+    // format under an active session. Reject while streaming (mirrors the
+    // CONF:ADC:CHANnel #116 guard); it also protects the mid-stream cal
+    // coefficient reload for values 0/1.
+    if (pRunTimeStreamConfig->IsEnabled || pRunTimeStreamConfig->Running) {
+        LOG_E("Calibration-mode change rejected: streaming is active (stop streaming first)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         return SCPI_RES_ERR;
     }
+
+    // #620: reject an out-of-range value BEFORE any state mutation. The paths
+    // below clear RawOutputMode, assign calVals (a bool, so e.g. 7 -> 1) and
+    // SaveToNvm before the switch's default rejected it — a command that
+    // returns an error would otherwise persist a wrong calibration selection
+    // (loaded as USER cal on the next reboot).
+    if (param1 < 0 || param1 > 2) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+
+    // #158/#270: value 2 = no calibration -> raw ADC-code output (CSV/JSON
+    // emit the integer code, skipping cal + voltage conversion; PB is
+    // already raw). Runtime-only streaming mode: it does NOT touch the NVM
+    // calVals coefficient selection, so switching back to 0/1 or rebooting
+    // restores the persisted factory/user cal choice.
+    if (param1 == 2) {
+        pRunTimeStreamConfig->RawOutputMode = true;
+        return SCPI_RES_OK;
+    }
+
+    // Values 0/1 select the calibration coefficient set and emit calibrated
+    // volts (leaving raw mode).
+    pRunTimeStreamConfig->RawOutputMode = false;
 
     //  Load existing settings
     if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) return SCPI_RES_ERR;
@@ -692,7 +729,15 @@ scpi_result_t SCPI_ADCUseCalSet(scpi_t * context) {
 
 scpi_result_t SCPI_ADCUseCalGet(scpi_t * context) {
     DaqifiSettings tmpTopLevelSettings;
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
 
+    // #158/#270: raw mode (runtime-only) reports as 2, overriding the
+    // persisted 0/1 coefficient selection.
+    if (pRunTimeStreamConfig != NULL && pRunTimeStreamConfig->RawOutputMode) {
+        SCPI_ResultInt32(context, 2);
+        return SCPI_RES_OK;
+    }
     if (daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) {
         SCPI_ResultInt32(context, tmpTopLevelSettings.settings.topLevelSettings.calVals);
         return SCPI_RES_OK;

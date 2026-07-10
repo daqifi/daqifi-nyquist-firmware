@@ -273,6 +273,30 @@ survives across `StopStreamData` until the next start or
 Out-of-band visibility (Saleae, PC-side iperf2.log) for long runs;
 never poll the device under test. Mirrored in the SCPI wiki.
 
+#### SCPI Command Surface — keep it lean
+
+**Before adding a new SCPI command, try to extend an existing one.** The
+command table is a maintenance and documentation surface (every entry needs
+a wiki row, a callback, client-library awareness); an ever-growing list is
+a liability. Order of preference when adding capability:
+
+1. **Add a parameter value to an existing setter.** A new mode almost always
+   fits an existing command as another enum value. *Example (#158/#270):
+   raw/no-calibration output shipped as `CONFigure:ADC:USECal 2` (0=factory,
+   1=user, 2=raw) rather than a separate `CONF:ADC:RAWmode` — one command,
+   backward-compatible (0/1 unchanged), no new table entry.*
+2. **Add an optional parameter** to an existing command (e.g. an extra
+   channel-index or flag argument) rather than a parallel command.
+3. **Group under an existing namespace** (`SYST:...:`, `CONF:ADC:...`) so
+   related functionality is discoverable together.
+4. **Only add a brand-new command** when the capability is genuinely
+   orthogonal to everything present and can't be expressed as a value/arg.
+
+When you do extend a command, keep old values' behavior identical (append
+new values at the end — don't renumber), and update the wiki row to document
+the full value set. This preference is the user's standing rule (2026-07-06):
+"keep our command list from blowing up."
+
 #### SCPI Command Verification Protocol
 
 **⚠️ CRITICAL: NEVER guess SCPI command syntax. ALWAYS verify first.**
@@ -569,7 +593,7 @@ The firmware computes a maximum safe streaming frequency as a `min()` of an **AD
 |-----------|----:|----:|----:|
 | USB    | 15000 / 15000 | 180000/(10+n) | 34000/(1+n) |
 | WiFi   | 5175 / 4675   | 139000/(30+n) | min(20000/(2+n), 3050) |
-| SD     | 9000 / 7500   | 150000/(15+n) | 42000/(12+n) |
+| SD     | 9000 / 7500   | 150000/(15+n) | 36000/(12+n) |
 | USB+SD | 8000 / 8000   | 66000/(6+n)   | 15000/(0+n) |
 
 **Fit basis (normative — the zero-loss sweep subset the F3 coefficients derive from, Hz):**
@@ -797,18 +821,20 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 | Priority | Task | Stack (words) | Peak Used | Notes |
 |----------|------|--------------|-----------|-------|
 | 9 | `_Streaming_Deferred_Interrupt_Task` | 512 | 214 | ISR deferral, sample collection (no FPU — uses Q16 LUT for sine pattern) |
-| 9 | `MC12bADC_EosInterruptTask` | 160 | 80 | ADC end-of-scan deferred interrupt |
-| 9 | `AD7609_DeferredInterruptTask` | 160 | 76 | AD7609 BSY pin handler |
-| 7 | `app_PowerAndUITask` | 512 | 226 | UI + BQ24297 power, FPU |
-| 7 | `app_USBDeviceTask` | 3072 | 1290 | SCPI callbacks use shared response buffer (see below) |
+| 9 | `MC12bADC_EosInterruptTask` | 256 | 80 | ADC end-of-scan deferred interrupt (stack raised 160→256 in #525 vsnprintf-margin follow-up) |
+| 9 | `AD7609_DeferredInterruptTask` | 1024 | 76 | AD7609 BSY pin handler (stack raised 160→1024 for the BSY-stuck LOG_E/vsnprintf frame, #525 follow-up; NQ3-only) |
+| 7 | `app_PowerAndUITask` | 640 | 226 | UI + BQ24297 power, FPU |
+| 7 | `app_USBDeviceTask` | 3072 | 1290 | Hosts the USB SCPI handler chain, FPU; SCPI callbacks use shared response buffer (see below). **Created at pri 2, self-boosts to 7** via `vTaskPrioritySet(NULL, 7)` right after `UsbCdc_Initialize()` (`app_freertos.c`) — static xTaskCreate reads 2, runtime is 7, so USB SCPI stays above the encoder (6) during streaming. |
 | 6 | `streaming_Task` | 1392 | 692 | Encodes PB/CSV/JSON + outputs, FPU (CSV/JSON at precision>0) |
+| 6 | `F_USB_DEVICE_Tasks` | 144 | 72 | USB device stack. **Created at pri 2, self-boosts to 6** via `vTaskPrioritySet(NULL, 6)` on first iteration (`tasks.c` `F_USB_DEVICE_Tasks`). Static xTaskCreate reads pri 2 — runtime is 6. |
 | 5 | `app_SDCardTask` | 1024 | 468 | SD mount/write/read/list/delete |
+| 5 | `Iperf2TaskMain` | 512 (static) | n/p | Dedicated iperf2 pacing task (#377), `xTaskCreateStatic`. Adaptive 2 ms (active) / 50 ms (idle) cadence. No FPU. |
 | 2 | `app_WifiTask` | 1500 | 780 | WiFi state machine + TCP + SCPI-over-TCP dispatch (post-#353 Opt 2: microrl + libscpi + handlers all run here instead of on WDRV_WINC_Tasks) |
-| 2 | `fwUpdateTask` | 128 | 62 | WiFi FW update (dynamic) |
+| 2 | `F_DRV_USBHS_Tasks` | 144 | 72 | USB hardware driver |
+| 2 | `fwUpdateTask` | 1024 | 62 | WiFi FW update (dynamic — created only during a WiFi FW-update session) |
 | 1 | `lWDRV_WINC_Tasks` | 1024 | 320 | WINC1500 driver. PR #492 (#489 variant B): dropped 2→1 so `streaming_Task` (pri 6) preempts WINC by 5 levels and OSAL semaphores inside `WDRV_WINC_Tasks` do the yielding (Microchip reference pattern). Eliminated #491 BIMODAL catastrophic WiFi drops. |
 | 1 | `lAPP_FREERTOS_Tasks` | 1500 | 1156 | Boot init (77% used) |
-| 1 | `F_USB_DEVICE_Tasks` | 144 | 72 | USB device stack |
-| 1 | `F_DRV_USBHS_Tasks` | 144 | 72 | USB hardware driver |
+| 1 | `LogIsrDrainTask` | 256 | n/p | Deferred ISR-log drain (`"logISR"`, `LOG_ISR_TASK_PRIO`). Drains the ISR log queue; memcpy-only, no FPU. |
 
 Stack sizes profiled under stress: 16ch@5kHz PB/CSV/JSON + SD file ops + WiFi TCP + power cycles. Sized at 2-3x measured peak. Query at runtime: `SYST:MEM:STACk?`
 
@@ -1275,6 +1301,18 @@ Fixes #23
 ```
 
 ### How we test (policy)
+
+**RULE (user standing rule, 2026-07-06): every firmware PR ships with a
+regression test in `daqifi-python-test-suite`.** When you open a PR that
+changes device behavior, a companion test that exercises the new behavior
+(and would fail on the old firmware) must land in the suite — committed and
+referenced in the PR body. Prefer building it from `test_harness.py`
+primitives; if the test needs a new reusable capability, add it to the
+harness (not a one-off in the script) so the next PR reuses it. Exempt:
+docs-only, lint-only, comment-only, and pure-refactor PRs with no behavior
+change. If bench hardware is occupied when the PR opens, the test is still
+committed and the run is queued (note it in the PR); the test existing is
+the requirement, not that it has run yet.
 
 All **durable regression tests** — firmware regression, MCP integration, client SDK validation, throughput characterization — live in **`daqifi-python-test-suite`**. The full policy is in [`docs/HOW_WE_TEST.md`](https://github.com/daqifi/daqifi-python-test-suite/blob/main/docs/HOW_WE_TEST.md) in that repo (private, see `docs/README.md` for access); the short version:
 

@@ -100,6 +100,7 @@ _Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_
         .ActiveInterface = StreamingInterface_USB,  /* Default: stream to single interface (USB) */ \
         .VoltagePrecision = 4,  /* Initial default; overridden by board config at boot */ \
         .OnboardDiagEnabled = true, /* MODULE7 scans diag channels during streaming */ \
+        .RawOutputMode = false, /* #158/#270: emit calibrated volts by default */ \
     }
 
 /**
@@ -122,6 +123,7 @@ _Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_
         .ipAddr = {.Val = 0}, \
         .ipMask = {.Val = 0}, \
         .gateway = {.Val = 0}, \
+        .ssidHidden = false, \
     }
 
 /**

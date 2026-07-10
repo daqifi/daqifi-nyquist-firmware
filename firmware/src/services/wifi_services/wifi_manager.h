@@ -134,6 +134,14 @@ extern "C" {
          */
         uint16_t tcpPort;
 
+        /**
+         * AP-mode SSID visibility (#45). When true the soft-AP SSID is
+         * hidden/cloaked (not broadcast in beacons); when false (default)
+         * the SSID is broadcast normally. Appended at the end of the struct
+         * to preserve the NVM offsets of the existing fields.
+         */
+        bool ssidHidden;
+
     } wifi_manager_settings_t;
 
     typedef struct {
@@ -216,6 +224,51 @@ extern "C" {
      * @return True if deinitialization is successful, false otherwise.
      */
     bool wifi_manager_Deinit();
+
+    /**
+     * @brief #334: Deep power-down the WINC1500 chip for battery savings.
+     *
+     * Unlike wifi_manager_Deinit (which leaves the chip powered-but-idle
+     * because nm_reset ends with CHIP_EN HIGH), this drives CHIP_EN and
+     * RESET_N LOW so the WINC enters shutdown mode drawing only its
+     * quiescent current. Only the WINC is affected — USB/SD streaming, ADC
+     * and power management continue running. Reverse with
+     * wifi_manager_PowerOn. Non-blocking (queues the DEINIT event).
+     *
+     * @return True on success, false if WiFi settings not initialized.
+     */
+    bool wifi_manager_PowerOff(void);
+
+    /**
+     * @brief #334: Bring the WINC1500 back up after wifi_manager_PowerOff.
+     *
+     * Clears the deep-power-down latch, re-enables WiFi and queues INIT; the
+     * driver's own init path drives CHIP_EN/RESET_N back HIGH. Full bring-up
+     * (re-init + reassoc + DHCP) takes ~1-2 s+.
+     *
+     * @return True on success, false if WiFi settings not initialized.
+     */
+    bool wifi_manager_PowerOn(void);
+
+    /**
+     * @brief #334: Query the WINC deep-power-down state.
+     *
+     * @return True if the WINC is held in deep power-down (CHIP_EN low),
+     *         false if it is powered/available.
+     */
+    bool wifi_manager_IsPoweredOff(void);
+
+    /**
+     * @brief #334: Query whether WiFi is currently enabled (user setting).
+     *
+     * Reads the live pWifiSettings->isEnabled. Used by the power-state
+     * machine to remember whether to bring WiFi back up when the device
+     * leaves STANDBY (it is captured BEFORE the deep-power-down teardown,
+     * which clears isEnabled in wifi_manager_Deinit).
+     *
+     * @return True if WiFi is enabled, false if disabled or not yet init.
+     */
+    bool wifi_manager_IsEnabled(void);
 
     /**
      * @brief Hardware reset the WINC chip (true GPIO reset).

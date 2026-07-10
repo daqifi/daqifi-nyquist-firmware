@@ -47,6 +47,7 @@ extern "C" {
         SD_CARD_MANAGER_MODE_DELETE_FILE,
         SD_CARD_MANAGER_MODE_FORMAT,
         SD_CARD_MANAGER_MODE_GET_SPACE,
+        SD_CARD_MANAGER_MODE_COMPUTE_CRC,   /**< #306: CRC32 of a stored file */
     } sd_card_manager_mode_t;
 
     /** #598: which interface receives async READ/LIST output data. */
@@ -59,6 +60,13 @@ extern "C" {
         bool enable;
         sd_card_manager_mode_t mode;
         sd_card_manager_reply_target_t replyTarget;  /**< #598 */
+        /* #599: TCP connection generation captured when a WIFI_TCP reply was
+         * requested (SCPI GET/LIST).  sd_card_manager_DataReadyCB refuses to
+         * write (and aborts the transfer) if the live connection no longer
+         * matches this value, so an async GET/LIST reply cannot leak into a
+         * different client that inherited the single TCP slot.  Meaningless
+         * (and left 0) when replyTarget == SD_CARD_REPLY_USB. */
+        uint32_t replyGeneration;
         char directory[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1];
         char file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
         uint64_t maxFileSizeBytes;  // Max file size before auto-split (0 = unlimited)
@@ -269,6 +277,18 @@ extern "C" {
      * @return true if valid result available, false otherwise
      */
     bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes);
+
+    /**
+     * @brief Gets the result of the last COMPUTE_CRC operation (#306).
+     *
+     * Call after sd_card_manager_WaitForCompletion() (or poll while
+     * IsBusy()) following a MODE_COMPUTE_CRC request.
+     *
+     * @param[out] crc32   IEEE 802.3 CRC-32 of the file contents
+     * @param[out] length  File length in bytes that was hashed
+     * @return true if a valid result is available, false otherwise
+     */
+    bool sd_card_manager_GetCrcResult(uint32_t *crc32, uint64_t *length);
 
     /**
      * @brief Requests abort of an in-progress SD file transfer (GET).

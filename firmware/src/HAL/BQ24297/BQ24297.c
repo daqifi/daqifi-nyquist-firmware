@@ -123,10 +123,28 @@ void BQ24297_ClearAccumulatedFaults(void) {
     pData->status.ntcFaultAccum = NTC_FAULT_NORMAL;
 }
 
+/*!
+ * @brief Change-notification ISR callback for the BQ24297 INT pin (RA4). (#193)
+ *
+ * The BQ24297 pulses its open-drain INT line low on any fault / charge-status /
+ * power-good change (datasheet). This runs in CHANGE_NOTICE_A ISR context
+ * (EVIC priority 1, kernel-managed). It only sets the volatile intFlag — a
+ * single-byte atomic store on PIC32MZ, no I2C — which PowerAndUITask consumes
+ * in Power_Tasks() for an immediate BQ24297_UpdateStatus(). The GPIO PLIB
+ * handler has already cleared the CN interrupt flag before this is invoked.
+ */
+static void BQ24297_IntCallback(GPIO_PIN pin, uintptr_t context) {
+    (void)pin;
+    (void)context;
+    if (pData != NULL) {
+        pData->intFlag = true;
+    }
+}
+
 void BQ24297_Config_Settings(void) {
     // Temporary value to hold current register value
     uint8_t reg = 0;
-    
+
     LOG_D("BQ24297_Config_Settings: Starting initialization");
     
     // Read initial status to determine current power state
@@ -221,6 +239,20 @@ void BQ24297_Config_Settings(void) {
 
     // Clear accumulated faults from init reads — start fresh
     BQ24297_ClearAccumulatedFaults();
+
+    // #193: Enable interrupt-driven fault monitoring on the INT pin (RA4).
+    // The Harmony GPIO config already places RA4 in the CN callback table,
+    // enables Port A change-notification (edge-detect) at EVIC priority 1, and
+    // sets the RA4 pull-up for the open-drain INT line. Register our ISR
+    // callback and enable falling-edge (INT assertion) detection so any
+    // BQ24297 event wakes an immediate status refresh in Power_Tasks(); the
+    // periodic poll there remains as a fallback for any missed edge.
+    pData->intFlag = false;
+    if (GPIO_PinInterruptCallbackRegister(BATT_MAN_INT_PIN, BQ24297_IntCallback, 0)) {
+        GPIO_PinIntEnable(BATT_MAN_INT_PIN, GPIO_INTERRUPT_ON_FALLING_EDGE);
+    } else {
+        LOG_E("BQ24297_Config_Settings: INT callback register failed — poll only");
+    }
 
     // Mark initialization complete
     pData->initComplete = true;

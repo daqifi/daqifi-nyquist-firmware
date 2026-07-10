@@ -99,6 +99,43 @@ static bool SCPI_CheckSDCardPresent(scpi_t *context) {
     return true;
 }
 
+
+/* #612: shared validation for SCPI-provided SD file/directory names.
+ * The FS root is the card itself, so exposure is bounded, but '..' can
+ * escape the configured directory (GET/DELete/CRC) and stray separators
+ * or control characters produce undefined FatFS behavior. Interior '/'
+ * stays legal (subdirectory paths like "DAQiFi/sub/file.csv"). */
+static bool SD_ValidatePathParam(const char *p, size_t len)
+{
+    if (len == 0u) {
+        return false;
+    }
+    if (p[0] == '/' || p[0] == '\\') {
+        return false;               /* absolute paths */
+    }
+    /* Reject '.' and '..' only as whole path SEGMENTS (between '/'), not as
+     * substrings - Qodo #615: the old substring check false-rejected
+     * legitimate names like "data..csv". */
+    size_t segStart = 0;
+    for (size_t i = 0; i <= len; i++) {
+        unsigned char c = (i < len) ? (unsigned char)p[i] : (unsigned char)'/';
+        if (i < len && (c < 0x20u || c == 0x7Fu || c == '\\' || c == ':')) {
+            return false;           /* control chars, backslash, drive prefix */
+        }
+        if (c == '/') {
+            size_t segLen = i - segStart;
+            if (segLen == 1u && p[segStart] == '.') {
+                return false;       /* "." segment */
+            }
+            if (segLen == 2u && p[segStart] == '.' && p[segStart + 1u] == '.') {
+                return false;       /* ".." traversal segment */
+            }
+            segStart = i + 1u;
+        }
+    }
+    return true;
+}
+
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     int param1;
     scpi_result_t result = SCPI_RES_ERR;
@@ -178,6 +215,11 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
+        if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
         memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
         pSDCardRuntimeConfig->file[fileLen] = '\0';
         LOG_D("SD:FILE - Set filename to '%s' (%zu bytes) dir='%s'\r\n",
@@ -191,6 +233,63 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     result = SCPI_RES_OK;
 __exit_point:
     return result;
+}
+
+/* #306: start an async CRC32 computation over a stored file. Result via
+ * SYST:STOR:SD:CRC? - mirrors the GET_SPACE request/query split so the SCPI
+ * task never blocks on a multi-second file scan. */
+scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
+    const char* pBuff;
+    size_t fileLen = 0;
+    sd_card_manager_settings_t* pSDCardRuntimeConfig =
+            (sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    if (!pSDCardRuntimeConfig->enable) {
+        context->interface->write(context, SD_CARD_NOT_ENABLED_ERROR_MSG, strlen(SD_CARD_NOT_ENABLED_ERROR_MSG));
+        return SCPI_RES_ERR;
+    }
+    if (sd_card_manager_IsBusy()) {
+        LOG_SD_BUSY("CRC");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+    if (!SCPI_CheckSDCardPresent(context)) {
+        return SCPI_RES_ERR;
+    }
+    if (!SCPI_ParamCharacters(context, &pBuff, &fileLen, TRUE) ||
+        fileLen == 0 || fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612: CRC was the deferred site (post-#610-merge) */
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
+    pSDCardRuntimeConfig->file[fileLen] = '\0';
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_COMPUTE_CRC;
+    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    return SCPI_RES_OK;
+}
+
+/* #306: CRC result query. "BUSY" while computing; "0xXXXXXXXX,<bytes>" when
+ * done; -230 (data corrupt/stale) if no valid result exists. */
+scpi_result_t SCPI_StorageSDCrcGet(scpi_t * context) {
+    uint32_t crc;
+    uint64_t len;
+    if (sd_card_manager_GetCrcResult(&crc, &len)) {
+        char out[40];
+        snprintf(out, sizeof(out), "0x%08lX,%llu",
+                 (unsigned long)crc, (unsigned long long)len);
+        SCPI_ResultText(context, out);
+        return SCPI_RES_OK;
+    }
+    if (sd_card_manager_IsBusy()) {
+        SCPI_ResultText(context, "BUSY");
+        return SCPI_RES_OK;
+    }
+    SCPI_ErrorPush(context, SCPI_ERROR_DATA_CORRUPT);
+    return SCPI_RES_ERR;
 }
 
 scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
@@ -226,12 +325,22 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
+        if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
         memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
         pSDCardRuntimeConfig->file[fileLen] = '\0';
     }
-    /* #598: route the async file data back to the interface that asked. */
-    pSDCardRuntimeConfig->replyTarget = wifi_tcp_server_ContextIsTcp(context)
+    /* #598: route the async file data back to the interface that asked.
+     * #599: capture the requesting TCP connection's generation so the SD
+     * reply can't leak into a different client that later inherits the slot. */
+    const bool getOverTcp = wifi_tcp_server_ContextIsTcp(context);
+    pSDCardRuntimeConfig->replyTarget = getOverTcp
             ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;
+    pSDCardRuntimeConfig->replyGeneration =
+            getOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
     result = SCPI_RES_OK;
@@ -277,14 +386,22 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
+        if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
         memcpy(pSDCardRuntimeConfig->directory, pBuff, fileLen);
         pSDCardRuntimeConfig->directory[fileLen] = '\0';
     }
     // If no directory specified, the sd_card_manager will use the default from settings
     
     // Set mode to LIST_DIRECTORY and let sd_card_manager handle it
-    pSDCardRuntimeConfig->replyTarget = wifi_tcp_server_ContextIsTcp(context)
-            ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;   /* #598 */
+    const bool listOverTcp = wifi_tcp_server_ContextIsTcp(context);   /* #598 */
+    pSDCardRuntimeConfig->replyTarget = listOverTcp
+            ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;
+    pSDCardRuntimeConfig->replyGeneration =
+            listOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;   /* #599 */
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 
@@ -619,6 +736,10 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     }
 
     // Set the filename
+    if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        goto __exit_point;
+    }
     memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
     pSDCardRuntimeConfig->file[fileLen] = '\0';
     LOG_D("SD:DELete - Deleting file '%s'\r\n", pSDCardRuntimeConfig->file);

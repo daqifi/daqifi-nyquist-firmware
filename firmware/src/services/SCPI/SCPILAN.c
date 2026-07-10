@@ -199,6 +199,50 @@ __exit_point:
     return result;
 }
 
+/**
+ * SCPI Callback: Query WINC deep-power-down state (#334).
+ * Returns 1 if the WINC is powered/available, 0 if held in deep
+ * power-down (CHIP_EN low).
+ */
+scpi_result_t SCPI_LANPowerGet(scpi_t * context) {
+    SCPI_ResultInt32(context, wifi_manager_IsPoweredOff() ? 0 : 1);
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: Deep power-down / power-up the WINC1500 chip (#334).
+ *
+ * SYST:COMM:LAN:POWer 0  -> hold WINC in shutdown (CHIP_EN low) for
+ *                           battery savings; the rest of the device
+ *                           (USB/SD streaming, ADC) keeps running.
+ * SYST:COMM:LAN:POWer 1  -> bring the WINC back up (re-init).
+ *
+ * Distinct from SYST:POWer:STATe, which standbys the *whole* device.
+ * Distinct from SYST:COMM:LAN:ENAbled, which only toggles the runtime
+ * enable flag and leaves the chip powered/idle.
+ *
+ * The deep-power-down teardown is queued via wifi_manager_PowerOff and
+ * completed by app_WifiTask; PowerOn re-inits asynchronously (~1-2 s).
+ */
+scpi_result_t SCPI_LANPowerSet(scpi_t * context) {
+    int param1;
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (param1 != 0 && param1 != 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    bool ok = (param1 == 0) ? wifi_manager_PowerOff()
+                            : wifi_manager_PowerOn();
+    if (!ok) {
+        SCPI_ExecutionError(context,
+                "SYST:COMM:LAN:POWer: WiFi manager not ready");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_LANNetModeGet(scpi_t * context) {
     wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
     uint8_t type = pWifiSettings->networkMode;
@@ -239,6 +283,41 @@ scpi_result_t SCPI_LANNetModeSet(scpi_t * context) {
 
     pRunTimeWifiSettings->networkMode = (uint8_t) param1;
     // LOG_D("WiFi mode set to %d\r\n", param1);
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: Get the AP-mode SSID hidden/cloaked flag (#45)
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANHiddenGet(scpi_t * context) {
+    wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
+    SCPI_ResultInt32(context, (int) pWifiSettings->ssidHidden);
+
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: Set the AP-mode SSID hidden/cloaked flag (#45)
+ * 1 = SSID hidden (not broadcast in beacons), 0 = SSID visible (default).
+ * Takes effect at the next LAN:APPLY / AP (re)start.
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANHiddenSet(scpi_t * context) {
+    wifi_manager_settings_t * pRunTimeWifiSettings = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_WIFI_SETTINGS);
+    int param1;
+
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+
+    if (param1 != 0 && param1 != 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    pRunTimeWifiSettings->ssidHidden = (bool) param1;
     return SCPI_RES_OK;
 }
 

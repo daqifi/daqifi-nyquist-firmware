@@ -524,26 +524,31 @@ static int escape_process (microrl_t * pThis, char ch)
 #endif
 
 //*****************************************************************************
-// insert len char of text at cursor position
+// insert len char of text at cursor position (issue #48: true insert mode).
+// Any characters currently at/after the cursor are shifted right by len so
+// mid-line typing inserts rather than overwrites. Appending at end-of-line
+// (dataCursor == cmdlen, the common case) is unchanged behaviourally.
 static int buffer_insert_text(microrl_t * pThis, char * text, int len)
 {
-	if (pThis->dataCursor + len < _COMMAND_LINE_LEN)
+    // cmdlen + len chars plus a trailing '\0' must fit in the buffer.
+	if (pThis->cmdlen + len < _COMMAND_LINE_LEN)
     {
+        // Shift the tail (chars after the cursor) right to make room.
+        int tail = pThis->cmdlen - pThis->dataCursor;
+        if (tail > 0)
+        {
+            memmove (pThis->cmdline + pThis->dataCursor + len,
+                     pThis->cmdline + pThis->dataCursor,
+                     tail);
+        }
+        // Drop the new text into the gap at the cursor.
 		memmove (pThis->cmdline + pThis->dataCursor, text, len);
-        if (pThis->dataCursor + len > pThis->cmdlen)
-        {
-            pThis->cmdlen = pThis->dataCursor + len;
-            pThis->dataCursor = pThis->cmdlen;
-            pThis->cmdline [pThis->cmdlen] = '\0';
-        }
-        else
-        {
-            pThis->dataCursor += len;	
-        }
-        
+        pThis->cmdlen += len;
+        pThis->dataCursor += len;
+        pThis->cmdline [pThis->cmdlen] = '\0';
 		return true;
 	}
-    
+
 	return false;
 }
 
@@ -631,6 +636,10 @@ void new_line_handler(microrl_t * pThis){
 	
     // Pass it to the command processor
     // Make sure the command terminator is appended for libscpi (but e do not want this saved in the history!)
+    // #48: with true insert semantics, force the cursor to end-of-line first so
+    // the terminator lands after the command rather than splitting it when Enter
+    // is pressed with the cursor mid-line.
+    pThis->dataCursor = pThis->cmdlen;
     buffer_insert_text(pThis, ENDL, strlen(ENDL));
 	if (pThis->execute != NULL)
     {
@@ -739,18 +748,25 @@ void microrl_insert_char (microrl_t * pThis, int ch)
                 {
                     break;
                 }
-                
-                if (buffer_insert_text (pThis, (char*)&ch, 1))
+
+                // #48: remember whether we were appending at end-of-line.
+                // A mid-line insert shifts the tail right, so the whole line
+                // must be redrawn; the single-char echo fast-path only works
+                // when the cursor was at the end.
                 {
-                    if (pThis->terminalPos == 0)
+                    int wasAtEnd = (pThis->dataCursor == pThis->cmdlen);
+                    if (buffer_insert_text (pThis, (char*)&ch, 1))
                     {
-                        terminal_print_line(pThis);
-                    }
-                    else
-                    {
-                        if (pThis->echoOn > -1)
+                        if (pThis->terminalPos == 0 || !wasAtEnd)
                         {
-                            terminal_print(pThis, 1, (char*)&ch, 1);
+                            terminal_print_line(pThis);
+                        }
+                        else
+                        {
+                            if (pThis->echoOn > -1)
+                            {
+                                terminal_print(pThis, 1, (char*)&ch, 1);
+                            }
                         }
                     }
                 }

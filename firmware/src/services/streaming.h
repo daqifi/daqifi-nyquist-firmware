@@ -211,11 +211,19 @@ static inline uint32_t Streaming_SdAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2use
  * @param interface      StreamingInterface (USB / WiFi / SD / UsbAndSd)
  * @param encoding       StreamingEncoding (PB vs CSV/JSON)
  * @param totalChannels  Total enabled public ADC channels
+ * @param isNQ1          1 for NQ1 (12-bit MC12b) — use the 2026-07-05 252 MHz PB
+ *                       transport refit (#595). 0 for NQ2/NQ3 (24-bit AD7173 /
+ *                       18-bit AD7609), which keep the pre-#595 (200 MHz)
+ *                       conservative PB caps: the #595 raise was characterized on
+ *                       NQ1 only, and NQ2/NQ3 emit wider PB varints per sample, so
+ *                       the same Hz pushes more transport bytes — the NQ1-raised Hz
+ *                       cap would over-cap them and risk silent transport overflow.
  * @return transport-limited max frequency in Hz
  */
 static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
                                                   StreamingEncoding encoding,
-                                                  uint32_t totalChannels) {
+                                                  uint32_t totalChannels,
+                                                  uint32_t isNQ1) {
     if (totalChannels == 0) return STREAMING_ISR_MAX_HZ;
     /* Explicit encoding handling (Qodo): unknown encodings cap at 1 Hz so a
      * future/garbage value can never over-cap. */
@@ -238,7 +246,13 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
              * shelter under the ADC additive model and the ISR clamp). Note:
              * the additive models (fitted at 200 MHz) now bind most cells --
              * their 252 MHz re-fit is the follow-up that unlocks the rest. */
-            if (pb) { single = 22000u; A = 120000u; B =  1u; }
+            /* #595 252 MHz USB-PB raise is NQ1-only; NQ2/NQ3 keep the pre-#595
+             * (200 MHz) USB-PB curve — their wider ADC samples cost more
+             * bytes/sample, so the NQ1-raised Hz cap would over-cap them. */
+            if (pb) {
+                if (isNQ1) { single = 22000u; A = 120000u; B =  1u; }
+                else       { single = 15000u; A = 180000u; B = 10u; }
+            }
             else    { single = 15000u; A =  34000u; B =  1u; }
             break;
         case StreamingInterface_WiFi:
@@ -271,7 +285,10 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
              * soak-unproven (leaked-at-ceiling) points at 5/8/10 ch which the
              * never-over discipline penalizes below the current curve -- a
              * raise there needs a third night or the additive-model re-fit. */
-            if (pb) { single =  8000u; A = 139000u; B = 30u; }
+            /* #595 raised only the PB single-channel term (5175->8000) at 252 MHz
+             * on NQ1; NQ2/NQ3 keep 5175. The multi-channel curve was unchanged by
+             * #595, so both variants share A/(B+n). */
+            if (pb) { single = isNQ1 ? 8000u : 5175u; A = 139000u; B = 30u; }
             else    { single =  4675u; A =  20000u; B =  2u; }
             break;
         case StreamingInterface_SD:
@@ -281,8 +298,20 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
              * The SD-additive model (#574, 200 MHz fit) now binds most SD
              * cells (e.g. 1xT1 at 9852, 5xT1 at 7500) -- its re-fit is the
              * follow-up. */
-            if (pb) { single = 13000u; A =  99000u; B =  4u; }
-            else    { single =  7500u; A =  42000u; B = 12u; }
+            /* #595 252 MHz SD-PB raise is NQ1-only; NQ2/NQ3 keep the pre-#595
+             * (200 MHz) SD-PB curve. */
+            if (pb) {
+                if (isNQ1) { single = 13000u; A =  99000u; B =  4u; }
+                else       { single =  9000u; A = 150000u; B = 15u; }
+            }
+            /* SD CSV A 42000->36000 (2026-07-09): the 8 h freeze-aware soak
+             * dropped SD bytes at the 10ch cap (5T1+5T2 @ 1909 = 42000/22) in
+             * 2/7 rounds -- byte-rate-limited (sdDrop, no wedge). sdDrop scales
+             * with the high-channel byte-rate asymptote (~A*bytes/sample), so
+             * lowering A pulls the many-channel ceiling under the SD write
+             * limit (10ch 1909->1636, ~14% margin) while the clean low-channel
+             * cells only gain headroom. Single-channel (7500) unaffected. */
+            else    { single =  7500u; A =  36000u; B = 12u; }
             break;
         case StreamingInterface_UsbAndSd:
             if (pb) { single =  8000u; A =  66000u; B =  6u; }

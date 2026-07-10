@@ -1014,6 +1014,7 @@
         <itemPath>../src/Util/CoherentPool.c</itemPath>
         <itemPath>../src/Util/CircularBuffer.c</itemPath>
         <itemPath>../src/Util/Logger.c</itemPath>
+        <itemPath>../src/Util/CRC32.c</itemPath>
         <itemPath>../src/Util/SpiBusHealth.c</itemPath>
         <itemPath>../src/Util/StringFormatters.c</itemPath>
         <itemPath>../src/Util/StreamingBufferPool.c</itemPath>
@@ -4415,6 +4416,24 @@
         <C32Global>
         </C32Global>
       </item>
+      <item path="../src/config/default/old_hv2_bootld.ld"
+            ex="true"
+            overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
       <item path="../src/config/default/p32MZ2048EFM144.ld"
             ex="true"
             overriding="false">
@@ -6870,6 +6889,24 @@
         </C32Global>
       </item>
       <item path="../src/Util/StringFormatters.h" ex="false" overriding="false">
+        <C32>
+        </C32>
+        <C32-AR>
+        </C32-AR>
+        <C32-AS>
+        </C32-AS>
+        <C32-CO>
+        </C32-CO>
+        <C32-LD>
+        </C32-LD>
+        <C32CPP>
+        </C32CPP>
+        <C32Global>
+        </C32Global>
+      </item>
+      <item path="../src/config/default/old_hv2_bootld.ld"
+            ex="true"
+            overriding="false">
         <C32>
         </C32>
         <C32-AR>
