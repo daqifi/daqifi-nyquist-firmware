@@ -2249,6 +2249,12 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
         wifi_manager_settings_t *pRtWifi =
                 BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
         bool userEnabled = (pRtWifi != NULL && pRtWifi->isEnabled);
+        if (pRtWifi != NULL) {
+            // #29: re-seed the power-save intent from the runtime-config copy
+            // (persisted by LAN:SAVE, mirrored by the PSave setter) so a
+            // standby->powered re-init preserves the user's choice.
+            gPowerSaveEnabled = !pRtWifi->powerSaveDisabled;
+        }
         taskENTER_CRITICAL();
         gWifiReinitDeadlineTick = 0;  // cancel any pending deferred-INIT
         if (gStateMachineContext.pWifiSettings != NULL && userEnabled) {
@@ -2260,8 +2266,13 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
         }
         return true;
     }
-    if (pSettings != NULL)
+    if (pSettings != NULL) {
         gStateMachineContext.pWifiSettings = pSettings;
+        // #29: seed the power-save intent from the NVM-loaded settings
+        // (boot memcpys DaqifiSettings_Wifi into this struct; inverted flag —
+        // legacy NVM holds 0 here, so upgraded devices default to enabled).
+        gPowerSaveEnabled = !pSettings->powerSaveDisabled;
+    }
     if (gStateMachineContext.fwUpdateTaskHandle == NULL) {
         BaseType_t result = xTaskCreate(fwUpdateTask, "fwUpdateTask", 1024, NULL, 2, &gStateMachineContext.fwUpdateTaskHandle);  // Keep original — FW flash path not fully profiled
         if (result != pdPASS) {
@@ -2357,6 +2368,18 @@ void wifi_manager_SetPowerSaveEnabled(bool enabled) {
     // intent on its next iteration and re-applies the mode (disabling forces
     // full power back on within one 5 ms loop).
     gPowerSaveEnabled = enabled;
+    // #29: mirror the (inverted) opt-out into both settings copies — the
+    // runtime-config copy is what SYST:COMM:LAN:SAVE memcpys to NVM, and the
+    // state-machine copy keeps any later re-seed consistent. Plain aligned
+    // bool stores (atomic on PIC32MZ; no RMW, no critical section needed).
+    wifi_manager_settings_t *pRtWifi =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
+    if (pRtWifi != NULL) {
+        pRtWifi->powerSaveDisabled = !enabled;
+    }
+    if (gStateMachineContext.pWifiSettings != NULL) {
+        gStateMachineContext.pWifiSettings->powerSaveDisabled = !enabled;
+    }
 }
 
 bool wifi_manager_GetPowerSaveEnabled(void) {

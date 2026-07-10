@@ -63,11 +63,17 @@ extern "C" {
          */
         bool isEnabled;
         /**
-         * DEPRECATED: No longer used. WiFi firmware update mode is now managed via state machine flags.
-         * Use wifi_manager_RequestWifiFirmwareUpdate() to request update and wifi_manager_IsWifiFirmwareUpdateActive() to check status.
-         * Kept for NVM compatibility - do not remove.
+         * #29: user's WiFi power-save opt-out, persisted with the LAN settings
+         * (SYST:COMM:LAN:SAVE memcpys this whole struct to NVM). INVERTED so
+         * the NVM default (0/false — also the only value pre-#29 firmware ever
+         * wrote in this slot) means power-save ENABLED: the feature ships
+         * default-on with zero NVM migration.
+         *
+         * REPURPOSES the deprecated isWifiFirmwareUpdateModeEnabled slot (same
+         * offset/size — NVM layout unchanged). That flag was dead: FW-update
+         * mode moved to state-machine flags and boot forced it false since.
          */
-        bool isWifiFirmwareUpdateModeEnabled;
+        bool powerSaveDisabled;
         /**
          * One of:
          *  WIFI_MANAGER_NETWORK_MODE_STA = 1,

@@ -819,6 +819,11 @@ scpi_result_t SCPI_LANPowerSaveSet(scpi_t * context) {
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         return SCPI_RES_ERR;
     }
+    if (param1 != 0 && param1 != 1) {
+        /* Match the LAN sibling setters (POWer/HIDden): documented 0|1 only. */
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
     wifi_manager_SetPowerSaveEnabled(param1 != 0);
     return SCPI_RES_OK;
 }

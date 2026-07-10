@@ -159,7 +159,7 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
 
             //mac address will be populated after reading from ATWINC
             wifi->networkMode = DEFAULT_WIFI_NETWORK_MODE;
-            wifi->isWifiFirmwareUpdateModeEnabled=false;
+            wifi->powerSaveDisabled = false;  /* #29: power-save on by default */
             memset(&wifi->macAddr, 0, sizeof (WDRV_WINC_MAC_ADDR));
             wifi->ipAddr.Val = inet_addr(DEFAULT_NETWORK_IP_ADDRESS);
             wifi->ipMask.Val = inet_addr(DEFAULT_NETWORK_IP_MASK);
