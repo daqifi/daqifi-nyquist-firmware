@@ -2268,10 +2268,24 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
     }
     if (pSettings != NULL) {
         gStateMachineContext.pWifiSettings = pSettings;
-        // #29: seed the power-save intent from the NVM-loaded settings
-        // (boot memcpys DaqifiSettings_Wifi into this struct; inverted flag —
-        // legacy NVM holds 0 here, so upgraded devices default to enabled).
-        gPowerSaveEnabled = !pSettings->powerSaveDisabled;
+    }
+    // #29: seed power-save intent from the RUNTIME-CONFIG copy — the single
+    // authority for the powerSaveDisabled bit (both Init seed points read it;
+    // the setter and UpdateNetworkSettings both write it). Reading the
+    // BoardData copy here instead created a two-copy asymmetry: a PSave 0 sent
+    // while the device is still in STANDBY (before this first Init runs) is
+    // written by the setter to the runtime copy only — pWifiSettings is NULL
+    // then, so its BoardData mirror is skipped — and seeding from BoardData
+    // would silently clobber that opt-out on the first power-up. Boot memcpys
+    // NVM into the runtime copy too, so it always carries the persisted value.
+    // (Adversarial-gate round-3 finding, #642.) Inverted flag: legacy NVM
+    // holds 0 -> enabled, so upgraded devices default to power-save on.
+    {
+        wifi_manager_settings_t *pRtSeed =
+                BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
+        if (pRtSeed != NULL) {
+            gPowerSaveEnabled = !pRtSeed->powerSaveDisabled;
+        }
     }
     if (gStateMachineContext.fwUpdateTaskHandle == NULL) {
         BaseType_t result = xTaskCreate(fwUpdateTask, "fwUpdateTask", 1024, NULL, 2, &gStateMachineContext.fwUpdateTaskHandle);  // Keep original — FW flash path not fully profiled
@@ -2607,14 +2621,26 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
             return false;
         }
     }
-    // #29: the settings copy above includes powerSaveDisabled, so re-seed the
-    // live intent flag — LAN:LOAD 1 / FACRESET 1 route through here and every
-    // OTHER field takes effect via the REINIT; without this line the loaded
-    // power-save choice was silently ignored until the next reboot/standby
-    // (adversarial-gate finding, #642). The rollback path above deliberately
-    // skips this: gPowerSaveEnabled was never changed, and the restored
-    // struct still matches it.
-    gPowerSaveEnabled = !gStateMachineContext.pWifiSettings->powerSaveDisabled;
+    // #29: the settings copy above includes powerSaveDisabled, so propagate it
+    // to the RUNTIME-CONFIG copy (the single authority both Init seed points
+    // read) and re-seed the live flag. LAN:LOAD 1 / FACRESET 1 route through
+    // here with a fresh NVM/factory struct; LAN:APPLY passes the runtime copy
+    // itself (self-copy, no-op). Without writing the runtime copy, a
+    // LOAD-applied opt-out took effect immediately but reverted on the next
+    // standby->powered cycle, whose re-init seeds from the (stale) runtime
+    // copy. Both adversarial-gate findings (rounds 2 and 3) are the same
+    // two-copy asymmetry; unifying on the runtime copy closes both. The
+    // REINIT-rollback path above deliberately skips this — gPowerSaveEnabled
+    // was never changed and the restored struct still matches it.
+    {
+        wifi_manager_settings_t *pRtWifi =
+                BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
+        if (pRtWifi != NULL) {
+            pRtWifi->powerSaveDisabled =
+                    gStateMachineContext.pWifiSettings->powerSaveDisabled;
+            gPowerSaveEnabled = !pRtWifi->powerSaveDisabled;
+        }
+    }
     return true;
 }
 
