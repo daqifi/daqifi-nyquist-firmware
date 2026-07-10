@@ -821,18 +821,20 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 | Priority | Task | Stack (words) | Peak Used | Notes |
 |----------|------|--------------|-----------|-------|
 | 9 | `_Streaming_Deferred_Interrupt_Task` | 512 | 214 | ISR deferral, sample collection (no FPU — uses Q16 LUT for sine pattern) |
-| 9 | `MC12bADC_EosInterruptTask` | 160 | 80 | ADC end-of-scan deferred interrupt |
-| 9 | `AD7609_DeferredInterruptTask` | 160 | 76 | AD7609 BSY pin handler |
-| 7 | `app_PowerAndUITask` | 512 | 226 | UI + BQ24297 power, FPU |
-| 7 | `app_USBDeviceTask` | 3072 | 1290 | SCPI callbacks use shared response buffer (see below) |
+| 9 | `MC12bADC_EosInterruptTask` | 256 | 80 | ADC end-of-scan deferred interrupt (stack raised 160→256 in #525 vsnprintf-margin follow-up) |
+| 9 | `AD7609_DeferredInterruptTask` | 1024 | 76 | AD7609 BSY pin handler (stack raised 160→1024 for the BSY-stuck LOG_E/vsnprintf frame, #525 follow-up; NQ3-only) |
+| 7 | `app_PowerAndUITask` | 640 | 226 | UI + BQ24297 power, FPU |
+| 7 | `app_USBDeviceTask` | 3072 | 1290 | Hosts the USB SCPI handler chain, FPU; SCPI callbacks use shared response buffer (see below). **Created at pri 2, self-boosts to 7** via `vTaskPrioritySet(NULL, 7)` right after `UsbCdc_Initialize()` (`app_freertos.c`) — static xTaskCreate reads 2, runtime is 7, so USB SCPI stays above the encoder (6) during streaming. |
 | 6 | `streaming_Task` | 1392 | 692 | Encodes PB/CSV/JSON + outputs, FPU (CSV/JSON at precision>0) |
+| 6 | `F_USB_DEVICE_Tasks` | 144 | 72 | USB device stack. **Created at pri 2, self-boosts to 6** via `vTaskPrioritySet(NULL, 6)` on first iteration (`tasks.c` `F_USB_DEVICE_Tasks`). Static xTaskCreate reads pri 2 — runtime is 6. |
 | 5 | `app_SDCardTask` | 1024 | 468 | SD mount/write/read/list/delete |
+| 5 | `Iperf2TaskMain` | 512 (static) | n/p | Dedicated iperf2 pacing task (#377), `xTaskCreateStatic`. Adaptive 2 ms (active) / 50 ms (idle) cadence. No FPU. |
 | 2 | `app_WifiTask` | 1500 | 780 | WiFi state machine + TCP + SCPI-over-TCP dispatch (post-#353 Opt 2: microrl + libscpi + handlers all run here instead of on WDRV_WINC_Tasks) |
-| 2 | `fwUpdateTask` | 128 | 62 | WiFi FW update (dynamic) |
+| 2 | `F_DRV_USBHS_Tasks` | 144 | 72 | USB hardware driver |
+| 2 | `fwUpdateTask` | 1024 | 62 | WiFi FW update (dynamic — created only during a WiFi FW-update session) |
 | 1 | `lWDRV_WINC_Tasks` | 1024 | 320 | WINC1500 driver. PR #492 (#489 variant B): dropped 2→1 so `streaming_Task` (pri 6) preempts WINC by 5 levels and OSAL semaphores inside `WDRV_WINC_Tasks` do the yielding (Microchip reference pattern). Eliminated #491 BIMODAL catastrophic WiFi drops. |
 | 1 | `lAPP_FREERTOS_Tasks` | 1500 | 1156 | Boot init (77% used) |
-| 1 | `F_USB_DEVICE_Tasks` | 144 | 72 | USB device stack |
-| 1 | `F_DRV_USBHS_Tasks` | 144 | 72 | USB hardware driver |
+| 1 | `LogIsrDrainTask` | 256 | n/p | Deferred ISR-log drain (`"logISR"`, `LOG_ISR_TASK_PRIO`). Drains the ISR log queue; memcpy-only, no FPU. |
 
 Stack sizes profiled under stress: 16ch@5kHz PB/CSV/JSON + SD file ops + WiFi TCP + power cycles. Sized at 2-3x measured peak. Query at runtime: `SYST:MEM:STACk?`
 
