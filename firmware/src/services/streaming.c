@@ -67,9 +67,6 @@ static volatile uint32_t gBenchmarkMode = BENCHMARK_OFF;
 // task.
 static volatile bool gNeedSharedScan = false;
 
-// Task priority constant (benchmark no longer changes priority)
-#define STREAMING_ISR_TASK_PRIORITY     8
-
 // SD protobuf metadata: emitted as first message in each SD log file.
 // volatile: written by SD card task (via Streaming_ResetSdPbMetadata),
 // read by streaming task — compiler must not cache in registers.
