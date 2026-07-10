@@ -59,8 +59,10 @@ extern "C" {
  *
  * CALLBACK CONTRACT (process_callback, used by ProcessBytes):
  *
- * - Called from the CONSUMER task's context, up to twice per ProcessBytes
- *    call (wrap-around split).
+ * - Called from the CONSUMER task's context, at most ONCE per ProcessBytes
+ *    call. On wrap-around only the pre-wrap (contiguous) chunk is offered;
+ *    the wrapped remainder is deferred to the next ProcessBytes call.
+ *    (Copy mode differs: it stitches both chunks in one call.)
  * - Return >= 0: the number of bytes actually processed. Partial processing
  *    is honored - the ring advances by the returned count only (#126) and
  *    unprocessed bytes are re-offered on the next call. Returning more than
