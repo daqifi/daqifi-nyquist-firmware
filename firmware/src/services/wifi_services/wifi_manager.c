@@ -156,12 +156,16 @@ static volatile TickType_t gListenSocketOpenTick = 0;
 // recv. WINC buffers inbound TCP while we process (per WINC docs).
 static volatile bool gTcpRxPending = false;
 
-// #29 dynamic WiFi power-save.  gPowerSaveEnabled is the user intent flag
-// (default on): when true the WiFi manager is allowed to drop the WINC into
-// its light auto power-save mode while associated as a STA but idle.  It is
-// written from any task via wifi_manager_SetPowerSaveEnabled() and read on
-// app_WifiTask; a plain 32-bit-atomic bool is sufficient (a one-cycle-stale
-// read only delays the policy by one 5 ms ProcessState iteration).
+// #29 dynamic WiFi power-save.  Power-save intent (default on) has a SINGLE
+// source of truth: the runtime-config copy's inverted powerSaveDisabled bit
+// (BOARDRUNTIME_WIFI_SETTINGS — persisted by LAN:SAVE, survives Deinit, the
+// #656 authority pattern).  There is deliberately NO cached bool: every reader
+// derives from that copy via wifiPowerSaveEnabled() so no code path can leave a
+// stale mirror.  (Adversarial-gate rounds 1-4 for #642 were ALL variants of a
+// cached flag diverging from the runtime copy across the setter / boot /
+// standby-reinit / bare-LOAD/FACRESET / APPLY writers; removing the cache
+// removes the entire class.)  A one-cycle-stale read is harmless — the policy
+// re-evaluates every 5 ms ProcessState iteration on app_WifiTask.
 //
 // gAppliedPsMode is the last mode we actually pushed to the WINC — tracked so
 // the policy only issues a WDRV_WINC_PowerSaveSetMode HIF transaction on a
@@ -171,8 +175,15 @@ static volatile bool gTcpRxPending = false;
 // keep working with only the ~100-300 ms wake latency documented in #29 —
 // deliberately NOT the deeper AUTO_LOW_POWER, which trades more latency for
 // marginal extra savings and is riskier for the control plane.
-static volatile bool gPowerSaveEnabled = true;
 static WDRV_WINC_PS_MODE gAppliedPsMode = WDRV_WINC_PS_MODE_OFF;
+
+// #29: the single power-save-intent read. Derives from the runtime-config copy
+// (never NULL — indexes a static boot-init array); no cached flag to go stale.
+static bool wifiPowerSaveEnabled(void) {
+    wifi_manager_settings_t *pRt =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
+    return (pRt != NULL) && !pRt->powerSaveDisabled;
+}
 
 // Deadline (in ticks) at which wifi_manager_ProcessState should queue
 // the deferred WIFI_MANAGER_EVENT_INIT after a HardReset.  0 = none
@@ -2249,12 +2260,8 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
         wifi_manager_settings_t *pRtWifi =
                 BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
         bool userEnabled = (pRtWifi != NULL && pRtWifi->isEnabled);
-        if (pRtWifi != NULL) {
-            // #29: re-seed the power-save intent from the runtime-config copy
-            // (persisted by LAN:SAVE, mirrored by the PSave setter) so a
-            // standby->powered re-init preserves the user's choice.
-            gPowerSaveEnabled = !pRtWifi->powerSaveDisabled;
-        }
+        // #29: no power-save seed here either — the policy reads the runtime
+        // copy directly, so a standby->powered re-init already preserves it.
         taskENTER_CRITICAL();
         gWifiReinitDeadlineTick = 0;  // cancel any pending deferred-INIT
         if (gStateMachineContext.pWifiSettings != NULL && userEnabled) {
@@ -2269,24 +2276,8 @@ bool wifi_manager_Init(wifi_manager_settings_t * pSettings) {
     if (pSettings != NULL) {
         gStateMachineContext.pWifiSettings = pSettings;
     }
-    // #29: seed power-save intent from the RUNTIME-CONFIG copy — the single
-    // authority for the powerSaveDisabled bit (both Init seed points read it;
-    // the setter and UpdateNetworkSettings both write it). Reading the
-    // BoardData copy here instead created a two-copy asymmetry: a PSave 0 sent
-    // while the device is still in STANDBY (before this first Init runs) is
-    // written by the setter to the runtime copy only — pWifiSettings is NULL
-    // then, so its BoardData mirror is skipped — and seeding from BoardData
-    // would silently clobber that opt-out on the first power-up. Boot memcpys
-    // NVM into the runtime copy too, so it always carries the persisted value.
-    // (Adversarial-gate round-3 finding, #642.) Inverted flag: legacy NVM
-    // holds 0 -> enabled, so upgraded devices default to power-save on.
-    {
-        wifi_manager_settings_t *pRtSeed =
-                BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
-        if (pRtSeed != NULL) {
-            gPowerSaveEnabled = !pRtSeed->powerSaveDisabled;
-        }
-    }
+    // #29: no power-save seed here — the policy reads the runtime-config copy
+    // directly (wifiPowerSaveEnabled()), which boot already loaded from NVM.
     if (gStateMachineContext.fwUpdateTaskHandle == NULL) {
         BaseType_t result = xTaskCreate(fwUpdateTask, "fwUpdateTask", 1024, NULL, 2, &gStateMachineContext.fwUpdateTaskHandle);  // Keep original — FW flash path not fully profiled
         if (result != pdPASS) {
@@ -2378,14 +2369,13 @@ bool wifi_manager_IsWiFiConnected(void) {
 }
 
 void wifi_manager_SetPowerSaveEnabled(bool enabled) {
-    // Plain 32-bit-atomic write; the policy on app_WifiTask picks up the new
-    // intent on its next iteration and re-applies the mode (disabling forces
-    // full power back on within one 5 ms loop).
-    gPowerSaveEnabled = enabled;
-    // #29: mirror the (inverted) opt-out into both settings copies — the
-    // runtime-config copy is what SYST:COMM:LAN:SAVE memcpys to NVM, and the
-    // state-machine copy keeps any later re-seed consistent. Plain aligned
-    // bool stores (atomic on PIC32MZ; no RMW, no critical section needed).
+    // #29: write the SINGLE authority — the runtime-config copy's (inverted)
+    // powerSaveDisabled bit. The policy on app_WifiTask reads this same copy
+    // every ~5 ms and re-applies the mode (disabling forces full power back on
+    // within one loop); SYST:COMM:LAN:SAVE persists this copy to NVM. Plain
+    // aligned bool store (atomic on PIC32MZ; no RMW, no critical section).
+    // Also mirror into the state-machine copy so the two structs stay coherent
+    // for whole-struct memcpys, though nothing reads it for power-save intent.
     wifi_manager_settings_t *pRtWifi =
             BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
     if (pRtWifi != NULL) {
@@ -2397,7 +2387,7 @@ void wifi_manager_SetPowerSaveEnabled(bool enabled) {
 }
 
 bool wifi_manager_GetPowerSaveEnabled(void) {
-    return gPowerSaveEnabled;
+    return wifiPowerSaveEnabled();  // #29: single authority = runtime-config copy
 }
 
 int wifi_manager_GetPowerSaveMode(void) {
@@ -2621,24 +2611,20 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
             return false;
         }
     }
-    // #29: the settings copy above includes powerSaveDisabled, so propagate it
-    // to the RUNTIME-CONFIG copy (the single authority both Init seed points
-    // read) and re-seed the live flag. LAN:LOAD 1 / FACRESET 1 route through
-    // here with a fresh NVM/factory struct; LAN:APPLY passes the runtime copy
-    // itself (self-copy, no-op). Without writing the runtime copy, a
-    // LOAD-applied opt-out took effect immediately but reverted on the next
-    // standby->powered cycle, whose re-init seeds from the (stale) runtime
-    // copy. Both adversarial-gate findings (rounds 2 and 3) are the same
-    // two-copy asymmetry; unifying on the runtime copy closes both. The
-    // REINIT-rollback path above deliberately skips this — gPowerSaveEnabled
-    // was never changed and the restored struct still matches it.
+    // #29: LAN:LOAD 1 / FACRESET 1 pass a fresh NVM/factory struct that this
+    // function memcpys into the state-machine (BoardData) copy — propagate its
+    // powerSaveDisabled to the RUNTIME-CONFIG copy, the single authority the
+    // power-save policy reads. LAN:APPLY passes the runtime copy itself
+    // (self-copy, no-op). No live-flag write needed — the policy derives
+    // intent from the runtime copy directly (wifiPowerSaveEnabled()). The
+    // REINIT-rollback path above returns before here, so a rolled-back apply
+    // leaves the runtime copy untouched.
     {
         wifi_manager_settings_t *pRtWifi =
                 BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
         if (pRtWifi != NULL) {
             pRtWifi->powerSaveDisabled =
                     gStateMachineContext.pWifiSettings->powerSaveDisabled;
-            gPowerSaveEnabled = !pRtWifi->powerSaveDisabled;
         }
     }
     return true;
@@ -2749,7 +2735,7 @@ static void MaybeReconcileStaConnected(void) {
 //
 // Full power (OFF) is the conservative default.  The light auto power-save
 // mode is requested only when EVERY one of these holds:
-//   - the feature is enabled (gPowerSaveEnabled),
+//   - the feature is enabled (wifiPowerSaveEnabled() — runtime-config copy),
 //   - we are associated as a STA (soft-AP must keep beaconing for its
 //     clients, so it must never sleep),
 //   - no TCP control-plane client is connected,
@@ -2780,7 +2766,7 @@ static void ApplyPowerSavePolicy(stateMachineInst_t * const pInstance) {
         (GetEventFlagStatus(pInstance->eventFlags,
                             WIFI_MANAGER_STATE_FLAG_AP_STARTED) != 0);
 
-    if (gPowerSaveEnabled && staConnected && !apStarted &&
+    if (wifiPowerSaveEnabled() && staConnected && !apStarted &&
         !wifi_tcp_server_HasActiveClient() &&
         !Streaming_IsActiveOnWifiInterface() &&
         !Iperf2_IsActive()) {
