@@ -2607,6 +2607,14 @@ bool wifi_manager_UpdateNetworkSettings(wifi_manager_settings_t * pSettings) {
             return false;
         }
     }
+    // #29: the settings copy above includes powerSaveDisabled, so re-seed the
+    // live intent flag — LAN:LOAD 1 / FACRESET 1 route through here and every
+    // OTHER field takes effect via the REINIT; without this line the loaded
+    // power-save choice was silently ignored until the next reboot/standby
+    // (adversarial-gate finding, #642). The rollback path above deliberately
+    // skips this: gPowerSaveEnabled was never changed, and the restored
+    // struct still matches it.
+    gPowerSaveEnabled = !gStateMachineContext.pWifiSettings->powerSaveDisabled;
     return true;
 }
 
@@ -2718,8 +2726,10 @@ static void MaybeReconcileStaConnected(void) {
 //   - the feature is enabled (gPowerSaveEnabled),
 //   - we are associated as a STA (soft-AP must keep beaconing for its
 //     clients, so it must never sleep),
-//   - no TCP control-plane client is connected, and
-//   - WiFi is not the active streaming interface.
+//   - no TCP control-plane client is connected,
+//   - WiFi is not the active streaming interface, and
+//   - no iperf2 session is in flight (raw WINC sockets — invisible to
+//     wifi_tcp_server; a dozing STA would corrupt the measurement).
 // A WiFi stream and TCP-SCPI both run over the TCP client socket, so
 // wifi_tcp_server_HasActiveClient() alone would force full power during
 // either; the explicit Streaming_IsActiveOnWifiInterface() check is a
@@ -2746,7 +2756,12 @@ static void ApplyPowerSavePolicy(stateMachineInst_t * const pInstance) {
 
     if (gPowerSaveEnabled && staConnected && !apStarted &&
         !wifi_tcp_server_HasActiveClient() &&
-        !Streaming_IsActiveOnWifiInterface()) {
+        !Streaming_IsActiveOnWifiInterface() &&
+        !Iperf2_IsActive()) {
+        // Iperf2_IsActive: iperf2 rides raw WINC sockets (own task, never
+        // wifi_tcp_server), so HasActiveClient() can't see it — without this
+        // predicate the WINC dozes through a link measurement and silently
+        // corrupts it (adversarial-gate finding, #642).
         desired = WDRV_WINC_PS_MODE_AUTO_MED_POWER;
     }
 

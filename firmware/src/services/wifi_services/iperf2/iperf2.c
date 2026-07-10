@@ -417,6 +417,13 @@ bool Iperf2_StartUdpClient(const char* remote_ip, uint16_t remote_port,
     return true;
 }
 
+// #29: power-save policy predicate — any in-flight session holds full power.
+// gCtx.mode is volatile and enum-sized (aligned 32-bit read = atomic on
+// PIC32MZ), safe to read from app_WifiTask's policy loop.
+bool Iperf2_IsActive(void) {
+    return gCtx.mode != IPERF2_MODE_IDLE;
+}
+
 void Iperf2_Stop(void) {
     if (gCtx.mode == IPERF2_MODE_IDLE) {
         return;

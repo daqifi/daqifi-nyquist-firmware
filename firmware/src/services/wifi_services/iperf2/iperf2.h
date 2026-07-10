@@ -140,6 +140,14 @@ bool Iperf2_StartTxBlast(uint16_t port, uint32_t duration_sec);
 void Iperf2_Stop(void);
 
 /**
+ * #29: true while any iperf2 session is in flight (mode != IDLE).
+ * Consumed by the WiFi power-save policy: iperf2 rides raw WINC sockets
+ * (not wifi_tcp_server), so without this predicate the WINC would stay in
+ * 802.11 power-save during a measurement and silently corrupt it.
+ */
+bool Iperf2_IsActive(void);
+
+/**
  * Snapshot the current stats — safe to call at any time.  Stats reflect
  * the most recent completed test until a new one starts.
  */
