@@ -30,6 +30,51 @@ extern "C" {
     /*  A brief description of a section can be given directly below the section
         banner.
      */
+/**
+ * CircularBuffer - single-producer / single-consumer byte ring.
+ *
+ * THREAD-SAFETY CONTRACT (#123):
+ *
+ * 1. SPSC by design. Exactly ONE producer task may call AddBytes and exactly
+ *    ONE consumer task may call ProcessBytes on a given instance. The split
+ *    producedBytes/consumedBytes counters (#276) make that pairing safe
+ *    WITHOUT a mutex; nothing in this module locks. Two producers (or two
+ *    consumers) on one instance corrupt it - callers with multiple writers
+ *    (e.g. SCPI responses from USB + WiFi tasks) must serialize externally
+ *    (see the wCirbuf wMutex pattern in sd_card_manager.c).
+ *
+ * 2. Init/InitExternal/Deinit/Resize/Reset are NOT safe concurrent with any
+ *    other call. Quiesce both sides first (streaming stopped) - the stream
+ *    start/stop re-partition path is the canonical caller.
+ *
+ * 3. NumBytesAvailable/NumBytesFree are safe from either side (single 32-bit
+ *    volatile reads; unsigned subtraction handles counter wraparound), but
+ *    are momentary: a producer may see less free space and a consumer less
+ *    available data than truly present - never more. Use accordingly
+ *    (optimistic checks fine, exactness requires quiescence).
+ *
+ * 4. ISR context: no CircularBuffer call is ISR-safe. Both sides run in task
+ *    context in this firmware (streaming task produces, transport tasks
+ *    consume); keep it that way.
+ *
+ * CALLBACK CONTRACT (process_callback, used by ProcessBytes):
+ *
+ * - Called from the CONSUMER task's context, at most ONCE per ProcessBytes
+ *    call. On wrap-around only the pre-wrap (contiguous) chunk is offered;
+ *    the wrapped remainder is deferred to the next ProcessBytes call.
+ *    (Copy mode differs: it stitches both chunks in one call.)
+ * - Return >= 0: the number of bytes actually processed. Partial processing
+ *    is honored - the ring advances by the returned count only (#126) and
+ *    unprocessed bytes are re-offered on the next call. Returning more than
+ *    offered is clamped.
+ * - Return < 0: hard error; nothing is consumed and the value is surfaced
+ *    through ProcessBytes' *error out-param.
+ * - Must not block indefinitely: bounded waits (e.g. DMA-busy retry with
+ *    vTaskDelay) are the norm; unbounded blocking stalls the whole consumer
+ *    pipeline behind this buffer.
+ * - Must not re-enter this module on the SAME instance (AddBytes to a
+ *    DIFFERENT buffer is fine and common - e.g. transport fan-out).
+ */
 typedef struct s_CircularBuf
 {
     uint8_t*    insertPtr;
