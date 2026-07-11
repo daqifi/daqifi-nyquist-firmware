@@ -159,10 +159,14 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         // read channel->Type at Data[(size_t)-1] — a wild OOB read — before the
         // range check caught it. Guard first, then it is safe to index.
         if (channelIndex >= (size_t) pBoardConfigAInChannels->Size) {
-            LOG_E("CONF:ADC:CHAN: channel %d not addressable (valid 0..%u). "
-                  "The two-arg form is <channel>,<state>; use the one-arg "
-                  "<mask> form to enable channels by bitmask.",
-                  param1, (unsigned)(pBoardConfigAInChannels->Size - 1));
+            // Note: do NOT report "valid 0..Size-1" — Size is the array entry
+            // count (user + monitoring), not the settable channel-id range,
+            // which is sparse (NQ1 user 0..15, monitoring 248..255; NQ3 0..7).
+            // A numeric range here would be wrong per-variant (#630 review).
+            LOG_E("CONF:ADC:CHAN: channel %d not addressable (not a settable "
+                  "analog channel). The two-arg form is <channel>,<state>; use "
+                  "the one-arg <mask> form to enable channels by bitmask.",
+                  param1);
             return SCPI_RES_ERR;
         }
 
