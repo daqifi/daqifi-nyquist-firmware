@@ -63,11 +63,17 @@ extern "C" {
          */
         bool isEnabled;
         /**
-         * DEPRECATED: No longer used. WiFi firmware update mode is now managed via state machine flags.
-         * Use wifi_manager_RequestWifiFirmwareUpdate() to request update and wifi_manager_IsWifiFirmwareUpdateActive() to check status.
-         * Kept for NVM compatibility - do not remove.
+         * #29: user's WiFi power-save opt-out, persisted with the LAN settings
+         * (SYST:COMM:LAN:SAVE memcpys this whole struct to NVM). INVERTED so
+         * the NVM default (0/false — also the only value pre-#29 firmware ever
+         * wrote in this slot) means power-save ENABLED: the feature ships
+         * default-on with zero NVM migration.
+         *
+         * REPURPOSES the deprecated isWifiFirmwareUpdateModeEnabled slot (same
+         * offset/size — NVM layout unchanged). That flag was dead: FW-update
+         * mode moved to state-machine flags and boot forced it false since.
          */
-        bool isWifiFirmwareUpdateModeEnabled;
+        bool powerSaveDisabled;
         /**
          * One of:
          *  WIFI_MANAGER_NETWORK_MODE_STA = 1,
@@ -431,6 +437,43 @@ extern "C" {
      *         cached, or the serialization lock was momentarily busy (retry).
      */
     bool wifi_manager_GetBSSID(uint8_t *pBssid);
+
+    /**
+     * @brief Enable or disable automatic WiFi power-save (#29).
+     *
+     * When enabled (default), the WiFi manager automatically requests the
+     * WINC1500's light auto power-save mode while WiFi is associated as a
+     * STA but idle (no TCP control-plane client and not the active
+     * streaming interface), and restores full power the instant WiFi is
+     * needed for a TCP client or WiFi streaming.  Power-save is never
+     * engaged in soft-AP mode (the AP must beacon continuously) nor while
+     * streaming over WiFi.
+     *
+     * The policy is applied from app_WifiTask (which owns the WINC client
+     * handle); this setter only flips the intent flag — the actual
+     * WDRV_WINC_PowerSaveSetMode call happens on the next ProcessState
+     * iteration.  Runtime-only, not persisted to NVM.
+     *
+     * @param[in] enabled true to allow automatic power-save, false to force
+     *            full power at all times.
+     */
+    void wifi_manager_SetPowerSaveEnabled(bool enabled);
+
+    /**
+     * @brief Query whether automatic WiFi power-save is enabled (#29).
+     *
+     * @return true if the automatic power-save policy is allowed to engage.
+     */
+    bool wifi_manager_GetPowerSaveEnabled(void);
+
+    /**
+     * @brief Query the WINC power-save mode currently applied (#29).
+     *
+     * @return The applied WDRV_WINC_PS_MODE value as an int
+     *         (WDRV_WINC_PS_MODE_OFF == 0 at full power), or -1 if the WiFi
+     *         driver handle is not open.
+     */
+    int wifi_manager_GetPowerSaveMode(void);
 
 #ifdef	__cplusplus
 }

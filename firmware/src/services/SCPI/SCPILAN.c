@@ -806,3 +806,37 @@ scpi_result_t SCPI_LANHostnameGet(scpi_t * context) {
     SCPI_LANStringGetImpl(context, host);
     return SCPI_RES_OK;
 }
+
+/**
+ * SCPI Callback: Enable/disable automatic WiFi power-save (#29).
+ *
+ * `SYST:COMM:LAN:PSave <0|1>` — 1 lets the WiFi manager drop the WINC into
+ * its light auto power-save mode while associated as a STA but idle; 0
+ * forces full power at all times.  Runtime-only (not persisted to NVM).
+ */
+scpi_result_t SCPI_LANPowerSaveSet(scpi_t * context) {
+    int param1;
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (param1 != 0 && param1 != 1) {
+        /* Match the LAN sibling setters (POWer/HIDden): documented 0|1 only. */
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    wifi_manager_SetPowerSaveEnabled(param1 != 0);
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: Query WiFi power-save state (#29).
+ *
+ * Returns "<enabled>,<appliedMode>" where enabled is 0/1 and appliedMode is
+ * the WDRV_WINC_PS_MODE value currently in force (0 = full power / OFF, or
+ * -1 when the WiFi driver is not open).
+ */
+scpi_result_t SCPI_LANPowerSaveGet(scpi_t * context) {
+    SCPI_ResultInt32(context, wifi_manager_GetPowerSaveEnabled() ? 1 : 0);
+    SCPI_ResultInt32(context, wifi_manager_GetPowerSaveMode());
+    return SCPI_RES_OK;
+}

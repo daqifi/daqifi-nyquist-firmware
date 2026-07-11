@@ -191,6 +191,16 @@ scpi_result_t SCPI_LANFwUpdate(scpi_t * context);
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANGetChipInfo(scpi_t * context);
+/**
+ * SCPI Callback: Enable/disable automatic WiFi power-save (#29).
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANPowerSaveSet(scpi_t * context);
+/**
+ * SCPI Callback: Query WiFi power-save state (#29).
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANPowerSaveGet(scpi_t * context);
 //scpi_result_t SCPI_LANAVSsidStrengthGet(scpi_t * context);
 //
 ///**

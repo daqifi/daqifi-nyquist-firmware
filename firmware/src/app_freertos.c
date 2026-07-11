@@ -584,8 +584,10 @@ void app_SystemInit() {
         daqifi_settings_LoadFactoryDeafult(DaqifiSettings_Wifi, &tmpSettings);
         daqifi_settings_SaveToNvm(&tmpSettings);
     }
-    // Move temp variable to global variables
-    tmpSettings.settings.wifi.isWifiFirmwareUpdateModeEnabled = false;
+    // Move temp variable to global variables.
+    // #29: the old force-false of the deprecated FW-update flag is gone — that
+    // slot is now powerSaveDisabled and the NVM-loaded value is meaningful
+    // (pre-#29 NVM only ever holds false there = power-save enabled).
     memcpy(&gpBoardRuntimeConfig->wifiSettings,
             &tmpSettings.settings.wifi,
             sizeof (wifi_manager_settings_t));

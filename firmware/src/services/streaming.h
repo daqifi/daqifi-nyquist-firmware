@@ -641,6 +641,15 @@ uint32_t Streaming_GetBenchmarkMode(void);
 bool Streaming_IsActiveOnNonWifiInterface(void);
 
 /**
+ * True when streaming is active AND the active interface is WiFi. The
+ * complement query to Streaming_IsActiveOnNonWifiInterface(); used by the
+ * #29 dynamic WiFi power-save policy to force full WINC power while the
+ * WiFi data path is in use. Safe to call from any context; reads plain
+ * fields with no cross-task coordination needed.
+ */
+bool Streaming_IsActiveOnWifiInterface(void);
+
+/**
  * Build channel mapping from current board config and runtime config.
  * Must be called before streaming starts (from SCPI_StartStreaming).
  * Stores mapping globally for ISR and encoder access.

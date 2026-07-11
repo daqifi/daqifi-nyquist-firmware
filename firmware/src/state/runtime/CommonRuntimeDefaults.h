@@ -110,7 +110,7 @@ _Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_
 #define COMMON_WIFI_RUNTIME_DEFAULTS \
     .wifiSettings = { \
         .isEnabled = true, \
-        .isWifiFirmwareUpdateModeEnabled = false, \
+        .powerSaveDisabled = false, /* #29: power-save on by default */ \
         .networkMode = DEFAULT_WIFI_NETWORK_MODE, \
         .securityMode = DEFAULT_WIFI_AP_SECURITY_MODE, \
         .ssid = DEFAULT_WIFI_AP_SSID, \
