@@ -86,6 +86,19 @@ static scpi_result_t SCPI_GPIOMultiStateGet(uint32_t* result);
  */
 static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value);
 
+// #671: validate a single-channel index at the SCPI boundary, on the FULL
+// parsed value, BEFORE it is narrowed to uint8_t. The outer setters cast
+// (uint8_t)param1 to call the inner single-channel helpers, so an index like
+// 256 wraps to 0 and aliases a nonexistent channel onto a valid one — slipping
+// past the inner id>=Size guard with no error. Reject out-of-range indices
+// (including negatives) here instead. Valid indices are 0 .. Size-1.
+static bool DIO_SingleChannelIndexValid(int channel)
+{
+    DIORuntimeArray * pRunTimeDIOChannels =
+            BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    return (channel >= 0) && ((size_t)channel < (size_t)pRunTimeDIOChannels->Size);
+}
+
 scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
 {
     int param1, param2;
@@ -94,13 +107,15 @@ scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
         return SCPI_RES_ERR;
     }
 
-    // TODO: Validate channel
     if (!SCPI_ParamInt32(context, &param2, FALSE))
     {
         return SCPI_GPIOMultiDirectionSet((uint32_t)~param1); // Interpret the input as a bit mask (invert because 1=output but we use isInput as the test)
     }
     else
     {
+        if (!DIO_SingleChannelIndexValid(param1)) {
+            return SCPI_RES_ERR; // #671: reject before (uint8_t) truncation
+        }
         if (DioProbe_IsChannelOwned((uint8_t)param1)) {
             SCPI_ExecutionError(context, "DIO:DIR: channel owned by DIO probe");
             return SCPI_RES_ERR;
@@ -130,7 +145,8 @@ scpi_result_t SCPI_GPIODirectionGet(scpi_t * context)
     else
     {
         bool result = false;
-        if (SCPI_GPIOSingleDirectionGet((uint8_t)param1, &result) == SCPI_RES_ERR)
+        if (!DIO_SingleChannelIndexValid(param1) ||  // #671: reject before truncation
+            SCPI_GPIOSingleDirectionGet((uint8_t)param1, &result) == SCPI_RES_ERR)
         {
             retCode = SCPI_RES_ERR;
         }
@@ -156,13 +172,15 @@ scpi_result_t SCPI_GPIOStateSet(scpi_t * context)
         return SCPI_RES_ERR;
     }
 
-    // TODO: Validate channel
     if (!SCPI_ParamInt32(context, &param2, FALSE))
     {
         return SCPI_GPIOMultiStateSet((uint32_t)param1); // Interpret the input as a bit mask
     }
     else
     {
+        if (!DIO_SingleChannelIndexValid(param1)) {
+            return SCPI_RES_ERR; // #671: reject before (uint8_t) truncation
+        }
         if (DioProbe_IsChannelOwned((uint8_t)param1)) {
             SCPI_ExecutionError(context, "DIO:STATE: channel owned by DIO probe");
             return SCPI_RES_ERR;
@@ -192,7 +210,8 @@ scpi_result_t SCPI_GPIOStateGet(scpi_t * context)
     else
     {
         bool result = false;
-        if (SCPI_GPIOSingleStateGet((uint8_t)param1, &result) == SCPI_RES_ERR)
+        if (!DIO_SingleChannelIndexValid(param1) ||  // #671: reject before truncation
+            SCPI_GPIOSingleStateGet((uint8_t)param1, &result) == SCPI_RES_ERR)
         {
             retCode = SCPI_RES_ERR;
         }
@@ -246,6 +265,9 @@ scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
         return SCPI_RES_ERR;
     }
 
+    if (!DIO_SingleChannelIndexValid(param1)) {
+        return SCPI_RES_ERR; // #671: reject before (uint8_t) truncation
+    }
     if (DioProbe_IsChannelOwned((uint8_t)param1)) {
         SCPI_ExecutionError(context, "DIO:PWM:ENA: channel owned by DIO probe");
         return SCPI_RES_ERR;
@@ -285,12 +307,20 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
     {
         return SCPI_RES_ERR;
     }
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(
+                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
+    // #671: FREQ Set was the 7th single-channel callback and had NO index
+    // bound at all — param1 flowed unbounded into DIO_PWMFrequencySet, which
+    // reads Data[param1].PwmFrequency (OOB) and divides the timebase by it
+    // (a device-resetting divide-by-zero on indices landing on a 0 dword).
+    // Validate at the boundary like the other single-channel callbacks.
+    if (param1 >= (uint32_t)pRunTimeDIOChannels->Size) {
+        return SCPI_RES_ERR;
+    }
     if (DioProbe_IsChannelOwned((uint8_t)param1)) {
         SCPI_ExecutionError(context, "DIO:PWM:FREQ: channel owned by DIO probe");
         return SCPI_RES_ERR;
     }
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(
-                        BOARDRUNTIMECONFIG_DIO_CHANNELS);
     //only timer 3 is driving all the pwm so, channel independent frequency cannot be generated
     for(i=0;i<pRunTimeDIOChannels->Size;i++){
         pRunTimeDIOChannels->Data[i].PwmFrequency=param2;

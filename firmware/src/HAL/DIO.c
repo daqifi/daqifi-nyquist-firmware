@@ -233,6 +233,13 @@ bool DIO_PWMFrequencySet(uint8_t dataIndex) {
     const uint16_t tim3PreScalers[8] = {1, 2, 4, 8, 16, 32, 64, 256};
     uint32_t timerClock = TIMER_CLOCK_FRQ;//TimerApi_FrequencyGet(3);
     uint32_t pwmFrequency = gpRuntimeBoardConfig->DIOChannels.Data[ dataIndex ].PwmFrequency;
+    // #671 defense-in-depth: never divide the shared PWM timebase by zero — a
+    // MIPS integer div-by-zero traps to a general exception (device reset). The
+    // SCPI boundary now range-checks the channel index (SCPIDIO.c), so a valid
+    // channel's frequency is always > 0 here; this guards any other caller.
+    if (pwmFrequency == 0) {
+        return false;
+    }
     uint32_t timer3ScaledClock = timerClock;
     uint64_t temp;
     uint8_t preScalerIndex = (sizeof (tim3PreScalers) / sizeof (tim3PreScalers[0])) - 1;
