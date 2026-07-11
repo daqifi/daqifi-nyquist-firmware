@@ -167,6 +167,10 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
                   "analog channel). The two-arg form is <channel>,<state>; use "
                   "the one-arg <mask> form to enable channels by bitmask.",
                   param1);
+            // Push a specific error (not the libscpi-default generic -200) so
+            // the failure is classifiable via SYST:ERR? too — consistent with
+            // the DIO boundary rejects (#671) and the ADCVoltageGet path above.
+            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
             return SCPI_RES_ERR;
         }
 
