@@ -467,6 +467,17 @@ extern "C" {
     bool wifi_manager_GetPowerSaveEnabled(void);
 
     /**
+     * @brief Set the TCP console idle timeout (#663). A connected client with
+     *        no RX or TX for this long is closed (connect-and-never-send DoS).
+     * @param seconds Idle deadline in seconds; 0 disables the watchdog.
+     *        Runtime-only (resets to the default on reboot).
+     */
+    void wifi_manager_SetConsoleIdleTimeout(uint32_t seconds);
+
+    /** @brief Query the TCP console idle timeout in seconds (0 = disabled). */
+    uint32_t wifi_manager_GetConsoleIdleTimeout(void);
+
+    /**
      * @brief Query the WINC power-save mode currently applied (#29).
      *
      * @return The applied WDRV_WINC_PS_MODE value as an int

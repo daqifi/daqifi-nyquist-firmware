@@ -134,6 +134,7 @@ static bool TcpServerFlush() {
         gpServerData->client.tcpInFlight++;
         taskEXIT_CRITICAL();
         gpServerData->client.writeBufferLength = 0;
+        gpServerData->client.lastActivityTick = xTaskGetTickCount(); // #663: TX keeps a streaming client non-idle
         funRet = true;
     } else if (sockRet == SOCK_ERR_BUFFER_FULL) {
         // WINC module buffer full - return false without blocking
@@ -351,6 +352,7 @@ void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData) {
         gpServerData->client.inflightHead = 0;
         gpServerData->client.inflightTail = 0;
         gpServerData->client.connGeneration = 0;
+        gpServerData->client.lastActivityTick = xTaskGetTickCount(); // #663 (idleClosed persists across connections — not reset)
         for (uint8_t i = 0; i < WIFI_TCP_MAX_IN_FLIGHT; i++) {
             gpServerData->client.inflightSizes[i] = 0;
         }
@@ -522,6 +524,25 @@ static inline void DrainPendingBufferReset(void) {
 // is actively connected. Returns true when a client socket is open.
 bool wifi_tcp_server_HasActiveClient(void) {
     return (gpServerData != NULL) && (gpServerData->client.clientSocket >= 0);
+}
+
+// #663: last RX/TX activity tick on the connected client (0 if none). Plain
+// aligned read of a volatile TickType_t — atomic on PIC32MZ.
+TickType_t wifi_tcp_server_GetLastActivityTick(void) {
+    return (gpServerData != NULL) ? gpServerData->client.lastActivityTick : 0;
+}
+
+// #663: stamp activity "now". No-op with no client. Single 32-bit store —
+// atomic on PIC32MZ; callers are the send path (streaming/WifiTask) and the
+// RX/ACCEPT handlers (WINC driver task).
+void wifi_tcp_server_StampActivity(void) {
+    if (gpServerData != NULL && gpServerData->client.clientSocket >= 0) {
+        gpServerData->client.lastActivityTick = xTaskGetTickCount();
+    }
+}
+
+uint32_t wifi_tcp_server_GetIdleClosedCount(void) {
+    return (gpServerData != NULL) ? gpServerData->client.idleClosed : 0;
 }
 
 // #367 diagnostics: bytes queued in the WiFi TCP write circular buffer

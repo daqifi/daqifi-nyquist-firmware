@@ -840,3 +840,30 @@ scpi_result_t SCPI_LANPowerSaveGet(scpi_t * context) {
     SCPI_ResultInt32(context, wifi_manager_GetPowerSaveMode());
     return SCPI_RES_OK;
 }
+
+/**
+ * SCPI Callback: Set the TCP console idle timeout in seconds (#663).
+ *
+ * A connected TCP console client with no RX or TX for this long is closed
+ * (connect-and-never-send DoS guard). 0 disables the watchdog. Runtime-only.
+ * A streaming client is continuously TX-active, so it is never idle and is
+ * never torn down by this timeout.
+ */
+scpi_result_t SCPI_LANIdleTimeoutSet(scpi_t * context) {
+    int param1;
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (param1 < 0) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    wifi_manager_SetConsoleIdleTimeout((uint32_t)param1);
+    return SCPI_RES_OK;
+}
+
+/** SCPI Callback: Query the TCP console idle timeout in seconds (0=off, #663). */
+scpi_result_t SCPI_LANIdleTimeoutGet(scpi_t * context) {
+    SCPI_ResultUInt32(context, wifi_manager_GetConsoleIdleTimeout());
+    return SCPI_RES_OK;
+}

@@ -201,6 +201,12 @@ scpi_result_t SCPI_LANPowerSaveSet(scpi_t * context);
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANPowerSaveGet(scpi_t * context);
+/**
+ * SCPI Callback: Set/query the TCP console idle timeout in seconds (#663).
+ * 0 disables. @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANIdleTimeoutSet(scpi_t * context);
+scpi_result_t SCPI_LANIdleTimeoutGet(scpi_t * context);
 //scpi_result_t SCPI_LANAVSsidStrengthGet(scpi_t * context);
 //
 ///**
