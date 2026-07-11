@@ -5107,13 +5107,23 @@ static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
 // guard was a sampled CS-high read, a TOCTOU: the WINC driver can begin a
 // transfer between that check and the probe's manual CS-drive + clocking,
 // corrupting a live WINC (or SD) transaction. Gate them behind "nothing else
-// owns SPI4": WiFi powered down (#637) AND no active streaming (SD rides the
-// same SPI4). Passive probes (STATs?, SPIBus? via ProbeJam) stay ungated.
+// owns SPI4":
+//   - WiFi in deep power-down (#637): the WINC is held in shutdown and cannot
+//     start a transfer. The caller must let LAN:POWer 0 settle (its DEINIT
+//     teardown is queued, not synchronous) before probing — the documented
+//     diagnostic workflow. This is option 1 of #658; the DRV_SPI exclusive
+//     lock (option 2) is the deferred belt-and-suspenders for the teardown
+//     micro-window. The gate is a strict improvement over the prior no-gate.
+//   - no active streaming on any interface (SD streaming rides the same SPI4);
+//   - the SD manager idle — a non-streaming SD file op (write/delete/format/
+//     list/read) also owns SPI4 (#658 review catch).
+// Passive probes (STATs?, SPIBus? via ProbeJam/ProbeActive) stay ungated.
 static bool DiagInvasiveSpiProbeAllowed(void)
 {
     return wifi_manager_IsPoweredOff()
         && !Streaming_IsActiveOnWifiInterface()
-        && !Streaming_IsActiveOnNonWifiInterface();
+        && !Streaming_IsActiveOnNonWifiInterface()
+        && !sd_card_manager_IsBusy();
 }
 
 static scpi_result_t SCPI_DiagSpiBusMisoFightGet(scpi_t * context)
