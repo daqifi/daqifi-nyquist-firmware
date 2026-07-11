@@ -333,7 +333,7 @@ scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){
         return SCPI_RES_ERR;
     }
     pRunTimeDIOChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
-    if(param1>pRunTimeDIOChannels->Size){
+    if(param1>=pRunTimeDIOChannels->Size){
         return SCPI_RES_ERR;
     }
     if(param2>100){
@@ -375,7 +375,7 @@ static scpi_result_t SCPI_GPIOSingleDirectionSet(uint8_t id, bool isInput)
     DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
-    if ( id > pRunTimeDIOChannels->Size)
+    if ( id >= pRunTimeDIOChannels->Size)
     {
         return SCPI_RES_ERR;
     }
@@ -415,7 +415,7 @@ static scpi_result_t SCPI_GPIOSingleDirectionGet(uint8_t id, bool* result)
     DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
-    if ( id > pRunTimeDIOChannels->Size)
+    if ( id >= pRunTimeDIOChannels->Size)
     {
         return SCPI_RES_ERR;
     }
@@ -458,7 +458,7 @@ static scpi_result_t SCPI_GPIOSingleStateSet(uint8_t id, bool value)
     DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
-    if ( id > pRunTimeDIOChannels->Size)
+    if ( id >= pRunTimeDIOChannels->Size)
     {
         return SCPI_RES_ERR;
     }
@@ -499,7 +499,7 @@ static scpi_result_t SCPI_GPIOSingleStateGet(uint8_t id, bool* result)
     DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
-    if ( id > pRunTimeDIOChannels->Size)
+    if ( id >= pRunTimeDIOChannels->Size)
     {
         return SCPI_RES_ERR;
     }
@@ -536,7 +536,7 @@ static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value)
     DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
     
-    if ( id > pRunTimeDIOChannels->Size)
+    if ( id >= pRunTimeDIOChannels->Size)
     {
         return SCPI_RES_ERR;
     }
