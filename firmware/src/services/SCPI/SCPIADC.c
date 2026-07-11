@@ -149,17 +149,36 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
     }
 
     if (SCPI_ParamInt32(context, &param2, FALSE)) {
+        // Single-channel form: (channel, state). NOT a bitmask — the one-arg
+        // form CONF:ADC:CHAN <mask> is the bitmask path (see #630).
         size_t channelIndex = ADC_FindChannelIndex((uint8_t) param1);
+
+        // #630: bounds-check BEFORE dereferencing. ADC_FindChannelIndex returns
+        // (size_t)-1 for an id not present in the channel table (e.g.
+        // CONF:ADC:CHAN 16,1 on NQ1, or 65535,1 → id 255), and the old code
+        // read channel->Type at Data[(size_t)-1] — a wild OOB read — before the
+        // range check caught it. Guard first, then it is safe to index.
+        if (channelIndex >= (size_t) pBoardConfigAInChannels->Size) {
+            // Note: do NOT report "valid 0..Size-1" — Size is the array entry
+            // count (user + monitoring), not the settable channel-id range,
+            // which is sparse (NQ1 user 0..15, monitoring 248..255; NQ3 0..7).
+            // A numeric range here would be wrong per-variant (#630 review).
+            LOG_E("CONF:ADC:CHAN: channel %d not addressable (not a settable "
+                  "analog channel). The two-arg form is <channel>,<state>; use "
+                  "the one-arg <mask> form to enable channels by bitmask.",
+                  param1);
+            // Push a specific error (not the libscpi-default generic -200) so
+            // the failure is classifiable via SYST:ERR? too — consistent with
+            // the DIO boundary rejects (#671) and the ADCVoltageGet path above.
+            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+            return SCPI_RES_ERR;
+        }
+
         AInRuntimeConfig* channelRuntimeConfig =
                 &pRuntimeAInChannels->Data[channelIndex];
         AInChannel* channel = &pBoardConfigAInChannels->Data[channelIndex];
         const AInModule* module = ADC_FindModule(channel->Type);
 
-        // Single channel
-        if (channelIndex > pBoardConfigAInChannels->Size) {
-            return SCPI_RES_ERR;
-        }
-        
         // Board variant-aware channel enable logic
         uint8_t boardVariant = pBoardConfig->BoardVariant;
         uint8_t channelId = (uint8_t) param1;
