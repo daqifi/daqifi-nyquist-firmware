@@ -2844,8 +2844,15 @@ static void wifi_manager_ServiceConsoleIdleTimeout(void)
     if (!wifi_tcp_server_HasActiveClient()) return;             // no client
     if (Streaming_IsActiveOnWifiInterface()) return;            // never touch a live stream
 
-    TickType_t idle = xTaskGetTickCount() -
-                      gStateMachineContext.pTcpServerContext->client.lastActivityTick;
+    // #676 gate: capture lastActivityTick FIRST, then read the current tick, so
+    // the elapsed subtraction can never underflow. If we read `now` first and a
+    // concurrent RX/TX (WINC driver or send path) stamped a newer tick before
+    // we read lastActivityTick, `now - last` would wrap to ~0xFFFFFFFF and
+    // spuriously close a just-active client. Reading `last` first guarantees
+    // now >= last (ticks are monotonic), so `idle` is a true non-negative
+    // elapsed (correct across the 32-bit rollover, the standard FreeRTOS idiom).
+    TickType_t last = gStateMachineContext.pTcpServerContext->client.lastActivityTick;
+    TickType_t idle = xTaskGetTickCount() - last;
     if (idle > gConsoleIdleDeadlineTicks) {
         LOG_I("TCP: console idle %us > %us deadline — closing (connect-and-never-send guard, #663)",
               (unsigned)(idle / configTICK_RATE_HZ),

@@ -854,7 +854,12 @@ scpi_result_t SCPI_LANIdleTimeoutSet(scpi_t * context) {
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         return SCPI_RES_ERR;
     }
-    if (param1 < 0) {
+    // #676 gate: bound the range. seconds * configTICK_RATE_HZ (1000) is a
+    // 32-bit tick multiply, so values >= ~4.29M s silently wrap (and multiples
+    // of 2^29 s wrap to exactly 0 = "disabled", inverting the query). Cap at a
+    // generous 24 h — far beyond any real console idle timeout — mirroring the
+    // bounded SCPI_SetTransportGrace setter. 0 = off.
+    if (param1 < 0 || param1 > SYST_LAN_IDLE_TIMEOUT_MAX_SEC) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }

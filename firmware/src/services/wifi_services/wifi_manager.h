@@ -466,11 +466,16 @@ extern "C" {
      */
     bool wifi_manager_GetPowerSaveEnabled(void);
 
+    /** #663/#676: max settable console idle timeout (seconds). Bounds the
+     *  SCPI setter so seconds * configTICK_RATE_HZ cannot overflow 32-bit
+     *  ticks. 24 h is far beyond any real idle-timeout need; 0 = off. */
+    #define SYST_LAN_IDLE_TIMEOUT_MAX_SEC 86400u
+
     /**
      * @brief Set the TCP console idle timeout (#663). A connected client with
      *        no RX or TX for this long is closed (connect-and-never-send DoS).
-     * @param seconds Idle deadline in seconds; 0 disables the watchdog.
-     *        Runtime-only (resets to the default on reboot).
+     * @param seconds Idle deadline in seconds (0 = off, max
+     *        SYST_LAN_IDLE_TIMEOUT_MAX_SEC). Runtime-only (resets on reboot).
      */
     void wifi_manager_SetConsoleIdleTimeout(uint32_t seconds);
 
