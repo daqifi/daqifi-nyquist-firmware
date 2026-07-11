@@ -5102,14 +5102,40 @@ static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
     return SCPI_RES_OK;
 }
 
+// #658: CROSScs?/MISOFight? are *invasive* diagnostics — they manually assert
+// WDRV_WINC_SS_PIN and clock bytes on the shared SPI4 bus. Their only prior
+// guard was a sampled CS-high read, a TOCTOU: the WINC driver can begin a
+// transfer between that check and the probe's manual CS-drive + clocking,
+// corrupting a live WINC (or SD) transaction. Gate them behind "nothing else
+// owns SPI4": WiFi powered down (#637) AND no active streaming (SD rides the
+// same SPI4). Passive probes (STATs?, SPIBus? via ProbeJam) stay ungated.
+static bool DiagInvasiveSpiProbeAllowed(void)
+{
+    return wifi_manager_IsPoweredOff()
+        && !Streaming_IsActiveOnWifiInterface()
+        && !Streaming_IsActiveOnNonWifiInterface();
+}
+
 static scpi_result_t SCPI_DiagSpiBusMisoFightGet(scpi_t * context)
 {
+    if (!DiagInvasiveSpiProbeAllowed())
+    {
+        SCPI_ExecutionError(context,
+            "DIAG:SPIBus:MISOFight: invasive probe requires WiFi powered down and streaming stopped");
+        return SCPI_RES_ERR;
+    }
     SCPI_ResultUInt32(context, SpiBusHealth_ProbeMisoFight());
     return SCPI_RES_OK;
 }
 
 static scpi_result_t SCPI_DiagSpiBusCrossCsGet(scpi_t * context)
 {
+    if (!DiagInvasiveSpiProbeAllowed())
+    {
+        SCPI_ExecutionError(context,
+            "DIAG:SPIBus:CROSScs: invasive probe requires WiFi powered down and streaming stopped");
+        return SCPI_RES_ERR;
+    }
     SpiBusHealthResult_t r = SpiBusHealth_ProbeCrossCs();
     SCPI_ResultText(context,
         (r == SPI_BUS_CLEAR) ? "CLEAR" :
