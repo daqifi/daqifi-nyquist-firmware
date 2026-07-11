@@ -149,17 +149,28 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
     }
 
     if (SCPI_ParamInt32(context, &param2, FALSE)) {
+        // Single-channel form: (channel, state). NOT a bitmask — the one-arg
+        // form CONF:ADC:CHAN <mask> is the bitmask path (see #630).
         size_t channelIndex = ADC_FindChannelIndex((uint8_t) param1);
+
+        // #630: bounds-check BEFORE dereferencing. ADC_FindChannelIndex returns
+        // (size_t)-1 for an id not present in the channel table (e.g.
+        // CONF:ADC:CHAN 16,1 on NQ1, or 65535,1 → id 255), and the old code
+        // read channel->Type at Data[(size_t)-1] — a wild OOB read — before the
+        // range check caught it. Guard first, then it is safe to index.
+        if (channelIndex >= (size_t) pBoardConfigAInChannels->Size) {
+            LOG_E("CONF:ADC:CHAN: channel %d not addressable (valid 0..%u). "
+                  "The two-arg form is <channel>,<state>; use the one-arg "
+                  "<mask> form to enable channels by bitmask.",
+                  param1, (unsigned)(pBoardConfigAInChannels->Size - 1));
+            return SCPI_RES_ERR;
+        }
+
         AInRuntimeConfig* channelRuntimeConfig =
                 &pRuntimeAInChannels->Data[channelIndex];
         AInChannel* channel = &pBoardConfigAInChannels->Data[channelIndex];
         const AInModule* module = ADC_FindModule(channel->Type);
 
-        // Single channel
-        if (channelIndex > pBoardConfigAInChannels->Size) {
-            return SCPI_RES_ERR;
-        }
-        
         // Board variant-aware channel enable logic
         uint8_t boardVariant = pBoardConfig->BoardVariant;
         uint8_t channelId = (uint8_t) param1;
