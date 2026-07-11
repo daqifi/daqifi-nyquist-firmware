@@ -2860,7 +2860,15 @@ static void wifi_manager_ServiceConsoleIdleTimeout(void)
     // elapsed (correct across the 32-bit rollover, the standard FreeRTOS idiom).
     TickType_t last = gStateMachineContext.pTcpServerContext->client.lastActivityTick;
     TickType_t idle = xTaskGetTickCount() - last;
-    if (idle > gConsoleIdleDeadlineTicks) {
+    // #676 Qodo: re-read lastActivityTick and only close if it is UNCHANGED
+    // since our snapshot (optimistic concurrency). An RX/TX from the WINC driver
+    // / send path stamps a newer tick; if one landed between the snapshot and
+    // here, the client just became active — skip the close so a near-boundary
+    // active client is not falsely disconnected. The residual window (a stamp
+    // after this re-read) is a couple of instructions and self-heals via the
+    // client's immediate reconnect. The read is a 32-bit aligned atomic.
+    if (idle > gConsoleIdleDeadlineTicks &&
+        gStateMachineContext.pTcpServerContext->client.lastActivityTick == last) {
         LOG_I("TCP: console idle %us > %us deadline — closing (connect-and-never-send guard, #663)",
               (unsigned)(idle / configTICK_RATE_HZ),
               (unsigned)(gConsoleIdleDeadlineTicks / configTICK_RATE_HZ));
