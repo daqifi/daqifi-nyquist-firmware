@@ -91,12 +91,21 @@ static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value);
 // (uint8_t)param1 to call the inner single-channel helpers, so an index like
 // 256 wraps to 0 and aliases a nonexistent channel onto a valid one — slipping
 // past the inner id>=Size guard with no error. Reject out-of-range indices
-// (including negatives) here instead. Valid indices are 0 .. Size-1.
-static bool DIO_SingleChannelIndexValid(int channel)
+// (including negatives) here, surfacing a specific SCPI_ERROR_DATA_OUT_OF_RANGE
+// + LOG_E so the failure is discoverable via SYST:ERR? / SYST:LOG? (standing
+// error-visibility rule) rather than a bare generic -200. DIO channel ids are
+// dense 0 .. Size-1 (no monitoring gap), so the logged range is exact.
+static bool DIO_SingleChannelIndexValid(scpi_t *context, int channel)
 {
     DIORuntimeArray * pRunTimeDIOChannels =
             BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_CHANNELS);
-    return (channel >= 0) && ((size_t)channel < (size_t)pRunTimeDIOChannels->Size);
+    if ((channel >= 0) && ((size_t)channel < (size_t)pRunTimeDIOChannels->Size)) {
+        return true;
+    }
+    LOG_E("DIO: channel %d out of range (valid 0..%u)",
+          channel, (unsigned)(pRunTimeDIOChannels->Size - 1));
+    SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+    return false;
 }
 
 scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
@@ -113,7 +122,7 @@ scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
     }
     else
     {
-        if (!DIO_SingleChannelIndexValid(param1)) {
+        if (!DIO_SingleChannelIndexValid(context, param1)) {
             return SCPI_RES_ERR; // #671: reject before (uint8_t) truncation
         }
         if (DioProbe_IsChannelOwned((uint8_t)param1)) {
@@ -145,7 +154,7 @@ scpi_result_t SCPI_GPIODirectionGet(scpi_t * context)
     else
     {
         bool result = false;
-        if (!DIO_SingleChannelIndexValid(param1) ||  // #671: reject before truncation
+        if (!DIO_SingleChannelIndexValid(context, param1) ||  // #671: reject before truncation
             SCPI_GPIOSingleDirectionGet((uint8_t)param1, &result) == SCPI_RES_ERR)
         {
             retCode = SCPI_RES_ERR;
@@ -178,7 +187,7 @@ scpi_result_t SCPI_GPIOStateSet(scpi_t * context)
     }
     else
     {
-        if (!DIO_SingleChannelIndexValid(param1)) {
+        if (!DIO_SingleChannelIndexValid(context, param1)) {
             return SCPI_RES_ERR; // #671: reject before (uint8_t) truncation
         }
         if (DioProbe_IsChannelOwned((uint8_t)param1)) {
@@ -210,7 +219,7 @@ scpi_result_t SCPI_GPIOStateGet(scpi_t * context)
     else
     {
         bool result = false;
-        if (!DIO_SingleChannelIndexValid(param1) ||  // #671: reject before truncation
+        if (!DIO_SingleChannelIndexValid(context, param1) ||  // #671: reject before truncation
             SCPI_GPIOSingleStateGet((uint8_t)param1, &result) == SCPI_RES_ERR)
         {
             retCode = SCPI_RES_ERR;
@@ -265,7 +274,7 @@ scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
         return SCPI_RES_ERR;
     }
 
-    if (!DIO_SingleChannelIndexValid(param1)) {
+    if (!DIO_SingleChannelIndexValid(context, param1)) {
         return SCPI_RES_ERR; // #671: reject before (uint8_t) truncation
     }
     if (DioProbe_IsChannelOwned((uint8_t)param1)) {
@@ -315,6 +324,9 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
     // (a device-resetting divide-by-zero on indices landing on a 0 dword).
     // Validate at the boundary like the other single-channel callbacks.
     if (param1 >= (uint32_t)pRunTimeDIOChannels->Size) {
+        LOG_E("DIO:PWM:FREQ: channel %u out of range (valid 0..%u)",
+              (unsigned)param1, (unsigned)(pRunTimeDIOChannels->Size - 1));
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
     if (DioProbe_IsChannelOwned((uint8_t)param1)) {
