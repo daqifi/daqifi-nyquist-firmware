@@ -696,8 +696,15 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                     }
                     break;
                 }
+                // #676 gate: stamp the idle clock BEFORE publishing clientSocket.
+                // The watchdog gates on HasActiveClient (clientSocket>=0); if we
+                // set clientSocket first, it could preempt between the two stores,
+                // see a live socket with the *previous* connection's stale tick
+                // (idle if the device sat client-less > deadline), and close the
+                // brand-new client. Stamping first makes a live socket always
+                // carry a fresh tick.
+                gStateMachineContext.pTcpServerContext->client.lastActivityTick = xTaskGetTickCount();
                 gStateMachineContext.pTcpServerContext->client.clientSocket = pAcceptMessage->sock;
-                gStateMachineContext.pTcpServerContext->client.lastActivityTick = xTaskGetTickCount(); // #663: start the idle clock at connect
                 // #599: this connection now owns the single TCP slot.  Bump the
                 // generation so any still-in-flight async SD GET/LIST reply that
                 // was bound to the previous connection stops writing to us.

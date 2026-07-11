@@ -526,25 +526,6 @@ bool wifi_tcp_server_HasActiveClient(void) {
     return (gpServerData != NULL) && (gpServerData->client.clientSocket >= 0);
 }
 
-// #663: last RX/TX activity tick on the connected client (0 if none). Plain
-// aligned read of a volatile TickType_t — atomic on PIC32MZ.
-TickType_t wifi_tcp_server_GetLastActivityTick(void) {
-    return (gpServerData != NULL) ? gpServerData->client.lastActivityTick : 0;
-}
-
-// #663: stamp activity "now". No-op with no client. Single 32-bit store —
-// atomic on PIC32MZ; callers are the send path (streaming/WifiTask) and the
-// RX/ACCEPT handlers (WINC driver task).
-void wifi_tcp_server_StampActivity(void) {
-    if (gpServerData != NULL && gpServerData->client.clientSocket >= 0) {
-        gpServerData->client.lastActivityTick = xTaskGetTickCount();
-    }
-}
-
-uint32_t wifi_tcp_server_GetIdleClosedCount(void) {
-    return (gpServerData != NULL) ? gpServerData->client.idleClosed : 0;
-}
-
 // #367 diagnostics: bytes queued in the WiFi TCP write circular buffer
 // that haven't been drained to send() yet. Streaming_Stop snapshots this
 // to reconcile the accounting gap.

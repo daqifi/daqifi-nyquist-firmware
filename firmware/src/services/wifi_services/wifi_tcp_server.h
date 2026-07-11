@@ -204,19 +204,6 @@ void wifi_tcp_server_SetWriteBuffer(uint8_t* buf, uint32_t size);
 bool wifi_tcp_server_HasActiveClient(void);
 
 /**
- * #663: tick of the last RX/TX activity on the connected client (0 if none).
- * Read by the console idle-timeout watchdog in wifi_manager_ProcessState.
- */
-TickType_t wifi_tcp_server_GetLastActivityTick(void);
-
-/** #663: stamp the connected client's activity tick "now" (RX or TX). No-op if
- *  no client. Called from the send path and the RX/ACCEPT handlers. */
-void wifi_tcp_server_StampActivity(void);
-
-/** #663: count of clients closed by the idle-timeout watchdog. */
-uint32_t wifi_tcp_server_GetIdleClosedCount(void);
-
-/**
  * Returns the current count of bytes sitting in the WiFi TCP write
  * circular buffer (queued for send() but not yet drained).
  * Used by Streaming_Stop to capture session-end "tail" bytes for the

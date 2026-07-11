@@ -2838,6 +2838,7 @@ static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
         pTcp->clientForceClosed = 0;
         pTcp->listenReopens = 0;
         pTcp->listenHardResets = 0;
+        pTcp->client.idleClosed = 0;  // #676: idle-timeout closes (sibling listener-health counter)
         taskEXIT_CRITICAL();
     }
     // Reset SD write metrics
@@ -2986,6 +2987,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         // #560/#475 Opt 0 — listener-health observability
         uint32_t socketOpenFails = 0, listenFails = 0, acceptFails = 0, acceptRefused = 0;
         uint32_t clientForceClosed = 0, listenReopens = 0, listenHardResets = 0, listenState = 0;
+        uint32_t idleClosed = 0;  // #676
         wifi_tcp_server_context_t* pTcp = wifi_manager_GetTcpServerContext();
         if (pTcp != NULL) {
             // Atomic snapshot of 64-bit counters (not atomic on 32-bit PIC32MZ)
@@ -3009,6 +3011,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
             clientForceClosed = pTcp->clientForceClosed;
             listenReopens = pTcp->listenReopens;
             listenHardResets = pTcp->listenHardResets;
+            idleClosed = pTcp->client.idleClosed;  // #676
             listenState = (pTcp->serverSocket >= 0) ? 1u : 0u;  // 0=closed, 1=open (2=suspect reserved for Opt 2 watchdog)
             taskEXIT_CRITICAL();
         }
@@ -3048,6 +3051,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "WifiClientForceClosed=%u\r\n", (unsigned)clientForceClosed);
         scpi_printf(context, "WifiListenReopens=%u\r\n", (unsigned)listenReopens);
         scpi_printf(context, "WifiListenHardResets=%u\r\n", (unsigned)listenHardResets);
+        scpi_printf(context, "WifiIdleClosed=%u\r\n", (unsigned)idleClosed);  // #663/#676
     }
     scpi_printf(context, "UsbBytesSent=%llu\r\n", (unsigned long long)UsbCdc_GetWireBytesSent());
     scpi_printf(context, "SdDroppedBytes=%u\r\n", (unsigned)s.sdDroppedBytes);
