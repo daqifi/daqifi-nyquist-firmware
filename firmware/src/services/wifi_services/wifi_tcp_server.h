@@ -108,6 +108,19 @@ typedef struct s_tcpClientContext
      *  targets the connection that issued it, so a later client inheriting
      *  the single slot can never receive it. */
     volatile uint32_t connGeneration;
+
+    /** #663: tick of the last RX or TX activity on this connection. Stamped at
+     *  ACCEPT, on every SOCKET_MSG_RECV, and on every successful send(). The
+     *  console idle-timeout watchdog (wifi_manager) closes a client that has
+     *  had no RX *or* TX for the configured deadline — the connect-and-never-
+     *  send DoS. Because a streaming client is continuously TX-active it is
+     *  never idle by this definition, so streaming is never torn down. */
+    volatile TickType_t lastActivityTick;
+
+    /** #663 health counter: connections closed by the idle-timeout watchdog
+     *  (single writer: app_WifiTask ProcessState). Sibling of acceptRefused/
+     *  acceptFails for #560-style listener observability. */
+    uint32_t idleClosed;
 } wifi_tcp_server_clientContext_t;
 
 /**

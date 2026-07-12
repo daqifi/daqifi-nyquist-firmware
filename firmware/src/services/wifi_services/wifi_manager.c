@@ -192,6 +192,17 @@ static bool wifiPowerSaveEnabled(void) {
 // calling HardReset/Deinit and read every tick from app_WifiTask.
 static volatile TickType_t gWifiReinitDeadlineTick = 0;
 
+// #663: TCP console idle-timeout deadline, in ticks. A connected client with
+// no RX or TX for this long is closed (connect-and-never-send DoS; #387/#560
+// listener-wedge class). Default 300 s — generous, since a legitimate headless
+// logger streams (constant TX → never idle) or polls; a pure-idle console with
+// no traffic for minutes is the DoS case. 0 = disabled. Runtime-only (resets
+// to default on reboot). 32-bit reads/writes atomic on PIC32MZ; written from a
+// SCPI task, read every WifiTask iteration.
+#define WIFI_CONSOLE_IDLE_TIMEOUT_DEFAULT_SEC 300u
+static volatile TickType_t gConsoleIdleDeadlineTicks =
+        WIFI_CONSOLE_IDLE_TIMEOUT_DEFAULT_SEC * configTICK_RATE_HZ;
+
 // #334: deep power-down latch. When true the user has requested that the
 // WINC1500 chip be held in full shutdown (CHIP_EN driven LOW) for battery
 // savings — distinct from a plain Deinit, which leaves nm_reset's final
@@ -685,6 +696,14 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                     }
                     break;
                 }
+                // #676 gate: stamp the idle clock BEFORE publishing clientSocket.
+                // The watchdog gates on HasActiveClient (clientSocket>=0); if we
+                // set clientSocket first, it could preempt between the two stores,
+                // see a live socket with the *previous* connection's stale tick
+                // (idle if the device sat client-less > deadline), and close the
+                // brand-new client. Stamping first makes a live socket always
+                // carry a fresh tick.
+                gStateMachineContext.pTcpServerContext->client.lastActivityTick = xTaskGetTickCount();
                 gStateMachineContext.pTcpServerContext->client.clientSocket = pAcceptMessage->sock;
                 // #599: this connection now owns the single TCP slot.  Bump the
                 // generation so any still-in-flight async SD GET/LIST reply that
@@ -721,6 +740,7 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 // we call recv() again, so missing this tick's re-arm is
                 // safe.
                 gStateMachineContext.pTcpServerContext->client.readBufferLength = pRecvMessage->s16BufferSize;
+                gStateMachineContext.pTcpServerContext->client.lastActivityTick = xTaskGetTickCount(); // #663: RX activity resets the idle clock
                 gTcpRxPending = true;
 
             } else {
@@ -2815,6 +2835,58 @@ static void ApplyPowerSavePolicy(stateMachineInst_t * const pInstance) {
     }
 }
 
+// #663: TCP console idle-timeout watchdog. Runs once per normal WifiTask
+// ProcessState iteration (under gProcessStateMutex, drainTcpRx path only).
+// Closes a client that has had no RX or TX for gConsoleIdleDeadlineTicks —
+// the connect-and-never-send DoS. Safe against the #452 close-races-streaming
+// hazard two ways: (1) a streaming client is continuously TX-active so its
+// lastActivityTick keeps advancing → never idle; (2) the explicit
+// !Streaming_IsActiveOnWifiInterface() gate. Closing sets clientSocket=-1 and
+// the still-listening serverSocket auto-accepts the next client (same path as
+// a normal disconnect — no manual re-listen).
+static void wifi_manager_ServiceConsoleIdleTimeout(void)
+{
+    if (gConsoleIdleDeadlineTicks == 0) return;                 // disabled
+    if (gStateMachineContext.pTcpServerContext == NULL) return;
+    if (!wifi_tcp_server_HasActiveClient()) return;             // no client
+    if (Streaming_IsActiveOnWifiInterface()) return;            // never touch a live stream
+
+    // #676 gate: capture lastActivityTick FIRST, then read the current tick, so
+    // the elapsed subtraction can never underflow. If we read `now` first and a
+    // concurrent RX/TX (WINC driver or send path) stamped a newer tick before
+    // we read lastActivityTick, `now - last` would wrap to ~0xFFFFFFFF and
+    // spuriously close a just-active client. Reading `last` first guarantees
+    // now >= last (ticks are monotonic), so `idle` is a true non-negative
+    // elapsed (correct across the 32-bit rollover, the standard FreeRTOS idiom).
+    TickType_t last = gStateMachineContext.pTcpServerContext->client.lastActivityTick;
+    TickType_t idle = xTaskGetTickCount() - last;
+    // #676 Qodo: re-read lastActivityTick and only close if it is UNCHANGED
+    // since our snapshot (optimistic concurrency). An RX/TX from the WINC driver
+    // / send path stamps a newer tick; if one landed between the snapshot and
+    // here, the client just became active — skip the close so a near-boundary
+    // active client is not falsely disconnected. The residual window (a stamp
+    // after this re-read) is a couple of instructions and self-heals via the
+    // client's immediate reconnect. The read is a 32-bit aligned atomic.
+    if (idle > gConsoleIdleDeadlineTicks &&
+        gStateMachineContext.pTcpServerContext->client.lastActivityTick == last) {
+        LOG_I("TCP: console idle %us > %us deadline — closing (connect-and-never-send guard, #663)",
+              (unsigned)(idle / configTICK_RATE_HZ),
+              (unsigned)(gConsoleIdleDeadlineTicks / configTICK_RATE_HZ));
+        gStateMachineContext.pTcpServerContext->client.idleClosed++;
+        wifi_tcp_server_CloseClientSocket();
+    }
+}
+
+// #663: runtime setter/getter for the console idle timeout (seconds; 0=off).
+void wifi_manager_SetConsoleIdleTimeout(uint32_t seconds)
+{
+    gConsoleIdleDeadlineTicks = (TickType_t)seconds * configTICK_RATE_HZ;
+}
+uint32_t wifi_manager_GetConsoleIdleTimeout(void)
+{
+    return (uint32_t)(gConsoleIdleDeadlineTicks / configTICK_RATE_HZ);
+}
+
 static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     wifi_manager_event_t event;
     wifi_manager_stateMachineReturnStatus_t ret;
@@ -2957,6 +3029,7 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     // the middle of a command dispatch — the outer loop applies it.
     if (drainTcpRx) {
         ApplyPowerSavePolicy(&gStateMachineContext);
+        wifi_manager_ServiceConsoleIdleTimeout();  // #663: connect-and-never-send guard
     }
 
     if (gProcessStateMutex != NULL) {
