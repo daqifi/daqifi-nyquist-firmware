@@ -152,23 +152,22 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         // Single-channel form: (channel, state). NOT a bitmask — the one-arg
         // form CONF:ADC:CHAN <mask> is the bitmask path (see #630).
 
-        // #678: validate the FULL parsed channel id against the settable-channel
-        // range BEFORE the (uint8_t) cast below. Without this, a value >= 256 is
-        // truncated mod-256 and can alias onto a valid user channel (256->0,
-        // 257->1, ...), silently mutating it and returning OK. The #630 guard
-        // does not catch it because it checks the RESOLVED index, which is
-        // downstream of the truncation. Same truncation-before-validation class
-        // that #653/#671 fixed for DIO (DIO_SingleChannelIndexValid): reject the
-        // raw value up front, no state change. This guard is inside the two-arg
-        // branch only — the one-arg <mask> form legitimately uses the full int as
-        // a bitmask (up to 0xFFFF). maxUserChannel matches the mask path below
-        // (NQ3: 0-7, others: 0-15).
-        uint8_t maxUserChannel = (pBoardConfig->BoardVariant == 3) ? 7 : 15;
-        if (param1 < 0 || param1 > maxUserChannel) {
-            LOG_E("CONF:ADC:CHAN: channel %d out of range (settable user channels "
-                  "0..%u). The two-arg form is <channel>,<state>; use the one-arg "
-                  "<mask> form to enable channels by bitmask.",
-                  param1, (unsigned) maxUserChannel);
+        // #678: reject a channel value that would be TRUNCATED by the (uint8_t)
+        // cast below — i.e. outside [0,255] — BEFORE the cast, so a value >= 256
+        // cannot alias mod-256 onto a valid user channel (256->0, 257->1, ...
+        // 271->15), which the old code silently enabled/disabled returning OK.
+        // Scope the guard to the truncation range ONLY (> 255): values in
+        // [0,255] are NOT truncated and fall through to the existing #630
+        // resolved-index guard + variant switch, which reject non-settable ids
+        // (16..255) with their own "not addressable" message. Narrowing to > 255
+        // (was `> maxUserChannel`, #678 follow-up) keeps this guard from usurping
+        // #630's gap-id handling — the broader form intercepted 16..255 and
+        // replaced #630's message, and its longer text truncated past the 128 B
+        // log-buffer width, hiding the hint (regressed test_630). Message kept
+        // short so the hint survives untruncated.
+        if (param1 < 0 || param1 > 255) {
+            LOG_E("CONF:ADC:CHAN: channel %d out of range (max 255); use one-arg "
+                  "<mask> to enable by bitmask", param1);
             SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
             return SCPI_RES_ERR;
         }
@@ -211,9 +210,16 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
                     if (module->Type == AIn_MC12bADC && channel->Config.MC12b.IsPublic) {
                         channelRuntimeConfig->IsEnabled = (param2 > 0);
                     } else {
+                        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
                         return SCPI_RES_ERR; // Private or wrong type
                     }
                 } else {
+                    // #682 gate: monitoring-channel ids (248..255) resolve to a valid
+                    // table index — so the #630 guard above does NOT fire — but are
+                    // not user-settable. Push the specific error so they reject with
+                    // -222 like the gap-ids, not libscpi's default -200 (the narrowed
+                    // #678 guard newly lets these reach this branch).
+                    SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
                     return SCPI_RES_ERR; // Monitoring channels not user-controllable
                 }
                 break;
@@ -223,9 +229,12 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
                     if (module->Type == AIn_AD7609) {
                         channelRuntimeConfig->IsEnabled = (param2 > 0);
                     } else {
+                        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
                         return SCPI_RES_ERR; // Wrong type for NQ3 user channels
                     }
                 } else {
+                    // #682 gate: monitoring ids reject with -222 (not default -200).
+                    SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
                     return SCPI_RES_ERR; // Monitoring channels not user-controllable
                 }
                 break;
@@ -236,7 +245,8 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
                     if (channel->Config.MC12b.IsPublic) {
                         channelRuntimeConfig->IsEnabled = (param2 > 0);
                     } else {
-                        return SCPI_RES_ERR;
+                        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+                        return SCPI_RES_ERR; // Private channel — not settable
                     }
                 } else {
                     channelRuntimeConfig->IsEnabled = (param2 > 0);
