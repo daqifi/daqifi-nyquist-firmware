@@ -151,6 +151,28 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
     if (SCPI_ParamInt32(context, &param2, FALSE)) {
         // Single-channel form: (channel, state). NOT a bitmask — the one-arg
         // form CONF:ADC:CHAN <mask> is the bitmask path (see #630).
+
+        // #678: validate the FULL parsed channel id against the settable-channel
+        // range BEFORE the (uint8_t) cast below. Without this, a value >= 256 is
+        // truncated mod-256 and can alias onto a valid user channel (256->0,
+        // 257->1, ...), silently mutating it and returning OK. The #630 guard
+        // does not catch it because it checks the RESOLVED index, which is
+        // downstream of the truncation. Same truncation-before-validation class
+        // that #653/#671 fixed for DIO (DIO_SingleChannelIndexValid): reject the
+        // raw value up front, no state change. This guard is inside the two-arg
+        // branch only — the one-arg <mask> form legitimately uses the full int as
+        // a bitmask (up to 0xFFFF). maxUserChannel matches the mask path below
+        // (NQ3: 0-7, others: 0-15).
+        uint8_t maxUserChannel = (pBoardConfig->BoardVariant == 3) ? 7 : 15;
+        if (param1 < 0 || param1 > maxUserChannel) {
+            LOG_E("CONF:ADC:CHAN: channel %d out of range (settable user channels "
+                  "0..%u). The two-arg form is <channel>,<state>; use the one-arg "
+                  "<mask> form to enable channels by bitmask.",
+                  param1, (unsigned) maxUserChannel);
+            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+            return SCPI_RES_ERR;
+        }
+
         size_t channelIndex = ADC_FindChannelIndex((uint8_t) param1);
 
         // #630: bounds-check BEFORE dereferencing. ADC_FindChannelIndex returns
