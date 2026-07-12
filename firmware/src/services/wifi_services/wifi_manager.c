@@ -2846,7 +2846,17 @@ static void ApplyPowerSavePolicy(stateMachineInst_t * const pInstance) {
 // a normal disconnect — no manual re-listen).
 static void wifi_manager_ServiceConsoleIdleTimeout(void)
 {
-    if (gConsoleIdleDeadlineTicks == 0) return;                 // disabled
+    // #677: snapshot the volatile deadline ONCE so the disabled-guard and the
+    // deadline compare below both use a single consistent value. Reading the
+    // global twice let a concurrent SYST:COMM:LAN:IDLEtimeout 0 (SCPI on USB
+    // pri 7, preempting this WiFi-task pri 2 code) land between the two reads:
+    // pass the disabled-guard while it was still e.g. 300s, then compare `idle`
+    // against a freshly-stored 0 and close a console the operator just disabled
+    // the watchdog for — the opposite of intent. The aligned 32-bit TickType_t
+    // load is atomic (no torn read), so this is a double-read TOCTOU, not a
+    // tear; caching in a local resolves it. Consistent with the #676 hardening.
+    const TickType_t deadline = gConsoleIdleDeadlineTicks;      // single read
+    if (deadline == 0) return;                                  // disabled
     if (gStateMachineContext.pTcpServerContext == NULL) return;
     if (!wifi_tcp_server_HasActiveClient()) return;             // no client
     if (Streaming_IsActiveOnWifiInterface()) return;            // never touch a live stream
@@ -2867,11 +2877,11 @@ static void wifi_manager_ServiceConsoleIdleTimeout(void)
     // active client is not falsely disconnected. The residual window (a stamp
     // after this re-read) is a couple of instructions and self-heals via the
     // client's immediate reconnect. The read is a 32-bit aligned atomic.
-    if (idle > gConsoleIdleDeadlineTicks &&
+    if (idle > deadline &&
         gStateMachineContext.pTcpServerContext->client.lastActivityTick == last) {
         LOG_I("TCP: console idle %us > %us deadline — closing (connect-and-never-send guard, #663)",
               (unsigned)(idle / configTICK_RATE_HZ),
-              (unsigned)(gConsoleIdleDeadlineTicks / configTICK_RATE_HZ));
+              (unsigned)(deadline / configTICK_RATE_HZ));
         gStateMachineContext.pTcpServerContext->client.idleClosed++;
         wifi_tcp_server_CloseClientSocket();
     }
