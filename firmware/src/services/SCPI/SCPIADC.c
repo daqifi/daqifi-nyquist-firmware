@@ -210,9 +210,16 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
                     if (module->Type == AIn_MC12bADC && channel->Config.MC12b.IsPublic) {
                         channelRuntimeConfig->IsEnabled = (param2 > 0);
                     } else {
+                        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
                         return SCPI_RES_ERR; // Private or wrong type
                     }
                 } else {
+                    // #682 gate: monitoring-channel ids (248..255) resolve to a valid
+                    // table index — so the #630 guard above does NOT fire — but are
+                    // not user-settable. Push the specific error so they reject with
+                    // -222 like the gap-ids, not libscpi's default -200 (the narrowed
+                    // #678 guard newly lets these reach this branch).
+                    SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
                     return SCPI_RES_ERR; // Monitoring channels not user-controllable
                 }
                 break;
@@ -222,9 +229,12 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
                     if (module->Type == AIn_AD7609) {
                         channelRuntimeConfig->IsEnabled = (param2 > 0);
                     } else {
+                        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
                         return SCPI_RES_ERR; // Wrong type for NQ3 user channels
                     }
                 } else {
+                    // #682 gate: monitoring ids reject with -222 (not default -200).
+                    SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
                     return SCPI_RES_ERR; // Monitoring channels not user-controllable
                 }
                 break;
@@ -235,7 +245,8 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
                     if (channel->Config.MC12b.IsPublic) {
                         channelRuntimeConfig->IsEnabled = (param2 > 0);
                     } else {
-                        return SCPI_RES_ERR;
+                        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+                        return SCPI_RES_ERR; // Private channel — not settable
                     }
                 } else {
                     channelRuntimeConfig->IsEnabled = (param2 > 0);
