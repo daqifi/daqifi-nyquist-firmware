@@ -3246,6 +3246,18 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     // Frequency (resolved further down).
     scpi_parameter_t freqParam;
     bool freqProvided = SCPI_Parameter(context, &freqParam, FALSE);
+    // #674 (Qodo): a token that is PRESENT but unparseable — invalid string data,
+    // not a mnemonic (e.g. `SYST:STR:START #`) — makes SCPI_Parameter return FALSE
+    // with type SCPI_TOKEN_UNKNOWN, whereas a genuinely ABSENT parameter leaves
+    // type SCPI_TOKEN_PROGRAM_MNEMONIC. Distinguish them so invalid-syntax garbage
+    // is rejected too, instead of the number-check below only covering mnemonic
+    // garbage while non-mnemonic garbage falls through to the stored-rate restart.
+    // libscpi already queued -150 for the bad token; add a LOG_E and stop here.
+    if (!freqProvided && freqParam.type == SCPI_TOKEN_UNKNOWN) {
+        LOG_E("Streaming rejected: invalid frequency argument syntax "
+              "(expected an integer Hz, e.g. SYST:STR:START 5000)");
+        return SCPI_RES_ERR;
+    }
     if (freqProvided) {
         if (!SCPI_ParamIsNumber(&freqParam, FALSE) ||
             !SCPI_ParamToInt32(context, &freqParam, &freq)) {
