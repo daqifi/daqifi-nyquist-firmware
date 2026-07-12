@@ -3232,7 +3232,29 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    bool freqProvided = SCPI_ParamInt32(context, &freq, FALSE);
+    // #674: distinguish "malformed rate argument" from "no argument". Both make
+    // SCPI_ParamInt32 return FALSE — it pushes -104 on a non-numeric token, but
+    // that FALSE is indistinguishable from a genuinely absent parameter, so the
+    // old code fell through to the no-argument branch below and restarted at the
+    // STORED rate: a typo'd rate (SYST:STR:START abc) silently restarted
+    // acquisition at the previous rate with only a queued error as evidence.
+    // Split the read: SCPI_Parameter reports token PRESENCE (FALSE = truly
+    // absent, no error pushed), and only when a token IS present do we require it
+    // to be a bare integer — rejecting a non-numeric or suffixed rate (e.g.
+    // "abc", "100Hz") instead of starting. Mirrors libscpi's own
+    // ParamSignUInt32 number-check. A no-argument START still reuses the stored
+    // Frequency (resolved further down).
+    scpi_parameter_t freqParam;
+    bool freqProvided = SCPI_Parameter(context, &freqParam, FALSE);
+    if (freqProvided) {
+        if (!SCPI_ParamIsNumber(&freqParam, FALSE) ||
+            !SCPI_ParamToInt32(context, &freqParam, &freq)) {
+            LOG_E("Streaming rejected: malformed frequency argument "
+                  "(expected an integer Hz, e.g. SYST:STR:START 5000)");
+            SCPI_ErrorPush(context, SCPI_ERROR_DATA_TYPE_ERROR);
+            return SCPI_RES_ERR;
+        }
+    }
     if (freqProvided && freq == 0) {
         // Frequency = 0 is the explicit disable form.  Always allowed,
         // including under heap pressure (the user may be trying to
