@@ -238,6 +238,24 @@ int8_t hif_deinit(void * arg)
 {
     int8_t ret = M2M_SUCCESS;
     ret = hif_chip_wake();
+    /* Release the HIF semaphore that hif_init() creates. Without this, every
+     * WINC deinit+reinit cycle (SYST:COMM:LAN:POWer toggle -> wifi_manager
+     * Deinit+Init) orphaned the ~88-byte OSAL binary semaphore created at
+     * hif_init():224, leaking the heap ~88 B per cycle -> FreeRTOS heap
+     * exhaustion -> vApplicationMallocFailedHook wedge after ~87 cycles. The
+     * WINC driver was written init-once-at-boot; #334's repeated power cycling
+     * exposed the leak. Matches the create/delete balance every other WINC
+     * driver file already keeps (e.g. wdrv_winc.c).
+     *
+     * Guard the delete: hifSemaphore is NULL at boot, and OSAL_SEM_Delete NULLs
+     * the handle after deleting, so a NULL handle means "never created / already
+     * freed". Deleting NULL would call vSemaphoreDelete(NULL) (UB). This makes
+     * deinit safe when reached after a failed/partial hif_init (which returns
+     * M2M_ERR_INIT before creating the semaphore) or via an unconditional
+     * reinit/double-deinit driver path (e.g. m2m_wifi_reinit_hold). */
+    if (hifSemaphore != NULL) {
+        OSAL_SEM_Delete(&hifSemaphore);
+    }
     memset((uint8_t*)&gstrHifCxt,0,sizeof(tstrHifContext));
     return ret;
 }
@@ -269,6 +287,13 @@ int8_t hif_send(uint8_t u8Gid,uint8_t u8Opcode,uint8_t *pu8CtrlBuf,uint16_t u16C
     int8_t     ret = M2M_ERR_SEND;
     tstrHifHdr strHif;
 
+    /* #684: bail if the HIF semaphore was deleted by hif_deinit() (WINC powered
+     * off). OSAL_SEM_Pend returns FAIL on a NULL handle, so the wait loop below
+     * would busy-spin forever instead of blocking — return an error instead of
+     * hanging when a send races with / follows deinit. */
+    if (hifSemaphore == NULL) {
+        return M2M_ERR_SEND;
+    }
     while (OSAL_RESULT_FALSE == OSAL_SEM_Pend(&hifSemaphore, OSAL_WAIT_FOREVER))
     {
     }
@@ -407,6 +432,13 @@ static int8_t hif_isr(void)
     uint32_t reg;
     tstrHifHdr strHif;
 
+    /* #684: bail if the HIF semaphore was deleted by hif_deinit() (WINC powered
+     * off). OSAL_SEM_Pend returns FAIL on a NULL handle, so the wait loop below
+     * would busy-spin forever instead of blocking — hang the WINC receive path.
+     * Return an error if this handler runs after / racing with deinit. */
+    if (hifSemaphore == NULL) {
+        return M2M_ERR_BUS_FAIL;
+    }
     while (OSAL_RESULT_FALSE == OSAL_SEM_Pend(&hifSemaphore, OSAL_WAIT_FOREVER))
     {
     }

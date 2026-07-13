@@ -4214,6 +4214,17 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
     scpi_printf(context, "HeapFree=%u\r\n", (unsigned)heapFree);
     scpi_printf(context, "HeapUsed=%u\r\n", (unsigned)(heapTotal - heapFree));
     scpi_printf(context, "HeapMinEverFree=%u\r\n", (unsigned)heapMinEver);
+    /* Fragmentation visibility: HeapFree (total) can stay flat while the largest
+     * contiguous free block shrinks — the failure mode behind the open/close
+     * malloc-fail wedge, invisible to HeapFree alone. */
+    HeapStats_t heapStats;
+    vPortGetHeapStats(&heapStats);
+    scpi_printf(context, "LargestFreeBlock=%u\r\n",
+                (unsigned)heapStats.xSizeOfLargestFreeBlockInBytes);
+    scpi_printf(context, "SmallestFreeBlock=%u\r\n",
+                (unsigned)heapStats.xSizeOfSmallestFreeBlockInBytes);
+    scpi_printf(context, "HeapFreeBlocks=%u\r\n",
+                (unsigned)heapStats.xNumberOfFreeBlocks);
     scpi_printf(context, "CoherentPoolTotal=%u\r\n", (unsigned)poolTotal);
     scpi_printf(context, "CoherentPoolFree=%u\r\n", (unsigned)poolFree);
     scpi_printf(context, "SdCircularSize=%u\r\n",
