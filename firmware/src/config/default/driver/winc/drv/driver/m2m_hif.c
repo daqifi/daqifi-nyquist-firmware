@@ -245,8 +245,17 @@ int8_t hif_deinit(void * arg)
      * exhaustion -> vApplicationMallocFailedHook wedge after ~87 cycles. The
      * WINC driver was written init-once-at-boot; #334's repeated power cycling
      * exposed the leak. Matches the create/delete balance every other WINC
-     * driver file already keeps (e.g. wdrv_winc.c). */
-    OSAL_SEM_Delete(&hifSemaphore);
+     * driver file already keeps (e.g. wdrv_winc.c).
+     *
+     * Guard the delete: hifSemaphore is NULL at boot, and OSAL_SEM_Delete NULLs
+     * the handle after deleting, so a NULL handle means "never created / already
+     * freed". Deleting NULL would call vSemaphoreDelete(NULL) (UB). This makes
+     * deinit safe when reached after a failed/partial hif_init (which returns
+     * M2M_ERR_INIT before creating the semaphore) or via an unconditional
+     * reinit/double-deinit driver path (e.g. m2m_wifi_reinit_hold). */
+    if (hifSemaphore != NULL) {
+        OSAL_SEM_Delete(&hifSemaphore);
+    }
     memset((uint8_t*)&gstrHifCxt,0,sizeof(tstrHifContext));
     return ret;
 }
