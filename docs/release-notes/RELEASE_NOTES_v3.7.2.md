@@ -1,15 +1,16 @@
 # DAQiFi Nyquist Firmware v3.7.2
 
-**Release date:** 2026-07-12
+**Release date:** 2026-07-13
 **Baseline:** v3.7.1
 
 A SCPI input-hardening and robustness release: a systematic sweep of the SCPI
 command surface for unchecked user input (channel indices, malformed
-parameters), a connect-and-never-send TCP-console DoS guard, and WiFi
-power-save. Notable process milestone — every code PR passed a **cross-vendor
-adversarial pre-merge gate** (an independent GPT/Codex bug-hunt plus a Claude
-refute-skeptic), which caught two real defects in already-merged code and a
-second-order regression inside one of the fixes.
+parameters), a connect-and-never-send TCP-console DoS guard, WiFi power-save, and
+a **long-standing WINC heap leak** that could wedge the device after sustained
+LAN power cycling (#684). Notable process milestone — every code PR passed a
+**cross-vendor adversarial pre-merge gate** (an independent GPT/Codex bug-hunt
+plus a Claude refute-skeptic), which caught two real defects in already-merged
+code and second-order regressions inside two of the fixes.
 
 ## Fixes
 
@@ -39,6 +40,18 @@ second-order regression inside one of the fixes.
   `SYST:DIAG:SPIBus:*` cross-CS / MISO-fight probes are now gated behind SPI4
   ownership (rejected while the SD manager holds the bus), closing the v3.7.1
   deferred diagnostic-misuse hazard.
+- **WINC HIF semaphore heap leak (#684)** — `hif_init()` created a HIF OSAL
+  semaphore that `hif_deinit()` never deleted, so every `SYST:COMM:LAN:POWer`
+  toggle (a full WINC deinit+reinit, added with the #334 power-down feature)
+  leaked ~88 B of FreeRTOS heap. After ~85 power cycles the heap was exhausted
+  and the next allocation tripped `vApplicationMallocFailedHook` (interrupts off,
+  spin) — an "enumerated-but-dead" wedge recoverable only by a power cycle. Fixed
+  by deleting the semaphore on deinit, with NULL guards so a double-deinit or a
+  HIF call racing with power-down returns an error rather than crashing or
+  busy-spinning. Root-caused with mdb + the new heap-fragmentation diagnostic
+  (below); hardware-validated (60× LAN power toggle → `HeapFree` steady-state
+  flat, was −88 B/cycle). Pre-existing since v3.7.1 and earlier; low-frequency
+  (needs sustained LAN power cycling).
 
 ## New features
 
@@ -48,6 +61,11 @@ second-order regression inside one of the fixes.
   streaming client is continuously TX-active and is never torn down.
 - **Dynamic WINC power-save (#29)** — the WINC1500 enters power-save based on
   streaming state, trimming idle-link power without affecting an active stream.
+- **Heap-fragmentation diagnostic** — `SYST:MEM:FREE?` now also reports
+  `LargestFreeBlock`, `SmallestFreeBlock`, and `HeapFreeBlocks` (FreeRTOS
+  `vPortGetHeapStats`), distinguishing a genuine leak (total free falling) from
+  fragmentation (total flat, largest contiguous block shrinking). This is the
+  instrument that root-caused the #684 heap leak.
 
 ## Docs / test infrastructure
 
@@ -78,9 +96,12 @@ second-order regression inside one of the fixes.
   (`HeapMinEverFree` flat after the first-stream allocation; stacks healthy).
 - **Cross-vendor adversarial pre-merge gate** (Codex GPT-5.x hunt + Claude opus
   refute-skeptic) on every code PR — caught #677 and #678 in already-merged code,
-  and a monitoring-id error-class regression inside the #678 fix (→ #682), each
-  fixed with a regression test before merge.
+  a monitoring-id error-class regression inside the #678 fix (→ #682), and a
+  busy-spin regression inside the #684 fix (a NULL-handle wait loop introduced by
+  the leak fix itself), each fixed with a regression test before merge.
 - **Hardware verification** of every behavioral change on bench NQ1 units:
   #678 (`256`/`248` rejected, victim channel intact), #674 (malformed rate
   rejected, no stream — `TotalSamplesStreamed=0`), #677 (idle-close + disabled-
-  stays-open + race probe over WiFi), #630 (gap-id bounds), #682 (`248→-222`).
+  stays-open + race probe over WiFi), #630 (gap-id bounds), #682 (`248→-222`),
+  and #684 (60× `SYST:COMM:LAN:POWer` toggle → `HeapFree` steady-state flat vs
+  −88 B/cycle unfixed; WINC still power-cycles; regression test `test_684`).
