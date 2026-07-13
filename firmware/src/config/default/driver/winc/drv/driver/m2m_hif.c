@@ -287,6 +287,13 @@ int8_t hif_send(uint8_t u8Gid,uint8_t u8Opcode,uint8_t *pu8CtrlBuf,uint16_t u16C
     int8_t     ret = M2M_ERR_SEND;
     tstrHifHdr strHif;
 
+    /* #684: bail if the HIF semaphore was deleted by hif_deinit() (WINC powered
+     * off). OSAL_SEM_Pend returns FAIL on a NULL handle, so the wait loop below
+     * would busy-spin forever instead of blocking — return an error instead of
+     * hanging when a send races with / follows deinit. */
+    if (hifSemaphore == NULL) {
+        return M2M_ERR_SEND;
+    }
     while (OSAL_RESULT_FALSE == OSAL_SEM_Pend(&hifSemaphore, OSAL_WAIT_FOREVER))
     {
     }
@@ -425,6 +432,13 @@ static int8_t hif_isr(void)
     uint32_t reg;
     tstrHifHdr strHif;
 
+    /* #684: bail if the HIF semaphore was deleted by hif_deinit() (WINC powered
+     * off). OSAL_SEM_Pend returns FAIL on a NULL handle, so the wait loop below
+     * would busy-spin forever instead of blocking — hang the WINC receive path.
+     * Return an error if this handler runs after / racing with deinit. */
+    if (hifSemaphore == NULL) {
+        return M2M_ERR_BUS_FAIL;
+    }
     while (OSAL_RESULT_FALSE == OSAL_SEM_Pend(&hifSemaphore, OSAL_WAIT_FOREVER))
     {
     }
