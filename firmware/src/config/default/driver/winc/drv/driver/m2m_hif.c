@@ -238,6 +238,15 @@ int8_t hif_deinit(void * arg)
 {
     int8_t ret = M2M_SUCCESS;
     ret = hif_chip_wake();
+    /* Release the HIF semaphore that hif_init() creates. Without this, every
+     * WINC deinit+reinit cycle (SYST:COMM:LAN:POWer toggle -> wifi_manager
+     * Deinit+Init) orphaned the ~88-byte OSAL binary semaphore created at
+     * hif_init():224, leaking the heap ~88 B per cycle -> FreeRTOS heap
+     * exhaustion -> vApplicationMallocFailedHook wedge after ~87 cycles. The
+     * WINC driver was written init-once-at-boot; #334's repeated power cycling
+     * exposed the leak. Matches the create/delete balance every other WINC
+     * driver file already keeps (e.g. wdrv_winc.c). */
+    OSAL_SEM_Delete(&hifSemaphore);
     memset((uint8_t*)&gstrHifCxt,0,sizeof(tstrHifContext));
     return ret;
 }
