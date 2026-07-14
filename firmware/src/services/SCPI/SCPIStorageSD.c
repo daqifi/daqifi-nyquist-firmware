@@ -48,6 +48,10 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
 }
 
 #define SCPI_SD_LIST_TIMEOUT_MS 10000
+/* #611: cadence at which a TCP SD:LIST? poll pumps wifi_tcp_server sends while
+ * waiting for the SD task to finish producing the listing.  Small enough that
+ * WINC (lower priority) gets frequent service to push queued packets over SPI. */
+#define SD_LIST_TCP_PUMP_SLICE_MS 4
 #define SCPI_SD_DELETE_TIMEOUT_MS 5000
 #define SCPI_SD_FORMAT_TIMEOUT_MS 30000
 #define SCPI_SD_SPACE_TIMEOUT_MS 10000
@@ -405,8 +409,34 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 
-    // Wait for sd_card_manager to complete listing (up to 10 seconds for large directories)
-    if (!sd_card_manager_WaitForCompletion(SCPI_SD_LIST_TIMEOUT_MS)) {
+    // Wait for sd_card_manager to complete the listing (up to 10 s for large trees).
+    bool listTimedOut;
+    if (listOverTcp) {
+        /* #611: this handler RUNS on WifiTask, which is also the task that
+         * drains the TCP write buffer.  The listing streams through the async
+         * DataReadyCB path into that buffer, so a plain blocking wait here would
+         * stop the drain and stall any listing larger than the buffer's free
+         * space until the SD-side completion timeout (the v1 limitation shipped
+         * with #599).  Instead, poll for completion while actively pumping the
+         * TCP sends, so the listing flows out and the SD task's chunk writes
+         * never back up.  Keeps LIST synchronous — no client contract change. */
+        TickType_t deadline =
+                xTaskGetTickCount() + pdMS_TO_TICKS(SCPI_SD_LIST_TIMEOUT_MS);
+        while (sd_card_manager_IsBusy()) {
+            wifi_tcp_server_TransmitBufferedData();   /* drain listing to socket */
+            if ((int32_t)(deadline - xTaskGetTickCount()) <= 0) {
+                break;                                 /* fall through to timeout */
+            }
+            /* Yield so WINC (lower priority) pushes the queued packet over SPI
+             * and its SOCKET_MSG_SEND callback frees an in-flight slot. */
+            vTaskDelay(pdMS_TO_TICKS(SD_LIST_TCP_PUMP_SLICE_MS));
+        }
+        listTimedOut = sd_card_manager_IsBusy();
+    } else {
+        listTimedOut = !sd_card_manager_WaitForCompletion(SCPI_SD_LIST_TIMEOUT_MS);
+    }
+
+    if (listTimedOut) {
         LOG_E("SD:LIST? - Operation timeout\r\n");
         pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
         sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);

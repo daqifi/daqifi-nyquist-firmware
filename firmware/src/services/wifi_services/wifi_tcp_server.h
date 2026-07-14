@@ -173,6 +173,14 @@ bool wifi_tcp_server_ResizeWriteBuffer(uint32_t newSize);
  *  Returns bytes accepted (0 = buffer full or no client - see #371 counters). */
 size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len);
 
+/** Drain one packet from the TCP write circular buffer to the socket, honoring
+ *  the WINC in-flight cap.  Normally called by WifiTask in wifi_manager_
+ *  ProcessState; re-entrant (also driven by the streaming write trigger and the
+ *  WDRV_WINC_Tasks SOCKET_MSG_SEND chain).  #611 exposes it so a SCPI handler
+ *  running on WifiTask (e.g. SD:LIST?) can keep the TCP drain alive while it
+ *  waits for an async SD reply instead of stalling the buffer. */
+bool wifi_tcp_server_TransmitBufferedData(void);
+
 /** #598: true when the given SCPI context is the WiFi TCP console's. */
 bool wifi_tcp_server_ContextIsTcp(const scpi_t* context);
 

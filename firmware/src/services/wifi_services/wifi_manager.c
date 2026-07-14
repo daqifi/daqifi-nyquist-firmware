@@ -90,7 +90,7 @@ static bool SendEvent(wifi_manager_event_t event);
 static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * const pInstance, uint16_t event);
 static void ApplyPowerSavePolicy(stateMachineInst_t * const pInstance);
 
-extern bool wifi_tcp_server_TransmitBufferedData();
+/* wifi_tcp_server_TransmitBufferedData() is declared in wifi_tcp_server.h (#611). */
 extern size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len);
 extern size_t wifi_tcp_server_GetWriteBuffFreeSize();
 extern void wifi_tcp_server_OpenSocket(uint16_t port);
