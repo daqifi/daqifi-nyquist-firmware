@@ -1976,13 +1976,27 @@ void Streaming_UpdateState(void) {
  * @note This function will return early if streaming is disabled or there is no data to process.
  */
 
+// #662 batch-pop: per encoder wake, encode up to STREAMING_BATCH_MAX samples
+// back-to-back into one buffer, then a SINGLE output write of the concatenated
+// framed messages. Amortizes the per-wake output-write + size-query overhead
+// across N samples. Each encoder call pops one sample and emits a self-framed
+// unit (PB length-delimited / CSV row / JSON object), so concatenating N is
+// byte-identical to N separate writes — invisible to clients (no wire-format
+// change). Bounded so a backlog can't monopolize the encoder or delay the
+// output write beyond N samples' worth. STREAMING_BATCH_MIN_ROOM is a
+// conservative worst-case single-message size: the batch stops before an
+// encode that isn't guaranteed to fit, so a 0 encoder return unambiguously
+// means empty-queue/failure rather than truncation.
+#define STREAMING_BATCH_MAX      8u
+#define STREAMING_BATCH_MIN_ROOM 1024u
+
 void streaming_Task(void) {
     // Enable FPU context saving for this task (required for ADC voltage conversion)
     portTASK_USES_FLOATING_POINT();
 
      TickType_t xBlockTime = portMAX_DELAY;
     NanopbFlagsArray nanopbFlag;
-    size_t usbSize, wifiSize, sdSize, maxSize;
+    size_t usbSize, wifiSize, sdSize;
     /* #371/#372: USB/WiFi gates moved to ActiveInterface checks at the
      * write sites — hasUsb / hasWifi are no longer consulted, removed
      * from the per-iteration switch.  hasSD is still consulted by the SD
@@ -2161,91 +2175,94 @@ void streaming_Task(void) {
         // whichever outputs have space, and discarded if none do.
         // Previously used min(128, output_free) which caused CSV 16ch
         // encoder failures when USB buffer was full (128 < row size ~172).
-        maxSize = bufferSize;
-
-        nanopbFlag.Size = 0;
-
-        nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_msg_time_stamp_tag;
-
-        if (AINDataAvailable) {
-            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_analog_in_data_tag;
-        }
-        if (DIODataAvailable) {
-            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_data_tag;
-            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_port_dir_tag;
-        }
-
+        // #662 batch-pop: encode up to STREAMING_BATCH_MAX samples back-to-back
+        // into `buffer`, accumulating framed messages, then a SINGLE output
+        // write below of the whole batch. Availability + room are re-checked
+        // every iteration (the pri-9 deferred task may enqueue concurrently);
+        // the MIN_ROOM guard guarantees the encoder has space so a 0 return is
+        // unambiguously empty-queue/failure, never truncation. At steady state
+        // (queue depth 1) this is a batch of 1 — identical to the pre-#662 path.
         packetSize = 0;
-        if (nanopbFlag.Size > 0) {
-            DioProbe_PulseStart(8);  /* probe 8: encode duration */
-            if(pRunTimeStreamConf->Encoding == Streaming_Csv){
-                DIO_TIMING_TEST_WRITE_STATE(1);
-                packetSize = csv_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
-                DIO_TIMING_TEST_WRITE_STATE(0);
+        for (uint32_t batchIdx = 0; batchIdx < STREAMING_BATCH_MAX; batchIdx++) {
+            bool ainNow = !AInSampleList_IsEmpty();
+            bool dioNow = !DIOSampleList_IsEmpty(&pBoardData->DIOSamples);
+            if (!ainNow && !dioNow) {
+                break;                       // queue drained — normal batch end
             }
-            else if (pRunTimeStreamConf->Encoding == Streaming_Json) {
+            if ((bufferSize - packetSize) < STREAMING_BATCH_MIN_ROOM) {
+                break;                       // flush what we have; no guaranteed room
+            }
+
+            nanopbFlag.Size = 0;
+            nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_msg_time_stamp_tag;
+            if (ainNow) {
+                nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_analog_in_data_tag;
+            }
+            if (dioNow) {
+                nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_data_tag;
+                nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_port_dir_tag;
+            }
+
+            uint8_t *encPtr = (uint8_t *) buffer + packetSize;
+            size_t encRoom = bufferSize - packetSize;
+            size_t encoded = 0;
+            DioProbe_PulseStart(8);  /* probe 8: encode duration */
+            if (pRunTimeStreamConf->Encoding == Streaming_Csv) {
                 DIO_TIMING_TEST_WRITE_STATE(1);
-                packetSize = Json_Encode(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
+                encoded = csv_Encode(pBoardData, &nanopbFlag, encPtr, encRoom);
+                DIO_TIMING_TEST_WRITE_STATE(0);
+            } else if (pRunTimeStreamConf->Encoding == Streaming_Json) {
+                DIO_TIMING_TEST_WRITE_STATE(1);
+                encoded = Json_Encode(pBoardData, &nanopbFlag, encPtr, encRoom);
                 DIO_TIMING_TEST_WRITE_STATE(0);
             } else {
                 DIO_TIMING_TEST_WRITE_STATE(1);
 #if PB_PROFILE_COUNTERS
                 uint32_t pbStart = _CP0_GET_COUNT();
-                packetSize = Nanopb_EncodeStreamingFast(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
+                encoded = Nanopb_EncodeStreamingFast(pBoardData, &nanopbFlag, encPtr, encRoom);
                 uint32_t pbCycles = _CP0_GET_COUNT() - pbStart;
                 taskENTER_CRITICAL();
                 gStreamStats.pbEncodeCycles += pbCycles;
                 if (pbCycles > gStreamStats.pbEncodeMaxCycles) {
                     gStreamStats.pbEncodeMaxCycles = pbCycles;
                 }
-                if (packetSize > 0) {
-                    gStreamStats.pbEncodeBytesOut += packetSize;
+                if (encoded > 0) {
+                    gStreamStats.pbEncodeBytesOut += encoded;
                 }
                 taskEXIT_CRITICAL();
 #else
-                packetSize = Nanopb_EncodeStreamingFast(pBoardData, &nanopbFlag, (uint8_t *) buffer, maxSize);
+                encoded = Nanopb_EncodeStreamingFast(pBoardData, &nanopbFlag, encPtr, encRoom);
 #endif
                 DIO_TIMING_TEST_WRITE_STATE(0);
             }
             DioProbe_PulseEnd(8);
-        }
-        if (packetSize == 0 && nanopbFlag.Size > 0 && (AINDataAvailable || DIODataAvailable)) {
-            // #484: shutdown race.  If Streaming_Stop ran between the
-            // IsEnabled check at the top of this loop iteration and the
-            // encoder invocation, the encoder runs against partially
-            // torn-down state (pool freed, sample queue drained,
-            // encoder buffer pointer about to be cleared) and returns
-            // packetSize=0.  That's not a real encoder failure — the
-            // operator asked us to stop.  Verified empirically (n=20,
-            // 5 s vs 30 s test streams both fire EF at ~50 % regardless
-            // of stream duration → fires at Stop, not mid-stream).
-            // Skip the failure bookkeeping ONLY (don't `continue`) so any
-            // post-encoder cleanup or future code below still runs.
-            if (pRunTimeStreamConf->IsEnabled) {
-                bool pastGrace = Streaming_PastStartupGrace();
-                // Each encoder pops exactly 1 sample per call. On failure that
-                // sample is freed back to the pool but its data is lost (#297).
-                // Counting 1 per failure avoids the race condition where the
-                // higher-priority deferred ISR task pushes new samples between
-                // queue depth reads, making a delta approach inaccurate.
-                // Count for both AIN and DIO encoder failures — any sample type
-                // consumed by a failed encode is lost.
-                // #483: also bump Steady subset when past the 3 s startup grace.
-                // Single critical section covers all counters and the QUES bit
-                // so a concurrent Streaming_GetStats snapshot sees them coherently.
-                taskENTER_CRITICAL();
-                gStreamStats.encoderFailures++;
-                gStreamStats.encoderDroppedSamples++;
-                if (pastGrace) {
-                    gStreamStats.encoderFailuresSteady++;
-                    gStreamStats.encoderDroppedSamplesSteady++;
+
+            if (encoded == 0) {
+                // The queue was non-empty (checked above) with guaranteed room,
+                // yet the encoder produced nothing → a real encoder failure OR
+                // the #484 shutdown race (Streaming_Stop ran mid-iteration and
+                // the encoder saw partially torn-down state — verified empirically
+                // to fire at Stop, not mid-stream). Account exactly one lost
+                // sample (each encode pops exactly one, #297) and stop the batch.
+                // #483: bump the Steady subset when past the 3 s startup grace.
+                if (pRunTimeStreamConf->IsEnabled) {
+                    bool pastGrace = Streaming_PastStartupGrace();
+                    taskENTER_CRITICAL();
+                    gStreamStats.encoderFailures++;
+                    gStreamStats.encoderDroppedSamples++;
+                    if (pastGrace) {
+                        gStreamStats.encoderFailuresSteady++;
+                        gStreamStats.encoderDroppedSamplesSteady++;
+                    }
+                    gQuesBits |= QUES_BIT_ENCODER_FAIL;
+                    taskEXIT_CRITICAL();
+                    LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
+                        "Streaming: encoder failure lost 1 sample");
+                    LOG_E_SESSION(LOG_SESSION_ENCODER_FAIL, "Streaming: Encoder failure detected");
                 }
-                gQuesBits |= QUES_BIT_ENCODER_FAIL;
-                taskEXIT_CRITICAL();
-                LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
-                    "Streaming: encoder failure lost 1 sample");
-                LOG_E_SESSION(LOG_SESSION_ENCODER_FAIL, "Streaming: Encoder failure detected");
+                break;
             }
+            packetSize += encoded;
         }
         if (packetSize > 0) {
             taskENTER_CRITICAL();
