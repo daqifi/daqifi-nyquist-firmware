@@ -2178,10 +2178,32 @@ void streaming_Task(void) {
         // #662 batch-pop: encode up to STREAMING_BATCH_MAX samples back-to-back
         // into `buffer`, accumulating framed messages, then a SINGLE output
         // write below of the whole batch. Availability + room are re-checked
-        // every iteration (the pri-9 deferred task may enqueue concurrently);
-        // the MIN_ROOM guard guarantees the encoder has space so a 0 return is
-        // unambiguously empty-queue/failure, never truncation. At steady state
-        // (queue depth 1) this is a batch of 1 — identical to the pre-#662 path.
+        // every iteration (the pri-9 deferred task may enqueue concurrently).
+        // At steady state (queue depth 1) this is a batch of 1 — identical to
+        // the pre-#662 path.
+        //
+        // The batch total is bounded by BOTH the encoder buffer AND the smallest
+        // ACTIVE transport ring's free space (#686 review): the transport writes
+        // below are all-or-nothing, and a single write larger than a ring's
+        // capacity can NEVER succeed (even on an empty ring), so an over-large
+        // batch would retry to the 10 s timeout and drop the whole batch — total
+        // loss on a small ring (e.g. WiFi min 1400). Free size is a safe bound:
+        // nothing writes these rings until after this loop, so the snapshot only
+        // grows. The FIRST message is always encoded (drain the queue; one framed
+        // message fits any legal ring, exactly as pre-#662); ADDITIONAL messages
+        // are added only while packetSize keeps MIN_ROOM within every active ring.
+        size_t batchXportFree = bufferSize;
+        switch (pRunTimeStreamConf->ActiveInterface) {
+            case StreamingInterface_USB:      batchXportFree = usbSize; break;
+            case StreamingInterface_WiFi:     batchXportFree = wifiSize; break;
+            case StreamingInterface_SD:       batchXportFree = sdSize; break;
+            case StreamingInterface_UsbAndSd:
+                batchXportFree = (usbSize < sdSize) ? usbSize : sdSize; break;
+            default: break;
+        }
+        if (hasSD && sdSize < batchXportFree) {
+            batchXportFree = sdSize;         // SD-logging override also writes SD
+        }
         packetSize = 0;
         for (uint32_t batchIdx = 0; batchIdx < STREAMING_BATCH_MAX; batchIdx++) {
             bool ainNow = !AInSampleList_IsEmpty();
@@ -2189,8 +2211,18 @@ void streaming_Task(void) {
             if (!ainNow && !dioNow) {
                 break;                       // queue drained — normal batch end
             }
-            if ((bufferSize - packetSize) < STREAMING_BATCH_MIN_ROOM) {
-                break;                       // flush what we have; no guaranteed room
+            // First message always encoded (drain the queue); additional
+            // messages must keep MIN_ROOM within the encoder buffer AND the
+            // smallest active transport ring, so the single all-or-nothing write
+            // below always fits its ring. Addition (not subtraction) avoids
+            // size_t underflow when a transport ring is momentarily full (free=0).
+            if (batchIdx > 0) {
+                if ((bufferSize - packetSize) < STREAMING_BATCH_MIN_ROOM) {
+                    break;                   // no encoder-buffer room
+                }
+                if ((packetSize + STREAMING_BATCH_MIN_ROOM) > batchXportFree) {
+                    break;                   // would overflow the smallest active ring
+                }
             }
 
             nanopbFlag.Size = 0;
