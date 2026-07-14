@@ -11,6 +11,9 @@
 #include "wifi_serial_bridge.h"
 #include "wifi_serial_bridge_interface.h"
 #include "iperf2/iperf2.h"
+#include "mdns_responder.h"                    // #345 mDNS/DNS-SD responder
+#include "state/board/BoardConfig.h"           // #345 identity: serial/variant/revs
+#include "services/daqifi_settings.h"          // #345 friendly name
 #include "driver/winc/include/drv/common/nm_common.h"  // nm_reset (canonical WINC reset pulse)
 #include "wdrv_winc_gpio.h"  // WDRV_WINC_GPIOChipEnable*/Reset* (#334 deep power-down)
 #include "semphr.h"
@@ -435,6 +438,7 @@ static void DhcpEventCallback(DRV_HANDLE handle, uint32_t ipAddress) {
     } else if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED)) {
         // In STA mode, this is our IP address from the DHCP server
         gStateMachineContext.pWifiSettings->ipAddr.Val = ipAddress;
+        mdns_responder_UpdateIp(ipAddress);  // #345: A record valid once lease known
         LOG_D("STA Mode: Station IP address is %s\r\n", inet_ntop(AF_INET, &ipAddress, s, sizeof (s)));
     }
 }
@@ -596,6 +600,15 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
     // here.  Skip the wifi_tcp_server / UDP-discovery cases below if iperf2
     // handles the event.
     if (Iperf2_HandleSocketEvent(socket, messageType, pMessage)) {
+        return;
+    }
+
+    /* #345: the mDNS responder owns its own UDP socket; let it claim its own
+     * BIND/RECVFROM/SENDTO events before the discovery/TCP handling below.
+     * OwnsSocket is false unless mDNS is active AND this is its socket, so the
+     * discovery/TCP paths are unaffected. */
+    if (mdns_responder_OwnsSocket(socket)) {
+        mdns_responder_HandleSocketEvent(socket, messageType, pMessage);
         return;
     }
 
@@ -1487,12 +1500,37 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
             }
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
+            /* #345: advertise via mDNS in STA mode only (this event also fires
+             * for AP-client associations — never advertise there). The DHCP
+             * lease arrives later (DhcpEventCallback -> mdns_responder_UpdateIp),
+             * so the A record stays silent until the station IP is known. */
+            if (pInstance->pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_STA) {
+                const tBoardConfig *pBcfg =
+                        (const tBoardConfig *) BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+                uint64_t sn = (pBcfg != NULL) ? pBcfg->boardSerialNumber : 0u;
+                char snStr[20], pnStr[8];
+                snprintf(snStr, sizeof(snStr), "%08lX%08lX",
+                         (unsigned long)(sn >> 32), (unsigned long)(sn & 0xFFFFFFFFu));
+                snprintf(pnStr, sizeof(pnStr), "Nq%d",
+                         (pBcfg != NULL) ? pBcfg->BoardVariant : 1);
+                mdns_identity_t mid;
+                memset(&mid, 0, sizeof(mid));
+                memcpy(mid.mac, pInstance->pWifiSettings->macAddr.addr, sizeof(mid.mac));
+                mid.ipAddr       = pInstance->pWifiSettings->ipAddr.Val;
+                mid.serialNumber = snStr;
+                mid.partNumber   = pnStr;
+                mid.fwRev        = (pBcfg != NULL) ? pBcfg->boardFirmwareRev : "";
+                mid.hwRev        = (pBcfg != NULL) ? pBcfg->boardHardwareRev : "";
+                mid.friendlyName = daqifi_settings_GetFriendlyName();
+                mdns_responder_Start(&mid);
+            }
             break;
         case WIFI_MANAGER_EVENT_STA_DISCONNECTED:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
             InvalidateStaLinkState();  // #517: clear cached RSSI/IP/assocHandle
             CloseUdpSocket(&pInstance->udpServerSocket);
+            mdns_responder_Stop();     // #345: leave the mDNS group + close socket
             wifi_tcp_server_CloseSocket();
             RESET_TCP_SOCKET_OPEN(pInstance);
             ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
@@ -2045,7 +2083,8 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 break;
             }
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_TRAN;
-            pInstance->nextState = MainState;            
+            pInstance->nextState = MainState;
+            mdns_responder_Stop();       // #345: full teardown — free the mDNS socket
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN))
                 CloseUdpSocket(&pInstance->udpServerSocket);
             if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN)) {
