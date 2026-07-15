@@ -3480,6 +3480,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         // (Qodo /agentic_review pass-1 finding on PR #508: "Stale
         // disk-full short-circuits start".)
         sd_card_manager_ClearStartupDiskFull();
+        sd_card_manager_ClearStartupDirFull();   /* #689 */
 
         pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
         sd_card_manager_UpdateSettings(pSDCardSettings);
@@ -3498,6 +3499,9 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         int readyWait = 0;
         while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
             if (sd_card_manager_StartupDiskFull()) {
+                break;
+            }
+            if (sd_card_manager_StartupDirFull()) {   /* #689: early-exit */
                 break;
             }
             vTaskDelay(pdMS_TO_TICKS(10));
@@ -3532,6 +3536,13 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                     LOG_E("[SD] STR:START refused: disk full (space unknown), floor=%llu B",
                           (unsigned long long)floor);
                 }
+            } else if (sd_card_manager_StartupDirFull()) {
+                /* #689: SD target directory holds too many files — file-create
+                 * would wedge the SD op timeout. Surface the precise cause and
+                 * remedy instead of a generic "not ready". */
+                LOG_E("[SD] STR:START refused: target directory has too many "
+                      "files (#689) — use a larger SD:MAXSize, a different "
+                      "directory, or clear the card");
             } else {
                 LOG_E("SD file not ready after %d ms", readyWait * 10);
             }
