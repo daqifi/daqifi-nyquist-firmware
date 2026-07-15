@@ -14,6 +14,17 @@
 #include <stdio.h>
 #include "socket.h"
 #include "Util/Logger.h"
+#include "FreeRTOS.h"
+#include "task.h"        /* taskENTER_CRITICAL — shared diagnostic-counter RMW (#692) */
+
+/* #58 / Qodo #692: the diagnostic counters are effectively single-writer per
+ * field, but they are read by GetDiag and reset by Start from other task
+ * contexts, and the RECVFROM counters run in the WINC-callback task while the
+ * heal counters run in WifiTask. Protect every read-modify-write per the
+ * project atomicity rule + compliance rule 68846 (PR #223 precedent). Plain
+ * bool/32-bit stores (recvArmed, needsReopen, lastArmRc) are atomic and need
+ * no guard. */
+#define MDNS_RMW(stmt_) do { taskENTER_CRITICAL(); stmt_; taskEXIT_CRITICAL(); } while (0)
 
 /* mDNS well-known group + port. 224.0.0.251 = 0xE00000FB. */
 #define MDNS_MCAST_ADDR_HOST   0xE00000FBu   /* host byte order */
@@ -304,7 +315,7 @@ static void mdns_arm_recv(void) {
     } else {
         gMdns.recvArmed = false;
         gMdns.needsReopen = true;
-        gMdns.armFailCount++;
+        MDNS_RMW(gMdns.armFailCount++);
         /* Static string only — LOG_E_ONCE's ISR branch passes fmt with no args.
          * The rc is in gMdns.lastArmRc, reported by SYST:COMM:LAN:MDNS?. */
         LOG_E_ONCE(LOG_ONCE_MDNS_ARM_FAIL,
@@ -460,7 +471,7 @@ void mdns_responder_ServiceHealth(void) {
     /* Rate-limit re-open attempts so a persistently-failing socket can't thrash
      * the WINC every WifiTask iteration. */
     if (gMdns.healCooldown > 0u) {
-        gMdns.healCooldown--;
+        MDNS_RMW(gMdns.healCooldown--);
         return;
     }
     if (!gMdns.needsReopen) {
@@ -474,7 +485,7 @@ void mdns_responder_ServiceHealth(void) {
     mdns_close_socket();
     if (mdns_open_socket()) {
         gMdns.needsReopen = false;        /* SOCKET_MSG_BIND will re-arm recv */
-        gMdns.healCount++;
+        MDNS_RMW(gMdns.healCount++);
     }
     /* else: open still failing -> needsReopen stays set, retried after cooldown */
 }
@@ -521,22 +532,29 @@ void mdns_responder_HandleSocketEvent(SOCKET sock, uint8_t msgType, void *pvMsg)
             setsockopt(gMdns.sock, SOL_SOCKET, IP_ADD_MEMBERSHIP, &grp, sizeof(grp));
             mdns_arm_recv();
         } else {
-            LOG_E("[mDNS] bind failed");
-            mdns_responder_Stop();
+            /* Async bind failure is a transient WINC/HIF condition, NOT an
+             * intentional teardown — calling the public Stop() would clear
+             * needsReopen and permanently disable the self-heal this PR adds
+             * (#692). Close the socket and schedule a rate-limited re-open so
+             * ServiceHealth() recovers it, same as a recvfrom re-arm failure. */
+            LOG_E("[mDNS] bind failed — scheduling self-heal retry");
+            mdns_close_socket();
+            gMdns.needsReopen = true;
+            gMdns.healCooldown = MDNS_HEAL_COOLDOWN_ITERS;
         }
         break;
     }
     case SOCKET_MSG_RECVFROM: {
         tstrSocketRecvMsg *pRx = (tstrSocketRecvMsg *)pvMsg;
         if (pRx != NULL && pRx->pu8Buffer != NULL && pRx->s16BufferSize > 0) {
-            gMdns.rxCount++;              /* #58 diag: a datagram was delivered */
+            MDNS_RMW(gMdns.rxCount++);    /* #58 diag: a datagram was delivered */
             /* Use the WINC event's own buffer pointer (== gMdns.rxBuf, the
              * buffer we armed recvfrom with) rather than the global — more
              * idiomatic and robust to any future buffer indirection. */
             if (query_matches(pRx->pu8Buffer, (size_t)pRx->s16BufferSize)) {
-                gMdns.matchCount++;
+                MDNS_RMW(gMdns.matchCount++);
                 if (mdns_send_response()) {
-                    gMdns.respCount++;
+                    MDNS_RMW(gMdns.respCount++);
                 }
             }
         }
