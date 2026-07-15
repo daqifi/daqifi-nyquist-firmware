@@ -511,6 +511,10 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
              "benchmark_%d.dat", (int)(xTaskGetTickCount() & 0xFFFF));
     
     // Set SD card to write mode
+    /* #690: this WRITE-mode open goes through the #689 dir-file-cap guard too.
+     * Clear the flag first so the poll observes only THIS request's outcome
+     * (mirrors SCPI_StartStreaming / the #503 disk-full pattern). */
+    sd_card_manager_ClearStartupDirFull();
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 
@@ -518,13 +522,22 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     {
         int readyWait = 0;
         while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
+            if (sd_card_manager_StartupDirFull()) {   /* #690: early-exit */
+                break;
+            }
             vTaskDelay(pdMS_TO_TICKS(10));
             readyWait++;
         }
         if (!sd_card_manager_IsWriteReady()) {
-            LOG_E("SD:BENCH - File not ready after timeout\r\n");
-            LOG_E("SD:BENCH - if reads/LIST work but writes hang, the card is "
-                  "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
+            if (sd_card_manager_StartupDirFull()) {
+                /* #690: name the real cause instead of the card advisory. */
+                LOG_E("SD:BENCH refused: target directory has too many files "
+                      "(#689) — use a different directory or clear the card\r\n");
+            } else {
+                LOG_E("SD:BENCH - File not ready after timeout\r\n");
+                LOG_E("SD:BENCH - if reads/LIST work but writes hang, the card is "
+                      "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
+            }
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             gSDBenchmarkResults.testInProgress = false;
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;

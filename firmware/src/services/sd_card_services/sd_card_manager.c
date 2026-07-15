@@ -272,14 +272,29 @@ static int CircularBufferToSDWrite(uint8_t* buf, uint32_t len) {
 static uint32_t CountDirEntries(const char* dirPath, uint32_t cap) {
     SYS_FS_HANDLE dh = SYS_FS_DirOpen(dirPath);
     if (dh == SYS_FS_HANDLE_INVALID) {
-        return 0;   // directory doesn't exist yet -> no files
+        /* #690 review (Qodo): distinguish "directory doesn't exist yet" (the
+         * normal first-write case → 0 files) from a real FS error. FAIL SAFE on
+         * a real error — return cap so the guard REFUSES the create rather than
+         * fail-open into the very wedge it exists to prevent. */
+        SYS_FS_ERROR e = SYS_FS_Error();
+        if (e == SYS_FS_ERROR_NO_PATH || e == SYS_FS_ERROR_NO_FILE) {
+            return 0;                       // directory absent -> no files
+        }
+        LOG_E("[SD] CountDirEntries: DirOpen('%s') failed err=%d — failing safe (refuse)",
+              dirPath, (int)e);
+        return cap;
     }
     uint32_t count = 0;
     SYS_FS_FSTAT st;
     memset(&st, 0, sizeof(st));
     while (count < cap) {
         if (SYS_FS_DirRead(dh, &st) == SYS_FS_RES_FAILURE) {
-            break;                          // read error
+            /* #690: a mid-scan read error means the count is untrustworthy —
+             * fail safe (refuse) rather than proceed on a partial count. */
+            LOG_E("[SD] CountDirEntries: DirRead failed at %u — failing safe",
+                  (unsigned)count);
+            (void)SYS_FS_DirClose(dh);
+            return cap;
         }
         if (st.fname[0] == '\0') {
             break;                          // end of directory
