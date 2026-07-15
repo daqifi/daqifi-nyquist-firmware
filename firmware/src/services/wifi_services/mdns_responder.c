@@ -391,7 +391,10 @@ void mdns_responder_HandleSocketEvent(SOCKET sock, uint8_t msgType, void *pvMsg)
     case SOCKET_MSG_RECVFROM: {
         tstrSocketRecvMsg *pRx = (tstrSocketRecvMsg *)pvMsg;
         if (pRx != NULL && pRx->pu8Buffer != NULL && pRx->s16BufferSize > 0) {
-            if (query_matches(gMdns.rxBuf, (size_t)pRx->s16BufferSize)) {
+            /* Use the WINC event's own buffer pointer (== gMdns.rxBuf, the
+             * buffer we armed recvfrom with) rather than the global — more
+             * idiomatic and robust to any future buffer indirection. */
+            if (query_matches(pRx->pu8Buffer, (size_t)pRx->s16BufferSize)) {
                 mdns_send_response();
             }
         }

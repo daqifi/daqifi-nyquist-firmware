@@ -1522,7 +1522,9 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 mid.fwRev        = (pBcfg != NULL) ? pBcfg->boardFirmwareRev : "";
                 mid.hwRev        = (pBcfg != NULL) ? pBcfg->boardHardwareRev : "";
                 mid.friendlyName = daqifi_settings_GetFriendlyName();
-                mdns_responder_Start(&mid);
+                if (!mdns_responder_Start(&mid)) {
+                    LOG_E("[mDNS] responder start failed");
+                }
             }
             break;
         case WIFI_MANAGER_EVENT_STA_DISCONNECTED:
