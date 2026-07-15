@@ -77,6 +77,10 @@ typedef struct {
     char hostFqdn[24];       /* "daqifi-xxxx.local"             */
     uint8_t rxBuf[MDNS_RX_BUF_SIZE];
     /* ---- #58 diagnostics + self-heal ---- */
+    bool     wantRun;        /* intent to run: Start sets, Stop clears. ServiceHealth
+                              * gates on this so a stale needsReopen store from a
+                              * WINC callback preempted by an intentional Stop
+                              * (DEINIT teardown) can't resurrect the responder (#692). */
     bool     recvArmed;      /* a recvfrom is currently outstanding */
     bool     needsReopen;    /* a recv re-arm failed -> ServiceHealth must recover */
     uint16_t healCooldown;   /* ServiceHealth iterations to skip before next re-open */
@@ -409,6 +413,7 @@ bool mdns_responder_Start(const mdns_identity_t *id) {
     gMdns.lastArmRc = 0;
     gMdns.healCooldown = 0u;
     gMdns.needsReopen = false;
+    gMdns.wantRun = true;             /* self-heal is now permitted for this session */
 
     if (!mdns_open_socket()) {
         /* Initial open failed to queue — let ServiceHealth() retry it from the
@@ -472,13 +477,22 @@ static void mdns_close_socket(void) {
 }
 
 void mdns_responder_Stop(void) {
-    /* Real teardown (STA disconnect / AP entry): clear the heal request so
-     * ServiceHealth() won't resurrect the socket after we intentionally close. */
+    /* Real teardown (STA disconnect / AP entry / DEINIT): clear the intent to
+     * run FIRST, then the heal request + socket. wantRun is the authority
+     * ServiceHealth() checks, so even if a WINC-callback bind/recvfrom-fail path
+     * was preempted here and later writes needsReopen=true, ServiceHealth won't
+     * resurrect a deliberately-stopped responder (#692 adversarial audit). */
+    gMdns.wantRun = false;
     gMdns.needsReopen = false;
     mdns_close_socket();
 }
 
 void mdns_responder_ServiceHealth(void) {
+    if (!gMdns.wantRun) {
+        return;                           /* never started, or intentionally stopped:
+                                           * ignore any stale needsReopen set by a
+                                           * WINC callback that raced Stop (#692). */
+    }
     /* Rate-limit re-open attempts so a persistently-failing socket can't thrash
      * the WINC every WifiTask iteration. */
     if (gMdns.healCooldown > 0u) {
@@ -486,7 +500,7 @@ void mdns_responder_ServiceHealth(void) {
         return;
     }
     if (!gMdns.needsReopen) {
-        return;                           /* healthy (or intentionally stopped) */
+        return;                           /* healthy */
     }
     /* A recvfrom re-arm (or the initial open) failed -> the responder is deaf
      * while the device stays associated. Re-open from this WifiTask context —
