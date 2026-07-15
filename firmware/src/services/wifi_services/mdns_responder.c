@@ -338,9 +338,11 @@ static bool mdns_send_response(void) {
     dst.sin_family = AF_INET;
     dst.sin_port = _htons(MDNS_PORT);
     dst.sin_addr.s_addr = _htonl(MDNS_MCAST_ADDR_HOST);
-    sendto(gMdns.sock, resp, (uint16_t)n, 0,
-           (struct sockaddr *)&dst, sizeof(dst));
-    return true;
+    /* #692: only count the response if sendto() accepted it — respCount then
+     * tracks accepted sends, not attempts. sendto returns sint16 (SOCK_ERR_*). */
+    int16_t sc = sendto(gMdns.sock, resp, (uint16_t)n, 0,
+                        (struct sockaddr *)&dst, sizeof(dst));
+    return (sc == SOCK_ERR_NO_ERROR);
 }
 
 static void copy_str(char *dst, size_t dstSize, const char *src) {
@@ -495,6 +497,11 @@ void mdns_responder_GetDiag(mdns_diag_t *out) {
         return;
     }
     memset(out, 0, sizeof(*out));
+    /* #692: coherent point-in-time snapshot — the counters are updated from the
+     * WINC-callback and WifiTask contexts, so take them together under a short
+     * critical section (infrequent SCPI-path query; the string copies are of
+     * post-Start-constant names). */
+    taskENTER_CRITICAL();
     out->active       = gMdns.active;
     out->recvArmed    = gMdns.recvArmed;
     out->rxCount      = gMdns.rxCount;
@@ -505,6 +512,7 @@ void mdns_responder_GetDiag(mdns_diag_t *out) {
     out->lastArmRc    = gMdns.lastArmRc;
     copy_str(out->instance, sizeof(out->instance), gMdns.instanceFqdn);
     copy_str(out->host, sizeof(out->host), gMdns.hostFqdn);
+    taskEXIT_CRITICAL();
 }
 
 void mdns_responder_UpdateIp(uint32_t ipAddrNetworkOrder) {
