@@ -15,6 +15,18 @@
 #define SD_CARD_MANAGER_DISK_MOUNT_NAME    "/mnt/DAQiFi"
 // SD_CARD_MANAGER_DISK_DEV_NAME is now in header for external use
 #define SD_CARD_MANAGER_MAX_SPLIT_FILES    9999
+/* #689: defensive files-per-directory ceiling. FatFs file-create is O(directory
+ * size) — creating a file in a directory holding many hundreds of entries can
+ * exceed the SD op timeout and wedge the manager (reads keep working). Refuse to
+ * create a WRITE-mode file when the target directory already holds this many
+ * files, so the failure is a clean, diagnosable error instead of a silent wedge.
+ * Set below the observed directory-size wedge onset. Bench 2026-07-14 (SanDisk
+ * SR256, gentle rotation): 75 files built clean, ~125 files wedged — the onset
+ * tracks the FatFs directory-cluster grow (dir_clear write burst) and the O(N)
+ * create scan, so it is CARD-DEPENDENT. 64 keeps the directory within its first
+ * FAT cluster (no grow burst) with margin below the proven-clean 75. Not a full
+ * fix (subdirectory bucketing would be) — a guard until #689 is resolved. */
+#define SD_CARD_MANAGER_MAX_DIR_FILES      64u
 
 // Iterative directory listing — bounded BSS-backed stack instead of recursion.
 // 16 levels covers any realistic FAT32 tree without growing the task stack.
@@ -202,6 +214,19 @@ typedef struct {
     // volatile, -O3 can hoist the read out of the loop or cache it
     // across the vTaskDelay(1), defeating the intended early-exit.
     volatile bool startupDiskFull;
+
+    // #689: set true when a WRITE-mode file create was refused because the
+    // target directory already holds >= SD_CARD_MANAGER_MAX_DIR_FILES files
+    // (FatFs create is O(dir size) and wedges the SD op timeout on very large
+    // directories). Read by SCPI_StartStreaming to surface a precise
+    // "directory too full" error instead of a generic "not ready". Same
+    // volatile / cross-task (SD task pri 5 writer, SCPI pri 7/2 reader)
+    // rationale as startupDiskFull above.
+    volatile bool startupDirFull;
+    // #689: file count of the target directory, counted once per session at the
+    // first file open; added to fileCounter to bound the check without a
+    // per-rotation re-scan.
+    uint32_t dirFileCountAtStart;
 } sd_card_manager_context_t;
 
 sd_card_manager_context_t gSDCardData;
@@ -237,6 +262,52 @@ static int CircularBufferToSDWrite(uint8_t* buf, uint32_t len) {
     // Return length to indicate success - actual write happens in state machine
     // Calling SDCardWrite() here causes duplicate writes!
     return len;
+}
+
+/* #689: count entries in a directory, early-exiting once `cap` is reached so the
+ * O(N) directory scan cost is bounded to ~cap entries regardless of directory
+ * size. Runs in the SD task, which owns the filesystem. "." / ".." are skipped.
+ * Returns min(actualFiles, cap); a return of `cap` means "at least cap". A
+ * missing directory (created lazily on first write) counts as 0. */
+static uint32_t CountDirEntries(const char* dirPath, uint32_t cap) {
+    SYS_FS_HANDLE dh = SYS_FS_DirOpen(dirPath);
+    if (dh == SYS_FS_HANDLE_INVALID) {
+        /* #690 review (Qodo): distinguish "directory doesn't exist yet" (the
+         * normal first-write case → 0 files) from a real FS error. FAIL SAFE on
+         * a real error — return cap so the guard REFUSES the create rather than
+         * fail-open into the very wedge it exists to prevent. */
+        SYS_FS_ERROR e = SYS_FS_Error();
+        if (e == SYS_FS_ERROR_NO_PATH || e == SYS_FS_ERROR_NO_FILE) {
+            return 0;                       // directory absent -> no files
+        }
+        LOG_E("[SD] CountDirEntries: DirOpen('%s') failed err=%d — failing safe (refuse)",
+              dirPath, (int)e);
+        return cap;
+    }
+    uint32_t count = 0;
+    SYS_FS_FSTAT st;
+    memset(&st, 0, sizeof(st));
+    while (count < cap) {
+        if (SYS_FS_DirRead(dh, &st) == SYS_FS_RES_FAILURE) {
+            /* #690: a mid-scan read error means the count is untrustworthy —
+             * fail safe (refuse) rather than proceed on a partial count. Log
+             * SYS_FS_Error() so a real media/FS fault is distinguishable in the
+             * field from a genuinely full directory (both take the refuse path). */
+            LOG_E("[SD] CountDirEntries: DirRead failed at %u err=%d — failing safe",
+                  (unsigned)count, (int)SYS_FS_Error());
+            (void)SYS_FS_DirClose(dh);
+            return cap;
+        }
+        if (st.fname[0] == '\0') {
+            break;                          // end of directory
+        }
+        if (strcmp(st.fname, ".") == 0 || strcmp(st.fname, "..") == 0) {
+            continue;                       // skip dot entries
+        }
+        count++;
+    }
+    (void)SYS_FS_DirClose(dh);
+    return count;
 }
 
 /**
@@ -986,6 +1057,38 @@ void sd_card_manager_ProcessState() {
                 if (gSDCardData.fileCounter == 0) {
                     // First time opening - extract base filename
                     extractBaseFilename(gpSDCardSettings->file);
+                    // #689: count existing files in the target directory once
+                    // (bounded to the guard ceiling) so the check below is cheap
+                    // on every subsequent rotation.
+                    gSDCardData.dirFileCountAtStart = CountDirEntries(
+                        gpSDCardSettings->directory, SD_CARD_MANAGER_MAX_DIR_FILES);
+                }
+
+                // #689 guard: refuse to create a file into a directory that
+                // already holds too many files. FatFs file-create is O(dir size)
+                // and would wedge the SD op timeout on large directories. This
+                // covers BOTH session start (fileCounter==0) and every split
+                // rotation (which re-enters OPEN_FILE with fileCounter++). Clean-
+                // stop to IDLE with startupDirFull set, so SCPI_StartStreaming
+                // reports a precise "directory too full" error rather than a
+                // silent wedge — mirrors the #503 disk-full clean-stop pattern.
+                if ((gSDCardData.dirFileCountAtStart + gSDCardData.fileCounter)
+                        >= SD_CARD_MANAGER_MAX_DIR_FILES) {
+                    LOG_E("[SD] WRITE refused: dir '%s' holds >= %u files — FatFs "
+                          "file-create wedges large directories (#689). Use a "
+                          "larger SD:MAXSize, a different directory, or clear the "
+                          "card.", gpSDCardSettings->directory,
+                          (unsigned)SD_CARD_MANAGER_MAX_DIR_FILES);
+                    gSDCardData.startupDirFull = true;
+                    gSDCardData.lastOperationSuccess = false;
+                    if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
+                        (void)SYS_FS_FileClose(gSDCardData.fileHandle);
+                        gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                    }
+                    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                    xSemaphoreGive(gSDCardData.opCompleteSemaphore);
+                    break;
                 }
 
                 generateFilename(gSDCardData.filePath, sizeof(gSDCardData.filePath),
@@ -1875,13 +1978,18 @@ bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs) {
         return true;  // Operation completed
     } else {
         LOG_E("[SD] WaitForCompletion timeout after %u ms\r\n", timeoutMs);
-        // #589: a card whose reads/LIST work while writes hang or abort is
-        // the bench-proven signature of an SPI-mode-incompatible card (e.g.
-        // A2-class SDXC). Say so — this line is the difference between a
-        // support mystery and a card swap.
-        LOG_E("[SD] card operations hanging while reads work - card may be "
-              "SPI-mode incompatible (A2/SDXC class); try a different card "
-              "(wiki: SD-Card-Compatibility)\r\n");
+        // Reads/LIST work but writes hang has two known causes; name both so the
+        // advisory isn't misleading (bench 2026-07-14 proved the directory case).
+        // #689: creating a file in a directory holding many hundreds of files is
+        //       O(dir size) in FatFs and can exceed this timeout — the common
+        //       cause with small SD:MAXSize + long sessions. The #689 guard now
+        //       refuses before this point, so if you see this, check dir size.
+        // #589: a genuinely SPI-mode-incompatible card (e.g. some A2/SDXC) whose
+        //       writes hang from power-up regardless of directory size.
+        LOG_E("[SD] operations hanging while reads work - likely (a) target "
+              "directory too large (#689: larger SD:MAXSize / clear the card) "
+              "or (b) an SPI-mode-incompatible card (wiki: SD-Card-Compatibility)"
+              "\r\n");
         return false;  // Timeout
     }
 }
@@ -1935,6 +2043,21 @@ void sd_card_manager_ClearStartupDiskFull(void) {
      * is correct, since gating on settings init could leave the
      * flag stuck-true if SCPI ever runs before sd init. */
     gSDCardData.startupDiskFull = false;
+}
+
+bool sd_card_manager_StartupDirFull(void) {
+    /* #689: true iff the most recent WRITE-mode file create was refused
+     * because the target directory already holds >= SD_CARD_MANAGER_MAX_DIR_FILES
+     * files. Read by SCPI_StartStreaming to surface a precise error. Same
+     * single-byte volatile/no-critical-section rationale as StartupDiskFull. */
+    return gSDCardData.startupDirFull;
+}
+
+void sd_card_manager_ClearStartupDirFull(void) {
+    /* #689: SCPI callers clear this synchronously before each new WRITE attempt
+     * (pairs with ClearStartupDiskFull), so the STR:START poll observes only the
+     * current request's outcome and a stale `true` can't reject a later start. */
+    gSDCardData.startupDirFull = false;
 }
 
 bool sd_card_manager_GetCrcResult(uint32_t *crc32, uint64_t *length) {

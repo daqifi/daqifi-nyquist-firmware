@@ -3480,6 +3480,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         // (Qodo /agentic_review pass-1 finding on PR #508: "Stale
         // disk-full short-circuits start".)
         sd_card_manager_ClearStartupDiskFull();
+        sd_card_manager_ClearStartupDirFull();   /* #689 */
 
         pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
         sd_card_manager_UpdateSettings(pSDCardSettings);
@@ -3498,6 +3499,9 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         int readyWait = 0;
         while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
             if (sd_card_manager_StartupDiskFull()) {
+                break;
+            }
+            if (sd_card_manager_StartupDirFull()) {   /* #689: early-exit */
                 break;
             }
             vTaskDelay(pdMS_TO_TICKS(10));
@@ -3532,6 +3536,13 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                     LOG_E("[SD] STR:START refused: disk full (space unknown), floor=%llu B",
                           (unsigned long long)floor);
                 }
+            } else if (sd_card_manager_StartupDirFull()) {
+                /* #689: SD target directory holds too many files — file-create
+                 * would wedge the SD op timeout. Surface the precise cause and
+                 * remedy instead of a generic "not ready". */
+                LOG_E("[SD] STR:START refused: target directory has too many "
+                      "files (#689) — use a larger SD:MAXSize, a different "
+                      "directory, or clear the card");
             } else {
                 LOG_E("SD file not ready after %d ms", readyWait * 10);
             }
@@ -3588,15 +3599,42 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
         // Re-enable SD if it was closed for DMA quiesce
         if (sdLoggingRequested) {
+            /* #690 (adversarial audit): this post-repartition re-open ALSO passes
+             * through the #689 dir-file-cap guard. If the directory reached the cap
+             * between the first open and this re-open (e.g. the first open created
+             * the boundary file, or disk filled), the guard refuses and IsWriteReady
+             * stays false. The OLD code only logged and fell through to enable
+             * streaming with OPER_SD_LOGGING asserted but NO file open — silent
+             * total data loss on an SD-only session. Mirror the first block: clear
+             * the flags, early-exit the poll, and FAIL START with the precise cause
+             * so SD-logging is never falsely asserted. */
+            sd_card_manager_ClearStartupDirFull();
+            sd_card_manager_ClearStartupDiskFull();
             pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
             sd_card_manager_UpdateSettings(pSDCardSettings);
             int readyWait = 0;
             while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
+                if (sd_card_manager_StartupDirFull() || sd_card_manager_StartupDiskFull()) {
+                    break;
+                }
                 vTaskDelay(pdMS_TO_TICKS(10));
                 readyWait++;
             }
             if (!sd_card_manager_IsWriteReady()) {
-                LOG_E("SD file not ready after DMA resize (%d ms)", readyWait * 10);
+                if (sd_card_manager_StartupDirFull()) {
+                    LOG_E("STR:START refused: SD directory too full (#689) after "
+                          "buffer repartition — use a different directory or clear the card\r\n");
+                } else if (sd_card_manager_StartupDiskFull()) {
+                    LOG_E("STR:START refused: SD disk full after buffer repartition\r\n");
+                } else {
+                    LOG_E("SD file not ready after DMA resize (%d ms)\r\n", readyWait * 10);
+                }
+                /* Abort START — never enable streaming with SD logging asserted
+                 * but no file open (would silently drop every sample). */
+                pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                sd_card_manager_UpdateSettings(pSDCardSettings);
+                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+                return SCPI_RES_ERR;
             }
         }
     }

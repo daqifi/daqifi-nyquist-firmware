@@ -240,6 +240,20 @@ extern "C" {
     void sd_card_manager_ClearStartupDiskFull(void);
 
     /**
+     * @brief #689: true if the most recent WRITE attempt was refused because
+     *        the target directory already holds >= SD_CARD_MANAGER_MAX_DIR_FILES
+     *        files (FatFs file-create is O(dir size) and wedges the SD op
+     *        timeout on very large directories). Read by SCPI_StartStreaming to
+     *        surface a precise "directory too full" error. Cleared on every
+     *        subsequent WRITE attempt.
+     */
+    bool sd_card_manager_StartupDirFull(void);
+
+    /** @brief #689: synchronously clear the directory-full flag before a new
+     *         WRITE attempt (pairs with sd_card_manager_ClearStartupDiskFull). */
+    void sd_card_manager_ClearStartupDirFull(void);
+
+    /**
      * @brief Checks if the SD card manager is busy with an active operation.
      *
      * This should be called before starting any new SD operation to prevent
