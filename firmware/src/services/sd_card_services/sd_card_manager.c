@@ -290,9 +290,11 @@ static uint32_t CountDirEntries(const char* dirPath, uint32_t cap) {
     while (count < cap) {
         if (SYS_FS_DirRead(dh, &st) == SYS_FS_RES_FAILURE) {
             /* #690: a mid-scan read error means the count is untrustworthy —
-             * fail safe (refuse) rather than proceed on a partial count. */
-            LOG_E("[SD] CountDirEntries: DirRead failed at %u — failing safe",
-                  (unsigned)count);
+             * fail safe (refuse) rather than proceed on a partial count. Log
+             * SYS_FS_Error() so a real media/FS fault is distinguishable in the
+             * field from a genuinely full directory (both take the refuse path). */
+            LOG_E("[SD] CountDirEntries: DirRead failed at %u err=%d — failing safe",
+                  (unsigned)count, (int)SYS_FS_Error());
             (void)SYS_FS_DirClose(dh);
             return cap;
         }
