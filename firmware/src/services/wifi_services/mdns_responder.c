@@ -320,6 +320,16 @@ bool mdns_responder_Start(const mdns_identity_t *id) {
     copy_str(gMdns.fw, sizeof(gMdns.fw), id->fwRev);
     copy_str(gMdns.hw, sizeof(gMdns.hw), id->hwRev);
     copy_str(gMdns.friendly, sizeof(gMdns.friendly), id->friendlyName);
+    /* #345 review (Qodo): the caller's identity strings are transient
+     * (wifi_manager passes stack locals). We copied them into owned buffers
+     * above; repoint gMdns.id's string members at those buffers so no dangling
+     * caller pointer is ever retained — satisfies the header contract and
+     * makes any future gMdns.id.<str> read safe. */
+    gMdns.id.serialNumber = gMdns.sn;
+    gMdns.id.partNumber   = gMdns.pn;
+    gMdns.id.fwRev        = gMdns.fw;
+    gMdns.id.hwRev        = gMdns.hw;
+    gMdns.id.friendlyName = gMdns.friendly;
 
     /* Derived names from the low 2 MAC bytes: host "daqifi-95a7.local",
      * instance "DAQiFi-95A7" (RFC 6763 human-readable instance). */
@@ -341,8 +351,18 @@ bool mdns_responder_Start(const mdns_identity_t *id) {
     addr.sin_port = _htons(MDNS_PORT);
     addr.sin_addr.s_addr = 0;             /* INADDR_ANY */
     /* Join happens after SOCKET_MSG_BIND completes (setsockopt requires a
-     * bound socket); recvfrom is armed then too. */
-    bind(gMdns.sock, (struct sockaddr *)&addr, sizeof(addr));
+     * bound socket); recvfrom is armed then too. #345 review (Qodo): check
+     * bind()'s SYNCHRONOUS return — WINC bind() fails synchronously when the
+     * request can't be queued to the chip (HIF send failure), and then
+     * SOCKET_MSG_BIND never arrives, so we'd be stuck "active" on an unbound
+     * socket. Mirror wifi_tcp_server's bindRc cleanup (PR #477). */
+    int8_t bindRc = bind(gMdns.sock, (struct sockaddr *)&addr, sizeof(addr));
+    if (bindRc != SOCK_ERR_NO_ERROR) {
+        LOG_E("[mDNS] bind() failed to queue: sock=%d rc=%d", gMdns.sock, (int)bindRc);
+        shutdown(gMdns.sock);
+        gMdns.sock = -1;
+        return false;
+    }
     gMdns.active = true;
     LOG_I("[mDNS] starting: %s on %s", gMdns.instanceFqdn, gMdns.hostFqdn);
     return true;
