@@ -192,6 +192,14 @@ scpi_result_t SCPI_LANFwUpdate(scpi_t * context);
  */
 scpi_result_t SCPI_LANGetChipInfo(scpi_t * context);
 /**
+ * SCPI Callback: mDNS responder diagnostics (#58). Returns a JSON snapshot of
+ * the responder's receive/answer counters + self-heal state so a wedge is
+ * observable on-device (SYST:COMM:LAN:MDNS?).
+ * @param context
+ * @return SCPI_RES_OK on success, SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANMdnsDiagGet(scpi_t * context);
+/**
  * SCPI Callback: Enable/disable automatic WiFi power-save (#29).
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */

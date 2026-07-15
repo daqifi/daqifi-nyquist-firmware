@@ -34,6 +34,22 @@ extern "C" {
 /** The TCP service port advertised in the SRV record (SCPI TCP console). */
 #define MDNS_SERVICE_PORT   9760u
 
+/** On-device diagnostics snapshot (#58). Lets `SYST:COMM:LAN:MDNS?` report
+ *  whether the responder is still receiving/answering queries — independent of
+ *  host-side mDNS tooling, which is unreliable on multi-homed test hosts. */
+typedef struct {
+    bool     active;        /**< responder owns a live socket */
+    bool     recvArmed;     /**< a recvfrom is currently armed (false = deaf) */
+    uint32_t rxCount;       /**< inbound datagrams delivered to the responder */
+    uint32_t matchCount;    /**< queries that matched our service/host */
+    uint32_t respCount;     /**< responses sent */
+    uint32_t armFailCount;  /**< recvfrom re-arm failures (the wedge signal) */
+    uint32_t healCount;     /**< self-heal socket re-opens performed */
+    int8_t   lastArmRc;     /**< rc of the most recent recvfrom re-arm */
+    char     instance[64];  /**< advertised instance FQDN */
+    char     host[24];      /**< advertised host FQDN */
+} mdns_diag_t;
+
 /** Runtime identity + TXT metadata for the advertised service. Strings are
  *  copied into the responder at Start; caller-owned buffers need not persist. */
 typedef struct {
@@ -87,6 +103,21 @@ bool mdns_responder_OwnsSocket(SOCKET sock);
  * @param sock the socket, @param msgType SOCKET_MSG_*, @param pvMsg WINC payload.
  */
 void mdns_responder_HandleSocketEvent(SOCKET sock, uint8_t msgType, void *pvMsg);
+
+/**
+ * Periodic self-heal (#58). Call from WifiTask's ProcessState loop (same
+ * context that Start/Stop already run in — NOT the WINC callback context, so
+ * no new HIF re-entrancy hazard). If the responder is active but its recvfrom
+ * re-arm has failed (it would otherwise be permanently deaf while still
+ * "active" — the observed long-run silence), this re-opens the socket using
+ * the stored identity so it recovers. Rate-limited internally; a no-op when
+ * healthy or inactive. Safe to call every iteration.
+ */
+void mdns_responder_ServiceHealth(void);
+
+/** Copy the current diagnostics snapshot (#58). Never fails; zeros @p out
+ *  when the responder is inactive. */
+void mdns_responder_GetDiag(mdns_diag_t *out);
 
 #ifdef __cplusplus
 }

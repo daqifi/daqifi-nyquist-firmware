@@ -47,6 +47,11 @@
 #define MDNS_TX_BUF_SIZE    384u
 #define MDNS_NAME_MAX       160u
 
+/* Self-heal cooldown: after a re-open attempt, skip this many ServiceHealth()
+ * calls before trying again, so a persistently-failing socket can't thrash the
+ * WINC with socket()/bind() every WifiTask iteration (~5 ms). 200 ≈ 1 s. */
+#define MDNS_HEAL_COOLDOWN_ITERS   200u
+
 typedef struct {
     SOCKET   sock;
     bool     active;
@@ -60,9 +65,22 @@ typedef struct {
     char instanceFqdn[64];   /* "<instance>._daqifi._tcp.local" */
     char hostFqdn[24];       /* "daqifi-xxxx.local"             */
     uint8_t rxBuf[MDNS_RX_BUF_SIZE];
+    /* ---- #58 diagnostics + self-heal ---- */
+    bool     recvArmed;      /* a recvfrom is currently outstanding */
+    bool     needsReopen;    /* a recv re-arm failed -> ServiceHealth must recover */
+    uint16_t healCooldown;   /* ServiceHealth iterations to skip before next re-open */
+    uint32_t rxCount;
+    uint32_t matchCount;
+    uint32_t respCount;
+    uint32_t armFailCount;
+    uint32_t healCount;
+    int8_t   lastArmRc;
 } mdns_state_t;
 
 static mdns_state_t gMdns = { .sock = -1, .active = false };
+
+/* Forward decl: shared socket open+bind used by Start and the self-heal. */
+static bool mdns_open_socket(void);
 
 /* ----- small wire-write helpers (network / big-endian) ------------------- */
 
@@ -269,20 +287,40 @@ static bool query_matches(const uint8_t *rx, size_t len) {
 
 /* ----- socket lifecycle -------------------------------------------------- */
 
+/* Arm one recvfrom. #58: the return was previously ignored — if it fails
+ * synchronously (WINC HIF queue full under heavy streaming load), no further
+ * SOCKET_MSG_RECVFROM ever arrives and the responder goes permanently deaf
+ * while still "active" and associated. Capture the rc, mark the socket
+ * un-armed, and flag needsReopen so ServiceHealth() (WifiTask) recovers it. */
 static void mdns_arm_recv(void) {
-    if (gMdns.sock >= 0) {
-        recvfrom(gMdns.sock, gMdns.rxBuf, sizeof(gMdns.rxBuf), 0);
+    if (gMdns.sock < 0) {
+        gMdns.recvArmed = false;
+        return;
+    }
+    int8_t rc = recvfrom(gMdns.sock, gMdns.rxBuf, sizeof(gMdns.rxBuf), 0);
+    gMdns.lastArmRc = rc;
+    if (rc == SOCK_ERR_NO_ERROR) {
+        gMdns.recvArmed = true;
+    } else {
+        gMdns.recvArmed = false;
+        gMdns.needsReopen = true;
+        gMdns.armFailCount++;
+        /* Static string only — LOG_E_ONCE's ISR branch passes fmt with no args.
+         * The rc is in gMdns.lastArmRc, reported by SYST:COMM:LAN:MDNS?. */
+        LOG_E_ONCE(LOG_ONCE_MDNS_ARM_FAIL,
+                   "[mDNS] recvfrom re-arm failed - self-heal will re-open (see MDNS? ArmFail/LastArmRc)");
     }
 }
 
-static void mdns_send_response(void) {
+/* Returns true if a datagram was handed to sendto() (for respCount). */
+static bool mdns_send_response(void) {
     if (gMdns.id.ipAddr == 0u) {
-        return;                           /* no DHCP lease yet — stay silent */
+        return false;                     /* no DHCP lease yet — stay silent */
     }
     uint8_t resp[MDNS_TX_BUF_SIZE];       /* stack (WINC task) — not BSS */
     size_t n = build_response(resp);
     if (n == 0u || n > SOCKET_BUFFER_MAX_LENGTH) {
-        return;
+        return false;
     }
     struct sockaddr_in dst;
     memset(&dst, 0, sizeof(dst));
@@ -291,6 +329,7 @@ static void mdns_send_response(void) {
     dst.sin_addr.s_addr = _htonl(MDNS_MCAST_ADDR_HOST);
     sendto(gMdns.sock, resp, (uint16_t)n, 0,
            (struct sockaddr *)&dst, sizeof(dst));
+    return true;
 }
 
 static void copy_str(char *dst, size_t dstSize, const char *src) {
@@ -338,10 +377,38 @@ bool mdns_responder_Start(const mdns_identity_t *id) {
     snprintf(gMdns.instanceFqdn, sizeof(gMdns.instanceFqdn),
              "DAQiFi-%02X%02X.%s", a, b, MDNS_SERVICE_TYPE);
 
+    /* #58: fresh session — reset diagnostics counters (self-heals, which call
+     * mdns_open_socket() directly, deliberately preserve them). */
+    gMdns.rxCount = 0u;
+    gMdns.matchCount = 0u;
+    gMdns.respCount = 0u;
+    gMdns.armFailCount = 0u;
+    gMdns.healCount = 0u;
+    gMdns.lastArmRc = 0;
+    gMdns.healCooldown = 0u;
+    gMdns.needsReopen = false;
+
+    if (!mdns_open_socket()) {
+        /* Initial open failed to queue — let ServiceHealth() retry it from the
+         * WifiTask context rather than staying silent until the next reconnect. */
+        gMdns.needsReopen = true;
+        return false;
+    }
+    LOG_I("[mDNS] starting: %s on %s", gMdns.instanceFqdn, gMdns.hostFqdn);
+    return true;
+}
+
+/* Open + bind the UDP socket using the already-stored gMdns identity. Shared
+ * by Start (first open) and ServiceHealth (self-heal re-open). On success the
+ * socket is bound-pending; SOCKET_MSG_BIND then joins the group + arms recv.
+ * Leaves gMdns.active/sock consistent on every path. */
+static bool mdns_open_socket(void) {
+    gMdns.recvArmed = false;
     gMdns.sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (gMdns.sock < 0) {
         LOG_E("[mDNS] socket() failed: %d", gMdns.sock);
         gMdns.sock = -1;
+        gMdns.active = false;
         return false;
     }
 
@@ -361,14 +428,17 @@ bool mdns_responder_Start(const mdns_identity_t *id) {
         LOG_E("[mDNS] bind() failed to queue: sock=%d rc=%d", gMdns.sock, (int)bindRc);
         (void)shutdown(gMdns.sock);  /* best-effort cleanup — rc intentionally ignored */
         gMdns.sock = -1;
+        gMdns.active = false;
         return false;
     }
     gMdns.active = true;
-    LOG_I("[mDNS] starting: %s on %s", gMdns.instanceFqdn, gMdns.hostFqdn);
     return true;
 }
 
-void mdns_responder_Stop(void) {
+/* Drop the multicast group + close the socket, leaving sock/active/recvArmed
+ * consistent. Does NOT touch needsReopen — used by BOTH the public Stop (real
+ * teardown) and the self-heal re-open, which manage needsReopen themselves. */
+static void mdns_close_socket(void) {
     if (gMdns.sock >= 0) {
         uint32_t grp = _htonl(MDNS_MCAST_ADDR_HOST);
         setsockopt(gMdns.sock, SOL_SOCKET, IP_DROP_MEMBERSHIP, &grp, sizeof(grp));
@@ -376,6 +446,54 @@ void mdns_responder_Stop(void) {
     }
     gMdns.sock = -1;
     gMdns.active = false;
+    gMdns.recvArmed = false;
+}
+
+void mdns_responder_Stop(void) {
+    /* Real teardown (STA disconnect / AP entry): clear the heal request so
+     * ServiceHealth() won't resurrect the socket after we intentionally close. */
+    gMdns.needsReopen = false;
+    mdns_close_socket();
+}
+
+void mdns_responder_ServiceHealth(void) {
+    /* Rate-limit re-open attempts so a persistently-failing socket can't thrash
+     * the WINC every WifiTask iteration. */
+    if (gMdns.healCooldown > 0u) {
+        gMdns.healCooldown--;
+        return;
+    }
+    if (!gMdns.needsReopen) {
+        return;                           /* healthy (or intentionally stopped) */
+    }
+    /* A recvfrom re-arm (or the initial open) failed -> the responder is deaf
+     * while the device stays associated. Re-open from this WifiTask context —
+     * the same context Start/Stop already run in, so no new HIF re-entrancy
+     * hazard vs. re-arming recvfrom directly from here. */
+    gMdns.healCooldown = MDNS_HEAL_COOLDOWN_ITERS;
+    mdns_close_socket();
+    if (mdns_open_socket()) {
+        gMdns.needsReopen = false;        /* SOCKET_MSG_BIND will re-arm recv */
+        gMdns.healCount++;
+    }
+    /* else: open still failing -> needsReopen stays set, retried after cooldown */
+}
+
+void mdns_responder_GetDiag(mdns_diag_t *out) {
+    if (out == NULL) {
+        return;
+    }
+    memset(out, 0, sizeof(*out));
+    out->active       = gMdns.active;
+    out->recvArmed    = gMdns.recvArmed;
+    out->rxCount      = gMdns.rxCount;
+    out->matchCount   = gMdns.matchCount;
+    out->respCount    = gMdns.respCount;
+    out->armFailCount = gMdns.armFailCount;
+    out->healCount    = gMdns.healCount;
+    out->lastArmRc    = gMdns.lastArmRc;
+    copy_str(out->instance, sizeof(out->instance), gMdns.instanceFqdn);
+    copy_str(out->host, sizeof(out->host), gMdns.hostFqdn);
 }
 
 void mdns_responder_UpdateIp(uint32_t ipAddrNetworkOrder) {
@@ -411,14 +529,18 @@ void mdns_responder_HandleSocketEvent(SOCKET sock, uint8_t msgType, void *pvMsg)
     case SOCKET_MSG_RECVFROM: {
         tstrSocketRecvMsg *pRx = (tstrSocketRecvMsg *)pvMsg;
         if (pRx != NULL && pRx->pu8Buffer != NULL && pRx->s16BufferSize > 0) {
+            gMdns.rxCount++;              /* #58 diag: a datagram was delivered */
             /* Use the WINC event's own buffer pointer (== gMdns.rxBuf, the
              * buffer we armed recvfrom with) rather than the global — more
              * idiomatic and robust to any future buffer indirection. */
             if (query_matches(pRx->pu8Buffer, (size_t)pRx->s16BufferSize)) {
-                mdns_send_response();
+                gMdns.matchCount++;
+                if (mdns_send_response()) {
+                    gMdns.respCount++;
+                }
             }
         }
-        mdns_arm_recv();                  /* always re-arm */
+        mdns_arm_recv();                  /* always re-arm (return-checked, #58) */
         break;
     }
     case SOCKET_MSG_SENDTO:
