@@ -63,6 +63,15 @@
  * WINC with socket()/bind() every WifiTask iteration (~5 ms). 200 ≈ 1 s. */
 #define MDNS_HEAL_COOLDOWN_ITERS   200u
 
+/* Bind-pending watchdog (#692 audit): if the socket opened (active) but the
+ * SOCKET_MSG_BIND completion never arrives to arm the recv — a silently dropped
+ * async completion, which produces no explicit failure event — force a reopen
+ * after this many ServiceHealth iterations so the "active but deaf" wedge is
+ * covered on the no-signal path too. Generous (~5 s at the ~5 ms ProcessState
+ * cadence; longer under streaming load) so a merely-slow bind never false-fires
+ * — a normal bind arms the recv in well under 1 s. */
+#define MDNS_BIND_PENDING_MAX_ITERS 1000u
+
 typedef struct {
     SOCKET   sock;
     bool     active;
@@ -84,6 +93,8 @@ typedef struct {
     bool     recvArmed;      /* a recvfrom is currently outstanding */
     bool     needsReopen;    /* a recv re-arm failed -> ServiceHealth must recover */
     uint16_t healCooldown;   /* ServiceHealth iterations to skip before next re-open */
+    uint16_t bindPendingTicks; /* ServiceHealth iterations spent active-but-not-armed
+                                * (bind-completion watchdog, #692 audit) */
     uint32_t rxCount;
     uint32_t matchCount;
     uint32_t respCount;
@@ -431,6 +442,7 @@ bool mdns_responder_Start(const mdns_identity_t *id) {
  * Leaves gMdns.active/sock consistent on every path. */
 static bool mdns_open_socket(void) {
     gMdns.recvArmed = false;
+    gMdns.bindPendingTicks = 0u;      /* fresh bind attempt — restart the watchdog */
     gMdns.sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (gMdns.sock < 0) {
         LOG_E("[mDNS] socket() failed: %d", gMdns.sock);
@@ -492,6 +504,18 @@ void mdns_responder_ServiceHealth(void) {
         return;                           /* never started, or intentionally stopped:
                                            * ignore any stale needsReopen set by a
                                            * WINC callback that raced Stop (#692). */
+    }
+    /* Bind-completion watchdog (#692 audit): a socket that opened (active) but
+     * never armed its recv means the SOCKET_MSG_BIND completion was dropped by
+     * the WINC without an explicit failure event — no needsReopen signal is
+     * produced. Force a reopen after the grace period so the "active but deaf"
+     * wedge is recovered on this no-signal path too. Reset once armed. */
+    if (gMdns.active && !gMdns.recvArmed && !gMdns.needsReopen) {
+        if (++gMdns.bindPendingTicks >= MDNS_BIND_PENDING_MAX_ITERS) {
+            gMdns.needsReopen = true;     /* stuck bind -> fall through to reopen */
+        }
+    } else {
+        gMdns.bindPendingTicks = 0u;
     }
     /* Rate-limit re-open attempts so a persistently-failing socket can't thrash
      * the WINC every WifiTask iteration. */
