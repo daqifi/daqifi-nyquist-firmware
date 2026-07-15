@@ -346,13 +346,22 @@ static bool mdns_send_response(void) {
 }
 
 static void copy_str(char *dst, size_t dstSize, const char *src) {
+    if (dstSize == 0u) {
+        return;
+    }
     if (src == NULL) {
         dst[0] = '\0';
         return;
     }
-    size_t n = strlen(src);
-    if (n >= dstSize) {
-        n = dstSize - 1u;
+    /* #692: bound the scan to dstSize — never run strlen() past the source
+     * buffer. GetDiag may copy gMdns.instanceFqdn/hostFqdn while Start is
+     * mid-snprintf on them (higher-prio USB SCPI preempts WifiTask), so the
+     * source can be transiently unterminated; an unbounded strlen would read
+     * past the array (UB). dst and the FQDN sources are the same size, so this
+     * also truncates identity strings exactly as before. */
+    size_t n = 0u;
+    while (n < (dstSize - 1u) && src[n] != '\0') {
+        n++;
     }
     memcpy(dst, src, n);
     dst[n] = '\0';
@@ -547,8 +556,12 @@ void mdns_responder_HandleSocketEvent(SOCKET sock, uint8_t msgType, void *pvMsg)
              * ServiceHealth() recovers it, same as a recvfrom re-arm failure. */
             LOG_E("[mDNS] bind failed — scheduling self-heal retry");
             mdns_close_socket();
+            /* Set ONLY needsReopen (a single atomic store), exactly like the
+             * recvfrom re-arm failure path: ServiceHealth() does a prompt first
+             * re-open and sets the cooldown itself for subsequent retries.
+             * Setting healCooldown here too was a second, non-atomic store that
+             * raced ServiceHealth's cooldown check (Qodo #692 pass 3). */
             gMdns.needsReopen = true;
-            gMdns.healCooldown = MDNS_HEAL_COOLDOWN_ITERS;
         }
         break;
     }
