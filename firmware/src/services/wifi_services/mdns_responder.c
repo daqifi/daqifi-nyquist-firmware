@@ -547,18 +547,23 @@ void mdns_responder_GetDiag(mdns_diag_t *out) {
     /* #692: coherent point-in-time snapshot — the counters are updated from the
      * WINC-callback and WifiTask contexts, so take them together under a short
      * critical section (infrequent SCPI-path query; the string copies are of
-     * post-Start-constant names). */
+     * post-Start-constant names). Honor the header contract: when the responder
+     * is INACTIVE the snapshot stays zeroed (the memset above) rather than
+     * leaking stale prior-session counters/names (#692 audit). The deaf-wedge
+     * state is still active=true, so this doesn't hide it. */
     taskENTER_CRITICAL();
-    out->active       = gMdns.active;
-    out->recvArmed    = gMdns.recvArmed;
-    out->rxCount      = gMdns.rxCount;
-    out->matchCount   = gMdns.matchCount;
-    out->respCount    = gMdns.respCount;
-    out->armFailCount = gMdns.armFailCount;
-    out->healCount    = gMdns.healCount;
-    out->lastArmRc    = gMdns.lastArmRc;
-    copy_str(out->instance, sizeof(out->instance), gMdns.instanceFqdn);
-    copy_str(out->host, sizeof(out->host), gMdns.hostFqdn);
+    out->active = gMdns.active;
+    if (gMdns.active) {
+        out->recvArmed    = gMdns.recvArmed;
+        out->rxCount      = gMdns.rxCount;
+        out->matchCount   = gMdns.matchCount;
+        out->respCount    = gMdns.respCount;
+        out->armFailCount = gMdns.armFailCount;
+        out->healCount    = gMdns.healCount;
+        out->lastArmRc    = gMdns.lastArmRc;
+        copy_str(out->instance, sizeof(out->instance), gMdns.instanceFqdn);
+        copy_str(out->host, sizeof(out->host), gMdns.hostFqdn);
+    }
     taskEXIT_CRITICAL();
 }
 
