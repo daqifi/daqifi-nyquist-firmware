@@ -359,7 +359,7 @@ bool mdns_responder_Start(const mdns_identity_t *id) {
     int8_t bindRc = bind(gMdns.sock, (struct sockaddr *)&addr, sizeof(addr));
     if (bindRc != SOCK_ERR_NO_ERROR) {
         LOG_E("[mDNS] bind() failed to queue: sock=%d rc=%d", gMdns.sock, (int)bindRc);
-        shutdown(gMdns.sock);
+        (void)shutdown(gMdns.sock);  /* best-effort cleanup — rc intentionally ignored */
         gMdns.sock = -1;
         return false;
     }
@@ -372,7 +372,7 @@ void mdns_responder_Stop(void) {
     if (gMdns.sock >= 0) {
         uint32_t grp = _htonl(MDNS_MCAST_ADDR_HOST);
         setsockopt(gMdns.sock, SOL_SOCKET, IP_DROP_MEMBERSHIP, &grp, sizeof(grp));
-        shutdown(gMdns.sock);
+        (void)shutdown(gMdns.sock);  /* best-effort cleanup — rc intentionally ignored */
     }
     gMdns.sock = -1;
     gMdns.active = false;
