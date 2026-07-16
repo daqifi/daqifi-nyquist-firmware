@@ -421,7 +421,13 @@ static uint16_t uart_ReadLocked(uint8_t* out, uint16_t maxLen) {
     while (n < maxLen && (*(u->sta) & _U1STA_URXDA_MASK) != 0u) {
         out[n++] = (uint8_t)(*(u->rxreg) & 0xFFu);
     }
-    if ((*(u->sta) & _U1STA_OERR_MASK) != 0u) {
+    /* Clear OERR ONLY once the FIFO is fully drained (URXDA clear). Clearing it
+     * flushes the FIFO, so a short read (maxLen hit with bytes still buffered)
+     * must leave OERR set and finish draining on the next READ?; otherwise we'd
+     * discard the recoverable bytes. Clear + count the overrun exactly once,
+     * when the FIFO is empty — that also un-stalls the shifter (erratum #8). */
+    if ((*(u->sta) & _U1STA_OERR_MASK) != 0u &&
+        (*(u->sta) & _U1STA_URXDA_MASK) == 0u) {
         gOverflow++;
         *(u->staClr) = _U1STA_OERR_MASK;
     }
