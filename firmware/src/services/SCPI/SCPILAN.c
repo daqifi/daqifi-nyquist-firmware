@@ -25,6 +25,7 @@
 #include "services/SCPI/SCPIInterface.h"              // #58: shared response buffer
 #include "HAL/UserSpi/UserSpi.h"                      // #665: user SPI1 master
 #include "HAL/UserUart/UserUart.h"                    // #16: user UART
+#include "HAL/UserI2c/UserI2c.h"                      // #15: user I2C hub
 #include "services/sd_card_services/sd_card_manager.h"
 
 
@@ -123,7 +124,7 @@ static scpi_result_t SCPI_LANStringGetImpl(scpi_t * context, const char* string)
 }
 
 static scpi_result_t SCPI_LANStringSetImpl(scpi_t * context, char* string, size_t maxLen) {
-    // Parse straight into the caller's buffer — no intermediate 128 B stack
+    // Parse straight into the caller's buffer -- no intermediate 128 B stack
     // local. (#355)
     //
     // API contract shared with the other SCPI_SafeParamString callers in
@@ -612,7 +613,7 @@ scpi_result_t SCPI_LANPasskeyGet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
-    // Gate on WiFi-ready FIRST, same as ADDRess?/SSIDStr? — without this, BSSID?
+    // Gate on WiFi-ready FIRST, same as ADDRess?/SSIDStr? -- without this, BSSID?
     // would return a stale cached MAC after the link is disabled/torn down (the
     // wifi_manager precheck alone wasn't cleared on the ENA 0 + APPLY path).
     if (!SCPI_LANRequireWiFiReady(context)) return SCPI_RES_ERR;
@@ -620,10 +621,10 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
     // Strictly non-blocking (safe on app_WifiTask via TCP-SCPI). The cache is
     // primed at association, so this returns the AP MAC immediately.
     if (!wifi_manager_GetBSSID(bssid)) {
-        // GetBSSID returns false for two distinct reasons — report each accurately
+        // GetBSSID returns false for two distinct reasons -- report each accurately
         // so the client knows whether retrying helps:
-        //   - not connected as STA (AP mode / not associated) → retry won't help
-        //   - connected but the STA_CONNECTED prefetch hasn't published yet → retry
+        //   - not connected as STA (AP mode / not associated) -> retry won't help
+        //   - connected but the STA_CONNECTED prefetch hasn't published yet -> retry
         if (wifi_manager_GetWiFiStatus() != WIFI_STATUS_CONNECTED) {
             SCPI_ExecutionError(context, "SYST:COMM:LAN:BSSID?: not connected as STA");
         } else {
@@ -635,9 +636,9 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
     snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
              bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
     // A MAC (colon-separated hex) is arbitrary string data, not a SCPI keyword
-    // mnemonic — return it as a quoted SCPI string (Qodo). BSSID? is new in this
+    // mnemonic -- return it as a quoted SCPI string (Qodo). BSSID? is new in this
     // PR so quoting it correctly costs no client compatibility. (ADDR? above keeps
-    // SCPI_ResultMnemonic intentionally — it ships, and changing its wire format
+    // SCPI_ResultMnemonic intentionally -- it ships, and changing its wire format
     // would break existing clients that parse the bare value.)
     SCPI_ResultText(context, buf);
     return SCPI_RES_OK;
@@ -723,7 +724,7 @@ scpi_result_t SCPI_LANGetChipInfo(scpi_t * context) {
 
 /* #58: mDNS responder diagnostics. Reports whether the responder is still
  * receiving/answering queries (recvArmed + rx/match/resp counters) and how many
- * times the self-heal has re-opened a deaf socket (armFail/heal) — answerable
+ * times the self-heal has re-opened a deaf socket (armFail/heal) -- answerable
  * on-device, independent of host-side mDNS tooling (unreliable on multi-homed
  * hosts). Uses the shared response buffer (JSON can approach 256 B). */
 scpi_result_t SCPI_LANMdnsDiagGet(scpi_t * context) {
@@ -748,7 +749,7 @@ scpi_result_t SCPI_LANMdnsDiagGet(scpi_t * context) {
 }
 
 // =========================================================================
-// User SPI1 master (#665, epic #664) — SYST:COMM:SPI:*
+// User SPI1 master (#665, epic #664) -- SYST:COMM:SPI:*
 // =========================================================================
 
 /* Map a signed SCPI pin argument to a DIO channel or the "none" sentinel.
@@ -759,11 +760,11 @@ static uint8_t spi_ScpiPinToDio(int32_t v) {
 }
 
 /* True if the SCPI line has an unconsumed trailing token after the expected
- * parameters — a real extra parameter (comma-separated: SCPI_Parameter returns
+ * parameters -- a real extra parameter (comma-separated: SCPI_Parameter returns
  * TRUE) or an invalid separator (space-separated: SCPI_Parameter returns FALSE
  * but queues an error). libscpi only flags a trailing token AFTER the callback
  * returns, so every SPI SETTER must call this and bail BEFORE applying any side
- * effect (pin claims, PPS/PMD, clocking, config store) — a rejected command
+ * effect (pin claims, PPS/PMD, clocking, config store) -- a rejected command
  * must not leave hardware or config changed (e.g. `SPI:ENA 1,0` would otherwise
  * leave SPI enabled). Pushes an execution error for the extra-parameter case;
  * SCPI_Parameter already queued one for the invalid-separator case. */
@@ -851,7 +852,7 @@ scpi_result_t SCPI_SpiConfigGet(scpi_t * context) {
              (int)cfg.mode, (int)cfg.lsbFirst,
              (int)UserSpi_IsEnabled(), (unsigned long)UserSpi_GetActualBaud());
     /* SCPI_ResultMnemonic emits the JSON raw (no SCPI string-quoting), so
-     * clients get parseable JSON — matching the mDNS diagnostic convention. */
+     * clients get parseable JSON -- matching the mDNS diagnostic convention. */
     SCPI_ResultMnemonic(context, buf);
     SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
@@ -921,7 +922,7 @@ scpi_result_t SCPI_SpiTransfer(scpi_t * context) {
     if (!SCPI_ParamCharacters(context, &p, &len, TRUE)) {
         return SCPI_RES_ERR;
     }
-    /* Exactly one (quoted) hex arg — reject any trailing token (comma- OR
+    /* Exactly one (quoted) hex arg -- reject any trailing token (comma- OR
      * space-separated) BEFORE we clock anything, else a truncated frame reaches
      * the slave before the error surfaces. The documented form is one quoted
      * token, e.g. "9F0000" (spi_ParseHex tolerates commas inside it). */
@@ -969,7 +970,7 @@ scpi_result_t SCPI_SpiTransfer(scpi_t * context) {
 }
 
 // *****************************************************************************
-// Section: user UART (#16, epic #664) — SYST:COMM:UART:*
+// Section: user UART (#16, epic #664) -- SYST:COMM:UART:*
 //
 // Reuses spi_ScpiPinToDio (-1 -> 0xFF, same sentinel) and spi_RejectTrailingParam.
 // *****************************************************************************
@@ -1013,7 +1014,7 @@ scpi_result_t SCPI_UartConfigSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
     /* Validate data/parity/stop on the FULL int32 value, before the uint8_t
-     * narrowing below — else an out-of-range arg (e.g. parity 258) truncates
+     * narrowing below -- else an out-of-range arg (e.g. parity 258) truncates
      * into a legal value (258&0xFF=2=ODD) and slips past uart_ConfigureLocked's
      * range check, silently applying the wrong setting (the #678 alias class). */
     if (data != 8 || parity < 0 || parity > 2 || (stop != 1 && stop != 2)) {
@@ -1128,7 +1129,7 @@ scpi_result_t SCPI_UartWrite(scpi_t * context) {
      * UserUart_Write can block for seconds at low baud (yielding), and holding
      * the global scratch mutex across it would stall every OTHER SCPI command
      * on both USB and WiFi. 128 bytes stays well under the WifiTask stack budget
-     * (the ">=256B must use the shared buffer" rule) — split larger frames. */
+     * (the ">=256B must use the shared buffer" rule) -- split larger frames. */
     uint8_t tx[128];
     uint16_t n = 0;
     if (!spi_ParseHex(p, len, tx, sizeof(tx), &n)) {
@@ -1181,6 +1182,184 @@ scpi_result_t SCPI_UartCount(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+// *****************************************************************************
+// Section: user I2C (#15, epic #664) -- SYST:COMM:I2C:*
+//
+// PCA9516A hub on I2C2 (RA2/RA3); segments land on DIO8-11. Reuses
+// spi_ParseHex / spi_RejectTrailingParam and the shared response buffer.
+// *****************************************************************************
+
+scpi_result_t SCPI_I2cEnableSet(scpi_t * context) {
+    int32_t en;
+    if (!SCPI_ParamInt32(context, &en, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;
+    }
+    const char* err = NULL;
+    bool ok = (en != 0) ? UserI2c_Enable(&err) : UserI2c_Disable();
+    if (!ok) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "I2C enable failed");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_I2cEnableGet(scpi_t * context) {
+    SCPI_ResultInt32(context, UserI2c_IsEnabled() ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_I2cSegmentSet(scpi_t * context) {
+    int32_t seg, on;
+    if (!SCPI_ParamInt32(context, &seg, TRUE) ||
+        !SCPI_ParamInt32(context, &on, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;
+    }
+    if (seg < 1 || seg > (int32_t)USER_I2C_SEGMENT_COUNT) {
+        SCPI_ExecutionError(context, "I2C segment must be 1 or 2");
+        return SCPI_RES_ERR;
+    }
+    const char* err = NULL;
+    if (!UserI2c_SetSegment((uint8_t)seg, on != 0, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "I2C segment set failed");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_I2cSegmentGet(scpi_t * context) {
+    int32_t seg;
+    if (!SCPI_ParamInt32(context, &seg, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;
+    }
+    bool on = false;
+    if (seg < 1 || seg > (int32_t)USER_I2C_SEGMENT_COUNT ||
+        !UserI2c_GetSegment((uint8_t)seg, &on)) {
+        SCPI_ExecutionError(context, "I2C segment must be 1 or 2");
+        return SCPI_RES_ERR;
+    }
+    SCPI_ResultInt32(context, on ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_I2cFreqSet(scpi_t * context) {
+    int32_t hz;
+    if (!SCPI_ParamInt32(context, &hz, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;
+    }
+    if (hz < 0) {
+        SCPI_ExecutionError(context, "I2C frequency must be > 0");
+        return SCPI_RES_ERR;
+    }
+    const char* err = NULL;
+    if (!UserI2c_SetFrequency((uint32_t)hz, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "I2C frequency rejected");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_I2cFreqGet(scpi_t * context) {
+    char *buf = (char *)SCPI_ResponseBuf_Take();
+    if (buf == NULL) { return SCPI_RES_ERR; }
+    snprintf(buf, SCPI_RESPONSE_BUF_SIZE, "{\"Freq\":%lu,\"ActualFreq\":%lu}\n",
+             (unsigned long)UserI2c_GetFrequency(),
+             (unsigned long)UserI2c_GetActualFrequency());
+    SCPI_ResultMnemonic(context, buf);
+    SCPI_ResponseBuf_Give();
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_I2cScan(scpi_t * context) {
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;
+    }
+    if (!UserI2c_IsEnabled()) {
+        SCPI_ExecutionError(context, "I2C not enabled");
+        return SCPI_RES_ERR;
+    }
+    uint8_t *buf = SCPI_ResponseBuf_Take();
+    if (buf == NULL) { return SCPI_RES_ERR; }
+    uint8_t *alist = buf;                          /* [0..127]    */
+    char    *out   = (char *)(buf + 128);          /* [128..2047] */
+    uint8_t n = UserI2c_Scan(alist, USER_I2C_MAX_SCAN_DEVICES);
+    int off = 0;
+    out[0] = '\0';
+    for (uint8_t i = 0; i < n; ++i) {
+        off += snprintf(out + off, (SCPI_RESPONSE_BUF_SIZE - 128) - off,
+                        "%s0x%02X", (i > 0) ? "," : "", (unsigned)alist[i]);
+    }
+    /* Raw comma list (empty if nothing ACKed) -- the client parses it directly. */
+    SCPI_ResultMnemonic(context, out);
+    SCPI_ResponseBuf_Give();
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_I2cTransfer(scpi_t * context) {
+    int32_t addr, nread;
+    const char* wp = NULL;
+    size_t wplen = 0;
+    if (!SCPI_ParamInt32(context, &addr, TRUE) ||
+        !SCPI_ParamCharacters(context, &wp, &wplen, TRUE) ||
+        !SCPI_ParamInt32(context, &nread, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;
+    }
+    if (addr < 0 || addr > 0x7F) {
+        SCPI_ExecutionError(context, "I2C address must be 0..0x7F");
+        return SCPI_RES_ERR;
+    }
+    if (nread < 0 || nread > 256) {
+        SCPI_ExecutionError(context, "I2C nRead must be 0..256");
+        return SCPI_RES_ERR;
+    }
+    if (!UserI2c_IsEnabled()) {
+        SCPI_ExecutionError(context, "I2C not enabled");
+        return SCPI_RES_ERR;
+    }
+    uint8_t *buf = SCPI_ResponseBuf_Take();
+    if (buf == NULL) { return SCPI_RES_ERR; }
+    uint8_t *wbuf = buf;                    /* [0..255]    */
+    uint8_t *rbuf = buf + 256;              /* [256..511]  */
+    char    *out  = (char *)(buf + 512);    /* [512..2047] */
+    uint16_t wn = 0;
+    /* An empty write ("") is a pure read; non-empty must be valid hex. */
+    if (wplen > 0u && !spi_ParseHex(wp, wplen, wbuf, 256u, &wn)) {
+        SCPI_ResponseBuf_Give();
+        SCPI_ExecutionError(context, "I2C:TRAN: bad hex write (even digits, <=256 bytes)");
+        return SCPI_RES_ERR;
+    }
+    const char* err = NULL;
+    if (!UserI2c_Transfer((uint8_t)addr, (wn > 0u) ? wbuf : NULL, wn,
+                          (nread > 0) ? rbuf : NULL, (uint16_t)nread, &err)) {
+        SCPI_ResponseBuf_Give();
+        SCPI_ExecutionError(context, (err != NULL) ? err : "I2C transfer failed");
+        return SCPI_RES_ERR;
+    }
+    static const char hexd[] = "0123456789ABCDEF";
+    for (int32_t i = 0; i < nread; ++i) {
+        out[2 * i]     = hexd[(rbuf[i] >> 4) & 0x0Fu];
+        out[2 * i + 1] = hexd[rbuf[i] & 0x0Fu];
+    }
+    out[2 * nread] = '\0';
+    SCPI_ResultMnemonic(context, out);
+    SCPI_ResponseBuf_Give();
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_LANSettingsSave(scpi_t * context) {
     wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);
@@ -1212,7 +1391,7 @@ scpi_result_t SCPI_LANSettingsLoad(scpi_t * context) {
     }
 
     if (applySettings) {
-        // #425: pass the loaded struct straight to UpdateNetworkSettings —
+        // #425: pass the loaded struct straight to UpdateNetworkSettings --
         // it copies into runtime config under the gate's critical section
         // and fires REINIT.  If the gate rejects (REINIT in flight), runtime
         // stays at the prior values: callers get -200 with no half-applied
@@ -1222,7 +1401,7 @@ scpi_result_t SCPI_LANSettingsLoad(scpi_t * context) {
             return SCPI_RES_ERR;
         }
     } else {
-        // No apply requested — just stage in runtime so callers can inspect /
+        // No apply requested -- just stage in runtime so callers can inspect /
         // edit before a future APPLY.
         memcpy(pRunTimeWifiSettings, &daqifiSettings.settings.wifi, sizeof(wifi_manager_settings_t));
     }
@@ -1248,7 +1427,7 @@ scpi_result_t SCPI_LANSettingsFactoryLoad(scpi_t * context) {
     }
 
     if (applySettings) {
-        // #425: see SCPI_LANSettingsLoad for rationale — gated copy + REINIT.
+        // #425: see SCPI_LANSettingsLoad for rationale -- gated copy + REINIT.
         if (!wifi_manager_UpdateNetworkSettings(&daqifiSettings.settings.wifi)) {
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
@@ -1274,7 +1453,7 @@ scpi_result_t SCPI_LANHostnameGet(scpi_t * context) {
 /**
  * SCPI Callback: Enable/disable automatic WiFi power-save (#29).
  *
- * `SYST:COMM:LAN:PSave <0|1>` — 1 lets the WiFi manager drop the WINC into
+ * `SYST:COMM:LAN:PSave <0|1>` -- 1 lets the WiFi manager drop the WINC into
  * its light auto power-save mode while associated as a STA but idle; 0
  * forces full power at all times.  Runtime-only (not persisted to NVM).
  */
@@ -1321,7 +1500,7 @@ scpi_result_t SCPI_LANIdleTimeoutSet(scpi_t * context) {
     // #676 gate: bound the range. seconds * configTICK_RATE_HZ (1000) is a
     // 32-bit tick multiply, so values >= ~4.29M s silently wrap (and multiples
     // of 2^29 s wrap to exactly 0 = "disabled", inverting the query). Cap at a
-    // generous 24 h — far beyond any real console idle timeout — mirroring the
+    // generous 24 h -- far beyond any real console idle timeout -- mirroring the
     // bounded SCPI_SetTransportGrace setter. 0 = off.
     if (param1 < 0 || param1 > SYST_LAN_IDLE_TIMEOUT_MAX_SEC) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
