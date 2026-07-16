@@ -414,11 +414,17 @@ static bool spi_TransferLocked(const uint8_t* tx, uint8_t* rx, uint16_t len) {
     }
 
     if (!ok) {
-        /* Per-byte timeout (SCK not toggling): drain any partial RX and clear
-         * the overflow flag so the next transfer starts from a clean FIFO. The
-         * drain is bounded — if SPIRBF were stuck set (hardware fault) an
-         * unbounded loop would hang the caller; the RX FIFO holds only a few
-         * bytes, so a small cap is ample. */
+        /* Per-byte timeout (SCK not toggling): reset the module so the next
+         * transfer starts from a clean slate. Toggling ON=0→1 flushes the shift
+         * register and FIFOs if SCK halted mid-byte — otherwise the next
+         * spi_XferByte (which only writes SPI1BUF, it does not re-init) could
+         * clock out residual bits. MSTEN/CKP/CKE/BRG live in SPI1CON/SPI1BRG and
+         * persist across the ON toggle, so no reconfigure is needed. Then clear
+         * the (sticky) overflow flag and bounded-drain any residual RX — bounded
+         * so a stuck SPIRBF from a hardware fault can't hang the caller; the RX
+         * FIFO holds only a few bytes, so a small cap is ample. */
+        SPI1CONCLR = _SPI1CON_ON_MASK;
+        SPI1CONSET = _SPI1CON_ON_MASK;
         SPI1STATCLR = _SPI1STAT_SPIROV_MASK;
         uint32_t drainGuard = 32u;
         while (((SPI1STAT & _SPI1STAT_SPIRBF_MASK) != 0U) && (drainGuard-- > 0U)) {
