@@ -32,7 +32,7 @@ static scpi_result_t SCPI_GPIOSingleDirectionSet(uint8_t id, bool isInput);
  * @param mask A mask where each bit corresponds to the pin with the given id (BIT(1) == PIN(1))
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
-static scpi_result_t SCPI_GPIOMultiDirectionSet(uint32_t mask);
+static scpi_result_t SCPI_GPIOMultiDirectionSet(scpi_t * context, uint32_t mask);
 
 /**
  * Gets the direction of a single GPIO pin
@@ -62,7 +62,7 @@ static scpi_result_t SCPI_GPIOSingleStateSet(uint8_t id, bool value);
  * @param mask A mask where each bit corresponds to the pin with the given id (BIT(1) == PIN(1))
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
-static scpi_result_t SCPI_GPIOMultiStateSet(uint32_t mask);
+static scpi_result_t SCPI_GPIOMultiStateSet(scpi_t * context, uint32_t mask);
 
 /**
  * Gets the value of a single GPIO pin
@@ -133,7 +133,7 @@ scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
 
     if (!SCPI_ParamInt32(context, &param2, FALSE))
     {
-        return SCPI_GPIOMultiDirectionSet((uint32_t)~param1); // Interpret the input as a bit mask (invert because 1=output but we use isInput as the test)
+        return SCPI_GPIOMultiDirectionSet(context, (uint32_t)~param1); // Interpret the input as a bit mask (invert because 1=output but we use isInput as the test)
     }
     else
     {
@@ -197,7 +197,7 @@ scpi_result_t SCPI_GPIOStateSet(scpi_t * context)
 
     if (!SCPI_ParamInt32(context, &param2, FALSE))
     {
-        return SCPI_GPIOMultiStateSet((uint32_t)param1); // Interpret the input as a bit mask
+        return SCPI_GPIOMultiStateSet(context, (uint32_t)param1); // Interpret the input as a bit mask
     }
     else
     {
@@ -431,12 +431,8 @@ static scpi_result_t SCPI_GPIOSingleDirectionSet(uint8_t id, bool isInput)
     {
         return SCPI_RES_ERR;
     }
-    /* Skip probe/peripheral-owned channels — the mask form (DIO:PORT:DIR
-     * <mask>) reaches here without the single-channel ownership guard. */
-    if (DIO_ChannelBlocked(id))
-    {
-        return SCPI_RES_OK;
-    }
+    /* Pure writer: ownership is enforced by both callers (see
+     * SCPI_GPIOSingleStateSet) — a blocked channel never reaches here. */
     pRunTimeDIOChannels->Data[id].IsInput = isInput;
     if (!DIO_WriteStateSingle(id))
     {
@@ -446,24 +442,43 @@ static scpi_result_t SCPI_GPIOSingleDirectionSet(uint8_t id, bool isInput)
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_GPIOMultiDirectionSet(uint32_t mask)
+static scpi_result_t SCPI_GPIOMultiDirectionSet(scpi_t * context, uint32_t mask)
 {
     size_t i = 0;
     scpi_result_t result = SCPI_RES_OK;
-    
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
+    uint32_t blockedMask = 0;
+
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
-    
+
     // Obviously, this breaks down if we have more than 32 channels
-    for (i=0; i<pRunTimeDIOChannels->Size; ++i) 
+    for (i=0; i<pRunTimeDIOChannels->Size; ++i)
     {
+        /* Skip probe/peripheral-owned pins (see SCPI_GPIOMultiStateSet) — never
+         * stomp an owner's direction, and report the skip rather than silently
+         * succeeding. */
+        if (DIO_ChannelBlocked(i))
+        {
+            blockedMask |= (uint32_t)(1u << i);
+            continue;
+        }
         bool isInput = (mask & (1 << i));
         if (SCPI_GPIOSingleDirectionSet(i, isInput) == SCPI_RES_ERR)
         {
             result = SCPI_RES_ERR;
         }
     }
-    
+
+    if (blockedMask != 0)
+    {
+        char msg[72];
+        snprintf(msg, sizeof(msg),
+                 "DIO:DIR mask: skipped owned channels 0x%04X (in use by SPI/probe)",
+                 (unsigned)blockedMask);
+        SCPI_ExecutionError(context, msg);
+        result = SCPI_RES_ERR;
+    }
+
     return result;
 }
 
@@ -519,15 +534,10 @@ static scpi_result_t SCPI_GPIOSingleStateSet(uint8_t id, bool value)
     {
         return SCPI_RES_ERR;
     }
-    /* Skip a channel owned by the probe or a peripheral (SPI/#665, ...). The
-     * mask form (DIO:PORT:STATe <mask>) reaches here WITHOUT the per-channel
-     * ownership guard the single-channel form applies upstream; silently
-     * rewriting an owned CS/data pin's runtime Value would surface as the
-     * wrong level once the owner releases the pin (DIO_RestoreChannel). */
-    if (DIO_ChannelBlocked(id))
-    {
-        return SCPI_RES_OK;
-    }
+    /* Pure writer: ownership is enforced by both callers — the single form
+     * (SCPI_GPIOStateSet) rejects blocked channels upstream and names the
+     * owner; the mask form (SCPI_GPIOMultiStateSet) skips them before calling
+     * here. So a blocked channel never reaches this point. */
     pRunTimeDIOChannels->Data[id].Value = value;
     if (!DIO_WriteStateSingle(id))
     {
@@ -538,24 +548,48 @@ static scpi_result_t SCPI_GPIOSingleStateSet(uint8_t id, bool value)
 }
  
 
-static scpi_result_t SCPI_GPIOMultiStateSet(uint32_t mask)
+static scpi_result_t SCPI_GPIOMultiStateSet(scpi_t * context, uint32_t mask)
 {
     size_t i = 0;
     scpi_result_t result = SCPI_RES_OK;
-    
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
+    uint32_t blockedMask = 0;
+
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
-    
+
     // Obviously, this breaks down if we have more than 32 channels
-    for (i=0; i<pRunTimeDIOChannels->Size; ++i) 
+    for (i=0; i<pRunTimeDIOChannels->Size; ++i)
     {
+        /* The mask form bypasses the per-channel ownership guard the single
+         * form applies upstream. Skip probe/peripheral-owned pins (SPI/#665) so
+         * we never stomp their runtime Value, but record them — the command
+         * must NOT silently succeed while ignoring claimed pins (contract:
+         * DIO:PORt setters reject claimed channels). */
+        if (DIO_ChannelBlocked(i))
+        {
+            blockedMask |= (uint32_t)(1u << i);
+            continue;
+        }
         bool value = (mask & (1 << i));
         if (SCPI_GPIOSingleStateSet(i, value) == SCPI_RES_ERR)
         {
             result = SCPI_RES_ERR;
         }
     }
-    
+
+    if (blockedMask != 0)
+    {
+        /* Push ONE execution error per command (not per channel) naming the
+         * skipped pins — surfaces via SYST:ERR? like the single form, and can't
+         * flood the log on a repeated mask poll. */
+        char msg[72];
+        snprintf(msg, sizeof(msg),
+                 "DIO:STATE mask: skipped owned channels 0x%04X (in use by SPI/probe)",
+                 (unsigned)blockedMask);
+        SCPI_ExecutionError(context, msg);
+        result = SCPI_RES_ERR;
+    }
+
     return result;
 }
 
