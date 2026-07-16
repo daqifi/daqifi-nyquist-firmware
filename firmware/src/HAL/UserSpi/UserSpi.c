@@ -343,6 +343,14 @@ static bool spi_EnableLocked(const char** err) {
     /* PPS map, then set buffer directions, then start SPI1. */
     spi_ApplyPps(true);
 
+    /* Pre-drive SCK to its CKP idle level BEFORE enabling its output buffer, so
+     * the terminal never sees a spurious clock edge when spi_Spi1Init drives SCK
+     * to idle below. SCK (DIO0/RD1) is exposed as a LAT-driven GPIO output while
+     * SPI1 is still OFF, so a prior LAT differing from the CKP idle would glitch
+     * the pad at ON=1 — and a no-CS slave (csDio=-1) with CS tied active would
+     * clock that edge as a bit, slipping the first frame. Mirror of the CS idle
+     * pre-drive below; CKP = mode bit 1 (idle high when set). */
+    DIO_DriveChannel(USER_SPI_SCK_DIO, (gCfg.mode & 0x2u) != 0u);
     DIO_SetChannelPeripheralOutput(USER_SPI_SCK_DIO);
     if (gCfg.mosiDio != USER_SPI_PIN_NONE) {
         DIO_SetChannelPeripheralOutput(gCfg.mosiDio);

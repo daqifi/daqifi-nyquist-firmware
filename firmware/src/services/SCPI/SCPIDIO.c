@@ -471,10 +471,15 @@ static scpi_result_t SCPI_GPIOMultiDirectionSet(scpi_t * context, uint32_t mask)
 
     if (blockedMask != 0)
     {
-        char msg[72];
+        /* Name the ACTUAL owner of the first skipped channel (registry has
+         * SPI/I2C/UART/1-Wire/... + probe) rather than a fixed string. */
+        uint8_t firstCh = (uint8_t)__builtin_ctz(blockedMask);
+        const char* owner = DIO_ChannelBlockedReason(firstCh);
+        char msg[112];
         snprintf(msg, sizeof(msg),
-                 "DIO:DIR mask: skipped owned channels 0x%04X (in use by SPI/probe)",
-                 (unsigned)blockedMask);
+                 "DIO:DIR mask: skipped owned channels 0x%04X (ch %u in use by %s)",
+                 (unsigned)blockedMask, (unsigned)firstCh,
+                 owner ? owner : "peripheral/probe");
         SCPI_ExecutionError(context, msg);
         result = SCPI_RES_ERR;
     }
@@ -582,10 +587,16 @@ static scpi_result_t SCPI_GPIOMultiStateSet(scpi_t * context, uint32_t mask)
         /* Push ONE execution error per command (not per channel) naming the
          * skipped pins — surfaces via SYST:ERR? like the single form, and can't
          * flood the log on a repeated mask poll. */
-        char msg[72];
+        /* Name the ACTUAL owner of the first skipped channel (registry has
+         * SPI/I2C/UART/1-Wire/... + probe) rather than a fixed string;
+         * blockedMask lists every skipped channel for follow-up. */
+        uint8_t firstCh = (uint8_t)__builtin_ctz(blockedMask);
+        const char* owner = DIO_ChannelBlockedReason(firstCh);
+        char msg[112];
         snprintf(msg, sizeof(msg),
-                 "DIO:STATE mask: skipped owned channels 0x%04X (in use by SPI/probe)",
-                 (unsigned)blockedMask);
+                 "DIO:STATE mask: skipped owned channels 0x%04X (ch %u in use by %s)",
+                 (unsigned)blockedMask, (unsigned)firstCh,
+                 owner ? owner : "peripheral/probe");
         SCPI_ExecutionError(context, msg);
         result = SCPI_RES_ERR;
     }
