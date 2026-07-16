@@ -214,7 +214,11 @@ static I2cXferResult_t i2c_XferLocked(uint8_t addr7, const uint8_t* w, uint16_t 
     }
     res = I2C_XFER_OK;
 stop:
-    (void)i2c_Stop();
+    /* A STOP that never completes means the bus is hung -- escalate to TIMEOUT
+     * (overriding OK/NACK) so the caller recovers rather than reporting success. */
+    if (!i2c_Stop()) {
+        res = I2C_XFER_TIMEOUT;
+    }
     return res;
 }
 
@@ -445,9 +449,14 @@ uint8_t UserI2c_Scan(uint8_t* addrs, uint8_t maxAddrs) {
     uint8_t found = 0u;
     if (gEnabled) {
         for (uint8_t a = 0x08u; a <= 0x77u && found < maxAddrs; ++a) {
-            if (i2c_XferLocked(a, NULL, 0u, NULL, 0u) == I2C_XFER_OK) {
+            I2cXferResult_t r = i2c_XferLocked(a, NULL, 0u, NULL, 0u);
+            if (r == I2C_XFER_OK) {
                 addrs[found++] = a;
+            } else if (r == I2C_XFER_TIMEOUT) {
+                i2c_BusRecover();   /* hung bus: recover once and stop the sweep */
+                break;
             }
+            /* NACK = address absent -> keep scanning */
         }
     }
     xSemaphoreGive(gI2cMutex);
