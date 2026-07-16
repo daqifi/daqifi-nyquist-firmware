@@ -93,17 +93,18 @@ bool DIO_ClaimChannel(uint8_t channel, DioChannelOwner_t owner) {
     if (channel >= MAX_DIO_CHANNEL || owner == DIO_OWNER_NONE) {
         return false;
     }
-    /* The debug probe has an exclusive claim that predates the registry. */
-    if (DioProbe_IsChannelOwned(channel)) {
-        return false;
-    }
     bool ok = false;
     taskENTER_CRITICAL();
-    DioChannelOwner_t cur = (DioChannelOwner_t)gDioOwner[channel];
-    if (cur == DIO_OWNER_NONE || cur == owner) {
-        gDioOwner[channel] = (uint8_t)owner;
-        gDioOwnedMask |= (uint16_t)(1u << channel);
-        ok = true;
+    /* Test the probe claim and the peripheral owner together inside the
+     * critical section so probe-assign (one SCPI interface) and a peripheral
+     * claim (the other) can't race between the check and the store. */
+    if (!DioProbe_IsChannelOwned(channel)) {
+        DioChannelOwner_t cur = (DioChannelOwner_t)gDioOwner[channel];
+        if (cur == DIO_OWNER_NONE || cur == owner) {
+            gDioOwner[channel] = (uint8_t)owner;
+            gDioOwnedMask |= (uint16_t)(1u << channel);
+            ok = true;
+        }
     }
     taskEXIT_CRITICAL();
     return ok;
@@ -260,6 +261,13 @@ bool DIO_WriteStateAll(void) {
 }
 
 bool DIO_WriteStateSingle(uint8_t dataIndex) {
+    /* Bounds-guard the array indexing below. DIO_ChannelBlocked only rejects
+     * indices >= MAX_DIO_CHANNEL, so a caller passing a value in
+     * [DIOChannels.Size, MAX_DIO_CHANNEL) (e.g. channel 15 under the 15-entry
+     * DIO_TIMING_TEST config) would otherwise read past the table. */
+    if (gpBoardConfig == NULL || dataIndex >= gpBoardConfig->DIOChannels.Size) {
+        return false;
+    }
     /* Probe or a peripheral (SPI/I2C/UART/...) owns this channel and
      * drives its TRIS/LAT exclusively. Skipping here is the primary
      * isolation point; for the probe, scope-signal purity depends on it,

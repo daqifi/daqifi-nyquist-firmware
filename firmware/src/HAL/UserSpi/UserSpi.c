@@ -14,6 +14,8 @@
 #include "UserSpi.h"
 #include "configuration.h"
 #include "definitions.h"
+#include "FreeRTOS.h"
+#include "semphr.h"
 #include "HAL/DIO.h"
 #include "Util/Logger.h"
 
@@ -39,6 +41,24 @@ static UserSpiConfig_t gCfg;
 static bool            gHaveConfig = false;
 static bool            gEnabled    = false;
 static uint32_t        gActualBaud = 0;
+
+/* Serializes the public API. SPI SCPI commands can be dispatched from both the
+ * USB SCPI task (pri 7) and the WiFi TCP SCPI task (pri 2), so config/enable/
+ * transfer must not interleave on the single shared SPI1 peripheral. Statically
+ * allocated (configSUPPORT_STATIC_ALLOCATION), lazily created on first use. */
+static SemaphoreHandle_t gSpiMutex = NULL;
+static StaticSemaphore_t gSpiMutexBuf;
+
+static SemaphoreHandle_t spi_Mutex(void) {
+    if (gSpiMutex == NULL) {
+        taskENTER_CRITICAL();
+        if (gSpiMutex == NULL) {   /* re-check: another task may have won the race */
+            gSpiMutex = xSemaphoreCreateMutexStatic(&gSpiMutexBuf);
+        }
+        taskEXIT_CRITICAL();
+    }
+    return gSpiMutex;
+}
 
 static void spi_CfgconUnlockedWrite(uint32_t val);
 
@@ -118,11 +138,17 @@ static uint32_t spi_ComputeBrg(uint32_t baudHz, uint32_t* actualOut) {
 /* Map / unmap SDO1 + SDI1 through PPS. Clears RPD1R so the dedicated SCK1
  * (not a remappable output) is the only driver on RD1/DIO0. */
 static void spi_ApplyPps(bool enable) {
-    /* PPS registers are gated by CFGCON.IOLOCK. Open it (DMA-suspended unlock),
-     * write the PPS map directly while it's open, then close it. DIO0/RD1: drop
+    /* PPS registers (RPnR outputs, SDI1R input) are gated by CFGCON.IOLOCK.
+     * Run the whole open -> PPS writes -> close sequence as ONE interrupt-
+     * disabled block so it is indivisible: no other task's PPS/SYSKEY work
+     * (PWM output remap, a future DIO peripheral) can interleave, and IOLOCK
+     * is never left open to a preemptor. The nested spi_CfgconUnlockedWrite
+     * calls also disable interrupts, but restore to the already-disabled
+     * state captured here, so interrupts stay off throughout. DIO0/RD1: drop
      * the remappable-output mux so the dedicated SCK1 owns the pad. */
-    spi_CfgconUnlockedWrite(CFGCON & ~(uint32_t)_CFGCON_IOLOCK_MASK);
+    uint32_t st = __builtin_disable_interrupts();
 
+    spi_CfgconUnlockedWrite(CFGCON & ~(uint32_t)_CFGCON_IOLOCK_MASK);
     RPD1R = 0U;
     volatile uint32_t *mosiRpr = spi_MosiRprAddr(gCfg.mosiDio);
     if (mosiRpr != NULL) {
@@ -130,8 +156,9 @@ static void spi_ApplyPps(bool enable) {
     }
     SDI1R = (enable && gCfg.misoDio != USER_SPI_PIN_NONE)
                 ? spi_MisoSdi1rValue(gCfg.misoDio) : 0U;
-
     spi_CfgconUnlockedWrite(CFGCON | (uint32_t)_CFGCON_IOLOCK_MASK);
+
+    __builtin_mtc0(12, 0, st);
 }
 
 /* Perform a SYSKEY-unlocked write to CFGCON — the only SYSKEY-gated register
@@ -200,7 +227,7 @@ static bool spi_XferByte(uint8_t txByte, uint8_t* rxByte) {
 // Section: public API
 // *****************************************************************************
 
-bool UserSpi_Configure(const UserSpiConfig_t* cfg, const char** err) {
+static bool spi_ConfigureLocked(const UserSpiConfig_t* cfg, const char** err) {
     const char* why = NULL;
     if (cfg == NULL) {
         why = "null config";
@@ -245,21 +272,13 @@ bool UserSpi_Configure(const UserSpiConfig_t* cfg, const char** err) {
     return true;
 }
 
-bool UserSpi_GetConfig(UserSpiConfig_t* out) {
-    if (out == NULL || !gHaveConfig) {
-        return false;
-    }
-    *out = gCfg;
-    return true;
-}
-
 /* True if a pin is unavailable to claim — owned by the probe/another
  * peripheral, or currently driving a PWM output. */
 static bool spi_PinInUse(uint8_t dio) {
     return (DIO_ChannelBlockedReason(dio) != NULL) || DIO_IsPwmActive(dio);
 }
 
-bool UserSpi_Enable(const char** err) {
+static bool spi_EnableLocked(const char** err) {
     if (!gHaveConfig) {
         if (err != NULL) { *err = "no SPI config set"; }
         return false;
@@ -328,7 +347,7 @@ bool UserSpi_Enable(const char** err) {
     return true;
 }
 
-bool UserSpi_Disable(void) {
+static bool spi_DisableLocked(void) {
     if (!gEnabled) {
         return true;
     }
@@ -360,7 +379,7 @@ bool UserSpi_IsEnabled(void) {
     return gEnabled;
 }
 
-bool UserSpi_Transfer(const uint8_t* tx, uint8_t* rx, uint16_t len) {
+static bool spi_TransferLocked(const uint8_t* tx, uint8_t* rx, uint16_t len) {
     if (!gEnabled || len == 0u || len > USER_SPI_MAX_FRAME) {
         return false;
     }
@@ -392,4 +411,58 @@ bool UserSpi_Transfer(const uint8_t* tx, uint8_t* rx, uint16_t len) {
 
 uint32_t UserSpi_GetActualBaud(void) {
     return gEnabled ? gActualBaud : 0u;
+}
+
+// *****************************************************************************
+// Section: public API mutex wrappers
+//
+// The SPI SCPI commands can be dispatched concurrently from the USB SCPI task
+// (pri 7) and the WiFi TCP SCPI task (pri 2). These thin wrappers serialize
+// every operation that touches the config, the shared SPI1 peripheral, or the
+// PPS/PMD reconfiguration, so the two interfaces cannot interleave. The inner
+// *_Locked functions keep their early-return structure; the single take/give
+// here avoids sprinkling gives across every exit path. IsEnabled/GetActualBaud
+// stay lock-free — each is a single aligned 32-bit read (atomic on PIC32MZ).
+// *****************************************************************************
+
+bool UserSpi_Configure(const UserSpiConfig_t* cfg, const char** err) {
+    xSemaphoreTake(spi_Mutex(), portMAX_DELAY);
+    bool r = spi_ConfigureLocked(cfg, err);
+    xSemaphoreGive(gSpiMutex);
+    return r;
+}
+
+bool UserSpi_GetConfig(UserSpiConfig_t* out) {
+    if (out == NULL) {
+        return false;
+    }
+    xSemaphoreTake(spi_Mutex(), portMAX_DELAY);
+    bool r = false;
+    if (gHaveConfig) {
+        *out = gCfg;
+        r = true;
+    }
+    xSemaphoreGive(gSpiMutex);
+    return r;
+}
+
+bool UserSpi_Enable(const char** err) {
+    xSemaphoreTake(spi_Mutex(), portMAX_DELAY);
+    bool r = spi_EnableLocked(err);
+    xSemaphoreGive(gSpiMutex);
+    return r;
+}
+
+bool UserSpi_Disable(void) {
+    xSemaphoreTake(spi_Mutex(), portMAX_DELAY);
+    bool r = spi_DisableLocked();
+    xSemaphoreGive(gSpiMutex);
+    return r;
+}
+
+bool UserSpi_Transfer(const uint8_t* tx, uint8_t* rx, uint16_t len) {
+    xSemaphoreTake(spi_Mutex(), portMAX_DELAY);
+    bool r = spi_TransferLocked(tx, rx, len);
+    xSemaphoreGive(gSpiMutex);
+    return r;
 }
