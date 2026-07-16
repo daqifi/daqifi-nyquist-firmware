@@ -115,8 +115,12 @@ bool UserUart_IsEnabled(void);
 bool UserUart_SetInvert(bool rxInv, bool txInv);
 
 /**
- * Transmit @p len bytes, blocking with a per-byte timeout.
- * @return false if not enabled, TX not configured, or a byte timed out.
+ * Transmit @p len bytes, blocking until the write completes or a single
+ * whole-write (~15 s) timeout budget elapses — that budget covers 128 bytes at
+ * the 300-baud floor with wide margin, and the wait yields throughout so it
+ * never starves the CPU. (Not a per-byte timeout: one shared budget bounds the
+ * entire call, matching uart_WriteLocked.)
+ * @return false if not enabled, TX not configured, or the write timed out.
  */
 bool UserUart_Write(const uint8_t* data, uint16_t len);
 
