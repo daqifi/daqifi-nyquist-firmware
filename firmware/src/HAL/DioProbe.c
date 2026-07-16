@@ -165,6 +165,22 @@ bool DioProbe_AssignToChannel(uint8_t probeId, uint8_t channel,
      * the second arrival sees the first's bit set and rejects. */
     taskENTER_CRITICAL();
     prev_ch = slot->channel;
+    /* Refuse a channel a peripheral (SPI/#665, future I2C/UART/...) has claimed
+     * — the mirror of DIO_ClaimChannel refusing a probe-owned pin. Checked
+     * inside the CS so it's atomic vs a concurrent DIO_ClaimChannel on the
+     * other SCPI task. UNCONDITIONAL (unlike the probe-vs-probe check below,
+     * which allows re-assigning your own slot's channel): a peripheral owner is
+     * never the probe, so if one exists the probe must not take the pin even if
+     * this slot's prev_ch already equals it — otherwise SYST:DIOProbe:MODE/ROUTe
+     * onto an SPI-owned pin drives it (asserting CS outside a transfer,
+     * corrupting the slave) and creates dual ownership. */
+    DioChannelOwner_t periphOwner = DIO_GetChannelOwner(channel);
+    if (periphOwner != DIO_OWNER_NONE) {
+        taskEXIT_CRITICAL();
+        LOG_E("DioProbe: channel %u owned by %s",
+              (unsigned)channel, DIO_ChannelOwnerName(periphOwner));
+        return false;
+    }
     if (prev_ch != channel && (gDioProbeOwnedMask & (1u << channel)) != 0u) {
         taskEXIT_CRITICAL();
         LOG_E("DioProbe: channel %u already owned by another probe",

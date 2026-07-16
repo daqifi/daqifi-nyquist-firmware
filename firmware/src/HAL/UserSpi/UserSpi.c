@@ -16,13 +16,15 @@
 #include "definitions.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
+#include "clock_config.h"
 #include "HAL/DIO.h"
 #include "Util/Logger.h"
 
-/* SPI1 source clock = PBCLK2. Post-#487 the peripheral bus runs at
- * SYSCLK/3 = 84 MHz (see the Clock Tree in CLAUDE.md). SPI_CLK =
- * PBCLK2 / (2*(BRG+1)). */
-#define USER_SPI_PBCLK_HZ   84000000UL
+/* SPI1 source clock = PBCLK2, taken from the project's single-source clock
+ * config so it tracks the DAQIFI_SYSCLK_252 toggle (84 MHz at 252 MHz sysclk,
+ * 100 MHz on the legacy 200 MHz build) rather than hardcoding one profile.
+ * SPI_CLK = PBCLK2 / (2*(BRG+1)). */
+#define USER_SPI_PBCLK_HZ   DAQIFI_PBCLK_HZ
 
 /* Per-byte polled-transfer spin bound. Sized to cover the slowest byte
  * (8 bits at USER_SPI_MIN_BAUD_HZ ~= 1.3 ms) with wide margin at the

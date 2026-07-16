@@ -431,13 +431,18 @@ static scpi_result_t SCPI_GPIOSingleDirectionSet(uint8_t id, bool isInput)
     {
         return SCPI_RES_ERR;
     }
-    
+    /* Skip probe/peripheral-owned channels — the mask form (DIO:PORT:DIR
+     * <mask>) reaches here without the single-channel ownership guard. */
+    if (DIO_ChannelBlocked(id))
+    {
+        return SCPI_RES_OK;
+    }
     pRunTimeDIOChannels->Data[id].IsInput = isInput;
     if (!DIO_WriteStateSingle(id))
     {
         return SCPI_RES_ERR;
     }
-    
+
     return SCPI_RES_OK;
 }
 
@@ -507,20 +512,28 @@ static scpi_result_t SCPI_GPIOMultiDirectionGet(uint32_t* mask)
 
 static scpi_result_t SCPI_GPIOSingleStateSet(uint8_t id, bool value)
 {
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
-    
+
     if ( id >= pRunTimeDIOChannels->Size)
     {
         return SCPI_RES_ERR;
     }
-    
+    /* Skip a channel owned by the probe or a peripheral (SPI/#665, ...). The
+     * mask form (DIO:PORT:STATe <mask>) reaches here WITHOUT the per-channel
+     * ownership guard the single-channel form applies upstream; silently
+     * rewriting an owned CS/data pin's runtime Value would surface as the
+     * wrong level once the owner releases the pin (DIO_RestoreChannel). */
+    if (DIO_ChannelBlocked(id))
+    {
+        return SCPI_RES_OK;
+    }
     pRunTimeDIOChannels->Data[id].Value = value;
     if (!DIO_WriteStateSingle(id))
     {
         return SCPI_RES_ERR;
     }
-    
+
     return SCPI_RES_OK;
 }
  
