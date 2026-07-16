@@ -233,6 +233,15 @@ static uint32_t uart_BaudFloor(void) {
 // *****************************************************************************
 
 static bool uart_ConfigureLocked(const UserUartConfig_t* cfg, const char** err) {
+    /* Reject a reconfigure while enabled (mirror of spi_ConfigureLocked).
+     * Overwriting gCfg while the hardware stays on the old pins would desync the
+     * config query from the real wiring AND strand the originally-claimed pins:
+     * a later Disable releases the NEW gCfg pins (never claimed -> no-op) and
+     * never releases the still-owned old pins, leaking them until reboot. */
+    if (gEnabled) {
+        if (err != NULL) { *err = "disable UART before reconfiguring"; }
+        return false;
+    }
     const char* why = NULL;
     if (cfg == NULL) {
         why = "null config";
