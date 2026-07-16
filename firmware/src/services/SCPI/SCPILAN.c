@@ -768,7 +768,18 @@ scpi_result_t SCPI_SpiConfigSet(scpi_t * context) {
         !SCPI_ParamInt32(context, &mode, TRUE)) {
         return SCPI_RES_ERR;   /* libscpi already pushed a parse error */
     }
-    (void)SCPI_ParamInt32(context, &order, FALSE);
+    /* Optional order param: if it is SUPPLIED it must be a valid integer, else
+     * reject the whole config. The old (void)SCPI_ParamInt32 discarded the
+     * parse result, so a bad 6th token (e.g. ...,0,BOGUS) pushed a DATA_TYPE
+     * error yet still committed the config with the default order. Mirror the
+     * SCPI_Parameter(FALSE)+SCPI_ParamToInt32 idiom used elsewhere. */
+    scpi_parameter_t orderParam;
+    if (SCPI_Parameter(context, &orderParam, FALSE)) {
+        if (!SCPI_ParamToInt32(context, &orderParam, &order)) {
+            return SCPI_RES_ERR;   /* present but not an integer (error already pushed) */
+        }
+    }
+    /* else: absent -> keep the MSB-first default (order = 0). */
 
     /* Reject out-of-range pin indices before the uint8_t narrowing so a
      * value like 258 can't alias onto DIO2. Negative = unused line. */
@@ -882,6 +893,17 @@ scpi_result_t SCPI_SpiTransfer(scpi_t * context) {
     const char* p = NULL;
     size_t len = 0;
     if (!SCPI_ParamCharacters(context, &p, &len, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    /* Exactly one (quoted) hex arg — reject any trailing parameter BEFORE we
+     * clock anything. Without this, unquoted comma-separated bytes
+     * ("TRAN? 9F,00,00") consume only 9F here and shift that truncated frame to
+     * the slave before libscpi rejects the leftover ",00,00". The documented
+     * form is one quoted token, e.g. "9F0000" (spi_ParseHex tolerates commas
+     * inside it). */
+    scpi_parameter_t extra;
+    if (SCPI_Parameter(context, &extra, FALSE)) {
+        SCPI_ExecutionError(context, "SPI:TRAN: one quoted hex arg only (e.g. \"9F0000\")");
         return SCPI_RES_ERR;
     }
     if (!UserSpi_IsEnabled()) {
