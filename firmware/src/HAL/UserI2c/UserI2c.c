@@ -444,6 +444,12 @@ bool UserI2c_Transfer(uint8_t addr7, const uint8_t* wdata, uint16_t wlen,
         if (err) { *err = "I2C: null buffer with non-zero length"; }
         return false;
     }
+    /* Erratum #6 (A1/A3): I2C misbehaves on a >500 B continuous transfer. Our
+     * write+read is one START..STOP transaction, so bound the combined length. */
+    if ((uint32_t)wlen + (uint32_t)rlen > USER_I2C_MAX_CONTINUOUS_BYTES) {
+        if (err) { *err = "I2C: combined transfer exceeds 500 B (erratum #6)"; }
+        return false;
+    }
     xSemaphoreTake(i2c_Mutex(), portMAX_DELAY);
     bool ok = false;
     if (!gEnabled) {

@@ -61,6 +61,10 @@ extern "C" {
 /** Largest 7-bit address sweep result the scanner can report. */
 #define USER_I2C_MAX_SCAN_DEVICES     112u    /* 0x08..0x77 general-call/reserved-trimmed */
 
+/** Max bytes in one continuous (write+read) transfer. Erratum #6 (A1/A3): I2C
+ *  misbehaves beyond 500 B continuous; a combined transfer is one transaction. */
+#define USER_I2C_MAX_CONTINUOUS_BYTES 500u
+
 /**
  * Initialize I2C2 (BRG for the current frequency, module ON), claim the DIO
  * channels of every currently-enabled segment (peripheral-input), and raise
