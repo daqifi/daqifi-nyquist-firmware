@@ -90,7 +90,15 @@ static volatile uint16_t gDioOwnedMask = 0;
 static volatile uint8_t  gDioOwner[MAX_DIO_CHANNEL] = {0};
 
 bool DIO_ClaimChannel(uint8_t channel, DioChannelOwner_t owner) {
-    if (channel >= MAX_DIO_CHANNEL || owner == DIO_OWNER_NONE) {
+    /* Bound against the actual board channel count, not just the gDioOwner
+     * array size — a channel index in [DIOChannels.Size, MAX_DIO_CHANNEL) is a
+     * valid array slot but not a real board pin, so claiming it would register
+     * ownership of a non-existent channel. Size is always <= MAX_DIO_CHANNEL by
+     * board-config construction, so this is also a strict array-bounds guard.
+     * Matches the DIO_WriteStateSingle guard added in this PR. */
+    if (gpBoardConfig == NULL ||
+        channel >= gpBoardConfig->DIOChannels.Size ||
+        owner == DIO_OWNER_NONE) {
         return false;
     }
     bool ok = false;

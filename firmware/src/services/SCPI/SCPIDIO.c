@@ -606,29 +606,33 @@ static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value)
         return SCPI_RES_ERR;
     }
     /* Snapshot so a blocked write rolls BOTH fields back to their pre-call
-     * state (not just IsPwmActive). */
+     * state (not just IsPwmActive). The whole transition — the transient
+     * Value/IsPwmActive write, the hardware program, and any rollback — runs in
+     * one critical section so a concurrent DIO_ClaimChannel on the other SCPI
+     * interface (USB pri 7 can preempt WiFi pri 2 mid-sequence) can never
+     * observe a transient IsPwmActive that this call later rolls back. Pairs
+     * with the critical section in DIO_ClaimChannel to make SPI-vs-PWM
+     * arbitration atomic in both directions (the fields are an RMW on a struct
+     * that claim reads — the project atomicity rule requires the guard).
+     * DIO_PWMWriteStateSingle is bounded register work (OCMP enable/disable +
+     * PPS remap, no loops/delays), so the section stays short (~1-2 us). */
+    taskENTER_CRITICAL();
     bool prevValue = pRunTimeDIOChannels->Data[id].Value;
     bool prevPwm   = pRunTimeDIOChannels->Data[id].IsPwmActive;
-    if(value){
-        pRunTimeDIOChannels->Data[id].Value=1;
-        pRunTimeDIOChannels->Data[id].IsPwmActive=1;
-    }
-    else{
-        pRunTimeDIOChannels->Data[id].Value=0;
-        pRunTimeDIOChannels->Data[id].IsPwmActive=0;
-    }
-    if (!DIO_PWMWriteStateSingle(id))
-    {
+    pRunTimeDIOChannels->Data[id].Value       = value ? 1 : 0;
+    pRunTimeDIOChannels->Data[id].IsPwmActive = value ? 1 : 0;
+    bool applied = DIO_PWMWriteStateSingle(id);
+    if (!applied) {
         /* Blocked — e.g. the pin was claimed by a peripheral (SPI) in a
          * concurrent cross-interface race, so DIO_PWMWriteStateSingle refused
          * to reprogram it. Roll BOTH runtime fields back: a lying IsPwmActive
          * would block the channel's DIO restore + later claims, and a stale
          * Value would drive an unintended static level once the block clears
          * and DIO_WriteStateSingle resumes for this channel. */
-        pRunTimeDIOChannels->Data[id].Value = prevValue;
+        pRunTimeDIOChannels->Data[id].Value       = prevValue;
         pRunTimeDIOChannels->Data[id].IsPwmActive = prevPwm;
-        return SCPI_RES_ERR;
     }
-    return SCPI_RES_OK;
+    taskEXIT_CRITICAL();
+    return applied ? SCPI_RES_OK : SCPI_RES_ERR;
 }
 
