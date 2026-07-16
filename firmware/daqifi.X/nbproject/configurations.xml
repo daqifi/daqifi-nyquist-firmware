@@ -339,6 +339,9 @@
         <logicalFolder name="UserSpi" displayName="UserSpi" projectFiles="true">
           <itemPath>../src/HAL/UserSpi/UserSpi.h</itemPath>
         </logicalFolder>
+        <logicalFolder name="UserUart" displayName="UserUart" projectFiles="true">
+          <itemPath>../src/HAL/UserUart/UserUart.h</itemPath>
+        </logicalFolder>
         <itemPath>../src/HAL/DIO.h</itemPath>
         <itemPath>../src/HAL/ADC.h</itemPath>
         <itemPath>../src/HAL/DioProbe.h</itemPath>
@@ -929,6 +932,9 @@
         </logicalFolder>
         <logicalFolder name="UserSpi" displayName="UserSpi" projectFiles="true">
           <itemPath>../src/HAL/UserSpi/UserSpi.c</itemPath>
+        </logicalFolder>
+        <logicalFolder name="UserUart" displayName="UserUart" projectFiles="true">
+          <itemPath>../src/HAL/UserUart/UserUart.c</itemPath>
         </logicalFolder>
         <itemPath>../src/HAL/DIO.c</itemPath>
         <itemPath>../src/HAL/ADC.c</itemPath>

@@ -24,6 +24,7 @@
 #include "services/wifi_services/mdns_responder.h"   // #58: mDNS diagnostics
 #include "services/SCPI/SCPIInterface.h"              // #58: shared response buffer
 #include "HAL/UserSpi/UserSpi.h"                      // #665: user SPI1 master
+#include "HAL/UserUart/UserUart.h"                    // #16: user UART
 #include "services/sd_card_services/sd_card_manager.h"
 
 
@@ -963,6 +964,204 @@ scpi_result_t SCPI_SpiTransfer(scpi_t * context) {
 
     /* Raw hex, no SCPI quoting, so the client parses MISO bytes directly. */
     SCPI_ResultMnemonic(context, out);
+    SCPI_ResponseBuf_Give();
+    return SCPI_RES_OK;
+}
+
+// *****************************************************************************
+// Section: user UART (#16, epic #664) — SYST:COMM:UART:*
+//
+// Reuses spi_ScpiPinToDio (-1 -> 0xFF, same sentinel) and spi_RejectTrailingParam.
+// *****************************************************************************
+
+/* Read an optional integer parameter: if SUPPLIED it must be a valid int (sets
+ * *ok=false, leaving a queued DATA_TYPE error), else returns @p dflt. Avoids the
+ * "invalid optional token commits anyway" class. */
+static int32_t uart_ScpiOptInt(scpi_t* context, int32_t dflt, bool* ok) {
+    scpi_parameter_t p;
+    *ok = true;
+    if (SCPI_Parameter(context, &p, FALSE)) {
+        int32_t v;
+        if (!SCPI_ParamToInt32(context, &p, &v)) { *ok = false; return dflt; }
+        return v;
+    }
+    return dflt;
+}
+
+scpi_result_t SCPI_UartConfigSet(scpi_t * context) {
+    int32_t rx, tx, baud;
+    if (!SCPI_ParamInt32(context, &rx,   TRUE) ||
+        !SCPI_ParamInt32(context, &tx,   TRUE) ||
+        !SCPI_ParamInt32(context, &baud, TRUE)) {
+        return SCPI_RES_ERR;   /* libscpi already pushed a parse error */
+    }
+    bool ok;
+    int32_t data   = uart_ScpiOptInt(context, 8, &ok); if (!ok) return SCPI_RES_ERR;
+    int32_t parity = uart_ScpiOptInt(context, 0, &ok); if (!ok) return SCPI_RES_ERR;
+    int32_t stop   = uart_ScpiOptInt(context, 1, &ok); if (!ok) return SCPI_RES_ERR;
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;   /* rejected CONFig must not store the config */
+    }
+    if (rx > 15 || tx > 15) {
+        SCPI_ExecutionError(context, "UART pin index out of range (-1..15)");
+        return SCPI_RES_ERR;
+    }
+    UserUartConfig_t cfg;
+    cfg.rxDio    = spi_ScpiPinToDio(rx);
+    cfg.txDio    = spi_ScpiPinToDio(tx);
+    cfg.baudHz   = (baud <= 0) ? USER_UART_DEFAULT_BAUD_HZ : (uint32_t)baud;
+    cfg.dataBits = (uint8_t)data;
+    cfg.parity   = (uint8_t)parity;
+    cfg.stopBits = (uint8_t)stop;
+    cfg.rxInv    = false;   /* set via SYST:COMM:UART:INVert */
+    cfg.txInv    = false;
+    const char* err = NULL;
+    if (!UserUart_Configure(&cfg, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "invalid UART config");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_UartConfigGet(scpi_t * context) {
+    UserUartConfig_t cfg;
+    if (!UserUart_GetConfig(&cfg)) {
+        SCPI_ExecutionError(context, "no UART config set");
+        return SCPI_RES_ERR;
+    }
+    char *buf = (char *)SCPI_ResponseBuf_Take();
+    if (buf == NULL) { return SCPI_RES_ERR; }
+    int rx = (cfg.rxDio == USER_UART_PIN_NONE) ? -1 : (int)cfg.rxDio;
+    int tx = (cfg.txDio == USER_UART_PIN_NONE) ? -1 : (int)cfg.txDio;
+    snprintf(buf, SCPI_RESPONSE_BUF_SIZE,
+             "{\"Rx\":%d,\"Tx\":%d,\"Baud\":%lu,\"Data\":%d,\"Parity\":%d,"
+             "\"Stop\":%d,\"RxInv\":%d,\"TxInv\":%d,\"Enabled\":%d,\"ActualBaud\":%lu}\n",
+             rx, tx, (unsigned long)cfg.baudHz, (int)cfg.dataBits, (int)cfg.parity,
+             (int)cfg.stopBits, (int)cfg.rxInv, (int)cfg.txInv,
+             (int)UserUart_IsEnabled(), (unsigned long)UserUart_GetActualBaud());
+    SCPI_ResultMnemonic(context, buf);
+    SCPI_ResponseBuf_Give();
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_UartEnableSet(scpi_t * context) {
+    int32_t on;
+    if (!SCPI_ParamInt32(context, &on, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;   /* rejected ENAble must not claim pins / power the UART */
+    }
+    const char* err = NULL;
+    bool ok = (on != 0) ? UserUart_Enable(&err) : UserUart_Disable();
+    if (!ok) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "UART enable failed");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_UartEnableGet(scpi_t * context) {
+    SCPI_ResultInt32(context, UserUart_IsEnabled() ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_UartInvertSet(scpi_t * context) {
+    int32_t rxInv, txInv;
+    if (!SCPI_ParamInt32(context, &rxInv, TRUE) ||
+        !SCPI_ParamInt32(context, &txInv, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;
+    }
+    if (!UserUart_SetInvert(rxInv != 0, txInv != 0)) {
+        SCPI_ExecutionError(context, "no UART config set");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_UartInvertGet(scpi_t * context) {
+    UserUartConfig_t cfg;
+    if (!UserUart_GetConfig(&cfg)) {
+        SCPI_ExecutionError(context, "no UART config set");
+        return SCPI_RES_ERR;
+    }
+    char *buf = (char *)SCPI_ResponseBuf_Take();
+    if (buf == NULL) { return SCPI_RES_ERR; }
+    snprintf(buf, SCPI_RESPONSE_BUF_SIZE, "{\"RxInv\":%d,\"TxInv\":%d}\n",
+             (int)cfg.rxInv, (int)cfg.txInv);
+    SCPI_ResultMnemonic(context, buf);
+    SCPI_ResponseBuf_Give();
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_UartWrite(scpi_t * context) {
+    const char* p = NULL;
+    size_t len = 0;
+    if (!SCPI_ParamCharacters(context, &p, &len, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;
+    }
+    if (!UserUart_IsEnabled()) {
+        SCPI_ExecutionError(context, "UART not enabled");
+        return SCPI_RES_ERR;
+    }
+    uint8_t *buf = SCPI_ResponseBuf_Take();
+    if (buf == NULL) { return SCPI_RES_ERR; }
+    uint16_t n = 0;
+    if (!spi_ParseHex(p, len, buf, 256u, &n)) {
+        SCPI_ResponseBuf_Give();
+        SCPI_ExecutionError(context, "UART:WRITE: bad hex (even digits, <=256 bytes)");
+        return SCPI_RES_ERR;
+    }
+    bool ok = UserUart_Write(buf, n);
+    SCPI_ResponseBuf_Give();
+    if (!ok) {
+        SCPI_ExecutionError(context, "UART write timeout (TX not configured?)");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_UartRead(scpi_t * context) {
+    int32_t maxN;
+    if (!SCPI_ParamInt32(context, &maxN, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;
+    }
+    if (!UserUart_IsEnabled()) {
+        SCPI_ExecutionError(context, "UART not enabled");
+        return SCPI_RES_ERR;
+    }
+    if (maxN < 0) { maxN = 0; }
+    if (maxN > 256) { maxN = 256; }
+    uint8_t *rx  = SCPI_ResponseBuf_Take();     /* [0..255] read, [256..] hex out */
+    if (rx == NULL) { return SCPI_RES_ERR; }
+    char *out = (char *)(rx + 256);
+    uint16_t got = UserUart_Read(rx, (uint16_t)maxN);
+    static const char hexd[] = "0123456789ABCDEF";
+    for (uint16_t i = 0; i < got; ++i) {
+        out[2 * i]     = hexd[(rx[i] >> 4) & 0x0Fu];
+        out[2 * i + 1] = hexd[rx[i] & 0x0Fu];
+    }
+    out[2 * got] = '\0';
+    SCPI_ResultMnemonic(context, out);          /* raw hex of the RX bytes */
+    SCPI_ResponseBuf_Give();
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_UartCount(scpi_t * context) {
+    char *buf = (char *)SCPI_ResponseBuf_Take();
+    if (buf == NULL) { return SCPI_RES_ERR; }
+    snprintf(buf, SCPI_RESPONSE_BUF_SIZE, "{\"Pending\":%u,\"Overflow\":%lu}\n",
+             (unsigned)UserUart_RxPending(), (unsigned long)UserUart_RxOverflowCount());
+    SCPI_ResultMnemonic(context, buf);
     SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
 }

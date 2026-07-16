@@ -26,12 +26,14 @@
  * promising more. (The 921600 debug UART is on a direct PIC pin, not behind the
  * terminal read path — don't transfer that expectation.)
  *
- * RX is interrupt-fed into a BSS ring with an overflow counter (erratum #8:
- * an RX FIFO overrun stops the shifter — the ISR clears OERR and the ring keeps
- * running, counting the event). TX is polled/blocking-with-timeout. The pins
- * are claimed through the DIO ownership registry (DIO_ClaimChannel), so
- * streaming and DIO:PORt won't stomp the bus and PWM on an overlapping channel
- * is refused. This driver ships the mechanism; the client picks the framing.
+ * RX (Phase 1) is polled: UserUart_Read drains the hardware RX FIFO on demand
+ * and clears/counts an OERR overrun (erratum #8). The FIFO is a few bytes deep,
+ * so a client must read promptly for bursts longer than the FIFO — an
+ * interrupt-fed BSS ring is a tracked follow-up (needs a vector-table entry).
+ * TX is polled/blocking-with-timeout. The pins are claimed through the DIO
+ * ownership registry (DIO_ClaimChannel), so streaming and DIO:PORt won't stomp
+ * the bus and PWM on an overlapping channel is refused. This driver ships the
+ * mechanism; the client picks the framing.
  */
 #ifndef USER_UART_H
 #define USER_UART_H
