@@ -413,9 +413,13 @@ static bool spi_TransferLocked(const uint8_t* tx, uint8_t* rx, uint16_t len) {
 
     if (!ok) {
         /* Per-byte timeout (SCK not toggling): drain any partial RX and clear
-         * the overflow flag so the next transfer starts from a clean FIFO. */
+         * the overflow flag so the next transfer starts from a clean FIFO. The
+         * drain is bounded — if SPIRBF were stuck set (hardware fault) an
+         * unbounded loop would hang the caller; the RX FIFO holds only a few
+         * bytes, so a small cap is ample. */
         SPI1STATCLR = _SPI1STAT_SPIROV_MASK;
-        while ((SPI1STAT & _SPI1STAT_SPIRBF_MASK) != 0U) {
+        uint32_t drainGuard = 32u;
+        while (((SPI1STAT & _SPI1STAT_SPIRBF_MASK) != 0U) && (drainGuard-- > 0U)) {
             (void)SPI1BUF;
         }
     }

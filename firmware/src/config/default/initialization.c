@@ -116,9 +116,9 @@
 // Note: Define ENABLE_ICSP_REALTIME_LOG=1 in project settings to enable debug logging
 // REJECT MCC MERGE ATTEMPTS TO REPLACE THIS CONDITIONAL LOGIC!
 #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1)
-    #pragma config PGL1WAY =    OFF  // Allow multiple Peripheral Pin Select reconfigurations
+    #pragma config PGL1WAY =    OFF  // Allow multiple Permission Group Lock reconfigurations
     #pragma config PMDL1WAY =   OFF  // Allow multiple Peripheral Module Disable reconfigurations
-    #pragma config IOL1WAY =    OFF  // Allow multiple I/O lock reconfigurations
+    #pragma config IOL1WAY =    OFF  // Allow multiple I/O (PPS) lock reconfigurations
     #warning "Config lock bits disabled for ICSP logging - DO NOT RELEASE TO PRODUCTION"
 #else
     // #664/#665: user digital-sensor peripherals on the DIO terminal need

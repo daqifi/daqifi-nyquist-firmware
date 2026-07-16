@@ -592,6 +592,10 @@ static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value)
     {
         return SCPI_RES_ERR;
     }
+    /* Snapshot so a blocked write rolls BOTH fields back to their pre-call
+     * state (not just IsPwmActive). */
+    bool prevValue = pRunTimeDIOChannels->Data[id].Value;
+    bool prevPwm   = pRunTimeDIOChannels->Data[id].IsPwmActive;
     if(value){
         pRunTimeDIOChannels->Data[id].Value=1;
         pRunTimeDIOChannels->Data[id].IsPwmActive=1;
@@ -604,10 +608,12 @@ static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value)
     {
         /* Blocked — e.g. the pin was claimed by a peripheral (SPI) in a
          * concurrent cross-interface race, so DIO_PWMWriteStateSingle refused
-         * to reprogram it. Don't leave IsPwmActive lying set for a channel PWM
-         * isn't actually driving (it would also wrongly block that channel's
-         * normal DIO restore and a later peripheral claim). */
-        pRunTimeDIOChannels->Data[id].IsPwmActive = 0;
+         * to reprogram it. Roll BOTH runtime fields back: a lying IsPwmActive
+         * would block the channel's DIO restore + later claims, and a stale
+         * Value would drive an unintended static level once the block clears
+         * and DIO_WriteStateSingle resumes for this channel. */
+        pRunTimeDIOChannels->Data[id].Value = prevValue;
+        pRunTimeDIOChannels->Data[id].IsPwmActive = prevPwm;
         return SCPI_RES_ERR;
     }
     return SCPI_RES_OK;
