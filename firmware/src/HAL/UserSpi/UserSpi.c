@@ -184,6 +184,10 @@ static void spi_CfgconUnlockedWrite(uint32_t val) {
  * (Harmony's CLK_Initialize disables unused peripherals) so every SPI1 SFR
  * write is ignored. Clearing CFGCON.PMDLOCK opens PMD5 for a direct write. */
 static void spi_SetPmd(bool enable) {
+    /* Indivisible like spi_ApplyPps: whole open -> PMD write -> close in one
+     * interrupt-disabled block so no other task's SYSKEY/PMD work interleaves
+     * and PMDLOCK is never left open to a preemptor. */
+    uint32_t st = __builtin_disable_interrupts();
     spi_CfgconUnlockedWrite(CFGCON & ~(uint32_t)_CFGCON_PMDLOCK_MASK);
     if (enable) {
         PMD5CLR = _PMD5_SPI1MD_MASK;
@@ -191,6 +195,7 @@ static void spi_SetPmd(bool enable) {
         PMD5SET = _PMD5_SPI1MD_MASK;
     }
     spi_CfgconUnlockedWrite(CFGCON | (uint32_t)_CFGCON_PMDLOCK_MASK);
+    __builtin_mtc0(12, 0, st);
 }
 
 static void spi_Spi1Init(void) {
@@ -403,6 +408,15 @@ static bool spi_TransferLocked(const uint8_t* tx, uint8_t* rx, uint16_t len) {
         }
         if (rx != NULL) {
             rx[i] = gCfg.lsbFirst ? spi_Reverse8(r) : r;
+        }
+    }
+
+    if (!ok) {
+        /* Per-byte timeout (SCK not toggling): drain any partial RX and clear
+         * the overflow flag so the next transfer starts from a clean FIFO. */
+        SPI1STATCLR = _SPI1STAT_SPIROV_MASK;
+        while ((SPI1STAT & _SPI1STAT_SPIRBF_MASK) != 0U) {
+            (void)SPI1BUF;
         }
     }
 
