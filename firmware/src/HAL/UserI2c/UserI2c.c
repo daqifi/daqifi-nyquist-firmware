@@ -103,12 +103,21 @@ static void i2c_ClearMif(void) {
 
 static bool i2c_WaitMif(void) {
     uint32_t start = _CP0_GET_COUNT();
-    while ((IFS4 & _IFS4_I2C2MIF_MASK) == 0u) {
+    for (;;) {
+        /* Brief tight spin: a normal byte at 100 kHz completes in ~90 us, so
+         * this returns without ever yielding on the common path. */
+        for (uint32_t s = 0; s < 8000u; ++s) {
+            if ((IFS4 & _IFS4_I2C2MIF_MASK) != 0u) { return true; }
+        }
+        if ((IFS4 & _IFS4_I2C2MIF_MASK) != 0u) { return true; }
         if ((uint32_t)(_CP0_GET_COUNT() - start) > I2C_OP_TIMEOUT_CP0) {
             return false;
         }
+        /* A slow/low-baud/stuck op must not busy-wait the SCPI task and starve
+         * lower-priority tasks (esp. a 112-address SCAN); the I2C hardware
+         * clocks the bus autonomously while we sleep. Mirrors uart_WaitSta. */
+        vTaskDelay(1);
     }
-    return true;
 }
 
 static void i2c_DelayHalfBit(void) {
@@ -165,20 +174,30 @@ static bool i2c_RxByte(bool sendAck, uint8_t* out) {
     return i2c_WaitMif();                    /* ACK/NACK clocked out */
 }
 
-/* One combined transfer. Always issues a STOP. Returns false on NACK/timeout. */
-static bool i2c_XferLocked(uint8_t addr7, const uint8_t* w, uint16_t wlen,
-                           uint8_t* r, uint16_t rlen) {
+/* Transfer outcome. NACK (device absent / declined) is normal and must NOT
+ * trigger bus recovery; only a TIMEOUT means the bus may be hung (SDA stuck). */
+typedef enum {
+    I2C_XFER_OK = 0,
+    I2C_XFER_NACK,      /* addressed/sent OK but the slave did not ACK */
+    I2C_XFER_TIMEOUT,   /* a bus event never completed (MIF timed out) */
+} I2cXferResult_t;
+
+/* One combined transfer. Always issues a STOP. */
+static I2cXferResult_t i2c_XferLocked(uint8_t addr7, const uint8_t* w, uint16_t wlen,
+                                      uint8_t* r, uint16_t rlen) {
     bool ack = false;
-    bool ok = false;
+    I2cXferResult_t res = I2C_XFER_TIMEOUT;   /* any primitive returning false = timeout */
     /* A write phase runs for a real write AND for an address-only probe (SCAN,
      * wlen==0 && rlen==0). A pure read (wlen==0 && rlen>0) skips it. */
     bool doWrite = (wlen > 0u) || (rlen == 0u);
 
     if (doWrite) {
         if (!i2c_Start()) { goto stop; }
-        if (!i2c_TxByte((uint8_t)(addr7 << 1), &ack) || !ack) { goto stop; }
+        if (!i2c_TxByte((uint8_t)(addr7 << 1), &ack)) { goto stop; }
+        if (!ack) { res = I2C_XFER_NACK; goto stop; }
         for (uint16_t i = 0; i < wlen; ++i) {
-            if (!i2c_TxByte(w[i], &ack) || !ack) { goto stop; }
+            if (!i2c_TxByte(w[i], &ack)) { goto stop; }
+            if (!ack) { res = I2C_XFER_NACK; goto stop; }
         }
     }
     if (rlen > 0u) {
@@ -187,15 +206,16 @@ static bool i2c_XferLocked(uint8_t addr7, const uint8_t* w, uint16_t wlen,
         } else {
             if (!i2c_Start()) { goto stop; }
         }
-        if (!i2c_TxByte((uint8_t)((addr7 << 1) | 1u), &ack) || !ack) { goto stop; }
+        if (!i2c_TxByte((uint8_t)((addr7 << 1) | 1u), &ack)) { goto stop; }
+        if (!ack) { res = I2C_XFER_NACK; goto stop; }
         for (uint16_t i = 0; i < rlen; ++i) {
             if (!i2c_RxByte((i + 1u) < rlen, &r[i])) { goto stop; }  /* NACK last */
         }
     }
-    ok = true;
+    res = I2C_XFER_OK;
 stop:
     (void)i2c_Stop();
-    return ok;
+    return res;
 }
 
 /* ------------------------------------------------------------------ */
@@ -425,7 +445,7 @@ uint8_t UserI2c_Scan(uint8_t* addrs, uint8_t maxAddrs) {
     uint8_t found = 0u;
     if (gEnabled) {
         for (uint8_t a = 0x08u; a <= 0x77u && found < maxAddrs; ++a) {
-            if (i2c_XferLocked(a, NULL, 0u, NULL, 0u)) {
+            if (i2c_XferLocked(a, NULL, 0u, NULL, 0u) == I2C_XFER_OK) {
                 addrs[found++] = a;
             }
         }
@@ -455,10 +475,15 @@ bool UserI2c_Transfer(uint8_t addr7, const uint8_t* wdata, uint16_t wlen,
     if (!gEnabled) {
         if (err) { *err = "I2C: not enabled"; }
     } else {
-        ok = i2c_XferLocked(addr7, wdata, wlen, rdata, rlen);
-        if (!ok) {
-            i2c_BusRecover();           /* free a slave stuck on a partial transfer */
-            if (err) { *err = "I2C: no ACK or bus timeout (bus recovered)"; }
+        I2cXferResult_t res = i2c_XferLocked(addr7, wdata, wlen, rdata, rlen);
+        ok = (res == I2C_XFER_OK);
+        if (res == I2C_XFER_TIMEOUT) {
+            /* Only a hung bus warrants recovery -- NOT a plain NACK, which is a
+             * normal "device absent/declined" and must not toggle the bus. */
+            i2c_BusRecover();
+            if (err) { *err = "I2C: bus timeout (bus recovered)"; }
+        } else if (res == I2C_XFER_NACK) {
+            if (err) { *err = "I2C: no ACK from device"; }
         }
     }
     xSemaphoreGive(gI2cMutex);
