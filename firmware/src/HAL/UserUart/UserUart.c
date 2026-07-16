@@ -64,6 +64,7 @@ static SemaphoreHandle_t uart_Mutex(void) {
 typedef struct {
     volatile uint32_t* mode;      /* UxMODE  */
     volatile uint32_t* modeSet;   /* UxMODESET */
+    volatile uint32_t* modeClr;   /* UxMODECLR */
     volatile uint32_t* sta;       /* UxSTA   */
     volatile uint32_t* staSet;    /* UxSTASET */
     volatile uint32_t* staClr;    /* UxSTACLR */
@@ -82,24 +83,24 @@ typedef struct {
 
 static const UartDesc_t gUarts[] = {
     /* U1: RX g1 {5,7,15}, TX g2 {2,4,6,14}, TX ppsval 1 */
-    { &U1MODE, &U1MODESET, &U1STA, &U1STASET, &U1STACLR, &U1BRG, &U1TXREG, &U1RXREG,
+    { &U1MODE, &U1MODESET, &U1MODECLR, &U1STA, &U1STASET, &U1STACLR, &U1BRG, &U1TXREG, &U1RXREG,
       &U1RXR, _PMD5_U1MD_MASK, 1u,
       D(5)|D(7)|D(15), D(2)|D(4)|D(6)|D(14) },
     /* U3: RX g2 {2,4,6,14}, TX g1 {5,7,15}, TX ppsval 1 */
-    { &U3MODE, &U3MODESET, &U3STA, &U3STASET, &U3STACLR, &U3BRG, &U3TXREG, &U3RXREG,
+    { &U3MODE, &U3MODESET, &U3MODECLR, &U3STA, &U3STASET, &U3STACLR, &U3BRG, &U3TXREG, &U3RXREG,
       &U3RXR, _PMD5_U3MD_MASK, 1u,
       D(2)|D(4)|D(6)|D(14), D(5)|D(7)|D(15) },
     /* U2: RX g3 {3,12}, TX g4 {0,11}, TX ppsval 2 */
-    { &U2MODE, &U2MODESET, &U2STA, &U2STASET, &U2STACLR, &U2BRG, &U2TXREG, &U2RXREG,
+    { &U2MODE, &U2MODESET, &U2MODECLR, &U2STA, &U2STASET, &U2STACLR, &U2BRG, &U2TXREG, &U2RXREG,
       &U2RXR, _PMD5_U2MD_MASK, 2u,
       D(3)|D(12), D(0)|D(11) },
     /* U6: RX g4 {0,11}, TX g3 {3,12}, TX ppsval 4 */
-    { &U6MODE, &U6MODESET, &U6STA, &U6STASET, &U6STACLR, &U6BRG, &U6TXREG, &U6RXREG,
+    { &U6MODE, &U6MODESET, &U6MODECLR, &U6STA, &U6STASET, &U6STACLR, &U6BRG, &U6TXREG, &U6RXREG,
       &U6RXR, _PMD5_U6MD_MASK, 4u,
       D(0)|D(11), D(3)|D(12) },
     /* U5: RX g1 {5,7,15}, TX g2 {2,4,6,14}, TX ppsval 3 — same pins as U1, so
      * U1 is auto-selected first; U5 is here for completeness / future N-UART. */
-    { &U5MODE, &U5MODESET, &U5STA, &U5STASET, &U5STACLR, &U5BRG, &U5TXREG, &U5RXREG,
+    { &U5MODE, &U5MODESET, &U5MODECLR, &U5STA, &U5STASET, &U5STACLR, &U5BRG, &U5TXREG, &U5RXREG,
       &U5RXR, _PMD5_U5MD_MASK, 3u,
       D(5)|D(7)|D(15), D(2)|D(4)|D(6)|D(14) },
 };
@@ -484,8 +485,10 @@ bool UserUart_SetInvert(bool rxInv, bool txInv) {
         gCfg.txInv = txInv;
         if (gEnabled) {
             const UartDesc_t* u = &gUarts[gUartIdx];
-            if (rxInv) { *(u->modeSet) = _U1MODE_RXINV_MASK; } else { *(u->mode) &= ~(uint32_t)_U1MODE_RXINV_MASK; }
-            if (txInv) { *(u->staSet)  = _U1STA_UTXINV_MASK; } else { *(u->staClr) = _U1STA_UTXINV_MASK; }
+            /* Atomic SET/CLR both directions (no RMW): UxSTA carries hardware-written
+             * status bits, and UxMODE stays consistent with the TX branch. */
+            if (rxInv) { *(u->modeSet) = _U1MODE_RXINV_MASK; } else { *(u->modeClr) = _U1MODE_RXINV_MASK; }
+            if (txInv) { *(u->staSet)  = _U1STA_UTXINV_MASK; } else { *(u->staClr)  = _U1STA_UTXINV_MASK; }
         }
         r = true;
     }
