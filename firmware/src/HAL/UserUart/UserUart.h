@@ -120,7 +120,15 @@ bool UserUart_SetInvert(bool rxInv, bool txInv);
  * the 300-baud floor with wide margin, and the wait yields throughout so it
  * never starves the CPU. (Not a per-byte timeout: one shared budget bounds the
  * entire call, matching uart_WriteLocked.)
- * @return false if not enabled, TX not configured, or the write timed out.
+ *
+ * Partial-write warning: on a timeout the call returns false after a prefix of
+ * @p len may already be on the wire, and Phase 1 exposes no byte-count/progress
+ * signal — so do NOT blindly re-send the same buffer on failure, or a naive
+ * retry duplicates the unknown prefix and corrupts framed protocols. The
+ * whole-write budget only trips on a genuinely stuck TX; a resend-safe
+ * byte-count arrives with the interrupt-fed TX ring follow-up.
+ * @return false if not enabled, TX not configured, or the write timed out
+ *         (on timeout, an unknown prefix of the payload may already be sent).
  */
 bool UserUart_Write(const uint8_t* data, uint16_t len);
 
