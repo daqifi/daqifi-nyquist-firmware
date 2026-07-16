@@ -757,6 +757,24 @@ static uint8_t spi_ScpiPinToDio(int32_t v) {
     return (v < 0) ? USER_SPI_PIN_NONE : (uint8_t)v;
 }
 
+/* True if the SCPI line has an unconsumed trailing token after the expected
+ * parameters — a real extra parameter (comma-separated: SCPI_Parameter returns
+ * TRUE) or an invalid separator (space-separated: SCPI_Parameter returns FALSE
+ * but queues an error). libscpi only flags a trailing token AFTER the callback
+ * returns, so every SPI SETTER must call this and bail BEFORE applying any side
+ * effect (pin claims, PPS/PMD, clocking, config store) — a rejected command
+ * must not leave hardware or config changed (e.g. `SPI:ENA 1,0` would otherwise
+ * leave SPI enabled). Pushes an execution error for the extra-parameter case;
+ * SCPI_Parameter already queued one for the invalid-separator case. */
+static bool spi_RejectTrailingParam(scpi_t* context) {
+    scpi_parameter_t extra;
+    if (SCPI_Parameter(context, &extra, FALSE)) {
+        SCPI_ExecutionError(context, "unexpected trailing parameter");
+        return true;
+    }
+    return SCPI_ParamErrorOccurred(context);
+}
+
 scpi_result_t SCPI_SpiConfigSet(scpi_t * context) {
     int32_t mosi, miso, cs, baud, mode;
     int32_t order = 0;   /* optional, default MSB-first */
@@ -780,6 +798,10 @@ scpi_result_t SCPI_SpiConfigSet(scpi_t * context) {
         }
     }
     /* else: absent -> keep the MSB-first default (order = 0). */
+
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;   /* a rejected CONFig must not store the config */
+    }
 
     /* Reject out-of-range pin indices before the uint8_t narrowing so a
      * value like 258 can't alias onto DIO2. Negative = unused line. */
@@ -839,6 +861,9 @@ scpi_result_t SCPI_SpiEnableSet(scpi_t * context) {
     if (!SCPI_ParamInt32(context, &on, TRUE)) {
         return SCPI_RES_ERR;
     }
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;   /* a rejected ENAble must not claim pins / power SPI1 */
+    }
     const char* err = NULL;
     bool ok = (on != 0) ? UserSpi_Enable(&err) : UserSpi_Disable();
     if (!ok) {
@@ -895,21 +920,12 @@ scpi_result_t SCPI_SpiTransfer(scpi_t * context) {
     if (!SCPI_ParamCharacters(context, &p, &len, TRUE)) {
         return SCPI_RES_ERR;
     }
-    /* Exactly one (quoted) hex arg — reject ANY trailing token BEFORE we clock
-     * anything, else a truncated frame reaches the slave before the error
-     * surfaces. Two malformed shapes: comma-separated ("TRAN? 9F,00,00") parses
-     * a 2nd parameter (SCPI_Parameter returns TRUE); space-separated
-     * ("TRAN? \"9F\" 00") is an INVALID_SEPARATOR (SCPI_Parameter returns FALSE
-     * but queues an error — so also check SCPI_ParamErrorOccurred). The
-     * documented form is one quoted token, e.g. "9F0000" (spi_ParseHex tolerates
-     * commas inside it). */
-    scpi_parameter_t extra;
-    if (SCPI_Parameter(context, &extra, FALSE)) {
-        SCPI_ExecutionError(context, "SPI:TRAN: one quoted hex arg only (e.g. \"9F0000\")");
+    /* Exactly one (quoted) hex arg — reject any trailing token (comma- OR
+     * space-separated) BEFORE we clock anything, else a truncated frame reaches
+     * the slave before the error surfaces. The documented form is one quoted
+     * token, e.g. "9F0000" (spi_ParseHex tolerates commas inside it). */
+    if (spi_RejectTrailingParam(context)) {
         return SCPI_RES_ERR;
-    }
-    if (SCPI_ParamErrorOccurred(context)) {
-        return SCPI_RES_ERR;   /* trailing token with an invalid separator (error already queued) */
     }
     if (!UserSpi_IsEnabled()) {
         SCPI_ExecutionError(context, "SPI not enabled");
