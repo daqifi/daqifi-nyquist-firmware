@@ -21,6 +21,8 @@
 #include "wdrv_winc_client_api.h"
 #include "services/daqifi_settings.h"
 #include "services/wifi_services/wifi_manager.h"
+#include "services/wifi_services/mdns_responder.h"   // #58: mDNS diagnostics
+#include "services/SCPI/SCPIInterface.h"              // #58: shared response buffer
 #include "services/sd_card_services/sd_card_manager.h"
 
 
@@ -715,6 +717,32 @@ scpi_result_t SCPI_LANGetChipInfo(scpi_t * context) {
     return SCPI_LANStringGetImpl(
             context,
             jsonChar);
+}
+
+/* #58: mDNS responder diagnostics. Reports whether the responder is still
+ * receiving/answering queries (recvArmed + rx/match/resp counters) and how many
+ * times the self-heal has re-opened a deaf socket (armFail/heal) — answerable
+ * on-device, independent of host-side mDNS tooling (unreliable on multi-homed
+ * hosts). Uses the shared response buffer (JSON can approach 256 B). */
+scpi_result_t SCPI_LANMdnsDiagGet(scpi_t * context) {
+    mdns_diag_t d;
+    mdns_responder_GetDiag(&d);
+    char *buf = (char *)SCPI_ResponseBuf_Take();
+    if (buf == NULL) {
+        return SCPI_RES_ERR;
+    }
+    snprintf(buf, 512,
+             "{\"Active\":%d,\"RecvArmed\":%d,\"Rx\":%lu,\"Match\":%lu,\"Resp\":%lu,"
+             "\"ArmFail\":%lu,\"Heal\":%lu,\"LastArmRc\":%d,"
+             "\"Instance\":\"%s\",\"Host\":\"%s\"}\n",
+             (int)d.active, (int)d.recvArmed,
+             (unsigned long)d.rxCount, (unsigned long)d.matchCount,
+             (unsigned long)d.respCount, (unsigned long)d.armFailCount,
+             (unsigned long)d.healCount, (int)d.lastArmRc,
+             d.instance, d.host);
+    scpi_result_t r = SCPI_LANStringGetImpl(context, buf);
+    SCPI_ResponseBuf_Give();
+    return r;
 }
 
 scpi_result_t SCPI_LANSettingsSave(scpi_t * context) {

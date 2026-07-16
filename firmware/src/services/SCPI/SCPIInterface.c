@@ -5413,6 +5413,7 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:COMMunicate:LAN:FACRESET", .callback = SCPI_LANSettingsFactoryLoad,},
     //
     {.pattern = "SYSTem:COMMunicate:LAN:GETChipInfo?", .callback = SCPI_LANGetChipInfo,},
+    {.pattern = "SYSTem:COMMunicate:LAN:MDNS?", .callback = SCPI_LANMdnsDiagGet,},  // #58 mDNS diagnostics
     // ADC
     {.pattern = "MEASure:VOLTage:DC?", .callback = SCPI_ADCVoltageGet,},
     {.pattern = "ENAble:VOLTage:DC", .callback = SCPI_ADCChanEnableSet,},

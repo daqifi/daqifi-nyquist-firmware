@@ -3081,6 +3081,7 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     if (drainTcpRx) {
         ApplyPowerSavePolicy(&gStateMachineContext);
         wifi_manager_ServiceConsoleIdleTimeout();  // #663: connect-and-never-send guard
+        mdns_responder_ServiceHealth();            // #58: re-open a deaf mDNS socket
     }
 
     if (gProcessStateMutex != NULL) {
