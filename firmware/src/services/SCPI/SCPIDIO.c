@@ -602,6 +602,12 @@ static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value)
     }
     if (!DIO_PWMWriteStateSingle(id))
     {
+        /* Blocked — e.g. the pin was claimed by a peripheral (SPI) in a
+         * concurrent cross-interface race, so DIO_PWMWriteStateSingle refused
+         * to reprogram it. Don't leave IsPwmActive lying set for a channel PWM
+         * isn't actually driving (it would also wrongly block that channel's
+         * normal DIO restore and a later peripheral claim). */
+        pRunTimeDIOChannels->Data[id].IsPwmActive = 0;
         return SCPI_RES_ERR;
     }
     return SCPI_RES_OK;

@@ -95,10 +95,14 @@ bool DIO_ClaimChannel(uint8_t channel, DioChannelOwner_t owner) {
     }
     bool ok = false;
     taskENTER_CRITICAL();
-    /* Test the probe claim and the peripheral owner together inside the
-     * critical section so probe-assign (one SCPI interface) and a peripheral
-     * claim (the other) can't race between the check and the store. */
-    if (!DioProbe_IsChannelOwned(channel)) {
+    /* Test the probe claim, PWM-active state, AND the peripheral owner together
+     * inside the critical section. PWM does not take a registry entry (it uses
+     * the IsPwmActive flag), so a claim that ignored IsPwmActive could steal a
+     * pin a concurrent PWM enable just activated on the other SCPI interface,
+     * then overwrite its PPS mux — a silent cross-feature corruption. Reading
+     * IsPwmActive here (paired with DIO_PWMWriteStateSingle refusing to program
+     * a registry-owned pin) makes SPI-vs-PWM arbitration race-free both ways. */
+    if (!DioProbe_IsChannelOwned(channel) && !DIO_IsPwmActive(channel)) {
         DioChannelOwner_t cur = (DioChannelOwner_t)gDioOwner[channel];
         if (cur == DIO_OWNER_NONE || cur == owner) {
             gDioOwner[channel] = (uint8_t)owner;
