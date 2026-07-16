@@ -466,7 +466,13 @@ void DIO_StreamingTrigger(DIOSample* latest, DIOSampleList* streamingSamples) {
         if (gpRuntimeBoardConfig->DIOGlobalEnable &&
                 gpRuntimeBoardConfig->StreamingConfig.IsEnabled) {
             DIOSample streamingSample;
-            streamingSample.Mask = 0xFFFF;
+            /* Use the mask DIO_ReadSampleByMask actually populated, not a
+             * hardcoded 0xFFFF: it has probe- and peripheral-owned (SPI/#665)
+             * channels stripped, so a JSON consumer sees those bus pins as
+             * NOT-valid rather than as a genuine logic-0 DIO reading (their
+             * Values bit is left 0). With nothing owned this equals 0xFFFF, so
+             * normal DIO streaming is unchanged. */
+            streamingSample.Mask = latest->Mask;
             streamingSample.Values = latest->Values;
             streamingSample.Timestamp = latest->Timestamp;
             if (!DIOSampleList_PushBack(

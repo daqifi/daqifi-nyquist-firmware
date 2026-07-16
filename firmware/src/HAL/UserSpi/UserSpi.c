@@ -249,6 +249,14 @@ static bool spi_ConfigureLocked(const UserSpiConfig_t* cfg, const char** err) {
         why = "mode must be 0..3";
     } else if (cfg->baudHz < USER_SPI_MIN_BAUD_HZ || cfg->baudHz > USER_SPI_MAX_BAUD_HZ) {
         why = "baud out of range (6k..42M Hz)";
+    } else if (cfg->baudHz < (USER_SPI_PBCLK_HZ / (2u * 8192u))) {
+        /* Below the BRG-saturation SCK floor at this PBCLK: the 13-bit BRG
+         * clamps at 8191, so a lower request would be met with a SCK ABOVE it
+         * (overclock). Reject here so spi_ComputeBrg's "achieved <= requested"
+         * contract always holds. On the 84 MHz build the floor (~5.1 kHz) is
+         * below the 6 kHz min above, so this only bites the 100 MHz legacy
+         * clock (floor ~6.1 kHz). */
+        why = "baud below the PBCLK SCK floor";
     } else if (cfg->mosiDio != USER_SPI_PIN_NONE && !spi_MosiCapable(cfg->mosiDio)) {
         why = "MOSI must be DIO 2,4,5,6,7,14,15";
     } else if (cfg->misoDio != USER_SPI_PIN_NONE && spi_MisoSdi1rValue(cfg->misoDio) == 0xFFu) {
@@ -409,7 +417,8 @@ static bool spi_TransferLocked(const uint8_t* tx, uint8_t* rx, uint16_t len) {
         return false;
     }
 
-    bool haveCs = (gCfg.csDio != USER_SPI_PIN_NONE);
+    bool haveCs   = (gCfg.csDio  != USER_SPI_PIN_NONE);
+    bool haveMiso = (gCfg.misoDio != USER_SPI_PIN_NONE);
     if (haveCs) {
         DIO_DriveChannel(gCfg.csDio, false);   /* assert (active low) */
     }
@@ -424,7 +433,11 @@ static bool spi_TransferLocked(const uint8_t* tx, uint8_t* rx, uint16_t len) {
             break;
         }
         if (rx != NULL) {
-            rx[i] = gCfg.lsbFirst ? spi_Reverse8(r) : r;
+            /* On a MOSI-only (write-only) bus no MISO pin is configured, yet
+             * SDI1R still selects a real PPS pin (input PPS has no no-connect
+             * encoding) whose read-back is arbitrary noise. Report the
+             * documented 0x00 for the no-MISO case instead of that pin's level. */
+            rx[i] = haveMiso ? (gCfg.lsbFirst ? spi_Reverse8(r) : r) : 0u;
         }
     }
 
