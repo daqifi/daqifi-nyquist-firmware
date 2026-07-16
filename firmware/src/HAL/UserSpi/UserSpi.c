@@ -119,15 +119,22 @@ static uint8_t spi_Reverse8(uint8_t b) {
  * PLIBs) and the actual resulting SCK. */
 static uint32_t spi_ComputeBrg(uint32_t baudHz, uint32_t* actualOut) {
     uint32_t src = USER_SPI_PBCLK_HZ;
-    uint32_t brg = ((src / baudHz) / 2u);
-    brg = (brg == 0u) ? 0u : (brg - 1u);
-    uint32_t baudHigh = src / (2u * (brg + 1u));
-    uint32_t baudLow  = src / (2u * (brg + 2u));
-    uint32_t errHigh  = (baudHigh > baudHz) ? (baudHigh - baudHz) : (baudHz - baudHigh);
-    uint32_t errLow   = (baudHz > baudLow)  ? (baudHz - baudLow)  : (baudLow - baudHz);
-    if (errHigh > errLow) {
-        brg++;
+    /* Round the SPI clock DOWN, never up: the achieved SCK must not exceed the
+     * requested baud. spi_ConfigureLocked validates only the *requested* rate
+     * against USER_SPI_MAX_BAUD_HZ, so a round-to-nearest that lands above the
+     * request would silently overclock a slave rated for the requested max
+     * (data corruption). SCK = src / (2*(BRG+1)), so the smallest divisor
+     * giving SCK <= baud is ceil(src / (2*baud)) = BRG+1. baudHz is validated
+     * >= USER_SPI_MIN_BAUD_HZ upstream, so 2*baud never overflows uint32 (baud
+     * <= 42 MHz) and is non-zero. The BRG clamp only bites below the hardware
+     * SCK floor (~5.1 kHz at 84 MHz), which the 6 kHz min baud keeps requests
+     * above — so actual <= baud always holds. */
+    uint32_t twoBaud = 2u * baudHz;
+    uint32_t divisor = (src + twoBaud - 1u) / twoBaud;   /* ceil(src / (2*baud)) */
+    if (divisor == 0u) {
+        divisor = 1u;
     }
+    uint32_t brg = divisor - 1u;
     if (brg > 8191u) {
         brg = 8191u;
     }
