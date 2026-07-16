@@ -168,7 +168,10 @@ scpi_result_t SCPI_GPIODirectionGet(scpi_t * context)
     else
     {
         bool result = false;
+        /* Reject a read of an owned pin the same way the setter dispatch does —
+         * consistent with SCPI_GPIODirectionSet (see SCPI_GPIOStateGet). */
         if (!DIO_SingleChannelIndexValid(context, param1) ||  // #671: reject before truncation
+            SCPI_DioChannelBlocked(context, param1, "DIO:DIR?") ||
             SCPI_GPIOSingleDirectionGet((uint8_t)param1, &result) == SCPI_RES_ERR)
         {
             retCode = SCPI_RES_ERR;
@@ -232,7 +235,13 @@ scpi_result_t SCPI_GPIOStateGet(scpi_t * context)
     else
     {
         bool result = false;
+        /* Reject a read of an owned pin (SPI/probe/...) the same way the setter
+         * dispatch does — an owned bus line has no meaningful DIO logic level,
+         * and the read path strips it to 0, misreporting a driven-high pin
+         * (e.g. an idle-high CS) as 0. Error + name the owner (a config problem,
+         * per the SCPI data-visibility rule), consistent with SCPI_GPIOStateSet. */
         if (!DIO_SingleChannelIndexValid(context, param1) ||  // #671: reject before truncation
+            SCPI_DioChannelBlocked(context, param1, "DIO:STATE?") ||
             SCPI_GPIOSingleStateGet((uint8_t)param1, &result) == SCPI_RES_ERR)
         {
             retCode = SCPI_RES_ERR;
