@@ -58,7 +58,11 @@ static StaticSemaphore_t gI2cMutexBuf;
 
 static SemaphoreHandle_t i2c_Mutex(void) {
     if (gI2cMutex == NULL) {
-        gI2cMutex = xSemaphoreCreateMutexStatic(&gI2cMutexBuf);
+        taskENTER_CRITICAL();
+        if (gI2cMutex == NULL) {   /* re-check: another task may have won the race */
+            gI2cMutex = xSemaphoreCreateMutexStatic(&gI2cMutexBuf);
+        }
+        taskEXIT_CRITICAL();
     }
     return gI2cMutex;
 }
@@ -197,7 +201,39 @@ stop:
 /* ------------------------------------------------------------------ */
 /* Module + bus recovery */
 
-static void i2c_ModuleInit(void) {
+/* SYSKEY-guarded CFGCON write (the plib_nvm idiom) so we can toggle PMDLOCK.
+ * Mirrors UserSpi's spi_CfgconUnlockedWrite. */
+static void i2c_CfgconUnlockedWrite(uint32_t val) {
+    uint32_t st = __builtin_disable_interrupts();
+    SYSKEY = 0x00000000U;
+    SYSKEY = 0xAA996655U;
+    SYSKEY = 0x556699AAU;
+    CFGCON = val;
+    SYSKEY = 0x33333333U;
+    __builtin_mtc0(12, 0, st);
+}
+
+/* Power the I2C2 module by clearing its PMD bit. CLK_Initialize leaves I2C2
+ * PMD-gated OFF (PMD5=0xfeefd5ff, I2C2MD set), so WITHOUT this every write to
+ * I2C2CON/BRG is ignored, ON never latches, and every transfer times out --
+ * indistinguishable from an empty bus. Clearing CFGCON.PMDLOCK opens PMD5 for a
+ * direct write; the whole open->write->close runs interrupts-off so PMDLOCK is
+ * never left open to a preemptor (PMDL1WAY is OFF per #664). Same pattern as
+ * UserSpi spi_SetPmd / UserUart uart_SetPmd. */
+static void i2c_SetPmd(void) {
+    uint32_t st = __builtin_disable_interrupts();
+    i2c_CfgconUnlockedWrite(CFGCON & ~(uint32_t)_CFGCON_PMDLOCK_MASK);
+    PMD5CLR = _PMD5_I2C2MD_MASK;
+    i2c_CfgconUnlockedWrite(CFGCON | (uint32_t)_CFGCON_PMDLOCK_MASK);
+    __builtin_mtc0(12, 0, st);
+}
+
+/* @return true iff the module actually powered up. A PMD-gated module ignores
+ * every SFR write and reads back 0, so ON failing to latch is the definitive
+ * "not clocked" signal -- the guard that keeps a dead module from masquerading
+ * as an empty bus (both scan empty otherwise). */
+static bool i2c_ModuleInit(void) {
+    i2c_SetPmd();                             /* power I2C2 before touching its SFRs */
     ANSELACLR = (1u << 2) | (1u << 3);        /* RA2/RA3 digital (defensive; ODCA set in GPIO init) */
     IEC4CLR = _IEC4_I2C2MIE_MASK;             /* poll the master flag, never take the interrupt */
     IEC4CLR = _IEC4_I2C2BIE_MASK;             /* bus-collision interrupt off too */
@@ -208,6 +244,7 @@ static void i2c_ModuleInit(void) {
     I2C2CONCLR = _I2C2CON_DISSLW_MASK;        /* slew-rate control on (<=400 kHz) */
     I2C2CONCLR = _I2C2CON_SMEN_MASK;
     I2C2CONSET = _I2C2CON_ON_MASK;
+    return (I2C2CON & _I2C2CON_ON_MASK) != 0u;
 }
 
 /* Free a slave that is holding SDA low: pulse SCL up to 9 times, then STOP. */
@@ -222,6 +259,10 @@ static void i2c_BusRecover(void) {
     LATACLR = (1u << 3); i2c_DelayHalfBit();  /* STOP: SDA low, */
     LATASET = (1u << 2); i2c_DelayHalfBit();  /*   SCL high, */
     LATASET = (1u << 3); i2c_DelayHalfBit();  /*   then SDA high */
+    /* Release RA2/RA3 back to inputs before the module retakes them, so we never
+     * leave a GPIO output fighting the open-drain bus (the module overrides TRIS
+     * once ON, but don't rely on that -- restore the pre-recovery direction). */
+    TRISASET = (1u << 2) | (1u << 3);
     I2C2CONSET = _I2C2CON_ON_MASK;
 }
 
@@ -258,6 +299,14 @@ static void i2c_SegRelease(uint8_t idx) {
 /* Public API */
 
 void UserI2c_InitEnablesLow(void) {
+    /* Create the bus mutex here, at boot (DIO_InitHardware, single-threaded
+     * before the scheduler), so the lazy check-then-create in i2c_Mutex() can
+     * never race two SCPI interfaces (USB pri-7 vs WiFi pri-2) on a concurrent
+     * first Enable -- by the time either runs, gI2cMutex is already non-NULL.
+     * Created directly (no critical section) because boot is single-threaded. */
+    if (gI2cMutex == NULL) {
+        gI2cMutex = xSemaphoreCreateMutexStatic(&gI2cMutexBuf);
+    }
     for (uint8_t i = 0; i < USER_I2C_SEGMENT_COUNT; ++i) {
         *(gSegs[i].enClr)     = gSegs[i].enMask;   /* drive low first (no glitch) */
         *(gSegs[i].enTrisClr) = gSegs[i].enMask;   /* then enable as output */
@@ -281,12 +330,16 @@ bool UserI2c_Enable(const char** err) {
                 }
             }
         }
+        if (ok && !i2c_ModuleInit()) {
+            /* module never latched ON -> not clocked (PMD/clock fault). */
+            ok = false;
+            if (err) { *err = "I2C: module failed to power up (PMD/clock)"; }
+        }
         if (!ok) {
             for (uint8_t i = 0; i < USER_I2C_SEGMENT_COUNT; ++i) {
                 if ((acquired & (1u << i)) != 0u) { i2c_SegRelease(i); }
             }
         } else {
-            i2c_ModuleInit();
             gEnabled = true;
         }
     }
