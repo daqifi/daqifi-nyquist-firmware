@@ -348,6 +348,13 @@ bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask) {
 }
 
 bool DIO_PWMWriteStateSingle(uint8_t dataIndex) {
+    /* Bounds-guard the table indexing below (same rationale as
+     * DIO_WriteStateSingle): DIO_ChannelBlocked only rejects >= MAX_DIO_CHANNEL,
+     * so an index in [DIOChannels.Size, MAX_DIO_CHANNEL) would read past the
+     * board table. SCPI callers validate, but keep the HAL self-protecting. */
+    if (gpBoardConfig == NULL || dataIndex >= gpBoardConfig->DIOChannels.Size) {
+        return false;
+    }
     if (DIO_ChannelBlocked(dataIndex)) {
         return false;
     }
@@ -374,6 +381,10 @@ bool DIO_PWMWriteStateSingle(uint8_t dataIndex) {
 }
 
 bool DIO_PWMDutyCycleSetSingle(uint8_t dataIndex) {
+    /* Bounds-guard the table indexing below — see DIO_WriteStateSingle. */
+    if (gpBoardConfig == NULL || dataIndex >= gpBoardConfig->DIOChannels.Size) {
+        return false;
+    }
     if (DIO_ChannelBlocked(dataIndex)) {
         return false;
     }
@@ -390,6 +401,10 @@ bool DIO_PWMDutyCycleSetSingle(uint8_t dataIndex) {
 }
 
 bool DIO_PWMFrequencySet(uint8_t dataIndex) {
+    /* Bounds-guard the table indexing below — see DIO_WriteStateSingle. */
+    if (gpBoardConfig == NULL || dataIndex >= gpBoardConfig->DIOChannels.Size) {
+        return false;
+    }
     if (DIO_ChannelBlocked(dataIndex)) {
         return false;
     }
