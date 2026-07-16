@@ -1124,17 +1124,18 @@ scpi_result_t SCPI_UartWrite(scpi_t * context) {
         SCPI_ExecutionError(context, "UART not enabled");
         return SCPI_RES_ERR;
     }
-    uint8_t *buf = SCPI_ResponseBuf_Take();
-    if (buf == NULL) { return SCPI_RES_ERR; }
+    /* Parse into a small stack local, NOT the shared 2048B SCPI response buffer:
+     * UserUart_Write can block for seconds at low baud (yielding), and holding
+     * the global scratch mutex across it would stall every OTHER SCPI command
+     * on both USB and WiFi. 128 bytes stays well under the WifiTask stack budget
+     * (the ">=256B must use the shared buffer" rule) — split larger frames. */
+    uint8_t tx[128];
     uint16_t n = 0;
-    if (!spi_ParseHex(p, len, buf, 256u, &n)) {
-        SCPI_ResponseBuf_Give();
-        SCPI_ExecutionError(context, "UART:WRITE: bad hex (even digits, <=256 bytes)");
+    if (!spi_ParseHex(p, len, tx, sizeof(tx), &n)) {
+        SCPI_ExecutionError(context, "UART:WRITE: bad hex (even digits, <=128 bytes)");
         return SCPI_RES_ERR;
     }
-    bool ok = UserUart_Write(buf, n);
-    SCPI_ResponseBuf_Give();
-    if (!ok) {
+    if (!UserUart_Write(tx, n)) {
         SCPI_ExecutionError(context, "UART write timeout (TX not configured?)");
         return SCPI_RES_ERR;
     }
