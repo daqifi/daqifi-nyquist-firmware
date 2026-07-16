@@ -1002,7 +1002,9 @@ scpi_result_t SCPI_UartConfigSet(scpi_t * context) {
     if (spi_RejectTrailingParam(context)) {
         return SCPI_RES_ERR;   /* rejected CONFig must not store the config */
     }
-    if (rx > 15 || tx > 15) {
+    if (rx < -1 || rx > 15 || tx < -1 || tx > 15) {
+        /* Only -1 (unused) is a valid negative; reject other negatives rather
+         * than silently folding them to "unused". */
         SCPI_ExecutionError(context, "UART pin index out of range (-1..15)");
         return SCPI_RES_ERR;
     }

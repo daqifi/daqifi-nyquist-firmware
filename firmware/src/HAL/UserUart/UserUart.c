@@ -26,10 +26,13 @@
  * BRGH=1: baud = PBCLK2 / (4*(BRG+1)). */
 #define USER_UART_PBCLK_HZ   DAQIFI_PBCLK_HZ
 
-/* Per-byte TX spin bound: covers one 10-bit frame at the min baud with margin
- * at 252 MHz; a byte at 115200 leaves in ~87 us. A timeout means TX never
- * drained (hardware/config fault). */
-#define USER_UART_TX_TIMEOUT  2000000UL
+/* Per-byte TX spin bound. Must exceed one frame-time at the SLOWEST baud: at
+ * the ~320 Hz BRG floor a 10-bit frame is ~31 ms, and each loop iteration is a
+ * peripheral-bus SFR read (tens of core cycles), so size generously — 20M gives
+ * hundreds of ms of headroom per wait at 252 MHz (a byte at 115200 leaves in
+ * ~87 us, so normal use never approaches it). A timeout means TX never drained
+ * (hardware/config fault). */
+#define USER_UART_TX_TIMEOUT  20000000UL
 
 /* BRG is 16-bit; the slowest baud is PBCLK2/(4*65536). */
 #define USER_UART_BRG_MAX     65535u
@@ -357,8 +360,12 @@ static bool uart_DisableLocked(void) {
     uart_ApplyPps(u, false);     /* unmap TX/RX PPS */
     uart_SetPmd(u, false);       /* gate the module */
 
-    if (gCfg.rxDio != USER_UART_PIN_NONE) { DIO_RestoreChannel(gCfg.rxDio); DIO_ReleaseChannel(gCfg.rxDio, DIO_OWNER_UART); }
-    if (gCfg.txDio != USER_UART_PIN_NONE) { DIO_RestoreChannel(gCfg.txDio); DIO_ReleaseChannel(gCfg.txDio, DIO_OWNER_UART); }
+    /* Release the claim BEFORE restoring: DIO_RestoreChannel -> DIO_WriteStateSingle
+     * short-circuits on a still-owned channel (its own contract), so restoring
+     * first would be a no-op and leave the pin in peripheral-buffer mode. Match
+     * the spi_DisableLocked order. */
+    if (gCfg.rxDio != USER_UART_PIN_NONE) { DIO_ReleaseChannel(gCfg.rxDio, DIO_OWNER_UART); DIO_RestoreChannel(gCfg.rxDio); }
+    if (gCfg.txDio != USER_UART_PIN_NONE) { DIO_ReleaseChannel(gCfg.txDio, DIO_OWNER_UART); DIO_RestoreChannel(gCfg.txDio); }
 
     gEnabled = false;
     gUartIdx = -1;
@@ -395,13 +402,17 @@ static uint16_t uart_ReadLocked(uint8_t* out, uint16_t maxLen) {
         return 0;
     }
     const UartDesc_t* u = &gUarts[gUartIdx];
-    if ((*(u->sta) & _U1STA_OERR_MASK) != 0u) {
-        gOverflow++;
-        *(u->staClr) = _U1STA_OERR_MASK;
-    }
+    /* Drain the FIFO BEFORE clearing OERR: on PIC32 clearing OERR resets the RX
+     * FIFO, so clearing first would discard the bytes already buffered. Reading
+     * empties the FIFO; then clear the (sticky) overrun to un-stall the shifter
+     * (erratum #8) and count the event. */
     uint16_t n = 0;
     while (n < maxLen && (*(u->sta) & _U1STA_URXDA_MASK) != 0u) {
         out[n++] = (uint8_t)(*(u->rxreg) & 0xFFu);
+    }
+    if ((*(u->sta) & _U1STA_OERR_MASK) != 0u) {
+        gOverflow++;
+        *(u->staClr) = _U1STA_OERR_MASK;
     }
     return n;
 }
