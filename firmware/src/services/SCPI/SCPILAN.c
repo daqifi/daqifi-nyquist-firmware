@@ -895,16 +895,21 @@ scpi_result_t SCPI_SpiTransfer(scpi_t * context) {
     if (!SCPI_ParamCharacters(context, &p, &len, TRUE)) {
         return SCPI_RES_ERR;
     }
-    /* Exactly one (quoted) hex arg — reject any trailing parameter BEFORE we
-     * clock anything. Without this, unquoted comma-separated bytes
-     * ("TRAN? 9F,00,00") consume only 9F here and shift that truncated frame to
-     * the slave before libscpi rejects the leftover ",00,00". The documented
-     * form is one quoted token, e.g. "9F0000" (spi_ParseHex tolerates commas
-     * inside it). */
+    /* Exactly one (quoted) hex arg — reject ANY trailing token BEFORE we clock
+     * anything, else a truncated frame reaches the slave before the error
+     * surfaces. Two malformed shapes: comma-separated ("TRAN? 9F,00,00") parses
+     * a 2nd parameter (SCPI_Parameter returns TRUE); space-separated
+     * ("TRAN? \"9F\" 00") is an INVALID_SEPARATOR (SCPI_Parameter returns FALSE
+     * but queues an error — so also check SCPI_ParamErrorOccurred). The
+     * documented form is one quoted token, e.g. "9F0000" (spi_ParseHex tolerates
+     * commas inside it). */
     scpi_parameter_t extra;
     if (SCPI_Parameter(context, &extra, FALSE)) {
         SCPI_ExecutionError(context, "SPI:TRAN: one quoted hex arg only (e.g. \"9F0000\")");
         return SCPI_RES_ERR;
+    }
+    if (SCPI_ParamErrorOccurred(context)) {
+        return SCPI_RES_ERR;   /* trailing token with an invalid separator (error already queued) */
     }
     if (!UserSpi_IsEnabled()) {
         SCPI_ExecutionError(context, "SPI not enabled");
