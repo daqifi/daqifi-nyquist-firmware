@@ -23,6 +23,7 @@
 #include "services/wifi_services/wifi_manager.h"
 #include "services/wifi_services/mdns_responder.h"   // #58: mDNS diagnostics
 #include "services/SCPI/SCPIInterface.h"              // #58: shared response buffer
+#include "HAL/UserSpi/UserSpi.h"                      // #665: user SPI1 master
 #include "services/sd_card_services/sd_card_manager.h"
 
 
@@ -743,6 +744,227 @@ scpi_result_t SCPI_LANMdnsDiagGet(scpi_t * context) {
     scpi_result_t r = SCPI_LANStringGetImpl(context, buf);
     SCPI_ResponseBuf_Give();
     return r;
+}
+
+// =========================================================================
+// User SPI1 master (#665, epic #664) — SYST:COMM:SPI:*
+// =========================================================================
+
+/* Map a signed SCPI pin argument to a DIO channel or the "none" sentinel.
+ * Negative = unused line; anything > 15 is rejected by the caller to avoid
+ * a uint8_t truncation-alias (cf. #678). */
+static uint8_t spi_ScpiPinToDio(int32_t v) {
+    return (v < 0) ? USER_SPI_PIN_NONE : (uint8_t)v;
+}
+
+/* True if the SCPI line has an unconsumed trailing token after the expected
+ * parameters — a real extra parameter (comma-separated: SCPI_Parameter returns
+ * TRUE) or an invalid separator (space-separated: SCPI_Parameter returns FALSE
+ * but queues an error). libscpi only flags a trailing token AFTER the callback
+ * returns, so every SPI SETTER must call this and bail BEFORE applying any side
+ * effect (pin claims, PPS/PMD, clocking, config store) — a rejected command
+ * must not leave hardware or config changed (e.g. `SPI:ENA 1,0` would otherwise
+ * leave SPI enabled). Pushes an execution error for the extra-parameter case;
+ * SCPI_Parameter already queued one for the invalid-separator case. */
+static bool spi_RejectTrailingParam(scpi_t* context) {
+    scpi_parameter_t extra;
+    if (SCPI_Parameter(context, &extra, FALSE)) {
+        SCPI_ExecutionError(context, "unexpected trailing parameter");
+        return true;
+    }
+    return SCPI_ParamErrorOccurred(context);
+}
+
+scpi_result_t SCPI_SpiConfigSet(scpi_t * context) {
+    int32_t mosi, miso, cs, baud, mode;
+    int32_t order = 0;   /* optional, default MSB-first */
+
+    if (!SCPI_ParamInt32(context, &mosi, TRUE) ||
+        !SCPI_ParamInt32(context, &miso, TRUE) ||
+        !SCPI_ParamInt32(context, &cs,   TRUE) ||
+        !SCPI_ParamInt32(context, &baud, TRUE) ||
+        !SCPI_ParamInt32(context, &mode, TRUE)) {
+        return SCPI_RES_ERR;   /* libscpi already pushed a parse error */
+    }
+    /* Optional order param: if it is SUPPLIED it must be a valid integer, else
+     * reject the whole config. The old (void)SCPI_ParamInt32 discarded the
+     * parse result, so a bad 6th token (e.g. ...,0,BOGUS) pushed a DATA_TYPE
+     * error yet still committed the config with the default order. Mirror the
+     * SCPI_Parameter(FALSE)+SCPI_ParamToInt32 idiom used elsewhere. */
+    scpi_parameter_t orderParam;
+    if (SCPI_Parameter(context, &orderParam, FALSE)) {
+        if (!SCPI_ParamToInt32(context, &orderParam, &order)) {
+            return SCPI_RES_ERR;   /* present but not an integer (error already pushed) */
+        }
+    }
+    /* else: absent -> keep the MSB-first default (order = 0). */
+
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;   /* a rejected CONFig must not store the config */
+    }
+
+    /* Reject out-of-range pin indices before the uint8_t narrowing so a
+     * value like 258 can't alias onto DIO2. Negative = unused line. */
+    if (mosi > 15 || miso > 15 || cs > 15) {
+        SCPI_ExecutionError(context, "SPI pin index out of range (-1..15)");
+        return SCPI_RES_ERR;
+    }
+    if (mode < 0 || mode > 3) {
+        SCPI_ExecutionError(context, "SPI mode must be 0..3");
+        return SCPI_RES_ERR;
+    }
+
+    UserSpiConfig_t cfg;
+    cfg.mosiDio  = spi_ScpiPinToDio(mosi);
+    cfg.misoDio  = spi_ScpiPinToDio(miso);
+    cfg.csDio    = spi_ScpiPinToDio(cs);
+    cfg.baudHz   = (baud <= 0) ? USER_SPI_DEFAULT_BAUD_HZ : (uint32_t)baud;  /* 0/neg = safe default */
+    cfg.mode     = (uint8_t)mode;
+    cfg.lsbFirst = (order != 0);
+
+    const char* err = NULL;
+    if (!UserSpi_Configure(&cfg, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "invalid SPI config");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_SpiConfigGet(scpi_t * context) {
+    UserSpiConfig_t cfg;
+    if (!UserSpi_GetConfig(&cfg)) {
+        SCPI_ExecutionError(context, "no SPI config set");
+        return SCPI_RES_ERR;
+    }
+    char *buf = (char *)SCPI_ResponseBuf_Take();
+    if (buf == NULL) {
+        return SCPI_RES_ERR;
+    }
+    int mosi = (cfg.mosiDio == USER_SPI_PIN_NONE) ? -1 : (int)cfg.mosiDio;
+    int miso = (cfg.misoDio == USER_SPI_PIN_NONE) ? -1 : (int)cfg.misoDio;
+    int cs   = (cfg.csDio   == USER_SPI_PIN_NONE) ? -1 : (int)cfg.csDio;
+    snprintf(buf, SCPI_RESPONSE_BUF_SIZE,
+             "{\"Sck\":0,\"Mosi\":%d,\"Miso\":%d,\"Cs\":%d,\"Baud\":%lu,"
+             "\"Mode\":%d,\"LsbFirst\":%d,\"Enabled\":%d,\"ActualBaud\":%lu}\n",
+             mosi, miso, cs, (unsigned long)cfg.baudHz,
+             (int)cfg.mode, (int)cfg.lsbFirst,
+             (int)UserSpi_IsEnabled(), (unsigned long)UserSpi_GetActualBaud());
+    /* SCPI_ResultMnemonic emits the JSON raw (no SCPI string-quoting), so
+     * clients get parseable JSON — matching the mDNS diagnostic convention. */
+    SCPI_ResultMnemonic(context, buf);
+    SCPI_ResponseBuf_Give();
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_SpiEnableSet(scpi_t * context) {
+    int32_t on;
+    if (!SCPI_ParamInt32(context, &on, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;   /* a rejected ENAble must not claim pins / power SPI1 */
+    }
+    const char* err = NULL;
+    bool ok = (on != 0) ? UserSpi_Enable(&err) : UserSpi_Disable();
+    if (!ok) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "SPI enable failed");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_SpiEnableGet(scpi_t * context) {
+    SCPI_ResultInt32(context, UserSpi_IsEnabled() ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
+/* Parse a hex byte string (tolerant of quotes, spaces, commas, underscores
+ * and an optional 0x prefix) into @p out. Requires an even, non-zero count
+ * of hex digits and at most @p maxOut bytes. */
+static bool spi_ParseHex(const char* p, size_t len, uint8_t* out,
+                         uint16_t maxOut, uint16_t* nOut) {
+    uint16_t n = 0;
+    int hi = -1;   /* pending high nibble, -1 = none */
+    size_t i = 0;
+    if (len >= 2u && p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+        i = 2u;
+    }
+    for (; i < len; ++i) {
+        char c = p[i];
+        if (c == ' ' || c == '\t' || c == '_' || c == ',' || c == '"') {
+            continue;
+        }
+        int v;
+        if (c >= '0' && c <= '9')      { v = c - '0'; }
+        else if (c >= 'a' && c <= 'f') { v = c - 'a' + 10; }
+        else if (c >= 'A' && c <= 'F') { v = c - 'A' + 10; }
+        else { return false; }
+        if (hi < 0) {
+            hi = v;
+        } else {
+            if (n >= maxOut) { return false; }
+            out[n++] = (uint8_t)(((uint8_t)hi << 4) | (uint8_t)v);
+            hi = -1;
+        }
+    }
+    if (hi >= 0 || n == 0u) {
+        return false;   /* odd nibble count or empty */
+    }
+    *nOut = n;
+    return true;
+}
+
+scpi_result_t SCPI_SpiTransfer(scpi_t * context) {
+    const char* p = NULL;
+    size_t len = 0;
+    if (!SCPI_ParamCharacters(context, &p, &len, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    /* Exactly one (quoted) hex arg — reject any trailing token (comma- OR
+     * space-separated) BEFORE we clock anything, else a truncated frame reaches
+     * the slave before the error surfaces. The documented form is one quoted
+     * token, e.g. "9F0000" (spi_ParseHex tolerates commas inside it). */
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;
+    }
+    if (!UserSpi_IsEnabled()) {
+        SCPI_ExecutionError(context, "SPI not enabled");
+        return SCPI_RES_ERR;
+    }
+
+    /* Carve tx/rx/out regions out of the shared 2048B response buffer so we
+     * never put a >=256B scratch array on the (small) WifiTask stack. */
+    uint8_t *buf = SCPI_ResponseBuf_Take();
+    if (buf == NULL) {
+        return SCPI_RES_ERR;
+    }
+    uint8_t *tx  = buf;             /* [0..255]   */
+    uint8_t *rx  = buf + 256;       /* [256..511] */
+    char    *out = (char *)(buf + 512);  /* [512..2047] */
+
+    uint16_t n = 0;
+    if (!spi_ParseHex(p, len, tx, 256u, &n)) {
+        SCPI_ResponseBuf_Give();
+        SCPI_ExecutionError(context, "SPI:TRAN: bad hex (even digits, <=256 bytes)");
+        return SCPI_RES_ERR;
+    }
+    if (!UserSpi_Transfer(tx, rx, n)) {
+        SCPI_ResponseBuf_Give();
+        SCPI_ExecutionError(context, "SPI transfer timeout");
+        return SCPI_RES_ERR;
+    }
+
+    static const char hexd[] = "0123456789ABCDEF";
+    for (uint16_t i = 0; i < n; ++i) {
+        out[2 * i]     = hexd[(rx[i] >> 4) & 0x0Fu];
+        out[2 * i + 1] = hexd[rx[i] & 0x0Fu];
+    }
+    out[2 * n] = '\0';
+
+    /* Raw hex, no SCPI quoting, so the client parses MISO bytes directly. */
+    SCPI_ResultMnemonic(context, out);
+    SCPI_ResponseBuf_Give();
+    return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_LANSettingsSave(scpi_t * context) {

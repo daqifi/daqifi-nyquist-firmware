@@ -199,6 +199,21 @@ scpi_result_t SCPI_LANGetChipInfo(scpi_t * context);
  * @return SCPI_RES_OK on success, SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANMdnsDiagGet(scpi_t * context);
+/* ---------------------------------------------------------------------
+ * User SPI1 master on the DIO terminal (#665, epic #664). SYST:COMM:SPI:*.
+ * Hosted here as the SYST:COMM namespace home until the epic's I2C/UART
+ * children justify a dedicated SCPIComm translation unit.
+ * --------------------------------------------------------------------- */
+/*! SCPI: SYST:COMM:SPI:CONFig <mosiDio|-1>,<misoDio|-1>,<csDio|-1>,<baud>,<mode 0-3>[,<order 0=MSB|1=LSB>] */
+scpi_result_t SCPI_SpiConfigSet(scpi_t * context);
+/*! SCPI: SYST:COMM:SPI:CONFig? -> JSON of the stored SPI config + state. */
+scpi_result_t SCPI_SpiConfigGet(scpi_t * context);
+/*! SCPI: SYST:COMM:SPI:ENAble <0|1> -> apply/tear down the SPI master. */
+scpi_result_t SCPI_SpiEnableSet(scpi_t * context);
+/*! SCPI: SYST:COMM:SPI:ENAble? -> 1 if the SPI master is active. */
+scpi_result_t SCPI_SpiEnableGet(scpi_t * context);
+/*! SCPI: SYST:COMM:SPI:TRANsfer? <hex> -> full-duplex transfer, MISO as hex. */
+scpi_result_t SCPI_SpiTransfer(scpi_t * context);
 /**
  * SCPI Callback: Enable/disable automatic WiFi power-save (#29).
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error

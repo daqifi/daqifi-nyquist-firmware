@@ -8,8 +8,12 @@
 
 /* Static pool array — lives in BSS, not heap. No fragmentation risk,
  * no malloc, no fatal hook. Size must fit in RAM alongside .data,
- * FreeRTOS heap (75KB), and coherent pool (92KB). */
-#define STATIC_POOL_SIZE (194U * 1024U)
+ * FreeRTOS heap (75KB), and coherent pool (92KB).
+ * Trimmed 1KB from 194KB (#665) to make room for the DIO-peripheral epic's
+ * static footprint (SPI1 mutex + DIO ownership registry) — the device was at
+ * the RAM edge and the extra statics overflowed the main stack region. 1KB is
+ * ~13 samples off the stream-time partition; negligible to throughput. */
+#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
 /* The overcommit fallback below carves these four minimums and expects the

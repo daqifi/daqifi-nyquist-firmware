@@ -18,7 +18,6 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/DIO.h"
-#include "HAL/DioProbe.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 /**
  * Sets the GPIO direction for a single pin
@@ -33,7 +32,7 @@ static scpi_result_t SCPI_GPIOSingleDirectionSet(uint8_t id, bool isInput);
  * @param mask A mask where each bit corresponds to the pin with the given id (BIT(1) == PIN(1))
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
-static scpi_result_t SCPI_GPIOMultiDirectionSet(uint32_t mask);
+static scpi_result_t SCPI_GPIOMultiDirectionSet(scpi_t * context, uint32_t mask);
 
 /**
  * Gets the direction of a single GPIO pin
@@ -63,7 +62,7 @@ static scpi_result_t SCPI_GPIOSingleStateSet(uint8_t id, bool value);
  * @param mask A mask where each bit corresponds to the pin with the given id (BIT(1) == PIN(1))
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
-static scpi_result_t SCPI_GPIOMultiStateSet(uint32_t mask);
+static scpi_result_t SCPI_GPIOMultiStateSet(scpi_t * context, uint32_t mask);
 
 /**
  * Gets the value of a single GPIO pin
@@ -108,6 +107,22 @@ static bool DIO_SingleChannelIndexValid(scpi_t *context, int channel)
     return false;
 }
 
+/* If @p channel is owned by the DIO probe or claimed by a peripheral
+ * (SPI/I2C/UART/...), push a SCPI execution error naming the owner and
+ * return true. The caller should then return SCPI_RES_ERR. Returns false
+ * if the channel is free for normal DIO/PWM control. (#664 ownership) */
+static bool SCPI_DioChannelBlocked(scpi_t * context, int channel, const char * op)
+{
+    const char* owner = DIO_ChannelBlockedReason((uint8_t)channel);
+    if (owner == NULL) {
+        return false;
+    }
+    char msg[64];
+    snprintf(msg, sizeof(msg), "%s: DIO ch %d in use by %s", op, channel, owner);
+    SCPI_ExecutionError(context, msg);
+    return true;
+}
+
 scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
 {
     int param1, param2;
@@ -118,15 +133,14 @@ scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
 
     if (!SCPI_ParamInt32(context, &param2, FALSE))
     {
-        return SCPI_GPIOMultiDirectionSet((uint32_t)~param1); // Interpret the input as a bit mask (invert because 1=output but we use isInput as the test)
+        return SCPI_GPIOMultiDirectionSet(context, (uint32_t)~param1); // Interpret the input as a bit mask (invert because 1=output but we use isInput as the test)
     }
     else
     {
         if (!DIO_SingleChannelIndexValid(context, param1)) {
             return SCPI_RES_ERR; // #671: reject before (uint8_t) truncation
         }
-        if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-            SCPI_ExecutionError(context, "DIO:DIR: channel owned by DIO probe");
+        if (SCPI_DioChannelBlocked(context, param1, "DIO:DIR")) {
             return SCPI_RES_ERR;
         }
         return SCPI_GPIOSingleDirectionSet((uint8_t)param1, !(bool)param2); // Interpret the input as a bit/direction pair (invert because 1=output but we use isInput as the test)
@@ -154,7 +168,10 @@ scpi_result_t SCPI_GPIODirectionGet(scpi_t * context)
     else
     {
         bool result = false;
+        /* Reject a read of an owned pin the same way the setter dispatch does —
+         * consistent with SCPI_GPIODirectionSet (see SCPI_GPIOStateGet). */
         if (!DIO_SingleChannelIndexValid(context, param1) ||  // #671: reject before truncation
+            SCPI_DioChannelBlocked(context, param1, "DIO:DIR?") ||
             SCPI_GPIOSingleDirectionGet((uint8_t)param1, &result) == SCPI_RES_ERR)
         {
             retCode = SCPI_RES_ERR;
@@ -183,15 +200,14 @@ scpi_result_t SCPI_GPIOStateSet(scpi_t * context)
 
     if (!SCPI_ParamInt32(context, &param2, FALSE))
     {
-        return SCPI_GPIOMultiStateSet((uint32_t)param1); // Interpret the input as a bit mask
+        return SCPI_GPIOMultiStateSet(context, (uint32_t)param1); // Interpret the input as a bit mask
     }
     else
     {
         if (!DIO_SingleChannelIndexValid(context, param1)) {
             return SCPI_RES_ERR; // #671: reject before (uint8_t) truncation
         }
-        if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-            SCPI_ExecutionError(context, "DIO:STATE: channel owned by DIO probe");
+        if (SCPI_DioChannelBlocked(context, param1, "DIO:STATE")) {
             return SCPI_RES_ERR;
         }
         return SCPI_GPIOSingleStateSet((uint8_t)param1, (bool)param2); // Interpret the input as a bit/direction pair
@@ -219,7 +235,13 @@ scpi_result_t SCPI_GPIOStateGet(scpi_t * context)
     else
     {
         bool result = false;
+        /* Reject a read of an owned pin (SPI/probe/...) the same way the setter
+         * dispatch does — an owned bus line has no meaningful DIO logic level,
+         * and the read path strips it to 0, misreporting a driven-high pin
+         * (e.g. an idle-high CS) as 0. Error + name the owner (a config problem,
+         * per the SCPI data-visibility rule), consistent with SCPI_GPIOStateSet. */
         if (!DIO_SingleChannelIndexValid(context, param1) ||  // #671: reject before truncation
+            SCPI_DioChannelBlocked(context, param1, "DIO:STATE?") ||
             SCPI_GPIOSingleStateGet((uint8_t)param1, &result) == SCPI_RES_ERR)
         {
             retCode = SCPI_RES_ERR;
@@ -277,8 +299,7 @@ scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
     if (!DIO_SingleChannelIndexValid(context, param1)) {
         return SCPI_RES_ERR; // #671: reject before (uint8_t) truncation
     }
-    if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-        SCPI_ExecutionError(context, "DIO:PWM:ENA: channel owned by DIO probe");
+    if (SCPI_DioChannelBlocked(context, param1, "DIO:PWM:ENA")) {
         return SCPI_RES_ERR;
     }
 
@@ -329,8 +350,7 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
-    if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-        SCPI_ExecutionError(context, "DIO:PWM:FREQ: channel owned by DIO probe");
+    if (SCPI_DioChannelBlocked(context, param1, "DIO:PWM:FREQ")) {
         return SCPI_RES_ERR;
     }
     //only timer 3 is driving all the pwm so, channel independent frequency cannot be generated
@@ -381,8 +401,7 @@ scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){
     if(param2>100){
         return SCPI_RES_ERR;
     }
-    if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-        SCPI_ExecutionError(context, "DIO:PWM:DUTY: channel owned by DIO probe");
+    if (SCPI_DioChannelBlocked(context, param1, "DIO:PWM:DUTY")) {
         return SCPI_RES_ERR;
     }
 
@@ -421,34 +440,59 @@ static scpi_result_t SCPI_GPIOSingleDirectionSet(uint8_t id, bool isInput)
     {
         return SCPI_RES_ERR;
     }
-    
+    /* Pure writer: ownership is enforced by both callers (see
+     * SCPI_GPIOSingleStateSet) — a blocked channel never reaches here. */
     pRunTimeDIOChannels->Data[id].IsInput = isInput;
     if (!DIO_WriteStateSingle(id))
     {
         return SCPI_RES_ERR;
     }
-    
+
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_GPIOMultiDirectionSet(uint32_t mask)
+static scpi_result_t SCPI_GPIOMultiDirectionSet(scpi_t * context, uint32_t mask)
 {
     size_t i = 0;
     scpi_result_t result = SCPI_RES_OK;
-    
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
+    uint32_t blockedMask = 0;
+
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
-    
+
     // Obviously, this breaks down if we have more than 32 channels
-    for (i=0; i<pRunTimeDIOChannels->Size; ++i) 
+    for (i=0; i<pRunTimeDIOChannels->Size; ++i)
     {
+        /* Skip probe/peripheral-owned pins (see SCPI_GPIOMultiStateSet) — never
+         * stomp an owner's direction, and report the skip rather than silently
+         * succeeding. */
+        if (DIO_ChannelBlocked(i))
+        {
+            blockedMask |= (uint32_t)(1u << i);
+            continue;
+        }
         bool isInput = (mask & (1 << i));
         if (SCPI_GPIOSingleDirectionSet(i, isInput) == SCPI_RES_ERR)
         {
             result = SCPI_RES_ERR;
         }
     }
-    
+
+    if (blockedMask != 0)
+    {
+        /* Name the ACTUAL owner of the first skipped channel (registry has
+         * SPI/I2C/UART/1-Wire/... + probe) rather than a fixed string. */
+        uint8_t firstCh = (uint8_t)__builtin_ctz(blockedMask);
+        const char* owner = DIO_ChannelBlockedReason(firstCh);
+        char msg[112];
+        snprintf(msg, sizeof(msg),
+                 "DIO:DIR mask: skipped owned channels 0x%04X (ch %u in use by %s)",
+                 (unsigned)blockedMask, (unsigned)firstCh,
+                 owner ? owner : "peripheral/probe");
+        SCPI_ExecutionError(context, msg);
+        result = SCPI_RES_ERR;
+    }
+
     return result;
 }
 
@@ -497,42 +541,75 @@ static scpi_result_t SCPI_GPIOMultiDirectionGet(uint32_t* mask)
 
 static scpi_result_t SCPI_GPIOSingleStateSet(uint8_t id, bool value)
 {
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
-    
+
     if ( id >= pRunTimeDIOChannels->Size)
     {
         return SCPI_RES_ERR;
     }
-    
+    /* Pure writer: ownership is enforced by both callers — the single form
+     * (SCPI_GPIOStateSet) rejects blocked channels upstream and names the
+     * owner; the mask form (SCPI_GPIOMultiStateSet) skips them before calling
+     * here. So a blocked channel never reaches this point. */
     pRunTimeDIOChannels->Data[id].Value = value;
     if (!DIO_WriteStateSingle(id))
     {
         return SCPI_RES_ERR;
     }
-    
+
     return SCPI_RES_OK;
 }
  
 
-static scpi_result_t SCPI_GPIOMultiStateSet(uint32_t mask)
+static scpi_result_t SCPI_GPIOMultiStateSet(scpi_t * context, uint32_t mask)
 {
     size_t i = 0;
     scpi_result_t result = SCPI_RES_OK;
-    
-    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(         
+    uint32_t blockedMask = 0;
+
+    DIORuntimeArray * pRunTimeDIOChannels = BoardRunTimeConfig_Get(
                         BOARDRUNTIMECONFIG_DIO_CHANNELS);
-    
+
     // Obviously, this breaks down if we have more than 32 channels
-    for (i=0; i<pRunTimeDIOChannels->Size; ++i) 
+    for (i=0; i<pRunTimeDIOChannels->Size; ++i)
     {
+        /* The mask form bypasses the per-channel ownership guard the single
+         * form applies upstream. Skip probe/peripheral-owned pins (SPI/#665) so
+         * we never stomp their runtime Value, but record them — the command
+         * must NOT silently succeed while ignoring claimed pins (contract:
+         * DIO:PORt setters reject claimed channels). */
+        if (DIO_ChannelBlocked(i))
+        {
+            blockedMask |= (uint32_t)(1u << i);
+            continue;
+        }
         bool value = (mask & (1 << i));
         if (SCPI_GPIOSingleStateSet(i, value) == SCPI_RES_ERR)
         {
             result = SCPI_RES_ERR;
         }
     }
-    
+
+    if (blockedMask != 0)
+    {
+        /* Push ONE execution error per command (not per channel) naming the
+         * skipped pins — surfaces via SYST:ERR? like the single form, and can't
+         * flood the log on a repeated mask poll. */
+        /* Name the ACTUAL owner of the first skipped channel (registry has
+         * SPI/I2C/UART/1-Wire/... + probe) rather than a fixed string;
+         * blockedMask lists every skipped channel for follow-up. */
+        uint8_t firstCh = (uint8_t)__builtin_ctz(blockedMask);
+        const char* owner = DIO_ChannelBlockedReason(firstCh);
+        char msg[112];
+        snprintf(msg, sizeof(msg),
+                 "DIO:STATE mask: skipped owned channels 0x%04X (ch %u in use by %s)",
+                 (unsigned)blockedMask, (unsigned)firstCh,
+                 owner ? owner : "peripheral/probe");
+        SCPI_ExecutionError(context, msg);
+        result = SCPI_RES_ERR;
+    }
+
     return result;
 }
 
@@ -582,18 +659,34 @@ static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value)
     {
         return SCPI_RES_ERR;
     }
-    if(value){
-        pRunTimeDIOChannels->Data[id].Value=1;
-        pRunTimeDIOChannels->Data[id].IsPwmActive=1;
+    /* Snapshot so a blocked write rolls BOTH fields back to their pre-call
+     * state (not just IsPwmActive). The whole transition — the transient
+     * Value/IsPwmActive write, the hardware program, and any rollback — runs in
+     * one critical section so a concurrent DIO_ClaimChannel on the other SCPI
+     * interface (USB pri 7 can preempt WiFi pri 2 mid-sequence) can never
+     * observe a transient IsPwmActive that this call later rolls back. Pairs
+     * with the critical section in DIO_ClaimChannel to make SPI-vs-PWM
+     * arbitration atomic in both directions (the fields are an RMW on a struct
+     * that claim reads — the project atomicity rule requires the guard).
+     * DIO_PWMWriteStateSingle is bounded register work (OCMP enable/disable +
+     * PPS remap, no loops/delays), so the section stays short (~1-2 us). */
+    taskENTER_CRITICAL();
+    bool prevValue = pRunTimeDIOChannels->Data[id].Value;
+    bool prevPwm   = pRunTimeDIOChannels->Data[id].IsPwmActive;
+    pRunTimeDIOChannels->Data[id].Value       = value ? 1 : 0;
+    pRunTimeDIOChannels->Data[id].IsPwmActive = value ? 1 : 0;
+    bool applied = DIO_PWMWriteStateSingle(id);
+    if (!applied) {
+        /* Blocked — e.g. the pin was claimed by a peripheral (SPI) in a
+         * concurrent cross-interface race, so DIO_PWMWriteStateSingle refused
+         * to reprogram it. Roll BOTH runtime fields back: a lying IsPwmActive
+         * would block the channel's DIO restore + later claims, and a stale
+         * Value would drive an unintended static level once the block clears
+         * and DIO_WriteStateSingle resumes for this channel. */
+        pRunTimeDIOChannels->Data[id].Value       = prevValue;
+        pRunTimeDIOChannels->Data[id].IsPwmActive = prevPwm;
     }
-    else{
-        pRunTimeDIOChannels->Data[id].Value=0;
-        pRunTimeDIOChannels->Data[id].IsPwmActive=0;
-    }
-    if (!DIO_PWMWriteStateSingle(id))
-    {
-        return SCPI_RES_ERR;
-    }
-    return SCPI_RES_OK;
+    taskEXIT_CRITICAL();
+    return applied ? SCPI_RES_OK : SCPI_RES_ERR;
 }
 

@@ -116,14 +116,21 @@
 // Note: Define ENABLE_ICSP_REALTIME_LOG=1 in project settings to enable debug logging
 // REJECT MCC MERGE ATTEMPTS TO REPLACE THIS CONDITIONAL LOGIC!
 #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1)
-    #pragma config PGL1WAY =    OFF  // Allow multiple Peripheral Pin Select reconfigurations
+    #pragma config PGL1WAY =    OFF  // Allow multiple Permission Group Lock reconfigurations
     #pragma config PMDL1WAY =   OFF  // Allow multiple Peripheral Module Disable reconfigurations
-    #pragma config IOL1WAY =    OFF  // Allow multiple I/O lock reconfigurations
+    #pragma config IOL1WAY =    OFF  // Allow multiple I/O (PPS) lock reconfigurations
     #warning "Config lock bits disabled for ICSP logging - DO NOT RELEASE TO PRODUCTION"
 #else
-    #pragma config PGL1WAY =    ON   // Peripheral Pin Select one-way lock
-    #pragma config PMDL1WAY =   ON   // Peripheral Module Disable one-way lock
-    #pragma config IOL1WAY =    ON   // I/O one-way lock
+    // #664/#665: user digital-sensor peripherals on the DIO terminal need
+    // RUNTIME reconfiguration of PPS (IOLOCK) and peripheral power (PMDLOCK) —
+    // remap SDO1/SDI1, power SPI1, etc. — which the one-way locks would freeze
+    // after the plib init. We don't rely on these locks as a security boundary,
+    // so this is just: relax the two the feature needs and leave the unrelated
+    // PGL1WAY (permission-group lock) at its default. Which subsystem may drive
+    // each pin is gated by the DIO ownership registry (HAL/DIO.c).
+    #pragma config PGL1WAY =    ON   // unrelated to PPS/PMD — left at default
+    #pragma config PMDL1WAY =   OFF  // Allow multiple Peripheral Module Disable reconfigurations
+    #pragma config IOL1WAY =    OFF  // Allow multiple I/O lock reconfigurations
 #endif
 #pragma config FUSBIDIO =   OFF
 

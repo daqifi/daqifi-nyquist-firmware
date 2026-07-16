@@ -9,6 +9,8 @@
 
 #include "configuration.h"
 #include "definitions.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "state/board/BoardConfig.h"
 #include "TimerApi/TimerApi.h"
@@ -73,6 +75,159 @@ void DIO_ProbeReleasePair(uint8_t channel) {
     SetGpioDir(dio->EnableChannel, dio->EnableBitPos, 1);
 }
 
+/* ---------------------------------------------------------------------
+ * DIO channel ownership registry (#664 shared foundation)
+ * ---------------------------------------------------------------------
+ * gDioOwnedMask is the fast-path bitmask consulted per streaming tick and
+ * in the read filter; gDioOwner[] carries the owner id for error naming.
+ * Written from task context (SCPI / peripheral HAL) under a critical
+ * section; the mask is read from the streaming task and the DIO write
+ * paths (a single aligned 16-bit load is atomic on PIC32MZ). The DIO
+ * debug probe (DioProbe) is a separate, higher-priority owner class with
+ * its own tear-safe mask — DIO_ChannelBlocked ORs the two.
+ * --------------------------------------------------------------------- */
+static volatile uint16_t gDioOwnedMask = 0;
+static volatile uint8_t  gDioOwner[MAX_DIO_CHANNEL] = {0};
+
+bool DIO_ClaimChannel(uint8_t channel, DioChannelOwner_t owner) {
+    /* Bound against the actual board channel count, not just the gDioOwner
+     * array size — a channel index in [DIOChannels.Size, MAX_DIO_CHANNEL) is a
+     * valid array slot but not a real board pin, so claiming it would register
+     * ownership of a non-existent channel. Size is always <= MAX_DIO_CHANNEL by
+     * board-config construction, so this is also a strict array-bounds guard.
+     * Matches the DIO_WriteStateSingle guard added in this PR. */
+    if (gpBoardConfig == NULL ||
+        channel >= gpBoardConfig->DIOChannels.Size ||
+        owner == DIO_OWNER_NONE) {
+        return false;
+    }
+    bool ok = false;
+    taskENTER_CRITICAL();
+    /* Test the probe claim, PWM-active state, AND the peripheral owner together
+     * inside the critical section. PWM does not take a registry entry (it uses
+     * the IsPwmActive flag), so a claim that ignored IsPwmActive could steal a
+     * pin a concurrent PWM enable just activated on the other SCPI interface,
+     * then overwrite its PPS mux — a silent cross-feature corruption. Reading
+     * IsPwmActive here (paired with DIO_PWMWriteStateSingle refusing to program
+     * a registry-owned pin) makes SPI-vs-PWM arbitration race-free both ways. */
+    if (!DioProbe_IsChannelOwned(channel) && !DIO_IsPwmActive(channel)) {
+        DioChannelOwner_t cur = (DioChannelOwner_t)gDioOwner[channel];
+        if (cur == DIO_OWNER_NONE || cur == owner) {
+            gDioOwner[channel] = (uint8_t)owner;
+            gDioOwnedMask |= (uint16_t)(1u << channel);
+            ok = true;
+        }
+    }
+    taskEXIT_CRITICAL();
+    return ok;
+}
+
+void DIO_ReleaseChannel(uint8_t channel, DioChannelOwner_t owner) {
+    if (channel >= MAX_DIO_CHANNEL) {
+        return;
+    }
+    taskENTER_CRITICAL();
+    if ((DioChannelOwner_t)gDioOwner[channel] == owner) {
+        gDioOwner[channel] = (uint8_t)DIO_OWNER_NONE;
+        gDioOwnedMask &= (uint16_t)~(1u << channel);
+    }
+    taskEXIT_CRITICAL();
+}
+
+DioChannelOwner_t DIO_GetChannelOwner(uint8_t channel) {
+    if (channel >= MAX_DIO_CHANNEL) {
+        return DIO_OWNER_NONE;
+    }
+    return (DioChannelOwner_t)gDioOwner[channel];
+}
+
+const char* DIO_ChannelOwnerName(DioChannelOwner_t owner) {
+    switch (owner) {
+        case DIO_OWNER_SPI:     return "SPI";
+        case DIO_OWNER_I2C:     return "I2C";
+        case DIO_OWNER_UART:    return "UART";
+        case DIO_OWNER_ONEWIRE: return "1-Wire";
+        case DIO_OWNER_IC:      return "InputCapture";
+        case DIO_OWNER_CLOCK:   return "Clock";
+        default:                return "none";
+    }
+}
+
+bool DIO_ChannelBlocked(uint8_t channel) {
+    if (channel >= MAX_DIO_CHANNEL) {
+        return false;
+    }
+    if (DioProbe_IsChannelOwned(channel)) {
+        return true;
+    }
+    return (gDioOwnedMask & (uint16_t)(1u << channel)) != 0;
+}
+
+const char* DIO_ChannelBlockedReason(uint8_t channel) {
+    if (channel >= MAX_DIO_CHANNEL) {
+        return NULL;
+    }
+    if (DioProbe_IsChannelOwned(channel)) {
+        return "DIO probe";
+    }
+    DioChannelOwner_t owner = (DioChannelOwner_t)gDioOwner[channel];
+    return (owner == DIO_OWNER_NONE) ? NULL : DIO_ChannelOwnerName(owner);
+}
+
+bool DIO_IsPwmActive(uint8_t channel) {
+    if (gpRuntimeBoardConfig == NULL ||
+        channel >= gpRuntimeBoardConfig->DIOChannels.Size) {
+        return false;
+    }
+    return gpRuntimeBoardConfig->DIOChannels.Data[channel].IsPwmActive;
+}
+
+/* ---------------------------------------------------------------------
+ * Peripheral pin electrical setup (#664 shared foundation)
+ * See the header for the SN74LVC2G241 buffer / 100K read-path model.
+ * --------------------------------------------------------------------- */
+bool DIO_SetChannelPeripheralOutput(uint8_t channel) {
+    if (gpBoardConfig == NULL || channel >= gpBoardConfig->DIOChannels.Size) {
+        return false;
+    }
+    const DIOConfig* dio = &gpBoardConfig->DIOChannels.Data[channel];
+    /* Data pin -> output (driven by the mapped peripheral or DIO_DriveChannel). */
+    SetGpioDir(dio->DataChannel, dio->DataBitPos, 0);
+    /* External buffer enabled: it drives the terminal at +5V_D. */
+    WriteGpioPin(dio->EnableChannel, dio->EnableBitPos, !dio->EnableInverted);
+    SetGpioDir(dio->EnableChannel, dio->EnableBitPos, 0);
+    return true;
+}
+
+bool DIO_SetChannelPeripheralInput(uint8_t channel) {
+    if (gpBoardConfig == NULL || channel >= gpBoardConfig->DIOChannels.Size) {
+        return false;
+    }
+    const DIOConfig* dio = &gpBoardConfig->DIOChannels.Data[channel];
+    /* Data pin -> input: reads the terminal through the 100K series R. */
+    SetGpioDir(dio->DataChannel, dio->DataBitPos, 1);
+    /* External buffer disabled: terminal high-Z so the slave can drive it. */
+    WriteGpioPin(dio->EnableChannel, dio->EnableBitPos, dio->EnableInverted);
+    SetGpioDir(dio->EnableChannel, dio->EnableBitPos, 0);
+    return true;
+}
+
+bool DIO_DriveChannel(uint8_t channel, bool level) {
+    if (gpBoardConfig == NULL || channel >= gpBoardConfig->DIOChannels.Size) {
+        return false;
+    }
+    const DIOConfig* dio = &gpBoardConfig->DIOChannels.Data[channel];
+    WriteGpioPin(dio->DataChannel, dio->DataBitPos, level ? 1 : 0);
+    return true;
+}
+
+void DIO_RestoreChannel(uint8_t channel) {
+    /* Re-apply the runtime-configured state. The caller must have released
+     * its claim first, else DIO_WriteStateSingle short-circuits on the
+     * still-blocked channel. */
+    (void)DIO_WriteStateSingle(channel);
+}
+
 bool DIO_InitHardware(const tBoardConfig *pInitBoardConfiguration,
         const tBoardRuntimeConfig *pInitBoardRuntimeConfig) {
     bool enableInverted;
@@ -118,10 +273,18 @@ bool DIO_WriteStateAll(void) {
 }
 
 bool DIO_WriteStateSingle(uint8_t dataIndex) {
-    /* Probe owns this channel — the debug probe drives TRIS/LAT
-     * exclusively. Skipping here is the primary isolation point;
-     * signal purity on the scope depends on it. */
-    if (DioProbe_IsChannelOwned(dataIndex)) {
+    /* Bounds-guard the array indexing below. DIO_ChannelBlocked only rejects
+     * indices >= MAX_DIO_CHANNEL, so a caller passing a value in
+     * [DIOChannels.Size, MAX_DIO_CHANNEL) (e.g. channel 15 under the 15-entry
+     * DIO_TIMING_TEST config) would otherwise read past the table. */
+    if (gpBoardConfig == NULL || dataIndex >= gpBoardConfig->DIOChannels.Size) {
+        return false;
+    }
+    /* Probe or a peripheral (SPI/I2C/UART/...) owns this channel and
+     * drives its TRIS/LAT exclusively. Skipping here is the primary
+     * isolation point; for the probe, scope-signal purity depends on it,
+     * and for a peripheral it prevents the DIO path stomping the bus. */
+    if (DIO_ChannelBlocked(dataIndex)) {
         return true;
     }
     bool enableInverted = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnableInverted;
@@ -156,10 +319,11 @@ bool DIO_WriteStateSingle(uint8_t dataIndex) {
 }
 
 bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask) {
-    /* Filter out probe-owned channels — their toggle waveform is
-     * debug artifact, not user data. Including them in the stream
-     * would mislead the consumer reading DIO samples. */
-    mask = DioProbe_FilterReadMask(mask);
+    /* Filter out probe-owned channels (their toggle waveform is a debug
+     * artifact, not user data) and peripheral-claimed channels (SPI/I2C/
+     * UART bus lines, not DIO logic levels) — including either would
+     * mislead the consumer reading DIO samples. */
+    mask = DioProbe_FilterReadMask(mask) & ~(uint32_t)gDioOwnedMask;
     sample->Mask = mask;
     sample->Values = 0;
     // Set module trigger timestamp
@@ -184,7 +348,14 @@ bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask) {
 }
 
 bool DIO_PWMWriteStateSingle(uint8_t dataIndex) {
-    if (DioProbe_IsChannelOwned(dataIndex)) {
+    /* Bounds-guard the table indexing below (same rationale as
+     * DIO_WriteStateSingle): DIO_ChannelBlocked only rejects >= MAX_DIO_CHANNEL,
+     * so an index in [DIOChannels.Size, MAX_DIO_CHANNEL) would read past the
+     * board table. SCPI callers validate, but keep the HAL self-protecting. */
+    if (gpBoardConfig == NULL || dataIndex >= gpBoardConfig->DIOChannels.Size) {
+        return false;
+    }
+    if (DIO_ChannelBlocked(dataIndex)) {
         return false;
     }
     bool enableInverted = gpBoardConfig->DIOChannels.Data[ dataIndex ].EnableInverted;
@@ -210,7 +381,11 @@ bool DIO_PWMWriteStateSingle(uint8_t dataIndex) {
 }
 
 bool DIO_PWMDutyCycleSetSingle(uint8_t dataIndex) {
-    if (DioProbe_IsChannelOwned(dataIndex)) {
+    /* Bounds-guard the table indexing below — see DIO_WriteStateSingle. */
+    if (gpBoardConfig == NULL || dataIndex >= gpBoardConfig->DIOChannels.Size) {
+        return false;
+    }
+    if (DIO_ChannelBlocked(dataIndex)) {
         return false;
     }
     uint8_t pwmDriverInstance = gpBoardConfig->DIOChannels.Data[ dataIndex ].PwmOcmpId;
@@ -226,7 +401,11 @@ bool DIO_PWMDutyCycleSetSingle(uint8_t dataIndex) {
 }
 
 bool DIO_PWMFrequencySet(uint8_t dataIndex) {
-    if (DioProbe_IsChannelOwned(dataIndex)) {
+    /* Bounds-guard the table indexing below — see DIO_WriteStateSingle. */
+    if (gpBoardConfig == NULL || dataIndex >= gpBoardConfig->DIOChannels.Size) {
+        return false;
+    }
+    if (DIO_ChannelBlocked(dataIndex)) {
         return false;
     }
 
@@ -272,9 +451,10 @@ void DIO_StreamingTrigger(DIOSample* latest, DIOSampleList* streamingSamples) {
 
     // Write DIO values
     for (i = 0; i < DIOChruntimeConfig->Size; ++i) {
-        /* Skip probe-owned channels at the loop level to avoid the
-         * call overhead. DIO_WriteStateSingle also guards internally. */
-        if (DioProbe_IsChannelOwned((uint8_t)i)) {
+        /* Skip probe- or peripheral-owned channels at the loop level to
+         * avoid the call overhead. DIO_WriteStateSingle also guards
+         * internally. */
+        if (DIO_ChannelBlocked((uint8_t)i)) {
             continue;
         }
         DIO_WriteStateSingle(i);
@@ -286,7 +466,13 @@ void DIO_StreamingTrigger(DIOSample* latest, DIOSampleList* streamingSamples) {
         if (gpRuntimeBoardConfig->DIOGlobalEnable &&
                 gpRuntimeBoardConfig->StreamingConfig.IsEnabled) {
             DIOSample streamingSample;
-            streamingSample.Mask = 0xFFFF;
+            /* Use the mask DIO_ReadSampleByMask actually populated, not a
+             * hardcoded 0xFFFF: it has probe- and peripheral-owned (SPI/#665)
+             * channels stripped, so a JSON consumer sees those bus pins as
+             * NOT-valid rather than as a genuine logic-0 DIO reading (their
+             * Values bit is left 0). With nothing owned this equals 0xFFFF, so
+             * normal DIO streaming is unchanged. */
+            streamingSample.Mask = latest->Mask;
             streamingSample.Values = latest->Values;
             streamingSample.Timestamp = latest->Timestamp;
             if (!DIOSampleList_PushBack(

@@ -5414,6 +5414,12 @@ static const scpi_command_t scpi_commands[] = {
     //
     {.pattern = "SYSTem:COMMunicate:LAN:GETChipInfo?", .callback = SCPI_LANGetChipInfo,},
     {.pattern = "SYSTem:COMMunicate:LAN:MDNS?", .callback = SCPI_LANMdnsDiagGet,},  // #58 mDNS diagnostics
+    // User SPI1 master on the DIO terminal (#665, epic #664)
+    {.pattern = "SYSTem:COMMunicate:SPI:CONFig", .callback = SCPI_SpiConfigSet,},
+    {.pattern = "SYSTem:COMMunicate:SPI:CONFig?", .callback = SCPI_SpiConfigGet,},
+    {.pattern = "SYSTem:COMMunicate:SPI:ENAble", .callback = SCPI_SpiEnableSet,},
+    {.pattern = "SYSTem:COMMunicate:SPI:ENAble?", .callback = SCPI_SpiEnableGet,},
+    {.pattern = "SYSTem:COMMunicate:SPI:TRANsfer?", .callback = SCPI_SpiTransfer,},
     // ADC
     {.pattern = "MEASure:VOLTage:DC?", .callback = SCPI_ADCVoltageGet,},
     {.pattern = "ENAble:VOLTage:DC", .callback = SCPI_ADCChanEnableSet,},
