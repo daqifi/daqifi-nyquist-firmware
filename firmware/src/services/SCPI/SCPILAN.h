@@ -214,6 +214,26 @@ scpi_result_t SCPI_SpiEnableSet(scpi_t * context);
 scpi_result_t SCPI_SpiEnableGet(scpi_t * context);
 /*! SCPI: SYST:COMM:SPI:TRANsfer? <hex> -> full-duplex transfer, MISO as hex. */
 scpi_result_t SCPI_SpiTransfer(scpi_t * context);
+
+/* User UART on the DIO terminal (#16, epic #664). SYST:COMM:UART:*. */
+/*! SCPI: SYST:COMM:UART:CONFig <rxDio|-1>,<txDio|-1>,<baud>[,<data 8>,<parity 0N|1E|2O>,<stop 1|2>] */
+scpi_result_t SCPI_UartConfigSet(scpi_t * context);
+/*! SCPI: SYST:COMM:UART:CONFig? -> JSON of the stored UART config + state. */
+scpi_result_t SCPI_UartConfigGet(scpi_t * context);
+/*! SCPI: SYST:COMM:UART:ENAble <0|1> -> apply/tear down the UART. */
+scpi_result_t SCPI_UartEnableSet(scpi_t * context);
+/*! SCPI: SYST:COMM:UART:ENAble? -> 1 if the UART is active. */
+scpi_result_t SCPI_UartEnableGet(scpi_t * context);
+/*! SCPI: SYST:COMM:UART:INVert <rx0|1>,<tx0|1> -> set RX/TX inversion. */
+scpi_result_t SCPI_UartInvertSet(scpi_t * context);
+/*! SCPI: SYST:COMM:UART:INVert? -> JSON {RxInv,TxInv}. */
+scpi_result_t SCPI_UartInvertGet(scpi_t * context);
+/*! SCPI: SYST:COMM:UART:WRITe <hex> -> transmit hex bytes. */
+scpi_result_t SCPI_UartWrite(scpi_t * context);
+/*! SCPI: SYST:COMM:UART:READ? <maxN> -> up to maxN RX bytes as hex. */
+scpi_result_t SCPI_UartRead(scpi_t * context);
+/*! SCPI: SYST:COMM:UART:COUNt? -> JSON {Pending,Overflow}. */
+scpi_result_t SCPI_UartCount(scpi_t * context);
 /**
  * SCPI Callback: Enable/disable automatic WiFi power-save (#29).
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
