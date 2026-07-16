@@ -785,7 +785,7 @@ scpi_result_t SCPI_SpiConfigSet(scpi_t * context) {
     cfg.mosiDio  = spi_ScpiPinToDio(mosi);
     cfg.misoDio  = spi_ScpiPinToDio(miso);
     cfg.csDio    = spi_ScpiPinToDio(cs);
-    cfg.baudHz   = (baud <= 0) ? 0u : (uint32_t)baud;
+    cfg.baudHz   = (baud <= 0) ? USER_SPI_DEFAULT_BAUD_HZ : (uint32_t)baud;  /* 0/neg = safe default */
     cfg.mode     = (uint8_t)mode;
     cfg.lsbFirst = (order != 0);
 

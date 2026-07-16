@@ -337,8 +337,11 @@ static bool spi_EnableLocked(const char** err) {
         DIO_SetChannelPeripheralInput(gCfg.misoDio);
     }
     if (gCfg.csDio != USER_SPI_PIN_NONE) {
+        /* Latch CS idle-high BEFORE enabling the output buffer, so the terminal
+         * never sees a brief active-low assertion if the pin's prior LAT was
+         * low (a spurious select to the slave). */
+        DIO_DriveChannel(gCfg.csDio, true);
         DIO_SetChannelPeripheralOutput(gCfg.csDio);
-        DIO_DriveChannel(gCfg.csDio, true);   /* CS idle high (deasserted) */
     }
 
     spi_SetPmd(true);    /* power the SPI1 module before touching its SFRs */
