@@ -371,13 +371,16 @@ static bool uart_DisableLocked(void) {
  * path (a byte at 115200 leaves in ~87 us — no context switch); if still not
  * ready (low baud) vTaskDelay(1) lets lower-priority work run. Returns false at
  * the wall-clock @p deadline (hardware fault). */
-static bool uart_WaitSta(const UartDesc_t* u, uint32_t mask, bool want, TickType_t deadline) {
+static bool uart_WaitSta(const UartDesc_t* u, uint32_t mask, bool want,
+                         TickType_t start, TickType_t timeoutTicks) {
     for (;;) {
         for (uint32_t s = 0; s < 4000u; ++s) {
             if (((*(u->sta) & mask) != 0u) == want) { return true; }
         }
         if (((*(u->sta) & mask) != 0u) == want) { return true; }
-        if (xTaskGetTickCount() >= deadline) { return false; }
+        /* Rollover-safe: unsigned (now - start) is the true elapsed count even
+         * across a tick-counter wrap, unlike an absolute-deadline compare. */
+        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) { return false; }
         vTaskDelay(1);
     }
 }
@@ -387,18 +390,19 @@ static bool uart_WriteLocked(const uint8_t* data, uint16_t len) {
         return false;
     }
     const UartDesc_t* u = &gUarts[gUartIdx];
-    /* Whole-write deadline: 256 bytes at the ~320 Hz BRG floor is ~8 s of wire
+    /* Whole-write timeout: 256 bytes at the ~320 Hz BRG floor is ~8 s of wire
      * time, so bound the write at ~15 s wall-clock (a stuck TX trips it). The
      * long legitimate case yields throughout, so it never starves the CPU. */
-    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(15000u);
+    const TickType_t start = xTaskGetTickCount();
+    const TickType_t timeout = pdMS_TO_TICKS(15000u);
     for (uint16_t i = 0; i < len; ++i) {
-        if (!uart_WaitSta(u, _U1STA_UTXBF_MASK, false, deadline)) {   /* buffer has room */
+        if (!uart_WaitSta(u, _U1STA_UTXBF_MASK, false, start, timeout)) {   /* buffer has room */
             return false;
         }
         *(u->txreg) = data[i];
     }
     /* Shifter empty = the last frame is fully on the wire. */
-    return uart_WaitSta(u, _U1STA_TRMT_MASK, true, deadline);
+    return uart_WaitSta(u, _U1STA_TRMT_MASK, true, start, timeout);
 }
 
 /* Drain the hardware RX FIFO into @p out (up to maxLen); fold an OERR overrun

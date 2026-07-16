@@ -1012,6 +1012,14 @@ scpi_result_t SCPI_UartConfigSet(scpi_t * context) {
         SCPI_ExecutionError(context, "UART baud must be >= 0 (0 = default)");
         return SCPI_RES_ERR;
     }
+    /* Validate data/parity/stop on the FULL int32 value, before the uint8_t
+     * narrowing below — else an out-of-range arg (e.g. parity 258) truncates
+     * into a legal value (258&0xFF=2=ODD) and slips past uart_ConfigureLocked's
+     * range check, silently applying the wrong setting (the #678 alias class). */
+    if (data != 8 || parity < 0 || parity > 2 || (stop != 1 && stop != 2)) {
+        SCPI_ExecutionError(context, "UART requires data=8, parity 0/1/2, stop 1/2");
+        return SCPI_RES_ERR;
+    }
     UserUartConfig_t cfg;
     cfg.rxDio    = spi_ScpiPinToDio(rx);
     cfg.txDio    = spi_ScpiPinToDio(tx);
