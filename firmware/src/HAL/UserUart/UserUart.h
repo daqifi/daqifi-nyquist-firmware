@@ -126,7 +126,9 @@ bool UserUart_Write(const uint8_t* data, uint16_t len);
  */
 uint16_t UserUart_Read(uint8_t* out, uint16_t maxLen);
 
-/** Bytes currently pending in the RX ring. */
+/** RX readiness: 1 if at least one RX byte is ready to read, else 0. (Phase 1
+ *  is polled off the hardware FIFO, which has no count register — an exact
+ *  pending count arrives with the interrupt-fed RX ring follow-up.) */
 uint16_t UserUart_RxPending(void);
 
 /** RX overflow events since Enable (ring-full drops + erratum-#8 OERR). */

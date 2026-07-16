@@ -26,14 +26,6 @@
  * BRGH=1: baud = PBCLK2 / (4*(BRG+1)). */
 #define USER_UART_PBCLK_HZ   DAQIFI_PBCLK_HZ
 
-/* Per-byte TX spin bound. Must exceed one frame-time at the SLOWEST baud: at
- * the ~320 Hz BRG floor a 10-bit frame is ~31 ms, and each loop iteration is a
- * peripheral-bus SFR read (tens of core cycles), so size generously — 20M gives
- * hundreds of ms of headroom per wait at 252 MHz (a byte at 115200 leaves in
- * ~87 us, so normal use never approaches it). A timeout means TX never drained
- * (hardware/config fault). */
-#define USER_UART_TX_TIMEOUT  20000000UL
-
 /* BRG is 16-bit; the slowest baud is PBCLK2/(4*65536). */
 #define USER_UART_BRG_MAX     65535u
 
@@ -373,25 +365,40 @@ static bool uart_DisableLocked(void) {
     return true;
 }
 
+/* Wait for a UxSTA bit to reach @p want (true = wait for set, false = clear),
+ * YIELDING so a slow transmit doesn't busy-spin at the SCPI task's priority and
+ * starve streaming (pri 6) / SD (5) / WiFi (2). A brief spin covers the fast
+ * path (a byte at 115200 leaves in ~87 us — no context switch); if still not
+ * ready (low baud) vTaskDelay(1) lets lower-priority work run. Returns false at
+ * the wall-clock @p deadline (hardware fault). */
+static bool uart_WaitSta(const UartDesc_t* u, uint32_t mask, bool want, TickType_t deadline) {
+    for (;;) {
+        for (uint32_t s = 0; s < 4000u; ++s) {
+            if (((*(u->sta) & mask) != 0u) == want) { return true; }
+        }
+        if (((*(u->sta) & mask) != 0u) == want) { return true; }
+        if (xTaskGetTickCount() >= deadline) { return false; }
+        vTaskDelay(1);
+    }
+}
+
 static bool uart_WriteLocked(const uint8_t* data, uint16_t len) {
     if (!gEnabled || gCfg.txDio == USER_UART_PIN_NONE || data == NULL) {
         return false;
     }
     const UartDesc_t* u = &gUarts[gUartIdx];
+    /* Whole-write deadline: 256 bytes at the ~320 Hz BRG floor is ~8 s of wire
+     * time, so bound the write at ~15 s wall-clock (a stuck TX trips it). The
+     * long legitimate case yields throughout, so it never starves the CPU. */
+    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(15000u);
     for (uint16_t i = 0; i < len; ++i) {
-        uint32_t guard = USER_UART_TX_TIMEOUT;
-        while ((*(u->sta) & _U1STA_UTXBF_MASK) != 0u) {   /* TX buffer full */
-            if (--guard == 0u) { return false; }
+        if (!uart_WaitSta(u, _U1STA_UTXBF_MASK, false, deadline)) {   /* buffer has room */
+            return false;
         }
         *(u->txreg) = data[i];
     }
-    /* Wait for the shifter to empty so the caller knows the frame is on the
-     * wire (bounded). */
-    uint32_t guard = USER_UART_TX_TIMEOUT;
-    while ((*(u->sta) & _U1STA_TRMT_MASK) == 0u) {
-        if (--guard == 0u) { return false; }
-    }
-    return true;
+    /* Shifter empty = the last frame is fully on the wire. */
+    return uart_WaitSta(u, _U1STA_TRMT_MASK, true, deadline);
 }
 
 /* Drain the hardware RX FIFO into @p out (up to maxLen); fold an OERR overrun

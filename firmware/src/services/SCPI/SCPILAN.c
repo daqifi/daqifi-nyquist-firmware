@@ -1008,10 +1008,14 @@ scpi_result_t SCPI_UartConfigSet(scpi_t * context) {
         SCPI_ExecutionError(context, "UART pin index out of range (-1..15)");
         return SCPI_RES_ERR;
     }
+    if (baud < 0) {
+        SCPI_ExecutionError(context, "UART baud must be >= 0 (0 = default)");
+        return SCPI_RES_ERR;
+    }
     UserUartConfig_t cfg;
     cfg.rxDio    = spi_ScpiPinToDio(rx);
     cfg.txDio    = spi_ScpiPinToDio(tx);
-    cfg.baudHz   = (baud <= 0) ? USER_UART_DEFAULT_BAUD_HZ : (uint32_t)baud;
+    cfg.baudHz   = (baud == 0) ? USER_UART_DEFAULT_BAUD_HZ : (uint32_t)baud;
     cfg.dataBits = (uint8_t)data;
     cfg.parity   = (uint8_t)parity;
     cfg.stopBits = (uint8_t)stop;
