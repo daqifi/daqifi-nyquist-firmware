@@ -116,6 +116,93 @@ bool DIO_PWMDutyCycleSetSingle(uint8_t dataIndex);
  */
 bool DIO_PWMFrequencySet(uint8_t dataIndex);
 
+/* ---------------------------------------------------------------------
+ * DIO channel ownership registry (#664 shared foundation)
+ * ---------------------------------------------------------------------
+ * A general claim/release layer so peripheral features built on the user
+ * DIO terminal (SPI #665, I2C #15, UART #16, 1-Wire #669, ...) can reserve
+ * the pins they drive. A claimed channel is skipped by the DIO streaming
+ * write path and rejected by the SCPI DIO:PORt / PWM setters (which name
+ * the owner). This generalizes the probe-specific DioProbe_IsChannelOwned
+ * into a multi-owner registry; the DIO debug probe keeps its own tear-safe
+ * fast path and is treated here as an additional, higher-priority owner
+ * class (see DIO_ChannelBlocked / DIO_ChannelBlockedReason).
+ * --------------------------------------------------------------------- */
+
+/*! Peripheral that has claimed a DIO channel. */
+typedef enum {
+    DIO_OWNER_NONE = 0,   //!< unclaimed by a peripheral
+    DIO_OWNER_SPI,        //!< user SPI1 master (#665)
+    DIO_OWNER_I2C,        //!< user I2C hub (#15)
+    DIO_OWNER_UART,       //!< user UART (#16)
+    DIO_OWNER_ONEWIRE,    //!< user 1-Wire master (#669)
+    DIO_OWNER_IC,         //!< input capture / edge events (#666/#667)
+    DIO_OWNER_CLOCK,      //!< clock output (#668)
+} DioChannelOwner_t;
+
+/*! Claim a DIO channel for a peripheral. Fails if the index is out of
+ *  range, the DIO debug probe owns the channel, or it is already claimed
+ *  by a *different* peripheral (idempotent for the same owner). Thread-safe
+ *  (task-context critical section).
+ *  @return true if the channel is now owned by @p owner. */
+bool DIO_ClaimChannel(uint8_t channel, DioChannelOwner_t owner);
+
+/*! Release a channel previously claimed via DIO_ClaimChannel. No-op unless
+ *  the channel is currently owned by @p owner (a peripheral cannot release
+ *  another peripheral's claim). */
+void DIO_ReleaseChannel(uint8_t channel, DioChannelOwner_t owner);
+
+/*! Current peripheral owner of a channel (DIO_OWNER_NONE if not claimed by
+ *  a peripheral). Does not report DIO-probe ownership. */
+DioChannelOwner_t DIO_GetChannelOwner(uint8_t channel);
+
+/*! Human-readable owner name for SCPI error messages ("SPI", "I2C", ...). */
+const char* DIO_ChannelOwnerName(DioChannelOwner_t owner);
+
+/*! True if a channel is unavailable for normal DIO use — owned by the
+ *  debug probe OR claimed by a peripheral. Hot-path helper used by the DIO
+ *  write/read/streaming paths. */
+bool DIO_ChannelBlocked(uint8_t channel);
+
+/*! Why a channel is blocked, as a static string for error messages, or
+ *  NULL if it is free for normal DIO use. */
+const char* DIO_ChannelBlockedReason(uint8_t channel);
+
+/*! True if PWM (output-compare) is currently active on a channel. Lets a
+ *  peripheral reject a pin-claim rather than silently leaving the OC output
+ *  driving the pad. */
+bool DIO_IsPwmActive(uint8_t channel);
+
+/* ---------------------------------------------------------------------
+ * Peripheral pin electrical setup (#664 shared foundation)
+ * ---------------------------------------------------------------------
+ * The DIO terminal channel is one unidirectional SN74LVC2G241 buffer half:
+ * enable(OE) active => the PIC pin drives the terminal at the +5V_D rail;
+ * enable inactive => terminal high-Z and the PIC pin reads the terminal
+ * through a 100K series resistor (input mode). These helpers apply that
+ * model for a claimed channel so SPI/UART/I2C don't each re-derive the
+ * buffer polarity. Call only on a channel already claimed by the caller.
+ * --------------------------------------------------------------------- */
+
+/*! Data pin -> output, external buffer enabled (drives the terminal). Used
+ *  for peripheral outputs: SPI SCK/MOSI/CS, UART TX. The data pin's value
+ *  is driven either by the mapped peripheral (SCK/MOSI) or by
+ *  DIO_DriveChannel (a software CS). */
+bool DIO_SetChannelPeripheralOutput(uint8_t channel);
+
+/*! Data pin -> input, external buffer disabled (terminal high-Z; the pin
+ *  reads the terminal through the 100K series resistor). Used for
+ *  peripheral inputs: SPI MISO, UART RX. */
+bool DIO_SetChannelPeripheralInput(uint8_t channel);
+
+/*! Drive a peripheral-output channel's data pin (e.g. a software CS line).
+ *  Only meaningful after DIO_SetChannelPeripheralOutput on @p channel. */
+bool DIO_DriveChannel(uint8_t channel, bool level);
+
+/*! Restore a channel to its runtime-configured DIO state. Call after
+ *  releasing a peripheral claim so the normal DIO path resumes cleanly. */
+void DIO_RestoreChannel(uint8_t channel);
+
 
 
 #ifdef  DIO_TIMING_TEST

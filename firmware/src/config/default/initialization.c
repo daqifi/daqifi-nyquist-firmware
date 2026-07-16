@@ -121,9 +121,14 @@
     #pragma config IOL1WAY =    OFF  // Allow multiple I/O lock reconfigurations
     #warning "Config lock bits disabled for ICSP logging - DO NOT RELEASE TO PRODUCTION"
 #else
-    #pragma config PGL1WAY =    ON   // Peripheral Pin Select one-way lock
-    #pragma config PMDL1WAY =   ON   // Peripheral Module Disable one-way lock
-    #pragma config IOL1WAY =    ON   // I/O one-way lock
+    // #664/#665: user digital-sensor peripherals on the DIO terminal need
+    // RUNTIME PPS + PMD reconfiguration (remap SDO1/SDI1, power SPI1, etc.).
+    // The one-way locks would freeze both after the plib init, so they are
+    // OFF. The DIO ownership registry (HAL/DIO.c) gates which subsystem may
+    // touch each pin, replacing the coarse one-way-lock security posture.
+    #pragma config PGL1WAY =    OFF  // Allow multiple Peripheral Pin Select reconfigurations
+    #pragma config PMDL1WAY =   OFF  // Allow multiple Peripheral Module Disable reconfigurations
+    #pragma config IOL1WAY =    OFF  // Allow multiple I/O lock reconfigurations
 #endif
 #pragma config FUSBIDIO =   OFF
 

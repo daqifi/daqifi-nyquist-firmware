@@ -18,7 +18,6 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/DIO.h"
-#include "HAL/DioProbe.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 /**
  * Sets the GPIO direction for a single pin
@@ -108,6 +107,22 @@ static bool DIO_SingleChannelIndexValid(scpi_t *context, int channel)
     return false;
 }
 
+/* If @p channel is owned by the DIO probe or claimed by a peripheral
+ * (SPI/I2C/UART/...), push a SCPI execution error naming the owner and
+ * return true. The caller should then return SCPI_RES_ERR. Returns false
+ * if the channel is free for normal DIO/PWM control. (#664 ownership) */
+static bool SCPI_DioChannelBlocked(scpi_t * context, int channel, const char * op)
+{
+    const char* owner = DIO_ChannelBlockedReason((uint8_t)channel);
+    if (owner == NULL) {
+        return false;
+    }
+    char msg[64];
+    snprintf(msg, sizeof(msg), "%s: DIO ch %d in use by %s", op, channel, owner);
+    SCPI_ExecutionError(context, msg);
+    return true;
+}
+
 scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
 {
     int param1, param2;
@@ -125,8 +140,7 @@ scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
         if (!DIO_SingleChannelIndexValid(context, param1)) {
             return SCPI_RES_ERR; // #671: reject before (uint8_t) truncation
         }
-        if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-            SCPI_ExecutionError(context, "DIO:DIR: channel owned by DIO probe");
+        if (SCPI_DioChannelBlocked(context, param1, "DIO:DIR")) {
             return SCPI_RES_ERR;
         }
         return SCPI_GPIOSingleDirectionSet((uint8_t)param1, !(bool)param2); // Interpret the input as a bit/direction pair (invert because 1=output but we use isInput as the test)
@@ -190,8 +204,7 @@ scpi_result_t SCPI_GPIOStateSet(scpi_t * context)
         if (!DIO_SingleChannelIndexValid(context, param1)) {
             return SCPI_RES_ERR; // #671: reject before (uint8_t) truncation
         }
-        if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-            SCPI_ExecutionError(context, "DIO:STATE: channel owned by DIO probe");
+        if (SCPI_DioChannelBlocked(context, param1, "DIO:STATE")) {
             return SCPI_RES_ERR;
         }
         return SCPI_GPIOSingleStateSet((uint8_t)param1, (bool)param2); // Interpret the input as a bit/direction pair
@@ -277,8 +290,7 @@ scpi_result_t SCPI_PWMChannelEnableSet (scpi_t * context){
     if (!DIO_SingleChannelIndexValid(context, param1)) {
         return SCPI_RES_ERR; // #671: reject before (uint8_t) truncation
     }
-    if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-        SCPI_ExecutionError(context, "DIO:PWM:ENA: channel owned by DIO probe");
+    if (SCPI_DioChannelBlocked(context, param1, "DIO:PWM:ENA")) {
         return SCPI_RES_ERR;
     }
 
@@ -329,8 +341,7 @@ scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
-    if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-        SCPI_ExecutionError(context, "DIO:PWM:FREQ: channel owned by DIO probe");
+    if (SCPI_DioChannelBlocked(context, param1, "DIO:PWM:FREQ")) {
         return SCPI_RES_ERR;
     }
     //only timer 3 is driving all the pwm so, channel independent frequency cannot be generated
@@ -381,8 +392,7 @@ scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context){
     if(param2>100){
         return SCPI_RES_ERR;
     }
-    if (DioProbe_IsChannelOwned((uint8_t)param1)) {
-        SCPI_ExecutionError(context, "DIO:PWM:DUTY: channel owned by DIO probe");
+    if (SCPI_DioChannelBlocked(context, param1, "DIO:PWM:DUTY")) {
         return SCPI_RES_ERR;
     }
 
