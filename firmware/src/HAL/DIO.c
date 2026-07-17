@@ -16,6 +16,7 @@
 #include "TimerApi/TimerApi.h"
 #include "OcmpApi/OcmpApi.h"
 #include "services/streaming.h"
+#include "UserI2c/UserI2c.h"   // #15 Phase-0: PCA9516A hub-enable boot hygiene
 #include "Util/Logger.h"
 #include "DioProbe.h"
 //! Pointer to the board configuration. It must be set in the initialization
@@ -257,6 +258,12 @@ bool DIO_InitHardware(const tBoardConfig *pInitBoardConfiguration,
 
         SetGpioDir(enableChannel, enableBitPos,0);
     }
+
+    /* #15 Phase-0 boot hygiene: Harmony's GPIO_Initialize leaves the PCA9516A
+     * hub enables (RH14/RA14) floating. Drive both LOW as outputs so the I2C
+     * segments are isolated until the user I2C master claims them. */
+    UserI2c_InitEnablesLow();
+
     return true;
 }
 

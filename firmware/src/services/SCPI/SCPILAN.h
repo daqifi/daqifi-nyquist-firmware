@@ -175,7 +175,7 @@ scpi_result_t SCPI_LANSettingsApply(scpi_t * context);
 /**
  * SCPI Callback: Hardware-reset the WINC chip (toggles GPIO reset).
  * Use to recover a wedged outbound TCP stack (#383). Returns
- * immediately; full recovery takes ~20 s — poll ADDR? to confirm.
+ * immediately; full recovery takes ~20 s -- poll ADDR? to confirm.
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANHardReset(scpi_t * context);
@@ -234,6 +234,24 @@ scpi_result_t SCPI_UartWrite(scpi_t * context);
 scpi_result_t SCPI_UartRead(scpi_t * context);
 /*! SCPI: SYST:COMM:UART:COUNt? -> JSON {Pending,Overflow}. */
 scpi_result_t SCPI_UartCount(scpi_t * context);
+
+/* --- user I2C (#15, epic #664) -- SYST:COMM:I2C:* --- */
+/*! SCPI: SYST:COMM:I2C:ENAble <0|1> -> master on/off (init I2C2, claim segments). */
+scpi_result_t SCPI_I2cEnableSet(scpi_t * context);
+/*! SCPI: SYST:COMM:I2C:ENAble? -> 1 if enabled else 0. */
+scpi_result_t SCPI_I2cEnableGet(scpi_t * context);
+/*! SCPI: SYST:COMM:I2C:SEGment <1|2>,<0|1> -> PCA9516A segment enable. */
+scpi_result_t SCPI_I2cSegmentSet(scpi_t * context);
+/*! SCPI: SYST:COMM:I2C:SEGment? <1|2> -> segment enabled state. */
+scpi_result_t SCPI_I2cSegmentGet(scpi_t * context);
+/*! SCPI: SYST:COMM:I2C:FREQuency <hz> -> bus frequency (>=400 kHz rejected). */
+scpi_result_t SCPI_I2cFreqSet(scpi_t * context);
+/*! SCPI: SYST:COMM:I2C:FREQuency? -> JSON {Freq,ActualFreq}. */
+scpi_result_t SCPI_I2cFreqGet(scpi_t * context);
+/*! SCPI: SYST:COMM:I2C:SCAN? -> comma list of ACKing 7-bit addresses. */
+scpi_result_t SCPI_I2cScan(scpi_t * context);
+/*! SCPI: SYST:COMM:I2C:TRANsfer? <addr>,<hexWrite>,<nRead> -> read bytes as hex. */
+scpi_result_t SCPI_I2cTransfer(scpi_t * context);
 /**
  * SCPI Callback: Enable/disable automatic WiFi power-save (#29).
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error

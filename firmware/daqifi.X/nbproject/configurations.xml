@@ -336,6 +336,9 @@
         <logicalFolder name="UI" displayName="UI" projectFiles="true">
           <itemPath>../src/HAL/UI/UI.h</itemPath>
         </logicalFolder>
+        <logicalFolder name="UserI2c" displayName="UserI2c" projectFiles="true">
+          <itemPath>../src/HAL/UserI2c/UserI2c.h</itemPath>
+        </logicalFolder>
         <logicalFolder name="UserSpi" displayName="UserSpi" projectFiles="true">
           <itemPath>../src/HAL/UserSpi/UserSpi.h</itemPath>
         </logicalFolder>
@@ -929,6 +932,9 @@
         </logicalFolder>
         <logicalFolder name="UI" displayName="UI" projectFiles="true">
           <itemPath>../src/HAL/UI/UI.c</itemPath>
+        </logicalFolder>
+        <logicalFolder name="UserI2c" displayName="UserI2c" projectFiles="true">
+          <itemPath>../src/HAL/UserI2c/UserI2c.c</itemPath>
         </logicalFolder>
         <logicalFolder name="UserSpi" displayName="UserSpi" projectFiles="true">
           <itemPath>../src/HAL/UserSpi/UserSpi.c</itemPath>
