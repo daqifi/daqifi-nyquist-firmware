@@ -198,8 +198,15 @@ bool AdcThreshold_Configure(uint8_t chId, AdcThresholdMode mode,
         return false;
     }
     if (mode != ADC_THRESH_OFF) {
-        if (lo > ADC_THRESHOLD_MAX_CODE || hi > ADC_THRESHOLD_MAX_CODE || lo > hi) {
-            if (err) { *err = "threshold: need 0 <= lo <= hi <= 4095 (raw codes)"; }
+        if (lo > ADC_THRESHOLD_MAX_CODE || hi > ADC_THRESHOLD_MAX_CODE) {
+            if (err) { *err = "threshold: raw codes must be 0..4095"; }
+            return false;
+        }
+        /* Only the window modes use both bounds (below uses lo, above uses hi),
+         * so lo<=hi is required only for inside/outside -- this catches an
+         * inverted window while letting below/above ignore the unused bound. */
+        if ((mode == ADC_THRESH_INSIDE || mode == ADC_THRESH_OUTSIDE) && lo > hi) {
+            if (err) { *err = "threshold: window modes need lo <= hi"; }
             return false;
         }
     }

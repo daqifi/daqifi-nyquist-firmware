@@ -188,8 +188,12 @@ extern "C" {
 
     /**
      * #670 — hardware analog threshold alarms via the ADCHS digital comparators.
-     *   CONFigure:ADC:THREshold <ch>,<mode 0-4>,<lo>,<hi>  — mode 0=off, 1=below,
-     *       2=above, 3=inside window, 4=outside window; lo/hi are raw 12-bit codes.
+     *   CONFigure:ADC:THREshold <ch>,<mode 0-4>,<lo>,<hi>  — mode 0=off,
+     *       1=below (uses lo: fires when DATA < lo),
+     *       2=above (uses hi: fires when DATA >= hi),
+     *       3=inside window (lo <= DATA < hi), 4=outside window (DATA < lo || DATA >= hi).
+     *       lo/hi are raw 12-bit codes (0..4095). Below/above ignore the unused
+     *       bound; only the window modes require lo <= hi.
      *   CONFigure:ADC:THREshold? <ch>   — mode,lo,hi,tripCount,latched
      *   CONFigure:ADC:THREshold:CLEar [<ch>]  — clear latch+counter (no arg = all)
      * MC12b (NQ1/NQ2) channels with AN input < 32 only; rejected while streaming.
@@ -197,7 +201,6 @@ extern "C" {
     scpi_result_t SCPI_ADCThresholdSet(scpi_t * context);
     scpi_result_t SCPI_ADCThresholdGet(scpi_t * context);
     scpi_result_t SCPI_ADCThresholdClear(scpi_t * context);
-    scpi_result_t SCPI_ADCThresholdDbg(scpi_t * context);  /* TEMP #670 bring-up */
 
 #ifdef	__cplusplus
 }

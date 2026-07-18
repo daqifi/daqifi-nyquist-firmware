@@ -5476,7 +5476,6 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:ADC:THREshold", .callback = SCPI_ADCThresholdSet,},
     {.pattern = "CONFigure:ADC:THREshold?", .callback = SCPI_ADCThresholdGet,},
     {.pattern = "CONFigure:ADC:THREshold:CLEar", .callback = SCPI_ADCThresholdClear,},
-    {.pattern = "CONFigure:ADC:THREshold:DBG?", .callback = SCPI_ADCThresholdDbg,},
     {.pattern = "CONFigure:ADC:SAMC:DEDicated", .callback = SCPI_ADCSamcDedicatedSet,},
     {.pattern = "CONFigure:ADC:SAMC:DEDicated?", .callback = SCPI_ADCSamcDedicatedGet,},
     {.pattern = "CONFigure:ADC:SAMC:SHARed", .callback = SCPI_ADCSamcSharedSet,},

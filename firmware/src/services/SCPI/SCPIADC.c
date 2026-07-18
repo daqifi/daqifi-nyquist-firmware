@@ -886,17 +886,6 @@ scpi_result_t SCPI_ADCThresholdGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-// TEMP DEBUG (#670 bring-up): dump comparator + interrupt regs for unit 1.
-scpi_result_t SCPI_ADCThresholdDbg(scpi_t * context) {
-    SCPI_ResultUInt32Base(context, ADCCMPCON1, 16);  // ENDCMP/DCMPGIEN/DCMPED/AINID/IE*
-    SCPI_ResultUInt32Base(context, ADCCMPEN1, 16);   // AN watch mask
-    SCPI_ResultUInt32Base(context, ADCCMP1, 16);     // DCMPHI:DCMPLO
-    SCPI_ResultUInt32Base(context, IFS1, 16);        // bit14 = ADCDC1IF
-    SCPI_ResultUInt32Base(context, IEC1, 16);        // bit14 = ADCDC1IE
-    SCPI_ResultUInt32Base(context, IPC11, 16);       // ADCDC1IP bits 20:18
-    return SCPI_RES_OK;
-}
-
 // CONF:ADC:THREshold:CLEar [<ch>] -> clear latch+counter (no arg = all)
 scpi_result_t SCPI_ADCThresholdClear(scpi_t * context) {
     int32_t ch;
