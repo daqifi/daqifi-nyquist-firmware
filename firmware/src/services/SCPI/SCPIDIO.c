@@ -804,8 +804,8 @@ scpi_result_t SCPI_DioEventCount(scpi_t * context) {
 
 scpi_result_t SCPI_DioEventNext(scpi_t * context) {
     uint8_t dio = 0u, edge = 0u;
-    uint32_t ts = 0u;
-    if (UserEdge_EventNext(&dio, &ts, &edge)) {
+    uint32_t ts = 0u, dropped = 0u;
+    if (UserEdge_EventNext(&dio, &ts, &edge, &dropped)) {
         SCPI_ResultUInt32(context, dio);
         SCPI_ResultUInt32(context, ts);
         SCPI_ResultUInt32(context, edge);
@@ -814,6 +814,7 @@ scpi_result_t SCPI_DioEventNext(scpi_t * context) {
         SCPI_ResultUInt32(context, 0u);
         SCPI_ResultUInt32(context, 0u);
     }
+    SCPI_ResultUInt32(context, dropped); /* cumulative FIFO drop-oldest losses (gap signal) */
     return SCPI_RES_OK;
 }
 

@@ -108,8 +108,9 @@ scpi_result_t SCPI_DioEventEnable(scpi_t * context);
 scpi_result_t SCPI_DioEventEnableGet(scpi_t * context);
 /*! SCPI: DIO:EVENt:COUNt? <dio> -> edge count since armed (0 if not an event pin). */
 scpi_result_t SCPI_DioEventCount(scpi_t * context);
-/*! SCPI: DIO:EVENt:NEXT? -> pop the oldest FIFO event as "<dio>,<ts>,<edge>", or
- *  "-1,0,0" when the FIFO is empty. */
+/*! SCPI: DIO:EVENt:NEXT? -> pop the oldest FIFO event as "<dio>,<ts>,<edge>,<dropped>"
+ *  (or "-1,0,0,<dropped>" when empty). <dropped> is the cumulative FIFO drop-oldest
+ *  loss count, so a client sees gaps even on a successful pop. */
 scpi_result_t SCPI_DioEventNext(scpi_t * context);
 /*! SCPI: DIO:COUNter:ENAble <dio>,<0|1> -> arm/disarm a hardware pulse totalizer
  *  (DIO 0/3/11/12). Claims the pin; rejected while streaming. */

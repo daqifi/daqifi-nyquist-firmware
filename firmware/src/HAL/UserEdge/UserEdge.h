@@ -43,7 +43,13 @@
  * Coexists with the #666 input-capture feature: both share DIO_OWNER_IC (a pin
  * cannot be a one-shot capture target and a persistent event source at once) but
  * use different hardware (IC1..9 + TMR2 there; INT1..4 + TMR8/9 + read-only TMR6
- * here), so they never contend for a timer.
+ * here), so they never contend for a timer. Within this file the event and
+ * totalizer families ALSO share DIO_OWNER_IC, so each arm path cross-checks the
+ * other (edge_EventActiveOnPin / edge_CounterActiveOnPin) because a same-owner
+ * DIO claim succeeds idempotently and would not arbitrate them. NOTE for the epic
+ * merge: #666 UserIC uses the same owner id, so the same cross-family idempotent-
+ * claim hole exists against it — reconcile at merge (distinct owner ids per
+ * IC-family feature, or a shared IC arbitration point).
  */
 #ifndef USER_EDGE_H
 #define USER_EDGE_H
@@ -87,10 +93,12 @@ uint64_t UserEdge_EventCount(uint8_t dio);
 
 /**
  * Pop the oldest event from the shared FIFO into @p dio / @p ts / @p edge
- * (edge: 1 = rising, 0 = falling; @p ts is the streaming timebase count).
+ * (edge: 1 = rising, 0 = falling; @p ts is the streaming timebase count). @p dropped
+ * (if non-NULL) always receives the cumulative count of events lost to FIFO
+ * drop-oldest overflow, so a client can detect gaps even when the pop succeeds.
  * @return true if an event was returned, false if the FIFO is empty.
  */
-bool UserEdge_EventNext(uint8_t* dio, uint32_t* ts, uint8_t* edge);
+bool UserEdge_EventNext(uint8_t* dio, uint32_t* ts, uint8_t* edge, uint32_t* dropped);
 
 /**
  * Arm/disarm the hardware pulse-count totalizer on @p dio.

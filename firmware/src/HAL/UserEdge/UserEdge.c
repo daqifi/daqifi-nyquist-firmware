@@ -95,11 +95,15 @@ static const EdgeCtrUnit_t gCtr[USER_EDGE_CTR_UNITS] = {
     { &T9CON, &TMR9, &PR9, &T9CKR, _PMD4_T9MD_MASK, _IEC1_T9IE_MASK, _IFS1_T9IF_MASK, gCtr9Pins, 2u },
 };
 
+/* enabled/stormed/dio/mode are written by the arming task and read by the INT
+ * ISR, so they are volatile (cross-context visibility + ordering vs the volatile
+ * IEC0SET that enables the interrupt — a non-volatile store could legally sink
+ * past it and let an early edge see enabled==false). */
 typedef struct {
-    bool              enabled;
-    bool              stormed;     /* auto-muted by the storm guard */
-    uint8_t           dio;         /* active pin (shared-unit mismatch guard) */
-    uint8_t           mode;        /* UserEdgeMode_t */
+    volatile bool     enabled;
+    volatile bool     stormed;     /* auto-muted by the storm guard */
+    volatile uint8_t  dio;         /* active pin (shared-unit mismatch guard) */
+    volatile uint8_t  mode;        /* UserEdgeMode_t */
     volatile uint64_t count;       /* edge count (ISR is sole writer) */
     volatile uint32_t winStart;    /* storm-window start (core-timer count) */
     volatile uint16_t winEdges;    /* edges in the current window */
@@ -114,7 +118,10 @@ typedef struct {
 static EdgeIntState_t gIntState[USER_EDGE_INT_UNITS];
 static EdgeCtrState_t gCtrState[USER_EDGE_CTR_UNITS];
 
-/* Shared timestamped event FIFO (drop-oldest). ISR pushes, task pops. */
+/* Shared timestamped event FIFO (drop-oldest). ISR pushes, task pops. One ring
+ * slot is reserved to distinguish full from empty, so up to LEN-1 (15) events
+ * are pending; overflow drop-oldest is counted in gFifoDropped and surfaced via
+ * DIO:EVENt:NEXT?. */
 typedef struct { uint8_t dio; uint8_t edge; uint32_t ts; } EdgeEvent_t;
 static volatile EdgeEvent_t gFifo[USER_EDGE_FIFO_LEN];
 static volatile uint8_t     gFifoHead;    /* next push slot */
@@ -161,6 +168,18 @@ static uint8_t edge_LookupCode(const EdgePinCode_t* pins, uint8_t n, uint8_t dio
         if (pins[i].dio == dio) { return pins[i].code; }
     }
     return 0u;   /* not reached: callers resolve the unit (and thus the pin) first */
+}
+
+/* True if an edge-event INT unit is currently armed on @p dio. */
+static bool edge_EventActiveOnPin(uint8_t dio) {
+    int u = edge_IntUnitForDio(dio);
+    return (u >= 0) && gIntState[u].enabled && (gIntState[u].dio == dio);
+}
+
+/* True if a totalizer is currently armed on @p dio. */
+static bool edge_CounterActiveOnPin(uint8_t dio) {
+    int u = edge_CtrUnitForDio(dio);
+    return (u >= 0) && gCtrState[u].enabled && (gCtrState[u].dio == dio);
 }
 
 /* ------------------------------------------------------------------ */
@@ -234,7 +253,7 @@ void UserEdge_Initialize(void) {
     gFifoHead = 0u; gFifoTail = 0u; gFifoDropped = 0u;
     for (uint8_t u = 0; u < USER_EDGE_INT_UNITS; u++) {
         gIntState[u].enabled = false; gIntState[u].stormed = false;
-        gIntState[u].mode = 0u; gIntState[u].count = 0u;
+        gIntState[u].dio = 0u; gIntState[u].mode = 0u; gIntState[u].count = 0u;
         gIntState[u].winStart = 0u; gIntState[u].winEdges = 0u;
     }
     for (uint8_t u = 0; u < USER_EDGE_CTR_UNITS; u++) {
@@ -254,14 +273,20 @@ void UserEdge_Initialize(void) {
  * delivered against half-initialized state. */
 static void edge_ConfigInt(uint8_t u, uint8_t mode) {
     const EdgeIntUnit_t* r = &gInt[u];
-    IEC0CLR = r->ieMask;
+    IEC0CLR = r->ieMask;                                        /* this unit's ISR can't run now */
     if (mode == USER_EDGE_FALLING) { INTCONCLR = r->epMask; }   /* falling */
     else { INTCONSET = r->epMask; }                             /* rising, and both starts on rising */
+    /* Reset the shared state under a critical section: the 64-bit count store must
+     * be atomic against a concurrent cross-task getter (this unit's ISR is already
+     * IEC-disabled, but UserEdge_EventCount runs on another task). */
+    uint32_t now = CORETIMER_CounterGet();
+    taskENTER_CRITICAL();
     gIntState[u].mode = mode;
     gIntState[u].count = 0u;
     gIntState[u].stormed = false;
-    gIntState[u].winStart = CORETIMER_CounterGet();
+    gIntState[u].winStart = now;
     gIntState[u].winEdges = 0u;
+    taskEXIT_CRITICAL();
     IFS0CLR = r->ifMask;
 }
 
@@ -275,14 +300,18 @@ bool UserEdge_EventEnable(uint8_t dio, uint8_t mode, const char** err) {
         if (err) { *err = "DIO:EVENt: pin is not edge-event reachable (use 0/2/3/4/5/6/7/11/12/14/15)"; }
         return false;
     }
-    if (edge_Streaming()) {
-        if (err) { *err = "DIO:EVENt: cannot arm/disarm while streaming"; }
-        return false;
-    }
     const EdgeIntUnit_t* r = &gInt[u];
     uint8_t code = edge_LookupCode(r->pins, r->nPins, dio);
     xSemaphoreTake(edge_Mutex(), portMAX_DELAY);
     bool ok = true;
+    if (edge_Streaming()) {
+        /* Re-checked under the mutex. Best-effort: stream start does not take this
+         * mutex, but a stream only READS TMR6 and never touches INT1-4/T8-9 or these
+         * pins, so a start racing an in-flight arm is benign. */
+        xSemaphoreGive(gMutex);
+        if (err) { *err = "DIO:EVENt: cannot arm/disarm while streaming"; }
+        return false;
+    }
     if (mode != (uint8_t)USER_EDGE_OFF) {
         if (gIntState[u].enabled && gIntState[u].dio != dio) {
             /* shared-unit: a different pin of this INT group is active (#9 guard) */
@@ -290,7 +319,13 @@ bool UserEdge_EventEnable(uint8_t dio, uint8_t mode, const char** err) {
             ok = false;
         } else {
             bool fresh = !gIntState[u].enabled;
-            if (fresh && !DIO_ClaimChannel(dio, DIO_OWNER_IC)) {
+            if (fresh && edge_CounterActiveOnPin(dio)) {
+                /* Events and totalizers share DIO_OWNER_IC, so a same-owner claim
+                 * would succeed idempotently — cross-check the sibling family here
+                 * (the #9 shared-pin guard extended ACROSS families). */
+                if (err) { *err = "DIO:EVENt: pin is an active totalizer (disable DIO:COUNter first)"; }
+                ok = false;
+            } else if (fresh && !DIO_ClaimChannel(dio, DIO_OWNER_IC)) {
                 if (err) { *err = "DIO:EVENt: pin is owned by another peripheral"; }
                 ok = false;
             } else {
@@ -345,9 +380,10 @@ uint64_t UserEdge_EventCount(uint8_t dio) {
     return c;
 }
 
-bool UserEdge_EventNext(uint8_t* dio, uint32_t* ts, uint8_t* edge) {
+bool UserEdge_EventNext(uint8_t* dio, uint32_t* ts, uint8_t* edge, uint32_t* dropped) {
     bool got = false;
     taskENTER_CRITICAL();
+    if (dropped != NULL) { *dropped = gFifoDropped; }   /* cumulative drop-oldest losses */
     if (gFifoHead != gFifoTail) {
         uint8_t t = gFifoTail;
         if (dio != NULL)  { *dio = gFifo[t].dio; }
@@ -366,20 +402,27 @@ bool UserEdge_CounterEnable(uint8_t dio, bool on, const char** err) {
         if (err) { *err = "DIO:COUNter: pin is not totalizer-reachable (use 0/3/11/12)"; }
         return false;
     }
-    if (edge_Streaming()) {
-        if (err) { *err = "DIO:COUNter: cannot arm/disarm while streaming"; }
-        return false;
-    }
     const EdgeCtrUnit_t* c = &gCtr[u];
     uint8_t code = edge_LookupCode(c->pins, c->nPins, dio);
     xSemaphoreTake(edge_Mutex(), portMAX_DELAY);
     bool ok = true;
+    if (edge_Streaming()) {
+        /* Re-checked under the mutex (best-effort — see UserEdge_EventEnable). */
+        xSemaphoreGive(gMutex);
+        if (err) { *err = "DIO:COUNter: cannot arm/disarm while streaming"; }
+        return false;
+    }
     if (on) {
         if (gCtrState[u].enabled && gCtrState[u].dio != dio) {
             if (err) { *err = "DIO:COUNter: this timer is busy on the other group pin"; }
             ok = false;
         } else if (gCtrState[u].enabled) {
             /* idempotent — already counting this pin */
+        } else if (edge_EventActiveOnPin(dio)) {
+            /* cross-family guard: the pin is a live edge-event source (shared
+             * DIO_OWNER_IC — see UserEdge_EventEnable). */
+            if (err) { *err = "DIO:COUNter: pin is an active event source (disable DIO:EVENt first)"; }
+            ok = false;
         } else if (!DIO_ClaimChannel(dio, DIO_OWNER_IC)) {
             if (err) { *err = "DIO:COUNter: pin is owned by another peripheral"; }
             ok = false;
@@ -478,8 +521,16 @@ void UserEdge_IsrEvent(uint8_t unit) {
         IFS0CLR = r->ifMask;   /* stray/masked — acknowledge and bail */
         return;
     }
-    uint32_t ts = TMR6;        /* streaming timebase (TSTimerIndex = TMR_INDEX_6) */
     uint8_t mode = gIntState[unit].mode;
+    /* Single-edge modes: acknowledge EARLY. INTxIF is not auto-cleared, and an edge
+     * arriving while it is still set merges into the set flag and is lost. Clearing
+     * first makes a mid-body edge re-pend for a fresh ISR entry (no undercount). BOTH
+     * mode must clear LATE (after the EP flip, to swallow the flip's synthetic edge),
+     * so it acknowledges in its own branch below. */
+    if (mode != (uint8_t)USER_EDGE_BOTH) {
+        IFS0CLR = r->ifMask;
+    }
+    uint32_t ts = TMR6;        /* streaming timebase (TSTimerIndex = TMR_INDEX_6) */
     uint8_t edge;
     if (mode == (uint8_t)USER_EDGE_RISING)       { edge = 1u; }
     else if (mode == (uint8_t)USER_EDGE_FALLING) { edge = 0u; }
@@ -489,13 +540,14 @@ void UserEdge_IsrEvent(uint8_t unit) {
     gIntState[unit].count++;   /* ISRs serialized by equal priority -> single writer */
 
     if (mode == (uint8_t)USER_EDGE_BOTH) {
-        /* Retarget the opposite edge: disable -> flip EP -> clear spurious -> enable. */
+        /* Retarget the opposite edge: disable -> flip EP -> read-back (retire the
+         * INTCON write through the bus so the flip settles before the ack) -> clear
+         * the flip's synthetic edge -> enable. */
         IEC0CLR = r->ieMask;
         INTCONINV = r->epMask;
+        (void)INTCON;
         IFS0CLR = r->ifMask;
         IEC0SET = r->ieMask;
-    } else {
-        IFS0CLR = r->ifMask;
     }
 
     /* Storm guard: mute a pin that floods the ISR so it can't starve the RTOS. */
@@ -506,7 +558,8 @@ void UserEdge_IsrEvent(uint8_t unit) {
     }
     gIntState[unit].winEdges++;
     if (gIntState[unit].winEdges > USER_EDGE_STORM_MAX) {
-        IEC0CLR = r->ieMask;          /* stop the flood (pin stays claimed, count kept) */
+        IEC0CLR = r->ieMask;          /* stop the flood; pin stays claimed and the count
+                                       * is preserved until a re-arm resets it to resume */
         gIntState[unit].stormed = true;
         LOG_E("DIO event: edge storm — pin auto-muted, re-arm to resume");
     }
