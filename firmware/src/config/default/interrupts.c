@@ -54,6 +54,7 @@
 
 
 #include "HAL/ADC.h"
+#include "HAL/ADC/AdcThreshold.h"
 #include "HAL/DIO.h"
 
 // *****************************************************************************
@@ -111,6 +112,8 @@ void I2C5_MASTER_Handler (void);
 void SPI6_RX_Handler (void);
 void SPI6_TX_Handler (void);
 void ADC_EOS_Handler (void);
+void ADC_DC1_Handler(void); void ADC_DC2_Handler(void); void ADC_DC3_Handler(void);
+void ADC_DC4_Handler(void); void ADC_DC5_Handler(void); void ADC_DC6_Handler(void);
 
 
 // *****************************************************************************
@@ -366,6 +369,16 @@ void __attribute__((used)) ADC_EOS_Handler (void)
 {
     ADC_EOS_InterruptHandler();
 }
+
+// #670: ADCHS digital-comparator trip ISRs (vectors 46-51). Each defers to the
+// shared, self-contained AdcThreshold_IsrTrip(unit); priority 3 (set in the
+// AdcThreshold module) keeps them FreeRTOS-syscall-safe (<= 4).
+void __attribute__((used)) ADC_DC1_Handler(void) { AdcThreshold_IsrTrip(0); }
+void __attribute__((used)) ADC_DC2_Handler(void) { AdcThreshold_IsrTrip(1); }
+void __attribute__((used)) ADC_DC3_Handler(void) { AdcThreshold_IsrTrip(2); }
+void __attribute__((used)) ADC_DC4_Handler(void) { AdcThreshold_IsrTrip(3); }
+void __attribute__((used)) ADC_DC5_Handler(void) { AdcThreshold_IsrTrip(4); }
+void __attribute__((used)) ADC_DC6_Handler(void) { AdcThreshold_IsrTrip(5); }
 
 
 

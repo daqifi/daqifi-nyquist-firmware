@@ -1,0 +1,343 @@
+/**
+ * @file AdcThreshold.c
+ * @brief ADCHS digital-comparator threshold alarms (#670, epic #664).
+ *
+ * Hand-rolled ADCCMPCONx/ADCCMPENx/ADCCMPx setup (no Harmony comparator API
+ * exists). Six comparator units; one is allocated per monitored channel. See
+ * AdcThreshold.h for the mode->condition map and the raw-code contract.
+ *
+ * AN-coverage limit: ADCCMPENx is a single 32-bit register, so a comparator can
+ * only be assigned an AN input < 32. A handful of NQ1 channels scan on AN>=32
+ * (via ADCCSS2) and are therefore rejected with a clear message. (Whether the
+ * silicon can compare AN>=32 through some other path is a FRM question; the safe,
+ * always-correct subset is AN<32, which is what we expose.)
+ */
+#define LOG_LVL    LOG_LEVEL_ADC
+#define LOG_MODULE LOG_MODULE_ADC
+#include "AdcThreshold.h"
+#include "device.h"
+#include "../ADC.h"
+#include "../../state/board/BoardConfig.h"
+#include "../../state/board/AInConfig.h"
+#include "../../state/runtime/BoardRuntimeConfig.h"
+#include "../../services/streaming.h"
+#include "../../Util/Logger.h"
+#include "FreeRTOS.h"
+#include "semphr.h"
+#include "task.h"
+
+/* ADCCMPCONx condition bits (identical layout across CMPCON1..6). FRM 22-26
+ * event semantics: IELOLO = DATA < DCMPLO; IEHIHI = DATA >= DCMPHI;
+ * IEBTWN = DCMPLO <= DATA < DCMPHI (the in-window condition -- IEHILO is only
+ * "DATA < DCMPHI", NOT the window). DCMPGIEN gates the interrupt on the event. */
+#define CMP_IELOLO   _ADCCMPCON1_IELOLO_MASK   /* DATA <  DCMPLO */
+#define CMP_IEBTWN   _ADCCMPCON1_IEBTWN_MASK   /* DCMPLO <= DATA < DCMPHI */
+#define CMP_IEHIHI   _ADCCMPCON1_IEHIHI_MASK   /* DATA >= DCMPHI */
+#define CMP_ENDCMP   _ADCCMPCON1_ENDCMP_MASK   /* enable the comparator */
+#define CMP_DCMPGIEN _ADCCMPCON1_DCMPGIEN_MASK /* enable the interrupt when an event fires */
+
+#define AN_CMP_MAX   31u   /* ADCCMPENx is 32-bit: only AN0..31 are selectable */
+
+typedef struct {
+    volatile uint32_t* con;   /* ADCCMPCONx */
+    volatile uint32_t* en;    /* ADCCMPENx  */
+    volatile uint32_t* cmp;   /* ADCCMPx (DCMPHI:DCMPLO) */
+    uint8_t  ifsBit;          /* IFS1/IEC1 bit for ADCDCxIF/IE */
+} CmpRegs_t;
+
+/* Vector 46..51 -> IFS1/IEC1 bits 14..19 (verified device header). */
+static const CmpRegs_t gRegs[ADC_THRESHOLD_UNITS] = {
+    { &ADCCMPCON1, &ADCCMPEN1, &ADCCMP1, 14u },
+    { &ADCCMPCON2, &ADCCMPEN2, &ADCCMP2, 15u },
+    { &ADCCMPCON3, &ADCCMPEN3, &ADCCMP3, 16u },
+    { &ADCCMPCON4, &ADCCMPEN4, &ADCCMP4, 17u },
+    { &ADCCMPCON5, &ADCCMPEN5, &ADCCMP5, 18u },
+    { &ADCCMPCON6, &ADCCMPEN6, &ADCCMP6, 19u },
+};
+
+typedef struct {
+    bool     inUse;
+    uint8_t  chId;                 /* user channel id being watched */
+    uint8_t  an;                   /* AN input (< 32) */
+    bool     isT1;                 /* dedicated (continuous) vs T2 (scanned) */
+    AdcThresholdMode mode;
+    uint16_t lo, hi;
+    volatile uint32_t tripCount;   /* ISR-incremented (ISR is the sole writer) */
+    volatile bool     latched;     /* ISR-set; cleared by AdcThreshold_Clear */
+} ThreshUnit;
+
+static ThreshUnit gUnits[ADC_THRESHOLD_UNITS];
+
+static SemaphoreHandle_t gMutex;
+static StaticSemaphore_t gMutexBuf;
+
+static SemaphoreHandle_t thr_Mutex(void) {
+    if (gMutex == NULL) {
+        taskENTER_CRITICAL();
+        if (gMutex == NULL) { gMutex = xSemaphoreCreateMutexStatic(&gMutexBuf); }
+        taskEXIT_CRITICAL();
+    }
+    return gMutex;
+}
+
+/* ---- interrupt enable/flag/priority (kept in-module; plib_evic untouched) ---- */
+
+static void thr_IntSetPriority(uint8_t u) {
+    /* Priority 3 (<= configMAX_SYSCALL_INTERRUPT_PRIORITY = 4), matching EOS.
+     * DC1/2 in IPC11, DC3/4/5/6 in IPC12; sub-priority left 0. */
+    switch (u) {
+        case 0: IPC11bits.ADCDC1IP = 3; IPC11bits.ADCDC1IS = 0; break;
+        case 1: IPC11bits.ADCDC2IP = 3; IPC11bits.ADCDC2IS = 0; break;
+        case 2: IPC12bits.ADCDC3IP = 3; IPC12bits.ADCDC3IS = 0; break;
+        case 3: IPC12bits.ADCDC4IP = 3; IPC12bits.ADCDC4IS = 0; break;
+        case 4: IPC12bits.ADCDC5IP = 3; IPC12bits.ADCDC5IS = 0; break;
+        case 5: IPC12bits.ADCDC6IP = 3; IPC12bits.ADCDC6IS = 0; break;
+        default: break;
+    }
+}
+static inline void thr_IntEnable(uint8_t u)  { IEC1SET = (1u << gRegs[u].ifsBit); }
+static inline void thr_IntDisable(uint8_t u) { IEC1CLR = (1u << gRegs[u].ifsBit); }
+static inline void thr_IntClearFlag(uint8_t u){ IFS1CLR = (1u << gRegs[u].ifsBit); }
+
+/* ---- channel resolution + capability gate ---- */
+
+/* Resolve a user channel id to its board index + AN + type, enforcing the
+ * MC12b-only / public-only / AN<32 constraints. err set on any rejection. */
+static bool thr_Resolve(uint8_t chId, size_t* idx, uint8_t* an, bool* isT1,
+                        const char** err) {
+    const tBoardConfig* pCfg =
+            (const tBoardConfig*)BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    size_t i = ADC_FindChannelIndex(chId);
+    if (i >= pCfg->AInChannels.Size) {
+        if (err) { *err = "threshold: unknown ADC channel"; }
+        return false;
+    }
+    const AInChannel* ch = &pCfg->AInChannels.Data[i];
+    if (ch->Type != AIn_MC12bADC) {
+        if (err) { *err = "threshold: not supported on this board's ADC (MC12b only)"; }
+        return false;
+    }
+    if (ch->Config.MC12b.IsPublic != 1) {
+        if (err) { *err = "threshold: not a public user channel"; }
+        return false;
+    }
+    uint32_t anv = ch->Config.MC12b.ChannelId;
+    if (anv > AN_CMP_MAX) {
+        if (err) { *err = "threshold: channel's ADC input (AN>=32) is not comparator-reachable"; }
+        return false;
+    }
+    if (idx)  { *idx = i; }
+    if (an)   { *an = (uint8_t)anv; }
+    if (isT1) { *isT1 = (ch->Config.MC12b.ChannelType == 1); }
+    return true;
+}
+
+/* find the unit watching chId, or -1 */
+static int thr_UnitForCh(uint8_t chId) {
+    for (int u = 0; u < (int)ADC_THRESHOLD_UNITS; u++) {
+        if (gUnits[u].inUse && gUnits[u].chId == chId) { return u; }
+    }
+    return -1;
+}
+
+static uint32_t thr_ModeBits(AdcThresholdMode m) {
+    switch (m) {
+        case ADC_THRESH_BELOW:   return CMP_IELOLO;              /* DATA < lo */
+        case ADC_THRESH_ABOVE:   return CMP_IEHIHI;              /* DATA >= hi */
+        case ADC_THRESH_INSIDE:  return CMP_IEBTWN;              /* lo <= DATA < hi */
+        case ADC_THRESH_OUTSIDE: return CMP_IELOLO | CMP_IEHIHI; /* DATA < lo || DATA >= hi */
+        default:                 return 0u;
+    }
+}
+
+/* Program comparator unit u for (an, mode, lo, hi) and arm its interrupt. */
+static void thr_ApplyUnit(uint8_t u, uint8_t an, AdcThresholdMode mode,
+                          uint16_t lo, uint16_t hi) {
+    const CmpRegs_t* r = &gRegs[u];
+    *(r->con) = 0u;                 /* disable while reconfiguring */
+    thr_IntDisable(u);
+    thr_IntClearFlag(u);
+    /* Reset the ISR-shared counters HERE, with this unit's IRQ disabled, so a
+     * trip from a still-live old config (reconfigure-in-place) or a stray idle
+     * conversion can't leave a phantom count/latch on the freshly-armed config. */
+    gUnits[u].tripCount = 0u;
+    gUnits[u].latched   = false;
+    *(r->cmp) = ((uint32_t)hi << 16) | (uint32_t)lo;   /* DCMPHI:DCMPLO */
+    *(r->en)  = (1u << an);                              /* watch this AN input */
+    /* condition + comparator enable + interrupt-on-event enable (DCMPGIEN) */
+    *(r->con) = thr_ModeBits(mode) | CMP_ENDCMP | CMP_DCMPGIEN;
+    (void)*(r->con);                /* clear any immediate DCMPED before arming */
+    thr_IntClearFlag(u);
+    thr_IntEnable(u);
+}
+
+/* Fully release comparator unit u. */
+static void thr_ReleaseUnit(uint8_t u) {
+    thr_IntDisable(u);
+    *(gRegs[u].con) = 0u;
+    *(gRegs[u].en)  = 0u;
+    thr_IntClearFlag(u);
+    gUnits[u].inUse     = false;
+    gUnits[u].mode      = ADC_THRESH_OFF;
+    gUnits[u].tripCount = 0u;
+    gUnits[u].latched   = false;
+}
+
+/* ------------------------------------------------------------------ */
+/* Public API */
+
+void AdcThreshold_Initialize(void) {
+    for (uint8_t u = 0; u < ADC_THRESHOLD_UNITS; u++) {
+        thr_IntDisable(u);
+        thr_IntClearFlag(u);
+        thr_IntSetPriority(u);
+        *(gRegs[u].con) = 0u;
+        *(gRegs[u].en)  = 0u;
+        gUnits[u] = (ThreshUnit){0};
+    }
+}
+
+bool AdcThreshold_Configure(uint8_t chId, AdcThresholdMode mode,
+                            uint16_t lo, uint16_t hi, const char** err) {
+    if (mode > ADC_THRESH_OUTSIDE) {
+        if (err) { *err = "threshold: mode out of range (0..4)"; }
+        return false;
+    }
+    if (mode != ADC_THRESH_OFF) {
+        if (lo > ADC_THRESHOLD_MAX_CODE || hi > ADC_THRESHOLD_MAX_CODE) {
+            if (err) { *err = "threshold: raw codes must be 0..4095"; }
+            return false;
+        }
+        /* Only the window modes use both bounds (below uses lo, above uses hi),
+         * so lo<=hi is required only for inside/outside -- this catches an
+         * inverted window while letting below/above ignore the unused bound. */
+        if ((mode == ADC_THRESH_INSIDE || mode == ADC_THRESH_OUTSIDE) && lo > hi) {
+            if (err) { *err = "threshold: window modes need lo <= hi"; }
+            return false;
+        }
+    }
+    size_t idx = 0; uint8_t an = 0; bool isT1 = false;
+    if (mode != ADC_THRESH_OFF) {
+        if (!thr_Resolve(chId, &idx, &an, &isT1, err)) { return false; }
+    }
+    (void)idx;   /* resolved for validation; the unit is keyed by chId */
+
+    xSemaphoreTake(thr_Mutex(), portMAX_DELAY);
+    bool ok = true;
+    int existing = thr_UnitForCh(chId);
+
+    if (mode == ADC_THRESH_OFF) {
+        if (existing >= 0) { thr_ReleaseUnit((uint8_t)existing); }
+        /* OFF on a channel with no threshold is a no-op success. */
+    } else if (existing >= 0) {
+        /* reconfigure in place. Only metadata is written here (the ISR does not
+         * read these fields); the ISR-shared tripCount/latched are reset inside
+         * thr_ApplyUnit with the IRQ disabled, so no phantom trip can survive. */
+        gUnits[existing].mode = mode;
+        gUnits[existing].an   = an;
+        gUnits[existing].isT1 = isT1;
+        gUnits[existing].lo   = lo;
+        gUnits[existing].hi   = hi;
+        thr_ApplyUnit((uint8_t)existing, an, mode, lo, hi);
+    } else {
+        int u = -1;
+        for (int k = 0; k < (int)ADC_THRESHOLD_UNITS; k++) {
+            if (!gUnits[k].inUse) { u = k; break; }
+        }
+        if (u < 0) {
+            if (err) { *err = "threshold: all 6 comparator units in use"; }
+            ok = false;
+        } else {
+            gUnits[u] = (ThreshUnit){ .inUse = true, .chId = chId, .an = an,
+                                      .isT1 = isT1, .mode = mode, .lo = lo, .hi = hi };
+            thr_ApplyUnit((uint8_t)u, an, mode, lo, hi);
+        }
+    }
+    xSemaphoreGive(thr_Mutex());
+    return ok;
+}
+
+bool AdcThreshold_Query(uint8_t chId, AdcThresholdMode* mode,
+                        uint16_t* lo, uint16_t* hi,
+                        uint32_t* tripCount, bool* latched) {
+    xSemaphoreTake(thr_Mutex(), portMAX_DELAY);
+    int u = thr_UnitForCh(chId);
+    bool found = (u >= 0);
+    if (mode)      { *mode      = found ? gUnits[u].mode : ADC_THRESH_OFF; }
+    if (lo)        { *lo        = found ? gUnits[u].lo : 0u; }
+    if (hi)        { *hi        = found ? gUnits[u].hi : 0u; }
+    if (tripCount) { *tripCount = found ? gUnits[u].tripCount : 0u; }
+    if (latched)   { *latched   = found ? gUnits[u].latched : false; }
+    xSemaphoreGive(thr_Mutex());
+    return found;
+}
+
+void AdcThreshold_Clear(uint8_t chId) {
+    xSemaphoreTake(thr_Mutex(), portMAX_DELAY);
+    for (uint8_t u = 0; u < ADC_THRESHOLD_UNITS; u++) {
+        if (!gUnits[u].inUse) { continue; }
+        if (chId != ADC_THRESHOLD_ALL_CH && gUnits[u].chId != chId) { continue; }
+        /* Disable the interrupt across the clear so a concurrent trip can't
+         * immediately re-latch/re-count what we just zeroed. */
+        thr_IntDisable(u);
+        gUnits[u].tripCount = 0u;
+        gUnits[u].latched   = false;
+        (void)*(gRegs[u].con);  /* clear a pending DCMPED (source) before the flag,
+                                 * else a stale event re-latches on re-enable */
+        thr_IntClearFlag(u);
+        thr_IntEnable(u);       /* re-arm — IsrTrip masks itself, Clear un-masks */
+    }
+    xSemaphoreGive(thr_Mutex());
+}
+
+bool AdcThreshold_AnyLatched(void) {
+    /* Lock-free read: each latched flag is a bool written only by its ISR; a
+     * stale miss is corrected on the next SyncQuesBits. */
+    for (uint8_t u = 0; u < ADC_THRESHOLD_UNITS; u++) {
+        if (gUnits[u].inUse && gUnits[u].latched) { return true; }
+    }
+    return false;
+}
+
+void AdcThreshold_RevalidateForStream(void) {
+    /* A Type 2 threshold whose channel is not in this session's scan (ADCCSS)
+     * won't see stream-sample conversions, so it can't monitor stream data this
+     * session. It is deliberately NOT released or disabled: the unit stays armed
+     * so it still fires on idle / MEAS conversions of that AN, and its config +
+     * latch survive the session (the persistence contract — a latched alarm must
+     * outlive an unrelated stream, cleared only by CONF:ADC:THREshold:CLEar).
+     * Just inform. Reads the applied ADCCSS1 live (AN < 32 by construction). */
+    xSemaphoreTake(thr_Mutex(), portMAX_DELAY);
+    for (uint8_t u = 0; u < ADC_THRESHOLD_UNITS; u++) {
+        if (!gUnits[u].inUse || gUnits[u].isT1) { continue; }
+        uint8_t an = gUnits[u].an;   /* < 32 by construction */
+        bool scanned = ((ADCCSS1 >> an) & 1u) != 0u;
+        if (!scanned) {
+            LOG_E("ADC threshold ch %u inactive this stream: channel not in the "
+                  "session scan (still monitors at idle; config/latch preserved)",
+                  (unsigned)gUnits[u].chId);
+        }
+    }
+    xSemaphoreGive(thr_Mutex());
+}
+
+void AdcThreshold_IsrTrip(uint8_t unit) {
+    if (unit >= ADC_THRESHOLD_UNITS) { return; }
+    /* Clear the peripheral event (read AINID via the CON register) BEFORE the
+     * EVIC flag — the PIC32 clear-source-then-flag rule. Clearing IFS while
+     * DCMPED is still asserted can immediately re-latch a spurious interrupt. */
+    (void)*(gRegs[unit].con);          /* read clears the DCMPED event */
+    thr_IntClearFlag(unit);
+    gUnits[unit].tripCount++;          /* ISR is the sole writer of this field */
+    gUnits[unit].latched = true;
+    /* Latch-and-mask. The comparator is LEVEL-evaluated: a signal parked past the
+     * limit (exactly the alarm condition) re-asserts DCMPED on every conversion,
+     * so leaving the IRQ enabled is an IPL3 ISR storm (up to the streaming rate)
+     * that preempts the pri-6 encoder and can force sample drops. A latched alarm
+     * only needs to fire ONCE — mask this unit's IRQ here; AdcThreshold_Clear (or
+     * a reconfigure) re-arms it. The comparator stays enabled, so DCMPED keeps
+     * tracking live state; only the interrupt is gated. IEC1CLR is an atomic
+     * SET/CLR write, safe from ISR context. */
+    thr_IntDisable(unit);
+    LOG_E_ONCE(LOG_ONCE_ADC_THRESHOLD_TRIP, "ADC analog threshold tripped");
+}

@@ -313,6 +313,7 @@
         <logicalFolder name="ADC" displayName="ADC" projectFiles="true">
           <itemPath>../src/HAL/ADC/AD7173.h</itemPath>
           <itemPath>../src/HAL/ADC/AD7609.h</itemPath>
+          <itemPath>../src/HAL/ADC/AdcThreshold.h</itemPath>
           <itemPath>../src/HAL/ADC/MC12bADC.h</itemPath>
         </logicalFolder>
         <logicalFolder name="BQ24297" displayName="BQ24297" projectFiles="true">
@@ -913,6 +914,7 @@
         <logicalFolder name="ADC" displayName="ADC" projectFiles="true">
           <itemPath>../src/HAL/ADC/AD7173.c</itemPath>
           <itemPath>../src/HAL/ADC/AD7609.c</itemPath>
+          <itemPath>../src/HAL/ADC/AdcThreshold.c</itemPath>
           <itemPath>../src/HAL/ADC/MC12bADC.c</itemPath>
         </logicalFolder>
         <logicalFolder name="BQ24297" displayName="BQ24297" projectFiles="true">
