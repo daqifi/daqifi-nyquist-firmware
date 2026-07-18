@@ -764,6 +764,9 @@ scpi_result_t SCPI_DioMeasFrequency(scpi_t * context) {
         return SCPI_RES_ERR;
     }
     (void)SCPI_ParamInt32(context, &gate, FALSE);   /* optional gate window (ms) */
+    if (SCPI_ParamErrorOccurred(context)) {         /* present-but-malformed gate */
+        return SCPI_RES_ERR;
+    }
     if (dio < 0 || dio > 15) {
         SCPI_ExecutionError(context, "DIO:MEAS: channel out of range (0..15)");
         return SCPI_RES_ERR;
@@ -807,6 +810,9 @@ scpi_result_t SCPI_DioMeasPulseWidth(scpi_t * context) {
         return SCPI_RES_ERR;
     }
     (void)SCPI_ParamInt32(context, &pol, FALSE);    /* optional polarity */
+    if (SCPI_ParamErrorOccurred(context)) {         /* present-but-malformed pol */
+        return SCPI_RES_ERR;
+    }
     if (dio < 0 || dio > 15) {
         SCPI_ExecutionError(context, "DIO:MEAS: channel out of range (0..15)");
         return SCPI_RES_ERR;

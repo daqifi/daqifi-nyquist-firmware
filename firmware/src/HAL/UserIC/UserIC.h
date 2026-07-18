@@ -7,7 +7,9 @@
  * PPS-selected RPn pin into a 4-deep hardware FIFO, clocked by Timer2 (the IC
  * timebase; Timer3 is owned by DIO PWM, so IC rides TMR2 — a single 16-bit
  * counter extended to 48 bits by a software epoch bumped in the TMR2 rollover
- * ISR). This gives ~11.9 ns resolution and a 0.1 Hz - ~100 kHz usable range.
+ * ISR). This gives ~11.9 ns resolution. Usable range ~0.4 Hz to ~100 kHz with
+ * the default timeouts; FREQuency reaches lower with a larger gate_ms (up to a
+ * 60 s clamp). The upper end is bounded by FIFO overflow (rejected, not faked).
  *
  * Measurements are ONE-SHOT and serialized (one active unit at a time under a
  * mutex): claim the pin + a reachable free IC unit, route PPS, capture over a
@@ -42,8 +44,9 @@ void UserIC_Initialize(void);
 
 /**
  * Measure signal frequency (Hz) on @p dio by averaging rising-edge periods over
- * a bounded window. @p gate_ms bounds the averaging window (0 = default 100 ms);
- * the no-signal timeout scales up for slow signals so ~0.1 Hz is still caught.
+ * a bounded window. @p gate_ms bounds the averaging window (0 = default 100 ms,
+ * clamped to 60 s); the no-signal timeout scales with the gate, so slow signals
+ * need a larger gate_ms (e.g. ~7000 ms reaches ~0.3 Hz).
  * @return false (reason in @p err) if @p dio is not IC-reachable, no IC unit is
  *   free, the pin can't be claimed, or no/too-slow signal within the timeout.
  */

@@ -16,8 +16,10 @@
  * on the FEDGE first-edge guarantee, which is bench-unverified).
  *
  * BENCH-VALIDATION PENDING (#666): needs a DIO0(PWM)->DIO5(IC) jumper self-test.
- * Two spec corners are UNVERIFIED until then: (a) the 16-bit epoch near-wrap
- * reconciliation, (b) FEDGE behavior (mitigated by the per-edge level anchor).
+ * The two formerly-unverified corners now FAIL SAFE rather than misreport:
+ * parity no longer depends on FEDGE (derived from a reliable per-edge level +
+ * strict alternation; coalesced captures error out), and an epoch near-wrap glitch
+ * is caught by a monotonic-timestamp check (error, never a fake value).
  */
 #define LOG_LVL    LOG_LEVEL_GENERAL
 #define LOG_MODULE LOG_MODULE_GENERAL
@@ -150,6 +152,21 @@ static void ic_SetPps(uint8_t u, uint8_t code) {
     __builtin_mtc0(12, 0, st);
 }
 
+/* Ungate (enable=true) / re-gate the IC module's clock via PMD3<unit> in a
+ * PMDLOCK window (mirror of uart_SetPmd). CLK_Initialize leaves all 9 IC modules
+ * PMD-disabled at boot; a PMD-disabled peripheral IGNORES SFR writes and reads 0,
+ * so this MUST run before the unit is armed (else every measurement reads no
+ * edges and times out — #666 audit finding). */
+static void ic_SetPmd(uint8_t u, bool enable) {
+    uint32_t st = __builtin_disable_interrupts();
+    ic_CfgconUnlockedWrite(CFGCON & ~(uint32_t)_CFGCON_PMDLOCK_MASK);
+    if (enable) { PMD3CLR = (1u << u); } else { PMD3SET = (1u << u); }
+    ic_CfgconUnlockedWrite(CFGCON | (uint32_t)_CFGCON_PMDLOCK_MASK);
+    __builtin_mtc0(12, 0, st);
+    /* PMD ungate needs a few clocks to settle before the module SFRs are live. */
+    for (volatile int d = 0; enable && d < 8; d++) { /* brief settle */ }
+}
+
 /* TMR2 rollover callback (plib TIMER_2_InterruptHandler dispatches this). */
 static void ic_RolloverCb(uint32_t status, uintptr_t ctx) {
     (void)status; (void)ctx;
@@ -179,6 +196,10 @@ void UserIC_Initialize(void) {
     IPC9bits.IC8IP  = 3; IPC9bits.IC8IS  = 0;
     IPC10bits.IC9IP = 3; IPC10bits.IC9IS = 0;
     gM.active = false;
+    /* Create the mutex unconditionally (not lazily): a non-zeroed-BSS reset (#409)
+     * after an MCLR mid-measurement could otherwise leave gMutex pointing at a
+     * stale, taken semaphore. Static create is pre-scheduler safe. */
+    gMutex = xSemaphoreCreateMutexStatic(&gMutexBuf);
 }
 
 void UserIC_IsrRollover(void) {
@@ -197,12 +218,17 @@ void UserIC_IsrCapture(uint8_t unit) {
     while ((*r->con) & IC_CON_ICBNE) {
         uint32_t cap   = *(r->buf) & 0xFFFFu;   /* pops one FIFO entry */
         uint32_t epoch = gM.epoch;
-        /* Near-wrap reconciliation (UNVERIFIED — bench-confirm): if a TMR2
-         * rollover is pending (T2IF) and this capture is in the low half, the
-         * wrap happened before we serviced it -> use epoch+1. */
+        /* Near-wrap reconciliation (best-effort; compute rejects non-monotonic
+         * timestamps as the backstop): a low-half capture with a pending TMR2
+         * rollover belongs to the next epoch. */
         if ((IFS0 & _IFS0_T2IF_MASK) != 0u && cap < 0x8000u) { epoch++; }
         uint64_t ts = ((uint64_t)epoch << 16) | cap;
-        uint8_t level = (uint8_t)((*gM.portReg >> gM.portBit) & 1u);
+        /* Level for pulse/duty parity — trust it ONLY when this pop emptied the
+         * FIFO (no coalescing); a multi-entry drain would stamp them all with the
+         * same late level. Unknown = 0xFF; compute anchors parity from a reliable
+         * entry + strict alternation (robust, FEDGE-independent). */
+        uint8_t level = ((*r->con) & IC_CON_ICBNE) ? 0xFFu
+                        : (uint8_t)((*gM.portReg >> gM.portBit) & 1u);
         uint16_t i = gM.count;
         if (i < IC_CAP_MAX) {
             gM.ts[i]  = ts;
@@ -211,6 +237,13 @@ void UserIC_IsrCapture(uint8_t unit) {
         }
     }
     if ((*r->con) & IC_CON_ICOV) { gM.overflow = true; }
+    /* Storm-shed: once the buffer is full or the FIFO overflowed, disarm the unit
+     * IN the ISR so a fast signal can't re-pend us at the edge rate and starve
+     * the task that runs teardown. The task's poll loop exits on count>=MAX. */
+    if (gM.count >= IC_CAP_MAX || gM.overflow) {
+        *(r->con)    = 0u;
+        *(r->iecClr) = r->flagMask;
+    }
     *(r->ifsClr) = r->flagMask;
 }
 
@@ -263,6 +296,10 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
     TimerApi_InterruptEnable(2);
     TimerApi_Start(2);
 
+    /* Ungate the IC module clock (PMD) before any IC SFR write — else the writes
+     * are silently ignored and no edge is ever captured. */
+    ic_SetPmd((uint8_t)unit, true);
+
     /* Arm the IC unit: reset (ON=0), drain stale FIFO, set mode, enable IRQ, ON. */
     const IcRegs_t* r = &gIc[unit];
     *(r->con) = 0u;
@@ -284,10 +321,12 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
         vTaskDelay(pdMS_TO_TICKS(2));
     }
 
-    /* Teardown + snapshot under lock. */
+    /* Teardown + snapshot under lock. Disable the IC unit, re-gate its PMD, stop
+     * TMR2, unroute PPS, then release AND restore the pin (siblings do both). */
     *(r->con) = 0u;
     *(r->iecClr) = r->flagMask;
     *(r->ifsClr) = r->flagMask;
+    ic_SetPmd((uint8_t)unit, false);
     TimerApi_Stop(2);
     TimerApi_InterruptDisable(2);
     ic_SetPps((uint8_t)unit, 0u);
@@ -299,17 +338,45 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
     bool ov = gM.overflow;
 
     DIO_ReleaseChannel(dio, DIO_OWNER_IC);
+    DIO_RestoreChannel(dio);   /* restore the pin's pre-measurement DIO state */
     xSemaphoreGive(gMutex);
 
     *outN = n;
+    /* Overflow means edges were dropped -> the "consecutive edges" premise of
+     * every measurement is broken. Fail regardless of how many were stored,
+     * rather than return a plausible-but-wrong value (#666 audit). */
+    if (ov) {
+        if (err) { *err = "IC: FIFO overflow — signal too fast for this range"; }
+        return false;
+    }
     if (n < minEdges) {
-        if (err) {
-            *err = ov ? "IC: FIFO overflow — signal too fast for this range"
-                      : "IC: no (or too-slow) signal within the measurement timeout";
-        }
+        if (err) { *err = "IC: no (or too-slow) signal within the measurement timeout"; }
         return false;
     }
     return true;
+}
+
+#define IC_GATE_MS_MAX 60000u   /* clamp — a huge gate would hold gMutex for ages */
+
+/* Reject non-monotonic timestamps (an epoch-reconciliation glitch) so a wrapped
+ * interval can never surface as a fake value. */
+static bool ic_Monotonic(const uint64_t* ts, uint16_t n) {
+    for (uint16_t k = 1; k < n; k++) { if (ts[k] <= ts[k - 1]) { return false; } }
+    return true;
+}
+
+/* Parity anchor: index of the first reliable level (lv != 0xFF) and its level;
+ * returns false if the whole capture coalesced (no reliable level). */
+static bool ic_ParityAnchor(const uint8_t* lv, uint16_t n, int* anchor, uint8_t* aLvl) {
+    for (uint16_t k = 0; k < n; k++) {
+        if (lv[k] != 0xFFu) { *anchor = (int)k; *aLvl = lv[k]; return true; }
+    }
+    return false;
+}
+
+/* Level of interval [k,k+1] by strict alternation from a reliable anchor. */
+static uint8_t ic_IntervalLevel(int k, int anchor, uint8_t aLvl) {
+    return (((k - anchor) & 1) == 0) ? aLvl : (uint8_t)(aLvl ^ 1u);
 }
 
 /* Averaged rising-edge span in timer counts (ts[n-1]-ts[0]) and edge count. */
@@ -317,8 +384,13 @@ bool UserIC_MeasureFrequency(uint8_t dio, uint32_t gate_ms, double* hz,
                              const char** err) {
     uint64_t ts[IC_CAP_MAX]; uint8_t lv[IC_CAP_MAX]; uint16_t n = 0;
     uint32_t gate = (gate_ms == 0u) ? 100u : gate_ms;
+    if (gate > IC_GATE_MS_MAX) { gate = IC_GATE_MS_MAX; }
     uint32_t hard = (3u * gate > 5000u) ? (3u * gate) : 5000u;
     if (!ic_Run(dio, IC_ICM_RISING, false, 2u, gate, hard, ts, lv, &n, err)) {
+        return false;
+    }
+    if (!ic_Monotonic(ts, n)) {
+        if (err) { *err = "IC: non-monotonic capture (timing glitch) — retry"; }
         return false;
     }
     double span = (double)(ts[n - 1] - ts[0]);          /* timer counts */
@@ -332,6 +404,10 @@ bool UserIC_MeasurePeriod(uint8_t dio, double* us, const char** err) {
     if (!ic_Run(dio, IC_ICM_RISING, false, 2u, 100u, 5000u, ts, lv, &n, err)) {
         return false;
     }
+    if (!ic_Monotonic(ts, n)) {
+        if (err) { *err = "IC: non-monotonic capture (timing glitch) — retry"; }
+        return false;
+    }
     double span = (double)(ts[n - 1] - ts[0]);
     if (span <= 0.0) { if (err) { *err = "IC: degenerate capture span"; } return false; }
     double periodCounts = span / (double)(n - 1);
@@ -339,18 +415,30 @@ bool UserIC_MeasurePeriod(uint8_t dio, double* us, const char** err) {
     return true;
 }
 
-/* Both-edge capture; interval [k,k+1] carries level lvl[k] (post-edge-k level).
- * A high interval follows a rising edge (lvl==1). */
+/* Both-edge capture; interval [k,k+1]'s level is derived by strict alternation
+ * from a reliable per-edge level anchor (NOT a late live read — see ISR). A high
+ * interval (level==1) follows a rising edge. */
 bool UserIC_MeasurePulseWidth(uint8_t dio, uint8_t polarity, double* us,
                               const char** err) {
     uint64_t ts[IC_CAP_MAX]; uint8_t lv[IC_CAP_MAX]; uint16_t n = 0;
     if (!ic_Run(dio, IC_ICM_BOTH, true, 3u, 100u, 5000u, ts, lv, &n, err)) {
         return false;
     }
+    if (!ic_Monotonic(ts, n)) {
+        if (err) { *err = "IC: non-monotonic capture (timing glitch) — retry"; }
+        return false;
+    }
+    int anchor = -1; uint8_t aLvl = 0;
+    if (!ic_ParityAnchor(lv, n, &anchor, &aLvl)) {
+        if (err) { *err = "IC: could not determine edge polarity (coalesced)"; }
+        return false;
+    }
     uint8_t want = (polarity != 0u) ? 1u : 0u;
     double sum = 0.0; uint32_t cnt = 0u;
     for (uint16_t k = 0; k + 1u < n; k++) {
-        if (lv[k] == want) { sum += (double)(ts[k + 1] - ts[k]); cnt++; }
+        if (ic_IntervalLevel((int)k, anchor, aLvl) == want) {
+            sum += (double)(ts[k + 1] - ts[k]); cnt++;
+        }
     }
     if (cnt == 0u) {
         if (err) { *err = "IC: no matching-polarity pulse captured"; }
@@ -365,11 +453,20 @@ bool UserIC_MeasureDuty(uint8_t dio, double* percent, const char** err) {
     if (!ic_Run(dio, IC_ICM_BOTH, true, 3u, 100u, 5000u, ts, lv, &n, err)) {
         return false;
     }
+    if (!ic_Monotonic(ts, n)) {
+        if (err) { *err = "IC: non-monotonic capture (timing glitch) — retry"; }
+        return false;
+    }
+    int anchor = -1; uint8_t aLvl = 0;
+    if (!ic_ParityAnchor(lv, n, &anchor, &aLvl)) {
+        if (err) { *err = "IC: could not determine edge polarity (coalesced)"; }
+        return false;
+    }
     double high = 0.0, total = 0.0;
     for (uint16_t k = 0; k + 1u < n; k++) {
         double interval = (double)(ts[k + 1] - ts[k]);
         total += interval;
-        if (lv[k] == 1u) { high += interval; }
+        if (ic_IntervalLevel((int)k, anchor, aLvl) == 1u) { high += interval; }
     }
     if (total <= 0.0) { if (err) { *err = "IC: degenerate capture span"; } return false; }
     *percent = 100.0 * high / total;
