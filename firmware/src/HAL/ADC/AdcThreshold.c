@@ -157,10 +157,16 @@ static void thr_ApplyUnit(uint8_t u, uint8_t an, AdcThresholdMode mode,
     *(r->con) = 0u;                 /* disable while reconfiguring */
     thr_IntDisable(u);
     thr_IntClearFlag(u);
+    /* Reset the ISR-shared counters HERE, with this unit's IRQ disabled, so a
+     * trip from a still-live old config (reconfigure-in-place) or a stray idle
+     * conversion can't leave a phantom count/latch on the freshly-armed config. */
+    gUnits[u].tripCount = 0u;
+    gUnits[u].latched   = false;
     *(r->cmp) = ((uint32_t)hi << 16) | (uint32_t)lo;   /* DCMPHI:DCMPLO */
     *(r->en)  = (1u << an);                              /* watch this AN input */
     /* condition + comparator enable + interrupt-on-event enable (DCMPGIEN) */
     *(r->con) = thr_ModeBits(mode) | CMP_ENDCMP | CMP_DCMPGIEN;
+    (void)*(r->con);                /* clear any immediate DCMPED before arming */
     thr_IntClearFlag(u);
     thr_IntEnable(u);
 }
@@ -224,14 +230,14 @@ bool AdcThreshold_Configure(uint8_t chId, AdcThresholdMode mode,
         if (existing >= 0) { thr_ReleaseUnit((uint8_t)existing); }
         /* OFF on a channel with no threshold is a no-op success. */
     } else if (existing >= 0) {
-        /* reconfigure in place (keep the unit, reset counters via ApplyUnit) */
+        /* reconfigure in place. Only metadata is written here (the ISR does not
+         * read these fields); the ISR-shared tripCount/latched are reset inside
+         * thr_ApplyUnit with the IRQ disabled, so no phantom trip can survive. */
         gUnits[existing].mode = mode;
         gUnits[existing].an   = an;
         gUnits[existing].isT1 = isT1;
         gUnits[existing].lo   = lo;
         gUnits[existing].hi   = hi;
-        gUnits[existing].tripCount = 0u;
-        gUnits[existing].latched   = false;
         thr_ApplyUnit((uint8_t)existing, an, mode, lo, hi);
     } else {
         int u = -1;
@@ -276,8 +282,10 @@ void AdcThreshold_Clear(uint8_t chId) {
         thr_IntDisable(u);
         gUnits[u].tripCount = 0u;
         gUnits[u].latched   = false;
+        (void)*(gRegs[u].con);  /* clear a pending DCMPED (source) before the flag,
+                                 * else a stale event re-latches on re-enable */
         thr_IntClearFlag(u);
-        thr_IntEnable(u);
+        thr_IntEnable(u);       /* re-arm — IsrTrip masks itself, Clear un-masks */
     }
     xSemaphoreGive(thr_Mutex());
 }
@@ -292,17 +300,22 @@ bool AdcThreshold_AnyLatched(void) {
 }
 
 void AdcThreshold_RevalidateForStream(void) {
-    /* A Type 2 threshold whose channel is not in the session scan (ADCCSS) can
-     * never fire. Disable it and inform. Reads the applied ADCCSS1/2 live. */
+    /* A Type 2 threshold whose channel is not in this session's scan (ADCCSS)
+     * won't see stream-sample conversions, so it can't monitor stream data this
+     * session. It is deliberately NOT released or disabled: the unit stays armed
+     * so it still fires on idle / MEAS conversions of that AN, and its config +
+     * latch survive the session (the persistence contract — a latched alarm must
+     * outlive an unrelated stream, cleared only by CONF:ADC:THREshold:CLEar).
+     * Just inform. Reads the applied ADCCSS1 live (AN < 32 by construction). */
     xSemaphoreTake(thr_Mutex(), portMAX_DELAY);
     for (uint8_t u = 0; u < ADC_THRESHOLD_UNITS; u++) {
         if (!gUnits[u].inUse || gUnits[u].isT1) { continue; }
         uint8_t an = gUnits[u].an;   /* < 32 by construction */
         bool scanned = ((ADCCSS1 >> an) & 1u) != 0u;
         if (!scanned) {
-            LOG_E("ADC threshold on ch %u disabled: channel not in the streaming scan",
+            LOG_E("ADC threshold ch %u inactive this stream: channel not in the "
+                  "session scan (still monitors at idle; config/latch preserved)",
                   (unsigned)gUnits[u].chId);
-            thr_ReleaseUnit(u);
         }
     }
     xSemaphoreGive(thr_Mutex());
@@ -310,9 +323,21 @@ void AdcThreshold_RevalidateForStream(void) {
 
 void AdcThreshold_IsrTrip(uint8_t unit) {
     if (unit >= ADC_THRESHOLD_UNITS) { return; }
-    thr_IntClearFlag(unit);
+    /* Clear the peripheral event (read AINID via the CON register) BEFORE the
+     * EVIC flag — the PIC32 clear-source-then-flag rule. Clearing IFS while
+     * DCMPED is still asserted can immediately re-latch a spurious interrupt. */
     (void)*(gRegs[unit].con);          /* read clears the DCMPED event */
+    thr_IntClearFlag(unit);
     gUnits[unit].tripCount++;          /* ISR is the sole writer of this field */
     gUnits[unit].latched = true;
+    /* Latch-and-mask. The comparator is LEVEL-evaluated: a signal parked past the
+     * limit (exactly the alarm condition) re-asserts DCMPED on every conversion,
+     * so leaving the IRQ enabled is an IPL3 ISR storm (up to the streaming rate)
+     * that preempts the pri-6 encoder and can force sample drops. A latched alarm
+     * only needs to fire ONCE — mask this unit's IRQ here; AdcThreshold_Clear (or
+     * a reconfigure) re-arms it. The comparator stays enabled, so DCMPED keeps
+     * tracking live state; only the interrupt is gated. IEC1CLR is an atomic
+     * SET/CLR write, safe from ISR context. */
+    thr_IntDisable(unit);
     LOG_E_ONCE(LOG_ONCE_ADC_THRESHOLD_TRIP, "ADC analog threshold tripped");
 }

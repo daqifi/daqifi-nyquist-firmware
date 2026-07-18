@@ -890,6 +890,13 @@ scpi_result_t SCPI_ADCThresholdGet(scpi_t * context) {
 scpi_result_t SCPI_ADCThresholdClear(scpi_t * context) {
     int32_t ch;
     if (!SCPI_ParamInt32(context, &ch, FALSE)) {
+        /* FALSE means EITHER "no argument" (clear all) OR "argument present but
+         * malformed" (e.g. `CLE ch5`, which pushes a data-type error). Only the
+         * absent case should clear all — a malformed token must not trigger a
+         * destructive clear-all of every unit (incl. an alarm on another ch). */
+        if (SCPI_ParamErrorOccurred(context)) {
+            return SCPI_RES_ERR;
+        }
         AdcThreshold_Clear(ADC_THRESHOLD_ALL_CH);
         return SCPI_RES_OK;
     }

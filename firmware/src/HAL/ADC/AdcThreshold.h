@@ -5,22 +5,28 @@
  *
  * The PIC32MZ ADCHS block has 6 digital comparators (ADCCMPCON1-6). Each watches
  * the 12-bit conversion RESULT of one selected AN input in hardware and raises an
- * interrupt the moment a result crosses a programmed limit -- zero per-sample CPU,
- * works during streaming scans (Type 1 dedicated and Type 2 MODULE7-scanned
- * channels), and fires on the very conversion that trips. A trip latches a
- * per-channel flag + counter, sets the QUES "analog limit" status bit, and emits a
- * one-shot log; the client reads it back with CONF:ADC:THREshold?.
+ * interrupt the moment a result crosses a programmed limit, on both Type 1
+ * (dedicated) and Type 2 (MODULE7-scanned) channels. A trip latches a per-channel
+ * flag + counter, sets the QUES "analog limit" status bit, and emits a one-shot
+ * log; the client reads it back with CONF:ADC:THREshold?.
+ *
+ * The comparator is LEVEL-evaluated, so a signal parked past the limit would set
+ * the event on every conversion. The trip ISR therefore latch-and-masks: it fires
+ * ONCE, disables its own interrupt, and is re-armed by AdcThreshold_Clear (or a
+ * reconfigure). Cost is one ISR per Clear-cycle, not per conversion -- so it adds
+ * no per-sample CPU in steady state even while streaming.
  *
  * Limits are RAW ADC codes (0..4095): the ISR path stays float-free; volts->codes
  * is the client's job (firmware = mechanism). NQ1/NQ2 (internal MC12bADC) only --
  * NQ3's external AD7609 has no such block, so the command is capability-gated off.
  *
  * Mode -> comparator condition (all set DCMPLO=lo, DCMPHI=hi; only the enabled
- * quadrant bits differ):
- *   BELOW   result <  lo              (IELOLO)
- *   ABOVE   result >= hi              (IEHIHI)
- *   INSIDE  lo <= result <  hi        (IEHILO)
- *   OUTSIDE result <  lo || result >= hi   (IELOLO | IEHIHI)
+ * event bits differ). NOTE: the in-window bit is IEBTWN, NOT IEHILO (which is only
+ * "result < DCMPHI") -- see the FRM note in AdcThreshold.c:
+ *   BELOW   result <  lo                    (IELOLO)
+ *   ABOVE   result >= hi                    (IEHIHI)
+ *   INSIDE  lo <= result <  hi              (IEBTWN)
+ *   OUTSIDE result <  lo || result >= hi    (IELOLO | IEHIHI)
  */
 #ifndef ADC_THRESHOLD_H
 #define ADC_THRESHOLD_H
@@ -53,9 +59,11 @@ void AdcThreshold_Initialize(void);
  * @p chId, in raw 12-bit codes. Allocates one of the 6 comparator units to the
  * channel; a second Configure on the same channel updates it in place.
  * @return false (reason in @p err if non-NULL) if the board variant has no MC12b
- *   ADC, @p chId is not a valid public channel, @p mode/@p lo/@p hi are out of
- *   range (need lo<=hi<=4095), no comparator unit is free (names the holders), or
- *   -- while streaming -- @p chId is a Type 2 channel not in the active scan.
+ *   ADC, @p chId is not a valid public channel, @p chId's AN input is >= 32
+ *   (comparators reach AN0..31 only), @p mode is out of range, @p lo/@p hi exceed
+ *   4095 (or lo>hi for the window modes), or no comparator unit is free (names the
+ *   holders). The while-streaming rejection is enforced by the SCPI layer, not
+ *   here. below uses only lo; above only hi; only the window modes need lo<=hi.
  */
 bool AdcThreshold_Configure(uint8_t chId, AdcThresholdMode mode,
                             uint16_t lo, uint16_t hi, const char** err);
@@ -78,11 +86,12 @@ void AdcThreshold_Clear(uint8_t chId);
 bool AdcThreshold_AnyLatched(void);
 
 /**
- * Re-validate active thresholds against the scan list applied at stream start:
- * a Type 2 threshold whose channel is not in the session scan can never fire, so
- * disable its comparator and emit a one-shot log (inform on stale data). Called
- * from the streaming-start path after the session CSS is computed. Type 1
- * (dedicated, continuously converting) thresholds are unaffected.
+ * Inform (do NOT disable) about active thresholds vs the scan list applied at
+ * stream start: a Type 2 threshold whose channel is not in the session scan won't
+ * see stream-sample conversions this session, so it emits a one-shot log. The unit
+ * is left fully armed so it still fires on idle/MEAS conversions and its config +
+ * latch survive the session (persistence contract). Called from the streaming-start
+ * path after the session CSS is computed. Type 1 thresholds are unaffected.
  */
 void AdcThreshold_RevalidateForStream(void);
 
