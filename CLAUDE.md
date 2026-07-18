@@ -1023,7 +1023,38 @@ The `StreamingInterface` enum exposes four combinations: `USB`, `WiFi`, `SD`, an
 ### Development Considerations
 
 - All hardware access must go through HAL layer
-- **Prefer Harmony PLIB / driver APIs over direct SFR writes** for hardware abstractability. Order of preference: (1) PLIB function (`EVIC_SourceEnable`, `ADCHS_*`, `GPIO_*`), (2) SFR bitfield accessors (`ADCCON2bits.SAMC = val`), (3) raw register writes only when no PLIB/bitfield path exists AND performance demands it OR SET/CLR atomic forms are needed — always comment *why*
+- **Read the PIC32 Family Reference Manual (FRM) BEFORE writing any peripheral
+  register code — this MCU is complicated and the DFP header alone is not
+  enough.** The device pack header gives you bit *names and positions* but NOT
+  the *semantics*, enable-ordering, routing requirements, or the gotcha `Note:`
+  callouts — and those are exactly where bring-up dies. The FRM section for each
+  peripheral is authoritative; grep its actual text, don't infer from register
+  width. Fetch the relevant section PDF from
+  `ww1.microchip.com/downloads/.../ReferenceManuals/` (e.g. the 12-bit HS SAR
+  ADC is **DS60001344E**), `pdftotext` it, and read the operation + register
+  descriptions in full. Cite FRM `DS#`/register/bit for load-bearing claims
+  (per the Debugging-discipline V-tag rule). Concrete #670 lessons the header
+  hid and only the FRM revealed: the digital comparator needs **`DCMPGIEN`**
+  (interrupt-enable, bit 6) set separately from `ENDCMP` — without it the event
+  fires but no interrupt; the in-window condition is **`IEBTWN`**, not `IEHILO`
+  (which is only "DATA < DCMPHI"); comparator/filter inputs are **limited to
+  AN0–31** (`ADCCMPENx` is 32-bit by spec, not just by register width); and a
+  result only reaches the comparator "if configured to use data from this
+  particular sample" — a routing requirement invisible in the headers.
+- **Prefer Microchip's own drivers, PLIBs, device packs, and reference code over
+  rolling your own — always check what Harmony/MCC/the DFP already provides
+  FIRST.** Our MCU has subtle, undocumented-in-headers sequencing that the vendor
+  code already gets right; a hand-rolled register sequence will miss a routing
+  or enable step (see #670). Order of preference: (1) a **Harmony driver / PLIB
+  function** (`ADCHS_*`, `EVIC_*`, `GPIO_*`, `DRV_*`) — check `plib_*.h` and the
+  Harmony framework/examples for the peripheral, and consider whether an MCC
+  reconfigure would generate the feature before hand-rolling it; (2) **SFR
+  bitfield accessors** (`ADCCON2bits.SAMC = val`) when no PLIB path exists;
+  (3) **raw register writes** ONLY when no PLIB/bitfield path exists AND
+  performance demands it OR SET/CLR atomic forms are needed — and then only
+  after reading the FRM for that peripheral, always commenting *why* and citing
+  the FRM. When you must hand-roll (no-MCC modules like REFO/comparator), still
+  read the FRM init sequence first and mirror the vendor example's ordering.
 - SCPI commands follow IEEE 488.2 standard
 - Use FreeRTOS primitives for synchronization
 - Respect board variant differences in runtime checks

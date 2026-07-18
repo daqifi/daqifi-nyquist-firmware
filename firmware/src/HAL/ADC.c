@@ -10,6 +10,7 @@
 #include "ADC/AD7609.h"
 //#include "ADC/AD7173.h"
 #include "ADC/MC12bADC.h"
+#include "ADC/AdcThreshold.h"
 #include "DIO.h"
 #include "DioProbe.h"
 #include "Util/Logger.h"
@@ -206,6 +207,10 @@ void ADC_Init(
 
     // Register ADC EOS interrupt callback using Harmony's callback mechanism
     ADCHS_EOSCallbackRegister(ADC_EOSInterruptCB, 0);
+
+    // #670: park the digital-comparator threshold units (interrupts off, priority
+    // set). No thresholds are armed until CONF:ADC:THREshold configures one.
+    AdcThreshold_Initialize();
 
     // Note: AD7609 initialization happens later when 10V rail is powered up
 }

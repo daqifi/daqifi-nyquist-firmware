@@ -182,6 +182,7 @@ extern "C" {
         LOG_ONCE_BRIDGE_RX_OVERFLOW,      /**< wifi_serial_bridge_interface.c: transparent RX ring full — bytes dropped instead of wrapped (silent wrap corrupted WINC images mid-flash, #WINC-recovery) */
         LOG_ONCE_BIT_SD_BACKOFF,          /**< drv_sdspi.c: detect-poll backoff engaged after 10 card-absent polls (#589 P1) */
         LOG_ONCE_MDNS_ARM_FAIL,           /**< mdns_responder.c: recvfrom re-arm failed — responder deaf until ServiceHealth() re-opens (#58) */
+        LOG_ONCE_ADC_THRESHOLD_TRIP,      /**< AdcThreshold.c: an ADC digital-comparator threshold tripped (#670); one-shot so a signal parked past the limit can't flood */
         /* Add new entries above this line */
         LOG_ONCE_COUNT                     /**< Must be <= 32 */
     } LogOnceBit_t;

@@ -29,6 +29,7 @@
 #include "peripheral/gpio/plib_gpio.h"
 #include "HAL/BQ24297/BQ24297.h"
 #include "HAL/ADC.h"
+#include "HAL/ADC/AdcThreshold.h"
 #include "HAL/DIO.h"
 #include "HAL/DioProbe.h"
 #include "SCPIADC.h"
@@ -73,9 +74,10 @@
 #define QUES_ENCODER_FAIL   (1 << 11)  // Bit 11: Encoder failure
 #define QUES_TRANSPORT_DOWN (1 << 12)  // Bit 12: all configured transports down >grace (#397 auto-stop)
 #define QUES_SPI_BUS_FAULT  (1 << 13)  // Bit 13: shared SPI4 bus jammed (#589 — suspect SD card)
+#define QUES_ANALOG_LIMIT   (1 << 14)  // Bit 14: an ADC digital-comparator threshold has tripped (#670)
 #define QUES_ALL_BITS       (QUES_DATA_LOSS | QUES_USB_OVERFLOW | QUES_WIFI_OVERFLOW | \
                              QUES_SD_OVERFLOW | QUES_ENCODER_FAIL | QUES_TRANSPORT_DOWN | \
-                             QUES_SPI_BUS_FAULT)
+                             QUES_SPI_BUS_FAULT | QUES_ANALOG_LIMIT)
 
 #define UNUSED(x) (void)(x)
 //
@@ -345,6 +347,10 @@ static void SCPI_ClearOperBits(scpi_reg_val_t bits) {
  */
 static void SCPI_SyncQuesBits(void) {
     uint32_t bits = Streaming_GetQuesBits();
+    // The analog-limit bit (#670) is derived from the comparator latch state
+    // rather than stored in gQuesBits: the trip ISR only touches its own latch,
+    // and the condition persists until CONF:ADC:THREshold:CLEar (not stream stop).
+    if (AdcThreshold_AnyLatched()) { bits |= QUES_ANALOG_LIMIT; }
     UsbCdcData_t* usb = UsbCdc_GetSettings();
     wifi_tcp_server_context_t* wifi = wifi_manager_GetTcpServerContext();
     // Replace streaming-related QUES bits in a single write to avoid
@@ -5467,6 +5473,9 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:ADC:USECal?", .callback = SCPI_ADCUseCalGet,},
     {.pattern = "CONFigure:ADC:OBDiag", .callback = SCPI_ADCOnboardDiagSet,},
     {.pattern = "CONFigure:ADC:OBDiag?", .callback = SCPI_ADCOnboardDiagGet,},
+    {.pattern = "CONFigure:ADC:THREshold", .callback = SCPI_ADCThresholdSet,},
+    {.pattern = "CONFigure:ADC:THREshold?", .callback = SCPI_ADCThresholdGet,},
+    {.pattern = "CONFigure:ADC:THREshold:CLEar", .callback = SCPI_ADCThresholdClear,},
     {.pattern = "CONFigure:ADC:SAMC:DEDicated", .callback = SCPI_ADCSamcDedicatedSet,},
     {.pattern = "CONFigure:ADC:SAMC:DEDicated?", .callback = SCPI_ADCSamcDedicatedGet,},
     {.pattern = "CONFigure:ADC:SAMC:SHARed", .callback = SCPI_ADCSamcSharedSet,},

@@ -809,3 +809,100 @@ IntVectorADC_EOS_Handler:
     portRESTORE_CONTEXT
     .end   IntVectorADC_EOS_Handler
 
+/* #670: ADCHS digital-comparator trip vectors 46-51 (DC1-DC6). */
+    .section   .vector_46,code, keep
+    .equ     __vector_dispatch_46, IntVectorADC_DC1_Handler
+    .global  __vector_dispatch_46
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DC1_Handler
+IntVectorADC_DC1_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DC1_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DC1_Handler
+
+    .section   .vector_47,code, keep
+    .equ     __vector_dispatch_47, IntVectorADC_DC2_Handler
+    .global  __vector_dispatch_47
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DC2_Handler
+IntVectorADC_DC2_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DC2_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DC2_Handler
+
+    .section   .vector_48,code, keep
+    .equ     __vector_dispatch_48, IntVectorADC_DC3_Handler
+    .global  __vector_dispatch_48
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DC3_Handler
+IntVectorADC_DC3_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DC3_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DC3_Handler
+
+    .section   .vector_49,code, keep
+    .equ     __vector_dispatch_49, IntVectorADC_DC4_Handler
+    .global  __vector_dispatch_49
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DC4_Handler
+IntVectorADC_DC4_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DC4_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DC4_Handler
+
+    .section   .vector_50,code, keep
+    .equ     __vector_dispatch_50, IntVectorADC_DC5_Handler
+    .global  __vector_dispatch_50
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DC5_Handler
+IntVectorADC_DC5_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DC5_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DC5_Handler
+
+    .section   .vector_51,code, keep
+    .equ     __vector_dispatch_51, IntVectorADC_DC6_Handler
+    .global  __vector_dispatch_51
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorADC_DC6_Handler
+IntVectorADC_DC6_Handler:
+    portSAVE_CONTEXT
+    la    s6,  ADC_DC6_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorADC_DC6_Handler
+

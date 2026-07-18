@@ -17,6 +17,7 @@
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
 #include "HAL/ADC/MC12bADC.h"
+#include "HAL/ADC/AdcThreshold.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/ADC.h"
 #include "../daqifi_settings.h"
@@ -823,6 +824,80 @@ scpi_result_t SCPI_ADCOnboardDiagGet(scpi_t * context) {
     StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     SCPI_ResultInt32(context, pStreamCfg->OnboardDiagEnabled ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
+// --- #670: ADC hardware threshold alarms (ADCHS digital comparators) --------
+// CONF:ADC:THREshold <ch>,<mode 0=off|1=below|2=above|3=inside|4=outside>,<lo>,<hi>
+scpi_result_t SCPI_ADCThresholdSet(scpi_t * context) {
+    int32_t ch, mode, lo = 0, hi = 0;
+    if (!SCPI_ParamInt32(context, &ch, TRUE))   return SCPI_RES_ERR;
+    if (!SCPI_ParamInt32(context, &mode, TRUE)) return SCPI_RES_ERR;
+    bool haveLo = SCPI_ParamInt32(context, &lo, FALSE);
+    bool haveHi = SCPI_ParamInt32(context, &hi, FALSE);
+    // Reject before the (uint8_t) narrowing so a value like 256 can't alias
+    // onto a valid channel (#671 truncation-alias lesson).
+    if (ch < 0 || ch > 255 || mode < 0 || mode > 4) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    if (mode != 0 && (!haveLo || !haveHi)) {
+        SCPI_ExecutionError(context, "CONF:ADC:THRE: modes 1-4 require lo,hi");
+        return SCPI_RES_ERR;
+    }
+    if ((haveLo && (lo < 0 || lo > (int32_t)ADC_THRESHOLD_MAX_CODE)) ||
+        (haveHi && (hi < 0 || hi > (int32_t)ADC_THRESHOLD_MAX_CODE))) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    // Config change: reject while streaming (consistent with the CONF:ADC family;
+    // the session scan is frozen at start, #116/#541).
+    StreamingRuntimeConfig *pStreamCfg =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (pStreamCfg->IsEnabled || pStreamCfg->Running) {
+        SCPI_ExecutionError(context, "CONF:ADC:THRE: cannot change while streaming");
+        return SCPI_RES_ERR;
+    }
+    const char* err = NULL;
+    if (!AdcThreshold_Configure((uint8_t)ch, (AdcThresholdMode)mode,
+                                (uint16_t)lo, (uint16_t)hi, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "CONF:ADC:THRE: rejected");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+// CONF:ADC:THREshold? <ch> -> mode,lo,hi,tripCount,latched (0s if none configured)
+scpi_result_t SCPI_ADCThresholdGet(scpi_t * context) {
+    int32_t ch;
+    if (!SCPI_ParamInt32(context, &ch, TRUE)) return SCPI_RES_ERR;
+    if (ch < 0 || ch > 255) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    AdcThresholdMode mode = ADC_THRESH_OFF;
+    uint16_t lo = 0, hi = 0; uint32_t cnt = 0; bool latched = false;
+    AdcThreshold_Query((uint8_t)ch, &mode, &lo, &hi, &cnt, &latched);
+    SCPI_ResultUInt32(context, (uint32_t)mode);
+    SCPI_ResultUInt32(context, (uint32_t)lo);
+    SCPI_ResultUInt32(context, (uint32_t)hi);
+    SCPI_ResultUInt32(context, cnt);
+    SCPI_ResultUInt32(context, latched ? 1u : 0u);
+    return SCPI_RES_OK;
+}
+
+// CONF:ADC:THREshold:CLEar [<ch>] -> clear latch+counter (no arg = all)
+scpi_result_t SCPI_ADCThresholdClear(scpi_t * context) {
+    int32_t ch;
+    if (!SCPI_ParamInt32(context, &ch, FALSE)) {
+        AdcThreshold_Clear(ADC_THRESHOLD_ALL_CH);
+        return SCPI_RES_OK;
+    }
+    if (ch < 0 || ch > 255) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+    AdcThreshold_Clear((uint8_t)ch);
     return SCPI_RES_OK;
 }
 

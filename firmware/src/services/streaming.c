@@ -37,6 +37,7 @@
 #include "UsbCdc/UsbCdc.h"
 #include "../HAL/TimerApi/TimerApi.h"
 #include "HAL/ADC/MC12bADC.h"
+#include "HAL/ADC/AdcThreshold.h"
 #include "sd_card_services/sd_card_manager.h"
 #include "wifi_services/wifi_tcp_server.h"
 #include "state/runtime/BoardRuntimeConfig.h"
@@ -140,6 +141,7 @@ static void Streaming_UpdateFlowWindow(bool dropped);
 #define QUES_BIT_ENCODER_FAIL (1 << 11)  // Bit 11: Encoder failure
 #define QUES_BIT_TRANSPORT_DOWN (1 << 12) // Bit 12: all configured transports down >grace (auto-stop fired)
 #define QUES_BIT_SPI_BUS_FAULT STREAMING_QUES_SPI_BUS_FAULT // Bit 13: shared SPI4 bus jammed (#589 — suspect SD card); set/cleared externally, survives session clears
+#define QUES_BIT_ANALOG_LIMIT (1 << 14) // Bit 14: ADC digital-comparator threshold tripped (#670); derived in SCPI_SyncQuesBits from the comparator latch (not set here)
 
 #define FLOW_WINDOW_MIN   20
 #define FLOW_WINDOW_MAX   10000
@@ -1355,6 +1357,9 @@ static void Streaming_Start(void) {
                         &css1, &css2);
                 MC12b_ApplyScanList(css1, css2);
                 gNeedSharedScan = (scanCount > 0);
+                // #670: a Type 2 threshold whose channel isn't in this session's
+                // scan can never fire — disable it (and log) now that ADCCSS is set.
+                AdcThreshold_RevalidateForStream();
             }
             // #541 D-A: clear any Type 1 result parked since the last idle
             // poll — ARDY would still be set and the direct-read path would
