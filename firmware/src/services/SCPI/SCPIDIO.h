@@ -91,6 +91,14 @@ scpi_result_t SCPI_PWMChannelDUTYSet(scpi_t * context);
  */
 scpi_result_t SCPI_PWMChannelDUTYGet(scpi_t * context);
 
+/* --- programmable clock outputs (#668, epic #664) — DIO:CLOCk:* --- */
+/*! SCPI: DIO:CLOCk:CONFig <dio>,<hz> -> configure a REFCLKO output; replies achieved Hz. */
+scpi_result_t SCPI_DioClockConfig(scpi_t * context);
+/*! SCPI: DIO:CLOCk:ENAble <dio>,<0|1> -> start/stop the clock (claims/releases the pin). */
+scpi_result_t SCPI_DioClockEnable(scpi_t * context);
+/*! SCPI: DIO:CLOCk? <dio> -> achieved output Hz (0 = off). */
+scpi_result_t SCPI_DioClockGet(scpi_t * context);
+
 #ifdef	__cplusplus
 }
 #endif

@@ -16,6 +16,7 @@
 #include "Util/Logger.h"
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
+#include "HAL/UserClock/UserClock.h"   // #668: REFCLKO clock outputs
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/DIO.h"
 #include "../../HAL/TimerApi/TimerApi.h"
@@ -688,5 +689,65 @@ static scpi_result_t SCPI_PWMSingleStateSet(uint8_t id, bool value)
     }
     taskEXIT_CRITICAL();
     return applied ? SCPI_RES_OK : SCPI_RES_ERR;
+}
+
+// *****************************************************************************
+// Section: programmable clock outputs (#668, epic #664) — DIO:CLOCk:*
+// REFCLKO on DIO 2/3/4/5/6/7/12/14/15; POSC source; achieved Hz reported.
+// *****************************************************************************
+
+scpi_result_t SCPI_DioClockConfig(scpi_t * context) {
+    int32_t dio, hz;
+    if (!SCPI_ParamInt32(context, &dio, TRUE) ||
+        !SCPI_ParamInt32(context, &hz, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "DIO:CLOCK: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    if (hz < 0) {
+        SCPI_ExecutionError(context, "DIO:CLOCK: frequency must be > 0");
+        return SCPI_RES_ERR;
+    }
+    const char* err = NULL;
+    uint32_t actual = 0;
+    if (!UserClock_Configure((uint8_t)dio, (uint32_t)hz, &actual, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "DIO:CLOCK: config rejected");
+        return SCPI_RES_ERR;
+    }
+    SCPI_ResultUInt32(context, actual);   /* achieved Hz (quantized by the fractional divider) */
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_DioClockEnable(scpi_t * context) {
+    int32_t dio, on;
+    if (!SCPI_ParamInt32(context, &dio, TRUE) ||
+        !SCPI_ParamInt32(context, &on, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "DIO:CLOCK: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    const char* err = NULL;
+    if (!UserClock_Enable((uint8_t)dio, on != 0, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "DIO:CLOCK: enable failed");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_DioClockGet(scpi_t * context) {
+    int32_t dio;
+    if (!SCPI_ParamInt32(context, &dio, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "DIO:CLOCK: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    SCPI_ResultUInt32(context, UserClock_GetActualHz((uint8_t)dio));   /* 0 = off */
+    return SCPI_RES_OK;
 }
 
