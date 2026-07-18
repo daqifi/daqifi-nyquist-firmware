@@ -1357,8 +1357,9 @@ static void Streaming_Start(void) {
                         &css1, &css2);
                 MC12b_ApplyScanList(css1, css2);
                 gNeedSharedScan = (scanCount > 0);
-                // #670: a Type 2 threshold whose channel isn't in this session's
-                // scan can never fire — disable it (and log) now that ADCCSS is set.
+                // #670: inform (log only) about any Type 2 threshold whose channel
+                // isn't in this session's scan — it won't monitor stream samples,
+                // but stays armed for idle/MEAS and keeps its latch (persistence).
                 AdcThreshold_RevalidateForStream();
             }
             // #541 D-A: clear any Type 1 result parked since the last idle
