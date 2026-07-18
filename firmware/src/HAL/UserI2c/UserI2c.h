@@ -28,8 +28,10 @@
  *
  * Phase 1 transfers are polled/blocking-with-timeout, run from SCPI (task)
  * context, and are bounded so a stuck bus can't hang the task -- a stuck-SDA
- * recovery (9 SCL pulses + STOP) is wired into the ENAble off/on cycle. This
- * driver ships the mechanism; the client owns the sensor's register protocol.
+ * recovery (9 SCL pulses + STOP) runs reactively on a transfer/scan timeout, so
+ * the next Scan/Transfer self-heals a slave holding SDA low (it is not run
+ * proactively at ENAble). This driver ships the mechanism; the client owns the
+ * sensor's register protocol.
  *
  * Errata honored: #37 (SCL tLOW out of I2C spec at >=400 kHz, no workaround --
  * frequencies >=400 kHz are rejected); #6 (A1/A3 I2C misbehaves >100 kHz or
