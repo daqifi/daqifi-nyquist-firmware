@@ -30,13 +30,18 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "HAL/TimerApi/TimerApi.h"   /* TIMER_CLOCK_FRQ (PBCLK3 — the TMR2 rate) */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #define USER_IC_UNITS          9u        /*!< IC1..IC9 */
-#define USER_IC_TIMER_HZ       84000000u /*!< PBCLK3 feeds TMR2 (11.905 ns/count @ 1:1) */
+/* TMR2 (the IC timebase) is clocked from PBCLK3; derive the rate from the same
+ * central constant the streaming timer + timestamps use, so freq/period/pulse-
+ * width stay correct across clock profiles — 84 MHz @252-MHz build, 100 MHz on
+ * the 200-MHz build (#702). Was hardcoded 84000000, wrong on the 200-MHz build. */
+#define USER_IC_TIMER_HZ       TIMER_CLOCK_FRQ
 
 /** Boot-time init: parks all 9 IC units (disabled, capture IRQ off, priority set)
  *  and clears the epoch. Safe to call before Timer2 is running. */
