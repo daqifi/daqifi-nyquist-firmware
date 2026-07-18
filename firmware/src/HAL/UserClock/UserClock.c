@@ -16,13 +16,17 @@
 
 #define D(n)   ((uint16_t)(1u << (n)))
 
-/* REFOxCON field encodings (identical layout across REFO1/3/4; use REFO1's masks). */
-#define CLK_ROSEL_POSC   2u                        /* ROSEL: POSC (24 MHz) */
-#define CLK_RODIV_POS    16u                       /* RODIV<14:0> */
-#define CLK_ROTRIM_POS   23u                       /* ROTRIM<8:0> in REFOxTRIM */
-#define CLK_OE_MASK      _REFO1CON_OE_MASK          /* 0x1000 */
-#define CLK_ON_MASK      _REFO1CON_ON_MASK          /* 0x8000 */
-#define CLK_RODIV_MAX    32767u                     /* 15-bit */
+/* REFOxCON/REFOxTRIM field encodings (identical layout across REFO1/3/4; take
+ * positions/masks from the device header rather than literals so the field
+ * layout stays owned by the DFP, not this file). */
+#define CLK_ROSEL_POSC   2u                          /* ROSEL value: POSC (24 MHz) */
+#define CLK_ROSEL_POS    _REFO1CON_ROSEL_POSITION    /* ROSEL field position (0) */
+#define CLK_RODIV_POS    _REFO1CON_RODIV_POSITION    /* RODIV<14:0> (16) */
+#define CLK_ROTRIM_POS   _REFO1TRIM_ROTRIM_POSITION  /* ROTRIM<8:0> in REFOxTRIM (23) */
+#define CLK_ROTRIM_MASK  _REFO1TRIM_ROTRIM_MASK      /* ROTRIM is REFOxTRIM's only field */
+#define CLK_OE_MASK      _REFO1CON_OE_MASK           /* 0x1000 */
+#define CLK_ON_MASK      _REFO1CON_ON_MASK           /* 0x8000 */
+#define CLK_RODIV_MAX    32767u                      /* 15-bit */
 
 typedef struct {
     volatile uint32_t* con;      /* REFOxCON    */
@@ -137,10 +141,10 @@ static void clock_SetPps(uint8_t dio, uint8_t ppsval) {
 
 /* @return true iff REFOx ON latched (a not-clocked/gated module reads back 0). */
 static bool clock_StartUnit(const ClockUnit_t* u, uint32_t rodiv, uint32_t rotrim) {
-    *(u->con)  = ((uint32_t)CLK_ROSEL_POSC)          /* ROSEL = POSC (24 MHz) */
+    *(u->con)  = ((uint32_t)CLK_ROSEL_POSC << CLK_ROSEL_POS) /* ROSEL = POSC (24 MHz) */
                | (rodiv << CLK_RODIV_POS)            /* RODIV */
                | CLK_OE_MASK;                        /* OE on; ON=0 for now */
-    *(u->trim) = (rotrim << CLK_ROTRIM_POS);         /* ROTRIM fractional */
+    *(u->trim) = (rotrim << CLK_ROTRIM_POS) & CLK_ROTRIM_MASK; /* ROTRIM (sole field) */
     *(u->conSet) = CLK_ON_MASK;                      /* turn the reference on */
     return (*(u->con) & CLK_ON_MASK) != 0u;
 }

@@ -711,12 +711,12 @@ scpi_result_t SCPI_DioClockConfig(scpi_t * context) {
         return SCPI_RES_ERR;
     }
     const char* err = NULL;
-    uint32_t actual = 0;
-    if (!UserClock_Configure((uint8_t)dio, (uint32_t)hz, &actual, &err)) {
+    /* Silent setter (SCPI convention: non-query commands emit no response).
+     * The achieved (quantized) Hz is read back with DIO:CLOCk? once enabled. */
+    if (!UserClock_Configure((uint8_t)dio, (uint32_t)hz, NULL, &err)) {
         SCPI_ExecutionError(context, (err != NULL) ? err : "DIO:CLOCK: config rejected");
         return SCPI_RES_ERR;
     }
-    SCPI_ResultUInt32(context, actual);   /* achieved Hz (quantized by the fractional divider) */
     return SCPI_RES_OK;
 }
 
