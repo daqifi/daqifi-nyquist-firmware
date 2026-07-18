@@ -30,7 +30,9 @@
 #define OW_W1_HIGH  64u    /* write-1 slot remainder          (B) */
 #define OW_W0_LOW   60u    /* write-0 drive-low time          (C) */
 #define OW_W0_HIGH  10u    /* write-0 slot remainder          (D) */
-#define OW_RD_WAIT  9u     /* read: release -> sample delay   (E) ~15us from start */
+#define OW_RD_WAIT  8u     /* read: release -> sample (E); 6+8=14us from slot start,
+                            * leaving budget for DIO-layer release/read overhead so
+                            * the sample stays inside the DS18B20 t_RDV<=15us window */
 #define OW_RD_TAIL  55u    /* read slot remainder             (F) */
 #define OW_RST_LOW  480u   /* reset drive-low                 (H) */
 #define OW_RST_WAIT 70u    /* reset release -> presence sample(I) */
@@ -41,6 +43,11 @@
 
 static uint8_t gDio = 0xFFu;   /* claimed channel, 0xFF = disabled */
 static bool    gEnabled = false;
+/* Set (under gMutex) while a transaction is bit-banging the bus. Read lock-free
+ * by SCPI_StartStreaming so streaming can't ARM mid-transaction (the reverse of
+ * ow_ready's reject-while-streaming — together they close the TOCTOU where a
+ * long 1-Wire critical section would mask the just-started pri-3 stream timer). */
+static volatile bool gOwBusy = false;
 
 static SemaphoreHandle_t gMutex = NULL;
 static StaticSemaphore_t gMutexBuf;
@@ -194,11 +201,24 @@ bool UserOneWire_IsEnabled(uint8_t* dio) {
     return en;
 }
 
-/* Common preconditions for a transaction; returns false + *err on failure. */
+/* Common preconditions for a transaction; returns false + *err on failure.
+ * Re-checks power and streaming EVERY transaction (both can change after enable),
+ * and probes bus health (an idle released bus must read high via the pull-up). */
 static bool ow_ready(const char** err) {
     if (!gEnabled) { if (err) { *err = "1-Wire: not enabled"; } return false; }
+    if (!ow_powered()) {
+        if (err) { *err = "1-Wire: device is not powered up (SYST:POW:STAT 1)"; }
+        return false;
+    }
     if (ow_streaming_active()) {
         if (err) { *err = "1-Wire: unavailable while streaming"; }
+        return false;
+    }
+    /* The bus is left released after every slot, so at idle the pull-up must hold
+     * it high; a low reading = short or missing 4.7k pull-up (also stops a
+     * shorted bus from fabricating phantom ROM ids in SEARch). */
+    if (!ow_sample()) {
+        if (err) { *err = "1-Wire: bus stuck low (short or missing pull-up)"; }
         return false;
     }
     return true;
@@ -208,11 +228,17 @@ bool UserOneWire_Reset(bool* present, const char** err) {
     xSemaphoreTake(ow_Mutex(), portMAX_DELAY);
     bool ok = ow_ready(err);
     if (ok) {
+        gOwBusy = true;
         bool p = ow_reset_pulse();
+        gOwBusy = false;
         if (present) { *present = p; }
     }
     xSemaphoreGive(gMutex);
     return ok;
+}
+
+bool UserOneWire_IsBusy(void) {
+    return gOwBusy;   /* lock-free: single volatile bool, atomic on PIC32MZ */
 }
 
 bool UserOneWire_Transfer(const uint8_t* wbuf, size_t nWrite,
@@ -220,6 +246,7 @@ bool UserOneWire_Transfer(const uint8_t* wbuf, size_t nWrite,
     xSemaphoreTake(ow_Mutex(), portMAX_DELAY);
     bool ok = ow_ready(err);
     if (ok) {
+        gOwBusy = true;
         /* Every 1-Wire transaction begins with reset + presence. */
         if (!ow_reset_pulse()) {
             if (err) { *err = "1-Wire: no presence pulse (no device on the bus)"; }
@@ -228,33 +255,42 @@ bool UserOneWire_Transfer(const uint8_t* wbuf, size_t nWrite,
             for (size_t i = 0; i < nWrite; i++) { ow_write_byte(wbuf[i]); }
             for (size_t i = 0; i < nRead; i++)  { rbuf[i] = ow_read_byte(); }
         }
+        gOwBusy = false;
     }
     xSemaphoreGive(gMutex);
     return ok;
 }
 
-/* One SEARCH pass: finds the next ROM after the discrepancy state. Returns the
- * device count discovered so far, or -1 on a bus fault. State per the Maxim
- * AN187 search algorithm. */
+/* Enumerate ROM ids into roms[] (8 bytes each), Maxim AN187 search algorithm.
+ * rom[] MUST persist across passes: a discrepancy below lastDiscrepancy re-treads
+ * the previous device's path from its stored bits. Always succeeds (returns the
+ * devices found); a mid-pass "11" (device dropped off) or reset-with-no-presence
+ * gracefully ends enumeration keeping what was already found. */
 static bool ow_search(uint8_t* roms, uint8_t maxRoms, uint8_t* count) {
-    uint8_t rom[USER_OWIRE_ROM_BYTES];
+    uint8_t rom[USER_OWIRE_ROM_BYTES] = {0};   /* persistent across passes */
     int lastDiscrepancy = 0;
     bool lastDevice = false;
     uint8_t found = 0u;
 
     while (!lastDevice && found < maxRoms) {
-        if (!ow_reset_pulse()) { break; }   /* no more devices */
+        if (!ow_reset_pulse()) { break; }   /* no (more) devices on the bus */
         ow_write_byte(OW_CMD_SEARCH);
 
         int lastZero = 0;
-        for (uint8_t i = 0; i < USER_OWIRE_ROM_BYTES; i++) { rom[i] = 0u; }
-
+        bool completed = true;
         for (int bitPos = 1; bitPos <= 64; bitPos++) {
             bool idBit  = ow_read_bit();
             bool cmpBit = ow_read_bit();
+            int idx = (bitPos - 1) / 8;
+            int sh  = (bitPos - 1) % 8;
             int dir;
             if (idBit && cmpBit) {
-                return false;               /* 11 -> no device responded: bus fault */
+                /* No device responded this bit (e.g. hot-unplug mid-search) —
+                 * end enumeration, keep prior finds. This partial pass is NOT a
+                 * valid device, so don't record it. */
+                completed = false;
+                lastDevice = true;
+                break;
             } else if (idBit != cmpBit) {
                 dir = idBit ? 1 : 0;        /* all present devices agree */
             } else {                        /* 00 -> discrepancy */
@@ -263,27 +299,24 @@ static bool ow_search(uint8_t* roms, uint8_t maxRoms, uint8_t* count) {
                 } else if (bitPos > lastDiscrepancy) {
                     dir = 0;
                 } else {
-                    int idx = (bitPos - 1) / 8;
-                    int sh  = (bitPos - 1) % 8;
-                    dir = (rom[idx] >> sh) & 1;
+                    dir = (rom[idx] >> sh) & 1;   /* re-tread the prior path */
                 }
                 if (dir == 0) { lastZero = bitPos; }
             }
-            if (dir == 1) {
-                int idx = (bitPos - 1) / 8;
-                int sh  = (bitPos - 1) % 8;
-                rom[idx] |= (uint8_t)(1u << sh);
-            }
+            /* Fully define this bit so rom[] stays valid for the next pass. */
+            if (dir == 1) { rom[idx] |= (uint8_t)(1u << sh); }
+            else          { rom[idx] &= (uint8_t)~(1u << sh); }
             ow_write_bit(dir != 0);         /* deselect the other branch */
         }
 
-        for (uint8_t i = 0; i < USER_OWIRE_ROM_BYTES; i++) {
-            roms[found * USER_OWIRE_ROM_BYTES + i] = rom[i];
+        if (completed) {
+            for (uint8_t i = 0; i < USER_OWIRE_ROM_BYTES; i++) {
+                roms[found * USER_OWIRE_ROM_BYTES + i] = rom[i];
+            }
+            found++;
+            lastDiscrepancy = lastZero;
+            if (lastDiscrepancy == 0) { lastDevice = true; }
         }
-        found++;
-
-        lastDiscrepancy = lastZero;
-        if (lastDiscrepancy == 0) { lastDevice = true; }
     }
     *count = found;
     return true;
@@ -295,7 +328,10 @@ bool UserOneWire_Search(uint8_t* roms, uint8_t maxRoms, uint8_t* count,
     bool ok = ow_ready(err);
     if (ok) {
         uint8_t n = 0u;
-        if (!ow_search(roms, maxRoms, &n)) {
+        gOwBusy = true;
+        bool sok = ow_search(roms, maxRoms, &n);
+        gOwBusy = false;
+        if (!sok) {
             if (err) { *err = "1-Wire: search bus fault"; }
             ok = false;
         } else if (count) {

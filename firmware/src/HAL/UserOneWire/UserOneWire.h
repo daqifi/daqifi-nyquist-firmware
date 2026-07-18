@@ -42,13 +42,18 @@ bool UserOneWire_Enable(uint8_t dio, bool enable, const char** err);
 /** Query whether 1-Wire is enabled, and on which channel (0xFF if none). */
 bool UserOneWire_IsEnabled(uint8_t* dio);
 
+/** True while a 1-Wire transaction is bit-banging the bus. Read by the streaming
+ *  start path so it can't arm the stream timer mid-transaction. */
+bool UserOneWire_IsBusy(void);
+
 /** Issue a reset pulse; @p present = true if a slave asserted presence.
  *  @return false (reason in @p err) if not enabled / streaming / bus fault. */
 bool UserOneWire_Reset(bool* present, const char** err);
 
 /** Byte-level transfer: write @p nWrite bytes from @p wbuf (after a reset), then
  *  read @p nRead bytes into @p rbuf. Either count may be 0. @return false
- *  (reason in @p err) on not-enabled / streaming / no-presence / timeout. */
+ *  (reason in @p err) on not-enabled / not-powered / streaming / stuck-bus /
+ *  no-presence. */
 bool UserOneWire_Transfer(const uint8_t* wbuf, size_t nWrite,
                           uint8_t* rbuf, size_t nRead, const char** err);
 

@@ -997,6 +997,14 @@ scpi_result_t SCPI_OneWireEnableSet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+scpi_result_t SCPI_OneWireEnableGet(scpi_t * context) {
+    uint8_t dio = 0xFFu;
+    bool en = UserOneWire_IsEnabled(&dio);
+    /* Channel (0..15) if enabled, else -1. */
+    SCPI_ResultInt32(context, en ? (int32_t)dio : -1);
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_OneWireReset(scpi_t * context) {
     bool present = false; const char* err = NULL;
     if (!UserOneWire_Reset(&present, &err)) {
@@ -1016,6 +1024,9 @@ scpi_result_t SCPI_OneWireTransfer(scpi_t * context) {
     }
     if (!SCPI_ParamInt32(context, &nRead, TRUE)) {
         return SCPI_RES_ERR;
+    }
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;   /* a trailing junk param must not clock a partial frame */
     }
     if (nRead < 0 || nRead > 256) {
         SCPI_ExecutionError(context, "OWIRE:TRAN: nRead out of range (0..256)");

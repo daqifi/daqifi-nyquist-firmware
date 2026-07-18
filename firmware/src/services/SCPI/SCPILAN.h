@@ -218,6 +218,8 @@ scpi_result_t SCPI_SpiTransfer(scpi_t * context);
 /* User 1-Wire master on a DIO channel (#669, epic #664). SYST:COMM:OWIRe:*. */
 /*! SCPI: SYST:COMM:OWIRe:ENAble <dio>,<0|1> -> claim/release the 1-Wire bus. */
 scpi_result_t SCPI_OneWireEnableSet(scpi_t * context);
+/*! SCPI: SYST:COMM:OWIRe:ENAble? -> claimed channel (0..15), or -1 if disabled. */
+scpi_result_t SCPI_OneWireEnableGet(scpi_t * context);
 /*! SCPI: SYST:COMM:OWIRe:RESet? -> reset pulse; 1 = presence detected. */
 scpi_result_t SCPI_OneWireReset(scpi_t * context);
 /*! SCPI: SYST:COMM:OWIRe:TRANsfer? <hexWrite>,<nRead> -> reset+write+read, hex. */
