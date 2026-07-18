@@ -97,7 +97,11 @@ static void ow_release(void) {
 }
 
 static bool ow_sample(void) {
-    bool level = true;                       /* default high (released) */
+    /* Fail-safe default: a read failure (misconfigured pin) reads LOW, which
+     * ow_ready()'s idle-must-be-high check rejects — never masquerade as a
+     * released (high) bus and pass the health check into a long CS (#704). On
+     * success DIO_ReadChannelRaw overwrites this with the real level. */
+    bool level = false;
     (void)DIO_ReadChannelRaw(gDio, &level);
     return level;
 }
@@ -243,6 +247,12 @@ bool UserOneWire_IsBusy(void) {
 
 bool UserOneWire_Transfer(const uint8_t* wbuf, size_t nWrite,
                           uint8_t* rbuf, size_t nRead, const char** err) {
+    /* Reject a NULL buffer with a non-zero length before dereferencing it in the
+     * byte loops (matches UserI2c_Transfer's contract) — #704. */
+    if ((nWrite > 0u && wbuf == NULL) || (nRead > 0u && rbuf == NULL)) {
+        if (err) { *err = "1-Wire: NULL buffer with non-zero length"; }
+        return false;
+    }
     xSemaphoreTake(ow_Mutex(), portMAX_DELAY);
     bool ok = ow_ready(err);
     if (ok) {
