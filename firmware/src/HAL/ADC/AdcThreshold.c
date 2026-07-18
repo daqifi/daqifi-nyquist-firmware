@@ -26,11 +26,15 @@
 #include "semphr.h"
 #include "task.h"
 
-/* ADCCMPCONx condition bits (identical layout across CMPCON1..6). */
-#define CMP_IELOLO   _ADCCMPCON1_IELOLO_MASK   /* result <  DCMPLO */
-#define CMP_IEHILO   _ADCCMPCON1_IEHILO_MASK   /* DCMPLO <= result < DCMPHI */
-#define CMP_IEHIHI   _ADCCMPCON1_IEHIHI_MASK   /* result >= DCMPHI */
+/* ADCCMPCONx condition bits (identical layout across CMPCON1..6). FRM 22-26
+ * event semantics: IELOLO = DATA < DCMPLO; IEHIHI = DATA >= DCMPHI;
+ * IEBTWN = DCMPLO <= DATA < DCMPHI (the in-window condition -- IEHILO is only
+ * "DATA < DCMPHI", NOT the window). DCMPGIEN gates the interrupt on the event. */
+#define CMP_IELOLO   _ADCCMPCON1_IELOLO_MASK   /* DATA <  DCMPLO */
+#define CMP_IEBTWN   _ADCCMPCON1_IEBTWN_MASK   /* DCMPLO <= DATA < DCMPHI */
+#define CMP_IEHIHI   _ADCCMPCON1_IEHIHI_MASK   /* DATA >= DCMPHI */
 #define CMP_ENDCMP   _ADCCMPCON1_ENDCMP_MASK   /* enable the comparator */
+#define CMP_DCMPGIEN _ADCCMPCON1_DCMPGIEN_MASK /* enable the interrupt when an event fires */
 
 #define AN_CMP_MAX   31u   /* ADCCMPENx is 32-bit: only AN0..31 are selectable */
 
@@ -138,10 +142,10 @@ static int thr_UnitForCh(uint8_t chId) {
 
 static uint32_t thr_ModeBits(AdcThresholdMode m) {
     switch (m) {
-        case ADC_THRESH_BELOW:   return CMP_IELOLO;
-        case ADC_THRESH_ABOVE:   return CMP_IEHIHI;
-        case ADC_THRESH_INSIDE:  return CMP_IEHILO;
-        case ADC_THRESH_OUTSIDE: return CMP_IELOLO | CMP_IEHIHI;
+        case ADC_THRESH_BELOW:   return CMP_IELOLO;              /* DATA < lo */
+        case ADC_THRESH_ABOVE:   return CMP_IEHIHI;              /* DATA >= hi */
+        case ADC_THRESH_INSIDE:  return CMP_IEBTWN;              /* lo <= DATA < hi */
+        case ADC_THRESH_OUTSIDE: return CMP_IELOLO | CMP_IEHIHI; /* DATA < lo || DATA >= hi */
         default:                 return 0u;
     }
 }
@@ -155,7 +159,8 @@ static void thr_ApplyUnit(uint8_t u, uint8_t an, AdcThresholdMode mode,
     thr_IntClearFlag(u);
     *(r->cmp) = ((uint32_t)hi << 16) | (uint32_t)lo;   /* DCMPHI:DCMPLO */
     *(r->en)  = (1u << an);                              /* watch this AN input */
-    *(r->con) = thr_ModeBits(mode) | CMP_ENDCMP;        /* condition + enable */
+    /* condition + comparator enable + interrupt-on-event enable (DCMPGIEN) */
+    *(r->con) = thr_ModeBits(mode) | CMP_ENDCMP | CMP_DCMPGIEN;
     thr_IntClearFlag(u);
     thr_IntEnable(u);
 }

@@ -197,6 +197,7 @@ extern "C" {
     scpi_result_t SCPI_ADCThresholdSet(scpi_t * context);
     scpi_result_t SCPI_ADCThresholdGet(scpi_t * context);
     scpi_result_t SCPI_ADCThresholdClear(scpi_t * context);
+    scpi_result_t SCPI_ADCThresholdDbg(scpi_t * context);  /* TEMP #670 bring-up */
 
 #ifdef	__cplusplus
 }
