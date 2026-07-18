@@ -364,9 +364,14 @@ uint8_t UserEdge_EventMode(uint8_t dio) {
     int u = edge_IntUnitForDio(dio);
     if (u < 0) { return 0u; }
     uint8_t m = 0u;
+    /* gMutex serializes vs a concurrent arm/disarm (another SCPI task) so the read
+     * can't observe a half-applied transition; the critical section keeps the read
+     * coherent vs the INT ISR. */
+    xSemaphoreTake(edge_Mutex(), portMAX_DELAY);
     taskENTER_CRITICAL();
     if (gIntState[u].enabled && gIntState[u].dio == dio) { m = gIntState[u].mode; }
     taskEXIT_CRITICAL();
+    xSemaphoreGive(gMutex);
     return m;
 }
 
@@ -374,9 +379,11 @@ uint64_t UserEdge_EventCount(uint8_t dio) {
     int u = edge_IntUnitForDio(dio);
     if (u < 0) { return 0u; }
     uint64_t c = 0u;
+    xSemaphoreTake(edge_Mutex(), portMAX_DELAY);
     taskENTER_CRITICAL();
     if (gIntState[u].enabled && gIntState[u].dio == dio) { c = gIntState[u].count; }
     taskEXIT_CRITICAL();
+    xSemaphoreGive(gMutex);
     return c;
 }
 
@@ -476,13 +483,20 @@ bool UserEdge_CounterEnable(uint8_t dio, bool on, const char** err) {
 
 bool UserEdge_CounterEnabled(uint8_t dio) {
     int u = edge_CtrUnitForDio(dio);
-    return (u >= 0) && gCtrState[u].enabled && (gCtrState[u].dio == dio);
+    if (u < 0) { return false; }
+    /* gMutex vs a concurrent arm/disarm — a getter must not read a half-applied
+     * transition (e.g. enabled still true after the timer was PMD-gated). */
+    xSemaphoreTake(edge_Mutex(), portMAX_DELAY);
+    bool on = gCtrState[u].enabled && (gCtrState[u].dio == dio);
+    xSemaphoreGive(gMutex);
+    return on;
 }
 
 uint64_t UserEdge_CounterGet(uint8_t dio) {
     int u = edge_CtrUnitForDio(dio);
     if (u < 0) { return 0u; }
     uint64_t v = 0u;
+    xSemaphoreTake(edge_Mutex(), portMAX_DELAY);
     taskENTER_CRITICAL();
     if (gCtrState[u].enabled && gCtrState[u].dio == dio) {
         uint32_t hi = gCtrState[u].high;
@@ -493,6 +507,7 @@ uint64_t UserEdge_CounterGet(uint8_t dio) {
         v = ((uint64_t)hi << 16) | lo;
     }
     taskEXIT_CRITICAL();
+    xSemaphoreGive(gMutex);
     return v;
 }
 
@@ -500,6 +515,7 @@ bool UserEdge_CounterClear(uint8_t dio) {
     int u = edge_CtrUnitForDio(dio);
     if (u < 0) { return false; }
     bool ok = false;
+    xSemaphoreTake(edge_Mutex(), portMAX_DELAY);
     taskENTER_CRITICAL();
     if (gCtrState[u].enabled && gCtrState[u].dio == dio) {
         *(gCtr[u].tmr) = 0u;
@@ -508,6 +524,7 @@ bool UserEdge_CounterClear(uint8_t dio) {
         ok = true;
     }
     taskEXIT_CRITICAL();
+    xSemaphoreGive(gMutex);
     return ok;
 }
 
