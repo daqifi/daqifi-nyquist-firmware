@@ -199,6 +199,12 @@ bool DIO_SetChannelPeripheralInput(uint8_t channel);
  *  Only meaningful after DIO_SetChannelPeripheralOutput on @p channel. */
 bool DIO_DriveChannel(uint8_t channel, bool level);
 
+/*! Read a claimed channel's data pin level directly (through the 100K read path
+ *  when the buffer is disabled). Unlike DIO_ReadSampleByMask this does NOT strip
+ *  owned channels, so a peripheral owner (e.g. the 1-Wire master, #669) can
+ *  sample the pin it owns. @return false on a bad channel / NULL out-pointer. */
+bool DIO_ReadChannelRaw(uint8_t channel, bool* level);
+
 /*! Restore a channel to its runtime-configured DIO state. Call after
  *  releasing a peripheral claim so the normal DIO path resumes cleanly. */
 void DIO_RestoreChannel(uint8_t channel);

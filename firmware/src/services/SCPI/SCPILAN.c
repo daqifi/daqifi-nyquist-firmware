@@ -25,6 +25,7 @@
 #include "services/SCPI/SCPIInterface.h"              // #58: shared response buffer
 #include "HAL/UserSpi/UserSpi.h"                      // #665: user SPI1 master
 #include "HAL/UserUart/UserUart.h"                    // #16: user UART
+#include "HAL/UserOneWire/UserOneWire.h"              // #669: user 1-Wire master
 #include "HAL/UserI2c/UserI2c.h"                      // #15: user I2C hub
 #include "services/sd_card_services/sd_card_manager.h"
 
@@ -965,6 +966,114 @@ scpi_result_t SCPI_SpiTransfer(scpi_t * context) {
 
     /* Raw hex, no SCPI quoting, so the client parses MISO bytes directly. */
     SCPI_ResultMnemonic(context, out);
+    SCPI_ResponseBuf_Give();
+    return SCPI_RES_OK;
+}
+
+// *****************************************************************************
+// Section: user 1-Wire master (#669, epic #664) -- SYST:COMM:OWIRe:*
+// Bit-banged open-drain via the DIO buffer OE. Byte I/O uses the same quoted-hex
+// convention as SPI. Firmware = mechanism; CRC / DS18B20 decode are client-side.
+// *****************************************************************************
+
+scpi_result_t SCPI_OneWireEnableSet(scpi_t * context) {
+    int32_t dio, on;
+    if (!SCPI_ParamInt32(context, &dio, TRUE) ||
+        !SCPI_ParamInt32(context, &on, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (spi_RejectTrailingParam(context)) {
+        return SCPI_RES_ERR;   /* a rejected ENAble must not claim the pin */
+    }
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "OWIRE: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    const char* err = NULL;
+    if (!UserOneWire_Enable((uint8_t)dio, on != 0, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "OWIRE enable failed");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_OneWireReset(scpi_t * context) {
+    bool present = false; const char* err = NULL;
+    if (!UserOneWire_Reset(&present, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "OWIRE reset failed");
+        return SCPI_RES_ERR;
+    }
+    SCPI_ResultInt32(context, present ? 1 : 0);   /* 1 = presence detected */
+    return SCPI_RES_OK;
+}
+
+// SYST:COMM:OWIRe:TRANsfer? <hexWrite>,<nRead> -> hex of nRead read bytes.
+scpi_result_t SCPI_OneWireTransfer(scpi_t * context) {
+    const char* p = NULL; size_t len = 0;
+    int32_t nRead = 0;
+    if (!SCPI_ParamCharacters(context, &p, &len, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (!SCPI_ParamInt32(context, &nRead, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (nRead < 0 || nRead > 256) {
+        SCPI_ExecutionError(context, "OWIRE:TRAN: nRead out of range (0..256)");
+        return SCPI_RES_ERR;
+    }
+    uint8_t *buf = SCPI_ResponseBuf_Take();
+    if (buf == NULL) { return SCPI_RES_ERR; }
+    uint8_t *tx  = buf;                   /* [0..255]   */
+    uint8_t *rx  = buf + 256;             /* [256..511] */
+    char    *out = (char *)(buf + 512);   /* [512..2047] */
+
+    uint16_t nw = 0;
+    if (!spi_ParseHex(p, len, tx, 256u, &nw)) {
+        SCPI_ResponseBuf_Give();
+        SCPI_ExecutionError(context, "OWIRE:TRAN: bad hex (even digits, <=256 bytes)");
+        return SCPI_RES_ERR;
+    }
+    const char* err = NULL;
+    if (!UserOneWire_Transfer(tx, nw, rx, (size_t)nRead, &err)) {
+        SCPI_ResponseBuf_Give();
+        SCPI_ExecutionError(context, (err != NULL) ? err : "OWIRE transfer failed");
+        return SCPI_RES_ERR;
+    }
+    static const char hexd[] = "0123456789ABCDEF";
+    for (int32_t i = 0; i < nRead; ++i) {
+        out[2 * i]     = hexd[(rx[i] >> 4) & 0x0Fu];
+        out[2 * i + 1] = hexd[rx[i] & 0x0Fu];
+    }
+    out[2 * nRead] = '\0';
+    SCPI_ResultMnemonic(context, out);
+    SCPI_ResponseBuf_Give();
+    return SCPI_RES_OK;
+}
+
+// SYST:COMM:OWIRe:SEARch? -> comma-separated 64-bit ROM ids (16 hex chars each).
+scpi_result_t SCPI_OneWireSearch(scpi_t * context) {
+    uint8_t *buf = SCPI_ResponseBuf_Take();
+    if (buf == NULL) { return SCPI_RES_ERR; }
+    uint8_t *roms = buf;                            /* MAX*8 bytes */
+    char    *out  = (char *)(buf + 512);            /* room for the hex list */
+    uint8_t count = 0; const char* err = NULL;
+    if (!UserOneWire_Search(roms, USER_OWIRE_MAX_DEVICES, &count, &err)) {
+        SCPI_ResponseBuf_Give();
+        SCPI_ExecutionError(context, (err != NULL) ? err : "OWIRE search failed");
+        return SCPI_RES_ERR;
+    }
+    static const char hexd[] = "0123456789ABCDEF";
+    int o = 0;
+    for (uint8_t d = 0; d < count; ++d) {
+        if (d > 0) { out[o++] = ','; }
+        for (uint8_t b = 0; b < USER_OWIRE_ROM_BYTES; ++b) {
+            uint8_t v = roms[d * USER_OWIRE_ROM_BYTES + b];
+            out[o++] = hexd[(v >> 4) & 0x0Fu];
+            out[o++] = hexd[v & 0x0Fu];
+        }
+    }
+    out[o] = '\0';
+    SCPI_ResultMnemonic(context, (count > 0) ? out : "");
     SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
 }

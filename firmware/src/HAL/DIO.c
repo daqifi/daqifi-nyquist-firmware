@@ -222,6 +222,20 @@ bool DIO_DriveChannel(uint8_t channel, bool level) {
     return true;
 }
 
+bool DIO_ReadChannelRaw(uint8_t channel, bool* level) {
+    if (gpBoardConfig == NULL || channel >= gpBoardConfig->DIOChannels.Size ||
+        level == NULL) {
+        return false;
+    }
+    const DIOConfig* dio = &gpBoardConfig->DIOChannels.Data[channel];
+    /* Read the data pin directly (through the 100K series read path when the
+     * buffer is disabled). Unlike DIO_ReadSampleByMask this does NOT strip owned
+     * channels — the caller (e.g. the 1-Wire master) owns the pin and must be
+     * able to sample it. #669. */
+    *level = (GPIO_PortRead(dio->DataChannel) & (1u << dio->DataBitPos)) != 0u;
+    return true;
+}
+
 void DIO_RestoreChannel(uint8_t channel) {
     /* Re-apply the runtime-configured state. The caller must have released
      * its claim first, else DIO_WriteStateSingle short-circuits on the

@@ -215,6 +215,16 @@ scpi_result_t SCPI_SpiEnableGet(scpi_t * context);
 /*! SCPI: SYST:COMM:SPI:TRANsfer? <hex> -> full-duplex transfer, MISO as hex. */
 scpi_result_t SCPI_SpiTransfer(scpi_t * context);
 
+/* User 1-Wire master on a DIO channel (#669, epic #664). SYST:COMM:OWIRe:*. */
+/*! SCPI: SYST:COMM:OWIRe:ENAble <dio>,<0|1> -> claim/release the 1-Wire bus. */
+scpi_result_t SCPI_OneWireEnableSet(scpi_t * context);
+/*! SCPI: SYST:COMM:OWIRe:RESet? -> reset pulse; 1 = presence detected. */
+scpi_result_t SCPI_OneWireReset(scpi_t * context);
+/*! SCPI: SYST:COMM:OWIRe:TRANsfer? <hexWrite>,<nRead> -> reset+write+read, hex. */
+scpi_result_t SCPI_OneWireTransfer(scpi_t * context);
+/*! SCPI: SYST:COMM:OWIRe:SEARch? -> comma list of 64-bit ROM ids (hex). */
+scpi_result_t SCPI_OneWireSearch(scpi_t * context);
+
 /* User UART on the DIO terminal (#16, epic #664). SYST:COMM:UART:*. */
 /*! SCPI: SYST:COMM:UART:CONFig <rxDio|-1>,<txDio|-1>,<baud>[,<data 8>,<parity 0N|1E|2O>,<stop 1|2>] */
 scpi_result_t SCPI_UartConfigSet(scpi_t * context);
