@@ -165,7 +165,7 @@ bool UserClock_Configure(uint8_t dio, uint32_t hz, uint32_t* actualHz, const cha
      * live (possibly on another pin of the group) would desync the recorded pin
      * from the claimed/clocked one. Reject; the client disables first. */
     if (gState[idx].enabled) {
-        xSemaphoreGive(gClockMutex);
+        xSemaphoreGive(clock_Mutex());
         if (err) { *err = "clock: disable before reconfiguring (DIO:CLOCk:ENAble <dio>,0)"; }
         return false;
     }
@@ -174,7 +174,7 @@ bool UserClock_Configure(uint8_t dio, uint32_t hz, uint32_t* actualHz, const cha
     gState[idx].rodiv      = rodiv;
     gState[idx].rotrim     = rotrim;
     gState[idx].actualHz   = actual;
-    xSemaphoreGive(gClockMutex);
+    xSemaphoreGive(clock_Mutex());
     if (actualHz != NULL) { *actualHz = actual; }
     return true;
 }
@@ -209,8 +209,15 @@ bool UserClock_Enable(uint8_t dio, bool on, const char** err) {
                 gState[idx].enabled = true;
             }
         }
-    } else {
-        if (gState[idx].enabled) {
+    } else if (gState[idx].enabled) {
+        /* One unit serves a whole pin-group; tear down ONLY the pin that is
+         * actually clocking. Disabling a different pin of the same unit must not
+         * stop that unit's reference or release/restore the wrong (unclaimed)
+         * pin -- reject it (symmetric with the enable path's dio-mismatch guard). */
+        if (gState[idx].dio != dio) {
+            if (err) { *err = "clock: DIO is not the active clock pin for its unit"; }
+            ok = false;
+        } else {
             clock_SetPps(dio, 0u);                       /* unroute PPS */
             *(u->conClr) = CLK_ON_MASK;                  /* stop the reference */
             DIO_ReleaseChannel(dio, DIO_OWNER_CLOCK);    /* release BEFORE restore */
@@ -218,7 +225,7 @@ bool UserClock_Enable(uint8_t dio, bool on, const char** err) {
             gState[idx].enabled = false;
         }
     }
-    xSemaphoreGive(gClockMutex);
+    xSemaphoreGive(clock_Mutex());
     return ok;
 }
 
@@ -227,6 +234,6 @@ uint32_t UserClock_GetActualHz(uint8_t dio) {
     if (idx < 0) { return 0u; }
     xSemaphoreTake(clock_Mutex(), portMAX_DELAY);
     uint32_t hz = (gState[idx].enabled && gState[idx].dio == dio) ? gState[idx].actualHz : 0u;
-    xSemaphoreGive(gClockMutex);
+    xSemaphoreGive(clock_Mutex());
     return hz;
 }
