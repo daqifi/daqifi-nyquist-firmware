@@ -17,6 +17,7 @@
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
 #include "HAL/UserClock/UserClock.h"   // #668: REFCLKO clock outputs
+#include "HAL/UserIC/UserIC.h"         // #666: input-capture measurements
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/DIO.h"
 #include "../../HAL/TimerApi/TimerApi.h"
@@ -748,6 +749,97 @@ scpi_result_t SCPI_DioClockGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
     SCPI_ResultUInt32(context, UserClock_GetActualHz((uint8_t)dio));   /* 0 = off */
+    return SCPI_RES_OK;
+}
+
+/* --- input-capture measurements (#666, epic #664) — DIO:MEASure:* --- *
+ * One-shot: claim pin + a reachable IC unit, measure, release. On no/too-slow
+ * signal the query errors (pushed to the error queue) rather than returning a
+ * fake value (project standing rule). */
+
+/* DIO:MEASure:FREQuency? <dio>[,<gate_ms>] -> Hz (period-averaged). */
+scpi_result_t SCPI_DioMeasFrequency(scpi_t * context) {
+    int32_t dio, gate = 0;
+    if (!SCPI_ParamInt32(context, &dio, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    (void)SCPI_ParamInt32(context, &gate, FALSE);   /* optional gate window (ms) */
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "DIO:MEAS: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    if (gate < 0) {
+        SCPI_ExecutionError(context, "DIO:MEAS: gate_ms must be >= 0");
+        return SCPI_RES_ERR;
+    }
+    double hz = 0.0; const char* err = NULL;
+    if (!UserIC_MeasureFrequency((uint8_t)dio, (uint32_t)gate, &hz, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "DIO:MEAS:FREQ failed");
+        return SCPI_RES_ERR;
+    }
+    SCPI_ResultDouble(context, hz);
+    return SCPI_RES_OK;
+}
+
+/* DIO:MEASure:PERiod? <dio> -> microseconds (rising-to-rising). */
+scpi_result_t SCPI_DioMeasPeriod(scpi_t * context) {
+    int32_t dio;
+    if (!SCPI_ParamInt32(context, &dio, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "DIO:MEAS: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    double us = 0.0; const char* err = NULL;
+    if (!UserIC_MeasurePeriod((uint8_t)dio, &us, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "DIO:MEAS:PER failed");
+        return SCPI_RES_ERR;
+    }
+    SCPI_ResultDouble(context, us);
+    return SCPI_RES_OK;
+}
+
+/* DIO:MEASure:PWIDth? <dio>[,<pol>] -> microseconds; pol 1=high (default), 0=low. */
+scpi_result_t SCPI_DioMeasPulseWidth(scpi_t * context) {
+    int32_t dio, pol = 1;
+    if (!SCPI_ParamInt32(context, &dio, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    (void)SCPI_ParamInt32(context, &pol, FALSE);    /* optional polarity */
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "DIO:MEAS: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    if (pol != 0 && pol != 1) {
+        SCPI_ExecutionError(context, "DIO:MEAS: polarity must be 0 (low) or 1 (high)");
+        return SCPI_RES_ERR;
+    }
+    double us = 0.0; const char* err = NULL;
+    if (!UserIC_MeasurePulseWidth((uint8_t)dio, (uint8_t)pol, &us, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "DIO:MEAS:PWID failed");
+        return SCPI_RES_ERR;
+    }
+    SCPI_ResultDouble(context, us);
+    return SCPI_RES_OK;
+}
+
+/* DIO:MEASure:DUTY? <dio> -> percent high (0..100). */
+scpi_result_t SCPI_DioMeasDuty(scpi_t * context) {
+    int32_t dio;
+    if (!SCPI_ParamInt32(context, &dio, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "DIO:MEAS: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    double pct = 0.0; const char* err = NULL;
+    if (!UserIC_MeasureDuty((uint8_t)dio, &pct, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "DIO:MEAS:DUTY failed");
+        return SCPI_RES_ERR;
+    }
+    SCPI_ResultDouble(context, pct);
     return SCPI_RES_OK;
 }
 
