@@ -906,3 +906,107 @@ IntVectorADC_DC6_Handler:
     portRESTORE_CONTEXT
     .end   IntVectorADC_DC6_Handler
 
+
+/* #667: edge-event external-interrupt vectors (INT1=8, INT2=13, INT3=18, INT4=23)
+ * and pulse-totalizer rollover vectors (Timer8=36, Timer9=40). */
+    .extern  Edge_INT1_Handler
+    .section   .vector_8,code, keep
+    .equ     __vector_dispatch_8, IntVectorEdge_INT1_Handler
+    .global  __vector_dispatch_8
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorEdge_INT1_Handler
+IntVectorEdge_INT1_Handler:
+    portSAVE_CONTEXT
+    la    s6,  Edge_INT1_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorEdge_INT1_Handler
+
+    .extern  Edge_INT2_Handler
+    .section   .vector_13,code, keep
+    .equ     __vector_dispatch_13, IntVectorEdge_INT2_Handler
+    .global  __vector_dispatch_13
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorEdge_INT2_Handler
+IntVectorEdge_INT2_Handler:
+    portSAVE_CONTEXT
+    la    s6,  Edge_INT2_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorEdge_INT2_Handler
+
+    .extern  Edge_INT3_Handler
+    .section   .vector_18,code, keep
+    .equ     __vector_dispatch_18, IntVectorEdge_INT3_Handler
+    .global  __vector_dispatch_18
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorEdge_INT3_Handler
+IntVectorEdge_INT3_Handler:
+    portSAVE_CONTEXT
+    la    s6,  Edge_INT3_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorEdge_INT3_Handler
+
+    .extern  Edge_INT4_Handler
+    .section   .vector_23,code, keep
+    .equ     __vector_dispatch_23, IntVectorEdge_INT4_Handler
+    .global  __vector_dispatch_23
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorEdge_INT4_Handler
+IntVectorEdge_INT4_Handler:
+    portSAVE_CONTEXT
+    la    s6,  Edge_INT4_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorEdge_INT4_Handler
+
+    .extern  Edge_TMR8_Handler
+    .section   .vector_36,code, keep
+    .equ     __vector_dispatch_36, IntVectorEdge_TMR8_Handler
+    .global  __vector_dispatch_36
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorEdge_TMR8_Handler
+IntVectorEdge_TMR8_Handler:
+    portSAVE_CONTEXT
+    la    s6,  Edge_TMR8_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorEdge_TMR8_Handler
+
+    .extern  Edge_TMR9_Handler
+    .section   .vector_40,code, keep
+    .equ     __vector_dispatch_40, IntVectorEdge_TMR9_Handler
+    .global  __vector_dispatch_40
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorEdge_TMR9_Handler
+IntVectorEdge_TMR9_Handler:
+    portSAVE_CONTEXT
+    la    s6,  Edge_TMR9_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorEdge_TMR9_Handler

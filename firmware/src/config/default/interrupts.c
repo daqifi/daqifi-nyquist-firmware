@@ -55,6 +55,7 @@
 
 #include "HAL/ADC.h"
 #include "HAL/ADC/AdcThreshold.h"
+#include "HAL/UserEdge/UserEdge.h"
 #include "HAL/DIO.h"
 
 // *****************************************************************************
@@ -379,6 +380,19 @@ void __attribute__((used)) ADC_DC3_Handler(void) { AdcThreshold_IsrTrip(2); }
 void __attribute__((used)) ADC_DC4_Handler(void) { AdcThreshold_IsrTrip(3); }
 void __attribute__((used)) ADC_DC5_Handler(void) { AdcThreshold_IsrTrip(4); }
 void __attribute__((used)) ADC_DC6_Handler(void) { AdcThreshold_IsrTrip(5); }
+
+// #667: edge-event external-interrupt ISRs (vectors 8/13/18/23 = INT1-4) and pulse
+// totalizer rollover ISRs (vectors 36/40 = Timer8/9). Each defers to a UserEdge
+// body; priority 3 (set in UserEdge_Initialize) keeps them FreeRTOS-syscall-safe.
+void Edge_INT1_Handler(void); void Edge_INT2_Handler(void);
+void Edge_INT3_Handler(void); void Edge_INT4_Handler(void);
+void Edge_TMR8_Handler(void); void Edge_TMR9_Handler(void);
+void __attribute__((used)) Edge_INT1_Handler(void) { UserEdge_IsrEvent(0); }
+void __attribute__((used)) Edge_INT2_Handler(void) { UserEdge_IsrEvent(1); }
+void __attribute__((used)) Edge_INT3_Handler(void) { UserEdge_IsrEvent(2); }
+void __attribute__((used)) Edge_INT4_Handler(void) { UserEdge_IsrEvent(3); }
+void __attribute__((used)) Edge_TMR8_Handler(void) { UserEdge_IsrCounterRollover(0); }
+void __attribute__((used)) Edge_TMR9_Handler(void) { UserEdge_IsrCounterRollover(1); }
 
 
 

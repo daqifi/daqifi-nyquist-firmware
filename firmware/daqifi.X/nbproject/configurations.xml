@@ -340,6 +340,9 @@
         <logicalFolder name="UserClock" displayName="UserClock" projectFiles="true">
           <itemPath>../src/HAL/UserClock/UserClock.h</itemPath>
         </logicalFolder>
+        <logicalFolder name="UserEdge" displayName="UserEdge" projectFiles="true">
+          <itemPath>../src/HAL/UserEdge/UserEdge.h</itemPath>
+        </logicalFolder>
         <logicalFolder name="UserI2c" displayName="UserI2c" projectFiles="true">
           <itemPath>../src/HAL/UserI2c/UserI2c.h</itemPath>
         </logicalFolder>
@@ -940,6 +943,9 @@
         </logicalFolder>
         <logicalFolder name="UserClock" displayName="UserClock" projectFiles="true">
           <itemPath>../src/HAL/UserClock/UserClock.c</itemPath>
+        </logicalFolder>
+        <logicalFolder name="UserEdge" displayName="UserEdge" projectFiles="true">
+          <itemPath>../src/HAL/UserEdge/UserEdge.c</itemPath>
         </logicalFolder>
         <logicalFolder name="UserI2c" displayName="UserI2c" projectFiles="true">
           <itemPath>../src/HAL/UserI2c/UserI2c.c</itemPath>

@@ -100,6 +100,27 @@ scpi_result_t SCPI_DioClockEnable(scpi_t * context);
 /*! SCPI: DIO:CLOCk? <dio> -> achieved output Hz (0 = off). */
 scpi_result_t SCPI_DioClockGet(scpi_t * context);
 
+/* --- edge events + pulse-count totalizers (#667, epic #664) --- */
+/*! SCPI: DIO:EVENt:ENAble <dio>,<mode> -> arm/disarm edge events on a DIO pin
+ *  (mode 0=off,1=rising,2=falling,3=both). Claims the pin; rejected while streaming. */
+scpi_result_t SCPI_DioEventEnable(scpi_t * context);
+/*! SCPI: DIO:EVENt:ENAble? <dio> -> current armed mode (0 = off). */
+scpi_result_t SCPI_DioEventEnableGet(scpi_t * context);
+/*! SCPI: DIO:EVENt:COUNt? <dio> -> edge count since armed (0 if not an event pin). */
+scpi_result_t SCPI_DioEventCount(scpi_t * context);
+/*! SCPI: DIO:EVENt:NEXT? -> pop the oldest FIFO event as "<dio>,<ts>,<edge>", or
+ *  "-1,0,0" when the FIFO is empty. */
+scpi_result_t SCPI_DioEventNext(scpi_t * context);
+/*! SCPI: DIO:COUNter:ENAble <dio>,<0|1> -> arm/disarm a hardware pulse totalizer
+ *  (DIO 0/3/11/12). Claims the pin; rejected while streaming. */
+scpi_result_t SCPI_DioCounterEnable(scpi_t * context);
+/*! SCPI: DIO:COUNter:ENAble? <dio> -> 1 if a totalizer is armed on the pin, else 0. */
+scpi_result_t SCPI_DioCounterEnableGet(scpi_t * context);
+/*! SCPI: DIO:COUNter? <dio> -> hardware totalizer count (0 if not armed). */
+scpi_result_t SCPI_DioCounterGet(scpi_t * context);
+/*! SCPI: DIO:COUNter:CLEar <dio> -> reset the totalizer to 0 (allowed while streaming). */
+scpi_result_t SCPI_DioCounterClear(scpi_t * context);
+
 #ifdef	__cplusplus
 }
 #endif

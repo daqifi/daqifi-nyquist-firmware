@@ -14,6 +14,7 @@
 #include "services/sd_card_services/sd_card_manager.h"
 #include "HAL/DIO.h"
 #include "HAL/DioProbe.h"
+#include "HAL/UserEdge/UserEdge.h"
 #include "HAL/DAC7718/DAC7718.h"
 #include "Util/Logger.h"
 #include "Util/CoherentPool.h"
@@ -639,6 +640,8 @@ void app_SystemInit() {
     // Init DIO debug probe framework AFTER default DIO state is applied
     // so ad-hoc probes start from a known quiescent pin state.
     DioProbe_Init();
+    // #667: park edge-event (INT1-4) + pulse-totalizer (Timer8/9) hardware.
+    UserEdge_Initialize();
     Streaming_Init(&gpBoardConfig->StreamingConfig,
             &gpBoardRuntimeConfig->StreamingConfig);
     Streaming_UpdateState();
