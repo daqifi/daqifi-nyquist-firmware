@@ -835,6 +835,12 @@ scpi_result_t SCPI_ADCThresholdSet(scpi_t * context) {
     if (!SCPI_ParamInt32(context, &mode, TRUE)) return SCPI_RES_ERR;
     bool haveLo = SCPI_ParamInt32(context, &lo, FALSE);
     bool haveHi = SCPI_ParamInt32(context, &hi, FALSE);
+    // A malformed optional lo/hi (e.g. "...,banana") pushes a data-type error but
+    // still returns FALSE; treat that as a hard reject, not "absent", so a bad
+    // token can't fall through to a mode-0 release or a partially-parsed arm.
+    if (SCPI_ParamErrorOccurred(context)) {
+        return SCPI_RES_ERR;
+    }
     // Reject before the (uint8_t) narrowing so a value like 256 can't alias
     // onto a valid channel (#671 truncation-alias lesson).
     if (ch < 0 || ch > 255 || mode < 0 || mode > 4) {
