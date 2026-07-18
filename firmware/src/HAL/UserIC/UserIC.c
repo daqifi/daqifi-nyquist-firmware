@@ -462,11 +462,19 @@ bool UserIC_MeasureDuty(uint8_t dio, double* percent, const char** err) {
         if (err) { *err = "IC: could not determine edge polarity (coalesced)"; }
         return false;
     }
+    /* Average over COMPLETE cycles (one high + one low half each) so an unequal
+     * number of captured half-cycles can't skew the ratio — a clean 50% wave
+     * captured as H,L,H (2 highs, 1 low) would otherwise read ~60%. Each iteration
+     * consumes one high and one low interval; a trailing odd interval is dropped
+     * (#702). Strict edge alternation (both-edge capture + monotonic ts) means
+     * exactly one of the pair is the high half. */
     double high = 0.0, total = 0.0;
-    for (uint16_t k = 0; k + 1u < n; k++) {
-        double interval = (double)(ts[k + 1] - ts[k]);
-        total += interval;
-        if (ic_IntervalLevel((int)k, anchor, aLvl) == 1u) { high += interval; }
+    for (uint16_t k = 0; k + 2u < n; k += 2u) {
+        double first  = (double)(ts[k + 1] - ts[k]);
+        double second = (double)(ts[k + 2] - ts[k + 1]);
+        total += first + second;
+        if (ic_IntervalLevel((int)k, anchor, aLvl) == 1u) { high += first; }
+        else { high += second; }
     }
     if (total <= 0.0) { if (err) { *err = "IC: degenerate capture span"; } return false; }
     *percent = 100.0 * high / total;
