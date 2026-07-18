@@ -12,7 +12,7 @@
  * electrical risk unique to buffer-emulated open-drain is the read-0 logic
  * margin through the 100K read path — scope it on a real sensor.
  */
-#define LOG_LVL    LOG_LEVEL_GENERAL
+#define LOG_LVL    LOG_LEVEL_ERROR
 #define LOG_MODULE LOG_MODULE_GENERAL
 #include "UserOneWire.h"
 #include "device.h"
