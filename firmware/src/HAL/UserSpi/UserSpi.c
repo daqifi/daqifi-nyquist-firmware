@@ -32,7 +32,17 @@
  * A timeout here means SCK is not toggling (hardware/config fault). */
 #define USER_SPI_XFER_TIMEOUT   2000000UL
 
-/* Max bytes per SYST:COMM:SPI:TRANsfer? frame (matches the SCPI hex cap). */
+/* HAL scratch capacity per UserSpi_Transfer() frame. NOTE (#695): a single
+ * SYST:COMM:SPI:TRANsfer? command cannot deliver a full 256 B frame -- the hex
+ * payload (2 chars/byte) plus the command framing and CRLF terminator must fit
+ * SCPI_INPUT_BUFFER_LENGTH (512, one byte reserved). Bench-measured 2026-07-19
+ * (FW 3.7.2): the long query form `SYSTem:COMMunicate:SPI:TRANsfer? "<hex>"`
+ * tops out at 237 payload bytes (238 overruns); the abbreviated
+ * `SYST:COMM:SPI:TRAN?` form reaches 243. Larger requests are rejected by
+ * libscpi (INPUT_BUFFER_OVERRUN, -363) BEFORE this callback runs. Use 237 B as
+ * the safe single-command ceiling across command forms. This 256 B is the HAL
+ * capability for any non-buffer-bound caller; SCPI clients split larger frames.
+ * See SCPI_SpiTransfer() and the wiki SPI:TRANsfer? row. */
 #define USER_SPI_MAX_FRAME      256u
 
 // *****************************************************************************
