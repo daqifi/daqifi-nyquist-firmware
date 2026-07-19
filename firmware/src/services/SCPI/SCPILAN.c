@@ -917,11 +917,12 @@ static bool spi_ParseHex(const char* p, size_t len, uint8_t* out,
 }
 
 /* #695: the 256 B HAL scratch (USER_SPI_MAX_FRAME) is more than one SCPI
- * command can carry -- the hex payload plus the command framing must fit
- * SCPI_INPUT_BUFFER_LENGTH (512), so the reachable single-command frame is
- * ~238 B (see USER_SPI_MAX_FRAME's comment for the arithmetic). A larger
- * request is rejected as INPUT_BUFFER_OVERRUN by libscpi before this callback
- * runs; clients split frames >238 B. */
+ * command can carry -- the hex payload plus the command framing + CRLF must fit
+ * SCPI_INPUT_BUFFER_LENGTH (512). Bench-measured single-command ceiling is
+ * 237 B (long command form; the abbreviated form reaches 243) -- see
+ * USER_SPI_MAX_FRAME's comment. A larger request is rejected as
+ * INPUT_BUFFER_OVERRUN by libscpi before this callback runs; clients split
+ * frames >237 B. */
 scpi_result_t SCPI_SpiTransfer(scpi_t * context) {
     const char* p = NULL;
     size_t len = 0;
@@ -953,7 +954,7 @@ scpi_result_t SCPI_SpiTransfer(scpi_t * context) {
     uint16_t n = 0;
     if (!spi_ParseHex(p, len, tx, 256u, &n)) {
         SCPI_ResponseBuf_Give();
-        SCPI_ExecutionError(context, "SPI:TRAN: bad hex (even digits; <=238 bytes/command, split larger frames)");
+        SCPI_ExecutionError(context, "SPI:TRAN: bad hex (even digits; <=237 bytes/command, split larger frames)");
         return SCPI_RES_ERR;
     }
     if (!UserSpi_Transfer(tx, rx, n)) {
