@@ -143,13 +143,28 @@ extern "C" {
     } DaqifiSettingsType;
 
     /**
+     * Size of the NVM integrity checksum field. #306: this used to hold a
+     * 16-byte MD5 (wolfSSL); it now holds a 4-byte CRC32 (Util/CRC32) in the
+     * first 4 bytes, with the remaining bytes zero. The field is kept at the
+     * MD5 digest size so the on-NVM struct layout is byte-identical to pre-#306
+     * releases — a device upgrading from MD5 firmware still reads its stored
+     * settings via the CRC32-fails -> MD5-fallback path in daqifi_settings.c
+     * (see daqifi_settings_LoadFromNvm). Decoupling this from wolfSSL entirely
+     * (and dropping the MD5 fallback) is #306 phase 2, once all fielded devices
+     * have re-saved with CRC32.
+     */
+#define DAQIFI_SETTINGS_CHECKSUM_SIZE CRYPT_MD5_DIGEST_SIZE
+
+    /**
      * The wrapper for all Daqifi NVM settings
      */
     typedef struct sDaqifiSettings {
         /**
-         * The MD5 Checksum of this structure. This is how the system determines whether the values are valid.
+         * Integrity checksum of this structure's `settings` payload — how the
+         * system determines whether stored values are valid. CRC32 since #306
+         * (was MD5); see DAQIFI_SETTINGS_CHECKSUM_SIZE above.
          */
-        uint8_t md5Sum[CRYPT_MD5_DIGEST_SIZE];
+        uint8_t checksum[DAQIFI_SETTINGS_CHECKSUM_SIZE];
 
         /**
          * The type of settings stored in this object
