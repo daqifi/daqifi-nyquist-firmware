@@ -69,7 +69,6 @@ static volatile bool gIsEnabled = false;
 #define ADCTRG_REG_COUNT            3
 #define ADCTRG_CHANNELS_PER_REG     4
 #define ADCTRG_FIELD_MASK           0x1FU   // 5-bit trigger source field
-#define ADCCON1_STRGSRC_SHIFT       16      // STRGSRC is bits [20:16]
 
 // PLIB-initialized trigger register values, saved once in MC12b_InitHardware
 // (after ADCHS_Initialize). Restored when hardware triggering is disabled so
@@ -86,7 +85,7 @@ bool MC12b_InitHardware(MC12bModuleConfig* pModuleConfigInit,
     gSavedADCTRG[0] = ADCTRG1;
     gSavedADCTRG[1] = ADCTRG2;
     gSavedADCTRG[2] = ADCTRG3;
-    gSavedSTRGSRC = (ADCCON1 >> ADCCON1_STRGSRC_SHIFT) & ADCTRG_FIELD_MASK;
+    gSavedSTRGSRC = ADCCON1bits.STRGSRC;   // [20:16] (DFP _ADCCON1_STRGSRC)
 
     // Copy factory calibration data to calibration registers
     ADC0CFG = DEVADC0;
@@ -379,10 +378,10 @@ void MC12b_RestoreIdleScanList(void) {
  * Returns 0xFFFFFFFF when no scan is armed (no bound). */
 uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive) {
     if (nActive == 0u) return 0xFFFFFFFFu;  // no scan armed — no bound
-    uint32_t conclkdiv = (ADCCON3 >> 24) & 0x3Fu;
-    uint32_t adcdiv    = ADCCON2 & 0x7Fu;
+    uint32_t conclkdiv = ADCCON3bits.CONCLKDIV;   // [29:24]
+    uint32_t adcdiv    = ADCCON2bits.ADCDIV;       // [6:0]
     if (adcdiv == 0u) adcdiv = 1u;          // 0 is reserved — defensive
-    uint32_t samc      = (ADCCON2 >> 16) & 0x3FFu;
+    uint32_t samc      = ADCCON2bits.SAMC;         // [25:16]
     /* #487: TCLK = 1/PBCLK3 (ADC control clock).  DAQIFI_PBCLK_MHZ from
      * clock_config.h = 84 @252 MHz SYSCLK (TCLK ~11.9 ns) or 100 @200 MHz
      * (TCLK 10 ns). tadNs = 2·ADCDIV·(CONCLKDIV+1)·TCLK, scaled ×1000 for ns.
@@ -579,13 +578,13 @@ void MC12b_ConfigureHardwareTrigger(bool hwDedicated, bool hwShared) {
     ADCTRG2 = trg[1];
     ADCTRG3 = trg[2];
 
-    // MODULE7 scan trigger (ADCCON1.STRGSRC): controls when the shared
-    // module starts its multiplexed scan of all enabled shared channels.
+    // MODULE7 scan trigger (ADCCON1.STRGSRC [20:16]): controls when the
+    // shared module starts its multiplexed scan of all enabled shared
+    // channels. The bitfield assignment is the same read-clear-set-store
+    // as the prior manual RMW; scanSrc is always a valid 5-bit trigger
+    // source (ADC_TRGSRC_TMR5 or the saved default read from this field).
     uint32_t scanSrc = hwShared ? ADC_TRGSRC_TMR5 : gSavedSTRGSRC;
-    uint32_t con1 = ADCCON1;
-    con1 &= ~(ADCTRG_FIELD_MASK << ADCCON1_STRGSRC_SHIFT);
-    con1 |= (scanSrc << ADCCON1_STRGSRC_SHIFT);
-    ADCCON1 = con1;
+    ADCCON1bits.STRGSRC = scanSrc;
 }
 
 // Query functions read SFR registers directly — the register value IS
@@ -593,11 +592,11 @@ void MC12b_ConfigureHardwareTrigger(bool hwDedicated, bool hwShared) {
 bool MC12b_IsHwTriggerDedicated(void) {
     // Check first dedicated channel (AN0) — all Type 1 channels are set
     // together so any one is representative.
-    return (ADCTRG1 & ADCTRG_FIELD_MASK) == ADC_TRGSRC_TMR5;
+    return ADCTRG1bits.TRGSRC0 == ADC_TRGSRC_TMR5;   // [4:0]
 }
 
 bool MC12b_IsHwTriggerShared(void) {
-    return ((ADCCON1 >> ADCCON1_STRGSRC_SHIFT) & ADCTRG_FIELD_MASK) == ADC_TRGSRC_TMR5;
+    return ADCCON1bits.STRGSRC == ADC_TRGSRC_TMR5;   // [20:16]
 }
 
 // --- ADC acquisition-time (SAMC) runtime control — #328 phase 1 ----------
