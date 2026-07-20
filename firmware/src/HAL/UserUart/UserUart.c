@@ -206,22 +206,35 @@ static void uart_SetPmd(const UartDesc_t* u, bool enable) {
 // Section: helpers
 // *****************************************************************************
 
-/* BRG for a requested baud, BRGH=1, round-to-NEAREST (unlike SPI's round-down:
+/* BRG + BRGH-mode for a requested baud, round-to-NEAREST (unlike SPI's round-down:
  * UART baud is a match-tolerance constraint, both directions are fine within
- * ~2-3%, so nearest minimizes error). Also returns the achieved baud. Uses the
- * project's DAQIFI_UART_BRGH_DIV so the rounding matches the debug UART. */
-static uint32_t uart_ComputeBrg(uint32_t baudHz, uint32_t* actualOut) {
-    uint32_t brg = DAQIFI_UART_BRGH_DIV(baudHz);
-    if (brg > USER_UART_BRG_MAX) { brg = USER_UART_BRG_MAX; }
-    if (actualOut != NULL) {
-        *actualOut = USER_UART_PBCLK_HZ / (4u * (brg + 1u));
+ * ~2-3%, so nearest minimizes error). High rates use BRGH=1 (÷4, matching the
+ * debug UART's DAQIFI_UART_BRGH_DIV); a rate whose BRGH=1 divisor would saturate
+ * the 16-bit BRG falls back to BRGH=0 (÷16), quadrupling the reach so the
+ * advertised 300-baud floor is actually achievable (#700 — the code previously
+ * only ever used BRGH=1, whose floor is ~320 Hz, so 300..319 were rejected).
+ * Returns the achieved baud in *actualOut and the chosen mode in *brgh1Out. */
+static uint32_t uart_ComputeBrg(uint32_t baudHz, bool* brgh1Out, uint32_t* actualOut) {
+    uint32_t brg = DAQIFI_UART_BRGH_DIV(baudHz);         /* BRGH=1 candidate (÷4) */
+    bool brgh1 = (brg <= USER_UART_BRG_MAX);             /* use it iff it doesn't saturate */
+    if (!brgh1) {
+        /* BRGH=0: baud = PBCLK/(16*(BRG+1)); round-to-nearest (half-divisor = 8*baud). */
+        brg = ((USER_UART_PBCLK_HZ + (8u * baudHz)) / (16u * baudHz)) - 1u;
+        if (brg > USER_UART_BRG_MAX) { brg = USER_UART_BRG_MAX; }
     }
+    if (actualOut != NULL) {
+        uint32_t divk = brgh1 ? 4u : 16u;
+        *actualOut = USER_UART_PBCLK_HZ / (divk * (brg + 1u));
+    }
+    if (brgh1Out != NULL) { *brgh1Out = brgh1; }
     return brg;
 }
 
-/* Lowest achievable baud at this PBCLK (BRG saturates at 65535). */
+/* Lowest achievable baud at this PBCLK: BRGH=0 (÷16) with BRG saturated. This is
+ * the absolute floor (#700) — BRGH=1's floor is 4× higher; uart_ComputeBrg drops
+ * to BRGH=0 below it, so the advertised 300-baud minimum is reachable. */
 static uint32_t uart_BaudFloor(void) {
-    return USER_UART_PBCLK_HZ / (4u * (USER_UART_BRG_MAX + 1u));
+    return USER_UART_PBCLK_HZ / (16u * (USER_UART_BRG_MAX + 1u));
 }
 
 // *****************************************************************************
@@ -317,7 +330,12 @@ static bool uart_EnableLocked(const char** err) {
     /* UxMODE/UxSTA bit positions are identical across all UARTs, so the U1 mask
      * macros carry the generic values. PDSEL: parity 0/1/2 = 8N/8E/8O (the enum
      * matches the field). */
-    uint32_t mode = _U1MODE_BRGH_MASK;                                   /* BRGH=1 */
+    /* Compute BRG + BRGH mode up front: high rates use BRGH=1 (÷4), rates below
+     * its saturation floor fall back to BRGH=0 (÷16) so 300 baud is reachable (#700). */
+    bool brgh1 = true;
+    uint32_t brgVal = uart_ComputeBrg(gCfg.baudHz, &brgh1, &gActualBaud);
+
+    uint32_t mode = brgh1 ? _U1MODE_BRGH_MASK : 0u;                      /* BRGH per rate */
     mode |= ((uint32_t)gCfg.parity << _U1MODE_PDSEL_POSITION);           /* 8N/8E/8O */
     if (gCfg.stopBits == 2u) { mode |= _U1MODE_STSEL_MASK; }
     if (gCfg.rxInv)          { mode |= _U1MODE_RXINV_MASK; }
@@ -329,7 +347,7 @@ static bool uart_EnableLocked(const char** err) {
     if (gCfg.txInv)                       { sta |= _U1STA_UTXINV_MASK; }
     *(u->sta) = sta;
 
-    *(u->brg) = uart_ComputeBrg(gCfg.baudHz, &gActualBaud);
+    *(u->brg) = brgVal;
     *(u->modeSet) = _U1MODE_ON_MASK;
 
     /* Now route PPS (pin follows the already-idling UxTX) and switch the

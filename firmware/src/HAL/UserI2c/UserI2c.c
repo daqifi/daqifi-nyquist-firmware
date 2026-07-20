@@ -6,8 +6,10 @@
  * directly here. The register sequences mirror the hardware-proven I2C5 PLIB
  * (START/addr/ACKSTAT/TRN, RCEN/RCV/ACKEN, PEN); the state machine is folded
  * into bounded polled primitives that run from SCPI (task) context so a stuck
- * bus times out instead of hanging (a 9-clock + STOP recovery is wired into the
- * ENAble cycle). See UserI2c.h for the verified hardware topology.
+ * bus times out instead of hanging. A stuck-SDA recovery (9 SCL pulses + STOP)
+ * runs REACTIVELY on a transfer/scan timeout, so the next Scan/Transfer clears a
+ * slave holding SDA low; it is not run proactively at ENAble. See UserI2c.h for
+ * the verified hardware topology.
  */
 #include "device.h"
 #include "UserI2c.h"
