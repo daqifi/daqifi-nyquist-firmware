@@ -101,7 +101,18 @@ bool daqifi_settings_LoadFromNvm(DaqifiSettingsType type, DaqifiSettings* settin
     uint32_t crc = CRC32_Compute(&(tmpSettings.settings), dataSize);
     uint32_t storedCrc;
     memcpy(&storedCrc, tmpSettings.checksum, sizeof(storedCrc));
-    bool valid = (storedCrc == crc);
+    /* A valid CRC32 record is [crc(4) | zero(12)] (see the save path). Require
+     * the zero padding as well, so a legacy MD5 (or corrupt) 16-byte checksum
+     * can't alias a CRC32 match on just the first 4 bytes and wrongly skip the
+     * MD5 fallback — the full checksum field must match the CRC32 record shape. */
+    bool padZero = true;
+    for (size_t i = sizeof(storedCrc); i < DAQIFI_SETTINGS_CHECKSUM_SIZE; i++) {
+        if (tmpSettings.checksum[i] != 0u) {
+            padZero = false;
+            break;
+        }
+    }
+    bool valid = padZero && (storedCrc == crc);
 
     if (!valid) {
         uint8_t hash[CRYPT_MD5_DIGEST_SIZE];
