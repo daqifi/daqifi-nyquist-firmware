@@ -21,7 +21,7 @@
  * strict alternation; coalesced captures error out), and an epoch near-wrap glitch
  * is caught by a monotonic-timestamp check (error, never a fake value).
  */
-#define LOG_LVL    LOG_LEVEL_GENERAL
+#define LOG_LVL    LOG_LEVEL_ERROR
 #define LOG_MODULE LOG_MODULE_GENERAL
 #include "UserIC.h"
 #include "device.h"
@@ -176,6 +176,25 @@ static void ic_SetPmd(uint8_t u, bool enable) {
     for (volatile int d = 0; enable && d < 8; d++) { /* brief settle */ }
 }
 
+/* Set IC unit u's capture-interrupt priority to 3 (<= FreeRTOS max-syscall 4),
+ * subpriority 0. IPC fields per DS: IC1=IPC1<20:18>, IC2=IPC2<28:26>,
+ * IC3=IPC4<4:2>, IC4=IPC5<12:10>, IC5=IPC6<20:18>, IC6=IPC7<20:18>,
+ * IC7=IPC8<20:18>, IC8=IPC9<20:18>, IC9=IPC10<20:18>. */
+static void ic_SetPriority(uint8_t u) {
+    switch (u) {
+        case 0: IPC1bits.IC1IP  = 3; IPC1bits.IC1IS  = 0; break;
+        case 1: IPC2bits.IC2IP  = 3; IPC2bits.IC2IS  = 0; break;
+        case 2: IPC4bits.IC3IP  = 3; IPC4bits.IC3IS  = 0; break;
+        case 3: IPC5bits.IC4IP  = 3; IPC5bits.IC4IS  = 0; break;
+        case 4: IPC6bits.IC5IP  = 3; IPC6bits.IC5IS  = 0; break;
+        case 5: IPC7bits.IC6IP  = 3; IPC7bits.IC6IS  = 0; break;
+        case 6: IPC8bits.IC7IP  = 3; IPC8bits.IC7IS  = 0; break;
+        case 7: IPC9bits.IC8IP  = 3; IPC9bits.IC8IS  = 0; break;
+        case 8: IPC10bits.IC9IP = 3; IPC10bits.IC9IS = 0; break;
+        default: break;
+    }
+}
+
 /* TMR2 rollover callback (plib TIMER_2_InterruptHandler dispatches this). */
 static void ic_RolloverCb(uint32_t status, uintptr_t ctx) {
     (void)status; (void)ctx;
@@ -195,15 +214,14 @@ void UserIC_Initialize(void) {
         *(gIc[u].iecClr) = gIc[u].flagMask;
         *(gIc[u].ifsClr) = gIc[u].flagMask;
     }
-    IPC1bits.IC1IP  = 3; IPC1bits.IC1IS  = 0;
-    IPC2bits.IC2IP  = 3; IPC2bits.IC2IS  = 0;
-    IPC4bits.IC3IP  = 3; IPC4bits.IC3IS  = 0;
-    IPC5bits.IC4IP  = 3; IPC5bits.IC4IS  = 0;
-    IPC6bits.IC5IP  = 3; IPC6bits.IC5IS  = 0;
-    IPC7bits.IC6IP  = 3; IPC7bits.IC6IS  = 0;
-    IPC8bits.IC7IP  = 3; IPC8bits.IC7IS  = 0;
-    IPC9bits.IC8IP  = 3; IPC9bits.IC8IS  = 0;
-    IPC10bits.IC9IP = 3; IPC10bits.IC9IS = 0;
+    /* Boot-time priority park. NOTE (#702): this write does NOT persist to
+     * measurement time on hardware — IPC reads back 0 (priority 0 = the capture
+     * IRQ never fires, FIFO overflows, zero samples). Root cause of the boot-time
+     * loss is not fully pinned down (it survives when the identical write runs from
+     * a live SCPI task), so the authoritative set is re-asserted per-measurement in
+     * ic_Run (mirrors #670 AdcThreshold's thr_IntSetPriority arm-time pattern).
+     * Kept here as defensive parking; ic_Run is what actually guarantees it. */
+    for (uint8_t u = 0; u < USER_IC_UNITS; u++) { ic_SetPriority(u); }
     gM.active = false;
     /* Create the mutex unconditionally (not lazily): a non-zeroed-BSS reset (#409)
      * after an MCLR mid-measurement could otherwise leave gMutex pointing at a
@@ -315,6 +333,12 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
     /* Ungate the IC module clock (PMD) before any IC SFR write — else the writes
      * are silently ignored and no edge is ever captured. */
     ic_SetPmd((uint8_t)unit, true);
+
+    /* Re-assert the capture-interrupt priority at arm time. The boot-time set in
+     * UserIC_Initialize did not survive to measurement time (IPC read back 0 →
+     * priority 0 = IRQ never fires → FIFO fills+overflows, cnt stays 0, #702); set
+     * it here so a live measurement can never run with a priority-0 (masked) IC. */
+    ic_SetPriority((uint8_t)unit);
 
     /* Arm the IC unit: reset (ON=0), drain stale FIFO, set mode, enable IRQ, ON. */
     const IcRegs_t* r = &gIc[unit];
