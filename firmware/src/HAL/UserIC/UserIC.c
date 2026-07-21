@@ -44,6 +44,15 @@
 #define IC_CAP_MAX     16u         /* captured edges per measurement (RAM-bounded;
                                     * 15 periods is ample for averaging, and the
                                     * device is at the RAM edge) */
+#define IC_LOCK_WAIT_MS 250u       /* max wait to acquire the IC measurement lock.
+                                    * A measurement holds gMutex for up to hardMs
+                                    * (3xgate, up to 180 s on a dead pin); the lock
+                                    * is shared by the USB (pri7) and WiFi (pri2)
+                                    * SCPI paths, so a blocking take would let one
+                                    * interface's long measurement freeze the
+                                    * other's entire SCPI task. Bound it: a
+                                    * concurrent request returns IC-busy at once
+                                    * instead of blocking for minutes (#666 audit). */
 
 typedef struct {
     volatile uint32_t* con;     /* ICxCON  */
@@ -259,7 +268,14 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
         if (err) { *err = "IC: DIO pin is not input-capture reachable"; }
         return false;
     }
-    xSemaphoreTake(ic_Mutex(), portMAX_DELAY);
+    if (xSemaphoreTake(ic_Mutex(), pdMS_TO_TICKS(IC_LOCK_WAIT_MS)) != pdTRUE) {
+        /* Another measurement holds the lock (up to hardMs). Fail fast with a
+         * busy error instead of blocking this SCPI task — the lock is shared
+         * across the USB and WiFi SCPI paths, so blocking here would freeze a
+         * whole interface for the duration of the other's measurement. */
+        if (err) { *err = "IC: busy — another measurement in progress"; }
+        return false;
+    }
 
     /* serialized -> any reachable unit is free */
     int unit = -1;
