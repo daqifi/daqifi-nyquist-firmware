@@ -205,7 +205,12 @@ static inline uint32_t Streaming_SdAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2use
  * is <= the measured zero-loss ceiling at the tested channel counts (safe by
  * construction; tightness 86-100%).  This closes the prior format-blind hole
  * where high-channel CSV was capped well ABOVE its true ceiling (silent loss).
- * JSON is treated as CSV (text; slightly optimistic — refine if it matters).
+ * JSON uses the CSV coefficient family, then a /2 derate (it emits ~2-3x CSV
+ * bytes/sample; the /2 is an uncharacterized placeholder). NOTE (#562): JSON
+ * is held on the *legacy* CSV coefficients on USB/NQ1 — it does NOT inherit the
+ * 252 MHz CSV transport raise (guarded by `isNQ1 && !json`), because raising it
+ * on top of the /2 placeholder could over-cap JSON's uncharacterized byte cost.
+ * A JSON refit is a separate follow-up (#529); keep it decoupled until then.
  * Only meaningful for the ACTIVE interface; ComputeMaxFreqForConfig gates on it.
  *
  * @param interface      StreamingInterface (USB / WiFi / SD / UsbAndSd)
