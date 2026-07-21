@@ -340,14 +340,18 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
      * it here so a live measurement can never run with a priority-0 (masked) IC. */
     ic_SetPriority((uint8_t)unit);
 
-    /* Arm the IC unit: reset (ON=0), drain stale FIFO, set mode, enable IRQ, ON. */
+    /* Arm the IC unit: reset (ON=0), drain stale FIFO, set mode, enable IRQ, ON.
+     * The final enable is a FULL write (conCfg | ON), not a `|= ON` read-modify-
+     * write — the deferred capture ISR also writes ICxCON (storm-shed ON=0), and a
+     * full store keeps the enable atomic against that cross-context writer. */
     const IcRegs_t* r = &gIc[unit];
+    uint32_t conCfg = IC_CON_ICTMR | (fedge ? IC_CON_FEDGE : 0u) | icm;
     *(r->con) = 0u;
     while ((*r->con) & IC_CON_ICBNE) { (void)*(r->buf); }
     *(r->ifsClr) = r->flagMask;
-    *(r->con) = IC_CON_ICTMR | (fedge ? IC_CON_FEDGE : 0u) | icm;   /* ON still 0 */
+    *(r->con) = conCfg;               /* mode set, ON still 0 */
     *(r->iecSet) = r->flagMask;
-    *(r->con) |= IC_CON_ON;
+    *(r->con) = conCfg | IC_CON_ON;   /* enable — full store, not a RMW */
 
     /* Collect: stop when the buffer fills, or minEdges captured and the gate has
      * elapsed, or the hard timeout expires (no/too-slow signal). */
