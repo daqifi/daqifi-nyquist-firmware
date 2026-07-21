@@ -329,6 +329,14 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
     ic_SetPmd((uint8_t)unit, false);
     TimerApi_Stop(2);
     TimerApi_InterruptDisable(2);
+    /* Restore TMR2 to its boot-time state (plib TMR2_Initialize: PR2=116,
+     * 1:256 prescale) and drop our rollover callback, so a later TMR2 consumer
+     * can't inherit our free-running config or fire a stale ic_RolloverCb. IC
+     * is the only runtime TMR2 user today; this keeps that from silently
+     * becoming a shared-state bug if that changes (#666 review). */
+    TimerApi_CallbackRegister(2, NULL, 0);
+    TimerApi_PreScalerSet(2, TMR_PRESCALE_VALUE_256);
+    TimerApi_PeriodSet(2, 116u);
     ic_SetPps((uint8_t)unit, 0u);
     gM.active = false;
 
