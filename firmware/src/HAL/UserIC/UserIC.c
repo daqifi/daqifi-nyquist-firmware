@@ -245,10 +245,21 @@ void UserIC_IsrCapture(uint8_t unit) {
     while ((*r->con) & IC_CON_ICBNE) {
         uint32_t cap   = *(r->buf) & 0xFFFFu;   /* pops one FIFO entry */
         uint32_t epoch = gM.epoch;
-        /* Near-wrap reconciliation (best-effort; compute rejects non-monotonic
-         * timestamps as the backstop): a low-half capture with a pending TMR2
-         * rollover belongs to the next epoch. */
-        if ((IFS0 & _IFS0_T2IF_MASK) != 0u && cap < 0x8000u) { epoch++; }
+        /* Near-wrap epoch reconciliation, symmetric for BOTH ISR orderings, using
+         * the live TMR2 count as the reference. In the no-wrap common case now>=cap
+         * (the timer only advanced since the edge), so epoch is left untouched:
+         *  - rollover pending (T2IF set, epoch ISR hasn't run yet): a FIFO entry
+         *    at/below the post-wrap count belongs to the next epoch; a larger
+         *    (pre-wrap, near-0xFFFF) entry stays in the current epoch;
+         *  - no rollover pending but cap>now: the epoch ISR already ran and cleared
+         *    T2IF, yet this entry was latched just before that wrap — step back one.
+         * ic_Monotonic() remains the backstop that rejects any residual misorder. */
+        uint32_t now = TMR2 & 0xFFFFu;
+        if ((IFS0 & _IFS0_T2IF_MASK) != 0u) {
+            if (cap <= now) { epoch++; }
+        } else if (cap > now && epoch != 0u) {
+            epoch--;
+        }
         uint64_t ts = ((uint64_t)epoch << 16) | cap;
         /* Level for pulse/duty parity — trust it ONLY when this pop emptied the
          * FIFO (no coalescing); a multi-entry drain would stamp them all with the
