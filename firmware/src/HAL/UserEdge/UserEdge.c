@@ -216,6 +216,33 @@ static bool edge_Streaming(void) {
     return Streaming_IsActiveOnNonWifiInterface() || Streaming_IsActiveOnWifiInterface();
 }
 
+/* Re-assert INTx / TMR8-9-rollover interrupt priority (3, <= FreeRTOS syscall 4;
+ * subpriority 0). The identical write in UserEdge_Initialize runs in the pri-1
+ * boot task and does NOT persist on this silicon: the IPCn store reads back 0,
+ * leaving the vector at priority 0, which never fires — the exact #702
+ * input-capture root cause (edges reach the peripheral and the FIFO/hardware
+ * counter fills, but the deferring ISR is never entered → EVENt count stuck at
+ * 0, COUNter's 64-bit rollover extension dead). The same store from a live SCPI
+ * task sticks, so call these at ARM time, right before the matching IECxSET.
+ * Mirrors UserIC ic_SetPriority (the proven #702 fix). */
+static void edge_SetIntPriority(uint8_t u) {
+    switch (u) {
+        case 0: IPC2bits.INT1IP = 3; IPC2bits.INT1IS = 0; break;
+        case 1: IPC3bits.INT2IP = 3; IPC3bits.INT2IS = 0; break;
+        case 2: IPC4bits.INT3IP = 3; IPC4bits.INT3IS = 0; break;
+        case 3: IPC5bits.INT4IP = 3; IPC5bits.INT4IS = 0; break;
+        default: break;
+    }
+}
+
+static void edge_SetCtrPriority(uint8_t u) {
+    switch (u) {
+        case 0: IPC9bits.T8IP  = 3; IPC9bits.T8IS  = 0; break;
+        case 1: IPC10bits.T9IP = 3; IPC10bits.T9IS = 0; break;
+        default: break;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* FIFO (single ISR writer at a time; task pops under a critical section) */
 
@@ -239,16 +266,14 @@ void UserEdge_Initialize(void) {
      * subpriority 0. The interrupt-controller SFRs are not PMD-gated. */
     IEC0CLR = _IEC0_INT1IE_MASK | _IEC0_INT2IE_MASK | _IEC0_INT3IE_MASK | _IEC0_INT4IE_MASK;
     IFS0CLR = _IFS0_INT1IF_MASK | _IFS0_INT2IF_MASK | _IFS0_INT3IF_MASK | _IFS0_INT4IF_MASK;
-    IPC2bits.INT1IP = 3; IPC2bits.INT1IS = 0;
-    IPC3bits.INT2IP = 3; IPC3bits.INT2IS = 0;
-    IPC4bits.INT3IP = 3; IPC4bits.INT3IS = 0;
-    IPC5bits.INT4IP = 3; IPC5bits.INT4IS = 0;
+    /* Defensive parking only — this boot-task write does not persist (see
+     * edge_SetIntPriority); the arm path re-asserts and is authoritative. */
+    for (uint8_t u = 0; u < USER_EDGE_INT_UNITS; u++) { edge_SetIntPriority(u); }
 
     /* Park Timer8/9 rollover interrupts (the timers stay PMD-gated until armed). */
     IEC1CLR = _IEC1_T8IE_MASK | _IEC1_T9IE_MASK;
     IFS1CLR = _IFS1_T8IF_MASK | _IFS1_T9IF_MASK;
-    IPC9bits.T8IP  = 3; IPC9bits.T8IS  = 0;
-    IPC10bits.T9IP = 3; IPC10bits.T9IS = 0;
+    for (uint8_t u = 0; u < USER_EDGE_CTR_UNITS; u++) { edge_SetCtrPriority(u); }
 
     gFifoHead = 0u; gFifoTail = 0u; gFifoDropped = 0u;
     for (uint8_t u = 0; u < USER_EDGE_INT_UNITS; u++) {
@@ -336,6 +361,7 @@ bool UserEdge_EventEnable(uint8_t dio, uint8_t mode, const char** err) {
                 edge_ConfigInt((uint8_t)u, mode);
                 gIntState[u].dio = dio;
                 gIntState[u].enabled = true;
+                edge_SetIntPriority((uint8_t)u);          /* boot IPC write doesn't persist (#702) */
                 IEC0SET = r->ieMask;                      /* enable last */
             }
         }
@@ -442,6 +468,7 @@ bool UserEdge_CounterEnable(uint8_t dio, bool on, const char** err) {
             *(c->tmr) = 0u;
             *(c->pr)  = 0xFFFFu;                  /* rollover interrupt each 65536 */
             IFS1CLR = c->ifMask;
+            edge_SetCtrPriority((uint8_t)u);      /* boot IPC write doesn't persist (#702) */
             IEC1SET = c->ieMask;
             *(c->con) = _T8CON_TCS_MASK;          /* external clock on TxCK, 1:1, 16-bit */
             *(c->con) |= _T8CON_ON_MASK;
