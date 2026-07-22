@@ -490,8 +490,14 @@ bool UserEdge_CounterEnable(uint8_t dio, bool on, const char** err) {
             IFS1CLR = c->ifMask;
             edge_SetCtrPriority((uint8_t)u);      /* boot IPC write doesn't persist (#702) */
             IEC1SET = c->ieMask;
-            *(c->con) = _T8CON_TCS_MASK;          /* external clock on TxCK, 1:1, 16-bit */
-            *(c->con) |= _T8CON_ON_MASK;
+            /* Single full store of TCS|ON (not = TCS then |= ON): the RMW would
+             * read back con and could drop the just-written TCS bit if the SFR
+             * readback is transient right after PMD ungate, leaving the timer on
+             * the internal clock (TCS=0) yet still passing the ON-only liveness
+             * check below -> wrong totalizer source. One atomic 32-bit store sets
+             * both bits with no readback (mirrors the event path's ICxCON full-store
+             * enable). External clock on TxCK, 1:1, 16-bit. (Qodo #705.) */
+            *(c->con) = _T8CON_TCS_MASK | _T8CON_ON_MASK;
             if ((*(c->con) & _T8CON_ON_MASK) == 0u) {
                 /* liveness: a still-PMD-gated timer can't latch ON — fail cleanly */
                 *(c->con) = 0u;
