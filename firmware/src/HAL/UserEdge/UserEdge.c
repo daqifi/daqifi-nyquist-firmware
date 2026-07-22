@@ -399,16 +399,23 @@ bool UserEdge_EventEnable(uint8_t dio, uint8_t mode, const char** err) {
     return ok;
 }
 
-uint8_t UserEdge_EventMode(uint8_t dio) {
+int8_t UserEdge_EventMode(uint8_t dio) {
     int u = edge_IntUnitForDio(dio);
-    if (u < 0) { return 0u; }
-    uint8_t m = 0u;
+    if (u < 0) { return 0; }
+    int8_t m = 0;
     /* gMutex serializes vs a concurrent arm/disarm (another SCPI task) so the read
      * can't observe a half-applied transition; the critical section keeps the read
-     * coherent vs the INT ISR. */
+     * coherent vs the INT ISR. A pin auto-muted by the storm guard is still armed
+     * but its ISR is disabled and its count/FIFO have gone stale; report it as the
+     * NEGATED mode (-1/-2/-3) so a DIO:EVENt:ENAble? poller can tell an idle sensor
+     * (mode > 0, count simply not advancing) apart from a firmware auto-mute
+     * (mode < 0), per the CLAUDE.md stale-data visibility rule. Re-arm to resume. */
     xSemaphoreTake(edge_Mutex(), portMAX_DELAY);
     taskENTER_CRITICAL();
-    if (gIntState[u].enabled && gIntState[u].dio == dio) { m = gIntState[u].mode; }
+    if (gIntState[u].enabled && gIntState[u].dio == dio) {
+        m = (int8_t)gIntState[u].mode;
+        if (gIntState[u].stormed) { m = (int8_t)(-m); }
+    }
     taskEXIT_CRITICAL();
     xSemaphoreGive(gMutex);
     return m;

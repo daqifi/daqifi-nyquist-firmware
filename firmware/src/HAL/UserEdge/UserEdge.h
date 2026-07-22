@@ -85,7 +85,9 @@ void UserEdge_Initialize(void);
 bool UserEdge_EventEnable(uint8_t dio, uint8_t mode, const char** err);
 
 /** Current armed mode on @p dio (0 = off), for DIO:EVENt:ENAble?. */
-uint8_t UserEdge_EventMode(uint8_t dio);
+/* 0 = off, 1/2/3 = armed & live (rising/falling/both), -1/-2/-3 = armed but
+ * auto-muted by the edge-storm guard (magnitude = the mode); re-arm to resume. */
+int8_t UserEdge_EventMode(uint8_t dio);
 
 /** Accumulated edge count on @p dio since it was armed (0 if @p dio is not an
  *  active event pin), for DIO:EVENt:COUNt?. */

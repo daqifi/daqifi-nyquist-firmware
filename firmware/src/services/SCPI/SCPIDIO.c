@@ -785,7 +785,8 @@ scpi_result_t SCPI_DioEventEnableGet(scpi_t * context) {
         SCPI_ExecutionError(context, "DIO:EVENt: channel out of range (0..15)");
         return SCPI_RES_ERR;
     }
-    SCPI_ResultUInt32(context, UserEdge_EventMode((uint8_t)dio));   /* 0 = off */
+    /* 0 = off, 1/2/3 = armed & live, -1/-2/-3 = armed but storm-auto-muted. */
+    SCPI_ResultInt32(context, UserEdge_EventMode((uint8_t)dio));
     return SCPI_RES_OK;
 }
 
