@@ -296,11 +296,24 @@ void UserEdge_Initialize(void) {
 /* Configure an INT unit's edge polarity + reset its counters. IEC left DISABLED —
  * the caller enables it last, after gIntState[u].enabled is set, so no edge is
  * delivered against half-initialized state. */
-static void edge_ConfigInt(uint8_t u, uint8_t mode) {
+static void edge_ConfigInt(uint8_t u, uint8_t dio, uint8_t mode) {
     const EdgeIntUnit_t* r = &gInt[u];
     IEC0CLR = r->ieMask;                                        /* this unit's ISR can't run now */
-    if (mode == USER_EDGE_FALLING) { INTCONCLR = r->epMask; }   /* falling */
-    else { INTCONSET = r->epMask; }                             /* rising, and both starts on rising */
+    if (mode == USER_EDGE_FALLING) {
+        INTCONCLR = r->epMask;                                  /* falling */
+    } else if (mode == USER_EDGE_BOTH) {
+        /* Both-edge is emulated by flipping INTxEP per edge in the ISR, so the
+         * FIRST polarity must match the NEXT expected transition or that edge is
+         * missed (INTx is edge-triggered; a pin held HIGH at arm then driven LOW
+         * presents a falling edge while armed for rising -> no interrupt). Arm
+         * from the current level: HIGH -> expect falling next; LOW -> rising.
+         * (Audit #705.) Default to rising if the level can't be read. */
+        bool high = false;
+        (void)DIO_ReadChannelLevel(dio, &high);
+        if (high) { INTCONCLR = r->epMask; } else { INTCONSET = r->epMask; }
+    } else {
+        INTCONSET = r->epMask;                                  /* rising */
+    }
     /* Reset the shared state under a critical section: the 64-bit count store must
      * be atomic against a concurrent cross-task getter (this unit's ISR is already
      * IEC-disabled, but UserEdge_EventCount runs on another task). */
@@ -358,7 +371,7 @@ bool UserEdge_EventEnable(uint8_t dio, uint8_t mode, const char** err) {
                     DIO_SetChannelPeripheralInput(dio);   /* buffer high-Z; read the terminal */
                     edge_SetPps(r->rpr, code);            /* route the pin to INTx */
                 }
-                edge_ConfigInt((uint8_t)u, mode);
+                edge_ConfigInt((uint8_t)u, dio, mode);
                 gIntState[u].dio = dio;
                 gIntState[u].enabled = true;
                 edge_SetIntPriority((uint8_t)u);          /* boot IPC write doesn't persist (#702) */

@@ -354,6 +354,22 @@ bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask) {
     return true;
 }
 
+bool DIO_ReadChannelLevel(uint8_t channel, bool* level) {
+    /* Raw single-pin level read that BYPASSES the owned-mask filter used by
+     * DIO_ReadSampleByMask: a peripheral-claimed pin (an INT edge-event input,
+     * a 1-Wire bus) still needs its level sampled — e.g. to arm the correct
+     * first both-edge polarity from the pin's current state. Bounds-guarded
+     * like the other single-channel HAL entry points. */
+    if (level == NULL || gpBoardConfig == NULL ||
+        channel >= gpBoardConfig->DIOChannels.Size) {
+        return false;
+    }
+    GPIO_PORT dataChannel = gpBoardConfig->DIOChannels.Data[channel].DataChannel;
+    uint8_t   dataBitPos  = gpBoardConfig->DIOChannels.Data[channel].DataBitPos;
+    *level = (GPIO_PortRead(dataChannel) & (1u << dataBitPos)) != 0u;
+    return true;
+}
+
 bool DIO_PWMWriteStateSingle(uint8_t dataIndex) {
     /* Bounds-guard the table indexing below (same rationale as
      * DIO_WriteStateSingle): DIO_ChannelBlocked only rejects >= MAX_DIO_CHANNEL,

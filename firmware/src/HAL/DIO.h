@@ -91,7 +91,17 @@ void DIO_ProbeReleasePair(uint8_t channel);
  * @param mask Defines the channels that will be included
  */
 bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask);
-    
+
+/*!
+ * Read the raw logic level of one DIO channel's data pin, bypassing the
+ * owned-mask filter in DIO_ReadSampleByMask (so a peripheral-claimed pin can
+ * still be sampled). Bounds-guarded.
+ * @param channel DIO channel index
+ * @param level   [out] true = high, false = low (untouched on failure)
+ * @return true on success, false if out of range / not configured
+ */
+bool DIO_ReadChannelLevel(uint8_t channel, bool* level);
+
 /*!
  * Performs periodic tasks for DIO
  * @param latest Storage for the latest values
