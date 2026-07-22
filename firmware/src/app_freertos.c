@@ -13,6 +13,7 @@
 #include "Util/SpiBusHealth.h"
 #include "services/sd_card_services/sd_card_manager.h"
 #include "HAL/DIO.h"
+#include "HAL/UserIC/UserIC.h"
 #include "HAL/DioProbe.h"
 #include "HAL/UserEdge/UserEdge.h"
 #include "HAL/DAC7718/DAC7718.h"
@@ -632,6 +633,9 @@ void app_SystemInit() {
 
     // Init DIO Hardware
     DIO_InitHardware(gpBoardConfig, gpBoardRuntimeConfig);
+
+    // #666: park the input-capture units (disabled, IRQ off, priority 3)
+    UserIC_Initialize();
 
     // Write initial values
     DIO_WriteStateAll();

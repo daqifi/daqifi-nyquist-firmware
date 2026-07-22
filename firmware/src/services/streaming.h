@@ -205,7 +205,12 @@ static inline uint32_t Streaming_SdAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2use
  * is <= the measured zero-loss ceiling at the tested channel counts (safe by
  * construction; tightness 86-100%).  This closes the prior format-blind hole
  * where high-channel CSV was capped well ABOVE its true ceiling (silent loss).
- * JSON is treated as CSV (text; slightly optimistic — refine if it matters).
+ * JSON uses the CSV coefficient family, then a /2 derate (it emits ~2-3x CSV
+ * bytes/sample; the /2 is an uncharacterized placeholder). NOTE (#562): JSON
+ * is held on the *legacy* CSV coefficients on USB/NQ1 — it does NOT inherit the
+ * 252 MHz CSV transport raise (guarded by `isNQ1 && !json`), because raising it
+ * on top of the /2 placeholder could over-cap JSON's uncharacterized byte cost.
+ * A JSON refit is a separate follow-up (#529); keep it decoupled until then.
  * Only meaningful for the ACTIVE interface; ComputeMaxFreqForConfig gates on it.
  *
  * @param interface      StreamingInterface (USB / WiFi / SD / UsbAndSd)
@@ -253,7 +258,25 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
                 if (isNQ1) { single = 22000u; A = 120000u; B =  1u; }
                 else       { single = 15000u; A = 180000u; B = 10u; }
             }
-            else    { single = 15000u; A =  34000u; B =  1u; }
+            /* CSV transport refit 2026-07-21 @252 MHz (#562): NQ1 transport-bound
+             * cells measured 1ch(T1)=20000 / 5ch(T1)=15000 600 s-endurance-clean,
+             * board-validated on two units (…E8A7 + …0292 agree on the T1/CSV
+             * ceilings). single 15000->20000, A/(B+n) 34000/(1+n)->90000/(1+n)
+             * through the 5ch point (raise-only at every n). This retires the
+             * stale 200 MHz CSV transport curve as a binder for multi-channel, so
+             * the (conservative, 200 MHz-fitted) ADC additive term binds instead:
+             * 5xT1 5666->8533, 10ch 3090->4188, 16ch 2000->2835 -- each well under
+             * the measured NOCAP ceiling and at-cap-validated. NQ1 ONLY (NQ2/NQ3
+             * wider ADC samples cost more bytes/sample -> the NQ1 Hz cap would
+             * over-cap them). JSON is DECOUPLED (kept on the old CSV coeffs, then
+             * /2 downstream): its 2-3x-CSV byte cost is uncharacterized, so the
+             * ×0.5 placeholder must not inherit the raise. The CSV *additive*
+             * refit (unlocks the additive-bound 1ch/T2 cells, e.g. 1xT1 10589 vs
+             * measured 20000) needs a fine grid -> tracked #562/#529 follow-up. */
+            else {
+                if (isNQ1 && !json) { single = 20000u; A = 90000u; B = 1u; }
+                else                { single = 15000u; A = 34000u; B = 1u; }
+            }
             break;
         case StreamingInterface_WiFi:
             /* Refit 2026-06-11 (take-5 walk-down soaks, T2-only,

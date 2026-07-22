@@ -5,6 +5,7 @@
 #include "state/board/BoardConfig.h"
 #include "state/board/NQ3BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
+#include "Util/CRC32.h"   /* #306: settings integrity checksum (severs wolfSSL) */
 
 uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16)));
 
@@ -90,13 +91,39 @@ bool daqifi_settings_LoadFromNvm(DaqifiSettingsType type, DaqifiSettings* settin
     }
     memcpy(&tmpSettings, (uint32_t *) PA_TO_KVA1(address), sizeof (DaqifiSettings));
 
-    uint8_t hash[CRYPT_MD5_DIGEST_SIZE];
-    CRYPT_MD5_CTX md5Sum;
-    CRYPT_MD5_Initialize(&md5Sum);
-    CRYPT_MD5_DataAdd(&md5Sum, (const uint8_t*) &(tmpSettings.settings), dataSize);
-    CRYPT_MD5_Finalize(&md5Sum, hash);
+    /* #306: validate integrity with CRC32 (Util/CRC32), severing the settings
+     * load path from wolfSSL. Dual-validate for the migration window: if the
+     * CRC32 doesn't match, fall back to the legacy 16-byte MD5 checksum so a
+     * device upgrading from pre-#306 firmware still reads its stored settings
+     * (the next save rewrites them with CRC32). The CRC32 lives in the first
+     * 4 bytes of the layout-stable checksum field; the checksum covers only the
+     * `settings` payload (dataSize bytes), exactly as the MD5 did. */
+    uint32_t crc = CRC32_Compute(&(tmpSettings.settings), dataSize);
+    uint32_t storedCrc;
+    memcpy(&storedCrc, tmpSettings.checksum, sizeof(storedCrc));
+    /* A valid CRC32 record is [crc(4) | zero(12)] (see the save path). Require
+     * the zero padding as well, so a legacy MD5 (or corrupt) 16-byte checksum
+     * can't alias a CRC32 match on just the first 4 bytes and wrongly skip the
+     * MD5 fallback — the full checksum field must match the CRC32 record shape. */
+    bool padZero = true;
+    for (size_t i = sizeof(storedCrc); i < DAQIFI_SETTINGS_CHECKSUM_SIZE; i++) {
+        if (tmpSettings.checksum[i] != 0u) {
+            padZero = false;
+            break;
+        }
+    }
+    bool valid = padZero && (storedCrc == crc);
 
-    if (memcmp(hash, &tmpSettings.md5Sum, CRYPT_MD5_DIGEST_SIZE) != 0) {
+    if (!valid) {
+        uint8_t hash[CRYPT_MD5_DIGEST_SIZE];
+        CRYPT_MD5_CTX md5Ctx;
+        CRYPT_MD5_Initialize(&md5Ctx);
+        CRYPT_MD5_DataAdd(&md5Ctx, (const uint8_t*) &(tmpSettings.settings), dataSize);
+        CRYPT_MD5_Finalize(&md5Ctx, hash);
+        valid = (memcmp(hash, tmpSettings.checksum, CRYPT_MD5_DIGEST_SIZE) == 0);
+    }
+
+    if (!valid) {
         return false;
     }
 
@@ -234,12 +261,15 @@ bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
         return false;
     }
 
-    CRYPT_MD5_CTX md5Sum;
-    CRYPT_MD5_Initialize(&md5Sum);
-    CRYPT_MD5_DataAdd(&md5Sum, (const uint8_t*) &(settings->settings), dataSize);
-    CRYPT_MD5_Finalize(&md5Sum, settings->md5Sum);
+    /* #306: CRC32 integrity (Util/CRC32) — no wolfSSL on the save path. Store
+     * the 4-byte CRC32 in the first bytes of the layout-stable checksum field
+     * and zero the rest, so the field is deterministic and can't be mistaken
+     * for a 16-byte MD5 by the load-path fallback. */
+    uint32_t crc = CRC32_Compute(&(settings->settings), dataSize);
+    memset(settings->checksum, 0, sizeof(settings->checksum));
+    memcpy(settings->checksum, &crc, sizeof(crc));
 
-    if (sizeof (DaqifiSettings)>sizeof (gTempFflashBuffer)) {        
+    if (sizeof (DaqifiSettings)>sizeof (gTempFflashBuffer)) {
         return false;
     }
     memcpy(gTempFflashBuffer, settings, sizeof (DaqifiSettings));

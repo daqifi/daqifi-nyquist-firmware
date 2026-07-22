@@ -121,6 +121,15 @@ scpi_result_t SCPI_DioCounterEnableGet(scpi_t * context);
 scpi_result_t SCPI_DioCounterGet(scpi_t * context);
 /*! SCPI: DIO:COUNter:CLEar <dio> -> reset the totalizer to 0 (allowed while streaming). */
 scpi_result_t SCPI_DioCounterClear(scpi_t * context);
+/* --- input-capture measurements (#666, epic #664) — DIO:MEASure:* --- */
+/*! SCPI: DIO:MEASure:FREQuency? <dio>[,<gate_ms>] -> frequency in Hz. */
+scpi_result_t SCPI_DioMeasFrequency(scpi_t * context);
+/*! SCPI: DIO:MEASure:PERiod? <dio> -> rising-to-rising period in microseconds. */
+scpi_result_t SCPI_DioMeasPeriod(scpi_t * context);
+/*! SCPI: DIO:MEASure:PWIDth? <dio>[,<pol>] -> pulse width us (pol 1=high,0=low). */
+scpi_result_t SCPI_DioMeasPulseWidth(scpi_t * context);
+/*! SCPI: DIO:MEASure:DUTY? <dio> -> duty cycle percent (0..100). */
+scpi_result_t SCPI_DioMeasDuty(scpi_t * context);
 
 #ifdef	__cplusplus
 }

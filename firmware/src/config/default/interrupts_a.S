@@ -913,6 +913,29 @@ IntVectorADC_DC6_Handler:
     .section   .vector_8,code, keep
     .equ     __vector_dispatch_8, IntVectorEdge_INT1_Handler
     .global  __vector_dispatch_8
+/* #666: input-capture vectors (IC1=6, IC2=11, IC3=16, IC4=21, IC5=26, IC6=30,
+ * IC7=34, IC8=38, IC9=42). */
+    .extern  IC1_Capture_Handler
+    .section   .vector_6,code, keep
+    .equ     __vector_dispatch_6, IntVectorIC1_Capture_Handler
+    .global  __vector_dispatch_6
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorIC1_Capture_Handler
+IntVectorIC1_Capture_Handler:
+    portSAVE_CONTEXT
+    la    s6,  IC1_Capture_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorIC1_Capture_Handler
+
+    .extern  IC2_Capture_Handler
+    .section   .vector_11,code, keep
+    .equ     __vector_dispatch_11, IntVectorIC2_Capture_Handler
+    .global  __vector_dispatch_11
     .set     nomicromips
     .set     noreorder
     .set     nomips16
@@ -930,6 +953,19 @@ IntVectorEdge_INT1_Handler:
     .section   .vector_13,code, keep
     .equ     __vector_dispatch_13, IntVectorEdge_INT2_Handler
     .global  __vector_dispatch_13
+    .ent  IntVectorIC2_Capture_Handler
+IntVectorIC2_Capture_Handler:
+    portSAVE_CONTEXT
+    la    s6,  IC2_Capture_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorIC2_Capture_Handler
+
+    .extern  IC3_Capture_Handler
+    .section   .vector_16,code, keep
+    .equ     __vector_dispatch_16, IntVectorIC3_Capture_Handler
+    .global  __vector_dispatch_16
     .set     nomicromips
     .set     noreorder
     .set     nomips16
@@ -947,6 +983,19 @@ IntVectorEdge_INT2_Handler:
     .section   .vector_18,code, keep
     .equ     __vector_dispatch_18, IntVectorEdge_INT3_Handler
     .global  __vector_dispatch_18
+    .ent  IntVectorIC3_Capture_Handler
+IntVectorIC3_Capture_Handler:
+    portSAVE_CONTEXT
+    la    s6,  IC3_Capture_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorIC3_Capture_Handler
+
+    .extern  IC4_Capture_Handler
+    .section   .vector_21,code, keep
+    .equ     __vector_dispatch_21, IntVectorIC4_Capture_Handler
+    .global  __vector_dispatch_21
     .set     nomicromips
     .set     noreorder
     .set     nomips16
@@ -964,6 +1013,19 @@ IntVectorEdge_INT3_Handler:
     .section   .vector_23,code, keep
     .equ     __vector_dispatch_23, IntVectorEdge_INT4_Handler
     .global  __vector_dispatch_23
+    .ent  IntVectorIC4_Capture_Handler
+IntVectorIC4_Capture_Handler:
+    portSAVE_CONTEXT
+    la    s6,  IC4_Capture_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorIC4_Capture_Handler
+
+    .extern  IC5_Capture_Handler
+    .section   .vector_26,code, keep
+    .equ     __vector_dispatch_26, IntVectorIC5_Capture_Handler
+    .global  __vector_dispatch_26
     .set     nomicromips
     .set     noreorder
     .set     nomips16
@@ -981,6 +1043,19 @@ IntVectorEdge_INT4_Handler:
     .section   .vector_36,code, keep
     .equ     __vector_dispatch_36, IntVectorEdge_TMR8_Handler
     .global  __vector_dispatch_36
+    .ent  IntVectorIC5_Capture_Handler
+IntVectorIC5_Capture_Handler:
+    portSAVE_CONTEXT
+    la    s6,  IC5_Capture_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorIC5_Capture_Handler
+
+    .extern  IC6_Capture_Handler
+    .section   .vector_30,code, keep
+    .equ     __vector_dispatch_30, IntVectorIC6_Capture_Handler
+    .global  __vector_dispatch_30
     .set     nomicromips
     .set     noreorder
     .set     nomips16
@@ -998,6 +1073,19 @@ IntVectorEdge_TMR8_Handler:
     .section   .vector_40,code, keep
     .equ     __vector_dispatch_40, IntVectorEdge_TMR9_Handler
     .global  __vector_dispatch_40
+    .ent  IntVectorIC6_Capture_Handler
+IntVectorIC6_Capture_Handler:
+    portSAVE_CONTEXT
+    la    s6,  IC6_Capture_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorIC6_Capture_Handler
+
+    .extern  IC7_Capture_Handler
+    .section   .vector_34,code, keep
+    .equ     __vector_dispatch_34, IntVectorIC7_Capture_Handler
+    .global  __vector_dispatch_34
     .set     nomicromips
     .set     noreorder
     .set     nomips16
@@ -1010,3 +1098,46 @@ IntVectorEdge_TMR9_Handler:
     nop
     portRESTORE_CONTEXT
     .end   IntVectorEdge_TMR9_Handler
+    .ent  IntVectorIC7_Capture_Handler
+IntVectorIC7_Capture_Handler:
+    portSAVE_CONTEXT
+    la    s6,  IC7_Capture_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorIC7_Capture_Handler
+
+    .extern  IC8_Capture_Handler
+    .section   .vector_38,code, keep
+    .equ     __vector_dispatch_38, IntVectorIC8_Capture_Handler
+    .global  __vector_dispatch_38
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorIC8_Capture_Handler
+IntVectorIC8_Capture_Handler:
+    portSAVE_CONTEXT
+    la    s6,  IC8_Capture_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorIC8_Capture_Handler
+
+    .extern  IC9_Capture_Handler
+    .section   .vector_42,code, keep
+    .equ     __vector_dispatch_42, IntVectorIC9_Capture_Handler
+    .global  __vector_dispatch_42
+    .set     nomicromips
+    .set     noreorder
+    .set     nomips16
+    .set     noat
+    .ent  IntVectorIC9_Capture_Handler
+IntVectorIC9_Capture_Handler:
+    portSAVE_CONTEXT
+    la    s6,  IC9_Capture_Handler
+    jalr  s6
+    nop
+    portRESTORE_CONTEXT
+    .end   IntVectorIC9_Capture_Handler
+

@@ -56,6 +56,7 @@
 #include "HAL/ADC.h"
 #include "HAL/ADC/AdcThreshold.h"
 #include "HAL/UserEdge/UserEdge.h"
+#include "HAL/UserIC/UserIC.h"
 #include "HAL/DIO.h"
 
 // *****************************************************************************
@@ -393,6 +394,23 @@ void __attribute__((used)) Edge_INT3_Handler(void) { UserEdge_IsrEvent(2); }
 void __attribute__((used)) Edge_INT4_Handler(void) { UserEdge_IsrEvent(3); }
 void __attribute__((used)) Edge_TMR8_Handler(void) { UserEdge_IsrCounterRollover(0); }
 void __attribute__((used)) Edge_TMR9_Handler(void) { UserEdge_IsrCounterRollover(1); }
+// #666: input-capture ISRs (vectors 6/11/16/21/26/30/34/38/42 = IC1-9). Each
+// defers to UserIC_IsrCapture(unit) which drains the FIFO; priority 3 (set in
+// UserIC_Initialize) keeps them FreeRTOS-syscall-safe (<= 4).
+void IC1_Capture_Handler(void); void IC2_Capture_Handler(void);
+void IC3_Capture_Handler(void); void IC4_Capture_Handler(void);
+void IC5_Capture_Handler(void); void IC6_Capture_Handler(void);
+void IC7_Capture_Handler(void); void IC8_Capture_Handler(void);
+void IC9_Capture_Handler(void);
+void __attribute__((used)) IC1_Capture_Handler(void) { UserIC_IsrCapture(0); }
+void __attribute__((used)) IC2_Capture_Handler(void) { UserIC_IsrCapture(1); }
+void __attribute__((used)) IC3_Capture_Handler(void) { UserIC_IsrCapture(2); }
+void __attribute__((used)) IC4_Capture_Handler(void) { UserIC_IsrCapture(3); }
+void __attribute__((used)) IC5_Capture_Handler(void) { UserIC_IsrCapture(4); }
+void __attribute__((used)) IC6_Capture_Handler(void) { UserIC_IsrCapture(5); }
+void __attribute__((used)) IC7_Capture_Handler(void) { UserIC_IsrCapture(6); }
+void __attribute__((used)) IC8_Capture_Handler(void) { UserIC_IsrCapture(7); }
+void __attribute__((used)) IC9_Capture_Handler(void) { UserIC_IsrCapture(8); }
 
 
 
