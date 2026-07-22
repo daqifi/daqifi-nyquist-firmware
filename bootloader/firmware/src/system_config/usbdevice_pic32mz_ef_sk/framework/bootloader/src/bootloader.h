@@ -89,8 +89,9 @@ typedef enum
  * so it displayed reversed as "1.4". Ordering it {MAJOR_VERSION, MINOR_VERSION} makes the
  * #define names match the displayed string. 2.0 marks the bootloader carrying the #568
  * USB reset/deconfigure datastream state-reset (wedge-fix) and the re-enabled inbound CRC
- * gate; the host now displays "2.0" (was "1.4"). The proactive re-enumeration backstop is
- * intentionally NOT in this build (held on branch fix/bootloader-568-hid-wedge-crc-led). */
+ * gate; the host now displays "2.0" (was "1.4"). This branch ADDITIONALLY carries the
+ * proactive re-enumeration backstop (Detach/Attach after a grace period) on top of the
+ * merged state-reset fix -- held as a fallback, not merged. */
 static const uint8_t BootInfo[2] =
 {
     MAJOR_VERSION,
