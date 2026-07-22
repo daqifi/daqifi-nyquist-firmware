@@ -346,6 +346,7 @@
         </logicalFolder>
         <logicalFolder name="UserSpi" displayName="UserSpi" projectFiles="true">
           <itemPath>../src/HAL/UserSpi/UserSpi.h</itemPath>
+          <itemPath>../src/HAL/UserOneWire/UserOneWire.h</itemPath>
         </logicalFolder>
         <logicalFolder name="UserUart" displayName="UserUart" projectFiles="true">
           <itemPath>../src/HAL/UserUart/UserUart.h</itemPath>
@@ -948,6 +949,7 @@
         </logicalFolder>
         <logicalFolder name="UserSpi" displayName="UserSpi" projectFiles="true">
           <itemPath>../src/HAL/UserSpi/UserSpi.c</itemPath>
+          <itemPath>../src/HAL/UserOneWire/UserOneWire.c</itemPath>
         </logicalFolder>
         <logicalFolder name="UserUart" displayName="UserUart" projectFiles="true">
           <itemPath>../src/HAL/UserUart/UserUart.c</itemPath>

@@ -31,6 +31,7 @@
 #include "HAL/ADC.h"
 #include "HAL/ADC/AdcThreshold.h"
 #include "HAL/DIO.h"
+#include "HAL/UserOneWire/UserOneWire.h"   // #669: UserOneWire_IsBusy interlock
 #include "HAL/DioProbe.h"
 #include "SCPIADC.h"
 #include "SCPIDAC.h" 
@@ -3192,6 +3193,14 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
+    // #669: a 1-Wire transaction bit-bangs the bus in ~1 ms critical sections that
+    // mask the pri-3 stream timer. Reject START while one is in flight (the other
+    // half of the interlock — 1-Wire itself rejects transactions while streaming).
+    if (UserOneWire_IsBusy()) {
+        LOG_E("Streaming command rejected: a 1-Wire transaction is in progress");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     volatile AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
     volatile AInArray *pBoardConfigADC = BoardConfig_Get(BOARDCONFIG_AIN_CHANNELS, 0);
@@ -5433,6 +5442,11 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:COMMunicate:SPI:ENAble", .callback = SCPI_SpiEnableSet,},
     {.pattern = "SYSTem:COMMunicate:SPI:ENAble?", .callback = SCPI_SpiEnableGet,},
     {.pattern = "SYSTem:COMMunicate:SPI:TRANsfer?", .callback = SCPI_SpiTransfer,},
+    {.pattern = "SYSTem:COMMunicate:OWIRe:ENAble", .callback = SCPI_OneWireEnableSet,},
+    {.pattern = "SYSTem:COMMunicate:OWIRe:ENAble?", .callback = SCPI_OneWireEnableGet,},
+    {.pattern = "SYSTem:COMMunicate:OWIRe:RESet?", .callback = SCPI_OneWireReset,},
+    {.pattern = "SYSTem:COMMunicate:OWIRe:TRANsfer?", .callback = SCPI_OneWireTransfer,},
+    {.pattern = "SYSTem:COMMunicate:OWIRe:SEARch?", .callback = SCPI_OneWireSearch,},
     {.pattern = "SYSTem:COMMunicate:UART:CONFig", .callback = SCPI_UartConfigSet,},
     {.pattern = "SYSTem:COMMunicate:UART:CONFig?", .callback = SCPI_UartConfigGet,},
     {.pattern = "SYSTem:COMMunicate:UART:ENAble", .callback = SCPI_UartEnableSet,},
