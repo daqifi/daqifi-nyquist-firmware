@@ -272,7 +272,7 @@
  * or heap_4.c are included in the build.  This value is defaulted to 4096 bytes but
  * it must be tailored to each application.  Note the heap will appear in the .bss
  * section.  See https://www.freertos.org/a00111.html. */
-#define configTOTAL_HEAP_SIZE                   ( ( size_t ) 75000 ) //Daqifi Modified - task stacks + queues + WiFi driver only (pool has buffers + samples)
+#define configTOTAL_HEAP_SIZE                   ( ( size_t ) 74000 ) //Daqifi Modified - task stacks + queues + WiFi driver only (pool has buffers + samples). 75000->74000 (#667 merge): #666 IC + #667 edge-events co-resident overflowed the linker stack region by 208 B; the heap is BSS so shrinking it 1 KB frees the stack region (soak HeapMinEverFree=6888 -> 5888 B runtime headroom remains, safe).
 
 /* Set configAPPLICATION_ALLOCATED_HEAP to 1 to have the application allocate
  * the array used as the FreeRTOS heap.  Set to 0 to have the linker allocate the

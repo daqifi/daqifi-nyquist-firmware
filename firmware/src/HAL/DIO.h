@@ -91,7 +91,17 @@ void DIO_ProbeReleasePair(uint8_t channel);
  * @param mask Defines the channels that will be included
  */
 bool DIO_ReadSampleByMask(DIOSample* sample, uint32_t mask);
-    
+
+/*!
+ * Read the raw logic level of one DIO channel's data pin, bypassing the
+ * owned-mask filter in DIO_ReadSampleByMask (so a peripheral-claimed pin can
+ * still be sampled). Bounds-guarded.
+ * @param channel DIO channel index
+ * @param level   [out] true = high, false = low (untouched on failure)
+ * @return true on success, false if out of range / not configured
+ */
+bool DIO_ReadChannelLevel(uint8_t channel, bool* level);
+
 /*!
  * Performs periodic tasks for DIO
  * @param latest Storage for the latest values
@@ -136,8 +146,12 @@ typedef enum {
     DIO_OWNER_I2C,        //!< user I2C hub (#15)
     DIO_OWNER_UART,       //!< user UART (#16)
     DIO_OWNER_ONEWIRE,    //!< user 1-Wire master (#669)
-    DIO_OWNER_IC,         //!< input capture / edge events (#666/#667)
+    DIO_OWNER_IC,         //!< input capture — DIO:MEASure (#666)
     DIO_OWNER_CLOCK,      //!< clock output (#668)
+    DIO_OWNER_EDGE,       //!< edge events + pulse totalizers — DIO:EVENt/COUNter (#667).
+                          //!< Distinct from DIO_OWNER_IC so IC and edge features are
+                          //!< mutually exclusive on a shared pin (e.g. DIO5 = INT3 & IC3):
+                          //!< a same-pin claim by the other family is rejected, not aliased.
 } DioChannelOwner_t;
 
 /*! Claim a DIO channel for a peripheral. Fails if the index is out of

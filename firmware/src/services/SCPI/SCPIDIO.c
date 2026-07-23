@@ -17,6 +17,7 @@
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
 #include "HAL/UserClock/UserClock.h"   // #668: REFCLKO clock outputs
+#include "HAL/UserEdge/UserEdge.h"     // #667: edge events + pulse totalizers
 #include "HAL/UserIC/UserIC.h"         // #666: input-capture measurements
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/DIO.h"
@@ -749,6 +750,133 @@ scpi_result_t SCPI_DioClockGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
     SCPI_ResultUInt32(context, UserClock_GetActualHz((uint8_t)dio));   /* 0 = off */
+    return SCPI_RES_OK;
+}
+
+/* --- edge events + pulse-count totalizers (#667, epic #664) --- */
+
+scpi_result_t SCPI_DioEventEnable(scpi_t * context) {
+    int32_t dio, mode;
+    if (!SCPI_ParamInt32(context, &dio, TRUE) ||
+        !SCPI_ParamInt32(context, &mode, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "DIO:EVENt: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    if (mode < 0 || mode > 3) {
+        SCPI_ExecutionError(context, "DIO:EVENt: mode must be 0=off,1=rising,2=falling,3=both");
+        return SCPI_RES_ERR;
+    }
+    const char* err = NULL;
+    if (!UserEdge_EventEnable((uint8_t)dio, (uint8_t)mode, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "DIO:EVENt: enable rejected");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_DioEventEnableGet(scpi_t * context) {
+    int32_t dio;
+    if (!SCPI_ParamInt32(context, &dio, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "DIO:EVENt: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    /* 0 = off, 1/2/3 = armed & live, -1/-2/-3 = armed but storm-auto-muted. */
+    SCPI_ResultInt32(context, UserEdge_EventMode((uint8_t)dio));
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_DioEventCount(scpi_t * context) {
+    int32_t dio;
+    if (!SCPI_ParamInt32(context, &dio, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "DIO:EVENt: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    SCPI_ResultUInt64(context, UserEdge_EventCount((uint8_t)dio));   /* 0 if not an event pin */
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_DioEventNext(scpi_t * context) {
+    uint8_t dio = 0u, edge = 0u;
+    uint32_t ts = 0u, dropped = 0u;
+    if (UserEdge_EventNext(&dio, &ts, &edge, &dropped)) {
+        SCPI_ResultUInt32(context, dio);
+        SCPI_ResultUInt32(context, ts);
+        SCPI_ResultUInt32(context, edge);
+    } else {
+        SCPI_ResultInt32(context, -1);   /* FIFO empty sentinel */
+        SCPI_ResultUInt32(context, 0u);
+        SCPI_ResultUInt32(context, 0u);
+    }
+    SCPI_ResultUInt32(context, dropped); /* cumulative FIFO drop-oldest losses (gap signal) */
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_DioCounterEnable(scpi_t * context) {
+    int32_t dio, on;
+    if (!SCPI_ParamInt32(context, &dio, TRUE) ||
+        !SCPI_ParamInt32(context, &on, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "DIO:COUNter: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    const char* err = NULL;
+    if (!UserEdge_CounterEnable((uint8_t)dio, on != 0, &err)) {
+        SCPI_ExecutionError(context, (err != NULL) ? err : "DIO:COUNter: enable rejected");
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_DioCounterEnableGet(scpi_t * context) {
+    int32_t dio;
+    if (!SCPI_ParamInt32(context, &dio, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "DIO:COUNter: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    SCPI_ResultBool(context, UserEdge_CounterEnabled((uint8_t)dio));
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_DioCounterGet(scpi_t * context) {
+    int32_t dio;
+    if (!SCPI_ParamInt32(context, &dio, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "DIO:COUNter: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    SCPI_ResultUInt64(context, UserEdge_CounterGet((uint8_t)dio));   /* 0 if not armed */
+    return SCPI_RES_OK;
+}
+
+scpi_result_t SCPI_DioCounterClear(scpi_t * context) {
+    int32_t dio;
+    if (!SCPI_ParamInt32(context, &dio, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    if (dio < 0 || dio > 15) {
+        SCPI_ExecutionError(context, "DIO:COUNter: channel out of range (0..15)");
+        return SCPI_RES_ERR;
+    }
+    if (!UserEdge_CounterClear((uint8_t)dio)) {
+        SCPI_ExecutionError(context, "DIO:COUNter: no totalizer armed on this pin");
+        return SCPI_RES_ERR;
+    }
     return SCPI_RES_OK;
 }
 
