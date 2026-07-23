@@ -150,6 +150,7 @@ const char* DIO_ChannelOwnerName(DioChannelOwner_t owner) {
         case DIO_OWNER_ONEWIRE: return "1-Wire";
         case DIO_OWNER_IC:      return "InputCapture";
         case DIO_OWNER_CLOCK:   return "Clock";
+        case DIO_OWNER_EDGE:    return "EdgeEvent";
         default:                return "none";
     }
 }

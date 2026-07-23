@@ -146,8 +146,12 @@ typedef enum {
     DIO_OWNER_I2C,        //!< user I2C hub (#15)
     DIO_OWNER_UART,       //!< user UART (#16)
     DIO_OWNER_ONEWIRE,    //!< user 1-Wire master (#669)
-    DIO_OWNER_IC,         //!< input capture / edge events (#666/#667)
+    DIO_OWNER_IC,         //!< input capture — DIO:MEASure (#666)
     DIO_OWNER_CLOCK,      //!< clock output (#668)
+    DIO_OWNER_EDGE,       //!< edge events + pulse totalizers — DIO:EVENt/COUNter (#667).
+                          //!< Distinct from DIO_OWNER_IC so IC and edge features are
+                          //!< mutually exclusive on a shared pin (e.g. DIO5 = INT3 & IC3):
+                          //!< a same-pin claim by the other family is rejected, not aliased.
 } DioChannelOwner_t;
 
 /*! Claim a DIO channel for a peripheral. Fails if the index is out of

@@ -358,12 +358,12 @@ bool UserEdge_EventEnable(uint8_t dio, uint8_t mode, const char** err) {
         } else {
             bool fresh = !gIntState[u].enabled;
             if (fresh && edge_CounterActiveOnPin(dio)) {
-                /* Events and totalizers share DIO_OWNER_IC, so a same-owner claim
+                /* Events and totalizers share DIO_OWNER_EDGE, so a same-owner claim
                  * would succeed idempotently — cross-check the sibling family here
                  * (the #9 shared-pin guard extended ACROSS families). */
                 if (err) { *err = "DIO:EVENt: pin is an active totalizer (disable DIO:COUNter first)"; }
                 ok = false;
-            } else if (fresh && !DIO_ClaimChannel(dio, DIO_OWNER_IC)) {
+            } else if (fresh && !DIO_ClaimChannel(dio, DIO_OWNER_EDGE)) {
                 if (err) { *err = "DIO:EVENt: pin is owned by another peripheral"; }
                 ok = false;
             } else {
@@ -389,7 +389,7 @@ bool UserEdge_EventEnable(uint8_t dio, uint8_t mode, const char** err) {
                 edge_SetPps(r->rpr, 0u);
                 gIntState[u].enabled = false;
                 gIntState[u].stormed = false;
-                DIO_ReleaseChannel(dio, DIO_OWNER_IC);
+                DIO_ReleaseChannel(dio, DIO_OWNER_EDGE);
                 DIO_RestoreChannel(dio);
             }
         }
@@ -473,10 +473,10 @@ bool UserEdge_CounterEnable(uint8_t dio, bool on, const char** err) {
             /* idempotent — already counting this pin */
         } else if (edge_EventActiveOnPin(dio)) {
             /* cross-family guard: the pin is a live edge-event source (shared
-             * DIO_OWNER_IC — see UserEdge_EventEnable). */
+             * DIO_OWNER_EDGE — see UserEdge_EventEnable). */
             if (err) { *err = "DIO:COUNter: pin is an active event source (disable DIO:EVENt first)"; }
             ok = false;
-        } else if (!DIO_ClaimChannel(dio, DIO_OWNER_IC)) {
+        } else if (!DIO_ClaimChannel(dio, DIO_OWNER_EDGE)) {
             if (err) { *err = "DIO:COUNter: pin is owned by another peripheral"; }
             ok = false;
         } else {
@@ -504,7 +504,7 @@ bool UserEdge_CounterEnable(uint8_t dio, bool on, const char** err) {
                 IEC1CLR = c->ieMask;
                 edge_CtrSetPmd((uint8_t)u, false);
                 edge_SetPps(c->rpr, 0u);
-                DIO_ReleaseChannel(dio, DIO_OWNER_IC);
+                DIO_ReleaseChannel(dio, DIO_OWNER_EDGE);
                 DIO_RestoreChannel(dio);
                 if (err) { *err = "DIO:COUNter: timer failed to power up (PMD)"; }
                 ok = false;
@@ -525,7 +525,7 @@ bool UserEdge_CounterEnable(uint8_t dio, bool on, const char** err) {
                 edge_CtrSetPmd((uint8_t)u, false);
                 edge_SetPps(c->rpr, 0u);
                 gCtrState[u].enabled = false;
-                DIO_ReleaseChannel(dio, DIO_OWNER_IC);
+                DIO_ReleaseChannel(dio, DIO_OWNER_EDGE);
                 DIO_RestoreChannel(dio);
             }
         }
