@@ -203,12 +203,19 @@ static inline uint32_t Streaming_SdAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2use
          * 157007 = the old 93539 base + 63468 armed offset. */
         period_ns = 157007ULL + 7959ULL*(uint64_t)nT1 + 4615ULL*(uint64_t)nT2user;
     } else {
-        /* #714 refit (2026-07-23): the pure-T1 (no-scan) branch over-capped
-         * 1xT1 at 9852 — at-cap silently dropped 2.57M bytes/100 s. Freeze-aware
-         * walk-down (COM3 …E8A7, atcap_20260723_013919.csv) measured the true
-         * zero-loss ceiling at 8600. Re-fit ~8% under (never-over): 1xT1 7900.
-         * Slope keeps 3xT1 (SD-transport-bound at 5528) and 5xT1 (~7499)
-         * unchanged — only the additive-bound 1xT1 cell moves. */
+        /* #714 refit (2026-07-23): the whole pure-T1 (no-scan, OBDiag=off) branch
+         * was over-high. The old 93539+7959*nT1 curve capped 1xT1 at 9852, which
+         * at-cap silently dropped 2.57M bytes/100 s (measured ceiling 8600); the
+         * higher-nT1 cells of that curve (2xT1 9137, 3xT1 8517, 4xT1 7979) sit in
+         * the SAME over-high regime — the SD-PB transport term (99000/(4+n):
+         * 2ch 16500 ... 5ch 11000) is well ABOVE them, so this additive binds and
+         * the old values were enforced with no measured backing. The pure-T1 SD
+         * Hz ceiling is roughly FLAT (SD-writer per-tick cost dominates, not bytes):
+         * re-fit ~5-8% under the flat ceiling — 1xT1 7900, 2xT1 7795, 3xT1 7694,
+         * 4xT1 7592, 5xT1 7499. BOTH endpoints at-cap-validated zero-loss (1xT1
+         * @7900, 5xT1 @7499, atcap_20260723_025553.csv); 2/3/4xT1 are bracketed on
+         * this monotonic curve. A precise per-channel multi-T1 SD ceiling sweep
+         * (to reclaim any headroom) is a #714 follow-up — never-over holds now. */
         period_ns = 124890ULL + 1692ULL*(uint64_t)nT1;
     }
     uint32_t hz = (uint32_t)(1000000000ULL / period_ns);  /* period_ns >= base, no div-by-0 */
