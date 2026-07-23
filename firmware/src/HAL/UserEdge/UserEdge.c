@@ -226,6 +226,14 @@ static bool edge_Streaming(void) {
  * task sticks, so call these at ARM time, right before the matching IECxSET.
  * Mirrors UserIC ic_SetPriority (the proven #702 fix). */
 static void edge_SetIntPriority(uint8_t u) {
+    /* Each IPCn bitfield write is a read-modify-write of a 32-bit register shared
+     * with other interrupts' priority fields — notably INT3 (IPC4<20:18>) shares
+     * IPC4 with IC3 (IPC4<4:2>), so a concurrent DIO:MEASure arm on the other SCPI
+     * interface (USB pri 7 can preempt WiFi pri 2 mid-RMW) could clobber this
+     * write. All call sites (boot + arm) run in task context (app_SystemInit runs
+     * inside the pri-1 APP_FREERTOS_Tasks task), so a critical section is the
+     * correct guard (project atomicity rule; Qodo #705). */
+    taskENTER_CRITICAL();
     switch (u) {
         case 0: IPC2bits.INT1IP = 3; IPC2bits.INT1IS = 0; break;
         case 1: IPC3bits.INT2IP = 3; IPC3bits.INT2IS = 0; break;
@@ -233,14 +241,19 @@ static void edge_SetIntPriority(uint8_t u) {
         case 3: IPC5bits.INT4IP = 3; IPC5bits.INT4IS = 0; break;
         default: break;
     }
+    taskEXIT_CRITICAL();
 }
 
 static void edge_SetCtrPriority(uint8_t u) {
+    /* RMW on IPC9/IPC10 shared with IC8/IC9 priority fields — guard as in
+     * edge_SetIntPriority (task-context critical section; Qodo #705). */
+    taskENTER_CRITICAL();
     switch (u) {
         case 0: IPC9bits.T8IP  = 3; IPC9bits.T8IS  = 0; break;
         case 1: IPC10bits.T9IP = 3; IPC10bits.T9IS = 0; break;
         default: break;
     }
+    taskEXIT_CRITICAL();
 }
 
 /* ------------------------------------------------------------------ */
@@ -389,6 +402,7 @@ bool UserEdge_EventEnable(uint8_t dio, uint8_t mode, const char** err) {
                 edge_SetPps(r->rpr, 0u);
                 gIntState[u].enabled = false;
                 gIntState[u].stormed = false;
+                gIntState[u].dio = 0u;   /* drop stale pin ref, symmetric w/ counter (Qodo #705) */
                 DIO_ReleaseChannel(dio, DIO_OWNER_EDGE);
                 DIO_RestoreChannel(dio);
             }
@@ -525,6 +539,7 @@ bool UserEdge_CounterEnable(uint8_t dio, bool on, const char** err) {
                 edge_CtrSetPmd((uint8_t)u, false);
                 edge_SetPps(c->rpr, 0u);
                 gCtrState[u].enabled = false;
+                gCtrState[u].dio = 0u;   /* drop stale pin ref (Qodo #705) */
                 DIO_ReleaseChannel(dio, DIO_OWNER_EDGE);
                 DIO_RestoreChannel(dio);
             }
