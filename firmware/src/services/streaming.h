@@ -147,7 +147,15 @@ static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2us
         } else if (armed != 0u) {
             period_ns = 58000ULL + 2160ULL*nT1 + 10000ULL*nT2user;
         } else {
-            period_ns = 43200ULL + 2300ULL*nT1;
+            /* #714/#90 refit (2026-07-23): the #596 pure-T1 term (43200+2300*nT1)
+             * over-caps USB PB at 252 MHz — at-cap silently drops. Freeze-aware
+             * walk-down soaks (COM3 …E8A7, 100 s/step, atcap_20260723_013919.csv)
+             * measured the true zero-loss ceilings: 1xT1 16900, 3xT1 15350,
+             * 5xT1 14075 (vs the enforced 19340/17564/16087 — ~14% too high).
+             * Re-fit ~7% under the measured ceilings (never-over): 1xT1 15799,
+             * 3xT1 14263, 5xT1 12998. Binds USB PB pure-T1 only (SD is SdAdditive-
+             * bound lower, WiFi/USB+SD transport-bound lower). */
+            period_ns = 52700ULL + 3000ULL*nT1;
         }
         num = 880000000ULL;   /* 1e9 * 0.88 (PB safe envelope) */
     } else {
@@ -188,8 +196,28 @@ static inline uint32_t Streaming_SdAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2use
         return STREAMING_ISR_MAX_HZ;   /* CSV is byte-bound: the transport term binds it */
     }
     uint32_t armed = (nT2user > 0u || nMon > 0u) ? 1u : 0u;
-    uint64_t period_ns = 93539ULL + 63468ULL*armed
-                       + 7959ULL*(uint64_t)nT1 + 4615ULL*(uint64_t)nT2user;
+    uint64_t period_ns;
+    if (armed != 0u) {
+        /* Armed (scan running) cells UNCHANGED from the #574 fit — every armed
+         * SD-PB cell (1xT2, mixed, OBDiag) at-cap-validated clean 2026-07-23.
+         * 157007 = the old 93539 base + 63468 armed offset. */
+        period_ns = 157007ULL + 7959ULL*(uint64_t)nT1 + 4615ULL*(uint64_t)nT2user;
+    } else {
+        /* #714 refit (2026-07-23): the whole pure-T1 (no-scan, OBDiag=off) branch
+         * was over-high. The old 93539+7959*nT1 curve capped 1xT1 at 9852, which
+         * at-cap silently dropped 2.57M bytes/100 s (measured ceiling 8600); the
+         * higher-nT1 cells of that curve (2xT1 9137, 3xT1 8517, 4xT1 7979) sit in
+         * the SAME over-high regime — the SD-PB transport term (99000/(4+n):
+         * 2ch 16500 ... 5ch 11000) is well ABOVE them, so this additive binds and
+         * the old values were enforced with no measured backing. The pure-T1 SD
+         * Hz ceiling is roughly FLAT (SD-writer per-tick cost dominates, not bytes):
+         * re-fit ~5-8% under the flat ceiling — 1xT1 7900, 2xT1 7795, 3xT1 7694,
+         * 4xT1 7592, 5xT1 7499. BOTH endpoints at-cap-validated zero-loss (1xT1
+         * @7900, 5xT1 @7499, atcap_20260723_025553.csv); 2/3/4xT1 are bracketed on
+         * this monotonic curve. A precise per-channel multi-T1 SD ceiling sweep
+         * (to reclaim any headroom) is a #714 follow-up — never-over holds now. */
+        period_ns = 124890ULL + 1692ULL*(uint64_t)nT1;
+    }
     uint32_t hz = (uint32_t)(1000000000ULL / period_ns);  /* period_ns >= base, no div-by-0 */
     if (hz > STREAMING_ISR_MAX_HZ) hz = STREAMING_ISR_MAX_HZ;
     return (hz == 0u) ? 1u : hz;
