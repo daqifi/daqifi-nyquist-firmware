@@ -147,7 +147,15 @@ static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2us
         } else if (armed != 0u) {
             period_ns = 58000ULL + 2160ULL*nT1 + 10000ULL*nT2user;
         } else {
-            period_ns = 43200ULL + 2300ULL*nT1;
+            /* #714/#90 refit (2026-07-23): the #596 pure-T1 term (43200+2300*nT1)
+             * over-caps USB PB at 252 MHz — at-cap silently drops. Freeze-aware
+             * walk-down soaks (COM3 …E8A7, 100 s/step, atcap_20260723_013919.csv)
+             * measured the true zero-loss ceilings: 1xT1 16900, 3xT1 15350,
+             * 5xT1 14075 (vs the enforced 19340/17564/16087 — ~14% too high).
+             * Re-fit ~7% under the measured ceilings (never-over): 1xT1 15799,
+             * 3xT1 14263, 5xT1 12998. Binds USB PB pure-T1 only (SD is SdAdditive-
+             * bound lower, WiFi/USB+SD transport-bound lower). */
+            period_ns = 52700ULL + 3000ULL*nT1;
         }
         num = 880000000ULL;   /* 1e9 * 0.88 (PB safe envelope) */
     } else {
@@ -188,8 +196,21 @@ static inline uint32_t Streaming_SdAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2use
         return STREAMING_ISR_MAX_HZ;   /* CSV is byte-bound: the transport term binds it */
     }
     uint32_t armed = (nT2user > 0u || nMon > 0u) ? 1u : 0u;
-    uint64_t period_ns = 93539ULL + 63468ULL*armed
-                       + 7959ULL*(uint64_t)nT1 + 4615ULL*(uint64_t)nT2user;
+    uint64_t period_ns;
+    if (armed != 0u) {
+        /* Armed (scan running) cells UNCHANGED from the #574 fit — every armed
+         * SD-PB cell (1xT2, mixed, OBDiag) at-cap-validated clean 2026-07-23.
+         * 157007 = the old 93539 base + 63468 armed offset. */
+        period_ns = 157007ULL + 7959ULL*(uint64_t)nT1 + 4615ULL*(uint64_t)nT2user;
+    } else {
+        /* #714 refit (2026-07-23): the pure-T1 (no-scan) branch over-capped
+         * 1xT1 at 9852 — at-cap silently dropped 2.57M bytes/100 s. Freeze-aware
+         * walk-down (COM3 …E8A7, atcap_20260723_013919.csv) measured the true
+         * zero-loss ceiling at 8600. Re-fit ~8% under (never-over): 1xT1 7900.
+         * Slope keeps 3xT1 (SD-transport-bound at 5528) and 5xT1 (~7499)
+         * unchanged — only the additive-bound 1xT1 cell moves. */
+        period_ns = 124890ULL + 1692ULL*(uint64_t)nT1;
+    }
     uint32_t hz = (uint32_t)(1000000000ULL / period_ns);  /* period_ns >= base, no div-by-0 */
     if (hz > STREAMING_ISR_MAX_HZ) hz = STREAMING_ISR_MAX_HZ;
     return (hz == 0u) ? 1u : hz;
