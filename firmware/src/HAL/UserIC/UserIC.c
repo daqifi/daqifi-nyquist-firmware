@@ -181,6 +181,20 @@ static void ic_SetPmd(uint8_t u, bool enable) {
  * IC3=IPC4<4:2>, IC4=IPC5<12:10>, IC5=IPC6<20:18>, IC6=IPC7<20:18>,
  * IC7=IPC8<20:18>, IC8=IPC9<20:18>, IC9=IPC10<20:18>. */
 static void ic_SetPriority(uint8_t u) {
+    /* Critical section is REQUIRED, not optional: IC2/3/4/8/9 share their IPC
+     * register with edge-event INT1/3/4 + totalizer T8/T9 priority fields
+     * (IPC2 IC2IP<28:26> vs INT1IP<4:2>; IPC4 IC3IP<4:2> vs INT3IP<20:18>; IPC5
+     * IC4IP<12:10> vs INT4IP<28:26>; IPC9 IC8IP<20:18> vs T8IP<4:2>; IPC10
+     * IC9IP<20:18> vs T9IP<4:2>). UserEdge.c's edge_SetIntPriority/
+     * edge_SetCtrPriority guard the SAME registers; a guard on only one side of
+     * the two-writer RMW gives NO mutual exclusion — a DIO:MEASure arm here
+     * racing a concurrent DIO:EVENt/DIO:COUNter arm on the other SCPI interface
+     * (USB pri 7 preempts WiFi pri 2 mid-RMW) would clobber the sibling's just-
+     * written priority back to 0, silently killing that vector (the #702 dead-
+     * vector symptom). Both sides in taskENTER_CRITICAL = true mutual exclusion.
+     * All call sites are task context (UserIC_Initialize runs inside the pri-1
+     * APP_FREERTOS_Tasks task; ic_Run on the SCPI task). (Adversarial audit #705.) */
+    taskENTER_CRITICAL();
     switch (u) {
         case 0: IPC1bits.IC1IP  = 3; IPC1bits.IC1IS  = 0; break;
         case 1: IPC2bits.IC2IP  = 3; IPC2bits.IC2IS  = 0; break;
@@ -193,6 +207,7 @@ static void ic_SetPriority(uint8_t u) {
         case 8: IPC10bits.IC9IP = 3; IPC10bits.IC9IS = 0; break;
         default: break;
     }
+    taskEXIT_CRITICAL();
 }
 
 /* TMR2 rollover callback (plib TIMER_2_InterruptHandler dispatches this). */
