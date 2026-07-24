@@ -629,24 +629,24 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             }
             /* #717: deterministic per-tick timestamp, computed ONCE per tick
              * BEFORE the pool alloc so a pool-exhaust drop still advances the
-             * tick index (the next emitted sample stays phase-correct). Seeds
-             * baseTS (a clean slot read) + periodTicks on the session's first
-             * tick; thereafter ts = baseTS + N*periodTicks with no shared-slot
-             * read (kills the catch-up aliasing that produced t,t,t+2p). The
-             * uint32_t product wraps in lockstep with TMR6's own 32-bit wrap
-             * ((N mod 2^32)*p == N*p mod 2^32), so it stays the exact TMR6 value.
-             * #533 0->1 clamp kept. Single writer (this task) -> no critical
-             * section on the tick-index RMW. */
+             * tick index (next emitted sample stays phase-correct). Kills the
+             * catch-up aliasing (t,t,t+2p) from reading the shared 1-deep slot at
+             * variable task latency. Seed baseTS (clean slot read) + periodTicks
+             * on the session's first tick; thereafter ts = baseTS + N*periodTicks.
+             * periodTicks = TSTimer(TMR6) freq / rate, from the SAME
+             * TimerApi_FrequencyGet reported as msg timestamp_freq
+             * (NanoPB_Encoder.c:521) -- so stamps stay consistent with what
+             * clients divide by, it is EXACT for the (integer-dividing) streaming
+             * rates, and it composes with the #716 clock fix (which corrects
+             * tsFreq). NOT ClockPeriod (TMR4/5 runs a different prescale than
+             * TMR6) and NOT a first-inter-tick measurement (that captures a
+             * slightly-long startup-transient period, e.g. 8431 vs the real 8400
+             * @5kHz -- rejected 2026-07-24). The uint32_t product wraps in
+             * lockstep with TMR6's 32-bit wrap ((N mod 2^32)*p == N*p mod 2^32).
+             * #533 0->1 clamp kept. */
             if (!gStreamTSSeeded) {
                 uint32_t* pSeed = BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
                 gStreamBaseTS = (pSeed != NULL) ? *pSeed : 1u;
-                /* periodTicks = TMR6-advance per streaming tick = tsFreq / rate.
-                 * tsFreq is TimerApi_FrequencyGet(TSTimerIndex) -- the SAME value
-                 * reported as msg timestamp_freq (NanoPB_Encoder.c:521), so the
-                 * computed stamps stay self-consistent with what clients divide
-                 * by (and compose with the #716 clock fix, which corrects tsFreq).
-                 * NOT ClockPeriod (the streaming timer TMR4/5 runs a different
-                 * prescale than TMR6, so ClockPeriod is in the wrong units). */
                 uint32_t tsFreq = TimerApi_FrequencyGet(gpStreamingConfig->TSTimerIndex);
                 uint64_t rate = (gpRuntimeConfigStream != NULL)
                               ? gpRuntimeConfigStream->Frequency : 0u;
@@ -656,7 +656,14 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             }
             uint32_t trigStamp = gStreamBaseTS + gStreamTickIndex * gStreamPeriodTicks;
             if (trigStamp == 0u) trigStamp = 1u;
+            /* #722: gStreamTickIndex is also written (=0) by Streaming_Start on
+             * the SCPI task, so this RMW is not single-writer — guard it (matches
+             * gTestPatternSampleCount's protected reset/increment; Compliance
+             * 68846). Bounded 32-bit increment, so the section stays trivially
+             * short. */
+            taskENTER_CRITICAL();
             gStreamTickIndex++;
+            taskEXIT_CRITICAL();
             DioProbe_PulseStart(3);  /* probe 3: alloc + channel loop + queue push */
             // Use object pool instead of heap allocation (eliminates vPortFree overhead)
             // No heap check needed - pool uses pre-allocated static memory
