@@ -48,6 +48,22 @@
 // 32-bit atomic read on PIC32MZ — no critical section needed for reads/writes.
 static volatile uint32_t gTestPattern = 0;       // 0=off, 1-4=pattern type
 static uint64_t gTestPatternSampleCount = 0;      // Monotonic counter, reset on start
+// #717: deterministic per-tick streaming timestamp. The old path read the
+// ISR-captured shared 1-deep slot (BOARDDATA_STREAMING_TIMESTAMP) once per
+// emitted sample; when the deferred task fell behind at high rate, K catch-up
+// iterations read the SAME (latest) slot value -> K duplicate msg_time_stamps
+// then a jump (t,t,t+2p; 0.07% @1kHz -> 15% @5kHz over USB). The streaming timer
+// (TMR4/5) and the timestamp timer (TMR6) both count PBCLK3 and the trigger is
+// hardware-periodic, so tick N's stamp is EXACTLY baseTS + N*periodTicks --
+// computed here, race-free, and still on TMR6's timebase so edge-event (#667)
+// correlation is preserved. periodTicks = TSTimer(TMR6) freq / stream rate,
+// sourced from the SAME TimerApi_FrequencyGet the msg timestamp_freq uses, so
+// the stamps stay consistent with what clients divide by.
+// Owner: the deferred streaming task (single writer); seeded per session.
+static uint32_t gStreamTickIndex = 0;      // ticks since session start (incl. drops)
+static uint32_t gStreamBaseTS = 0;         // TMR6 at the session's first tick
+static uint32_t gStreamPeriodTicks = 0;    // TMR6 ticks per streaming tick
+static bool     gStreamTSSeeded = false;   // baseTS/periodTicks captured this session?
 
 // Benchmark mode level (BENCHMARK_OFF/NOCAP/PIPELINE).
 // Uses uint32_t for guaranteed 32-bit atomic access on PIC32MZ.
@@ -611,6 +627,43 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             if (!pRunTimeStreamConf->IsEnabled) {
                 goto pool_done;
             }
+            /* #717: deterministic per-tick timestamp, computed ONCE per tick
+             * BEFORE the pool alloc so a pool-exhaust drop still advances the
+             * tick index (next emitted sample stays phase-correct). Kills the
+             * catch-up aliasing (t,t,t+2p) from reading the shared 1-deep slot at
+             * variable task latency. Seed baseTS (clean slot read) + periodTicks
+             * on the session's first tick; thereafter ts = baseTS + N*periodTicks.
+             * periodTicks = TSTimer(TMR6) freq / rate, from the SAME
+             * TimerApi_FrequencyGet reported as msg timestamp_freq
+             * (NanoPB_Encoder.c:521) -- so stamps stay consistent with what
+             * clients divide by, it is EXACT for the (integer-dividing) streaming
+             * rates, and it composes with the #716 clock fix (which corrects
+             * tsFreq). NOT ClockPeriod (TMR4/5 runs a different prescale than
+             * TMR6) and NOT a first-inter-tick measurement (that captures a
+             * slightly-long startup-transient period, e.g. 8431 vs the real 8400
+             * @5kHz -- rejected 2026-07-24). The uint32_t product wraps in
+             * lockstep with TMR6's 32-bit wrap ((N mod 2^32)*p == N*p mod 2^32).
+             * #533 0->1 clamp kept. */
+            if (!gStreamTSSeeded) {
+                uint32_t* pSeed = BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
+                gStreamBaseTS = (pSeed != NULL) ? *pSeed : 1u;
+                uint32_t tsFreq = TimerApi_FrequencyGet(gpStreamingConfig->TSTimerIndex);
+                uint64_t rate = (gpRuntimeConfigStream != NULL)
+                              ? gpRuntimeConfigStream->Frequency : 0u;
+                gStreamPeriodTicks = (rate > 0u) ? (uint32_t)(tsFreq / rate) : 1u;
+                if (gStreamPeriodTicks == 0u) gStreamPeriodTicks = 1u;
+                gStreamTSSeeded = true;
+            }
+            uint32_t trigStamp = gStreamBaseTS + gStreamTickIndex * gStreamPeriodTicks;
+            if (trigStamp == 0u) trigStamp = 1u;
+            /* #722: gStreamTickIndex is also written (=0) by Streaming_Start on
+             * the SCPI task, so this RMW is not single-writer — guard it (matches
+             * gTestPatternSampleCount's protected reset/increment; Compliance
+             * 68846). Bounded 32-bit increment, so the section stays trivially
+             * short. */
+            taskENTER_CRITICAL();
+            gStreamTickIndex++;
+            taskEXIT_CRITICAL();
             DioProbe_PulseStart(3);  /* probe 3: alloc + channel loop + queue push */
             // Use object pool instead of heap allocation (eliminates vPortFree overhead)
             // No heap check needed - pool uses pre-allocated static memory
@@ -662,19 +715,9 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             pPublicSampleList->validMask = 0;
             pPublicSampleList->Timestamp = 0;
 
-            // Streaming trigger timestamp for this tick, captured by
-            // Streaming_TimerHandler at the single point all sample stamps
-            // derive from (clamps 0 -> 1, so 0 can never alias the #533
-            // invalid sentinel).  Hoisted out of the channel loop: the #541
-            // T1 direct-read path stamps every T1 sample with it, and the
-            // post-loop fallback uses it too.
-            uint32_t trigStamp = 0;
-            {
-                uint32_t* pTrigStamp =
-                        BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
-                if (pTrigStamp != NULL) trigStamp = *pTrigStamp;
-            }
-
+            // #717: trigStamp for this tick is the deterministic value computed
+            // above (baseTS + tickIndex*periodTicks) — the #541 T1 direct-read
+            // path and the post-loop fallback both stamp with it.
             for (uint8_t j = 0; j < mapping->count; j++) {
                 uint8_t cfgIdx = mapping->configIndices[j];
 
@@ -1292,6 +1335,10 @@ static void Streaming_Start(void) {
             // Reset test pattern counter so each session starts at 0
             taskENTER_CRITICAL();
             gTestPatternSampleCount = 0;
+            // #717: re-seed the deterministic timestamp on this session's first
+            // tick (baseTS + periodTicks captured there from a clean slot read).
+            gStreamTSSeeded = false;
+            gStreamTickIndex = 0;
             taskEXIT_CRITICAL();
             // #450: anchor the startup-grace window at the start of each
             // enabled session.  Steady drop counters won't increment
@@ -1654,6 +1701,10 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
      * No critical section needed: this runs pre-scheduler with interrupts off. */
     gTestPattern = 0;
     gTestPatternSampleCount = 0;
+    gStreamTickIndex = 0;      // #717 deterministic-ts state (retained-RAM safety)
+    gStreamBaseTS = 0;
+    gStreamPeriodTicks = 0;
+    gStreamTSSeeded = false;
     gBenchmarkMode = BENCHMARK_OFF;
     gSdPbMetadataSent = false;
     gSdFileWasReady = false;
