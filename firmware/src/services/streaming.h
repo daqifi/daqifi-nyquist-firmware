@@ -366,7 +366,15 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
             break;
         case StreamingInterface_UsbAndSd:
             if (pb) { single =  8000u; A =  66000u; B =  6u; }
-            else    { single =  8000u; A =  15000u; B =  0u; }
+            /* #719: the CSV single-channel cap of 8000 silently dropped SD data
+             * at-cap (nightly soak: USB+SD CSV 1xT1 @8000 leaked 5/5 rounds;
+             * walk-down COM3 …E8A7 measured @8000 LEAK sdDrop=595832, @7000
+             * clean). This is a 200 MHz-era coefficient — the #712 252 MHz CSV
+             * transport refit covered USB only, not USB+SD. Lower single to 6500
+             * (never-over, ~7% under the proven-clean 7000). The A/(B+n) curve
+             * (n>=2) is untested here (nightly only exercises 1xT1) — a precise
+             * multi-channel USB+SD CSV sweep is a #719 follow-up. */
+            else    { single =  6500u; A =  15000u; B =  0u; }
             break;
         default:
             return 1u;  /* unknown/corrupted interface -> fail-safe floor, never over-cap (Qodo) */
