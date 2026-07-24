@@ -366,7 +366,24 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
             break;
         case StreamingInterface_UsbAndSd:
             if (pb) { single =  8000u; A =  66000u; B =  6u; }
-            else    { single =  8000u; A =  15000u; B =  0u; }
+            /* #719: the CSV single-channel cap of 8000 silently dropped SD data
+             * at-cap (nightly soak: USB+SD CSV 1xT1 @8000 leaked 5/5 rounds;
+             * walk-down COM3 …E8A7: @8000 LEAK sdDrop=595832, @7000 clean). A
+             * 200 MHz-era coefficient — the #712 252 MHz CSV refit covered USB
+             * only, not USB+SD. Lower single 8000->6500 (never-over, ~7% under
+             * the proven-clean 7000).
+             * NON-MONOTONIC BY PHYSICS (not a fit error): the multi-channel curve
+             * (15000/(0+n): 2ch 7500, 3ch 5000) was walk-down-VALIDATED clean at
+             * cap (2ch@7500, 3ch@5000, 0 drops/100s), yet 1ch leaks at a LOWER
+             * rate (~7000) than 2ch sustains (>=7500). Cause: a 1ch CSV row is
+             * tiny, so at 8 kHz the SD writer does many small (sub-sector)
+             * writes -> per-write overhead binds 1ch below 2ch's wider-row rate.
+             * So 1ch (6500) < 2ch (7500) is real; each cap is individually
+             * never-over-validated. The usual F3 "single >= curve" shape does not
+             * hold for this cell, so leave both at their measured-safe values
+             * rather than force monotonicity (which would waste the validated
+             * 2ch headroom). */
+            else    { single =  6500u; A =  15000u; B =  0u; }
             break;
         default:
             return 1u;  /* unknown/corrupted interface -> fail-safe floor, never over-cap (Qodo) */
