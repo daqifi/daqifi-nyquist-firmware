@@ -265,8 +265,9 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
-    memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
-    pSDCardRuntimeConfig->file[fileLen] = '\0';
+    /* #724: transient operand, not the logging target `file`. */
+    memcpy(pSDCardRuntimeConfig->opFile, pBuff, fileLen);
+    pSDCardRuntimeConfig->opFile[fileLen] = '\0';
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_COMPUTE_CRC;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
     return SCPI_RES_OK;
@@ -344,8 +345,15 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
-        pSDCardRuntimeConfig->file[fileLen] = '\0';
+        /* #724: write the transient operand, NOT the logging target `file`. */
+        memcpy(pSDCardRuntimeConfig->opFile, pBuff, fileLen);
+        pSDCardRuntimeConfig->opFile[fileLen] = '\0';
+    } else {
+        /* #724: legacy no-argument GET operated on the current filename; preserve
+         * that by copying the logging target into opFile (without clobbering it).
+         * snprintf guarantees NUL-termination within the destination bound. */
+        snprintf(pSDCardRuntimeConfig->opFile, sizeof(pSDCardRuntimeConfig->opFile),
+                 "%s", pSDCardRuntimeConfig->file);
     }
     /* #598: route the async file data back to the interface that asked.
      * #599: capture the requesting TCP connection's generation so the SD
@@ -754,9 +762,10 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         goto __exit_point;
     }
-    memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
-    pSDCardRuntimeConfig->file[fileLen] = '\0';
-    LOG_D("SD:DELete - Deleting file '%s'\r\n", pSDCardRuntimeConfig->file);
+    /* #724: delete the transient operand, not the logging target `file`. */
+    memcpy(pSDCardRuntimeConfig->opFile, pBuff, fileLen);
+    pSDCardRuntimeConfig->opFile[fileLen] = '\0';
+    LOG_D("SD:DELete - Deleting file '%s'\r\n", pSDCardRuntimeConfig->opFile);
 
     // Set mode to DELETE and trigger the operation
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_DELETE_FILE;
