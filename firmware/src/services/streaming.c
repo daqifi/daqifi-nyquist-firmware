@@ -604,7 +604,11 @@ void _Streaming_Deferred_Interrupt_Task(void) {
     uint64_t ChannelScanFreqDivCount = 0;
 
     while (1) {
-        ulTaskNotifyTake(pdFALSE, xBlockTime);
+        /* pre-decrement pending-notification count = ticks that fired before
+         * this wake (1 in steady state; >1 only if a pri-9 peer starved us).
+         * Used once, at session-start seeding, to anchor baseTS to tick 0 when
+         * the first wake coalesced M ticks (#717 / Fable Q3). */
+        uint32_t notifyCount = ulTaskNotifyTake(pdFALSE, xBlockTime);
         DioProbe_Toggle(2);  /* probe 2: deferred task wake rate */
 
         if (pRunTimeStreamConf->IsEnabled) {
@@ -633,34 +637,80 @@ void _Streaming_Deferred_Interrupt_Task(void) {
              * catch-up aliasing (t,t,t+2p) from reading the shared 1-deep slot at
              * variable task latency. Seed baseTS (clean slot read) + periodTicks
              * on the session's first tick; thereafter ts = baseTS + N*periodTicks.
-             * periodTicks = TSTimer(TMR6) freq / rate, from the SAME
-             * TimerApi_FrequencyGet reported as msg timestamp_freq
-             * (NanoPB_Encoder.c:521) -- so stamps stay consistent with what
-             * clients divide by, it is EXACT for the (integer-dividing) streaming
-             * rates, and it composes with the #716 clock fix (which corrects
-             * tsFreq). NOT ClockPeriod (TMR4/5 runs a different prescale than
-             * TMR6) and NOT a first-inter-tick measurement (that captures a
-             * slightly-long startup-transient period, e.g. 8431 vs the real 8400
-             * @5kHz -- rejected 2026-07-24). The uint32_t product wraps in
-             * lockstep with TMR6's 32-bit wrap ((N mod 2^32)*p == N*p mod 2^32).
-             * #533 0->1 clamp kept. */
+             * periodTicks = the EXACT TMR6-tick count of one streaming-timer
+             * period: (ClockPeriod+1) streaming-timer (TMR4/5) cycles scaled by
+             * the live TMR6:TMR4/5 frequency ratio (tsFreq/streamTimerFreq).
+             * The two timers run DIFFERENT prescales (TMR4/5 1:8, TMR6 1:2 = a
+             * 4x ratio) and the requested rate is quantized into ClockPeriod by
+             * CEILING division (SCPIInterface.c ~3419), so the actual tick rate
+             * != the requested rate -- the old `tsFreq/rate` drifted ~428 ppm at
+             * non-clean-dividing rates (9000 Hz: computed 4666 vs the real 4668
+             * TMR6 ticks), unbounded per session and desyncing from #667
+             * edge-event TMR6 correlation (audit #722, fix 1). Deriving from the
+             * ACTUAL configured ClockPeriod and the live TimerApi_FrequencyGet
+             * ratio is exact for every rate/prescaler and composes with the #716
+             * clock fix. tsFreq is the same TimerApi_FrequencyGet reported as the
+             * msg timestamp_freq (NanoPB_Encoder.c:521), so stamps stay
+             * consistent with what clients divide by. Rejected a first-inter-tick
+             * measurement (captures a slightly-long startup-transient period,
+             * e.g. 8431 vs the real 8400 @5kHz -- 2026-07-24). The uint32_t
+             * product wraps in lockstep with TMR6's 32-bit wrap
+             * ((N mod 2^32)*p == N*p mod 2^32). #533 0->1 clamp kept. */
             if (!gStreamTSSeeded) {
-                uint32_t* pSeed = BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
-                gStreamBaseTS = (pSeed != NULL) ? *pSeed : 1u;
-                uint32_t tsFreq = TimerApi_FrequencyGet(gpStreamingConfig->TSTimerIndex);
-                uint64_t rate = (gpRuntimeConfigStream != NULL)
-                              ? gpRuntimeConfigStream->Frequency : 0u;
-                gStreamPeriodTicks = (rate > 0u) ? (uint32_t)(tsFreq / rate) : 1u;
+                // Exact TMR6 ticks per streaming period: (ClockPeriod+1) TMR4/5
+                // cycles * (tsFreq/streamTimerFreq). Multiply in uint64 first to
+                // avoid the intermediate wrap; result fits uint32 (<= tsFreq).
+                // Exactness holds while TIMER_CLOCK_FRQ divides both prescalers
+                // and the stream:ts prescale ratio is integral (currently
+                // 1:8/1:2 = 4); a TS prescale COARSER than the stream timer's
+                // would truncate here and reintroduce per-tick drift.
+                uint32_t tsFreq =
+                        TimerApi_FrequencyGet(gpStreamingConfig->TSTimerIndex);
+                uint32_t streamTimerFreq =
+                        TimerApi_FrequencyGet(gpStreamingConfig->TimerIndex);
+                uint32_t periodCycles = (gpRuntimeConfigStream != NULL)
+                              ? (gpRuntimeConfigStream->ClockPeriod + 1u) : 1u;
+                gStreamPeriodTicks = (streamTimerFreq > 0u)
+                        ? (uint32_t)(((uint64_t)tsFreq * periodCycles) / streamTimerFreq)
+                        : 1u;
                 if (gStreamPeriodTicks == 0u) gStreamPeriodTicks = 1u;
+                // Anchor baseTS at THIS session's tick 0. The 1-deep slot holds
+                // the LATEST fired tick's stamp; if M ticks coalesced before this
+                // first wake (notifyCount = the pre-decrement count captured at
+                // the top of the loop) the slot is tick (M-1) while this
+                // iteration is tick 0 — back it out so absolute stamps anchor
+                // correctly. A constant (M-1)*p offset otherwise: invisible to
+                // intra-stream dt, but it would desync the #667 edge-event TMR6
+                // correlation the exact periodTicks exists to preserve. Common
+                // case M==1 -> no correction. The uint32 subtraction wraps in
+                // lockstep with TMR6 (audit #722 / Fable Q3, 2026-07-26); the
+                // #533 0->1 sentinel is handled by the trigStamp clamp below.
+                uint32_t* pSeed = BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
+                if (pSeed != NULL) {
+                    uint32_t coalesced =
+                            (notifyCount > 0u) ? (notifyCount - 1u) : 0u;
+                    gStreamBaseTS = *pSeed - coalesced * gStreamPeriodTicks;
+                } else {
+                    gStreamBaseTS = 1u;
+                }
                 gStreamTSSeeded = true;
             }
+            /* gStreamTickIndex is the session-relative twin of gTimerISRCalls
+             * (#265): one increment per processed tick, so tick N deterministically
+             * stamps baseTS + N*periodTicks. The iterations<->notifications<->ISR
+             * mapping is guaranteed by the portMAX_DELAY block + pdFALSE take +
+             * IsEnabled gate (same invariant as TimerISRCalls == Total+Dropped). */
             uint32_t trigStamp = gStreamBaseTS + gStreamTickIndex * gStreamPeriodTicks;
             if (trigStamp == 0u) trigStamp = 1u;
-            /* #722: gStreamTickIndex is also written (=0) by Streaming_Start on
-             * the SCPI task, so this RMW is not single-writer — guard it (matches
-             * gTestPatternSampleCount's protected reset/increment; Compliance
-             * 68846). Bounded 32-bit increment, so the section stays trivially
-             * short. */
+            /* gStreamTickIndex is also written (=0) by Streaming_Start on the
+             * SCPI task (pri<=7). The pri-9 deferred task can't be preempted
+             * mid-RMW by a lower-priority writer, and that store only runs while
+             * this task is blocked (IsEnabled false through the stop gap,
+             * notifications drained) — so no torn interleave is actually
+             * reachable. The critical section is kept for symmetry with
+             * gTestPatternSampleCount and future-proofing, not because a race is
+             * live (#722 / Fable Q4; Compliance 68846). Bounded 32-bit
+             * increment — the section stays trivially short. */
             taskENTER_CRITICAL();
             gStreamTickIndex++;
             taskEXIT_CRITICAL();
@@ -713,11 +763,18 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             const AInChannelMapping* mapping = &gChannelMapping;
             pPublicSampleList->channelCount = mapping->count;
             pPublicSampleList->validMask = 0;
-            pPublicSampleList->Timestamp = 0;
+            // #717 (audit #722 fix 2): stamp the packet with the deterministic
+            // per-tick trigStamp computed above, UNCONDITIONALLY and up front.
+            // The first cut only set trigStamp on the #541 T1-direct path and the
+            // all-invalid post-loop fallback; the normal ADC path and EVERY
+            // AD7609/NQ2-NQ3 session stamped from pAiSample->Timestamp (the
+            // shared 1-deep slot) -> the same catch-up aliasing (t,t,t+2p) for
+            // any T2-first config. Setting it here makes every path (incl.
+            // Pipeline/test-pattern/DIO-only) deterministic. trigStamp is >=1
+            // (clamped), so the PB encoder never omits msg_time_stamp (it drops
+            // the field on Timestamp==0), which retires the old post-loop net.
+            pPublicSampleList->Timestamp = trigStamp;
 
-            // #717: trigStamp for this tick is the deterministic value computed
-            // above (baseTS + tickIndex*periodTicks) — the #541 T1 direct-read
-            // path and the post-loop fallback both stamp with it.
             for (uint8_t j = 0; j < mapping->count; j++) {
                 uint8_t cfgIdx = mapping->configIndices[j];
 
@@ -757,11 +814,9 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                     pPublicSampleList->validMask |= (1U << j);
                 } else if (gTestPattern != 0) {
                     // Test pattern: always produce deterministic data regardless
-                    // of ADC state. Read ADC for timestamp only.
-                    pAiSample = BoardData_Get(BOARDDATA_AIN_LATEST, cfgIdx);
-                    if (pAiSample != NULL && pPublicSampleList->Timestamp == 0) {
-                        pPublicSampleList->Timestamp = pAiSample->Timestamp;
-                    }
+                    // of ADC state. Packet Timestamp is the deterministic
+                    // trigStamp set once before the loop (#717) — no ADC read
+                    // needed here for the timestamp.
                     pPublicSampleList->Values[j] =
                         Streaming_GenerateTestValue(gTestPattern,
                             mapping->channelIds[j],
@@ -787,9 +842,8 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                             &val)) {
                         pPublicSampleList->Values[j] = val;
                         pPublicSampleList->validMask |= (1U << j);
-                        if (pPublicSampleList->Timestamp == 0) {
-                            pPublicSampleList->Timestamp = trigStamp;
-                        }
+                        // Packet Timestamp is the deterministic trigStamp set
+                        // before the loop (#717) — nothing to set per-channel.
                         // Refresh the LATEST cache so non-streaming readers
                         // (MEAS:VOLT:DC?) stay live during a session.  Same
                         // per-tick work the EOS task used to do at the same
@@ -825,29 +879,28 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                         // A genuine counter reading of 0 can never alias the
                         // sentinel: Streaming_TimerHandler clamps 0 -> 1 at
                         // the single capture point all stamps derive from.
+                        // #533 slot-validity gate stays: ts==0 marks the LATEST
+                        // slot invalid, so the value + validMask bit are gated on
+                        // it. The PACKET Timestamp is the deterministic trigStamp
+                        // (#717) and is no longer derived from this per-channel
+                        // slot ts — that per-channel derivation was the T2-first
+                        // aliasing source the #722 audit flagged (fix 2).
                         if (ts != 0) {
                             pPublicSampleList->Values[j] = val;
                             pPublicSampleList->validMask |= (1U << j);
-                            if (pPublicSampleList->Timestamp == 0) {
-                                pPublicSampleList->Timestamp = ts;
-                            }
                         }
                     }
                     // else: bit stays 0 in validMask (invalid)
                 }
             }
 
-            // Guarantee a non-zero timestamp on every emitted packet. Pipeline
-            // mode never reads ADC samples; normal/test-pattern modes may also
-            // end up with Timestamp=0 in edge cases (DIO-only streaming, or
-            // all AIN channels happen to be invalid this cycle). Fall back to
-            // the streaming timer tick captured by Streaming_TimerHandler —
-            // same source the ADC ISR writes to AInSample.Timestamp, so the
-            // wire output remains consistent across modes. Required because
-            // the PB encoder omits the msg_time_stamp field when timestamp==0.
-            if (pPublicSampleList->Timestamp == 0) {
-                pPublicSampleList->Timestamp = trigStamp;
-            }
+            // #717: every emitted packet already carries the deterministic
+            // trigStamp (set before the channel loop, >=1) regardless of mode —
+            // Pipeline (no ADC read), DIO-only, and all-AIN-invalid cycles
+            // included. The old "fall back to trigStamp if Timestamp==0" net is
+            // now provably dead (Timestamp can never be 0 here), so it's retired.
+            // The PB encoder omits msg_time_stamp only on Timestamp==0, which no
+            // longer occurs.
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
                 // #499: split counter — this path = FreeRTOS queue full,
                 // i.e. streaming_Task can't drain fast enough. Distinct from
