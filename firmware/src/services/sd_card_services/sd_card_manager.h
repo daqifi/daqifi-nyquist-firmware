@@ -69,6 +69,14 @@ extern "C" {
         uint32_t replyGeneration;
         char directory[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1];
         char file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
+        /* #724: transient operand filename for the READ (SD:GET) / COMPUTE_CRC /
+         * DELETE ops. Kept SEPARATE from `file` (the persistent logging target set
+         * by SD:FILE) so downloading/CRC'ing/deleting a file no longer clobbers the
+         * logging target — previously all four wrote `file`, so a GET/DELETE
+         * followed by an SD-armed stream (without re-setting SD:FILE) truncated the
+         * just-referenced file. The READ/CRC/DELETE path construction and the INIT
+         * filename validation use this field for those modes; WRITE uses `file`. */
+        char opFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
         uint64_t maxFileSizeBytes;  // Max file size before auto-split (0 = unlimited)
         // Pre-start free-space floor (#498).  When > 0, SYST:STR:START
         // for SD-output sessions runs a SYS_FS_DriveSectorGet() check

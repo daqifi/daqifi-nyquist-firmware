@@ -683,16 +683,28 @@ void sd_card_manager_ProcessState() {
             // GET_SPACE is allowed even when disabled (transient read-only query)
             if ((gpSDCardSettings->enable || gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_GET_SPACE)
                 && gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_NONE) {
-                // Validate directory and file settings
+                // Validate directory and file settings.
+                // #724: READ/CRC/DELETE operate on the transient `opFile`; WRITE
+                // (logging) uses the persistent `file`. Validate the field the
+                // active mode will actually open.
+                bool isTransientOp =
+                        (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ ||
+                         gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_COMPUTE_CRC ||
+                         gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_DELETE_FILE);
+                const char* opName = isTransientOp ? gpSDCardSettings->opFile
+                                                   : gpSDCardSettings->file;
                 bool dirValid = strlen(gpSDCardSettings->directory) > 0 &&
                                strlen(gpSDCardSettings->directory) <= SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX;
-                bool fileValid = strlen(gpSDCardSettings->file) > 0 &&
-                                strlen(gpSDCardSettings->file) <= SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX;
+                bool fileValid = strlen(opName) > 0 &&
+                                strlen(opName) <= SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX;
 
                 // LIST and FORMAT modes don't need a filename
-                // DELETE, READ, WRITE need a filename
+                // DELETE, READ, WRITE, CRC need a filename. #724 (Qodo): include
+                // COMPUTE_CRC so its opFile is validated upfront (consistent with
+                // isTransientOp above) rather than only failing at file open.
                 bool needsFile = (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_DELETE_FILE ||
                                  gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ ||
+                                 gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_COMPUTE_CRC ||
                                  gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE);
 
                 // GET_SPACE only needs to mount - no directory or file needed
@@ -711,7 +723,7 @@ void sd_card_manager_ProcessState() {
                         LOG_E("[%s:%d]Invalid SD Card Directory or file name (dir='%s', file='%s')",
                               __FILE__, __LINE__,
                               gpSDCardSettings->directory,
-                              gpSDCardSettings->file);
+                              opName);
                         errorLogged = true;
                     }
                 }
@@ -1156,9 +1168,10 @@ void sd_card_manager_ProcessState() {
                 }
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ ||
                        gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_COMPUTE_CRC) {
-                // READ/CRC: construct filename directly from settings (no splitting)
+                // READ/CRC: construct filename directly from settings (no splitting).
+                // #724: open the transient operand (opFile), not the logging target.
                 snprintf(gSDCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%s/%s",
-                        gpSDCardSettings->directory, gpSDCardSettings->file);
+                        gpSDCardSettings->directory, gpSDCardSettings->opFile);
                 LOG_D("[SD] Opening file for read: '%s'\r\n", gSDCardData.filePath);
 
                 gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
@@ -1213,8 +1226,9 @@ void sd_card_manager_ProcessState() {
                 while (dirLen > 0 && gpSDCardSettings->directory[dirLen - 1] == '/') {
                     dirLen--;
                 }
+                // #724: delete the transient operand (opFile), not the logging target.
                 int pathLen = snprintf(gSDCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%.*s/%s",
-                        (int)dirLen, gpSDCardSettings->directory, gpSDCardSettings->file);
+                        (int)dirLen, gpSDCardSettings->directory, gpSDCardSettings->opFile);
 
                 // Validate path was not truncated
                 if (pathLen < 0 || pathLen >= (int)SD_CARD_MANAGER_FILE_PATH_LEN_MAX) {
