@@ -297,6 +297,24 @@ extern "C" {
     bool sd_card_manager_BufferOpInFlight(void);
 
     /**
+     * @brief #703: non-blocking acquire of the SD op mutex around a buffer swap.
+     *
+     * The streaming partitioner calls this immediately before it re-partitions
+     * and pointer-swaps the SD circular buffer, and holds it across the swap, to
+     * close the TOCTOU that a BufferOpInFlight() check at function entry leaves
+     * open (an SD op can arm on the other SCPI task in the interim). Non-blocking:
+     * returns false immediately if an SD READ/LIST/CRC currently holds the lock,
+     * so the caller can fail-fast instead of blocking for a multi-second transfer.
+     *
+     * @return true if the lock was taken (caller MUST call Unlock) or the mutex
+     *         does not exist yet (early boot); false if an SD op holds it.
+     */
+    bool sd_card_manager_TryLockBuffer(void);
+
+    /** @brief #703: release the lock taken by sd_card_manager_TryLockBuffer(). */
+    void sd_card_manager_UnlockBuffer(void);
+
+    /**
      * @brief Checks if the SD card file is open and ready to accept write data.
      *
      * Returns true only after the file has been opened and the write buffer

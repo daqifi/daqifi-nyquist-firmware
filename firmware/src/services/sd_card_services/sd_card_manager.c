@@ -2214,6 +2214,31 @@ bool sd_card_manager_BufferOpInFlight(void) {
     }
 }
 
+/* #703: non-blocking acquire of the SD op mutex (the SAME mutex the READ/LIST/CRC
+ * loops take before they touch the shared SD buffer — read_operation/list_operation).
+ * The streaming partitioner calls this right before it re-partitions and pointer-
+ * swaps the SD circular buffer, and holds it across the swap, to close the TOCTOU
+ * that BufferOpInFlight()-at-entry alone leaves open: an SD op can arm on the OTHER
+ * SCPI task (USB pri 7 vs TCP pri 2) between the entry check and the swap. With the
+ * lock held: a swap can't begin while an op holds it (try-lock fails -> caller
+ * aborts, fail-fast, no multi-second block), and an op that arms during the swap
+ * blocks at its read_operation take until the swap completes -> it then computes its
+ * read chunk from the NEW buffer size (consistent, no overflow). Returns true if the
+ * lock was acquired (caller MUST pair with Unlock) or if the mutex doesn't exist yet
+ * (early boot — no SD op machinery, nothing to guard). */
+bool sd_card_manager_TryLockBuffer(void) {
+    if (gSDOpMutex == NULL) {
+        return true;
+    }
+    return xSemaphoreTake(gSDOpMutex, 0) == pdTRUE;
+}
+
+void sd_card_manager_UnlockBuffer(void) {
+    if (gSDOpMutex != NULL) {
+        xSemaphoreGive(gSDOpMutex);
+    }
+}
+
 void sd_card_manager_AbortTransfer(void) {
     gTransferAbortRequested = true;
 }
