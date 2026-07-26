@@ -270,6 +270,33 @@ extern "C" {
     bool sd_card_manager_IsBusy(void);
 
     /**
+     * @brief #703: is the SD read scratch buffer large enough for SD:GET?
+     *
+     * SD:GET reads into the streaming pool's SD circular buffer, floor-aligned
+     * to the read chunk size; below one alignment unit the read bails. A non-SD
+     * stream can shrink that buffer, so a SCPI GET handler can call this to fail
+     * loudly (synchronous SCPI error) instead of arming an async read that
+     * bails silently.
+     *
+     * @return true if SD:GET can proceed, false if the buffer is too small
+     */
+    bool sd_card_manager_ReadBufferReady(void);
+
+    /**
+     * @brief #703: is an SD op actively streaming into the shared SD buffer?
+     *
+     * True while an SD:GET read / CRC / directory LIST is in flight — the ops
+     * that read into the SD circular buffer with a chunk size fixed up front.
+     * The streaming partitioner must not re-size / pointer-swap that buffer
+     * while one of these runs, or the stale chunk overflows adjacent partitions.
+     * Narrower than sd_card_manager_IsBusy(): excludes WRITE, GET_SPACE,
+     * DELETE/FORMAT and idle/unmount transients.
+     *
+     * @return true if a buffer-streaming SD op is in flight
+     */
+    bool sd_card_manager_BufferOpInFlight(void);
+
+    /**
      * @brief Checks if the SD card file is open and ready to accept write data.
      *
      * Returns true only after the file has been opened and the write buffer

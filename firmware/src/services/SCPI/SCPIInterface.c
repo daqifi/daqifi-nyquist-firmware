@@ -3448,9 +3448,26 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #703: SD:GET read / CRC / directory LIST are ASYNC — the SD task streams
+     * into the SD circular buffer (static BSS in the streaming pool) using a
+     * chunk size it computes ONCE up front. PrepareStreamingBuffers below
+     * re-partitions that pool and pointer-swaps the SD buffer out from under an
+     * in-flight op, so its stale chunk would overflow the shrunk region into
+     * adjacent (live-stream) partitions — memory corruption during acquisition.
+     * The prior SD-busy gate only ran for SD-*logging* streams (below); reject
+     * ANY stream start while such an op is in flight. Deliberately narrower than
+     * IsBusy() (see sd_card_manager_BufferOpInFlight) so it does NOT spuriously
+     * reject a start during a post-stop unmount transient or a quick GET_SPACE. */
+    if (sd_card_manager_BufferOpInFlight()) {
+        LOG_E("Cannot start streaming - SD read/list/CRC in flight (#703)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     // If SD logging is requested, set mode to WRITE now (deferred from LOGging command)
     if (sdLoggingRequested) {
-        // Check if SD card is busy with another operation (DELETE, FORMAT, etc.)
+        // Check if SD card is busy with another operation (DELETE, FORMAT, etc.).
+        // SD is a single consumer — don't start a logging file while any SD op runs.
         if (sd_card_manager_IsBusy()) {
             LOG_E("Cannot start SD logging - SD card busy with another operation");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -4302,6 +4319,22 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
 static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     uint32_t usbSize, wifiSize, sdCircSize;
     uint32_t sdDmaSize, usbDmaSize, wifiDmaSize, encSize;
+
+    /* #703: this function re-partitions the streaming pool and pointer-swaps the
+     * SD circular buffer. An in-flight async SD read/CRC/LIST op streams into
+     * that same buffer using a chunk size computed once, up front — swapping it
+     * out from under the op would make FileRead overflow the shrunk region into
+     * adjacent partitions (memory corruption during acquisition). Refuse to
+     * re-partition while such an op is in flight. This backstops the non-
+     * STR:START callers (SYST:MEM:AUTO, THRoughput, WiFi rate finder); STR:START
+     * itself rejects earlier with a clearer error. (WRITE is not flagged by
+     * BufferOpInFlight — it's the caller's own logging setup, the intended
+     * consumer of the new partition.) */
+    if (sd_card_manager_BufferOpInFlight()) {
+        LOG_E("PrepareStreamingBuffers: refused — SD read/list/CRC in flight; "
+              "cannot re-partition the SD read buffer (#703)");
+        return false;
+    }
 
     // Mirror SCPI_StartStreaming's auto-vs-explicit decision so the finder
     // measures with the SAME buffer layout the user's real stream will use:

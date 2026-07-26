@@ -37,6 +37,14 @@
 #define SD_READ_ALIGNMENT_SIZE      4096U   // Chunk alignment (4KB) - matches USB transfer granularity
 #define SD_FLUSH_THRESHOLD          4096U   // Minimum bytes to trigger flush before unmount
 
+/* #703: SD:GET reads into the streaming pool's SD circular buffer; the read
+ * bails (maxRead==0) if that buffer is below one alignment unit. Pin the pool's
+ * inactive SD floor at/above the read minimum so a non-SD stream can never
+ * shrink SD:GET into a silent failure. If a future RAM-pressure trim drops
+ * STREAMING_SD_CIRCULAR_MIN below the alignment, this fails the build. */
+_Static_assert(STREAMING_SD_CIRCULAR_MIN >= SD_READ_ALIGNMENT_SIZE,
+               "SD circular floor must be >= SD read alignment (#703)");
+
 // =============================================================================
 // Debug Timeout Configuration
 // =============================================================================
@@ -1178,6 +1186,17 @@ void sd_card_manager_ProcessState() {
                      * Mirrors the CRC read-error terminal path. Fixes the
                      * SYST:STOR:SD:CRC "missing" wedge and the pre-existing
                      * latent SD:GET open-fail wedge. */
+                    /* #703: for a READ (SD:GET) the host is blocked waiting for
+                     * the file bytes + __END_OF_FILE__ terminator; without a
+                     * terminator it hangs on a missing/unopenable file. Emit the
+                     * marker so the GET terminates as an empty transfer. (CRC has
+                     * no streamed terminator — its result is queried via SD:CRC?
+                     * — so only send it for READ.) */
+                    if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ) {
+                        sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                                (uint8_t*)"__END_OF_FILE__",
+                                sizeof("__END_OF_FILE__") - 1);
+                    }
                     gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                     LOG_E("[%s:%d]Failed to open SD Card file for reading: '%s'", __FILE__, __LINE__, gSDCardData.filePath);
@@ -1513,12 +1532,33 @@ void sd_card_manager_ProcessState() {
             TickType_t lastYieldTime = xTaskGetTickCount();
             const TickType_t yieldInterval = pdMS_TO_TICKS(1000);
 
+            // EOF marker as literal constant (safer than sprintf).
+            // Declared before the buffer-size check so the terminal bail
+            // below (#703) can also emit it.
+            static const char eofMarker[] = "__END_OF_FILE__";
+
             // Calculate safe read size based on buffer capacity
             size_t maxRead = gSdSharedBufferSize;
             if (maxRead > SD_READ_MAX_CHUNK_SIZE) maxRead = SD_READ_MAX_CHUNK_SIZE;
             maxRead = (maxRead / SD_READ_ALIGNMENT_SIZE) * SD_READ_ALIGNMENT_SIZE;
             if (maxRead == 0U) {
-                LOG_E("[SD] Buffer too small for read");
+                /* #703: terminal, host-safe bail. This path previously skipped
+                 * the mode=NONE reset (SD subsystem latched busy — every later
+                 * SD command rejected), leaked the open file handle, and sent
+                 * NO __END_OF_FILE__ (the host hung waiting for a terminator).
+                 * With the SD-circular floor pinned >= SD_READ_ALIGNMENT_SIZE
+                 * this is now practically unreachable, but keep it terminal as
+                 * defense in depth. Mirror the normal-exit ordering:
+                 * drain -> marker -> close -> priority -> mutex -> mode/state. */
+                LOG_E("[SD] Buffer too small for read (%u < %u) — aborting GET",
+                      (unsigned)gSdSharedBufferSize, (unsigned)SD_READ_ALIGNMENT_SIZE);
+                sd_wait_usb_drain();
+                sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                        (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
+                if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
+                    (void)SYS_FS_FileClose(gSDCardData.fileHandle);
+                    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                }
                 vTaskPrioritySet(currentTask, originalPriority);
 
                 // Release mutex on error path
@@ -1526,12 +1566,10 @@ void sd_card_manager_ProcessState() {
                     xSemaphoreGive(gSDOpMutex);
                 }
 
+                gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                 gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
                 break;
             }
-
-            // EOF marker as literal constant (safer than sprintf)
-            static const char eofMarker[] = "__END_OF_FILE__";
 
             // Clear abort flag at start of transfer
             gTransferAbortRequested = false;
@@ -2141,6 +2179,39 @@ bool sd_card_manager_IsWriteReady(void) {
         && gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE
         && gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE
         && gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID;
+}
+
+/* #703: is the SD read scratch large enough for SD:GET to make progress?
+ * The read chunk is floor-aligned to SD_READ_ALIGNMENT_SIZE, so anything below
+ * that yields maxRead==0 and the read bails. Reads the SAME variable the read
+ * loop uses (gSdSharedBufferSize, a 32-bit aligned scalar -> atomic read on
+ * PIC32MZ) so the SCPI-side pre-check faithfully mirrors what the SD task will
+ * see. The floor fix keeps this true; this is the host-visible fail-loud guard. */
+bool sd_card_manager_ReadBufferReady(void) {
+    return gSdSharedBufferSize >= SD_READ_ALIGNMENT_SIZE;
+}
+
+/* #703: is an async SD op actively streaming into the shared SD circular buffer
+ * with a chunk size it computed ONCE up front? Those ops (SD:GET read, CRC,
+ * directory LIST) would be corrupted if the streaming partitioner re-sized /
+ * pointer-swapped the buffer mid-transfer (stale chunk -> FileRead overflows the
+ * shrunk region into adjacent partitions). Deliberately NARROWER than IsBusy():
+ * excludes WRITE (logging is the partition's intended consumer), GET_SPACE,
+ * DELETE/FORMAT (don't stream into the buffer), and post-stop unmount transients
+ * (mode NONE) — so it won't spuriously reject a stream start right after an SD
+ * session stops. */
+bool sd_card_manager_BufferOpInFlight(void) {
+    if (gpSDCardSettings == NULL) {
+        return false;
+    }
+    switch (gpSDCardSettings->mode) {
+        case SD_CARD_MANAGER_MODE_READ:
+        case SD_CARD_MANAGER_MODE_COMPUTE_CRC:
+        case SD_CARD_MANAGER_MODE_LIST_DIRECTORY:
+            return true;
+        default:
+            return false;
+    }
 }
 
 void sd_card_manager_AbortTransfer(void) {
