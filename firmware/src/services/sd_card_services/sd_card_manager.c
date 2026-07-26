@@ -699,9 +699,12 @@ void sd_card_manager_ProcessState() {
                                 strlen(opName) <= SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX;
 
                 // LIST and FORMAT modes don't need a filename
-                // DELETE, READ, WRITE need a filename
+                // DELETE, READ, WRITE, CRC need a filename. #724 (Qodo): include
+                // COMPUTE_CRC so its opFile is validated upfront (consistent with
+                // isTransientOp above) rather than only failing at file open.
                 bool needsFile = (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_DELETE_FILE ||
                                  gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ ||
+                                 gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_COMPUTE_CRC ||
                                  gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE);
 
                 // GET_SPACE only needs to mount - no directory or file needed

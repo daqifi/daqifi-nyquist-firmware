@@ -350,10 +350,10 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
         pSDCardRuntimeConfig->opFile[fileLen] = '\0';
     } else {
         /* #724: legacy no-argument GET operated on the current filename; preserve
-         * that by copying the logging target into opFile (without clobbering it). */
-        strncpy(pSDCardRuntimeConfig->opFile, pSDCardRuntimeConfig->file,
-                SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX);
-        pSDCardRuntimeConfig->opFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
+         * that by copying the logging target into opFile (without clobbering it).
+         * snprintf guarantees NUL-termination within the destination bound. */
+        snprintf(pSDCardRuntimeConfig->opFile, sizeof(pSDCardRuntimeConfig->opFile),
+                 "%s", pSDCardRuntimeConfig->file);
     }
     /* #598: route the async file data back to the interface that asked.
      * #599: capture the requesting TCP connection's generation so the SD
