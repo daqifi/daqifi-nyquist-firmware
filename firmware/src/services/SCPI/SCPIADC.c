@@ -371,7 +371,7 @@ scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context) {
         // Single channel
         size_t index = ADC_FindChannelIndex((uint8_t) param1);
         // TODO: This function should be able to read which version of the board we are using and assign the ADC channels associated that version
-        if (index > pBoardConfigAInChannels->Size) {
+        if (index >= pBoardConfigAInChannels->Size) {
             return SCPI_RES_ERR;
         }
 
@@ -412,7 +412,7 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
     if (SCPI_ParamInt32(context, &param2, FALSE)) {
         // Single channel
         size_t index = ADC_FindChannelIndex((uint8_t) param1);
-        if (index > pBoardConfigAInChannels->Size) {
+        if (index >= pBoardConfigAInChannels->Size) {
             return SCPI_RES_ERR;
         }
 
@@ -447,7 +447,7 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
     if (SCPI_ParamInt32(context, &param1, FALSE)) {
         // Single channel
         size_t index = ADC_FindChannelIndex((uint8_t) param1);
-        if (index > pBoardConfigAInChannels->Size) {
+        if (index >= pBoardConfigAInChannels->Size) {
             return SCPI_RES_ERR;
         }
 
@@ -577,7 +577,7 @@ scpi_result_t SCPI_ADCChanCalmSet(scpi_t * context) {
     }
 
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
-    if (index > pBoardConfigAInChannels->Size) {
+    if (index >= pBoardConfigAInChannels->Size) {
         return SCPI_RES_ERR;
     }
 
@@ -603,7 +603,7 @@ scpi_result_t SCPI_ADCChanCalbSet(scpi_t * context) {
     }
 
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
-    if (index > pBoardConfigAInChannels->Size) {
+    if (index >= pBoardConfigAInChannels->Size) {
         return SCPI_RES_ERR;
     }
 
@@ -623,7 +623,7 @@ scpi_result_t SCPI_ADCChanCalmGet(scpi_t * context) {
     }
 
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
-    if (index > pBoardConfigAInChannels->Size) {
+    if (index >= pBoardConfigAInChannels->Size) {
         return SCPI_RES_ERR;
     }
 
@@ -643,7 +643,7 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
     }
 
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
-    if (index > pBoardConfigAInChannels->Size) {
+    if (index >= pBoardConfigAInChannels->Size) {
         return SCPI_RES_ERR;
     }
 
