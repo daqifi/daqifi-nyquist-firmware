@@ -52,18 +52,22 @@ static uint64_t gTestPatternSampleCount = 0;      // Monotonic counter, reset on
 // ISR-captured shared 1-deep slot (BOARDDATA_STREAMING_TIMESTAMP) once per
 // emitted sample; when the deferred task fell behind at high rate, K catch-up
 // iterations read the SAME (latest) slot value -> K duplicate msg_time_stamps
-// then a jump (t,t,t+2p; 0.07% @1kHz -> 15% @5kHz over USB). The streaming timer
-// (TMR4/5) and the timestamp timer (TMR6) both count PBCLK3 and the trigger is
-// hardware-periodic, so tick N's stamp is EXACTLY baseTS + N*periodTicks --
-// computed here, race-free, and still on TMR6's timebase so edge-event (#667)
-// correlation is preserved. periodTicks = TSTimer(TMR6) freq / stream rate,
-// sourced from the SAME TimerApi_FrequencyGet the msg timestamp_freq uses, so
-// the stamps stay consistent with what clients divide by.
-// Owner: the deferred streaming task (single writer); seeded per session.
-static uint32_t gStreamTickIndex = 0;      // ticks since session start (incl. drops)
-static uint32_t gStreamBaseTS = 0;         // TMR6 at the session's first tick
-static uint32_t gStreamPeriodTicks = 0;    // TMR6 ticks per streaming tick
-static bool     gStreamTSSeeded = false;   // baseTS/periodTicks captured this session?
+// then a jump (t,t,t+2p; 0.07% @1kHz -> 15% @5kHz over USB). Tick N's stamp is
+// now EXACTLY baseTS + N*periodTicks, still on TMR6's timebase so edge-event
+// (#667) correlation is preserved. Ownership (audit #722, race-free):
+//   gStreamBaseTS   — TMR6 at the session's first enabled tick. Written ONCE by
+//                     the timer ISR (Streaming_TimerHandler); read by the task.
+//   gStreamPeriodTicks — exact TMR6 ticks/streaming-period, config-derived.
+//                     Written ONCE by Streaming_Start (SCPI task, timer stopped);
+//                     read by the task.
+//   gStreamTickIndex — dispatches since session start (incl. drops). Reset =0 by
+//                     Streaming_Start (timer stopped); incremented by the task.
+//   gStreamTSSeeded  — latches the ISR baseTS capture. Cleared by Streaming_Start
+//                     (timer stopped), set by the ISR. No concurrent writers.
+static uint32_t gStreamTickIndex = 0;      // dispatches since session start (incl. drops)
+static uint32_t gStreamBaseTS = 0;         // TMR6 at the session's first tick (ISR-seeded)
+static uint32_t gStreamPeriodTicks = 0;    // TMR6 ticks per streaming tick (Start-computed)
+static bool     gStreamTSSeeded = false;   // baseTS captured this session? (ISR latch)
 
 // Benchmark mode level (BENCHMARK_OFF/NOCAP/PIPELINE).
 // Uses uint32_t for guaranteed 32-bit atomic access on PIC32MZ.
@@ -604,11 +608,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
     uint64_t ChannelScanFreqDivCount = 0;
 
     while (1) {
-        /* pre-decrement pending-notification count = ticks that fired before
-         * this wake (1 in steady state; >1 only if a pri-9 peer starved us).
-         * Used once, at session-start seeding, to anchor baseTS to tick 0 when
-         * the first wake coalesced M ticks (#717 / Fable Q3). */
-        uint32_t notifyCount = ulTaskNotifyTake(pdFALSE, xBlockTime);
+        ulTaskNotifyTake(pdFALSE, xBlockTime);
         DioProbe_Toggle(2);  /* probe 2: deferred task wake rate */
 
         if (pRunTimeStreamConf->IsEnabled) {
@@ -631,70 +631,27 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             if (!pRunTimeStreamConf->IsEnabled) {
                 goto pool_done;
             }
-            /* #717: deterministic per-tick timestamp, computed ONCE per tick
-             * BEFORE the pool alloc so a pool-exhaust drop still advances the
-             * tick index (next emitted sample stays phase-correct). Kills the
-             * catch-up aliasing (t,t,t+2p) from reading the shared 1-deep slot at
-             * variable task latency. Seed baseTS (clean slot read) + periodTicks
-             * on the session's first tick; thereafter ts = baseTS + N*periodTicks.
-             * periodTicks = the EXACT TMR6-tick count of one streaming-timer
-             * period: (ClockPeriod+1) streaming-timer (TMR4/5) cycles scaled by
-             * the live TMR6:TMR4/5 frequency ratio (tsFreq/streamTimerFreq).
-             * The two timers run DIFFERENT prescales (TMR4/5 1:8, TMR6 1:2 = a
-             * 4x ratio) and the requested rate is quantized into ClockPeriod by
-             * CEILING division (SCPIInterface.c ~3419), so the actual tick rate
-             * != the requested rate -- the old `tsFreq/rate` drifted ~428 ppm at
-             * non-clean-dividing rates (9000 Hz: computed 4666 vs the real 4668
-             * TMR6 ticks), unbounded per session and desyncing from #667
-             * edge-event TMR6 correlation (audit #722, fix 1). Deriving from the
-             * ACTUAL configured ClockPeriod and the live TimerApi_FrequencyGet
-             * ratio is exact for every rate/prescaler and composes with the #716
-             * clock fix. tsFreq is the same TimerApi_FrequencyGet reported as the
-             * msg timestamp_freq (NanoPB_Encoder.c:521), so stamps stay
-             * consistent with what clients divide by. Rejected a first-inter-tick
-             * measurement (captures a slightly-long startup-transient period,
-             * e.g. 8431 vs the real 8400 @5kHz -- 2026-07-24). The uint32_t
-             * product wraps in lockstep with TMR6's 32-bit wrap
-             * ((N mod 2^32)*p == N*p mod 2^32). #533 0->1 clamp kept. */
-            if (!gStreamTSSeeded) {
-                // Exact TMR6 ticks per streaming period: (ClockPeriod+1) TMR4/5
-                // cycles * (tsFreq/streamTimerFreq). Multiply in uint64 first to
-                // avoid the intermediate wrap; result fits uint32 (<= tsFreq).
-                // Exactness holds while TIMER_CLOCK_FRQ divides both prescalers
-                // and the stream:ts prescale ratio is integral (currently
-                // 1:8/1:2 = 4); a TS prescale COARSER than the stream timer's
-                // would truncate here and reintroduce per-tick drift.
-                uint32_t tsFreq =
-                        TimerApi_FrequencyGet(gpStreamingConfig->TSTimerIndex);
-                uint32_t streamTimerFreq =
-                        TimerApi_FrequencyGet(gpStreamingConfig->TimerIndex);
-                uint32_t periodCycles = (gpRuntimeConfigStream != NULL)
-                              ? (gpRuntimeConfigStream->ClockPeriod + 1u) : 1u;
-                gStreamPeriodTicks = (streamTimerFreq > 0u)
-                        ? (uint32_t)(((uint64_t)tsFreq * periodCycles) / streamTimerFreq)
-                        : 1u;
-                if (gStreamPeriodTicks == 0u) gStreamPeriodTicks = 1u;
-                // Anchor baseTS at THIS session's tick 0. The 1-deep slot holds
-                // the LATEST fired tick's stamp; if M ticks coalesced before this
-                // first wake (notifyCount = the pre-decrement count captured at
-                // the top of the loop) the slot is tick (M-1) while this
-                // iteration is tick 0 — back it out so absolute stamps anchor
-                // correctly. A constant (M-1)*p offset otherwise: invisible to
-                // intra-stream dt, but it would desync the #667 edge-event TMR6
-                // correlation the exact periodTicks exists to preserve. Common
-                // case M==1 -> no correction. The uint32 subtraction wraps in
-                // lockstep with TMR6 (audit #722 / Fable Q3, 2026-07-26); the
-                // #533 0->1 sentinel is handled by the trigStamp clamp below.
-                uint32_t* pSeed = BoardData_Get(BOARDDATA_STREAMING_TIMESTAMP, 0);
-                if (pSeed != NULL) {
-                    uint32_t coalesced =
-                            (notifyCount > 0u) ? (notifyCount - 1u) : 0u;
-                    gStreamBaseTS = *pSeed - coalesced * gStreamPeriodTicks;
-                } else {
-                    gStreamBaseTS = 1u;
-                }
-                gStreamTSSeeded = true;
-            }
+            /* #717: deterministic per-tick timestamp. The old path read the
+             * ISR-captured shared 1-deep slot (BOARDDATA_STREAMING_TIMESTAMP)
+             * once per emitted sample; when the deferred task fell behind at high
+             * rate, K catch-up iterations read the SAME latest slot value -> K
+             * duplicate msg_time_stamps then a 2-period jump (t,t,t+2p; 0.07%
+             * @1kHz -> 15% @5kHz over USB). Now stamp N = gStreamBaseTS +
+             * N*gStreamPeriodTicks, race-free:
+             *   - gStreamBaseTS is captured in the timer ISR
+             *     (Streaming_TimerHandler) on this session's FIRST enabled tick,
+             *     atomically with the tick — so no task-wake latency or coalesced
+             *     first wake can offset it (audit #722 seed race; supersedes the
+             *     deferred-task notifyCount reconstruction).
+             *   - gStreamPeriodTicks (config-derived, no timing race) is computed
+             *     once in Streaming_Start as the EXACT TMR6-tick count of one
+             *     streaming period = (ClockPeriod+1) TMR4/5 cycles * (tsFreq /
+             *     streamTimerFreq), which corrects the ~428 ppm drift the naive
+             *     floor(tsFreq/rate) had at non-clean-dividing rates (9000 Hz:
+             *     4666 vs the real 4668) and composes with the #716 clock fix.
+             * gStreamBaseTS is written once per session by the ISR and only read
+             * here (uint32 atomic); the task's wake is the ISR's own notify, so
+             * the seed is always visible. #533 0->1 handled by the clamp below. */
             /* gStreamTickIndex is the session-relative twin of gTimerISRCalls
              * (#265): one increment per processed tick, so tick N deterministically
              * stamps baseTS + N*periodTicks. The iterations<->notifications<->ISR
@@ -1098,6 +1055,20 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
             if (eosSeq == gScanEosSeqSeen) gScanStaleDropped++;  // no new EOS since last tick -> stale
             gScanEosSeqSeen = eosSeq;
         }
+        // #717 (audit #722): seed the deterministic-timestamp base HERE, in ISR
+        // context, on the session's FIRST enabled tick — race-free. valueTMR is
+        // this trigger's clamped TMR6 stamp = tick 0's absolute time, so the
+        // deferred task (which processes this dispatch as tickIndex 0) stamps
+        // baseTS + 0. Capturing it here, atomically with the tick, eliminates the
+        // task-side TOCTOU (a coalesced first wake, or ticks firing between the
+        // task reading the notify count and the shared slot, could otherwise
+        // offset baseTS by K periods and desync #667 correlation). Single writer
+        // (same-source ISR can't preempt itself); Streaming_Start clears
+        // gStreamTSSeeded while the timer is stopped, so no concurrent write.
+        if (!gStreamTSSeeded) {
+            gStreamBaseTS = valueTMR;
+            gStreamTSSeeded = true;
+        }
         Streaming_Defer_Interrupt();
     }
 
@@ -1388,11 +1359,38 @@ static void Streaming_Start(void) {
             // Reset test pattern counter so each session starts at 0
             taskENTER_CRITICAL();
             gTestPatternSampleCount = 0;
-            // #717: re-seed the deterministic timestamp on this session's first
-            // tick (baseTS + periodTicks captured there from a clean slot read).
+            // #717: reset deterministic-timestamp state for this session. baseTS
+            // is seeded in the timer ISR on tick 0 (race-free, audit #722);
+            // tickIndex starts at 0 so the first processed dispatch stamps
+            // baseTS + 0. periodTicks is computed just below.
             gStreamTSSeeded = false;
             gStreamTickIndex = 0;
             taskEXIT_CRITICAL();
+            // #717: periodTicks is config-derived (not timing), so compute it
+            // here once — the EXACT TMR6-tick count of one streaming period:
+            // (ClockPeriod+1) TMR4/5 cycles * (tsFreq / streamTimerFreq). The two
+            // timers run different prescales (1:8 / 1:2 = 4) and the requested
+            // rate is quantized into ClockPeriod by ceiling division
+            // (SCPIInterface.c ~3419), so deriving from the ACTUAL configured
+            // period + live frequency ratio is exact for every rate (vs the
+            // drift-prone floor(tsFreq/rate); composes with #716). Multiply in
+            // uint64 first (fits: result <= tsFreq). The timer isn't started
+            // until below, so this store races no reader. ClockPeriod is set by
+            // SCPI_StartStreaming before this runs; the prescalers are fixed at
+            // boot. Exactness holds while the stream:ts prescale ratio is
+            // integral; a TS prescale coarser than the stream timer would
+            // truncate here and reintroduce per-tick drift.
+            {
+                uint32_t tsFreq =
+                        TimerApi_FrequencyGet(gpStreamingConfig->TSTimerIndex);
+                uint32_t streamTimerFreq =
+                        TimerApi_FrequencyGet(gpStreamingConfig->TimerIndex);
+                uint32_t periodCycles = gpRuntimeConfigStream->ClockPeriod + 1u;
+                gStreamPeriodTicks = (streamTimerFreq > 0u)
+                        ? (uint32_t)(((uint64_t)tsFreq * periodCycles) / streamTimerFreq)
+                        : 1u;
+                if (gStreamPeriodTicks == 0u) gStreamPeriodTicks = 1u;
+            }
             // #450: anchor the startup-grace window at the start of each
             // enabled session.  Steady drop counters won't increment
             // until xTaskGetTickCount() - gStreamStartTick >= grace.
