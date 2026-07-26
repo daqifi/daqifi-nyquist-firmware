@@ -64,10 +64,17 @@ static uint64_t gTestPatternSampleCount = 0;      // Monotonic counter, reset on
 //                     Streaming_Start (timer stopped); incremented by the task.
 //   gStreamTSSeeded  — latches the ISR baseTS capture. Cleared by Streaming_Start
 //                     (timer stopped), set by the ISR. No concurrent writers.
-static uint32_t gStreamTickIndex = 0;      // dispatches since session start (incl. drops)
-static uint32_t gStreamBaseTS = 0;         // TMR6 at the session's first tick (ISR-seeded)
-static uint32_t gStreamPeriodTicks = 0;    // TMR6 ticks per streaming tick (Start-computed)
-static bool     gStreamTSSeeded = false;   // baseTS captured this session? (ISR latch)
+// All four are volatile: each is written in one context (timer ISR or the SCPI
+// task inside Streaming_Start) and read in another (the deferred task), which is
+// exactly the case where the compiler must not cache the value in a register at
+// -O3. uint32_t throughout for guaranteed 32-bit atomic load/store on PIC32MZ
+// (the seeded latch included — a plain bool would still be atomic, but the
+// native width keeps the whole set uniform). volatile does NOT make the
+// gStreamTickIndex RMW atomic — that keeps its critical section.
+static volatile uint32_t gStreamTickIndex = 0;   // dispatches since session start (incl. drops)
+static volatile uint32_t gStreamBaseTS = 0;      // TMR6 at the session's first tick (ISR-seeded)
+static volatile uint32_t gStreamPeriodTicks = 0; // TMR6 ticks per streaming tick (Start-computed)
+static volatile uint32_t gStreamTSSeeded = 0u;   // baseTS captured this session? (ISR latch)
 
 // Benchmark mode level (BENCHMARK_OFF/NOCAP/PIPELINE).
 // Uses uint32_t for guaranteed 32-bit atomic access on PIC32MZ.
@@ -1067,7 +1074,7 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
         // gStreamTSSeeded while the timer is stopped, so no concurrent write.
         if (!gStreamTSSeeded) {
             gStreamBaseTS = valueTMR;
-            gStreamTSSeeded = true;
+            gStreamTSSeeded = 1u;
         }
         Streaming_Defer_Interrupt();
     }
@@ -1363,7 +1370,7 @@ static void Streaming_Start(void) {
             // is seeded in the timer ISR on tick 0 (race-free, audit #722);
             // tickIndex starts at 0 so the first processed dispatch stamps
             // baseTS + 0. periodTicks is computed just below.
-            gStreamTSSeeded = false;
+            gStreamTSSeeded = 0u;
             gStreamTickIndex = 0;
             taskEXIT_CRITICAL();
             // #717: periodTicks is config-derived (not timing), so compute it
@@ -1755,7 +1762,7 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gStreamTickIndex = 0;      // #717 deterministic-ts state (retained-RAM safety)
     gStreamBaseTS = 0;
     gStreamPeriodTicks = 0;
-    gStreamTSSeeded = false;
+    gStreamTSSeeded = 0u;
     gBenchmarkMode = BENCHMARK_OFF;
     gSdPbMetadataSent = false;
     gSdFileWasReady = false;
