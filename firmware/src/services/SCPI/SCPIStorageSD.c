@@ -318,6 +318,20 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
         goto __exit_point;
     }
 
+    /* #703: SD:GET reads into the streaming pool's SD circular buffer, which the
+     * auto-balancer shrinks after a non-SD stream. If it collapsed below the read
+     * minimum, fail loudly and synchronously here (SCPI -200 + LOG_E) rather than
+     * arming an async read that bails on the SD task. The floor fix keeps this
+     * from ever tripping in practice; it's the host-visible mirror of the SD-task
+     * terminal bail so a client gets an error instead of a bare EOF marker. */
+    if (!sd_card_manager_ReadBufferReady()) {
+        LOG_E("[SD] GET rejected: read buffer too small — start an SD-logging "
+              "session or reboot to restore the SD buffer");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {

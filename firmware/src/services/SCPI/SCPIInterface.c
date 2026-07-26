@@ -3442,9 +3442,26 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #703: SD:GET read / CRC / directory LIST are ASYNC — the SD task streams
+     * into the SD circular buffer (static BSS in the streaming pool) using a
+     * chunk size it computes ONCE up front. PrepareStreamingBuffers below
+     * re-partitions that pool and pointer-swaps the SD buffer out from under an
+     * in-flight op, so its stale chunk would overflow the shrunk region into
+     * adjacent (live-stream) partitions — memory corruption during acquisition.
+     * The prior SD-busy gate only ran for SD-*logging* streams (below); reject
+     * ANY stream start while such an op is in flight. Deliberately narrower than
+     * IsBusy() (see sd_card_manager_BufferOpInFlight) so it does NOT spuriously
+     * reject a start during a post-stop unmount transient or a quick GET_SPACE. */
+    if (sd_card_manager_BufferOpInFlight()) {
+        LOG_E("Cannot start streaming - SD read/list/CRC in flight (#703)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     // If SD logging is requested, set mode to WRITE now (deferred from LOGging command)
     if (sdLoggingRequested) {
-        // Check if SD card is busy with another operation (DELETE, FORMAT, etc.)
+        // Check if SD card is busy with another operation (DELETE, FORMAT, etc.).
+        // SD is a single consumer — don't start a logging file while any SD op runs.
         if (sd_card_manager_IsBusy()) {
             LOG_E("Cannot start SD logging - SD card busy with another operation");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -4259,6 +4276,27 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     uint32_t usbSize, wifiSize, sdCircSize;
     uint32_t sdDmaSize, usbDmaSize, wifiDmaSize, encSize;
 
+    /* #703: this function re-partitions the streaming pool and pointer-swaps the
+     * SD circular buffer. An in-flight async SD read/CRC/LIST op streams into
+     * that same buffer using a chunk size computed once, up front — swapping it
+     * out from under the op would make FileRead overflow the shrunk region into
+     * adjacent partitions (memory corruption during acquisition).
+     *
+     * This entry check is a FAIL-FAST only: it rejects before the ~1 s of
+     * vTaskDelay waits below when SD is already busy. It is NOT the correctness
+     * guard — an op can still arm on the other SCPI task during those waits.
+     * The actual guard is sd_card_manager_TryLockBuffer() held across the swap
+     * (just before StreamingBufferPool_Partition below). Backstops the non-
+     * STR:START callers (SYST:MEM:AUTO, THRoughput, WiFi rate finder); STR:START
+     * itself rejects earlier with a clearer error. (WRITE is not flagged by
+     * BufferOpInFlight — it's the caller's own logging setup, the intended
+     * consumer of the new partition.) */
+    if (sd_card_manager_BufferOpInFlight()) {
+        LOG_E("PrepareStreamingBuffers: refused — SD read/list/CRC in flight; "
+              "cannot re-partition the SD read buffer (#703)");
+        return false;
+    }
+
     // Mirror SCPI_StartStreaming's auto-vs-explicit decision so the finder
     // measures with the SAME buffer layout the user's real stream will use:
     // if any MemoryConfig field is set (SYST:MEM:* static config), honor those
@@ -4307,6 +4345,20 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
         }
     }
 
+    /* #703 (Qodo TOCTOU): the BufferOpInFlight() check at function entry is only
+     * fail-fast — an SD READ/LIST/CRC can arm on the OTHER SCPI task (USB pri 7
+     * vs TCP pri 2) during the vTaskDelay waits above, then read the buffer with a
+     * chunk size computed against the OLD partition. Take the SAME mutex those ops
+     * hold before they touch the SD buffer and keep it across the re-partition +
+     * pointer swap below: if an op holds it now, abort (fail-fast, no multi-second
+     * block); an op that arms during the swap blocks at its own take until we
+     * release, then reads from the NEW buffer size (consistent). Released on every
+     * exit path after this point. */
+    if (!sd_card_manager_TryLockBuffer()) {
+        LOG_E("PrepareStreamingBuffers: refused — SD read/list/CRC holds the buffer lock (#703)");
+        return false;
+    }
+
     StreamingBufferPool_Partition(usbSize, wifiSize, encSize,
                                   sdCircSize, poolCount, sampleElemSize);
 
@@ -4319,6 +4371,7 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     if (usbBuf == NULL || wifiBuf == NULL || encBuf == NULL || sdCircBuf == NULL) {
         LOG_E("PrepareStreamingBuffers: partition failed USB=%u WiFi=%u enc=%u sd=%u",
               (unsigned)usbLen, (unsigned)wifiLen, (unsigned)encLen, (unsigned)sdCircLen);
+        sd_card_manager_UnlockBuffer();   /* #703: release SD buffer lock on abort */
         return false;
     }
     // NOTE: buffer-pointer Set calls are deferred to the END (after the coherent
@@ -4343,6 +4396,7 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
         wifiDmaSize = WIFI_DMA_MIN;
     }
     if (!SCPI_QuiesceAndResetCoherentPool()) {
+        sd_card_manager_UnlockBuffer();   /* #703: release SD buffer lock on abort */
         return false;
     }
     // Allocate all three coherent DMA buffers; ABORT if any fails rather than
@@ -4354,6 +4408,7 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     if (sdDmaBuf == NULL || usbDmaBuf == NULL || wifiDmaBuf == NULL) {
         LOG_E("PrepareStreamingBuffers: coherent alloc failed SD=%u USB=%u WIFI=%u",
               (unsigned)sdDmaSize, (unsigned)usbDmaSize, (unsigned)wifiDmaSize);
+        sd_card_manager_UnlockBuffer();   /* #703: release SD buffer lock on abort */
         return false;
     }
     // All allocations succeeded — now apply every buffer pointer together
@@ -4365,6 +4420,10 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     sd_card_manager_SetWriteBuffer(sdDmaBuf, sdDmaSize);
     UsbCdc_SetDmaWriteBuffer(usbDmaBuf, usbDmaSize);
     WDRV_WINC_SPI_SetBuffer(wifiDmaBuf, wifiDmaSize);
+    /* #703: swap complete — release the SD buffer lock. Any SD op that armed
+     * during the swap was blocked at its read_operation take and now proceeds
+     * against the new buffer size. */
+    sd_card_manager_UnlockBuffer();
 
     void* sPoolMem; int16_t* sFreeMem; uint32_t sCount; size_t sElemSz;
     StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSz);
