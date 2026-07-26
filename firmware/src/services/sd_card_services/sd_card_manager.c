@@ -2191,13 +2191,24 @@ bool sd_card_manager_ReadBufferReady(void) {
     return gSdSharedBufferSize >= SD_READ_ALIGNMENT_SIZE;
 }
 
-/* #703: is an async SD op actively streaming into the shared SD circular buffer
- * with a chunk size it computed ONCE up front? Those ops (SD:GET read, CRC,
- * directory LIST) would be corrupted if the streaming partitioner re-sized /
- * pointer-swapped the buffer mid-transfer (stale chunk -> FileRead overflows the
- * shrunk region into adjacent partitions). Deliberately NARROWER than IsBusy():
+/* #703: is an async SD op in flight that touches a STREAMING-POOL buffer the
+ * partitioner (PrepareStreamingBuffers -> StreamingBufferPool_Partition) re-sizes
+ * and pointer-swaps? TWO distinct-but-real hazards, hence three modes:
+ *   - READ (SD:GET) and COMPUTE_CRC read the SD *circular* buffer (gSdSharedBuffer)
+ *     with a chunk size computed ONCE up front — a mid-transfer swap makes their
+ *     next FileRead overflow the shrunk region into adjacent partitions.
+ *   - LIST_DIRECTORY does NOT read gSdSharedBuffer (it formats into the fixed
+ *     512 B gSDCardData.messageBuffer). Its hazard is on the OUTPUT side: the
+ *     listing chunks are written into the streaming-pool USB/WiFi *output*
+ *     circular buffer (DataReadyCB -> sd_reply_write_usb/tcp ->
+ *     UsbCdc_WriteToBuffer / wifi_tcp_server), the SAME buffer PrepareStreamingBuffers
+ *     swaps via UsbCdc_SetWriteBuffer / wifi_tcp_server_SetWriteBuffer — a
+ *     mid-listing swap races that output. (Audit note #723: the earlier comment
+ *     wrongly attributed LIST's inclusion to the SD-circular read; the real reason
+ *     is the output-buffer swap, so LIST correctly stays in the set.)
+ * All three must block a re-partition. Deliberately NARROWER than IsBusy():
  * excludes WRITE (logging is the partition's intended consumer), GET_SPACE,
- * DELETE/FORMAT (don't stream into the buffer), and post-stop unmount transients
+ * DELETE/FORMAT (touch no re-partitioned buffer), and post-stop unmount transients
  * (mode NONE) — so it won't spuriously reject a stream start right after an SD
  * session stops. */
 bool sd_card_manager_BufferOpInFlight(void) {
@@ -2215,10 +2226,12 @@ bool sd_card_manager_BufferOpInFlight(void) {
 }
 
 /* #703: non-blocking acquire of the SD op mutex (the SAME mutex the READ/LIST/CRC
- * loops take before they touch the shared SD buffer — read_operation/list_operation).
- * The streaming partitioner calls this right before it re-partitions and pointer-
- * swaps the SD circular buffer, and holds it across the swap, to close the TOCTOU
- * that BufferOpInFlight()-at-entry alone leaves open: an SD op can arm on the OTHER
+ * ProcessState loops take — read_operation/list_operation — before they touch the
+ * buffers the partitioner swaps: READ/CRC the SD circular, LIST the USB/WiFi output
+ * circular; see sd_card_manager_BufferOpInFlight above). The streaming partitioner
+ * calls this right before it re-partitions and pointer-swaps those buffers, and
+ * holds it across the swap, to close the TOCTOU that BufferOpInFlight()-at-entry
+ * alone leaves open: an SD op can arm on the OTHER
  * SCPI task (USB pri 7 vs TCP pri 2) between the entry check and the swap. With the
  * lock held: a swap can't begin while an op holds it (try-lock fails -> caller
  * aborts, fail-fast, no multi-second block), and an op that arms during the swap
