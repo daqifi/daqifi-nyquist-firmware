@@ -38,7 +38,13 @@ extern "C" {
 #define STREAMING_WIFI_MIN          1400   /* SOCKET_BUFFER_MAX_LENGTH (one TCP packet) */
 #define ENCODER_BUFFER_MIN          1024   /* Must fit at least one encoded sample set */
 #define ENCODER_BUFFER_DEFAULT      8192   /* Optimal for USB; SD benefits from 16384 */
-#define STREAMING_SD_CIRCULAR_MIN   512    /* Min valid circular buffer (unused when inactive) */
+/* #703: the SD *read* path (SD:GET) reads into this SAME circular buffer and
+ * bails (maxRead==0) if it is below one read-alignment unit (SD_READ_ALIGNMENT_SIZE
+ * = 4096). So this floor is NOT "unused when inactive" — a non-SD stream shrinks
+ * the SD circular to it, and SD:GET afterwards depends on it being >= 4096. At 512
+ * every SD:GET after any non-SD stream silently failed until reboot. Keep >= 4096;
+ * a _Static_assert in sd_card_manager.c cross-ties this to SD_READ_ALIGNMENT_SIZE. */
+#define STREAMING_SD_CIRCULAR_MIN   4096   /* Min SD circular; also the SD:GET read floor (#703) */
 
 /** Active-interface defaults used by Streaming_ComputeAutoBuffers */
 #define STREAMING_USB_DEFAULT       (64U * 1024U)  /* USB circular when active */

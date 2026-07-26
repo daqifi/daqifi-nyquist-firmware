@@ -270,6 +270,51 @@ extern "C" {
     bool sd_card_manager_IsBusy(void);
 
     /**
+     * @brief #703: is the SD read scratch buffer large enough for SD:GET?
+     *
+     * SD:GET reads into the streaming pool's SD circular buffer, floor-aligned
+     * to the read chunk size; below one alignment unit the read bails. A non-SD
+     * stream can shrink that buffer, so a SCPI GET handler can call this to fail
+     * loudly (synchronous SCPI error) instead of arming an async read that
+     * bails silently.
+     *
+     * @return true if SD:GET can proceed, false if the buffer is too small
+     */
+    bool sd_card_manager_ReadBufferReady(void);
+
+    /**
+     * @brief #703: is an SD op actively streaming into the shared SD buffer?
+     *
+     * True while an SD:GET read / CRC / directory LIST is in flight — the ops
+     * that read into the SD circular buffer with a chunk size fixed up front.
+     * The streaming partitioner must not re-size / pointer-swap that buffer
+     * while one of these runs, or the stale chunk overflows adjacent partitions.
+     * Narrower than sd_card_manager_IsBusy(): excludes WRITE, GET_SPACE,
+     * DELETE/FORMAT and idle/unmount transients.
+     *
+     * @return true if a buffer-streaming SD op is in flight
+     */
+    bool sd_card_manager_BufferOpInFlight(void);
+
+    /**
+     * @brief #703: non-blocking acquire of the SD op mutex around a buffer swap.
+     *
+     * The streaming partitioner calls this immediately before it re-partitions
+     * and pointer-swaps the SD circular buffer, and holds it across the swap, to
+     * close the TOCTOU that a BufferOpInFlight() check at function entry leaves
+     * open (an SD op can arm on the other SCPI task in the interim). Non-blocking:
+     * returns false immediately if an SD READ/LIST/CRC currently holds the lock,
+     * so the caller can fail-fast instead of blocking for a multi-second transfer.
+     *
+     * @return true if the lock was taken (caller MUST call Unlock) or the mutex
+     *         does not exist yet (early boot); false if an SD op holds it.
+     */
+    bool sd_card_manager_TryLockBuffer(void);
+
+    /** @brief #703: release the lock taken by sd_card_manager_TryLockBuffer(). */
+    void sd_card_manager_UnlockBuffer(void);
+
+    /**
      * @brief Checks if the SD card file is open and ready to accept write data.
      *
      * Returns true only after the file has been opened and the write buffer
