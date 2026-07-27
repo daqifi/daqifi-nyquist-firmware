@@ -171,7 +171,7 @@ const NanopbFlagsArray fields_all = {
 };
 
 const NanopbFlagsArray fields_info = {
-    .Size = 59,
+    .Size = 62,
     .Data =
     {
         DaqifiOutMessage_msg_time_stamp_tag,
@@ -180,6 +180,10 @@ const NanopbFlagsArray fields_info = {
         DaqifiOutMessage_batt_status_tag,
         DaqifiOutMessage_temp_status_tag,
         DaqifiOutMessage_timestamp_freq_tag,
+        /* #730 streaming timebase */
+        DaqifiOutMessage_stream_timer_freq_tag,
+        DaqifiOutMessage_timestamp_ticks_per_sample_tag,
+        DaqifiOutMessage_actual_rate_millihz_tag,
         DaqifiOutMessage_analog_in_port_num_tag,
         DaqifiOutMessage_analog_in_port_num_priv_tag,
         DaqifiOutMessage_analog_in_port_type_tag,
@@ -2096,6 +2100,10 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     uint32_t savedPattern = Streaming_GetTestPattern();
     uint64_t savedFrequency = StreamFreq_Get(pStreamCfg);   // Frequency is uint64_t — no truncation
     uint32_t savedClockPeriod = pStreamCfg->ClockPeriod;
+    /* #730/#733: this path restores ClockPeriod below, so the rate-configured
+     * flag must be restored with it — otherwise a benchmark on a fresh boot
+     * leaves it set over the meaningless boot default. */
+    bool savedRateConfigured = Streaming_IsRateConfigured();
 
     // Enable benchmark mode + test pattern
     Streaming_SetBenchmarkMode(BENCHMARK_NOCAP);
@@ -2127,6 +2135,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
             Streaming_SetTestPattern(savedPattern);
             StreamFreq_Set(pStreamCfg, savedFrequency);     // no-op here (poke is later), kept for consistency
             pStreamCfg->ClockPeriod = savedClockPeriod;
+            Streaming_RestoreRateConfigured(savedRateConfigured);   /* #730 */
             RestoreSdMode(savedSdMode);
             SCPI_ExecutionError(context, "SYST:STR:THR: buffer prepare failed");
             return SCPI_RES_ERR;
@@ -2152,6 +2161,11 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
         Streaming_SetTestPattern(savedPattern);
         StreamFreq_Set(pStreamCfg, savedFrequency);
         pStreamCfg->ClockPeriod = savedClockPeriod;
+        /* #730/#733 Qodo: Streaming_Start may already have marked the rate
+         * configured before the start failed — restore on THIS path too, or a
+         * failed benchmark leaves the flag set over the period it just put
+         * back. Every exit from this function restores the same four things. */
+        Streaming_RestoreRateConfigured(savedRateConfigured);
         RestoreSdMode(savedSdMode);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
@@ -2169,6 +2183,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     Streaming_SetTestPattern(savedPattern);
     StreamFreq_Set(pStreamCfg, savedFrequency);
     pStreamCfg->ClockPeriod = savedClockPeriod;
+    Streaming_RestoreRateConfigured(savedRateConfigured);   /* #730 */
     RestoreSdMode(savedSdMode);
 
     // Collect and report results
@@ -2433,6 +2448,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     uint32_t savedPattern = Streaming_GetTestPattern();
     uint64_t savedFrequency = StreamFreq_Get(cfg);      // Frequency is uint64_t — no truncation
     uint32_t savedClockPeriod = cfg->ClockPeriod;
+    bool savedRateConfigured = Streaming_IsRateConfigured();   /* #730, see above */
     Streaming_SetBenchmarkMode(BENCHMARK_NOCAP);   // bypass cap to probe the link
     Streaming_SetTestPattern(3);                   // fullscale: worst-case PB size
 
@@ -2578,6 +2594,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     Streaming_SetTestPattern(savedPattern);
     StreamFreq_Set(cfg, savedFrequency);
     cfg->ClockPeriod = savedClockPeriod;
+    Streaming_RestoreRateConfigured(savedRateConfigured);   /* #730 */
     RestoreSdMode(savedSdMode);
 
     // ---- Bench-fitted WiFi cap (#522) -------------------------------------
@@ -3419,6 +3436,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             uint32_t periodCycles = (clkFreq + freq - 1) / freq;
             if (periodCycles < 2) periodCycles = 2;  // PR must be >= 1
             pRunTimeStreamConfig->ClockPeriod = periodCycles - 1;
+            Streaming_NoteRateConfigured();   /* #730 */
             pRunTimeStreamConfig->Frequency = freq;
             pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
             // #107: scan the shared MODULE7 (Type-2) mux on EVERY tick so T2 yields
@@ -5038,6 +5056,40 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         (unsigned)st.isrMaxHz,
         (unsigned)cfg->CapabilitiesFlags.streamingConservativeEnvelopeHz,
         (unsigned)st.maxFreqHz);
+
+    /* #730 timing block — the streaming timebase, so a client never has to
+     * assume a clock or a prescale ratio, and can see the rate the hardware
+     * ACTUALLY runs.
+     *
+     * Emitted here as well as in SYSTem:SYSInfoPB? (fields 70-72) because this
+     * is the "render your UI from one query" surface; the PB route otherwise
+     * forces a second round-trip just for timing. Same values, same helpers.
+     *
+     * - timestamp_hz / stream_timer_hz: divide them for the prescale ratio
+     *   (4 today). Reported rather than derivable because the ratio is a
+     *   PRESCALER ratio — clock-invariant across the 200/252 MHz configs —
+     *   while the core-timer ratio would not be (see #731).
+     * - timestamp_ticks_per_sample: exactly what the deferred task stamps with
+     *   (#717 gStreamPeriodTicks), from the shared helper so it cannot drift.
+     * - actual_rate_millihz: the QUANTIZED rate. `Frequency` is what was asked
+     *   for; the period register is an integer, so asking for 4500 Hz yields
+     *   4498.714 Hz at 252 MHz (~286 ppm). Millihertz keeps it integral.
+     * Both per-config values are 0 until a rate is configured. */
+    {
+        StreamingRuntimeConfig* tcfg =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+        uint32_t tClockPeriod = (tcfg != NULL) ? tcfg->ClockPeriod : 0u;
+        bool tConfigured = Streaming_IsRateConfigured();
+        scpi_printf(context,
+            "\"timing\":{\"timestamp_hz\":%u,\"stream_timer_hz\":%u,"
+            "\"timestamp_ticks_per_sample\":%u,\"actual_rate_millihz\":%u},",
+            (unsigned)TimerApi_FrequencyGet(cfg->StreamingConfig.TSTimerIndex),
+            (unsigned)TimerApi_FrequencyGet(cfg->StreamingConfig.TimerIndex),
+            (unsigned)(tConfigured
+                ? Streaming_TimestampTicksPerSample(tClockPeriod) : 0u),
+            (unsigned)(tConfigured
+                ? Streaming_ActualRateMilliHz(tClockPeriod) : 0u));
+    }
 
     scpi_printf(context,
         "\"rate_model\":{\"formula\":"

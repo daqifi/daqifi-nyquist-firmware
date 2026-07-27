@@ -17,6 +17,7 @@
 #include "HAL/TimerApi/TimerApi.h"
 #include "state/board/BoardConfig.h"
 #include "HAL/DIO.h"
+#include "services/streaming.h"   /* #730: timebase helpers */
 #ifndef min
 #define min(x,y) ((x) <= (y) ? (x) : (y))
 #endif // min
@@ -116,6 +117,19 @@ static int Nanopb_EncodeLength(const NanopbFlagsArray* fields) {
 
             case DaqifiOutMessage_timestamp_freq_tag:
                 len += sizeof (out->timestamp_freq);
+                break;
+
+            /* #730 streaming timebase */
+            case DaqifiOutMessage_stream_timer_freq_tag:
+                len += sizeof (out->stream_timer_freq);
+                break;
+
+            case DaqifiOutMessage_timestamp_ticks_per_sample_tag:
+                len += sizeof (out->timestamp_ticks_per_sample);
+                break;
+
+            case DaqifiOutMessage_actual_rate_millihz_tag:
+                len += sizeof (out->actual_rate_millihz);
                 break;
 
             case DaqifiOutMessage_analog_in_port_num_tag:
@@ -521,6 +535,40 @@ size_t Nanopb_Encode(tBoardData* state,
                 message.timestamp_freq = TimerApi_FrequencyGet(
                         pBoardConfig->StreamingConfig.TSTimerIndex);
                 break;
+
+            /* #730 streaming timebase (with timestamp_freq, field 16). That field
+             * alone is not enough to
+             * predict the stamps: the trigger and the timestamp counter run
+             * different prescales, and the requested rate is quantized into an
+             * integer period register. These three close that gap so a client
+             * never assumes a clock or a ratio. */
+            case DaqifiOutMessage_stream_timer_freq_tag:
+                message.stream_timer_freq = TimerApi_FrequencyGet(
+                        pBoardConfig->StreamingConfig.TimerIndex);
+                break;
+
+            case DaqifiOutMessage_timestamp_ticks_per_sample_tag:
+            case DaqifiOutMessage_actual_rate_millihz_tag:
+            {
+                /* Both derive from the configured trigger period. Reported as
+                 * 0 when no rate has been configured yet, so a client can tell
+                 * "unconfigured" from a real value. Computed by the streaming
+                 * module so these can never disagree with the stamps the
+                 * deferred task actually emits (#717 gStreamPeriodTicks). */
+                const StreamingRuntimeConfig* cfg = BoardRunTimeConfig_Get(
+                        BOARDRUNTIME_STREAMING_CONFIGURATION);
+                uint32_t clockPeriod = (cfg != NULL) ? cfg->ClockPeriod : 0u;
+                bool configured = Streaming_IsRateConfigured();
+                if (fields->Data[i] ==
+                        DaqifiOutMessage_timestamp_ticks_per_sample_tag) {
+                    message.timestamp_ticks_per_sample = configured
+                            ? Streaming_TimestampTicksPerSample(clockPeriod) : 0u;
+                } else {
+                    message.actual_rate_millihz = configured
+                            ? Streaming_ActualRateMilliHz(clockPeriod) : 0u;
+                }
+                break;
+            }
             case DaqifiOutMessage_analog_in_port_num_tag:
             {
                 /**

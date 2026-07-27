@@ -684,6 +684,35 @@ void Streaming_SetLossThreshold(uint32_t pct);
 uint32_t Streaming_GetFlowWindowOverride(void);
 void Streaming_SetFlowWindowOverride(uint32_t size);
 
+// #730 streaming timebase, for clients that need exact timing.
+//
+// Streaming_TimestampTicksPerSample: the timestamp-domain length of one
+//   streaming period for a given stream-timer period register value. This is
+//   the SAME value Streaming_Start stamps with (#717 gStreamPeriodTicks) —
+//   shared so a reported value can't drift from the emitted stamps. Always >= 1.
+// Streaming_ActualRateMilliHz: the rate the hardware actually runs, in
+//   millihertz. StreamingRuntimeConfig.Frequency stores the REQUESTED rate;
+//   the period register quantizes it (4500 Hz -> 4498.714 Hz at 252 MHz).
+//   Returns 0 when no period is configured.
+//
+// Both take ClockPeriod (the PR value, i.e. periodCycles-1) so a caller can ask
+// about a hypothetical rate without mutating the runtime config.
+// True once a streaming rate has been configured this boot. Gates the two
+// per-config values above (both report 0 when unconfigured). Reads a 32-bit
+// flag — atomic on PIC32MZ, no critical section needed.
+bool Streaming_IsRateConfigured(void);
+// Called by the SCPI paths that set ClockPeriod (stream START, per-channel
+// enable) to mark the rate as genuinely configured. The boot defaults are
+// placeholders that describe no real rate, so the flag is what makes the
+// "0 = unconfigured" contract on the timebase values true.
+void Streaming_NoteRateConfigured(void);
+// Restore a previously captured flag value. For the benchmark / WiFi-finder
+// paths, which stream at a temporary period and then restore the previous one:
+// the flag belongs in the same save/restore block as Frequency and ClockPeriod.
+void Streaming_RestoreRateConfigured(bool configured);
+uint32_t Streaming_TimestampTicksPerSample(uint32_t clockPeriod);
+uint32_t Streaming_ActualRateMilliHz(uint32_t clockPeriod);
+
 // Test pattern streaming mode.
 // 0=off (real ADC data), 1=counter, 2=midscale, 3=fullscale, 4=walking,
 // 5=triangle, 6=sine. Runtime-only (not persisted to NVM).

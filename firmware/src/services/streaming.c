@@ -71,6 +71,21 @@ static uint64_t gTestPatternSampleCount = 0;      // Monotonic counter, reset on
 // (the seeded latch included — a plain bool would still be atomic, but the
 // native width keeps the whole set uniform). volatile does NOT make the
 // gStreamTickIndex RMW atomic — that keeps its critical section.
+/* #730: has a streaming rate been configured this boot?
+ *
+ * Deliberately a flag rather than a test of the config fields. The boot
+ * defaults (CommonRuntimeDefaults.h) are placeholders that do not describe any
+ * real rate: ClockPeriod=130 works out to 80,153 Hz at 252 MHz while
+ * Frequency=30000 claims 30 kHz — they disagree with each other, and both sit
+ * above the 22 kHz ISR ceiling. Testing either would report a confident,
+ * meaningless number at exactly the moment a client reads the timebase
+ * (connect time, before any START). Tracked separately as a defaults cleanup.
+ *
+ * Set by Streaming_NoteRateConfigured() from the SCPI paths that write
+ * ClockPeriod; never cleared — a configured rate stays configured until reboot.
+ */
+static volatile uint32_t gStreamRateConfigured = 0;
+
 static volatile uint32_t gStreamTickIndex = 0;   // dispatches since session start (incl. drops)
 static volatile uint32_t gStreamBaseTS = 0;      // TMR6 at the session's first tick (ISR-seeded)
 static volatile uint32_t gStreamPeriodTicks = 0; // TMR6 ticks per streaming tick (Start-computed)
@@ -1387,17 +1402,16 @@ static void Streaming_Start(void) {
             // boot. Exactness holds while the stream:ts prescale ratio is
             // integral; a TS prescale coarser than the stream timer would
             // truncate here and reintroduce per-tick drift.
-            {
-                uint32_t tsFreq =
-                        TimerApi_FrequencyGet(gpStreamingConfig->TSTimerIndex);
-                uint32_t streamTimerFreq =
-                        TimerApi_FrequencyGet(gpStreamingConfig->TimerIndex);
-                uint32_t periodCycles = gpRuntimeConfigStream->ClockPeriod + 1u;
-                gStreamPeriodTicks = (streamTimerFreq > 0u)
-                        ? (uint32_t)(((uint64_t)tsFreq * periodCycles) / streamTimerFreq)
-                        : 1u;
-                if (gStreamPeriodTicks == 0u) gStreamPeriodTicks = 1u;
-            }
+            gStreamPeriodTicks = Streaming_TimestampTicksPerSample(
+                    gpRuntimeConfigStream->ClockPeriod);
+            /* #730: by the time a session starts, ClockPeriod describes a real
+             * rate whoever set it — including the benchmark/finder paths, which
+             * poke it directly instead of going through the SCPI setters. Those
+             * two then RESTORE the previous period on exit, and restore this
+             * flag with it (Streaming_RestoreRateConfigured), so a temporary
+             * benchmark stream doesn't leave the flag set over a period nobody
+             * configured. */
+            Streaming_NoteRateConfigured();
             // #450: anchor the startup-grace window at the start of each
             // enabled session.  Steady drop counters won't increment
             // until xTaskGetTickCount() - gStreamStartTick >= grace.
@@ -1763,6 +1777,12 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gStreamBaseTS = 0;
     gStreamPeriodTicks = 0;
     gStreamTSSeeded = 0u;
+    /* #730: same retained-RAM safety. The runtime config is NOT retained
+     * (InitBoardRuntimeConfig memcpy's the const defaults every boot), so a
+     * flag that survived while ClockPeriod reverted to the 130 placeholder
+     * would report the meaningless 524 ticks / 80,153 Hz as "configured" —
+     * the very thing the flag exists to suppress (#733 audit). */
+    gStreamRateConfigured = 0u;
     gBenchmarkMode = BENCHMARK_OFF;
     gSdPbMetadataSent = false;
     gSdFileWasReady = false;
@@ -2653,6 +2673,101 @@ void TimestampTimer_Init(void) {
     TimerApi_InterruptEnable(gpStreamingConfig->TSTimerIndex);
     TimerApi_Start(gpStreamingConfig->TSTimerIndex);
 
+}
+
+/* #730: the timestamp-domain length of one streaming period, for a given
+ * stream-timer period register value.
+ *
+ * Single source of truth for the #717 period math — Streaming_Start stores the
+ * result in gStreamPeriodTicks (what the deferred task actually stamps with),
+ * and the capability/SYSInfoPB emitters report it to clients. Splitting the
+ * formula across those call sites is how a reported value silently stops
+ * matching the emitted stamps.
+ *
+ * The two timers run different prescales (1:8 stream / 1:2 TS = ratio 4) and
+ * the requested rate is quantized into ClockPeriod by ceiling division in the
+ * STREAM domain (SCPIInterface.c ~3419), so deriving from the ACTUAL configured
+ * period + the live frequency ratio is exact at every rate — unlike the
+ * drift-prone floor(tsFreq/rate). Multiply in uint64 first (result <= tsFreq).
+ *
+ * Exactness holds while the stream:ts prescale ratio is integral. That ratio is
+ * 4 at BOTH clock configurations (#487: 1:2 vs 1:8 is a prescaler ratio, so it
+ * is immune to SYSCLK and the PBCLK divider alike), which is why this survived
+ * the 200->252 MHz move untouched. A TS prescale COARSER than the stream
+ * timer's would truncate here and reintroduce per-tick drift.
+ *
+ * Returns >= 1 always; never 0 (a zero period would make every stamp identical).
+ */
+uint32_t Streaming_TimestampTicksPerSample(uint32_t clockPeriod) {
+    if (gpStreamingConfig == NULL) return 1u;
+    uint32_t tsFreq = TimerApi_FrequencyGet(gpStreamingConfig->TSTimerIndex);
+    uint32_t streamTimerFreq =
+            TimerApi_FrequencyGet(gpStreamingConfig->TimerIndex);
+    if (streamTimerFreq == 0u) return 1u;
+    uint32_t periodCycles = clockPeriod + 1u;
+    uint32_t ticks =
+            (uint32_t)(((uint64_t)tsFreq * periodCycles) / streamTimerFreq);
+    return (ticks == 0u) ? 1u : ticks;
+}
+
+/* #730: has a streaming rate been configured this boot?
+ *
+ * Gates the two per-config timebase values below, so a client can tell
+ * "unconfigured" (0) from a real value.
+ *
+ * Reads a 32-bit flag, so no critical section: aligned 32-bit loads are atomic
+ * on PIC32MZ. (An earlier revision tested StreamingRuntimeConfig.Frequency
+ * instead, which IS uint64_t and would have needed one — but that test could
+ * not tell a configured rate from the boot default, which is why the flag
+ * exists. The stale "takes a critical section" comment outlived the change;
+ * Qodo #733 caught it.)
+ */
+bool Streaming_IsRateConfigured(void) {
+    return (gStreamRateConfigured != 0u);
+}
+
+/* Called from the SCPI paths that write ClockPeriod (stream START and the
+ * per-channel enable). See gStreamRateConfigured for why a flag is needed
+ * rather than testing the config fields. */
+void Streaming_NoteRateConfigured(void) {
+    gStreamRateConfigured = 1u;   // 32-bit store is atomic on PIC32MZ
+}
+
+/* Restore a previously captured flag value.
+ *
+ * For the benchmark and WiFi-finder paths, which poke ClockPeriod, stream at
+ * it, then RESTORE the previous period. Without this they would leave the flag
+ * set over a period they did not configure — on a fresh boot that means
+ * reporting the meaningless default (524 ticks / 80,153 Hz) right after a
+ * benchmark, which is the exact failure the flag exists to prevent. They
+ * already save/restore Frequency and ClockPeriod; the flag belongs in that
+ * same block (pre-merge audit on PR #733).
+ */
+void Streaming_RestoreRateConfigured(bool configured) {
+    gStreamRateConfigured = configured ? 1u : 0u;
+}
+
+/* #730: the rate the hardware ACTUALLY runs, in millihertz.
+ *
+ * `StreamingRuntimeConfig.Frequency` stores what the client ASKED for; the
+ * trigger period is an integer register, so the achievable rates are quantized
+ * to streamTimerFreq / N. Request 4500 Hz at 252 MHz and the device runs
+ * 10.5e6/2334 = 4498.714 Hz while reporting 4500 — ~286 ppm, and there was no
+ * way to observe it before this. Millihertz keeps the value integral (no FPU
+ * in an SCPI callback, and the deferred task is pure-integer by design).
+ *
+ * Returns 0 when no period is configured, so a client can distinguish
+ * "unconfigured" from a real rate.
+ */
+uint32_t Streaming_ActualRateMilliHz(uint32_t clockPeriod) {
+    if (gpStreamingConfig == NULL) return 0u;
+    uint32_t streamTimerFreq =
+            TimerApi_FrequencyGet(gpStreamingConfig->TimerIndex);
+    uint32_t periodCycles = clockPeriod + 1u;
+    if (streamTimerFreq == 0u || periodCycles == 0u) return 0u;
+    /* uint64 intermediate: 10.5e6 * 1000 overflows uint32. Max result at the
+     * 22 kHz cap is 22e6 millihertz, well inside uint32. */
+    return (uint32_t)(((uint64_t)streamTimerFreq * 1000u) / periodCycles);
 }
 
 void Streaming_SetTestPattern(uint32_t pattern) {

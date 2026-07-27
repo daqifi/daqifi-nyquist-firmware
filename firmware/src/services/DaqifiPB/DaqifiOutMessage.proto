@@ -93,4 +93,11 @@ message DaqifiOutMessage
 	string device_hw_rev = 67;						//  Device hardware revision
 	string device_fw_rev = 68;						//  Device firmware revision
     uint64 device_sn = 69;                         //  Device serial number
+
+	// Streaming timebase (#730). timestamp_freq (16) is the timestamp counter;
+	// these three complete the picture so a client never has to assume a clock
+	// or a prescale ratio, and can see the rate the hardware ACTUALLY runs.
+	uint32 stream_timer_freq = 70;                 //  Streaming trigger timer frequency, Hz
+	uint32 timestamp_ticks_per_sample = 71;        //  Exact timestamp ticks per streaming period (0 = unconfigured)
+	uint32 actual_rate_millihz = 72;               //  Quantized streaming rate actually applied, millihertz (0 = unconfigured)
 }
