@@ -504,7 +504,16 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * as possibly truncating (-Werror=format-truncation). Copying the whole
      * fixed-size buffer carries the terminator with it; the explicit NUL is
      * belt-and-braces if `file` were ever unterminated. */
+    /* Under the same critical section the SD:FILE setter and the restore path
+     * use. A guarded writer does not protect an unguarded reader: this is a
+     * 41-byte multi-word copy, so USB SCPI (pri 7) landing a SYST:STOR:SD:FILE
+     * mid-copy would leave savedLogFile holding a prefix of the old name and a
+     * suffix of the new one — a filename no command ever selected, which the
+     * restore would then write back. All three sites that touch `file` are now
+     * symmetric (#736 audit). */
+    taskENTER_CRITICAL();
     memcpy(savedLogFile, pSDCardRuntimeConfig->file, sizeof(savedLogFile));
+    taskEXIT_CRITICAL();
     savedLogFile[sizeof(savedLogFile) - 1] = '\0';
     
     // Check if SD card is enabled
