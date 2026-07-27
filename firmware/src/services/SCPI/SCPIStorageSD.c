@@ -179,6 +179,26 @@ scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context){
     return SCPI_RES_OK;
 }
 
+// Global variables for benchmark results.
+// Defined here rather than beside SCPI_StorageSDBenchmark because
+// SCPI_StorageSDLoggingSet below reads testInProgress to reject an SD:FILE
+// that would race the benchmark's target (#736).
+typedef struct {
+    uint32_t totalBytesWritten;
+    uint32_t totalTimeMs;
+    uint32_t writeSpeedBps;
+    bool testInProgress;
+    bool resultAvailable;
+} SDBenchmarkResults_t;
+
+/* volatile: written by the SCPI task running a benchmark and read by the
+ * OTHER transport's SCPI task (SCPI_StorageSDLoggingSet's guard below, and
+ * the benchmark's own re-entrancy claim). Per CLAUDE.md a value written by
+ * one task and read by another needs volatile so the compiler cannot cache
+ * it in a register. volatile does NOT make the read-modify-write atomic —
+ * the claim still takes a critical section (#736). */
+static volatile SDBenchmarkResults_t gSDBenchmarkResults = {0};
+
 scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     const char* pBuff;
     size_t fileLen = 0;
@@ -196,6 +216,27 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("FILE");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    /* #736: a running benchmark OWNS the logging target. sd_card_manager_IsBusy()
+     * above does not cover it — the benchmark publishes its temp name and only
+     * then sets mode=WRITE and calls sd_card_manager_UpdateSettings(), and IsBusy()
+     * stays false across that whole span (mode NONE, state IDLE), so an SD:FILE
+     * from the other transport is accepted right in the middle of it.
+     * UpdateSettings() snapshots the settings by memcpy at call time, so such a
+     * command could make the benchmark open and overwrite the USER'S file instead
+     * of benchmark_XXXX.dat.
+     *
+     * Rejecting is the honest answer rather than a smaller race window: the
+     * benchmark restores the target on exit, so a set accepted during it would be
+     * discarded moments later anyway — the caller would be told "OK" about a
+     * change that does not survive. Failing tells them to retry, and it makes the
+     * benchmark's save/restore pairing airtight instead of merely narrow. */
+    if (gSDBenchmarkResults.testInProgress) {
+        SCPI_ExecutionError(context,
+                            "SYST:STOR:SD:FILE: rejected, benchmark in progress");
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -220,8 +261,47 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
-        pSDCardRuntimeConfig->file[fileLen] = '\0';
+        /* #736: make the write atomic w.r.t. the other SCPI transport and the
+         * benchmark's restore. Without this the copy can be preempted
+         * mid-name — USB SCPI (pri 7) preempts WiFi SCPI (pri 2) and there is
+         * no cross-transport dispatch mutex — and a reader that takes a
+         * critical section still sees the write RESUME afterwards, splicing
+         * the tail of one name onto another. Two fixed-size ops on a 41-byte
+         * field; the reader side is SCPI_StorageSDBenchmark's restore. */
+        /* Re-validate the benchmark guard HERE, under the same critical
+         * section as the write. The check near the top of this function is
+         * only a fast path: SCPI_CheckSDCardPresent, SCPI_ParamCharacters and
+         * SD_ValidatePathParam all run between it and this point, and none of
+         * them is in a critical section. So WiFi SCPI (pri 2) can pass the
+         * early check while no benchmark exists, be preempted by USB SCPI
+         * (pri 7) starting one, and then resume PAST the now-stale check and
+         * overwrite `file` while the benchmark is mid-session.
+         *
+         * That is not a cosmetic race. gpSDCardSettings is the SAME struct
+         * instance (BoardRunTimeConfig_Get returns the one object), so the SD
+         * task's next pass would open the name written here and stream the
+         * benchmark's synthetic pattern into the user's real log — the exact
+         * silent-corruption class #728 exists to close, reopened through this
+         * guard. The exit compare would then legitimately not match and skip
+         * the restore, so neither transport ever learns of the collision.
+         *
+         * Checking and writing under one critical section makes it atomic,
+         * mirroring the benchmark's own claim (#736 audit round 7). */
+        bool benchOwnsTarget;
+        taskENTER_CRITICAL();
+        benchOwnsTarget = gSDBenchmarkResults.testInProgress;
+        if (!benchOwnsTarget) {
+            memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
+            pSDCardRuntimeConfig->file[fileLen] = '\0';
+        }
+        taskEXIT_CRITICAL();
+        if (benchOwnsTarget) {
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: rejected, benchmark claimed "
+                                "the target during validation");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
         LOG_D("SD:FILE - Set filename to '%s' (%zu bytes) dir='%s'\r\n",
               pSDCardRuntimeConfig->file, fileLen, pSDCardRuntimeConfig->directory);
     } else {
@@ -443,17 +523,6 @@ __exit_point:
 
 }
 
-// Global variables for benchmark results
-typedef struct {
-    uint32_t totalBytesWritten;
-    uint32_t totalTimeMs;
-    uint32_t writeSpeedBps;
-    bool testInProgress;
-    bool resultAvailable;
-} SDBenchmarkResults_t;
-
-static SDBenchmarkResults_t gSDBenchmarkResults = {0};
-
 /**
  * @brief Perform SD card write speed benchmark
  * 
@@ -472,6 +541,38 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     int32_t pattern = 0;
     scpi_result_t result = SCPI_RES_ERR;
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    /* #728: the benchmark writes its temp name into the SHARED logging target
+     * (`file`) because it runs through mode=WRITE — the real logging path —
+     * so it cannot use the `opFile` side-channel #724 added for the READ /
+     * CRC / DELETE operands. Left as-is, a later SD-armed stream that does not
+     * re-issue SYST:STOR:SD:FILE logs into benchmark_XXXX.dat instead of the
+     * user's target: the same silent data-loss class as #724.
+     *
+     * The whole benchmark runs synchronously inside this callback (write loop,
+     * then mode=NONE), so a save/restore is sufficient — no completion
+     * callback needed. Restored at __exit_point on every path. */
+    char savedLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
+    char benchLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1] = {0};
+    bool logFileClobbered = false;
+    bool ownsBenchFlag = false;   /* #736: did THIS call claim testInProgress? */
+    /* Size MUST match the struct field, which is [LEN_MAX + 1] — LEN_MAX (40)
+     * is the longest ACCEPTED name and the field carries a 41st byte for the
+     * terminator. Sizing this [LEN_MAX] silently dropped the 40th character of
+     * a legal max-length target on restore (#736 audit).
+     * memcpy, not snprintf("%s"): equal-sized buffers make GCC flag the format
+     * as possibly truncating (-Werror=format-truncation). Copying the whole
+     * fixed-size buffer carries the terminator with it; the explicit NUL is
+     * belt-and-braces if `file` were ever unterminated. */
+    /* Under the same critical section the SD:FILE setter and the restore path
+     * use. A guarded writer does not protect an unguarded reader: this is a
+     * 41-byte multi-word copy, so USB SCPI (pri 7) landing a SYST:STOR:SD:FILE
+     * mid-copy would leave savedLogFile holding a prefix of the old name and a
+     * suffix of the new one — a filename no command ever selected, which the
+     * restore would then write back. All three sites that touch `file` are now
+     * symmetric (#736 audit). */
+    /* NB: the snapshot itself happens AFTER the ownership claim below, not
+     * here — see the comment at that point for why. */
     
     // Check if SD card is enabled
     if (!pSDCardRuntimeConfig->enable) {
@@ -521,16 +622,78 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         goto __exit_point;
     }
     
-    // Initialize benchmark results
+    /* #736 audit: ATOMIC test-and-set, and it must come BEFORE any write to
+     * gSDBenchmarkResults. The early `if (testInProgress)` reject above is only
+     * a fast path — parameter parsing sits between it and this point, and USB
+     * SCPI (pri 7) preempts WiFi SCPI (pri 2) with no shared dispatch mutex, so
+     * two BENCH invocations could both pass that check and both enter. Claiming
+     * the flag under a critical section makes exactly one of them the owner; the
+     * loser rejects here instead of running a second benchmark concurrently
+     * (which would also corrupt the save/restore pairing this PR relies on).
+     *
+     * Ordering matters as much as atomicity: the counter reset used to run
+     * ahead of the claim, so a loser zeroed totalBytesWritten/totalTimeMs/
+     * writeSpeedBps and then bailed — destroying a completed run's results, or
+     * letting BENCH? read resultAvailable=true beside zeroed counters, from a
+     * call that never ran. Everything below this point is owner-only. */
+    bool benchAlreadyRunning;
+    taskENTER_CRITICAL();
+    benchAlreadyRunning = gSDBenchmarkResults.testInProgress;
+    if (!benchAlreadyRunning) {
+        gSDBenchmarkResults.testInProgress = true;
+    }
+    taskEXIT_CRITICAL();
+    if (benchAlreadyRunning) {
+        SCPI_ExecutionError(context, "SYST:STOR:SD:BENCH: benchmark already in progress");
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+    ownsBenchFlag = true;
+
+    /* Snapshot the logging target HERE, after the claim — not at function
+     * entry. SCPI_StorageSDLoggingSet rejects SD:FILE only once testInProgress
+     * is set, so an SD:FILE from the other transport arriving during parameter
+     * parsing is legitimately ACCEPTED. Snapshotting at entry captured the
+     * pre-command name, and the exit restore then reverted the change the
+     * device had just acknowledged — a silent lost update, and an arbitrary
+     * boundary (rejected after the claim, silently discarded before it).
+     *
+     * Taking it after the claim makes the rule consistent in both directions:
+     * an SD:FILE that is ACCEPTED always takes effect, and one that is
+     * REJECTED never does. Under the same critical section as every other
+     * reader of the field (Qodo #736). */
+    taskENTER_CRITICAL();
+    memcpy(savedLogFile, pSDCardRuntimeConfig->file, sizeof(savedLogFile));
+    taskEXIT_CRITICAL();
+    savedLogFile[sizeof(savedLogFile) - 1] = '\0';
+
+    // Initialize benchmark results (owner-only — see the ordering note above)
     gSDBenchmarkResults.totalBytesWritten = 0;
     gSDBenchmarkResults.totalTimeMs = 0;
     gSDBenchmarkResults.writeSpeedBps = 0;
-    gSDBenchmarkResults.testInProgress = true;
     gSDBenchmarkResults.resultAvailable = false;
     
-    // Create test file name
-    snprintf(pSDCardRuntimeConfig->file, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX, 
+    /* Create the test file name in our OWN buffer first, then publish it under
+     * one critical section.
+     *
+     * benchLogFile is the sentinel the exit compare uses to tell "still ours"
+     * from "someone else set a new target while we ran" (#728). Building it by
+     * writing `file` and then reading `file` back was two separate unguarded
+     * statements, so an SD:FILE landing between them would seed the sentinel
+     * with the INTERLOPER's name — and sd_card_manager_IsBusy() is still false
+     * here (mode is not set to WRITE until below), so such a command IS
+     * accepted. The exit compare would then match and silently revert the
+     * user's accepted target. Seeding from our own string instead makes the
+     * sentinel un-poisonable, and makes this the fourth symmetric `file` site
+     * (#736 audit round 6). */
+    snprintf(benchLogFile, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX,
              "benchmark_%d.dat", (int)(xTaskGetTickCount() & 0xFFFF));
+    benchLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
+    taskENTER_CRITICAL();
+    memcpy(pSDCardRuntimeConfig->file, benchLogFile, sizeof(benchLogFile));
+    pSDCardRuntimeConfig->file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
+    taskEXIT_CRITICAL();
+    logFileClobbered = true;   /* #728: restore the logging target on exit */
     
     // Set SD card to write mode
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;
@@ -548,7 +711,6 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
             LOG_E("SD:BENCH - if reads/LIST work but writes hang, the card is "
                   "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-            gSDBenchmarkResults.testInProgress = false;
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
             result = SCPI_RES_ERR;
@@ -578,7 +740,6 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         if (testBuffer == NULL) {
             LOG_E("SD:BENCH - Could not acquire SCPI response buffer\r\n");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-            gSDBenchmarkResults.testInProgress = false;
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
             result = SCPI_RES_ERR;
@@ -630,7 +791,6 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
             LOG_E("SD:BENCH - if reads/LIST work but writes stall, the card is "
                   "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-            gSDBenchmarkResults.testInProgress = false;
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
             result = SCPI_RES_ERR;
@@ -667,7 +827,6 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         gSDBenchmarkResults.writeSpeedBps = (bytesWritten * 1000) / gSDBenchmarkResults.totalTimeMs;
     }
     
-    gSDBenchmarkResults.testInProgress = false;
     gSDBenchmarkResults.resultAvailable = true;
     
     // Send immediate results
@@ -682,6 +841,70 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     result = SCPI_RES_OK;
     
 __exit_point:
+    /* #736 audit r4: clear the re-entrancy guard only AFTER the target is
+     * restored, and clear it on every path from one place.
+     *
+     * It used to be cleared before this block — with a full
+     * context->interface->write() of the result string in between — so the
+     * `if (testInProgress)` guard at the top of this function was open for
+     * milliseconds while `file` still held benchmark_XXXX.dat. A second
+     * SYST:STOR:SD:BENCH from the other transport could enter there, capture
+     * the UNRESTORED benchmark name as "the user's target", and overwrite
+     * `file` with its own; this callback would then find the name no longer
+     * its own, skip the restore by the deliberate "theirs wins" rule, and the
+     * real target would be gone for good. Keeping the flag set until the
+     * restore completes closes that window.
+     *
+     * #728: put the user's logging target back before returning, on EVERY
+     * path — normal completion, the not-ready timeout, the buffer-take
+     * failure and the write failure all land here. Re-publishing through
+     * UpdateSettings matters as much as the field itself: the manager keeps
+     * its own memcpy'd copy, so restoring only the runtime config would leave
+     * the benchmark name live inside sd_card_manager.
+     * The early parameter/enable/present errors return before the name is
+     * overwritten, so the flag keeps this a no-op for them. */
+    /* #736 audit: restore ONLY if the field still holds the name we wrote.
+     * Once the manager reaches IDLE (polled just above), SD:FILE from the
+     * OTHER transport is accepted — USB and WiFi run separate SCPI contexts
+     * with no shared dispatch mutex, and this callback yields in vTaskDelay.
+     * An unconditional restore would silently revert a target the user just
+     * set successfully. If someone changed it, theirs wins and we leave it. */
+    if (logFileClobbered) {
+        /* Compare AND restore inside one critical section. Split, this is a
+         * check-then-act on a field another SCPI context can rewrite: the
+         * compare could read a half-written name, or a new target could land
+         * between the compare and the memcpy and be silently clobbered
+         * (#736 audit r2 + Qodo TOCTOU). Both transports' SCPI tasks are
+         * below the syscall-priority ceiling, so a critical section excludes
+         * them; the region is two fixed-size buffer ops on a 41-byte field.
+         *
+         * Terminator goes at [LEN_MAX], the field's LAST byte, not
+         * [LEN_MAX - 1]: LEN_MAX (40) is the longest name the setter ACCEPTS
+         * and the field is [LEN_MAX + 1] to hold its NUL. */
+        taskENTER_CRITICAL();
+        if (strncmp(pSDCardRuntimeConfig->file, benchLogFile,
+                    SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1) == 0) {
+            memcpy(pSDCardRuntimeConfig->file, savedLogFile, sizeof(savedLogFile));
+            pSDCardRuntimeConfig->file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
+        }
+        taskEXIT_CRITICAL();
+        /* Deliberately NOT sd_card_manager_UpdateSettings(): it unconditionally
+         * forces currentProcessState = DEINIT, so publishing here would kick the
+         * manager out of the IDLE state this callback just waited for, and
+         * follow-on SD commands that gate on IsBusy() could be refused
+         * (Qodo #736). Not publishing is also what SD:FILE itself does — the
+         * setter only writes the runtime field and lets whoever arms SD
+         * publish it (SCPI_StartStreaming and friends all call UpdateSettings).
+         * So the restored name reaches the manager the same way any other
+         * SD:FILE would. */
+    }
+    /* Only the invocation that CLAIMED the flag may clear it. The
+     * "benchmark already in progress" early-reject also lands here, and an
+     * unconditional clear would wipe the OTHER benchmark's in-progress flag —
+     * turning the re-entrancy guard into a way to defeat itself. */
+    if (ownsBenchFlag) {
+        gSDBenchmarkResults.testInProgress = false;
+    }
     return result;
 }
 
