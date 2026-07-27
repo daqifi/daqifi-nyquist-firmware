@@ -644,6 +644,179 @@ static const SYS_TIME_INIT sysTimeInitData =
   Remarks:
  */
 
+/* ===================================================================== #741
+ * Boot-time System PLL switch.
+ *
+ * WHY THIS EXISTS. FPLLMULT lives in DEVCFG2, a device Configuration Word.
+ * Our USB bootloader refuses to program config words on purpose
+ * (bootloader/.../nvm.c:244 "Make sure we are not writing boot area and device
+ * configuration bits"), and DS80000663 Rev R erratum 45 says run-time
+ * self-programming of them is not functional with no workaround. So a field
+ * firmware update can never change the DEVCFG default, and every device
+ * manufactured with the MUL_50 bootloader hex boots at 200 MHz forever (#716).
+ *
+ * But the DEVCFG value is only the POWER-ON DEFAULT. SPLLCON is an ordinary
+ * runtime R/W register that POR-loads from DEVCFG2 (DS60001320G Register 8-3),
+ * so software can override it. The datasheet in fact PRESCRIBES this for
+ * 252 MHz parts (DS60001320G p.165):
+ *
+ *   "Devices that support 252 MHz operation should be configured for
+ *    SYSCLK <= 200 MHz operation. Adjust the dividers of the PBCLKs, and then
+ *    increase the SYSCLK to the desired speed."
+ *
+ * Boot-at-200-then-raise is the vendor's recommended bring-up, not a
+ * workaround. Running it here also removes the transient this file documents
+ * above (buses at 126 MHz during crt0), because a 200 MHz part's /2 reset
+ * default is 100 MHz — in spec.
+ *
+ * WHY IT IS SAFE TO ATTEMPT. Every field device is already fused to permit it:
+ * the bootloader hex sets FCKSM = CSECMD (clock switching enabled, FSCM
+ * disabled) alongside the MUL_50 that causes the problem. Nothing here writes
+ * flash, so the worst case is a boot that never reaches the application — and
+ * the bootloader lives in boot flash and always runs first at reset, so button
+ * entry still recovers the unit exactly as it does after any bad app update.
+ *
+ * SEQUENCE. FRM DS60001250B 42.3.7 Note 2 forbids changing the multiplier
+ * while running from the affected PLL, so this is the documented two-step:
+ * switch to FRC, rewrite SPLLCON, switch back. 42.3.7.2's recommended code
+ * sequence is followed exactly, including the back-to-back key writes and an
+ * immediate relock. Interrupts and DMA are required to be off during the
+ * unlock; that holds by construction here — __builtin_enable_interrupts() is
+ * not called until the end of SYS_Initialize, and no DMA is configured yet.
+ *
+ * 42.3.7.3: "If the new clock source does not start, or is not present, the
+ * OSWEN bit remains set", so every wait below is BOUNDED. A failed raise
+ * reverts the multiplier and returns to the PLL that demonstrably worked at
+ * reset. If even that fails the part keeps running on FRC — slow, but alive,
+ * bootloader intact, and #716's runtime clock derivation reports the real
+ * frequency and clock_ok=false rather than lying about it.
+ */
+#define DAQIFI_NOSC_FRC     0x0u   /* OSCCON NOSC: 000 = FRC (non-PLL) */
+#define DAQIFI_NOSC_SPLL    0x1u   /* OSCCON NOSC: 001 = System PLL */
+/* Generous: a PLL lock is microseconds, and this loop runs at 8 MHz FRC in the
+ * worst case. Big enough never to trip on a healthy part, small enough that a
+ * dead clock source cannot hang the boot. */
+#define DAQIFI_OSW_TIMEOUT  2000000u
+
+/* One clock switch, per the FRM's recommended sequence. Returns false if OSWEN
+ * did not clear, i.e. the requested source never started. */
+static bool DAQIFI_ClockSwitch(uint32_t nosc)
+{
+    uint32_t guard;
+
+    /* Unlock: the two key writes MUST be back-to-back with no intervening
+     * peripheral access (42.3.7.3). Nothing is inserted between them. */
+    SYSKEY = 0x00000000U;
+    SYSKEY = 0xAA996655U;
+    SYSKEY = 0x556699AAU;
+
+    OSCCONbits.NOSC = nosc;
+    OSCCONbits.OSWEN = 1;
+
+    /* "The system will not relock automatically. Perform the relock sequence as
+     * soon as possible after the clock switch." The wait below is deliberately
+     * outside the unlocked window. */
+    SYSKEY = 0x33333333U;
+
+    for (guard = 0u; guard < DAQIFI_OSW_TIMEOUT; ++guard) {
+        if (OSCCONbits.OSWEN == 0u) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Write PLLMULT. Caller MUST already be off the PLL: DS60001320G Register 8-3
+ * Note 2 says writes are not allowed while SPLL is the clock source. */
+static void DAQIFI_SetPllMult(uint32_t multField)
+{
+    SYSKEY = 0x00000000U;
+    SYSKEY = 0xAA996655U;
+    SYSKEY = 0x556699AAU;
+    SPLLCONbits.PLLMULT = multField;
+    SYSKEY = 0x33333333U;
+}
+
+static void DAQIFI_ApplyTargetPll(void)
+{
+    const uint32_t target = (uint32_t)DAQIFI_PLLMULT_FIELD;
+    uint32_t saved;
+    uint32_t inHz;
+    uint32_t idiv;
+    uint32_t odivField;
+    uint32_t odiv;
+    uint32_t wouldBe;
+
+    /* Already what this image wants — the normal case on a PICkit-programmed
+     * unit, whose DEVCFG matches the build. Do nothing at all. */
+    if (SPLLCONbits.PLLMULT == target) {
+        return;
+    }
+
+    /* Only switch when the outcome can be PROVEN to equal what every constant
+     * in this build assumes. If the PLL is wired differently than expected
+     * (unexpected input select, reserved PLLODIV), leave the hardware alone:
+     * #716's runtime derivation will still report the truth, whereas a blind
+     * switch could land somewhere neither correct nor detected. */
+    inHz = (SPLLCONbits.PLLICLK != 0u) ? (uint32_t)DAQIFI_FRC_HZ
+                                       : (uint32_t)DAQIFI_POSC_HZ;
+    /* Register 8-3: with PLLICLK = FRC the input divider is ignored and the
+     * PLL uses divide-by-1. */
+    idiv = (SPLLCONbits.PLLICLK != 0u) ? 1u
+                                       : ((uint32_t)SPLLCONbits.PLLIDIV + 1u);
+    odivField = (uint32_t)SPLLCONbits.PLLODIV;
+    if ((odivField < 1u) || (odivField > 5u)) {   /* 000 and 11x are Reserved */
+        return;
+    }
+    odiv = 1u << odivField;
+    wouldBe = (uint32_t)(((uint64_t)inHz * (target + 1u)) / idiv / odiv);
+    if (wouldBe != (uint32_t)DAQIFI_SYSCLK_HZ) {
+        return;
+    }
+
+    saved = (uint32_t)SPLLCONbits.PLLMULT;
+
+    /* Step 1: off the PLL, so SPLLCON becomes writable. If this fails we are
+     * still on the original PLL — a perfectly serviceable state. */
+    if (!DAQIFI_ClockSwitch(DAQIFI_NOSC_FRC)) {
+        return;
+    }
+
+    /* Step 2: retune. Only PLLMULT moves; PLLIDIV / PLLODIV / PLLRANGE /
+     * PLLICLK keep the values DEVCFG2 loaded, so the PLL input frequency and
+     * therefore the PLLRANGE selection stay valid. */
+    DAQIFI_SetPllMult(target);
+
+    /* Step 3: back onto the PLL. Hardware waits for lock before clearing
+     * OSWEN (42.3.7.3), so success here means the PLL is locked at the new
+     * multiplier. */
+    if (!DAQIFI_ClockSwitch(DAQIFI_NOSC_SPLL)) {
+        /* Did not lock, so per 42.3.7.3 OSWEN is STILL SET and the switch is
+         * still pending. Cancel it before touching SPLLCON again.
+         *
+         * This ordering was found by fault injection, not by reading: an
+         * earlier version reverted the multiplier immediately and the part
+         * stayed stuck on FRC. Register 8-3 Note 2 forbids writing SPLLCON
+         * while SPLL is the clock source, and a pending switch appears to
+         * count — the write is dropped, the PLL stays at the bad multiplier,
+         * and the pending switch can never complete.
+         *
+         * The documented way out is a REDUNDANT switch: 42.3.7.2 says when
+         * NOSC equals COSC the hardware treats it as redundant, "the OSWEN
+         * bit is cleared automatically and the clock switch is aborted".
+         * COSC is still FRC here (the switch never completed), so asking for
+         * FRC again is exactly that no-op, and it is the only software-visible
+         * way to clear a stuck OSWEN — FSCM's OSWEN clear needs the Fail-Safe
+         * Clock Monitor, which FCKSM = CSECMD leaves disabled. */
+        (void)DAQIFI_ClockSwitch(DAQIFI_NOSC_FRC);
+
+        /* Now SPLLCON is writable again: restore the multiplier the part
+         * booted with, which demonstrably locked at reset, and go back to it. */
+        DAQIFI_SetPllMult(saved);
+        (void)DAQIFI_ClockSwitch(DAQIFI_NOSC_SPLL);
+    }
+}
+
 void SYS_Initialize ( void* data )
 {
 
@@ -689,6 +862,12 @@ void SYS_Initialize ( void* data )
      * TODO(#487): tune down to the DS60001320H Table 7-1 / §39 value after boot-verify. */
     PRECONbits.PFMWS = DAQIFI_PFMWS;
     CFGCONbits.ECCCON = 3;
+
+    /* #741: raise (or lower) the PLL to match this build. Deliberately AFTER
+     * the PBxDIV and flash-wait-state writes above: the datasheet's 252 MHz
+     * note says to set the PBCLK dividers first and increase SYSCLK last, and
+     * PFMWS must already cover the higher speed before the core runs at it. */
+    DAQIFI_ApplyTargetPll();
 
 
 

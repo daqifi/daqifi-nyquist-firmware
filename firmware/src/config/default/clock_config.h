@@ -39,6 +39,17 @@
 #define DAQIFI_POSC_HZ      24000000UL
 #define DAQIFI_FRC_HZ        8000000UL
 
+/* #741: the SPLLCON PLLMULT FIELD value for the target SYSCLK — the field is
+ * (multiplier - 1) per DS60001320G Register 8-3, so x63 -> 62 and x50 -> 49.
+ * SystemInit compares the live SPLLCON against this and switches the PLL at
+ * boot if they differ, because the DEVCFG default cannot be changed by a
+ * firmware update (see #716) but SPLLCON is an ordinary runtime register. */
+#if DAQIFI_SYSCLK_252
+  #define DAQIFI_PLLMULT_FIELD      62u    /* x63 */
+#else
+  #define DAQIFI_PLLMULT_FIELD      49u    /* x50 */
+#endif
+
 #if DAQIFI_SYSCLK_252
   #define DAQIFI_SYSCLK_HZ   252000000UL   /* SPLL: 24 MHz POSC /3 x63 /2 */
   #define DAQIFI_PBCLK_HZ     84000000UL   /* peripheral buses at PBxDIV /3 */
