@@ -564,18 +564,20 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         goto __exit_point;
     }
     
-    // Initialize benchmark results
-    gSDBenchmarkResults.totalBytesWritten = 0;
-    gSDBenchmarkResults.totalTimeMs = 0;
-    gSDBenchmarkResults.writeSpeedBps = 0;
-    /* #736 audit: ATOMIC test-and-set. The early `if (testInProgress)` reject
-     * above is only a fast path — parameter parsing sits between it and this
-     * point, and USB SCPI (pri 7) preempts WiFi SCPI (pri 2) with no shared
-     * dispatch mutex, so two BENCH invocations could both pass that check and
-     * both enter. Claiming the flag under a critical section makes exactly one
-     * of them the owner; the loser rejects here instead of running a second
-     * benchmark concurrently (which would also corrupt the save/restore
-     * pairing this PR relies on). */
+    /* #736 audit: ATOMIC test-and-set, and it must come BEFORE any write to
+     * gSDBenchmarkResults. The early `if (testInProgress)` reject above is only
+     * a fast path — parameter parsing sits between it and this point, and USB
+     * SCPI (pri 7) preempts WiFi SCPI (pri 2) with no shared dispatch mutex, so
+     * two BENCH invocations could both pass that check and both enter. Claiming
+     * the flag under a critical section makes exactly one of them the owner; the
+     * loser rejects here instead of running a second benchmark concurrently
+     * (which would also corrupt the save/restore pairing this PR relies on).
+     *
+     * Ordering matters as much as atomicity: the counter reset used to run
+     * ahead of the claim, so a loser zeroed totalBytesWritten/totalTimeMs/
+     * writeSpeedBps and then bailed — destroying a completed run's results, or
+     * letting BENCH? read resultAvailable=true beside zeroed counters, from a
+     * call that never ran. Everything below this point is owner-only. */
     bool benchAlreadyRunning;
     taskENTER_CRITICAL();
     benchAlreadyRunning = gSDBenchmarkResults.testInProgress;
@@ -589,16 +591,34 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         goto __exit_point;
     }
     ownsBenchFlag = true;
+
+    // Initialize benchmark results (owner-only — see the ordering note above)
+    gSDBenchmarkResults.totalBytesWritten = 0;
+    gSDBenchmarkResults.totalTimeMs = 0;
+    gSDBenchmarkResults.writeSpeedBps = 0;
     gSDBenchmarkResults.resultAvailable = false;
     
-    // Create test file name
-    snprintf(pSDCardRuntimeConfig->file, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX, 
+    /* Create the test file name in our OWN buffer first, then publish it under
+     * one critical section.
+     *
+     * benchLogFile is the sentinel the exit compare uses to tell "still ours"
+     * from "someone else set a new target while we ran" (#728). Building it by
+     * writing `file` and then reading `file` back was two separate unguarded
+     * statements, so an SD:FILE landing between them would seed the sentinel
+     * with the INTERLOPER's name — and sd_card_manager_IsBusy() is still false
+     * here (mode is not set to WRITE until below), so such a command IS
+     * accepted. The exit compare would then match and silently revert the
+     * user's accepted target. Seeding from our own string instead makes the
+     * sentinel un-poisonable, and makes this the fourth symmetric `file` site
+     * (#736 audit round 6). */
+    snprintf(benchLogFile, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX,
              "benchmark_%d.dat", (int)(xTaskGetTickCount() & 0xFFFF));
-    logFileClobbered = true;   /* #728: restore the logging target on exit */
-    /* Keep our exact temp name so the restore can tell "still ours" from
-     * "someone else set a new target while we ran" (#736 audit). */
-    memcpy(benchLogFile, pSDCardRuntimeConfig->file, sizeof(benchLogFile));
     benchLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
+    taskENTER_CRITICAL();
+    memcpy(pSDCardRuntimeConfig->file, benchLogFile, sizeof(benchLogFile));
+    pSDCardRuntimeConfig->file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
+    taskEXIT_CRITICAL();
+    logFileClobbered = true;   /* #728: restore the logging target on exit */
     
     // Set SD card to write mode
     /* #690: this WRITE-mode open goes through the #689 dir-file-cap guard too.
