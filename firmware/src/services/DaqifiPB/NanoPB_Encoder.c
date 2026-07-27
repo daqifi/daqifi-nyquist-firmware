@@ -536,7 +536,8 @@ size_t Nanopb_Encode(tBoardData* state,
                         pBoardConfig->StreamingConfig.TSTimerIndex);
                 break;
 
-            /* #730 streaming timebase. timestamp_freq alone is not enough to
+            /* #730 streaming timebase (with timestamp_freq, field 16). That field
+             * alone is not enough to
              * predict the stamps: the trigger and the timestamp counter run
              * different prescales, and the requested rate is quantized into an
              * integer period register. These three close that gap so a client
