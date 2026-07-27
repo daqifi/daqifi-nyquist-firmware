@@ -425,3 +425,134 @@ why the n=1/n=7 wedges needed the separate EOS-rate limit.
 The cap's scan gate is therefore: `min(busy-bound, 10,400 EOS-rate,
 60,000/(nUserT2+1))`. All three are silicon-anchored; the storm-vs-
 starvation mechanism behind the two fatal limits is #545.
+
+## Timestamp semantics — what the stamp on a sample means (#729)
+
+Established while auditing #722 (deterministic per-tick timestamp). Not a
+defect: this records a contract that was previously implicit, so clients
+and future changes stop having to rediscover it.
+
+**The stamp is the acquisition TRIGGER instant, not the conversion
+instant.** Since #722, every emitted sample carries `baseTS + N ×
+periodTicks`.
+
+Be precise about what `baseTS` is, because it is *not* a hardware capture
+of the match. Nothing latches TMR6 at the TMR4/5 compare; `baseTS` is a
+software read — `TimerApi_CounterGet(TSTimerIndex)` at the top of
+`Streaming_TimerHandler` (`firmware/src/services/streaming.c:1014-1016`),
+reached through the TIMER_5 handler. So:
+
+- `baseTS` = the match instant **plus one TIMER_5 ISR-entry latency**.
+  TIMER_5 is kernel-maskable (`taskENTER_CRITICAL` masks it), so that is
+  µs-scale — tens to hundreds of TMR6 ticks. A TMR6 tick is **23.8 ns at
+  the current 252 MHz configuration** (PBCLK3 84 MHz, 1:2 prescale → 42 MHz,
+  which is what the device reports as `timestamp_hz`), or 20 ns on the
+  legacy 200 MHz build (100 MHz → 50 MHz). Do not confuse either with the
+  ADC's own TAD — the stale "ADC_clk = 50 MHz, one clock = 20 ns" comments
+  flagged elsewhere in this document refer to a different clock.
+- It is seeded **once per session** (`gStreamTSSeeded` latches it), so the
+  error is a **fixed, session-wide offset**, not per-tick jitter.
+- **Inter-tick spacing is exact**: `periodTicks` is config-derived, so
+  consecutive stamps differ by exactly one period. Every *relative*
+  measurement is unaffected.
+
+Treat the stamp as an exact relative clock carrying an unmeasured constant
+absolute offset.
+
+For **Type 1** channels read via the #541 ARDY-direct path
+(`firmware/src/services/streaming.c` ~807-840), the value is same-tick: the conversion was
+triggered by that match and read back once `ARDY` set — no *acquisition*
+lag. (The session-wide seed offset above still applies; it applies to
+every stamp on every path.)
+
+For **cached-path** channels the value can originate one scan earlier:
+
+| path | why it lags |
+|---|---|
+| NQ1 Type 2 (shared MODULE7 scan) | the scan armed at tick N completes *after* the tick-N deferred task has already read `BOARDDATA_AIN_LATEST` |
+| NQ3 AD7609 | `ADC_HandleAD7609Interrupt` (`firmware/src/HAL/ADC.c:64`) fills LATEST (`ADC.c:89`) when the BSY deferred task runs |
+
+So a cached-path sample stamped `t` may carry a conversion armed at
+`t − 1 period`.
+
+**That is true only while the deferred task keeps up.** The two halves of a
+packet come from different places: the stamp is *counter-derived*
+(`baseTS + tickIndex × periodTicks`, fixed the moment the iteration runs),
+while the value is read *live* from the one-deep slot at that same moment.
+When the task falls behind, a backlog of notifications drains as K
+back-to-back iterations (`ulTaskNotifyTake(pdFALSE, …)`), and the pri-1 T2
+data-ready ISRs keep overwriting the slot with newer conversions
+throughout. So the iteration stamped N can pair with tick N's conversion,
+or with tick N+1's — **a value NEWER than its own stamp** — and the skew
+varies from tick to tick.
+
+That regime is not hypothetical: it is exactly the deferred-task backlog
+#717 measured at 0.07 % of samples @1 kHz rising to **15 % @5 kHz** over
+USB, at rates inside the enforced caps.
+
+| regime | value ↔ stamp association |
+|---|---|
+| steady state (task keeps up) | fixed and uniform: T1 same-tick, cached-path up to one scan behind |
+| deferred-task catch-up | **variable**, and the value can be newer than the stamp |
+
+The same caveat applies to the Type-1 statement above: a late iteration's
+`MC12b_ReadResult` returns whatever `ADCDATAx` holds *then*, which under
+catch-up is a later conversion than the one its stamp names.
+
+**#722 fixed the stamp side only.** It made the emitted timestamps a
+uniform arithmetic sequence; it did not change where the value comes from
+(`firmware/src/services/streaming.c:844`), so the value-to-stamp skew is
+still variable under catch-up. `ScanStaleDropped` does **not** cover this —
+it is evaluated in the timer ISR on EOS-sequence advance and detects a scan
+that failed to complete, not a late deferred task, so it reads 0 throughout
+this regime.
+
+### Why this is the right contract, not a bug to fix
+
+1. **One timestamp per packet.** `AInSampleList` carries a single
+   `Timestamp`. In any mixed T1-direct + cached session the pre-#722
+   "first valid channel's slot timestamp" was already wrong for every
+   *other* channel in the packet. A per-tick trigger stamp is the only
+   choice that is self-consistent across a mixed channel set.
+2. **It matches the accepted freshness model.** `ScanStaleDropped`
+   (#557/#563) counts a tick as lost only when EOS has *not* fired since
+   the prior trigger — i.e. data one scan behind is explicitly defined as
+   valid current-tick data. Stamping it with the emission tick agrees
+   with that definition.
+3. **The pre-#722 label was not a conversion timestamp either.** It was
+   whatever the shared 1-deep slot held when the deferred task ran, which
+   under catch-up is the *latest* tick's value — the (t, t, t+2p)
+   aliasing #717 fixed. Note the precise scope of that improvement: #722
+   removed the *stamp* aliasing (duplicate stamps then a 2-period jump).
+   It did not make the value-to-stamp association fixed under catch-up —
+   see the regime table above. Saying the old behavior was "strictly
+   worse, a variable error rather than a fixed one" would overstate it.
+4. **Correlation is preserved for intervals.** #667 edge events read the
+   same TMR6, so edges and samples share a timebase and any Δt *within one
+   source* is unaffected — a uniform offset shifts both ends equally and
+   cancels. It does **not** fully cancel *across* sources: edge events take
+   their own read in their own ISR with their own entry latency, so an
+   edge-to-sample absolute comparison carries both offsets. Ordering and
+   timebase are sound; the sub-µs absolute anchor is not established.
+
+### Client guidance
+
+- Δt between samples is exact: consecutive stamps differ by exactly
+  `timestamp_ticks_per_sample` (#730), or an integer multiple when a
+  sample was dropped.
+- For **absolute** phase alignment against an external event, two separate
+  offsets apply: (a) up to one scan period of *acquisition* latency on
+  cached-path channels — T1 on the ARDY-direct path has none; and (b) the
+  session-wide ISR-entry seed offset above, which applies to **every**
+  path including T1. Neither is currently measured or reported.
+- The exact per-config latency is **not currently reported**. #730 exposes
+  the timebase (`timestamp_hz`, `stream_timer_hz`,
+  `timestamp_ticks_per_sample`, `actual_rate_millihz`) but not this
+  offset; surfacing it is open follow-up work.
+
+**Evidence class: I** (design-intent reasoning over V-class code reads at
+`firmware/src/services/streaming.c` ~795/~823-857/~931 and `firmware/src/HAL/ADC.c:64,89`). The skew has
+**not** been measured — no bench run has quantified it against a
+known-phase input. A measurement would upgrade this to E and pin the
+exact offset per configuration; until then treat "up to one scan period"
+as a bound, not a calibrated figure.

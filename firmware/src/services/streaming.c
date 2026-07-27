@@ -1088,6 +1088,16 @@ static void Streaming_TimerHandler(uintptr_t context, uint32_t alarmCount) {
         // (same-source ISR can't preempt itself); Streaming_Start clears
         // gStreamTSSeeded while the timer is stopped, so no concurrent write.
         if (!gStreamTSSeeded) {
+            /* NOTE (#734 audit): this is a SOFTWARE read, not a hardware
+             * capture — nothing latches TMR6 at the TMR4/5 compare. baseTS is
+             * therefore the match instant plus one TIMER_5 ISR-entry latency
+             * (kernel-maskable, so us-scale). Seeded once per session, so it
+             * is a FIXED session-wide absolute offset, never per-tick jitter:
+             * inter-tick spacing stays exact because periodTicks is
+             * config-derived. Relative timing is unaffected; absolute phase
+             * alignment against an external event carries this offset, which
+             * has never been measured. Do not describe the stamp as the exact
+             * match instant. */
             gStreamBaseTS = valueTMR;
             gStreamTSSeeded = 1u;
         }
