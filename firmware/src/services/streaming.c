@@ -1842,6 +1842,50 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     TimestampTimer_Init();
     TimerApi_Stop(gpStreamingConfig->TimerIndex);
     TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
+    /* #732: derive the boot period from the LIVE timer clock rather than
+     * trusting the static literal in CommonRuntimeDefaults.h. ClockPeriod is
+     * clock-dependent, so one literal cannot be correct at both 252 MHz
+     * (PBCLK3/8 = 10.5 MHz) and 200 MHz (12.5 MHz); deriving keeps ClockPeriod
+     * and Frequency describing the same rate on every build. Same ceiling
+     * division the SCPI setters use (SCPIADC.c / SCPIInterface.c), including
+     * the periodCycles >= 2 floor.
+     *
+     * Deliberately does NOT call Streaming_NoteRateConfigured(): this is a
+     * built-in default, not a client-requested rate, and #730 reports
+     * "unconfigured" until a client actually asks for one.
+     *
+     * The 64-bit Frequency read takes a critical section, matching the guarded
+     * SCPI accessors (StreamFreq_Get/Set, SCPIInterface.c).
+     *
+     * This is NOT universal in the tree, and this comment makes no claim that
+     * it is: Streaming_InitFlowWindow's read below and SCPI_ADCChanEnableSet
+     * (SCPIADC.c) both touch the field bare. The latter is an unguarded 64-bit
+     * read-modify-write reachable from either transport, so it is a real gap,
+     * not a safe path — deliberately left alone here as out of scope rather
+     * than characterised as fine. Guarding this reader says nothing about
+     * those.
+     * "Pre-scheduler" would be the wrong justification for skipping it:
+     * Streaming_Init is called from app_SystemInit, which runs INSIDE the
+     * priority-1 APP_FREERTOS_Tasks — the scheduler is already running (see the
+     * same caveat spelled out at app_freertos.c:538-545). Sequential ordering
+     * there does happen to make a race impossible today, because the USB / WiFi
+     * / SCPI tasks that write Frequency are xTaskCreate'd later in that same
+     * function, but that is a subtle argument to leave load-bearing for a read
+     * that costs nothing to guard. Matching the established pattern is cheaper
+     * than an exception that needs a paragraph to defend. */
+    {
+        uint32_t clkFreq = TimerApi_FrequencyGet(gpStreamingConfig->TimerIndex);
+        uint64_t defFreq;
+        taskENTER_CRITICAL();
+        defFreq = gpRuntimeConfigStream->Frequency;
+        taskEXIT_CRITICAL();
+        if (clkFreq > 0u && defFreq > 0u) {
+            uint32_t periodCycles =
+                (uint32_t)(((uint64_t)clkFreq + defFreq - 1u) / defFreq);
+            if (periodCycles < 2u) periodCycles = 2u;
+            gpRuntimeConfigStream->ClockPeriod = periodCycles - 1u;
+        }
+    }
     TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
     gpRuntimeConfigStream->Running = false;
 }

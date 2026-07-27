@@ -92,8 +92,32 @@ _Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_
     .StreamingConfig = { \
         .IsEnabled = false, \
         .Running = false, \
-        .ClockPeriod = 130,   /* default 3k hz (15khz is the max) */ \
-        .Frequency = 30000,   /* Default 30kHz (limited by active channel count in SCPI) */ \
+        /* #732: these two describe ONE rate and must agree. They did not: 130
+         * implies 10.5e6/(130+1) = 80,153 Hz at 252 MHz while Frequency said
+         * 30,000, and both were above STREAMING_ISR_MAX_HZ, so neither was a
+         * rate SYST:STR:START would accept. ClockPeriod is clock-dependent
+         * (PBCLK3/8 = 10.5 MHz at 252 MHz, 12.5 MHz at 200 MHz), so no literal
+         * is right for both builds — Streaming_Init recomputes it from the live
+         * timer clock. The literal below is the 252 MHz value and only covers
+         * the window before that runs.
+         *
+         * 1 Hz rather than a "typical" rate: this is consumed ONLY by a
+         * no-argument SYST:STR:START, and it must be accepted in every
+         * interface/format/channel combination. It is not enough to be under
+         * the common caps: USB+SD CSV (15000/(0+n), streaming.h) is already
+         * down to 937 Hz at 16 channels, and JSON takes the CSV coefficients
+         * and halves them (streaming.h "JSON uses the CSV coefficient family,
+         * then a /2 derate"), so USB+SD JSON at 16 channels is lower still
+         * (~468 Hz). A 1 kHz default would be rejected -222 in both. Rather
+         * than track whichever combination is currently lowest — that floor
+         * moves every time the caps are refit — 1 Hz is below every cap by
+         * construction; the only floor in SCPI_StartStreaming is
+         * freq < 1. It also matches the 1 Hz convention already used for the
+         * monitoring channels (CommonMonitoringChannels.h) and for NQ3's
+         * AD7609-only override. A client that wants a real rate passes one,
+         * which overwrites both fields. */ \
+        .ClockPeriod = 10499999, /* 1 Hz at PBCLK3/8 = 10.5 MHz; see Streaming_Init */ \
+        .Frequency = 1,       /* 1 Hz: the only rate legal in EVERY config */ \
         .ChannelScanFreqDiv = 1, /* All channels scan together */ \
         .Encoding = Streaming_ProtoBuffer, \
         .TSClockPeriod = 0xFFFFFFFF,   /* maximum */ \
