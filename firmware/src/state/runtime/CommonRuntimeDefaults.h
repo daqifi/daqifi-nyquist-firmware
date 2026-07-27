@@ -99,9 +99,21 @@ _Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_
          * (PBCLK3/8 = 10.5 MHz at 252 MHz, 12.5 MHz at 200 MHz), so no literal
          * is right for both builds — Streaming_Init recomputes it from the live
          * timer clock. The literal below is the 252 MHz value and only covers
-         * the window before that runs. */ \
-        .ClockPeriod = 10499, /* 1 kHz at PBCLK3/8 = 10.5 MHz; see Streaming_Init */ \
-        .Frequency = 1000,    /* Default 1 kHz — a rate the caps actually allow */ \
+         * the window before that runs.
+         *
+         * 1 Hz rather than a "typical" rate: this is consumed ONLY by a
+         * no-argument SYST:STR:START, and it must be accepted in every
+         * interface/format/channel combination. It is not enough to be under
+         * the common caps — the lowest enforced transport cap is USB+SD CSV
+         * (15000/(0+n), streaming.h), which at 16 channels is 937 Hz, so even
+         * a 1 kHz default would still be rejected -222 there. 1 Hz is below
+         * every cap by construction; the only floor in SCPI_StartStreaming is
+         * freq < 1. It also matches the 1 Hz convention already used for the
+         * monitoring channels (CommonMonitoringChannels.h) and for NQ3's
+         * AD7609-only override. A client that wants a real rate passes one,
+         * which overwrites both fields. */ \
+        .ClockPeriod = 10499999, /* 1 Hz at PBCLK3/8 = 10.5 MHz; see Streaming_Init */ \
+        .Frequency = 1,       /* 1 Hz: the only rate legal in EVERY config */ \
         .ChannelScanFreqDiv = 1, /* All channels scan together */ \
         .Encoding = Streaming_ProtoBuffer, \
         .TSClockPeriod = 0xFFFFFFFF,   /* maximum */ \
