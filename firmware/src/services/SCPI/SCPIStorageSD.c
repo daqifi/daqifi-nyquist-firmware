@@ -220,8 +220,17 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
+        /* #736: make the write atomic w.r.t. the other SCPI transport and the
+         * benchmark's restore. Without this the copy can be preempted
+         * mid-name — USB SCPI (pri 7) preempts WiFi SCPI (pri 2) and there is
+         * no cross-transport dispatch mutex — and a reader that takes a
+         * critical section still sees the write RESUME afterwards, splicing
+         * the tail of one name onto another. Two fixed-size ops on a 41-byte
+         * field; the reader side is SCPI_StorageSDBenchmark's restore. */
+        taskENTER_CRITICAL();
         memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
         pSDCardRuntimeConfig->file[fileLen] = '\0';
+        taskEXIT_CRITICAL();
         LOG_D("SD:FILE - Set filename to '%s' (%zu bytes) dir='%s'\r\n",
               pSDCardRuntimeConfig->file, fileLen, pSDCardRuntimeConfig->directory);
     } else {
