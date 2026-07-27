@@ -1842,6 +1842,30 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     TimestampTimer_Init();
     TimerApi_Stop(gpStreamingConfig->TimerIndex);
     TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
+    /* #732: derive the boot period from the LIVE timer clock rather than
+     * trusting the static literal in CommonRuntimeDefaults.h. ClockPeriod is
+     * clock-dependent, so one literal cannot be correct at both 252 MHz
+     * (PBCLK3/8 = 10.5 MHz) and 200 MHz (12.5 MHz); deriving keeps ClockPeriod
+     * and Frequency describing the same rate on every build. Same ceiling
+     * division the SCPI setters use (SCPIADC.c / SCPIInterface.c), including
+     * the periodCycles >= 2 floor.
+     *
+     * Deliberately does NOT call Streaming_NoteRateConfigured(): this is a
+     * built-in default, not a client-requested rate, and #730 reports
+     * "unconfigured" until a client actually asks for one.
+     *
+     * Pre-scheduler, single-threaded, so the 64-bit Frequency read needs no
+     * critical section here (it does on the SCPI paths — see SCPIInterface.c). */
+    {
+        uint32_t clkFreq = TimerApi_FrequencyGet(gpStreamingConfig->TimerIndex);
+        uint64_t defFreq = gpRuntimeConfigStream->Frequency;
+        if (clkFreq > 0u && defFreq > 0u) {
+            uint32_t periodCycles =
+                (uint32_t)(((uint64_t)clkFreq + defFreq - 1u) / defFreq);
+            if (periodCycles < 2u) periodCycles = 2u;
+            gpRuntimeConfigStream->ClockPeriod = periodCycles - 1u;
+        }
+    }
     TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
     gpRuntimeConfigStream->Running = false;
 }

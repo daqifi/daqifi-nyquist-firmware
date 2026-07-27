@@ -92,8 +92,16 @@ _Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_
     .StreamingConfig = { \
         .IsEnabled = false, \
         .Running = false, \
-        .ClockPeriod = 130,   /* default 3k hz (15khz is the max) */ \
-        .Frequency = 30000,   /* Default 30kHz (limited by active channel count in SCPI) */ \
+        /* #732: these two describe ONE rate and must agree. They did not: 130
+         * implies 10.5e6/(130+1) = 80,153 Hz at 252 MHz while Frequency said
+         * 30,000, and both were above STREAMING_ISR_MAX_HZ, so neither was a
+         * rate SYST:STR:START would accept. ClockPeriod is clock-dependent
+         * (PBCLK3/8 = 10.5 MHz at 252 MHz, 12.5 MHz at 200 MHz), so no literal
+         * is right for both builds — Streaming_Init recomputes it from the live
+         * timer clock. The literal below is the 252 MHz value and only covers
+         * the window before that runs. */ \
+        .ClockPeriod = 10499, /* 1 kHz at PBCLK3/8 = 10.5 MHz; see Streaming_Init */ \
+        .Frequency = 1000,    /* Default 1 kHz — a rate the caps actually allow */ \
         .ChannelScanFreqDiv = 1, /* All channels scan together */ \
         .Encoding = Streaming_ProtoBuffer, \
         .TSClockPeriod = 0xFFFFFFFF,   /* maximum */ \
