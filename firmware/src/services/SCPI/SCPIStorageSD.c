@@ -483,12 +483,16 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * The whole benchmark runs synchronously inside this callback (write loop,
      * then mode=NONE), so a save/restore is sufficient — no completion
      * callback needed. Restored at __exit_point on every path. */
-    char savedLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX];
+    char savedLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
     bool logFileClobbered = false;
-    /* memcpy, not snprintf("%s"): both buffers are the same size, so GCC
-     * flags the format as possibly truncating (-Werror=format-truncation).
-     * Copying the whole fixed-size buffer carries its terminator with it;
-     * the explicit NUL is belt-and-braces if `file` were ever unterminated. */
+    /* Size MUST match the struct field, which is [LEN_MAX + 1] — LEN_MAX (40)
+     * is the longest ACCEPTED name and the field carries a 41st byte for the
+     * terminator. Sizing this [LEN_MAX] silently dropped the 40th character of
+     * a legal max-length target on restore (#736 audit).
+     * memcpy, not snprintf("%s"): equal-sized buffers make GCC flag the format
+     * as possibly truncating (-Werror=format-truncation). Copying the whole
+     * fixed-size buffer carries the terminator with it; the explicit NUL is
+     * belt-and-braces if `file` were ever unterminated. */
     memcpy(savedLogFile, pSDCardRuntimeConfig->file, sizeof(savedLogFile));
     savedLogFile[sizeof(savedLogFile) - 1] = '\0';
     
@@ -725,7 +729,11 @@ __exit_point:
      * overwritten, so the flag keeps this a no-op for them. */
     if (logFileClobbered) {
         memcpy(pSDCardRuntimeConfig->file, savedLogFile, sizeof(savedLogFile));
-        pSDCardRuntimeConfig->file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX - 1] = '\0';
+        /* Terminate at [LEN_MAX], the field's LAST byte — not [LEN_MAX - 1].
+         * LEN_MAX (40) is the longest name the setter ACCEPTS, and the field is
+         * [LEN_MAX + 1] to hold its terminator, so guarding at LEN_MAX - 1
+         * chopped the 40th character off a legal max-length target. */
+        pSDCardRuntimeConfig->file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
         sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
     }
     return result;
