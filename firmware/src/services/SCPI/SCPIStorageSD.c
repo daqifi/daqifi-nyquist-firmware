@@ -486,6 +486,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     char savedLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
     char benchLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1] = {0};
     bool logFileClobbered = false;
+    bool ownsBenchFlag = false;   /* #736: did THIS call claim testInProgress? */
     /* Size MUST match the struct field, which is [LEN_MAX + 1] — LEN_MAX (40)
      * is the longest ACCEPTED name and the field carries a 41st byte for the
      * terminator. Sizing this [LEN_MAX] silently dropped the 40th character of
@@ -550,6 +551,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     gSDBenchmarkResults.totalTimeMs = 0;
     gSDBenchmarkResults.writeSpeedBps = 0;
     gSDBenchmarkResults.testInProgress = true;
+    ownsBenchFlag = true;
     gSDBenchmarkResults.resultAvailable = false;
     
     // Create test file name
@@ -590,7 +592,6 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
                       "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
             }
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-            gSDBenchmarkResults.testInProgress = false;
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
             result = SCPI_RES_ERR;
@@ -620,7 +621,6 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         if (testBuffer == NULL) {
             LOG_E("SD:BENCH - Could not acquire SCPI response buffer\r\n");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-            gSDBenchmarkResults.testInProgress = false;
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
             result = SCPI_RES_ERR;
@@ -672,7 +672,6 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
             LOG_E("SD:BENCH - if reads/LIST work but writes stall, the card is "
                   "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-            gSDBenchmarkResults.testInProgress = false;
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
             result = SCPI_RES_ERR;
@@ -709,7 +708,6 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         gSDBenchmarkResults.writeSpeedBps = (bytesWritten * 1000) / gSDBenchmarkResults.totalTimeMs;
     }
     
-    gSDBenchmarkResults.testInProgress = false;
     gSDBenchmarkResults.resultAvailable = true;
     
     // Send immediate results
@@ -724,7 +722,21 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     result = SCPI_RES_OK;
     
 __exit_point:
-    /* #728: put the user's logging target back before returning, on EVERY
+    /* #736 audit r4: clear the re-entrancy guard only AFTER the target is
+     * restored, and clear it on every path from one place.
+     *
+     * It used to be cleared before this block — with a full
+     * context->interface->write() of the result string in between — so the
+     * `if (testInProgress)` guard at the top of this function was open for
+     * milliseconds while `file` still held benchmark_XXXX.dat. A second
+     * SYST:STOR:SD:BENCH from the other transport could enter there, capture
+     * the UNRESTORED benchmark name as "the user's target", and overwrite
+     * `file` with its own; this callback would then find the name no longer
+     * its own, skip the restore by the deliberate "theirs wins" rule, and the
+     * real target would be gone for good. Keeping the flag set until the
+     * restore completes closes that window.
+     *
+     * #728: put the user's logging target back before returning, on EVERY
      * path — normal completion, the not-ready timeout, the buffer-take
      * failure and the write failure all land here. Re-publishing through
      * UpdateSettings matters as much as the field itself: the manager keeps
@@ -766,6 +778,13 @@ __exit_point:
          * publish it (SCPI_StartStreaming and friends all call UpdateSettings).
          * So the restored name reaches the manager the same way any other
          * SD:FILE would. */
+    }
+    /* Only the invocation that CLAIMED the flag may clear it. The
+     * "benchmark already in progress" early-reject also lands here, and an
+     * unconditional clear would wipe the OTHER benchmark's in-progress flag —
+     * turning the re-entrancy guard into a way to defeat itself. */
+    if (ownsBenchFlag) {
+        gSDBenchmarkResults.testInProgress = false;
     }
     return result;
 }
