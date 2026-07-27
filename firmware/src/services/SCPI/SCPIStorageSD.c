@@ -738,16 +738,34 @@ __exit_point:
      * with no shared dispatch mutex, and this callback yields in vTaskDelay.
      * An unconditional restore would silently revert a target the user just
      * set successfully. If someone changed it, theirs wins and we leave it. */
-    if (logFileClobbered &&
-        strncmp(pSDCardRuntimeConfig->file, benchLogFile,
-                SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1) == 0) {
-        memcpy(pSDCardRuntimeConfig->file, savedLogFile, sizeof(savedLogFile));
-        /* Terminate at [LEN_MAX], the field's LAST byte — not [LEN_MAX - 1].
-         * LEN_MAX (40) is the longest name the setter ACCEPTS, and the field is
-         * [LEN_MAX + 1] to hold its terminator, so guarding at LEN_MAX - 1
-         * chopped the 40th character off a legal max-length target. */
-        pSDCardRuntimeConfig->file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
-        sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    if (logFileClobbered) {
+        /* Compare AND restore inside one critical section. Split, this is a
+         * check-then-act on a field another SCPI context can rewrite: the
+         * compare could read a half-written name, or a new target could land
+         * between the compare and the memcpy and be silently clobbered
+         * (#736 audit r2 + Qodo TOCTOU). Both transports' SCPI tasks are
+         * below the syscall-priority ceiling, so a critical section excludes
+         * them; the region is two fixed-size buffer ops on a 41-byte field.
+         *
+         * Terminator goes at [LEN_MAX], the field's LAST byte, not
+         * [LEN_MAX - 1]: LEN_MAX (40) is the longest name the setter ACCEPTS
+         * and the field is [LEN_MAX + 1] to hold its NUL. */
+        taskENTER_CRITICAL();
+        if (strncmp(pSDCardRuntimeConfig->file, benchLogFile,
+                    SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1) == 0) {
+            memcpy(pSDCardRuntimeConfig->file, savedLogFile, sizeof(savedLogFile));
+            pSDCardRuntimeConfig->file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
+        }
+        taskEXIT_CRITICAL();
+        /* Deliberately NOT sd_card_manager_UpdateSettings(): it unconditionally
+         * forces currentProcessState = DEINIT, so publishing here would kick the
+         * manager out of the IDLE state this callback just waited for, and
+         * follow-on SD commands that gate on IsBusy() could be refused
+         * (Qodo #736). Not publishing is also what SD:FILE itself does — the
+         * setter only writes the runtime field and lets whoever arms SD
+         * publish it (SCPI_StartStreaming and friends all call UpdateSettings).
+         * So the restored name reaches the manager the same way any other
+         * SD:FILE would. */
     }
     return result;
 }
