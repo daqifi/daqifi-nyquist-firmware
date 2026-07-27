@@ -5091,16 +5091,26 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
             BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
         uint32_t tClockPeriod = (tcfg != NULL) ? tcfg->ClockPeriod : 0u;
         bool tConfigured = Streaming_IsRateConfigured();
+        /* Split across two writes on purpose. scpi_printf has a 192-byte
+         * buffer and truncates SILENTLY (SCPIInterface.h) — and truncation
+         * here would drop the trailing comma before the next chunk, making
+         * the whole capability response unparseable JSON rather than merely
+         * short. As one call this expansion reaches 189 bytes on the shipped
+         * 252 MHz build and 192 on the legacy 200 MHz build, i.e. from three
+         * bytes of margin down to none (#740 audit). Two calls put both
+         * halves under 110 bytes, so no plausible clock/rate combination can
+         * reach the limit. */
         scpi_printf(context,
             "\"timing\":{\"timestamp_hz\":%u,\"stream_timer_hz\":%u,"
-            "\"timestamp_ticks_per_sample\":%u,\"actual_rate_millihz\":%u,"
-            "\"pbclk_hz\":%u,\"pbclk_built_hz\":%u,\"clock_ok\":%s},",
+            "\"timestamp_ticks_per_sample\":%u,\"actual_rate_millihz\":%u,",
             (unsigned)TimerApi_FrequencyGet(cfg->StreamingConfig.TSTimerIndex),
             (unsigned)TimerApi_FrequencyGet(cfg->StreamingConfig.TimerIndex),
             (unsigned)(tConfigured
                 ? Streaming_TimestampTicksPerSample(tClockPeriod) : 0u),
             (unsigned)(tConfigured
-                ? Streaming_ActualRateMilliHz(tClockPeriod) : 0u),
+                ? Streaming_ActualRateMilliHz(tClockPeriod) : 0u));
+        scpi_printf(context,
+            "\"pbclk_hz\":%u,\"pbclk_built_hz\":%u,\"clock_ok\":%s},",
             (unsigned)TimerApi_PeripheralClockHz(),
             (unsigned)TIMER_CLOCK_FRQ_BUILT,
             TimerApi_ClockMatchesBuild() ? "true" : "false");
