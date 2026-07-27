@@ -472,6 +472,25 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     int32_t pattern = 0;
     scpi_result_t result = SCPI_RES_ERR;
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    /* #728: the benchmark writes its temp name into the SHARED logging target
+     * (`file`) because it runs through mode=WRITE — the real logging path —
+     * so it cannot use the `opFile` side-channel #724 added for the READ /
+     * CRC / DELETE operands. Left as-is, a later SD-armed stream that does not
+     * re-issue SYST:STOR:SD:FILE logs into benchmark_XXXX.dat instead of the
+     * user's target: the same silent data-loss class as #724.
+     *
+     * The whole benchmark runs synchronously inside this callback (write loop,
+     * then mode=NONE), so a save/restore is sufficient — no completion
+     * callback needed. Restored at __exit_point on every path. */
+    char savedLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX];
+    bool logFileClobbered = false;
+    /* memcpy, not snprintf("%s"): both buffers are the same size, so GCC
+     * flags the format as possibly truncating (-Werror=format-truncation).
+     * Copying the whole fixed-size buffer carries its terminator with it;
+     * the explicit NUL is belt-and-braces if `file` were ever unterminated. */
+    memcpy(savedLogFile, pSDCardRuntimeConfig->file, sizeof(savedLogFile));
+    savedLogFile[sizeof(savedLogFile) - 1] = '\0';
     
     // Check if SD card is enabled
     if (!pSDCardRuntimeConfig->enable) {
@@ -531,6 +550,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     // Create test file name
     snprintf(pSDCardRuntimeConfig->file, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX, 
              "benchmark_%d.dat", (int)(xTaskGetTickCount() & 0xFFFF));
+    logFileClobbered = true;   /* #728: restore the logging target on exit */
     
     // Set SD card to write mode
     /* #690: this WRITE-mode open goes through the #689 dir-file-cap guard too.
@@ -695,6 +715,19 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     result = SCPI_RES_OK;
     
 __exit_point:
+    /* #728: put the user's logging target back before returning, on EVERY
+     * path — normal completion, the not-ready timeout, the buffer-take
+     * failure and the write failure all land here. Re-publishing through
+     * UpdateSettings matters as much as the field itself: the manager keeps
+     * its own memcpy'd copy, so restoring only the runtime config would leave
+     * the benchmark name live inside sd_card_manager.
+     * The early parameter/enable/present errors return before the name is
+     * overwritten, so the flag keeps this a no-op for them. */
+    if (logFileClobbered) {
+        memcpy(pSDCardRuntimeConfig->file, savedLogFile, sizeof(savedLogFile));
+        pSDCardRuntimeConfig->file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX - 1] = '\0';
+        sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    }
     return result;
 }
 
