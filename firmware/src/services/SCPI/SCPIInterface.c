@@ -171,7 +171,7 @@ const NanopbFlagsArray fields_all = {
 };
 
 const NanopbFlagsArray fields_info = {
-    .Size = 59,
+    .Size = 62,
     .Data =
     {
         DaqifiOutMessage_msg_time_stamp_tag,
@@ -180,6 +180,10 @@ const NanopbFlagsArray fields_info = {
         DaqifiOutMessage_batt_status_tag,
         DaqifiOutMessage_temp_status_tag,
         DaqifiOutMessage_timestamp_freq_tag,
+        /* #730 streaming timebase */
+        DaqifiOutMessage_stream_timer_freq_tag,
+        DaqifiOutMessage_timestamp_ticks_per_sample_tag,
+        DaqifiOutMessage_actual_rate_millihz_tag,
         DaqifiOutMessage_analog_in_port_num_tag,
         DaqifiOutMessage_analog_in_port_num_priv_tag,
         DaqifiOutMessage_analog_in_port_type_tag,
@@ -5038,6 +5042,40 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         (unsigned)st.isrMaxHz,
         (unsigned)cfg->CapabilitiesFlags.streamingConservativeEnvelopeHz,
         (unsigned)st.maxFreqHz);
+
+    /* #730 timing block — the streaming timebase, so a client never has to
+     * assume a clock or a prescale ratio, and can see the rate the hardware
+     * ACTUALLY runs.
+     *
+     * Emitted here as well as in SYSTem:SYSInfoPB? (fields 70-72) because this
+     * is the "render your UI from one query" surface; the PB route otherwise
+     * forces a second round-trip just for timing. Same values, same helpers.
+     *
+     * - timestamp_hz / stream_timer_hz: divide them for the prescale ratio
+     *   (4 today). Reported rather than derivable because the ratio is a
+     *   PRESCALER ratio — clock-invariant across the 200/252 MHz configs —
+     *   while the core-timer ratio would not be (see #731).
+     * - timestamp_ticks_per_sample: exactly what the deferred task stamps with
+     *   (#717 gStreamPeriodTicks), from the shared helper so it cannot drift.
+     * - actual_rate_millihz: the QUANTIZED rate. `Frequency` is what was asked
+     *   for; the period register is an integer, so asking for 4500 Hz yields
+     *   4498.714 Hz at 252 MHz (~286 ppm). Millihertz keeps it integral.
+     * Both per-config values are 0 until a rate is configured. */
+    {
+        StreamingRuntimeConfig* tcfg =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+        uint32_t tClockPeriod = (tcfg != NULL) ? tcfg->ClockPeriod : 0u;
+        bool tConfigured = (tcfg != NULL) && (StreamFreq_Get(tcfg) > 0u);
+        scpi_printf(context,
+            "\"timing\":{\"timestamp_hz\":%u,\"stream_timer_hz\":%u,"
+            "\"timestamp_ticks_per_sample\":%u,\"actual_rate_millihz\":%u},",
+            (unsigned)TimerApi_FrequencyGet(cfg->StreamingConfig.TSTimerIndex),
+            (unsigned)TimerApi_FrequencyGet(cfg->StreamingConfig.TimerIndex),
+            (unsigned)(tConfigured
+                ? Streaming_TimestampTicksPerSample(tClockPeriod) : 0u),
+            (unsigned)(tConfigured
+                ? Streaming_ActualRateMilliHz(tClockPeriod) : 0u));
+    }
 
     scpi_printf(context,
         "\"rate_model\":{\"formula\":"

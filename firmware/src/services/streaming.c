@@ -1387,17 +1387,8 @@ static void Streaming_Start(void) {
             // boot. Exactness holds while the stream:ts prescale ratio is
             // integral; a TS prescale coarser than the stream timer would
             // truncate here and reintroduce per-tick drift.
-            {
-                uint32_t tsFreq =
-                        TimerApi_FrequencyGet(gpStreamingConfig->TSTimerIndex);
-                uint32_t streamTimerFreq =
-                        TimerApi_FrequencyGet(gpStreamingConfig->TimerIndex);
-                uint32_t periodCycles = gpRuntimeConfigStream->ClockPeriod + 1u;
-                gStreamPeriodTicks = (streamTimerFreq > 0u)
-                        ? (uint32_t)(((uint64_t)tsFreq * periodCycles) / streamTimerFreq)
-                        : 1u;
-                if (gStreamPeriodTicks == 0u) gStreamPeriodTicks = 1u;
-            }
+            gStreamPeriodTicks = Streaming_TimestampTicksPerSample(
+                    gpRuntimeConfigStream->ClockPeriod);
             // #450: anchor the startup-grace window at the start of each
             // enabled session.  Steady drop counters won't increment
             // until xTaskGetTickCount() - gStreamStartTick >= grace.
@@ -2653,6 +2644,64 @@ void TimestampTimer_Init(void) {
     TimerApi_InterruptEnable(gpStreamingConfig->TSTimerIndex);
     TimerApi_Start(gpStreamingConfig->TSTimerIndex);
 
+}
+
+/* #730: the timestamp-domain length of one streaming period, for a given
+ * stream-timer period register value.
+ *
+ * Single source of truth for the #717 period math — Streaming_Start stores the
+ * result in gStreamPeriodTicks (what the deferred task actually stamps with),
+ * and the capability/SYSInfoPB emitters report it to clients. Splitting the
+ * formula across those call sites is how a reported value silently stops
+ * matching the emitted stamps.
+ *
+ * The two timers run different prescales (1:8 stream / 1:2 TS = ratio 4) and
+ * the requested rate is quantized into ClockPeriod by ceiling division in the
+ * STREAM domain (SCPIInterface.c ~3419), so deriving from the ACTUAL configured
+ * period + the live frequency ratio is exact at every rate — unlike the
+ * drift-prone floor(tsFreq/rate). Multiply in uint64 first (result <= tsFreq).
+ *
+ * Exactness holds while the stream:ts prescale ratio is integral. That ratio is
+ * 4 at BOTH clock configurations (#487: 1:2 vs 1:8 is a prescaler ratio, so it
+ * is immune to SYSCLK and the PBCLK divider alike), which is why this survived
+ * the 200->252 MHz move untouched. A TS prescale COARSER than the stream
+ * timer's would truncate here and reintroduce per-tick drift.
+ *
+ * Returns >= 1 always; never 0 (a zero period would make every stamp identical).
+ */
+uint32_t Streaming_TimestampTicksPerSample(uint32_t clockPeriod) {
+    if (gpStreamingConfig == NULL) return 1u;
+    uint32_t tsFreq = TimerApi_FrequencyGet(gpStreamingConfig->TSTimerIndex);
+    uint32_t streamTimerFreq =
+            TimerApi_FrequencyGet(gpStreamingConfig->TimerIndex);
+    if (streamTimerFreq == 0u) return 1u;
+    uint32_t periodCycles = clockPeriod + 1u;
+    uint32_t ticks =
+            (uint32_t)(((uint64_t)tsFreq * periodCycles) / streamTimerFreq);
+    return (ticks == 0u) ? 1u : ticks;
+}
+
+/* #730: the rate the hardware ACTUALLY runs, in millihertz.
+ *
+ * `StreamingRuntimeConfig.Frequency` stores what the client ASKED for; the
+ * trigger period is an integer register, so the achievable rates are quantized
+ * to streamTimerFreq / N. Request 4500 Hz at 252 MHz and the device runs
+ * 10.5e6/2334 = 4498.714 Hz while reporting 4500 — ~286 ppm, and there was no
+ * way to observe it before this. Millihertz keeps the value integral (no FPU
+ * in an SCPI callback, and the deferred task is pure-integer by design).
+ *
+ * Returns 0 when no period is configured, so a client can distinguish
+ * "unconfigured" from a real rate.
+ */
+uint32_t Streaming_ActualRateMilliHz(uint32_t clockPeriod) {
+    if (gpStreamingConfig == NULL) return 0u;
+    uint32_t streamTimerFreq =
+            TimerApi_FrequencyGet(gpStreamingConfig->TimerIndex);
+    uint32_t periodCycles = clockPeriod + 1u;
+    if (streamTimerFreq == 0u || periodCycles == 0u) return 0u;
+    /* uint64 intermediate: 10.5e6 * 1000 overflows uint32. Max result at the
+     * 22 kHz cap is 22e6 millihertz, well inside uint32. */
+    return (uint32_t)(((uint64_t)streamTimerFreq * 1000u) / periodCycles);
 }
 
 void Streaming_SetTestPattern(uint32_t pattern) {
