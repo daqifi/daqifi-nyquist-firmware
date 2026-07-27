@@ -327,7 +327,7 @@ scpi_result_t SCPI_PWMChannelEnableGet(scpi_t * context){
 scpi_result_t SCPI_PWMChannelFrequencySet(scpi_t * context){
     uint32_t param1,param2;
     int i;
-    uint32_t timerClock=TIMER_CLOCK_FRQ;
+    uint32_t timerClock=TimerApi_PeripheralClockHz();   /* #716: real clock, not built-for */
     if (!SCPI_ParamUInt32(context, &param1, FALSE))
     {
         return SCPI_RES_ERR;

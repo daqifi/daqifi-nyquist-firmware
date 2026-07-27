@@ -5074,7 +5074,18 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * - actual_rate_millihz: the QUANTIZED rate. `Frequency` is what was asked
      *   for; the period register is an integer, so asking for 4500 Hz yields
      *   4498.714 Hz at 252 MHz (~286 ppm). Millihertz keeps it integral.
-     * Both per-config values are 0 until a rate is configured. */
+     * Both per-config values are 0 until a rate is configured.
+     *
+     * - pbclk_hz / pbclk_built_hz + clock_ok: #716. The PLL multiplier lives in
+     *   a device Configuration Word, which our bootloader will not program (and
+     *   which erratum 45 says cannot be self-programmed at all), so a device
+     *   that took a firmware update keeps the PLL it was manufactured with
+     *   while the application's PBxDIV write DOES apply. The two can therefore
+     *   disagree, and the symptom is silent: every rate comes out scaled by
+     *   pbclk_hz/pbclk_built_hz (0.794 for a 200 MHz unit running the 252 MHz
+     *   image). Reported so a client or support engineer can SEE it instead of
+     *   inferring it from a rate that looks 21% low. clock_ok=false means the
+     *   unit needs a physical reprogram to reach its intended clock. */
     {
         StreamingRuntimeConfig* tcfg =
             BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -5082,13 +5093,17 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         bool tConfigured = Streaming_IsRateConfigured();
         scpi_printf(context,
             "\"timing\":{\"timestamp_hz\":%u,\"stream_timer_hz\":%u,"
-            "\"timestamp_ticks_per_sample\":%u,\"actual_rate_millihz\":%u},",
+            "\"timestamp_ticks_per_sample\":%u,\"actual_rate_millihz\":%u,"
+            "\"pbclk_hz\":%u,\"pbclk_built_hz\":%u,\"clock_ok\":%s},",
             (unsigned)TimerApi_FrequencyGet(cfg->StreamingConfig.TSTimerIndex),
             (unsigned)TimerApi_FrequencyGet(cfg->StreamingConfig.TimerIndex),
             (unsigned)(tConfigured
                 ? Streaming_TimestampTicksPerSample(tClockPeriod) : 0u),
             (unsigned)(tConfigured
-                ? Streaming_ActualRateMilliHz(tClockPeriod) : 0u));
+                ? Streaming_ActualRateMilliHz(tClockPeriod) : 0u),
+            (unsigned)TimerApi_PeripheralClockHz(),
+            (unsigned)TIMER_CLOCK_FRQ_BUILT,
+            TimerApi_ClockMatchesBuild() ? "true" : "false");
     }
 
     scpi_printf(context,

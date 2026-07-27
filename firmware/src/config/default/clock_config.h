@@ -29,6 +29,16 @@
 /* 1 = 252 MHz (chip-rated max, #487) · 0 = 200 MHz (legacy revert path) */
 #define DAQIFI_SYSCLK_252   1
 
+/* PLL input sources, needed to DERIVE the actual SYSCLK from SPLLCON at run
+ * time (#716). The values below describe the hardware, not a build choice:
+ *   POSC — 24 MHz external clock on this board (FPLLICLK = PLL_POSC,
+ *          POSCMOD = EC in initialization.c)
+ *   FRC  — 8 MHz internal oscillator, the alternative PLL input (PLLICLK = 1)
+ * Every constant in this header is what the image was BUILT for; what the
+ * silicon is actually running may differ — see TimerApi_PeripheralClockHz(). */
+#define DAQIFI_POSC_HZ      24000000UL
+#define DAQIFI_FRC_HZ        8000000UL
+
 #if DAQIFI_SYSCLK_252
   #define DAQIFI_SYSCLK_HZ   252000000UL   /* SPLL: 24 MHz POSC /3 x63 /2 */
   #define DAQIFI_PBCLK_HZ     84000000UL   /* peripheral buses at PBxDIV /3 */

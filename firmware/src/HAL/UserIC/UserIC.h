@@ -38,10 +38,16 @@ extern "C" {
 
 #define USER_IC_UNITS          9u        /*!< IC1..IC9 */
 /* TMR2 (the IC timebase) is clocked from PBCLK3; derive the rate from the same
- * central constant the streaming timer + timestamps use, so freq/period/pulse-
- * width stay correct across clock profiles — 84 MHz @252-MHz build, 100 MHz on
- * the 200-MHz build (#702). Was hardcoded 84000000, wrong on the 200-MHz build. */
-#define USER_IC_TIMER_HZ       TIMER_CLOCK_FRQ
+ * source the streaming timer + timestamps use, so freq/period/pulse-width stay
+ * correct across clock profiles (#702 — was hardcoded 84000000).
+ *
+ * #716: now the RUN-TIME clock, not a compile-time constant. A field device
+ * whose DEVCFG still holds the 200 MHz PLL runs PBCLK3 at 66.67 MHz while the
+ * built-for constant says 84 MHz, which would scale every measured frequency,
+ * period and pulse width by 1.26x. Evaluates to a function call — fine in the
+ * three double-precision expressions in UserIC.c that use it, none of which is
+ * a constant initialiser or a per-sample path. */
+#define USER_IC_TIMER_HZ       TimerApi_PeripheralClockHz()
 
 /** Boot-time init: parks all 9 IC units (disabled, capture IRQ off, priority set)
  *  and clears the epoch. Safe to call before Timer2 is running. */

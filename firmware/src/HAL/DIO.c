@@ -434,7 +434,12 @@ bool DIO_PWMFrequencySet(uint8_t dataIndex) {
     }
 
     const uint16_t tim3PreScalers[8] = {1, 2, 4, 8, 16, 32, 64, 256};
-    uint32_t timerClock = TIMER_CLOCK_FRQ;//TimerApi_FrequencyGet(3);
+    /* #716: the real PBCLK3, not the built-for constant — otherwise a PWM
+     * frequency request is off by the same 1.26x as everything else on a
+     * config-word/application clock mismatch. (The commented-out
+     * TimerApi_FrequencyGet(3) alternative would additionally divide by TMR3's
+     * prescaler, which this calculation applies itself just below.) */
+    uint32_t timerClock = TimerApi_PeripheralClockHz();
     uint32_t pwmFrequency = gpRuntimeBoardConfig->DIOChannels.Data[ dataIndex ].PwmFrequency;
     // #671 defense-in-depth: never divide the shared PWM timebase by zero — a
     // MIPS integer div-by-zero traps to a general exception (device reset). The
