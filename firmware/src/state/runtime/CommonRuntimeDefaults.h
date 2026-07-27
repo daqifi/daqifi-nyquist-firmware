@@ -104,10 +104,14 @@ _Static_assert(sizeof(DEFAULT_NETWORK_HOST_NAME) <= WIFI_MANAGER_DNS_CLIENT_MAX_
          * 1 Hz rather than a "typical" rate: this is consumed ONLY by a
          * no-argument SYST:STR:START, and it must be accepted in every
          * interface/format/channel combination. It is not enough to be under
-         * the common caps — the lowest enforced transport cap is USB+SD CSV
-         * (15000/(0+n), streaming.h), which at 16 channels is 937 Hz, so even
-         * a 1 kHz default would still be rejected -222 there. 1 Hz is below
-         * every cap by construction; the only floor in SCPI_StartStreaming is
+         * the common caps: USB+SD CSV (15000/(0+n), streaming.h) is already
+         * down to 937 Hz at 16 channels, and JSON takes the CSV coefficients
+         * and halves them (streaming.h "JSON uses the CSV coefficient family,
+         * then a /2 derate"), so USB+SD JSON at 16 channels is lower still
+         * (~468 Hz). A 1 kHz default would be rejected -222 in both. Rather
+         * than track whichever combination is currently lowest — that floor
+         * moves every time the caps are refit — 1 Hz is below every cap by
+         * construction; the only floor in SCPI_StartStreaming is
          * freq < 1. It also matches the 1 Hz convention already used for the
          * monitoring channels (CommonMonitoringChannels.h) and for NQ3's
          * AD7609-only override. A client that wants a real rate passes one,
