@@ -179,6 +179,20 @@ scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context){
     return SCPI_RES_OK;
 }
 
+// Global variables for benchmark results.
+// Defined here rather than beside SCPI_StorageSDBenchmark because
+// SCPI_StorageSDLoggingSet below reads testInProgress to reject an SD:FILE
+// that would race the benchmark's target (#736).
+typedef struct {
+    uint32_t totalBytesWritten;
+    uint32_t totalTimeMs;
+    uint32_t writeSpeedBps;
+    bool testInProgress;
+    bool resultAvailable;
+} SDBenchmarkResults_t;
+
+static SDBenchmarkResults_t gSDBenchmarkResults = {0};
+
 scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     const char* pBuff;
     size_t fileLen = 0;
@@ -196,6 +210,27 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("FILE");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    /* #736: a running benchmark OWNS the logging target. sd_card_manager_IsBusy()
+     * above does not cover it — the benchmark publishes its temp name and only
+     * then sets mode=WRITE and calls sd_card_manager_UpdateSettings(), and IsBusy()
+     * stays false across that whole span (mode NONE, state IDLE), so an SD:FILE
+     * from the other transport is accepted right in the middle of it.
+     * UpdateSettings() snapshots the settings by memcpy at call time, so such a
+     * command could make the benchmark open and overwrite the USER'S file instead
+     * of benchmark_XXXX.dat.
+     *
+     * Rejecting is the honest answer rather than a smaller race window: the
+     * benchmark restores the target on exit, so a set accepted during it would be
+     * discarded moments later anyway — the caller would be told "OK" about a
+     * change that does not survive. Failing tells them to retry, and it makes the
+     * benchmark's save/restore pairing airtight instead of merely narrow. */
+    if (gSDBenchmarkResults.testInProgress) {
+        SCPI_ExecutionError(context,
+                            "SYST:STOR:SD:FILE: rejected, benchmark in progress");
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -451,17 +486,6 @@ __exit_point:
     return result;
 
 }
-
-// Global variables for benchmark results
-typedef struct {
-    uint32_t totalBytesWritten;
-    uint32_t totalTimeMs;
-    uint32_t writeSpeedBps;
-    bool testInProgress;
-    bool resultAvailable;
-} SDBenchmarkResults_t;
-
-static SDBenchmarkResults_t gSDBenchmarkResults = {0};
 
 /**
  * @brief Perform SD card write speed benchmark
