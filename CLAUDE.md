@@ -399,6 +399,8 @@ The PIC32MZ ADCHS peripheral has two classes of ADC channels with different read
 3. EOS fires at full-scan completion → `MC12bADC_EosInterruptTask` reads monitoring channels (OBDiag=1 sessions and idle)
 4. Software-trigger path (`MC12b_TriggerConversion`) remains for idle polling and non-HW-trigger modes
 
+**What a sample's timestamp means (#729):** the stamp is the acquisition **trigger** instant (`baseTS + N × periodTicks` since #722), not the conversion instant. T1 channels on the ARDY-direct path are same-tick. **Cached-path channels — NQ1 Type 2 (shared scan) and NQ3 AD7609 — can carry a conversion armed one scan earlier**, because the scan armed at tick N completes after the tick-N deferred task has already read `BOARDDATA_AIN_LATEST`. That skew is fixed, deterministic and uniform (not jitter), it is the only self-consistent choice given one `Timestamp` per packet, and it matches the `ScanStaleDropped` freshness model (#557/#563: data one scan behind is *defined* as valid current-tick data). Δt between samples is exact either way; only absolute phase alignment against an external event needs to account for it. The per-config offset is not currently reported and has not been measured — see `docs/ADC_HW_SEMANTICS.md` § "Timestamp semantics".
+
 **Key files:**
 - `services/streaming.c` — deferred task T1 direct read, session CSS rebuild, scan-bound cap term
 - `HAL/ADC/MC12bADC.c` — `MC12b_ComputeScanList` / `MC12b_ApplyScanList` / `MC12b_ScanMaxFreq` / `MC12b_DrainType1Results`, `MC12b_TriggerConversion`, hardware-trigger config

@@ -425,3 +425,69 @@ why the n=1/n=7 wedges needed the separate EOS-rate limit.
 The cap's scan gate is therefore: `min(busy-bound, 10,400 EOS-rate,
 60,000/(nUserT2+1))`. All three are silicon-anchored; the storm-vs-
 starvation mechanism behind the two fatal limits is #545.
+
+## Timestamp semantics — what the stamp on a sample means (#729)
+
+Established while auditing #722 (deterministic per-tick timestamp). Not a
+defect: this records a contract that was previously implicit, so clients
+and future changes stop having to rediscover it.
+
+**The stamp is the acquisition TRIGGER instant, not the conversion
+instant.** Since #722, every emitted sample carries `baseTS + N ×
+periodTicks` — the exact time of the TMR4/5 match that started tick N.
+
+For **Type 1** channels read via the #541 ARDY-direct path
+(`streaming.c` ~807-840), the value is same-tick: the conversion was
+triggered by that match and read back once `ARDY` set.
+
+For **cached-path** channels the value can originate one scan earlier:
+
+| path | why it lags |
+|---|---|
+| NQ1 Type 2 (shared MODULE7 scan) | the scan armed at tick N completes *after* the tick-N deferred task has already read `BOARDDATA_AIN_LATEST` |
+| NQ3 AD7609 | `ADC_HandleAD7609Interrupt` (`HAL/ADC.c:67,71`) fills LATEST when the BSY deferred task runs |
+
+So a cached-path sample stamped `t` may carry a conversion armed at
+`t − 1 period`. This is a **fixed, deterministic, uniform** skew on the
+TMR6 timebase — not jitter.
+
+### Why this is the right contract, not a bug to fix
+
+1. **One timestamp per packet.** `AInSampleList` carries a single
+   `Timestamp`. In any mixed T1-direct + cached session the pre-#722
+   "first valid channel's slot timestamp" was already wrong for every
+   *other* channel in the packet. A per-tick trigger stamp is the only
+   choice that is self-consistent across a mixed channel set.
+2. **It matches the accepted freshness model.** `ScanStaleDropped`
+   (#557/#563) counts a tick as lost only when EOS has *not* fired since
+   the prior trigger — i.e. data one scan behind is explicitly defined as
+   valid current-tick data. Stamping it with the emission tick agrees
+   with that definition.
+3. **The pre-#722 label was not a conversion timestamp either.** It was
+   whatever the shared 1-deep slot held when the deferred task ran, which
+   under catch-up is the *latest* tick's value — the (t, t, t+2p)
+   aliasing #717 fixed. The old behavior was strictly worse: a variable
+   error rather than a fixed one.
+4. **Correlation is preserved.** #667 edge events read the same TMR6, so
+   an edge and a sample stay comparable; a uniform offset shifts both
+   ends of an interval equally and cancels in any Δt.
+
+### Client guidance
+
+- Δt between samples is exact: consecutive stamps differ by exactly
+  `timestamp_ticks_per_sample` (#730), or an integer multiple when a
+  sample was dropped.
+- For **absolute** phase alignment against an external event, account for
+  up to one scan period of acquisition latency on cached-path channels.
+  T1 channels on the ARDY-direct path have none.
+- The exact per-config latency is **not currently reported**. #730 exposes
+  the timebase (`timestamp_hz`, `stream_timer_hz`,
+  `timestamp_ticks_per_sample`, `actual_rate_millihz`) but not this
+  offset; surfacing it is open follow-up work.
+
+**Evidence class: I** (design-intent reasoning over V-class code reads at
+`streaming.c` ~795/~823-857/~931 and `HAL/ADC.c:67,71`). The skew has
+**not** been measured — no bench run has quantified it against a
+known-phase input. A measurement would upgrade this to E and pin the
+exact offset per configuration; until then treat "up to one scan period"
+as a bound, not a calibrated figure.
