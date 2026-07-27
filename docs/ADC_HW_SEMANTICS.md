@@ -444,7 +444,12 @@ reached through the TIMER_5 handler. So:
 
 - `baseTS` = the match instant **plus one TIMER_5 ISR-entry latency**.
   TIMER_5 is kernel-maskable (`taskENTER_CRITICAL` masks it), so that is
-  µs-scale — tens to hundreds of TMR6 ticks at ~24 ns each.
+  µs-scale — tens to hundreds of TMR6 ticks. A TMR6 tick is **23.8 ns at
+  the current 252 MHz configuration** (PBCLK3 84 MHz, 1:2 prescale → 42 MHz,
+  which is what the device reports as `timestamp_hz`), or 20 ns on the
+  legacy 200 MHz build (100 MHz → 50 MHz). Do not confuse either with the
+  ADC's own TAD — the stale "ADC_clk = 50 MHz, one clock = 20 ns" comments
+  flagged elsewhere in this document refer to a different clock.
 - It is seeded **once per session** (`gStreamTSSeeded` latches it), so the
   error is a **fixed, session-wide offset**, not per-tick jitter.
 - **Inter-tick spacing is exact**: `periodTicks` is config-derived, so
