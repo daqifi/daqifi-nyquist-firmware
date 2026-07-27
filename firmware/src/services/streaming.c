@@ -1777,6 +1777,12 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gStreamBaseTS = 0;
     gStreamPeriodTicks = 0;
     gStreamTSSeeded = 0u;
+    /* #730: same retained-RAM safety. The runtime config is NOT retained
+     * (InitBoardRuntimeConfig memcpy's the const defaults every boot), so a
+     * flag that survived while ClockPeriod reverted to the 130 placeholder
+     * would report the meaningless 524 ticks / 80,153 Hz as "configured" —
+     * the very thing the flag exists to suppress (#733 audit). */
+    gStreamRateConfigured = 0u;
     gBenchmarkMode = BENCHMARK_OFF;
     gSdPbMetadataSent = false;
     gSdFileWasReady = false;
