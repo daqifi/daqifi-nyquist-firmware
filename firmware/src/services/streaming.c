@@ -1854,8 +1854,13 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
      * built-in default, not a client-requested rate, and #730 reports
      * "unconfigured" until a client actually asks for one.
      *
-     * The 64-bit Frequency read takes a critical section like every other
-     * reader. "Pre-scheduler" would be the wrong justification for skipping it:
+     * The 64-bit Frequency read takes a critical section, matching the guarded
+     * SCPI accessors (StreamFreq_Get/Set, SCPIInterface.c). Note this is NOT
+     * universal in the tree — streaming.c's own Streaming_InitFlowWindow call
+     * and SCPIADC.c's SCPI_ADCChanEnableSet still read the field bare; both sit
+     * on paths where no concurrent writer exists today. Guarding here is not a
+     * claim that every reader is guarded, only that this one is.
+     * "Pre-scheduler" would be the wrong justification for skipping it:
      * Streaming_Init is called from app_SystemInit, which runs INSIDE the
      * priority-1 APP_FREERTOS_Tasks — the scheduler is already running (see the
      * same caveat spelled out at app_freertos.c:538-545). Sequential ordering
