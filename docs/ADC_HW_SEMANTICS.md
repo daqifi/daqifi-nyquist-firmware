@@ -434,11 +434,31 @@ and future changes stop having to rediscover it.
 
 **The stamp is the acquisition TRIGGER instant, not the conversion
 instant.** Since #722, every emitted sample carries `baseTS + N ×
-periodTicks` — the exact time of the TMR4/5 match that started tick N.
+periodTicks`.
+
+Be precise about what `baseTS` is, because it is *not* a hardware capture
+of the match. Nothing latches TMR6 at the TMR4/5 compare; `baseTS` is a
+software read — `TimerApi_CounterGet(TSTimerIndex)` at the top of
+`Streaming_TimerHandler` (`firmware/src/services/streaming.c:1001`),
+reached through the TIMER_5 handler. So:
+
+- `baseTS` = the match instant **plus one TIMER_5 ISR-entry latency**.
+  TIMER_5 is kernel-maskable (`taskENTER_CRITICAL` masks it), so that is
+  µs-scale — tens to hundreds of TMR6 ticks at ~24 ns each.
+- It is seeded **once per session** (`gStreamTSSeeded` latches it), so the
+  error is a **fixed, session-wide offset**, not per-tick jitter.
+- **Inter-tick spacing is exact**: `periodTicks` is config-derived, so
+  consecutive stamps differ by exactly one period. Every *relative*
+  measurement is unaffected.
+
+Treat the stamp as an exact relative clock carrying an unmeasured constant
+absolute offset.
 
 For **Type 1** channels read via the #541 ARDY-direct path
 (`firmware/src/services/streaming.c` ~807-840), the value is same-tick: the conversion was
-triggered by that match and read back once `ARDY` set.
+triggered by that match and read back once `ARDY` set — no *acquisition*
+lag. (The session-wide seed offset above still applies; it applies to
+every stamp on every path.)
 
 For **cached-path** channels the value can originate one scan earlier:
 
@@ -468,18 +488,24 @@ TMR6 timebase — not jitter.
    under catch-up is the *latest* tick's value — the (t, t, t+2p)
    aliasing #717 fixed. The old behavior was strictly worse: a variable
    error rather than a fixed one.
-4. **Correlation is preserved.** #667 edge events read the same TMR6, so
-   an edge and a sample stay comparable; a uniform offset shifts both
-   ends of an interval equally and cancels in any Δt.
+4. **Correlation is preserved for intervals.** #667 edge events read the
+   same TMR6, so edges and samples share a timebase and any Δt *within one
+   source* is unaffected — a uniform offset shifts both ends equally and
+   cancels. It does **not** fully cancel *across* sources: edge events take
+   their own read in their own ISR with their own entry latency, so an
+   edge-to-sample absolute comparison carries both offsets. Ordering and
+   timebase are sound; the sub-µs absolute anchor is not established.
 
 ### Client guidance
 
 - Δt between samples is exact: consecutive stamps differ by exactly
   `timestamp_ticks_per_sample` (#730), or an integer multiple when a
   sample was dropped.
-- For **absolute** phase alignment against an external event, account for
-  up to one scan period of acquisition latency on cached-path channels.
-  T1 channels on the ARDY-direct path have none.
+- For **absolute** phase alignment against an external event, two separate
+  offsets apply: (a) up to one scan period of *acquisition* latency on
+  cached-path channels — T1 on the ARDY-direct path has none; and (b) the
+  session-wide ISR-entry seed offset above, which applies to **every**
+  path including T1. Neither is currently measured or reported.
 - The exact per-config latency is **not currently reported**. #730 exposes
   the timebase (`timestamp_hz`, `stream_timer_hz`,
   `timestamp_ticks_per_sample`, `actual_rate_millihz`) but not this
