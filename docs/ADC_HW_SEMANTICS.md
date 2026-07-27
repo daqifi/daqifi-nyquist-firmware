@@ -439,7 +439,7 @@ periodTicks`.
 Be precise about what `baseTS` is, because it is *not* a hardware capture
 of the match. Nothing latches TMR6 at the TMR4/5 compare; `baseTS` is a
 software read — `TimerApi_CounterGet(TSTimerIndex)` at the top of
-`Streaming_TimerHandler` (`firmware/src/services/streaming.c:1001`),
+`Streaming_TimerHandler` (`firmware/src/services/streaming.c:1014-1016`),
 reached through the TIMER_5 handler. So:
 
 - `baseTS` = the match instant **plus one TIMER_5 ISR-entry latency**.
@@ -465,11 +465,42 @@ For **cached-path** channels the value can originate one scan earlier:
 | path | why it lags |
 |---|---|
 | NQ1 Type 2 (shared MODULE7 scan) | the scan armed at tick N completes *after* the tick-N deferred task has already read `BOARDDATA_AIN_LATEST` |
-| NQ3 AD7609 | `ADC_HandleAD7609Interrupt` (`firmware/src/HAL/ADC.c:67,71`) fills LATEST when the BSY deferred task runs |
+| NQ3 AD7609 | `ADC_HandleAD7609Interrupt` (`firmware/src/HAL/ADC.c:64`) fills LATEST (`ADC.c:89`) when the BSY deferred task runs |
 
 So a cached-path sample stamped `t` may carry a conversion armed at
-`t − 1 period`. This is a **fixed, deterministic, uniform** skew on the
-TMR6 timebase — not jitter.
+`t − 1 period`.
+
+**That is true only while the deferred task keeps up.** The two halves of a
+packet come from different places: the stamp is *counter-derived*
+(`baseTS + tickIndex × periodTicks`, fixed the moment the iteration runs),
+while the value is read *live* from the one-deep slot at that same moment.
+When the task falls behind, a backlog of notifications drains as K
+back-to-back iterations (`ulTaskNotifyTake(pdFALSE, …)`), and the pri-1 T2
+data-ready ISRs keep overwriting the slot with newer conversions
+throughout. So the iteration stamped N can pair with tick N's conversion,
+or with tick N+1's — **a value NEWER than its own stamp** — and the skew
+varies from tick to tick.
+
+That regime is not hypothetical: it is exactly the deferred-task backlog
+#717 measured at 0.07 % of samples @1 kHz rising to **15 % @5 kHz** over
+USB, at rates inside the enforced caps.
+
+| regime | value ↔ stamp association |
+|---|---|
+| steady state (task keeps up) | fixed and uniform: T1 same-tick, cached-path up to one scan behind |
+| deferred-task catch-up | **variable**, and the value can be newer than the stamp |
+
+The same caveat applies to the Type-1 statement above: a late iteration's
+`MC12b_ReadResult` returns whatever `ADCDATAx` holds *then*, which under
+catch-up is a later conversion than the one its stamp names.
+
+**#722 fixed the stamp side only.** It made the emitted timestamps a
+uniform arithmetic sequence; it did not change where the value comes from
+(`firmware/src/services/streaming.c:844`), so the value-to-stamp skew is
+still variable under catch-up. `ScanStaleDropped` does **not** cover this —
+it is evaluated in the timer ISR on EOS-sequence advance and detects a scan
+that failed to complete, not a late deferred task, so it reads 0 throughout
+this regime.
 
 ### Why this is the right contract, not a bug to fix
 
@@ -486,8 +517,11 @@ TMR6 timebase — not jitter.
 3. **The pre-#722 label was not a conversion timestamp either.** It was
    whatever the shared 1-deep slot held when the deferred task ran, which
    under catch-up is the *latest* tick's value — the (t, t, t+2p)
-   aliasing #717 fixed. The old behavior was strictly worse: a variable
-   error rather than a fixed one.
+   aliasing #717 fixed. Note the precise scope of that improvement: #722
+   removed the *stamp* aliasing (duplicate stamps then a 2-period jump).
+   It did not make the value-to-stamp association fixed under catch-up —
+   see the regime table above. Saying the old behavior was "strictly
+   worse, a variable error rather than a fixed one" would overstate it.
 4. **Correlation is preserved for intervals.** #667 edge events read the
    same TMR6, so edges and samples share a timebase and any Δt *within one
    source* is unaffected — a uniform offset shifts both ends equally and
@@ -512,7 +546,7 @@ TMR6 timebase — not jitter.
   offset; surfacing it is open follow-up work.
 
 **Evidence class: I** (design-intent reasoning over V-class code reads at
-`firmware/src/services/streaming.c` ~795/~823-857/~931 and `firmware/src/HAL/ADC.c:67,71`). The skew has
+`firmware/src/services/streaming.c` ~795/~823-857/~931 and `firmware/src/HAL/ADC.c:64,89`). The skew has
 **not** been measured — no bench run has quantified it against a
 known-phase input. A measurement would upgrade this to E and pin the
 exact offset per configuration; until then treat "up to one scan period"
