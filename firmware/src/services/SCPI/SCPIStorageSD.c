@@ -484,6 +484,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * then mode=NONE), so a save/restore is sufficient — no completion
      * callback needed. Restored at __exit_point on every path. */
     char savedLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
+    char benchLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1] = {0};
     bool logFileClobbered = false;
     /* Size MUST match the struct field, which is [LEN_MAX + 1] — LEN_MAX (40)
      * is the longest ACCEPTED name and the field carries a 41st byte for the
@@ -555,6 +556,10 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     snprintf(pSDCardRuntimeConfig->file, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX, 
              "benchmark_%d.dat", (int)(xTaskGetTickCount() & 0xFFFF));
     logFileClobbered = true;   /* #728: restore the logging target on exit */
+    /* Keep our exact temp name so the restore can tell "still ours" from
+     * "someone else set a new target while we ran" (#736 audit). */
+    memcpy(benchLogFile, pSDCardRuntimeConfig->file, sizeof(benchLogFile));
+    benchLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
     
     // Set SD card to write mode
     /* #690: this WRITE-mode open goes through the #689 dir-file-cap guard too.
@@ -727,7 +732,15 @@ __exit_point:
      * the benchmark name live inside sd_card_manager.
      * The early parameter/enable/present errors return before the name is
      * overwritten, so the flag keeps this a no-op for them. */
-    if (logFileClobbered) {
+    /* #736 audit: restore ONLY if the field still holds the name we wrote.
+     * Once the manager reaches IDLE (polled just above), SD:FILE from the
+     * OTHER transport is accepted — USB and WiFi run separate SCPI contexts
+     * with no shared dispatch mutex, and this callback yields in vTaskDelay.
+     * An unconditional restore would silently revert a target the user just
+     * set successfully. If someone changed it, theirs wins and we leave it. */
+    if (logFileClobbered &&
+        strncmp(pSDCardRuntimeConfig->file, benchLogFile,
+                SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1) == 0) {
         memcpy(pSDCardRuntimeConfig->file, savedLogFile, sizeof(savedLogFile));
         /* Terminate at [LEN_MAX], the field's LAST byte — not [LEN_MAX - 1].
          * LEN_MAX (40) is the longest name the setter ACCEPTS, and the field is
