@@ -1404,9 +1404,13 @@ static void Streaming_Start(void) {
             // truncate here and reintroduce per-tick drift.
             gStreamPeriodTicks = Streaming_TimestampTicksPerSample(
                     gpRuntimeConfigStream->ClockPeriod);
-            /* #730: whatever set ClockPeriod, by the time a session starts the
-             * period is real. Covers the benchmark/finder paths, which poke
-             * ClockPeriod directly instead of going through the SCPI setters. */
+            /* #730: by the time a session starts, ClockPeriod describes a real
+             * rate whoever set it — including the benchmark/finder paths, which
+             * poke it directly instead of going through the SCPI setters. Those
+             * two then RESTORE the previous period on exit, and restore this
+             * flag with it (Streaming_RestoreRateConfigured), so a temporary
+             * benchmark stream doesn't leave the flag set over a period nobody
+             * configured. */
             Streaming_NoteRateConfigured();
             // #450: anchor the startup-grace window at the start of each
             // enabled session.  Steady drop counters won't increment
@@ -2718,6 +2722,20 @@ bool Streaming_IsRateConfigured(void) {
  * rather than testing the config fields. */
 void Streaming_NoteRateConfigured(void) {
     gStreamRateConfigured = 1u;   // 32-bit store is atomic on PIC32MZ
+}
+
+/* Restore a previously captured flag value.
+ *
+ * For the benchmark and WiFi-finder paths, which poke ClockPeriod, stream at
+ * it, then RESTORE the previous period. Without this they would leave the flag
+ * set over a period they did not configure — on a fresh boot that means
+ * reporting the meaningless default (524 ticks / 80,153 Hz) right after a
+ * benchmark, which is the exact failure the flag exists to prevent. They
+ * already save/restore Frequency and ClockPeriod; the flag belongs in that
+ * same block (pre-merge audit on PR #733).
+ */
+void Streaming_RestoreRateConfigured(bool configured) {
+    gStreamRateConfigured = configured ? 1u : 0u;
 }
 
 /* #730: the rate the hardware ACTUALLY runs, in millihertz.

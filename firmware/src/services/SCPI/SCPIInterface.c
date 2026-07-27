@@ -2100,6 +2100,10 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     uint32_t savedPattern = Streaming_GetTestPattern();
     uint64_t savedFrequency = StreamFreq_Get(pStreamCfg);   // Frequency is uint64_t — no truncation
     uint32_t savedClockPeriod = pStreamCfg->ClockPeriod;
+    /* #730/#733: this path restores ClockPeriod below, so the rate-configured
+     * flag must be restored with it — otherwise a benchmark on a fresh boot
+     * leaves it set over the meaningless boot default. */
+    bool savedRateConfigured = Streaming_IsRateConfigured();
 
     // Enable benchmark mode + test pattern
     Streaming_SetBenchmarkMode(BENCHMARK_NOCAP);
@@ -2173,6 +2177,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     Streaming_SetTestPattern(savedPattern);
     StreamFreq_Set(pStreamCfg, savedFrequency);
     pStreamCfg->ClockPeriod = savedClockPeriod;
+    Streaming_RestoreRateConfigured(savedRateConfigured);   /* #730 */
     RestoreSdMode(savedSdMode);
 
     // Collect and report results
@@ -2437,6 +2442,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     uint32_t savedPattern = Streaming_GetTestPattern();
     uint64_t savedFrequency = StreamFreq_Get(cfg);      // Frequency is uint64_t — no truncation
     uint32_t savedClockPeriod = cfg->ClockPeriod;
+    bool savedRateConfigured = Streaming_IsRateConfigured();   /* #730, see above */
     Streaming_SetBenchmarkMode(BENCHMARK_NOCAP);   // bypass cap to probe the link
     Streaming_SetTestPattern(3);                   // fullscale: worst-case PB size
 
@@ -2582,6 +2588,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
     Streaming_SetTestPattern(savedPattern);
     StreamFreq_Set(cfg, savedFrequency);
     cfg->ClockPeriod = savedClockPeriod;
+    Streaming_RestoreRateConfigured(savedRateConfigured);   /* #730 */
     RestoreSdMode(savedSdMode);
 
     // ---- Bench-fitted WiFi cap (#522) -------------------------------------

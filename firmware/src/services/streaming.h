@@ -706,6 +706,10 @@ bool Streaming_IsRateConfigured(void);
 // placeholders that describe no real rate, so the flag is what makes the
 // "0 = unconfigured" contract on the timebase values true.
 void Streaming_NoteRateConfigured(void);
+// Restore a previously captured flag value. For the benchmark / WiFi-finder
+// paths, which stream at a temporary period and then restore the previous one:
+// the flag belongs in the same save/restore block as Frequency and ClockPeriod.
+void Streaming_RestoreRateConfigured(bool configured);
 uint32_t Streaming_TimestampTicksPerSample(uint32_t clockPeriod);
 uint32_t Streaming_ActualRateMilliHz(uint32_t clockPeriod);
 
