@@ -1854,11 +1854,22 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
      * built-in default, not a client-requested rate, and #730 reports
      * "unconfigured" until a client actually asks for one.
      *
-     * Pre-scheduler, single-threaded, so the 64-bit Frequency read needs no
-     * critical section here (it does on the SCPI paths — see SCPIInterface.c). */
+     * The 64-bit Frequency read takes a critical section like every other
+     * reader. "Pre-scheduler" would be the wrong justification for skipping it:
+     * Streaming_Init is called from app_SystemInit, which runs INSIDE the
+     * priority-1 APP_FREERTOS_Tasks — the scheduler is already running (see the
+     * same caveat spelled out at app_freertos.c:538-545). Sequential ordering
+     * there does happen to make a race impossible today, because the USB / WiFi
+     * / SCPI tasks that write Frequency are xTaskCreate'd later in that same
+     * function, but that is a subtle argument to leave load-bearing for a read
+     * that costs nothing to guard. Matching the established pattern is cheaper
+     * than an exception that needs a paragraph to defend. */
     {
         uint32_t clkFreq = TimerApi_FrequencyGet(gpStreamingConfig->TimerIndex);
-        uint64_t defFreq = gpRuntimeConfigStream->Frequency;
+        uint64_t defFreq;
+        taskENTER_CRITICAL();
+        defFreq = gpRuntimeConfigStream->Frequency;
+        taskEXIT_CRITICAL();
         if (clkFreq > 0u && defFreq > 0u) {
             uint32_t periodCycles =
                 (uint32_t)(((uint64_t)clkFreq + defFreq - 1u) / defFreq);
