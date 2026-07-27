@@ -646,6 +646,32 @@ void app_SystemInit() {
     DioProbe_Init();
     // #667: park edge-event (INT1-4) + pulse-totalizer (Timer8/9) hardware.
     UserEdge_Initialize();
+    /* #716: does the silicon's clock match what this image was built for?
+     *
+     * FPLLMULT lives in DEVCFG2, a device Configuration Word. Our USB
+     * bootloader deliberately refuses to program config words, and erratum 45
+     * (DS80000663 Rev R) says run-time self-programming of them is not
+     * functional with no workaround — so a field firmware update CANNOT move a
+     * device's PLL. PBxDIV, by contrast, is an ordinary register write in
+     * SystemInit and does get updated. A unit manufactured at 200 MHz that
+     * takes the 252 MHz image therefore runs PBCLK3 at 66.67 MHz while this
+     * build expects 84 MHz.
+     *
+     * The clock-derived paths now read the real rate, so the device streams
+     * accurately either way. This check exists because the condition is
+     * otherwise invisible: nothing else tells the operator that a unit is
+     * running below its intended clock and will never reach the documented
+     * ceilings until it is physically reprogrammed. */
+    if (!TimerApi_ClockMatchesBuild()) {
+        LOG_E("Clock mismatch (#716): PBCLK3 is %u Hz, image built for %u Hz. "
+              "Device configuration words hold an older PLL and cannot be "
+              "updated by a firmware update — reprogram with a PICkit/IPE to "
+              "reach the intended clock. Rates are derived from the ACTUAL "
+              "clock, so streaming is accurate but ceilings are lower.",
+              (unsigned)TimerApi_PeripheralClockHz(),
+              (unsigned)TIMER_CLOCK_FRQ_BUILT);
+    }
+
     Streaming_Init(&gpBoardConfig->StreamingConfig,
             &gpBoardRuntimeConfig->StreamingConfig);
     Streaming_UpdateState();

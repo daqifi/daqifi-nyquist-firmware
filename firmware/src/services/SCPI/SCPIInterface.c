@@ -5074,21 +5074,46 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * - actual_rate_millihz: the QUANTIZED rate. `Frequency` is what was asked
      *   for; the period register is an integer, so asking for 4500 Hz yields
      *   4498.714 Hz at 252 MHz (~286 ppm). Millihertz keeps it integral.
-     * Both per-config values are 0 until a rate is configured. */
+     * Both per-config values are 0 until a rate is configured.
+     *
+     * - pbclk_hz / pbclk_built_hz + clock_ok: #716. The PLL multiplier lives in
+     *   a device Configuration Word, which our bootloader will not program (and
+     *   which erratum 45 says cannot be self-programmed at all), so a device
+     *   that took a firmware update keeps the PLL it was manufactured with
+     *   while the application's PBxDIV write DOES apply. The two can therefore
+     *   disagree, and the symptom is silent: every rate comes out scaled by
+     *   pbclk_hz/pbclk_built_hz (0.794 for a 200 MHz unit running the 252 MHz
+     *   image). Reported so a client or support engineer can SEE it instead of
+     *   inferring it from a rate that looks 21% low. clock_ok=false means the
+     *   unit needs a physical reprogram to reach its intended clock. */
     {
         StreamingRuntimeConfig* tcfg =
             BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
         uint32_t tClockPeriod = (tcfg != NULL) ? tcfg->ClockPeriod : 0u;
         bool tConfigured = Streaming_IsRateConfigured();
+        /* Split across two writes on purpose. scpi_printf has a 192-byte
+         * buffer and truncates SILENTLY (SCPIInterface.h) — and truncation
+         * here would drop the trailing comma before the next chunk, making
+         * the whole capability response unparseable JSON rather than merely
+         * short. As one call this expansion reaches 189 bytes on the shipped
+         * 252 MHz build and 192 on the legacy 200 MHz build, i.e. from three
+         * bytes of margin down to none (#740 audit). Two calls put both
+         * halves under 110 bytes, so no plausible clock/rate combination can
+         * reach the limit. */
         scpi_printf(context,
             "\"timing\":{\"timestamp_hz\":%u,\"stream_timer_hz\":%u,"
-            "\"timestamp_ticks_per_sample\":%u,\"actual_rate_millihz\":%u},",
+            "\"timestamp_ticks_per_sample\":%u,\"actual_rate_millihz\":%u,",
             (unsigned)TimerApi_FrequencyGet(cfg->StreamingConfig.TSTimerIndex),
             (unsigned)TimerApi_FrequencyGet(cfg->StreamingConfig.TimerIndex),
             (unsigned)(tConfigured
                 ? Streaming_TimestampTicksPerSample(tClockPeriod) : 0u),
             (unsigned)(tConfigured
                 ? Streaming_ActualRateMilliHz(tClockPeriod) : 0u));
+        scpi_printf(context,
+            "\"pbclk_hz\":%u,\"pbclk_built_hz\":%u,\"clock_ok\":%s},",
+            (unsigned)TimerApi_PeripheralClockHz(),
+            (unsigned)TIMER_CLOCK_FRQ_BUILT,
+            TimerApi_ClockMatchesBuild() ? "true" : "false");
     }
 
     scpi_printf(context,
