@@ -559,7 +559,26 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     gSDBenchmarkResults.totalBytesWritten = 0;
     gSDBenchmarkResults.totalTimeMs = 0;
     gSDBenchmarkResults.writeSpeedBps = 0;
-    gSDBenchmarkResults.testInProgress = true;
+    /* #736 audit: ATOMIC test-and-set. The early `if (testInProgress)` reject
+     * above is only a fast path — parameter parsing sits between it and this
+     * point, and USB SCPI (pri 7) preempts WiFi SCPI (pri 2) with no shared
+     * dispatch mutex, so two BENCH invocations could both pass that check and
+     * both enter. Claiming the flag under a critical section makes exactly one
+     * of them the owner; the loser rejects here instead of running a second
+     * benchmark concurrently (which would also corrupt the save/restore
+     * pairing this PR relies on). */
+    bool benchAlreadyRunning;
+    taskENTER_CRITICAL();
+    benchAlreadyRunning = gSDBenchmarkResults.testInProgress;
+    if (!benchAlreadyRunning) {
+        gSDBenchmarkResults.testInProgress = true;
+    }
+    taskEXIT_CRITICAL();
+    if (benchAlreadyRunning) {
+        SCPI_ExecutionError(context, "SYST:STOR:SD:BENCH: benchmark already in progress");
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
     ownsBenchFlag = true;
     gSDBenchmarkResults.resultAvailable = false;
     
