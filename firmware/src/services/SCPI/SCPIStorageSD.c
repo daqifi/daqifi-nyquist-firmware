@@ -191,7 +191,13 @@ typedef struct {
     bool resultAvailable;
 } SDBenchmarkResults_t;
 
-static SDBenchmarkResults_t gSDBenchmarkResults = {0};
+/* volatile: written by the SCPI task running a benchmark and read by the
+ * OTHER transport's SCPI task (SCPI_StorageSDLoggingSet's guard below, and
+ * the benchmark's own re-entrancy claim). Per CLAUDE.md a value written by
+ * one task and read by another needs volatile so the compiler cannot cache
+ * it in a register. volatile does NOT make the read-modify-write atomic —
+ * the claim still takes a critical section (#736). */
+static volatile SDBenchmarkResults_t gSDBenchmarkResults = {0};
 
 scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     const char* pBuff;
@@ -535,10 +541,8 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * suffix of the new one — a filename no command ever selected, which the
      * restore would then write back. All three sites that touch `file` are now
      * symmetric (#736 audit). */
-    taskENTER_CRITICAL();
-    memcpy(savedLogFile, pSDCardRuntimeConfig->file, sizeof(savedLogFile));
-    taskEXIT_CRITICAL();
-    savedLogFile[sizeof(savedLogFile) - 1] = '\0';
+    /* NB: the snapshot itself happens AFTER the ownership claim below, not
+     * here — see the comment at that point for why. */
     
     // Check if SD card is enabled
     if (!pSDCardRuntimeConfig->enable) {
@@ -615,6 +619,23 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         goto __exit_point;
     }
     ownsBenchFlag = true;
+
+    /* Snapshot the logging target HERE, after the claim — not at function
+     * entry. SCPI_StorageSDLoggingSet rejects SD:FILE only once testInProgress
+     * is set, so an SD:FILE from the other transport arriving during parameter
+     * parsing is legitimately ACCEPTED. Snapshotting at entry captured the
+     * pre-command name, and the exit restore then reverted the change the
+     * device had just acknowledged — a silent lost update, and an arbitrary
+     * boundary (rejected after the claim, silently discarded before it).
+     *
+     * Taking it after the claim makes the rule consistent in both directions:
+     * an SD:FILE that is ACCEPTED always takes effect, and one that is
+     * REJECTED never does. Under the same critical section as every other
+     * reader of the field (Qodo #736). */
+    taskENTER_CRITICAL();
+    memcpy(savedLogFile, pSDCardRuntimeConfig->file, sizeof(savedLogFile));
+    taskEXIT_CRITICAL();
+    savedLogFile[sizeof(savedLogFile) - 1] = '\0';
 
     // Initialize benchmark results (owner-only — see the ordering note above)
     gSDBenchmarkResults.totalBytesWritten = 0;
