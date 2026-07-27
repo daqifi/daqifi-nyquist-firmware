@@ -268,10 +268,40 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
          * critical section still sees the write RESUME afterwards, splicing
          * the tail of one name onto another. Two fixed-size ops on a 41-byte
          * field; the reader side is SCPI_StorageSDBenchmark's restore. */
+        /* Re-validate the benchmark guard HERE, under the same critical
+         * section as the write. The check near the top of this function is
+         * only a fast path: SCPI_CheckSDCardPresent, SCPI_ParamCharacters and
+         * SD_ValidatePathParam all run between it and this point, and none of
+         * them is in a critical section. So WiFi SCPI (pri 2) can pass the
+         * early check while no benchmark exists, be preempted by USB SCPI
+         * (pri 7) starting one, and then resume PAST the now-stale check and
+         * overwrite `file` while the benchmark is mid-session.
+         *
+         * That is not a cosmetic race. gpSDCardSettings is the SAME struct
+         * instance (BoardRunTimeConfig_Get returns the one object), so the SD
+         * task's next pass would open the name written here and stream the
+         * benchmark's synthetic pattern into the user's real log — the exact
+         * silent-corruption class #728 exists to close, reopened through this
+         * guard. The exit compare would then legitimately not match and skip
+         * the restore, so neither transport ever learns of the collision.
+         *
+         * Checking and writing under one critical section makes it atomic,
+         * mirroring the benchmark's own claim (#736 audit round 7). */
+        bool benchOwnsTarget;
         taskENTER_CRITICAL();
-        memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
-        pSDCardRuntimeConfig->file[fileLen] = '\0';
+        benchOwnsTarget = gSDBenchmarkResults.testInProgress;
+        if (!benchOwnsTarget) {
+            memcpy(pSDCardRuntimeConfig->file, pBuff, fileLen);
+            pSDCardRuntimeConfig->file[fileLen] = '\0';
+        }
         taskEXIT_CRITICAL();
+        if (benchOwnsTarget) {
+            SCPI_ExecutionError(context,
+                                "SYST:STOR:SD:FILE: rejected, benchmark claimed "
+                                "the target during validation");
+            result = SCPI_RES_ERR;
+            goto __exit_point;
+        }
         LOG_D("SD:FILE - Set filename to '%s' (%zu bytes) dir='%s'\r\n",
               pSDCardRuntimeConfig->file, fileLen, pSDCardRuntimeConfig->directory);
     } else {
