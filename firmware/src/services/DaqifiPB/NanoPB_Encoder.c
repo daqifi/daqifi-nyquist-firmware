@@ -557,7 +557,7 @@ size_t Nanopb_Encode(tBoardData* state,
                 const StreamingRuntimeConfig* cfg = BoardRunTimeConfig_Get(
                         BOARDRUNTIME_STREAMING_CONFIGURATION);
                 uint32_t clockPeriod = (cfg != NULL) ? cfg->ClockPeriod : 0u;
-                bool configured = (cfg != NULL) && (cfg->Frequency > 0u);
+                bool configured = Streaming_IsRateConfigured();
                 if (fields->Data[i] ==
                         DaqifiOutMessage_timestamp_ticks_per_sample_tag) {
                     message.timestamp_ticks_per_sample = configured

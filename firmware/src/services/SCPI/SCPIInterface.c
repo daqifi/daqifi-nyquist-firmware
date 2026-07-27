@@ -3423,6 +3423,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             uint32_t periodCycles = (clkFreq + freq - 1) / freq;
             if (periodCycles < 2) periodCycles = 2;  // PR must be >= 1
             pRunTimeStreamConfig->ClockPeriod = periodCycles - 1;
+            Streaming_NoteRateConfigured();   /* #730 */
             pRunTimeStreamConfig->Frequency = freq;
             pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
             // #107: scan the shared MODULE7 (Type-2) mux on EVERY tick so T2 yields
@@ -5065,7 +5066,7 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         StreamingRuntimeConfig* tcfg =
             BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
         uint32_t tClockPeriod = (tcfg != NULL) ? tcfg->ClockPeriod : 0u;
-        bool tConfigured = (tcfg != NULL) && (StreamFreq_Get(tcfg) > 0u);
+        bool tConfigured = Streaming_IsRateConfigured();
         scpi_printf(context,
             "\"timing\":{\"timestamp_hz\":%u,\"stream_timer_hz\":%u,"
             "\"timestamp_ticks_per_sample\":%u,\"actual_rate_millihz\":%u},",

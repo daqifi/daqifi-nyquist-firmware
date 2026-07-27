@@ -71,6 +71,21 @@ static uint64_t gTestPatternSampleCount = 0;      // Monotonic counter, reset on
 // (the seeded latch included — a plain bool would still be atomic, but the
 // native width keeps the whole set uniform). volatile does NOT make the
 // gStreamTickIndex RMW atomic — that keeps its critical section.
+/* #730: has a streaming rate been configured this boot?
+ *
+ * Deliberately a flag rather than a test of the config fields. The boot
+ * defaults (CommonRuntimeDefaults.h) are placeholders that do not describe any
+ * real rate: ClockPeriod=130 works out to 80,153 Hz at 252 MHz while
+ * Frequency=30000 claims 30 kHz — they disagree with each other, and both sit
+ * above the 22 kHz ISR ceiling. Testing either would report a confident,
+ * meaningless number at exactly the moment a client reads the timebase
+ * (connect time, before any START). Tracked separately as a defaults cleanup.
+ *
+ * Set by Streaming_NoteRateConfigured() from the SCPI paths that write
+ * ClockPeriod; never cleared — a configured rate stays configured until reboot.
+ */
+static volatile uint32_t gStreamRateConfigured = 0;
+
 static volatile uint32_t gStreamTickIndex = 0;   // dispatches since session start (incl. drops)
 static volatile uint32_t gStreamBaseTS = 0;      // TMR6 at the session's first tick (ISR-seeded)
 static volatile uint32_t gStreamPeriodTicks = 0; // TMR6 ticks per streaming tick (Start-computed)
@@ -1389,6 +1404,10 @@ static void Streaming_Start(void) {
             // truncate here and reintroduce per-tick drift.
             gStreamPeriodTicks = Streaming_TimestampTicksPerSample(
                     gpRuntimeConfigStream->ClockPeriod);
+            /* #730: whatever set ClockPeriod, by the time a session starts the
+             * period is real. Covers the benchmark/finder paths, which poke
+             * ClockPeriod directly instead of going through the SCPI setters. */
+            Streaming_NoteRateConfigured();
             // #450: anchor the startup-grace window at the start of each
             // enabled session.  Steady drop counters won't increment
             // until xTaskGetTickCount() - gStreamStartTick >= grace.
@@ -2679,6 +2698,26 @@ uint32_t Streaming_TimestampTicksPerSample(uint32_t clockPeriod) {
     uint32_t ticks =
             (uint32_t)(((uint64_t)tsFreq * periodCycles) / streamTimerFreq);
     return (ticks == 0u) ? 1u : ticks;
+}
+
+/* #730: has a streaming rate been configured this boot?
+ *
+ * Gates the two per-config timebase values below, so a client can tell
+ * "unconfigured" (0) from a real value. StreamingRuntimeConfig.Frequency is
+ * uint64_t and therefore NOT atomic on PIC32MZ, so the read takes a critical
+ * section per the project atomicity rule — the same reason SCPIInterface.c
+ * wraps it in StreamFreq_Get. Callers are SCPI-task one-shots, never the hot
+ * path, so the latency cost is nil.
+ */
+bool Streaming_IsRateConfigured(void) {
+    return (gStreamRateConfigured != 0u);
+}
+
+/* Called from the SCPI paths that write ClockPeriod (stream START and the
+ * per-channel enable). See gStreamRateConfigured for why a flag is needed
+ * rather than testing the config fields. */
+void Streaming_NoteRateConfigured(void) {
+    gStreamRateConfigured = 1u;   // 32-bit store is atomic on PIC32MZ
 }
 
 /* #730: the rate the hardware ACTUALLY runs, in millihertz.

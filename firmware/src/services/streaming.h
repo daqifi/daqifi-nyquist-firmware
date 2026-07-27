@@ -697,6 +697,15 @@ void Streaming_SetFlowWindowOverride(uint32_t size);
 //
 // Both take ClockPeriod (the PR value, i.e. periodCycles-1) so a caller can ask
 // about a hypothetical rate without mutating the runtime config.
+// True once a streaming rate has been configured this boot. Gates the two
+// per-config values above (both report 0 when unconfigured). Takes a
+// critical section: Frequency is uint64_t, non-atomic on PIC32MZ.
+bool Streaming_IsRateConfigured(void);
+// Called by the SCPI paths that set ClockPeriod (stream START, per-channel
+// enable) to mark the rate as genuinely configured. The boot defaults are
+// placeholders that describe no real rate, so the flag is what makes the
+// "0 = unconfigured" contract on the timebase values true.
+void Streaming_NoteRateConfigured(void);
 uint32_t Streaming_TimestampTicksPerSample(uint32_t clockPeriod);
 uint32_t Streaming_ActualRateMilliHz(uint32_t clockPeriod);
 
