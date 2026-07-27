@@ -2135,6 +2135,7 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
             Streaming_SetTestPattern(savedPattern);
             StreamFreq_Set(pStreamCfg, savedFrequency);     // no-op here (poke is later), kept for consistency
             pStreamCfg->ClockPeriod = savedClockPeriod;
+            Streaming_RestoreRateConfigured(savedRateConfigured);   /* #730 */
             RestoreSdMode(savedSdMode);
             SCPI_ExecutionError(context, "SYST:STR:THR: buffer prepare failed");
             return SCPI_RES_ERR;
@@ -2160,6 +2161,11 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
         Streaming_SetTestPattern(savedPattern);
         StreamFreq_Set(pStreamCfg, savedFrequency);
         pStreamCfg->ClockPeriod = savedClockPeriod;
+        /* #730/#733 Qodo: Streaming_Start may already have marked the rate
+         * configured before the start failed — restore on THIS path too, or a
+         * failed benchmark leaves the flag set over the period it just put
+         * back. Every exit from this function restores the same four things. */
+        Streaming_RestoreRateConfigured(savedRateConfigured);
         RestoreSdMode(savedSdMode);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;

@@ -2707,11 +2707,14 @@ uint32_t Streaming_TimestampTicksPerSample(uint32_t clockPeriod) {
 /* #730: has a streaming rate been configured this boot?
  *
  * Gates the two per-config timebase values below, so a client can tell
- * "unconfigured" (0) from a real value. StreamingRuntimeConfig.Frequency is
- * uint64_t and therefore NOT atomic on PIC32MZ, so the read takes a critical
- * section per the project atomicity rule — the same reason SCPIInterface.c
- * wraps it in StreamFreq_Get. Callers are SCPI-task one-shots, never the hot
- * path, so the latency cost is nil.
+ * "unconfigured" (0) from a real value.
+ *
+ * Reads a 32-bit flag, so no critical section: aligned 32-bit loads are atomic
+ * on PIC32MZ. (An earlier revision tested StreamingRuntimeConfig.Frequency
+ * instead, which IS uint64_t and would have needed one — but that test could
+ * not tell a configured rate from the boot default, which is why the flag
+ * exists. The stale "takes a critical section" comment outlived the change;
+ * Qodo #733 caught it.)
  */
 bool Streaming_IsRateConfigured(void) {
     return (gStreamRateConfigured != 0u);
