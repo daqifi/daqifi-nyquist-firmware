@@ -437,7 +437,7 @@ instant.** Since #722, every emitted sample carries `baseTS + N ×
 periodTicks` — the exact time of the TMR4/5 match that started tick N.
 
 For **Type 1** channels read via the #541 ARDY-direct path
-(`streaming.c` ~807-840), the value is same-tick: the conversion was
+(`firmware/src/services/streaming.c` ~807-840), the value is same-tick: the conversion was
 triggered by that match and read back once `ARDY` set.
 
 For **cached-path** channels the value can originate one scan earlier:
@@ -445,7 +445,7 @@ For **cached-path** channels the value can originate one scan earlier:
 | path | why it lags |
 |---|---|
 | NQ1 Type 2 (shared MODULE7 scan) | the scan armed at tick N completes *after* the tick-N deferred task has already read `BOARDDATA_AIN_LATEST` |
-| NQ3 AD7609 | `ADC_HandleAD7609Interrupt` (`HAL/ADC.c:67,71`) fills LATEST when the BSY deferred task runs |
+| NQ3 AD7609 | `ADC_HandleAD7609Interrupt` (`firmware/src/HAL/ADC.c:67,71`) fills LATEST when the BSY deferred task runs |
 
 So a cached-path sample stamped `t` may carry a conversion armed at
 `t − 1 period`. This is a **fixed, deterministic, uniform** skew on the
@@ -486,7 +486,7 @@ TMR6 timebase — not jitter.
   offset; surfacing it is open follow-up work.
 
 **Evidence class: I** (design-intent reasoning over V-class code reads at
-`streaming.c` ~795/~823-857/~931 and `HAL/ADC.c:67,71`). The skew has
+`firmware/src/services/streaming.c` ~795/~823-857/~931 and `firmware/src/HAL/ADC.c:67,71`). The skew has
 **not** been measured — no bench run has quantified it against a
 known-phase input. A measurement would upgrade this to E and pin the
 exact offset per configuration; until then treat "up to one scan period"
