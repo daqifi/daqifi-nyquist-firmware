@@ -205,36 +205,56 @@ uint16_t TimerApi_PreScalerGet(uint8_t index) {
  * which makes a lazily-filled cache-valid flag a hazard for no gain here — the
  * callers are SCPI/config paths, never the per-sample path.
  */
-uint32_t TimerApi_PeripheralClockHz(void) {
-    uint32_t sysclkHz;
+static uint32_t TimerApi_DerivePbclkHz(bool* pDerived) {
+    bool derived = false;
+    uint32_t sysclkHz = (uint32_t)DAQIFI_SYSCLK_HZ;   /* fallback, see below */
 
     if (OSCCONbits.COSC == 0x1u) {          /* running from the System PLL */
-        const uint32_t inHz = (SPLLCONbits.PLLICLK != 0u)
-                              ? (uint32_t)DAQIFI_FRC_HZ
-                              : (uint32_t)DAQIFI_POSC_HZ;
-        const uint32_t idiv = (uint32_t)SPLLCONbits.PLLIDIV + 1u;
-        const uint32_t mult = (uint32_t)SPLLCONbits.PLLMULT + 1u;
         const uint32_t odivField = (uint32_t)SPLLCONbits.PLLODIV;
-        /* 000 is Reserved; treat it as the /2 POR default rather than shifting
-         * by 0 and reporting double the real clock. */
-        const uint32_t odiv = (odivField == 0u) ? 2u : (1u << odivField);
+        /* Only 001..101 (/2 .. /32) are defined; 000 and 11x are Reserved.
+         * Shifting by a reserved field would invent a /1, /64 or /128 divisor
+         * and silently skew every timer-derived rate — the exact failure class
+         * this whole function exists to remove — so treat it as underivable
+         * instead of guessing. */
+        if ((odivField >= 1u) && (odivField <= 5u)) {
+            const uint32_t inHz = (SPLLCONbits.PLLICLK != 0u)
+                                  ? (uint32_t)DAQIFI_FRC_HZ
+                                  : (uint32_t)DAQIFI_POSC_HZ;
+            const uint32_t idiv = (uint32_t)SPLLCONbits.PLLIDIV + 1u;
+            const uint32_t mult = (uint32_t)SPLLCONbits.PLLMULT + 1u;
+            const uint32_t odiv = 1u << odivField;
 
-        /* 64-bit intermediate: 24 MHz x 128 overflows uint32. Multiply before
-         * dividing so a non-integral input divide cannot truncate. */
-        sysclkHz = (uint32_t)(((uint64_t)inHz * mult) / idiv / odiv);
-    } else {
-        /* Not on the PLL (FRC/POSC/SOSC directly). Nothing in this firmware
-         * switches away from SPLL, so this is unreachable in practice; fall
-         * back to the built-for value rather than reporting nonsense. */
-        sysclkHz = (uint32_t)DAQIFI_SYSCLK_HZ;
+            /* 64-bit intermediate: 24 MHz x 128 overflows uint32. Multiply
+             * before dividing so a non-integral input divide cannot truncate. */
+            sysclkHz = (uint32_t)(((uint64_t)inHz * mult) / idiv / odiv);
+            derived = true;
+        }
     }
 
-    /* Timers live on PBCLK3. */
+    if (pDerived != NULL) {
+        *pDerived = derived;
+    }
+    /* PB3DIV is a plain runtime register this firmware wrote itself, so it is
+     * trustworthy even when the PLL side is not. Timers live on PBCLK3. */
     return sysclkHz / ((uint32_t)PB3DIVbits.PBDIV + 1u);
 }
 
+uint32_t TimerApi_PeripheralClockHz(void) {
+    return TimerApi_DerivePbclkHz(NULL);
+}
+
 bool TimerApi_ClockMatchesBuild(void) {
-    return (TimerApi_PeripheralClockHz() == (uint32_t)TIMER_CLOCK_FRQ_BUILT);
+    bool derived = false;
+    const uint32_t pbclkHz = TimerApi_DerivePbclkHz(&derived);
+
+    /* An underivable clock is NOT a match. Returning the built-for value from
+     * the fallback and then comparing it against itself would report "clock
+     * OK" by construction while the part ran on, say, the 8 MHz FRC — turning
+     * the detector into a rubber stamp on exactly the case it should catch. */
+    if (!derived) {
+        return false;
+    }
+    return (pbclkHz == (uint32_t)TIMER_CLOCK_FRQ_BUILT);
 }
 
 uint32_t TimerApi_FrequencyGet(uint8_t index) {
