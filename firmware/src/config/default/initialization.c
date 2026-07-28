@@ -690,6 +690,41 @@ static const SYS_TIME_INIT sysTimeInitData =
  * reset. If even that fails the part keeps running on FRC — slow, but alive,
  * bootloader intact, and #716's runtime clock derivation reports the real
  * frequency and clock_ok=false rather than lying about it.
+ *
+ * WHAT ACTUALLY PROTECTS THIS (read before changing it). The load-bearing
+ * guard is the pre-switch validation in DAQIFI_ApplyTargetPll(): the only
+ * multiplier ever written is the compile-time target, and it is written only
+ * after proving, from the LIVE PLL input fields, that it yields exactly
+ * DAQIFI_SYSCLK_HZ. The revert is belt-and-braces for a lock failure and is
+ * deliberately NOT load-bearing — see the measured envelope below.
+ *
+ * MEASURED FREQUENCY ENVELOPE (E, bench 7E2898F46200E8A7, deliberate fault
+ * injection observed via Windows device state):
+ *   x1   -> VCO 8 MHz    -> SYSCLK ~4 MHz   : PLL LOCKS. The part runs but is
+ *                                             too slow to meet USB enumeration
+ *                                             timing — Windows reports "Device
+ *                                             Descriptor Request Failed"
+ *                                             (VID_0000): D+ pulled up, no
+ *                                             descriptor returned. So the USB
+ *                                             floor sits well above 4 MHz.
+ *   x128 -> VCO 1024 MHz -> SYSCLK ~512 MHz : locks; CPU dies immediately
+ *                                             (device absent from USB).
+ *   x50 / x63 (200 / 252 MHz)               : fully functional.
+ *
+ * The 4 MHz result is not just empirical: 60 MHz is the DOCUMENTED minimum
+ * SYSCLK with the USB module enabled (DS60001320H OS51 / MOS51, Tables 37-18
+ * and 39-5 — "60 ... 252 MHz, USB module enabled"). 4 MHz is 15x below that
+ * floor, so the enumeration failure is spec-predicted, not a surprise.
+ *
+ * The lesson for anyone extending this: a lock FAILURE is not the realistic
+ * hazard, because this PLL locks across a very wide range. Writing the WRONG
+ * multiplier is, and the validation is what prevents it. Runtime frequency
+ * scaling would additionally have to stay above the 60 MHz USB floor, AND
+ * recompute every PBCLK-derived BRG (consumer list atop clock_config.h), AND
+ * carry its own fitted streaming caps — note the two-step switch necessarily
+ * transits FRC at 8 MHz, i.e. below that USB floor, so a runtime switch would
+ * likely drop the CDC connection every time. Evaluated and declined; a
+ * boot-time selected point is the viable shape if it is ever wanted.
  */
 #define DAQIFI_NOSC_FRC     0x0u   /* OSCCON NOSC: 000 = FRC (non-PLL) */
 #define DAQIFI_NOSC_SPLL    0x1u   /* OSCCON NOSC: 001 = System PLL */
@@ -794,12 +829,12 @@ static void DAQIFI_ApplyTargetPll(void)
         /* Did not lock, so per 42.3.7.3 OSWEN is STILL SET and the switch is
          * still pending. Cancel it before touching SPLLCON again.
          *
-         * This ordering was found by fault injection, not by reading: an
-         * earlier version reverted the multiplier immediately and the part
-         * stayed stuck on FRC. Register 8-3 Note 2 forbids writing SPLLCON
-         * while SPLL is the clock source, and a pending switch appears to
-         * count — the write is dropped, the PLL stays at the bad multiplier,
-         * and the pending switch can never complete.
+         * UNTESTED, and labelled as such. Two fault-injection attempts
+         * could not produce a genuine lock failure — the PLL locked both
+         * times, just at a useless frequency (see the envelope above), and
+         * OSWEN cleared normally, so this branch never executed. The cancel
+         * below is FRM-documented behaviour, not something demonstrated on
+         * hardware here.
          *
          * The documented way out is a REDUNDANT switch: 42.3.7.2 says when
          * NOSC equals COSC the hardware treats it as redundant, "the OSWEN
