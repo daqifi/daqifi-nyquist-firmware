@@ -732,10 +732,47 @@ static const SYS_TIME_INIT sysTimeInitData =
  * worst case. Big enough never to trip on a healthy part, small enough that a
  * dead clock source cannot hang the boot. */
 #define DAQIFI_OSW_TIMEOUT  2000000u
+/* Separate symbol for the raise-to-target switch purely so a bench build can
+ * shrink it and force the revert path to run. Production value is identical. */
+#ifndef DAQIFI_OSW_SPLL_TIMEOUT
+#define DAQIFI_OSW_SPLL_TIMEOUT  DAQIFI_OSW_TIMEOUT
+#endif
 
-/* One clock switch, per the FRM's recommended sequence. Returns false if OSWEN
- * did not clear, i.e. the requested source never started. */
-static bool DAQIFI_ClockSwitch(uint32_t nosc)
+/* One clock switch, per the FRM's recommended sequence.
+ *
+ * REGISTERS AND BITS (FRM DS60001250B 42.3.7.2 "Oscillator Switching Sequence";
+ * register/bit definitions DS60001320H Register 8-1 OSCCON, Register 8-3
+ * SPLLCON):
+ *   SYSKEY<31:0>            0xAA996655 then 0x556699AA unlocks; any non-key
+ *                           value (0x33333333) relocks. The two key writes
+ *                           must be BACK-TO-BACK with no intervening
+ *                           peripheral access (42.3.7.3).
+ *   OSCCON<10:8> NOSC<2:0>  requested source; 000 = FRC, 001 = SPLL.
+ *   OSCCON<14:12> COSC<2:0> current source, same encoding. NOSC == COSC is
+ *                           defined as redundant: hardware clears OSWEN and
+ *                           aborts (42.3.7.2), which is the only software way
+ *                           to cancel a stuck switch.
+ *   OSCCON<0>    OSWEN      1 initiates; hardware clears it on success, having
+ *                           first waited for PLL lock when the new source uses
+ *                           the PLL. "If the new clock source does not start,
+ *                           or is not present, the OSWEN bit remains set"
+ *                           (42.3.7.3) — hence the bounded wait.
+ *
+ * NO PLIB PATH EXISTS for this: the generated clock PLIB exposes only
+ * CLK_Initialize() (plib_clk.h), which writes PMD bits, and nothing under
+ * config/default/peripheral touches OSCCON or SPLLCON. CLAUDE.md's preference
+ * order therefore lands on SFR bitfield accessors (used here for OSCCON and
+ * SPLLCON) with raw writes only for SYSKEY, which has no bitfields — and only
+ * after reading the FRM, cited above.
+ *
+ * @param nosc     NOSC value for the requested source.
+ * @param timeout  bound on the OSWEN poll, in iterations. Parameterised rather
+ *                 than fixed so a bench build can force a timeout and exercise
+ *                 the revert path, which is otherwise unreachable (the PLL
+ *                 locks over a very wide range — see the envelope above).
+ * @return true if OSWEN cleared, i.e. the switch completed.
+ */
+static bool DAQIFI_ClockSwitch(uint32_t nosc, uint32_t timeout)
 {
     uint32_t guard;
 
@@ -753,7 +790,7 @@ static bool DAQIFI_ClockSwitch(uint32_t nosc)
      * outside the unlocked window. */
     SYSKEY = 0x33333333U;
 
-    for (guard = 0u; guard < DAQIFI_OSW_TIMEOUT; ++guard) {
+    for (guard = 0u; guard < timeout; ++guard) {
         if (OSCCONbits.OSWEN == 0u) {
             return true;
         }
@@ -782,9 +819,16 @@ static void DAQIFI_ApplyTargetPll(void)
     uint32_t odiv;
     uint32_t wouldBe;
 
-    /* Already what this image wants — the normal case on a PICkit-programmed
-     * unit, whose DEVCFG matches the build. Do nothing at all. */
-    if (SPLLCONbits.PLLMULT == target) {
+    /* Already what this image wants AND actually running from the PLL — the
+     * normal case on a PICkit-programmed unit whose DEVCFG matches the build.
+     * Do nothing at all.
+     *
+     * COSC is checked too, not just the multiplier: SPLLCON can hold the target
+     * while the part runs from FRC or POSC directly, in which case skipping
+     * would leave initialisation to continue with peripheral constants that
+     * assume the PLL frequency. Falling through instead lets the switch below
+     * put the part onto the PLL (Qodo #742). */
+    if ((SPLLCONbits.PLLMULT == target) && (OSCCONbits.COSC == DAQIFI_NOSC_SPLL)) {
         return;
     }
 
@@ -813,7 +857,7 @@ static void DAQIFI_ApplyTargetPll(void)
 
     /* Step 1: off the PLL, so SPLLCON becomes writable. If this fails we are
      * still on the original PLL — a perfectly serviceable state. */
-    if (!DAQIFI_ClockSwitch(DAQIFI_NOSC_FRC)) {
+    if (!DAQIFI_ClockSwitch(DAQIFI_NOSC_FRC, DAQIFI_OSW_TIMEOUT)) {
         return;
     }
 
@@ -825,7 +869,7 @@ static void DAQIFI_ApplyTargetPll(void)
     /* Step 3: back onto the PLL. Hardware waits for lock before clearing
      * OSWEN (42.3.7.3), so success here means the PLL is locked at the new
      * multiplier. */
-    if (!DAQIFI_ClockSwitch(DAQIFI_NOSC_SPLL)) {
+    if (!DAQIFI_ClockSwitch(DAQIFI_NOSC_SPLL, DAQIFI_OSW_SPLL_TIMEOUT)) {
         /* Did not lock, so per 42.3.7.3 OSWEN is STILL SET and the switch is
          * still pending. Cancel it before touching SPLLCON again.
          *
@@ -843,12 +887,12 @@ static void DAQIFI_ApplyTargetPll(void)
          * FRC again is exactly that no-op, and it is the only software-visible
          * way to clear a stuck OSWEN — FSCM's OSWEN clear needs the Fail-Safe
          * Clock Monitor, which FCKSM = CSECMD leaves disabled. */
-        (void)DAQIFI_ClockSwitch(DAQIFI_NOSC_FRC);
+        (void)DAQIFI_ClockSwitch(DAQIFI_NOSC_FRC, DAQIFI_OSW_TIMEOUT);
 
         /* Now SPLLCON is writable again: restore the multiplier the part
          * booted with, which demonstrably locked at reset, and go back to it. */
         DAQIFI_SetPllMult(saved);
-        (void)DAQIFI_ClockSwitch(DAQIFI_NOSC_SPLL);
+        (void)DAQIFI_ClockSwitch(DAQIFI_NOSC_SPLL, DAQIFI_OSW_TIMEOUT);
     }
 }
 
