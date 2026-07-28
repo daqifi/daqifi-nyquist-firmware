@@ -855,9 +855,18 @@ static void DAQIFI_ApplyTargetPll(void)
 
     saved = (uint32_t)SPLLCONbits.PLLMULT;
 
-    /* Step 1: off the PLL, so SPLLCON becomes writable. If this fails we are
-     * still on the original PLL — a perfectly serviceable state. */
+    /* Step 1: off the PLL, so SPLLCON becomes writable. */
     if (!DAQIFI_ClockSwitch(DAQIFI_NOSC_FRC, DAQIFI_OSW_TIMEOUT)) {
+        /* Giving up is not enough: 42.3.7.3 says OSWEN stays set, so the
+         * switch is STILL PENDING and could complete later — dropping the
+         * part onto FRC in the middle of peripheral init, while every
+         * constant still assumes the PLL. Cancel it first.
+         *
+         * COSC is still SPLL here (the switch never completed), so asking for
+         * SPLL again is the redundant no-op that 42.3.7.2 defines as clearing
+         * OSWEN and aborting. Then we are back exactly where we started, on
+         * the original PLL, with nothing pending (Qodo #742). */
+        (void)DAQIFI_ClockSwitch(DAQIFI_NOSC_SPLL, DAQIFI_OSW_TIMEOUT);
         return;
     }
 
