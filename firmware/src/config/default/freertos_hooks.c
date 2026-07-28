@@ -38,6 +38,7 @@
 // DOM-IGNORE-END
 #include "FreeRTOS.h"
 #include "task.h"
+#include "peripheral/power/plib_power.h"   /* #513: POWER_LowPowerModeEnter */
 
 
 void vApplicationIdleHook( void );
@@ -187,7 +188,30 @@ void vApplicationIdleHook( void )
     important that vApplicationIdleHook() is permitted to return to its calling
     function, because it is the responsibility of the idle task to clean up
     memory allocated by the kernel to any task that has since been deleted. */
-    
+
+    /* #513: halt the core until the next interrupt.
+     *
+     * IDLE, not Sleep. Idle mode (SLPEN = 0) stops the CPU pipeline but leaves
+     * SYSCLK and every peripheral clock running — USB stays enumerated, the
+     * FreeRTOS tick keeps arriving, the streaming timer keeps triggering the
+     * ADC, and wake-up on any interrupt has "very low" latency
+     * (DS60001320H 33.2.2). Sleep would gate the peripheral clocks and drop
+     * USB, so it is not usable here.
+     *
+     * The saving is the whole reason this is worth doing: DS60001320H puts the
+     * running core at 156 mA and the idle core at 41 mA, both typ at 252 MHz
+     * (MDC27a / MDC35, Tables 39-2 and 39-3).
+     *
+     * Via the PLIB rather than a hand-rolled `wait`: POWER_LowPowerModeEnter()
+     * already performs the SYSKEY unlock, clears SLPEN and issues the
+     * instruction, and CLAUDE.md's peripheral-access rule prefers the PLIB
+     * where one exists. The per-call SYSKEY pair costs a handful of
+     * instructions against a wake that is at minimum a whole tick away.
+     *
+     * Safe to call unconditionally from here: this hook only runs when NO task
+     * is ready, and any interrupt — tick, streaming timer, USB, SPI — resumes
+     * the core, so nothing that was runnable can be delayed by it. */
+    POWER_LowPowerModeEnter(LOW_POWER_IDLE_MODE);
 }
 
 /*-----------------------------------------------------------*/

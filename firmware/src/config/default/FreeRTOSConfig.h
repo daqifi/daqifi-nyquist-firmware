@@ -323,7 +323,10 @@
  * functionality in the build.  Set to 0 to exclude the hook functionality from the
  * build.  The application writer is responsible for providing the hook function
  * for any set to 1.  See https://www.freertos.org/a00016.html. */
-#define configUSE_IDLE_HOOK                     0
+/* #513: the idle task drops the CPU into Idle mode (see vApplicationIdleHook
+ * in freertos_hooks.c). Idle halts the core while leaving every peripheral
+ * clock, USB, the tick and the ADC trigger running. */
+#define configUSE_IDLE_HOOK                     1
 #define configUSE_TICK_HOOK                     0
 #define configUSE_MALLOC_FAILED_HOOK            1
 #define configUSE_DAEMON_TASK_STARTUP_HOOK      0
