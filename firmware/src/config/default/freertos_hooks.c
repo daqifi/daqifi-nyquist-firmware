@@ -191,12 +191,20 @@ void vApplicationIdleHook( void )
 
     /* #513: halt the core until the next interrupt.
      *
-     * IDLE, not Sleep. Idle mode (SLPEN = 0) stops the CPU pipeline but leaves
-     * SYSCLK and every peripheral clock running — USB stays enumerated, the
-     * FreeRTOS tick keeps arriving, the streaming timer keeps triggering the
-     * ADC, and wake-up on any interrupt has "very low" latency
-     * (DS60001320H 33.2.2). Sleep would gate the peripheral clocks and drop
-     * USB, so it is not usable here.
+      * IDLE, not Sleep. Which mode a WAIT enters is selected by OSCCON<4>
+     * SLPEN, whose bit definition is exactly this choice (DS60001320H
+     * Register 8-1: "1 = Device will enter Sleep mode when a WAIT instruction
+     * is executed / 0 = Device will enter Idle mode when a WAIT instruction is
+     * executed"); the modes themselves are DS60001320H Section 33
+     * "Power-Saving Features", 33.2.2 for Idle, and the oscillator side is FRM
+     * DS60001250B. POWER_LowPowerModeEnter's LOW_POWER_IDLE_MODE clears SLPEN
+     * before issuing WAIT, which is why Idle is what we get.
+     *
+     * Idle stops the CPU pipeline while leaving SYSCLK and every peripheral
+     * clock running, so USB stays enumerated, the FreeRTOS tick keeps
+     * arriving, the streaming timer keeps triggering the ADC, and wake on any
+     * interrupt has "very low" latency (33.2.2). Sleep would gate the
+     * peripheral clocks and drop USB, so it is not usable here.
      *
      * The saving is the whole reason this is worth doing: DS60001320H puts the
      * running core at 156 mA and the idle core at 41 mA, both typ at 252 MHz
