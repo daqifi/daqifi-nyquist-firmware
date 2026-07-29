@@ -323,7 +323,16 @@
  * functionality in the build.  Set to 0 to exclude the hook functionality from the
  * build.  The application writer is responsible for providing the hook function
  * for any set to 1.  See https://www.freertos.org/a00016.html. */
-#define configUSE_IDLE_HOOK                     0
+/* #513: the idle task drops the CPU into Idle mode (see vApplicationIdleHook
+ * in freertos_hooks.c). Idle halts the core while leaving every peripheral
+ * clock, USB, the tick and the ADC trigger running. */
+/* HAND-EDITED. This file sits under config/default/, i.e. MCC/Harmony
+ * territory: a regeneration would restore the stock 0 and silently remove the
+ * power saving with NO build error. Team direction (2026-06-10) is that
+ * MCC/Harmony regeneration will not be used on this codebase again, so this is
+ * a documentation hazard rather than a live one — but if a regen ever does
+ * happen, this line AND vApplicationIdleHook's body must both be restored. */
+#define configUSE_IDLE_HOOK                     1
 #define configUSE_TICK_HOOK                     0
 #define configUSE_MALLOC_FAILED_HOOK            1
 #define configUSE_DAEMON_TASK_STARTUP_HOOK      0

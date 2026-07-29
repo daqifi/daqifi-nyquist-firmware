@@ -38,6 +38,23 @@
 // DOM-IGNORE-END
 #include "FreeRTOS.h"
 #include "task.h"
+#include "peripheral/power/plib_power.h"   /* #513: POWER_LowPowerModeEnter */
+
+/* #513: fail the BUILD rather than lose the power saving quietly.
+ *
+ * FreeRTOSConfig.h lives under config/default/, i.e. MCC/Harmony territory. If
+ * it were ever regenerated, configUSE_IDLE_HOOK would revert to the stock 0,
+ * FreeRTOS would simply stop calling vApplicationIdleHook, and the core would
+ * go back to spinning — with no build error, no runtime symptom and no test
+ * failure, because the device behaves identically apart from drawing ~115 mA
+ * more. Silent is the problem; this makes it loud.
+ *
+ * If you are here because the build broke: either restore
+ * configUSE_IDLE_HOOK = 1 in FreeRTOSConfig.h, or delete this guard together
+ * with the hook body below if disabling the saving is genuinely intended. */
+#if !defined(configUSE_IDLE_HOOK) || (configUSE_IDLE_HOOK != 1)
+#error "#513: configUSE_IDLE_HOOK must be 1 or the CPU never idles. See vApplicationIdleHook in this file."
+#endif
 
 
 void vApplicationIdleHook( void );
@@ -187,7 +204,38 @@ void vApplicationIdleHook( void )
     important that vApplicationIdleHook() is permitted to return to its calling
     function, because it is the responsibility of the idle task to clean up
     memory allocated by the kernel to any task that has since been deleted. */
-    
+
+    /* #513: halt the core until the next interrupt.
+     *
+      * IDLE, not Sleep. Which mode a WAIT enters is selected by OSCCON<4>
+     * SLPEN, whose bit definition is exactly this choice (DS60001320H
+     * Register 8-1: "1 = Device will enter Sleep mode when a WAIT instruction
+     * is executed / 0 = Device will enter Idle mode when a WAIT instruction is
+     * executed"); the modes themselves are DS60001320H Section 33
+     * "Power-Saving Features", 33.2.2 for Idle, and the oscillator side is FRM
+     * DS60001250B. POWER_LowPowerModeEnter's LOW_POWER_IDLE_MODE clears SLPEN
+     * before issuing WAIT, which is why Idle is what we get.
+     *
+     * Idle stops the CPU pipeline while leaving SYSCLK and every peripheral
+     * clock running, so USB stays enumerated, the FreeRTOS tick keeps
+     * arriving, the streaming timer keeps triggering the ADC, and wake on any
+     * interrupt has "very low" latency (33.2.2). Sleep would gate the
+     * peripheral clocks and drop USB, so it is not usable here.
+     *
+     * The saving is the whole reason this is worth doing: DS60001320H puts the
+     * running core at 156 mA and the idle core at 41 mA, both typ at 252 MHz
+     * (MDC27a / MDC35, Tables 39-2 and 39-3).
+     *
+     * Via the PLIB rather than a hand-rolled `wait`: POWER_LowPowerModeEnter()
+     * already performs the SYSKEY unlock, clears SLPEN and issues the
+     * instruction, and CLAUDE.md's peripheral-access rule prefers the PLIB
+     * where one exists. The per-call SYSKEY pair costs a handful of
+     * instructions against a wake that is at minimum a whole tick away.
+     *
+     * Safe to call unconditionally from here: this hook only runs when NO task
+     * is ready, and any interrupt — tick, streaming timer, USB, SPI — resumes
+     * the core, so nothing that was runnable can be delayed by it. */
+    POWER_LowPowerModeEnter(LOW_POWER_IDLE_MODE);
 }
 
 /*-----------------------------------------------------------*/
