@@ -40,6 +40,22 @@
 #include "task.h"
 #include "peripheral/power/plib_power.h"   /* #513: POWER_LowPowerModeEnter */
 
+/* #513: fail the BUILD rather than lose the power saving quietly.
+ *
+ * FreeRTOSConfig.h lives under config/default/, i.e. MCC/Harmony territory. If
+ * it were ever regenerated, configUSE_IDLE_HOOK would revert to the stock 0,
+ * FreeRTOS would simply stop calling vApplicationIdleHook, and the core would
+ * go back to spinning — with no build error, no runtime symptom and no test
+ * failure, because the device behaves identically apart from drawing ~115 mA
+ * more. Silent is the problem; this makes it loud.
+ *
+ * If you are here because the build broke: either restore
+ * configUSE_IDLE_HOOK = 1 in FreeRTOSConfig.h, or delete this guard together
+ * with the hook body below if disabling the saving is genuinely intended. */
+#if !defined(configUSE_IDLE_HOOK) || (configUSE_IDLE_HOOK != 1)
+#error "#513: configUSE_IDLE_HOOK must be 1 or the CPU never idles. See vApplicationIdleHook in this file."
+#endif
+
 
 void vApplicationIdleHook( void );
 void vApplicationTickHook( void );
