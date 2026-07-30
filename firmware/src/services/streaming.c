@@ -163,9 +163,20 @@ static volatile uint32_t gScanEosSeq      = 1u;  // bumped per completed scan (E
 static volatile uint32_t gScanEosSeqSeen  = 0u;  // last seq the timer ISR observed
 static volatile uint32_t gScanStaleDropped = 0;  // ticks scan armed but no new EOS
 /* #707/#745: ticks that fired before the session's first shared scan had
- * completed, so no sample could be built. A DRY TICK, not a sample and not a
- * drop — see the emit-path comment for why it is neither. Separate volatile,
- * single writer (the deferred task), same pattern as gScanStaleDropped. */
+ * completed, so no sample could be built. A DRY TICK — not a sample and not a
+ * drop; see the emit-path comment.
+ *
+ * INTERNAL ONLY, deliberately not a reported statistic. It exists solely so
+ * TimerISRCalls can be reported as "ticks that produced a sample attempt",
+ * which keeps the documented invariant unchanged:
+ *   TimerISRCalls == TotalSamplesStreamed + QueueDroppedSamples
+ * A dry call is not a generated sample, so it is not counted as one.
+ *
+ * Subtracted at snapshot time rather than by adjusting gTimerISRCalls itself:
+ * that counter is incremented in true ISR context and relies on having exactly
+ * one writer (same-source cannot preempt itself, so it needs no critical
+ * section). Adding a task-context writer would break that. Single writer here
+ * too — the deferred task. */
 static volatile uint32_t gDryTicks = 0;
 /* #707/#745: true when at least one ENABLED USER channel takes its value from
  * the shared-scan LATEST cache, i.e. the frame cannot be complete until the
@@ -911,13 +922,12 @@ void _Streaming_Deferred_Interrupt_Task(void) {
              * The second is why every clean session reported one phantom drop.
              *
              * Neither is a sample and neither is a loss: the ISR fired, but
-             * there was nothing ready to emit. Counted as a dry tick, which is
-             * why the session invariant is
+             * there was nothing ready to emit. A dry call is not a generated
+             * sample, so it is not counted as one — gDryTicks is subtracted
+             * from the reported TimerISRCalls, leaving the documented invariant
+             * exactly as it always was:
              *   TimerISRCalls == TotalSamplesStreamed + QueueDroppedSamples
-             *                    + DryTicks
-             * The tick is still counted as having happened (TimerISRCalls is a
-             * hardware truth used to detect timer rate-limiting, #265) — it is
-             * only excluded from samples and from loss.
+             * No new statistic is exposed.
              *
              * Gated on gUserT2Enabled, not gNeedSharedScan: a T1-only session
              * with OBDiag=1 has a non-empty scan list (monitoring rides it) but
@@ -1970,9 +1980,19 @@ void Streaming_GetStats(StreamingStats* out) {
     // Snapshot the volatile ISR counter into the struct copy. The volatile
     // read forces a fresh load from memory; the critical section blocks the
     // timer ISR (priority 1) so we get a coherent reading.
-    out->timerISRCalls = gTimerISRCalls;
+    /* #707/#745: net of dry ticks. A tick that fired before the session's
+     * first shared scan completed had no sample to emit — it is not a
+     * generated sample, so it is not counted as one. This keeps the documented
+     * invariant exactly as it was:
+     *   TimerISRCalls == TotalSamplesStreamed + QueueDroppedSamples
+     * gDryTicks is internal and never reported on its own. */
+    {
+        uint64_t isrRaw = gTimerISRCalls;
+        uint32_t dry = gDryTicks;
+        out->timerISRCalls = (isrRaw > (uint64_t)dry) ? (isrRaw - (uint64_t)dry)
+                                                     : 0u;
+    }
     out->scanStaleDropped = gScanStaleDropped;  // #557 (separate volatile, like timerISRCalls)
-    out->dryTicks = gDryTicks;                  // #707/#745 (same pattern)
     taskEXIT_CRITICAL();
 }
 

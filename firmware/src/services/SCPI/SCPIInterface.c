@@ -3102,7 +3102,6 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     // still streamed, just with frozen data; same exclusion as EosOverruns).
     // ~0 with the scan cap in place; non-zero flags over-rate / NOCAP scan-busy.
     scpi_printf(context, "ScanStaleDropped=%u\r\n", (unsigned)s.scanStaleDropped);
-    scpi_printf(context, "DryTicks=%u\r\n", (unsigned)s.dryTicks);   /* #707/#745 */
     // #541 D-A diag: ticks where a T1 result was not ready (ARDY clear) at
     // the deferred task's direct read.  Expected 0; non-zero ticks emitted
     // that channel with its validMask bit clear.

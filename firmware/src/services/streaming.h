@@ -535,11 +535,6 @@ typedef struct {
     uint32_t queueDroppedSamplesSteady;  // post-grace subset of queueDroppedSamples
     uint32_t eosOverruns;      // EOS notifications coalesced (>1 per wake) (#295)
     uint32_t scanStaleDropped; // #557: scan armed but EOS not fired by next trigger
-    uint32_t dryTicks;         // #707/#745: ticks before the session's first
-                               // completed scan — no sample was ready, so
-                               // neither a sample nor a loss. Session invariant:
-                               // TimerISRCalls == TotalSamplesStreamed
-                               //                  + QueueDroppedSamples + dryTicks
                                // (scan-busy/stale) — counted as a dropped sample
     // #541 D-A diagnostic: ticks where a T1 (dedicated-module) channel's
     // ARDY flag was not set when the deferred task went to read its result
