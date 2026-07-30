@@ -171,7 +171,20 @@ static const char* SD_StripConfiguredDir(const char *p, size_t *pLen,
         return p;
     }
     *pLen -= (dirLen + 1u);
-    return p + dirLen + 1u;
+    p += dirLen + 1u;
+    /* A configured directory carrying its own trailing slash makes the listing
+     * print "<dir>//<name>" (it concatenates dirPath verbatim with "%s/%s"),
+     * so one more separator can be left over here. Without this the remainder
+     * starts with '/' and SD_ValidatePathParam rejects it as an absolute path
+     * — the device's own output still would not round-trip (audit #749).
+     * Traversal is unaffected: the validator below still runs, and it rejects
+     * "." and ".." as whole segments regardless of how many slashes precede
+     * them. */
+    while (*pLen > 1u && *p == '/') {
+        p++;
+        (*pLen)--;
+    }
+    return p;
 }
 
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
@@ -1035,6 +1048,12 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
 
     // Get filename parameter (required)
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
+    /* #747: accept the "<directory>/<name>" form SD:LISt? prints. BEFORE the
+     * length check, like the other three operand sites: the prefix costs 7
+     * bytes against a 40-byte limit, so checking first rejects listed paths
+     * whose filename is 34-40 characters — a length SD:FILE accepts and which
+     * GET/CRC round-trip, leaving DELETE the odd one out (audit #749). */
+    pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
 
     if (fileLen == 0 || fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
         LOG_E("SD:DELete - Invalid filename length: %d\r\n", fileLen);
@@ -1044,8 +1063,6 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     }
 
     // Set the filename
-    /* #747: accept the "<directory>/<name>" form SD:LISt? prints. */
-    pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
     if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         goto __exit_point;
