@@ -551,6 +551,17 @@ typedef struct {
     // should always hold during a session — every timer event becomes either
     // a successfully queued sample or a pool-exhaustion drop.
     //
+    // #707/#745: the value REPORTED here is therefore ticks that produced a
+    // sample attempt, not raw ISR entries. At session start a tick can fire
+    // before the shared MODULE7 scan has published anything, so no sample is
+    // ready to emit; that is a dry call — not a generated sample and not a
+    // loss — and it is excluded here so the invariant above stays exact
+    // without inventing a third term. The exclusion is bounded to the
+    // session's scan-priming window (at most a handful of ticks, and 0 for
+    // configs with no enabled Type 2 user channel), so this remains a valid
+    // basis for the #265 use below: a timerISRCalls far short of
+    // `freq × duration` still means the timer itself is rate-limited.
+    //
     // 64-bit so it never wraps in practice — at the ~90 kHz hardware ceiling
     // it would take ~6 million years to overflow. Matches the other 64-bit
     // session counters (totalSamplesStreamed, totalBytesStreamed).
@@ -560,7 +571,8 @@ typedef struct {
     // global is the actual ISR-modified storage; the StreamingStats field is
     // a snapshot copy taken inside taskENTER_CRITICAL (which makes the
     // non-atomic 64-bit read coherent by blocking the timer ISR).
-    uint64_t timerISRCalls;          // Actual timer ISR entry count this session
+    uint64_t timerISRCalls;          // Sample-producing timer ticks this session
+                                     // (ISR entries less scan-priming dry calls)
     // #367 diagnostics — populated at Streaming_Stop() to reconcile the
     // accounting gap (TotalBytesStreamed vs WifiTcpBytesSent at saturation).
     uint32_t circularBufferEndBytes; // Bytes still in WiFi circular buffer at Stop
