@@ -136,6 +136,44 @@ static bool SD_ValidatePathParam(const char *p, size_t len)
     return true;
 }
 
+/* #747: SYST:STOR:SD:LISt? prints every entry as "<directory>/<name>", but the
+ * operand sites below prepend the configured directory themselves — so handing
+ * back the exact string the device just printed builds "DAQiFi/DAQiFi/<name>",
+ * the open fails, and for SD:GET the host receives a bare __END_OF_FILE__ with
+ * SYST:ERR? still reading "No error". That is indistinguishable from an empty
+ * file, which is what made #747 read as a device fault rather than a rejected
+ * path.
+ *
+ * Accept the round-trip form by dropping ONE leading "<directory>/". Traversal
+ * stays impossible: the prefix must match the device's own configured
+ * directory exactly, and SD_ValidatePathParam still rejects absolute paths and
+ * "." / ".." segments in what remains.
+ *
+ * Case-sensitive on purpose — this normalizes the exact form the device emits,
+ * not arbitrary user spellings. Returns the (possibly advanced) pointer and
+ * updates *pLen. */
+static const char* SD_StripConfiguredDir(const char *p, size_t *pLen,
+                                         const char *directory)
+{
+    if (p == NULL || pLen == NULL || directory == NULL) {
+        return p;
+    }
+    size_t dirLen = strlen(directory);
+    while (dirLen > 0u && directory[dirLen - 1u] == '/') {
+        dirLen--;                    /* configured dir may carry a trailing '/' */
+    }
+    /* Need at least one character after "<dir>/" — a bare "DAQiFi/" is not a
+     * filename and must fall through to the existing validation. */
+    if (dirLen == 0u || *pLen <= dirLen + 1u) {
+        return p;
+    }
+    if (strncmp(p, directory, dirLen) != 0 || p[dirLen] != '/') {
+        return p;
+    }
+    *pLen -= (dirLen + 1u);
+    return p + dirLen + 1u;
+}
+
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     int param1;
     scpi_result_t result = SCPI_RES_ERR;
@@ -248,6 +286,9 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     }
 
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
+    /* #747: accept the "<directory>/<name>" form SD:LISt? prints. Before the
+     * length check, so a max-length name is not rejected for the prefix. */
+    pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
 
     if (fileLen > 0) {
         if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
@@ -336,8 +377,13 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
     if (!SCPI_CheckSDCardPresent(context)) {
         return SCPI_RES_ERR;
     }
-    if (!SCPI_ParamCharacters(context, &pBuff, &fileLen, TRUE) ||
-        fileLen == 0 || fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
+    if (!SCPI_ParamCharacters(context, &pBuff, &fileLen, TRUE)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    /* #747: accept the "<directory>/<name>" form SD:LISt? prints. */
+    pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
+    if (fileLen == 0 || fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
@@ -414,6 +460,10 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     }
 
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
+    /* #747: accept the "<directory>/<name>" form SD:LISt? prints. Before the
+     * length check, so a max-length name is not rejected for carrying the
+     * prefix the device itself emitted. */
+    pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
 
     if (fileLen > 0) {
         if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
@@ -994,6 +1044,8 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     }
 
     // Set the filename
+    /* #747: accept the "<directory>/<name>" form SD:LISt? prints. */
+    pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
     if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         goto __exit_point;
