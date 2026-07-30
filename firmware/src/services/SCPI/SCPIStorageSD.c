@@ -251,7 +251,13 @@ typedef struct {
 static volatile SDBenchmarkResults_t gSDBenchmarkResults = {0};
 
 scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
-    const char* pBuff;
+    /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
+     * leaves pBuff untouched when the argument is omitted, and the operand
+     * normalizer is called unconditionally. fileLen is 0 in that case so the
+     * normalizer returns before dereferencing anything, but merely READING an
+     * indeterminate pointer is undefined — and this file is built at -O3.
+     * Initializing costs nothing and makes the NULL guard meaningful. */
+    const char* pBuff = NULL;
     size_t fileLen = 0;
  
     scpi_result_t result = SCPI_RES_ERR;
@@ -373,7 +379,13 @@ __exit_point:
  * SYST:STOR:SD:CRC? - mirrors the GET_SPACE request/query split so the SCPI
  * task never blocks on a multi-second file scan. */
 scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
-    const char* pBuff;
+    /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
+     * leaves pBuff untouched when the argument is omitted, and the operand
+     * normalizer is called unconditionally. fileLen is 0 in that case so the
+     * normalizer returns before dereferencing anything, but merely READING an
+     * indeterminate pointer is undefined — and this file is built at -O3.
+     * Initializing costs nothing and makes the NULL guard meaningful. */
+    const char* pBuff = NULL;
     size_t fileLen = 0;
     sd_card_manager_settings_t* pSDCardRuntimeConfig =
             (sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
@@ -433,7 +445,13 @@ scpi_result_t SCPI_StorageSDCrcGet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
-    const char* pBuff;
+    /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
+     * leaves pBuff untouched when the argument is omitted, and the operand
+     * normalizer is called unconditionally. fileLen is 0 in that case so the
+     * normalizer returns before dereferencing anything, but merely READING an
+     * indeterminate pointer is undefined — and this file is built at -O3.
+     * Initializing costs nothing and makes the NULL guard meaningful. */
+    const char* pBuff = NULL;
     size_t fileLen = 0;
     scpi_result_t result = SCPI_RES_ERR;
     sd_card_manager_settings_t* pSDCardRuntimeConfig = (sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
@@ -514,7 +532,13 @@ __exit_point:
 }
 
 scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
-    const char* pBuff;
+    /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
+     * leaves pBuff untouched when the argument is omitted, and the operand
+     * normalizer is called unconditionally. fileLen is 0 in that case so the
+     * normalizer returns before dereferencing anything, but merely READING an
+     * indeterminate pointer is undefined — and this file is built at -O3.
+     * Initializing costs nothing and makes the NULL guard meaningful. */
+    const char* pBuff = NULL;
     size_t fileLen = 0;
     scpi_result_t result = SCPI_RES_ERR;
     sd_card_manager_settings_t* pSDCardRuntimeConfig = (sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
@@ -1020,7 +1044,13 @@ scpi_result_t SCPI_StorageSDBenchmarkQuery(scpi_t * context) {
  * Example: SYST:STOR:SD:DEL "test.csv"
  */
 scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
-    const char* pBuff;
+    /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
+     * leaves pBuff untouched when the argument is omitted, and the operand
+     * normalizer is called unconditionally. fileLen is 0 in that case so the
+     * normalizer returns before dereferencing anything, but merely READING an
+     * indeterminate pointer is undefined — and this file is built at -O3.
+     * Initializing costs nothing and makes the NULL guard meaningful. */
+    const char* pBuff = NULL;
     size_t fileLen = 0;
     scpi_result_t result = SCPI_RES_ERR;
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
