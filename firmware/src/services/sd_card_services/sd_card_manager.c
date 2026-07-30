@@ -1298,6 +1298,21 @@ void sd_card_manager_ProcessState() {
                     uint32_t maxExtract = (availBytes < wbufCap) ? availBytes
                                                                  : wbufCap;
                     maxExtract = (maxExtract / SD_SECTOR_SIZE_BYTES) * SD_SECTOR_SIZE_BYTES;
+                    /* Unreachable today: the branch above requires availBytes
+                     * >= one sector, and writeBufferSize is floored at 512 (by
+                     * PrepareStreamingBuffers, twice, and by the 64 KB init).
+                     * Guarded anyway because this loop now DEPENDS on that
+                     * floor, and the public setter only rejects size == 0 — a
+                     * future caller passing a sub-sector size would truncate to
+                     * 0 here, and extracting 0 after setting sdCardWritePending
+                     * would leave the state machine waiting on a write that
+                     * never had data (Qodo #748). */
+                    if (maxExtract == 0) {
+                        xSemaphoreGive(gSDCardData.wMutex);
+                        LOG_E_ONCE(LOG_ONCE_SD_WBUF_SUBSECTOR,
+                                   "[SD] write buffer below one sector - drain stalled");
+                        break;
+                    }
                     gSDCardData.sdCardWritePending = 1;
                     CircularBuf_ProcessBytes(&gSDCardData.wCirbuf, NULL, maxExtract, &writeLen);
                     gSDCardData.totalBytesFlushPending += gSDCardData.writeBufferLength;

@@ -183,6 +183,7 @@ extern "C" {
         LOG_ONCE_BIT_SD_BACKOFF,          /**< drv_sdspi.c: detect-poll backoff engaged after 10 card-absent polls (#589 P1) */
         LOG_ONCE_MDNS_ARM_FAIL,           /**< mdns_responder.c: recvfrom re-arm failed — responder deaf until ServiceHealth() re-opens (#58) */
         LOG_ONCE_ADC_THRESHOLD_TRIP,      /**< AdcThreshold.c: an ADC digital-comparator threshold tripped (#670); one-shot so a signal parked past the limit can't flood */
+        LOG_ONCE_SD_WBUF_SUBSECTOR,       /**< sd_card_manager.c: SD DMA write buffer below one sector, so the sector-aligned drain can extract nothing (#738); unreachable with the current 512-byte floor, one-shot so a broken floor can't flood the drain loop */
         /* Add new entries above this line */
         LOG_ONCE_COUNT                     /**< Must be <= 32 */
     } LogOnceBit_t;
