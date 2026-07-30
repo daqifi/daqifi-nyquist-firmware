@@ -181,6 +181,7 @@ extern "C" {
         LOG_ONCE_USB_TRANSPARENT_DECLINE, /**< UsbCdc.c: transparent-mode read CB declined a buffer — dropped to avoid un-arming the CDC read (#575); one-shot so a persistently-declining CB can't flood */
         LOG_ONCE_BRIDGE_RX_OVERFLOW,      /**< wifi_serial_bridge_interface.c: transparent RX ring full — bytes dropped instead of wrapped (silent wrap corrupted WINC images mid-flash, #WINC-recovery) */
         LOG_ONCE_BIT_SD_BACKOFF,          /**< drv_sdspi.c: detect-poll backoff engaged after 10 card-absent polls (#589 P1) */
+        LOG_ONCE_SD_WBUF_SUBSECTOR,       /**< sd_card_manager.c: SD DMA write buffer below one sector, so the sector-aligned drain can extract nothing (#738); unreachable with the current 512-byte floor, one-shot so a broken floor can't flood the drain loop */
         /* Add new entries above this line */
         LOG_ONCE_COUNT                     /**< Must be <= 32 */
     } LogOnceBit_t;
