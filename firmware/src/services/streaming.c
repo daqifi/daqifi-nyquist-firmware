@@ -175,17 +175,31 @@ static volatile uint32_t gScanStaleDropped = 0;  // ticks scan armed but no new 
  * Subtracted at snapshot time rather than by adjusting gTimerISRCalls itself:
  * that counter is incremented in true ISR context and relies on having exactly
  * one writer (same-source cannot preempt itself, so it needs no critical
- * section). Adding a task-context writer would break that. Single writer here
- * too — the deferred task. */
+ * section). Adding a task-context writer would break that.
+ *
+ * Writers: the deferred task increments it (under a critical section, since it
+ * is an RMW), and Streaming_Init / Streaming_ClearStats zero it. All task
+ * context — no ISR writer. */
 static volatile uint32_t gDryTicks = 0;
-/* #707/#745: true when at least one ENABLED USER channel takes its value from
- * the shared-scan LATEST cache, i.e. the frame cannot be complete until the
- * session's first scan finishes. Deliberately NOT gNeedSharedScan: that is true
- * whenever the scan list is non-empty, which includes a monitoring-only scan
- * (OBDiag=1) in a T1-only session — where the user's channels are read directly
- * via ARDY and ARE ready on tick 0, so suppressing that tick would discard a
- * perfectly good sample. */
-static volatile bool gUserT2Enabled = false;
+/* #707/#745: latched TRUE at Streaming_Start when at least one ENABLED USER
+ * channel takes its value from the shared-scan LATEST cache, i.e. the frame
+ * cannot be complete until the session's first scan finishes. The deferred task
+ * clears it on the first completed scan, and nothing re-arms it in a session.
+ *
+ * Deliberately NOT derived from gNeedSharedScan: that is true whenever the scan
+ * list is non-empty, which includes a monitoring-only scan (OBDiag=1) in a
+ * T1-only session — where the user's channels are read directly via ARDY and
+ * ARE ready on tick 0, so suppressing there would discard a good sample.
+ *
+ * Deliberately NOT reset by Streaming_ClearStats. Mid-session clearing is an
+ * intentionally supported operation (see that function), and it also rewinds
+ * gScanEosSeq to its primed value — so a condition derived from that seq alone
+ * would re-arm the suppression MID-STREAM and start dropping good ticks. A
+ * latch that only ever clears keeps the suppression strictly a session-start
+ * affair regardless of what a client clears and when, and a client that clears
+ * stats immediately after START still gets the protection, which resetting the
+ * flag would have silently removed (Qodo #746). */
+static volatile bool gPrimingPending = false;
 
 // Log-once flags: each error condition logs once per session via
 // LOG_E_SESSION / LOG_I_SESSION macros (gSessionOneShot bitmask in Logger).
@@ -929,7 +943,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
              *   TimerISRCalls == TotalSamplesStreamed + QueueDroppedSamples
              * No new statistic is exposed.
              *
-             * Gated on gUserT2Enabled, not gNeedSharedScan: a T1-only session
+             * Gated on the enabled-user-T2 latch, not gNeedSharedScan: a T1-only session
              * with OBDiag=1 has a non-empty scan list (monitoring rides it) but
              * its USER channels are read directly via ARDY and ARE ready on
              * tick 0, so suppressing there would throw away a good sample. Only
@@ -942,14 +956,23 @@ void _Streaming_Deferred_Interrupt_Task(void) {
              * the first EOS this is never true again, and a scan that later
              * falls behind is a different condition already counted by
              * ScanStaleDropped. */
-            if (gUserT2Enabled && (gScanEosSeq == 1u)) {
-                taskENTER_CRITICAL();
-                gDryTicks++;
-                taskEXIT_CRITICAL();
-                AInSampleList_FreeToPool(pPublicSampleList);
-                /* Deliberately NOT Streaming_UpdateFlowWindow(): the flow
-                 * window measures loss, and nothing was lost. */
-                goto pool_done;
+            if (gPrimingPending) {
+                if (gScanEosSeq == 1u) {          /* no scan completed yet */
+                    taskENTER_CRITICAL();
+                    gDryTicks++;
+                    taskEXIT_CRITICAL();
+                    AInSampleList_FreeToPool(pPublicSampleList);
+                    /* Deliberately NOT Streaming_UpdateFlowWindow(): the flow
+                     * window measures loss, and nothing was lost. */
+                    /* Close the probe pulse opened for this iteration — the
+                     * early exit would otherwise leave probe 3 asserted and
+                     * corrupt every later timing measurement (Qodo #746). */
+                    DioProbe_PulseEnd(3);
+                    goto pool_done;
+                }
+                /* First completed scan seen: the cache is live from here on, so
+                 * never suppress again this session. */
+                gPrimingPending = false;
             }
 
             if(!AInSampleList_PushBack(pPublicSampleList)){//failed pushing to Q
@@ -1560,7 +1583,7 @@ static void Streaming_Start(void) {
                 gNeedSharedScan = (scanCount > 0);
                 /* #707/#745: enabled USER T2 channels only — monitoring
                  * excluded, no registers written (pure count). */
-                gUserT2Enabled =
+                gPrimingPending =
                         (MC12b_ComputeScanList(true, false, NULL, NULL) > 0u);
                 // #670: inform (log only) about any Type 2 threshold whose channel
                 // isn't in this session's scan — it won't monitor stream samples,
@@ -1876,7 +1899,7 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
     gDryTicks = 0;
-    gUserT2Enabled = false;
+    gPrimingPending = false;
     gScanEosSeq = 1u;       // #557/#563: prime seq one ahead of "seen" so the
     gScanEosSeqSeen = 0u;   // first post-start tick (no scan completed yet) reads fresh
     memset(gFlowWindow, 0, sizeof(gFlowWindow));
@@ -2042,7 +2065,6 @@ void Streaming_ClearStats(void) {
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
     gDryTicks = 0;
-    gUserT2Enabled = false;
     gScanEosSeq = 1u;       // #557/#563: prime seq one ahead of "seen" so the
     gScanEosSeqSeen = 0u;   // first post-start tick (no scan completed yet) reads fresh
 #if PB_PROFILE_COUNTERS
