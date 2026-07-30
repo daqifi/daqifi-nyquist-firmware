@@ -834,8 +834,12 @@ void sd_card_manager_ProcessState() {
                         SD_TakeMutexDebug(gSDCardData.wMutex, "unmount_drain_loop");
                         if (gSDCardData.sdCardWritePending != 1) {
                             gSDCardData.sdCardWritePending = 1;
+                            /* #738: runtime size, not the compile-time
+                             * ceiling — see the WRITE_TO_FILE extract. This is
+                             * the close-time drain, so an over-large extract
+                             * loses the tail of the file outright. */
                             CircularBuf_ProcessBytes(&gSDCardData.wCirbuf, NULL,
-                                SD_CARD_MANAGER_CONF_WBUFFER_SIZE, &writeLen);
+                                gSDCardData.writeBufferSize, &writeLen);
                             gSDCardData.totalBytesFlushPending += gSDCardData.writeBufferLength;
                             xSemaphoreGive(gSDCardData.wMutex);
 
@@ -1280,8 +1284,19 @@ void sd_card_manager_ProcessState() {
                 uint32_t availBytes = CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf);
                 if (availBytes >= SD_SECTOR_SIZE_BYTES
                         && gSDCardData.sdCardWritePending != 1) {
-                    uint32_t maxExtract = (availBytes < SD_CARD_MANAGER_CONF_WBUFFER_SIZE)
-                                        ? availBytes : SD_CARD_MANAGER_CONF_WBUFFER_SIZE;
+                    /* #738: bound by the buffer we ACTUALLY have, not the
+                     * compile-time maximum. writeBufferSize is the runtime
+                     * size auto-balance assigned (SD_CARD_MANAGER_CONF_WBUFFER_SIZE
+                     * is only the 64 KB ceiling), and it collapses to the
+                     * inactive-interface minimum whenever SD is not the active
+                     * streaming interface. Extracting the ceiling into a
+                     * smaller buffer is refused by CircularBufferToSDWrite, so
+                     * the write fails and the data is dropped. Read under
+                     * wMutex, which is the mutex sd_card_manager_SetWriteBuffer
+                     * takes to change it. */
+                    uint32_t wbufCap = gSDCardData.writeBufferSize;
+                    uint32_t maxExtract = (availBytes < wbufCap) ? availBytes
+                                                                 : wbufCap;
                     maxExtract = (maxExtract / SD_SECTOR_SIZE_BYTES) * SD_SECTOR_SIZE_BYTES;
                     gSDCardData.sdCardWritePending = 1;
                     CircularBuf_ProcessBytes(&gSDCardData.wCirbuf, NULL, maxExtract, &writeLen);
@@ -1393,7 +1408,10 @@ void sd_card_manager_ProcessState() {
                         SD_TakeMutexDebug(gSDCardData.wMutex, "drain_loop");
                         if (gSDCardData.sdCardWritePending != 1) {
                             gSDCardData.sdCardWritePending = 1;
-                            CircularBuf_ProcessBytes(&gSDCardData.wCirbuf, NULL, SD_CARD_MANAGER_CONF_WBUFFER_SIZE, &writeLen);
+                            /* #738: runtime size, not the compile-time
+                             * ceiling — see the WRITE_TO_FILE extract. */
+                            CircularBuf_ProcessBytes(&gSDCardData.wCirbuf, NULL,
+                                gSDCardData.writeBufferSize, &writeLen);
                             gSDCardData.totalBytesFlushPending += gSDCardData.writeBufferLength;
                             xSemaphoreGive(gSDCardData.wMutex);
 
