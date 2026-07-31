@@ -122,16 +122,51 @@ extern "C" {
      * @param context SCPI context
      * @param fmt printf format string
      */
-    static inline void scpi_printf(scpi_t *context, const char *fmt, ...) {
+    /**
+     * Formatted SCPI write with a 192-byte stack buffer.
+     *
+     * #744: overflow used to be SILENT — it wrote sizeof(buf)-1 bytes, i.e.
+     * dropped the last character, with no log, no SCPI error, and a void
+     * return the caller could not check. That is the worst possible shape for
+     * this particular buffer, because the dropped character is usually the
+     * separating comma of a CONF:CAP:JSON? chunk: losing it does not shorten
+     * one field, it makes the ENTIRE ~8 KB response unparseable, since the
+     * next chunk's members run together with no separator.
+     *
+     * It already bit once. The `timing` chunk reached 189 of 192 bytes on the
+     * shipped build and exactly 192 on the legacy 200 MHz build — it truncated
+     * in one supported configuration, and was caught by an audit doing the
+     * arithmetic across every rate, not by a test or a build warning.
+     *
+     * Truncation is now loud (LOG_E naming the format string and the length
+     * needed) and detectable: the return value is vsnprintf's, so a caller
+     * that cares can compare it against the buffer size. The output behaviour
+     * is unchanged, so no existing caller has to react.
+     *
+     * @return bytes the format needed (>= sizeof(buf) means the response was
+     *         truncated and is corrupt), or vsnprintf's negative error.
+     */
+    static inline int scpi_printf(scpi_t *context, const char *fmt, ...) {
         char buf[192];
         va_list args;
         va_start(args, fmt);
         int n = vsnprintf(buf, sizeof(buf), fmt, args);
         va_end(args);
-        if (n > 0) {
-            size_t len = ((size_t)n < sizeof(buf)) ? (size_t)n : sizeof(buf) - 1;
-            context->interface->write(context, buf, len);
+        if (n < 0) {
+            LOG_E("scpi_printf: encoding error (fmt starts '%.32s')", fmt);
+            return n;
         }
+        if ((size_t)n >= sizeof(buf)) {
+            LOG_E("scpi_printf TRUNCATED: needed %d of %u bytes - response is "
+                  "corrupt, not merely short (fmt starts '%.48s')",
+                  n, (unsigned)sizeof(buf), fmt);
+            context->interface->write(context, buf, sizeof(buf) - 1);
+            return n;
+        }
+        if (n > 0) {
+            context->interface->write(context, buf, (size_t)n);
+        }
+        return n;
     }
 
     /**
