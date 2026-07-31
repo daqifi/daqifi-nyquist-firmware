@@ -1623,8 +1623,13 @@ static void Streaming_Start(void) {
                     const sd_card_manager_settings_t* sdCfg =
                         (const sd_card_manager_settings_t*)BoardRunTimeConfig_Get(
                             BOARDRUNTIME_SD_CARD_SETTINGS);
+                    /* No NULL check: BoardRunTimeConfig_Get() indexes a
+                     * static array initialised at boot and never returns NULL
+                     * (CLAUDE.md standing rule — no other SCPI/streaming call
+                     * site guards it, and adding one here would be an
+                     * inconsistency for zero safety benefit). */
                     gSdExpectedThisSession =
-                        (sdCfg != NULL) && sdCfg->enable &&
+                        sdCfg->enable &&
                         (sdCfg->mode == SD_CARD_MANAGER_MODE_WRITE) &&
                         (gpRuntimeConfigStream->ActiveInterface !=
                             StreamingInterface_WiFi);
