@@ -2980,9 +2980,16 @@ static scpi_result_t SCPI_GetLossGrace(scpi_t * context) {
  * silently stopped growing.
  *
  * Recomputed from live SD state before an OPER query instead. Only the SD
- * bit is touched: OPER_MEASURING is owned by the start/stop path. A 1->0
- * transition latching in the OPER EVENt register is the correct outcome here
- * — it is exactly the event a client wants to catch.
+ * bit is touched: OPER_MEASURING is owned by the start/stop path.
+ *
+ * CLIENTS MUST POLL STATus:OPERation:CONDition? FOR THIS, NOT THE EVENt
+ * REGISTER. libscpi latches only POSITIVE transitions into the event register
+ * when no transition filters are configured (ieee488.c: `val = ((old_val ^
+ * val) & val) | event`), and the OPER group declares SCPI_REG_NONE for both
+ * ptfilt and ntfilt. An SD stop is 1->0, so it never reaches OPER/OPER:EVENt.
+ * The CONDition register — which is what this fixes and what the companion
+ * test asserts — does reflect it. (An earlier revision of this comment
+ * claimed the 1->0 would latch; that was wrong, and Qodo caught it.)
  */
 static void SCPI_SyncOperSdBit(void) {
     const sd_card_manager_settings_t* sd =
@@ -2997,7 +3004,11 @@ static void SCPI_SyncOperSdBit(void) {
      * open handle in WRITE_TO_FILE state, which is briefly false during every
      * normal file rotation (#split) — it would blink the bit off and latch a
      * spurious 1->0 in the OPER EVENt register on a perfectly healthy session. */
-    const bool logging = (sd != NULL) && sd->enable &&
+    /* Gated on an active streaming session: SD mode is also WRITE during a
+     * standalone SYST:STOR:SD:BENCHmark, and reporting "SD logging active"
+     * for a benchmark would be a new wrong answer in place of the old one. */
+    const bool logging = Streaming_IsActiveOnNonWifiInterface() &&
+                         (sd != NULL) && sd->enable &&
                          (sd->mode == SD_CARD_MANAGER_MODE_WRITE) &&
                          !sd_card_manager_StartupDirFull() &&
                          !sd_card_manager_StartupDiskFull();
