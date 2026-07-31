@@ -1600,14 +1600,35 @@ static void Streaming_Start(void) {
                  * excluded, no registers written (pure count). */
                 gPrimingPending =
                         (MC12b_ComputeScanList(true, false, NULL, NULL) > 0u);
-                /* #691: clear the SD expectation HERE, at the real session
-                 * start — deliberately not in Streaming_ClearStats, which a
-                 * client may call mid-session (SYST:STR:STATS:CLEar). Clearing
-                 * it there would drop the expectation for the rest of a session
-                 * whose SD logging had already stopped, which is the very
-                 * accounting hole this fixes. The encode path re-asserts it
-                 * each iteration while SD is in WRITE mode. */
-                gSdExpectedThisSession = false;
+                /* #691: decide the SD expectation ONCE, here, from what this
+                 * session actually asked for.
+                 *
+                 * Deliberately not in Streaming_ClearStats — a client may call
+                 * SYST:STR:STATS:CLEar mid-session, and clearing it there would
+                 * drop the expectation for the rest of a session whose SD
+                 * logging had already stopped, which is the accounting hole
+                 * this fixes.
+                 *
+                 * And deliberately NOT re-asserted from the encode path. An
+                 * earlier revision latched it there whenever SD was in WRITE
+                 * mode, which a standalone SYST:STOR:SD:BENCHmark also enters:
+                 * running a benchmark during a USB-only stream would latch an
+                 * SD expectation the session never had, and every packet after
+                 * the benchmark restored mode=NONE would be counted as an SD
+                 * drop with no in-session recovery. Reading the live mode had
+                 * self-corrected there, so that was a regression this fix
+                 * introduced (audit of #752). Session intent is fixed at start;
+                 * nothing that happens later should redefine it. */
+                {
+                    const sd_card_manager_settings_t* sdCfg =
+                        (const sd_card_manager_settings_t*)BoardRunTimeConfig_Get(
+                            BOARDRUNTIME_SD_CARD_SETTINGS);
+                    gSdExpectedThisSession =
+                        (sdCfg != NULL) && sdCfg->enable &&
+                        (sdCfg->mode == SD_CARD_MANAGER_MODE_WRITE) &&
+                        (gpRuntimeConfigStream->ActiveInterface !=
+                            StreamingInterface_WiFi);
+                }
                 // #670: inform (log only) about any Type 2 threshold whose channel
                 // isn't in this session's scan — it won't monitor stream samples,
                 // but stays armed for idle/MEAS and keeps its latch (persistence).
@@ -2482,7 +2503,6 @@ void streaming_Task(void) {
             // Only enable SD if we're not streaming to WiFi (SPI bus conflict)
             if (pRunTimeStreamConf->ActiveInterface != StreamingInterface_WiFi) {
                 hasSD = (sdSize >= 128);
-                gSdExpectedThisSession = true;   /* #691: latch the expectation */
             }
         }
 

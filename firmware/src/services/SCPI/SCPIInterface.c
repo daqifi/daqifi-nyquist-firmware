@@ -3004,9 +3004,17 @@ static void SCPI_SyncOperSdBit(void) {
      * open handle in WRITE_TO_FILE state, which is briefly false during every
      * normal file rotation (#split) — it would blink the bit off and latch a
      * spurious 1->0 in the OPER EVENt register on a perfectly healthy session. */
-    /* Gated on an active streaming session: SD mode is also WRITE during a
-     * standalone SYST:STOR:SD:BENCHmark, and reporting "SD logging active"
-     * for a benchmark would be a new wrong answer in place of the old one. */
+    /* Gated on an active streaming session so a benchmark run OUTSIDE a stream
+     * does not report "SD logging active" — SD mode is also WRITE during
+     * SYST:STOR:SD:BENCHmark.
+     *
+     * Scope, stated honestly: this gate does NOT exclude a benchmark run
+     * CONCURRENTLY with a stream, because the session is genuinely active then
+     * (audit of #752 made this point and it is correct). During that window the
+     * bit reports the benchmark's WRITE mode. That window is already outside
+     * supported use — the quiescence rule says not to issue SCPI mid-stream,
+     * and the benchmark additionally shares the SD ring with the stream — so it
+     * is left rather than papered over with a benchmark-specific interlock. */
     const bool logging = Streaming_IsActiveOnNonWifiInterface() &&
                          (sd != NULL) && sd->enable &&
                          (sd->mode == SD_CARD_MANAGER_MODE_WRITE) &&
