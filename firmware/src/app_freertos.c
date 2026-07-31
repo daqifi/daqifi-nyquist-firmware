@@ -277,14 +277,23 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
                  * a fixed-size hole in a file the host was still told had
                  * completed.
                  *
-                 * The host is not reading; the next chunk will not fare
+                 * The peer is not reading; the next chunk will not fare
                  * better. Requesting the abort makes the read loop terminate
                  * on its next iteration, which closes the file and resets
                  * mode/state to IDLE through the existing path — the same
-                 * mechanism the TCP-client-gone case above already uses. */
-                if (!toTcp) {
-                    sd_card_manager_AbortTransfer();
-                }
+                 * mechanism the TCP-client-gone case above already uses.
+                 *
+                 * Applies to BOTH transports. An earlier revision gated this
+                 * on !toTcp, reasoning that the TCP branch already had its own
+                 * abort — it does not cover this case. That guard fires only
+                 * when wifi_tcp_server_ConnIsCurrent() goes false, i.e. the
+                 * client is GONE. A client that is still connected but has
+                 * stopped draining keeps clientSocket >= 0 and the same
+                 * generation, so the entry guard never fires and the TCP path
+                 * kept the exact stall this fix removes for USB (audit of
+                 * #753). The two failure modes are client-gone and
+                 * client-stalled; each transport needs both. */
+                sd_card_manager_AbortTransfer();
                 break;
             }
             vTaskDelay(1);
