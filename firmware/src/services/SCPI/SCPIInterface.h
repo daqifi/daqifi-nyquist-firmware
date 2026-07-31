@@ -119,11 +119,9 @@ extern "C" {
     /**
      * Printf-style helper for writing formatted text to a SCPI response.
      * Uses an internal 192-byte buffer; each call is one write.
+     *
      * @param context SCPI context
      * @param fmt printf format string
-     */
-    /**
-     * Formatted SCPI write with a 192-byte stack buffer.
      *
      * #744: overflow used to be SILENT — it wrote sizeof(buf)-1 bytes, i.e.
      * dropped the last character, with no log, no SCPI error, and a void
