@@ -1626,8 +1626,27 @@ void sd_card_manager_ProcessState() {
                 // Check for user-requested abort
                 if (gTransferAbortRequested) {
                     gTransferAbortRequested = false;
-                    LOG_E("[SD] Transfer ABORTED by user at %u bytes", totalBytesRead);
+                    LOG_E("[SD] Transfer ABORTED at %u bytes", totalBytesRead);
                     sd_wait_usb_drain();
+                    /* Terminate the stream so the host stops waiting. Without
+                     * this the abort closed the file silently and a peer that
+                     * was still reading blocked until its own timeout — the
+                     * same hang #703 removed from the open-failure and
+                     * buffer-too-small paths, which emit the marker for
+                     * exactly this reason.
+                     *
+                     * Cheap even when the abort came from a reply stall: the
+                     * marker is 15 bytes, so it fits where the refused
+                     * >=1024-byte chunk did not.
+                     *
+                     * It is deliberately the SAME marker as a clean finish.
+                     * The host cannot yet distinguish "complete" from
+                     * "aborted" — that needs a distinguishable terminator and
+                     * client coordination, which is #725. Sending nothing is
+                     * strictly worse: the peer hangs instead of ending on a
+                     * short file it can at least compare against SD:LISt?. */
+                    sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                            (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
                     if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
                         SYS_FS_FileClose(gSDCardData.fileHandle);
                         gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
