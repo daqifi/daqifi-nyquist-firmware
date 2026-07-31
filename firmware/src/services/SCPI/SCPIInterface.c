@@ -3015,9 +3015,12 @@ static void SCPI_SyncOperSdBit(void) {
      * supported use — the quiescence rule says not to issue SCPI mid-stream,
      * and the benchmark additionally shares the SD ring with the stream — so it
      * is left rather than papered over with a benchmark-specific interlock. */
-    /* No NULL check on sd: BoardRunTimeConfig_Get() never returns NULL
-     * (CLAUDE.md standing rule); every other callback in this file relies on
-     * that, and guarding only here would be inconsistent. */
+    /* No NULL check on sd. BoardRunTimeConfig_Get() returns NULL only for an
+     * INVALID parameter (its default / NUM_OF_ELEMENTS branch); every named
+     * case returns the address of a member of a static struct, and
+     * BOARDRUNTIME_SD_CARD_SETTINGS is a compile-time constant naming a real
+     * case. Every other callback in this file relies on the same reasoning
+     * (CLAUDE.md standing rule), so guarding only here would be inconsistent. */
     const bool logging = Streaming_IsActiveOnNonWifiInterface() &&
                          sd->enable &&
                          (sd->mode == SD_CARD_MANAGER_MODE_WRITE) &&

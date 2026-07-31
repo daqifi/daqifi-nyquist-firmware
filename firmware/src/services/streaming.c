@@ -1623,11 +1623,14 @@ static void Streaming_Start(void) {
                     const sd_card_manager_settings_t* sdCfg =
                         (const sd_card_manager_settings_t*)BoardRunTimeConfig_Get(
                             BOARDRUNTIME_SD_CARD_SETTINGS);
-                    /* No NULL check: BoardRunTimeConfig_Get() indexes a
-                     * static array initialised at boot and never returns NULL
-                     * (CLAUDE.md standing rule — no other SCPI/streaming call
-                     * site guards it, and adding one here would be an
-                     * inconsistency for zero safety benefit). */
+                    /* No NULL check. BoardRunTimeConfig_Get() is a switch
+                     * that returns NULL only for an INVALID parameter (its
+                     * default / NUM_OF_ELEMENTS branch); every named case
+                     * returns the address of a member of a static struct.
+                     * BOARDRUNTIME_SD_CARD_SETTINGS is a compile-time constant
+                     * naming a real case, so this call cannot reach that
+                     * branch. Guarding here would also be inconsistent with
+                     * every other call site (CLAUDE.md standing rule). */
                     gSdExpectedThisSession =
                         sdCfg->enable &&
                         (sdCfg->mode == SD_CARD_MANAGER_MODE_WRITE) &&
