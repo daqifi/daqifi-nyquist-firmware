@@ -136,6 +136,57 @@ static bool SD_ValidatePathParam(const char *p, size_t len)
     return true;
 }
 
+/* #747: SYST:STOR:SD:LISt? prints every entry as "<directory>/<name>", but the
+ * operand sites below prepend the configured directory themselves — so handing
+ * back the exact string the device just printed builds "DAQiFi/DAQiFi/<name>",
+ * the open fails, and for SD:GET the host receives a bare __END_OF_FILE__ with
+ * SYST:ERR? still reading "No error". That is indistinguishable from an empty
+ * file, which is what made #747 read as a device fault rather than a rejected
+ * path.
+ *
+ * Accept the round-trip form by dropping ONE leading "<directory>/". Traversal
+ * stays impossible: the prefix must match the device's own configured
+ * directory exactly, and SD_ValidatePathParam still rejects absolute paths and
+ * "." / ".." segments in what remains.
+ *
+ * Case-sensitive on purpose — this normalizes the exact form the device emits,
+ * not arbitrary user spellings. Returns the (possibly advanced) pointer and
+ * updates *pLen. */
+static const char* SD_StripConfiguredDir(const char *p, size_t *pLen,
+                                         const char *directory)
+{
+    if (p == NULL || pLen == NULL || directory == NULL) {
+        return p;
+    }
+    size_t dirLen = strlen(directory);
+    while (dirLen > 0u && directory[dirLen - 1u] == '/') {
+        dirLen--;                    /* configured dir may carry a trailing '/' */
+    }
+    /* Need at least one character after "<dir>/" — a bare "DAQiFi/" is not a
+     * filename and must fall through to the existing validation. */
+    if (dirLen == 0u || *pLen <= dirLen + 1u) {
+        return p;
+    }
+    if (strncmp(p, directory, dirLen) != 0 || p[dirLen] != '/') {
+        return p;
+    }
+    *pLen -= (dirLen + 1u);
+    p += dirLen + 1u;
+    /* A configured directory carrying its own trailing slash makes the listing
+     * print "<dir>//<name>" (it concatenates dirPath verbatim with "%s/%s"),
+     * so one more separator can be left over here. Without this the remainder
+     * starts with '/' and SD_ValidatePathParam rejects it as an absolute path
+     * — the device's own output still would not round-trip (audit #749).
+     * Traversal is unaffected: the validator below still runs, and it rejects
+     * "." and ".." as whole segments regardless of how many slashes precede
+     * them. */
+    while (*pLen > 1u && *p == '/') {
+        p++;
+        (*pLen)--;
+    }
+    return p;
+}
+
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
     int param1;
     scpi_result_t result = SCPI_RES_ERR;
@@ -200,7 +251,13 @@ typedef struct {
 static volatile SDBenchmarkResults_t gSDBenchmarkResults = {0};
 
 scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
-    const char* pBuff;
+    /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
+     * leaves pBuff untouched when the argument is omitted, and the operand
+     * normalizer is called unconditionally. fileLen is 0 in that case so the
+     * normalizer returns before dereferencing anything, but merely READING an
+     * indeterminate pointer is undefined — and this file is built at -O3.
+     * Initializing costs nothing and makes the NULL guard meaningful. */
+    const char* pBuff = NULL;
     size_t fileLen = 0;
  
     scpi_result_t result = SCPI_RES_ERR;
@@ -248,6 +305,9 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     }
 
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
+    /* #747: accept the "<directory>/<name>" form SD:LISt? prints. Before the
+     * length check, so a max-length name is not rejected for the prefix. */
+    pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
 
     if (fileLen > 0) {
         if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
@@ -319,7 +379,13 @@ __exit_point:
  * SYST:STOR:SD:CRC? - mirrors the GET_SPACE request/query split so the SCPI
  * task never blocks on a multi-second file scan. */
 scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
-    const char* pBuff;
+    /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
+     * leaves pBuff untouched when the argument is omitted, and the operand
+     * normalizer is called unconditionally. fileLen is 0 in that case so the
+     * normalizer returns before dereferencing anything, but merely READING an
+     * indeterminate pointer is undefined — and this file is built at -O3.
+     * Initializing costs nothing and makes the NULL guard meaningful. */
+    const char* pBuff = NULL;
     size_t fileLen = 0;
     sd_card_manager_settings_t* pSDCardRuntimeConfig =
             (sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
@@ -336,8 +402,13 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
     if (!SCPI_CheckSDCardPresent(context)) {
         return SCPI_RES_ERR;
     }
-    if (!SCPI_ParamCharacters(context, &pBuff, &fileLen, TRUE) ||
-        fileLen == 0 || fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
+    if (!SCPI_ParamCharacters(context, &pBuff, &fileLen, TRUE)) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    /* #747: accept the "<directory>/<name>" form SD:LISt? prints. */
+    pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
+    if (fileLen == 0 || fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
@@ -374,7 +445,13 @@ scpi_result_t SCPI_StorageSDCrcGet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
-    const char* pBuff;
+    /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
+     * leaves pBuff untouched when the argument is omitted, and the operand
+     * normalizer is called unconditionally. fileLen is 0 in that case so the
+     * normalizer returns before dereferencing anything, but merely READING an
+     * indeterminate pointer is undefined — and this file is built at -O3.
+     * Initializing costs nothing and makes the NULL guard meaningful. */
+    const char* pBuff = NULL;
     size_t fileLen = 0;
     scpi_result_t result = SCPI_RES_ERR;
     sd_card_manager_settings_t* pSDCardRuntimeConfig = (sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
@@ -414,6 +491,10 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     }
 
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
+    /* #747: accept the "<directory>/<name>" form SD:LISt? prints. Before the
+     * length check, so a max-length name is not rejected for carrying the
+     * prefix the device itself emitted. */
+    pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
 
     if (fileLen > 0) {
         if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
@@ -451,7 +532,13 @@ __exit_point:
 }
 
 scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
-    const char* pBuff;
+    /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
+     * leaves pBuff untouched when the argument is omitted, and the operand
+     * normalizer is called unconditionally. fileLen is 0 in that case so the
+     * normalizer returns before dereferencing anything, but merely READING an
+     * indeterminate pointer is undefined — and this file is built at -O3.
+     * Initializing costs nothing and makes the NULL guard meaningful. */
+    const char* pBuff = NULL;
     size_t fileLen = 0;
     scpi_result_t result = SCPI_RES_ERR;
     sd_card_manager_settings_t* pSDCardRuntimeConfig = (sd_card_manager_settings_t*) BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
@@ -944,7 +1031,13 @@ scpi_result_t SCPI_StorageSDBenchmarkQuery(scpi_t * context) {
  * Example: SYST:STOR:SD:DEL "test.csv"
  */
 scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
-    const char* pBuff;
+    /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
+     * leaves pBuff untouched when the argument is omitted, and the operand
+     * normalizer is called unconditionally. fileLen is 0 in that case so the
+     * normalizer returns before dereferencing anything, but merely READING an
+     * indeterminate pointer is undefined — and this file is built at -O3.
+     * Initializing costs nothing and makes the NULL guard meaningful. */
+    const char* pBuff = NULL;
     size_t fileLen = 0;
     scpi_result_t result = SCPI_RES_ERR;
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
@@ -972,6 +1065,12 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
 
     // Get filename parameter (required)
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
+    /* #747: accept the "<directory>/<name>" form SD:LISt? prints. BEFORE the
+     * length check, like the other three operand sites: the prefix costs 7
+     * bytes against a 40-byte limit, so checking first rejects listed paths
+     * whose filename is 34-40 characters — a length SD:FILE accepts and which
+     * GET/CRC round-trip, leaving DELETE the odd one out (audit #749). */
+    pBuff = SD_StripConfiguredDir(pBuff, &fileLen, pSDCardRuntimeConfig->directory);
 
     if (fileLen == 0 || fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
         LOG_E("SD:DELete - Invalid filename length: %d\r\n", fileLen);
