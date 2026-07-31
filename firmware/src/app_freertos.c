@@ -180,6 +180,24 @@ void wifi_manager_FormUdpAnnouncePacketCB(const wifi_manager_settings_t *pWifiSe
  * by WifiTask (pri 2) concurrently, so retry-with-delay makes progress. */
 static size_t sd_reply_write_usb(const char* data, size_t len)
 {
+    /* #750: same hazard the TCP path below was fixed for (Qodo #599), and the
+     * USB path simply never got it.
+     *
+     * UsbCdc_WriteToBuffer is all-or-nothing, and the USB circular buffer
+     * collapses to STREAMING_USB_MIN (2048 B) after a NON-USB streaming
+     * session re-partitions the pool. The reply loop offers up to
+     * USB_TRANSFER_CHUNK_SIZE (~4000 B), which can never fit in 2048 — so
+     * every write returned 0, the retry loop burned its full 10 s budget per
+     * chunk, and SD:GET returned an empty file with SYST:ERR? reading
+     * "No error".
+     *
+     * Measured on the bench: after a 10 s SD-logging session, SD:GET went
+     * from 245,464 B (3.7 s) to 0 B, logging
+     *     [SD reply] USB timeout: sent 0/16384 bytes after 10000 retries
+     * Clamp below the floor; the caller's loop already handles short writes. */
+    if (len > 1024u) {
+        len = 1024u;
+    }
     return UsbCdc_WriteToBuffer(NULL, data, len);
 }
 
@@ -249,6 +267,24 @@ void sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff
                 LOG_E("[SD reply] %s timeout: sent %u/%u bytes after %u retries",
                       toTcp ? "TCP" : "USB",
                       (unsigned)transferredLength, (unsigned)dataLen, (unsigned)retryCount);
+                /* #750: give up on the whole transfer, not just this chunk.
+                 *
+                 * Dropping only the chunk left the read loop to continue and
+                 * spend a fresh USB_TRANSFER_MAX_RETRIES (10 s) on every
+                 * remaining one — a 47 KB file is ~12 chunks, so the SD
+                 * subsystem stayed busy for ~2 minutes and rejected every
+                 * SD:GET in the meantime with "SD card busy". It also punched
+                 * a fixed-size hole in a file the host was still told had
+                 * completed.
+                 *
+                 * The host is not reading; the next chunk will not fare
+                 * better. Requesting the abort makes the read loop terminate
+                 * on its next iteration, which closes the file and resets
+                 * mode/state to IDLE through the existing path — the same
+                 * mechanism the TCP-client-gone case above already uses. */
+                if (!toTcp) {
+                    sd_card_manager_AbortTransfer();
+                }
                 break;
             }
             vTaskDelay(1);
