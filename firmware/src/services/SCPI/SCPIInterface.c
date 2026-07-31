@@ -2971,6 +2971,53 @@ static scpi_result_t SCPI_GetLossGrace(scpi_t * context) {
  * STATus:QUEStionable:CONDition? wrapper that syncs streaming health
  * bits from the streaming engine before reading the register.
  */
+/**
+ * #691: OPER_SD_LOGGING is asserted at STR:START and was only cleared at
+ * STR:STOP, so it stayed set after SD logging stopped MID-stream — the
+ * #689 dir-cap firing, a disk-full, or an FS write error all drop the SD
+ * manager out of WRITE mode without touching the register. A client polling
+ * the status registers saw "SD logging active" while the archive copy had
+ * silently stopped growing.
+ *
+ * Recomputed from live SD state before an OPER query instead. Only the SD
+ * bit is touched: OPER_MEASURING is owned by the start/stop path. A 1->0
+ * transition latching in the OPER EVENt register is the correct outcome here
+ * — it is exactly the event a client wants to catch.
+ */
+static void SCPI_SyncOperSdBit(void) {
+    const sd_card_manager_settings_t* sd =
+        (const sd_card_manager_settings_t*)BoardRunTimeConfig_Get(
+            BOARDRUNTIME_SD_CARD_SETTINGS);
+    /* enable+WRITE alone is NOT the truth: measured on the bench, a #689
+     * dir-cap refusal stops logging while LEAVING mode at WRITE, so that
+     * predicate keeps reporting "logging active" through exactly the failure
+     * this is meant to expose. The refusal flags are the terminal-stop signal.
+     *
+     * Deliberately NOT sd_card_manager_IsWriteReady(): that also requires an
+     * open handle in WRITE_TO_FILE state, which is briefly false during every
+     * normal file rotation (#split) — it would blink the bit off and latch a
+     * spurious 1->0 in the OPER EVENt register on a perfectly healthy session. */
+    const bool logging = (sd != NULL) && sd->enable &&
+                         (sd->mode == SD_CARD_MANAGER_MODE_WRITE) &&
+                         !sd_card_manager_StartupDirFull() &&
+                         !sd_card_manager_StartupDiskFull();
+    if (logging) {
+        SCPI_SetOperBits(OPER_SD_LOGGING);
+    } else {
+        SCPI_ClearOperBits(OPER_SD_LOGGING);
+    }
+}
+
+static scpi_result_t SCPI_OperConditionQ(scpi_t * context) {
+    SCPI_SyncOperSdBit();
+    return SCPI_StatusOperationConditionQ(context);
+}
+
+static scpi_result_t SCPI_OperEventQ(scpi_t * context) {
+    SCPI_SyncOperSdBit();
+    return SCPI_StatusOperationEventQ(context);
+}
+
 static scpi_result_t SCPI_QuesConditionQ(scpi_t * context) {
     SCPI_SyncQuesBits();
     return SCPI_StatusQuestionableConditionQ(context);
@@ -5454,9 +5501,9 @@ static const scpi_command_t scpi_commands[] = {
     // Operation status registers (library-provided, returns 0 until firmware sets condition bits)
     // Per SCPI standard, bare "STATus:OPERation?" defaults to the Event register (clears on read).
     // See libscpi test_parser.c: pattern "STATus:OPERation[:EVENt]?" -> SCPI_StatusOperationEventQ
-    {.pattern = "STATus:OPERation?", .callback = SCPI_StatusOperationEventQ,},
-    {.pattern = "STATus:OPERation:EVENt?", .callback = SCPI_StatusOperationEventQ,},
-    {.pattern = "STATus:OPERation:CONDition?", .callback = SCPI_StatusOperationConditionQ,},
+    {.pattern = "STATus:OPERation?", .callback = SCPI_OperEventQ,},
+    {.pattern = "STATus:OPERation:EVENt?", .callback = SCPI_OperEventQ,},
+    {.pattern = "STATus:OPERation:CONDition?", .callback = SCPI_OperConditionQ,},
     {.pattern = "STATus:OPERation:ENABle", .callback = SCPI_StatusOperationEnable,},
     {.pattern = "STATus:OPERation:ENABle?", .callback = SCPI_StatusOperationEnableQ,},
     // Questionable status condition (completes the set already registered above)
