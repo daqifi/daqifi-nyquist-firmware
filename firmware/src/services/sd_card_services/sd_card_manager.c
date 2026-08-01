@@ -1628,25 +1628,41 @@ void sd_card_manager_ProcessState() {
                     gTransferAbortRequested = false;
                     LOG_E("[SD] Transfer ABORTED at %u bytes", totalBytesRead);
                     sd_wait_usb_drain();
-                    /* Terminate the stream so the host stops waiting. Without
-                     * this the abort closed the file silently and a peer that
-                     * was still reading blocked until its own timeout — the
-                     * same hang #703 removed from the open-failure and
-                     * buffer-too-small paths, which emit the marker for
-                     * exactly this reason.
+                    /* Emit the terminator ONLY if no file content went out.
                      *
-                     * Cheap even when the abort came from a reply stall: the
-                     * marker is 15 bytes, so it fits where the refused
-                     * >=1024-byte chunk did not.
+                     * That is #723's actual precedent: it made the PRE-transfer
+                     * failures terminal (buffer-too-small, open-failure) — both
+                     * of which have sent nothing — and #725 records why the
+                     * mid-transfer case was deliberately left out:
                      *
-                     * It is deliberately the SAME marker as a clean finish.
-                     * The host cannot yet distinguish "complete" from
-                     * "aborted" — that needs a distinguishable terminator and
-                     * client coordination, which is #725. Sending nothing is
-                     * strictly worse: the peer hangs instead of ending on a
-                     * short file it can at least compare against SD:LISt?. */
-                    sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                            (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
+                     *   "sending a plain EOF marker after partial data would
+                     *    convert a detectable hang into a silently truncated
+                     *    file that looks complete — the wrong trade for a
+                     *    data-acquisition product"
+                     *
+                     * An earlier revision of this fix emitted it
+                     * unconditionally, which contradicts that decision: a host
+                     * would have accepted a truncated capture as a whole one.
+                     * A hang is recoverable and visible; a short file that
+                     * looks complete is neither.
+                     *
+                     * So: nothing sent -> terminate cleanly (the host learns
+                     * the transfer produced no data). Partial data sent -> stay
+                     * silent until #725 gives us a DISTINGUISHABLE terminator,
+                     * which is the only thing that makes this case honest.
+                     *
+                     * Skipping the emit on the partial path also avoids a
+                     * second stall: DataReadyCB retries for 10 s, and the abort
+                     * is reached precisely when the peer is not draining. */
+                    if (totalBytesRead == 0u) {
+                        sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                                (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
+                    } else {
+                        LOG_E("[SD] aborted after %u bytes — no terminator sent "
+                              "(a plain EOF would look like a complete file; "
+                              "#725 tracks a distinguishable one)",
+                              (unsigned)totalBytesRead);
+                    }
                     if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
                         SYS_FS_FileClose(gSDCardData.fileHandle);
                         gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
