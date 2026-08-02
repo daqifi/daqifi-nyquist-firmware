@@ -2971,6 +2971,88 @@ static scpi_result_t SCPI_GetLossGrace(scpi_t * context) {
  * STATus:QUEStionable:CONDition? wrapper that syncs streaming health
  * bits from the streaming engine before reading the register.
  */
+/**
+ * #691: OPER_SD_LOGGING is asserted at STR:START and was only cleared at
+ * STR:STOP, so it stayed set after SD logging stopped MID-stream — the
+ * #689 dir-cap firing, a disk-full, or an FS write error all drop the SD
+ * manager out of WRITE mode without touching the register. A client polling
+ * the status registers saw "SD logging active" while the archive copy had
+ * silently stopped growing.
+ *
+ * Recomputed from live SD state before an OPER query instead. Only the SD
+ * bit is touched: OPER_MEASURING is owned by the start/stop path.
+ *
+ * CLIENTS MUST POLL STATus:OPERation:CONDition? FOR THIS, NOT THE EVENt
+ * REGISTER. libscpi latches only POSITIVE transitions into the event register
+ * when no transition filters are configured (ieee488.c: `val = ((old_val ^
+ * val) & val) | event`), and the OPER group declares SCPI_REG_NONE for both
+ * ptfilt and ntfilt. An SD stop is 1->0, so it never reaches OPER/OPER:EVENt.
+ * The CONDition register — which is what this fixes and what the companion
+ * test asserts — does reflect it. (An earlier revision of this comment
+ * claimed the 1->0 would latch; that was wrong, and Qodo caught it.)
+ */
+static void SCPI_SyncOperSdBit(void) {
+    const sd_card_manager_settings_t* sd =
+        (const sd_card_manager_settings_t*)BoardRunTimeConfig_Get(
+            BOARDRUNTIME_SD_CARD_SETTINGS);
+    /* The refusal flags are belt-and-braces, not the load-bearing term.
+     *
+     * Correcting my own earlier comment here: it claimed a #689 dir-cap
+     * refusal "leaves mode at WRITE". It does not — that path sets
+     * mode = SD_CARD_MANAGER_MODE_NONE (sd_card_manager.c), and a mid-session
+     * rotation re-enters OPEN_FILE and hits the same path. What I actually
+     * observed on the bench was the cap firing LATER than my two fixed
+     * sample points, not mode persisting; I mis-attributed the timing to a
+     * state that never held. enable+WRITE alone would in fact have been
+     * sufficient.
+     *
+     * The flags are kept because they also cover the disk-full stop and cost
+     * nothing, but they are defence in depth rather than the reason this
+     * works.
+     *
+     * Deliberately NOT sd_card_manager_IsWriteReady(): that also requires an
+     * open handle in WRITE_TO_FILE state, which is briefly false during every
+     * normal file rotation (#split) — it would blink the bit off and latch a
+     * spurious 1->0 in the OPER EVENt register on a perfectly healthy session. */
+    /* Gated on an active streaming session so a benchmark run OUTSIDE a stream
+     * does not report "SD logging active" — SD mode is also WRITE during
+     * SYST:STOR:SD:BENCHmark.
+     *
+     * Scope, stated honestly: this gate does NOT exclude a benchmark run
+     * CONCURRENTLY with a stream, because the session is genuinely active then
+     * (audit of #752 made this point and it is correct). During that window the
+     * bit reports the benchmark's WRITE mode. That window is already outside
+     * supported use — the quiescence rule says not to issue SCPI mid-stream,
+     * and the benchmark additionally shares the SD ring with the stream — so it
+     * is left rather than papered over with a benchmark-specific interlock. */
+    /* No NULL check on sd. BoardRunTimeConfig_Get() returns NULL only for an
+     * INVALID parameter (its default / NUM_OF_ELEMENTS branch); every named
+     * case returns the address of a member of a static struct, and
+     * BOARDRUNTIME_SD_CARD_SETTINGS is a compile-time constant naming a real
+     * case. Every other callback in this file relies on the same reasoning
+     * (CLAUDE.md standing rule), so guarding only here would be inconsistent. */
+    const bool logging = Streaming_IsActiveOnNonWifiInterface() &&
+                         sd->enable &&
+                         (sd->mode == SD_CARD_MANAGER_MODE_WRITE) &&
+                         !sd_card_manager_StartupDirFull() &&
+                         !sd_card_manager_StartupDiskFull();
+    if (logging) {
+        SCPI_SetOperBits(OPER_SD_LOGGING);
+    } else {
+        SCPI_ClearOperBits(OPER_SD_LOGGING);
+    }
+}
+
+static scpi_result_t SCPI_OperConditionQ(scpi_t * context) {
+    SCPI_SyncOperSdBit();
+    return SCPI_StatusOperationConditionQ(context);
+}
+
+static scpi_result_t SCPI_OperEventQ(scpi_t * context) {
+    SCPI_SyncOperSdBit();
+    return SCPI_StatusOperationEventQ(context);
+}
+
 static scpi_result_t SCPI_QuesConditionQ(scpi_t * context) {
     SCPI_SyncQuesBits();
     return SCPI_StatusQuestionableConditionQ(context);
@@ -5454,9 +5536,9 @@ static const scpi_command_t scpi_commands[] = {
     // Operation status registers (library-provided, returns 0 until firmware sets condition bits)
     // Per SCPI standard, bare "STATus:OPERation?" defaults to the Event register (clears on read).
     // See libscpi test_parser.c: pattern "STATus:OPERation[:EVENt]?" -> SCPI_StatusOperationEventQ
-    {.pattern = "STATus:OPERation?", .callback = SCPI_StatusOperationEventQ,},
-    {.pattern = "STATus:OPERation:EVENt?", .callback = SCPI_StatusOperationEventQ,},
-    {.pattern = "STATus:OPERation:CONDition?", .callback = SCPI_StatusOperationConditionQ,},
+    {.pattern = "STATus:OPERation?", .callback = SCPI_OperEventQ,},
+    {.pattern = "STATus:OPERation:EVENt?", .callback = SCPI_OperEventQ,},
+    {.pattern = "STATus:OPERation:CONDition?", .callback = SCPI_OperConditionQ,},
     {.pattern = "STATus:OPERation:ENABle", .callback = SCPI_StatusOperationEnable,},
     {.pattern = "STATus:OPERation:ENABle?", .callback = SCPI_StatusOperationEnableQ,},
     // Questionable status condition (completes the set already registered above)

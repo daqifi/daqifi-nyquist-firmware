@@ -201,6 +201,21 @@ static volatile uint32_t gDryTicks = 0;
  * flag would have silently removed (Qodo #746). */
 static volatile bool gPrimingPending = false;
 
+/* #691: was SD logging expected when this session STARTED?
+ *
+ * The skipped-byte accounting below used to read the SD manager's LIVE mode.
+ * That is self-erasing: the #689 dir-cap firing, a disk-full, or an FS write
+ * error all drop the manager out of WRITE mode mid-session, so at the very
+ * moment SD output starts being skipped the condition that counts the skip
+ * becomes false. SdDroppedBytes stayed at 0 while the archive copy quietly
+ * stopped growing, and STATS looked healthy.
+ *
+ * Latched at Streaming_Start and never re-read from the manager, so the
+ * expectation survives whatever happens to SD during the session. Only the
+ * USB+SD override path needs it — an ActiveInterface of SD or UsbAndSd is
+ * already an unconditional expectation. */
+static volatile bool gSdExpectedThisSession = false;
+
 // Log-once flags: each error condition logs once per session via
 // LOG_E_SESSION / LOG_I_SESSION macros (gSessionOneShot bitmask in Logger).
 // All reset in Streaming_ClearStats() via Logger_ResetSessionOneShots().
@@ -1585,6 +1600,43 @@ static void Streaming_Start(void) {
                  * excluded, no registers written (pure count). */
                 gPrimingPending =
                         (MC12b_ComputeScanList(true, false, NULL, NULL) > 0u);
+                /* #691: decide the SD expectation ONCE, here, from what this
+                 * session actually asked for.
+                 *
+                 * Deliberately not in Streaming_ClearStats — a client may call
+                 * SYST:STR:STATS:CLEar mid-session, and clearing it there would
+                 * drop the expectation for the rest of a session whose SD
+                 * logging had already stopped, which is the accounting hole
+                 * this fixes.
+                 *
+                 * And deliberately NOT re-asserted from the encode path. An
+                 * earlier revision latched it there whenever SD was in WRITE
+                 * mode, which a standalone SYST:STOR:SD:BENCHmark also enters:
+                 * running a benchmark during a USB-only stream would latch an
+                 * SD expectation the session never had, and every packet after
+                 * the benchmark restored mode=NONE would be counted as an SD
+                 * drop with no in-session recovery. Reading the live mode had
+                 * self-corrected there, so that was a regression this fix
+                 * introduced (audit of #752). Session intent is fixed at start;
+                 * nothing that happens later should redefine it. */
+                {
+                    const sd_card_manager_settings_t* sdCfg =
+                        (const sd_card_manager_settings_t*)BoardRunTimeConfig_Get(
+                            BOARDRUNTIME_SD_CARD_SETTINGS);
+                    /* No NULL check. BoardRunTimeConfig_Get() is a switch
+                     * that returns NULL only for an INVALID parameter (its
+                     * default / NUM_OF_ELEMENTS branch); every named case
+                     * returns the address of a member of a static struct.
+                     * BOARDRUNTIME_SD_CARD_SETTINGS is a compile-time constant
+                     * naming a real case, so this call cannot reach that
+                     * branch. Guarding here would also be inconsistent with
+                     * every other call site (CLAUDE.md standing rule). */
+                    gSdExpectedThisSession =
+                        sdCfg->enable &&
+                        (sdCfg->mode == SD_CARD_MANAGER_MODE_WRITE) &&
+                        (gpRuntimeConfigStream->ActiveInterface !=
+                            StreamingInterface_WiFi);
+                }
                 // #670: inform (log only) about any Type 2 threshold whose channel
                 // isn't in this session's scan — it won't monitor stream samples,
                 // but stays armed for idle/MEAS and keeps its latch (persistence).
@@ -2766,11 +2818,15 @@ void streaming_Task(void) {
             // encoded packet is silently discarded.  Count these drops so
             // SYST:STR:STATS? is accurate.
             {
+                /* #691: the override term is the session LATCH, not the SD
+                 * manager's live mode. Reading the live mode made this
+                 * self-erasing — the same events that stop SD logging
+                 * mid-session also clear WRITE mode, so the skip stopped
+                 * being counted exactly when it started happening. */
                 bool sdExpected = hasSD || (
                     pRunTimeStreamConf->ActiveInterface == StreamingInterface_SD ||
                     pRunTimeStreamConf->ActiveInterface == StreamingInterface_UsbAndSd ||
-                    (pSDCardSettings && pSDCardSettings->enable &&
-                     pSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE &&
+                    (gSdExpectedThisSession &&
                      pRunTimeStreamConf->ActiveInterface != StreamingInterface_WiFi));
                 bool sdWritten = hasSD && gSdFileWasReady;
 
