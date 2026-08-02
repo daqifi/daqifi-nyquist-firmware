@@ -2995,10 +2995,20 @@ static void SCPI_SyncOperSdBit(void) {
     const sd_card_manager_settings_t* sd =
         (const sd_card_manager_settings_t*)BoardRunTimeConfig_Get(
             BOARDRUNTIME_SD_CARD_SETTINGS);
-    /* enable+WRITE alone is NOT the truth: measured on the bench, a #689
-     * dir-cap refusal stops logging while LEAVING mode at WRITE, so that
-     * predicate keeps reporting "logging active" through exactly the failure
-     * this is meant to expose. The refusal flags are the terminal-stop signal.
+    /* The refusal flags are belt-and-braces, not the load-bearing term.
+     *
+     * Correcting my own earlier comment here: it claimed a #689 dir-cap
+     * refusal "leaves mode at WRITE". It does not — that path sets
+     * mode = SD_CARD_MANAGER_MODE_NONE (sd_card_manager.c), and a mid-session
+     * rotation re-enters OPEN_FILE and hits the same path. What I actually
+     * observed on the bench was the cap firing LATER than my two fixed
+     * sample points, not mode persisting; I mis-attributed the timing to a
+     * state that never held. enable+WRITE alone would in fact have been
+     * sufficient.
+     *
+     * The flags are kept because they also cover the disk-full stop and cost
+     * nothing, but they are defence in depth rather than the reason this
+     * works.
      *
      * Deliberately NOT sd_card_manager_IsWriteReady(): that also requires an
      * open handle in WRITE_TO_FILE state, which is briefly false during every
