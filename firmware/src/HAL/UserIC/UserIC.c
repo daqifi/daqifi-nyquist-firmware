@@ -380,7 +380,19 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
     *(r->con) = conCfg | IC_CON_ON;   /* enable — full store, not a RMW */
 
     /* Collect: stop when the buffer fills, or minEdges captured and the gate has
-     * elapsed, or the hard timeout expires (no/too-slow signal). */
+     * elapsed, or the hard timeout expires (no/too-slow signal).
+     *
+     * hardMs is scaled by (minEdges+1)/minEdges because the entry-0 drop below
+     * (#760) makes us wait for one MORE edge than the caller asked for. Without
+     * this the low-frequency floor silently rises ~1.5x — a 0.3 Hz square that
+     * measured fine before would return "no (or too-slow) signal", and
+     * PERiod?/PWIDth?/DUTY? expose no gate parameter, so a client would have no
+     * way to compensate. Scaling keeps the documented ~0.4 Hz floor intact; the
+     * only cost is that a genuinely dead signal takes proportionally longer to
+     * be reported. */
+    const uint32_t hardMsEff = (minEdges > 0u)
+            ? (uint32_t)((uint64_t)hardMs * (minEdges + 1u) / minEdges)
+            : hardMs;
     TickType_t start = xTaskGetTickCount();
     for (;;) {
         uint16_t c = gM.count;
@@ -389,7 +401,7 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
         /* minEdges + 1: entry 0 is discarded below (#760), so collect one extra
          * to leave the caller the count it actually asked for. */
         if (c >= (uint16_t)(minEdges + 1u) && el >= pdMS_TO_TICKS(gateMs)) { break; }
-        if (el >= pdMS_TO_TICKS(hardMs)) { break; }
+        if (el >= pdMS_TO_TICKS(hardMsEff)) { break; }
         vTaskDelay(pdMS_TO_TICKS(2));
     }
 
