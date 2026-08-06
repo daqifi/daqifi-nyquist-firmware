@@ -189,7 +189,12 @@ static void uart_ApplyPps(const UartDesc_t* u, bool enable) {
     if (gCfg.rxDio != USER_UART_PIN_NONE) {
         *(u->rxr) = enable ? (uint32_t)uart_RxPpsval(gCfg.rxDio) : 0u;
     }
-    uart_CfgconUnlockedWrite(CFGCON | (uint32_t)_CFGCON_IOLOCK_MASK);
+        /* #761: DO NOT re-lock. On a bootloader-configured part
+         * IOL1WAY/PMDL1WAY are ON, and FRM DS60001120F 12.3.1.6.2 says a
+         * set BLOCKS the bit from ever being cleared again (until reset).
+         * Setting it here would make this the LAST reconfiguration the
+         * device ever accepts. The unlock above stays - it is idempotent
+         * and still correct on L1WAY=OFF bench parts. */
     __builtin_mtc0(12, 0, st);
 }
 
@@ -198,7 +203,12 @@ static void uart_SetPmd(const UartDesc_t* u, bool enable) {
     uint32_t st = __builtin_disable_interrupts();
     uart_CfgconUnlockedWrite(CFGCON & ~(uint32_t)_CFGCON_PMDLOCK_MASK);
     if (enable) { PMD5CLR = u->pmdMask; } else { PMD5SET = u->pmdMask; }
-    uart_CfgconUnlockedWrite(CFGCON | (uint32_t)_CFGCON_PMDLOCK_MASK);
+        /* #761: DO NOT re-lock. On a bootloader-configured part
+         * IOL1WAY/PMDL1WAY are ON, and FRM DS60001120F 12.3.1.6.2 says a
+         * set BLOCKS the bit from ever being cleared again (until reset).
+         * Setting it here would make this the LAST reconfiguration the
+         * device ever accepts. The unlock above stays - it is idempotent
+         * and still correct on L1WAY=OFF bench parts. */
     __builtin_mtc0(12, 0, st);
 }
 

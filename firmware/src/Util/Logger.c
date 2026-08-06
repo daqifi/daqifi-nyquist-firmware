@@ -219,8 +219,10 @@ static void InitICSPLogging(void)
     PMD5bits.U4MD = 0;      // Enable UART4 module
 
     /* Lock back the system after PPS configuration */
-    CFGCONbits.IOLOCK = 1U;
-    CFGCONbits.PMDLOCK = 1U;
+    /* #761: deliberately NOT re-locked. Dev-only path, but the store is
+     * irreversible on an IOL1WAY/PMDL1WAY=ON part (FRM DS60001120F
+     * 12.3.1.6.2), so enabling the ICSP log would silently kill every
+     * later PPS/PMD reconfiguration on that unit. */
     SYSKEY = 0x33333333U;
     
     /* Restore interrupt state */

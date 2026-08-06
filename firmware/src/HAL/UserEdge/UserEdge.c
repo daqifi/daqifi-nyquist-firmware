@@ -197,7 +197,12 @@ static void edge_SetPps(volatile uint32_t* rpr, uint8_t code) {
     uint32_t st = __builtin_disable_interrupts();
     edge_CfgconUnlockedWrite(CFGCON & ~(uint32_t)_CFGCON_IOLOCK_MASK);
     *rpr = (uint32_t)code;
-    edge_CfgconUnlockedWrite(CFGCON | (uint32_t)_CFGCON_IOLOCK_MASK);
+        /* #761: DO NOT re-lock. On a bootloader-configured part
+         * IOL1WAY/PMDL1WAY are ON, and FRM DS60001120F 12.3.1.6.2 says a
+         * set BLOCKS the bit from ever being cleared again (until reset).
+         * Setting it here would make this the LAST reconfiguration the
+         * device ever accepts. The unlock above stays - it is idempotent
+         * and still correct on L1WAY=OFF bench parts. */
     __builtin_mtc0(12, 0, st);
 }
 
@@ -207,7 +212,12 @@ static void edge_CtrSetPmd(uint8_t u, bool enable) {
     uint32_t st = __builtin_disable_interrupts();
     edge_CfgconUnlockedWrite(CFGCON & ~(uint32_t)_CFGCON_PMDLOCK_MASK);
     if (enable) { PMD4CLR = gCtr[u].pmdMask; } else { PMD4SET = gCtr[u].pmdMask; }
-    edge_CfgconUnlockedWrite(CFGCON | (uint32_t)_CFGCON_PMDLOCK_MASK);
+        /* #761: DO NOT re-lock. On a bootloader-configured part
+         * IOL1WAY/PMDL1WAY are ON, and FRM DS60001120F 12.3.1.6.2 says a
+         * set BLOCKS the bit from ever being cleared again (until reset).
+         * Setting it here would make this the LAST reconfiguration the
+         * device ever accepts. The unlock above stays - it is idempotent
+         * and still correct on L1WAY=OFF bench parts. */
     __builtin_mtc0(12, 0, st);
     for (volatile int d = 0; enable && d < 8; d++) { /* let the module clock settle */ }
 }
