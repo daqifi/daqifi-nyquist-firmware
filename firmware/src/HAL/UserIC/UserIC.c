@@ -322,6 +322,22 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
         if (err) { *err = "IC: DIO pin is not input-capture reachable"; }
         return false;
     }
+    /* Capacity contract (#760). Dropping entry 0 below means this can return at
+     * most IC_CAP_MAX-1 edges, so a request for IC_CAP_MAX or more could never
+     * be satisfied: it would spin to the hard timeout and then report "no
+     * signal" on a perfectly good input. Reject it up front with a
+     * distinguishable error instead of a misleading one.
+     *
+     * Checked BEFORE the mutex and the channel claim so the early return has
+     * nothing to unwind. Every caller today asks for 2 or 3 (UserIC.c
+     * MeasureFrequency/Period/PulseWidth/Duty), so this guards the next one.
+     *
+     * It also makes the (minEdges + 1u) arithmetic in the collect loop safe:
+     * minEdges is bounded far below UINT16_MAX here, so it cannot wrap. */
+    if (minEdges >= (uint16_t)IC_CAP_MAX) {
+        if (err) { *err = "IC: requested edge count exceeds capture capacity"; }
+        return false;
+    }
     if (xSemaphoreTake(ic_Mutex(), pdMS_TO_TICKS(IC_LOCK_WAIT_MS)) != pdTRUE) {
         /* Another measurement holds the lock (up to hardMs). Fail fast with a
          * busy error instead of blocking this SCPI task — the lock is shared
@@ -390,14 +406,28 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
     *(r->con) = conCfg | IC_CON_ON;   /* enable — full store, not a RMW */
 
     /* Collect: stop when the buffer fills, or minEdges captured and the gate has
-     * elapsed, or the hard timeout expires (no/too-slow signal). */
+     * elapsed, or the hard timeout expires (no/too-slow signal).
+     *
+     * hardMs is scaled by (minEdges+1)/minEdges because the entry-0 drop below
+     * (#760) makes us wait for one MORE edge than the caller asked for. Without
+     * this the low-frequency floor silently rises ~1.5x — a 0.3 Hz square that
+     * measured fine before would return "no (or too-slow) signal", and
+     * PERiod?/PWIDth?/DUTY? expose no gate parameter, so a client would have no
+     * way to compensate. Scaling keeps the documented ~0.4 Hz floor intact; the
+     * only cost is that a genuinely dead signal takes proportionally longer to
+     * be reported. */
+    const uint32_t hardMsEff = (minEdges > 0u)
+            ? (uint32_t)((uint64_t)hardMs * (minEdges + 1u) / minEdges)
+            : hardMs;
     TickType_t start = xTaskGetTickCount();
     for (;;) {
         uint16_t c = gM.count;
         TickType_t el = xTaskGetTickCount() - start;
         if (c >= IC_CAP_MAX) { break; }
-        if (c >= minEdges && el >= pdMS_TO_TICKS(gateMs)) { break; }
-        if (el >= pdMS_TO_TICKS(hardMs)) { break; }
+        /* minEdges + 1: entry 0 is discarded below (#760), so collect one extra
+         * to leave the caller the count it actually asked for. */
+        if (c >= (uint16_t)(minEdges + 1u) && el >= pdMS_TO_TICKS(gateMs)) { break; }
+        if (el >= pdMS_TO_TICKS(hardMsEff)) { break; }
         vTaskDelay(pdMS_TO_TICKS(2));
     }
 
@@ -420,9 +450,40 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
     ic_SetPps((uint8_t)unit, 0u);
     gM.active = false;
 
-    uint16_t n = gM.count;
-    if (n > IC_CAP_MAX) { n = IC_CAP_MAX; }
-    for (uint16_t i = 0; i < n; i++) { out[i] = gM.ts[i]; outLvl[i] = gM.lvl[i]; }
+    /* Discard the FIRST captured entry (#760).
+     *
+     * Enabling the unit (the `conCfg | IC_CON_ON` store above) while the routed
+     * pin is already at the active level latches a capture at the ARM INSTANT
+     * rather than at a signal edge: the edge detector's prior-sample state comes
+     * up 0 out of module reset, so an already-high pin reads as a 0->1
+     * transition. ts[0] is then the arm time, and the first interval is the
+     * REMAINING active time - genuinely short, correctly level-labelled, and
+     * perfectly monotonic, so nothing downstream rejects it.
+     *
+     * Every reducer then consumes it. Measured on a 1 kHz 50% square (LA ground
+     * truth 499.814 us +/- 0.035 over 10,072 pulses):
+     *
+     *   PWIDth?     up to 12%  low   (phantom sits in a mean over ~8 intervals)
+     *   DUTY?       up to 3.7% low   (partially cancels in the ratio)
+     *   PERiod?     up to 3.3% low   (diluted across 15 intervals in the span)
+     *   FREQuency?  as PERiod?       (same reducer)
+     *
+     * The error walks linearly with arm phase and snaps back - a sawtooth, not
+     * noise - because the arm instant beats against the signal period. Confirmed
+     * by prediction: the model put the DUTY? floor at 46.3% and the PERiod?
+     * floor at 967.0 us; the bench measured 46.56% and 967.55 us.
+     *
+     * Dropping entry 0 unconditionally is deliberate. When the pin happens to be
+     * inactive at arm there is no phantom and this discards one real edge, which
+     * costs one edge of resolution and nothing else - cheaper than trying to
+     * detect the condition, and correct regardless of the exact arm-time
+     * mechanism. */
+    uint16_t raw_n = gM.count;
+    if (raw_n > IC_CAP_MAX) { raw_n = IC_CAP_MAX; }
+    uint16_t n = (raw_n > 0u) ? (uint16_t)(raw_n - 1u) : 0u;
+    for (uint16_t i = 0; i < n; i++) {
+        out[i] = gM.ts[i + 1u]; outLvl[i] = gM.lvl[i + 1u];
+    }
     bool ov = gM.overflow;
 
     DIO_ReleaseChannel(dio, DIO_OWNER_IC);
