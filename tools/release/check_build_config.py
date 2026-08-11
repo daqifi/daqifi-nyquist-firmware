@@ -46,6 +46,18 @@ def main():
         else:
             print(f'  {"IN " if included else "OUT"}  {name}')
 
+    missing = [n for n, v in state.items() if v is None]
+    if missing:
+        # An unlisted script is not "excluded" — the project has lost the entry
+        # (MPLAB X prunes this file on config switches; it stripped eight source
+        # files earlier in this work). Treat it as a failure rather than
+        # inferring intent from an absence.
+        print(f'\nNOT DETERMINABLE: {missing} not listed in the project at all.\n'
+              'MPLAB X prunes configurations.xml on config switches — restore it\n'
+              '(git checkout -- firmware/daqifi.X/nbproject/configurations.xml)\n'
+              'and regenerate the makefiles before trusting a build.')
+        return 1
+
     included = [n for n, v in state.items() if v]
     if len(included) == 1:
         layout = ('bootloader-linked (release)' if included[0] == SCRIPTS[1]

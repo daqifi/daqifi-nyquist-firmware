@@ -29,8 +29,13 @@ BOOT_FLASH = 0x1FC00000          # config words + crt0 live here
 
 
 def parse_hex(path):
-    """Return {addr: byte}. Raises on a malformed record."""
-    mem, hi = {}, 0
+    """Return (mem, saw_eof). Raises ValueError on a malformed record.
+
+    A truncated hex (download cut short, partial write) parses fine up to the
+    cut and would otherwise be judged on whatever made it to disk — so the
+    EOF record is reported and the caller treats its absence as a failure.
+    """
+    mem, hi, saw_eof = {}, 0, False
     with open(path) as fh:
         for lineno, raw in enumerate(fh, 1):
             ln = raw.strip()
@@ -42,7 +47,11 @@ def parse_hex(path):
                 rtype = int(ln[7:9], 16)
                 data = ln[9:9 + 2 * n]
             except ValueError as exc:
-                raise SystemExit(f'{path}:{lineno}: malformed record: {exc}')
+                raise ValueError(f'line {lineno}: malformed record: {exc}')
+            if len(data) != 2 * n:
+                raise ValueError(
+                    f'line {lineno}: record claims {n} bytes but carries '
+                    f'{len(data) // 2}')
             if rtype == 0x04:            # extended linear address
                 hi = int(data, 16)
             elif rtype == 0x02:          # extended segment address
@@ -51,7 +60,9 @@ def parse_hex(path):
                 base = (hi << 16) | off
                 for i in range(n):
                     mem[base + i] = int(data[2 * i:2 * i + 2], 16)
-    return mem
+            elif rtype == 0x01:
+                saw_eof = True
+    return mem, saw_eof
 
 
 def main():
@@ -61,10 +72,16 @@ def main():
     a = ap.parse_args()
 
     try:
-        mem = parse_hex(a.hex)
+        mem, saw_eof = parse_hex(a.hex)
     except OSError as exc:
         print(f'CANNOT CHECK: {exc}')
         return 2
+    except ValueError as exc:
+        # A malformed hex is a FAILURE, not an un-checkable condition: shipping
+        # it would be worse than shipping the wrong layout.
+        print(f'checking {a.hex}\n  FAIL {exc}\n\nNOT SHIPPABLE - '
+              f'the file is not valid Intel HEX.')
+        return 1
     if not mem:
         print(f'CANNOT CHECK: {a.hex} contains no data records')
         return 2
@@ -100,9 +117,26 @@ def main():
     else:
         notes.append('no boot-flash records (config words correctly absent)')
 
-    # 4. bulk of code above the app base
-    if not any(x >= APP_BASE for x in mem):
+    # 4. the application must START at APP_BASE. Merely having *some* data above
+    #    it would accept an image whose payload begins at the wrong offset, which
+    #    the bootloader would then jump into the middle of.
+    above = [x for x in mem if x >= APP_BASE]
+    if not above:
         problems.append(f'no data at or above 0x{APP_BASE:08X} - hex has no application')
+    elif min(above) != APP_BASE:
+        problems.append(
+            f'application starts at 0x{min(above):08X}, expected exactly '
+            f'0x{APP_BASE:08X} - the bootloader hands off assuming that offset')
+    else:
+        notes.append(f'application starts at 0x{APP_BASE:08X}')
+
+    # 5. the EOF record must be present
+    if not saw_eof:
+        problems.append('no :00000001FF end-of-file record - the hex is '
+                        'truncated; anything judged from it is judged from a '
+                        'partial file')
+    else:
+        notes.append('end-of-file record present')
 
     # 5. optional: the map's origin
     if a.map:

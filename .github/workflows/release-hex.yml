@@ -30,11 +30,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Self-test the guard against known-good and known-bad shapes
+      - name: Self-test the release-hex guard
         run: |
           set -euo pipefail
           python3 -m py_compile tools/release/check_release_hex.py
           python3 tools/release/selftest_release_hex.py
+
+      - name: Check the build-config selects exactly one linker script
+        # The guard existed but nothing ran it, so an ambiguous or pruned
+        # configurations.xml would still reach a release. This is the check
+        # that actually catches the #761-class divergence at PR time.
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/release/check_build_config.py
+          python3 tools/release/check_build_config.py
 
       - name: Check the candidate artifact
         if: ${{ inputs.hex_path != '' }}

@@ -27,7 +27,8 @@ def ext(hi):
            f'{((-sum(body)) & 0xFF):02X}\n'
 
 
-def build(path, *, reset_bytes=408, boot_flash=False, app=True):
+def build(path, *, reset_bytes=408, boot_flash=False, app=True,
+          app_addr=0x0480, eof=True, corrupt=False):
     out = [ext(0x1D00)]
     written = 0
     addr = 0x0000
@@ -37,11 +38,14 @@ def build(path, *, reset_bytes=408, boot_flash=False, app=True):
         addr += n
         written += n
     if app:
-        out.append(rec(0x0480, [0x55] * 16))
+        out.append(rec(app_addr, [0x55] * 16))
     if boot_flash:
         out.append(ext(0x1FC0))
         out.append(rec(0x0000, [0x77] * 16))
-    out.append(':00000001FF\n')
+    if corrupt:
+        out.append(':10000000GARBAGE\n')   # non-hex payload
+    if eof:
+        out.append(':00000001FF\n')
     path.write_text(''.join(out))
 
 
@@ -56,6 +60,9 @@ CASES = [
     ('standalone: has boot flash', dict(boot_flash=True), 1),
     ('wrong reset size', dict(reset_bytes=1152), 1),
     ('no application payload', dict(app=False), 1),
+    ('app starts at wrong offset', dict(app_addr=0x0500), 1),
+    ('truncated: no EOF record', dict(eof=False), 1),
+    ('malformed record', dict(corrupt=True), 1),
 ]
 
 def main():
