@@ -243,7 +243,14 @@ static void edge_SetIntPriority(uint8_t u) {
      * write. All call sites (boot + arm) run in task context (app_SystemInit runs
      * inside the pri-1 APP_FREERTOS_Tasks task), so a critical section is the
      * correct guard (project atomicity rule; Qodo #705). */
-    taskENTER_CRITICAL();
+    /* RAW mask, not taskENTER_CRITICAL: UserEdge_Initialize calls this at
+     * boot, and on the PIC32MZ FreeRTOS port vTaskExitCritical() does NOT
+     * re-enable interrupts when the scheduler is not yet running — a
+     * critical section here would leave interrupts masked for the rest of
+     * boot. The RMW still needs to be atomic (IPC4 is shared between INT3
+     * and IC3), so only the mechanism changes (Qodo #705).
+     */
+    uint32_t st = __builtin_disable_interrupts();
     switch (u) {
         case 0: IPC2bits.INT1IP = 3; IPC2bits.INT1IS = 0; break;
         case 1: IPC3bits.INT2IP = 3; IPC3bits.INT2IS = 0; break;
@@ -251,19 +258,26 @@ static void edge_SetIntPriority(uint8_t u) {
         case 3: IPC5bits.INT4IP = 3; IPC5bits.INT4IS = 0; break;
         default: break;
     }
-    taskEXIT_CRITICAL();
+    __builtin_mtc0(12, 0, st);
 }
 
 static void edge_SetCtrPriority(uint8_t u) {
     /* RMW on IPC9/IPC10 shared with IC8/IC9 priority fields — guard as in
      * edge_SetIntPriority (task-context critical section; Qodo #705). */
-    taskENTER_CRITICAL();
+    /* RAW mask, not taskENTER_CRITICAL: UserEdge_Initialize calls this at
+     * boot, and on the PIC32MZ FreeRTOS port vTaskExitCritical() does NOT
+     * re-enable interrupts when the scheduler is not yet running — a
+     * critical section here would leave interrupts masked for the rest of
+     * boot. The RMW still needs to be atomic (IPC4 is shared between INT3
+     * and IC3), so only the mechanism changes (Qodo #705).
+     */
+    uint32_t st = __builtin_disable_interrupts();
     switch (u) {
         case 0: IPC9bits.T8IP  = 3; IPC9bits.T8IS  = 0; break;
         case 1: IPC10bits.T9IP = 3; IPC10bits.T9IS = 0; break;
         default: break;
     }
-    taskEXIT_CRITICAL();
+    __builtin_mtc0(12, 0, st);
 }
 
 /* ------------------------------------------------------------------ */
@@ -407,12 +421,36 @@ bool UserEdge_EventEnable(uint8_t dio, uint8_t mode, const char** err) {
                 if (err) { *err = "DIO:EVENt: DIO is not the active event pin for its INT unit"; }
                 ok = false;
             } else {
+                /* Disarm under an interrupt mask (Qodo #705).
+                 *
+                 * IEC0CLR does not stop an ISR that is ALREADY executing, and
+                 * this unit's ISR runs above the kernel-managed threshold, so
+                 * without masking there are two races:
+                 *
+                 *  1. an in-flight ISR reaches edge_FifoPush AFTER the task
+                 *     zeroes gIntState[u].dio, enqueueing an event whose pin
+                 *     reads 0 — a bogus DIO number to whoever pops it;
+                 *  2. in USER_EDGE_BOTH the in-flight ISR ends with IEC0SET to
+                 *     retarget the opposite edge. Landing after the task's
+                 *     IEC0CLR, that leaves the interrupt ENABLED on a pin the
+                 *     caller was told is disarmed, and the next edge runs an
+                 *     ISR against enabled=false, dio=0.
+                 *
+                 * Masking the whole teardown closes both: the ISR either
+                 * finished before the mask (its IEC0SET then undone by our
+                 * IEC0CLR) or cannot start until the state is torn down. */
+                uint32_t st = __builtin_disable_interrupts();
                 IEC0CLR = r->ieMask;
                 IFS0CLR = r->ifMask;
-                edge_SetPps(r->rpr, 0u);
                 gIntState[u].enabled = false;
                 gIntState[u].stormed = false;
                 gIntState[u].dio = 0u;   /* drop stale pin ref, symmetric w/ counter (Qodo #705) */
+                __builtin_mtc0(12, 0, st);
+
+                /* PPS unroute AFTER the mask: a SYSKEY/CFGCON sequence should
+                 * not run with interrupts globally disabled, and by here no
+                 * ISR can reach this unit. */
+                edge_SetPps(r->rpr, 0u);
                 DIO_ReleaseChannel(dio, DIO_OWNER_EDGE);
                 DIO_RestoreChannel(dio);
             }
