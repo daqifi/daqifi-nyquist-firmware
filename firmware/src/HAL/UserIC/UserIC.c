@@ -312,6 +312,22 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
         if (err) { *err = "IC: DIO pin is not input-capture reachable"; }
         return false;
     }
+    /* Capacity contract (#760). Dropping entry 0 below means this can return at
+     * most IC_CAP_MAX-1 edges, so a request for IC_CAP_MAX or more could never
+     * be satisfied: it would spin to the hard timeout and then report "no
+     * signal" on a perfectly good input. Reject it up front with a
+     * distinguishable error instead of a misleading one.
+     *
+     * Checked BEFORE the mutex and the channel claim so the early return has
+     * nothing to unwind. Every caller today asks for 2 or 3 (UserIC.c
+     * MeasureFrequency/Period/PulseWidth/Duty), so this guards the next one.
+     *
+     * It also makes the (minEdges + 1u) arithmetic in the collect loop safe:
+     * minEdges is bounded far below UINT16_MAX here, so it cannot wrap. */
+    if (minEdges >= (uint16_t)IC_CAP_MAX) {
+        if (err) { *err = "IC: requested edge count exceeds capture capacity"; }
+        return false;
+    }
     if (xSemaphoreTake(ic_Mutex(), pdMS_TO_TICKS(IC_LOCK_WAIT_MS)) != pdTRUE) {
         /* Another measurement holds the lock (up to hardMs). Fail fast with a
          * busy error instead of blocking this SCPI task — the lock is shared
