@@ -145,7 +145,25 @@ void GPIO_Initialize ( void )
     RPG8R = 6;
 
         /* Lock back the system after PPS configuration */
-    CFGCONbits.IOLOCK = 1U;
+    /* ===================== DO NOT RESTORE (#761) =====================
+     * The re-lock that MCC generates here is DELETED ON PURPOSE.
+     *
+     * Devices configured by the BOOTLOADER carry IOL1WAY/PMDL1WAY = ON.
+     * FRM DS60001120F 12.3.1.6.2: setting this bit "blocks [it] from being
+     * cleared after it has been set once ... the only way to clear the bit
+     * ... is to perform a device Reset."
+     *
+     * So this one store would permanently disable runtime PPS/PMD and kill
+     * the whole DIO-terminal family (#665 SPI, #666 IC, #667 edge, #668
+     * clocks, user I2C/UART) on every fielded unit. Config words cannot be
+     * fixed in the field: erratum #45 (RTSP of config words, "no
+     * workaround") and the bootloader refuses to program them.
+     *
+     * The bit resets to 0, and the bootloader hands off by JUMP not reset,
+     * so leaving it alone is all that is required.
+     *
+     * If an MCC regeneration puts this line back, DELETE IT AGAIN.
+     * ================================================================= */
 
     SYSKEY = 0x00000000U;
 

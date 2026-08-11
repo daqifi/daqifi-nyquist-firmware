@@ -157,7 +157,12 @@ static void ic_SetPps(uint8_t u, uint8_t code) {
     uint32_t st = __builtin_disable_interrupts();
     ic_CfgconUnlockedWrite(CFGCON & ~(uint32_t)_CFGCON_IOLOCK_MASK);
     *(gIc[u].rpr) = (uint32_t)code;
-    ic_CfgconUnlockedWrite(CFGCON | (uint32_t)_CFGCON_IOLOCK_MASK);
+        /* #761: DO NOT re-lock. On a bootloader-configured part
+         * IOL1WAY/PMDL1WAY are ON, and FRM DS60001120F 12.3.1.6.2 says a
+         * set BLOCKS the bit from ever being cleared again (until reset).
+         * Setting it here would make this the LAST reconfiguration the
+         * device ever accepts. The unlock above stays - it is idempotent
+         * and still correct on L1WAY=OFF bench parts. */
     __builtin_mtc0(12, 0, st);
 }
 
@@ -170,7 +175,12 @@ static void ic_SetPmd(uint8_t u, bool enable) {
     uint32_t st = __builtin_disable_interrupts();
     ic_CfgconUnlockedWrite(CFGCON & ~(uint32_t)_CFGCON_PMDLOCK_MASK);
     if (enable) { PMD3CLR = (1u << u); } else { PMD3SET = (1u << u); }
-    ic_CfgconUnlockedWrite(CFGCON | (uint32_t)_CFGCON_PMDLOCK_MASK);
+        /* #761: DO NOT re-lock. On a bootloader-configured part
+         * IOL1WAY/PMDL1WAY are ON, and FRM DS60001120F 12.3.1.6.2 says a
+         * set BLOCKS the bit from ever being cleared again (until reset).
+         * Setting it here would make this the LAST reconfiguration the
+         * device ever accepts. The unlock above stays - it is idempotent
+         * and still correct on L1WAY=OFF bench parts. */
     __builtin_mtc0(12, 0, st);
     /* PMD ungate needs a few clocks to settle before the module SFRs are live. */
     for (volatile int d = 0; enable && d < 8; d++) { /* brief settle */ }
