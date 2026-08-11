@@ -1,0 +1,41 @@
+name: release-hex-shape
+
+# A release HEX must be BOOTLOADER-LINKED. The in-app updater programs program
+# flash only, so a standalone-linked image silently loses its config words on a
+# customer device — which is how firmware #761 shipped a dead DIO-terminal
+# family while every bench unit (PICkit-flashed standalone) worked fine.
+#
+# Runs on any PR touching the release tooling or the project file that decides
+# the layout, and on demand for a candidate artifact.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/release/**'
+      - 'firmware/daqifi.X/nbproject/configurations.xml'
+      - '.github/workflows/release-hex.yml'
+  workflow_dispatch:
+    inputs:
+      hex_path:
+        description: 'Path to a candidate release .hex (checked out in this repo)'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Self-test the guard against known-good and known-bad shapes
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/release/check_release_hex.py
+          python3 tools/release/selftest_release_hex.py
+
+      - name: Check the candidate artifact
+        if: ${{ inputs.hex_path != '' }}
+        run: python3 tools/release/check_release_hex.py "${{ inputs.hex_path }}"
