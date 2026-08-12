@@ -365,6 +365,13 @@ typedef void (*ListChunkCallback)(const uint8_t* data, size_t len);
 
 // Static callback for sending directory listing chunks
 static void sd_listdir_send_chunk(const uint8_t* data, size_t len) {
+    /* #754: once an abort is pending, stop handing chunks to a transport that
+     * is not draining. Each DataReadyCB burns USB_TRANSFER_MAX_RETRIES (~10 s)
+     * before giving up, so continuing to send is what turns one stalled peer
+     * into a multi-minute SD lockout for every other command. */
+    if (gTransferAbortRequested) {
+        return;
+    }
     if (len > 0) {
         LOG_D("[SD] Sending chunk: %d bytes\r\n", (int)len);
         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_LIST_DIRECTORY, (uint8_t*)data, len);
@@ -390,6 +397,12 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
 
     memset(newPath, 0, sizeof (newPath));
     memset(&stat, 0, sizeof (stat));
+
+    /* Clear on entry, exactly as the READ_FROM_FILE loop does. An abort
+     * requested while no transfer was running would otherwise be latched and
+     * kill the NEXT listing instead of the one it was meant for (#754). */
+    gTransferAbortRequested = false;
+
     LOG_D("[SD] ListFiles: Opening directory '%s'\r\n", dirPath);
 
     SYS_FS_HANDLE rootHandle = SYS_FS_DirOpen(dirPath);
@@ -421,6 +434,29 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
     }
 
     while (sp >= 0) {
+        /* #754: the LIST path never consumed this flag — #753 added it with a
+         * single consumer at the top of the READ_FROM_FILE loop. So a listing
+         * to a connected-but-stalled peer walked the entire tree, ~10 s per
+         * chunk, holding gSDOpMutex throughout and rejecting every other SD
+         * command with "SD card busy".
+         *
+         * Unwind the WHOLE stack rather than returning directly: each frame
+         * holds an open SYS_FS directory handle, and bailing out without
+         * closing them leaks handles for the rest of the session. */
+        if (gTransferAbortRequested) {
+            gTransferAbortRequested = false;
+            LOG_E("[SD] ListFiles: ABORTED (peer not draining), closing %d dir handle(s)",
+                  sp + 1);
+            while (sp >= 0) {
+                if (SYS_FS_DirClose(gListDirStack[sp].handle) == SYS_FS_RES_FAILURE) {
+                    LOG_E("[SD] ListFiles: Failed to close directory on abort, error=%d",
+                          SYS_FS_Error());
+                }
+                sp--;
+            }
+            return;
+        }
+
         if (SYS_FS_DirRead(gListDirStack[sp].handle, &stat) == SYS_FS_RES_FAILURE) {
             SYS_FS_ERROR err = SYS_FS_Error();
             LOG_E("[SD] ListFiles: Failed to read directory '%s', error=%d",
