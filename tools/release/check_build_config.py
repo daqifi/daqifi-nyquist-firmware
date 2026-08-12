@@ -21,6 +21,21 @@ from pathlib import Path
 DEFAULT = Path(__file__).resolve().parents[2] / \
     'firmware/daqifi.X/nbproject/configurations.xml'
 SCRIPTS = ('p32MZ2048EFM144.ld', 'old_hv2_bootld.ld')
+CONF = 'default'   # the configuration cut_release.sh builds
+
+
+def conf_block(text, conf):
+    """Return just the <conf name="conf"> ... section, or None if absent.
+
+    Bounded by the NEXT <conf name=...> (or end of file) rather than by a
+    </conf> tag, so a nested close tag cannot end the block early.
+    """
+    m = re.search(r'<conf\s+name="' + re.escape(conf) + r'"', text)
+    if not m:
+        return None
+    rest = text[m.end():]
+    nxt = re.search(r'<conf\s+name="', rest)
+    return rest[:nxt.start()] if nxt else rest
 
 
 def main():
@@ -31,12 +46,24 @@ def main():
         print(f'CANNOT CHECK: {exc}')
         return 2
 
+    # Scope to the conf actually built. configurations.xml carries a full <item>
+    # set PER CONFIGURATION — three copies of each linker script (default, Nq1,
+    # Nq3). An unscoped whole-file search silently falls through to the Nq1 copy
+    # when the default-conf entry is the one that got pruned, which is exactly
+    # the state this guard exists to catch: it would report OK while
+    # cut_release.sh (which scopes its own lookup with awk bounded by
+    # <conf name="default">) dies at release time on its precondition.
+    block = conf_block(text, CONF)
+    if block is None:
+        print(f'CANNOT CHECK: no <conf name="{CONF}"> block in {path}')
+        return 2
+
     state = {}
     for name in SCRIPTS:
         # attributes span multiple lines in MPLAB X output, so DOTALL and a
         # bounded gap rather than a single-line match
         m = re.search(r'<item\s+path="[^"]*' + re.escape(name) +
-                      r'"\s+ex="(true|false)"', text, re.S)
+                      r'"\s+ex="(true|false)"', block, re.S)
         state[name] = (m.group(1) == 'false') if m else None
 
     print(f'checking {path}')

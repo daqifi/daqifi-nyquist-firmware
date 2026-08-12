@@ -35,4 +35,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m py_compile tools/release/check_build_config.py
+          python3 -m py_compile tools/release/selftest_build_config.py
+          # the guard's own logic first — a guard that cannot detect a
+          # pruned default-conf entry would pass this job for the wrong reason
+          python3 tools/release/selftest_build_config.py
           python3 tools/release/check_build_config.py
