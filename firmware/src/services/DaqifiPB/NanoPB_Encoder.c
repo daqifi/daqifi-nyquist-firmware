@@ -759,11 +759,16 @@ size_t Nanopb_Encode(tBoardData* state,
                         message.analog_in_res = pBoardConfig->AInModules.Data[AIn_MC12bADC].Config.MC12b.Resolution;
                         break;
                     case 2:
-                        /* NQ2 / AD7173 stays unencoded: AIn_AD7173 is commented
-                         * out of the AInType enum (AInConfig.h), so there is no
-                         * module slot to read and no NQ2 board config to read it
-                         * from. Restore this together with the enum entry, not
-                         * before — the index would otherwise shift AIn_AD7609. */
+                        /* NQ2 / AD7173 stays unencoded. The board config DOES
+                         * exist — NQ2BoardConfig.c carries .Type = AIn_AD7173
+                         * with .Resolution = 16777216 (24-bit) — but it is
+                         * ex="true" (excluded) in every configuration, and
+                         * AIn_AD7173 is commented out of AInType (AInConfig.h),
+                         * which is why that file compiles nowhere today.
+                         * Restoring NQ2 means restoring the enum entry AND the
+                         * build inclusion together; note the enum entry would
+                         * shift AIn_AD7609, so the case 3 line below must be
+                         * re-checked at the same time. */
                         break;
                     case 3:
                         message.analog_in_res = pBoardConfig->AInModules.Data[AIn_AD7609].Config.AD7609.Resolution;
