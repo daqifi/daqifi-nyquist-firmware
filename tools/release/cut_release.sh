@@ -106,18 +106,50 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Find old_hv2_bootld.ld inside the <conf name="default"> block and flip the ex=
-# flag on the line that follows it. Robust to line moves: locate by block, not
-# hardcoded line numbers. Bound the block by the </conf> close tag rather than
-# the name of the next conf (which could be renamed).
-LN="$(awk '
+# Assert the starting state with the SAME checker CI uses (#767, #769).
+#
+# This began as a hand-rolled grep that only ever inspected old_hv2_bootld.ld
+# and assumed ex= sat on the line AFTER the path. Both assumptions were wrong.
+# Nothing verified p32MZ2048EFM144.ld was excluded, so the flip below could turn
+# ONE selected script into TWO. And configurations.xml contains both single-line
+# and wrapped <item> forms (129 vs 35 today), so an MPLAB X regen that emitted
+# these entries single-line would have aborted a perfectly valid release cut.
+#
+# check_build_config.py parses the file as XML, so attribute layout and ordering
+# cannot fool it, and it exits 0 only for the state this script requires: no
+# custom linker script selected in the default conf. It carries an 11-case
+# selftest. Reusing it keeps ONE definition of "releasable state" rather than
+# two that drift apart.
+python3 "$REPO/tools/release/check_build_config.py" "$CFG" \
+  || die "configurations.xml is not in a releasable state (detail above).
+  Nothing has been modified — this check runs before the linker flip, and
+  cleanup() restores the file from a per-run backup regardless. Fix the
+  selection in MPLAB X (or by hand) and re-run; do NOT 'git checkout' the
+  file unless you also mean to discard your own edits to it."
+
+# Locate the default-conf old_hv2_bootld.ld ex= attribute and flip it.
+#
+# Format-agnostic for the same reason as above: take ex= from the item's own
+# line when it is there, else the first ex= that follows. Scoped to the
+# <conf name="default"> block and bounded a few lines past the item so a
+# malformed file cannot run away.
+EXLN="$(awk '
   /<conf name="default"/ {indef=1}
-  indef && /<\/conf>/      {indef=0}
-  indef && /old_hv2_bootld\.ld"/ {print NR; exit}
+  indef && /<\/conf>/     {indef=0}
+  indef && found && NR > found + 4 {exit}
+  indef && /old_hv2_bootld\.ld"/ {found=NR; if ($0 ~ /ex="/) {print NR; exit} next}
+  indef && found && /ex="/ {print NR; exit}
 ' "$CFG")"
-[ -n "$LN" ] || die "could not locate default-conf old_hv2_bootld.ld item in $CFG"
-EXLN=$((LN + 1))
-grep -q 'ex="true"' <(sed -n "${EXLN}p" "$CFG") || die "expected ex=\"true\" at line $EXLN (got: $(sed -n "${EXLN}p" "$CFG"))"
+[ -n "$EXLN" ] || die "could not locate the default-conf old_hv2_bootld.ld ex= attribute in $CFG"
+EXLINE="$(sed -n "${EXLN}p" "$CFG")"
+# Plain expansion rather than `grep -q ... <(sed ...)`: process substitution
+# needs /dev/fd, which is not guaranteed in every environment this might run in,
+# and reading the line once means the check and the error message cannot
+# disagree about what was actually there.
+case "$EXLINE" in
+  *'ex="true"'*) : ;;
+  *) die "expected ex=\"true\" at line $EXLN (got: $EXLINE)" ;;
+esac
 sed -i "${EXLN}s/ex=\"true\"/ex=\"false\"/" "$CFG"
 echo "  old_hv2_bootld.ld -> included (line $EXLN)"
 
