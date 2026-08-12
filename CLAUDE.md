@@ -729,22 +729,35 @@ Each variant has specific:
 
 #### Switching Between Board Variants
 
-The firmware supports building for different board variants using MPLAB X configurations:
+The firmware supports building for different board variants using MPLAB X configurations.
+
+> **`default` IS the NQ1 configuration.** There is no separate `Nq1` conf — it was
+> deleted because it had silently diverged: it built at **-O1** and lacked the
+> per-file overrides for `FreeRTOS_tasks.c` and `tfm.c`, while `default` builds at
+> **-O3** (see "Compiler Optimization Level"). Every NQ1 image ever flashed, every
+> characterization number in this file, and every release cut came from `default`;
+> `Nq1` was never validated on hardware. All release tooling — `cut_release.sh`,
+> `check_build_config.py`, the CI guard — scopes to `<conf name="default">`.
 
 1. **In MPLAB X IDE**:
-   - Right-click project → Set Configuration → Select "Nq1" or "Nq3"
+   - NQ1: use the `default` configuration (selected on open)
+   - NQ3: Right-click project → Set Configuration → Select "Nq3"
    - Build the project
 
 2. **From Command Line**:
    ```bash
-   # Build NQ1 firmware
+   # Build NQ1 firmware (the `default` configuration)
    "/mnt/c/Program Files/Microchip/MPLABX/v6.30/gnuBins/GnuWin32/bin/make.exe" \
-     -f nbproject/Makefile-Nq1.mk CONF=Nq1 build -j4
+     -f nbproject/Makefile-default.mk CONF=default build -j4
 
    # Build NQ3 firmware
    "/mnt/c/Program Files/Microchip/MPLABX/v6.30/gnuBins/GnuWin32/bin/make.exe" \
      -f nbproject/Makefile-Nq3.mk CONF=Nq3 build -j4
    ```
+
+   ⚠️ **Nq3 currently builds at -O1**, not the -O3 the rest of this document
+   assumes. Tracked separately — do not read NQ3 timing or throughput numbers as
+   comparable to NQ1's until that is resolved.
 
 3. **How It Works**:
    - Each configuration includes/excludes variant-specific files
