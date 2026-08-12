@@ -38,15 +38,16 @@ BOTH_IN = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex="fal
 PRUNED = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex="true"></item>'''
 # p32 selected alone: looks like a harmless "standalone" choice in the IDE, but
 # cut_release.sh only ever flips old_hv2_bootld.ld and never inspects p32, so a
-# release cut from here leaves BOTH scripts selected. Audit finding, PR #765.
+# release cut from here leaves BOTH scripts selected. Tracked as #767.
 P32_ONLY = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex="false"></item>
       <item path="../src/config/default/old_hv2_bootld.ld" ex="true"></item>'''
 
-# Two entries for one script (merge artifact) -- effective flag depends on which
-# the toolchain reads. And attribute order reversed, since XML does not care.
+# Two entries for one script (merge artifact): the effective flag would depend
+# on which one the toolchain reads, so the guard must refuse rather than pick.
 DUPLICATE = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex="true"></item>
       <item path="../src/config/default/old_hv2_bootld.ld" ex="true"></item>
       <item path="../src/config/default/old_hv2_bootld.ld" ex="false"></item>'''
+# Attribute order is not significant in XML; the guard must not depend on it.
 ATTR_REVERSED = '''      <item ex="true" path="../src/config/default/p32MZ2048EFM144.ld"></item>
       <item ex="true" path="../src/config/default/old_hv2_bootld.ld"></item>'''
 
@@ -63,15 +64,29 @@ CASES = [
      'two entries for one script -> refuse, do not read the first'),
     (0, 'attr-order', ATTR_REVERSED,
      'ex= before path= -> XML attribute order is not significant'),
+    (0, 'comment-shadow', STANDALONE,
+     'commented-out conf must not shadow the live one'),
     (2, 'pruned', PRUNED,
      'default-conf entry gone, Nq1 copy present -> must NOT fall through'),
 ]
 
 
-def project(default_items):
+# A commented-out <conf name="default"> preceding the real one. Raised by the
+# pre-merge audit against the old regex parser, which matched text inside the
+# comment and reported the fake block's state. An XML parser discards comments,
+# so this is now structurally impossible — the case pins that.
+COMMENTED_SHADOW = True
+
+
+def project(default_items, shadow=False):
+    ghost = ('  <!-- <conf name="default" type="2">'
+             '<item path="../src/config/default/p32MZ2048EFM144.ld" ex="false">'
+             '</item>'
+             '<item path="../src/config/default/old_hv2_bootld.ld" ex="false">'
+             '</item></conf> -->\n') if shadow else ''
     return f'''<configurationDescriptor version="65">
   <confs>
-    <conf name="default" type="2">
+{ghost}    <conf name="default" type="2">
 {default_items}
     </conf>
     <conf name="Nq1" type="2">
@@ -87,7 +102,8 @@ def main():
     with tempfile.TemporaryDirectory() as td:
         for want, name, items, why in CASES:
             path = Path(td) / f'{name}.xml'
-            path.write_text(project(items), encoding='utf-8')
+            path.write_text(project(items, shadow=(name == 'comment-shadow')),
+                            encoding='utf-8')
             run = subprocess.run([sys.executable, str(GUARD), str(path)],
                                  capture_output=True, text=True)
             got = run.returncode

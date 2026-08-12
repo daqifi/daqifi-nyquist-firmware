@@ -19,8 +19,8 @@ Exit:  0 = release-compatible: NO custom linker script selected. This is the
            fine locally; none may land, because each breaks the release cut.
        2 = could not check (entry or default conf missing)
 """
-import re
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 DEFAULT = Path(__file__).resolve().parents[2] / \
@@ -29,45 +29,43 @@ SCRIPTS = ('p32MZ2048EFM144.ld', 'old_hv2_bootld.ld')
 CONF = 'default'   # the configuration cut_release.sh builds
 
 
-def conf_block(text, conf):
-    """Return just the <conf name="conf"> ... section, or None if absent.
-
-    Bounded by the NEXT <conf name=...> (or end of file) rather than by a
-    </conf> tag, so a nested close tag cannot end the block early.
-    """
-    m = re.search(r'<conf\s+name="' + re.escape(conf) + r'"', text)
-    if not m:
-        return None
-    rest = text[m.end():]
-    nxt = re.search(r'<conf\s+name="', rest)
-    return rest[:nxt.start()] if nxt else rest
+def conf_element(root, conf):
+    """Return the <conf name="conf"> element, or None if absent."""
+    for el in root.iter('conf'):
+        if el.get('name') == conf:
+            return el
+    return None
 
 
-def script_entries(block, name):
-    """Every <item> in `block` whose path basename is `name`, as included-flags.
+def script_entries(conf_el, name):
+    """Every <item> under `conf_el` whose path basename is `name`.
 
-    Parses each tag's attributes separately instead of matching path and ex in
-    a fixed order: attribute order is not significant in XML, and MPLAB X wraps
-    long <item> tags across lines. Returns a LIST so the caller can reject
-    duplicates rather than silently taking whichever entry comes first — the
-    same failure mode as the unscoped whole-file search this guard already had
-    to fix (see conf_block).
+    Returns a LIST of included-flags, so the caller can reject duplicates
+    rather than silently taking whichever entry appears first.
     """
     out = []
-    for tag in re.findall(r'<item\b[^>]*>', block, re.S):
-        p = re.search(r'\bpath="([^"]*)"', tag)
-        e = re.search(r'\bex="(true|false)"', tag)
-        if p and e and p.group(1).rsplit('/', 1)[-1] == name:
-            out.append(e.group(1) == 'false')
+    for item in conf_el.iter('item'):
+        path, ex = item.get('path'), item.get('ex')
+        if path and ex is not None and path.rsplit('/', 1)[-1] == name:
+            out.append(ex == 'false')
     return out
 
 
 def main():
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT
+    # Parse as XML, because it IS XML. Every defect review found in this guard
+    # was a regex artifact a real parser does not have: an unscoped search
+    # reading the Nq1 copy of a pruned entry, a fixed path-then-ex attribute
+    # order, duplicate entries resolved by document position, and a
+    # commented-out block shadowing the live one. ElementTree scopes by tree
+    # structure, ignores attribute order, and discards comments outright.
     try:
-        text = path.read_text(encoding='utf-8', errors='ignore')
+        root = ET.parse(path).getroot()
     except OSError as exc:
         print(f'CANNOT CHECK: {exc}')
+        return 2
+    except ET.ParseError as exc:
+        print(f'CANNOT CHECK: {path} is not well-formed XML: {exc}')
         return 2
 
     # Scope to the conf actually built. configurations.xml carries a full <item>
@@ -77,7 +75,7 @@ def main():
     # the state this guard exists to catch: it would report OK while
     # cut_release.sh (which scopes its own lookup with awk bounded by
     # <conf name="default">) dies at release time on its precondition.
-    block = conf_block(text, CONF)
+    block = conf_element(root, CONF)
     if block is None:
         print(f'CANNOT CHECK: no <conf name="{CONF}"> block in {path}')
         return 2
