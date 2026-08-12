@@ -141,7 +141,15 @@ EXLN="$(awk '
   indef && found && /ex="/ {print NR; exit}
 ' "$CFG")"
 [ -n "$EXLN" ] || die "could not locate the default-conf old_hv2_bootld.ld ex= attribute in $CFG"
-grep -q 'ex="true"' <(sed -n "${EXLN}p" "$CFG") || die "expected ex=\"true\" at line $EXLN (got: $(sed -n "${EXLN}p" "$CFG"))"
+EXLINE="$(sed -n "${EXLN}p" "$CFG")"
+# Plain expansion rather than `grep -q ... <(sed ...)`: process substitution
+# needs /dev/fd, which is not guaranteed in every environment this might run in,
+# and reading the line once means the check and the error message cannot
+# disagree about what was actually there.
+case "$EXLINE" in
+  *'ex="true"'*) : ;;
+  *) die "expected ex=\"true\" at line $EXLN (got: $EXLINE)" ;;
+esac
 sed -i "${EXLN}s/ex=\"true\"/ex=\"false\"/" "$CFG"
 echo "  old_hv2_bootld.ld -> included (line $EXLN)"
 
