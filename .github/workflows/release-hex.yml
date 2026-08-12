@@ -1,0 +1,45 @@
+name: build-config-shape
+
+# tools/release/cut_release.sh already builds, VERIFIES and packages the
+# release hex — it asserts the map origin (0x9d000480), the lowest physical
+# address (0x1D000000), the 408-byte reset vector, and that the bulk starts
+# exactly at 0x1D000480. That validation is not duplicated here.
+#
+# What it cannot do is run at PR time: it is invoked deliberately when cutting
+# a release, and it depends on configurations.xml being in the expected
+# starting state (old_hv2_bootld.ld ex="true"). If that file is pruned or left
+# in a half-selected state — MPLAB X rewrites it on config switches and has
+# stripped source-file entries in this repo — cut_release.sh dies on its own
+# precondition at release time, which is the worst moment to find out.
+#
+# This job checks that precondition on every PR that touches the project file.
+# It fails on all three ways the state can be wrong: the entry pruned (exit 2),
+# two scripts selected at once (exit 1), and old_hv2_bootld.ld left SELECTED
+# (exit 1) — the last is fine locally but breaks cut_release.sh if it lands.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/release/**'
+      - 'firmware/daqifi.X/nbproject/configurations.xml'
+      - '.github/workflows/release-hex.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build config selects a coherent linker-script state
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/release/check_build_config.py
+          python3 -m py_compile tools/release/selftest_build_config.py
+          # the guard's own logic first — a guard that cannot detect a
+          # pruned default-conf entry would pass this job for the wrong reason
+          python3 tools/release/selftest_build_config.py
+          python3 tools/release/check_build_config.py
