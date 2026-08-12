@@ -1,12 +1,18 @@
-name: release-hex-shape
+name: build-config-shape
 
-# A release HEX must be BOOTLOADER-LINKED. The in-app updater programs program
-# flash only, so a standalone-linked image silently loses its config words on a
-# customer device — which is how firmware #761 shipped a dead DIO-terminal
-# family while every bench unit (PICkit-flashed standalone) worked fine.
+# tools/release/cut_release.sh already builds, VERIFIES and packages the
+# release hex — it asserts the map origin (0x9d000480), the lowest physical
+# address (0x1D000000), the 408-byte reset vector, and that the bulk starts
+# exactly at 0x1D000480. That validation is not duplicated here.
 #
-# Runs on any PR touching the release tooling or the project file that decides
-# the layout, and on demand for a candidate artifact.
+# What it cannot do is run at PR time: it is invoked deliberately when cutting
+# a release, and it depends on configurations.xml being in the expected
+# starting state (old_hv2_bootld.ld ex="true"). If that file is pruned or left
+# in a half-selected state — MPLAB X rewrites it on config switches and has
+# stripped source-file entries in this repo — cut_release.sh dies on its own
+# precondition at release time, which is the worst moment to find out.
+#
+# This job checks that precondition on every PR that touches the project file.
 
 on:
   pull_request:
@@ -16,10 +22,6 @@ on:
       - 'firmware/daqifi.X/nbproject/configurations.xml'
       - '.github/workflows/release-hex.yml'
   workflow_dispatch:
-    inputs:
-      hex_path:
-        description: 'Path to a candidate release .hex (checked out in this repo)'
-        required: false
 
 permissions:
   contents: read
@@ -29,22 +31,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-
-      - name: Self-test the release-hex guard
-        run: |
-          set -euo pipefail
-          python3 -m py_compile tools/release/check_release_hex.py
-          python3 tools/release/selftest_release_hex.py
-
-      - name: Check the build-config selects exactly one linker script
-        # The guard existed but nothing ran it, so an ambiguous or pruned
-        # configurations.xml would still reach a release. This is the check
-        # that actually catches the #761-class divergence at PR time.
+      - name: Build config selects a coherent linker-script state
         run: |
           set -euo pipefail
           python3 -m py_compile tools/release/check_build_config.py
           python3 tools/release/check_build_config.py
-
-      - name: Check the candidate artifact
-        if: ${{ inputs.hex_path != '' }}
-        run: python3 tools/release/check_release_hex.py "${{ inputs.hex_path }}"

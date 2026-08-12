@@ -59,6 +59,22 @@ def main():
         return 1
 
     included = [n for n, v in state.items() if v]
+
+    # BOTH excluded is the STANDALONE BENCH DEFAULT, not an error: with no
+    # custom script selected XC32 falls back to the device linker script, which
+    # links the app at 0x9D000000. tools/release/cut_release.sh depends on this
+    # exact state — it asserts old_hv2_bootld.ld is ex="true" and flips it for
+    # the release build, then restores it. Reporting this as a failure would
+    # have been wrong, and permanently flipping the file (my first attempt)
+    # would have made cut_release.sh die on its own precondition.
+    if not included:
+        print('\nOK: no custom linker script selected -> standalone (bench '
+              'default).\n'
+              'Release builds flip old_hv2_bootld.ld on via '
+              'tools/release/cut_release.sh, which\nalso verifies the '
+              'resulting hex layout and restores this state afterwards.')
+        return 0
+
     if len(included) == 1:
         layout = ('bootloader-linked (release)' if included[0] == SCRIPTS[1]
                   else 'standalone (bench only — NEVER ship)')
