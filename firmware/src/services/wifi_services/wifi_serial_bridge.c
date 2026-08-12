@@ -98,21 +98,38 @@ static bool ProcessCommand(wifi_serial_bridge_context_t * const pContext) {
 
         case WIFI_SERIAL_BRIDGE_COMMAND_READ_BLOCK:
         {
+            /* Walk the request in dataBuf-sized chunks. Both the remaining
+             * count and the source address must advance every iteration (#755):
+             * before this, neither did, so any cmdSize >= 2048 re-read and
+             * re-sent the SAME chunk forever and the loop could only exit on
+             * an error. cmdAddr is scratch for the duration of the command —
+             * ProcessHeader re-parses it from the wire for every request — so
+             * advancing it in place is safe. */
+            uint32_t addr = pContext->cmdAddr;
+
             cnt = pContext->cmdSize;
 
             while (cnt >= WIFI_SERIAL_BRIDGE_CMD_BUFFER_SIZE) {
-                if (M2M_SUCCESS != nm_read_block(pContext->cmdAddr, pContext->dataBuf, WIFI_SERIAL_BRIDGE_CMD_BUFFER_SIZE))
+                if (M2M_SUCCESS != nm_read_block(addr, pContext->dataBuf, WIFI_SERIAL_BRIDGE_CMD_BUFFER_SIZE))
                     return false;
 
                 if (false == wifi_serial_bridge_interface_UARTWritePutBuffer(pContext->dataBuf, WIFI_SERIAL_BRIDGE_CMD_BUFFER_SIZE))
                     return false;
+
+                addr += WIFI_SERIAL_BRIDGE_CMD_BUFFER_SIZE;
+                cnt  -= WIFI_SERIAL_BRIDGE_CMD_BUFFER_SIZE;
             }
 
             if (cnt) {
-                if (M2M_SUCCESS != nm_read_block(pContext->cmdAddr, pContext->dataBuf, cnt))
+                if (M2M_SUCCESS != nm_read_block(addr, pContext->dataBuf, cnt))
                     return false;
 
-                if (false == wifi_serial_bridge_interface_UARTWritePutBuffer(pContext->dataBuf, pContext->cmdSize))
+                /* cnt, NOT cmdSize: with the loop fixed, cnt is the remainder
+                 * and only the first cnt bytes of dataBuf are valid. Sending
+                 * cmdSize here would leak stale buffer contents past the data
+                 * actually read — harmless only while the loop above could
+                 * never terminate. */
+                if (false == wifi_serial_bridge_interface_UARTWritePutBuffer(pContext->dataBuf, cnt))
                     return false;
             }
 
