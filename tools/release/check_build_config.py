@@ -43,6 +43,25 @@ def conf_block(text, conf):
     return rest[:nxt.start()] if nxt else rest
 
 
+def script_entries(block, name):
+    """Every <item> in `block` whose path basename is `name`, as included-flags.
+
+    Parses each tag's attributes separately instead of matching path and ex in
+    a fixed order: attribute order is not significant in XML, and MPLAB X wraps
+    long <item> tags across lines. Returns a LIST so the caller can reject
+    duplicates rather than silently taking whichever entry comes first — the
+    same failure mode as the unscoped whole-file search this guard already had
+    to fix (see conf_block).
+    """
+    out = []
+    for tag in re.findall(r'<item\b[^>]*>', block, re.S):
+        p = re.search(r'\bpath="([^"]*)"', tag)
+        e = re.search(r'\bex="(true|false)"', tag)
+        if p and e and p.group(1).rsplit('/', 1)[-1] == name:
+            out.append(e.group(1) == 'false')
+    return out
+
+
 def main():
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT
     try:
@@ -64,19 +83,31 @@ def main():
         return 2
 
     state = {}
+    dupes = []
     for name in SCRIPTS:
-        # attributes span multiple lines in MPLAB X output, so DOTALL and a
-        # bounded gap rather than a single-line match
-        m = re.search(r'<item\s+path="[^"]*' + re.escape(name) +
-                      r'"\s+ex="(true|false)"', block, re.S)
-        state[name] = (m.group(1) == 'false') if m else None
+        found = script_entries(block, name)
+        if len(found) > 1:
+            dupes.append((name, len(found)))
+        state[name] = found[0] if len(found) == 1 else None
 
     print(f'checking {path}')
     for name, included in state.items():
         if included is None:
-            print(f'  ??   {name}: not listed in the project')
+            print(f'  ??   {name}: not listed exactly once in the project')
         else:
             print(f'  {"IN " if included else "OUT"}  {name}')
+
+    if dupes:
+        # Two entries for one script (a merge artifact, or a hand-edit) means
+        # the effective flag depends on which one the toolchain reads. Refuse
+        # rather than report whichever appears first.
+        detail = ', '.join(f'{n} x{c}' for n, c in dupes)
+        print(f'\nCANNOT CHECK: duplicate linker-script entries in the '
+              f'<conf name="{CONF}"> block ({detail}).\n'
+              'The effective selection then depends on which entry the '
+              'toolchain reads.\nRestore the project file:\n'
+              '  git checkout -- firmware/daqifi.X/nbproject/configurations.xml')
+        return 2
 
     missing = [n for n, v in state.items() if v is None]
     if missing:

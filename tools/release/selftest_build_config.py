@@ -42,6 +42,14 @@ PRUNED = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex="true
 P32_ONLY = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex="false"></item>
       <item path="../src/config/default/old_hv2_bootld.ld" ex="true"></item>'''
 
+# Two entries for one script (merge artifact) -- effective flag depends on which
+# the toolchain reads. And attribute order reversed, since XML does not care.
+DUPLICATE = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex="true"></item>
+      <item path="../src/config/default/old_hv2_bootld.ld" ex="true"></item>
+      <item path="../src/config/default/old_hv2_bootld.ld" ex="false"></item>'''
+ATTR_REVERSED = '''      <item ex="true" path="../src/config/default/p32MZ2048EFM144.ld"></item>
+      <item ex="true" path="../src/config/default/old_hv2_bootld.ld"></item>'''
+
 CASES = [
     (0, 'standalone', STANDALONE,
      'both excluded -> bench default (what main has)'),
@@ -51,6 +59,10 @@ CASES = [
      'both included -> layout depends on regen order'),
     (1, 'p32-only', P32_ONLY,
      'p32 selected alone -> cut_release.sh flip leaves BOTH selected'),
+    (2, 'duplicate', DUPLICATE,
+     'two entries for one script -> refuse, do not read the first'),
+    (0, 'attr-order', ATTR_REVERSED,
+     'ex= before path= -> XML attribute order is not significant'),
     (2, 'pruned', PRUNED,
      'default-conf entry gone, Nq1 copy present -> must NOT fall through'),
 ]
