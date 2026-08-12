@@ -235,28 +235,55 @@ static bool edge_Streaming(void) {
  * 0, COUNter's 64-bit rollover extension dead). The same store from a live SCPI
  * task sticks, so call these at ARM time, right before the matching IECxSET.
  * Mirrors UserIC ic_SetPriority (the proven #702 fix). */
+/* Guard an IPCn read-modify-write.
+ *
+ * Each IPCn bitfield write is an RMW of a 32-bit register shared with other
+ * interrupts' priority fields — notably INT3 (IPC4<20:18>) shares IPC4 with IC3
+ * (IPC4<4:2>), so a concurrent DIO:MEASure arm on the other SCPI interface (USB
+ * pri 7 can preempt WiFi pri 2 mid-RMW) could clobber the write. The RMW must
+ * be atomic against both tasks and the pri-3 ISRs that touch these registers.
+ *
+ * The setters below run in BOTH contexts, so the guard picks per call:
+ *
+ *  - scheduler RUNNING (the #702 re-assert on the SCPI arm path, lines ~420 and
+ *    ~566) -> taskENTER_CRITICAL. It raises IPL to
+ *    configMAX_SYSCALL_INTERRUPT_PRIORITY (4), which covers every context that
+ *    can reach these registers while leaving the priority 5+ sources FreeRTOS
+ *    deliberately never disables alone. This is the FreeRTOS-idiomatic path and
+ *    the one taken at runtime (Qodo #705, second pass).
+ *
+ *  - scheduler NOT STARTED (UserEdge_Initialize, reached from app_SystemInit
+ *    inside SYS_Initialize: main.c -> initialization.c APP_FREERTOS_Initialize
+ *    -> app_SystemInit, i.e. BEFORE vTaskStartScheduler(), which lives in
+ *    SYS_Tasks()) -> raw mask. FreeRTOS_tasks.c wraps the whole body of
+ *    vTaskExitCritical(), portENABLE_INTERRUPTS() included, in
+ *    `if (xSchedulerRunning != pdFALSE)`, so pre-scheduler the exit is a no-op
+ *    and a critical section would leave interrupts masked for the rest of boot.
+ *
+ * (An earlier revision claimed app_SystemInit runs inside the pri-1
+ * APP_FREERTOS_Tasks task. It does not — APP_FREERTOS_Initialize and
+ * APP_FREERTOS_Tasks are different functions, and that confusion is what put a
+ * plain critical section on a pre-scheduler path in the first place.) */
+typedef struct { bool crit; uint32_t st; } EdgeIpcGuard_t;
+
+static EdgeIpcGuard_t edge_IpcGuardEnter(void) {
+    EdgeIpcGuard_t g = { false, 0u };
+    if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
+        g.crit = true;
+        taskENTER_CRITICAL();
+    } else {
+        g.st = (uint32_t)__builtin_disable_interrupts();
+    }
+    return g;
+}
+
+static void edge_IpcGuardExit(EdgeIpcGuard_t g) {
+    if (g.crit) { taskEXIT_CRITICAL(); }
+    else        { __builtin_mtc0(12, 0, g.st); }
+}
+
 static void edge_SetIntPriority(uint8_t u) {
-    /* Each IPCn bitfield write is a read-modify-write of a 32-bit register shared
-     * with other interrupts' priority fields — notably INT3 (IPC4<20:18>) shares
-     * IPC4 with IC3 (IPC4<4:2>), so a concurrent DIO:MEASure arm on the other SCPI
-     * interface (USB pri 7 can preempt WiFi pri 2 mid-RMW) could clobber this
-     * write, so the RMW must be atomic.
-     *
-     * RAW mask, not taskENTER_CRITICAL: this runs BOTH pre- and post-scheduler.
-     * UserEdge_Initialize reaches it from app_SystemInit, which runs inside
-     * SYS_Initialize (main.c -> initialization.c APP_FREERTOS_Initialize ->
-     * app_SystemInit) — i.e. BEFORE vTaskStartScheduler(), which lives in
-     * SYS_Tasks(). On this port vTaskExitCritical() wraps its whole body,
-     * portENABLE_INTERRUPTS() included, in `if (xSchedulerRunning != pdFALSE)`,
-     * so pre-scheduler the exit is a no-op and a critical section here would
-     * leave interrupts masked for the rest of boot. A raw mask restores the
-     * saved IPL either way.
-     *
-     * (An earlier revision of this comment claimed app_SystemInit runs inside
-     * the pri-1 APP_FREERTOS_Tasks task. It does not — APP_FREERTOS_Initialize
-     * and APP_FREERTOS_Tasks are different functions, and that confusion is
-     * what put a critical section here in the first place.) */
-    uint32_t st = __builtin_disable_interrupts();
+    EdgeIpcGuard_t g = edge_IpcGuardEnter();
     switch (u) {
         case 0: IPC2bits.INT1IP = 3; IPC2bits.INT1IS = 0; break;
         case 1: IPC3bits.INT2IP = 3; IPC3bits.INT2IS = 0; break;
@@ -264,26 +291,18 @@ static void edge_SetIntPriority(uint8_t u) {
         case 3: IPC5bits.INT4IP = 3; IPC5bits.INT4IS = 0; break;
         default: break;
     }
-    __builtin_mtc0(12, 0, st);
+    edge_IpcGuardExit(g);
 }
 
 static void edge_SetCtrPriority(uint8_t u) {
-    /* RMW on IPC9/IPC10 shared with IC8/IC9 priority fields — guard as in
-     * edge_SetIntPriority (task-context critical section; Qodo #705). */
-    /* RAW mask, not taskENTER_CRITICAL: UserEdge_Initialize calls this at
-     * boot, and on the PIC32MZ FreeRTOS port vTaskExitCritical() does NOT
-     * re-enable interrupts when the scheduler is not yet running — a
-     * critical section here would leave interrupts masked for the rest of
-     * boot. The RMW still needs to be atomic (IPC4 is shared between INT3
-     * and IC3), so only the mechanism changes (Qodo #705).
-     */
-    uint32_t st = __builtin_disable_interrupts();
+    /* IPC9/IPC10 are shared with the IC8/IC9 priority fields — same guard. */
+    EdgeIpcGuard_t g = edge_IpcGuardEnter();
     switch (u) {
         case 0: IPC9bits.T8IP  = 3; IPC9bits.T8IS  = 0; break;
         case 1: IPC10bits.T9IP = 3; IPC10bits.T9IS = 0; break;
         default: break;
     }
-    __builtin_mtc0(12, 0, st);
+    edge_IpcGuardExit(g);
 }
 
 /* ------------------------------------------------------------------ */
