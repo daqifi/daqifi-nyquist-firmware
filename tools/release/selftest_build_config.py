@@ -51,6 +51,12 @@ DUPLICATE = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex="t
 ATTR_REVERSED = '''      <item ex="true" path="../src/config/default/p32MZ2048EFM144.ld"></item>
       <item ex="true" path="../src/config/default/old_hv2_bootld.ld"></item>'''
 
+# ex= values the guard must refuse rather than silently read as "excluded":
+# a bare `ex == 'false'` test maps every unknown string to True (excluded).
+MALFORMED_EX = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex="maybe"></item>
+      <item path="../src/config/default/old_hv2_bootld.ld" ex="true"></item>'''
+
+
 CASES = [
     (0, 'standalone', STANDALONE,
      'both excluded -> bench default (what main has)'),
@@ -66,6 +72,10 @@ CASES = [
      'ex= before path= -> XML attribute order is not significant'),
     (0, 'comment-shadow', STANDALONE,
      'commented-out conf must not shadow the live one'),
+    (2, 'dup-conf', STANDALONE,
+     'two <conf name="default"> blocks -> refuse, do not read the first'),
+    (2, 'malformed-ex', MALFORMED_EX,
+     'ex="maybe" must not silently read as excluded'),
     (2, 'pruned', PRUNED,
      'default-conf entry gone, Nq1 copy present -> must NOT fall through'),
 ]
@@ -75,18 +85,19 @@ CASES = [
 # pre-merge audit against the old regex parser, which matched text inside the
 # comment and reported the fake block's state. An XML parser discards comments,
 # so this is now structurally impossible — the case pins that.
-COMMENTED_SHADOW = True
 
 
-def project(default_items, shadow=False):
+def project(default_items, shadow=False, twice=False):
     ghost = ('  <!-- <conf name="default" type="2">'
              '<item path="../src/config/default/p32MZ2048EFM144.ld" ex="false">'
              '</item>'
              '<item path="../src/config/default/old_hv2_bootld.ld" ex="false">'
              '</item></conf> -->\n') if shadow else ''
+    dup = (f'    <conf name="default" type="2">\n{default_items}\n    </conf>\n'
+           if twice else '')
     return f'''<configurationDescriptor version="65">
   <confs>
-{ghost}    <conf name="default" type="2">
+{ghost}{dup}    <conf name="default" type="2">
 {default_items}
     </conf>
     <conf name="Nq1" type="2">
@@ -102,7 +113,9 @@ def main():
     with tempfile.TemporaryDirectory() as td:
         for want, name, items, why in CASES:
             path = Path(td) / f'{name}.xml'
-            path.write_text(project(items, shadow=(name == 'comment-shadow')),
+            path.write_text(project(items,
+                                    shadow=(name == 'comment-shadow'),
+                                    twice=(name == 'dup-conf')),
                             encoding='utf-8')
             run = subprocess.run([sys.executable, str(GUARD), str(path)],
                                  capture_output=True, text=True)

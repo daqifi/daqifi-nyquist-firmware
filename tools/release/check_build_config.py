@@ -27,14 +27,15 @@ DEFAULT = Path(__file__).resolve().parents[2] / \
     'firmware/daqifi.X/nbproject/configurations.xml'
 SCRIPTS = ('p32MZ2048EFM144.ld', 'old_hv2_bootld.ld')
 CONF = 'default'   # the configuration cut_release.sh builds
+MAX_BYTES = 8 * 1024 * 1024   # ~20x the real file; a cap, not a tight bound
 
 
-def conf_element(root, conf):
-    """Return the <conf name="conf"> element, or None if absent."""
-    for el in root.iter('conf'):
-        if el.get('name') == conf:
-            return el
-    return None
+def conf_elements(root, conf):
+    """Every <conf name="conf"> element. A LIST, for the same reason
+    script_entries returns one: two blocks with the same name means the
+    effective config depends on which the toolchain reads, and picking the
+    first would hide that."""
+    return [el for el in root.iter('conf') if el.get('name') == conf]
 
 
 def script_entries(conf_el, name):
@@ -46,8 +47,14 @@ def script_entries(conf_el, name):
     out = []
     for item in conf_el.iter('item'):
         path, ex = item.get('path'), item.get('ex')
-        if path and ex is not None and path.rsplit('/', 1)[-1] == name:
-            out.append(ex == 'false')
+        if not path or path.rsplit('/', 1)[-1] != name:
+            continue
+        if ex not in ('true', 'false'):
+            # Anything else (absent, empty, a typo) is NOT "excluded". A bare
+            # `ex == 'false'` test would silently read it that way and report a
+            # confident verdict on a value it did not understand.
+            raise ValueError(f'{name}: ex={ex!r} is neither "true" nor "false"')
+        out.append(ex == 'false')
     return out
 
 
@@ -60,6 +67,13 @@ def main():
     # commented-out block shadowing the live one. ElementTree scopes by tree
     # structure, ignores attribute order, and discards comments outright.
     try:
+        # Cap the input first: CI runs this on PRs that can edit the file, and
+        # an oversized one should produce a verdict rather than exhaust the
+        # runner. The real file is ~400 KB.
+        size = path.stat().st_size
+        if size > MAX_BYTES:
+            print(f'CANNOT CHECK: {path} is {size} bytes (cap {MAX_BYTES}).')
+            return 2
         root = ET.parse(path).getroot()
     except OSError as exc:
         print(f'CANNOT CHECK: {exc}')
@@ -75,18 +89,28 @@ def main():
     # the state this guard exists to catch: it would report OK while
     # cut_release.sh (which scopes its own lookup with awk bounded by
     # <conf name="default">) dies at release time on its precondition.
-    block = conf_element(root, CONF)
-    if block is None:
+    confs = conf_elements(root, CONF)
+    if not confs:
         print(f'CANNOT CHECK: no <conf name="{CONF}"> block in {path}')
         return 2
+    if len(confs) > 1:
+        print(f'CANNOT CHECK: {len(confs)} <conf name="{CONF}"> blocks in '
+              f'{path}.\nThe effective configuration then depends on which one '
+              'the toolchain reads.')
+        return 2
+    block = confs[0]
 
     state = {}
     dupes = []
-    for name in SCRIPTS:
-        found = script_entries(block, name)
-        if len(found) > 1:
-            dupes.append((name, len(found)))
-        state[name] = found[0] if len(found) == 1 else None
+    try:
+        for name in SCRIPTS:
+            found = script_entries(block, name)
+            if len(found) > 1:
+                dupes.append((name, len(found)))
+            state[name] = found[0] if len(found) == 1 else None
+    except ValueError as exc:
+        print(f'CANNOT CHECK: {exc}')
+        return 2
 
     print(f'checking {path}')
     for name, included in state.items():
