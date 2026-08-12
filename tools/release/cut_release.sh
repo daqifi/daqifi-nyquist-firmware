@@ -122,7 +122,10 @@ trap cleanup EXIT
 # two that drift apart.
 python3 "$REPO/tools/release/check_build_config.py" "$CFG" \
   || die "configurations.xml is not in a releasable state (detail above).
-  Restore the bench default: git checkout -- $CFG"
+  Nothing has been modified — this check runs before the linker flip, and
+  cleanup() restores the file from a per-run backup regardless. Fix the
+  selection in MPLAB X (or by hand) and re-run; do NOT 'git checkout' the
+  file unless you also mean to discard your own edits to it."
 
 # Locate the default-conf old_hv2_bootld.ld ex= attribute and flip it.
 #
@@ -135,7 +138,7 @@ EXLN="$(awk '
   indef && /<\/conf>/     {indef=0}
   indef && found && NR > found + 4 {exit}
   indef && /old_hv2_bootld\.ld"/ {found=NR; if ($0 ~ /ex="/) {print NR; exit} next}
-  found && /ex="/ {print NR; exit}
+  indef && found && /ex="/ {print NR; exit}
 ' "$CFG")"
 [ -n "$EXLN" ] || die "could not locate the default-conf old_hv2_bootld.ld ex= attribute in $CFG"
 grep -q 'ex="true"' <(sed -n "${EXLN}p" "$CFG") || die "expected ex=\"true\" at line $EXLN (got: $(sed -n "${EXLN}p" "$CFG"))"
