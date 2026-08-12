@@ -13,6 +13,9 @@ name: build-config-shape
 # precondition at release time, which is the worst moment to find out.
 #
 # This job checks that precondition on every PR that touches the project file.
+# It fails on all three ways the state can be wrong: the entry pruned (exit 2),
+# two scripts selected at once (exit 1), and old_hv2_bootld.ld left SELECTED
+# (exit 1) — the last is fine locally but breaks cut_release.sh if it lands.
 
 on:
   pull_request:

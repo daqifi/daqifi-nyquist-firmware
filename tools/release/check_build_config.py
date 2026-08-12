@@ -12,7 +12,9 @@ UserUart entries, producing 'undefined reference' errors for code that plainly
 exists.
 
 Usage: check_build_config.py [configurations.xml]
-Exit:  0 = exactly one selected, 1 = ambiguous, 2 = could not check.
+Exit:  0 = release-compatible state (standalone: bootld ex="true")
+       1 = ambiguous, or bootloader-linked committed (breaks cut_release.sh)
+       2 = could not check (entry or default conf missing)
 """
 import re
 import sys
@@ -107,9 +109,23 @@ def main():
         return 0
 
     if len(included) == 1:
-        layout = ('bootloader-linked (release)' if included[0] == SCRIPTS[1]
-                  else 'standalone (bench only — NEVER ship)')
-        print(f'\nOK: exactly one linker script selected -> {layout}')
+        if included[0] == SCRIPTS[1]:
+            # cut_release.sh asserts old_hv2_bootld.ld is ex="true" (line ~120),
+            # flips it for the release build, then restores it. A committed
+            # bootloader-linked project therefore breaks the release path: the
+            # script dies on its own precondition. This state is fine locally —
+            # it must just not be what lands on a branch.
+            print('\nRELEASE PRECONDITION BROKEN: old_hv2_bootld.ld is selected '
+                  '(ex="false") in the\ncommitted project. '
+                  'tools/release/cut_release.sh requires ex="true" as its\n'
+                  'starting state — it flips the script on itself and restores '
+                  'it afterwards —\nso a release cut from this state aborts '
+                  'immediately.\n'
+                  'Restore the bench default before merging:\n'
+                  '  git checkout -- firmware/daqifi.X/nbproject/configurations.xml')
+            return 1
+        print('\nOK: exactly one linker script selected -> standalone '
+              '(bench only — NEVER ship)')
         return 0
 
     print(f'\nAMBIGUOUS: {len(included)} linker scripts selected {included}.\n'

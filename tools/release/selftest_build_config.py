@@ -40,8 +40,8 @@ PRUNED = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex="true
 CASES = [
     (0, 'standalone', STANDALONE,
      'both excluded -> bench default (what main has)'),
-    (0, 'bootloader', BOOTLOADER,
-     'one included -> unambiguous release selection'),
+    (1, 'bootloader', BOOTLOADER,
+     'bootloader-linked committed -> breaks cut_release.sh precondition'),
     (1, 'ambiguous', BOTH_IN,
      'both included -> layout depends on regen order'),
     (2, 'pruned', PRUNED,
@@ -69,12 +69,21 @@ def main():
         for want, name, items, why in CASES:
             path = Path(td) / f'{name}.xml'
             path.write_text(project(items), encoding='utf-8')
-            got = subprocess.run([sys.executable, str(GUARD), str(path)],
-                                 capture_output=True, text=True).returncode
+            run = subprocess.run([sys.executable, str(GUARD), str(path)],
+                                 capture_output=True, text=True)
+            got = run.returncode
             ok = got == want
             failures += 0 if ok else 1
             print(f'  [{"PASS" if ok else "FAIL"}] {name:<11} '
                   f'exit={got} want={want}  {why}')
+            if not ok:
+                # Echo what the guard actually said. The CI step runs under
+                # `set -e` with the selftest BEFORE the standalone guard, so a
+                # failure here aborts the step and the guard's own explanation
+                # would otherwise never be printed.
+                for stream, label in ((run.stdout, 'stdout'), (run.stderr, 'stderr')):
+                    for line in (stream or '').splitlines():
+                        print(f'        {label}| {line}')
 
     # The committed project file must be checkable and coherent, or CI is
     # guarding nothing.
