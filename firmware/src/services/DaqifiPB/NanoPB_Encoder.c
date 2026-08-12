@@ -739,8 +739,19 @@ size_t Nanopb_Encode(tBoardData* state,
                 /**
                  * @brief Encodes the resolution of the analog input channels.
                  *
-                 * This tag stores the resolution (in bits) of the analog input channels,
-                 * based on the ADC configuration for the active board variant.
+                 * Not "in bits" despite the older wording here: this is the raw
+                 * code COUNT (4096 for NQ1's 12-bit MC12b, 262144 for NQ3's
+                 * 18-bit AD7609). Consumers scale as
+                 * raw / resolution * portRange * calM + calB, so the units
+                 * matter — daqifi-core's DaqifiDevice.PopulateAnalogChannels
+                 * treats a 0 as "assume 65535".
+                 *
+                 * NQ3 (#697): this was commented out, so the field stayed 0 —
+                 * nanopb STATIC SINGULAR UINT32 has no presence bit — and every
+                 * AD7609 sample came out ~4x low on the host with no error
+                 * surfaced. The value was correct in board config all along
+                 * (NQ3BoardConfig.c .Resolution = 262144); it simply never
+                 * reached the wire.
                  */
 
                 switch (pBoardConfig->BoardVariant) {
@@ -748,10 +759,14 @@ size_t Nanopb_Encode(tBoardData* state,
                         message.analog_in_res = pBoardConfig->AInModules.Data[AIn_MC12bADC].Config.MC12b.Resolution;
                         break;
                     case 2:
-                        //message.analog_in_res = pBoardConfig->AInModules.Data[1].Config.AD7173.Resolution;
+                        /* NQ2 / AD7173 stays unencoded: AIn_AD7173 is commented
+                         * out of the AInType enum (AInConfig.h), so there is no
+                         * module slot to read and no NQ2 board config to read it
+                         * from. Restore this together with the enum entry, not
+                         * before — the index would otherwise shift AIn_AD7609. */
                         break;
                     case 3:
-                        //message.analog_in_res = pBoardConfig->AInModules.Data[1].Config.AD7609.Resolution;
+                        message.analog_in_res = pBoardConfig->AInModules.Data[AIn_AD7609].Config.AD7609.Resolution;
                         break;
                     default:
                         break;
