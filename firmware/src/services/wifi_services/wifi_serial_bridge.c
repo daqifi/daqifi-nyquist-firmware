@@ -101,10 +101,10 @@ static bool ProcessCommand(wifi_serial_bridge_context_t * const pContext) {
             /* Walk the request in dataBuf-sized chunks. Both the remaining
              * count and the source address must advance every iteration (#755):
              * before this, neither did, so any cmdSize >= 2048 re-read and
-             * re-sent the SAME chunk forever and the loop could only exit on
-             * an error. cmdAddr is scratch for the duration of the command —
-             * ProcessHeader re-parses it from the wire for every request — so
-             * advancing it in place is safe. */
+             * re-sent the SAME chunk forever, and the loop could exit only on
+             * an error. The cursor is a local rather than a mutation of
+             * pContext->cmdAddr, so the command's parsed header stays
+             * read-only for its lifetime. */
             uint32_t addr = pContext->cmdAddr;
 
             cnt = pContext->cmdSize;
