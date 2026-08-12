@@ -52,11 +52,15 @@ def main():
         # (MPLAB X prunes this file on config switches; it stripped eight source
         # files earlier in this work). Treat it as a failure rather than
         # inferring intent from an absence.
-        print(f'\nNOT DETERMINABLE: {missing} not listed in the project at all.\n'
+        print(f'\nCANNOT CHECK: {missing} not listed in the project at all.\n'
               'MPLAB X prunes configurations.xml on config switches — restore it\n'
               '(git checkout -- firmware/daqifi.X/nbproject/configurations.xml)\n'
               'and regenerate the makefiles before trusting a build.')
-        return 1
+        # 2, not 1: the input is unusable, which is a different problem from a
+        # readable project that names two scripts. 1 must stay specific to
+        # "ambiguous selection" so a caller can tell "fix your config" from
+        # "restore the project file".
+        return 2
 
     included = [n for n, v in state.items() if v]
 
