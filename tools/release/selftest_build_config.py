@@ -36,6 +36,11 @@ BOOTLOADER = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex="
 BOTH_IN = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex="false"></item>
       <item path="../src/config/default/old_hv2_bootld.ld" ex="false"></item>'''
 PRUNED = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex="true"></item>'''
+# p32 selected alone: looks like a harmless "standalone" choice in the IDE, but
+# cut_release.sh only ever flips old_hv2_bootld.ld and never inspects p32, so a
+# release cut from here leaves BOTH scripts selected. Audit finding, PR #765.
+P32_ONLY = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex="false"></item>
+      <item path="../src/config/default/old_hv2_bootld.ld" ex="true"></item>'''
 
 CASES = [
     (0, 'standalone', STANDALONE,
@@ -44,6 +49,8 @@ CASES = [
      'bootloader-linked committed -> breaks cut_release.sh precondition'),
     (1, 'ambiguous', BOTH_IN,
      'both included -> layout depends on regen order'),
+    (1, 'p32-only', P32_ONLY,
+     'p32 selected alone -> cut_release.sh flip leaves BOTH selected'),
     (2, 'pruned', PRUNED,
      'default-conf entry gone, Nq1 copy present -> must NOT fall through'),
 ]

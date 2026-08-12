@@ -12,8 +12,11 @@ UserUart entries, producing 'undefined reference' errors for code that plainly
 exists.
 
 Usage: check_build_config.py [configurations.xml]
-Exit:  0 = release-compatible state (standalone: bootld ex="true")
-       1 = ambiguous, or bootloader-linked committed (breaks cut_release.sh)
+Exit:  0 = release-compatible: NO custom linker script selected. This is the
+           only committable state — cut_release.sh selects old_hv2_bootld.ld
+           itself and assumes (without checking) p32 stays excluded.
+       1 = any selection at all: bootloader-linked, p32-only, or both. Each is
+           fine locally; none may land, because each breaks the release cut.
        2 = could not check (entry or default conf missing)
 """
 import re
@@ -113,20 +116,32 @@ def main():
             # cut_release.sh asserts old_hv2_bootld.ld is ex="true" (line ~120),
             # flips it for the release build, then restores it. A committed
             # bootloader-linked project therefore breaks the release path: the
-            # script dies on its own precondition. This state is fine locally —
-            # it must just not be what lands on a branch.
+            # script dies on its own precondition.
             print('\nRELEASE PRECONDITION BROKEN: old_hv2_bootld.ld is selected '
                   '(ex="false") in the\ncommitted project. '
                   'tools/release/cut_release.sh requires ex="true" as its\n'
                   'starting state — it flips the script on itself and restores '
                   'it afterwards —\nso a release cut from this state aborts '
-                  'immediately.\n'
-                  'Restore the bench default before merging:\n'
-                  '  git checkout -- firmware/daqifi.X/nbproject/configurations.xml')
-            return 1
-        print('\nOK: exactly one linker script selected -> standalone '
-              '(bench only — NEVER ship)')
-        return 0
+                  'immediately.')
+        else:
+            # p32 selected on its own is a legitimate way to express "standalone"
+            # in the IDE, and it looks harmless — but cut_release.sh only ever
+            # inspects old_hv2_bootld.ld (cut_release.sh:113-121). Its "keep
+            # p32MZ excluded" note at line 77 is an ASSUMPTION, not a check. So
+            # from this state the release flip selects old_hv2 while p32 is
+            # still selected, leaving BOTH custom scripts active — exactly the
+            # ambiguous layout this guard exists to prevent. Tracked separately
+            # for cut_release.sh itself; here we simply refuse to let the state
+            # land.
+            print('\nRELEASE PRECONDITION BROKEN: p32MZ2048EFM144.ld is selected '
+                  '(ex="false") in the\ncommitted project. '
+                  'tools/release/cut_release.sh does not inspect this script — '
+                  'it\nonly flips old_hv2_bootld.ld — so a release cut from '
+                  'here ends up with BOTH\ncustom linker scripts selected, and '
+                  'the layout depends on makefile\nregeneration order.')
+        print('Restore the bench default before merging:\n'
+              '  git checkout -- firmware/daqifi.X/nbproject/configurations.xml')
+        return 1
 
     print(f'\nAMBIGUOUS: {len(included)} linker scripts selected {included}.\n'
           'The produced layout then depends on makefile regeneration order.\n'
