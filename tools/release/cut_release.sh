@@ -106,36 +106,38 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Assert p32MZ2048EFM144.ld is EXCLUDED before touching anything (#767).
+# Assert the starting state with the SAME checker CI uses (#767, #769).
 #
-# Step 1's header says "keep p32MZ excluded", but nothing checked it — and this
-# script only ever inspects old_hv2_bootld.ld. From a project where p32 is
-# selected, the flip below turns ONE selected script into TWO, and the produced
-# layout then depends on makefile regeneration order. Same block-scoped awk as
-# the old_hv2 lookup so both preconditions fail the same way.
-P32LN="$(awk '
-  /<conf name="default"/ {indef=1}
-  indef && /<\/conf>/      {indef=0}
-  indef && /p32MZ2048EFM144\.ld"/ {print NR; exit}
-' "$CFG")"
-[ -n "$P32LN" ] || die "could not locate default-conf p32MZ2048EFM144.ld item in $CFG"
-P32EXLN=$((P32LN + 1))
-grep -q 'ex="true"' <(sed -n "${P32EXLN}p" "$CFG") \
-  || die "p32MZ2048EFM144.ld must be ex=\"true\" (excluded) before a release cut; got line $P32EXLN: $(sed -n "${P32EXLN}p" "$CFG")
-  Flipping old_hv2_bootld.ld from here would leave BOTH linker scripts selected.
+# This began as a hand-rolled grep that only ever inspected old_hv2_bootld.ld
+# and assumed ex= sat on the line AFTER the path. Both assumptions were wrong.
+# Nothing verified p32MZ2048EFM144.ld was excluded, so the flip below could turn
+# ONE selected script into TWO. And configurations.xml contains both single-line
+# and wrapped <item> forms (129 vs 35 today), so an MPLAB X regen that emitted
+# these entries single-line would have aborted a perfectly valid release cut.
+#
+# check_build_config.py parses the file as XML, so attribute layout and ordering
+# cannot fool it, and it exits 0 only for the state this script requires: no
+# custom linker script selected in the default conf. It carries an 11-case
+# selftest. Reusing it keeps ONE definition of "releasable state" rather than
+# two that drift apart.
+python3 "$REPO/tools/release/check_build_config.py" "$CFG" \
+  || die "configurations.xml is not in a releasable state (detail above).
   Restore the bench default: git checkout -- $CFG"
 
-# Find old_hv2_bootld.ld inside the <conf name="default"> block and flip the ex=
-# flag on the line that follows it. Robust to line moves: locate by block, not
-# hardcoded line numbers. Bound the block by the </conf> close tag rather than
-# the name of the next conf (which could be renamed).
-LN="$(awk '
+# Locate the default-conf old_hv2_bootld.ld ex= attribute and flip it.
+#
+# Format-agnostic for the same reason as above: take ex= from the item's own
+# line when it is there, else the first ex= that follows. Scoped to the
+# <conf name="default"> block and bounded a few lines past the item so a
+# malformed file cannot run away.
+EXLN="$(awk '
   /<conf name="default"/ {indef=1}
-  indef && /<\/conf>/      {indef=0}
-  indef && /old_hv2_bootld\.ld"/ {print NR; exit}
+  indef && /<\/conf>/     {indef=0}
+  indef && found && NR > found + 4 {exit}
+  indef && /old_hv2_bootld\.ld"/ {found=NR; if ($0 ~ /ex="/) {print NR; exit} next}
+  found && /ex="/ {print NR; exit}
 ' "$CFG")"
-[ -n "$LN" ] || die "could not locate default-conf old_hv2_bootld.ld item in $CFG"
-EXLN=$((LN + 1))
+[ -n "$EXLN" ] || die "could not locate the default-conf old_hv2_bootld.ld ex= attribute in $CFG"
 grep -q 'ex="true"' <(sed -n "${EXLN}p" "$CFG") || die "expected ex=\"true\" at line $EXLN (got: $(sed -n "${EXLN}p" "$CFG"))"
 sed -i "${EXLN}s/ex=\"true\"/ex=\"false\"/" "$CFG"
 echo "  old_hv2_bootld.ld -> included (line $EXLN)"
