@@ -106,6 +106,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Assert p32MZ2048EFM144.ld is EXCLUDED before touching anything (#767).
+#
+# Step 1's header says "keep p32MZ excluded", but nothing checked it — and this
+# script only ever inspects old_hv2_bootld.ld. From a project where p32 is
+# selected, the flip below turns ONE selected script into TWO, and the produced
+# layout then depends on makefile regeneration order. Same block-scoped awk as
+# the old_hv2 lookup so both preconditions fail the same way.
+P32LN="$(awk '
+  /<conf name="default"/ {indef=1}
+  indef && /<\/conf>/      {indef=0}
+  indef && /p32MZ2048EFM144\.ld"/ {print NR; exit}
+' "$CFG")"
+[ -n "$P32LN" ] || die "could not locate default-conf p32MZ2048EFM144.ld item in $CFG"
+P32EXLN=$((P32LN + 1))
+grep -q 'ex="true"' <(sed -n "${P32EXLN}p" "$CFG") \
+  || die "p32MZ2048EFM144.ld must be ex=\"true\" (excluded) before a release cut; got line $P32EXLN: $(sed -n "${P32EXLN}p" "$CFG")
+  Flipping old_hv2_bootld.ld from here would leave BOTH linker scripts selected.
+  Restore the bench default: git checkout -- $CFG"
+
 # Find old_hv2_bootld.ld inside the <conf name="default"> block and flip the ex=
 # flag on the line that follows it. Robust to line moves: locate by block, not
 # hardcoded line numbers. Bound the block by the </conf> close tag rather than
