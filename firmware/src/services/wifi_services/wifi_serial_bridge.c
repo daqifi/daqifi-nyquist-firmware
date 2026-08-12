@@ -9,6 +9,8 @@
 #include "nmdrv.h"
 #include "nmbus.h"
 #include "m2m_wifi.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 #define WIFI_SERIAL_BRIDGE_COMMAND_HEADER_SIZE      12
 
@@ -26,6 +28,42 @@ typedef enum {
     WIFI_SERIAL_BRIDGE_RESPONSE_ID_FIXED_BR = 0x5c,
     WIFI_SERIAL_BRIDGE_RESPONSE_ACK = 0xac
 } wifi_serial_bridge_response_t;
+
+/* Bounded retry around the bridge's USB write.
+ *
+ * UsbCdc_WriteToBuffer is NON-BLOCKING and ALL-OR-NOTHING: it returns 0 when
+ * the write mutex is busy or the circular buffer cannot take the whole chunk,
+ * and its contract explicitly puts retry on the caller — "Callers retry via
+ * Streaming_WriteWithRetry — no data loss" (UsbCdc.c). The bridge never did,
+ * so a single transient buffer-full aborted the command.
+ *
+ * That mattered little while READ_BLOCK's loop could never terminate: the
+ * unterminated loop accidentally supplied the retry by re-sending the same
+ * chunk forever. With the loop fixed (#755) a large transfer performs many
+ * distinct 2048-byte writes, so an unretried failure truncates the response
+ * and leaves the host waiting for bytes that never arrive.
+ *
+ * Deadline is (now - start) < window so a tick-counter wrap cannot end the
+ * wait early. Runs on app_WifiTask (wifi_manager.c calls
+ * wifi_serial_bridge_Process), i.e. task context, so vTaskDelay is legal.
+ */
+#define BRIDGE_WRITE_TIMEOUT_MS   2000u
+
+static bool bridge_WriteAll(const void *pBuf, size_t numBytes) {
+    if (wifi_serial_bridge_interface_UARTWritePutBuffer(pBuf, numBytes)) {
+        return true;
+    }
+    const TickType_t start = xTaskGetTickCount();
+    while ((TickType_t)(xTaskGetTickCount() - start) < pdMS_TO_TICKS(BRIDGE_WRITE_TIMEOUT_MS)) {
+        vTaskDelay(1);
+        if (wifi_serial_bridge_interface_UARTWritePutBuffer(pBuf, numBytes)) {
+            return true;
+        }
+    }
+    LOG_E("Serial bridge: USB write blocked >%u ms, response truncated",
+          (unsigned)BRIDGE_WRITE_TIMEOUT_MS);
+    return false;
+}
 
 static bool ProcessHeader(wifi_serial_bridge_context_t * const pContext, uint8_t *pHeader) {
     uint8_t checksum;
@@ -82,7 +120,7 @@ static bool ProcessCommand(wifi_serial_bridge_context_t * const pContext) {
             pContext->dataBuf[2] = (regVal >> 8) & 0xff;
             pContext->dataBuf[3] = (regVal) & 0xff;
 
-            if (false == wifi_serial_bridge_interface_UARTWritePutBuffer(pContext->dataBuf, 4)) {
+            if (false == bridge_WriteAll(pContext->dataBuf, 4)) {
                 return false;
             }
 
@@ -113,7 +151,7 @@ static bool ProcessCommand(wifi_serial_bridge_context_t * const pContext) {
                 if (M2M_SUCCESS != nm_read_block(addr, pContext->dataBuf, WIFI_SERIAL_BRIDGE_CMD_BUFFER_SIZE))
                     return false;
 
-                if (false == wifi_serial_bridge_interface_UARTWritePutBuffer(pContext->dataBuf, WIFI_SERIAL_BRIDGE_CMD_BUFFER_SIZE))
+                if (false == bridge_WriteAll(pContext->dataBuf, WIFI_SERIAL_BRIDGE_CMD_BUFFER_SIZE))
                     return false;
 
                 addr += WIFI_SERIAL_BRIDGE_CMD_BUFFER_SIZE;
@@ -129,7 +167,7 @@ static bool ProcessCommand(wifi_serial_bridge_context_t * const pContext) {
                  * cmdSize here would leak stale buffer contents past the data
                  * actually read — harmless only while the loop above could
                  * never terminate. */
-                if (false == wifi_serial_bridge_interface_UARTWritePutBuffer(pContext->dataBuf, cnt))
+                if (false == bridge_WriteAll(pContext->dataBuf, cnt))
                     return false;
             }
 
@@ -144,7 +182,7 @@ static bool ProcessCommand(wifi_serial_bridge_context_t * const pContext) {
                 pContext->dataBuf[0] = WIFI_SERIAL_BRIDGE_RESPONSE_NACK;
             }
 
-            return wifi_serial_bridge_interface_UARTWritePutBuffer(pContext->dataBuf, 1);
+            return bridge_WriteAll(pContext->dataBuf, 1);
         }
 
         case WIFI_SERIAL_BRIDGE_COMMAND_RECONFIGURE:
