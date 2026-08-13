@@ -79,6 +79,11 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
 /* ************************************************************************** */
 #define LAN_ACTIVE_ERROR_MSG "\r\nError !! Please Disable LAN\r\n"
 #define SD_CARD_NOT_ENABLED_ERROR_MSG "\r\nError !! Please Enabled SD Card\r\n"
+/* #756: bounded re-check after a detect-poll kick. Short enough not to be
+ * felt as a hang on the SCPI path, long enough to cover a kicked poll. */
+#define SD_PRESENCE_RECHECK_MS        900u
+#define SD_PRESENCE_RECHECK_STEP_MS   100u
+
 #define SD_CARD_NOT_PRESENT_ERROR_MSG "\r\nError !! No SD Card Detected\r\n"
 
 // Log format for SD busy errors - use LOG_SD_BUSY("COMMAND") for consistency
@@ -91,6 +96,37 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
  */
 static bool SCPI_CheckSDCardPresent(scpi_t *context) {
     if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
+        /* #756: do not answer "no card" off a stale view.
+         *
+         * When the slot last looked empty the driver backs the detect poll off
+         * to DRV_SDSPI_DETECT_BACKOFF_INTERVAL_MS (5 s, drv_sdspi_local.h).
+         * The thing that restores the fast cadence, DRV_SDSPI_DetectPollKick,
+         * is called from sd_card_manager_UpdateSettings — which runs AFTER
+         * this gate. So the first SD command of a session could fail on a
+         * stale DETACHED view and never kick the poll, leaving recovery to
+         * land wherever the backoff cycle happened to be. That is why a fixed
+         * client-side retry did not reliably rescue it.
+         *
+         * Kick the poll here and re-check briefly before declaring no card.
+         * The wait is bounded and only paid on the failing path — a present
+         * card that already reads ATTACHED never reaches this code. */
+        extern void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object);
+        DRV_SDSPI_DetectPollKick(0);
+
+        bool present = false;
+        for (uint32_t waited = 0u; waited < SD_PRESENCE_RECHECK_MS;
+             waited += SD_PRESENCE_RECHECK_STEP_MS) {
+            vTaskDelay(pdMS_TO_TICKS(SD_PRESENCE_RECHECK_STEP_MS));
+            if (SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
+                present = true;
+                break;
+            }
+        }
+        if (present) {
+            LOG_I("SD - card detected after poll kick (first-access backoff, #756)");
+            return true;
+        }
+
         LOG_E("SD - No SD card detected\r\n");
         context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
