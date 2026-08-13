@@ -160,6 +160,19 @@ extern "C" {
      */
     void UsbCdc_ProcessState();
 
+    /* #780: run ONLY the write half of the CDC state machine.
+     *
+     * app_USBDeviceTask both hosts the SCPI handler chain and drains the USB
+     * circular buffer. A SCPI callback that blocks (an SD reply waiting on the
+     * SD task) therefore stops the drain the SD task is waiting for — the
+     * producer waits on a consumer that is waiting on the producer, broken only
+     * by a 10 s timeout. Calling this from such a wait keeps output flowing.
+     *
+     * Deliberately NOT UsbCdc_ProcessState(): that also runs FinalizeRead,
+     * which dispatches SCPI, so calling it from inside a SCPI callback would
+     * re-enter the parser. This touches no read state. */
+    void UsbCdc_PumpWrite(void);
+
     /**
      * Indicates whether USB is up and active
      */
