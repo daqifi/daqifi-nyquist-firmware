@@ -941,6 +941,33 @@ static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
     gSDCardData.bucketFileCountAtStart =
         CountDirEntries(countPath, SD_CARD_MANAGER_MAX_DIR_FILES,
                         &fsError);
+
+    /* The BUCKET ROOT must be bounded too, not just the directory receiving
+     * files. When the filename carries a subdirectory, mirroring creates that
+     * subdirectory as an entry IN THE ROOT -- so a run using a fresh leading
+     * component each session ("run001/data.csv", "run002/data.csv", ...) adds a
+     * permanent root entry every time while the guard only ever looked at the
+     * near-empty child. The root grew without limit and the O(N) create scan
+     * came back: the exact wedge this change exists to remove, re-entered
+     * through the feature added to support nested names.
+     *
+     * It also falsified the bound documented at MAX_BUCKET (<=64 files x 3
+     * entries + <=64 bucket dirs x 1 = 256), which assumed the root gains
+     * entries only from log files and bucket directories.
+     *
+     * So take the WORSE of the two: the invariant is that every directory this
+     * manager adds entries to stays under the ceiling, and both qualify. */
+    if (!fsError && strcmp(countPath, gSDCardData.bucketPath) != 0) {
+        bool rootErr = false;
+        uint32_t rootCount = CountDirEntries(gSDCardData.bucketPath,
+                                             SD_CARD_MANAGER_MAX_DIR_FILES,
+                                             &rootErr);
+        if (rootErr) {
+            fsError = true;
+        } else if (rootCount > gSDCardData.bucketFileCountAtStart) {
+            gSDCardData.bucketFileCountAtStart = rootCount;
+        }
+    }
     if (fsError) {
         LOG_E("[SD] #689 bucket '%s' unreadable - refusing rather than rolling",
               gSDCardData.bucketPath);
@@ -1486,11 +1513,31 @@ void sd_card_manager_ProcessState() {
                 }
 
                 uint32_t advanced = 0u;
+                bool rescanned = false;
                 while (bucketOk && !reopenExisting &&
                        (gSDCardData.bucketFileCountAtStart +
                         gSDCardData.filesInCurBucket) >= SD_CARD_MANAGER_MAX_DIR_FILES) {
                     if (gSDCardData.curBucket >= SD_CARD_MANAGER_MAX_BUCKET ||
                         advanced >= SD_CARD_MANAGER_BUCKET_ADVANCE_MAX) {
+                        /* Before declaring exhaustion, rescan from bucket 0
+                         * ONCE. The cursor persists so a session need not walk
+                         * buckets it already passed -- but that also means
+                         * space freed in an EARLIER bucket (SD:DELete, the
+                         * natural "remove the oldest files" cleanup) is
+                         * invisible, and logging is refused with "every bucket
+                         * is full" while a writable bucket exists.
+                         *
+                         * Only on the exhaustion edge, so the common path still
+                         * pays nothing: the rescan costs the same bounded walk
+                         * as a cold start, and only when we would otherwise
+                         * have refused outright. */
+                        if (!rescanned && gSDCardData.curBucket > 0u) {
+                            rescanned = true;
+                            advanced = 0u;
+                            if (sd_EnterBucket(gpSDCardSettings->directory, 0u)) {
+                                continue;
+                            }
+                        }
                         gSDCardData.writeRefuseReason = SD_REFUSE_BUCKETS_EXHAUSTED;
                         bucketOk = false;
                         break;
