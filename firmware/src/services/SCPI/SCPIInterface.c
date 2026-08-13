@@ -3745,8 +3745,13 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             }
             if (!sd_card_manager_IsWriteReady()) {
                 if (sd_card_manager_StartupDirFull()) {
-                    LOG_E("STR:START refused: SD directory too full (#689) after "
-                          "buffer repartition — use a different directory or clear the card\r\n");
+                    /* #689: this flag means "no writable location", which covers a
+                     * full directory AND a bucket that could not be created or read.
+                     * Naming only fullness misdirects the operator when the real
+                     * fault is the media; the SD-side LOG_E names which it was. */
+                    LOG_E("STR:START refused: no writable SD location (#689) after "
+                          "buffer repartition — directory full, or the bucket could "
+                          "not be created/read. See SYST:LOG? for which\r\n");
                 } else if (sd_card_manager_StartupDiskFull()) {
                     LOG_E("STR:START refused: SD disk full after buffer repartition\r\n");
                 } else {

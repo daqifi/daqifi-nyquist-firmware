@@ -802,9 +802,14 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         }
         if (!sd_card_manager_IsWriteReady()) {
             if (sd_card_manager_StartupDirFull()) {
-                /* #690: name the real cause instead of the card advisory. */
-                LOG_E("SD:BENCH refused: target directory has too many files "
-                      "(#689) — use a different directory or clear the card\r\n");
+                /* #690: name the real cause instead of the card advisory.
+                 * #689: the flag covers every "no writable location" cause, not
+                 * just fullness — an FS fault reaching here would otherwise be
+                 * reported as a full directory and send the operator to clear a
+                 * card that is not the problem. */
+                LOG_E("SD:BENCH refused: no writable SD location (#689) — the "
+                      "directory is full, or the bucket could not be created/read. "
+                      "See SYST:LOG? for which\r\n");
             } else {
                 LOG_E("SD:BENCH - File not ready after timeout\r\n");
                 LOG_E("SD:BENCH - if reads/LIST work but writes hang, the card is "

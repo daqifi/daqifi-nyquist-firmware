@@ -46,7 +46,24 @@
  * name costs — the parent holds bucket entries too, and they must not become
  * the next O(N) problem. */
 #define SD_CARD_MANAGER_BUCKET_PREFIX      "P"
-#define SD_CARD_MANAGER_MAX_BUCKET         999u
+/* The parent holds one entry per bucket, so the bucket ceiling IS a bound on
+ * the parent's size — get it wrong and creating a late bucket re-enters the
+ * very O(N) scan this fix exists to avoid. Worst-case parent entry budget:
+ *
+ *   <= MAX_DIR_FILES files      x 3 entries (2 LFN + 1 SFN)  = 192
+ *   + <= MAX_BUCKET subdirs     x 1 entry  (8.3-clean names) =  64
+ *                                                             ----
+ *                                                              256 entries
+ *                                                            ~8 KB, ~16 sectors
+ *
+ * The bench wedge (#689) was observed at ~500 LFN files ~= 1,536 entries
+ * (~48 KB, ~94 sectors), so 256 stays ~6x below it. Matching MAX_BUCKET to
+ * MAX_DIR_FILES keeps that arithmetic honest and still allows bucket 0 plus
+ * P001..P064 = 65 x 64 = 4,160 files before the clean refuse. Raising it
+ * without
+ * re-deriving the table above would silently walk the parent back toward the
+ * wedge. */
+#define SD_CARD_MANAGER_MAX_BUCKET         SD_CARD_MANAGER_MAX_DIR_FILES
 /* Advancing a bucket costs a DirectoryMake + a bounded CountDirEntries. Cap
  * how many we will skip in one open so a heavily pre-populated card cannot
  * turn a single create into a long synchronous FS walk inside the SD task —
