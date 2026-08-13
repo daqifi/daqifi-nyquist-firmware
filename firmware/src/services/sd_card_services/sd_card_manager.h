@@ -264,6 +264,7 @@ extern "C" {
         SD_REFUSE_BUCKETS_EXHAUSTED, /* every bucket up to the ceiling is full */
         SD_REFUSE_BUCKET_MKDIR,      /* the bucket directory could not be created */
         SD_REFUSE_BUCKET_UNREADABLE, /* the bucket could not be counted (FS fault) */
+        SD_REFUSE_BUCKET_NOT_DIR,    /* a non-directory occupies the bucket name */
     } SdWriteRefuseReason;
 
     SdWriteRefuseReason sd_card_manager_WriteRefuseReason(void);

@@ -780,6 +780,25 @@ static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
                 gSDCardData.writeRefuseReason = SD_REFUSE_BUCKET_MKDIR;
                 return false;
             }
+            /* EXIST means the NAME is taken, not that a directory is there --
+             * FatFs returns it for any collision, including a regular file. If
+             * a file occupies the bucket name, the count below opens it, gets
+             * NO_PATH, and reports "absent -> 0 files", so the roll stops here
+             * and every later bucket becomes unreachable while the open fails
+             * in a loop. Reachable by an operator-placed extensionless file, or
+             * self-inflicted by pointing SD:FILe at a bucket name.
+             *
+             * Check what is actually there and refuse precisely instead. */
+            SYS_FS_FSTAT st;
+            memset(&st, 0, sizeof(st));
+            if (SYS_FS_FileStat(gSDCardData.bucketPath, &st) != SYS_FS_RES_SUCCESS ||
+                (st.fattrib & SYS_FS_ATTR_DIR) == 0) {
+                LOG_E("[SD] #689 bucket name '%s' is taken by a non-directory - "
+                      "rename or remove it, or use a different directory",
+                      gSDCardData.bucketPath);
+                gSDCardData.writeRefuseReason = SD_REFUSE_BUCKET_NOT_DIR;
+                return false;
+            }
         }
     }
     gSDCardData.curBucket = bucket;
@@ -2457,6 +2476,9 @@ const char* sd_card_manager_WriteRefuseText(void) {
         case SD_REFUSE_BUCKET_UNREADABLE:
             return "a directory bucket could not be read - likely a card or "
                    "filesystem fault, not a full directory";
+        case SD_REFUSE_BUCKET_NOT_DIR:
+            return "a file is occupying a directory-bucket name - rename or "
+                   "remove it, or log to a different directory";
         case SD_REFUSE_NONE:
         default:
             /* The enum documents NONE as "not refused", so returning a refusal
