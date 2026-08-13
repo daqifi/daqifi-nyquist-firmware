@@ -856,10 +856,18 @@ static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
             }
         }
     }
-    /* Mirror any subdirectory in the log filename into this bucket. Bucket 0 is
-     * the configured directory itself, whose subdirectory the caller already
-     * created -- only the rolled-into buckets need it. */
-    if (bucket != 0u && gpSDCardSettings != NULL &&
+    /* Create any subdirectory named in the log filename, in EVERY bucket
+     * including bucket 0.
+     *
+     * Bucket 0 needs it too: CREATE_DIRECTORY makes only the configured
+     * directory, so SD:FILE "sub/run.csv" has never worked on a card where
+     * <dir>/sub was not already present -- a documented form (the SCPI
+     * validator's own comment gives "DAQiFi/sub/file.csv") that silently failed
+     * unless someone had created the directory externally. Doing it here makes
+     * the form work from scratch and makes bucket 0 consistent with the buckets
+     * it rolls into, rather than fixing rollover for a case that could not be
+     * set up on-device in the first place. */
+    if (gpSDCardSettings != NULL &&
         !sd_MirrorFileSubdirs(gSDCardData.bucketPath, gpSDCardSettings->file)) {
         gSDCardData.writeRefuseReason = SD_REFUSE_BUCKET_MKDIR;
         return false;
