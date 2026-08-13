@@ -12,6 +12,13 @@ extern "C" {
         Streaming_ProtoBuffer = 0,
         Streaming_Json = 1,
         Streaming_Csv=2,
+        /* #619: CSV with ONE leading timestamp column instead of a per-channel
+         * ain<N>_ts column. Since the compact sample pool (#115) shares a single
+         * timestamp across a sample set, those per-channel columns are all
+         * identical -- ~15 redundant ~9-digit fields on a 16-channel row.
+         * Appended as a new value rather than changing 2, so existing clients
+         * are untouched; opt-in via SYST:STR:FORmat 3. */
+        Streaming_CsvCompact=3,
     } StreamingEncoding;
 
     typedef enum eStreamingInterface

@@ -3848,6 +3848,10 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
         pRunTimeStreamConfig->Encoding = Streaming_Json;
     }else if(param1 == Streaming_Csv){
          pRunTimeStreamConfig->Encoding = Streaming_Csv;
+    }else if(param1 == Streaming_CsvCompact){
+         /* #619: CSV with one leading timestamp column instead of N identical
+          * per-channel ones. Opt-in; 0/1/2 keep their existing meaning. */
+         pRunTimeStreamConfig->Encoding = Streaming_CsvCompact;
     }else{
         pRunTimeStreamConfig->Encoding = Streaming_Json;
     }
