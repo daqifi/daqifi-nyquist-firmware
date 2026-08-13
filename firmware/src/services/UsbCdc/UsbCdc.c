@@ -1287,6 +1287,25 @@ void UsbCdc_Initialize() {
 
 }
 
+void UsbCdc_PumpWrite(void) {
+    /* Same guard order as the write branch of UsbCdc_ProcessState: only in
+     * PROCESS state, and only when no transfer is already in flight (the
+     * driver allows a single outstanding write). BeginWrite re-checks the
+     * state itself; the check here keeps the intent readable at the call site.
+     *
+     * Safe to call from within a SCPI callback: that runs on this same task,
+     * so there is no concurrent writer, and the outer ProcessState iteration
+     * is suspended inside FinalizeRead rather than mid-BeginWrite. */
+    if (gRunTimeUsbSttings.state != USB_CDC_STATE_PROCESS) {
+        return;
+    }
+    if (gRunTimeUsbSttings.writeTransferHandle !=
+            USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
+        return;                 /* a write is already in flight */
+    }
+    (void)UsbCdc_BeginWrite(&gRunTimeUsbSttings);
+}
+
 void UsbCdc_ProcessState() {
 
     UNUSED(UsbCdc_WaitForRead); // We dont want to block on the read so this is currently not used

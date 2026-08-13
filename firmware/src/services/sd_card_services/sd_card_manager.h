@@ -214,6 +214,14 @@ extern "C" {
      */
     bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs);
 
+    /* #780: use this instead when the CALLER is app_USBDeviceTask and the
+     * operation produces a reply through sd_card_manager_DataReadyCB. That task
+     * also drains the USB circular buffer, so a plain block stops the drain the
+     * SD task needs to finish -- a reply larger than the idle buffer then takes
+     * the full timeout to deliver. This variant pumps the USB write half while
+     * waiting. WiFi/TCP callers do not need it (a different task drains). */
+    bool sd_card_manager_WaitForCompletionPumped(uint32_t timeoutMs);
+
     /**
      * @brief Gets the result of the last completed operation.
      *

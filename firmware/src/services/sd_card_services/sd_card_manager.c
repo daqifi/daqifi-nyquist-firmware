@@ -28,6 +28,11 @@
  * fix (subdirectory bucketing would be) — a guard until #689 is resolved. */
 #define SD_CARD_MANAGER_MAX_DIR_FILES      64u
 
+/* #780: how long the pumped wait blocks between USB write pumps. Small enough
+ * that a filling circular buffer is serviced promptly, large enough that the
+ * wait is not a busy-spin against the SD task. */
+#define SD_WAIT_PUMP_SLICE_MS              2u
+
 // Iterative directory listing — bounded BSS-backed stack instead of recursion.
 // 16 levels covers any realistic FAT32 tree without growing the task stack.
 #define SD_CARD_MANAGER_MAX_LIST_DEPTH     16
@@ -2121,6 +2126,41 @@ bool sd_card_manager_IsIdle() {
             gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_INIT);
 }
 
+
+bool sd_card_manager_WaitForCompletionPumped(uint32_t timeoutMs) {
+    /* #780: identical to WaitForCompletion, except it keeps the USB write half
+     * running while it waits.
+     *
+     * The caller here is app_USBDeviceTask, which is BOTH the SCPI host and the
+     * task that drains the USB circular buffer. Blocking it outright stops the
+     * drain that the SD task needs in order to hand over its reply, so a reply
+     * larger than the idle buffer could only complete by burning the full
+     * timeout. Pumping breaks that cycle: the producer's chunks keep leaving.
+     *
+     * Poll in short slices rather than one long block; each slice pumps. The
+     * slice is the resolution of the timeout, so keep it small. */
+    if (sd_card_manager_IsIdle()) {
+        return true;
+    }
+    const TickType_t slice = pdMS_TO_TICKS(SD_WAIT_PUMP_SLICE_MS);
+    TickType_t waited = 0;
+    const TickType_t limit = (timeoutMs == 0) ? portMAX_DELAY
+                                              : pdMS_TO_TICKS(timeoutMs);
+    for (;;) {
+        if (xSemaphoreTake(gSDCardData.opCompleteSemaphore, slice) == pdTRUE) {
+            return true;
+        }
+        UsbCdc_PumpWrite();
+        if (limit != portMAX_DELAY) {
+            waited += slice;
+            if (waited >= limit) {
+                break;
+            }
+        }
+    }
+    LOG_E("[SD] WaitForCompletion (pumped) timeout after %u ms\r\n", timeoutMs);
+    return false;
+}
 
 bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs) {
     if (sd_card_manager_IsIdle()) {
