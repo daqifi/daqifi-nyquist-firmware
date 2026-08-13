@@ -1309,8 +1309,36 @@ void sd_card_manager_ProcessState() {
                 // BOTH axes — the highest bucket index, and how many we may skip
                 // in a single open — because unbounded synchronous FS work inside
                 // the SD task is the failure mode this issue is about.
+                /* Re-opening a file that ALREADY EXISTS in this bucket adds no
+                 * directory entry, so it must not be treated as a new one.
+                 *
+                 * STR:START opens the file once to prove readiness, then
+                 * PrepareStreamingBuffers closes it and re-opens for the actual
+                 * stream. With the directory at exactly MAX-1 entries, that
+                 * first open filled the bucket, and the re-open then rolled the
+                 * live stream into P001 -- leaving a zero-byte file at the path
+                 * the caller configured while the samples went elsewhere.
+                 *
+                 * Cheaper and more precise than tracking the pre-open: ask the
+                 * filesystem whether the exact target is already there. */
+                bool reopenExisting = false;
+                if (bucketOk) {
+                    char candidate[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
+                    generateFilename(candidate, sizeof(candidate),
+                                     gSDCardData.fileCounter,
+                                     gSDCardData.bucketPath,
+                                     gSDCardData.baseFilename,
+                                     gpSDCardSettings->file);
+                    if (candidate[0] != '\0') {
+                        SYS_FS_FSTAT st;
+                        memset(&st, 0, sizeof(st));
+                        reopenExisting =
+                            (SYS_FS_FileStat(candidate, &st) == SYS_FS_RES_SUCCESS);
+                    }
+                }
+
                 uint32_t advanced = 0u;
-                while (bucketOk &&
+                while (bucketOk && !reopenExisting &&
                        (gSDCardData.bucketFileCountAtStart +
                         gSDCardData.filesInCurBucket) >= SD_CARD_MANAGER_MAX_DIR_FILES) {
                     if (gSDCardData.curBucket >= SD_CARD_MANAGER_MAX_BUCKET ||
