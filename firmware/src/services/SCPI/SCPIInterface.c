@@ -3663,9 +3663,13 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                 /* #689: SD target directory holds too many files — file-create
                  * would wedge the SD op timeout. Surface the precise cause and
                  * remedy instead of a generic "not ready". */
-                LOG_E("[SD] STR:START refused: target directory has too many "
-                      "files (#689) — use a larger SD:MAXSize, a different "
-                      "directory, or clear the card");
+                /* Report the RECORDED cause, like the post-repartition and
+                 * SD:BENCH sites. This is the site that fires on the initial
+                 * bucket scan -- the most common refusal -- and it was the one
+                 * left hardcoded, so a media fault or a bucket-name collision
+                 * still told the operator to clear a card that is not full. */
+                LOG_E("[SD] STR:START refused (#689): %s",
+                      sd_card_manager_WriteRefuseText());
             } else {
                 LOG_E("SD file not ready after %d ms", readyWait * 10);
             }
