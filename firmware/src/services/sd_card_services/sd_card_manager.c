@@ -859,6 +859,12 @@ static bool sd_TargetDirForFile(char* out, size_t outLen, const char* bucketPath
 static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
     if (!sd_BuildBucketPath(gSDCardData.bucketPath,
                             sizeof(gSDCardData.bucketPath), dir, bucket)) {
+        /* Keep the invariant "refused => a reason is recorded". Without this the
+         * caller sets startupDirFull while WriteRefuseText says "no refusal
+         * recorded" -- precisely the misdirection the reason codes exist to
+         * remove. Unreachable today (a 40-char directory cannot overflow a
+         * 510-byte path) but the invariant should not depend on that. */
+        gSDCardData.writeRefuseReason = SD_REFUSE_BUCKET_MKDIR;
         return false;
     }
     if (bucket != 0u) {
@@ -928,6 +934,7 @@ static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
     if (!sd_TargetDirForFile(countPath, sizeof(countPath), gSDCardData.bucketPath,
                              (gpSDCardSettings != NULL) ? gpSDCardSettings->file
                                                         : "")) {
+        gSDCardData.writeRefuseReason = SD_REFUSE_BUCKET_MKDIR;   /* see above */
         return false;
     }
     bool fsError = false;
@@ -1527,7 +1534,13 @@ void sd_card_manager_ProcessState() {
                 // Count the attempt, not the success: a failed create still costs
                 // a directory entry scan, and over-counting only rolls us to a
                 // fresh bucket sooner, which is the safe direction.
-                gSDCardData.filesInCurBucket++;
+                /* A re-open of an existing target adds no directory entry, so
+                 * it must not be counted -- the same reason the roll above skips
+                 * it. Counting it inflated the estimate by one per session on
+                 * the STR:START readiness path. */
+                if (!reopenExisting) {
+                    gSDCardData.filesInCurBucket++;
+                }
 
                 LOG_D("[SD] Opening file '%s' (counter=%u, splitting=%s)\r\n",
                      gSDCardData.filePath, gSDCardData.fileCounter,
