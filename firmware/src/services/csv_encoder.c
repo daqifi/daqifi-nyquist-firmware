@@ -124,6 +124,11 @@ static const char CSV_HEADER_HZ_SUFFIX[] = " Hz\n";
 // This allows board-specific naming conventions (e.g., "ain" vs "ch" prefix)
 
 // DIO header strings
+/* #619: leading single-timestamp column for the compact CSV encoding. DIO keeps
+ * its OWN ts column -- a DIO sample carries an independent timestamp, so folding
+ * it into the analog one would misreport it. Only the per-analog-channel columns
+ * are redundant (they share one sample-set timestamp since the #115 pool). */
+static const char CSV_COMPACT_TS_HEADER[] = "timestamp";
 static const char CSV_DIO_HEADER_FIRST[] = "dio_ts,dio_val\n";
 static const char CSV_DIO_HEADER_SUBSEQUENT[] = ",dio_ts,dio_val\n";
 
@@ -199,7 +204,8 @@ void csv_ResetEncoder(void) {
  * Uses pre-computed strings from flash to minimize file rotation latency.
  * Critical for maintaining data continuity at high sample rates (15kHz+).
  */
-static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConfig, bool dioEnabled) {
+static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConfig,
+                             bool dioEnabled, bool compact) {
     char *q = out;
 
     // Get board config early with NULL check
@@ -263,11 +269,33 @@ static size_t generateHeader(char *out, size_t rem, AInRuntimeArray* channelConf
     }
 
     bool firstCol = true;
-    for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
-        if (channelConfig->Data[i].IsEnabled) {
-            const char* header = firstCol ? headerFirst[i] : headerSubsequent[i];
-            q = fast_strcpy_bounded(q, &rem, header);
-            firstCol = false;
+    if (compact) {
+        /* #619: one leading timestamp column, then value-only names. The
+         * per-channel name is derived from the existing array rather than
+         * duplicating a second 16-entry table per board variant: the entries
+         * are "ain<N>_ts,ain<N>_val" (and the subsequent form only adds a
+         * leading comma), so the text after the LAST comma is exactly the
+         * value column name. One source of truth for channel naming. */
+        q = fast_strcpy_bounded(q, &rem, CSV_COMPACT_TS_HEADER);
+        firstCol = false;
+        for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
+            if (channelConfig->Data[i].IsEnabled) {
+                const char* valName = strrchr(headerFirst[i], ',');
+                if (valName == NULL) {
+                    LOG_E("[CSV] Malformed channel header at %d", i);
+                    return 0;
+                }
+                q = fast_strcpy_bounded(q, &rem, ",");
+                q = fast_strcpy_bounded(q, &rem, valName + 1);
+            }
+        }
+    } else {
+        for (int i = 0; i < MAX_AIN_PUBLIC_CHANNELS; i++) {
+            if (channelConfig->Data[i].IsEnabled) {
+                const char* header = firstCol ? headerFirst[i] : headerSubsequent[i];
+                q = fast_strcpy_bounded(q, &rem, header);
+                firstCol = false;
+            }
         }
     }
 
@@ -293,7 +321,10 @@ size_t csv_GenerateHeaderToBuffer(char* buffer, size_t size) {
     if (!channelConfig) return 0;
     bool* pDioEnable = (bool*)BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
     bool dioEnabled = (pDioEnable && *pDioEnable);
-    size_t len = generateHeader(buffer, size - 1, channelConfig, dioEnabled);
+    StreamingRuntimeConfig *pHdrCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    bool compact = (pHdrCfg != NULL) && (pHdrCfg->Encoding == Streaming_CsvCompact);
+    size_t len = generateHeader(buffer, size - 1, channelConfig, dioEnabled, compact);
     if (len > 0 && len < size) buffer[len] = '\0';
     return len;
 }
@@ -323,7 +354,8 @@ static size_t tryWriteRow(
     bool       *hadAIN,
     bool       *hadDIO,
     uint8_t     voltagePrecision,
-    bool        rawMode              /* #158/#270: emit raw ADC codes */
+    bool        rawMode,             /* #158/#270: emit raw ADC codes */
+    bool        compact              /* #619: one leading ts, not one per channel */
 ) {
     // 1) peek queues
     AInPublicSampleList_t *ainPeek = NULL;
@@ -358,6 +390,25 @@ static size_t tryWriteRow(
         chCount = (uint8_t)ainPeek->channelCount;
     }
 
+    /* #619: in compact mode the sample-set timestamp is written ONCE, ahead of
+     * the values. Every ain<N>_ts column carried this same value (the #115 pool
+     * shares one timestamp per set), so N-1 of them were pure duplication --
+     * ~9 bytes x 15 channels on a 16-channel row. Written even when no analog
+     * sample is present (as an empty field) so the column count per row stays
+     * fixed, which is what keeps the output parseable. */
+    if (compact) {
+        char* p = q;
+        size_t space = rem;
+        if (*hadAIN && ainPeek) {
+            p = uint32_to_str(ainPeek->Timestamp, p, space);
+            if (p == NULL) return 0;
+        }
+        w = p - q;
+        if (w < 0 || (size_t)w >= rem) return 0;
+        q += w; rem -= w;
+        firstField = false;
+    }
+
     for (uint8_t j = 0; j < chCount; j++) {
         bool valid = *hadAIN && ainPeek && (ainPeek->validMask & (1U << j));
 
@@ -370,13 +421,15 @@ static size_t tryWriteRow(
                 *p++ = ',';
                 space--;
             }
-            p = uint32_to_str(ainPeek->Timestamp, p, space);
-            if (p == NULL) return 0;  // Buffer exhausted
-            size_t used = p - q;
-            space = (used < rem) ? rem - used : 0;
-            if (space == 0) return 0;  // Buffer exhausted
-            *p++ = ',';
-            space--;
+            if (!compact) {
+                p = uint32_to_str(ainPeek->Timestamp, p, space);
+                if (p == NULL) return 0;  // Buffer exhausted
+                size_t used = p - q;
+                space = (used < rem) ? rem - used : 0;
+                if (space == 0) return 0;  // Buffer exhausted
+                *p++ = ',';
+                space--;
+            }
 
             // #158/#270: raw mode emits the ADC code directly - no cal,
             // no voltage conversion, no double math (fastest path; also the
@@ -427,8 +480,10 @@ static size_t tryWriteRow(
                 *p++ = ',';  // separator before empty ts
                 space--;
             }
-            if (space < 1) return 0;  // Buffer exhausted
-            *p++ = ',';  // separator between empty ts and empty val
+            if (!compact) {
+                if (space < 1) return 0;  // Buffer exhausted
+                *p++ = ',';  // separator between empty ts and empty val
+            }
 
             w = p - q;
             firstField = false;
@@ -523,6 +578,9 @@ size_t csv_Encode(
     StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     uint8_t voltagePrecision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
+    /* #619: opt-in compact layout (SYST:STR:FORmat 3). Read once per call, not
+     * per row. Defaults to the classic layout if the config is unavailable. */
+    bool compact = (pStreamCfg != NULL) && (pStreamCfg->Encoding == Streaming_CsvCompact);
 
     char   *p     = (char*)pBuffer;
     size_t  rem   = buffSize - 1;  // reserve 1 byte up front for '\0'
@@ -530,7 +588,7 @@ size_t csv_Encode(
 
     // Generate header on first call
     if (!csvHeaderSent) {
-        size_t headerLen = generateHeader(p, rem, channelConfig, dioEnabled);
+        size_t headerLen = generateHeader(p, rem, channelConfig, dioEnabled, compact);
         if (headerLen == 0) {
             // Not enough space to write header; don't emit partial data
             *p = '\0';
@@ -546,7 +604,7 @@ size_t csv_Encode(
         bool hadAIN, hadDIO;
         // attempt to write the next row in-place
         bool rawMode = (pStreamCfg != NULL) ? pStreamCfg->RawOutputMode : false;
-        size_t rowLen = tryWriteRow(p, rem, state, channelConfig, dioEnabled, &hadAIN, &hadDIO, voltagePrecision, rawMode);
+        size_t rowLen = tryWriteRow(p, rem, state, channelConfig, dioEnabled, &hadAIN, &hadDIO, voltagePrecision, rawMode, compact);
         if (rowLen == 0 || rowLen > rem) {
             break;  // no data left or row won?t fit
         }

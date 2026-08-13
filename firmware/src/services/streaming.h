@@ -253,6 +253,15 @@ static inline uint32_t Streaming_SdAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2use
  *                       cap would over-cap them and risk silent transport overflow.
  * @return transport-limited max frequency in Hz
  */
+/* #619: both CSV encodings share the CSV encoder, the CSV header and the CSV
+ * cap coefficients — they differ only in whether a row carries one timestamp or
+ * N identical ones. Call sites must test the FAMILY, not the single value, or
+ * compact CSV silently falls through to whatever branch follows. */
+static inline bool Streaming_EncodingIsCsv(StreamingEncoding e)
+{
+    return (e == Streaming_Csv) || (e == Streaming_CsvCompact);
+}
+
 static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
                                                   StreamingEncoding encoding,
                                                   uint32_t totalChannels,
@@ -265,6 +274,11 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
     switch (encoding) {
         case Streaming_ProtoBuffer: pb = 1u; break;
         case Streaming_Csv:         pb = 0u; break;
+        /* #619: compact CSV emits strictly FEWER bytes per row than CSV, so the
+         * CSV coefficients are a conservative (never-over) bound for it. Note
+         * this case is required, not optional -- the `default` below caps an
+         * unrecognised encoding at 1 Hz. */
+        case Streaming_CsvCompact:  pb = 0u; break;
         case Streaming_Json:        pb = 0u; json = 1u; break;  /* CSV coefficients, derated below */
         default:                    return 1u;
     }
