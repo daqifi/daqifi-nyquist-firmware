@@ -294,6 +294,12 @@ typedef struct {
     // it, and filesInCurBucket counts what this session has added since — so
     // the fullness test costs no per-rotation re-scan.
     uint32_t curBucket;
+    /* #689: the directory curBucket is an index INTO. The cursor is meaningless
+     * against a different directory -- resuming at P003 under a freshly
+     * configured, empty directory would write <newdir>/P003/<file> and never
+     * create the <newdir>/<file> the caller asked for. Compared on every
+     * session start; a mismatch restarts the scan at bucket 0. */
+    char bucketDir[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1];
     uint32_t bucketFileCountAtStart;
     uint32_t filesInCurBucket;
     char bucketPath[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
@@ -777,6 +783,8 @@ static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
         }
     }
     gSDCardData.curBucket = bucket;
+    /* Bind the cursor to the directory it indexes (see bucketDir). */
+    (void)snprintf(gSDCardData.bucketDir, sizeof(gSDCardData.bucketDir), "%s", dir);
     /* An FS error must NOT be read as "this bucket is full": that would roll us
      * forward, creating a spurious empty directory per attempt on a filesystem
      * that is already failing. Refuse instead — the caller's clean stop is the
@@ -1266,15 +1274,28 @@ void sd_card_manager_ProcessState() {
                     // First time opening - extract base filename
                     extractBaseFilename(gpSDCardSettings->file);
                     /* #689: RESUME from the bucket cursor rather than restarting
-                     * at 0. The cursor is reset to 0 only at mount/unmount, so a
-                     * fresh card still starts at the configured directory, but a
-                     * later session on a well-used card does not rescan every
-                     * full bucket it already walked past. Without this, each new
-                     * session paid the full scan again -- and with a capped
-                     * advance it could not finish it, so the session was refused
-                     * at START while free buckets existed. */
+                     * at 0, so a later session on a well-used card does not
+                     * rescan every full bucket it already walked past. Without
+                     * this, each session paid the full scan again -- and with a
+                     * capped advance it could not finish it, so the session was
+                     * refused at START while free buckets existed.
+                     *
+                     * ONLY when the cursor belongs to the directory now
+                     * configured. It is an index into a specific directory, so
+                     * carrying it to a different one would resume at, say, P003
+                     * under a fresh empty directory and write <dir>/P003/<file>
+                     * -- silently never creating the <dir>/<file> that was
+                     * asked for. The configured directory is caller-settable
+                     * (SYST:STOR:SD:LISt? rewrites it persistently), so this is
+                     * reachable without anything exotic. */
+                    uint32_t startBucket = gSDCardData.curBucket;
+                    if (strncmp(gSDCardData.bucketDir, gpSDCardSettings->directory,
+                                sizeof(gSDCardData.bucketDir)) != 0) {
+                        startBucket = 0u;
+                        LOG_D("[SD] #689 directory changed - restarting bucket scan\r\n");
+                    }
                     bucketOk = sd_EnterBucket(gpSDCardSettings->directory,
-                                              gSDCardData.curBucket);
+                                              startBucket);
                 }
 
                 // #689: roll into the next bucket while the active one is at its
@@ -2074,6 +2095,7 @@ void sd_card_manager_ProcessState() {
                  * create P0xx on an empty card and skip the configured directory
                  * entirely -- files still land, but in a surprising place. */
                 gSDCardData.curBucket = 0u;
+                gSDCardData.bucketDir[0] = '\0';
                 gSDCardData.bucketFileCountAtStart = 0u;
                 gSDCardData.filesInCurBucket = 0u;
                 gSDCardData.lastOperationSuccess = true;
