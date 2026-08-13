@@ -1293,9 +1293,25 @@ void UsbCdc_PumpWrite(void) {
      * driver allows a single outstanding write). BeginWrite re-checks the
      * state itself; the check here keeps the intent readable at the call site.
      *
-     * Safe to call from within a SCPI callback: that runs on this same task,
-     * so there is no concurrent writer, and the outer ProcessState iteration
-     * is suspended inside FinalizeRead rather than mid-BeginWrite. */
+     * Safe to call from within a SCPI callback, but NOT because it is always
+     * the same task -- it is not. SYST:STOR:SD:LISt? also serves TCP origin
+     * (SCPIStorageSD.c) and is dispatched on app_WifiTask (pri 2) since #353,
+     * so this can run concurrently with app_USBDeviceTask (pri 7) doing its own
+     * ProcessState -> BeginWrite. Concurrent BeginWrite is tolerated because:
+     *   - the consumer side runs under wMutex, the external serialization
+     *     CircularBuffer.h requires for multiple consumers;
+     *   - the DMA submit is claimed under the #127 writeInProgress flag inside
+     *     a critical section, so the loser's callback returns -1 and
+     *     CircularBuf_ProcessBytes consumes nothing on a negative return --
+     *     no lost bytes, no double-consume;
+     *   - -1 is not a USB_ERROR_* value (those are SCHAR_MIN-based), so it
+     *     falls through BeginWrite's switch as "no action" and cannot trip the
+     *     BEGIN_CLOSE arms.
+     * Cross-task BeginWrite already exists on main (SYST:STR:STOP over TCP ->
+     * UsbCdc_FlushWriteBuffer), so this adds an instance of a tolerated class,
+     * not a new one. Do NOT weaken that locking on the belief that this is
+     * single-task. Same-task re-entry is separately clean: over USB the SCPI
+     * callback runs inside FinalizeRead, never with BeginWrite on the stack. */
     if (gRunTimeUsbSttings.state != USB_CDC_STATE_PROCESS) {
         return;
     }
