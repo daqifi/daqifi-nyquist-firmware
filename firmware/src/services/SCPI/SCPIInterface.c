@@ -3842,6 +3842,26 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #619: reject an encoding change while streaming. The CSV header is sent
+     * ONCE per session (csvHeaderSent), but the row layout is chosen from the
+     * live Encoding on every row -- so switching mid-session leaves every
+     * subsequent row disagreeing with the header the client already parsed.
+     *
+     * That hazard is worst between the two CSV encodings: both announce
+     * themselves as CSV, so a client sees columns silently shift rather than a
+     * format change it could detect. It applies to any switch though, so the
+     * guard covers all of them.
+     *
+     * Mirrors SCPI_ADCChanEnableSet's #116 guard, including its IsEnabled ||
+     * Running form -- the two flags are set and cleared in separate steps at
+     * start/stop, so an && test would leave a window open. */
+    if (pRunTimeStreamConfig->IsEnabled || pRunTimeStreamConfig->Running) {
+        LOG_E("Stream format change rejected: streaming is active "
+              "(stop streaming first)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     if (param1 == Streaming_ProtoBuffer) {
         pRunTimeStreamConfig->Encoding = Streaming_ProtoBuffer;
     } else if (param1 == Streaming_Json) {
