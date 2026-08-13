@@ -808,8 +808,43 @@ static bool sd_MirrorFileSubdirs(const char* bucketPath, const char* fileName) {
                       path, (int)e);
                 return false;
             }
+            /* Same FatFs ambiguity sd_EnterBucket guards: EXIST means the NAME
+             * is taken, not that a directory is there. Without this check a
+             * regular file at this component is accepted, the log open then
+             * fails, and the manager churns instead of refusing cleanly.
+             * Self-inflictable with two settings: SD:FILE "sub" creates the
+             * file DAQiFi/sub, then SD:FILE "sub/run.csv" collides on it. */
+            SYS_FS_FSTAT cst;
+            memset(&cst, 0, sizeof(cst));
+            if (SYS_FS_FileStat(path, &cst) != SYS_FS_RES_SUCCESS ||
+                (cst.fattrib & SYS_FS_ATTR_DIR) == 0) {
+                LOG_E("[SD] #689 '%s' is a file, not a directory - the log "
+                      "filename's path cannot be created", path);
+                return false;
+            }
         }
         seg = slash + 1;
+    }
+    return true;
+}
+
+/* #689: the directory a log file actually lands in -- the bucket, plus any
+ * leading path components of the filename. This is what the fullness guard must
+ * measure, because it is where FatFs does its O(N) create scan. */
+static bool sd_TargetDirForFile(char* out, size_t outLen, const char* bucketPath,
+                                const char* fileName) {
+    const char* lastSlash = strrchr(fileName, '/');
+    int n;
+    if (lastSlash == NULL) {
+        n = snprintf(out, outLen, "%s", bucketPath);
+    } else {
+        n = snprintf(out, outLen, "%s/%.*s", bucketPath,
+                     (int)(lastSlash - fileName), fileName);
+    }
+    if (n < 0 || (size_t)n >= outLen) {
+        LOG_E("[SD] #689 target directory path too long for '%s'", fileName);
+        out[0] = '\0';
+        return false;
     }
     return true;
 }
@@ -879,9 +914,25 @@ static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
      * forward, creating a spurious empty directory per attempt on a filesystem
      * that is already failing. Refuse instead — the caller's clean stop is the
      * right answer for a broken card. */
+    /* Count the directory that will actually RECEIVE the files, which is not
+     * the bucket root when the filename carries a subdirectory.
+     *
+     * With SD:FILE "sub/run.csv" the creates land in <bucket>/sub, but counting
+     * <bucket> sees just the single `sub` entry -- so the guard never fires, and
+     * the FatFs O(N) create scan runs in a directory that can hold hundreds of
+     * files. That is precisely the wedge this whole change exists to prevent,
+     * reintroduced through the side door. (The pre-#689 guard had the same blind
+     * spot, but the nested form only became usable on-device here, so this is
+     * where it becomes reachable.) */
+    char countPath[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
+    if (!sd_TargetDirForFile(countPath, sizeof(countPath), gSDCardData.bucketPath,
+                             (gpSDCardSettings != NULL) ? gpSDCardSettings->file
+                                                        : "")) {
+        return false;
+    }
     bool fsError = false;
     gSDCardData.bucketFileCountAtStart =
-        CountDirEntries(gSDCardData.bucketPath, SD_CARD_MANAGER_MAX_DIR_FILES,
+        CountDirEntries(countPath, SD_CARD_MANAGER_MAX_DIR_FILES,
                         &fsError);
     if (fsError) {
         LOG_E("[SD] #689 bucket '%s' unreadable - refusing rather than rolling",
