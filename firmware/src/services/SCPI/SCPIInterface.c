@@ -5116,7 +5116,12 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * channels, the max rate will be X Hz" without round-tripping
      * for every checkbox change. */
     scpi_printf(context,
-        "\"streaming\":{\"encodings\":[\"pb\",\"csv\",\"json\"],"
+        /* #619: csv_compact (SYST:STR:FORmat 3) is listed because this blob is
+         * documented as the client's source of truth for what the device
+         * supports. Adding an encoding the firmware accepts but never
+         * advertises leaves every schema-following client unable to offer it.
+         * Appended last so existing clients see their three unchanged. */
+        "\"streaming\":{\"encodings\":[\"pb\",\"csv\",\"json\",\"csv_compact\"],"
         "\"transports\":[");
     {
         bool first = true;
