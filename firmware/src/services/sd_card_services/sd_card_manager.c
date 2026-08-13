@@ -64,12 +64,21 @@
  * re-deriving the table above would silently walk the parent back toward the
  * wedge. */
 #define SD_CARD_MANAGER_MAX_BUCKET         SD_CARD_MANAGER_MAX_DIR_FILES
-/* Advancing a bucket costs a DirectoryMake + a bounded CountDirEntries. Cap
- * how many we will skip in one open so a heavily pre-populated card cannot
- * turn a single create into a long synchronous FS walk inside the SD task —
- * the exact unbounded-work failure mode #689 is about. 16 buckets is >1000
- * files of headroom past the current position. */
-#define SD_CARD_MANAGER_BUCKET_ADVANCE_MAX 16u
+/* Advancing a bucket costs a DirectoryMake + a CountDirEntries that is itself
+ * bounded to MAX_DIR_FILES entries (~2 sectors for a full bucket), so one
+ * advance is a few milliseconds.
+ *
+ * This MUST be able to cross every bucket. An earlier value of 16 looked safely
+ * conservative and was actively wrong: a session starting on a card whose first
+ * 60-odd buckets are full could not reach the free ones, and was refused at
+ * START even though space existed. Bench-found 2026-08-13 -- the simulation
+ * that covered this case scored it a "designed backstop", which it is not.
+ *
+ * Worst case is therefore ~65 bounded scans, a few hundred milliseconds, and
+ * only on the FIRST create after a mount: the bucket cursor persists across
+ * sessions (see below), so later sessions resume where the last one stopped
+ * instead of rescanning from zero. */
+#define SD_CARD_MANAGER_BUCKET_ADVANCE_MAX (SD_CARD_MANAGER_MAX_BUCKET + 1u)
 
 // Iterative directory listing — bounded BSS-backed stack instead of recursion.
 // 16 levels covers any realistic FAT32 tree without growing the task stack.
@@ -1110,6 +1119,11 @@ void sd_card_manager_ProcessState() {
             } else {
                 gSDCardData.unmountRetryCount = 0;
                 // Reset file splitting state for next session
+                /* #689: the bucket cursor deliberately does NOT reset here -- it
+                 * persists across sessions so a later one resumes where the last
+                 * stopped instead of rescanning every full bucket. It resets on
+                 * a format (below), where the directories it names cease to
+                 * exist. */
                 gSDCardData.fileCounter = 0;
                 gSDCardData.currentFileBytes = 0;
                 memset(gSDCardData.baseFilename, 0, sizeof(gSDCardData.baseFilename));
@@ -1251,8 +1265,16 @@ void sd_card_manager_ProcessState() {
                 if (gSDCardData.fileCounter == 0) {
                     // First time opening - extract base filename
                     extractBaseFilename(gpSDCardSettings->file);
-                    // #689: start in bucket 0 — the configured directory itself.
-                    bucketOk = sd_EnterBucket(gpSDCardSettings->directory, 0u);
+                    /* #689: RESUME from the bucket cursor rather than restarting
+                     * at 0. The cursor is reset to 0 only at mount/unmount, so a
+                     * fresh card still starts at the configured directory, but a
+                     * later session on a well-used card does not rescan every
+                     * full bucket it already walked past. Without this, each new
+                     * session paid the full scan again -- and with a capped
+                     * advance it could not finish it, so the session was refused
+                     * at START while free buckets existed. */
+                    bucketOk = sd_EnterBucket(gpSDCardSettings->directory,
+                                              gSDCardData.curBucket);
                 }
 
                 // #689: roll into the next bucket while the active one is at its
@@ -2047,6 +2069,13 @@ void sd_card_manager_ProcessState() {
 
             if (SYS_FS_DriveFormat(SD_CARD_MANAGER_DISK_MOUNT_NAME, &opt, formatWorkBuffer, sizeof(formatWorkBuffer)) == SYS_FS_RES_SUCCESS) {
                 LOG_D("[SD] Format completed successfully\r\n");
+                /* #689: a format destroys every bucket directory, so the cursor
+                 * must go back to 0. Leaving it high would make the next session
+                 * create P0xx on an empty card and skip the configured directory
+                 * entirely -- files still land, but in a surprising place. */
+                gSDCardData.curBucket = 0u;
+                gSDCardData.bucketFileCountAtStart = 0u;
+                gSDCardData.filesInCurBucket = 0u;
                 gSDCardData.lastOperationSuccess = true;
                 gFormatStatus = 2;  // Success
             } else {
