@@ -2378,8 +2378,13 @@ const char* sd_card_manager_WriteRefuseText(void) {
         case SD_REFUSE_BUCKET_UNREADABLE:
             return "a directory bucket could not be read - likely a card or "
                    "filesystem fault, not a full directory";
+        case SD_REFUSE_NONE:
         default:
-            return "no writable SD location";
+            /* The enum documents NONE as "not refused", so returning a refusal
+             * phrase here would make a diagnostic read as a failure when none
+             * happened -- e.g. a caller logging this outside an active refusal.
+             * Say plainly that there is nothing to report. */
+            return "no refusal recorded";
     }
 }
 
