@@ -759,6 +759,61 @@ static bool sd_BuildBucketPath(char* out, size_t outLen, const char* dir,
     return true;
 }
 
+/* #689: a log filename may itself contain a subdirectory -- SD:FILE accepts
+ * "sub/run.csv", the SCPI validator explicitly permits interior '/', and bucket
+ * 0 writes <dir>/sub/run*.csv correctly because <dir>/sub already exists.
+ *
+ * On rollover the target becomes <dir>/P001/sub/run-N.csv, whose parent was
+ * never created: the bucket mkdir creates only the bucket itself. The open then
+ * fails, the manager goes to ERROR -> UNMOUNT -> INIT and re-enters the same
+ * bucket, so it churns without writing and leaves empty P00x directories behind
+ * -- a supported configuration degrading into a retry loop rather than the
+ * clean, precisely-reported refusal it deserves.
+ *
+ * So mirror any leading path components of the filename inside the bucket.
+ * Walks component by component; each level is one mkdir and EXIST is success. */
+static bool sd_MirrorFileSubdirs(const char* bucketPath, const char* fileName) {
+    if (strchr(fileName, '/') == NULL) {
+        return true;                        /* plain name: nothing to mirror */
+    }
+    char path[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
+    int n = snprintf(path, sizeof(path), "%s", bucketPath);
+    if (n < 0 || (size_t)n >= sizeof(path)) {
+        return false;
+    }
+    size_t used = (size_t)n;
+    const char* seg = fileName;
+    for (;;) {
+        const char* slash = strchr(seg, '/');
+        if (slash == NULL) {
+            break;                          /* last component is the file */
+        }
+        size_t segLen = (size_t)(slash - seg);
+        if (segLen == 0u) {                 /* tolerate "//" */
+            seg = slash + 1;
+            continue;
+        }
+        if (used + 1u + segLen >= sizeof(path)) {
+            LOG_E("[SD] #689 subdirectory path too long under '%s'", bucketPath);
+            return false;
+        }
+        path[used++] = '/';
+        memcpy(&path[used], seg, segLen);
+        used += segLen;
+        path[used] = '\0';
+        if (SYS_FS_DirectoryMake(path) == SYS_FS_RES_FAILURE) {
+            SYS_FS_ERROR e = SYS_FS_Error();
+            if (e != SYS_FS_ERROR_EXIST) {
+                LOG_E("[SD] #689 could not create '%s' inside the bucket err=%d",
+                      path, (int)e);
+                return false;
+            }
+        }
+        seg = slash + 1;
+    }
+    return true;
+}
+
 /* #689: make `bucket` the active one — create its directory if needed and
  * count what it already holds, ONCE, so the per-rotation fullness test is
  * arithmetic rather than another O(N) scan.
@@ -800,6 +855,14 @@ static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
                 return false;
             }
         }
+    }
+    /* Mirror any subdirectory in the log filename into this bucket. Bucket 0 is
+     * the configured directory itself, whose subdirectory the caller already
+     * created -- only the rolled-into buckets need it. */
+    if (bucket != 0u && gpSDCardSettings != NULL &&
+        !sd_MirrorFileSubdirs(gSDCardData.bucketPath, gpSDCardSettings->file)) {
+        gSDCardData.writeRefuseReason = SD_REFUSE_BUCKET_MKDIR;
+        return false;
     }
     gSDCardData.curBucket = bucket;
     /* Bind the cursor to the directory it indexes (see bucketDir). */
