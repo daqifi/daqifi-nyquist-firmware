@@ -594,8 +594,12 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 
-    // Wait for sd_card_manager to complete listing (up to 10 seconds for large directories)
-    if (!sd_card_manager_WaitForCompletion(SCPI_SD_LIST_TIMEOUT_MS)) {
+    // Wait for sd_card_manager to complete listing (up to 10 seconds for large
+    // directories). #780: PUMPED — a listing is delivered through DataReadyCB
+    // while we wait, and over USB this same task is what drains it. A plain
+    // block deadlocks the two until the timeout fires, so every listing larger
+    // than the idle USB buffer took exactly 10 s and reported failure.
+    if (!sd_card_manager_WaitForCompletionPumped(SCPI_SD_LIST_TIMEOUT_MS)) {
         LOG_E("SD:LIST? - Operation timeout\r\n");
         pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
         sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);

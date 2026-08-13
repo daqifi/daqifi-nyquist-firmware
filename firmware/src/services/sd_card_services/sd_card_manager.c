@@ -28,6 +28,17 @@
  * fix (subdirectory bucketing would be) — a guard until #689 is resolved. */
 #define SD_CARD_MANAGER_MAX_DIR_FILES      64u
 
+/* #780: how long the pumped wait blocks between USB write pumps. Small enough
+ * that a filling circular buffer is serviced promptly, large enough that the
+ * wait is not a busy-spin against the SD task.
+ *
+ * The slice is clamped to >= 1 tick at use. At the current 1000 Hz tick this is
+ * 2 ticks, but if configTICK_RATE_HZ ever dropped below 500, pdMS_TO_TICKS(2)
+ * would round to 0 -- a zero-timeout take never blocks, so the pri-7 waiter
+ * would busy-spin and starve the pri-5 SD task that has to give the semaphore.
+ * That is a livelock for the whole timeout, and forever when timeoutMs == 0. */
+#define SD_WAIT_PUMP_SLICE_MS              2u
+
 // Iterative directory listing — bounded BSS-backed stack instead of recursion.
 // 16 levels covers any realistic FAT32 tree without growing the task stack.
 #define SD_CARD_MANAGER_MAX_LIST_DEPTH     16
@@ -2121,6 +2132,57 @@ bool sd_card_manager_IsIdle() {
             gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_INIT);
 }
 
+
+bool sd_card_manager_WaitForCompletionPumped(uint32_t timeoutMs) {
+    /* #780: identical to WaitForCompletion, except it keeps the USB write half
+     * running while it waits.
+     *
+     * The caller here is app_USBDeviceTask, which is BOTH the SCPI host and the
+     * task that drains the USB circular buffer. Blocking it outright stops the
+     * drain that the SD task needs in order to hand over its reply, so a reply
+     * larger than the idle buffer could only complete by burning the full
+     * timeout. Pumping breaks that cycle: the producer's chunks keep leaving.
+     *
+     * Poll in short slices rather than one long block; each slice pumps. The
+     * slice is the resolution of the timeout, so keep it small. */
+    if (sd_card_manager_IsIdle()) {
+        return true;
+    }
+    TickType_t slice = pdMS_TO_TICKS(SD_WAIT_PUMP_SLICE_MS);
+    if (slice == 0u) {
+        slice = 1u;                 /* never a non-blocking take -- see above */
+    }
+    const TickType_t limit = (timeoutMs == 0) ? portMAX_DELAY
+                                              : pdMS_TO_TICKS(timeoutMs);
+    /* Measure ELAPSED ticks, not slices-attempted. Counting a full slice per
+     * failed take over-counts: a 2-tick take returns after between just-over-1
+     * and 2 ticks of wall time (the wait starts mid-tick), so the nominal
+     * timeout could expire up to ~2x early. The caller documents "up to N ms";
+     * honour it. */
+    /* Only the USB reply path needs pumping. A TCP-targeted reply is drained by
+     * a different task, so pumping USB there is pure waste on every slice -- and
+     * it is the case where this runs on app_WifiTask rather than the USB task,
+     * so not pumping also keeps the common path single-task. */
+    const bool toUsb = (gpSDCardSettings == NULL) ||
+                       (gpSDCardSettings->replyTarget != SD_CARD_REPLY_WIFI_TCP);
+    const TickType_t start = xTaskGetTickCount();
+    for (;;) {
+        if (xSemaphoreTake(gSDCardData.opCompleteSemaphore, slice) == pdTRUE) {
+            return true;
+        }
+        if (toUsb) {
+            UsbCdc_PumpWrite();
+        }
+        if (limit != portMAX_DELAY) {
+            /* Wrap-safe elapsed comparison (project rule: (now - start) < window). */
+            if ((TickType_t)(xTaskGetTickCount() - start) >= limit) {
+                break;
+            }
+        }
+    }
+    LOG_E("[SD] WaitForCompletion (pumped) timeout after %u ms\r\n", timeoutMs);
+    return false;
+}
 
 bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs) {
     if (sd_card_manager_IsIdle()) {
