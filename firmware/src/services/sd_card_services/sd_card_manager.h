@@ -255,6 +255,24 @@ extern "C" {
      *        surface a precise "directory too full" error. Cleared on every
      *        subsequent WRITE attempt.
      */
+    /* #689: WHY a WRITE create was refused. The boolean below stays the control
+     * signal (behaviour unchanged); this reports which condition set it, so a
+     * caller can say what actually happened instead of always blaming a full
+     * directory. Reported, never acted on. */
+    typedef enum {
+        SD_REFUSE_NONE = 0,          /* not refused */
+        SD_REFUSE_BUCKETS_EXHAUSTED, /* every bucket up to the ceiling is full */
+        SD_REFUSE_BUCKET_MKDIR,      /* the bucket directory could not be created */
+        SD_REFUSE_BUCKET_UNREADABLE, /* the bucket could not be counted (FS fault) */
+    } SdWriteRefuseReason;
+
+    SdWriteRefuseReason sd_card_manager_WriteRefuseReason(void);
+
+    /* Human-readable form of the above, so every caller words the same cause
+     * the same way instead of each inventing its own (which is how the
+     * "directory too full" wording ended up on media faults). */
+    const char* sd_card_manager_WriteRefuseText(void);
+
     bool sd_card_manager_StartupDirFull(void);
 
     /** @brief #689: synchronously clear the directory-full flag before a new

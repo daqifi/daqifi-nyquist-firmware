@@ -274,6 +274,10 @@ typedef struct {
     // volatile / cross-task (SD task pri 5 writer, SCPI pri 7/2 reader)
     // rationale as startupDiskFull above.
     volatile bool startupDirFull;
+    /* #689: which condition set startupDirFull. Same cross-task rationale as
+     * the flag above (SD task pri 5 writer, SCPI pri 7/2 readers); a 32-bit
+     * enum load/store is atomic on PIC32MZ, so no critical section is needed. */
+    volatile SdWriteRefuseReason writeRefuseReason;
     // #689: bucketing state. curBucket is the subdirectory index currently
     // being filled (0 == the configured directory itself); bucketPath is its
     // full path, rebuilt only when the bucket changes. bucketFileCountAtStart
@@ -758,6 +762,7 @@ static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
             if (e != SYS_FS_ERROR_EXIST) {
                 LOG_E("[SD] #689 bucket mkdir '%s' failed err=%d",
                       gSDCardData.bucketPath, (int)e);
+                gSDCardData.writeRefuseReason = SD_REFUSE_BUCKET_MKDIR;
                 return false;
             }
         }
@@ -774,9 +779,11 @@ static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
     if (fsError) {
         LOG_E("[SD] #689 bucket '%s' unreadable - refusing rather than rolling",
               gSDCardData.bucketPath);
+        gSDCardData.writeRefuseReason = SD_REFUSE_BUCKET_UNREADABLE;
         return false;
     }
     gSDCardData.filesInCurBucket = 0u;
+    gSDCardData.writeRefuseReason = SD_REFUSE_NONE;
     LOG_D("[SD] #689 bucket '%s' active (holds %u)\r\n", gSDCardData.bucketPath,
           (unsigned)gSDCardData.bucketFileCountAtStart);
     return true;
@@ -1265,6 +1272,7 @@ void sd_card_manager_ProcessState() {
                         gSDCardData.filesInCurBucket) >= SD_CARD_MANAGER_MAX_DIR_FILES) {
                     if (gSDCardData.curBucket >= SD_CARD_MANAGER_MAX_BUCKET ||
                         advanced >= SD_CARD_MANAGER_BUCKET_ADVANCE_MAX) {
+                        gSDCardData.writeRefuseReason = SD_REFUSE_BUCKETS_EXHAUSTED;
                         bucketOk = false;
                         break;
                     }
@@ -2353,6 +2361,26 @@ void sd_card_manager_ClearStartupDiskFull(void) {
      * is correct, since gating on settings init could leave the
      * flag stuck-true if SCPI ever runs before sd init. */
     gSDCardData.startupDiskFull = false;
+}
+
+SdWriteRefuseReason sd_card_manager_WriteRefuseReason(void) {
+    return gSDCardData.writeRefuseReason;
+}
+
+const char* sd_card_manager_WriteRefuseText(void) {
+    switch (gSDCardData.writeRefuseReason) {
+        case SD_REFUSE_BUCKETS_EXHAUSTED:
+            return "every directory bucket is full - use a different directory "
+                   "or clear the card";
+        case SD_REFUSE_BUCKET_MKDIR:
+            return "the next directory bucket could not be created - the card "
+                   "may be write-protected, full or faulty";
+        case SD_REFUSE_BUCKET_UNREADABLE:
+            return "a directory bucket could not be read - likely a card or "
+                   "filesystem fault, not a full directory";
+        default:
+            return "no writable SD location";
+    }
 }
 
 bool sd_card_manager_StartupDirFull(void) {

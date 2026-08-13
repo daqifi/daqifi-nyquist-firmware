@@ -807,9 +807,8 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
                  * just fullness — an FS fault reaching here would otherwise be
                  * reported as a full directory and send the operator to clear a
                  * card that is not the problem. */
-                LOG_E("SD:BENCH refused: no writable SD location (#689) — the "
-                      "directory is full, or the bucket could not be created/read. "
-                      "See SYST:LOG? for which\r\n");
+                LOG_E("SD:BENCH refused (#689): %s\r\n",
+                      sd_card_manager_WriteRefuseText());
             } else {
                 LOG_E("SD:BENCH - File not ready after timeout\r\n");
                 LOG_E("SD:BENCH - if reads/LIST work but writes hang, the card is "
