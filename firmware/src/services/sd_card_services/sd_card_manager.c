@@ -2159,12 +2159,20 @@ bool sd_card_manager_WaitForCompletionPumped(uint32_t timeoutMs) {
      * and 2 ticks of wall time (the wait starts mid-tick), so the nominal
      * timeout could expire up to ~2x early. The caller documents "up to N ms";
      * honour it. */
+    /* Only the USB reply path needs pumping. A TCP-targeted reply is drained by
+     * a different task, so pumping USB there is pure waste on every slice -- and
+     * it is the case where this runs on app_WifiTask rather than the USB task,
+     * so not pumping also keeps the common path single-task. */
+    const bool toUsb = (gpSDCardSettings == NULL) ||
+                       (gpSDCardSettings->replyTarget != SD_CARD_REPLY_WIFI_TCP);
     const TickType_t start = xTaskGetTickCount();
     for (;;) {
         if (xSemaphoreTake(gSDCardData.opCompleteSemaphore, slice) == pdTRUE) {
             return true;
         }
-        UsbCdc_PumpWrite();
+        if (toUsb) {
+            UsbCdc_PumpWrite();
+        }
         if (limit != portMAX_DELAY) {
             /* Wrap-safe elapsed comparison (project rule: (now - start) < window). */
             if ((TickType_t)(xTaskGetTickCount() - start) >= limit) {
