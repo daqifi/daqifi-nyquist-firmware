@@ -71,7 +71,7 @@
 
 **Build:**
 - MPLAB X project: `firmware/daqifi.X/`
-- Makefile configurations: `nbproject/Makefile-default.mk`, `Makefile-Nq1.mk`, `Makefile-Nq3.mk`
+- Makefile configurations: `nbproject/Makefile-default.mk` (NQ1), `Makefile-Nq3.mk`
 - Linker scripts: `old_hv2_bootld.ld` (for bootloader-compatible builds)
 
 ## Platform Requirements
