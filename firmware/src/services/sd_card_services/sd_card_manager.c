@@ -934,8 +934,25 @@ static bool sd_BucketDirExists(const char* bucketPath, bool* fsError) {
  * us it is unwell. */
 static bool sd_TargetExistsInBucketPath(const char* bucketPath, bool* fsError) {
     *fsError = false;
-    char candidate[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
-    generateFilename(candidate, sizeof(candidate), gSDCardData.fileCounter,
+    /* Scratch in gSDCardData.filePath rather than a ~511-byte stack local.
+     * Two such buffers would otherwise live at once during the reuse pre-walk
+     * -- this one and the caller's probePath -- against an SD task stack sized
+     * on a PROFILED peak (see the SDCardTask xTaskCreate note in
+     * app_freertos.c). A static is not an option: BSS is at its ceiling on
+     * this target, and adding ~1 KB fails the link outright with "Not enough
+     * memory for stack".
+     *
+     * Safe, and narrowly so -- keep it that way: filePath is memset at
+     * OPEN_FILE entry, this function is called only from the WRITE branch's
+     * pre-walk, and the REAL path is written over it by generateFilename
+     * further down before anything reads it. Do not add a read of filePath
+     * between those two points. */
+    char* candidate = gSDCardData.filePath;
+    /* sizeof(gSDCardData.filePath), NOT sizeof(candidate) -- candidate is a
+     * pointer here, so sizeof would be 4 and generateFilename would reject
+     * every path as too long. */
+    generateFilename(candidate, sizeof(gSDCardData.filePath),
+                     gSDCardData.fileCounter,
                      bucketPath, gSDCardData.baseFilename,
                      gpSDCardSettings->file);
     if (candidate[0] == '\0') {
