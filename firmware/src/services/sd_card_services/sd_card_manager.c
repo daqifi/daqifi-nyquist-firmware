@@ -2235,6 +2235,12 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.curBucket = 0u;
                 gSDCardData.bucketFileCountAtStart = 0u;
                 gSDCardData.filesInCurBucket = 0u;
+                /* bucketPath too, or the refusal LOG_E and the "bucket active"
+                 * trace keep naming a P0xx directory the format just deleted --
+                 * the state is cleared but its label still describes the old
+                 * card, which is exactly the misdirection the reason codes
+                 * exist to remove. */
+                gSDCardData.bucketPath[0] = '\0';
                 gSDCardData.lastOperationSuccess = true;
                 gFormatStatus = 2;  // Success
             } else {
