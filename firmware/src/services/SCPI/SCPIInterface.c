@@ -3850,12 +3850,36 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #619: reject an encoding change while streaming. The CSV header is sent
+     * ONCE per session (csvHeaderSent), but the row layout is chosen from the
+     * live Encoding on every row -- so switching mid-session leaves every
+     * subsequent row disagreeing with the header the client already parsed.
+     *
+     * That hazard is worst between the two CSV encodings: both announce
+     * themselves as CSV, so a client sees columns silently shift rather than a
+     * format change it could detect. It applies to any switch though, so the
+     * guard covers all of them.
+     *
+     * Mirrors SCPI_ADCChanEnableSet's #116 guard, including its IsEnabled ||
+     * Running form -- the two flags are set and cleared in separate steps at
+     * start/stop, so an && test would leave a window open. */
+    if (pRunTimeStreamConfig->IsEnabled || pRunTimeStreamConfig->Running) {
+        LOG_E("Stream format change rejected: streaming is active "
+              "(stop streaming first)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     if (param1 == Streaming_ProtoBuffer) {
         pRunTimeStreamConfig->Encoding = Streaming_ProtoBuffer;
     } else if (param1 == Streaming_Json) {
         pRunTimeStreamConfig->Encoding = Streaming_Json;
     }else if(param1 == Streaming_Csv){
          pRunTimeStreamConfig->Encoding = Streaming_Csv;
+    }else if(param1 == Streaming_CsvCompact){
+         /* #619: CSV with one leading timestamp column instead of N identical
+          * per-channel ones. Opt-in; 0/1/2 keep their existing meaning. */
+         pRunTimeStreamConfig->Encoding = Streaming_CsvCompact;
     }else{
         pRunTimeStreamConfig->Encoding = Streaming_Json;
     }
@@ -5100,7 +5124,12 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * channels, the max rate will be X Hz" without round-tripping
      * for every checkbox change. */
     scpi_printf(context,
-        "\"streaming\":{\"encodings\":[\"pb\",\"csv\",\"json\"],"
+        /* #619: csv_compact (SYST:STR:FORmat 3) is listed because this blob is
+         * documented as the client's source of truth for what the device
+         * supports. Adding an encoding the firmware accepts but never
+         * advertises leaves every schema-following client unable to offer it.
+         * Appended last so existing clients see their three unchanged. */
+        "\"streaming\":{\"encodings\":[\"pb\",\"csv\",\"json\",\"csv_compact\"],"
         "\"transports\":[");
     {
         bool first = true;

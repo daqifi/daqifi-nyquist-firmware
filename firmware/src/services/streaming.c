@@ -2445,7 +2445,7 @@ void streaming_Task(void) {
             // Write SD-only header/metadata for each new file so every
             // file is self-describing and independently parseable.
             size_t sdHdrLen = 0;
-            if (pRunTimeStreamConf->Encoding == Streaming_Csv) {
+            if (Streaming_EncodingIsCsv(pRunTimeStreamConf->Encoding)) {
                 // On rotation (header already sent to USB), generate
                 // SD-only header.  First file: encoder flag is false,
                 // so the encoder naturally includes the header for ALL
@@ -2593,7 +2593,7 @@ void streaming_Task(void) {
             size_t encRoom = bufferSize - packetSize;
             size_t encoded = 0;
             DioProbe_PulseStart(8);  /* probe 8: encode duration */
-            if (pRunTimeStreamConf->Encoding == Streaming_Csv) {
+            if (Streaming_EncodingIsCsv(pRunTimeStreamConf->Encoding)) {
                 DIO_TIMING_TEST_WRITE_STATE(1);
                 encoded = csv_Encode(pBoardData, &nanopbFlag, encPtr, encRoom);
                 DIO_TIMING_TEST_WRITE_STATE(0);
