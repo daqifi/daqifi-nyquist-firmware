@@ -25,9 +25,62 @@
  * tracks the FatFs directory-cluster grow (dir_clear write burst) and the O(N)
  * create scan, so it is CARD-DEPENDENT. 64 keeps the directory within its first
  * FAT cluster (no grow burst) with margin below the proven-clean 75. Not a full
- * fix (subdirectory bucketing would be) — a guard until #689 is resolved. */
+ * fix on its own — it is the per-BUCKET ceiling that the #689 bucketing below
+ * rolls over at, and the hard refuse only when buckets are exhausted. */
 #define SD_CARD_MANAGER_MAX_DIR_FILES      64u
 
+/* #689: subdirectory bucketing. A long split-file session used to pile every
+ * part into one directory; FatFs file-create is O(directory size) (dir_find
+ * scans to EOF, then dir_alloc rescans from 0 for contiguous free entries),
+ * so past a few hundred files a create exceeds the SD op timeout and wedges
+ * the manager. Bucketing keeps every directory we write into small, so the
+ * create scan stays bounded no matter how long the session runs.
+ *
+ * Bucket 0 IS the configured directory — sessions that never exceed one
+ * bucket are byte-for-byte identical to the pre-#689 layout, so the common
+ * case gains no new paths and host tooling sees no change. Only once a
+ * directory reaches MAX_DIR_FILES do we roll into 'P001', 'P002', ...
+ *
+ * The names are deliberately 8.3-clean (uppercase, <=8 chars, no extension)
+ * so FatFs stores each as a SINGLE directory entry rather than the 3 an LFN
+ * name costs — the parent holds bucket entries too, and they must not become
+ * the next O(N) problem. */
+#define SD_CARD_MANAGER_BUCKET_PREFIX      "P"
+/* The parent holds one entry per bucket, so the bucket ceiling IS a bound on
+ * the parent's size — get it wrong and creating a late bucket re-enters the
+ * very O(N) scan this fix exists to avoid. Worst-case parent entry budget:
+ *
+ *   <= MAX_DIR_FILES files      x 3 entries (2 LFN + 1 SFN)  = 192
+ *   + <= MAX_BUCKET subdirs     x 1 entry  (8.3-clean names) =  64
+ *                                                             ----
+ *                                                              256 entries
+ *                                                            ~8 KB, ~16 sectors
+ *
+ * The bench wedge (#689) was observed at ~500 LFN files ~= 1,536 entries
+ * (~48 KB, ~94 sectors), so 256 stays ~6x below it. Matching MAX_BUCKET to
+ * MAX_DIR_FILES keeps that arithmetic honest and still allows bucket 0 plus
+ * P001..P064 = 65 x 64 = 4,160 files before the clean refuse. Raising it
+ * without
+ * re-deriving the table above would silently walk the parent back toward the
+ * wedge. */
+#define SD_CARD_MANAGER_MAX_BUCKET         SD_CARD_MANAGER_MAX_DIR_FILES
+/* Advancing a bucket costs a DirectoryMake + a CountDirEntries that is itself
+ * bounded to MAX_DIR_FILES entries (~2 sectors for a full bucket), so one
+ * advance is a few milliseconds.
+ *
+ * This MUST be able to cross every bucket. An earlier value of 16 looked safely
+ * conservative and was actively wrong: a session starting on a card whose first
+ * 60-odd buckets are full could not reach the free ones, and was refused at
+ * START even though space existed. Bench-found 2026-08-13 -- the simulation
+ * that covered this case scored it a "designed backstop", which it is not.
+ *
+ * Worst case is therefore ~65 bounded scans, a few hundred milliseconds, paid
+ * on the first create of each SESSION -- every session rescans from bucket 0.
+ * An earlier revision persisted the cursor across sessions to avoid exactly
+ * that rescan; it was removed because a cursor that cannot be stale is worth
+ * more than the time it saves (see the fileCounter==0 branch for the three
+ * ways the stale one went wrong). */
+#define SD_CARD_MANAGER_BUCKET_ADVANCE_MAX (SD_CARD_MANAGER_MAX_BUCKET + 1u)
 /* #780: how long the pumped wait blocks between USB write pumps. Small enough
  * that a filling circular buffer is serviced promptly, large enough that the
  * wait is not a busy-spin against the SD task.
@@ -242,10 +295,20 @@ typedef struct {
     // volatile / cross-task (SD task pri 5 writer, SCPI pri 7/2 reader)
     // rationale as startupDiskFull above.
     volatile bool startupDirFull;
-    // #689: file count of the target directory, counted once per session at the
-    // first file open; added to fileCounter to bound the check without a
-    // per-rotation re-scan.
-    uint32_t dirFileCountAtStart;
+    /* #689: which condition set startupDirFull. Same cross-task rationale as
+     * the flag above (SD task pri 5 writer, SCPI pri 7/2 readers); a 32-bit
+     * enum load/store is atomic on PIC32MZ, so no critical section is needed. */
+    volatile SdWriteRefuseReason writeRefuseReason;
+    // #689: bucketing state. curBucket is the subdirectory index currently
+    // being filled (0 == the configured directory itself); bucketPath is its
+    // full path, rebuilt only when the bucket changes. bucketFileCountAtStart
+    // is the pre-existing occupancy of that bucket, counted ONCE when we enter
+    // it, and filesInCurBucket counts what this session has added since — so
+    // the fullness test costs no per-rotation re-scan.
+    uint32_t curBucket;
+    uint32_t bucketFileCountAtStart;
+    uint32_t filesInCurBucket;
+    char bucketPath[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
 } sd_card_manager_context_t;
 
 sd_card_manager_context_t gSDCardData;
@@ -287,8 +350,17 @@ static int CircularBufferToSDWrite(uint8_t* buf, uint32_t len) {
  * O(N) directory scan cost is bounded to ~cap entries regardless of directory
  * size. Runs in the SD task, which owns the filesystem. "." / ".." are skipped.
  * Returns min(actualFiles, cap); a return of `cap` means "at least cap". A
- * missing directory (created lazily on first write) counts as 0. */
-static uint32_t CountDirEntries(const char* dirPath, uint32_t cap) {
+ * missing directory (created lazily on first write) counts as 0.
+ *
+ * #689: `cap` is returned BOTH for "at least cap files" and for a real FS
+ * error, so callers that act on fullness must be able to tell them apart —
+ * rolling to a fresh bucket is right for a full directory and wrong for a
+ * broken filesystem. pFsError (optional) reports which happened. */
+static uint32_t CountDirEntries(const char* dirPath, uint32_t cap,
+                                bool* pFsError) {
+    if (pFsError != NULL) {
+        *pFsError = false;
+    }
     SYS_FS_HANDLE dh = SYS_FS_DirOpen(dirPath);
     if (dh == SYS_FS_HANDLE_INVALID) {
         /* #690 review (Qodo): distinguish "directory doesn't exist yet" (the
@@ -301,6 +373,9 @@ static uint32_t CountDirEntries(const char* dirPath, uint32_t cap) {
         }
         LOG_E("[SD] CountDirEntries: DirOpen('%s') failed err=%d — failing safe (refuse)",
               dirPath, (int)e);
+        if (pFsError != NULL) {
+            *pFsError = true;
+        }
         return cap;
     }
     uint32_t count = 0;
@@ -315,6 +390,9 @@ static uint32_t CountDirEntries(const char* dirPath, uint32_t cap) {
             LOG_E("[SD] CountDirEntries: DirRead failed at %u err=%d — failing safe",
                   (unsigned)count, (int)SYS_FS_Error());
             (void)SYS_FS_DirClose(dh);
+            if (pFsError != NULL) {
+                *pFsError = true;
+            }
             return cap;
         }
         if (st.fname[0] == '\0') {
@@ -667,6 +745,98 @@ static void extractBaseFilename(const char* filename) {
     }
 }
 
+/* #689: build the path of bucket `bucket` under `dir`. Bucket 0 IS `dir`, so
+ * a session that never fills one bucket produces exactly the pre-#689 paths. */
+static bool sd_BuildBucketPath(char* out, size_t outLen, const char* dir,
+                               uint32_t bucket) {
+    int written;
+    if (bucket == 0u) {
+        written = snprintf(out, outLen, "%s", dir);
+    } else {
+        written = snprintf(out, outLen, "%s/" SD_CARD_MANAGER_BUCKET_PREFIX "%03u",
+                           dir, (unsigned)bucket);
+    }
+    if (written < 0 || (size_t)written >= outLen) {
+        LOG_E("[%s:%d]Bucket path too long: dir='%s' bucket=%u (max %zu)",
+              __FILE__, __LINE__, dir, (unsigned)bucket, outLen);
+        out[0] = '\0';
+        return false;
+    }
+    return true;
+}
+
+
+
+/* #689: make `bucket` the active one — create its directory if needed and
+ * count what it already holds, ONCE, so the per-rotation fullness test is
+ * arithmetic rather than another O(N) scan.
+ *
+ * An existing directory is success, not an error: buckets are reused across
+ * sessions by design (the same base filename overwrites the same part names,
+ * matching the pre-#689 single-directory behaviour). */
+static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
+    if (!sd_BuildBucketPath(gSDCardData.bucketPath,
+                            sizeof(gSDCardData.bucketPath), dir, bucket)) {
+        /* Keep the invariant "refused => a reason is recorded". Without this the
+         * caller sets startupDirFull while WriteRefuseText says "no refusal
+         * recorded" -- precisely the misdirection the reason codes exist to
+         * remove. Unreachable today (a 40-char directory cannot overflow a
+         * 510-byte path) but the invariant should not depend on that. */
+        gSDCardData.writeRefuseReason = SD_REFUSE_BUCKET_MKDIR;
+        return false;
+    }
+    if (bucket != 0u) {
+        if (SYS_FS_DirectoryMake(gSDCardData.bucketPath) == SYS_FS_RES_FAILURE) {
+            SYS_FS_ERROR e = SYS_FS_Error();
+            if (e != SYS_FS_ERROR_EXIST) {
+                LOG_E("[SD] #689 bucket mkdir '%s' failed err=%d",
+                      gSDCardData.bucketPath, (int)e);
+                gSDCardData.writeRefuseReason = SD_REFUSE_BUCKET_MKDIR;
+                return false;
+            }
+            /* EXIST means the NAME is taken, not that a directory is there --
+             * FatFs returns it for any collision, including a regular file. If
+             * a file occupies the bucket name, the count below opens it, gets
+             * NO_PATH, and reports "absent -> 0 files", so the roll stops here
+             * and every later bucket becomes unreachable while the open fails
+             * in a loop. Reachable by an operator-placed extensionless file, or
+             * self-inflicted by pointing SD:FILe at a bucket name.
+             *
+             * Check what is actually there and refuse precisely instead. */
+            SYS_FS_FSTAT st;
+            memset(&st, 0, sizeof(st));
+            if (SYS_FS_FileStat(gSDCardData.bucketPath, &st) != SYS_FS_RES_SUCCESS ||
+                (st.fattrib & SYS_FS_ATTR_DIR) == 0) {
+                LOG_E("[SD] #689 bucket name '%s' is taken by a non-directory - "
+                      "rename or remove it, or use a different directory",
+                      gSDCardData.bucketPath);
+                gSDCardData.writeRefuseReason = SD_REFUSE_BUCKET_NOT_DIR;
+                return false;
+            }
+        }
+    }
+    gSDCardData.curBucket = bucket;
+    /* An FS error must NOT be read as "this bucket is full": that would roll us
+     * forward, creating a spurious empty directory per attempt on a filesystem
+     * that is already failing. Refuse instead -- the caller's clean stop is the
+     * right answer for a broken card. */
+    bool fsError = false;
+    gSDCardData.bucketFileCountAtStart =
+        CountDirEntries(gSDCardData.bucketPath, SD_CARD_MANAGER_MAX_DIR_FILES,
+                        &fsError);
+    if (fsError) {
+        LOG_E("[SD] #689 bucket '%s' unreadable - refusing rather than rolling",
+              gSDCardData.bucketPath);
+        gSDCardData.writeRefuseReason = SD_REFUSE_BUCKET_UNREADABLE;
+        return false;
+    }
+    gSDCardData.filesInCurBucket = 0u;
+    gSDCardData.writeRefuseReason = SD_REFUSE_NONE;
+    LOG_D("[SD] #689 bucket '%s' active (holds %u)\r\n", gSDCardData.bucketPath,
+          (unsigned)gSDCardData.bucketFileCountAtStart);
+    return true;
+}
+
 /**
  * @brief Generates filename with sequential numbering.
  *
@@ -718,6 +888,88 @@ static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
               __FILE__, __LINE__, written, maxLen, directory, baseFilename, counter, useExt);
         outPath[0] = '\0';
     }
+}
+
+/* #689: is a bucket directory present? Buckets are created in ascending order,
+ * so the first absent one ends a forward search. Checks the DIR attribute for
+ * the same reason sd_EnterBucket does: a regular file wearing a bucket name
+ * must not read as a bucket.
+ *
+ * *fsError is set when the stat failed for a reason OTHER than "not there".
+ * Collapsing those into "absent" would end the search early on a failing card
+ * and silently create a duplicate part -- the same conflation CountDirEntries
+ * refuses to make, and the caller fails safe the same way it does. */
+static bool sd_BucketDirExists(const char* bucketPath, bool* fsError) {
+    *fsError = false;
+    SYS_FS_FSTAT st;
+    memset(&st, 0, sizeof(st));
+    if (SYS_FS_FileStat(bucketPath, &st) != SYS_FS_RES_SUCCESS) {
+        SYS_FS_ERROR e = SYS_FS_Error();
+        if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
+            LOG_E("[SD] #689 bucket stat '%s' failed err=%d — failing safe "
+                  "rather than reading it as absent", bucketPath, (int)e);
+            *fsError = true;
+        }
+        return false;
+    }
+    return ((st.fattrib & SYS_FS_ATTR_DIR) != 0);
+}
+
+/* #689: does this bucket already hold the part about to be opened? Used to
+ * reopen a part in place instead of creating a duplicate in a later bucket.
+ *
+ * A DIRECTORY at the target path is not a reopenable part. Accepting one
+ * would set reopenExisting, suppress the roll, and then fail the
+ * FileOpen(...WRITE_PLUS) that follows -- turning an operator-created name
+ * collision into a stuck open instead of letting the roll move past it. This
+ * is the mirror of the check sd_EnterBucket makes on SYS_FS_ERROR_EXIST,
+ * where the ambiguity runs the other way (a regular file wearing a bucket
+ * name); FatFs reports presence, never kind, so both sites must ask.
+ *
+ * *fsError follows the same rule as sd_BucketDirExists and CountDirEntries: a
+ * stat that fails for a reason OTHER than "not there" must not be reported as
+ * absence. Reading a fault as "no such part" makes the caller create a SECOND
+ * copy of a part that does exist, which is the one outcome this whole search
+ * is here to prevent -- and it would do so silently, on a card that is telling
+ * us it is unwell. */
+static bool sd_TargetExistsInBucketPath(const char* bucketPath, bool* fsError) {
+    *fsError = false;
+    /* Scratch in gSDCardData.filePath rather than a ~511-byte stack local.
+     * Two such buffers would otherwise live at once during the reuse pre-walk
+     * -- this one and the caller's probePath -- against an SD task stack sized
+     * on a PROFILED peak (see the SDCardTask xTaskCreate note in
+     * app_freertos.c). A static is not an option: BSS is at its ceiling on
+     * this target, and adding ~1 KB fails the link outright with "Not enough
+     * memory for stack".
+     *
+     * Safe, and narrowly so -- keep it that way: filePath is memset at
+     * OPEN_FILE entry, this function is called only from the WRITE branch's
+     * pre-walk, and the REAL path is written over it by generateFilename
+     * further down before anything reads it. Do not add a read of filePath
+     * between those two points. */
+    char* candidate = gSDCardData.filePath;
+    /* sizeof(gSDCardData.filePath), NOT sizeof(candidate) -- candidate is a
+     * pointer here, so sizeof would be 4 and generateFilename would reject
+     * every path as too long. */
+    generateFilename(candidate, sizeof(gSDCardData.filePath),
+                     gSDCardData.fileCounter,
+                     bucketPath, gSDCardData.baseFilename,
+                     gpSDCardSettings->file);
+    if (candidate[0] == '\0') {
+        return false;
+    }
+    SYS_FS_FSTAT st;
+    memset(&st, 0, sizeof(st));
+    if (SYS_FS_FileStat(candidate, &st) != SYS_FS_RES_SUCCESS) {
+        SYS_FS_ERROR e = SYS_FS_Error();
+        if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
+            LOG_E("[SD] #689 part stat '%s' failed err=%d — failing safe "
+                  "rather than reading it as absent", candidate, (int)e);
+            *fsError = true;
+        }
+        return false;
+    }
+    return ((st.fattrib & SYS_FS_ATTR_DIR) == 0);
 }
 
 void sd_card_manager_ProcessState() {
@@ -988,6 +1240,18 @@ void sd_card_manager_ProcessState() {
             } else {
                 gSDCardData.unmountRetryCount = 0;
                 // Reset file splitting state for next session
+                /* #689: curBucket/bucketPath are left alone here, and that is
+                 * harmless rather than deliberate -- resetting fileCounter is
+                 * what matters, because the next session's first open takes the
+                 * fileCounter==0 branch and re-enters bucket 0, re-establishing
+                 * both.
+                 *
+                 * An earlier revision DID persist the cursor on purpose, to
+                 * resume where the last session stopped instead of rescanning
+                 * full buckets. That was removed: it survived a card swap or a
+                 * PC-side reformat, it ignored space freed by deleting files,
+                 * and it stopped the same base filename from overwriting. Do
+                 * not reintroduce it without re-reading those three cases. */
                 gSDCardData.fileCounter = 0;
                 gSDCardData.currentFileBytes = 0;
                 memset(gSDCardData.baseFilename, 0, sizeof(gSDCardData.baseFilename));
@@ -1125,31 +1389,177 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.fileSplittingEnabled = (gpSDCardSettings->maxFileSizeBytes > 0);
 
                 // Extract base filename and generate actual filename with counter
+                bool bucketOk = true;
                 if (gSDCardData.fileCounter == 0) {
                     // First time opening - extract base filename
                     extractBaseFilename(gpSDCardSettings->file);
-                    // #689: count existing files in the target directory once
-                    // (bounded to the guard ceiling) so the check below is cheap
-                    // on every subsequent rotation.
-                    gSDCardData.dirFileCountAtStart = CountDirEntries(
-                        gpSDCardSettings->directory, SD_CARD_MANAGER_MAX_DIR_FILES);
+                    /* #689: ALWAYS scan from bucket 0. An earlier revision
+                     * persisted a cursor across sessions to avoid re-walking
+                     * buckets already passed, and that optimisation produced
+                     * three separate defects: it survived a card swap or a
+                     * PC-side reformat (first session on a fresh card landed in
+                     * P0xx instead of the configured directory); it ignored
+                     * space freed by deleting older files, refusing with "every
+                     * bucket is full" while a writable one existed; and it made
+                     * the same base filename stop overwriting, so repeated runs
+                     * accumulated duplicate part names across buckets.
+                     *
+                     * The scan it avoided is cheap and bounded: at most
+                     * MAX_BUCKET+1 CountDirEntries calls, each itself bounded to
+                     * MAX_DIR_FILES entries -- a few hundred milliseconds once
+                     * per session start, against sessions that run for minutes
+                     * to hours. Paying it buys a cursor that cannot be stale,
+                     * which is worth far more than the time it saves. */
+                    bucketOk = sd_EnterBucket(gpSDCardSettings->directory, 0u);
                 }
 
-                // #689 guard: refuse to create a file into a directory that
-                // already holds too many files. FatFs file-create is O(dir size)
-                // and would wedge the SD op timeout on large directories. This
-                // covers BOTH session start (fileCounter==0) and every split
-                // rotation (which re-enters OPEN_FILE with fileCounter++). Clean-
-                // stop to IDLE with startupDirFull set, so SCPI_StartStreaming
-                // reports a precise "directory too full" error rather than a
-                // silent wedge — mirrors the #503 disk-full clean-stop pattern.
-                if ((gSDCardData.dirFileCountAtStart + gSDCardData.fileCounter)
-                        >= SD_CARD_MANAGER_MAX_DIR_FILES) {
-                    LOG_E("[SD] WRITE refused: dir '%s' holds >= %u files — FatFs "
+                // #689: roll into the next bucket while the active one is at its
+                // ceiling, so FatFs never sees a large directory to scan. This
+                // replaces the old hard refuse, which merely converted the wedge
+                // into a dead stop: a long split session now keeps logging into
+                // P001, P002, ... instead of ending at 64 files.
+                //
+                // A `while` rather than an `if` because the bucket we land in may
+                // itself be populated from an earlier session. It is bounded on
+                // BOTH axes — the highest bucket index, and how many we may skip
+                // in a single open — because unbounded synchronous FS work inside
+                // the SD task is the failure mode this issue is about.
+                /* Re-opening a file that ALREADY EXISTS in this bucket adds no
+                 * directory entry, so it must not be treated as a new one.
+                 *
+                 * STR:START opens the file once to prove readiness, then
+                 * PrepareStreamingBuffers closes it and re-opens for the actual
+                 * stream. With the directory at exactly MAX-1 entries, that
+                 * first open filled the bucket, and the re-open then rolled the
+                 * live stream into P001 -- leaving a zero-byte file at the path
+                 * the caller configured while the samples went elsewhere.
+                 *
+                 * Cheaper and more precise than tracking the pre-open: ask the
+                 * filesystem whether the exact target is already there.
+                 *
+                 * The search spans buckets, forward from the ACTIVE one -- a
+                 * session only ever moves forward -- and stops at the first
+                 * ABSENT bucket, because buckets are created in ascending
+                 * order. A fresh card therefore costs one directory stat.
+                 *
+                 * Stopping at the first gap is a DELIBERATE bound, not an
+                 * oversight. Removing it means stat-ing all MAX_BUCKET+1
+                 * buckets on EVERY open -- reintroducing exactly the
+                 * O(directory) synchronous FS work inside the SD task that
+                 * this issue exists to remove. Nothing in this firmware can
+                 * create a gap (buckets are made in ascending order and only
+                 * files are deleted), so reaching that state needs a whole
+                 * P0xx directory removed on a PC while a later one survives,
+                 * and the consequence is bounded: one extra copy of one part
+                 * name, nothing overwritten.
+                 *
+                 * It must NOT be folded into the roll below, which was tried
+                 * and is wrong: the roll only advances while a bucket is FULL,
+                 * so it never runs when the active bucket has room -- and a
+                 * bucket can have room while a LATER one still holds this
+                 * part, e.g. after files are deleted from it PC-side. The roll
+                 * would then skip the search entirely and create a duplicate
+                 * part alongside the surviving original. Searching here covers
+                 * both shapes with one mechanism; a newly created bucket is
+                 * empty, so nothing the roll creates can hold the part. */
+                bool reopenExisting = false;
+                if (bucketOk) {
+                    uint32_t reuseBucket = gSDCardData.curBucket;
+                    char probePath[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
+                    for (uint32_t probe = gSDCardData.curBucket;
+                         probe <= SD_CARD_MANAGER_MAX_BUCKET; probe++) {
+                        if (!sd_BuildBucketPath(probePath, sizeof(probePath),
+                                                gpSDCardSettings->directory,
+                                                probe)) {
+                            break;
+                        }
+                        if (probe != gSDCardData.curBucket) {
+                            bool probeFsError = false;
+                            bool present = sd_BucketDirExists(probePath,
+                                                              &probeFsError);
+                            if (probeFsError) {
+                                /* An unreadable bucket is NOT an absent one.
+                                 * Ending the search here would create a
+                                 * duplicate part on a card that is merely
+                                 * failing, so refuse instead -- the same
+                                 * fail-safe sd_EnterBucket applies to an
+                                 * unreadable count. */
+                                gSDCardData.writeRefuseReason =
+                                        SD_REFUSE_BUCKET_UNREADABLE;
+                                bucketOk = false;
+                                break;
+                            }
+                            if (!present) {
+                                break;
+                            }
+                        }
+                        bool targetFsError = false;
+                        bool found = sd_TargetExistsInBucketPath(probePath,
+                                                                 &targetFsError);
+                        if (targetFsError) {
+                            gSDCardData.writeRefuseReason =
+                                    SD_REFUSE_BUCKET_UNREADABLE;
+                            bucketOk = false;
+                            break;
+                        }
+                        if (found) {
+                            reopenExisting = true;
+                            reuseBucket = probe;
+                            break;
+                        }
+                    }
+                    /* Only re-enter when the part lives elsewhere: sd_EnterBucket
+                     * re-counts and zeroes filesInCurBucket, so calling it for
+                     * the bucket we are already in would forget the files this
+                     * session has added and overshoot the per-bucket ceiling. */
+                    if (reopenExisting && reuseBucket != gSDCardData.curBucket) {
+                        bucketOk = sd_EnterBucket(gpSDCardSettings->directory,
+                                                  reuseBucket);
+                        reopenExisting = bucketOk;
+                    }
+                    /* The pre-walk borrowed filePath as scratch (see
+                     * sd_TargetExistsInBucketPath). Hand it back EMPTY rather
+                     * than holding the last probe path.
+                     *
+                     * Nothing reads it before generateFilename rewrites it
+                     * below -- that invariant is why borrowing is safe at all
+                     * -- but a later edit that adds a log or branch in between
+                     * would silently pick up a plausible-looking WRONG path.
+                     * Clearing costs one store and turns that from a silent
+                     * wrong-file bug into an obviously empty one. */
+                    gSDCardData.filePath[0] = '\0';
+                }
+
+                uint32_t advanced = 0u;
+                while (bucketOk && !reopenExisting &&
+                       (gSDCardData.bucketFileCountAtStart +
+                        gSDCardData.filesInCurBucket) >= SD_CARD_MANAGER_MAX_DIR_FILES) {
+                    if (gSDCardData.curBucket >= SD_CARD_MANAGER_MAX_BUCKET ||
+                        advanced >= SD_CARD_MANAGER_BUCKET_ADVANCE_MAX) {
+                        /* Genuinely out of buckets: the scan started at 0
+                         * this session, so there is nothing behind us to find. */
+                        gSDCardData.writeRefuseReason = SD_REFUSE_BUCKETS_EXHAUSTED;
+                        bucketOk = false;
+                        break;
+                    }
+                    bucketOk = sd_EnterBucket(gpSDCardSettings->directory,
+                                              gSDCardData.curBucket + 1u);
+                    advanced++;
+                }
+
+                // Buckets exhausted (or a bucket could not be created). Clean-stop
+                // to IDLE with startupDirFull set, so SCPI_StartStreaming reports a
+                // precise error rather than a silent wedge — mirrors the #503
+                // disk-full clean-stop pattern.
+                if (!bucketOk) {
+                    LOG_E("[SD] WRITE refused: no writable bucket under '%s' "
+                          "(active '%s', bucket %u, %u per bucket, max %u) — FatFs "
                           "file-create wedges large directories (#689). Use a "
                           "larger SD:MAXSize, a different directory, or clear the "
                           "card.", gpSDCardSettings->directory,
-                          (unsigned)SD_CARD_MANAGER_MAX_DIR_FILES);
+                          gSDCardData.bucketPath, (unsigned)gSDCardData.curBucket,
+                          (unsigned)SD_CARD_MANAGER_MAX_DIR_FILES,
+                          (unsigned)SD_CARD_MANAGER_MAX_BUCKET);
                     gSDCardData.startupDirFull = true;
                     gSDCardData.lastOperationSuccess = false;
                     if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
@@ -1162,9 +1572,22 @@ void sd_card_manager_ProcessState() {
                     break;
                 }
 
+                // #689: create into the ACTIVE BUCKET, not the raw configured
+                // directory. For bucket 0 these are the same string, which is why
+                // short sessions keep their existing on-card layout exactly.
                 generateFilename(gSDCardData.filePath, sizeof(gSDCardData.filePath),
-                               gSDCardData.fileCounter, gpSDCardSettings->directory,
+                               gSDCardData.fileCounter, gSDCardData.bucketPath,
                                gSDCardData.baseFilename, gpSDCardSettings->file);
+                // Count the attempt, not the success: a failed create still costs
+                // a directory entry scan, and over-counting only rolls us to a
+                // fresh bucket sooner, which is the safe direction.
+                /* A re-open of an existing target adds no directory entry, so
+                 * it must not be counted -- the same reason the roll above skips
+                 * it. Counting it inflated the estimate by one per session on
+                 * the STR:START readiness path. */
+                if (!reopenExisting) {
+                    gSDCardData.filesInCurBucket++;
+                }
 
                 LOG_D("[SD] Opening file '%s' (counter=%u, splitting=%s)\r\n",
                      gSDCardData.filePath, gSDCardData.fileCounter,
@@ -1918,6 +2341,22 @@ void sd_card_manager_ProcessState() {
 
             if (SYS_FS_DriveFormat(SD_CARD_MANAGER_DISK_MOUNT_NAME, &opt, formatWorkBuffer, sizeof(formatWorkBuffer)) == SYS_FS_RES_SUCCESS) {
                 LOG_D("[SD] Format completed successfully\r\n");
+                /* #689: a format destroys every bucket directory, so the
+                 * bucketing state must go back to 0 rather than describe
+                 * directories that no longer exist. The next session would
+                 * re-enter bucket 0 anyway (it rescans from 0), so this is
+                 * belt-and-braces for anything that reads the state before
+                 * then -- not the load-bearing reset it was when the cursor
+                 * persisted across sessions. */
+                gSDCardData.curBucket = 0u;
+                gSDCardData.bucketFileCountAtStart = 0u;
+                gSDCardData.filesInCurBucket = 0u;
+                /* bucketPath too, or the refusal LOG_E and the "bucket active"
+                 * trace keep naming a P0xx directory the format just deleted --
+                 * the state is cleared but its label still describes the old
+                 * card, which is exactly the misdirection the reason codes
+                 * exist to remove. */
+                gSDCardData.bucketPath[0] = '\0';
                 gSDCardData.lastOperationSuccess = true;
                 gFormatStatus = 2;  // Success
             } else {
@@ -2283,6 +2722,34 @@ void sd_card_manager_ClearStartupDiskFull(void) {
      * is correct, since gating on settings init could leave the
      * flag stuck-true if SCPI ever runs before sd init. */
     gSDCardData.startupDiskFull = false;
+}
+
+SdWriteRefuseReason sd_card_manager_WriteRefuseReason(void) {
+    return gSDCardData.writeRefuseReason;
+}
+
+const char* sd_card_manager_WriteRefuseText(void) {
+    switch (gSDCardData.writeRefuseReason) {
+        case SD_REFUSE_BUCKETS_EXHAUSTED:
+            return "every directory bucket is full - use a different directory "
+                   "or clear the card";
+        case SD_REFUSE_BUCKET_MKDIR:
+            return "the next directory bucket could not be created - the card "
+                   "may be write-protected, full or faulty";
+        case SD_REFUSE_BUCKET_UNREADABLE:
+            return "a directory bucket could not be read - likely a card or "
+                   "filesystem fault, not a full directory";
+        case SD_REFUSE_BUCKET_NOT_DIR:
+            return "a file is occupying a directory-bucket name - rename or "
+                   "remove it, or log to a different directory";
+        case SD_REFUSE_NONE:
+        default:
+            /* The enum documents NONE as "not refused", so returning a refusal
+             * phrase here would make a diagnostic read as a failure when none
+             * happened -- e.g. a caller logging this outside an active refusal.
+             * Say plainly that there is nothing to report. */
+            return "no refusal recorded";
+    }
 }
 
 bool sd_card_manager_StartupDirFull(void) {

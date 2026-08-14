@@ -3663,9 +3663,13 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                 /* #689: SD target directory holds too many files — file-create
                  * would wedge the SD op timeout. Surface the precise cause and
                  * remedy instead of a generic "not ready". */
-                LOG_E("[SD] STR:START refused: target directory has too many "
-                      "files (#689) — use a larger SD:MAXSize, a different "
-                      "directory, or clear the card");
+                /* Report the RECORDED cause, like the post-repartition and
+                 * SD:BENCH sites. This is the site that fires on the initial
+                 * bucket scan -- the most common refusal -- and it was the one
+                 * left hardcoded, so a media fault or a bucket-name collision
+                 * still told the operator to clear a card that is not full. */
+                LOG_E("[SD] STR:START refused (#689): %s",
+                      sd_card_manager_WriteRefuseText());
             } else {
                 LOG_E("SD file not ready after %d ms", readyWait * 10);
             }
@@ -3745,8 +3749,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             }
             if (!sd_card_manager_IsWriteReady()) {
                 if (sd_card_manager_StartupDirFull()) {
-                    LOG_E("STR:START refused: SD directory too full (#689) after "
-                          "buffer repartition — use a different directory or clear the card\r\n");
+                    /* #689: this flag means "no writable location", which covers a
+                     * full directory AND a bucket that could not be created or read.
+                     * Naming only fullness misdirects the operator when the real
+                     * fault is the media; the SD-side LOG_E names which it was. */
+                    LOG_E("STR:START refused after buffer repartition (#689): %s\r\n",
+                          sd_card_manager_WriteRefuseText());
                 } else if (sd_card_manager_StartupDiskFull()) {
                     LOG_E("STR:START refused: SD disk full after buffer repartition\r\n");
                 } else {
