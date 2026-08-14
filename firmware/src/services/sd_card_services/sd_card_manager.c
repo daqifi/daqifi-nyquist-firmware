@@ -888,6 +888,25 @@ static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
     }
 }
 
+/* #689: does this open's target already exist in the ACTIVE bucket?
+ *
+ * Re-opening an existing file adds no directory entry, so it must not trigger a
+ * roll -- and the answer changes with every bucket, which is why this is a
+ * function rather than a value computed once. */
+static bool sd_TargetExistsInBucket(void)
+{
+    char candidate[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
+    generateFilename(candidate, sizeof(candidate), gSDCardData.fileCounter,
+                     gSDCardData.bucketPath, gSDCardData.baseFilename,
+                     gpSDCardSettings->file);
+    if (candidate[0] == '\0') {
+        return false;
+    }
+    SYS_FS_FSTAT st;
+    memset(&st, 0, sizeof(st));
+    return (SYS_FS_FileStat(candidate, &st) == SYS_FS_RES_SUCCESS);
+}
+
 void sd_card_manager_ProcessState() {
     /* Check the application's current state. */
 
@@ -1345,21 +1364,19 @@ void sd_card_manager_ProcessState() {
                  *
                  * Cheaper and more precise than tracking the pre-open: ask the
                  * filesystem whether the exact target is already there. */
-                bool reopenExisting = false;
-                if (bucketOk) {
-                    char candidate[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
-                    generateFilename(candidate, sizeof(candidate),
-                                     gSDCardData.fileCounter,
-                                     gSDCardData.bucketPath,
-                                     gSDCardData.baseFilename,
-                                     gpSDCardSettings->file);
-                    if (candidate[0] != '\0') {
-                        SYS_FS_FSTAT st;
-                        memset(&st, 0, sizeof(st));
-                        reopenExisting =
-                            (SYS_FS_FileStat(candidate, &st) == SYS_FS_RES_SUCCESS);
-                    }
-                }
+                /* Re-checked after EVERY advance, not computed once. The
+                  * answer is per-bucket: an earlier revision stat'd the target
+                  * in the bucket that happened to be active and reused that
+                  * answer for the whole roll, so a part that already existed in
+                  * a LATER bucket was never found. Two consequences, both
+                  * observed by audit: a repeat session stopped overwriting its
+                  * own parts >= 64 and consumed a fresh bucket per run until it
+                  * refused "buckets exhausted"; and the readiness open could
+                  * land in P001 while the real stream rolled on to P002,
+                  * leaving a stray file at the first -- the very "stray file /
+                  * samples elsewhere" failure this check was added to prevent,
+                  * fixed only for the single-level case that was bench-tested. */
+                bool reopenExisting = bucketOk && sd_TargetExistsInBucket();
 
                 uint32_t advanced = 0u;
                 while (bucketOk && !reopenExisting &&
@@ -1376,6 +1393,8 @@ void sd_card_manager_ProcessState() {
                     bucketOk = sd_EnterBucket(gpSDCardSettings->directory,
                                               gSDCardData.curBucket + 1u);
                     advanced++;
+                    /* The new bucket may already hold this exact target. */
+                    reopenExisting = bucketOk && sd_TargetExistsInBucket();
                 }
 
                 // Buckets exhausted (or a bucket could not be created). Clean-stop
