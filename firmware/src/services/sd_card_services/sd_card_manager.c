@@ -1491,6 +1491,10 @@ void sd_card_manager_ProcessState() {
             // Declared before the buffer-size check so the terminal bail
             // below (#703) can also emit it.
             static const char eofMarker[] = "__END_OF_FILE__";
+            /* #725: mid-transfer failure terminator. Distinct from the EOF
+             * marker so a host can tell "complete" from "aborted with partial
+             * data" -- see the read-error path below. */
+            static const char transferErrorMarker[] = "__TRANSFER_ERROR__";
 
             // Calculate safe read size based on buffer capacity
             size_t maxRead = gSdSharedBufferSize;
@@ -1592,11 +1596,29 @@ void sd_card_manager_ProcessState() {
                 size_t bytesRead = SYS_FS_FileRead(gSDCardData.fileHandle, gSdSharedBuffer, maxRead);
 
                 if (bytesRead == (size_t) - 1) {
-                    // Read error - log only, don't send error text through data stream
                     LOG_E("[SD] Transfer ERROR: %u MB, read#%u", totalBytesRead/(1024*1024), readCount);
 
                     // Wait for USB to drain any pending data before closing
                     sd_wait_usb_drain();
+
+                    /* #725: send a DISTINGUISHABLE terminator, not silence and
+                     * not __END_OF_FILE__.
+                     *
+                     * Sending nothing (the old behaviour) leaves the host
+                     * waiting forever for a terminator that never arrives -- a
+                     * hang, with no way to tell it from a slow transfer.
+                     * Sending the normal EOF marker would be worse: the host
+                     * would accept a TRUNCATED file as complete, which on a
+                     * data-acquisition product means silently losing the tail
+                     * of a measurement. #703/PR #723 made the PRE-transfer
+                     * failures terminal for the same reason but deliberately
+                     * left this path alone rather than take that trade.
+                     *
+                     * A separate marker lets the host do the right thing: stop
+                     * waiting, and know the data is incomplete. */
+                    sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
+                            (uint8_t*)transferErrorMarker,
+                            sizeof(transferErrorMarker) - 1);
 
                     // Close file handle to prevent resource leak
                     if (SYS_FS_FileClose(gSDCardData.fileHandle) == SYS_FS_RES_FAILURE) {
