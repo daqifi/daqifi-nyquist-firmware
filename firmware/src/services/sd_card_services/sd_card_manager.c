@@ -888,17 +888,6 @@ static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
     }
 }
 
-/* #689: is a bucket directory present? Buckets are created densely, so the
- * first absent one ends a forward search. Checks the DIR attribute rather
- * than mere existence for the same reason sd_EnterBucket does: a regular
- * file wearing a bucket name must not read as a bucket. */
-static bool sd_BucketDirExists(const char* bucketPath) {
-    SYS_FS_FSTAT st;
-    memset(&st, 0, sizeof(st));
-    return (SYS_FS_FileStat(bucketPath, &st) == SYS_FS_RES_SUCCESS) &&
-           ((st.fattrib & SYS_FS_ATTR_DIR) != 0);
-}
-
 /* #689: does this bucket already hold the part about to be opened? Used to
  * reopen a part in place instead of creating a duplicate in a later bucket. */
 static bool sd_TargetExistsInBucketPath(const char* bucketPath) {
@@ -1372,53 +1361,13 @@ void sd_card_manager_ProcessState() {
                  * Cheaper and more precise than tracking the pre-open: ask the
                  * filesystem whether the exact target is already there.
                  *
-                 * The search must span buckets, not just the active one. The
-                 * roll below only advances while a bucket is FULL, so it walks
-                 * straight past the bucket holding an existing part: session A
-                 * fills bucket 0 and P001; session B reopens parts 0-63 in
-                 * bucket 0, then at part 64 finds bucket 0 full, rolls across
-                 * the equally-full P001 -- where its run-64.csv actually lives
-                 * -- and creates a SECOND run-64.csv in P002. Both copies then
-                 * carry the same base name, so PC-side merge tooling
-                 * (download_sd_files.py / analyze_split_files.py) silently
-                 * splices the stale session into the fresh one. That also
-                 * contradicts this file's own contract above: the same base
-                 * filename overwrites the same part names.
-                 *
-                 * Searching forward from the ACTIVE bucket is sufficient (a
-                 * session only ever moves forward) and stops at the first
-                 * absent bucket, since buckets are created densely -- so a
-                 * fresh card costs one stat per open rather than MAX_BUCKET. */
+                 * This covers only the ACTIVE bucket; a part living in a LATER
+                 * one is caught inside the roll below, which is the only place
+                 * that can reach it. */
                 bool reopenExisting = false;
                 if (bucketOk) {
-                    uint32_t reuseBucket = gSDCardData.curBucket;
-                    char probePath[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
-                    for (uint32_t probe = gSDCardData.curBucket;
-                         probe <= SD_CARD_MANAGER_MAX_BUCKET; probe++) {
-                        if (!sd_BuildBucketPath(probePath, sizeof(probePath),
-                                                gpSDCardSettings->directory,
-                                                probe)) {
-                            break;
-                        }
-                        if (probe != gSDCardData.curBucket &&
-                            !sd_BucketDirExists(probePath)) {
-                            break;
-                        }
-                        if (sd_TargetExistsInBucketPath(probePath)) {
-                            reopenExisting = true;
-                            reuseBucket = probe;
-                            break;
-                        }
-                    }
-                    /* Only re-enter when the part lives elsewhere: sd_EnterBucket
-                     * re-counts and zeroes filesInCurBucket, so calling it for
-                     * the bucket we are already in would forget the files this
-                     * session has added and overshoot the per-bucket ceiling. */
-                    if (reopenExisting && reuseBucket != gSDCardData.curBucket) {
-                        bucketOk = sd_EnterBucket(gpSDCardSettings->directory,
-                                                  reuseBucket);
-                        reopenExisting = bucketOk;
-                    }
+                    reopenExisting =
+                        sd_TargetExistsInBucketPath(gSDCardData.bucketPath);
                 }
 
                 uint32_t advanced = 0u;
@@ -1436,6 +1385,31 @@ void sd_card_manager_ProcessState() {
                     bucketOk = sd_EnterBucket(gpSDCardSettings->directory,
                                               gSDCardData.curBucket + 1u);
                     advanced++;
+                    /* The part we are opening may ALREADY live in this bucket,
+                     * and without this check the roll would step straight over
+                     * it and create a duplicate further on: session A fills
+                     * bucket 0 and P001; session B reopens parts 0-63 in bucket
+                     * 0, then at part 64 finds bucket 0 full, crosses the
+                     * equally full P001 -- where its run-64.csv actually lives
+                     * -- and writes a SECOND run-64.csv into P002. Both copies
+                     * carry the same base name, so PC-side merge tooling
+                     * (download_sd_files.py / analyze_split_files.py) splices
+                     * the stale session into the fresh one with nothing to
+                     * indicate it, and this file's own contract above -- the
+                     * same base filename overwrites the same part names -- is
+                     * broken.
+                     *
+                     * Checking here rather than pre-walking the buckets keeps
+                     * the search and the roll over the SAME range by
+                     * construction: it costs one stat per bucket actually
+                     * crossed (against the directory count sd_EnterBucket
+                     * already pays for each), nothing at all when no roll
+                     * happens, and it needs no assumption about buckets being
+                     * contiguous. */
+                    if (bucketOk &&
+                        sd_TargetExistsInBucketPath(gSDCardData.bucketPath)) {
+                        reopenExisting = true;
+                    }
                 }
 
                 // Buckets exhausted (or a bucket could not be created). Clean-stop
