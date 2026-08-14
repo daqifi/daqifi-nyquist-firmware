@@ -893,12 +893,26 @@ static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
 /* #689: is a bucket directory present? Buckets are created in ascending order,
  * so the first absent one ends a forward search. Checks the DIR attribute for
  * the same reason sd_EnterBucket does: a regular file wearing a bucket name
- * must not read as a bucket. */
-static bool sd_BucketDirExists(const char* bucketPath) {
+ * must not read as a bucket.
+ *
+ * *fsError is set when the stat failed for a reason OTHER than "not there".
+ * Collapsing those into "absent" would end the search early on a failing card
+ * and silently create a duplicate part -- the same conflation CountDirEntries
+ * refuses to make, and the caller fails safe the same way it does. */
+static bool sd_BucketDirExists(const char* bucketPath, bool* fsError) {
+    *fsError = false;
     SYS_FS_FSTAT st;
     memset(&st, 0, sizeof(st));
-    return (SYS_FS_FileStat(bucketPath, &st) == SYS_FS_RES_SUCCESS) &&
-           ((st.fattrib & SYS_FS_ATTR_DIR) != 0);
+    if (SYS_FS_FileStat(bucketPath, &st) != SYS_FS_RES_SUCCESS) {
+        SYS_FS_ERROR e = SYS_FS_Error();
+        if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
+            LOG_E("[SD] #689 bucket stat '%s' failed err=%d — failing safe "
+                  "rather than reading it as absent", bucketPath, (int)e);
+            *fsError = true;
+        }
+        return false;
+    }
+    return ((st.fattrib & SYS_FS_ATTR_DIR) != 0);
 }
 
 /* #689: does this bucket already hold the part about to be opened? Used to
@@ -1415,9 +1429,25 @@ void sd_card_manager_ProcessState() {
                                                 probe)) {
                             break;
                         }
-                        if (probe != gSDCardData.curBucket &&
-                            !sd_BucketDirExists(probePath)) {
-                            break;
+                        if (probe != gSDCardData.curBucket) {
+                            bool probeFsError = false;
+                            bool present = sd_BucketDirExists(probePath,
+                                                              &probeFsError);
+                            if (probeFsError) {
+                                /* An unreadable bucket is NOT an absent one.
+                                 * Ending the search here would create a
+                                 * duplicate part on a card that is merely
+                                 * failing, so refuse instead -- the same
+                                 * fail-safe sd_EnterBucket applies to an
+                                 * unreadable count. */
+                                gSDCardData.writeRefuseReason =
+                                        SD_REFUSE_BUCKET_UNREADABLE;
+                                bucketOk = false;
+                                break;
+                            }
+                            if (!present) {
+                                break;
+                            }
                         }
                         if (sd_TargetExistsInBucketPath(probePath)) {
                             reopenExisting = true;
