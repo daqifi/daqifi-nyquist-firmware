@@ -74,10 +74,12 @@
  * START even though space existed. Bench-found 2026-08-13 -- the simulation
  * that covered this case scored it a "designed backstop", which it is not.
  *
- * Worst case is therefore ~65 bounded scans, a few hundred milliseconds, and
- * only on the FIRST create after a mount: the bucket cursor persists across
- * sessions (see below), so later sessions resume where the last one stopped
- * instead of rescanning from zero. */
+ * Worst case is therefore ~65 bounded scans, a few hundred milliseconds, paid
+ * on the first create of each SESSION -- every session rescans from bucket 0.
+ * An earlier revision persisted the cursor across sessions to avoid exactly
+ * that rescan; it was removed because a cursor that cannot be stale is worth
+ * more than the time it saves (see the fileCounter==0 branch for the three
+ * ways the stale one went wrong). */
 #define SD_CARD_MANAGER_BUCKET_ADVANCE_MAX (SD_CARD_MANAGER_MAX_BUCKET + 1u)
 /* #780: how long the pumped wait blocks between USB write pumps. Small enough
  * that a filling circular buffer is serviced promptly, large enough that the
@@ -1171,11 +1173,18 @@ void sd_card_manager_ProcessState() {
             } else {
                 gSDCardData.unmountRetryCount = 0;
                 // Reset file splitting state for next session
-                /* #689: the bucket cursor deliberately does NOT reset here -- it
-                 * persists across sessions so a later one resumes where the last
-                 * stopped instead of rescanning every full bucket. It resets on
-                 * a format (below), where the directories it names cease to
-                 * exist. */
+                /* #689: curBucket/bucketPath are left alone here, and that is
+                 * harmless rather than deliberate -- resetting fileCounter is
+                 * what matters, because the next session's first open takes the
+                 * fileCounter==0 branch and re-enters bucket 0, re-establishing
+                 * both.
+                 *
+                 * An earlier revision DID persist the cursor on purpose, to
+                 * resume where the last session stopped instead of rescanning
+                 * full buckets. That was removed: it survived a card swap or a
+                 * PC-side reformat, it ignored space freed by deleting files,
+                 * and it stopped the same base filename from overwriting. Do
+                 * not reintroduce it without re-reading those three cases. */
                 gSDCardData.fileCounter = 0;
                 gSDCardData.currentFileBytes = 0;
                 memset(gSDCardData.baseFilename, 0, sizeof(gSDCardData.baseFilename));
@@ -2184,10 +2193,13 @@ void sd_card_manager_ProcessState() {
 
             if (SYS_FS_DriveFormat(SD_CARD_MANAGER_DISK_MOUNT_NAME, &opt, formatWorkBuffer, sizeof(formatWorkBuffer)) == SYS_FS_RES_SUCCESS) {
                 LOG_D("[SD] Format completed successfully\r\n");
-                /* #689: a format destroys every bucket directory, so the cursor
-                 * must go back to 0. Leaving it high would make the next session
-                 * create P0xx on an empty card and skip the configured directory
-                 * entirely -- files still land, but in a surprising place. */
+                /* #689: a format destroys every bucket directory, so the
+                 * bucketing state must go back to 0 rather than describe
+                 * directories that no longer exist. The next session would
+                 * re-enter bucket 0 anyway (it rescans from 0), so this is
+                 * belt-and-braces for anything that reads the state before
+                 * then -- not the load-bearing reset it was when the cursor
+                 * persisted across sessions. */
                 gSDCardData.curBucket = 0u;
                 gSDCardData.bucketFileCountAtStart = 0u;
                 gSDCardData.filesInCurBucket = 0u;
