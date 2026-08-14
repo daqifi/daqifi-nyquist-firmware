@@ -924,8 +924,16 @@ static bool sd_BucketDirExists(const char* bucketPath, bool* fsError) {
  * collision into a stuck open instead of letting the roll move past it. This
  * is the mirror of the check sd_EnterBucket makes on SYS_FS_ERROR_EXIST,
  * where the ambiguity runs the other way (a regular file wearing a bucket
- * name); FatFs reports presence, never kind, so both sites must ask. */
-static bool sd_TargetExistsInBucketPath(const char* bucketPath) {
+ * name); FatFs reports presence, never kind, so both sites must ask.
+ *
+ * *fsError follows the same rule as sd_BucketDirExists and CountDirEntries: a
+ * stat that fails for a reason OTHER than "not there" must not be reported as
+ * absence. Reading a fault as "no such part" makes the caller create a SECOND
+ * copy of a part that does exist, which is the one outcome this whole search
+ * is here to prevent -- and it would do so silently, on a card that is telling
+ * us it is unwell. */
+static bool sd_TargetExistsInBucketPath(const char* bucketPath, bool* fsError) {
+    *fsError = false;
     char candidate[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
     generateFilename(candidate, sizeof(candidate), gSDCardData.fileCounter,
                      bucketPath, gSDCardData.baseFilename,
@@ -935,8 +943,16 @@ static bool sd_TargetExistsInBucketPath(const char* bucketPath) {
     }
     SYS_FS_FSTAT st;
     memset(&st, 0, sizeof(st));
-    return (SYS_FS_FileStat(candidate, &st) == SYS_FS_RES_SUCCESS) &&
-           ((st.fattrib & SYS_FS_ATTR_DIR) == 0);
+    if (SYS_FS_FileStat(candidate, &st) != SYS_FS_RES_SUCCESS) {
+        SYS_FS_ERROR e = SYS_FS_Error();
+        if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
+            LOG_E("[SD] #689 part stat '%s' failed err=%d — failing safe "
+                  "rather than reading it as absent", candidate, (int)e);
+            *fsError = true;
+        }
+        return false;
+    }
+    return ((st.fattrib & SYS_FS_ATTR_DIR) == 0);
 }
 
 void sd_card_manager_ProcessState() {
@@ -1460,7 +1476,16 @@ void sd_card_manager_ProcessState() {
                                 break;
                             }
                         }
-                        if (sd_TargetExistsInBucketPath(probePath)) {
+                        bool targetFsError = false;
+                        bool found = sd_TargetExistsInBucketPath(probePath,
+                                                                 &targetFsError);
+                        if (targetFsError) {
+                            gSDCardData.writeRefuseReason =
+                                    SD_REFUSE_BUCKET_UNREADABLE;
+                            bucketOk = false;
+                            break;
+                        }
+                        if (found) {
                             reopenExisting = true;
                             reuseBucket = probe;
                             break;
