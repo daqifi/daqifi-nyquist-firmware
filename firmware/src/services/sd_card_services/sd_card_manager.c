@@ -891,7 +891,15 @@ static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
 }
 
 /* #689: does this bucket already hold the part about to be opened? Used to
- * reopen a part in place instead of creating a duplicate in a later bucket. */
+ * reopen a part in place instead of creating a duplicate in a later bucket.
+ *
+ * A DIRECTORY at the target path is not a reopenable part. Accepting one
+ * would set reopenExisting, suppress the roll, and then fail the
+ * FileOpen(...WRITE_PLUS) that follows -- turning an operator-created name
+ * collision into a stuck open instead of letting the roll move past it. This
+ * is the mirror of the check sd_EnterBucket makes on SYS_FS_ERROR_EXIST,
+ * where the ambiguity runs the other way (a regular file wearing a bucket
+ * name); FatFs reports presence, never kind, so both sites must ask. */
 static bool sd_TargetExistsInBucketPath(const char* bucketPath) {
     char candidate[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
     generateFilename(candidate, sizeof(candidate), gSDCardData.fileCounter,
@@ -902,7 +910,8 @@ static bool sd_TargetExistsInBucketPath(const char* bucketPath) {
     }
     SYS_FS_FSTAT st;
     memset(&st, 0, sizeof(st));
-    return (SYS_FS_FileStat(candidate, &st) == SYS_FS_RES_SUCCESS);
+    return (SYS_FS_FileStat(candidate, &st) == SYS_FS_RES_SUCCESS) &&
+           ((st.fattrib & SYS_FS_ATTR_DIR) == 0);
 }
 
 void sd_card_manager_ProcessState() {
