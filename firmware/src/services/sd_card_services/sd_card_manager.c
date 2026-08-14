@@ -1409,6 +1409,17 @@ void sd_card_manager_ProcessState() {
                  * ABSENT bucket, because buckets are created in ascending
                  * order. A fresh card therefore costs one directory stat.
                  *
+                 * Stopping at the first gap is a DELIBERATE bound, not an
+                 * oversight. Removing it means stat-ing all MAX_BUCKET+1
+                 * buckets on EVERY open -- reintroducing exactly the
+                 * O(directory) synchronous FS work inside the SD task that
+                 * this issue exists to remove. Nothing in this firmware can
+                 * create a gap (buckets are made in ascending order and only
+                 * files are deleted), so reaching that state needs a whole
+                 * P0xx directory removed on a PC while a later one survives,
+                 * and the consequence is bounded: one extra copy of one part
+                 * name, nothing overwritten.
+                 *
                  * It must NOT be folded into the roll below, which was tried
                  * and is wrong: the roll only advances while a bucket is FULL,
                  * so it never runs when the active bucket has room -- and a
