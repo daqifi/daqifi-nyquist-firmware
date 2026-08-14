@@ -271,7 +271,7 @@ extern "C" {
         SD_REFUSE_NONE = 0,          /* not refused */
         SD_REFUSE_BUCKETS_EXHAUSTED, /* every bucket up to the ceiling is full */
         SD_REFUSE_BUCKET_MKDIR,      /* the bucket directory could not be created */
-        SD_REFUSE_BUCKET_UNREADABLE, /* the bucket could not be counted (FS fault) */
+        SD_REFUSE_BUCKET_UNREADABLE, /* a bucket could not be counted OR stat'd (FS fault) */
         SD_REFUSE_BUCKET_NOT_DIR,    /* a non-directory occupies the bucket name */
     } SdWriteRefuseReason;
 
