@@ -64,6 +64,16 @@
 // SCPI STATus:OPERation condition register bit assignments (IEEE 488.2 Sec 11.6.1)
 #define OPER_MEASURING   (1 << 4)   // Bit 4: streaming/measuring active
 #define OPER_SD_LOGGING  (1 << 10)  // Bit 10: SD card logging active
+/* Bit 11: the previous session's SD close did not finish inside STR:STOP's
+ * bounded wait, so the SD manager is STILL FINALISING. #783.
+ *
+ * Reported rather than waited out. Bench-measured 2026-08-14: after a 195 s
+ * torture-rotation fill the drain refused every SD command for over 100 s and
+ * then recovered on its own -- so a wait long enough to cover it would block
+ * the SCPI task for minutes, which is far worse than the condition it hides.
+ * A client polls this bit instead and knows both that waiting is the right
+ * move and when it is over. */
+#define OPER_SD_FINALIZING (1 << 11)
 
 // SCPI STATus:QUEStionable condition register bit assignments
 // These must match the QUES_BIT_* defines in streaming.c
@@ -3041,6 +3051,15 @@ static void SCPI_SyncOperSdBit(void) {
     } else {
         SCPI_ClearOperBits(OPER_SD_LOGGING);
     }
+
+    /* #783: clear the finalising bit once the manager actually reaches idle.
+     * Doing it HERE rather than in the stop path is what makes the bit usable:
+     * this runs on every OPER query, so a client polling STAT:OPER:COND? sees
+     * the bit drop by itself the moment the drain completes. Set in one place
+     * (the stop path, on expiry), cleared in one place (here, on idle). */
+    if (sd_card_manager_IsIdle()) {
+        SCPI_ClearOperBits(OPER_SD_FINALIZING);
+    }
 }
 
 static scpi_result_t SCPI_OperConditionQ(scpi_t * context) {
@@ -3778,6 +3797,19 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     if (sdLoggingRequested) {
         SCPI_SetOperBits(OPER_SD_LOGGING);
     }
+    /* #783: a successful START PROVES the previous session's SD finalise
+     * completed -- PrepareStreamingBuffers -> QuiesceAndResetCoherentPool
+     * aborts the start unless the manager reaches idle first -- so clear the
+     * finalising bit here.
+     *
+     * Without this the bit latches stale-true across an entire healthy
+     * session: its only other clear runs when an OPER query happens to land
+     * while the manager is idle, and a logging session sits in WRITE_TO_FILE,
+     * never idle. A client that did not poll DURING the drain (one retrying
+     * START against -200 does exactly that) would then read bit 11 mid-session
+     * for hours and believe the previous stop was still finalising -- the
+     * precise misreading this bit exists to prevent. */
+    SCPI_ClearOperBits(OPER_SD_FINALIZING);
 
     return SCPI_RES_OK;
 }
@@ -3811,8 +3843,49 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
                 vTaskDelay(pdMS_TO_TICKS(10));
                 idleWait++;
             }
-            if (idleWait >= 500) {
-                LOG_E("[SD] StopStreaming: SD idle timeout after 5s");
+            /* BOTH conditions, and neither alone is right.
+             *
+             * The counter alone over-reports: the loop re-tests IsIdle()
+             * first, so at idleWait == 500 a drain landing in the final 10 ms
+             * slice exits idle-but-at-the-limit, and calling that a timeout
+             * sets bit 11 and latches a phantom 0->1 into the OPER EVENt
+             * register while SD is genuinely idle.
+             *
+             * A fresh IsIdle() check alone ALSO over-reports, in the opposite
+             * direction: the loop can exit early and idle, and an unrelated SD
+             * operation starting before this line would then read as busy --
+             * setting bit 11 and logging "after 5s" for a wait that never
+             * expired.
+             *
+             * The condition being reported is "the bounded wait ran out AND
+             * the close is still in flight", so test exactly that. */
+            const bool sdStillBusy = (idleWait >= 500) &&
+                                     !sd_card_manager_IsIdle();
+            if (sdStillBusy) {
+                /* #783: do not swallow this. STR:STOP still reports success --
+                 * the STREAM did stop, and failing the command would be a lie
+                 * about the wrong thing -- but the SD close is genuinely still
+                 * in flight, and every SD command until it lands is refused as
+                 * "busy". Previously that surfaced only as an error on some
+                 * later, unrelated command, which reads as "the card broke"
+                 * rather than "the previous stop is still finishing".
+                 *
+                 * Publish it instead: OPER bit 11 stays set until the manager
+                 * reaches idle, so a client can poll STAT:OPER:COND? and know
+                 * both that waiting is correct and when it is over.
+                 * Bench-measured drains have exceeded 100 s, so a longer
+                 * bounded wait here is not the answer.
+                 *
+                 * Cleared in three places, all meaning "the finalise is done":
+                 * SCPI_SyncOperSdBit when the manager is idle, the else branch
+                 * below when a later stop drains in time, and STR:START, which
+                 * cannot succeed unless the manager reached idle first. */
+                SCPI_SetOperBits(OPER_SD_FINALIZING);
+                LOG_E("[SD] StopStreaming: SD still finalising after 5s - "
+                      "OPER bit 11 (SD finalising) set; SD commands will be "
+                      "refused until it clears. Poll STAT:OPER:COND?");
+            } else {
+                SCPI_ClearOperBits(OPER_SD_FINALIZING);
             }
         }
     }
