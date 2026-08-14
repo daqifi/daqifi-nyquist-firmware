@@ -888,6 +888,15 @@ static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
     }
 }
 
+/* #689: point bucketPath at `bucket` WITHOUT the mkdir or the directory count.
+ * Used by the reuse probe, which only needs to ask "is my file in there?" and
+ * must not create empty directories or pay a count per bucket while looking. */
+static bool sd_EnterBucketPathOnly(const char* dir, uint32_t bucket)
+{
+    return sd_BuildBucketPath(gSDCardData.bucketPath,
+                              sizeof(gSDCardData.bucketPath), dir, bucket);
+}
+
 /* #689: does this open's target already exist in the ACTIVE bucket?
  *
  * Re-opening an existing file adds no directory entry, so it must not trigger a
@@ -1376,7 +1385,48 @@ void sd_card_manager_ProcessState() {
                   * leaving a stray file at the first -- the very "stray file /
                   * samples elsewhere" failure this check was added to prevent,
                   * fixed only for the single-level case that was bench-tested. */
-                bool reopenExisting = bucketOk && sd_TargetExistsInBucket();
+                /* Find this part if it ALREADY EXISTS anywhere, before deciding
+                 * where to put a new one.
+                 *
+                 * The roll loop below only advances while the current bucket is
+                 * FULL, so it stops at the first bucket with room. If the part
+                 * lives in a later bucket than that, the loop never reaches it
+                 * and a duplicate is created in the bucket it stopped at --
+                 * which is what a repeat session does at every rotation, so each
+                 * run consumes fresh buckets instead of overwriting its own
+                 * parts. Bench-observed: run 1 filled P001..P006, run 2 added
+                 * P007. Checking only "does it exist in the bucket I happen to
+                 * be standing in" was not enough; the search has to be
+                 * independent of fullness.
+                 *
+                 * Bounded by the same ceiling as the roll, and each probe is a
+                 * single FileStat -- far cheaper than the directory count the
+                 * roll performs per bucket. */
+                bool reopenExisting = false;
+                if (bucketOk) {
+                    uint32_t probe = 0u;
+                    while (probe <= SD_CARD_MANAGER_MAX_BUCKET) {
+                        if (probe != gSDCardData.curBucket &&
+                            !sd_EnterBucketPathOnly(gpSDCardSettings->directory,
+                                                    probe)) {
+                            break;
+                        }
+                        if (sd_TargetExistsInBucket()) {
+                            reopenExisting = true;
+                            break;
+                        }
+                        probe++;
+                    }
+                    if (reopenExisting) {
+                        /* Make that bucket the active one for the open. */
+                        bucketOk = sd_EnterBucket(gpSDCardSettings->directory,
+                                                  probe);
+                        reopenExisting = bucketOk && sd_TargetExistsInBucket();
+                    } else {
+                        /* Nothing to reuse: restore the scan position. */
+                        bucketOk = sd_EnterBucket(gpSDCardSettings->directory, 0u);
+                    }
+                }
 
                 uint32_t advanced = 0u;
                 while (bucketOk && !reopenExisting &&
@@ -1393,8 +1443,6 @@ void sd_card_manager_ProcessState() {
                     bucketOk = sd_EnterBucket(gpSDCardSettings->directory,
                                               gSDCardData.curBucket + 1u);
                     advanced++;
-                    /* The new bucket may already hold this exact target. */
-                    reopenExisting = bucketOk && sd_TargetExistsInBucket();
                 }
 
                 // Buckets exhausted (or a bucket could not be created). Clean-stop
