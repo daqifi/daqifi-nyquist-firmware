@@ -1517,6 +1517,17 @@ void sd_card_manager_ProcessState() {
                                                   reuseBucket);
                         reopenExisting = bucketOk;
                     }
+                    /* The pre-walk borrowed filePath as scratch (see
+                     * sd_TargetExistsInBucketPath). Hand it back EMPTY rather
+                     * than holding the last probe path.
+                     *
+                     * Nothing reads it before generateFilename rewrites it
+                     * below -- that invariant is why borrowing is safe at all
+                     * -- but a later edit that adds a log or branch in between
+                     * would silently pick up a plausible-looking WRONG path.
+                     * Clearing costs one store and turns that from a silent
+                     * wrong-file bug into an obviously empty one. */
+                    gSDCardData.filePath[0] = '\0';
                 }
 
                 uint32_t advanced = 0u;
