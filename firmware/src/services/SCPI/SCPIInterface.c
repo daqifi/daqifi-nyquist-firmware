@@ -3843,15 +3843,24 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
                 vTaskDelay(pdMS_TO_TICKS(10));
                 idleWait++;
             }
-            /* Ask WHY the loop exited rather than inferring it from the
-             * counter. Both clauses can be true at idleWait == 500: the
-             * condition re-tests IsIdle() first, so a drain that lands in the
-             * final 10 ms slice exits idle-but-at-the-limit. Reading the
-             * counter alone then reports a timeout that did not happen --
-             * setting bit 11, latching a phantom 0->1 into the OPER EVENt
-             * register, and logging "SD commands will be refused" when they
-             * are not. */
-            const bool sdStillBusy = !sd_card_manager_IsIdle();
+            /* BOTH conditions, and neither alone is right.
+             *
+             * The counter alone over-reports: the loop re-tests IsIdle()
+             * first, so at idleWait == 500 a drain landing in the final 10 ms
+             * slice exits idle-but-at-the-limit, and calling that a timeout
+             * sets bit 11 and latches a phantom 0->1 into the OPER EVENt
+             * register while SD is genuinely idle.
+             *
+             * A fresh IsIdle() check alone ALSO over-reports, in the opposite
+             * direction: the loop can exit early and idle, and an unrelated SD
+             * operation starting before this line would then read as busy --
+             * setting bit 11 and logging "after 5s" for a wait that never
+             * expired.
+             *
+             * The condition being reported is "the bounded wait ran out AND
+             * the close is still in flight", so test exactly that. */
+            const bool sdStillBusy = (idleWait >= 500) &&
+                                     !sd_card_manager_IsIdle();
             if (sdStillBusy) {
                 /* #783: do not swallow this. STR:STOP still reports success --
                  * the STREAM did stop, and failing the command would be a lie
