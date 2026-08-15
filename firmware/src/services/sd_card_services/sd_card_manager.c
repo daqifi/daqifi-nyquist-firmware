@@ -1660,30 +1660,21 @@ void sd_card_manager_ProcessState() {
                 taskEXIT_CRITICAL();
 
                 if (openAborted) {
-                    if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
-                        /* Invalidate ONLY on a successful close. UNMOUNT_DISK
-                         * gates its whole drain-and-close block on
-                         * fileHandle != INVALID, so clearing the handle after
-                         * a FAILED close would skip the retry that block
-                         * exists to perform, and the file could stay open
-                         * across the unmount. Leaving it set costs nothing:
-                         * DEINIT -> UNMOUNT_DISK runs next either way. */
-                        if (SYS_FS_FileClose(gSDCardData.fileHandle)
-                                == SYS_FS_RES_FAILURE) {
-                            /* Name the file, matching the other close-failure
-                             * logs here -- "a close failed" is not actionable
-                             * without knowing which. Sized to fit
-                             * LOG_MESSAGE_SIZE (128) for a realistic path
-                             * (~101 chars at 35 path chars); a pathological
-                             * one truncates, which every path-bearing log in
-                             * this file already shares. */
-                            LOG_E("[SD] open-abort close failed '%s' err=%d - "
-                                  "handle kept for UNMOUNT",
-                                  gSDCardData.filePath, SYS_FS_Error());
-                        } else {
-                            gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
-                        }
-                    }
+                    /* Deliberately do NOT close here. DEINIT -> UNMOUNT_DISK
+                     * runs next and is the single owner of closing this
+                     * handle: it drains, closes, and invalidates in one
+                     * place. Closing here meant reasoning about UNMOUNT's
+                     * gate (it skips its whole block when the handle is
+                     * already INVALID), which is what produced two separate
+                     * defects in review -- a discarded close result, then an
+                     * invalidation that suppressed UNMOUNT's retry.
+                     *
+                     * Note this is about single ownership, not data
+                     * recovery: nothing can be pending at this point. The
+                     * circular buffer and the write pipeline are reset a few
+                     * lines above, and the abort path never sets
+                     * WRITE_TO_FILE, so sd_card_manager_IsWriteReady() stays
+                     * false and the streaming task cannot have written. */
                     LOG_I("[SD] open aborted: session torn down mid-open "
                           "(mode=%s)", sd_card_manager_GetModeName());
                     break;
