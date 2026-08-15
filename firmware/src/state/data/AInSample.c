@@ -213,7 +213,7 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
     poolActive = true;
     xSemaphoreGive(poolMutex);
 
-    LOG_I("Sample pool: %u samples × %u bytes (external memory)",
+    LOG_I("Sample pool: %u samples x %u bytes (external memory)",
           (unsigned)poolCapacity, (unsigned)poolElementStride);
 }
 

@@ -371,7 +371,7 @@ static uint32_t CountDirEntries(const char* dirPath, uint32_t cap,
         if (e == SYS_FS_ERROR_NO_PATH || e == SYS_FS_ERROR_NO_FILE) {
             return 0;                       // directory absent -> no files
         }
-        LOG_E("[SD] CountDirEntries: DirOpen('%s') failed err=%d — failing safe (refuse)",
+        LOG_E("[SD] CountDirEntries: DirOpen('%s') failed err=%d - failing safe (refuse)",
               dirPath, (int)e);
         if (pFsError != NULL) {
             *pFsError = true;
@@ -387,7 +387,7 @@ static uint32_t CountDirEntries(const char* dirPath, uint32_t cap,
              * fail safe (refuse) rather than proceed on a partial count. Log
              * SYS_FS_Error() so a real media/FS fault is distinguishable in the
              * field from a genuinely full directory (both take the refuse path). */
-            LOG_E("[SD] CountDirEntries: DirRead failed at %u err=%d — failing safe",
+            LOG_E("[SD] CountDirEntries: DirRead failed at %u err=%d - failing safe",
                   (unsigned)count, (int)SYS_FS_Error());
             (void)SYS_FS_DirClose(dh);
             if (pFsError != NULL) {
@@ -907,7 +907,7 @@ static bool sd_BucketDirExists(const char* bucketPath, bool* fsError) {
     if (SYS_FS_FileStat(bucketPath, &st) != SYS_FS_RES_SUCCESS) {
         SYS_FS_ERROR e = SYS_FS_Error();
         if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
-            LOG_E("[SD] #689 bucket stat '%s' failed err=%d — failing safe "
+            LOG_E("[SD] #689 bucket stat '%s' failed err=%d - failing safe "
                   "rather than reading it as absent", bucketPath, (int)e);
             *fsError = true;
         }
@@ -964,7 +964,7 @@ static bool sd_TargetExistsInBucketPath(const char* bucketPath, bool* fsError) {
     if (SYS_FS_FileStat(candidate, &st) != SYS_FS_RES_SUCCESS) {
         SYS_FS_ERROR e = SYS_FS_Error();
         if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
-            LOG_E("[SD] #689 part stat '%s' failed err=%d — failing safe "
+            LOG_E("[SD] #689 part stat '%s' failed err=%d - failing safe "
                   "rather than reading it as absent", candidate, (int)e);
             *fsError = true;
         }
@@ -1554,7 +1554,7 @@ void sd_card_manager_ProcessState() {
                 // disk-full clean-stop pattern.
                 if (!bucketOk) {
                     LOG_E("[SD] WRITE refused: no writable bucket under '%s' "
-                          "(active '%s', bucket %u, %u per bucket, max %u) — FatFs "
+                          "(active '%s', bucket %u, %u per bucket, max %u) - FatFs "
                           "file-create wedges large directories (#689). Use a "
                           "larger SD:MAXSize, a different directory, or clear the "
                           "card.", gpSDCardSettings->directory,
@@ -2149,7 +2149,7 @@ void sd_card_manager_ProcessState() {
                  * this is now practically unreachable, but keep it terminal as
                  * defense in depth. Mirror the normal-exit ordering:
                  * drain -> marker -> close -> priority -> mutex -> mode/state. */
-                LOG_E("[SD] Buffer too small for read (%u < %u) — aborting GET",
+                LOG_E("[SD] Buffer too small for read (%u < %u) - aborting GET",
                       (unsigned)gSdSharedBufferSize, (unsigned)SD_READ_ALIGNMENT_SIZE);
                 sd_wait_usb_drain();
                 sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
@@ -2210,7 +2210,7 @@ void sd_card_manager_ProcessState() {
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                                 (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
                     } else {
-                        LOG_E("[SD] aborted after %u bytes — no terminator sent "
+                        LOG_E("[SD] aborted after %u bytes - no terminator sent "
                               "(a plain EOF would look like a complete file; "
                               "#725 tracks a distinguishable one)",
                               (unsigned)totalBytesRead);

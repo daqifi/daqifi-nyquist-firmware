@@ -488,7 +488,7 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
      * from ever tripping in practice; it's the host-visible mirror of the SD-task
      * terminal bail so a client gets an error instead of a bare EOF marker. */
     if (!sd_card_manager_ReadBufferReady()) {
-        LOG_E("[SD] GET rejected: read buffer too small — start an SD-logging "
+        LOG_E("[SD] GET rejected: read buffer too small - start an SD-logging "
               "session or reboot to restore the SD buffer");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;

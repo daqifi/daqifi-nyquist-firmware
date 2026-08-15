@@ -710,7 +710,7 @@ void app_SystemInit() {
     if (!TimerApi_ClockMatchesBuild()) {
         LOG_E("Clock mismatch (#716): PBCLK3 is %u Hz, image built for %u Hz. "
               "Device configuration words hold an older PLL and cannot be "
-              "updated by a firmware update — reprogram with a PICkit/IPE to "
+              "updated by a firmware update - reprogram with a PICkit/IPE to "
               "reach the intended clock. Rates are derived from the ACTUAL "
               "clock, so streaming is accurate but ceilings are lower.",
               (unsigned)TimerApi_PeripheralClockHz(),

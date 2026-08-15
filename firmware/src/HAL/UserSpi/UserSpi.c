@@ -332,7 +332,7 @@ static bool spi_EnableLocked(const char** err) {
     /* Pre-check every needed pin before claiming any, so a failure leaves
      * nothing half-claimed. */
     if (spi_PinInUse(USER_SPI_SCK_DIO)) {
-        if (err != NULL) { *err = "SCK/DIO0 in use (probe or PWM ch0) — free it first"; }
+        if (err != NULL) { *err = "SCK/DIO0 in use (probe or PWM ch0) - free it first"; }
         return false;
     }
     if (gCfg.mosiDio != USER_SPI_PIN_NONE && spi_PinInUse(gCfg.mosiDio)) {

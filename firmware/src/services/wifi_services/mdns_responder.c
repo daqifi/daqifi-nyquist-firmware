@@ -597,7 +597,7 @@ void mdns_responder_HandleSocketEvent(SOCKET sock, uint8_t msgType, void *pvMsg)
              * needsReopen and permanently disable the self-heal this PR adds
              * (#692). Close the socket and schedule a rate-limited re-open so
              * ServiceHealth() recovers it, same as a recvfrom re-arm failure. */
-            LOG_E("[mDNS] bind failed — scheduling self-heal retry");
+            LOG_E("[mDNS] bind failed - scheduling self-heal retry");
             mdns_close_socket();
             /* Set ONLY needsReopen (a single atomic store), exactly like the
              * recvfrom re-arm failure path: ServiceHealth() does a prompt first

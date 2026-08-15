@@ -342,7 +342,7 @@ void MC12b_ApplyScanList(uint32_t css1, uint32_t css2) {
         uint32_t spin = 500000u;
         while ((ADCCON3bits.UPDRDY == 0) && (--spin != 0u)) { }
         if (spin == 0u) {
-            LOG_E("ADC CSS update: UPDRDY timeout — scan list unchanged");
+            LOG_E("ADC CSS update: UPDRDY timeout - scan list unchanged");
             ADCCON3bits.TRGSUSP = 0;
             return;
         }

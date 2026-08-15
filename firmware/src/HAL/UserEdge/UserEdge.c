@@ -726,7 +726,7 @@ void UserEdge_IsrEvent(uint8_t unit) {
         IEC0CLR = r->ieMask;          /* stop the flood; pin stays claimed and the count
                                        * is preserved until a re-arm resets it to resume */
         gIntState[unit].stormed = true;
-        LOG_E("DIO event: edge storm — pin auto-muted, re-arm to resume");
+        LOG_E("DIO event: edge storm - pin auto-muted, re-arm to resume");
     }
 }
 
