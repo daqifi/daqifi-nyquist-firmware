@@ -74,34 +74,77 @@ HINTS = {
 }
 
 
-ESCAPE_RE = re.compile(
-    r"\\(?:x[0-9a-fA-F]{1,2}|[0-7]{1,3}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})")
-
-
 def escaped_nonascii(lit):
-    """Return escape sequences in `lit` that encode a byte/codepoint > 127.
+    """Return escape sequences in `lit` that encode a value > 127.
 
-    A literal written as "\\xE2\\x80\\x94" contains only ASCII source
-    characters, so an ord(ch) > 127 test passes it -- and it compiles to an em
-    dash all the same. Checking only what the eye can see would leave an easy
-    and completely silent way back to the defect.
+    Walks the literal instead of regex-scanning it, because a regex gets three
+    things wrong here -- all three were caught by an adversarial audit, and the
+    third would have failed CI on perfectly good code:
+
+    * ESCAPED BACKSLASH. In "literal \\\\xE2 token" the compiler emits the ASCII
+      bytes \\, x, E, 2. A regex retries after a failed match and finds "\\xE2"
+      starting at the SECOND backslash, so it reports non-ASCII in a string
+      that has none. Consuming \\\\ as a unit is the only way to be right.
+    * MAXIMAL MUNCH. C99 6.4.4.4: a hex escape consumes ALL following hex
+      digits. "\\x0E2" is one byte 0xE2, not \\x0E followed by '2'. A {1,2}
+      slice sees 0x0E (14) and passes an em dash straight through.
+    * LINE SPLICES. Translation phase 2 removes backslash-newline before
+      tokenizing, so "\\x" + splice + "E2" is really \\xE2. Handled by the
+      caller, which strips splices before this runs.
     """
     out = []
-    for m in ESCAPE_RE.finditer(lit):
-        esc = m.group(0)
-        body = esc[1:]
-        try:
-            if body[0] in "xX":
-                val = int(body[1:], 16)
-            elif body[0] in "uU":
-                val = int(body[1:], 16)
-            else:
-                val = int(body, 8)
-        except ValueError:
+    i, n = 0, len(lit)
+    while i < n:
+        if lit[i] != "\\":
+            i += 1
             continue
-        if val > 127:
-            out.append(esc)
+        i += 1                              # consume the backslash
+        if i >= n:
+            break
+        c = lit[i]
+        if c == "\\":                        # escaped backslash: consume BOTH
+            i += 1
+            continue
+        if c in "xX":
+            j = i + 1
+            while j < n and lit[j] in "0123456789abcdefABCDEF":
+                j += 1                      # maximal munch, per C99
+            if j > i + 1 and int(lit[i + 1:j], 16) > 127:
+                out.append(lit[i - 1:j])
+            i = j
+        elif c in "01234567":
+            j = i
+            while j < n and j < i + 3 and lit[j] in "01234567":
+                j += 1                      # octal is capped at 3 digits
+            if int(lit[i:j], 8) > 127:
+                out.append(lit[i - 1:j])
+            i = j
+        elif c in "uU":
+            width = 4 if c == "u" else 8
+            j, k = i + 1, i + 1 + width
+            digits = lit[j:k]
+            if len(digits) == width and all(
+                    d in "0123456789abcdefABCDEF" for d in digits):
+                if int(digits, 16) > 127:
+                    out.append(lit[i - 1:k])
+                i = k
+            else:
+                i += 1
+        else:
+            i += 1                          # \\n, \\t, \\", ... : ordinary
     return out
+
+
+def has_line_splice(lit):
+    """True if the literal contains a backslash-newline line splice.
+
+    The compiler removes these before tokenizing, so they can hide an escape
+    from any scanner that reads unspliced source. Rather than decode around
+    them, the caller fails closed and asks for the splice to be removed --
+    they do not occur anywhere in this codebase and have no legitimate use
+    inside a log string.
+    """
+    return "\\\n" in lit or "\\\r\n" in lit
 
 
 def string_literals(src):
@@ -168,6 +211,8 @@ def main():
         for off, lit in string_literals(src):
             bad = sorted({ch for ch in lit if ord(ch) > 127})
             bad += escaped_nonascii(lit)
+            if has_line_splice(lit):
+                bad.append("<line-splice>")
             if bad:
                 offenders.append((path, src.count("\n", 0, off) + 1, bad,
                                   lit.strip('"')[:60]))
