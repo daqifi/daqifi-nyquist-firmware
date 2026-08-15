@@ -1627,6 +1627,30 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
                         (SYS_FS_FILE_OPEN_WRITE_PLUS));
 
+                /* #782: a teardown may have landed while this open was in
+                 * flight. SCPI (pri 7) preempts this task (pri 5), and
+                 * sd_card_manager_UpdateSettings() tears the session down by
+                 * clearing mode and forcing currentProcessState = DEINIT. An
+                 * unconditional assignment here overwrites that DEINIT, and
+                 * the session is then stranded in WRITE_TO_FILE with
+                 * mode == NONE: nothing re-arms a write, so IsBusy() stays
+                 * true and every SD command is refused until something
+                 * re-initialises the manager. Rotation made this likely
+                 * because it re-enters OPEN_FILE roughly every MAXSize bytes.
+                 * Re-check the mode we were dispatched on and honour the
+                 * teardown instead of clobbering it. */
+                if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
+                    if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
+                        SYS_FS_FileClose(gSDCardData.fileHandle);
+                        gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                    }
+                    LOG_I("[SD] open aborted: session torn down mid-open "
+                          "(mode=%s)", sd_card_manager_GetModeName());
+                    gSDCardData.currentProcessState =
+                            SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
+                    break;
+                }
+
                 // Transition to WRITE_TO_FILE — IsWriteReady() becomes
                 // true after this point.  The streaming task detects the
                 // transition and writes SD-only headers at byte 0.
@@ -1743,6 +1767,30 @@ void sd_card_manager_ProcessState() {
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE:
         {
+            /* #782: this state had no exit for a cleared mode. Its only
+             * transition to IDLE is the split-limit path below, which needs
+             * writes that will never arrive once the session is torn down --
+             * so a teardown that landed here left the manager busy forever,
+             * refusing every SD command until something re-initialised it.
+             *
+             * The guard in OPEN_FILE should keep us out of that window, but
+             * this is the state that has to be survivable: it is reachable
+             * from any future caller that clears the mode, and being wrong
+             * here is permanent rather than momentary.
+             *
+             * Route to DEINIT (-> UNMOUNT_DISK) rather than draining here:
+             * that path already flushes the pending write buffer AND the
+             * circular buffer before closing the file, without the
+             * sector-alignment the steady-state loop uses, which is exactly
+             * what a stop needs to avoid truncating a sub-sector tail. */
+            if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
+                LOG_I("[SD] write session ended (mode=%s) - finalising",
+                      sd_card_manager_GetModeName());
+                gSDCardData.currentProcessState =
+                        SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
+                break;
+            }
+
             /* If read was success, try writing to the new file */
             int writeLen = -2;
             
