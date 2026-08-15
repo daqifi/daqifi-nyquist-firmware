@@ -1661,15 +1661,21 @@ void sd_card_manager_ProcessState() {
 
                 if (openAborted) {
                     if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
-                        /* Deliberately (void): the file was created empty by
-                         * the WRITE_PLUS open above and is being abandoned,
-                         * so a close failure changes nothing we would do
-                         * differently -- UNMOUNT_DISK follows either way.
-                         * Cast explicitly rather than dropping the result
-                         * silently, matching the other abandon-path close in
-                         * this file. */
-                        (void)SYS_FS_FileClose(gSDCardData.fileHandle);
-                        gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                        /* Invalidate ONLY on a successful close. UNMOUNT_DISK
+                         * gates its whole drain-and-close block on
+                         * fileHandle != INVALID, so clearing the handle after
+                         * a FAILED close would skip the retry that block
+                         * exists to perform, and the file could stay open
+                         * across the unmount. Leaving it set costs nothing:
+                         * DEINIT -> UNMOUNT_DISK runs next either way. */
+                        if (SYS_FS_FileClose(gSDCardData.fileHandle)
+                                == SYS_FS_RES_FAILURE) {
+                            LOG_E("[SD] open-abort close failed err=%d - "
+                                  "leaving the handle for UNMOUNT_DISK",
+                                  SYS_FS_Error());
+                        } else {
+                            gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                        }
                     }
                     LOG_I("[SD] open aborted: session torn down mid-open "
                           "(mode=%s)", sd_card_manager_GetModeName());
