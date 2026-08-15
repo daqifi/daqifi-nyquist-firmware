@@ -30,19 +30,33 @@ WHY COMMENTS ARE SKIPPED
     `/* */` and character literals rather than by regex.
 
 SCOPE
-    firmware/src, excluding third_party/ and libraries/ -- vendored code we do
-    not own, matching tools/lint/cppcheck.sh's exclusions.
+    firmware/src, excluding third_party/, libraries/ and config/ -- vendored
+    code we do not own. Same exclusions as tools/lint/cppcheck.sh.
+
+    config/ is excluded for a concrete reason, not by analogy: vendored FatFs
+    (config/default/system/fs/fat_fs/file_system/ff.c) embeds a boot-sector
+    jump instruction as "\xEB\x76\x90". That is binary data in a string
+    literal, entirely legitimate, and scanning it turns this gate red on
+    correct code. An earlier revision did include config/ and did exactly
+    that.
+
+    CAVEAT worth knowing: one real violation was fixed under config/
+    (config/default/driver/sdspi/src/drv_sdspi.c) and is therefore NOT
+    guarded against regression here. MCC regeneration is retired, so that
+    file changes only by hand -- but a hand edit could reintroduce it
+    silently.
 
 Usage:
     python3 tools/lint/check_log_ascii.py [ROOT]     # default firmware/src
 Exit codes:
     0 = clean, 1 = offending literals found, 2 = usage/IO error
 """
+import re
 import sys
 from pathlib import Path
 
 DEFAULT_ROOT = Path("firmware/src")
-EXCLUDED_PREFIXES = ("third_party/", "libraries/")
+EXCLUDED_PREFIXES = ("third_party/", "libraries/", "config/")
 
 # Advisory replacements for characters seen in this codebase. Any non-ASCII
 # is a failure whether or not it appears here.
@@ -58,6 +72,36 @@ HINTS = {
     "≈": "~",
     "…": "...",
 }
+
+
+ESCAPE_RE = re.compile(
+    r"\\(?:x[0-9a-fA-F]{1,2}|[0-7]{1,3}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})")
+
+
+def escaped_nonascii(lit):
+    """Return escape sequences in `lit` that encode a byte/codepoint > 127.
+
+    A literal written as "\\xE2\\x80\\x94" contains only ASCII source
+    characters, so an ord(ch) > 127 test passes it -- and it compiles to an em
+    dash all the same. Checking only what the eye can see would leave an easy
+    and completely silent way back to the defect.
+    """
+    out = []
+    for m in ESCAPE_RE.finditer(lit):
+        esc = m.group(0)
+        body = esc[1:]
+        try:
+            if body[0] in "xX":
+                val = int(body[1:], 16)
+            elif body[0] in "uU":
+                val = int(body[1:], 16)
+            else:
+                val = int(body, 8)
+        except ValueError:
+            continue
+        if val > 127:
+            out.append(esc)
+    return out
 
 
 def string_literals(src):
@@ -123,6 +167,7 @@ def main():
             return 2
         for off, lit in string_literals(src):
             bad = sorted({ch for ch in lit if ord(ch) > 127})
+            bad += escaped_nonascii(lit)
             if bad:
                 offenders.append((path, src.count("\n", 0, off) + 1, bad,
                                   lit.strip('"')[:60]))
@@ -136,11 +181,15 @@ def main():
           f"non-ASCII\n")
     for path, line, bad, preview in offenders:
         for ch in bad:
-            hint = HINTS.get(ch)
-            suffix = f"  (use {hint!r})" if hint else ""
-            print(f"::error file={path},line={line}::non-ASCII "
-                  f"U+{ord(ch):04X} {ch!r} in a string literal{suffix}"
-                  f"  --  {preview!r}")
+            if len(ch) == 1:
+                hint = HINTS.get(ch)
+                suffix = f"  (use {hint!r})" if hint else ""
+                what = f"non-ASCII U+{ord(ch):04X} {ch!r}"
+            else:
+                suffix = "  (escape encodes a byte > 127)"
+                what = f"non-ASCII escape {ch!r}"
+            print(f"::error file={path},line={line}::{what} in a string "
+                  f"literal{suffix}  --  {preview!r}")
     print("\nDevice text is read over SYST:LOG? / SYST:ERR?, where non-ASCII "
           "is mangled on a cp1252 console, can throw in a client, and eats "
           "the 128-byte LOG_MESSAGE_SIZE budget. See #787.")
