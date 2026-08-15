@@ -2645,7 +2645,6 @@ const char *sd_card_manager_GetModeName(void) {
     return "UNKNOWN";
 }
 
-
 bool sd_card_manager_WaitForCompletionPumped(uint32_t timeoutMs) {
     /* #780: identical to WaitForCompletion, except it keeps the USB write half
      * running while it waits.

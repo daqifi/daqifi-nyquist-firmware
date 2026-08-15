@@ -82,8 +82,9 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
 #define SD_CARD_NOT_PRESENT_ERROR_MSG "\r\nError !! No SD Card Detected\r\n"
 
 // Log format for SD busy errors - use LOG_SD_BUSY("COMMAND") for consistency.
-// #782: the state name is what makes a refusal actionable - every busy state
-// returns the same -200, so without it "busy" cannot be told from "wedged".
+// #782: the state/mode pair is what makes a refusal actionable - every busy
+// state returns the same -200, so without it "busy" cannot be told from
+// "wedged". Both are logged because IsBusy() has two independent causes.
 #define LOG_SD_BUSY(cmd) LOG_E("SD:" cmd " - SD card busy, state=%s mode=%s\r\n", \
                                sd_card_manager_GetStateName(), \
                                sd_card_manager_GetModeName())
