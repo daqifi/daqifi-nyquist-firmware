@@ -1638,8 +1638,28 @@ void sd_card_manager_ProcessState() {
                  * re-initialises the manager. Rotation made this likely
                  * because it re-enters OPEN_FILE roughly every MAXSize bytes.
                  * Re-check the mode we were dispatched on and honour the
-                 * teardown instead of clobbering it. */
-                if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
+                 * teardown instead of clobbering it.
+                 *
+                 * The check and the state write must be ONE atomic step. A
+                 * plain "if (mode != WRITE) ... else state = WRITE_TO_FILE"
+                 * only narrows the window: SCPI can still land between the
+                 * comparison and the assignment, and the assignment then
+                 * clobbers the DEINIT exactly as before. Both operands are
+                 * 32-bit and individually atomic on PIC32MZ, but this is a
+                 * read-decide-write across two variables, which is the case
+                 * the project's atomicity rules reserve a critical section
+                 * for. It spans one compare and one store; the file close and
+                 * the log stay outside it. */
+                bool openAborted;
+                taskENTER_CRITICAL();
+                openAborted = (gpSDCardSettings->mode
+                               != SD_CARD_MANAGER_MODE_WRITE);
+                gSDCardData.currentProcessState = openAborted
+                        ? SD_CARD_MANAGER_PROCESS_STATE_DEINIT
+                        : SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
+                taskEXIT_CRITICAL();
+
+                if (openAborted) {
                     if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
                         /* Deliberately (void): the file was created empty by
                          * the WRITE_PLUS open above and is being abandoned,
@@ -1653,15 +1673,13 @@ void sd_card_manager_ProcessState() {
                     }
                     LOG_I("[SD] open aborted: session torn down mid-open "
                           "(mode=%s)", sd_card_manager_GetModeName());
-                    gSDCardData.currentProcessState =
-                            SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
                     break;
                 }
 
-                // Transition to WRITE_TO_FILE — IsWriteReady() becomes
-                // true after this point.  The streaming task detects the
-                // transition and writes SD-only headers at byte 0.
-                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
+                /* State is already WRITE_TO_FILE from the block above --
+                 * IsWriteReady() becomes true at that point, and the
+                 * streaming task detects the transition and writes SD-only
+                 * headers at byte 0. */
                 gSDCardData.totalBytesFlushPending = 0;
                 gSDCardData.currentFileBytes = 0;  // Reset byte counter for new file
                 gSDCardData.lastFlushMillis = pdTICKS_TO_MS(xTaskGetTickCount());
