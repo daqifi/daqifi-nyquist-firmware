@@ -1641,7 +1641,14 @@ void sd_card_manager_ProcessState() {
                  * teardown instead of clobbering it. */
                 if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
                     if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
-                        SYS_FS_FileClose(gSDCardData.fileHandle);
+                        /* Deliberately (void): the file was created empty by
+                         * the WRITE_PLUS open above and is being abandoned,
+                         * so a close failure changes nothing we would do
+                         * differently -- UNMOUNT_DISK follows either way.
+                         * Cast explicitly rather than dropping the result
+                         * silently, matching the other abandon-path close in
+                         * this file. */
+                        (void)SYS_FS_FileClose(gSDCardData.fileHandle);
                         gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                     }
                     LOG_I("[SD] open aborted: session torn down mid-open "
