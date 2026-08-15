@@ -207,6 +207,36 @@ extern "C" {
     bool sd_card_manager_IsIdle(void);
 
     /**
+     * @brief Returns the manager's current process state as a short name.
+     *
+     * Diagnostic only (#782). Every busy state refuses SCPI commands with the
+     * same -200, so the name is what distinguishes "draining a write" from
+     * "stuck unmounting". Returns a pointer to a string literal - never NULL,
+     * safe to log directly.
+     *
+     * The value is a snapshot: the manager runs on its own task, so the state
+     * may already have advanced by the time the caller uses it.
+     *
+     * @return State name, e.g. "IDLE", "WRITE", "UNMOUNT"
+     */
+    const char *sd_card_manager_GetStateName(void);
+
+    /**
+     * @brief Returns the manager's currently requested mode as a short name.
+     *
+     * Diagnostic only (#782), and the necessary companion to
+     * sd_card_manager_GetStateName(): sd_card_manager_IsBusy() reports busy
+     * when EITHER the mode is still set OR the state machine is off idle, so
+     * the state alone cannot distinguish those two causes.
+     *
+     * Returns a pointer to a string literal - never NULL, safe to log
+     * directly. "UNINIT" means settings are not yet bound.
+     *
+     * @return Mode name, e.g. "NONE", "WRITE", "FORMAT"
+     */
+    const char *sd_card_manager_GetModeName(void);
+
+    /**
      * @brief Waits for the current SD card operation to complete.
      *
      * @param[in] timeoutMs Maximum time to wait in milliseconds (0 = wait forever)

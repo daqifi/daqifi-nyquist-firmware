@@ -2593,6 +2593,58 @@ bool sd_card_manager_IsIdle() {
             gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_INIT);
 }
 
+/* #782: from outside the manager every stuck state looks identical - the
+ * command is refused with -200 and nothing says which state refused it. The
+ * switch (rather than a lookup table) is deliberate: -Wswitch is an error
+ * here, so a state added without a name fails the build instead of silently
+ * reporting "UNKNOWN" from the field. */
+const char *sd_card_manager_GetStateName(void) {
+    switch (gSDCardData.currentProcessState) {
+        case SD_CARD_MANAGER_PROCESS_STATE_INIT:             return "INIT";
+        case SD_CARD_MANAGER_PROCESS_STATE_MOUNT_DISK:       return "MOUNT";
+        case SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK:     return "UNMOUNT";
+        case SD_CARD_MANAGER_PROCESS_STATE_CURRENT_DRIVE:    return "CURDRIVE";
+        case SD_CARD_MANAGER_PROCESS_STATE_CHECK_DISK_FULL:  return "CHKFULL";
+        case SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY: return "MKDIR";
+        case SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE:        return "OPEN";
+        case SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE:    return "WRITE";
+        case SD_CARD_MANAGER_PROCESS_STATE_READ_FROM_FILE:   return "READ";
+        case SD_CARD_MANAGER_PROCESS_STATE_LIST_DIR:         return "LISTDIR";
+        case SD_CARD_MANAGER_PROCESS_STATE_DELETE_FILE:      return "DELETE";
+        case SD_CARD_MANAGER_PROCESS_STATE_FORMAT:           return "FORMAT";
+        case SD_CARD_MANAGER_PROCESS_STATE_GET_SPACE:        return "GETSPACE";
+        case SD_CARD_MANAGER_PROCESS_STATE_COMPUTE_CRC:      return "CRC";
+        case SD_CARD_MANAGER_PROCESS_STATE_DEINIT:           return "DEINIT";
+        case SD_CARD_MANAGER_PROCESS_STATE_IDLE:             return "IDLE";
+        case SD_CARD_MANAGER_PROCESS_STATE_ERROR:            return "ERROR";
+    }
+    /* Unreachable while the switch is exhaustive; keeps the compiler happy
+     * about a corrupted value read from RAM. */
+    return "UNKNOWN";
+}
+
+/* #782: sd_card_manager_IsBusy() is true when EITHER the requested mode is
+ * still set OR the state machine is off idle - two independent causes that
+ * produce the identical -200. Reporting the state alone cannot tell
+ * "mode left armed with the machine parked at IDLE" from "machine genuinely
+ * stuck mid-operation", and those need different fixes. */
+const char *sd_card_manager_GetModeName(void) {
+    if (gpSDCardSettings == NULL) {
+        return "UNINIT";
+    }
+    switch (gpSDCardSettings->mode) {
+        case SD_CARD_MANAGER_MODE_NONE:           return "NONE";
+        case SD_CARD_MANAGER_MODE_READ:           return "READ";
+        case SD_CARD_MANAGER_MODE_WRITE:          return "WRITE";
+        case SD_CARD_MANAGER_MODE_LIST_DIRECTORY: return "LIST";
+        case SD_CARD_MANAGER_MODE_DELETE_FILE:    return "DELETE";
+        case SD_CARD_MANAGER_MODE_FORMAT:         return "FORMAT";
+        case SD_CARD_MANAGER_MODE_GET_SPACE:      return "GETSPACE";
+        case SD_CARD_MANAGER_MODE_COMPUTE_CRC:    return "CRC";
+    }
+    return "UNKNOWN";
+}
+
 
 bool sd_card_manager_WaitForCompletionPumped(uint32_t timeoutMs) {
     /* #780: identical to WaitForCompletion, except it keeps the USB write half

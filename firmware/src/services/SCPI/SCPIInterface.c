@@ -3881,9 +3881,14 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
                  * below when a later stop drains in time, and STR:START, which
                  * cannot succeed unless the manager reached idle first. */
                 SCPI_SetOperBits(OPER_SD_FINALIZING);
-                LOG_E("[SD] StopStreaming: SD still finalising after 5s - "
-                      "OPER bit 11 (SD finalising) set; SD commands will be "
-                      "refused until it clears. Poll STAT:OPER:COND?");
+                /* Kept under LOG_MESSAGE_SIZE (128) with the longest state
+                 * name: the previous wording was 149 chars and lost its own
+                 * "Poll STAT:OPER:COND?" advice to truncation. */
+                LOG_E("[SD] StopStreaming: SD still finalising in state=%s "
+                      "mode=%s; OPER bit 11 set until idle. "
+                      "Poll STAT:OPER:COND?",
+                      sd_card_manager_GetStateName(),
+                      sd_card_manager_GetModeName());
             } else {
                 SCPI_ClearOperBits(OPER_SD_FINALIZING);
             }
