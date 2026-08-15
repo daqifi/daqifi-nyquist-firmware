@@ -840,7 +840,8 @@ static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
 /**
  * @brief Generates filename with sequential numbering.
  *
- * Format: basename-NNN.ext (e.g., "data-001.csv", "data-002.csv")
+ * Format: basename-N.ext, NOT zero-padded (e.g., "data-1.csv", "data-2.csv",
+ * ... "data-10.csv") -- the counter is written with a plain %u below.
  *
  * @param outPath Output buffer for full path
  * @param maxLen Maximum length of output buffer

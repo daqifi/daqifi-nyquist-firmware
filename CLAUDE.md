@@ -1206,7 +1206,7 @@ SYST:STOR:SD:MAXSize?               # Query current setting
 
 **File Naming:**
 - First file: Uses original name (e.g., `experiment.csv`)
-- Split files: Sequential 4-digit numbering (e.g., `experiment-0001.csv`, `experiment-0002.csv`)
+- Split files: Sequential numbering, **not** zero-padded (e.g., `experiment-1.csv`, `experiment-2.csv`) — `generateFilename` formats `"%s/%s-%u%s"` (`sd_card_manager.c`)
 - Supports up to 9999 files per session (~39TB @ 3.9GB each)
 
 **CSV Headers:**
