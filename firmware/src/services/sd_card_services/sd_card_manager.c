@@ -1670,9 +1670,16 @@ void sd_card_manager_ProcessState() {
                          * DEINIT -> UNMOUNT_DISK runs next either way. */
                         if (SYS_FS_FileClose(gSDCardData.fileHandle)
                                 == SYS_FS_RES_FAILURE) {
-                            LOG_E("[SD] open-abort close failed err=%d - "
-                                  "leaving the handle for UNMOUNT_DISK",
-                                  SYS_FS_Error());
+                            /* Name the file, matching the other close-failure
+                             * logs here -- "a close failed" is not actionable
+                             * without knowing which. Sized to fit
+                             * LOG_MESSAGE_SIZE (128) for a realistic path
+                             * (~101 chars at 35 path chars); a pathological
+                             * one truncates, which every path-bearing log in
+                             * this file already shares. */
+                            LOG_E("[SD] open-abort close failed '%s' err=%d - "
+                                  "handle kept for UNMOUNT",
+                                  gSDCardData.filePath, SYS_FS_Error());
                         } else {
                             gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                         }
