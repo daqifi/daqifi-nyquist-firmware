@@ -89,8 +89,10 @@ def escaped_nonascii(lit):
       digits. "\\x0E2" is one byte 0xE2, not \\x0E followed by '2'. A {1,2}
       slice sees 0x0E (14) and passes an em dash straight through.
     * LINE SPLICES. Translation phase 2 removes backslash-newline before
-      tokenizing, so "\\x" + splice + "E2" is really \\xE2. Handled by the
-      caller, which strips splices before this runs.
+      tokenizing, so "\\x" + splice + "E2" is really \\xE2. This function does
+      NOT decode around that. It does not have to: main() rejects any literal
+      containing a splice outright (see has_line_splice), so a spliced escape
+      never reaches a scanner that would misread it.
     """
     out = []
     i, n = 0, len(lit)
@@ -211,20 +213,24 @@ def main():
         for off, lit in string_literals(src):
             bad = sorted({ch for ch in lit if ord(ch) > 127})
             bad += escaped_nonascii(lit)
-            if has_line_splice(lit):
-                bad.append("<line-splice>")
-            if bad:
+            # A splice is a DIFFERENT violation from a non-ASCII byte -- it is
+            # "this literal cannot be checked", not "this literal is bad". It
+            # is carried separately rather than as a sentinel in `bad` so the
+            # reporter can say so; a sentinel string lands in the escape
+            # branch below and prints the flatly untrue "escape encodes a
+            # byte > 127".
+            splice = has_line_splice(lit)
+            if bad or splice:
                 offenders.append((path, src.count("\n", 0, off) + 1, bad,
-                                  lit.strip('"')[:60]))
+                                  splice, lit.strip('"')[:60]))
 
     if not offenders:
         print(f"check_log_ascii: clean - no non-ASCII in any string literal "
               f"({scanned} files scanned)")
         return 0
 
-    print(f"check_log_ascii: {len(offenders)} string literal(s) contain "
-          f"non-ASCII\n")
-    for path, line, bad, preview in offenders:
+    print(f"check_log_ascii: {len(offenders)} string literal(s) rejected\n")
+    for path, line, bad, splice, preview in offenders:
         for ch in bad:
             if len(ch) == 1:
                 hint = HINTS.get(ch)
@@ -235,6 +241,12 @@ def main():
                 what = f"non-ASCII escape {ch!r}"
             print(f"::error file={path},line={line}::{what} in a string "
                   f"literal{suffix}  --  {preview!r}")
+        if splice:
+            print(f"::error file={path},line={line}::line splice "
+                  f"(backslash-newline) in a string literal  (remove it: the "
+                  f"compiler joins the lines before tokenizing, so an escape "
+                  f"can straddle the split and evade this check)  --  "
+                  f"{preview!r}")
     print("\nDevice text is read over SYST:LOG? / SYST:ERR?, where non-ASCII "
           "is mangled on a cp1252 console, can throw in a client, and eats "
           "the 128-byte LOG_MESSAGE_SIZE budget. See #787.")
