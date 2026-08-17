@@ -516,7 +516,7 @@ static void lDRV_SDSPI_CommandSend
             if (sCmdTimeoutLogs < 4U)
             {
                 sCmdTimeoutLogs++;
-                LOG_E("SD: cmd bus-completion timeout — forcing error path");
+                LOG_E("SD: cmd bus-completion timeout - forcing error path");
             }
             DRV_SDSPI_AbortedXferRecord(dObj);
             dObj->spiTransferStatus = DRV_SDSPI_SPI_TRANSFER_STATUS_ERROR;

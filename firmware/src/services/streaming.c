@@ -1307,7 +1307,7 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
         if (cfg && !cfg->IsEnabled) return STREAM_WRITE_RETURN_STOPPED;
     }
 
-    LOG_E("Output write timeout (%u ms, %u bytes) — interface dead",
+    LOG_E("Output write timeout (%u ms, %u bytes) - interface dead",
           STREAM_WRITE_TIMEOUT_MS, (unsigned)len);
     return STREAM_WRITE_RETURN_TIMEOUT;
 }
@@ -2407,7 +2407,7 @@ void streaming_Task(void) {
             taskENTER_CRITICAL();
             gQuesBits |= QUES_BIT_TRANSPORT_DOWN;
             taskEXIT_CRITICAL();
-            LOG_E("Streaming: all configured transports down >%u s — auto-stop",
+            LOG_E("Streaming: all configured transports down >%u s - auto-stop",
                   (unsigned)gTransportGraceSec);
             pRunTimeStreamConf->IsEnabled = false;
             Streaming_Stop();

@@ -533,7 +533,7 @@ scpi_result_t SCPI_ADCChanRangeSet(scpi_t * context) {
     // Store range value after hardware has settled
     pRuntimeModules->Data[moduleIndex].Range = rangeVoltage;
 
-    LOG_I("AD7609 module range set to ±%.1fV", rangeVoltage);
+    LOG_I("AD7609 module range set to +/-%.1fV", rangeVoltage);
 
     return SCPI_RES_OK;
 }

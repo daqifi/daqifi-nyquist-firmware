@@ -176,11 +176,11 @@ static void FinalizeStats(void) {
 // DISCONNECTED but the WINC isn't actually up yet).
 static bool RequireWifiConnected(const char* where) {
     if (wifi_manager_GetWiFiStatus() != WIFI_STATUS_CONNECTED) {
-        LOG_E("iperf2: %s refused — WiFi not CONNECTED", where);
+        LOG_E("iperf2: %s refused - WiFi not CONNECTED", where);
         return false;
     }
     if (m2m_wifi_get_state() != WIFI_STATE_START) {
-        LOG_E("iperf2: %s refused — WINC not started", where);
+        LOG_E("iperf2: %s refused - WINC not started", where);
         return false;
     }
     return true;
@@ -188,11 +188,11 @@ static bool RequireWifiConnected(const char* where) {
 
 static bool RequireWifiReadyForSockets(const char* where) {
     if (wifi_manager_GetWiFiStatus() == WIFI_STATUS_DISABLED) {
-        LOG_E("iperf2: %s refused — WiFi DISABLED", where);
+        LOG_E("iperf2: %s refused - WiFi DISABLED", where);
         return false;
     }
     if (m2m_wifi_get_state() != WIFI_STATE_START) {
-        LOG_E("iperf2: %s refused — WINC not started", where);
+        LOG_E("iperf2: %s refused - WINC not started", where);
         return false;
     }
     return true;
@@ -412,7 +412,7 @@ bool Iperf2_StartUdpClient(const char* remote_ip, uint16_t remote_port,
     gCtx.udp_fin_count = 0;
     gCtx.last_stats.active = true;
     gCtx.last_stats.completed = false;
-    LOG_I("iperf2: UDP client → %s:%u for %u s", remote_ip,
+    LOG_I("iperf2: UDP client -> %s:%u for %u s", remote_ip,
           (unsigned)remote_port, (unsigned)duration_sec);
     return true;
 }

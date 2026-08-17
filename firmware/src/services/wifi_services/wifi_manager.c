@@ -1106,7 +1106,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     SendEvent(WIFI_MANAGER_EVENT_WIFI_FW_UPDATE_INIT);
                     break;
                 }
-                LOG_E("FW-update entry: driver still BUSY after 3 s — arming bridge anyway");
+                LOG_E("FW-update entry: driver still BUSY after 3 s - arming bridge anyway");
             }
             sFwUpdInitWaiting = false;
             sysObj.drvWifiWinc = WDRV_WINC_Initialize(0, NULL);
@@ -1925,7 +1925,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     if (wifi_tcp_server_HasActiveClient() ||
                         GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN) ||
                         GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
-                        LOG_E("STA reconfig with bound socket — diverting to HardReset (#435/#437b)");
+                        LOG_E("STA reconfig with bound socket - diverting to HardReset (#435/#437b)");
                         wifi_tcp_server_CloseSocket();
                         if (GetEventFlagStatus(pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN)) {
                             CloseUdpSocket(&pInstance->udpServerSocket);
@@ -1965,7 +1965,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                             // and the only recovery is SYST:REBoot — log
                             // explicitly so the user sees it in SYST:LOG?.
                             if (!SendEvent(WIFI_MANAGER_EVENT_ERROR)) {
-                                LOG_E("HardReset divert: ERROR fallback also failed; manager may be stuck — SYST:REBoot");
+                                LOG_E("HardReset divert: ERROR fallback also failed; manager may be stuck - SYST:REBoot");
                             }
                         }
                         break;
@@ -2530,7 +2530,7 @@ bool wifi_manager_PowerOn(void) {
         GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_INITIALIZED) &&
         (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED) ||
          GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED))) {
-        LOG_I("WiFi: power-up requested but WINC already powered/up — no-op (#637)");
+        LOG_I("WiFi: power-up requested but WINC already powered/up - no-op (#637)");
         return true;
     }
     taskENTER_CRITICAL();
@@ -2920,7 +2920,7 @@ static void wifi_manager_ServiceConsoleIdleTimeout(void)
     // client's immediate reconnect. The read is a 32-bit aligned atomic.
     if (idle > deadline &&
         gStateMachineContext.pTcpServerContext->client.lastActivityTick == last) {
-        LOG_I("TCP: console idle %us > %us deadline — closing (connect-and-never-send guard, #663)",
+        LOG_I("TCP: console idle %us > %us deadline - closing (connect-and-never-send guard, #663)",
               (unsigned)(idle / configTICK_RATE_HZ),
               (unsigned)(deadline / configTICK_RATE_HZ));
         gStateMachineContext.pTcpServerContext->client.idleClosed++;
@@ -2962,7 +2962,7 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     if (gProcessStateMutex != NULL) {
         if (xSemaphoreTakeRecursive(gProcessStateMutex,
                                     pdMS_TO_TICKS(250)) != pdTRUE) {
-            LOG_E("WiFi ProcessState: mutex timeout — skipping iteration");
+            LOG_E("WiFi ProcessState: mutex timeout - skipping iteration");
             return;
         }
     }

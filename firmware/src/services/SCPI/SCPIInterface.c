@@ -2525,7 +2525,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
             // SAME freq once; only lock saturation if it trips again (#520 HW
             // tuning 2026-05-31: 1/5 runs collapsed to 900 Hz on a transient).
             confirmTrip = true;
-            LOG_I("WIFI:FIND %u Hz: trip — re-testing (debounce)", (unsigned)freq);
+            LOG_I("WIFI:FIND %u Hz: trip - re-testing (debounce)", (unsigned)freq);
             vTaskDelay(pdMS_TO_TICKS(FIND_INTERSTEP_MS));
             // freq unchanged → loop re-measures this step
         } else {
@@ -3433,7 +3433,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     if (currentInterfaceAtCheck == StreamingInterface_WiFi) {
         size_t heapFreeAtStart = xPortGetFreeHeapSize();
         if (heapFreeAtStart < MIN_HEAP_FREE_FOR_STREAM_START_BYTES) {
-            LOG_E("WiFi streaming start rejected: free heap %u < floor %u (#475 — bounce LAN:APPLY or reboot)",
+            LOG_E("WiFi streaming start rejected: free heap %u < floor %u (#475 - bounce LAN:APPLY or reboot)",
                   (unsigned)heapFreeAtStart,
                   (unsigned)MIN_HEAP_FREE_FOR_STREAM_START_BYTES);
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -4546,7 +4546,7 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
      * BufferOpInFlight — it's the caller's own logging setup, the intended
      * consumer of the new partition.) */
     if (sd_card_manager_BufferOpInFlight()) {
-        LOG_E("PrepareStreamingBuffers: refused — SD read/list/CRC in flight; "
+        LOG_E("PrepareStreamingBuffers: refused - SD read/list/CRC in flight; "
               "cannot re-partition the SD read buffer (#703)");
         return false;
     }
@@ -4609,7 +4609,7 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
      * release, then reads from the NEW buffer size (consistent). Released on every
      * exit path after this point. */
     if (!sd_card_manager_TryLockBuffer()) {
-        LOG_E("PrepareStreamingBuffers: refused — SD read/list/CRC holds the buffer lock (#703)");
+        LOG_E("PrepareStreamingBuffers: refused - SD read/list/CRC holds the buffer lock (#703)");
         return false;
     }
 
