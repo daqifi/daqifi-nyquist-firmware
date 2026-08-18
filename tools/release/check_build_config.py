@@ -83,10 +83,11 @@ def main():
         return 2
 
     # Scope to the conf actually built. configurations.xml carries a full <item>
-    # set PER CONFIGURATION — three copies of each linker script (default, Nq1,
-    # Nq3). An unscoped whole-file search silently falls through to the Nq1 copy
-    # when the default-conf entry is the one that got pruned, which is exactly
-    # the state this guard exists to catch: it would report OK while
+    # set PER CONFIGURATION — one copy of each linker script per conf (today:
+    # default and Nq3; the stale Nq1 conf was deleted in #771/#775). An unscoped
+    # whole-file search silently falls through to another conf's copy when the
+    # default-conf entry is the one that got pruned, which is exactly the state
+    # this guard exists to catch: it would report OK while
     # cut_release.sh (which scopes its own lookup with awk bounded by
     # <conf name="default">) dies at release time on its precondition.
     confs = conf_elements(root, CONF)
