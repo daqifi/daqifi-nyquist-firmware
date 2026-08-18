@@ -44,6 +44,18 @@ jobs:
             exit 1
           fi
 
+      # #787: log text reaches operators over SYST:LOG?, where non-ASCII is
+      # mangled on a cp1252 console, can throw outright in a Python client,
+      # and eats the firmware's 128-byte LOG_MESSAGE_SIZE (so it truncates
+      # the rest of the message too). CLAUDE.md documented the rule long
+      # before this gate existed and 35 sites accumulated anyway, which is
+      # why it is enforced rather than only written down.
+      # Runs before cppcheck: it needs no toolchain and fails in under a
+      # second, so a violation reports immediately instead of after the
+      # slower analysis.
+      - name: Check log literals are ASCII
+        run: python3 tools/lint/check_log_ascii.py
+
       - name: Run cppcheck
         run: bash tools/lint/cppcheck.sh /tmp/cppcheck-current.txt
 

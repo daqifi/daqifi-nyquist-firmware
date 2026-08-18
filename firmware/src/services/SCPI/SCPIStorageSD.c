@@ -81,8 +81,13 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
 #define SD_CARD_NOT_ENABLED_ERROR_MSG "\r\nError !! Please Enabled SD Card\r\n"
 #define SD_CARD_NOT_PRESENT_ERROR_MSG "\r\nError !! No SD Card Detected\r\n"
 
-// Log format for SD busy errors - use LOG_SD_BUSY("COMMAND") for consistency
-#define LOG_SD_BUSY(cmd) LOG_E("SD:" cmd " - SD card busy with current operation\r\n")
+// Log format for SD busy errors - use LOG_SD_BUSY("COMMAND") for consistency.
+// #782: the state/mode pair is what makes a refusal actionable - every busy
+// state returns the same -200, so without it "busy" cannot be told from
+// "wedged". Both are logged because IsBusy() has two independent causes.
+#define LOG_SD_BUSY(cmd) LOG_E("SD:" cmd " - SD card busy, state=%s mode=%s\r\n", \
+                               sd_card_manager_GetStateName(), \
+                               sd_card_manager_GetModeName())
 
 /**
  * @brief Check if SD card media is present
@@ -483,7 +488,7 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
      * from ever tripping in practice; it's the host-visible mirror of the SD-task
      * terminal bail so a client gets an error instead of a bare EOF marker. */
     if (!sd_card_manager_ReadBufferReady()) {
-        LOG_E("[SD] GET rejected: read buffer too small — start an SD-logging "
+        LOG_E("[SD] GET rejected: read buffer too small - start an SD-logging "
               "session or reboot to restore the SD buffer");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
@@ -594,8 +599,12 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
 
-    // Wait for sd_card_manager to complete listing (up to 10 seconds for large directories)
-    if (!sd_card_manager_WaitForCompletion(SCPI_SD_LIST_TIMEOUT_MS)) {
+    // Wait for sd_card_manager to complete listing (up to 10 seconds for large
+    // directories). #780: PUMPED — a listing is delivered through DataReadyCB
+    // while we wait, and over USB this same task is what drains it. A plain
+    // block deadlocks the two until the timeout fires, so every listing larger
+    // than the idle USB buffer took exactly 10 s and reported failure.
+    if (!sd_card_manager_WaitForCompletionPumped(SCPI_SD_LIST_TIMEOUT_MS)) {
         LOG_E("SD:LIST? - Operation timeout\r\n");
         pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
         sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
@@ -802,9 +811,13 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         }
         if (!sd_card_manager_IsWriteReady()) {
             if (sd_card_manager_StartupDirFull()) {
-                /* #690: name the real cause instead of the card advisory. */
-                LOG_E("SD:BENCH refused: target directory has too many files "
-                      "(#689) — use a different directory or clear the card\r\n");
+                /* #690: name the real cause instead of the card advisory.
+                 * #689: the flag covers every "no writable location" cause, not
+                 * just fullness — an FS fault reaching here would otherwise be
+                 * reported as a full directory and send the operator to clear a
+                 * card that is not the problem. */
+                LOG_E("SD:BENCH refused (#689): %s\r\n",
+                      sd_card_manager_WriteRefuseText());
             } else {
                 LOG_E("SD:BENCH - File not ready after timeout\r\n");
                 LOG_E("SD:BENCH - if reads/LIST work but writes hang, the card is "

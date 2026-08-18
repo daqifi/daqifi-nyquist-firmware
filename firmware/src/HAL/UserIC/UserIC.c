@@ -343,7 +343,7 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
          * busy error instead of blocking this SCPI task — the lock is shared
          * across the USB and WiFi SCPI paths, so blocking here would freeze a
          * whole interface for the duration of the other's measurement. */
-        if (err) { *err = "IC: busy — another measurement in progress"; }
+        if (err) { *err = "IC: busy - another measurement in progress"; }
         return false;
     }
 
@@ -495,7 +495,7 @@ static bool ic_Run(uint8_t dio, uint32_t icm, bool fedge, uint16_t minEdges,
      * every measurement is broken. Fail regardless of how many were stored,
      * rather than return a plausible-but-wrong value (#666 audit). */
     if (ov) {
-        if (err) { *err = "IC: FIFO overflow — signal too fast for this range"; }
+        if (err) { *err = "IC: FIFO overflow - signal too fast for this range"; }
         return false;
     }
     if (n < minEdges) {
@@ -539,7 +539,7 @@ bool UserIC_MeasureFrequency(uint8_t dio, uint32_t gate_ms, double* hz,
         return false;
     }
     if (!ic_Monotonic(ts, n)) {
-        if (err) { *err = "IC: non-monotonic capture (timing glitch) — retry"; }
+        if (err) { *err = "IC: non-monotonic capture (timing glitch) - retry"; }
         return false;
     }
     double span = (double)(ts[n - 1] - ts[0]);          /* timer counts */
@@ -554,7 +554,7 @@ bool UserIC_MeasurePeriod(uint8_t dio, double* us, const char** err) {
         return false;
     }
     if (!ic_Monotonic(ts, n)) {
-        if (err) { *err = "IC: non-monotonic capture (timing glitch) — retry"; }
+        if (err) { *err = "IC: non-monotonic capture (timing glitch) - retry"; }
         return false;
     }
     double span = (double)(ts[n - 1] - ts[0]);
@@ -574,7 +574,7 @@ bool UserIC_MeasurePulseWidth(uint8_t dio, uint8_t polarity, double* us,
         return false;
     }
     if (!ic_Monotonic(ts, n)) {
-        if (err) { *err = "IC: non-monotonic capture (timing glitch) — retry"; }
+        if (err) { *err = "IC: non-monotonic capture (timing glitch) - retry"; }
         return false;
     }
     int anchor = -1; uint8_t aLvl = 0;
@@ -603,7 +603,7 @@ bool UserIC_MeasureDuty(uint8_t dio, double* percent, const char** err) {
         return false;
     }
     if (!ic_Monotonic(ts, n)) {
-        if (err) { *err = "IC: non-monotonic capture (timing glitch) — retry"; }
+        if (err) { *err = "IC: non-monotonic capture (timing glitch) - retry"; }
         return false;
     }
     int anchor = -1; uint8_t aLvl = 0;

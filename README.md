@@ -35,7 +35,7 @@ Multi-channel data acquisition firmware for the DAQiFi Nyquist device family, bu
 ### From MPLAB X IDE
 
 1. Open `firmware/daqifi.X` project
-2. Select configuration: **default** (NQ1), **Nq1**, or **Nq3**
+2. Select configuration: **default** (NQ1) or **Nq3**
 3. Build (F11)
 
 ### From Command Line (WSL/Linux)

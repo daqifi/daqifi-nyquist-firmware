@@ -64,6 +64,16 @@
 // SCPI STATus:OPERation condition register bit assignments (IEEE 488.2 Sec 11.6.1)
 #define OPER_MEASURING   (1 << 4)   // Bit 4: streaming/measuring active
 #define OPER_SD_LOGGING  (1 << 10)  // Bit 10: SD card logging active
+/* Bit 11: the previous session's SD close did not finish inside STR:STOP's
+ * bounded wait, so the SD manager is STILL FINALISING. #783.
+ *
+ * Reported rather than waited out. Bench-measured 2026-08-14: after a 195 s
+ * torture-rotation fill the drain refused every SD command for over 100 s and
+ * then recovered on its own -- so a wait long enough to cover it would block
+ * the SCPI task for minutes, which is far worse than the condition it hides.
+ * A client polls this bit instead and knows both that waiting is the right
+ * move and when it is over. */
+#define OPER_SD_FINALIZING (1 << 11)
 
 // SCPI STATus:QUEStionable condition register bit assignments
 // These must match the QUES_BIT_* defines in streaming.c
@@ -2515,7 +2525,7 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
             // SAME freq once; only lock saturation if it trips again (#520 HW
             // tuning 2026-05-31: 1/5 runs collapsed to 900 Hz on a transient).
             confirmTrip = true;
-            LOG_I("WIFI:FIND %u Hz: trip — re-testing (debounce)", (unsigned)freq);
+            LOG_I("WIFI:FIND %u Hz: trip - re-testing (debounce)", (unsigned)freq);
             vTaskDelay(pdMS_TO_TICKS(FIND_INTERSTEP_MS));
             // freq unchanged → loop re-measures this step
         } else {
@@ -3041,6 +3051,15 @@ static void SCPI_SyncOperSdBit(void) {
     } else {
         SCPI_ClearOperBits(OPER_SD_LOGGING);
     }
+
+    /* #783: clear the finalising bit once the manager actually reaches idle.
+     * Doing it HERE rather than in the stop path is what makes the bit usable:
+     * this runs on every OPER query, so a client polling STAT:OPER:COND? sees
+     * the bit drop by itself the moment the drain completes. Set in one place
+     * (the stop path, on expiry), cleared in one place (here, on idle). */
+    if (sd_card_manager_IsIdle()) {
+        SCPI_ClearOperBits(OPER_SD_FINALIZING);
+    }
 }
 
 static scpi_result_t SCPI_OperConditionQ(scpi_t * context) {
@@ -3414,7 +3433,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     if (currentInterfaceAtCheck == StreamingInterface_WiFi) {
         size_t heapFreeAtStart = xPortGetFreeHeapSize();
         if (heapFreeAtStart < MIN_HEAP_FREE_FOR_STREAM_START_BYTES) {
-            LOG_E("WiFi streaming start rejected: free heap %u < floor %u (#475 — bounce LAN:APPLY or reboot)",
+            LOG_E("WiFi streaming start rejected: free heap %u < floor %u (#475 - bounce LAN:APPLY or reboot)",
                   (unsigned)heapFreeAtStart,
                   (unsigned)MIN_HEAP_FREE_FOR_STREAM_START_BYTES);
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -3663,9 +3682,13 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                 /* #689: SD target directory holds too many files — file-create
                  * would wedge the SD op timeout. Surface the precise cause and
                  * remedy instead of a generic "not ready". */
-                LOG_E("[SD] STR:START refused: target directory has too many "
-                      "files (#689) — use a larger SD:MAXSize, a different "
-                      "directory, or clear the card");
+                /* Report the RECORDED cause, like the post-repartition and
+                 * SD:BENCH sites. This is the site that fires on the initial
+                 * bucket scan -- the most common refusal -- and it was the one
+                 * left hardcoded, so a media fault or a bucket-name collision
+                 * still told the operator to clear a card that is not full. */
+                LOG_E("[SD] STR:START refused (#689): %s",
+                      sd_card_manager_WriteRefuseText());
             } else {
                 LOG_E("SD file not ready after %d ms", readyWait * 10);
             }
@@ -3745,8 +3768,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             }
             if (!sd_card_manager_IsWriteReady()) {
                 if (sd_card_manager_StartupDirFull()) {
-                    LOG_E("STR:START refused: SD directory too full (#689) after "
-                          "buffer repartition — use a different directory or clear the card\r\n");
+                    /* #689: this flag means "no writable location", which covers a
+                     * full directory AND a bucket that could not be created or read.
+                     * Naming only fullness misdirects the operator when the real
+                     * fault is the media; the SD-side LOG_E names which it was. */
+                    LOG_E("STR:START refused after buffer repartition (#689): %s\r\n",
+                          sd_card_manager_WriteRefuseText());
                 } else if (sd_card_manager_StartupDiskFull()) {
                     LOG_E("STR:START refused: SD disk full after buffer repartition\r\n");
                 } else {
@@ -3770,6 +3797,19 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     if (sdLoggingRequested) {
         SCPI_SetOperBits(OPER_SD_LOGGING);
     }
+    /* #783: a successful START PROVES the previous session's SD finalise
+     * completed -- PrepareStreamingBuffers -> QuiesceAndResetCoherentPool
+     * aborts the start unless the manager reaches idle first -- so clear the
+     * finalising bit here.
+     *
+     * Without this the bit latches stale-true across an entire healthy
+     * session: its only other clear runs when an OPER query happens to land
+     * while the manager is idle, and a logging session sits in WRITE_TO_FILE,
+     * never idle. A client that did not poll DURING the drain (one retrying
+     * START against -200 does exactly that) would then read bit 11 mid-session
+     * for hours and believe the previous stop was still finalising -- the
+     * precise misreading this bit exists to prevent. */
+    SCPI_ClearOperBits(OPER_SD_FINALIZING);
 
     return SCPI_RES_OK;
 }
@@ -3803,8 +3843,54 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
                 vTaskDelay(pdMS_TO_TICKS(10));
                 idleWait++;
             }
-            if (idleWait >= 500) {
-                LOG_E("[SD] StopStreaming: SD idle timeout after 5s");
+            /* BOTH conditions, and neither alone is right.
+             *
+             * The counter alone over-reports: the loop re-tests IsIdle()
+             * first, so at idleWait == 500 a drain landing in the final 10 ms
+             * slice exits idle-but-at-the-limit, and calling that a timeout
+             * sets bit 11 and latches a phantom 0->1 into the OPER EVENt
+             * register while SD is genuinely idle.
+             *
+             * A fresh IsIdle() check alone ALSO over-reports, in the opposite
+             * direction: the loop can exit early and idle, and an unrelated SD
+             * operation starting before this line would then read as busy --
+             * setting bit 11 and logging "after 5s" for a wait that never
+             * expired.
+             *
+             * The condition being reported is "the bounded wait ran out AND
+             * the close is still in flight", so test exactly that. */
+            const bool sdStillBusy = (idleWait >= 500) &&
+                                     !sd_card_manager_IsIdle();
+            if (sdStillBusy) {
+                /* #783: do not swallow this. STR:STOP still reports success --
+                 * the STREAM did stop, and failing the command would be a lie
+                 * about the wrong thing -- but the SD close is genuinely still
+                 * in flight, and every SD command until it lands is refused as
+                 * "busy". Previously that surfaced only as an error on some
+                 * later, unrelated command, which reads as "the card broke"
+                 * rather than "the previous stop is still finishing".
+                 *
+                 * Publish it instead: OPER bit 11 stays set until the manager
+                 * reaches idle, so a client can poll STAT:OPER:COND? and know
+                 * both that waiting is correct and when it is over.
+                 * Bench-measured drains have exceeded 100 s, so a longer
+                 * bounded wait here is not the answer.
+                 *
+                 * Cleared in three places, all meaning "the finalise is done":
+                 * SCPI_SyncOperSdBit when the manager is idle, the else branch
+                 * below when a later stop drains in time, and STR:START, which
+                 * cannot succeed unless the manager reached idle first. */
+                SCPI_SetOperBits(OPER_SD_FINALIZING);
+                /* Kept under LOG_MESSAGE_SIZE (128) with the longest state
+                 * name: the previous wording was 149 chars and lost its own
+                 * "Poll STAT:OPER:COND?" advice to truncation. */
+                LOG_E("[SD] StopStreaming: SD still finalising in state=%s "
+                      "mode=%s; OPER bit 11 set until idle. "
+                      "Poll STAT:OPER:COND?",
+                      sd_card_manager_GetStateName(),
+                      sd_card_manager_GetModeName());
+            } else {
+                SCPI_ClearOperBits(OPER_SD_FINALIZING);
             }
         }
     }
@@ -3842,12 +3928,36 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #619: reject an encoding change while streaming. The CSV header is sent
+     * ONCE per session (csvHeaderSent), but the row layout is chosen from the
+     * live Encoding on every row -- so switching mid-session leaves every
+     * subsequent row disagreeing with the header the client already parsed.
+     *
+     * That hazard is worst between the two CSV encodings: both announce
+     * themselves as CSV, so a client sees columns silently shift rather than a
+     * format change it could detect. It applies to any switch though, so the
+     * guard covers all of them.
+     *
+     * Mirrors SCPI_ADCChanEnableSet's #116 guard, including its IsEnabled ||
+     * Running form -- the two flags are set and cleared in separate steps at
+     * start/stop, so an && test would leave a window open. */
+    if (pRunTimeStreamConfig->IsEnabled || pRunTimeStreamConfig->Running) {
+        LOG_E("Stream format change rejected: streaming is active "
+              "(stop streaming first)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     if (param1 == Streaming_ProtoBuffer) {
         pRunTimeStreamConfig->Encoding = Streaming_ProtoBuffer;
     } else if (param1 == Streaming_Json) {
         pRunTimeStreamConfig->Encoding = Streaming_Json;
     }else if(param1 == Streaming_Csv){
          pRunTimeStreamConfig->Encoding = Streaming_Csv;
+    }else if(param1 == Streaming_CsvCompact){
+         /* #619: CSV with one leading timestamp column instead of N identical
+          * per-channel ones. Opt-in; 0/1/2 keep their existing meaning. */
+         pRunTimeStreamConfig->Encoding = Streaming_CsvCompact;
     }else{
         pRunTimeStreamConfig->Encoding = Streaming_Json;
     }
@@ -4436,7 +4546,7 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
      * BufferOpInFlight — it's the caller's own logging setup, the intended
      * consumer of the new partition.) */
     if (sd_card_manager_BufferOpInFlight()) {
-        LOG_E("PrepareStreamingBuffers: refused — SD read/list/CRC in flight; "
+        LOG_E("PrepareStreamingBuffers: refused - SD read/list/CRC in flight; "
               "cannot re-partition the SD read buffer (#703)");
         return false;
     }
@@ -4499,7 +4609,7 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
      * release, then reads from the NEW buffer size (consistent). Released on every
      * exit path after this point. */
     if (!sd_card_manager_TryLockBuffer()) {
-        LOG_E("PrepareStreamingBuffers: refused — SD read/list/CRC holds the buffer lock (#703)");
+        LOG_E("PrepareStreamingBuffers: refused - SD read/list/CRC holds the buffer lock (#703)");
         return false;
     }
 
@@ -5092,7 +5202,12 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * channels, the max rate will be X Hz" without round-tripping
      * for every checkbox change. */
     scpi_printf(context,
-        "\"streaming\":{\"encodings\":[\"pb\",\"csv\",\"json\"],"
+        /* #619: csv_compact (SYST:STR:FORmat 3) is listed because this blob is
+         * documented as the client's source of truth for what the device
+         * supports. Adding an encoding the firmware accepts but never
+         * advertises leaves every schema-following client unable to offer it.
+         * Appended last so existing clients see their three unchanged. */
+        "\"streaming\":{\"encodings\":[\"pb\",\"csv\",\"json\",\"csv_compact\"],"
         "\"transports\":[");
     {
         bool first = true;

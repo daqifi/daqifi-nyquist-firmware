@@ -251,7 +251,7 @@ void BQ24297_Config_Settings(void) {
     if (GPIO_PinInterruptCallbackRegister(BATT_MAN_INT_PIN, BQ24297_IntCallback, 0)) {
         GPIO_PinIntEnable(BATT_MAN_INT_PIN, GPIO_INTERRUPT_ON_FALLING_EDGE);
     } else {
-        LOG_E("BQ24297_Config_Settings: INT callback register failed — poll only");
+        LOG_E("BQ24297_Config_Settings: INT callback register failed - poll only");
     }
 
     // Mark initialization complete

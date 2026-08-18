@@ -207,12 +207,50 @@ extern "C" {
     bool sd_card_manager_IsIdle(void);
 
     /**
+     * @brief Returns the manager's current process state as a short name.
+     *
+     * Diagnostic only (#782). Every busy state refuses SCPI commands with the
+     * same -200, so the name is what distinguishes "draining a write" from
+     * "stuck unmounting". Returns a pointer to a string literal - never NULL,
+     * safe to log directly.
+     *
+     * The value is a snapshot: the manager runs on its own task, so the state
+     * may already have advanced by the time the caller uses it.
+     *
+     * @return State name, e.g. "IDLE", "WRITE", "UNMOUNT"
+     */
+    const char *sd_card_manager_GetStateName(void);
+
+    /**
+     * @brief Returns the manager's currently requested mode as a short name.
+     *
+     * Diagnostic only (#782), and the necessary companion to
+     * sd_card_manager_GetStateName(): sd_card_manager_IsBusy() reports busy
+     * when EITHER the mode is still set OR the state machine is off idle, so
+     * the state alone cannot distinguish those two causes.
+     *
+     * Returns a pointer to a string literal - never NULL, safe to log
+     * directly. "UNINIT" means settings are not yet bound.
+     *
+     * @return Mode name, e.g. "NONE", "WRITE", "FORMAT"
+     */
+    const char *sd_card_manager_GetModeName(void);
+
+    /**
      * @brief Waits for the current SD card operation to complete.
      *
      * @param[in] timeoutMs Maximum time to wait in milliseconds (0 = wait forever)
      * @return true if operation completed, false if timeout occurred
      */
     bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs);
+
+    /* #780: use this instead when the CALLER is app_USBDeviceTask and the
+     * operation produces a reply through sd_card_manager_DataReadyCB. That task
+     * also drains the USB circular buffer, so a plain block stops the drain the
+     * SD task needs to finish -- a reply larger than the idle buffer then takes
+     * the full timeout to deliver. This variant pumps the USB write half while
+     * waiting. WiFi/TCP callers do not need it (a different task drains). */
+    bool sd_card_manager_WaitForCompletionPumped(uint32_t timeoutMs);
 
     /**
      * @brief Gets the result of the last completed operation.
@@ -255,6 +293,25 @@ extern "C" {
      *        surface a precise "directory too full" error. Cleared on every
      *        subsequent WRITE attempt.
      */
+    /* #689: WHY a WRITE create was refused. The boolean below stays the control
+     * signal (behaviour unchanged); this reports which condition set it, so a
+     * caller can say what actually happened instead of always blaming a full
+     * directory. Reported, never acted on. */
+    typedef enum {
+        SD_REFUSE_NONE = 0,          /* not refused */
+        SD_REFUSE_BUCKETS_EXHAUSTED, /* every bucket up to the ceiling is full */
+        SD_REFUSE_BUCKET_MKDIR,      /* the bucket directory could not be created */
+        SD_REFUSE_BUCKET_UNREADABLE, /* a bucket could not be counted OR stat'd (FS fault) */
+        SD_REFUSE_BUCKET_NOT_DIR,    /* a non-directory occupies the bucket name */
+    } SdWriteRefuseReason;
+
+    SdWriteRefuseReason sd_card_manager_WriteRefuseReason(void);
+
+    /* Human-readable form of the above, so every caller words the same cause
+     * the same way instead of each inventing its own (which is how the
+     * "directory too full" wording ended up on media faults). */
+    const char* sd_card_manager_WriteRefuseText(void);
+
     bool sd_card_manager_StartupDirFull(void);
 
     /** @brief #689: synchronously clear the directory-full flag before a new

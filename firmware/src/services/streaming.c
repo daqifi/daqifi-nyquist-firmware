@@ -1307,7 +1307,7 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
         if (cfg && !cfg->IsEnabled) return STREAM_WRITE_RETURN_STOPPED;
     }
 
-    LOG_E("Output write timeout (%u ms, %u bytes) — interface dead",
+    LOG_E("Output write timeout (%u ms, %u bytes) - interface dead",
           STREAM_WRITE_TIMEOUT_MS, (unsigned)len);
     return STREAM_WRITE_RETURN_TIMEOUT;
 }
@@ -2407,7 +2407,7 @@ void streaming_Task(void) {
             taskENTER_CRITICAL();
             gQuesBits |= QUES_BIT_TRANSPORT_DOWN;
             taskEXIT_CRITICAL();
-            LOG_E("Streaming: all configured transports down >%u s — auto-stop",
+            LOG_E("Streaming: all configured transports down >%u s - auto-stop",
                   (unsigned)gTransportGraceSec);
             pRunTimeStreamConf->IsEnabled = false;
             Streaming_Stop();
@@ -2445,7 +2445,7 @@ void streaming_Task(void) {
             // Write SD-only header/metadata for each new file so every
             // file is self-describing and independently parseable.
             size_t sdHdrLen = 0;
-            if (pRunTimeStreamConf->Encoding == Streaming_Csv) {
+            if (Streaming_EncodingIsCsv(pRunTimeStreamConf->Encoding)) {
                 // On rotation (header already sent to USB), generate
                 // SD-only header.  First file: encoder flag is false,
                 // so the encoder naturally includes the header for ALL
@@ -2593,7 +2593,7 @@ void streaming_Task(void) {
             size_t encRoom = bufferSize - packetSize;
             size_t encoded = 0;
             DioProbe_PulseStart(8);  /* probe 8: encode duration */
-            if (pRunTimeStreamConf->Encoding == Streaming_Csv) {
+            if (Streaming_EncodingIsCsv(pRunTimeStreamConf->Encoding)) {
                 DIO_TIMING_TEST_WRITE_STATE(1);
                 encoded = csv_Encode(pBoardData, &nanopbFlag, encPtr, encRoom);
                 DIO_TIMING_TEST_WRITE_STATE(0);

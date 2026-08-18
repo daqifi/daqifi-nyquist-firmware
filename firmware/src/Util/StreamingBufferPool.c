@@ -80,7 +80,7 @@ void StreamingBufferPool_Partition(uint32_t usbSize, uint32_t wifiSize,
      * override is diagnosable. */
     uint32_t bufTotal = usbSize + wifiSize + encoderSize + sdCircularSize;
     if (bufTotal > gPoolSize) {
-        LOG_E("Streaming buffers overcommit pool (%u > %u) — falling back to minimums",
+        LOG_E("Streaming buffers overcommit pool (%u > %u) - falling back to minimums",
               (unsigned)bufTotal, (unsigned)gPoolSize);
         usbSize = (usbSize > STREAMING_USB_MIN) ? STREAMING_USB_ACTIVE_MIN
                                                 : STREAMING_USB_MIN;
@@ -119,7 +119,7 @@ void StreamingBufferPool_Partition(uint32_t usbSize, uint32_t wifiSize,
     gSampleCount = sampleCount;
     gSampleElementSize = sampleElementSize;
 
-    LOG_I("Pool partition: USB=%u WiFi=%u enc=%u sdCirc=%u samples=%u×%u (of %u max, %u pool)",
+    LOG_I("Pool partition: USB=%u WiFi=%u enc=%u sdCirc=%u samples=%ux%u (of %u max, %u pool)",
           (unsigned)usbSize, (unsigned)wifiSize, (unsigned)encoderSize,
           (unsigned)sdCircularSize, (unsigned)sampleCount, (unsigned)sampleElementSize,
           (unsigned)maxSamples, (unsigned)gPoolSize);
