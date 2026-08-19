@@ -65,6 +65,14 @@ scpi_result_t SCPI_StorageSDFormatQuery(scpi_t * context);
 // SD Card Identification Info
 scpi_result_t SCPI_StorageSDInfo(scpi_t * context);
 
+/**
+ * #589: why the SD stack is currently suspended, as user-facing text, or NULL
+ * when it is not. Shared so every refusal names the SAME cause -- quarantine,
+ * a WiFi firmware update, and WiFi streaming each need a different action
+ * from the user, and a guard that guesses sends them after the wrong one.
+ */
+const char *SD_SuspendReasonText(void);
+
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }

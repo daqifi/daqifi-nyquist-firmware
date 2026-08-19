@@ -29,6 +29,8 @@
 #include "SCPIInterface.h"
 #include "../sd_card_services/sd_card_manager.h"
 #include "../wifi_services/wifi_tcp_server.h"  /* #598 ContextIsTcp */
+#include "../wifi_services/wifi_manager.h"     /* #589 FW-update owner */
+#include "app_freertos.h"                       /* #589 live SPI-owner test */
 #include "../../state/runtime/BoardRuntimeConfig.h"
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/fs/sys_fs.h"
@@ -88,6 +90,84 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
 #define LOG_SD_BUSY(cmd) LOG_E("SD:" cmd " - SD card busy, state=%s mode=%s\r\n", \
                                sd_card_manager_GetStateName(), \
                                sd_card_manager_GetModeName())
+
+/* #589: refuse immediately when the SD task is suspended.
+ *
+ * While WiFi streaming (or a WiFi FW update, or the jam quarantine) owns
+ * SPI4, app_SDCardTask parks in APP_SD_STATE_SUSPENDED and pumps neither
+ * DRV_SDSPI_Tasks() nor sd_card_manager_ProcessState(). Arming an operation
+ * then cannot work: nothing advances the state machine, so the caller waits
+ * out the whole WaitForCompletion timeout (10 s for LIST/SPACe, measured
+ * 10.38 s on the bench) and gets a -200 whose hint blames "#689: directory
+ * too large" -- which is wrong, and reproduces on an empty card.
+ *
+ * Worse, sd_card_manager_UpdateSettings() parks the machine at DEINIT on the
+ * way in, so every LATER command fails instantly at the IsBusy guard for the
+ * rest of the session and reports a state that looks wedged.
+ *
+ * Refusing up front costs the caller nothing it could have had, and says
+ * something true. Same spirit as #782 adding state/mode to LOG_SD_BUSY: every
+ * refusal returns -200, so the log line is what makes it actionable.
+ *
+ * NOT applied to SYST:STOR:SD:ENAble -- that is the manual escape hatch and
+ * must keep working -- nor to pure config/result reads.
+ */
+const char *SD_SuspendReasonText(void)
+{
+    if (!app_SDCard_SpiOwnedByWifi() && !SpiBusHealth_IsSdSuspended()) {
+        return NULL;
+    }
+    /* Quarantine first: it is the one that does NOT clear on its own. */
+    if (SpiBusHealth_IsSdQuarantined()) {
+        return "SD quarantined after a bus jam - reseat or remove the card, "
+               "then SYST:STOR:SD:ENAble 1 to retry";
+    }
+    if (wifi_manager_IsWifiFirmwareUpdateActive()) {
+        return "a WiFi firmware update owns SPI4 - retry when it completes";
+    }
+    return "WiFi streaming owns SPI4 - SYST:STR:STOP first";
+}
+
+
+/* #589: arm an SD operation, or report why it could not be armed.
+ *
+ * sd_card_manager_UpdateSettings() refuses while the SD task is suspended, and
+ * NO caller historically checked its return -- so a command whose guard passed
+ * and then lost a race to a WiFi FW-update or a quarantine would either report
+ * SUCCESS having armed nothing (FORmat, CRC and GET return OK immediately) or
+ * sit out its WaitForCompletion timeout. Both are worse than saying no.
+ */
+static bool SD_ArmOrRefuse(scpi_t *context, const char *cmd,
+                           sd_card_manager_settings_t *cfg)
+{
+    if (sd_card_manager_UpdateSettings(cfg)) {
+        return true;
+    }
+    const char *why = SD_SuspendReasonText();
+    LOG_E("SD:%s - could not arm the operation: %s\r\n", cmd,
+          why ? why : "the SD task is not accepting work");
+    SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    return false;
+}
+
+
+static bool SD_RefuseIfSuspended(scpi_t *context, const char *cmd)
+{
+    /* The LIVE condition, not SpiBusHealth_IsSdSuspended(): the SD task runs
+     * at priority 5 and this runs at 7, so a single USB packet holding
+     * `STR:INT 1`, `STR:START ...` and an SD command can execute end to end
+     * before the SD task next runs and publishes anything. The flag is right
+     * for REPORTING what the task is doing; for REFUSING, the question is
+     * whether WiFi owns the bus now, which is answerable directly. */
+    if (!app_SDCard_SpiOwnedByWifi() && !SpiBusHealth_IsSdSuspended()) {
+        return false;
+    }
+    const char *why = SD_SuspendReasonText();
+    LOG_E("SD:%s refused - SD suspended: %s\r\n", cmd,
+          why ? why : "SPI4 is owned elsewhere");
+    SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    return true;
+}
 
 /**
  * @brief Check if SD card media is present
@@ -275,6 +355,11 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     }
 
     // Check if SD card is busy with another operation
+    /* NOT gated on the #589 suspension: this command only STAGES the logging
+     * target name. It sets no mode and calls no sd_card_manager_UpdateSettings,
+     * so it needs nothing from the suspended SD task, and refusing it would
+     * stop a client preparing the next session while WiFi streams. */
+
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("FILE");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -399,12 +484,10 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
         context->interface->write(context, SD_CARD_NOT_ENABLED_ERROR_MSG, strlen(SD_CARD_NOT_ENABLED_ERROR_MSG));
         return SCPI_RES_ERR;
     }
+
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("CRC");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
-    }
-    if (!SCPI_CheckSDCardPresent(context)) {
         return SCPI_RES_ERR;
     }
     if (!SCPI_ParamCharacters(context, &pBuff, &fileLen, TRUE)) {
@@ -424,8 +507,37 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
     /* #724: transient operand, not the logging target `file`. */
     memcpy(pSDCardRuntimeConfig->opFile, pBuff, fileLen);
     pSDCardRuntimeConfig->opFile[fileLen] = '\0';
+    /* Suspension is checked HERE, after the operand has been parsed and
+     * validated. Checking earlier meant a MALFORMED CRC request also hit the
+     * refusal -- and the refusal invalidates the cached result, so a typo
+     * issued during a WiFi stream destroyed a perfectly good CRC the user had
+     * already computed. A request that was never well-formed should not have
+     * that side effect.
+     *
+     * The invalidation itself is required: the refusal short-circuits
+     * sd_card_manager_UpdateSettings, and the #306 fix that clears
+     * crcResultValid when a new CRC is armed lives inside it. Without this,
+     * SYST:STOR:SD:CRC? would hand back the PREVIOUS file's checksum as the
+     * answer to the request just refused (bench-confirmed before the fix). */
+    if (SD_RefuseIfSuspended(context, "CRC")) {
+        sd_card_manager_InvalidateCrcResult();
+        return SCPI_RES_ERR;
+    }
+
+    /* Presence is probed AFTER the suspension check, not before. While the SD
+     * task is suspended nothing refreshes the SDSPI attach cache that this
+     * reads, so a card inserted during a WiFi stream still reads DETACHED --
+     * and answering "No SD Card Detected" sends the user after a card that is
+     * sitting in the slot. "SD suspended" is both true and actionable; the
+     * stale probe is neither. */
+    if (!SCPI_CheckSDCardPresent(context)) {
+        return SCPI_RES_ERR;
+    }
+
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_COMPUTE_CRC;
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    if (!SD_ArmOrRefuse(context, "CRC", pSDCardRuntimeConfig)) {
+        return SCPI_RES_ERR;
+    }
     return SCPI_RES_OK;
 }
 
@@ -468,6 +580,11 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     }
 
     // Check if SD card is busy with another operation
+    if (SD_RefuseIfSuspended(context, "GET")) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("GET");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -530,7 +647,10 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     pSDCardRuntimeConfig->replyGeneration =
             getOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    if (!SD_ArmOrRefuse(context, "GET", pSDCardRuntimeConfig)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
     result = SCPI_RES_OK;
 __exit_point:
     return result;
@@ -552,6 +672,14 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     if (!pSDCardRuntimeConfig->enable) {
         LOG_E("SD:LIST? - SD card not enabled\r\n");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    // Refuse before probing the card: while the SD task is suspended the
+    // presence check reads a cached attach flag that nothing is refreshing,
+    // so asking it first would answer from stale state.
+    if (SD_RefuseIfSuspended(context, "LISt")) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -597,7 +725,10 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     pSDCardRuntimeConfig->replyGeneration =
             listOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;   /* #599 */
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    if (!SD_ArmOrRefuse(context, "LISt", pSDCardRuntimeConfig)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
 
     // Wait for sd_card_manager to complete listing (up to 10 seconds for large
     // directories). #780: PUMPED — a listing is delivered through DataReadyCB
@@ -633,6 +764,13 @@ __exit_point:
  *          STOR:SD:BENCH 512,1     # Write 512KB of sequential data
  */
 scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
+    /* #589: the benchmark arms a WRITE like any other SD operation, so
+     * it is refused while the SD task is suspended for the same reason.
+     * It has no IsBusy guard of its own (#736: a running benchmark OWNS
+     * the logging target), which is why it needed naming separately. */
+    if (SD_RefuseIfSuspended(context, "BENCHmark")) {
+        return SCPI_RES_ERR;
+    }
     int32_t testSizeKB = 0;
     int32_t pattern = 0;
     scpi_result_t result = SCPI_RES_ERR;
@@ -1076,6 +1214,11 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     }
 
     // Check if SD card is busy with another operation
+    if (SD_RefuseIfSuspended(context, "DELete")) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("DELete");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -1117,7 +1260,10 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
 
     // Set mode to DELETE and trigger the operation
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_DELETE_FILE;
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    if (!SD_ArmOrRefuse(context, "DELete", pSDCardRuntimeConfig)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
 
     // Wait for sd_card_manager to complete deletion (up to 5 seconds)
     if (!sd_card_manager_WaitForCompletion(SCPI_SD_DELETE_TIMEOUT_MS)) {
@@ -1160,6 +1306,11 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     }
 
     // Check if SD card is busy with another operation
+    if (SD_RefuseIfSuspended(context, "FORmat")) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("FORmat");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -1179,7 +1330,18 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     // Poll SYST:STOR:SD:FORmat? for status and progress percentage
     sd_card_manager_SetFormatPending();  // Immediately visible to FORmat? queries
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_FORMAT;
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    /* This one reported SUCCESS on a refused arm -- it returns OK without
+     * waiting, so the client believed a format had started when nothing had
+     * been queued at all. That is the worst of the three shapes. */
+    if (!SD_ArmOrRefuse(context, "FORmat", pSDCardRuntimeConfig)) {
+        /* SetFormatPending() above already published "in progress" so
+         * FORmat? would answer immediately. Nothing is going to run it now,
+         * so clear it -- otherwise FORmat? reports a format in flight
+         * forever and a client polling for completion never stops. */
+        sd_card_manager_ClearFormatStatus();
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
 
     result = SCPI_RES_OK;
 __exit_point:
@@ -1334,6 +1496,12 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
     scpi_result_t result = SCPI_RES_ERR;
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
+    // Refuse before probing the card -- see SCPI_StorageSDListDir.
+    if (SD_RefuseIfSuspended(context, "SPACe")) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     if (!SCPI_CheckSDCardPresent(context)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
@@ -1348,7 +1516,10 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
 
     // Set mode to GET_SPACE and let sd_card_manager handle mount/query/unmount
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_GET_SPACE;
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    if (!SD_ArmOrRefuse(context, "SPACe", pSDCardRuntimeConfig)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
 
     if (!sd_card_manager_WaitForCompletion(SCPI_SD_SPACE_TIMEOUT_MS)) {
         LOG_E("[SD] SPACe? - Operation timeout");

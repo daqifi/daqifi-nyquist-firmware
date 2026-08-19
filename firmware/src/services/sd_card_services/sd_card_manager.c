@@ -3,6 +3,8 @@
 
 #include <string.h>
 #include "Util/Logger.h"
+#include "Util/SpiBusHealth.h"
+#include "app_freertos.h"   /* #589: app_SDCard_SpiOwnedByWifi (live owner) */
 #include "Util/CoherentPool.h"
 #include "Util/StreamingBufferPool.h"
 #include "sd_card_manager.h"
@@ -2645,6 +2647,62 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
     extern void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object);
     DRV_SDSPI_DetectPollKick(0);
 
+    /* #589: refuse to ARM an operation while the SD task is suspended.
+     *
+     * Every SCPI entry point checks this first, but the check and the arm are
+     * not atomic: a WiFi FW-update or a bus-jam quarantine raised by a
+     * higher-priority task in between would otherwise arm work into a stack
+     * that is about to stop being pumped. This is the single choke point they
+     * all pass through, so refusing here closes that window and, just as
+     * importantly, means no operation can leave the state machine parked at
+     * DEINIT for the rest of the session.
+     *
+     * mode NONE is deliberately exempt: it is how the timeout and shutdown
+     * paths TEAR DOWN an operation (app_SDCard_GracefulShutdown uses exactly
+     * that), and refusing it would strand the machine -- the failure this
+     * issue is about.
+     *
+     * Residual, stated honestly: callers do not check this return, so a raced
+     * arm still costs the caller its WaitForCompletion timeout. What it can
+     * no longer do is corrupt the manager's state on the way.
+     */
+    /* The LIVE condition, same as the SCPI guard uses. The published flag
+     * alone lags by up to one SD-task iteration, so a caller that lost the
+     * race to WiFi claiming the bus could still be accepted here -- which is
+     * the exact window this backstop exists to close. */
+    if (pSettings != NULL &&
+        pSettings->mode != SD_CARD_MANAGER_MODE_NONE &&
+        (app_SDCard_SpiOwnedByWifi() || SpiBusHealth_IsSdSuspended())) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            LOG_E("SD op refused at arm time - the SD task is suspended and "
+                  "cannot pump it (#589)\r\n");
+        }
+        /* CLEAR the requested mode, do not merely decline to copy it.
+         * gpSDCardSettings is assigned from the caller's pointer on first use
+         * below, and every SCPI caller passes
+         * BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS) -- the same
+         * live object -- having ALREADY written the mode into it before
+         * calling. Returning without clearing would leave the refused
+         * operation armed in the shared settings, and the SD task would run
+         * it when it resumes. */
+        /* A refused CRC must also INVALIDATE the cached result. The #306 fix
+         * that does this lives further down, inside the block this early
+         * return skips -- so without it a refused
+         * `SYST:STOR:SD:CRC "new.bin"` would leave the previous file's
+         * checksum valid, and `SYST:STOR:SD:CRC?` would hand it back as if it
+         * belonged to the file just asked about. Refusing an operation must
+         * not resurrect the exact staleness #306 removed. */
+        if (pSettings->mode == SD_CARD_MANAGER_MODE_COMPUTE_CRC) {
+            taskENTER_CRITICAL();
+            gSDCardData.crcResultValid = false;
+            taskEXIT_CRITICAL();
+        }
+        pSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+        return false;
+    }
+
     if (pSettings != NULL && gpSDCardSettings != NULL) {
         memcpy(gpSDCardSettings, pSettings, sizeof (sd_card_manager_settings_t));
         /* #306 fix (stale CRC): a new CRC request must invalidate any prior
@@ -2656,6 +2714,7 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
             gSDCardData.crcResultValid = false;
             taskEXIT_CRITICAL();
         }
+
     }
     // Drain any stale completion token, but only when idle to avoid
     // consuming a signal that an in-flight WaitForCompletion is expecting
@@ -2894,6 +2953,12 @@ void sd_card_manager_ClearStartupDirFull(void) {
      * (pairs with ClearStartupDiskFull), so the STR:START poll observes only the
      * current request's outcome and a stale `true` can't reject a later start. */
     gSDCardData.startupDirFull = false;
+}
+
+void sd_card_manager_InvalidateCrcResult(void) {
+    taskENTER_CRITICAL();
+    gSDCardData.crcResultValid = false;
+    taskEXIT_CRITICAL();
 }
 
 bool sd_card_manager_GetCrcResult(uint32_t *crc32, uint64_t *length) {

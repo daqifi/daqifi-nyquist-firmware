@@ -20,6 +20,9 @@
 #include "services/DaqifiPB/NanoPB_Encoder.h"
 //#include "Util/StringFormatters.h"
 #include "Util/SpiBusHealth.h"
+#include "app_freertos.h"   /* #589 app_SDCard_SpiOwnedByWifi (reaches here
+                              * transitively via PowerApi.h -> definitions.h;
+                              * named explicitly so it does not depend on that) */
 #include "Util/Logger.h"
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
@@ -3585,6 +3588,19 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
     // If SD logging is requested, set mode to WRITE now (deferred from LOGging command)
     if (sdLoggingRequested) {
+        /* #589: the SD task is parked while WiFi streaming, a WiFi firmware
+         * update, or the jam quarantine owns SPI4, so a WRITE armed here could
+         * never be advanced -- the start would wait out its open poll and then
+         * assert SD logging with no file open. Refuse with the cause instead.
+         * This one check covers both arming sites in this flow (the initial
+         * open and the re-open retry below). */
+        if (app_SDCard_SpiOwnedByWifi() || SpiBusHealth_IsSdSuspended()) {
+            const char *why = SD_SuspendReasonText();
+            LOG_E("Cannot start SD logging - SD suspended: %s\r\n",
+                  why ? why : "SPI4 is owned elsewhere");
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
+        }
         // Check if SD card is busy with another operation (DELETE, FORMAT, etc.).
         // SD is a single consumer — don't start a logging file while any SD op runs.
         if (sd_card_manager_IsBusy()) {
@@ -5433,7 +5449,15 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
 /**
  * #589 Tier-1 diagnostics: probe the shared SPI4 bus for an electrical jam
  * (sick SD card holding MISO with no chip select asserted).
- * Response: CLEAR | JAMMED | BUSY | INDETERMINATE, plus ",QUARANTINED".
+ * Response: CLEAR | JAMMED | BUSY | INDETERMINATE, plus ",QUARANTINED"
+ * and/or ",SUSPENDED".
+ *
+ * #589: SUSPENDED means app_SDCardTask is parked in APP_SD_STATE_SUSPENDED
+ * because WiFi streaming (or a WiFi FW update, or the quarantine) owns SPI4 —
+ * the SD stack is not being pumped, so every SD command is refused until the
+ * owner releases the bus. Reported here rather than as a new command: this is
+ * already the SPI-bus health query, and a client asking "why did my SD
+ * command fail?" looks in exactly one place.
  */
 // #285: human/machine name for each onboard diagnostic (monitoring) channel.
 // The monitoring set is hardware-identical across NQ1/NQ2/NQ3 (defined once in
@@ -5590,9 +5614,10 @@ static scpi_result_t SCPI_DiagSpiBusGet(scpi_t * context)
     const char *txt = (r == SPI_BUS_CLEAR) ? "CLEAR" :
                       (r == SPI_BUS_JAMMED) ? "JAMMED" :
                       (r == SPI_BUS_BUSY) ? "BUSY" : "INDETERMINATE";
-    char out[48];
-    snprintf(out, sizeof(out), "%s%s", txt,
-             SpiBusHealth_IsSdQuarantined() ? ",QUARANTINED" : "");
+    char out[64];
+    snprintf(out, sizeof(out), "%s%s%s", txt,
+             SpiBusHealth_IsSdQuarantined() ? ",QUARANTINED" : "",
+             SpiBusHealth_IsSdSuspended() ? ",SUSPENDED" : "");
     SCPI_ResultText(context, out);
     return SCPI_RES_OK;
 }
