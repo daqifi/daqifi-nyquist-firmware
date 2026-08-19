@@ -449,6 +449,14 @@ static void app_SDCardTask(void* p_arg) {
     uint8_t state = APP_SD_STATE_WAIT_POWER_UP;
 
     while (1) {
+        /* #589: publish the suspension so the SD SCPI callbacks can refuse an
+         * operation that could never complete. Derived from `state` on every
+         * iteration rather than set at each transition: SUSPENDED already has
+         * more than one exit (PROCESS and WAIT_POWER_UP), and a flag written
+         * per-transition silently goes stale the moment another is added.
+         * This cannot disagree with the state it describes. */
+        SpiBusHealth_SetSdSuspended(state == APP_SD_STATE_SUSPENDED);
+
         switch (state) {
             case APP_SD_STATE_WAIT_POWER_UP:
             {

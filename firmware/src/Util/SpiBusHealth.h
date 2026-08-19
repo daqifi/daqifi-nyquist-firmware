@@ -78,6 +78,24 @@ SpiBusHealthResult_t SpiBusHealth_LastResult(void);
 void SpiBusHealth_SetSdQuarantine(bool quarantine);
 bool SpiBusHealth_IsSdQuarantined(void);
 
+/**
+ * #589: true while app_SDCardTask is parked in APP_SD_STATE_SUSPENDED, i.e.
+ * WiFi streaming (or a WiFi FW update, or the quarantine above) owns SPI4.
+ *
+ * In that state the task pumps NEITHER DRV_SDSPI_Tasks() NOR
+ * sd_card_manager_ProcessState(), so an SD operation armed by a SCPI command
+ * can never be advanced to completion: it burns the full WaitForCompletion
+ * timeout (10 s for LIST/SPACe) and then returns -200 with a "directory too
+ * large" hint that has nothing to do with the cause. Published here so the
+ * SCPI layer can refuse immediately and accurately instead.
+ *
+ * Written only by app_SDCardTask as it enters/leaves SUSPENDED; read by the
+ * SD SCPI callbacks on the USB/WiFi tasks. Plain bool: aligned 32-bit-class
+ * stores and loads are atomic on PIC32MZ and there is no read-modify-write.
+ */
+void SpiBusHealth_SetSdSuspended(bool suspended);
+bool SpiBusHealth_IsSdSuspended(void);
+
 #ifdef __cplusplus
 }
 #endif

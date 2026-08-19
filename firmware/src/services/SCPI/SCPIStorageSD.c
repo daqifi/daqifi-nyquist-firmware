@@ -89,6 +89,38 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
                                sd_card_manager_GetStateName(), \
                                sd_card_manager_GetModeName())
 
+/* #589: refuse immediately when the SD task is suspended.
+ *
+ * While WiFi streaming (or a WiFi FW update, or the jam quarantine) owns
+ * SPI4, app_SDCardTask parks in APP_SD_STATE_SUSPENDED and pumps neither
+ * DRV_SDSPI_Tasks() nor sd_card_manager_ProcessState(). Arming an operation
+ * then cannot work: nothing advances the state machine, so the caller waits
+ * out the whole WaitForCompletion timeout (10 s for LIST/SPACe, measured
+ * 10.38 s on the bench) and gets a -200 whose hint blames "#689: directory
+ * too large" -- which is wrong, and reproduces on an empty card.
+ *
+ * Worse, sd_card_manager_UpdateSettings() parks the machine at DEINIT on the
+ * way in, so every LATER command fails instantly at the IsBusy guard for the
+ * rest of the session and reports a state that looks wedged.
+ *
+ * Refusing up front costs the caller nothing it could have had, and says
+ * something true. Same spirit as #782 adding state/mode to LOG_SD_BUSY: every
+ * refusal returns -200, so the log line is what makes it actionable.
+ *
+ * NOT applied to SYST:STOR:SD:ENAble -- that is the manual escape hatch and
+ * must keep working -- nor to pure config/result reads.
+ */
+static bool SD_RefuseIfSuspended(scpi_t *context, const char *cmd)
+{
+    if (!SpiBusHealth_IsSdSuspended()) {
+        return false;
+    }
+    LOG_E("SD:%s - SD suspended: WiFi streaming owns SPI4; stop streaming "
+          "(SYST:STReam:STOP) before SD operations\r\n", cmd);
+    SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    return true;
+}
+
 /**
  * @brief Check if SD card media is present
  * @param context SCPI context for error reporting
@@ -275,6 +307,11 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     }
 
     // Check if SD card is busy with another operation
+    if (SD_RefuseIfSuspended(context, "FILE")) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("FILE");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -399,6 +436,10 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
         context->interface->write(context, SD_CARD_NOT_ENABLED_ERROR_MSG, strlen(SD_CARD_NOT_ENABLED_ERROR_MSG));
         return SCPI_RES_ERR;
     }
+    if (SD_RefuseIfSuspended(context, "CRC")) {
+        return SCPI_RES_ERR;
+    }
+
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("CRC");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -468,6 +509,11 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     }
 
     // Check if SD card is busy with another operation
+    if (SD_RefuseIfSuspended(context, "GET")) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("GET");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -563,6 +609,11 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     }
 
     // Check if SD card is busy with another operation
+    if (SD_RefuseIfSuspended(context, "LISt")) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("LISt");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -1076,6 +1127,11 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     }
 
     // Check if SD card is busy with another operation
+    if (SD_RefuseIfSuspended(context, "DELete")) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("DELete");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -1160,6 +1216,11 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     }
 
     // Check if SD card is busy with another operation
+    if (SD_RefuseIfSuspended(context, "FORmat")) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("FORmat");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -1335,6 +1396,11 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
     if (!SCPI_CheckSDCardPresent(context)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
+    if (SD_RefuseIfSuspended(context, "SPACe")) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }

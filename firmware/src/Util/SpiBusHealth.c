@@ -44,6 +44,22 @@ bool SpiBusHealth_IsSdQuarantined(void)
     return gSdQuarantined;
 }
 
+// #589: written by the SD task around APP_SD_STATE_SUSPENDED, read by the SD
+// SCPI callbacks so they refuse an operation that could never complete rather
+// than arming it and waiting out the full timeout. Same storage rules as
+// gSdQuarantined above.
+static volatile bool gSdSuspended = false;
+
+void SpiBusHealth_SetSdSuspended(bool suspended)
+{
+    gSdSuspended = suspended;
+}
+
+bool SpiBusHealth_IsSdSuspended(void)
+{
+    return gSdSuspended;
+}
+
 static DRV_HANDLE gSpiHandle = DRV_HANDLE_INVALID;
 // DRV_SPI instance 0 uses DMA: both buffers must be coherent (KSEG1,
 // uncached) and 16-byte aligned or the CPU reads stale cache lines from
