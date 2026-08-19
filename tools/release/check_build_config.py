@@ -98,6 +98,14 @@ def inert_optimization_overrides(conf_el):
         # perfectly releasable project over a dead entry.
         if item.get('ex') == 'true':
             continue
+        # Only C sources reach the C compiler. An assembler item (.S/.s) is
+        # assembled, not compiled, so its <C32> optimization-level -- blank or
+        # otherwise -- selects nothing; the assembler settings live in
+        # <C32-AS>. Flagging those would be a false positive on a file whose
+        # code generation this property cannot affect.
+        path = item.get('path') or ''
+        if not path.lower().endswith('.c'):
+            continue
         c32 = item.find('C32')
         if c32 is None:
             continue

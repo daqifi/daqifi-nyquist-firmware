@@ -105,6 +105,16 @@ EXCLUDED_INERT = STANDALONE + '''
       </item>'''
 
 
+# An ASSEMBLER item is assembled, not compiled: its <C32>
+# optimization-level selects nothing (assembler flags live in <C32-AS>),
+# so a blank value there is not an inert C override.
+ASM_INERT = STANDALONE + '''
+      <item path="../src/config/default/interrupts_a.S"
+            ex="false" overriding="true">
+        <C32><property key="optimization-level" value=""/></C32>
+      </item>'''
+
+
 CASES = [
     (0, 'standalone', STANDALONE,
      'both excluded -> bench default (what main has)'),
@@ -136,6 +146,8 @@ CASES = [
      'empty in <C32CPP> only -> C build unaffected, and C++ is never invoked'),
     (0, 'excluded-inert', EXCLUDED_INERT,
      'ex="true" -> not compiled, so a blank override on it emits nothing'),
+    (0, 'asm-inert', ASM_INERT,
+     'a .S item is assembled, not compiled -> <C32> opt-level selects nothing'),
 ]
 
 
