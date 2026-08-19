@@ -700,7 +700,19 @@ static ListDirResult ListFilesInDirectoryChunked(const char* dirPath, uint8_t *p
         if (n > 0 && (size_t)n < strBuffSize - strBuffIndex) {
             strBuffIndex += (size_t)n;
         } else {
-            // Entry doesn't fit - flush buffer and retry with fresh buffer
+            // Entry doesn't fit - flush buffer and retry with fresh buffer.
+            //
+            // Every way out of here that does NOT get the entry into the buffer
+            // has to set `skipped`, or the walk reports OK for a listing the
+            // host never received in full. Three of them are real: no callback
+            // to flush through, a buffer that was already empty (so the
+            // snprintf above WAS the empty-buffer attempt), and an entry too
+            // long even then. The last is reachable, not theoretical --
+            // newPath is SYS_FS_FILE_NAME_LEN*2+1 = 511 bytes against a
+            // 512-byte chunk buffer, so one deep path plus its size and CRLF
+            // does not fit at any buffer occupancy, and #689's bucket
+            // subdirectories make paths deeper.
+            bool appended = false;
             if (sendChunk && strBuffIndex > 0) {
                 pStrBuff[strBuffIndex] = '\0';
                 sendChunk(pStrBuff, strBuffIndex);
@@ -711,10 +723,12 @@ static ListDirResult ListFilesInDirectoryChunked(const char* dirPath, uint8_t *p
                             "%s %u\r\n", newPath, (unsigned)stat.fsize);
                 if (n > 0 && (size_t)n < strBuffSize) {
                     strBuffIndex = (size_t)n;
-                } else {
-                    // Entry is too large even for an empty buffer: skipped.
-                    skipped = true;     /* #794 */
+                    appended = true;
                 }
+            }
+            if (!appended) {
+                LOG_E("[SD] ListFiles: entry does not fit, omitting '%s'", newPath);
+                skipped = true;     /* #794 */
             }
         }
     }
@@ -752,6 +766,18 @@ done:
                            : (result == SD_LISTDIR_INCOMPLETE) ? SD_LIST_END_INCOMPLETE
                                                                : SD_LIST_END_FAILED;
         sendChunk((const uint8_t *)marker, strlen(marker));
+    }
+
+    /* The peer can stop draining while these last sends are in flight:
+     * DataReadyCB requests the abort synchronously, and sd_listdir_send_chunk
+     * then drops the marker on the floor rather than burning another
+     * USB_TRANSFER_MAX_RETRIES on it. That is the right transport behaviour,
+     * but it leaves the walk's earlier verdict describing a reply the host
+     * did not get. What the host actually saw is a listing that ended with no
+     * marker -- which is ABORTED -- so say that, and let the log agree with
+     * the wire. */
+    if (gTransferAbortRequested) {
+        result = SD_LISTDIR_ABORTED;
     }
     return result;
 }
