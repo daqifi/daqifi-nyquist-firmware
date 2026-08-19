@@ -2682,6 +2682,18 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
          * calling. Returning without clearing would leave the refused
          * operation armed in the shared settings, and the SD task would run
          * it when it resumes. */
+        /* A refused CRC must also INVALIDATE the cached result. The #306 fix
+         * that does this lives further down, inside the block this early
+         * return skips -- so without it a refused
+         * `SYST:STOR:SD:CRC "new.bin"` would leave the previous file's
+         * checksum valid, and `SYST:STOR:SD:CRC?` would hand it back as if it
+         * belonged to the file just asked about. Refusing an operation must
+         * not resurrect the exact staleness #306 removed. */
+        if (pSettings->mode == SD_CARD_MANAGER_MODE_COMPUTE_CRC) {
+            taskENTER_CRITICAL();
+            gSDCardData.crcResultValid = false;
+            taskEXIT_CRITICAL();
+        }
         pSettings->mode = SD_CARD_MANAGER_MODE_NONE;
         return false;
     }
