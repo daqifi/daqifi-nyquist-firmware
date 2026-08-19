@@ -416,7 +416,7 @@ static bool app_SDCard_GracefulShutdown(uint32_t timeoutMs, const char* reason) 
 /**
  * Check if WiFi needs the SPI bus (streaming to WiFi or firmware update).
  */
-static bool app_SDCard_IsWifiUsingSPI(void) {
+bool app_SDCard_SpiOwnedByWifi(void) {
     StreamingRuntimeConfig* pStreamConfig =
         BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
     bool isStreaming = pStreamConfig->IsEnabled;
@@ -463,7 +463,7 @@ static void app_SDCardTask(void* p_arg) {
          * the bus closes that window; the state term then keeps it true until
          * the task actually leaves SUSPENDED. */
         SpiBusHealth_SetSdSuspended(state == APP_SD_STATE_SUSPENDED ||
-                                    app_SDCard_IsWifiUsingSPI());
+                                    app_SDCard_SpiOwnedByWifi());
 
         switch (state) {
             case APP_SD_STATE_WAIT_POWER_UP:
@@ -490,7 +490,7 @@ static void app_SDCardTask(void* p_arg) {
                 }
 
                 // Check if WiFi needs exclusive SPI bus access
-                if (app_SDCard_IsWifiUsingSPI()) {
+                if (app_SDCard_SpiOwnedByWifi()) {
                     app_SDCard_GracefulShutdown(3000,
                         SpiBusHealth_IsSdQuarantined() ? "SPI bus quarantine (#589)" :
                         wifi_manager_IsWifiFirmwareUpdateActive()
@@ -510,7 +510,7 @@ static void app_SDCardTask(void* p_arg) {
             case APP_SD_STATE_SUSPENDED:
             {
                 // Check if WiFi released the SPI bus
-                if (!app_SDCard_IsWifiUsingSPI()) {
+                if (!app_SDCard_SpiOwnedByWifi()) {
                     if (pPowerState != NULL &&
                         (pPowerState->powerState == POWERED_UP ||
                          pPowerState->powerState == POWERED_UP_EXT_DOWN)) {

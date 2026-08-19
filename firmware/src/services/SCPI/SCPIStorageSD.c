@@ -30,6 +30,7 @@
 #include "../sd_card_services/sd_card_manager.h"
 #include "../wifi_services/wifi_tcp_server.h"  /* #598 ContextIsTcp */
 #include "../wifi_services/wifi_manager.h"     /* #589 FW-update owner */
+#include "app_freertos.h"                       /* #589 live SPI-owner test */
 #include "../../state/runtime/BoardRuntimeConfig.h"
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/fs/sys_fs.h"
@@ -113,7 +114,13 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
  */
 static bool SD_RefuseIfSuspended(scpi_t *context, const char *cmd)
 {
-    if (!SpiBusHealth_IsSdSuspended()) {
+    /* The LIVE condition, not SpiBusHealth_IsSdSuspended(): the SD task runs
+     * at priority 5 and this runs at 7, so a single USB packet holding
+     * `STR:INT 1`, `STR:START ...` and an SD command can execute end to end
+     * before the SD task next runs and publishes anything. The flag is right
+     * for REPORTING what the task is doing; for REFUSING, the question is
+     * whether WiFi owns the bus now, which is answerable directly. */
+    if (!app_SDCard_SpiOwnedByWifi() && !SpiBusHealth_IsSdSuspended()) {
         return false;
     }
     /* Name the ACTUAL owner. SUSPENDED has three causes and they need

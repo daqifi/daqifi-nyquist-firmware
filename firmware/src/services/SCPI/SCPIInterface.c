@@ -3591,7 +3591,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * assert SD logging with no file open. Refuse with the cause instead.
          * This one check covers both arming sites in this flow (the initial
          * open and the re-open retry below). */
-        if (SpiBusHealth_IsSdSuspended()) {
+        if (app_SDCard_SpiOwnedByWifi() || SpiBusHealth_IsSdSuspended()) {
             LOG_E("Cannot start SD logging - SD suspended: WiFi/FW-update owns "
                   "SPI4; stop streaming (SYST:STReam:STOP) first\r\n");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);

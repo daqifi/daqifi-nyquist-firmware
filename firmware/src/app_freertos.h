@@ -263,6 +263,19 @@ void APP_FREERTOS_Initialize ( void );
     This routine must be called from SYS_Tasks() routine.
  */
 
+/**
+ * #589: true when WiFi streaming, a WiFi firmware update, or the SD jam
+ * quarantine owns the shared SPI4 bus -- i.e. when app_SDCardTask suspends
+ * its pump and an SD operation armed now could never be advanced.
+ *
+ * Callable from any task. This is the LIVE condition, deliberately not a
+ * published flag: the SD task runs at priority 5 and the SCPI callbacks at 7,
+ * so several pipelined commands (`STR:INT 1`, `STR:START`, `SD:LISt?` in one
+ * USB packet) can all execute before the SD task next runs. A cached copy
+ * would still read "not suspended" for that whole sequence.
+ */
+bool app_SDCard_SpiOwnedByWifi(void);
+
 void APP_FREERTOS_Tasks ( void );
 void APP_FREERTOS_Initialize ( void );
 
