@@ -355,10 +355,10 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     }
 
     // Check if SD card is busy with another operation
-    if (SD_RefuseIfSuspended(context, "FILE")) {
-        result = SCPI_RES_ERR;
-        goto __exit_point;
-    }
+    /* NOT gated on the #589 suspension: this command only STAGES the logging
+     * target name. It sets no mode and calls no sd_card_manager_UpdateSettings,
+     * so it needs nothing from the suspended SD task, and refusing it would
+     * stop a client preparing the next session while WiFi streams. */
 
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("FILE");
@@ -484,15 +484,6 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
         context->interface->write(context, SD_CARD_NOT_ENABLED_ERROR_MSG, strlen(SD_CARD_NOT_ENABLED_ERROR_MSG));
         return SCPI_RES_ERR;
     }
-    if (SD_RefuseIfSuspended(context, "CRC")) {
-        /* The refusal happens HERE, so sd_card_manager_UpdateSettings -- and
-         * the #306 invalidation it performs when a new CRC is armed -- is
-         * never reached. Without this the previous file's checksum stays
-         * readable and SYST:STOR:SD:CRC? would return it as if it were the
-         * answer to the request just refused. Bench-confirmed: it did. */
-        sd_card_manager_InvalidateCrcResult();
-        return SCPI_RES_ERR;
-    }
 
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("CRC");
@@ -519,6 +510,23 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
     /* #724: transient operand, not the logging target `file`. */
     memcpy(pSDCardRuntimeConfig->opFile, pBuff, fileLen);
     pSDCardRuntimeConfig->opFile[fileLen] = '\0';
+    /* Suspension is checked HERE, after the operand has been parsed and
+     * validated. Checking earlier meant a MALFORMED CRC request also hit the
+     * refusal -- and the refusal invalidates the cached result, so a typo
+     * issued during a WiFi stream destroyed a perfectly good CRC the user had
+     * already computed. A request that was never well-formed should not have
+     * that side effect.
+     *
+     * The invalidation itself is required: the refusal short-circuits
+     * sd_card_manager_UpdateSettings, and the #306 fix that clears
+     * crcResultValid when a new CRC is armed lives inside it. Without this,
+     * SYST:STOR:SD:CRC? would hand back the PREVIOUS file's checksum as the
+     * answer to the request just refused (bench-confirmed before the fix). */
+    if (SD_RefuseIfSuspended(context, "CRC")) {
+        sd_card_manager_InvalidateCrcResult();
+        return SCPI_RES_ERR;
+    }
+
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_COMPUTE_CRC;
     if (!SD_ArmOrRefuse(context, "CRC", pSDCardRuntimeConfig)) {
         return SCPI_RES_ERR;
