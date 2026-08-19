@@ -57,6 +57,85 @@ MALFORMED_EX = '''      <item path="../src/config/default/p32MZ2048EFM144.ld" ex
       <item path="../src/config/default/old_hv2_bootld.ld" ex="true"></item>'''
 
 
+# --- #791: inert per-file optimization overrides --------------------------
+# The historical defect: #426 replaced FreeRTOS_tasks.c's -O1 clamp by BLANKING
+# the C32 value instead of deleting the <item>. An active override with an
+# empty value emits no -O flag, so the file fell to -O0 while the conf built at
+# -O3. The stale '-O1' that looks like the intent lives in <C32CPP>, which this
+# C project never invokes -- reading THAT is how the state was misread, so a
+# case below pins that the C++ value is ignored.
+INERT_OPT = STANDALONE + '''
+      <item path="../src/third_party/rtos/FreeRTOS/Source/FreeRTOS_tasks.c"
+            ex="false" overriding="true">
+        <C32><property key="optimization-level" value=""/></C32>
+        <C32CPP><property key="optimization-level" value="-O1"/></C32CPP>
+      </item>'''
+
+# An explicit value is a legitimate override (tfm.c really does need one).
+EXPLICIT_OPT = STANDALONE + '''
+      <item path="../src/third_party/wolfssl/wolfcrypt/src/tfm.c"
+            ex="false" overriding="true">
+        <C32><property key="optimization-level" value="-O3"/></C32>
+      </item>'''
+
+# overriding="false": the block is inactive, so its empty value emits nothing.
+# Flagging it would fire on ordinary project files.
+INACTIVE_OPT = STANDALONE + '''
+      <item path="../src/third_party/rtos/FreeRTOS/Source/FreeRTOS_tasks.c"
+            ex="false" overriding="false">
+        <C32><property key="optimization-level" value=""/></C32>
+      </item>'''
+
+# Empty ONLY in C++ -- the C compilation is untouched, so this must pass.
+CPP_ONLY_EMPTY = STANDALONE + '''
+      <item path="../src/third_party/rtos/FreeRTOS/Source/FreeRTOS_tasks.c"
+            ex="false" overriding="true">
+        <C32><property key="optimization-level" value="-O3"/></C32>
+        <C32CPP><property key="optimization-level" value=""/></C32CPP>
+      </item>'''
+
+
+# An EXCLUDED file is not compiled, so a stale blank override on it is
+# harmless -- refusing the project over a dead entry would be a false
+# positive that blocks a releasable config.
+EXCLUDED_INERT = STANDALONE + '''
+      <item path="../src/unused.c"
+            ex="true" overriding="true">
+        <C32><property key="optimization-level" value=""/></C32>
+      </item>'''
+
+
+# An ASSEMBLER item is assembled, not compiled: its <C32>
+# optimization-level selects nothing (assembler flags live in <C32-AS>),
+# so a blank value there is not an inert C override.
+ASM_INERT = STANDALONE + '''
+      <item path="../src/config/default/interrupts_a.S"
+            ex="false" overriding="true">
+        <C32><property key="optimization-level" value=""/></C32>
+      </item>'''
+
+
+# BOTH problems at once: an inert override AND a duplicated linker entry.
+# The duplicate makes the project unusable (2, 'cannot check'), which is
+# the more fundamental fault and must win over the inert override's 1 --
+# otherwise a caller cannot tell 'fix your config' from 'restore the
+# project file'.
+INERT_PLUS_DUPLICATE = DUPLICATE + '''
+      <item path="../src/third_party/rtos/FreeRTOS/Source/FreeRTOS_tasks.c"
+            ex="false" overriding="true">
+        <C32><property key="optimization-level" value=""/></C32>
+      </item>'''
+
+
+# The property is present but carries NO value= attribute. The override is
+# expressed and still names no flag, which is the same silence as value="".
+NO_VALUE_ATTR = STANDALONE + '''
+      <item path="../src/third_party/rtos/FreeRTOS/Source/FreeRTOS_tasks.c"
+            ex="false" overriding="true">
+        <C32><property key="optimization-level"/></C32>
+      </item>'''
+
+
 CASES = [
     (0, 'standalone', STANDALONE,
      'both excluded -> bench default (what main has)'),
@@ -78,6 +157,22 @@ CASES = [
      'ex="maybe" must not silently read as excluded'),
     (2, 'pruned', PRUNED,
      'default-conf entry gone, Nq1 copy present -> must NOT fall through'),
+    (1, 'inert-opt', INERT_OPT,
+     '#791: overriding=true with an EMPTY C32 value -> file builds at -O0'),
+    (0, 'explicit-opt', EXPLICIT_OPT,
+     'an override with a real value (-O3, as tfm.c has) is legitimate'),
+    (0, 'inactive-opt', INACTIVE_OPT,
+     'overriding=false emits nothing -> must not fire on ordinary items'),
+    (0, 'cpp-only-empty', CPP_ONLY_EMPTY,
+     'empty in <C32CPP> only -> C build unaffected, and C++ is never invoked'),
+    (0, 'excluded-inert', EXCLUDED_INERT,
+     'ex="true" -> not compiled, so a blank override on it emits nothing'),
+    (0, 'asm-inert', ASM_INERT,
+     'a .S item is assembled, not compiled -> <C32> opt-level selects nothing'),
+    (2, 'inert-plus-duplicate', INERT_PLUS_DUPLICATE,
+     'unusable input (2) must win over the inert override (1)'),
+    (1, 'no-value-attr', NO_VALUE_ATTR,
+     'property present with no value= -> still emits no -O flag'),
 ]
 
 

@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""Assert the MPLAB X project selects exactly ONE linker script (#764 item 3).
+"""Assert the MPLAB X project is in a committable build state (#764, #791).
+
+Two independent checks, both on <conf name="default">:
+
+  1. Exactly ONE linker script selected (#764 item 3) -- see below.
+  2. No INERT per-file optimization override (#791). An <item overriding="true">
+     whose <C32> optimization-level is EMPTY emits no -O flag at all, so that
+     file silently compiles at -O0 while the rest of the project is at -O3.
+     This is not hypothetical: #426 replaced the FreeRTOS_tasks.c -O1 clamp by
+     blanking its value instead of deleting the <item>, and the production
+     kernel shipped unoptimized for two years while CLAUDE.md stated twice
+     that it built at -O3. Nothing in the IDE shows it -- the stale "-O1" that
+     looks like the intent sits in the <C32CPP> block, which this C project
+     never invokes. Deleting the <item> is the fix; the file then inherits the
+     conf-level flag.
 
 configurations.xml lists both scripts and marks one excluded. If BOTH are
 included (or both excluded) the produced layout depends on regeneration order,
@@ -15,8 +29,9 @@ Usage: check_build_config.py [configurations.xml]
 Exit:  0 = release-compatible: NO custom linker script selected. This is the
            only committable state — cut_release.sh selects old_hv2_bootld.ld
            itself and assumes (without checking) p32 stays excluded.
-       1 = any selection at all: bootloader-linked, p32-only, or both. Each is
-           fine locally; none may land, because each breaks the release cut.
+       1 = a config state that must not land: any linker selection at all
+           (bootloader-linked, p32-only, or both -- each breaks the release
+           cut), or an inert optimization override.
        2 = could not check (entry or default conf missing)
 """
 import sys
@@ -55,6 +70,57 @@ def script_entries(conf_el, name):
             # confident verdict on a value it did not understand.
             raise ValueError(f'{name}: ex={ex!r} is neither "true" nor "false"')
         out.append(ex == 'false')
+    return out
+
+
+def inert_optimization_overrides(conf_el):
+    """Every <item> in `conf_el` that overrides optimization to NOTHING.
+
+    Returns [(path, value)]. An override with an EMPTY optimization-level is
+    always a defect: MPLAB emits no -O flag for it, so the file drops to the
+    compiler default (-O0) rather than inheriting the conf-level setting. If
+    the conf-level setting was what you wanted, the <item> should be deleted.
+
+    Only <C32> is consulted. The <C32CPP> block carries its own
+    optimization-level and this is a C project, so a value there compiles
+    nothing -- reading it is how #426's leftover "-O1" was mistaken for the
+    effective setting in the first place.
+
+    A NON-empty override is left alone: tfm.c legitimately overrides (it needs
+    -Wno-error=array-bounds) and states "-O3" explicitly.
+    """
+    out = []
+    for item in conf_el.iter('item'):
+        if item.get('overriding') != 'true':
+            continue
+        # An EXCLUDED file is not compiled, so a stale blank override on it
+        # emits nothing and changes nothing. Flagging it would refuse a
+        # perfectly releasable project over a dead entry.
+        if item.get('ex') == 'true':
+            continue
+        # Only C sources reach the C compiler. An assembler item (.S/.s) is
+        # assembled, not compiled, so its <C32> optimization-level -- blank or
+        # otherwise -- selects nothing; the assembler settings live in
+        # <C32-AS>. Flagging those would be a false positive on a file whose
+        # code generation this property cannot affect.
+        path = item.get('path') or ''
+        if not path.lower().endswith('.c'):
+            continue
+        c32 = item.find('C32')
+        if c32 is None:
+            continue
+        for prop in c32.iter('property'):
+            if prop.get('key') != 'optimization-level':
+                continue
+            value = prop.get('value')
+            # We are already inside the optimization-level property, so the
+            # override IS expressed; the question is only whether it names a
+            # flag. Empty ("") and a missing value= attribute (None) are the
+            # same thing to the toolchain -- neither emits a -O option -- so
+            # both count. (An absent PROPERTY is different: that inherits
+            # normally and never reaches this loop.)
+            if not (value or '').strip():
+                out.append((item.get('path') or '<no path>', value))
     return out
 
 
@@ -147,6 +213,27 @@ def main():
         # "ambiguous selection" so a caller can tell "fix your config" from
         # "restore the project file".
         return 2
+
+    # Checked AFTER the linker entries, not before: those can return 2
+    # ("cannot check" -- pruned, duplicated or malformed project), and an
+    # unusable input is the more fundamental problem. Reporting 1 first
+    # would hide it and break the exit-code contract, which a caller uses
+    # to tell "fix your config" from "restore the project file".
+    inert = inert_optimization_overrides(block)
+    if inert:
+        print(f'checking {path}')
+        for item_path, value in inert:
+            print(f'  DEAD  {item_path.rsplit("/", 1)[-1]}: '
+                  f'optimization-level={value!r} (emits no -O flag)')
+        print(f'\nINERT OPTIMIZATION OVERRIDE in <conf name="{CONF}">.\n'
+              'An active override with an empty value emits NO -O flag, so '
+              'these files\ncompile at -O0 while the rest of the project is '
+              'at -O3 — silently, and\nwithout anything in the IDE showing '
+              'it (#791; #426 shipped the kernel this\nway).\n'
+              'Fix: delete the <item> so the file inherits the conf-level '
+              'optimization,\nor give the override an explicit value if it '
+              'genuinely needs a different one.')
+        return 1
 
     included = [n for n, v in state.items() if v]
 
