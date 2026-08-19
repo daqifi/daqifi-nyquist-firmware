@@ -3,6 +3,7 @@
 
 #include <string.h>
 #include "Util/Logger.h"
+#include "Util/SpiBusHealth.h"
 #include "Util/CoherentPool.h"
 #include "Util/StreamingBufferPool.h"
 #include "sd_card_manager.h"
@@ -2657,6 +2658,28 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
             taskEXIT_CRITICAL();
         }
     }
+    /* #589 backstop: nothing may ARM an operation while the SD task is
+     * suspended, because no one will pump it to completion. Every SCPI entry
+     * point that arms one is guarded, but this is the single choke point they
+     * all pass through, so a site added later that forgets the guard shows up
+     * here instead of silently reproducing the original 10 s hang.
+     *
+     * Log ONLY, deliberately: mode NONE is how the timeout and shutdown paths
+     * tear an operation down, and refusing that would strand the state
+     * machine -- the exact failure this issue is about. Static latch because
+     * a caller that loops would otherwise flood the buffer.
+     */
+    if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_NONE &&
+        SpiBusHealth_IsSdSuspended()) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            LOG_E("SD op armed while the SD task is suspended (mode=%s) - it "
+                  "cannot complete; an SCPI entry point is missing its #589 "
+                  "guard\r\n", sd_card_manager_GetModeName());
+        }
+    }
+
     // Drain any stale completion token, but only when idle to avoid
     // consuming a signal that an in-flight WaitForCompletion is expecting
     if (sd_card_manager_IsIdle() && gSDCardData.opCompleteSemaphore != NULL) {

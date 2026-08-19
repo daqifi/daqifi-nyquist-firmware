@@ -3585,6 +3585,18 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
     // If SD logging is requested, set mode to WRITE now (deferred from LOGging command)
     if (sdLoggingRequested) {
+        /* #589: the SD task is parked while WiFi streaming, a WiFi firmware
+         * update, or the jam quarantine owns SPI4, so a WRITE armed here could
+         * never be advanced -- the start would wait out its open poll and then
+         * assert SD logging with no file open. Refuse with the cause instead.
+         * This one check covers both arming sites in this flow (the initial
+         * open and the re-open retry below). */
+        if (SpiBusHealth_IsSdSuspended()) {
+            LOG_E("Cannot start SD logging - SD suspended: WiFi/FW-update owns "
+                  "SPI4; stop streaming (SYST:STReam:STOP) first\r\n");
+            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            return SCPI_RES_ERR;
+        }
         // Check if SD card is busy with another operation (DELETE, FORMAT, etc.).
         // SD is a single consumer — don't start a logging file while any SD op runs.
         if (sd_card_manager_IsBusy()) {

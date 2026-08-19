@@ -684,6 +684,13 @@ __exit_point:
  *          STOR:SD:BENCH 512,1     # Write 512KB of sequential data
  */
 scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
+    /* #589: the benchmark arms a WRITE like any other SD operation, so
+     * it is refused while the SD task is suspended for the same reason.
+     * It has no IsBusy guard of its own (#736: a running benchmark OWNS
+     * the logging target), which is why it needed naming separately. */
+    if (SD_RefuseIfSuspended(context, "BENCHmark")) {
+        return SCPI_RES_ERR;
+    }
     int32_t testSizeKB = 0;
     int32_t pattern = 0;
     scpi_result_t result = SCPI_RES_ERR;
