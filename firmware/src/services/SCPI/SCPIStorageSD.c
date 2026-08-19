@@ -622,6 +622,14 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
         goto __exit_point;
     }
 
+    // Refuse before probing the card: while the SD task is suspended the
+    // presence check reads a cached attach flag that nothing is refreshing,
+    // so asking it first would answer from stale state.
+    if (SD_RefuseIfSuspended(context, "LISt")) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     // Check if SD card is actually present and mounted
     if (!SCPI_CheckSDCardPresent(context)) {
         result = SCPI_RES_ERR;
@@ -629,11 +637,6 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     }
 
     // Check if SD card is busy with another operation
-    if (SD_RefuseIfSuspended(context, "LISt")) {
-        result = SCPI_RES_ERR;
-        goto __exit_point;
-    }
-
     if (sd_card_manager_IsBusy()) {
         LOG_SD_BUSY("LISt");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -1422,12 +1425,13 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
     scpi_result_t result = SCPI_RES_ERR;
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
-    if (!SCPI_CheckSDCardPresent(context)) {
+    // Refuse before probing the card -- see SCPI_StorageSDListDir.
+    if (SD_RefuseIfSuspended(context, "SPACe")) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
 
-    if (SD_RefuseIfSuspended(context, "SPACe")) {
+    if (!SCPI_CheckSDCardPresent(context)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
