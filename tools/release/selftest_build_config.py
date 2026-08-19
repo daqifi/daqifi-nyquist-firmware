@@ -127,6 +127,15 @@ INERT_PLUS_DUPLICATE = DUPLICATE + '''
       </item>'''
 
 
+# The property is present but carries NO value= attribute. The override is
+# expressed and still names no flag, which is the same silence as value="".
+NO_VALUE_ATTR = STANDALONE + '''
+      <item path="../src/third_party/rtos/FreeRTOS/Source/FreeRTOS_tasks.c"
+            ex="false" overriding="true">
+        <C32><property key="optimization-level"/></C32>
+      </item>'''
+
+
 CASES = [
     (0, 'standalone', STANDALONE,
      'both excluded -> bench default (what main has)'),
@@ -162,6 +171,8 @@ CASES = [
      'a .S item is assembled, not compiled -> <C32> opt-level selects nothing'),
     (2, 'inert-plus-duplicate', INERT_PLUS_DUPLICATE,
      'unusable input (2) must win over the inert override (1)'),
+    (1, 'no-value-attr', NO_VALUE_ATTR,
+     'property present with no value= -> still emits no -O flag'),
 ]
 
 

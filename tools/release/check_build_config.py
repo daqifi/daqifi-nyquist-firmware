@@ -113,10 +113,13 @@ def inert_optimization_overrides(conf_el):
             if prop.get('key') != 'optimization-level':
                 continue
             value = prop.get('value')
-            # An ABSENT property means "no override expressed" and inherits
-            # normally; an EMPTY one is an override that expresses nothing.
-            # Only the latter silences the flag.
-            if value is not None and not value.strip():
+            # We are already inside the optimization-level property, so the
+            # override IS expressed; the question is only whether it names a
+            # flag. Empty ("") and a missing value= attribute (None) are the
+            # same thing to the toolchain -- neither emits a -O option -- so
+            # both count. (An absent PROPERTY is different: that inherits
+            # normally and never reaches this loop.)
+            if not (value or '').strip():
                 out.append((item.get('path') or '<no path>', value))
     return out
 
