@@ -4,6 +4,7 @@
 #include <string.h>
 #include "Util/Logger.h"
 #include "Util/SpiBusHealth.h"
+#include "app_freertos.h"   /* #589: app_SDCard_SpiOwnedByWifi (live owner) */
 #include "Util/CoherentPool.h"
 #include "Util/StreamingBufferPool.h"
 #include "sd_card_manager.h"
@@ -2665,9 +2666,13 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
      * arm still costs the caller its WaitForCompletion timeout. What it can
      * no longer do is corrupt the manager's state on the way.
      */
+    /* The LIVE condition, same as the SCPI guard uses. The published flag
+     * alone lags by up to one SD-task iteration, so a caller that lost the
+     * race to WiFi claiming the bus could still be accepted here -- which is
+     * the exact window this backstop exists to close. */
     if (pSettings != NULL &&
         pSettings->mode != SD_CARD_MANAGER_MODE_NONE &&
-        SpiBusHealth_IsSdSuspended()) {
+        (app_SDCard_SpiOwnedByWifi() || SpiBusHealth_IsSdSuspended())) {
         static bool warned = false;
         if (!warned) {
             warned = true;

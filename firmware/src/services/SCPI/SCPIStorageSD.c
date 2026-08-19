@@ -1319,6 +1319,11 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
      * waiting, so the client believed a format had started when nothing had
      * been queued at all. That is the worst of the three shapes. */
     if (!SD_ArmOrRefuse(context, "FORmat", pSDCardRuntimeConfig)) {
+        /* SetFormatPending() above already published "in progress" so
+         * FORmat? would answer immediately. Nothing is going to run it now,
+         * so clear it -- otherwise FORmat? reports a format in flight
+         * forever and a client polling for completion never stops. */
+        sd_card_manager_ClearFormatStatus();
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
