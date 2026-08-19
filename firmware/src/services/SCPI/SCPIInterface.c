@@ -20,6 +20,9 @@
 #include "services/DaqifiPB/NanoPB_Encoder.h"
 //#include "Util/StringFormatters.h"
 #include "Util/SpiBusHealth.h"
+#include "app_freertos.h"   /* #589 app_SDCard_SpiOwnedByWifi (reaches here
+                              * transitively via PowerApi.h -> definitions.h;
+                              * named explicitly so it does not depend on that) */
 #include "Util/Logger.h"
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
