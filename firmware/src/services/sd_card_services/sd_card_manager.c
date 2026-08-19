@@ -1467,6 +1467,26 @@ void sd_card_manager_ProcessState() {
             break;
 
         case SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY:
+            /* #797: only a WRITE may create the directory. Every mode routes
+             * through this state, so a read-only operation used to CREATE the
+             * thing it had been asked to look at -- `SD:LISt? "TYPO"` made
+             * TYPO, then truthfully reported it empty, and left it on the
+             * card. Two bugs in one: a query that modifies the card, and a
+             * host that cannot tell "that directory is empty" from "that
+             * directory is not there", because the firmware had just made the
+             * second answer into the first.
+             *
+             * With the create gone, DirOpen fails for a path that is not
+             * there and the walk reports SD_LISTDIR_FAILED -- `I could not
+             * look`, which is what #796's FAILED marker already means. A
+             * WRITE still creates its target directory, so the first stream
+             * after a format works exactly as before. */
+            if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
+                LOG_D("[SD] Not creating '%s': mode %d is read-only\r\n",
+                      gpSDCardSettings->directory, (int)gpSDCardSettings->mode);
+                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+                break;
+            }
             if (SYS_FS_DirectoryMake(gpSDCardSettings->directory) == SYS_FS_RES_FAILURE) {
                 if (SYS_FS_Error() == SYS_FS_ERROR_EXIST) {
                     LOG_D("[SD] Directory '%s' already exists\r\n", gpSDCardSettings->directory);
