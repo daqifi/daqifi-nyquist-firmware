@@ -164,22 +164,6 @@ def main():
         return 2
     block = confs[0]
 
-    inert = inert_optimization_overrides(block)
-    if inert:
-        print(f'checking {path}')
-        for item_path, value in inert:
-            print(f'  DEAD  {item_path.rsplit("/", 1)[-1]}: '
-                  f'optimization-level={value!r} (emits no -O flag)')
-        print(f'\nINERT OPTIMIZATION OVERRIDE in <conf name="{CONF}">.\n'
-              'An active override with an empty value emits NO -O flag, so '
-              'these files\ncompile at -O0 while the rest of the project is '
-              'at -O3 — silently, and\nwithout anything in the IDE showing '
-              'it (#791; #426 shipped the kernel this\nway).\n'
-              'Fix: delete the <item> so the file inherits the conf-level '
-              'optimization,\nor give the override an explicit value if it '
-              'genuinely needs a different one.')
-        return 1
-
     state = {}
     dupes = []
     try:
@@ -226,6 +210,27 @@ def main():
         # "ambiguous selection" so a caller can tell "fix your config" from
         # "restore the project file".
         return 2
+
+    # Checked AFTER the linker entries, not before: those can return 2
+    # ("cannot check" -- pruned, duplicated or malformed project), and an
+    # unusable input is the more fundamental problem. Reporting 1 first
+    # would hide it and break the exit-code contract, which a caller uses
+    # to tell "fix your config" from "restore the project file".
+    inert = inert_optimization_overrides(block)
+    if inert:
+        print(f'checking {path}')
+        for item_path, value in inert:
+            print(f'  DEAD  {item_path.rsplit("/", 1)[-1]}: '
+                  f'optimization-level={value!r} (emits no -O flag)')
+        print(f'\nINERT OPTIMIZATION OVERRIDE in <conf name="{CONF}">.\n'
+              'An active override with an empty value emits NO -O flag, so '
+              'these files\ncompile at -O0 while the rest of the project is '
+              'at -O3 — silently, and\nwithout anything in the IDE showing '
+              'it (#791; #426 shipped the kernel this\nway).\n'
+              'Fix: delete the <item> so the file inherits the conf-level '
+              'optimization,\nor give the override an explicit value if it '
+              'genuinely needs a different one.')
+        return 1
 
     included = [n for n, v in state.items() if v]
 

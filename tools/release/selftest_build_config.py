@@ -115,6 +115,18 @@ ASM_INERT = STANDALONE + '''
       </item>'''
 
 
+# BOTH problems at once: an inert override AND a duplicated linker entry.
+# The duplicate makes the project unusable (2, 'cannot check'), which is
+# the more fundamental fault and must win over the inert override's 1 --
+# otherwise a caller cannot tell 'fix your config' from 'restore the
+# project file'.
+INERT_PLUS_DUPLICATE = DUPLICATE + '''
+      <item path="../src/third_party/rtos/FreeRTOS/Source/FreeRTOS_tasks.c"
+            ex="false" overriding="true">
+        <C32><property key="optimization-level" value=""/></C32>
+      </item>'''
+
+
 CASES = [
     (0, 'standalone', STANDALONE,
      'both excluded -> bench default (what main has)'),
@@ -148,6 +160,8 @@ CASES = [
      'ex="true" -> not compiled, so a blank override on it emits nothing'),
     (0, 'asm-inert', ASM_INERT,
      'a .S item is assembled, not compiled -> <C32> opt-level selects nothing'),
+    (2, 'inert-plus-duplicate', INERT_PLUS_DUPLICATE,
+     'unusable input (2) must win over the inert override (1)'),
 ]
 
 
