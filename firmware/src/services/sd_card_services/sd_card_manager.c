@@ -2646,6 +2646,37 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
     extern void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object);
     DRV_SDSPI_DetectPollKick(0);
 
+    /* #589: refuse to ARM an operation while the SD task is suspended.
+     *
+     * Every SCPI entry point checks this first, but the check and the arm are
+     * not atomic: a WiFi FW-update or a bus-jam quarantine raised by a
+     * higher-priority task in between would otherwise arm work into a stack
+     * that is about to stop being pumped. This is the single choke point they
+     * all pass through, so refusing here closes that window and, just as
+     * importantly, means no operation can leave the state machine parked at
+     * DEINIT for the rest of the session.
+     *
+     * mode NONE is deliberately exempt: it is how the timeout and shutdown
+     * paths TEAR DOWN an operation (app_SDCard_GracefulShutdown uses exactly
+     * that), and refusing it would strand the machine -- the failure this
+     * issue is about.
+     *
+     * Residual, stated honestly: callers do not check this return, so a raced
+     * arm still costs the caller its WaitForCompletion timeout. What it can
+     * no longer do is corrupt the manager's state on the way.
+     */
+    if (pSettings != NULL &&
+        pSettings->mode != SD_CARD_MANAGER_MODE_NONE &&
+        SpiBusHealth_IsSdSuspended()) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            LOG_E("SD op refused at arm time - the SD task is suspended and "
+                  "cannot pump it (#589)\r\n");
+        }
+        return false;
+    }
+
     if (pSettings != NULL && gpSDCardSettings != NULL) {
         memcpy(gpSDCardSettings, pSettings, sizeof (sd_card_manager_settings_t));
         /* #306 fix (stale CRC): a new CRC request must invalidate any prior
@@ -2658,34 +2689,6 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
             taskEXIT_CRITICAL();
         }
 
-        /* #589 backstop: nothing may ARM an operation while the SD task is
-         * suspended, because no one will pump it to completion. Every SCPI
-         * entry point that arms one is guarded, but this is the single choke
-         * point they all pass through, so a site added later that forgets the
-         * guard shows up here instead of silently reproducing the 10 s hang.
-         *
-         * INSIDE the NULL guard deliberately: app_TasksCreate() starts
-         * USBDeviceTask (which boosts itself to priority 7) BEFORE the SD
-         * task, so a SCPI command can reach this function while
-         * gpSDCardSettings is still NULL -- dereferencing it out here would
-         * fault at boot. The enclosing block is also where the mode has just
-         * been established, so this is the right place on both counts.
-         *
-         * Log ONLY: mode NONE is how the timeout and shutdown paths tear an
-         * operation down, and refusing that would strand the state machine --
-         * the exact failure this issue is about. Static latch so a looping
-         * caller cannot flood the buffer.
-         */
-        if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_NONE &&
-            SpiBusHealth_IsSdSuspended()) {
-            static bool warned = false;
-            if (!warned) {
-                warned = true;
-                LOG_E("SD op armed while the SD task is suspended (mode=%s) - "
-                      "it cannot complete; an SCPI entry point is missing its "
-                      "#589 guard\r\n", sd_card_manager_GetModeName());
-            }
-        }
     }
     // Drain any stale completion token, but only when idle to avoid
     // consuming a signal that an in-flight WaitForCompletion is expecting

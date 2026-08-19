@@ -3595,8 +3595,9 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * This one check covers both arming sites in this flow (the initial
          * open and the re-open retry below). */
         if (app_SDCard_SpiOwnedByWifi() || SpiBusHealth_IsSdSuspended()) {
-            LOG_E("Cannot start SD logging - SD suspended: WiFi/FW-update owns "
-                  "SPI4; stop streaming (SYST:STReam:STOP) first\r\n");
+            const char *why = SD_SuspendReasonText();
+            LOG_E("Cannot start SD logging - SD suspended: %s\r\n",
+                  why ? why : "SPI4 is owned elsewhere");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
         }

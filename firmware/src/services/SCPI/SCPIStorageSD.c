@@ -112,6 +112,23 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
  * NOT applied to SYST:STOR:SD:ENAble -- that is the manual escape hatch and
  * must keep working -- nor to pure config/result reads.
  */
+const char *SD_SuspendReasonText(void)
+{
+    if (!app_SDCard_SpiOwnedByWifi() && !SpiBusHealth_IsSdSuspended()) {
+        return NULL;
+    }
+    /* Quarantine first: it is the one that does NOT clear on its own. */
+    if (SpiBusHealth_IsSdQuarantined()) {
+        return "SD quarantined after a bus jam - reseat or remove the card, "
+               "then SYST:STOR:SD:ENAble 1 to retry";
+    }
+    if (wifi_manager_IsWifiFirmwareUpdateActive()) {
+        return "a WiFi firmware update owns SPI4 - retry when it completes";
+    }
+    return "WiFi streaming owns SPI4 - SYST:STR:STOP first";
+}
+
+
 static bool SD_RefuseIfSuspended(scpi_t *context, const char *cmd)
 {
     /* The LIVE condition, not SpiBusHealth_IsSdSuspended(): the SD task runs
@@ -123,20 +140,9 @@ static bool SD_RefuseIfSuspended(scpi_t *context, const char *cmd)
     if (!app_SDCard_SpiOwnedByWifi() && !SpiBusHealth_IsSdSuspended()) {
         return false;
     }
-    /* Name the ACTUAL owner. SUSPENDED has three causes and they need
-     * different things from the user; telling someone mid-firmware-update to
-     * "stop streaming" sends them after the wrong thing. Quarantine is
-     * checked first because it is the one that does NOT clear on its own. */
-    const char *why;
-    if (SpiBusHealth_IsSdQuarantined()) {
-        why = "SD quarantined after a bus jam - reseat or remove the card, "
-              "then SYST:STOR:SD:ENAble 1 to retry";
-    } else if (wifi_manager_IsWifiFirmwareUpdateActive()) {
-        why = "a WiFi firmware update owns SPI4 - retry when it completes";
-    } else {
-        why = "WiFi streaming owns SPI4 - SYST:STR:STOP first";
-    }
-    LOG_E("SD:%s refused - SD suspended: %s\r\n", cmd, why);
+    const char *why = SD_SuspendReasonText();
+    LOG_E("SD:%s refused - SD suspended: %s\r\n", cmd,
+          why ? why : "SPI4 is owned elsewhere");
     SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
     return true;
 }
