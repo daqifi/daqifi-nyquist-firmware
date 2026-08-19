@@ -129,6 +129,28 @@ const char *SD_SuspendReasonText(void)
 }
 
 
+/* #589: arm an SD operation, or report why it could not be armed.
+ *
+ * sd_card_manager_UpdateSettings() refuses while the SD task is suspended, and
+ * NO caller historically checked its return -- so a command whose guard passed
+ * and then lost a race to a WiFi FW-update or a quarantine would either report
+ * SUCCESS having armed nothing (FORmat, CRC and GET return OK immediately) or
+ * sit out its WaitForCompletion timeout. Both are worse than saying no.
+ */
+static bool SD_ArmOrRefuse(scpi_t *context, const char *cmd,
+                           sd_card_manager_settings_t *cfg)
+{
+    if (sd_card_manager_UpdateSettings(cfg)) {
+        return true;
+    }
+    const char *why = SD_SuspendReasonText();
+    LOG_E("SD:%s - could not arm the operation: %s\r\n", cmd,
+          why ? why : "the SD task is not accepting work");
+    SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    return false;
+}
+
+
 static bool SD_RefuseIfSuspended(scpi_t *context, const char *cmd)
 {
     /* The LIVE condition, not SpiBusHealth_IsSdSuspended(): the SD task runs
@@ -498,7 +520,9 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
     memcpy(pSDCardRuntimeConfig->opFile, pBuff, fileLen);
     pSDCardRuntimeConfig->opFile[fileLen] = '\0';
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_COMPUTE_CRC;
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    if (!SD_ArmOrRefuse(context, "CRC", pSDCardRuntimeConfig)) {
+        return SCPI_RES_ERR;
+    }
     return SCPI_RES_OK;
 }
 
@@ -608,7 +632,10 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     pSDCardRuntimeConfig->replyGeneration =
             getOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    if (!SD_ArmOrRefuse(context, "GET", pSDCardRuntimeConfig)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
     result = SCPI_RES_OK;
 __exit_point:
     return result;
@@ -683,7 +710,10 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     pSDCardRuntimeConfig->replyGeneration =
             listOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;   /* #599 */
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    if (!SD_ArmOrRefuse(context, "LISt", pSDCardRuntimeConfig)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
 
     // Wait for sd_card_manager to complete listing (up to 10 seconds for large
     // directories). #780: PUMPED — a listing is delivered through DataReadyCB
@@ -1215,7 +1245,10 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
 
     // Set mode to DELETE and trigger the operation
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_DELETE_FILE;
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    if (!SD_ArmOrRefuse(context, "DELete", pSDCardRuntimeConfig)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
 
     // Wait for sd_card_manager to complete deletion (up to 5 seconds)
     if (!sd_card_manager_WaitForCompletion(SCPI_SD_DELETE_TIMEOUT_MS)) {
@@ -1282,7 +1315,13 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     // Poll SYST:STOR:SD:FORmat? for status and progress percentage
     sd_card_manager_SetFormatPending();  // Immediately visible to FORmat? queries
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_FORMAT;
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    /* This one reported SUCCESS on a refused arm -- it returns OK without
+     * waiting, so the client believed a format had started when nothing had
+     * been queued at all. That is the worst of the three shapes. */
+    if (!SD_ArmOrRefuse(context, "FORmat", pSDCardRuntimeConfig)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
 
     result = SCPI_RES_OK;
 __exit_point:
@@ -1457,7 +1496,10 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
 
     // Set mode to GET_SPACE and let sd_card_manager handle mount/query/unmount
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_GET_SPACE;
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    if (!SD_ArmOrRefuse(context, "SPACe", pSDCardRuntimeConfig)) {
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
 
     if (!sd_card_manager_WaitForCompletion(SCPI_SD_SPACE_TIMEOUT_MS)) {
         LOG_E("[SD] SPACe? - Operation timeout");
