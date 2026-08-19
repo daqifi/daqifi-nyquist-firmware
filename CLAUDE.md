@@ -1199,6 +1199,44 @@ SYST:POW:BQ:DIAGnostics?   # Comprehensive diagnostics dump (battery, registers,
 - **SCPI commands**: `services/SCPI/SCPIInterface.c`
 - **I2C mutex**: `BQ24297_Read_I2C()` and `BQ24297_Write_I2C()` are protected by a FreeRTOS mutex to synchronize access between PowerAndUITask and USBDeviceTask (both priority 7)
 
+### SD is unavailable while streaming over WiFi (#589)
+
+**SPI4 is time-multiplexed between the SD card and the WINC WiFi module, and
+the arbitration is at TASK level, not per-transfer.** For the whole duration of
+a WiFi streaming session `app_SDCardTask` parks in `APP_SD_STATE_SUSPENDED`
+(`app_freertos.c:494-527`) and pumps **neither** `DRV_SDSPI_Tasks()` **nor**
+`sd_card_manager_ProcessState()`. An SD operation armed in that window can
+never be advanced to completion.
+
+The predicate is `app_SDCard_SpiOwnedByWifi()` (`app_freertos.c:419-430`):
+`IsEnabled && ActiveInterface == StreamingInterface_WiFi`, OR a WiFi
+firmware update, OR the #589 jam quarantine. Note it is **streaming**, not
+"WiFi is up" — SD:GET and SD:LISt over a WiFi TCP *control session* work
+normally (`test_598_sd_get_over_wifi` covers exactly that).
+
+**What a client sees.** Every SD command is refused with `-200` and
+`SYST:DIAG:SPIBus?` reports `,SUSPENDED`; `SYST:LOG?` names the owner
+(streaming / FW update / quarantine) and the remedy. It is a **gate, not a
+fault** — it clears by itself on `SYST:STReam:STOP` with no re-enable and no
+remount. `SYST:STOR:SD:ENAble` is deliberately NOT gated: it is the manual
+escape hatch and the way a `QUARANTINED` state is cleared.
+
+**Before the fix**, each command instead armed an operation nothing would pump,
+waited out its full `WaitForCompletion` timeout (**10.38 s measured** for
+`SD:SPACe?`), and returned `-200` with a hint blaming *"directory too large
+(#689: clear the card)"* — which is wrong and reproduces on a freshly
+formatted card. The first such command also left the state machine parked at
+`DEINIT`, so every later one failed instantly while reporting a state that
+looked wedged. **If you are debugging an older image and see that pattern,
+this is what it is — do not chase #689.**
+
+**If you add a new SD SCPI command**, it must (a) call `SD_RefuseIfSuspended()`
+before arming and (b) check `sd_card_manager_UpdateSettings()`'s return via
+`SD_ArmOrRefuse()`. The guard closes the common case; the return check is what
+makes a lost race visible instead of a false success — `FORmat`, `CRC` and
+`GET` all return OK without waiting, so an unchecked arm reports success having
+queued nothing.
+
 ### SD Card File Splitting
 
 **Feature:** Automatic file splitting prevents FAT32 4GB file size limit issues during long logging sessions.
