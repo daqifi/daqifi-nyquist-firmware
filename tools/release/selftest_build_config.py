@@ -95,6 +95,16 @@ CPP_ONLY_EMPTY = STANDALONE + '''
       </item>'''
 
 
+# An EXCLUDED file is not compiled, so a stale blank override on it is
+# harmless -- refusing the project over a dead entry would be a false
+# positive that blocks a releasable config.
+EXCLUDED_INERT = STANDALONE + '''
+      <item path="../src/unused.c"
+            ex="true" overriding="true">
+        <C32><property key="optimization-level" value=""/></C32>
+      </item>'''
+
+
 CASES = [
     (0, 'standalone', STANDALONE,
      'both excluded -> bench default (what main has)'),
@@ -124,6 +134,8 @@ CASES = [
      'overriding=false emits nothing -> must not fire on ordinary items'),
     (0, 'cpp-only-empty', CPP_ONLY_EMPTY,
      'empty in <C32CPP> only -> C build unaffected, and C++ is never invoked'),
+    (0, 'excluded-inert', EXCLUDED_INERT,
+     'ex="true" -> not compiled, so a blank override on it emits nothing'),
 ]
 
 

@@ -93,6 +93,11 @@ def inert_optimization_overrides(conf_el):
     for item in conf_el.iter('item'):
         if item.get('overriding') != 'true':
             continue
+        # An EXCLUDED file is not compiled, so a stale blank override on it
+        # emits nothing and changes nothing. Flagging it would refuse a
+        # perfectly releasable project over a dead entry.
+        if item.get('ex') == 'true':
+            continue
         c32 = item.find('C32')
         if c32 is None:
             continue
