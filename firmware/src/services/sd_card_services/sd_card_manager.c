@@ -2674,6 +2674,15 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
             LOG_E("SD op refused at arm time - the SD task is suspended and "
                   "cannot pump it (#589)\r\n");
         }
+        /* CLEAR the requested mode, do not merely decline to copy it.
+         * gpSDCardSettings is assigned from the caller's pointer on first use
+         * below, and every SCPI caller passes
+         * BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS) -- the same
+         * live object -- having ALREADY written the mode into it before
+         * calling. Returning without clearing would leave the refused
+         * operation armed in the shared settings, and the SD task would run
+         * it when it resumes. */
+        pSettings->mode = SD_CARD_MANAGER_MODE_NONE;
         return false;
     }
 
