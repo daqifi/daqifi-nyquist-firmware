@@ -454,6 +454,31 @@ static uint32_t CountDirEntries(const char* dirPath, uint32_t cap,
 // Callback function type for sending directory listing chunks
 typedef void (*ListChunkCallback)(const uint8_t* data, size_t len);
 
+/* #794: how a directory walk ended, so the reply can say so.
+ *
+ * SYST:STOR:SD:LISt? streamed "<path> <size>\r\n" per file and then simply
+ * stopped, which made a complete listing and one cut short by a read timeout,
+ * a buffer boundary or a stall-abort byte-identical: a run of well-formed
+ * entries that ends. A host could therefore never prove ABSENCE -- "is my
+ * capture still on the card?" answered "no files" from a truncated read.
+ *
+ * Every walk that can still talk to the host now ends with one marker line
+ * carrying a status word. ABORTED is the deliberate exception: the abort
+ * exists because the peer is not draining (#754), and each further send burns
+ * USB_TRANSFER_MAX_RETRIES (~10 s) before giving up -- so an aborted listing
+ * ends with NO marker, and its absence is what tells the host the reply is
+ * incomplete. */
+typedef enum {
+    SD_LISTDIR_OK = 0,      /* walked the whole tree, every entry emitted */
+    SD_LISTDIR_INCOMPLETE,  /* walk finished, but entries were skipped */
+    SD_LISTDIR_FAILED,      /* nothing could be listed at all */
+    SD_LISTDIR_ABORTED      /* peer stalled -- no marker is sent */
+} ListDirResult;
+
+#define SD_LIST_END_OK          "\r\n__END_OF_LIST__ OK"
+#define SD_LIST_END_INCOMPLETE  "\r\n__END_OF_LIST__ INCOMPLETE"
+#define SD_LIST_END_FAILED      "\r\n__END_OF_LIST__ FAILED"
+
 // Static callback for sending directory listing chunks
 static void sd_listdir_send_chunk(const uint8_t* data, size_t len) {
     /* #754: once an abort is pending, stop handing chunks to a transport that
@@ -480,9 +505,14 @@ typedef struct {
 
 static ListDirFrame gListDirStack[SD_CARD_MANAGER_MAX_LIST_DEPTH];
 
-static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, size_t strBuffSize, ListChunkCallback sendChunk) {
+static ListDirResult ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, size_t strBuffSize, ListChunkCallback sendChunk) {
     SYS_FS_FSTAT stat;
     size_t strBuffIndex = 0;
+    /* #794: set wherever the walk drops something -- a depth cap, a directory
+     * it could not read or open, a path or entry that did not fit. The walk
+     * still finishes; the reply just cannot claim to be the whole card. */
+    bool skipped = false;
+    ListDirResult result = SD_LISTDIR_OK;
     char newPath[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
     int sp = -1;  // Stack pointer: -1 = empty, 0..MAX-1 = current frame
 
@@ -505,7 +535,9 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
         if (strBuffIndex > 0 && sendChunk) {
             sendChunk(pStrBuff, strBuffIndex);
         }
-        return;
+        strBuffIndex = 0;
+        result = SD_LISTDIR_FAILED;
+        goto done;
     }
 
     sp = 0;
@@ -521,7 +553,9 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
         if (sendChunk && strBuffIndex > 0) {
             sendChunk(pStrBuff, strBuffIndex);
         }
-        return;
+        strBuffIndex = 0;
+        result = SD_LISTDIR_FAILED;
+        goto done;
     }
 
     while (sp >= 0) {
@@ -545,7 +579,16 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
                 }
                 sp--;
             }
-            return;
+            /* Drop whatever was still buffered. Before #794 this path returned
+             * outright and never flushed it; routing every exit through `done`
+             * would have handed those entries to sd_listdir_send_chunk, and
+             * the abort just cleared the flag that makes it a no-op -- so a
+             * peer that stopped draining would get one more chunk and one more
+             * ~10 s of transfer retries, which is the lockout #754 exists to
+             * end. */
+            strBuffIndex = 0;
+            result = SD_LISTDIR_ABORTED;
+            goto done;
         }
 
         if (SYS_FS_DirRead(gListDirStack[sp].handle, &stat) == SYS_FS_RES_FAILURE) {
@@ -569,6 +612,7 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
                 LOG_E("[SD] ListFiles: Failed to close directory '%s', error=%d",
                       gListDirStack[sp].path, SYS_FS_Error());
             }
+            skipped = true;     /* #794: the rest of this directory is missing */
             sp--;
             continue;
         }
@@ -593,6 +637,7 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
         if (pn < 0 || (size_t)pn >= sizeof(newPath)) {
             LOG_E("[SD] ListFiles: Path too long, skipping '%s/%s'",
                   gListDirStack[sp].path, stat.fname);
+            skipped = true;     /* #794 */
             continue;
         }
 
@@ -616,6 +661,7 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
                 if (depthN > 0 && (size_t)depthN < strBuffSize - strBuffIndex) {
                     strBuffIndex += (size_t)depthN;
                 }
+                skipped = true;     /* #794: this subtree is not in the reply */
                 continue;
             }
             LOG_D("[SD] ListFiles: Descending into '%s'\r\n", newPath);
@@ -623,6 +669,7 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
             if (childHandle == SYS_FS_HANDLE_INVALID) {
                 SYS_FS_ERROR err = SYS_FS_Error();
                 LOG_E("[SD] ListFiles: Failed to open subdir '%s', error=%d", newPath, err);
+                skipped = true;     /* #794: that subtree is not in the reply */
                 continue;
             }
             sp++;
@@ -653,7 +700,19 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
         if (n > 0 && (size_t)n < strBuffSize - strBuffIndex) {
             strBuffIndex += (size_t)n;
         } else {
-            // Entry doesn't fit - flush buffer and retry with fresh buffer
+            // Entry doesn't fit - flush buffer and retry with fresh buffer.
+            //
+            // Every way out of here that does NOT get the entry into the buffer
+            // has to set `skipped`, or the walk reports OK for a listing the
+            // host never received in full. Three of them are real: no callback
+            // to flush through, a buffer that was already empty (so the
+            // snprintf above WAS the empty-buffer attempt), and an entry too
+            // long even then. The last is reachable, not theoretical --
+            // newPath is SYS_FS_FILE_NAME_LEN*2+1 = 511 bytes against a
+            // 512-byte chunk buffer, so one deep path plus its size and CRLF
+            // does not fit at any buffer occupancy, and #689's bucket
+            // subdirectories make paths deeper.
+            bool appended = false;
             if (sendChunk && strBuffIndex > 0) {
                 pStrBuff[strBuffIndex] = '\0';
                 sendChunk(pStrBuff, strBuffIndex);
@@ -664,12 +723,21 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
                             "%s %u\r\n", newPath, (unsigned)stat.fsize);
                 if (n > 0 && (size_t)n < strBuffSize) {
                     strBuffIndex = (size_t)n;
+                    appended = true;
                 }
-                // If still doesn't fit, entry is too large for buffer (skip it)
+            }
+            if (!appended) {
+                LOG_E("[SD] ListFiles: entry does not fit, omitting '%s'", newPath);
+                skipped = true;     /* #794 */
             }
         }
     }
 
+    if (skipped && result == SD_LISTDIR_OK) {
+        result = SD_LISTDIR_INCOMPLETE;
+    }
+
+done:
     // Send final chunk if any data remains
     if (sendChunk && strBuffIndex > 0) {
         // Remove trailing CRLF from final chunk to avoid extra blank line before prompt
@@ -681,6 +749,37 @@ static void ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, 
             sendChunk(pStrBuff, strBuffIndex);
         }
     }
+
+    /* #794: one marker line, so a host can tell a finished listing from a
+     * truncated one. Deliberately NOT sent on abort: the peer is not draining
+     * (that is why the walk aborted), and every further chunk burns
+     * USB_TRANSFER_MAX_RETRIES (~10 s) before it gives up -- the multi-minute
+     * SD lockout #754 was filed for. An aborted listing therefore ends with
+     * no marker at all, and that absence is the signal. */
+    /* The marker is a flash-resident string literal, like the SD:GET path's
+     * __END_OF_FILE__ a few hundred lines below. That is safe here because
+     * the reply path COPIES: DataReadyCB hands the pointer to
+     * sd_reply_write_usb / _tcp, which write into their own buffers rather
+     * than DMA-ing from the caller's. */
+    if (sendChunk && result != SD_LISTDIR_ABORTED) {
+        const char *marker = (result == SD_LISTDIR_OK)         ? SD_LIST_END_OK
+                           : (result == SD_LISTDIR_INCOMPLETE) ? SD_LIST_END_INCOMPLETE
+                                                               : SD_LIST_END_FAILED;
+        sendChunk((const uint8_t *)marker, strlen(marker));
+    }
+
+    /* The peer can stop draining while these last sends are in flight:
+     * DataReadyCB requests the abort synchronously, and sd_listdir_send_chunk
+     * then drops the marker on the floor rather than burning another
+     * USB_TRANSFER_MAX_RETRIES on it. That is the right transport behaviour,
+     * but it leaves the walk's earlier verdict describing a reply the host
+     * did not get. What the host actually saw is a listing that ended with no
+     * marker -- which is ABORTED -- so say that, and let the log agree with
+     * the wire. */
+    if (gTransferAbortRequested) {
+        result = SD_LISTDIR_ABORTED;
+    }
+    return result;
 }
 
 bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
@@ -2330,17 +2429,23 @@ void sd_card_manager_ProcessState() {
             LOG_D("[SD] Listing directory: '%s'\r\n", gpSDCardSettings->directory);
 
             // List files in chunks using static callback
-            ListFilesInDirectoryChunked(
+            ListDirResult listResult = ListFilesInDirectoryChunked(
                     gpSDCardSettings->directory,
                     gSDCardData.messageBuffer,
                     SD_CARD_MANAGER_CONF_RBUFFER_SIZE,
                     sd_listdir_send_chunk);
+            LOG_D("[SD] Listing ended: %d (0=OK 1=INCOMPLETE 2=FAILED 3=ABORTED)\r\n",
+                  (int)listResult);
 
             // Release mutex - operation complete
             if (gSDOpMutex) {
                 xSemaphoreGive(gSDOpMutex);
             }
 
+            /* Unchanged on purpose. This flag is file-local (no reader outside
+             * this module) and no caller distinguishes list outcomes through
+             * it; #794 puts the outcome where the HOST can see it, in the
+             * reply's terminator, rather than in a flag nothing reads. */
             gSDCardData.lastOperationSuccess = true;  // List always succeeds (may return empty)
             // Reset mode to prevent re-triggering
             gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
