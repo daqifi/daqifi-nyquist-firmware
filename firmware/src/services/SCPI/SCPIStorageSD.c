@@ -490,9 +490,6 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
-    if (!SCPI_CheckSDCardPresent(context)) {
-        return SCPI_RES_ERR;
-    }
     if (!SCPI_ParamCharacters(context, &pBuff, &fileLen, TRUE)) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
@@ -524,6 +521,16 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
      * answer to the request just refused (bench-confirmed before the fix). */
     if (SD_RefuseIfSuspended(context, "CRC")) {
         sd_card_manager_InvalidateCrcResult();
+        return SCPI_RES_ERR;
+    }
+
+    /* Presence is probed AFTER the suspension check, not before. While the SD
+     * task is suspended nothing refreshes the SDSPI attach cache that this
+     * reads, so a card inserted during a WiFi stream still reads DETACHED --
+     * and answering "No SD Card Detected" sends the user after a card that is
+     * sitting in the slot. "SD suspended" is both true and actionable; the
+     * stale probe is neither. */
+    if (!SCPI_CheckSDCardPresent(context)) {
         return SCPI_RES_ERR;
     }
 
