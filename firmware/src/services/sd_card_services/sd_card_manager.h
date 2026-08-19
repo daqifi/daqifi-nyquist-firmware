@@ -415,6 +415,16 @@ extern "C" {
     bool sd_card_manager_GetCrcResult(uint32_t *crc32, uint64_t *length);
 
     /**
+     * #589/#306: drop any cached CRC result.
+     *
+     * Call this whenever a CRC request is REFUSED. The refusal means no new
+     * checksum will be produced, and leaving the previous file's result
+     * readable would let SYST:STOR:SD:CRC? hand it back as though it belonged
+     * to the file just asked about -- the staleness #306 removed.
+     */
+    void sd_card_manager_InvalidateCrcResult(void);
+
+    /**
      * @brief Requests abort of an in-progress SD file transfer (GET).
      *
      * Sets a flag checked by the read loop. The transfer will stop at the

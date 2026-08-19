@@ -2950,6 +2950,12 @@ void sd_card_manager_ClearStartupDirFull(void) {
     gSDCardData.startupDirFull = false;
 }
 
+void sd_card_manager_InvalidateCrcResult(void) {
+    taskENTER_CRITICAL();
+    gSDCardData.crcResultValid = false;
+    taskEXIT_CRITICAL();
+}
+
 bool sd_card_manager_GetCrcResult(uint32_t *crc32, uint64_t *length) {
     bool valid;
     taskENTER_CRITICAL();

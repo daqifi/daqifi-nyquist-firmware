@@ -463,6 +463,12 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
         return SCPI_RES_ERR;
     }
     if (SD_RefuseIfSuspended(context, "CRC")) {
+        /* The refusal happens HERE, so sd_card_manager_UpdateSettings -- and
+         * the #306 invalidation it performs when a new CRC is armed -- is
+         * never reached. Without this the previous file's checksum stays
+         * readable and SYST:STOR:SD:CRC? would return it as if it were the
+         * answer to the request just refused. Bench-confirmed: it did. */
+        sd_card_manager_InvalidateCrcResult();
         return SCPI_RES_ERR;
     }
 
