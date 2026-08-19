@@ -29,6 +29,7 @@
 #include "SCPIInterface.h"
 #include "../sd_card_services/sd_card_manager.h"
 #include "../wifi_services/wifi_tcp_server.h"  /* #598 ContextIsTcp */
+#include "../wifi_services/wifi_manager.h"     /* #589 FW-update owner */
 #include "../../state/runtime/BoardRuntimeConfig.h"
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/fs/sys_fs.h"
@@ -115,8 +116,20 @@ static bool SD_RefuseIfSuspended(scpi_t *context, const char *cmd)
     if (!SpiBusHealth_IsSdSuspended()) {
         return false;
     }
-    LOG_E("SD:%s - SD suspended: WiFi streaming owns SPI4; stop streaming "
-          "(SYST:STReam:STOP) before SD operations\r\n", cmd);
+    /* Name the ACTUAL owner. SUSPENDED has three causes and they need
+     * different things from the user; telling someone mid-firmware-update to
+     * "stop streaming" sends them after the wrong thing. Quarantine is
+     * checked first because it is the one that does NOT clear on its own. */
+    const char *why;
+    if (SpiBusHealth_IsSdQuarantined()) {
+        why = "SD quarantined after a bus jam - reseat or remove the card, "
+              "then SYST:STOR:SD:ENAble 1 to retry";
+    } else if (wifi_manager_IsWifiFirmwareUpdateActive()) {
+        why = "a WiFi firmware update owns SPI4 - retry when it completes";
+    } else {
+        why = "WiFi streaming owns SPI4 - SYST:STR:STOP first";
+    }
+    LOG_E("SD:%s refused - SD suspended: %s\r\n", cmd, why);
     SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
     return true;
 }

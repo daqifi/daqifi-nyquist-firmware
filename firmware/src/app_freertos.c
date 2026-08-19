@@ -450,12 +450,20 @@ static void app_SDCardTask(void* p_arg) {
 
     while (1) {
         /* #589: publish the suspension so the SD SCPI callbacks can refuse an
-         * operation that could never complete. Derived from `state` on every
-         * iteration rather than set at each transition: SUSPENDED already has
-         * more than one exit (PROCESS and WAIT_POWER_UP), and a flag written
-         * per-transition silently goes stale the moment another is added.
-         * This cannot disagree with the state it describes. */
-        SpiBusHealth_SetSdSuspended(state == APP_SD_STATE_SUSPENDED);
+         * operation that could never complete. Derived on every iteration
+         * rather than set at each transition: SUSPENDED already has more than
+         * one exit (PROCESS and WAIT_POWER_UP), and a flag written
+         * per-transition goes stale the moment another is added.
+         *
+         * The predicate is OR'd in deliberately. `state` alone would leave the
+         * flag false for the whole of app_SDCard_GracefulShutdown() -- up to
+         * THREE SECONDS of yielding while the bus is being handed to WiFi --
+         * during which a command would still pass the guard and arm work that
+         * is about to become unserviceable. Publishing as soon as WiFi claims
+         * the bus closes that window; the state term then keeps it true until
+         * the task actually leaves SUSPENDED. */
+        SpiBusHealth_SetSdSuspended(state == APP_SD_STATE_SUSPENDED ||
+                                    app_SDCard_IsWifiUsingSPI());
 
         switch (state) {
             case APP_SD_STATE_WAIT_POWER_UP:
