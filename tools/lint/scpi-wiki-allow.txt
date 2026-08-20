@@ -10,19 +10,10 @@
 # maximise insight into device health. An entry here should mean "documented
 # somewhere a command row cannot express", not "undocumented".
 
-# These four ARE documented, in the stream-migration table's SECOND column
-# (| Canonical | Legacy alias | Migration PR |) rather than as command rows of
-# their own, because they are legacy aliases of the SYST:STR:* forms and
-# listing them as rows would double the streaming command surface.
-#
-# They were previously covered implicitly: the checker also accepted any cell
-# of any table. That fallback was mutation-proved to let a COINCIDENTAL cell
-# anywhere in the wiki vouch for a command whose real row had been deleted
-# (#807), so it was removed and these four became explicit. The trade is
-# stated plainly: if the migration table is ever deleted, these four stop
-# being checked rather than being flagged -- an allowlist entry is a decision
-# someone wrote down, which the fallback never was.
-SYSTem:StartStreamData
-SYSTem:StopStreamData
-SYSTem:StreamData?
-SYSTem:USB:SetTransparentMode
+# Empty on purpose. Every registered command now has a command-table row of
+# its own, including the four legacy streaming/USB aliases -- which used to be
+# named only in the stream-migration table's SECOND column and were covered by
+# a fallback that accepted any table cell. That fallback let a coincidental
+# cell vouch for a deleted row (#807), so it is gone; rather than exempt the
+# four here, they were given the rows they always should have had. A callable
+# command with no row is a documentation gap, not an allowlist case.
