@@ -11,6 +11,31 @@
 #include "services/UsbCdc/UsbCdc.h"
 #include "Util/CRC32.h"   /* #306 */
 #include "services/streaming.h"  // For Streaming_ResetSdPbMetadata on file rotation
+#include <stddef.h>
+#include "ff.h"   /* #810: FILINFO, for the layout assert below */
+
+/* #810: FATFS_readdir (sys_fs_fat_interface.c) hands ONE buffer to f_readdir as a
+ * FILINFO and then reinterprets it as a SYS_FS_FSTAT, reading lfname out of it and
+ * writing through it:
+ *
+ *     res = f_readdir(dp, finfo);
+ *     if ((res == FR_OK) && (fileStat->lfname != NULL)) { fileStat->lfname[0] = '\0'; }
+ *
+ * That is safe only while lfname sits past everything f_readdir writes. If it ever
+ * lands inside fname[], lfname becomes four FILENAME CHARACTERS reinterpreted as a
+ * pointer and the line above is a wild one-byte write to a card-content-derived
+ * address -- intermittent, far from its cause, and with no diagnostic.
+ *
+ * Today it holds by coincidence: SYS_FS_FILE_NAME_LEN (MCC-generated
+ * configuration.h) happens to agree with FF_LFN_BUF (ffconf.h). Nothing ties those
+ * two files together, so an MCC regeneration, a FatFs bump, or someone shortening
+ * the name limit to reclaim RAM would break it silently.
+ *
+ * This is a compile-time invariant check, not a defensive runtime guard: the
+ * invariant is undocumented, unenforced, and split across two generated files. */
+_Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
+               "SYS_FS_FSTAT.lfname overlaps what f_readdir writes: FATFS_readdir "
+               "would write through a pointer built from filename bytes");
 
 #define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
@@ -1074,22 +1099,45 @@ static bool sd_TargetExistsInBucketPath(const char* bucketPath, bool* fsError) {
     return ((st.fattrib & SYS_FS_ATTR_DIR) == 0);
 }
 
-/* #798: publish a post-DirectoryMake state without clobbering a teardown.
- * SYS_FS_DirectoryMake is a filesystem round-trip, so it is the WIDEST window
- * in this state for SCPI to preempt and force DEINIT -- wider than the compare
- * the read-only branch above protects. Honour the teardown rather than
- * overwrite it. Same read-decide-write shape, same reason, as #782 at
- * OPEN_FILE. */
-static void SD_PublishPostCreateState(sd_card_manager_processState_t next)
-{
-    taskENTER_CRITICAL();
-    if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_NONE) {
-        gSDCardData.currentProcessState = next;
-    }   /* else: a teardown landed during the create -- leave DEINIT standing */
-    taskEXIT_CRITICAL();
-}
+/* #800: a teardown raised while the SD task is mid-transition must not be lost.
+ *
+ * sd_card_manager_UpdateSettings() and sd_card_manager_Deinit() run on the
+ * CALLER's task and tear a session down by forcing
+ * currentProcessState = DEINIT. The SD task writes that same field
+ * unconditionally from ~56 sites, in the shape "decide, then store NEXT_STATE".
+ * A teardown landing between a decision and its store is therefore silently
+ * OVERWRITTEN: the operation the teardown existed to stop carries on, does the
+ * filesystem work, and ends in ERROR instead of unmounting cleanly. Nothing
+ * logs it, because from the SD task's point of view nothing happened.
+ *
+ * A flag cannot be clobbered that way. The store that loses the state does not
+ * touch it, so the request survives and is honoured at the next iteration.
+ *
+ * Why this rather than a critical section at each store: #782 fixed exactly one
+ * site that way (see OPEN_FILE), and its comment is right that the compare and
+ * the store must be one atomic step. Doing that ~56 times would be 56 chances
+ * to get it wrong, and it would still leave any site added later unprotected.
+ * This is one check, at the one place every iteration passes through.
+ *
+ * The residual, stated rather than glossed: the teardown is honoured on the
+ * NEXT iteration, so at most one further state transition runs first. That
+ * bounds the damage to a single step instead of a whole operation -- it does
+ * not make the handoff instantaneous. A truly synchronous teardown needs the
+ * per-site atomicity above, which is a bigger change than this issue warrants.
+ *
+ * volatile: written by the caller's task, read by the SD task. A bool store is
+ * atomic on PIC32MZ, and the read-then-clear below is single-writer (SD task
+ * only), so a concurrent set is preserved for the next pass rather than lost --
+ * no critical section is needed for the flag itself. */
+static volatile bool gSdTeardownRequested = false;
 
 void sd_card_manager_ProcessState() {
+    /* #800: honour a teardown that raced a state store, before dispatching. */
+    if (gSdTeardownRequested) {
+        gSdTeardownRequested = false;
+        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
+    }
+
     /* Check the application's current state. */
 
     switch (gSDCardData.currentProcessState) {
@@ -1496,103 +1544,82 @@ void sd_card_manager_ProcessState() {
              * look`, which is what #796's FAILED marker already means. A
              * WRITE still creates its target directory, so the first stream
              * after a format works exactly as before. */
-            /* Decide and publish in ONE atomic step, for the reason #782
-             * documents at OPEN_FILE below: SCPI (pri 7) preempts this task
-             * (pri 5), and sd_card_manager_UpdateSettings() tears a session
-             * down by clearing mode and forcing currentProcessState = DEINIT
-             * (tail of that function). A plain compare-then-assign only
-             * narrows the window -- SCPI can land between the two, and the
-             * assignment then clobbers the DEINIT, so a torn-down operation
-             * walks on into OPEN_FILE, opens a file nobody is waiting for, and
-             * ends in ERROR instead of unmounting cleanly.
+            /* #797: only a WRITE may create the directory. Every mode routes
+             * through this state, so a read-only operation used to CREATE the
+             * thing it had been asked to look at -- `SD:LISt? "TYPO"` made
+             * TYPO, then truthfully reported it empty, and left it on the
+             * card. Two bugs in one: a query that modifies the card, and a
+             * host that cannot tell "that directory is empty" from "that
+             * directory is not there", because the firmware had just made the
+             * second answer into the first.
              *
-             * The teardown signature here is mode == NONE, NOT mode != WRITE.
-             * That differs from the OPEN_FILE precedent, where the dispatch
-             * mode WAS WRITE so anything else meant torn-down. In this state
-             * every read-only operation (LIST, READ, CRC, DELETE) legitimately
-             * arrives with mode != WRITE, and testing that would route normal
-             * traffic into DEINIT. */
+             * With the create gone, DirOpen fails for a path that is not there
+             * and the walk reports SD_LISTDIR_FAILED -- `I could not look`,
+             * which is what #796's FAILED marker already means. A WRITE still
+             * creates its target directory, so the first stream after a format
+             * works exactly as before.
+             *
+             * The state stores below are plain, like the other ~56 in this
+             * function: #800's gSdTeardownRequested flag, consumed once per
+             * iteration at the top, is what keeps a teardown from being
+             * clobbered. An earlier revision of this PR guarded each store
+             * here with its own critical section, which duplicated that
+             * mechanism using precisely the per-site approach #800 argued
+             * against.
+             *
+             * The critical section that DOES remain covers only the snapshot,
+             * and for a different hazard: sd_card_manager_UpdateSettings()
+             * memcpy's the WHOLE settings struct from SCPI (pri 7), so reading
+             * the mode and the name separately -- or handing FatFs a pointer
+             * into the live struct across a filesystem call -- can create a
+             * directory under a torn name. Read both once, together. */
             {
                 sd_card_manager_mode_t dirMode;
-                bool skipCreate;
                 char dirName[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1];
 
                 taskENTER_CRITICAL();
                 dirMode = gpSDCardSettings->mode;
-                skipCreate = (dirMode != SD_CARD_MANAGER_MODE_WRITE);
-                /* Snapshot the NAME too, not just the mode. A preempting
-                 * sd_card_manager_UpdateSettings() memcpy's the WHOLE settings
-                 * struct, so passing &gpSDCardSettings->directory[0] straight
-                 * into SYS_FS_DirectoryMake hands FatFs a string that can be
-                 * rewritten underneath it during a long filesystem call --
-                 * creating a directory under a torn name. Copy once, under the
-                 * same lock that decided to create. */
                 (void)strncpy(dirName, gpSDCardSettings->directory,
                               sizeof(dirName) - 1u);
                 dirName[sizeof(dirName) - 1u] = '\0';
-                if (skipCreate) {
-                    /* #797: only a WRITE may create the directory. Every mode
-                     * routes through this state, so a read-only operation used
-                     * to CREATE the thing it had been asked to look at --
-                     * `SD:LISt? "TYPO"` made TYPO, then truthfully reported it
-                     * empty, and left it on the card. Two bugs in one: a query
-                     * that modifies the card, and a host that cannot tell
-                     * "that directory is empty" from "that directory is not
-                     * there", because the firmware had just made the second
-                     * answer into the first.
-                     *
-                     * With the create gone, DirOpen fails for a path that is
-                     * not there and the walk reports SD_LISTDIR_FAILED -- `I
-                     * could not look`, which is what #796's FAILED marker
-                     * already means. A WRITE still creates its target
-                     * directory, so the first stream after a format works
-                     * exactly as before. */
-                    gSDCardData.currentProcessState =
-                            (dirMode == SD_CARD_MANAGER_MODE_NONE)
-                            ? SD_CARD_MANAGER_PROCESS_STATE_DEINIT
-                            : SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
-                }
                 taskEXIT_CRITICAL();
 
-                if (skipCreate) {
-                    /* Logging stays OUTSIDE the critical section. */
+                if (dirMode != SD_CARD_MANAGER_MODE_WRITE) {
                     LOG_D("[SD] Not creating '%s': mode %d is read-only\r\n",
                           dirName, (int)dirMode);
+                    gSDCardData.currentProcessState =
+                            SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
                     break;
                 }
 
-            if (SYS_FS_DirectoryMake(dirName) == SYS_FS_RES_FAILURE) {
-                /* Read the error ONCE. SYS_FS_Error() returns a shared global,
-                 * so calling it again for the log can report a different fault
-                 * than the one that selected the branch -- which is worse than
-                 * no code at all, because it looks authoritative. */
-                SYS_FS_ERROR mkdirErr = SYS_FS_Error();
+                if (SYS_FS_DirectoryMake(dirName) == SYS_FS_RES_FAILURE) {
+                    /* Read the error ONCE. SYS_FS_Error() returns a shared
+                     * global, so calling it again for the log can report a
+                     * different fault than the one that selected the branch --
+                     * worse than no code at all, because it looks
+                     * authoritative. */
+                    SYS_FS_ERROR mkdirErr = SYS_FS_Error();
 
-                if (mkdirErr == SYS_FS_ERROR_EXIST) {
-                    LOG_D("[SD] Directory '%s' already exists\r\n", dirName);
-                    SD_PublishPostCreateState(SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE);
+                    if (mkdirErr == SYS_FS_ERROR_EXIST) {
+                        LOG_D("[SD] Directory '%s' already exists\r\n", dirName);
+                        gSDCardData.currentProcessState =
+                                SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+                    } else {
+                        /* This branch is reached for EVERY DirectoryMake
+                         * failure that is not EXIST -- media faults, a full
+                         * root directory, an I/O error -- so the old
+                         * "Invalid SD Card Directory name" sent operators
+                         * after a naming problem that usually is not there. */
+                        gSDCardData.currentProcessState =
+                                SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                        LOG_E("[%s:%d]SD DirectoryMake('%s') failed, SYS_FS_Error=%d",
+                              __FILE__, __LINE__, dirName, (int)mkdirErr);
+                    }
                 } else {
-                    /* Guarded like the success paths: if a teardown landed
-                     * during the create, the operation is already dead and
-                     * DEINIT -> UNMOUNT is the clean exit. Recording ERROR
-                     * over it would strand the manager in ERROR for work
-                     * nobody is waiting on -- the same clobber #782 is about,
-                     * just with a different value. */
-                    SD_PublishPostCreateState(SD_CARD_MANAGER_PROCESS_STATE_ERROR);
-                    /* Report the FS error code. This branch is reached for
-                     * every DirectoryMake failure that is not EXIST -- media
-                     * faults, a full root directory, an I/O error -- so
-                     * asserting "invalid name" sent operators after a naming
-                     * problem that usually is not there. */
-                    LOG_E("[%s:%d]SD DirectoryMake('%s') failed, SYS_FS_Error=%d",
-                          __FILE__, __LINE__, dirName, (int)mkdirErr);
+                    LOG_D("[SD] Created directory '%s'\r\n", dirName);
+                    gSDCardData.currentProcessState =
+                            SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
                 }
-                /* Error while creating a new drive */
-            } else {
-                LOG_D("[SD] Created directory '%s'\r\n", dirName);
-                /* Open a file for writing. */
-                SD_PublishPostCreateState(SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE);
-            }
             }
             break;
 
@@ -2853,8 +2880,11 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
 }
 
 bool sd_card_manager_Deinit() {
-    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
+    /* enable BEFORE the state, so the SD task can never observe
+     * "DEINIT but still enabled" and re-arm off the stale flag. */
     gpSDCardSettings->enable = 0;
+    gSdTeardownRequested = true;   /* #800: survives a racing state store */
+    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
     return true;
 }
 
@@ -2938,6 +2968,28 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
     // consuming a signal that an in-flight WaitForCompletion is expecting
     if (sd_card_manager_IsIdle() && gSDCardData.opCompleteSemaphore != NULL) {
         xSemaphoreTake(gSDCardData.opCompleteSemaphore, 0);
+    }
+    /* #800: raise the sticky flag ONLY for an actual teardown.
+     *
+     * This function forces DEINIT on EVERY non-refused call -- arming a new
+     * operation goes through here too, and DEINIT is how the machine restarts
+     * into it. Raising the flag unconditionally would therefore let a request
+     * belonging to one call be consumed during the next, re-asserting DEINIT
+     * after the machine had already moved on. It happens to be harmless today
+     * (every caller of this function wants DEINIT anyway, and nothing outside
+     * the SD task advances the state -- sd_card_manager_Init runs once at
+     * boot), but that is an argument from the current call graph, not from the
+     * flag's own meaning.
+     *
+     * mode == NONE is the teardown signature -- it is how the timeout and
+     * shutdown paths tear an operation down, and the reason the race in #800 is
+     * reachable at all. Scoping the flag to it keeps the mechanism matching its
+     * name, and keeps a future caller from inheriting a teardown it never asked
+     * for. Arming paths keep the plain (clobberable) DEINIT they had before;
+     * protecting those is a different problem from the one #800 describes. */
+    if (gpSDCardSettings == NULL ||
+        gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_NONE) {
+        gSdTeardownRequested = true;
     }
     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
     return true;
