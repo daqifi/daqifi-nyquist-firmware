@@ -82,8 +82,33 @@ def strip_c_comments(text):
         lambda m: m.group(0) if m.group(0)[0] in "\"'" else "", text)
 
 
+# `.pattern = "A" "B", .callback = X` is legal C -- adjacent string literals
+# concatenate -- so the string part is one-or-more literals, joined.
+_REGISTRATION = re.compile(
+    r'\.pattern\s*=\s*((?:"[^"]*"\s*)+),\s*\.callback\s*=\s*([A-Za-z_]\w*)')
+_PATTERN_FIELD = re.compile(r"\.pattern\s*=")
+# libscpi requires the command table to end with a {NULL, ...} sentinel. It is
+# a real `.pattern =` field and deliberately not a command, so the parse guard
+# below counts it as understood rather than as something it failed to read.
+_NULL_SENTINEL = re.compile(r"\.pattern\s*=\s*NULL\b")
+_ONE_LITERAL = re.compile(r'"([^"]*)"')
+
+
+def _joined(literal_group):
+    """The C value of one or more adjacent string literals."""
+    return "".join(_ONE_LITERAL.findall(literal_group))
+
+
 def registered_patterns(scpi_c):
-    """(live, commented_out) sets of .pattern strings in the command table."""
+    """(live, commented_out) sets of .pattern strings in the command table.
+
+    Raises SystemExit if any `.pattern =` field fails to parse. That guard is
+    the point: the failure mode of a regex-based extractor is not a wrong
+    answer, it is a SILENTLY SMALLER `live` set -- and a command missing from
+    `live` can never be reported as undocumented, so the gate would go green
+    over exactly the drift it exists to catch. Better to fail loudly on a C
+    construct this does not understand than to quietly stop checking it.
+    """
     if not os.path.exists(scpi_c):
         # A bare FileNotFoundError traceback in CI reads like the checker is
         # broken. It usually means the command table was moved or renamed,
@@ -93,31 +118,21 @@ def registered_patterns(scpi_c):
                  f".github/workflows/scpi-wiki-sync.yml.")
     with open(scpi_c, encoding="utf-8", errors="replace") as fh:
         raw = fh.read()
-    rx = r'\.pattern\s*=\s*"([^"]+)"\s*,\s*\.callback\s*=\s*([A-Za-z_]\w*)'
-    every = {p for p, _ in re.findall(rx, raw)}
-    live = {p for p, _ in re.findall(rx, strip_c_comments(raw))}
+    live_src = strip_c_comments(raw)
+    every = {_joined(g) for g, _ in _REGISTRATION.findall(raw)}
+    live = {_joined(g) for g, _ in _REGISTRATION.findall(live_src)}
+
+    declared = (len(_PATTERN_FIELD.findall(live_src))
+                - len(_NULL_SENTINEL.findall(live_src)))
+    parsed = len(_REGISTRATION.findall(live_src))
+    if declared != parsed:
+        sys.exit(f"error: {scpi_c!r} has {declared} live '.pattern =' command "
+                 f"fields but only {parsed} parsed as registrations. An entry "
+                 f"uses a form this checker does not understand, and would be "
+                 f"silently omitted from the check -- so a command missing "
+                 f"from the wiki could never be reported. Extend "
+                 f"_REGISTRATION in tools/lint/scpi_wiki_sync.py.")
     return live, every - live
-
-
-def abbreviate(pattern):
-    """SCPI short form: the capitals (and digits) of each node.
-
-    A node with no capitals is kept verbatim rather than collapsing to an
-    empty string, which would make the joined form match almost anything.
-
-    The trailing '?' is PRESERVED. Query and setter are registered separately
-    with distinct callbacks, and this codebase actually contains a split pair:
-    `SYSTem:COMMunicate:LAN:DNS1` is registered while `...:DNS1?` is not. An
-    earlier version stripped the '?' before comparing, which made the live
-    setter vouch for the dead getter -- the checker would have reported that
-    exact row as fine.
-    """
-    query = pattern.endswith("?")
-    nodes = []
-    for node in pattern.rstrip("?").split(":"):
-        caps = "".join(c for c in node if c.isupper() or c.isdigit())
-        nodes.append(caps if caps else node)
-    return ":".join(nodes) + ("?" if query else "")
 
 
 def _mandatory(node):
@@ -201,14 +216,14 @@ def wiki_text_and_rows(wiki_dir):
 
     Keying on the header is exact. Every command table in the wiki uses it.
     """
-    blobs, rows = [], []
+    table_cells, rows = set(), []
     files = sorted(glob.glob(os.path.join(wiki_dir, "*.md")))
     if not files:
         sys.exit(f"error: no .md files under {wiki_dir!r} -- is the wiki cloned?")
     for path in files:
         with open(path, encoding="utf-8", errors="replace") as fh:
             body = fh.read()
-        blobs.append(body)
+
         in_command_table = False
         for line in body.split("\n"):
             if not line.lstrip().startswith("|"):
@@ -221,6 +236,14 @@ def wiki_text_and_rows(wiki_dir):
             if first.lower() in ("scpi command", "command"):  # header: rows below are commands
                 in_command_table = True
                 continue
+            # Every cell of every table is a candidate mention. The legacy
+            # alias table names its commands in the SECOND column
+            # ("| Canonical | Legacy alias | Migration PR |"), so first cells
+            # alone would report four shipped aliases as undocumented.
+            for c in cells:
+                cleaned = clean_cell(c)
+                if cleaned:
+                    table_cells.add(cleaned)
             if not in_command_table:
                 continue
             if set(first) <= set("-: "):          # the |---|---| separator
@@ -228,7 +251,7 @@ def wiki_text_and_rows(wiki_dir):
             first = clean_cell(first)
             if first:
                 rows.append((first, line))
-    return "\n".join(blobs), rows
+    return table_cells, rows
 
 
 def load_allowlist(path):
@@ -280,13 +303,62 @@ def self_test():
             failures += 1
             print(f"  FAIL is_form_of({written!r}, {pattern!r}) = {got}, "
                   f"expected {expected} -- {why}")
+    failures += _self_test_end_to_end()
     if failures:
-        print(f"\n::error::{failures} of {len(SELF_TEST_CASES)} matcher "
-              f"self-tests failed")
+        print(f"\n::error::{failures} self-test(s) failed")
         return 1
     print(f"self-test: {len(SELF_TEST_CASES)}/{len(SELF_TEST_CASES)} matcher "
-          f"cases pass")
+          f"cases + 2 end-to-end cases pass")
     return 0
+
+
+def _self_test_end_to_end():
+    """Pin the two false-pass holes an adversarial audit found and proved.
+
+    Both failed toward SILENCE -- the checker exited 0 while a shipped command
+    had no wiki row -- which is the one failure direction that makes a gate
+    worse than useless, so both are pinned here rather than trusted to stay
+    fixed.
+    """
+    import tempfile
+    failures = 0
+    src = ('const scpi_command_t scpi_commands[] = {\n'
+           '    {.pattern = "SYSTem:WIFI:" "DEBUG?", .callback = SCPI_A,},\n'
+           '    {.pattern = "SYSTem:POWer:OTG", .callback = SCPI_B,},\n'
+           '    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n};\n')
+    with tempfile.TemporaryDirectory() as d:
+        c = os.path.join(d, "scpi.c")
+        with open(c, "w", encoding="utf-8") as fh:
+            fh.write(src)
+
+        # (1) Adjacent string literals concatenate in C. Missing this dropped
+        # the command from `live`, where it could never be reported at all.
+        live, _ = registered_patterns(c)
+        if "SYSTem:WIFI:DEBUG?" not in live:
+            print("  FAIL end-to-end: a concatenated .pattern was not extracted"
+                  " -- it would be invisible to the whole check")
+            failures += 1
+
+        # (2) A bare mention in prose must NOT stand in for a table row. The
+        # audit mutation-proved the old behaviour: deleting one prose sentence
+        # flipped the verdict, so the sentence was carrying it.
+        wiki = os.path.join(d, "wiki")
+        os.makedirs(wiki)
+        with open(os.path.join(wiki, "01.md"), "w", encoding="utf-8") as fh:
+            fh.write("| SCPI Command | Description | Example | Callback |\n"
+                     "| -- | -- | -- | -- |\n"
+                     "| SYSTem:WIFI:DEBUG? | x | x | SCPI_A |\n\n"
+                     "Prose only: SYSTem:POWer:OTG is diagnostic.\n")
+        cells, rows = wiki_text_and_rows(wiki)
+        written = [cmd for cmd, _ in rows]
+        documented = (any(is_form_of(w, "SYSTem:POWer:OTG") for w in written)
+                      or any(is_form_of(t, "SYSTem:POWer:OTG") for t in cells))
+        if documented:
+            print("  FAIL end-to-end: a command mentioned only in prose counted"
+                  " as documented -- the gate can be satisfied without writing"
+                  " a row")
+            failures += 1
+    return failures
 
 
 def main():
@@ -315,7 +387,7 @@ def main():
     if not live:
         sys.exit(f"error: no .pattern entries found in {args.scpi!r} -- "
                  f"has the command table moved?")
-    _wiki_text, rows = wiki_text_and_rows(args.wiki)
+    table_cells, rows = wiki_text_and_rows(args.wiki)
     allow = load_allowlist(args.allow)
 
     written = [cmd for cmd, _ in rows]
@@ -324,17 +396,22 @@ def main():
     # prose rather than a row of their own. Deliberately the looser of the two
     # directions: the expensive failure is a user calling a command the wiki
     # lists and getting -113, which is the ghost check below.
-    tokens = set(re.findall(r"\*?[A-Za-z][A-Za-z0-9]*(?::[A-Za-z0-9]+)*\??", _wiki_text))
+    # Documented means a TABLE names it -- either as a command row, or in any
+    # cell of any table (the legacy aliases live in the migration table's
+    # second column).
+    #
+    # It deliberately no longer means "appears anywhere on the page". That
+    # fallback read every .md file whole, prose and fenced code included, so a
+    # single sentence mentioning a command silently vouched for a missing row.
+    # An adversarial audit mutation-proved it: deleting one prose sentence
+    # flipped the checker from exit 0 to exit 1, which means the sentence --
+    # not any documentation -- was carrying the verdict. Anyone who did not
+    # want to write a row could satisfy the gate by mentioning the command.
     undocumented = sorted(
         p for p in live
         if p not in allow
         and not any(is_form_of(w, p) for w in written)
-        # The prose fallback is deliberately limited to MULTI-NODE commands.
-        # A single-node one is an ordinary English word -- `help` -- or a short
-        # token, so any page of prose would vouch for it and the check would be
-        # meaningless exactly where it is easiest to satisfy honestly. Those
-        # must have a table row.
-        and not (":" in p and any(is_form_of(t, p) for t in tokens)))
+        and not any(is_form_of(c, p) for c in table_cells))
 
     # "Documented" means a command TABLE ROW names it. Searching the whole page
     # instead let a command pass on a passing mention inside another command's
