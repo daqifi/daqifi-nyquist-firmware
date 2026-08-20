@@ -1491,11 +1491,7 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
      * directory. Rejecting costs the caller nothing -- set the directory
      * before starting -- and is the same guard the other SD entry points in
      * this file already apply. */
-    if (sd_card_manager_IsBusy()) {
-        LOG_SD_BUSY("DIRectory");
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
-    }
+
 
     /* Config-only write, deliberately NOT followed by
      * sd_card_manager_UpdateSettings(): that call forces the SD state machine
@@ -1518,10 +1514,25 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
      * steps observes new-prefix + old-suffix. That is a well-formed string
      * naming the wrong directory, which for SD:DELete is the worse outcome of
      * the two. The copy is <= 41 bytes, so the section is short. */
+    /* The busy test and the write share ONE critical section. Checked
+     * separately, an SD operation could arm in between and the write would
+     * land in a session that had just started -- the exact case the check
+     * exists to prevent. IsBusy() only reads mode and currentProcessState,
+     * so it is safe here; the log stays outside. */
+    bool busy;
     taskENTER_CRITICAL();
-    memcpy(pSDCardRuntimeConfig->directory, pBuff, pathLen);
-    pSDCardRuntimeConfig->directory[pathLen] = '\0';
+    busy = sd_card_manager_IsBusy();
+    if (!busy) {
+        memcpy(pSDCardRuntimeConfig->directory, pBuff, pathLen);
+        pSDCardRuntimeConfig->directory[pathLen] = '\0';
+    }
     taskEXIT_CRITICAL();
+
+    if (busy) {
+        LOG_SD_BUSY("DIRectory");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
     return SCPI_RES_OK;
 }
 
