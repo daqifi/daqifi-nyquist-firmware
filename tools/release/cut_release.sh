@@ -211,6 +211,25 @@ bulk_starts=sorted(s for s,e in spans if s>=RESET_HI)
 chk(lo==RESET_LO, f"lowest phys addr 0x{lo:08X} == 0x1D000000")
 chk(reset_bytes==408, f"reset vector [0x1D000000,0x1D000480) = {reset_bytes} bytes == 408")
 chk(bool(bulk_starts) and bulk_starts[0]==RESET_HI, f"bulk starts at 0x{(bulk_starts[0] if bulk_starts else 0):08X} == 0x1D000480")
+# #764: NOTHING may live in boot flash. The bootloader can only write program
+# flash 0x9D000000-0x9D1FFFFF, so any record at or above 0x1FC00000 is SILENTLY
+# DROPPED by the in-field updater -- the hex verifies fine, the device accepts
+# the update, and the dropped content simply never arrives. That is how a bench
+# image and a fielded image diverge with nobody seeing it: the config words stay
+# whatever the bootloader burned, permanently (erratum #45, RTSP of
+# Configuration Words, no workaround).
+#
+# A bootloader-linked build has no boot-flash records at all, so this must be
+# zero. If it is not, the hex is a standalone build wearing the right reset
+# vector, and shipping it means shipping content the customer cannot receive.
+BOOT_FLASH_LO=0x1FC00000
+boot_records=[(a,b) for a,b in spans if b>BOOT_FLASH_LO]
+boot_bytes=sum(b-max(a,BOOT_FLASH_LO) for a,b in boot_records)
+boot_msg='no records at/above 0x1FC00000 (boot flash)'
+if boot_records:
+    boot_msg += ' -- found %d span(s), %d byte(s), first at 0x%08X' % (
+        len(boot_records), boot_bytes, boot_records[0][0])
+chk(not boot_records, boot_msg)
 sys.exit(0 if ok else 1)
 PY
 
