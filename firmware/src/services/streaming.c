@@ -2071,11 +2071,31 @@ void Streaming_SdInterfaceReleased(void) {
     if (gpRuntimeConfigStream == NULL) {
         return;   /* before Streaming_Init; nothing to release */
     }
-    StreamingInterface active = gpRuntimeConfigStream->ActiveInterface;
-    if (active == StreamingInterface_SD || active == StreamingInterface_UsbAndSd) {
+    /* Decide and publish in ONE atomic step. This is a read-decide-write on a
+     * field three contexts touch -- USB SCPI (pri 7), WiFi SCPI (pri 2) and
+     * the SD task (pri 5) -- so a plain compare-then-assign can land between
+     * another task's SYST:STR:INT and clobber the choice it just made with
+     * USB. The store itself is a single 32-bit write and atomic on PIC32MZ;
+     * it is the read-decide-write pair that is not, which is the case the
+     * project's atomicity rules reserve a critical section for.
+     *
+     * The section spans one compare and one store. The log stays outside it,
+     * so interrupt latency does not pay for the message. */
+    StreamingInterface active;
+    bool released;
+
+    taskENTER_CRITICAL();
+    active = gpRuntimeConfigStream->ActiveInterface;
+    released = (active == StreamingInterface_SD ||
+                active == StreamingInterface_UsbAndSd);
+    if (released) {
+        gpRuntimeConfigStream->ActiveInterface = StreamingInterface_USB;
+    }
+    taskEXIT_CRITICAL();
+
+    if (released) {
         LOG_E("SD unavailable - streaming interface was %d (SD); falling back to "
               "USB so the stream still has somewhere to go (#759)", (int)active);
-        gpRuntimeConfigStream->ActiveInterface = StreamingInterface_USB;
     }
 }
 
