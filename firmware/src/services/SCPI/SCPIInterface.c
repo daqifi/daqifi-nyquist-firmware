@@ -442,12 +442,33 @@ static scpi_result_t SCPI_Reset(scpi_t * context) {
 }
 
 /**
- * Placeholder for un-implemented SCPI commands
+ * Placeholder for un-implemented SCPI commands.
+ *
+ * These stay registered rather than being deleted: SCPI_Help enumerates them under
+ * its "Not Implemented:" heading, which is how a caller discovers that a command is
+ * planned-but-absent rather than simply unknown. Deleting them would answer -113
+ * ("Undefined header") for free, but would also delete that record.
+ *
  * @param context The SCPI context
- * @return always SCPI_RES_ERROR
+ * @return always SCPI_RES_ERR
  */
 static scpi_result_t SCPI_NotImplemented(scpi_t * context) {
-    context->interface->write(context, "Not Implemented!", 16);
+    /* Safe to dereference: libscpi reaches this callback THROUGH param_list.cmd
+     * (processCommand, parser.c), so it cannot be NULL here. */
+    LOG_E("SCPI: '%s' is registered but not implemented",
+          context->param_list.cmd->pattern);
+
+    /* Pushed explicitly rather than left to parser.c's default. Pushing sets
+     * cmd_error (error.c), and parser.c only supplies its own -200 when that flag
+     * is clear -- so the queue still holds exactly one -200, unchanged for callers.
+     *
+     * What changes is that the explanation no longer goes out on the wire. The old
+     * body wrote a bare "Not Implemented!" onto the interface, which is neither a
+     * SCPI response nor terminated, so it ran straight into the transport's own
+     * error line and a client read "Not Implemented!**ERROR: -200, ...". Per the
+     * project rule, an error travels as a code and is explained via SYST:LOG?,
+     * never as data in the response stream. */
+    SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
     return SCPI_RES_ERR;
 }
 
