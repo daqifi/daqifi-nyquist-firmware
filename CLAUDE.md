@@ -247,9 +247,12 @@ Services Layer
    - Entry point: `services/SCPI/SCPIInterface.c`
    - Modules: SCPIADC, SCPIDIO, SCPILAN, SCPIStorageSD
    - Used for device configuration and control
-   - **SCPI Abbreviation Rule**: Commands can be abbreviated based on the capitalization in the full command. The abbreviated command must contain all letters that are in CAPS. For example:
-     - `SYST:COMM:LAN:NETMode` can be abbreviated as `SYST:COMM:LAN:NETM`
-     - `SYST:COMM:LAN:APPLy` can be abbreviated as `SYST:COMM:LAN:APPL`
+   - **SCPI Abbreviation Rule**: each node has exactly **two** legal spellings — the **full** node, or the node **truncated at its first lowercase letter**. Nothing in between. Per node, `UPPERCASElowercase` accepts `UPPERCASElowercase` and `UPPERCASE` only:
+     - `SYST:COMM:LAN:NETMode` → `SYST:COMM:LAN:NETM` ✅ (short form)
+     - `SYST:COMM:LAN:APPLy` → `SYST:COMM:LAN:APPL` ✅ (short form)
+     - `CONFigure:ADC:OBDiag` → `CONF:ADC:OBD`, `CONF:ADC:OBDiag`, `CONFigure:ADC:OBD` … ✅ (each node independently full or short)
+     - `CONFigure:ADC:OBDiag` → `CONFig:ADC:OBDiag` ❌ **`-113 Undefined header`** — `CONFig` is neither `CONFigure` nor `CONF`
+     This is **stricter than "must contain all the CAPS"**, which a previous revision of this file stated: that phrasing also permits `NETMod` and `CONFig`, which the device rejects. The authority is `matchPattern` in `firmware/src/libraries/scpi/libscpi/src/utils.c:478` — `compareStr(full) || compareStr(short)`, where `compareStr` (`utils.c:347`) requires the lengths to be **equal**, so a partial prefix matches neither arm. `tools/lint/scpi_wiki_sync.py` implements this rule and pins it in `--self-test`.
 
 2. **USB CDC** - Virtual COM port communication
    - Implementation: `services/UsbCdc/UsbCdc.c`
@@ -352,6 +355,30 @@ New code, docs, and the wiki should use the canonical forms. Existing client lib
 #### SCPI Wiki Maintenance
 
 **When adding, modifying, or removing SCPI commands, ALWAYS update the GitHub wiki SCPI reference page.**
+
+This is now **enforced in CI** (`.github/workflows/scpi-wiki-sync.yml` →
+`tools/lint/scpi_wiki_sync.py`), because writing it down was not enough: an
+audit in August 2026 found the two had drifted in *both* directions — 37
+shipped commands with no wiki entry at all (including the entire
+`DIO:EVENt:*` and `DIO:COUNter:*` families), and 11 documented commands that
+were not registered, two of them the **old names of a renamed pair**
+(`SYSTem:DIOProbe:ASSign` → `MODE`/`ROUTe`), so following the reference
+returned `-113`.
+
+The gate runs only when `SCPIInterface.c` or the checker changes. It compares
+the *registered* patterns (comments stripped — the file has 16 commented-out
+`.pattern` entries that are **not** shipped) against the wiki, accepting either
+the full or the caps-only abbreviated form. A wiki row for an unregistered
+command is allowed only if the row says `NOT IMPLEMENTED` and why. Run it
+locally with:
+
+```bash
+git clone https://github.com/daqifi/daqifi-nyquist-firmware.wiki.git /tmp/daqifi-wiki
+python3 tools/lint/scpi_wiki_sync.py --wiki /tmp/daqifi-wiki
+```
+
+Because the wiki is a separate repo, the wiki edit cannot ride in the same PR —
+push it before merging, which is precisely the step this gate exists to catch.
 
 The wiki lives in a separate repo:
 ```bash

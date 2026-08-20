@@ -1,0 +1,11 @@
+# SCPI commands deliberately NOT published in the wiki reference.
+#
+# One command per line, exactly as it appears in the .pattern string.
+# Everything after a '#' is a comment. An entry here must say WHY -- an
+# unexplained line is indistinguishable from an oversight, which is the
+# failure mode tools/lint/scpi_wiki_sync.py exists to catch.
+#
+# Empty on purpose: as of the audit that added this checker, every
+# registered command is documented. Prefer documenting a command (with a
+# warning if it is dangerous or diagnostic) over hiding it -- CLAUDE.md's
+# SCPI visibility principle is to maximise insight into device health.
