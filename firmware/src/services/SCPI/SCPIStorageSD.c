@@ -302,6 +302,35 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
         }
         LOG_D("SD:ENAble - Disabling SD card manager\r\n");
         pSDCardRuntimeConfig->enable = false;
+
+        /* #759: do not leave streaming aimed at an interface that can no
+         * longer deliver. SCPI_SetStreamInterface REFUSES to select SD or
+         * USB+SD while SD is disabled -- so that combination is already
+         * understood to be invalid; it was simply still reachable by
+         * disabling SD afterwards, and nothing put it right.
+         *
+         * The consequence was silent, which is what made it expensive. The
+         * streaming task gates the USB write on ActiveInterface == USB, so a
+         * client that reconnects over USB and starts a stream gets a
+         * SUCCESSFUL start, `SYST:ERRor?` reading 0,"No error", and no data
+         * at all -- which reaches the host as "the device did not report its
+         * channel configuration". Measured on the bench: 5169 bytes in 2 s
+         * with the interface on USB, 8 bytes (the echo alone) with a
+         * stranded SD selection, 5130 bytes again once it is put back.
+         *
+         * Fall back to USB rather than to the streaming default, because USB
+         * is the interface that is always available. Only the two SD-bearing
+         * selections are touched; WiFi is left alone, since disabling the SD
+         * card says nothing about it. */
+        StreamingRuntimeConfig *pStreamCfg =
+                BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+        if (pStreamCfg->ActiveInterface == StreamingInterface_SD ||
+            pStreamCfg->ActiveInterface == StreamingInterface_UsbAndSd) {
+            LOG_E("SD:ENAble 0 - streaming interface was %d (SD); falling back "
+                  "to USB so the stream still has somewhere to go (#759)",
+                  (int)pStreamCfg->ActiveInterface);
+            pStreamCfg->ActiveInterface = StreamingInterface_USB;
+        }
     }
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
