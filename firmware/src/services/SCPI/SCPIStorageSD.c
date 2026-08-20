@@ -713,8 +713,25 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
+        /* #799: same critical section as SCPI_StorageSDDirectorySet, for the
+         * same reason. This is a two-step write (copy, then terminator) to a
+         * field the new SD:DIRectory? getter reads from the OTHER SCPI
+         * transport -- USB is priority 7, WiFi TCP is 2, and there is no
+         * shared dispatch mutex between them. A reader landing between the
+         * steps sees new-prefix + old-suffix, ended by the old terminator: a
+         * well-formed path naming a directory nobody asked for.
+         *
+         * Guarding the reader alone cannot fix this -- it only guarantees the
+         * reader sees a STABLE buffer, not a coherent one. All three sites
+         * that touch this field are now symmetric.
+         *
+         * NOTE this does not change WHETHER SD:LISt? writes the field, which
+         * is #799 part 3 and needs a client survey. Only that the write other
+         * tasks observe is indivisible -- invisible to clients. */
+        taskENTER_CRITICAL();
         memcpy(pSDCardRuntimeConfig->directory, pBuff, fileLen);
         pSDCardRuntimeConfig->directory[fileLen] = '\0';
+        taskEXIT_CRITICAL();
     }
     // If no directory specified, the sd_card_manager will use the default from settings
     
