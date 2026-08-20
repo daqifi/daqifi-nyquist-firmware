@@ -1530,19 +1530,96 @@ void sd_card_manager_ProcessState() {
             break;
 
         case SD_CARD_MANAGER_PROCESS_STATE_CREATE_DIRECTORY:
-            if (SYS_FS_DirectoryMake(gpSDCardSettings->directory) == SYS_FS_RES_FAILURE) {
-                if (SYS_FS_Error() == SYS_FS_ERROR_EXIST) {
-                    LOG_D("[SD] Directory '%s' already exists\r\n", gpSDCardSettings->directory);
-                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
-                } else {
-                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                    LOG_E("[%s:%d]Invalid SD Card Directory name '%s'", __FILE__, __LINE__, gpSDCardSettings->directory);
+            /* #797: only a WRITE may create the directory. Every mode routes
+             * through this state, so a read-only operation used to CREATE the
+             * thing it had been asked to look at -- `SD:LISt? "TYPO"` made
+             * TYPO, then truthfully reported it empty, and left it on the
+             * card. Two bugs in one: a query that modifies the card, and a
+             * host that cannot tell "that directory is empty" from "that
+             * directory is not there", because the firmware had just made the
+             * second answer into the first.
+             *
+             * With the create gone, DirOpen fails for a path that is not
+             * there and the walk reports SD_LISTDIR_FAILED -- `I could not
+             * look`, which is what #796's FAILED marker already means. A
+             * WRITE still creates its target directory, so the first stream
+             * after a format works exactly as before. */
+            /* #797: only a WRITE may create the directory. Every mode routes
+             * through this state, so a read-only operation used to CREATE the
+             * thing it had been asked to look at -- `SD:LISt? "TYPO"` made
+             * TYPO, then truthfully reported it empty, and left it on the
+             * card. Two bugs in one: a query that modifies the card, and a
+             * host that cannot tell "that directory is empty" from "that
+             * directory is not there", because the firmware had just made the
+             * second answer into the first.
+             *
+             * With the create gone, DirOpen fails for a path that is not there
+             * and the walk reports SD_LISTDIR_FAILED -- `I could not look`,
+             * which is what #796's FAILED marker already means. A WRITE still
+             * creates its target directory, so the first stream after a format
+             * works exactly as before.
+             *
+             * The state stores below are plain, like the other ~56 in this
+             * function: #800's gSdTeardownRequested flag, consumed once per
+             * iteration at the top, is what keeps a teardown from being
+             * clobbered. An earlier revision of this PR guarded each store
+             * here with its own critical section, which duplicated that
+             * mechanism using precisely the per-site approach #800 argued
+             * against.
+             *
+             * The critical section that DOES remain covers only the snapshot,
+             * and for a different hazard: sd_card_manager_UpdateSettings()
+             * memcpy's the WHOLE settings struct from SCPI (pri 7), so reading
+             * the mode and the name separately -- or handing FatFs a pointer
+             * into the live struct across a filesystem call -- can create a
+             * directory under a torn name. Read both once, together. */
+            {
+                sd_card_manager_mode_t dirMode;
+                char dirName[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1];
+
+                taskENTER_CRITICAL();
+                dirMode = gpSDCardSettings->mode;
+                (void)strncpy(dirName, gpSDCardSettings->directory,
+                              sizeof(dirName) - 1u);
+                dirName[sizeof(dirName) - 1u] = '\0';
+                taskEXIT_CRITICAL();
+
+                if (dirMode != SD_CARD_MANAGER_MODE_WRITE) {
+                    LOG_D("[SD] Not creating '%s': mode %d is read-only\r\n",
+                          dirName, (int)dirMode);
+                    gSDCardData.currentProcessState =
+                            SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+                    break;
                 }
-                /* Error while creating a new drive */
-            } else {
-                LOG_D("[SD] Created directory '%s'\r\n", gpSDCardSettings->directory);
-                /* Open a file for writing. */
-                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+
+                if (SYS_FS_DirectoryMake(dirName) == SYS_FS_RES_FAILURE) {
+                    /* Read the error ONCE. SYS_FS_Error() returns a shared
+                     * global, so calling it again for the log can report a
+                     * different fault than the one that selected the branch --
+                     * worse than no code at all, because it looks
+                     * authoritative. */
+                    SYS_FS_ERROR mkdirErr = SYS_FS_Error();
+
+                    if (mkdirErr == SYS_FS_ERROR_EXIST) {
+                        LOG_D("[SD] Directory '%s' already exists\r\n", dirName);
+                        gSDCardData.currentProcessState =
+                                SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+                    } else {
+                        /* This branch is reached for EVERY DirectoryMake
+                         * failure that is not EXIST -- media faults, a full
+                         * root directory, an I/O error -- so the old
+                         * "Invalid SD Card Directory name" sent operators
+                         * after a naming problem that usually is not there. */
+                        gSDCardData.currentProcessState =
+                                SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                        LOG_E("[%s:%d]SD DirectoryMake('%s') failed, SYS_FS_Error=%d",
+                              __FILE__, __LINE__, dirName, (int)mkdirErr);
+                    }
+                } else {
+                    LOG_D("[SD] Created directory '%s'\r\n", dirName);
+                    gSDCardData.currentProcessState =
+                            SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+                }
             }
             break;
 
