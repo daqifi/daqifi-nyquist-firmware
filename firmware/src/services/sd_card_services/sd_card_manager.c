@@ -1851,10 +1851,33 @@ void sd_card_manager_ProcessState() {
 
                 // Now clear the buffer — streaming task won't write here
                 // because gSdFileWasReady is already false.
+                /* #757: reset the buffer's BOOKKEEPING, not its bytes.
+                 *
+                 * Every rotation used to zero two backing stores here, and
+                 * neither zero is load-bearing: nothing reads either buffer
+                 * past a length that is reset alongside it. CircularBuf_Reset
+                 * already makes the circular buffer logically empty (head,
+                 * tail and count), and no reader looks beyond count. The write
+                 * buffer is only ever emitted as its first writeBufferLength
+                 * bytes, which is zeroed three lines below -- and the comment
+                 * there records that the 'junk bytes in the new file' bug was
+                 * fixed by resetting sdCardWritePending/writeBufferLength, not
+                 * by this memset.
+                 *
+                 * The cost was not small. writeBuffer is the COHERENT (KSEG1,
+                 * uncached) DMA buffer -- ~78 KB when SD is the only active
+                 * interface -- so zeroing it is an uncached write of every
+                 * byte, with no cache-line benefit, on the SD task at
+                 * priority 5. It runs inside the rotation window, during which
+                 * sd_card_manager_IsWriteReady() is false, the encoder forces
+                 * sdSize = 0, and every packet encoded is counted as an SD
+                 * drop (#757). Per-rotation loss is proportional to the length
+                 * of that window, so time spent here is data lost.
+                 *
+                 * The mutex is still taken: CircularBuf_Reset mutates state the
+                 * streaming task reads. */
                 SD_TakeMutexDebug(gSDCardData.wMutex, "open_file_clear_buffer");
                 CircularBuf_Reset(&gSDCardData.wCirbuf);
-                memset(gSdSharedBuffer, 0, gSdSharedBufferSize);
-                memset(gSDCardData.writeBuffer, 0, gSDCardData.writeBufferSize);
                 xSemaphoreGive(gSDCardData.wMutex);
 
                 // Reset write pipeline state for clean start.
