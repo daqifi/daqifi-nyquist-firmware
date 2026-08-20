@@ -1515,10 +1515,21 @@ void sd_card_manager_ProcessState() {
             {
                 sd_card_manager_mode_t dirMode;
                 bool skipCreate;
+                char dirName[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1];
 
                 taskENTER_CRITICAL();
                 dirMode = gpSDCardSettings->mode;
                 skipCreate = (dirMode != SD_CARD_MANAGER_MODE_WRITE);
+                /* Snapshot the NAME too, not just the mode. A preempting
+                 * sd_card_manager_UpdateSettings() memcpy's the WHOLE settings
+                 * struct, so passing &gpSDCardSettings->directory[0] straight
+                 * into SYS_FS_DirectoryMake hands FatFs a string that can be
+                 * rewritten underneath it during a long filesystem call --
+                 * creating a directory under a torn name. Copy once, under the
+                 * same lock that decided to create. */
+                (void)strncpy(dirName, gpSDCardSettings->directory,
+                              sizeof(dirName) - 1u);
+                dirName[sizeof(dirName) - 1u] = '\0';
                 if (skipCreate) {
                     /* #797: only a WRITE may create the directory. Every mode
                      * routes through this state, so a read-only operation used
@@ -1546,24 +1557,30 @@ void sd_card_manager_ProcessState() {
                 if (skipCreate) {
                     /* Logging stays OUTSIDE the critical section. */
                     LOG_D("[SD] Not creating '%s': mode %d is read-only\r\n",
-                          gpSDCardSettings->directory, (int)dirMode);
+                          dirName, (int)dirMode);
                     break;
                 }
-            }
 
-            if (SYS_FS_DirectoryMake(gpSDCardSettings->directory) == SYS_FS_RES_FAILURE) {
+            if (SYS_FS_DirectoryMake(dirName) == SYS_FS_RES_FAILURE) {
                 if (SYS_FS_Error() == SYS_FS_ERROR_EXIST) {
-                    LOG_D("[SD] Directory '%s' already exists\r\n", gpSDCardSettings->directory);
+                    LOG_D("[SD] Directory '%s' already exists\r\n", dirName);
                     SD_PublishPostCreateState(SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE);
                 } else {
-                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                    LOG_E("[%s:%d]Invalid SD Card Directory name '%s'", __FILE__, __LINE__, gpSDCardSettings->directory);
+                    /* Guarded like the success paths: if a teardown landed
+                     * during the create, the operation is already dead and
+                     * DEINIT -> UNMOUNT is the clean exit. Recording ERROR
+                     * over it would strand the manager in ERROR for work
+                     * nobody is waiting on -- the same clobber #782 is about,
+                     * just with a different value. */
+                    SD_PublishPostCreateState(SD_CARD_MANAGER_PROCESS_STATE_ERROR);
+                    LOG_E("[%s:%d]Invalid SD Card Directory name '%s'", __FILE__, __LINE__, dirName);
                 }
                 /* Error while creating a new drive */
             } else {
-                LOG_D("[SD] Created directory '%s'\r\n", gpSDCardSettings->directory);
+                LOG_D("[SD] Created directory '%s'\r\n", dirName);
                 /* Open a file for writing. */
                 SD_PublishPostCreateState(SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE);
+            }
             }
             break;
 
