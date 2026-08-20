@@ -59,5 +59,12 @@ jobs:
             exit 1
           fi
 
+      # A ghost row on the SCHEDULED run against main is usually the process
+      # working, not failing: this gate fails a PR whose new command has no wiki
+      # row, so the wiki must be pushed BEFORE that PR merges -- during which
+      # main legitimately documents a command it does not yet register. On a PR
+      # the checkout contains the new command, so a real ghost still fails.
       - name: Compare the command table against the wiki
-        run: python3 tools/lint/scpi_wiki_sync.py --wiki /tmp/daqifi-wiki
+        run: |
+          python3 tools/lint/scpi_wiki_sync.py --wiki /tmp/daqifi-wiki \
+            ${{ github.event_name == 'schedule' && '--ghosts-warn-only' || '' }}

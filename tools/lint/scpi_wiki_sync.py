@@ -96,6 +96,11 @@ def abbreviate(pattern):
     return ":".join(nodes) + ("?" if query else "")
 
 
+def _mandatory(node):
+    """The characters an abbreviation of `node` may not drop: its capitals."""
+    return "".join(c for c in node if c.isupper() or c.isdigit())
+
+
 def is_form_of(written, pattern):
     """True if `written` is a legal way to write `pattern`.
 
@@ -121,10 +126,14 @@ def is_form_of(written, pattern):
     if len(w_nodes) != len(p_nodes):
         return False
     for w, n in zip(w_nodes, p_nodes):
-        caps = "".join(c for c in n if c.isupper() or c.isdigit())
         if not n.upper().startswith(w.upper()):
             return False
-        if len(w) < len(caps):          # dropped a capitalised letter
+        # The prefix must CONTAIN every capital, which is not the same as being
+        # at least as long as the count of them: the capitals are not always
+        # contiguous at the front. `AvNETType` has capitals A,NET,T -- five --
+        # so a length test accepts the five-character `AvNET`, which has
+        # dropped the final T and is not a legal way to write it.
+        if _mandatory(n[:len(w)]) != _mandatory(n):
             return False
     return True
 
@@ -210,14 +219,73 @@ def load_allowlist(path):
     return out
 
 
+SELF_TEST_CASES = [
+    # (written, pattern, expected, why this case exists)
+    ("SYSTem:DEVice:NAME", "SYSTem:DEVice:NAME", True, "full form"),
+    ("SYST:DEV:NAME", "SYSTem:DEVice:NAME", True, "caps-only form"),
+    ("CONF:ADC:OBDiag", "CONFigure:ADC:OBDiag", True,
+     "mixed prefix -- the wiki writes this, and comparing against only the "
+     "full and caps-only forms missed it"),
+    ("SYSTem:DEVice:NAME", "SYSTem:DEVice:NAME?", False,
+     "a setter must not vouch for its query: LAN:DNS1 is registered and "
+     "LAN:DNS1? is not"),
+    ("SYSTem:DEVice:NAME?", "SYSTem:DEVice:NAME", False, "nor the reverse"),
+    ("SYSTem:DEVice:NAME", "SYSTem:DEVice:NAME:SAVE", False,
+     "a parent must not be matched by its child"),
+    ("SYST:DEV:NAM", "SYSTem:DEVice:NAME", False, "dropped a mandatory capital"),
+    ("AvNET", "AvNETType", False,
+     "capitals are not contiguous here (A, NET, T), so a length test wrongly "
+     "accepted this five-character prefix"),
+    ("AvNETType", "AvNETType", True, "the full node still matches"),
+    ("help", "HELP", True, "case-insensitive"),
+    ("*RST", "*RST", True, "IEEE common command"),
+    ("*RS", "*RST", False, "dropped a mandatory capital of an IEEE command"),
+]
+
+
+def self_test():
+    """Check the abbreviation rule against its known cases.
+
+    Kept in the tool rather than a side file so it cannot drift away from the
+    function it covers, and so CI runs it for free.
+    """
+    failures = 0
+    for written, pattern, expected, why in SELF_TEST_CASES:
+        got = is_form_of(written, pattern)
+        if got != expected:
+            failures += 1
+            print(f"  FAIL is_form_of({written!r}, {pattern!r}) = {got}, "
+                  f"expected {expected} -- {why}")
+    if failures:
+        print(f"\n::error::{failures} of {len(SELF_TEST_CASES)} matcher "
+              f"self-tests failed")
+        return 1
+    print(f"self-test: {len(SELF_TEST_CASES)}/{len(SELF_TEST_CASES)} matcher "
+          f"cases pass")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--scpi", default="firmware/src/services/SCPI/SCPIInterface.c")
-    ap.add_argument("--wiki", required=True,
+    ap.add_argument("--self-test", action="store_true",
+                    help="check the abbreviation matcher and exit")
+    ap.add_argument("--wiki",
                     help="path to a clone of the daqifi-nyquist-firmware.wiki repo")
     ap.add_argument("--allow", default="tools/lint/scpi-wiki-allow.txt",
                     help="commands intentionally left out of the wiki")
+    ap.add_argument("--ghosts-warn-only", action="store_true",
+                    help="report ghost rows without failing (for scheduled "
+                         "runs -- see the note in main())")
     args = ap.parse_args()
+
+    if args.self_test:
+        return self_test()
+    if not args.wiki:
+        ap.error("--wiki is required (or use --self-test)")
+
+    if self_test() != 0:      # a broken matcher makes every verdict below junk
+        return 1
 
     live, commented = registered_patterns(args.scpi)
     if not live:
@@ -237,7 +305,12 @@ def main():
         p for p in live
         if p not in allow
         and not any(is_form_of(w, p) for w in written)
-        and not any(is_form_of(t, p) for t in tokens))
+        # The prose fallback is deliberately limited to MULTI-NODE commands.
+        # A single-node one is an ordinary English word -- `help` -- or a short
+        # token, so any page of prose would vouch for it and the check would be
+        # meaningless exactly where it is easiest to satisfy honestly. Those
+        # must have a table row.
+        and not (":" in p and any(is_form_of(t, p) for t in tokens)))
 
     # "Documented" means a command TABLE ROW names it. Searching the whole page
     # instead let a command pass on a passing mention inside another command's
@@ -252,6 +325,7 @@ def main():
     print(f"commented-out patterns   : {len(commented)} (not shipped, ignored)")
     print(f"wiki command rows        : {len(rows)}")
 
+    fatal_ghosts = ghosts and not args.ghosts_warn_only
     if not undocumented and not ghosts:
         print("\nOK: the wiki and the command table agree.")
         return 0
@@ -267,15 +341,23 @@ def main():
         print("  with a comment saying why.")
 
     if ghosts:
-        print(f"\n::error::{len(ghosts)} wiki command(s) are NOT registered in "
-              f"the firmware -- calling them returns -113:")
+        # Warn-only exists for the SCHEDULED run against main, and the reason is
+        # a real ordering trap: this gate fails a PR whose new command has no
+        # wiki row, so the wiki must be pushed BEFORE that PR merges -- during
+        # which main legitimately has a wiki entry for a command it does not yet
+        # register. Failing the weekly run for that would punish following the
+        # process. On a PR the checkout contains the new command, so a genuine
+        # ghost still fails there.
+        level = "warning" if args.ghosts_warn_only else "error"
+        print(f"\n::{level}::{len(ghosts)} wiki command(s) are NOT registered "
+              f"in the firmware -- calling them returns -113:")
         for cmd in ghosts:
             print(f"    {cmd}")
         print("\n  Either remove the row, or say 'NOT IMPLEMENTED' in it along")
         print("  with the reason. If the command was RENAMED, update the row to")
         print("  the new name instead of leaving the old one behind.")
 
-    return 1
+    return 1 if (undocumented or fatal_ghosts) else 0
 
 
 if __name__ == "__main__":
