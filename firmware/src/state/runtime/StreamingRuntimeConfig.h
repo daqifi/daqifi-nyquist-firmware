@@ -19,6 +19,20 @@ extern "C" {
          * Appended as a new value rather than changing 2, so existing clients
          * are untouched; opt-in via SYST:STR:FORmat 3. */
         Streaming_CsvCompact=3,
+        /* NOT an encoding -- the count, for bounds checks. Keep it last, and
+         * add new encodings ABOVE it so it stays one past the end.
+         *
+         * #801: SCPI_SetStreamFormat used to name the highest encoding
+         * directly in its range check, which is a second place to remember
+         * when a fifth is added -- and the case that check exists for is
+         * precisely a value the firmware does not know yet. Deriving the
+         * bound from the enum means the two cannot disagree.
+         *
+         * Safe for the switch in Streaming_TransportMaxFreq: it has a
+         * `default` that caps an unrecognised encoding at 1 Hz, so this
+         * member needs no case of its own and could not over-cap if it
+         * somehow arrived. */
+        Streaming_Encoding_COUNT
     } StreamingEncoding;
 
     typedef enum eStreamingInterface

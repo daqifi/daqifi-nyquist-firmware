@@ -3978,9 +3978,14 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
      * A range check rather than a switch because eStreamingEncoding is
      * contiguous, and because the case that matters is a client sending a
      * value THIS firmware does not know yet -- a range check stays correct
-     * when a fifth encoding is appended, and an enumerated list would have to
-     * be remembered. */
-    if (param1 < (int)Streaming_ProtoBuffer || param1 > (int)Streaming_CsvCompact) {
+     * when a fifth encoding is appended, where an enumerated list has to be
+     * remembered.
+     *
+     * Bounded by the enum's own COUNT rather than by naming the highest
+     * encoding here, so adding one does not leave a second place to update
+     * (Qodo). */
+    if (param1 < (int)Streaming_ProtoBuffer
+            || param1 >= (int)Streaming_Encoding_COUNT) {
         LOG_E("Stream format %d is not a known encoding (0=PB, 1=JSON, "
               "2=CSV, 3=CsvCompact)", param1);
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
