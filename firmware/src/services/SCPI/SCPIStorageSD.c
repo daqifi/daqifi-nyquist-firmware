@@ -302,6 +302,13 @@ scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context){
         }
         LOG_D("SD:ENAble - Disabling SD card manager\r\n");
         pSDCardRuntimeConfig->enable = false;
+
+        /* #759: the card is going away -- do not leave streaming aimed at it.
+         * The same release is needed from the SD task's two internal
+         * auto-disables (mount failure, unsupported filesystem), which an
+         * adversarial audit found the first version of this fix had missed, so
+         * the logic lives in one helper rather than three copies. */
+        Streaming_SdInterfaceReleased();
     }
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);

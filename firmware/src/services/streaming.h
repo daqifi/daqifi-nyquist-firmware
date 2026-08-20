@@ -497,6 +497,11 @@ void TimestampTimer_Init( void );
  * Resets the SD protobuf metadata flag so the next SD log file
  * gets a self-describing metadata header as its first message.
  */
+/* #759: release a streaming selection that points at the SD card once the card
+ * is no longer available. Safe to call from any task; no-op unless the active
+ * interface is SD or USB+SD. */
+void Streaming_SdInterfaceReleased(void);
+
 void Streaming_ResetSdPbMetadata(void);
 
 // #388 — Compile-time profiling counters for the PB streaming hot path.

@@ -4162,27 +4162,51 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
     sd_card_manager_settings_t* pSDCardSettings =
         BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
-    // Check if SD card is enabled when trying to use SD or USB+SD interfaces
-    if (param1 == StreamingInterface_SD || param1 == StreamingInterface_UsbAndSd) {
-        if (!pSDCardSettings->enable) {
-            LOG_E("Cannot set SD/USB+SD interface - SD card not enabled. Use SYSTem:STORage:SD:ENAble 1");
-            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-            return SCPI_RES_ERR;
-        }
-    }
+    /* #759: test the card's state and publish the selection in ONE atomic
+     * step. Checked separately, the SD-enabled test below and the store at the
+     * end are ~20 lines apart, and an SD disable can land between them --
+     * either SYST:STOR:SD:ENAble 0 from the other SCPI transport, or the SD
+     * task's own auto-disable on a mount failure. The release helper those
+     * paths call cannot see a selection that has passed its check but not yet
+     * been stored, so the store lands afterwards and recreates exactly the
+     * ActiveInterface = SD, SD disabled pairing this refusal exists to
+     * prevent -- the #759 strand, through the one door the helper cannot
+     * watch.
+     *
+     * Both operands are 32-bit and individually atomic on PIC32MZ; it is the
+     * read-decide-write across two objects that is not.
+     *
+     * Logging and the SCPI error stay OUTSIDE the section. */
+    bool rejectSdNotEnabled = false;
+    bool rejectWifiDuringSdWrite = false;
 
-    /* WiFi+SD SPI conflict: only a risk when switching explicitly to
-     * WiFi while SD is actively writing. Interface_All is USB+SD now
-     * (no WiFi), so no check needed for All. */
-    if (param1 == StreamingInterface_WiFi) {
-        if (pSDCardSettings->enable && pSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
-            LOG_E("Cannot switch to WiFi while SD streaming is active (SPI bus conflict). Stop streaming first.");
-            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-            return SCPI_RES_ERR;
-        }
+    taskENTER_CRITICAL();
+    if ((param1 == StreamingInterface_SD ||
+         param1 == StreamingInterface_UsbAndSd) && !pSDCardSettings->enable) {
+        // Cannot stream to a card that is not enabled.
+        rejectSdNotEnabled = true;
+    } else if (param1 == StreamingInterface_WiFi &&
+               pSDCardSettings->enable &&
+               pSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+        /* WiFi+SD SPI conflict: only a risk when switching explicitly to
+         * WiFi while SD is actively writing. Interface_All is USB+SD now
+         * (no WiFi), so no check needed for All. */
+        rejectWifiDuringSdWrite = true;
+    } else {
+        pRunTimeStreamConfig->ActiveInterface = (StreamingInterface) param1;
     }
+    taskEXIT_CRITICAL();
 
-    pRunTimeStreamConfig->ActiveInterface = (StreamingInterface) param1;
+    if (rejectSdNotEnabled) {
+        LOG_E("Cannot set SD/USB+SD interface - SD card not enabled. Use SYSTem:STORage:SD:ENAble 1");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+    if (rejectWifiDuringSdWrite) {
+        LOG_E("Cannot switch to WiFi while SD streaming is active (SPI bus conflict). Stop streaming first.");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
     return SCPI_RES_OK;
 }
 

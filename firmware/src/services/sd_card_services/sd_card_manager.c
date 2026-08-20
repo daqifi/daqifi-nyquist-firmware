@@ -1220,6 +1220,9 @@ void sd_card_manager_ProcessState() {
                         if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
                             LOG_E("[SD] SD disabled - re-run SYST:STOR:SD:ENAble 1 after inserting/fixing the card");
                             gpSDCardSettings->enable = false;
+                            /* #759: the card is gone; do not leave streaming
+                             * aimed at it (see Streaming_SdInterfaceReleased). */
+                            Streaming_SdInterfaceReleased();
                         }
                         gSDCardData.lastOperationSuccess = false;
                         gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
@@ -1245,6 +1248,8 @@ void sd_card_manager_ProcessState() {
                          * enable; a read-only query must not disarm SD. */
                         if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
                             gpSDCardSettings->enable = false;
+                            /* #759: unusable filesystem is unusable card. */
+                            Streaming_SdInterfaceReleased();
                         }
                         gSDCardData.lastOperationSuccess = false;
                         gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
