@@ -1099,7 +1099,45 @@ static bool sd_TargetExistsInBucketPath(const char* bucketPath, bool* fsError) {
     return ((st.fattrib & SYS_FS_ATTR_DIR) == 0);
 }
 
+/* #800: a teardown raised while the SD task is mid-transition must not be lost.
+ *
+ * sd_card_manager_UpdateSettings() and sd_card_manager_Deinit() run on the
+ * CALLER's task and tear a session down by forcing
+ * currentProcessState = DEINIT. The SD task writes that same field
+ * unconditionally from ~56 sites, in the shape "decide, then store NEXT_STATE".
+ * A teardown landing between a decision and its store is therefore silently
+ * OVERWRITTEN: the operation the teardown existed to stop carries on, does the
+ * filesystem work, and ends in ERROR instead of unmounting cleanly. Nothing
+ * logs it, because from the SD task's point of view nothing happened.
+ *
+ * A flag cannot be clobbered that way. The store that loses the state does not
+ * touch it, so the request survives and is honoured at the next iteration.
+ *
+ * Why this rather than a critical section at each store: #782 fixed exactly one
+ * site that way (see OPEN_FILE), and its comment is right that the compare and
+ * the store must be one atomic step. Doing that ~56 times would be 56 chances
+ * to get it wrong, and it would still leave any site added later unprotected.
+ * This is one check, at the one place every iteration passes through.
+ *
+ * The residual, stated rather than glossed: the teardown is honoured on the
+ * NEXT iteration, so at most one further state transition runs first. That
+ * bounds the damage to a single step instead of a whole operation -- it does
+ * not make the handoff instantaneous. A truly synchronous teardown needs the
+ * per-site atomicity above, which is a bigger change than this issue warrants.
+ *
+ * volatile: written by the caller's task, read by the SD task. A bool store is
+ * atomic on PIC32MZ, and the read-then-clear below is single-writer (SD task
+ * only), so a concurrent set is preserved for the next pass rather than lost --
+ * no critical section is needed for the flag itself. */
+static volatile bool gSdTeardownRequested = false;
+
 void sd_card_manager_ProcessState() {
+    /* #800: honour a teardown that raced a state store, before dispatching. */
+    if (gSdTeardownRequested) {
+        gSdTeardownRequested = false;
+        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
+    }
+
     /* Check the application's current state. */
 
     switch (gSDCardData.currentProcessState) {
@@ -2765,8 +2803,11 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
 }
 
 bool sd_card_manager_Deinit() {
-    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
+    /* enable BEFORE the state, so the SD task can never observe
+     * "DEINIT but still enabled" and re-arm off the stale flag. */
     gpSDCardSettings->enable = 0;
+    gSdTeardownRequested = true;   /* #800: survives a racing state store */
+    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
     return true;
 }
 
@@ -2850,6 +2891,28 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
     // consuming a signal that an in-flight WaitForCompletion is expecting
     if (sd_card_manager_IsIdle() && gSDCardData.opCompleteSemaphore != NULL) {
         xSemaphoreTake(gSDCardData.opCompleteSemaphore, 0);
+    }
+    /* #800: raise the sticky flag ONLY for an actual teardown.
+     *
+     * This function forces DEINIT on EVERY non-refused call -- arming a new
+     * operation goes through here too, and DEINIT is how the machine restarts
+     * into it. Raising the flag unconditionally would therefore let a request
+     * belonging to one call be consumed during the next, re-asserting DEINIT
+     * after the machine had already moved on. It happens to be harmless today
+     * (every caller of this function wants DEINIT anyway, and nothing outside
+     * the SD task advances the state -- sd_card_manager_Init runs once at
+     * boot), but that is an argument from the current call graph, not from the
+     * flag's own meaning.
+     *
+     * mode == NONE is the teardown signature -- it is how the timeout and
+     * shutdown paths tear an operation down, and the reason the race in #800 is
+     * reachable at all. Scoping the flag to it keeps the mechanism matching its
+     * name, and keeps a future caller from inheriting a teardown it never asked
+     * for. Arming paths keep the plain (clobberable) DEINIT they had before;
+     * protecting those is a different problem from the one #800 describes. */
+    if (gpSDCardSettings == NULL ||
+        gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_NONE) {
+        gSdTeardownRequested = true;
     }
     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
     return true;
