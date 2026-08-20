@@ -591,7 +591,22 @@ The firmware computes a maximum safe streaming frequency as a `min()` of an **AD
 
 **Effective limit (NQ2/NQ3):** `min(ISR_MAX 16000, 55000/type1Count, 110000/(6+totalEnabled), TransportMax(interface, encoding, n), ScanBounds(scan list, SAMC))`
 
-**Transport term** (`Streaming_TransportMaxFreq`, streaming.h — #524): single-channel special-cased + `A/(B+n)` for n≥2 ("F3"), fitted ≤ the measured zero-loss ceilings (tightness 86–100%). JSON uses the CSV coefficients ×0.5 (uncharacterized — conservative; emits 2–3× CSV bytes/sample; measuring it is a tracked #524 follow-up).
+**Transport term** (`Streaming_TransportMaxFreq`, streaming.h — #524): single-channel special-cased + `A/(B+n)` for n≥2 ("F3"), fitted ≤ the measured zero-loss ceilings (tightness 86–100%).
+
+**The four encodings** (`eStreamingEncoding`, `StreamingRuntimeConfig.h`; `SYST:STR:FORmat <n>`). Bytes/sample measured on the bench 2026-08-19, USB, pattern 3, well below any ceiling so the figures are honest per-sample sizes. Ratios are computed from the figures shown, so they recompute:
+
+| n | encoding | 1ch | 5ch | 16ch | vs CSV @1ch / @16ch | cap treatment |
+|--:|---|--:|--:|--:|---|---|
+| 0 | ProtoBuffer | 10.9 B | 18.7 B | 40.4 B | 0.69× / 0.16× | own coefficients |
+| 1 | Json | 49.3 B | 137.0 B | 381.6 B | **3.12× / 1.51×** | CSV coefficients ×0.5 (uncharacterized, #529) |
+| 2 | Csv | 15.8 B | 78.9 B | 252.4 B | 1.00× / 1.00× | own coefficients |
+| 3 | CsvCompact | 14.8 B | 35.6 B | 89.7 B | 0.94× / **0.36×** | CSV coefficients unchanged (conservative, #619) |
+
+`CsvCompact` (#619) is CSV with ONE leading `timestamp` column instead of a per-channel `ain<N>_ts` column — the per-channel stamps are all the same value since the compact pool shares one timestamp per sample set. Opt-in; 0/1/2 are unchanged. Its cap uses the CSV coefficients unmodified, which is safe (it emits strictly fewer bytes) but means its wire-rate win is currently unreachable through the enforced cap.
+
+JSON's ratio is **not** a flat "2–3×" — it is ~3.1× at one channel and ~1.5× at sixteen, because the per-row framing amortises as channels grow. It is also **pretty-printed across ~5 lines per sample**, which matters for any host-side row counting: neither CSV row counting nor protobuf frame parsing can see JSON samples (see `count_mode_for` in the test suite's `test_harness.py`).
+
+An unrecognised format value is **rejected** with `-224` since #801/#802; before that it silently selected JSON.
 
 | interface | single (n=1) PB / CSV | A/(B+n) PB | A/(B+n) CSV |
 |-----------|----:|----:|----:|
