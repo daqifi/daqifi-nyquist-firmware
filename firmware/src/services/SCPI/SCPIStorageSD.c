@@ -713,8 +713,25 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
+        /* #799: same critical section as SCPI_StorageSDDirectorySet, for the
+         * same reason. This is a two-step write (copy, then terminator) to a
+         * field the new SD:DIRectory? getter reads from the OTHER SCPI
+         * transport -- USB is priority 7, WiFi TCP is 2, and there is no
+         * shared dispatch mutex between them. A reader landing between the
+         * steps sees new-prefix + old-suffix, ended by the old terminator: a
+         * well-formed path naming a directory nobody asked for.
+         *
+         * Guarding the reader alone cannot fix this -- it only guarantees the
+         * reader sees a STABLE buffer, not a coherent one. All three sites
+         * that touch this field are now symmetric.
+         *
+         * NOTE this does not change WHETHER SD:LISt? writes the field, which
+         * is #799 part 3 and needs a client survey. Only that the write other
+         * tasks observe is indivisible -- invisible to clients. */
+        taskENTER_CRITICAL();
         memcpy(pSDCardRuntimeConfig->directory, pBuff, fileLen);
         pSDCardRuntimeConfig->directory[fileLen] = '\0';
+        taskEXIT_CRITICAL();
     }
     // If no directory specified, the sd_card_manager will use the default from settings
     
@@ -1406,6 +1423,134 @@ scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
 
 __exit_point:
     return result;
+}
+
+/**
+ * @brief Read the SD working directory (#799)
+ *
+ * Command: SYST:STOR:SD:DIRectory?
+ *
+ * This field is the device's SD working directory: logging writes into it,
+ * and SD:GET, SD:DELete and SD:CRC interpret their operands relative to it.
+ * Until now there was no way to READ it -- so a host was subject to a value
+ * it could neither observe before an operation nor restore afterwards, and
+ * the only way to change it was the side effect of a SD:LISt? query.
+ *
+ * This getter is deliberately the first of the three pieces in #799: it is
+ * purely additive, it breaks nothing, and it is what makes the other two
+ * testable at all. Stopping SD:LISt? from writing the field (#799 part 3) is
+ * a behaviour change that needs a client survey first and is NOT done here.
+ */
+scpi_result_t SCPI_StorageSDDirectoryGet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    char snapshot[sizeof(pSDCardRuntimeConfig->directory)];
+
+    /* Copy under a critical section, then emit. SCPI runs on two transports
+     * (USB pri 7, WiFi TCP pri 2), so the setter below can be writing this
+     * buffer while this reads it. See the setter for what a reader would
+     * otherwise observe. */
+    taskENTER_CRITICAL();
+    memcpy(snapshot, pSDCardRuntimeConfig->directory, sizeof(snapshot));
+    taskEXIT_CRITICAL();
+    snapshot[sizeof(snapshot) - 1u] = '\0';
+
+    SCPI_ResultText(context, snapshot);
+    return SCPI_RES_OK;
+}
+
+/**
+ * @brief Set the SD working directory explicitly (#799)
+ *
+ * Command: SYST:STOR:SD:DIRectory "<path>"
+ *
+ * Before this, the ONLY way to change the working directory was to issue a
+ * SD:LISt? for its side effect -- a query changing device state, which also
+ * made an ordinary browse silently retarget the next SD:GET, SD:DELete,
+ * SD:CRC and capture. Having a real setter means changing it is something a
+ * caller ASKS for.
+ *
+ * Validation is deliberately the same pair SD:LISt? already applies to the
+ * same field -- the length bound and SD_ValidatePathParam (#612) -- rather
+ * than a second, subtly different rule for the same value.
+ */
+scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    const char *pBuff = NULL;
+    size_t pathLen = 0;
+
+    if (!SCPI_ParamCharacters(context, &pBuff, &pathLen, TRUE)) {
+        return SCPI_RES_ERR;   /* libscpi has already pushed the parse error */
+    }
+
+    if (pathLen >= sizeof(pSDCardRuntimeConfig->directory)) {
+        LOG_E("SD:DIRectory - path too long: %lu bytes, max %lu",
+              (unsigned long)pathLen,
+              (unsigned long)(sizeof(pSDCardRuntimeConfig->directory) - 1));
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    if (!SD_ValidatePathParam(pBuff, pathLen)) {   /* #612 */
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    /* Refuse while an SD operation owns the card -- which includes an active
+     * logging session, since IsBusy() is true for any mode != NONE.
+     *
+     * The directory is re-read at every file OPEN, not just the first, so
+     * retargeting it mid-session would land the next rotated part
+     * ("<name>-1.csv", generateFilename) in a different folder from the part
+     * before it. That splits one logical capture across two directories,
+     * where the tooling that reassembles a split set groups by name WITHIN a
+     * directory. Rejecting costs the caller nothing -- set the directory
+     * before starting -- and is the same guard the other SD entry points in
+     * this file already apply. */
+
+
+    /* Config-only write, deliberately NOT followed by
+     * sd_card_manager_UpdateSettings(): that call forces the SD state machine
+     * to DEINIT -> UNMOUNT_DISK, closing any open file and truncating it on
+     * the next open. SCPI_StorageSDMinFreeSet documents the same reasoning for
+     * the same struct. The manager holds a POINTER to this very object
+     * (gpSDCardSettings = pSettings, sd_card_manager.c), so the write is
+     * visible to it without any notification. */
+    /* Publish as ONE indivisible update. The copy and the terminator are two
+     * steps over a buffer another task reads (the getter above, the SD
+     * manager's dirValid check, SD_StripConfiguredDir), and SCPI runs on two
+     * transports at different priorities.
+     *
+     * To be precise about the hazard, because it is NOT an overrun: every
+     * writer stores at most 40 characters plus a terminator into a 41-byte
+     * array, so a NUL always exists at index <= 40 and strlen cannot run off
+     * the end. What a reader CAN see is a SPLICED path -- when the previous
+     * name was longer than the new one, the old tail survives past the bytes
+     * just copied and the old terminator ends it, so a reader between the two
+     * steps observes new-prefix + old-suffix. That is a well-formed string
+     * naming the wrong directory, which for SD:DELete is the worse outcome of
+     * the two. The copy is <= 41 bytes, so the section is short. */
+    /* The busy test and the write share ONE critical section. Checked
+     * separately, an SD operation could arm in between and the write would
+     * land in a session that had just started -- the exact case the check
+     * exists to prevent. IsBusy() only reads mode and currentProcessState,
+     * so it is safe here; the log stays outside. */
+    bool busy;
+    taskENTER_CRITICAL();
+    busy = sd_card_manager_IsBusy();
+    if (!busy) {
+        memcpy(pSDCardRuntimeConfig->directory, pBuff, pathLen);
+        pSDCardRuntimeConfig->directory[pathLen] = '\0';
+    }
+    taskEXIT_CRITICAL();
+
+    if (busy) {
+        LOG_SD_BUSY("DIRectory");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+    return SCPI_RES_OK;
 }
 
 /**
