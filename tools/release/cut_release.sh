@@ -227,8 +227,12 @@ boot_records=[(a,b) for a,b in spans if b>BOOT_FLASH_LO]
 boot_bytes=sum(b-max(a,BOOT_FLASH_LO) for a,b in boot_records)
 boot_msg='no records at/above 0x1FC00000 (boot flash)'
 if boot_records:
-    boot_msg += ' -- found %d span(s), %d byte(s), first at 0x%08X' % (
-        len(boot_records), boot_bytes, boot_records[0][0])
+    # Report the first OFFENDING address, not the span start: a span may
+    # straddle the boundary (start below 0x1FC00000, end above), and printing
+    # its start contradicts the message and points at an address that is not
+    # the problem.
+    boot_msg += ' -- found %d span(s), %d byte(s), first offending addr 0x%08X' % (
+        len(boot_records), boot_bytes, max(boot_records[0][0], BOOT_FLASH_LO))
 chk(not boot_records, boot_msg)
 sys.exit(0 if ok else 1)
 PY

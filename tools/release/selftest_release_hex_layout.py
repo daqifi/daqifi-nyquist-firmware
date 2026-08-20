@@ -59,7 +59,10 @@ def run(validator, chunks):
     try:
         p = subprocess.run([sys.executable, "-c", validator, path],
                            capture_output=True, text=True)
-        return p.returncode, p.stdout
+        # Return BOTH streams. If the extracted validator raises, the traceback
+        # goes to stderr -- dropping it leaves a failing test with nothing to
+        # debug from, which is the failure mode this self-test exists to catch.
+        return p.returncode, (p.stdout or '') + (p.stderr or '')
     finally:
         os.unlink(path)
 
