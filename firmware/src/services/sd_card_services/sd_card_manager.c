@@ -1562,7 +1562,13 @@ void sd_card_manager_ProcessState() {
                 }
 
             if (SYS_FS_DirectoryMake(dirName) == SYS_FS_RES_FAILURE) {
-                if (SYS_FS_Error() == SYS_FS_ERROR_EXIST) {
+                /* Read the error ONCE. SYS_FS_Error() returns a shared global,
+                 * so calling it again for the log can report a different fault
+                 * than the one that selected the branch -- which is worse than
+                 * no code at all, because it looks authoritative. */
+                SYS_FS_ERROR mkdirErr = SYS_FS_Error();
+
+                if (mkdirErr == SYS_FS_ERROR_EXIST) {
                     LOG_D("[SD] Directory '%s' already exists\r\n", dirName);
                     SD_PublishPostCreateState(SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE);
                 } else {
@@ -1579,7 +1585,7 @@ void sd_card_manager_ProcessState() {
                      * asserting "invalid name" sent operators after a naming
                      * problem that usually is not there. */
                     LOG_E("[%s:%d]SD DirectoryMake('%s') failed, SYS_FS_Error=%d",
-                          __FILE__, __LINE__, dirName, (int)SYS_FS_Error());
+                          __FILE__, __LINE__, dirName, (int)mkdirErr);
                 }
                 /* Error while creating a new drive */
             } else {
