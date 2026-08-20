@@ -353,6 +353,30 @@ New code, docs, and the wiki should use the canonical forms. Existing client lib
 
 **When adding, modifying, or removing SCPI commands, ALWAYS update the GitHub wiki SCPI reference page.**
 
+This is now **enforced in CI** (`.github/workflows/scpi-wiki-sync.yml` →
+`tools/lint/scpi_wiki_sync.py`), because writing it down was not enough: an
+audit in August 2026 found the two had drifted in *both* directions — 37
+shipped commands with no wiki entry at all (including the entire
+`DIO:EVENt:*` and `DIO:COUNter:*` families), and 11 documented commands that
+were not registered, two of them the **old names of a renamed pair**
+(`SYSTem:DIOProbe:ASSign` → `MODE`/`ROUTe`), so following the reference
+returned `-113`.
+
+The gate runs only when `SCPIInterface.c` or the checker changes. It compares
+the *registered* patterns (comments stripped — the file has 16 commented-out
+`.pattern` entries that are **not** shipped) against the wiki, accepting either
+the full or the caps-only abbreviated form. A wiki row for an unregistered
+command is allowed only if the row says `NOT IMPLEMENTED` and why. Run it
+locally with:
+
+```bash
+git clone https://github.com/daqifi/daqifi-nyquist-firmware.wiki.git /tmp/daqifi-wiki
+python3 tools/lint/scpi_wiki_sync.py --wiki /tmp/daqifi-wiki
+```
+
+Because the wiki is a separate repo, the wiki edit cannot ride in the same PR —
+push it before merging, which is precisely the step this gate exists to catch.
+
 The wiki lives in a separate repo:
 ```bash
 git clone https://github.com/daqifi/daqifi-nyquist-firmware.wiki.git /tmp/daqifi-wiki
