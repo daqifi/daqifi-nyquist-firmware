@@ -14,8 +14,16 @@
  *     boot (PMD4<T8MD,T9MD>) and MUST be PMD-ungated before their SFRs respond.
  *   - Timestamps come from TMR6 read directly — the streaming timebase
  *     (TSTimerIndex = TMR_INDEX_6), so an edge and an ADC sample carry the same
- *     clock and correlate by construction. TMR6 only runs while streaming, so a
- *     timestamp is meaningful during a stream; the edge COUNT is the idle signal.
+ *     clock and correlate by construction. TMR6 free-runs from BOOT, not only
+ *     during a stream: Streaming_Init calls TimestampTimer_Init, which ends in
+ *     TimerApi_Start(TSTimerIndex), and nothing ever stops it again
+ *     (Streaming_Stop stops only TimerIndex, the stream trigger). So an idle
+ *     edge timestamp is just as valid and monotonic as one taken mid-stream --
+ *     it simply has no ADC samples to correlate against until a stream runs.
+ *     The counter is 32-bit and wraps, so a consumer differencing two stamps
+ *     must use unsigned wrap arithmetic; the wrap period follows from the
+ *     device-reported timestamp frequency (#730, SYST:SYSInfoPB? timestamp_freq)
+ *     rather than any figure assumed here.
  *
  * Concurrency: the four INT ISRs and the two rollover ISRs all run at priority 3.
  * Equal-priority interrupts do not preempt one another on this MIPS core, so the
