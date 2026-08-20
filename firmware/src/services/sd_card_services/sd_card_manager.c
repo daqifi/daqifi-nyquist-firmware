@@ -1074,6 +1074,21 @@ static bool sd_TargetExistsInBucketPath(const char* bucketPath, bool* fsError) {
     return ((st.fattrib & SYS_FS_ATTR_DIR) == 0);
 }
 
+/* #798: publish a post-DirectoryMake state without clobbering a teardown.
+ * SYS_FS_DirectoryMake is a filesystem round-trip, so it is the WIDEST window
+ * in this state for SCPI to preempt and force DEINIT -- wider than the compare
+ * the read-only branch above protects. Honour the teardown rather than
+ * overwrite it. Same read-decide-write shape, same reason, as #782 at
+ * OPEN_FILE. */
+static void SD_PublishPostCreateState(sd_card_manager_processState_t next)
+{
+    taskENTER_CRITICAL();
+    if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_NONE) {
+        gSDCardData.currentProcessState = next;
+    }   /* else: a teardown landed during the create -- leave DEINIT standing */
+    taskEXIT_CRITICAL();
+}
+
 void sd_card_manager_ProcessState() {
     /* Check the application's current state. */
 
@@ -1481,16 +1496,65 @@ void sd_card_manager_ProcessState() {
              * look`, which is what #796's FAILED marker already means. A
              * WRITE still creates its target directory, so the first stream
              * after a format works exactly as before. */
-            if (gpSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
-                LOG_D("[SD] Not creating '%s': mode %d is read-only\r\n",
-                      gpSDCardSettings->directory, (int)gpSDCardSettings->mode);
-                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
-                break;
+            /* Decide and publish in ONE atomic step, for the reason #782
+             * documents at OPEN_FILE below: SCPI (pri 7) preempts this task
+             * (pri 5), and sd_card_manager_UpdateSettings() tears a session
+             * down by clearing mode and forcing currentProcessState = DEINIT
+             * (tail of that function). A plain compare-then-assign only
+             * narrows the window -- SCPI can land between the two, and the
+             * assignment then clobbers the DEINIT, so a torn-down operation
+             * walks on into OPEN_FILE, opens a file nobody is waiting for, and
+             * ends in ERROR instead of unmounting cleanly.
+             *
+             * The teardown signature here is mode == NONE, NOT mode != WRITE.
+             * That differs from the OPEN_FILE precedent, where the dispatch
+             * mode WAS WRITE so anything else meant torn-down. In this state
+             * every read-only operation (LIST, READ, CRC, DELETE) legitimately
+             * arrives with mode != WRITE, and testing that would route normal
+             * traffic into DEINIT. */
+            {
+                sd_card_manager_mode_t dirMode;
+                bool skipCreate;
+
+                taskENTER_CRITICAL();
+                dirMode = gpSDCardSettings->mode;
+                skipCreate = (dirMode != SD_CARD_MANAGER_MODE_WRITE);
+                if (skipCreate) {
+                    /* #797: only a WRITE may create the directory. Every mode
+                     * routes through this state, so a read-only operation used
+                     * to CREATE the thing it had been asked to look at --
+                     * `SD:LISt? "TYPO"` made TYPO, then truthfully reported it
+                     * empty, and left it on the card. Two bugs in one: a query
+                     * that modifies the card, and a host that cannot tell
+                     * "that directory is empty" from "that directory is not
+                     * there", because the firmware had just made the second
+                     * answer into the first.
+                     *
+                     * With the create gone, DirOpen fails for a path that is
+                     * not there and the walk reports SD_LISTDIR_FAILED -- `I
+                     * could not look`, which is what #796's FAILED marker
+                     * already means. A WRITE still creates its target
+                     * directory, so the first stream after a format works
+                     * exactly as before. */
+                    gSDCardData.currentProcessState =
+                            (dirMode == SD_CARD_MANAGER_MODE_NONE)
+                            ? SD_CARD_MANAGER_PROCESS_STATE_DEINIT
+                            : SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+                }
+                taskEXIT_CRITICAL();
+
+                if (skipCreate) {
+                    /* Logging stays OUTSIDE the critical section. */
+                    LOG_D("[SD] Not creating '%s': mode %d is read-only\r\n",
+                          gpSDCardSettings->directory, (int)dirMode);
+                    break;
+                }
             }
+
             if (SYS_FS_DirectoryMake(gpSDCardSettings->directory) == SYS_FS_RES_FAILURE) {
                 if (SYS_FS_Error() == SYS_FS_ERROR_EXIST) {
                     LOG_D("[SD] Directory '%s' already exists\r\n", gpSDCardSettings->directory);
-                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+                    SD_PublishPostCreateState(SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE);
                 } else {
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                     LOG_E("[%s:%d]Invalid SD Card Directory name '%s'", __FILE__, __LINE__, gpSDCardSettings->directory);
@@ -1499,7 +1563,7 @@ void sd_card_manager_ProcessState() {
             } else {
                 LOG_D("[SD] Created directory '%s'\r\n", gpSDCardSettings->directory);
                 /* Open a file for writing. */
-                gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+                SD_PublishPostCreateState(SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE);
             }
             break;
 
