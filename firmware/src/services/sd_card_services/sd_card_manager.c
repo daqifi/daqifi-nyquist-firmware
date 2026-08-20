@@ -11,6 +11,31 @@
 #include "services/UsbCdc/UsbCdc.h"
 #include "Util/CRC32.h"   /* #306 */
 #include "services/streaming.h"  // For Streaming_ResetSdPbMetadata on file rotation
+#include <stddef.h>
+#include "ff.h"   /* #810: FILINFO, for the layout assert below */
+
+/* #810: FATFS_readdir (sys_fs_fat_interface.c) hands ONE buffer to f_readdir as a
+ * FILINFO and then reinterprets it as a SYS_FS_FSTAT, reading lfname out of it and
+ * writing through it:
+ *
+ *     res = f_readdir(dp, finfo);
+ *     if ((res == FR_OK) && (fileStat->lfname != NULL)) { fileStat->lfname[0] = '\0'; }
+ *
+ * That is safe only while lfname sits past everything f_readdir writes. If it ever
+ * lands inside fname[], lfname becomes four FILENAME CHARACTERS reinterpreted as a
+ * pointer and the line above is a wild one-byte write to a card-content-derived
+ * address -- intermittent, far from its cause, and with no diagnostic.
+ *
+ * Today it holds by coincidence: SYS_FS_FILE_NAME_LEN (MCC-generated
+ * configuration.h) happens to agree with FF_LFN_BUF (ffconf.h). Nothing ties those
+ * two files together, so an MCC regeneration, a FatFs bump, or someone shortening
+ * the name limit to reclaim RAM would break it silently.
+ *
+ * This is a compile-time invariant check, not a defensive runtime guard: the
+ * invariant is undocumented, unenforced, and split across two generated files. */
+_Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
+               "SYS_FS_FSTAT.lfname overlaps what f_readdir writes: FATFS_readdir "
+               "would write through a pointer built from filename bytes");
 
 #define SD_CARD_MANAGER_CIRCULAR_BUFFER_SIZE SD_CARD_MANAGER_DEFAULT_CIRCULAR_SIZE
 #define SD_CARD_MANAGER_FILE_PATH_LEN_MAX (SYS_FS_FILE_NAME_LEN*2)
