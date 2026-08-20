@@ -1427,8 +1427,18 @@ __exit_point:
 scpi_result_t SCPI_StorageSDDirectoryGet(scpi_t * context) {
     sd_card_manager_settings_t* pSDCardRuntimeConfig =
             BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    char snapshot[sizeof(pSDCardRuntimeConfig->directory)];
 
-    SCPI_ResultText(context, pSDCardRuntimeConfig->directory);
+    /* Copy under a critical section, then emit. SCPI runs on two transports
+     * (USB pri 7, WiFi TCP pri 2), so the setter below can be writing this
+     * buffer while this reads it. See the setter for what a reader would
+     * otherwise observe. */
+    taskENTER_CRITICAL();
+    memcpy(snapshot, pSDCardRuntimeConfig->directory, sizeof(snapshot));
+    taskEXIT_CRITICAL();
+    snapshot[sizeof(snapshot) - 1u] = '\0';
+
+    SCPI_ResultText(context, snapshot);
     return SCPI_RES_OK;
 }
 
@@ -1458,9 +1468,9 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
     }
 
     if (pathLen >= sizeof(pSDCardRuntimeConfig->directory)) {
-        LOG_E("SD:DIRectory - path too long: %u bytes, max %u",
-              (unsigned)pathLen,
-              (unsigned)(sizeof(pSDCardRuntimeConfig->directory) - 1));
+        LOG_E("SD:DIRectory - path too long: %lu bytes, max %lu",
+              (unsigned long)pathLen,
+              (unsigned long)(sizeof(pSDCardRuntimeConfig->directory) - 1));
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
@@ -1494,8 +1504,24 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
      * the same struct. The manager holds a POINTER to this very object
      * (gpSDCardSettings = pSettings, sd_card_manager.c), so the write is
      * visible to it without any notification. */
+    /* Publish as ONE indivisible update. The copy and the terminator are two
+     * steps over a buffer another task reads (the getter above, the SD
+     * manager's dirValid check, SD_StripConfiguredDir), and SCPI runs on two
+     * transports at different priorities.
+     *
+     * To be precise about the hazard, because it is NOT an overrun: every
+     * writer stores at most 40 characters plus a terminator into a 41-byte
+     * array, so a NUL always exists at index <= 40 and strlen cannot run off
+     * the end. What a reader CAN see is a SPLICED path -- when the previous
+     * name was longer than the new one, the old tail survives past the bytes
+     * just copied and the old terminator ends it, so a reader between the two
+     * steps observes new-prefix + old-suffix. That is a well-formed string
+     * naming the wrong directory, which for SD:DELete is the worse outcome of
+     * the two. The copy is <= 41 bytes, so the section is short. */
+    taskENTER_CRITICAL();
     memcpy(pSDCardRuntimeConfig->directory, pBuff, pathLen);
     pSDCardRuntimeConfig->directory[pathLen] = '\0';
+    taskEXIT_CRITICAL();
     return SCPI_RES_OK;
 }
 
