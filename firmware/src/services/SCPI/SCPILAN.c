@@ -295,6 +295,90 @@ scpi_result_t SCPI_LANNetModeSet(scpi_t * context) {
  * SCPI Callback: Get the AP-mode SSID hidden/cloaked flag (#45)
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
+/**
+ * SCPI Callback: query the STA BSSID PIN (#675)
+ *
+ * Distinct from LAN:BSSID?, which reports the AP actually associated. This
+ * reports what was REQUESTED, and deliberately does not require an
+ * association -- a pin can be set before the link is up.
+ *
+ * Returns "AA:BB:CC:DD:EE:FF" when a pin is set, or an empty string when
+ * association is by SSID only (the default).
+ */
+scpi_result_t SCPI_LANBssidPinGet(scpi_t * context) {
+    uint8_t bssid[6];
+    char out[18];
+    if (!wifi_manager_GetBssidPin(bssid)) {
+        SCPI_ResultText(context, "");
+        return SCPI_RES_OK;
+    }
+    snprintf(out, sizeof(out), "%02X:%02X:%02X:%02X:%02X:%02X",
+             bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
+    SCPI_ResultText(context, out);
+    return SCPI_RES_OK;
+}
+
+/**
+ * SCPI Callback: pin STA association to a specific AP MAC (#675)
+ *
+ * "AA:BB:CC:DD:EE:FF" pins; "" clears and restores SSID-only association.
+ * Separators may be ':' or '-'. Takes effect at the next LAN:APPLy.
+ *
+ * RUNTIME ONLY -- deliberately not persisted; see wifi_manager.c for why
+ * (growing the persisted WiFi struct would wipe saved credentials on upgrade).
+ */
+scpi_result_t SCPI_LANBssidPinSet(scpi_t * context) {
+    const char *pBuff = NULL;
+    size_t len = 0;
+    uint8_t bssid[6];
+    size_t nibbles = 0;
+
+    if (!SCPI_ParamCharacters(context, &pBuff, &len, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+
+    if (len == 0u) {                 /* clear -> SSID-only association */
+        wifi_manager_SetBssidPin(NULL);
+        return SCPI_RES_OK;
+    }
+
+    /* Accept AA:BB:CC:DD:EE:FF and AA-BB-CC-DD-EE-FF. Parsed strictly: exactly
+     * 12 hex digits, and nothing but hex digits and separators. A partially
+     * parsed MAC must not become a pin -- pinning to the wrong AP fails to
+     * associate, which is harder to diagnose than a rejected command. */
+    memset(bssid, 0, sizeof(bssid));
+    for (size_t i = 0; i < len; i++) {
+        char c = pBuff[i];
+        if (c == ':' || c == '-') {
+            continue;
+        }
+        uint8_t v;
+        if      (c >= '0' && c <= '9') v = (uint8_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') v = (uint8_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') v = (uint8_t)(c - 'A' + 10);
+        else {
+            LOG_E("LAN:BSSID - not a MAC address");
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+            return SCPI_RES_ERR;
+        }
+        if (nibbles >= 12u) {
+            LOG_E("LAN:BSSID - too many hex digits (want 12)");
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+            return SCPI_RES_ERR;
+        }
+        bssid[nibbles / 2u] = (uint8_t)((bssid[nibbles / 2u] << 4) | v);
+        nibbles++;
+    }
+    if (nibbles != 12u) {
+        LOG_E("LAN:BSSID - need 12 hex digits, got %u", (unsigned)nibbles);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    wifi_manager_SetBssidPin(bssid);
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_LANHiddenGet(scpi_t * context) {
     wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(BOARDRUNTIME_WIFI_SETTINGS);
     SCPI_ResultInt32(context, (int) pWifiSettings->ssidHidden);

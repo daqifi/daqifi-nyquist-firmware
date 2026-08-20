@@ -5809,6 +5809,8 @@ static const scpi_command_t scpi_commands[] = {
     //    {.pattern = "SYSTem:COMMunicate:LAN:AvNETType?", .callback = SCPI_LANAVNetTypeGet, },
     {.pattern = "SYSTem:COMMunicate:LAN:NETType", .callback = SCPI_LANNetModeSet,},
     {.pattern = "SYSTem:COMMunicate:LAN:HIDden?", .callback = SCPI_LANHiddenGet,},
+    {.pattern = "SYSTem:COMMunicate:LAN:BSSID:PIN", .callback = SCPI_LANBssidPinSet,},    /* #675 */
+    {.pattern = "SYSTem:COMMunicate:LAN:BSSID:PIN?", .callback = SCPI_LANBssidPinGet,},   /* #675 */
     {.pattern = "SYSTem:COMMunicate:LAN:HIDden", .callback = SCPI_LANHiddenSet,},
     //    {.pattern = "SYSTem:COMMunicate:LAN:IPV6?", .callback = SCPI_LANIpv6Get, },
     //    {.pattern = "SYSTem:COMMunicate:LAN:IPV6", .callback = SCPI_LANIpv6Set, },

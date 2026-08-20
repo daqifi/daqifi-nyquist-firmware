@@ -20,6 +20,12 @@ extern "C" {
      * announce packets without hardcoding the value themselves. */
 #define WIFI_MANAGER_UDP_LISTEN_PORT             ((uint16_t)30303)
 
+    /* #675: runtime-only BSSID pin for STA association. NOT persisted -- see
+     * the definition in wifi_manager.c for why. NULL clears it; the getter
+     * returns false when no pin is set. */
+    bool wifi_manager_SetBssidPin(const uint8_t *pBssid);
+    bool wifi_manager_GetBssidPin(uint8_t *pOut);
+
     typedef enum {
         WIFI_MANAGER_NETWORK_MODE_STA = 1,
         WIFI_MANAGER_NETWORK_MODE_AP = 4

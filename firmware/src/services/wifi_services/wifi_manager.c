@@ -108,6 +108,22 @@ static QueueHandle_t gEventQH = NULL;
 //(TODO(Daqifi):Remove from here
 static wifi_tcp_server_context_t gTcpServerContext;
 
+/* #675: RUNTIME-ONLY BSSID pin for STA association.
+ *
+ * Deliberately NOT persisted. Adding a field to wifi_manager_settings_t would
+ * grow the struct that daqifi_settings.c checksums by sizeof(), so the first
+ * boot after an upgrade would checksum more bytes than were ever written, fail
+ * both the CRC32 and the #306 MD5 fallback, and fall through to factory
+ * defaults -- wiping every user's saved SSID and passphrase. #306 kept the
+ * on-NVM layout byte-identical for exactly that reason. Persistence needs its
+ * own migration design and stays on #675.
+ *
+ * Cleared on reboot, which is the documented behaviour: this covers the
+ * 'deterministic bench testing -- always the same AP' case, not roaming
+ * control in fixed installations. */
+static uint8_t gBssidPin[6];
+static bool    gBssidPinSet = false;
+
 // Volatile flags for on-demand RSSI queries
 static volatile bool gRssiUpdatePending = false;
 
@@ -986,6 +1002,48 @@ static void ApplyDefaultSuffixAndDeviceName(stateMachineInst_t *pInstance) {
     }
 }
 
+bool wifi_manager_SetBssidPin(const uint8_t *pBssid) {
+    /* NULL clears the pin. The copy and the flag move together under a
+     * critical section: the SCPI task writes them, WifiTask reads them, and a
+     * 6-byte copy is not atomic on its own. */
+    taskENTER_CRITICAL();
+    if (pBssid == NULL) {
+        gBssidPinSet = false;
+        memset(gBssidPin, 0, sizeof(gBssidPin));
+    } else {
+        memcpy(gBssidPin, pBssid, sizeof(gBssidPin));
+        gBssidPinSet = true;
+    }
+    taskEXIT_CRITICAL();
+    return true;
+}
+
+bool wifi_manager_GetBssidPin(uint8_t *pOut) {
+    bool set;
+    taskENTER_CRITICAL();
+    set = gBssidPinSet;
+    if (set && pOut != NULL) {
+        memcpy(pOut, gBssidPin, sizeof(gBssidPin));
+    }
+    taskEXIT_CRITICAL();
+    return set;
+}
+
+/* Applied immediately before BSSConnect on BOTH STA paths, so it is the last
+ * word on the context regardless of earlier setup. A no-op when no pin is set,
+ * which is the default and today's behaviour exactly. */
+static void ApplyBssidPin(WDRV_WINC_BSS_CONTEXT *pCtx) {
+    uint8_t bssid[6];
+    if (!wifi_manager_GetBssidPin(bssid)) {
+        return;
+    }
+    if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSCtxSetBSSID(pCtx, bssid)) {
+        /* Degrade to SSID-only rather than leave WiFi unusable until someone
+         * clears the pin. */
+        LOG_E("WiFi: driver rejected the BSSID pin; associating by SSID only (#675)");
+    }
+}
+
 static bool SendEvent(wifi_manager_event_t event) {
     if (gEventQH == NULL) {
         // Init hasn't run yet — caller is misusing the API.  Surface as
@@ -1318,6 +1376,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 // This ensures we're ready for socket events when connection succeeds
                 WDRV_WINC_SocketRegisterEventCallback(pInstance->wdrvHandle, &SocketEventCallback);
                 
+                ApplyBssidPin(&pInstance->bssCtx);   /* #675 */
                 if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(pInstance->wdrvHandle, &pInstance->bssCtx, &pInstance->authCtx, &StaEventCallback)) {
                     SendEvent(WIFI_MANAGER_EVENT_ERROR);
                     LOG_E("[%s:%d]Error WiFi init", __FILE__, __LINE__);
@@ -2052,6 +2111,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     WDRV_WINC_SocketRegisterEventCallback(pInstance->wdrvHandle, &SocketEventCallback);
                     
                     // Connect to network
+                    ApplyBssidPin(&pInstance->bssCtx);   /* #675 */
                     if (WDRV_WINC_STATUS_OK != WDRV_WINC_BSSConnect(pInstance->wdrvHandle,
                         &pInstance->bssCtx, &pInstance->authCtx, &StaEventCallback)) {
                         SendEvent(WIFI_MANAGER_EVENT_ERROR);

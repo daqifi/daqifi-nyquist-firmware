@@ -54,6 +54,8 @@ scpi_result_t SCPI_LANNetModeSet(scpi_t * context);
  * SCPI Callback: Get the AP-mode SSID hidden/cloaked flag (#45)
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
+scpi_result_t SCPI_LANBssidPinGet(scpi_t * context);   /* #675 */
+scpi_result_t SCPI_LANBssidPinSet(scpi_t * context);   /* #675 */
 scpi_result_t SCPI_LANHiddenGet(scpi_t * context);
 
 /**
