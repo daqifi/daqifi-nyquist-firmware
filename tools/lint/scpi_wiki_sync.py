@@ -73,16 +73,94 @@ def abbreviate(pattern):
 
     A node with no capitals is kept verbatim rather than collapsing to an
     empty string, which would make the joined form match almost anything.
+
+    The trailing '?' is PRESERVED. Query and setter are registered separately
+    with distinct callbacks, and this codebase actually contains a split pair:
+    `SYSTem:COMMunicate:LAN:DNS1` is registered while `...:DNS1?` is not. An
+    earlier version stripped the '?' before comparing, which made the live
+    setter vouch for the dead getter -- the checker would have reported that
+    exact row as fine.
     """
+    query = pattern.endswith("?")
     nodes = []
     for node in pattern.rstrip("?").split(":"):
         caps = "".join(c for c in node if c.isupper() or c.isdigit())
         nodes.append(caps if caps else node)
-    return ":".join(nodes)
+    return ":".join(nodes) + ("?" if query else "")
+
+
+def is_form_of(written, pattern):
+    """True if `written` is a legal way to write `pattern`.
+
+    Implements the project's SCPI abbreviation rule (CLAUDE.md): a command may
+    be written with any prefix of each node, provided the prefix keeps every
+    capitalised letter. `CONF:ADC:OBDiag`, `CONFigure:ADC:OBD` and
+    `CONFigure:ADC:OBDiag` are all the same command.
+
+    Comparing against just two canonical forms -- full and caps-only -- is not
+    enough, and missed a real case: the wiki writes `CONF:ADC:OBDiag`, which is
+    neither `CONFigure:ADC:OBDiag` nor `CONF:ADC:OBD`.
+
+    The trailing '?' must match exactly. Query and setter are registered
+    separately with distinct callbacks, and this codebase contains a split
+    pair -- `SYSTem:COMMunicate:LAN:DNS1` is registered while `...:DNS1?` is
+    not -- so treating them as one command lets the live setter vouch for the
+    dead getter.
+    """
+    if written.endswith("?") != pattern.endswith("?"):
+        return False
+    w_nodes = written.rstrip("?").split(":")
+    p_nodes = pattern.rstrip("?").split(":")
+    if len(w_nodes) != len(p_nodes):
+        return False
+    for w, n in zip(w_nodes, p_nodes):
+        caps = "".join(c for c in n if c.isupper() or c.isdigit())
+        if not n.upper().startswith(w.upper()):
+            return False
+        if len(w) < len(caps):          # dropped a capitalised letter
+            return False
+    return True
+
+
+def clean_cell(cell):
+    """The bare command in a table's first cell.
+
+    Rows are not uniform: some carry the argument in the command cell
+    (`SYSTem:MEMory:SD:BUFfer \\<bytes\\>`), some wrap it in backticks, and one
+    slipped a `<br>` in. Taking the cell verbatim reported those commands as
+    BOTH undocumented and ghosts -- the same row failing in both directions,
+    which is the signature of a parsing bug rather than real drift.
+    """
+    cell = cell.replace("`", "").replace("<br>", " ").strip()
+    cell = re.split(r"[\s\\<(]", cell, 1)[0]      # drop a trailing argument
+    return cell.strip().rstrip(",")
+
+
+def split_row(line):
+    """Cells of a markdown table row, splitting on UNESCAPED pipes only.
+
+    The wiki writes `SYSTem:STReam:BENCHmark \\<0\\|1\\|2\\>` in a first cell.
+    Splitting on every '|' truncated that command to `SYSTem:STReam:BENCHmark
+    \\<0\\` and reported it as a ghost.
+    """
+    parts = re.split(r"(?<!\\)\|", line.strip().strip("|"))
+    return [c.strip() for c in parts]
 
 
 def wiki_text_and_rows(wiki_dir):
-    """(all wiki text lowercased, [(command, whole row)] for table rows)."""
+    """(all wiki text, [(command, whole row)] for rows of the COMMAND tables).
+
+    Rows are taken from tables whose header's first column is "SCPI Command",
+    rather than by pattern-matching the first cell. The first version used a
+    regex requiring at least one ':', which silently ignored every IEEE common
+    command (`*IDN?`, `*CLS`, `*RST`) and single-node commands like `help` --
+    so a stale or invented row in those families could never be reported.
+    Loosening the regex instead would have been worse: `| Probe | Stage |` and
+    the various field-reference tables would start yielding "commands" like
+    `Probe` and `Bit`.
+
+    Keying on the header is exact. Every command table in the wiki uses it.
+    """
     blobs, rows = [], []
     files = sorted(glob.glob(os.path.join(wiki_dir, "*.md")))
     if not files:
@@ -91,14 +169,26 @@ def wiki_text_and_rows(wiki_dir):
         with open(path, encoding="utf-8", errors="replace") as fh:
             body = fh.read()
         blobs.append(body)
+        in_command_table = False
         for line in body.split("\n"):
             if not line.lstrip().startswith("|"):
+                in_command_table = False          # any non-row ends the table
                 continue
-            cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            if cells and re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(:[A-Za-z0-9]+)+\??",
-                                      cells[0]):
-                rows.append((cells[0], line))
-    return "\n".join(blobs).lower(), rows
+            cells = split_row(line)
+            if not cells:
+                continue
+            first = cells[0]
+            if first.lower() in ("scpi command", "command"):  # header: rows below are commands
+                in_command_table = True
+                continue
+            if not in_command_table:
+                continue
+            if set(first) <= set("-: "):          # the |---|---| separator
+                continue
+            first = clean_cell(first)
+            if first:
+                rows.append((first, line))
+    return "\n".join(blobs), rows
 
 
 def load_allowlist(path):
@@ -126,21 +216,29 @@ def main():
     if not live:
         sys.exit(f"error: no .pattern entries found in {args.scpi!r} -- "
                  f"has the command table moved?")
-    wiki_lower, rows = wiki_text_and_rows(args.wiki)
+    _wiki_text, rows = wiki_text_and_rows(args.wiki)
     allow = load_allowlist(args.allow)
 
+    written = [cmd for cmd, _ in rows]
+    # A command counts as documented if a table row names it, OR if the page
+    # writes it anywhere -- some are covered by the legacy-alias table and by
+    # prose rather than a row of their own. Deliberately the looser of the two
+    # directions: the expensive failure is a user calling a command the wiki
+    # lists and getting -113, which is the ghost check below.
+    tokens = set(re.findall(r"\*?[A-Za-z][A-Za-z0-9]*(?::[A-Za-z0-9]+)*\??", _wiki_text))
     undocumented = sorted(
         p for p in live
         if p not in allow
-        and p.rstrip("?").lower() not in wiki_lower
-        and abbreviate(p).lower() not in wiki_lower)
+        and not any(is_form_of(w, p) for w in written)
+        and not any(is_form_of(t, p) for t in tokens))
 
-    live_forms = {p.rstrip("?").lower() for p in live}
-    live_forms |= {abbreviate(p).lower() for p in live}
+    # "Documented" means a command TABLE ROW names it. Searching the whole page
+    # instead let a command pass on a passing mention inside another command's
+    # prose -- which is how CONFigure:ADC:OBDiag looked documented while having
+    # no row of its own.
     ghosts = sorted(
         {cmd for cmd, row in rows
-         if cmd.rstrip("?").lower() not in live_forms
-         and abbreviate(cmd).lower() not in live_forms
+         if not any(is_form_of(cmd, p) for p in live)
          and NOT_IMPLEMENTED_MARK not in row.lower()})
 
     print(f"registered SCPI commands : {len(live)}")

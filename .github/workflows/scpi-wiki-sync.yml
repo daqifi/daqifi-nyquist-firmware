@@ -7,24 +7,31 @@ name: scpi-wiki-sync
 # commands were not registered at all -- two of them the OLD NAMES of a renamed
 # pair, so following the reference produced -113 Undefined header.
 #
-# This runs only when the command table or the checker itself changes, so an
-# ordinary firmware PR never pays for it.
+# On PR/push this runs only when the SCPI sources or the checker change, so an
+# ordinary firmware PR never pays for it. A weekly run covers drift introduced
+# from the wiki side, which cannot trigger a workflow here.
 
 on:
   pull_request:
     branches: [main]
     paths:
-      - 'firmware/src/services/SCPI/SCPIInterface.c'
+      - 'firmware/src/services/SCPI/**'
       - 'tools/lint/scpi_wiki_sync.py'
       - 'tools/lint/scpi-wiki-allow.txt'
       - '.github/workflows/scpi-wiki-sync.yml'
   push:
     branches: [main]
     paths:
-      - 'firmware/src/services/SCPI/SCPIInterface.c'
+      - 'firmware/src/services/SCPI/**'
       - 'tools/lint/scpi_wiki_sync.py'
       - 'tools/lint/scpi-wiki-allow.txt'
       - '.github/workflows/scpi-wiki-sync.yml'
+
+  # Drift can also be introduced from the WIKI side, and a wiki push cannot
+  # trigger a workflow in this repository. Without a timed run, deleting a row
+  # over there would go unnoticed until the next SCPI change over here.
+  schedule:
+    - cron: '17 6 * * 1'   # Mondays, 06:17 UTC
 
 permissions:
   contents: read   # checkout + clone a public wiki; nothing is written
