@@ -247,9 +247,12 @@ Services Layer
    - Entry point: `services/SCPI/SCPIInterface.c`
    - Modules: SCPIADC, SCPIDIO, SCPILAN, SCPIStorageSD
    - Used for device configuration and control
-   - **SCPI Abbreviation Rule**: Commands can be abbreviated based on the capitalization in the full command. The abbreviated command must contain all letters that are in CAPS. For example:
-     - `SYST:COMM:LAN:NETMode` can be abbreviated as `SYST:COMM:LAN:NETM`
-     - `SYST:COMM:LAN:APPLy` can be abbreviated as `SYST:COMM:LAN:APPL`
+   - **SCPI Abbreviation Rule**: each node has exactly **two** legal spellings — the **full** node, or the node **truncated at its first lowercase letter**. Nothing in between. Per node, `UPPERCASElowercase` accepts `UPPERCASElowercase` and `UPPERCASE` only:
+     - `SYST:COMM:LAN:NETMode` → `SYST:COMM:LAN:NETM` ✅ (short form)
+     - `SYST:COMM:LAN:APPLy` → `SYST:COMM:LAN:APPL` ✅ (short form)
+     - `CONFigure:ADC:OBDiag` → `CONF:ADC:OBD`, `CONF:ADC:OBDiag`, `CONFigure:ADC:OBD` … ✅ (each node independently full or short)
+     - `CONFigure:ADC:OBDiag` → `CONFig:ADC:OBDiag` ❌ **`-113 Undefined header`** — `CONFig` is neither `CONFigure` nor `CONF`
+     This is **stricter than "must contain all the CAPS"**, which a previous revision of this file stated: that phrasing also permits `NETMod` and `CONFig`, which the device rejects. The authority is `matchPattern` in `firmware/src/libraries/scpi/libscpi/src/utils.c:478` — `compareStr(full) || compareStr(short)`, where `compareStr` (`utils.c:347`) requires the lengths to be **equal**, so a partial prefix matches neither arm. `tools/lint/scpi_wiki_sync.py` implements this rule and pins it in `--self-test`.
 
 2. **USB CDC** - Virtual COM port communication
    - Implementation: `services/UsbCdc/UsbCdc.c`

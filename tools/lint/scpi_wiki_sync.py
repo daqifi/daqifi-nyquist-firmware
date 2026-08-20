@@ -135,28 +135,38 @@ def registered_patterns(scpi_c):
     return live, every - live
 
 
-def _mandatory(node):
-    """The characters an abbreviation of `node` may not drop: its capitals."""
-    return "".join(c for c in node if c.isupper() or c.isdigit())
+def _short_form(node):
+    """The node truncated at its first lowercase letter -- libscpi's short form."""
+    for i, c in enumerate(node):
+        if c.islower():
+            return node[:i]
+    return node
 
 
 def is_form_of(written, pattern):
-    """True if `written` is a legal way to write `pattern`.
+    """True if `written` is a way libscpi would actually accept `pattern`.
 
-    Implements the project's SCPI abbreviation rule (CLAUDE.md): a command may
-    be written with any prefix of each node, provided the prefix keeps every
-    capitalised letter. `CONF:ADC:OBDiag`, `CONFigure:ADC:OBD` and
-    `CONFigure:ADC:OBDiag` are all the same command.
+    libscpi accepts exactly TWO spellings of each node and no others
+    (`matchPattern`, libraries/scpi/libscpi/src/utils.c:478):
 
-    Comparing against just two canonical forms -- full and caps-only -- is not
-    enough, and missed a real case: the wiki writes `CONF:ADC:OBDiag`, which is
-    neither `CONFigure:ADC:OBDiag` nor `CONF:ADC:OBD`.
+        compareStr(full node)            || compareStr(node truncated at the
+                                            first lowercase letter)
 
-    The trailing '?' must match exactly. Query and setter are registered
+    and `compareStr` (utils.c:347) requires the lengths to be EQUAL. So for
+    `CONFigure` only `CONFigure` and `CONF` are legal -- `CONFig` is not, and
+    the device answers -113 for it.
+
+    This is stricter than CLAUDE.md's prose rule ("must contain all letters
+    that are in CAPS"), which an earlier version of this function implemented
+    as "any prefix keeping the capitals". That accepted `CONFig:ADC:OBDiag`,
+    so a wiki row spelled that way vouched for a command the firmware would
+    reject -- a false pass in both directions at once. The shipped matcher, not
+    the prose, is the authority here, because the whole question this tool asks
+    is what the device does.
+
+    The trailing '?' must match exactly: query and setter are registered
     separately with distinct callbacks, and this codebase contains a split
-    pair -- `SYSTem:COMMunicate:LAN:DNS1` is registered while `...:DNS1?` is
-    not -- so treating them as one command lets the live setter vouch for the
-    dead getter.
+    pair (`SYSTem:COMMunicate:LAN:DNS1` is registered, `...:DNS1?` is not).
     """
     if written.endswith("?") != pattern.endswith("?"):
         return False
@@ -165,14 +175,7 @@ def is_form_of(written, pattern):
     if len(w_nodes) != len(p_nodes):
         return False
     for w, n in zip(w_nodes, p_nodes):
-        if not n.upper().startswith(w.upper()):
-            return False
-        # The prefix must CONTAIN every capital, which is not the same as being
-        # at least as long as the count of them: the capitals are not always
-        # contiguous at the front. `AvNETType` has capitals A,NET,T -- five --
-        # so a length test accepts the five-character `AvNET`, which has
-        # dropped the final T and is not a legal way to write it.
-        if _mandatory(n[:len(w)]) != _mandatory(n):
+        if w.upper() != n.upper() and w.upper() != _short_form(n).upper():
             return False
     return True
 
@@ -189,6 +192,10 @@ def clean_cell(cell):
     cell = cell.replace("`", "").replace("<br>", " ").strip()
     cell = re.split(r"[\s\\<(]", cell, 1)[0]      # drop a trailing argument
     return cell.strip().rstrip(",")
+
+
+def _lower(values):
+    return {v.lower() for v in values}
 
 
 def split_row(line):
@@ -236,10 +243,15 @@ def wiki_text_and_rows(wiki_dir):
             if first.lower() in ("scpi command", "command"):  # header: rows below are commands
                 in_command_table = True
                 continue
-            # Every cell of every table is a candidate mention. The legacy
-            # alias table names its commands in the SECOND column
-            # ("| Canonical | Legacy alias | Migration PR |"), so first cells
-            # alone would report four shipped aliases as undocumented.
+            # Cells of NON-command tables are a weaker kind of mention. They
+            # are needed -- the legacy alias table names its commands in the
+            # SECOND column ("| Canonical | Legacy alias | Migration PR |"), so
+            # command-table first cells alone would report four shipped aliases
+            # as undocumented -- but they are matched EXACTLY, never by
+            # abbreviation. An audit showed abbreviation-matching here let a
+            # coincidental cell in a completely unrelated table vouch for a
+            # deleted command row (reproduced on the real wiki with
+            # DIO:COUNter? and SYST:STR:START/STOP/STATS?).
             for c in cells:
                 cleaned = clean_cell(c)
                 if cleaned:
@@ -284,6 +296,13 @@ SELF_TEST_CASES = [
      "capitals are not contiguous here (A, NET, T), so a length test wrongly "
      "accepted this five-character prefix"),
     ("AvNETType", "AvNETType", True, "the full node still matches"),
+    ("CONFig:ADC:OBDiag", "CONFigure:ADC:OBDiag", False,
+     "libscpi accepts only the full node or the short form -- `CONFig` is "
+     "neither, and the device answers -113 for it (utils.c:478 matchPattern, "
+     "compareStr requires equal lengths). The prose rule in CLAUDE.md is "
+     "looser than the shipped matcher; the matcher is the authority"),
+    ("SYSTe:DEVic:NAME", "SYSTem:DEVice:NAME", False,
+     "same rule, every node: a mid-length prefix is not a legal spelling"),
     ("help", "HELP", True, "case-insensitive"),
     ("*RST", "*RST", True, "IEEE common command"),
     ("*RS", "*RST", False, "dropped a mandatory capital of an IEEE command"),
@@ -303,12 +322,13 @@ def self_test():
             failures += 1
             print(f"  FAIL is_form_of({written!r}, {pattern!r}) = {got}, "
                   f"expected {expected} -- {why}")
-    failures += _self_test_end_to_end()
+    e2e_cases, e2e_failures = _self_test_end_to_end()
+    failures += e2e_failures
     if failures:
         print(f"\n::error::{failures} self-test(s) failed")
         return 1
     print(f"self-test: {len(SELF_TEST_CASES)}/{len(SELF_TEST_CASES)} matcher "
-          f"cases + 2 end-to-end cases pass")
+          f"cases + {e2e_cases}/{e2e_cases} end-to-end cases pass")
     return 0
 
 
@@ -321,7 +341,7 @@ def _self_test_end_to_end():
     fixed.
     """
     import tempfile
-    failures = 0
+    cases, failures = 3, 0
     src = ('const scpi_command_t scpi_commands[] = {\n'
            '    {.pattern = "SYSTem:WIFI:" "DEBUG?", .callback = SCPI_A,},\n'
            '    {.pattern = "SYSTem:POWer:OTG", .callback = SCPI_B,},\n'
@@ -352,13 +372,33 @@ def _self_test_end_to_end():
         cells, rows = wiki_text_and_rows(wiki)
         written = [cmd for cmd, _ in rows]
         documented = (any(is_form_of(w, "SYSTem:POWer:OTG") for w in written)
-                      or any(is_form_of(t, "SYSTem:POWer:OTG") for t in cells))
+                      or "system:power:otg" in _lower(cells))
         if documented:
             print("  FAIL end-to-end: a command mentioned only in prose counted"
                   " as documented -- the gate can be satisfied without writing"
                   " a row")
             failures += 1
-    return failures
+
+        # (3) A cell in an UNRELATED table must not vouch for a missing command
+        # row. An audit reproduced this on the real wiki: deleting the
+        # DIO:COUNter? row while some other table happened to contain the
+        # abbreviation DIO:COUN? left the checker green.
+        wiki2 = os.path.join(d, "wiki2")
+        os.makedirs(wiki2)
+        with open(os.path.join(wiki2, "01.md"), "w", encoding="utf-8") as fh:
+            fh.write("| SCPI Command | Description |\n| -- | -- |\n"
+                     "| SYSTem:REboot | x |\n\n"
+                     "| Signal | Example |\n| -- | -- |\n"
+                     "| counter note | DIO:COUN? |\n")
+        cells2, rows2 = wiki_text_and_rows(wiki2)
+        written2 = [cmd for cmd, _ in rows2]
+        vouched = (any(is_form_of(w, "DIO:COUNter?") for w in written2)
+                   or "dio:counter?" in _lower(cells2))
+        if vouched:
+            print("  FAIL end-to-end: an abbreviation in an unrelated table "
+                  "vouched for a command with no row of its own")
+            failures += 1
+    return cases, failures
 
 
 def main():
@@ -411,7 +451,8 @@ def main():
         p for p in live
         if p not in allow
         and not any(is_form_of(w, p) for w in written)
-        and not any(is_form_of(c, p) for c in table_cells))
+        # Exact, not is_form_of: see the note where table_cells is built.
+        and p.lower() not in _lower(table_cells))
 
     # "Documented" means a command TABLE ROW names it. Searching the whole page
     # instead let a command pass on a passing mention inside another command's
