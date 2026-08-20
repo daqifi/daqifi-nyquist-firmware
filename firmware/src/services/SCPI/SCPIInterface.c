@@ -3964,19 +3964,32 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    if (param1 == Streaming_ProtoBuffer) {
-        pRunTimeStreamConfig->Encoding = Streaming_ProtoBuffer;
-    } else if (param1 == Streaming_Json) {
-        pRunTimeStreamConfig->Encoding = Streaming_Json;
-    }else if(param1 == Streaming_Csv){
-         pRunTimeStreamConfig->Encoding = Streaming_Csv;
-    }else if(param1 == Streaming_CsvCompact){
-         /* #619: CSV with one leading timestamp column instead of N identical
-          * per-channel ones. Opt-in; 0/1/2 keep their existing meaning. */
-         pRunTimeStreamConfig->Encoding = Streaming_CsvCompact;
-    }else{
-        pRunTimeStreamConfig->Encoding = Streaming_Json;
+    /* #801: reject an unrecognised encoding rather than quietly picking one.
+     *
+     * This used to fall through to Streaming_Json and return OK, so
+     * `SYST:STR:FORmat 99` selected JSON while the caller believed it had
+     * selected something else -- and JSON is the byte-heaviest encoding
+     * (3.11x CSV per sample at 1 channel, #529) sitting on the least
+     * characterised cap, so the silent choice was also the most expensive
+     * one. Every sibling setter in this file already rejects out-of-range:
+     * SCPI_SetStreamInterface and SCPI_SetTestPattern both push
+     * ILLEGAL_PARAMETER_VALUE, and this was the odd one out.
+     *
+     * A range check rather than a switch because eStreamingEncoding is
+     * contiguous, and because the case that matters is a client sending a
+     * value THIS firmware does not know yet -- a range check stays correct
+     * when a fifth encoding is appended, and an enumerated list would have to
+     * be remembered. */
+    if (param1 < (int)Streaming_ProtoBuffer || param1 > (int)Streaming_CsvCompact) {
+        LOG_E("Stream format %d is not a known encoding (0=PB, 1=JSON, "
+              "2=CSV, 3=CsvCompact)", param1);
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
     }
+
+    /* Assigned only after the range check, so a rejected set cannot leave the
+     * encoding half-changed: FORmat? still reports what it reported before. */
+    pRunTimeStreamConfig->Encoding = (StreamingEncoding)param1;
 
     return SCPI_RES_OK;
 }
