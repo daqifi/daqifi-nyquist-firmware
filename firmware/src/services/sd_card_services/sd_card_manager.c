@@ -1573,7 +1573,13 @@ void sd_card_manager_ProcessState() {
                      * nobody is waiting on -- the same clobber #782 is about,
                      * just with a different value. */
                     SD_PublishPostCreateState(SD_CARD_MANAGER_PROCESS_STATE_ERROR);
-                    LOG_E("[%s:%d]Invalid SD Card Directory name '%s'", __FILE__, __LINE__, dirName);
+                    /* Report the FS error code. This branch is reached for
+                     * every DirectoryMake failure that is not EXIST -- media
+                     * faults, a full root directory, an I/O error -- so
+                     * asserting "invalid name" sent operators after a naming
+                     * problem that usually is not there. */
+                    LOG_E("[%s:%d]SD DirectoryMake('%s') failed, SYS_FS_Error=%d",
+                          __FILE__, __LINE__, dirName, (int)SYS_FS_Error());
                 }
                 /* Error while creating a new drive */
             } else {
