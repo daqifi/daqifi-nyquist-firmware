@@ -2803,9 +2803,11 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
 }
 
 bool sd_card_manager_Deinit() {
+    /* enable BEFORE the state, so the SD task can never observe
+     * "DEINIT but still enabled" and re-arm off the stale flag. */
+    gpSDCardSettings->enable = 0;
     gSdTeardownRequested = true;   /* #800: survives a racing state store */
     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
-    gpSDCardSettings->enable = 0;
     return true;
 }
 
@@ -2890,7 +2892,28 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
     if (sd_card_manager_IsIdle() && gSDCardData.opCompleteSemaphore != NULL) {
         xSemaphoreTake(gSDCardData.opCompleteSemaphore, 0);
     }
-    gSdTeardownRequested = true;   /* #800: survives a racing state store */
+    /* #800: raise the sticky flag ONLY for an actual teardown.
+     *
+     * This function forces DEINIT on EVERY non-refused call -- arming a new
+     * operation goes through here too, and DEINIT is how the machine restarts
+     * into it. Raising the flag unconditionally would therefore let a request
+     * belonging to one call be consumed during the next, re-asserting DEINIT
+     * after the machine had already moved on. It happens to be harmless today
+     * (every caller of this function wants DEINIT anyway, and nothing outside
+     * the SD task advances the state -- sd_card_manager_Init runs once at
+     * boot), but that is an argument from the current call graph, not from the
+     * flag's own meaning.
+     *
+     * mode == NONE is the teardown signature -- it is how the timeout and
+     * shutdown paths tear an operation down, and the reason the race in #800 is
+     * reachable at all. Scoping the flag to it keeps the mechanism matching its
+     * name, and keeps a future caller from inheriting a teardown it never asked
+     * for. Arming paths keep the plain (clobberable) DEINIT they had before;
+     * protecting those is a different problem from the one #800 describes. */
+    if (gpSDCardSettings == NULL ||
+        gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_NONE) {
+        gSdTeardownRequested = true;
+    }
     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
     return true;
 }
