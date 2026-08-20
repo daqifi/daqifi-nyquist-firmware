@@ -60,6 +60,13 @@ def strip_c_comments(text):
 
 def registered_patterns(scpi_c):
     """(live, commented_out) sets of .pattern strings in the command table."""
+    if not os.path.exists(scpi_c):
+        # A bare FileNotFoundError traceback in CI reads like the checker is
+        # broken. It usually means the command table was moved or renamed,
+        # which is a one-line fix once you know that is what happened.
+        sys.exit(f"error: {scpi_c!r} not found. If the SCPI command table "
+                 f"moved, pass --scpi <path> and update "
+                 f".github/workflows/scpi-wiki-sync.yml.")
     with open(scpi_c, encoding="utf-8", errors="replace") as fh:
         raw = fh.read()
     rx = r'\.pattern\s*=\s*"([^"]+)"\s*,\s*\.callback\s*=\s*([A-Za-z_]\w*)'
