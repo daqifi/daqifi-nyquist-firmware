@@ -1409,12 +1409,6 @@ __exit_point:
 }
 
 /**
- * @brief Query maximum file size setting
- *
- * Command: SYST:STOR:SD:MAXSize?
- * Returns: <bytes> (0 = unlimited)
- */
-/**
  * @brief Read the SD working directory (#799)
  *
  * Command: SYST:STOR:SD:DIRectory?
@@ -1476,11 +1470,41 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* Refuse while an SD operation owns the card -- which includes an active
+     * logging session, since IsBusy() is true for any mode != NONE.
+     *
+     * The directory is re-read at every file OPEN, not just the first, so
+     * retargeting it mid-session would land the next rotated part
+     * ("<name>-1.csv", generateFilename) in a different folder from the part
+     * before it. That splits one logical capture across two directories,
+     * where the tooling that reassembles a split set groups by name WITHIN a
+     * directory. Rejecting costs the caller nothing -- set the directory
+     * before starting -- and is the same guard the other SD entry points in
+     * this file already apply. */
+    if (sd_card_manager_IsBusy()) {
+        LOG_SD_BUSY("DIRectory");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    /* Config-only write, deliberately NOT followed by
+     * sd_card_manager_UpdateSettings(): that call forces the SD state machine
+     * to DEINIT -> UNMOUNT_DISK, closing any open file and truncating it on
+     * the next open. SCPI_StorageSDMinFreeSet documents the same reasoning for
+     * the same struct. The manager holds a POINTER to this very object
+     * (gpSDCardSettings = pSettings, sd_card_manager.c), so the write is
+     * visible to it without any notification. */
     memcpy(pSDCardRuntimeConfig->directory, pBuff, pathLen);
     pSDCardRuntimeConfig->directory[pathLen] = '\0';
     return SCPI_RES_OK;
 }
 
+/**
+ * @brief Query maximum file size setting
+ *
+ * Command: SYST:STOR:SD:MAXSize?
+ * Returns: <bytes> (0 = unlimited)
+ */
 scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context) {
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 

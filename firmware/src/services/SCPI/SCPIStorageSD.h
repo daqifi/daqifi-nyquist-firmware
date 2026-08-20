@@ -47,9 +47,12 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context);
 
 // SD Card File Splitting Commands
 scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context);
-scpi_result_t SCPI_StorageSDDirectoryGet(scpi_t * context);   /* #799 */
-scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context);   /* #799 */
 scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context);
+
+// SD Working Directory (#799) - the folder logging writes into, and the one
+// SD:GET / SD:DELete / SD:CRC resolve a bare filename against.
+scpi_result_t SCPI_StorageSDDirectoryGet(scpi_t * context);
+scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context);
 
 // SD Disk-Full Pre-Start Gate (#498)
 scpi_result_t SCPI_StorageSDMinFreeSet(scpi_t * context);
