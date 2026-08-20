@@ -530,6 +530,38 @@ typedef struct {
 
 static ListDirFrame gListDirStack[SD_CARD_MANAGER_MAX_LIST_DEPTH];
 
+/* #795: true if every byte of `name` is one FAT/exFAT can actually store.
+ * Illegal in a long file name: the C0 controls (< 0x20), DEL, and
+ * " * / : < > ? \ | . Bytes >= 0x80 ARE legal (OEM code page / UTF-8), so
+ * they must not be rejected.
+ *
+ * `/` is rejected here because this sees ONE entry NAME from
+ * SYS_FS_DirRead, never a path -- a slash inside a name is as impossible
+ * as a newline. A host-side check on the printed reply must allow it,
+ * since by then it is the separator in `DAQiFi/file.csv`.
+ *
+ * This exists because a name FAT cannot store did not come from a directory
+ * entry, so emitting it tells the host a file exists that does not. #795
+ * observed 45 such entries after a day of logging -- names carrying a raw
+ * 0x0A and "sizes" that decode to this device's own CSV header text, while
+ * SPACe? reported the card nearly empty. Whatever produced them (still open:
+ * five hypotheses eliminated, the card has not been read on a PC), a host
+ * cannot reject them by shape -- `DAQiFi/3214741.021 825373450` parses as a
+ * perfectly well-formed `<path> <size>` line. This filter is correct
+ * independent of that root cause. */
+static bool sd_listdir_name_is_storable(const char *name)
+{
+    for (const unsigned char *p = (const unsigned char *)name; *p != '\0'; p++) {
+        if (*p < 0x20u || *p == 0x7Fu) {
+            return false;
+        }
+        if (strchr("\"*/:<>?\\|", (int)*p) != NULL) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static ListDirResult ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, size_t strBuffSize, ListChunkCallback sendChunk) {
     SYS_FS_FSTAT stat;
     size_t strBuffIndex = 0;
@@ -537,6 +569,12 @@ static ListDirResult ListFilesInDirectoryChunked(const char* dirPath, uint8_t *p
      * it could not read or open, a path or entry that did not fit. The walk
      * still finishes; the reply just cannot claim to be the whole card. */
     bool skipped = false;
+    /* #795: entries dropped for carrying a name FAT cannot store. Counted
+     * separately from `skipped` so the summary can report how many, and so
+     * the detailed diagnostic below is emitted only for the first one -- a
+     * corrupt directory produced 45 of them, which would evict every other
+     * message from the 64-entry log buffer. */
+    unsigned rejectedNames = 0;
     ListDirResult result = SD_LISTDIR_OK;
     char newPath[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
     int sp = -1;  // Stack pointer: -1 = empty, 0..MAX-1 = current frame
@@ -653,6 +691,29 @@ static ListDirResult ListFilesInDirectoryChunked(const char* dirPath, uint8_t *p
 
         LOG_D("[SD] ListFiles: Read entry '%s'\r\n", stat.fname);
 
+        if (!sd_listdir_name_is_storable(stat.fname)) {
+            /* Log the raw bytes once. This is the observation #795 has been
+             * missing: if they decode to file content the read path handed
+             * back a data sector, if they look like FAT structures the
+             * on-card directory is damaged. The issue cannot currently tell
+             * those apart, and they lead opposite ways. */
+            if (rejectedNames == 0) {
+                char hex[3 * 16 + 1];
+                size_t i = 0;
+                while (i < 16u && stat.fname[i] != '\0') {
+                    snprintf(hex + i * 3u, 4u, "%02X ", (unsigned)(unsigned char)stat.fname[i]);
+                    i++;
+                }
+                hex[i * 3u] = '\0';
+                LOG_E("[SD] ListFiles: #795 unstorable name in '%s' -- bytes: %s(attrib=0x%02X size=%u)",
+                      gListDirStack[sp].path, hex, (unsigned)stat.fattrib,
+                      (unsigned)stat.fsize);
+            }
+            rejectedNames++;
+            skipped = true;     /* #794: the reply is not the whole card */
+            continue;
+        }
+
         if (strcmp(stat.fname, ".") == 0 || strcmp(stat.fname, "..") == 0) {
             continue;
         }
@@ -756,6 +817,11 @@ static ListDirResult ListFilesInDirectoryChunked(const char* dirPath, uint8_t *p
                 skipped = true;     /* #794 */
             }
         }
+    }
+
+    if (rejectedNames > 0) {
+        LOG_E("[SD] ListFiles: #795 dropped %u entry/entries with unstorable names",
+              rejectedNames);
     }
 
     if (skipped && result == SD_LISTDIR_OK) {
