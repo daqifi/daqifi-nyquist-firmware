@@ -5993,6 +5993,8 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:STORage:SD:FORmat?", .callback = SCPI_StorageSDFormatQuery},
     {.pattern = "SYSTem:STORage:SD:BENCHmark", .callback = SCPI_StorageSDBenchmark},
     {.pattern = "SYSTem:STORage:SD:BENCHmark?", .callback = SCPI_StorageSDBenchmarkQuery},
+    {.pattern = "SYSTem:STORage:SD:DIRectory", .callback = SCPI_StorageSDDirectorySet},   /* #799 */
+    {.pattern = "SYSTem:STORage:SD:DIRectory?", .callback = SCPI_StorageSDDirectoryGet},  /* #799 */
     {.pattern = "SYSTem:STORage:SD:MAXSize", .callback = SCPI_StorageSDMaxSizeSet},
     {.pattern = "SYSTem:STORage:SD:MAXSize?", .callback = SCPI_StorageSDMaxSizeGet},
     {.pattern = "SYSTem:STORage:SD:MINFree", .callback = SCPI_StorageSDMinFreeSet},   // #498

@@ -1414,6 +1414,73 @@ __exit_point:
  * Command: SYST:STOR:SD:MAXSize?
  * Returns: <bytes> (0 = unlimited)
  */
+/**
+ * @brief Read the SD working directory (#799)
+ *
+ * Command: SYST:STOR:SD:DIRectory?
+ *
+ * This field is the device's SD working directory: logging writes into it,
+ * and SD:GET, SD:DELete and SD:CRC interpret their operands relative to it.
+ * Until now there was no way to READ it -- so a host was subject to a value
+ * it could neither observe before an operation nor restore afterwards, and
+ * the only way to change it was the side effect of a SD:LISt? query.
+ *
+ * This getter is deliberately the first of the three pieces in #799: it is
+ * purely additive, it breaks nothing, and it is what makes the other two
+ * testable at all. Stopping SD:LISt? from writing the field (#799 part 3) is
+ * a behaviour change that needs a client survey first and is NOT done here.
+ */
+scpi_result_t SCPI_StorageSDDirectoryGet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    SCPI_ResultText(context, pSDCardRuntimeConfig->directory);
+    return SCPI_RES_OK;
+}
+
+/**
+ * @brief Set the SD working directory explicitly (#799)
+ *
+ * Command: SYST:STOR:SD:DIRectory "<path>"
+ *
+ * Before this, the ONLY way to change the working directory was to issue a
+ * SD:LISt? for its side effect -- a query changing device state, which also
+ * made an ordinary browse silently retarget the next SD:GET, SD:DELete,
+ * SD:CRC and capture. Having a real setter means changing it is something a
+ * caller ASKS for.
+ *
+ * Validation is deliberately the same pair SD:LISt? already applies to the
+ * same field -- the length bound and SD_ValidatePathParam (#612) -- rather
+ * than a second, subtly different rule for the same value.
+ */
+scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
+    sd_card_manager_settings_t* pSDCardRuntimeConfig =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    const char *pBuff = NULL;
+    size_t pathLen = 0;
+
+    if (!SCPI_ParamCharacters(context, &pBuff, &pathLen, TRUE)) {
+        return SCPI_RES_ERR;   /* libscpi has already pushed the parse error */
+    }
+
+    if (pathLen >= sizeof(pSDCardRuntimeConfig->directory)) {
+        LOG_E("SD:DIRectory - path too long: %u bytes, max %u",
+              (unsigned)pathLen,
+              (unsigned)(sizeof(pSDCardRuntimeConfig->directory) - 1));
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    if (!SD_ValidatePathParam(pBuff, pathLen)) {   /* #612 */
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+
+    memcpy(pSDCardRuntimeConfig->directory, pBuff, pathLen);
+    pSDCardRuntimeConfig->directory[pathLen] = '\0';
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context) {
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
