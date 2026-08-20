@@ -52,10 +52,34 @@ import sys
 NOT_IMPLEMENTED_MARK = "not implemented"
 
 
+# String literals are matched FIRST so a comment marker inside one is not
+# mistaken for a comment, and a quote inside a comment cannot open a string.
+# Both comment forms are then consumed whole, in one pass.
+_CODE_OR_COMMENT = re.compile(
+    r'"(?:\\.|[^"\\])*"'      # string literal  -- kept
+    r"|'(?:\\.|[^'\\])*'"     # char literal    -- kept
+    r"|/\*.*?\*/"              # block comment   -- dropped
+    r"|//[^\n]*",              # line comment    -- dropped
+    re.S)
+
+
 def strip_c_comments(text):
-    """Remove /* */ then // comments. Block first -- see module docstring."""
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-    return re.sub(r"//[^\n]*", "", text)
+    """Remove C comments, leaving string and character literals intact.
+
+    Single-pass rather than "strip block comments, then line comments". The
+    two-pass form is wrong on a line comment that contains an opening block
+    marker -- `// see /* note` -- where the first pass starts a block at that
+    marker and deletes everything up to the next `*/`, taking real code with
+    it. It is equally wrong about a comment marker inside a string literal.
+
+    Neither case exists in SCPIInterface.c today (checked: zero occurrences,
+    and both forms yield the same 292 patterns), so this is a guard against a
+    future edit rather than a fix for a live miscount -- but a checker that
+    silently loses commands the moment someone writes an ordinary comment is
+    not worth having.
+    """
+    return _CODE_OR_COMMENT.sub(
+        lambda m: m.group(0) if m.group(0)[0] in "\"'" else "", text)
 
 
 def registered_patterns(scpi_c):
