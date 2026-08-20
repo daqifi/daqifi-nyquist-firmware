@@ -209,8 +209,8 @@ def split_row(line):
     return [c.strip() for c in parts]
 
 
-def wiki_text_and_rows(wiki_dir):
-    """(all wiki text, [(command, whole row)] for rows of the COMMAND tables).
+def wiki_rows(wiki_dir):
+    """[(command, whole row)] for the rows of the COMMAND tables.
 
     Rows are taken from tables whose header's first column is "SCPI Command",
     rather than by pattern-matching the first cell. The first version used a
@@ -223,7 +223,7 @@ def wiki_text_and_rows(wiki_dir):
 
     Keying on the header is exact. Every command table in the wiki uses it.
     """
-    table_cells, rows = set(), []
+    rows = []
     files = sorted(glob.glob(os.path.join(wiki_dir, "*.md")))
     if not files:
         sys.exit(f"error: no .md files under {wiki_dir!r} -- is the wiki cloned?")
@@ -243,19 +243,15 @@ def wiki_text_and_rows(wiki_dir):
             if first.lower() in ("scpi command", "command"):  # header: rows below are commands
                 in_command_table = True
                 continue
-            # Cells of NON-command tables are a weaker kind of mention. They
-            # are needed -- the legacy alias table names its commands in the
-            # SECOND column ("| Canonical | Legacy alias | Migration PR |"), so
-            # command-table first cells alone would report four shipped aliases
-            # as undocumented -- but they are matched EXACTLY, never by
-            # abbreviation. An audit showed abbreviation-matching here let a
-            # coincidental cell in a completely unrelated table vouch for a
-            # deleted command row (reproduced on the real wiki with
-            # DIO:COUNter? and SYST:STR:START/STOP/STATS?).
-            for c in cells:
-                cleaned = clean_cell(c)
-                if cleaned:
-                    table_cells.add(cleaned)
+            # Cells of NON-command tables are not consulted at all (#807). They
+            # used to be, as a weaker kind of mention, because the legacy-alias
+            # table names its commands in the SECOND column and four shipped
+            # aliases would otherwise read as undocumented. But an audit
+            # mutation-proved that any coincidental cell anywhere in the wiki
+            # could then vouch for a command whose real row had been deleted --
+            # green, red, green, with the unrelated cell carrying the verdict.
+            # Those four are explicit allowlist entries now, which is strictly
+            # tighter and says out loud what the fallback only implied.
             if not in_command_table:
                 continue
             if set(first) <= set("-: "):          # the |---|---| separator
@@ -263,7 +259,7 @@ def wiki_text_and_rows(wiki_dir):
             first = clean_cell(first)
             if first:
                 rows.append((first, line))
-    return table_cells, rows
+    return rows
 
 
 def load_allowlist(path):
@@ -369,34 +365,34 @@ def _self_test_end_to_end():
                      "| -- | -- | -- | -- |\n"
                      "| SYSTem:WIFI:DEBUG? | x | x | SCPI_A |\n\n"
                      "Prose only: SYSTem:POWer:OTG is diagnostic.\n")
-        cells, rows = wiki_text_and_rows(wiki)
+        rows = wiki_rows(wiki)
         written = [cmd for cmd, _ in rows]
-        documented = (any(is_form_of(w, "SYSTem:POWer:OTG") for w in written)
-                      or "system:power:otg" in _lower(cells))
-        if documented:
+        if any(is_form_of(w, "SYSTem:POWer:OTG") for w in written):
             print("  FAIL end-to-end: a command mentioned only in prose counted"
                   " as documented -- the gate can be satisfied without writing"
                   " a row")
             failures += 1
 
         # (3) A cell in an UNRELATED table must not vouch for a missing command
-        # row. An audit reproduced this on the real wiki: deleting the
-        # DIO:COUNter? row while some other table happened to contain the
-        # abbreviation DIO:COUN? left the checker green.
+        # row -- including when it spells the command EXACTLY. An audit
+        # reproduced both forms on the real wiki: deleting the DIO:COUNter? row
+        # left the checker green while another table happened to contain the
+        # abbreviation DIO:COUN? (fixed in #805), and again while another table
+        # contained the exact text DIO:COUNter? (#807, fixed here). Both cells
+        # below are present at once, so this fails if either path returns.
         wiki2 = os.path.join(d, "wiki2")
         os.makedirs(wiki2)
         with open(os.path.join(wiki2, "01.md"), "w", encoding="utf-8") as fh:
             fh.write("| SCPI Command | Description |\n| -- | -- |\n"
                      "| SYSTem:REboot | x |\n\n"
                      "| Signal | Example |\n| -- | -- |\n"
-                     "| counter note | DIO:COUN? |\n")
-        cells2, rows2 = wiki_text_and_rows(wiki2)
+                     "| counter note | DIO:COUN? |\n"
+                     "| exact note | DIO:COUNter? |\n")
+        rows2 = wiki_rows(wiki2)
         written2 = [cmd for cmd, _ in rows2]
-        vouched = (any(is_form_of(w, "DIO:COUNter?") for w in written2)
-                   or "dio:counter?" in _lower(cells2))
-        if vouched:
-            print("  FAIL end-to-end: an abbreviation in an unrelated table "
-                  "vouched for a command with no row of its own")
+        if any(is_form_of(w, "DIO:COUNter?") for w in written2):
+            print("  FAIL end-to-end: a cell in an unrelated table vouched for "
+                  "a command with no row of its own")
             failures += 1
     return cases, failures
 
@@ -427,32 +423,26 @@ def main():
     if not live:
         sys.exit(f"error: no .pattern entries found in {args.scpi!r} -- "
                  f"has the command table moved?")
-    table_cells, rows = wiki_text_and_rows(args.wiki)
+    rows = wiki_rows(args.wiki)
     allow = load_allowlist(args.allow)
 
     written = [cmd for cmd, _ in rows]
-    # A command counts as documented if a table row names it, OR if the page
-    # writes it anywhere -- some are covered by the legacy-alias table and by
-    # prose rather than a row of their own. Deliberately the looser of the two
-    # directions: the expensive failure is a user calling a command the wiki
-    # lists and getting -113, which is the ghost check below.
-    # Documented means a TABLE names it -- either as a command row, or in any
-    # cell of any table (the legacy aliases live in the migration table's
-    # second column).
+    # Documented means a COMMAND-TABLE ROW names it. Nothing else counts.
     #
-    # It deliberately no longer means "appears anywhere on the page". That
-    # fallback read every .md file whole, prose and fenced code included, so a
-    # single sentence mentioning a command silently vouched for a missing row.
-    # An adversarial audit mutation-proved it: deleting one prose sentence
-    # flipped the checker from exit 0 to exit 1, which means the sentence --
-    # not any documentation -- was carrying the verdict. Anyone who did not
-    # want to write a row could satisfy the gate by mentioning the command.
+    # Two looser rules were tried, and each was mutation-proved to be carrying
+    # the verdict itself. "Appears anywhere on the page" let a single prose
+    # sentence vouch for a missing row -- deleting the sentence flipped the
+    # checker red. "Appears in any table cell" let a coincidental cell in an
+    # unrelated table do the same (#807): narrower, but still a false pass, and
+    # still invisible to whoever deleted the row.
+    #
+    # A command that genuinely has no row of its own belongs in the allowlist,
+    # where the entry must state why -- which turns an implicit rule into a
+    # decision someone wrote down.
     undocumented = sorted(
         p for p in live
         if p not in allow
-        and not any(is_form_of(w, p) for w in written)
-        # Exact, not is_form_of: see the note where table_cells is built.
-        and p.lower() not in _lower(table_cells))
+        and not any(is_form_of(w, p) for w in written))
 
     # "Documented" means a command TABLE ROW names it. Searching the whole page
     # instead let a command pass on a passing mention inside another command's

@@ -5,7 +5,15 @@
 # unexplained line is indistinguishable from an oversight, which is the
 # failure mode tools/lint/scpi_wiki_sync.py exists to catch.
 #
-# Empty on purpose: as of the audit that added this checker, every
-# registered command is documented. Prefer documenting a command (with a
-# warning if it is dangerous or diagnostic) over hiding it -- CLAUDE.md's
-# SCPI visibility principle is to maximise insight into device health.
+# Prefer documenting a command (with a warning if it is dangerous or
+# diagnostic) over hiding it -- CLAUDE.md's SCPI visibility principle is to
+# maximise insight into device health. An entry here should mean "documented
+# somewhere a command row cannot express", not "undocumented".
+
+# Empty on purpose. Every registered command now has a command-table row of
+# its own, including the four legacy streaming/USB aliases -- which used to be
+# named only in the stream-migration table's SECOND column and were covered by
+# a fallback that accepted any table cell. That fallback let a coincidental
+# cell vouch for a deleted row (#807), so it is gone; rather than exempt the
+# four here, they were given the rows they always should have had. A callable
+# command with no row is a documentation gap, not an allowlist case.
