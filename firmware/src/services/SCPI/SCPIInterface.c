@@ -3247,7 +3247,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
      * as a measurement, so it is absent from every loss percentage below. The
      * mask is over sample-list SLOTS (bit j = the j-th enabled channel in this
      * session), matching validMask, not over board channel numbers. */
-    scpi_printf(context, "ClippedSamples=%u\r\n", (unsigned)s.clippedSamples);
+    scpi_printf(context, "ClippedSamples=%llu\r\n", (unsigned long long)s.clippedSamples);
     scpi_printf(context, "ClippedChannelMask=%u\r\n", (unsigned)s.clippedChannelMask);
     // #541 D-A diag: ticks where a T1 result was not ready (ARDY clear) at
     // the deferred task's direct read.  Expected 0; non-zero ticks emitted

@@ -167,12 +167,18 @@ static volatile uint32_t gScanStaleDropped = 0;  // ticks scan armed but no new 
  * consumer reading device_status sees the current frame's state rather than a
  * latch it must learn to clear. The other two accumulate for SYST:STR:STATS?.
  *
- * Single writer (the deferred streaming task), 32-bit aligned, so the plain
- * store of gClipLiveMask is atomic on PIC32MZ and needs no critical section;
- * the two accumulators are RMW but are only ever written by that same task.
- * Readers (NanoPB encoder, SCPI) get a coherent 32-bit load either way. */
+ * All three are published ONLY for a sample that is actually delivered --
+ * see the publish block next to gStreamStats.totalSamplesStreamed++. A frame
+ * suppressed by the priming gate or lost to a full queue describes nothing
+ * the consumer ever sees, and the priming window in particular can present
+ * a stale cache value that looks exactly like the bottom rail.
+ *
+ * They are updated inside the same taskENTER_CRITICAL as that counter, which
+ * the 64-bit gClippedSamples requires anyway (CLAUDE.md: 64-bit operations
+ * always need one) and which makes the two RMWs consistent with their
+ * neighbours rather than relying on a single-writer argument. */
 static volatile uint32_t gClipLiveMask = 0;      // channels at a rail THIS tick
-static volatile uint32_t gClippedSamples = 0;    // samples with >=1 railed channel
+static volatile uint64_t gClippedSamples = 0;    // samples with >=1 railed channel
 static volatile uint32_t gClipChannelMask = 0;   // OR of every slot seen railed
 /* #707/#745: ticks that fired before the session's first shared scan had
  * completed, so no sample could be built. A DRY TICK — not a sample and not a
@@ -960,14 +966,6 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 }
             }
 
-            /* Publish LIVE state every tick, set or clear -- device_status
-             * must describe this frame, not the worst frame so far. The
-             * accumulators below are the cumulative view for STATS?. */
-            gClipLiveMask = clipMask;
-            if (clipMask != 0u) {
-                gClippedSamples++;
-                gClipChannelMask |= clipMask;
-            }
 
             // #717: every emitted packet already carries the deterministic
             // trigStamp (set before the channel loop, >=1) regardless of mode —
@@ -1052,6 +1050,14 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             } else {
                 taskENTER_CRITICAL();
                 gStreamStats.totalSamplesStreamed++;
+                /* #814: publish the rail state for THIS delivered sample.
+                 * Live mask is rewritten every delivery, set or clear, so it
+                 * describes the current frame rather than the worst so far. */
+                gClipLiveMask = clipMask;
+                if (clipMask != 0u) {
+                    gClippedSamples++;
+                    gClipChannelMask |= clipMask;
+                }
                 taskEXIT_CRITICAL();
                 Streaming_UpdateFlowWindow(false);
             }

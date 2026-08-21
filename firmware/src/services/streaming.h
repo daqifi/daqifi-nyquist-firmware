@@ -561,7 +561,10 @@ typedef struct {
      * rides the protobuf device_status word so a consumer can mark the span
      * as it plots. NOT loss -- a clipped sample is delivered, it is just not
      * trustworthy as a measurement, so it is never folded into any loss %. */
-    uint32_t clippedSamples;
+    /* 64-bit for the same reason totalSamplesStreamed is: a fully railed
+     * channel makes clippedSamples EQUAL to it, so it inherits the same
+     * range requirement and a uint32 would wrap inside a long log. */
+    uint64_t clippedSamples;
     uint32_t clippedChannelMask;
     uint32_t scanStaleDropped; // #557: scan armed but EOS not fired by next trigger
                                // (scan-busy/stale) — counted as a dropped sample
@@ -659,11 +662,14 @@ void Streaming_NoteEosFired(void);
 /**
  * @brief True while at least one enabled channel is AT A RAIL right now.
  *
- * #814: live state, recomputed every streaming tick -- not a sticky latch and
- * not a cumulative counter. The protobuf encoder ORs this into device_status
- * as bit 0x100, so a consumer plotting the stream can mark the affected span
- * as it happens rather than discovering a total afterwards. Returns false
- * when not streaming.
+ * #814: live state, republished for every DELIVERED sample -- not a sticky
+ * latch and not a cumulative counter. Returns false when not streaming.
+ *
+ * Where this is observable matters and is easy to get wrong: streaming
+ * protobuf frames do NOT carry device_status (the fast encoder emits only
+ * timestamp, analog, digital and port-dir), so the bit rides the INFO and
+ * DISCOVERY messages, not the stream. The live in-session surface is
+ * STAT:QUES:COND? bit 0, read over a link that is not carrying the stream.
  *
  * A railed value is delivered normally; the bit says only that it cannot be
  * trusted as a measurement, because a genuine full-scale reading and a
