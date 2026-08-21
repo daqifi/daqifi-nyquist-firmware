@@ -834,10 +834,20 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                  * is also the worst moment to add work.
                  *
                  * A consumer can still tell 'not clipping' from 'not knowable'
-                 * without a third state: this window always coincides with
-                 * QueueDropped/PoolExhausted rising and QUES loss bits 4/8-13
-                 * being set. Bit 0 reading 0 while those are set means 'no
-                 * current measurement', not 'measured and clean'. */
+                 * without a third state, but the signal to use is the STATS
+                 * COUNTERS, not the QUES bits: PoolExhaustedSamples and
+                 * QueueDroppedSamples are incremented unconditionally right
+                 * here, every affected tick. Bit 0 reading 0 while
+                 * PoolExhaustedSamples is climbing means 'no current
+                 * measurement', not 'measured and clean'.
+                 *
+                 * Deliberately NOT the QUES loss bits, which an earlier
+                 * revision of this comment wrongly promised: this path reaches
+                 * only Streaming_UpdateFlowWindow(true), which touches bit 4
+                 * alone -- and even that only at a window boundary and only
+                 * once windowed loss crosses gLossThresholdPct (default 5%),
+                 * so it lags and can stay clear. Bits 8-13 are transport and
+                 * bus faults and are never set from here. */
                 gClipLiveMask = 0;
                 taskEXIT_CRITICAL();
                 LOG_E_SESSION(LOG_SESSION_POOL_EXHAUST, "Streaming: Sample pool exhausted");
