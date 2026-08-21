@@ -1267,6 +1267,21 @@ void sd_card_manager_ProcessState() {
 
     switch (gSDCardData.currentProcessState) {
         case SD_CARD_MANAGER_PROCESS_STATE_INIT:
+            /* #757: a rotation window never spans an INIT -- a rotation goes
+             * WRITE_TO_FILE -> OPEN_FILE directly -- so reaching here with the
+             * flag still set means the previous session was interrupted between
+             * the rotation's close and the open that would have cleared it.
+             * app_SDCardTask parking in SUSPENDED for a WiFi streaming session
+             * (#589) is one way to get there, since it pumps neither this state
+             * machine nor the driver.
+             *
+             * mode != WRITE already makes IsBufferAccepting() false in that
+             * state, so nothing streams into a dead buffer -- but a STALE true
+             * would survive into the next write session and make OPEN_FILE skip
+             * the metadata and buffer reset on a FIRST open, which is exactly
+             * the case the skip is not meant to cover. Clear it here so the
+             * flag cannot outlive the session that set it. */
+            gSdRotating = false;
             // Only initialize if SD is enabled AND has a valid operation mode
             // Just enabling SD without setting a mode (WRITE/READ/LIST) is valid - don't spam errors
             // GET_SPACE is allowed even when disabled (transient read-only query)

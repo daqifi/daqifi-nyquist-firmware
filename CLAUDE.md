@@ -1303,7 +1303,16 @@ SYST:STOR:SD:MAXSize?               # Query current setting
 **Safety Features:**
 - Default: 3.9GB limit (100MB below FAT32 maximum)
 - Minimum: 1000 bytes (prevents rapid rotation)
-- Circular buffer draining before rotation (zero data loss)
+- Circular buffer draining before rotation, AND the buffer keeps accepting
+  encoder output across the file-open window (#757). Both halves are needed for
+  "zero data loss": the drain covers what was already buffered, and the second
+  covers what arrives while the next file is being created. Before #757 only
+  the drain existed, so every rotation discarded the packets encoded during the
+  open — measured ~14,000 bytes per 25 s at 2 kHz with `MAXSize 20000`, growing
+  with directory occupancy because the FatFs create is O(N) in it. The encoder
+  gate is `sd_card_manager_IsBufferAccepting()`; note that transport health
+  deliberately still uses `IsWriteReady()`, or a stuck open would read as
+  healthy.
 - Unconditional filesystem flush before file close
 
 **Python Tools:**
