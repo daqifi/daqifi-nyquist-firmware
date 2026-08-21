@@ -4619,14 +4619,14 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
      * spare. Appended, not substituted -- MEM:FREE? is a key=value list and existing
      * keys keep their meaning.
      *
-     * Partitioned == 0 means the streaming pool has NOT been carved yet: gSampleCount
-     * is only assigned by StreamingBufferPool_Partition, which runs at StartStreamData.
-     * On a freshly-booted device that has not streamed, the sample list is still on the
-     * boot path (BoardData.c calls AInSampleList_Initialize(DEFAULT_AIN_SAMPLE_COUNT)),
-     * so Count reads 1100 while Partitioned reads 0 -- the pair is only comparable
-     * after a partition has run. Zero is unambiguous for this: a successful partition
-     * always yields at least MIN_AIN_SAMPLE_COUNT slots. ClampedSlots stays 0 in that
-     * state rather than going negative, which is why the subtraction is guarded. */
+     * Partitioned == 0 is a FAULT, not a pre-stream state. The pool is partitioned at
+     * boot -- StreamingBufferPool_Init (app_freertos.c) calls Partition with
+     * DEFAULT_AIN_SAMPLE_COUNT -- so a healthy device reports a non-zero Partitioned
+     * before it has ever streamed (equal to Count, giving ClampedSlots 0). The only
+     * path that leaves gSampleCount at 0 is the "Pool too small" bail-out in
+     * StreamingBufferPool_Partition, which also zeroes the buffer sizes. Read a 0 here
+     * as a failed partition worth investigating. The subtraction is still guarded so
+     * ClampedSlots cannot underflow if Partitioned somehow lands below Count. */
     uint32_t poolPartitioned = StreamingBufferPool_SampleCount();
     scpi_printf(context, "SamplePoolPartitioned=%u\r\n", (unsigned)poolPartitioned);
     scpi_printf(context, "SamplePoolClampedSlots=%u\r\n",
