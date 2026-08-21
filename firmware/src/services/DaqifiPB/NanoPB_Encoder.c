@@ -514,6 +514,26 @@ size_t Nanopb_Encode(tBoardData* state,
                         flag |= 0x00000004;
                     }
                 }
+                /* #814: 0x100 -- one or more channels are AT A RAIL right
+                 * now. Live per-frame state, not a sticky latch, and
+                 * deliberately bit 8 rather than 3 so 0x08-0x80 stay free for
+                 * connection-state growth. A consumer that does not know the
+                 * bit ignores it, so this is backward compatible.
+                 *
+                 * It exists because a railed sample is indistinguishable from
+                 * a real reading once it leaves the device: a genuine
+                 * full-scale value and a clamped one are the same number on
+                 * the wire. Riding the status word means a plot can mark the
+                 * affected span as it happens, which an on-device counter
+                 * alone can never do. Shares its meaning with the Gloor IAQ
+                 * board so the apps parse one convention (#814).
+                 *
+                 * The cumulative view is SYST:STR:STATS? ClippedSamples /
+                 * ClippedChannelMask -- deliberately folded into the existing
+                 * stats reply rather than given new SCPI commands. */
+                if (Streaming_IsClipping()) {
+                    flag |= 0x00000100;
+                }
                 message.device_status = flag;
             }
                 break;

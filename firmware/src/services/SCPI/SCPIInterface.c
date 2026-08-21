@@ -80,6 +80,12 @@
 
 // SCPI STATus:QUEStionable condition register bit assignments
 // These must match the QUES_BIT_* defines in streaming.c
+/* Bit 0 is IEEE 488.2's VOLTAGE summary bit, which is exactly what this means:
+ * a channel is sitting at a rail, so the voltage being reported is not a
+ * trustworthy measurement (#814). Derived live in SCPI_SyncQuesBits from
+ * Streaming_IsClipping() rather than latched in gQuesBits -- same treatment as
+ * QUES_ANALOG_LIMIT, and the reason a stopped stream reports it as clear. */
+#define QUES_VOLT_CLIPPED   (1 << 0)   // Bit 0: a channel is at a rail right now (#814)
 #define QUES_DATA_LOSS      (1 << 4)   // Bit 4: windowed sample loss >= 5%
 #define QUES_USB_OVERFLOW   (1 << 8)   // Bit 8: USB buffer overflow
 #define QUES_WIFI_OVERFLOW  (1 << 9)   // Bit 9: WiFi buffer overflow
@@ -90,7 +96,8 @@
 #define QUES_ANALOG_LIMIT   (1 << 14)  // Bit 14: an ADC digital-comparator threshold has tripped (#670)
 #define QUES_ALL_BITS       (QUES_DATA_LOSS | QUES_USB_OVERFLOW | QUES_WIFI_OVERFLOW | \
                              QUES_SD_OVERFLOW | QUES_ENCODER_FAIL | QUES_TRANSPORT_DOWN | \
-                             QUES_SPI_BUS_FAULT | QUES_ANALOG_LIMIT)
+                             QUES_SPI_BUS_FAULT | QUES_ANALOG_LIMIT | \
+                             QUES_VOLT_CLIPPED)
 
 #define UNUSED(x) (void)(x)
 //
@@ -368,6 +375,15 @@ static void SCPI_SyncQuesBits(void) {
     // rather than stored in gQuesBits: the trip ISR only touches its own latch,
     // and the condition persists until CONF:ADC:THREshold:CLEar (not stream stop).
     if (AdcThreshold_AnyLatched()) { bits |= QUES_ANALOG_LIMIT; }
+    /* #814: also derived rather than stored. The streaming protobuf frames do
+     * not carry device_status (the fast encoder emits only timestamp, analog,
+     * digital and port-dir to keep the hot path small), and a mid-stream
+     * SYST:SYSInfoPB? reply arrives buried in streaming frames -- so on this
+     * platform the status word is not a practical carrier for a live signal.
+     * The QUES condition register is: it is small, it is the register that
+     * already means 'this measurement is suspect', and it is queryable at any
+     * time with STAT:QUES:COND?. */
+    if (Streaming_IsClipping()) { bits |= QUES_VOLT_CLIPPED; }
     UsbCdcData_t* usb = UsbCdc_GetSettings();
     wifi_tcp_server_context_t* wifi = wifi_manager_GetTcpServerContext();
     // Replace streaming-related QUES bits in a single write to avoid
@@ -3227,6 +3243,12 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     // still streamed, just with frozen data; same exclusion as EosOverruns).
     // ~0 with the scan cap in place; non-zero flags over-rate / NOCAP scan-busy.
     scpi_printf(context, "ScanStaleDropped=%u\r\n", (unsigned)s.scanStaleDropped);
+    /* #814: NOT loss -- a clipped sample is delivered, it is just untrustworthy
+     * as a measurement, so it is absent from every loss percentage below. The
+     * mask is over sample-list SLOTS (bit j = the j-th enabled channel in this
+     * session), matching validMask, not over board channel numbers. */
+    scpi_printf(context, "ClippedSamples=%llu\r\n", (unsigned long long)s.clippedSamples);
+    scpi_printf(context, "ClippedChannelMask=%u\r\n", (unsigned)s.clippedChannelMask);
     // #541 D-A diag: ticks where a T1 result was not ready (ARDY clear) at
     // the deferred task's direct read.  Expected 0; non-zero ticks emitted
     // that channel with its validMask bit clear.
