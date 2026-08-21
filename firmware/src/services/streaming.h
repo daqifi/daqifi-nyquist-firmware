@@ -233,12 +233,18 @@ static inline uint32_t Streaming_SdAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2use
  * is <= the measured zero-loss ceiling at the tested channel counts (safe by
  * construction; tightness 86-100%).  This closes the prior format-blind hole
  * where high-channel CSV was capped well ABOVE its true ceiling (silent loss).
- * JSON uses the CSV coefficient family, then a /2 derate (it emits ~2-3x CSV
- * bytes/sample; the /2 is an uncharacterized placeholder). NOTE (#562): JSON
- * is held on the *legacy* CSV coefficients on USB/NQ1 — it does NOT inherit the
+ * JSON is now SPLIT (#529). On USB/NQ1 it carries its OWN bench-measured
+ * coefficients (single 11000, 32000/(2+n)) and skips the derate entirely —
+ * `jsonFitted` marks that. Everywhere else — WiFi, SD, USB+SD, and every
+ * interface on NQ2/NQ3 — JSON still uses the CSV coefficient family plus the
+ * /2 placeholder, which remains uncharacterized there. NQ2/NQ3 are excluded
+ * deliberately: their wider ADC codes cost more bytes/sample, so an NQ1-fitted
+ * Hz cap would over-cap them.
+ *
+ * The #562 note still holds for the un-fitted paths: JSON does NOT inherit the
  * 252 MHz CSV transport raise (guarded by `isNQ1 && !json`), because raising it
  * on top of the /2 placeholder could over-cap JSON's uncharacterized byte cost.
- * A JSON refit is a separate follow-up (#529); keep it decoupled until then.
+ * On USB/NQ1 that guard is now moot — the measured branch is taken first.
  * Only meaningful for the ACTIVE interface; ComputeMaxFreqForConfig gates on it.
  *
  * @param interface      StreamingInterface (USB / WiFi / SD / UsbAndSd)
@@ -271,6 +277,10 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
      * future/garbage value can never over-cap. */
     uint32_t pb = 0u, json = 0u;  /* init pb defensively (Qodo pass-7); every
                                    * non-default case still assigns it explicitly */
+    /* #529: set when an interface supplies MEASURED JSON coefficients, so the
+     * blanket x0.5 placeholder at the bottom is skipped for that interface
+     * only. Interfaces still uncharacterised keep the derate. */
+    uint32_t jsonFitted = 0u;
     switch (encoding) {
         case Streaming_ProtoBuffer: pb = 1u; break;
         case Streaming_Csv:         pb = 0u; break;
@@ -315,6 +325,44 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
              * ×0.5 placeholder must not inherit the raise. The CSV *additive*
              * refit (unlocks the additive-bound 1ch/T2 cells, e.g. 1xT1 10589 vs
              * measured 20000) needs a fine grid -> tracked #562/#529 follow-up. */
+            else if (json && isNQ1) {
+                /* #529 JSON transport fit, measured 2026-08-21 on NQ1/USB.
+                 * NOCAP ceiling sweep, each ceiling then held 120 s with zero
+                 * drops on every counter (1xT1 reproduced on two passes):
+                 *   1ch (1xT1 OBD=OFF) 12000 Hz  563 KB/s
+                 *   5ch (5xT1 OBD=OFF)  7000 Hz  951 KB/s
+                 *  10ch (5T1+5T2)       3000 Hz  737 KB/s
+                 *  16ch (5T1+11T2)      2000 Hz  755 KB/s
+                 * single 11000 and 32000/(2+n) sit at 89% of measured at n=1,
+                 * 10 and 16 -- inside the 86-100% tightness band the other
+                 * transport fits use.
+                 *
+                 * n=5 lands at 65%, deliberately. No A/(B+n) can pass through
+                 * both 7000@5 and 2000@16 with positive B (solving gives
+                 * B=-0.6): 5xT1 arms no MODULE7 scan while the 10ch and 16ch
+                 * configs do, so the measured curve is steeper than this form.
+                 * Fitting UNDER the 5ch point is the safe side of that -- the
+                 * 5ch headroom is real but unreachable through this curve,
+                 * the same way CsvCompact's is.
+                 *
+                 * NOTE the single (n=1) value is currently DORMANT. The
+                 * enforced cap is min(additive, transport), and for JSON the
+                 * additive model runs its CSV-class branch (isProtoBuf=0,
+                 * x0.80 envelope): 1xT1 gives 800e6/(71000+4550) = 10589 Hz,
+                 * below this 11000, so the additive binds and the single never
+                 * applies. Confirmed on the bench -- the device reports exactly
+                 * 10589 for that config. It is set to the measured-safe
+                 * transport value anyway (<= the 12000 ceiling) so it is
+                 * correct if a JSON-specific ADDITIVE fit later lifts that
+                 * bound; characterising the additive for JSON is the follow-up
+                 * that would unlock the remaining 1-channel headroom.
+                 *
+                 * NQ2/NQ3 are NOT covered: their wider ADC codes cost more
+                 * bytes/sample, so an NQ1-fitted Hz cap would over-cap them.
+                 * They fall through to the CSV coefficients + the x0.5 below. */
+                single = 11000u; A = 32000u; B = 2u;
+                jsonFitted = 1u;
+            }
             else {
                 if (isNQ1 && !json) { single = 20000u; A = 90000u; B = 1u; }
                 else                { single = 15000u; A = 34000u; B = 1u; }
@@ -430,7 +478,10 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
      * while halve-without-clamp gives 2000 Hz ~= 5000 CSV-equivalent, well
      * above it.  (An earlier comment argued this in Hz terms, which was
      * arithmetically wrong — Qodo #540 pass-2 catch.) */
-    if (json) hz /= 2u;
+    /* #529: only for interfaces with no measured JSON fit. USB/NQ1 now
+     * supplies its own coefficients above and sets jsonFitted, so halving
+     * there would re-apply a derate that the measurement already replaced. */
+    if (json && !jsonFitted) hz /= 2u;
     return (hz == 0u) ? 1u : hz;
 }
 
