@@ -835,6 +835,10 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 uint8_t cfgIdx = mapping->configIndices[j];
 
                 uint32_t adcMax;
+                /* #814: AD7609 codes are SIGNED; MC12b codes are unsigned.
+                 * The rail test below has to know which, so record it here
+                 * alongside adcMax rather than re-deriving it. */
+                bool adcIsSigned;
                 // #368: this task is registered as pure-integer (see comment
                 // at top of _Streaming_Deferred_Interrupt_Task — no
                 // portTASK_USES_FLOATING_POINT()).  The historical bug:
@@ -853,8 +857,10 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 // by reverting one of the two.
                 if (pBoardConfig->AInChannels.Data[cfgIdx].Type == AIn_AD7609) {
                     adcMax = 262143u;  // 18-bit AD7609
+                    adcIsSigned = true;
                 } else {
                     adcMax = 4095u;    // 12-bit MC12bADC
+                    adcIsSigned = false;
                 }
 
                 if (gBenchmarkMode == BENCHMARK_PIPELINE) {
@@ -965,7 +971,33 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                  * FPU out of this loop (#368/#369). */
                 if (pPublicSampleList->validMask & (1U << j)) {
                     const uint32_t v = pPublicSampleList->Values[j];
-                    if (v == 0u || v >= adcMax) {
+                    bool railed;
+                    if (adcIsSigned) {
+                        /* AD7609 stores an 18-bit two's-complement code
+                         * SIGN-EXTENDED into this uint32_t (AD7609.c:454 ORs
+                         * AD7609_SIGN_EXTEND 0xFFFC0000 when bit 17 is set),
+                         * so the code range is -131072..+131071 and the rails
+                         * are those extremes -- NOT 0 and adcMax.
+                         *
+                         * Comparing it unsigned against adcMax is wrong in
+                         * both directions and neither failure is quiet: every
+                         * ordinary NEGATIVE reading sign-extends to a huge
+                         * unsigned value and would be flagged clipped (about
+                         * half of all samples on a bipolar +/-10 V board),
+                         * while true positive full scale, 131071, is below
+                         * adcMax and would never be flagged at all. 0 is
+                         * mid-scale here, not a rail.
+                         *
+                         * Bounds derived from adcMax so they cannot drift from
+                         * the board config's Resolution (262144 -> +/-131072). */
+                        const int32_t sv = (int32_t)v;
+                        const int32_t posRail = (int32_t)(adcMax >> 1);       /* +131071 */
+                        const int32_t negRail = -(int32_t)((adcMax >> 1) + 1); /* -131072 */
+                        railed = (sv >= posRail) || (sv <= negRail);
+                    } else {
+                        railed = (v == 0u) || (v >= adcMax);
+                    }
+                    if (railed) {
                         clipMask |= (1U << j);
                     }
                 }
