@@ -504,6 +504,11 @@ void Streaming_SdInterfaceReleased(void);
 
 void Streaming_ResetSdPbMetadata(void);
 
+/* #757: report SD bytes that were buffered for the next file but can never be
+ * written, because the session was torn down while the rotation's open was in
+ * flight. Counts into SdDroppedBytes so the loss is visible instead of silent. */
+void Streaming_ReportSdDiscard(size_t bytes);
+
 // #388 — Compile-time profiling counters for the PB streaming hot path.
 // When enabled, instruments encoder + USB write paths with _CP0_GET_COUNT()
 // cycle measurements.  Off by default in production: enable here for a

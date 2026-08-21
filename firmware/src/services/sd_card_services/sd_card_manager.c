@@ -203,6 +203,20 @@ static SemaphoreHandle_t gSDOpMutex = NULL;
 static bool gLoggedUnmountFail = false;
 // gLoggedWriteBufferTimeout removed — WriteToBuffer is now non-blocking
 static volatile bool gTransferAbortRequested = false;
+
+/* #757: true from the instant the old file is closed for a size rotation until
+ * the new file's open has resolved. During that window there is no valid file
+ * handle, so sd_card_manager_IsWriteReady() is false -- but the circular buffer
+ * is empty (the rotation drained it) and will be written to the NEW file, so it
+ * can safely keep ACCEPTING encoder output. That is the whole fix: without it
+ * the encoder is told sdSize == 0 for the entire open, and every packet encoded
+ * in that window is discarded and counted in SdDroppedBytes.
+ *
+ * Single writer (the SD task); read by the streaming task via
+ * sd_card_manager_IsBufferAccepting(). A plain aligned bool is atomic on
+ * PIC32MZ; volatile is here because the two contexts differ, not to imply
+ * read-modify-write safety. */
+static volatile bool gSdRotating = false;
 static int gFormatStatus = 0;  // 0=idle, 1=in progress, 2=success, -1=failed
 static uint32_t gFormatSectorsEstimate = 0;  // Estimated total sectors written during format
 
@@ -1213,10 +1227,55 @@ static bool sd_TargetExistsInBucketPath(const char* bucketPath, bool* fsError) {
  * no critical section is needed for the flag itself. */
 static volatile bool gSdTeardownRequested = false;
 
+/* #757: end a rotation's open window on a path that will never write.
+ *
+ * Closing the window is not optional. While gSdRotating is set the streaming
+ * task keeps filling the circular buffer on the strength of a promise that
+ * something will drain it; if the open ends without a handle -- a bucket
+ * refusal, a teardown, a failed create -- that promise is broken and the flag
+ * must be cleared or the encoder buffers forever into a dead path.
+ *
+ * Whatever it already buffered cannot be recovered: there is no file to write
+ * it to. It is still real SD loss, so it is counted rather than dropped
+ * quietly, and the buffer is reset so the next session does not inherit a
+ * half-written file's header.
+ *
+ * The success path does NOT come here -- it just clears the flag, because the
+ * WRITE_TO_FILE arm of IsBufferAccepting() takes over and the buffered bytes
+ * are about to be written, not lost. */
+static void sd_AbandonRotationWindow(const char* why) {
+    /* Clear INSIDE the mutex, not before taking it. sd_card_manager_WriteToBuffer
+     * re-checks sd_card_manager_IsBufferAccepting() under this same mutex, so
+     * ordering them this way leaves no gap: a writer that gets the mutex first
+     * writes, and the count below includes its bytes; a writer that gets it
+     * after sees the flag already false and refuses. Clearing before the take
+     * would let a writer blocked on the mutex append AFTER the reset, and those
+     * bytes would be neither drained nor counted. */
+    SD_TakeMutexDebug(gSDCardData.wMutex, "abandon_rotation");
+    gSdRotating = false;
+    size_t buffered = CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf);
+    CircularBuf_Reset(&gSDCardData.wCirbuf);
+    xSemaphoreGive(gSDCardData.wMutex);
+    if (buffered > 0u) {
+        Streaming_ReportSdDiscard(buffered);
+        LOG_E("[SD] rotation open abandoned (%s): discarded %u buffered byte(s)",
+              why, (unsigned)buffered);
+    }
+}
+
 void sd_card_manager_ProcessState() {
     /* #800: honour a teardown that raced a state store, before dispatching. */
     if (gSdTeardownRequested) {
         gSdTeardownRequested = false;
+        /* #757: this override can land while a rotation window is open --
+         * a STOP arriving between the rotation's close and OPEN_FILE. Forcing
+         * DEINIT here means OPEN_FILE never runs, so the abort path that would
+         * have closed the window and accounted for its bytes never runs
+         * either: the flag stays set and the bytes vanish from SdDroppedBytes.
+         * Route it through the same accounting every other abandon uses. */
+        if (gSdRotating) {
+            sd_AbandonRotationWindow("teardown during rotation");
+        }
         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
     }
 
@@ -1224,6 +1283,21 @@ void sd_card_manager_ProcessState() {
 
     switch (gSDCardData.currentProcessState) {
         case SD_CARD_MANAGER_PROCESS_STATE_INIT:
+            /* #757: a rotation window never spans an INIT -- a rotation goes
+             * WRITE_TO_FILE -> OPEN_FILE directly -- so reaching here with the
+             * flag still set means the previous session was interrupted between
+             * the rotation's close and the open that would have cleared it.
+             * app_SDCardTask parking in SUSPENDED for a WiFi streaming session
+             * (#589) is one way to get there, since it pumps neither this state
+             * machine nor the driver.
+             *
+             * mode != WRITE already makes IsBufferAccepting() false in that
+             * state, so nothing streams into a dead buffer -- but a STALE true
+             * would survive into the next write session and make OPEN_FILE skip
+             * the metadata and buffer reset on a FIRST open, which is exactly
+             * the case the skip is not meant to cover. Clear it here so the
+             * flag cannot outlive the session that set it. */
+            gSdRotating = false;
             // Only initialize if SD is enabled AND has a valid operation mode
             // Just enabling SD without setting a mode (WRITE/READ/LIST) is valid - don't spam errors
             // GET_SPACE is allowed even when disabled (transient read-only query)
@@ -1897,6 +1971,11 @@ void sd_card_manager_ProcessState() {
                     }
                     gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                    /* #757: this exits OPEN_FILE without ever reaching the
+                     * open, so the rotation window has to be closed here too --
+                     * otherwise the encoder keeps filling a buffer that nothing
+                     * will drain. */
+                    sd_AbandonRotationWindow("no writable bucket");
                     xSemaphoreGive(gSDCardData.opCompleteSemaphore);
                     break;
                 }
@@ -1934,15 +2013,42 @@ void sd_card_manager_ProcessState() {
                 //      encodes WITHOUT metadata, writes to buffer
                 //   3. Streaming_ResetSdPbMetadata() resets flags (too late)
                 //   => Non-metadata data at byte 0 of new file
-                Streaming_ResetSdPbMetadata();
+                /* #757: skipped during a rotation -- the close path above
+                 * already reset the metadata and the buffer, and the encoder
+                 * has been filling that buffer with the new file's header and
+                 * data ever since. Repeating the reset here would throw away
+                 * exactly the bytes this fix exists to keep. On a FIRST open
+                 * (session start, not rotation) gSdRotating is false and this
+                 * runs as it always did. */
+                if (!gSdRotating) {
+                    Streaming_ResetSdPbMetadata();
 
-                // Now clear the buffer — streaming task won't write here
-                // because gSdFileWasReady is already false.
-                SD_TakeMutexDebug(gSDCardData.wMutex, "open_file_clear_buffer");
-                CircularBuf_Reset(&gSDCardData.wCirbuf);
-                memset(gSdSharedBuffer, 0, gSdSharedBufferSize);
-                memset(gSDCardData.writeBuffer, 0, gSDCardData.writeBufferSize);
-                xSemaphoreGive(gSDCardData.wMutex);
+                    // Now clear the buffer — streaming task won't write here
+                    // because gSdFileWasReady is already false.
+                /* #757: reset the buffer's BOOKKEEPING, not its bytes.
+                 *
+                 * Neither zero was load-bearing: nothing reads either buffer
+                 * past a length that is reset alongside it. CircularBuf_Reset
+                 * already makes the circular buffer logically empty (head,
+                 * tail, count) and no reader looks beyond count; the write
+                 * buffer is only ever emitted as its first writeBufferLength
+                 * bytes, reset a few lines below -- and the comment there
+                 * records that the "junk bytes in the new file" bug was fixed
+                 * by resetting sdCardWritePending/writeBufferLength, NOT by
+                 * this memset.
+                 *
+                 * The cost was real: writeBuffer is the COHERENT (KSEG1,
+                 * uncached) DMA buffer, ~78 KB when SD is the active
+                 * interface, so this was an uncached write of every byte with
+                 * no cache-line benefit -- inside the very window this issue
+                 * is about. Measured ~4% of the loss on its own.
+                 *
+                 * The mutex is still taken: CircularBuf_Reset mutates state
+                 * the streaming task reads. */
+                    SD_TakeMutexDebug(gSDCardData.wMutex, "open_file_clear_buffer");
+                    CircularBuf_Reset(&gSDCardData.wCirbuf);
+                    xSemaphoreGive(gSDCardData.wMutex);
+                }
 
                 // Reset write pipeline state for clean start.
                 // Without this, a stale sdCardWritePending=1 from a previous
@@ -1986,6 +2092,25 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.currentProcessState = openAborted
                         ? SD_CARD_MANAGER_PROCESS_STATE_DEINIT
                         : SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
+                /* #757: close the window in the SAME critical section that
+                 * opens WRITE_TO_FILE, so the handoff is atomic.
+                 *
+                 * Clearing it any earlier reopens this issue in miniature.
+                 * Between a clear and the state assignment, gSdRotating is
+                 * false while currentProcessState is still OPEN_FILE, so
+                 * IsWriteReady() is false too and IsBufferAccepting() returns
+                 * FALSE -- the encoder (pri 6) preempts this task (pri 5)
+                 * right there and its packets are discarded. That gap was
+                 * measurable: it is where the last few stray SdDroppedBytes in
+                 * an otherwise clean rotation run came from.
+                 *
+                 * Only the success arm clears. On abort the flag stays set
+                 * until sd_AbandonRotationWindow() below clears it AND
+                 * accounts for what was buffered -- clearing it here would
+                 * silently strand those bytes instead. */
+                if (!openAborted) {
+                    gSdRotating = false;
+                }
                 taskEXIT_CRITICAL();
 
                 if (openAborted) {
@@ -1999,11 +2124,25 @@ void sd_card_manager_ProcessState() {
                      * invalidation that suppressed UNMOUNT's retry.
                      *
                      * Note this is about single ownership, not data
-                     * recovery: nothing can be pending at this point. The
-                     * circular buffer and the write pipeline are reset a few
-                     * lines above, and the abort path never sets
-                     * WRITE_TO_FILE, so sd_card_manager_IsWriteReady() stays
-                     * false and the streaming task cannot have written. */
+                     * recovery.
+                     *
+                     * #757 CHANGED THE SECOND HALF OF THAT REASONING. This
+                     * comment used to say nothing could be pending, because
+                     * the abort path never sets WRITE_TO_FILE so
+                     * IsWriteReady() stays false and the streaming task
+                     * cannot have written. That is no longer true: across a
+                     * rotation the encoder writes on IsBufferAccepting(),
+                     * which IS true during the open, so the buffer can hold
+                     * the new file's header and some samples by the time we
+                     * get here.
+                     *
+                     * Those bytes are unrecoverable -- the session is being
+                     * torn down and there is no handle to write them to -- but
+                     * they must not vanish silently. Count them as SD drops so
+                     * they appear in SdDroppedBytes like any other SD loss,
+                     * and reset the buffer so the next session starts clean
+                     * rather than inheriting a partial file's header. */
+                    sd_AbandonRotationWindow("session torn down mid-open");
                     LOG_I("[SD] open aborted: session torn down mid-open "
                           "(mode=%s)", sd_card_manager_GetModeName());
                     break;
@@ -2019,6 +2158,10 @@ void sd_card_manager_ProcessState() {
 
                 if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
                     /* Could not open the file. Error out*/
+                    /* #757: nothing will ever drain what the encoder buffered
+                     * during this open, so account for it instead of leaving
+                     * it to be silently overwritten by the next session. */
+                    sd_AbandonRotationWindow("file open failed");
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                     LOG_E("[%s:%d]Failed to open SD Card file for writing: '%s'", __FILE__, __LINE__, gSDCardData.filePath);
                 }
@@ -2350,6 +2493,60 @@ void sd_card_manager_ProcessState() {
                     }
                 }
 
+                /* #757: arm the NEW file's buffer BEFORE the sync and close,
+                 * not after.
+                 *
+                 * IsWriteReady() stays true right up to the FileClose below,
+                 * so the streaming task keeps enqueuing throughout the sync --
+                 * which is the slow part. Doing the reset afterwards meant
+                 * those bytes were sitting in the buffer when it was cleared,
+                 * and they were DISCARDED: ~95 bytes per rotation, invisible,
+                 * because nothing counted them. (Measured by counting them:
+                 * 3,702 bytes across 39 rotations in one 25 s arm. The old
+                 * code discarded them too, just as silently.)
+                 *
+                 * Resetting here instead keeps them. The buffer is empty at
+                 * this point -- the drain above just emptied it into the old
+                 * file -- so clearing the metadata latch now means the encoder
+                 * writes the NEW file's header first and everything enqueued
+                 * during the sync, the close and the open follows it, in
+                 * order, into the new file. Nothing is dropped and the header
+                 * is still at byte 0.
+                 *
+                 * Conditional on actually rotating: the split-limit branch
+                 * below never opens a new file, so promising a drain there
+                 * would strand whatever accumulated. */
+                const bool willRotate =
+                        (gSDCardData.fileCounter < SD_CARD_MANAGER_MAX_SPLIT_FILES);
+                if (willRotate) {
+                    /* The metadata clear MUST be inside the same mutex as the
+                     * buffer reset, not before it.
+                     *
+                     * Streaming_ResetSdPbMetadata() sets gSdFileWasReady=false,
+                     * which is the encoder's cue to emit the next file's
+                     * header. The old file is still open here, so
+                     * IsBufferAccepting() is true; if the pri-6 streaming task
+                     * preempts this pri-5 one between that clear and the reset,
+                     * it generates the header, writes it into the buffer, and
+                     * sets gSdFileWasReady=true -- and then the reset below
+                     * wipes it. Nothing re-emits it (OPEN_FILE skips its own
+                     * reset while gSdRotating is true) and nothing counts it,
+                     * so the split file starts with data rows and no header,
+                     * silently. That is the same class of defect this issue is
+                     * about, arriving through the fix for it.
+                     *
+                     * Holding wMutex across both closes it, because
+                     * sd_card_manager_WriteToBuffer takes the same mutex: an
+                     * encoder that has already decided to write the header
+                     * blocks until the reset is done and then lands it in the
+                     * emptied buffer, still at byte 0. */
+                    SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_open_window");
+                    Streaming_ResetSdPbMetadata();
+                    CircularBuf_Reset(&gSDCardData.wCirbuf);
+                    gSdRotating = true;
+                    xSemaphoreGive(gSDCardData.wMutex);
+                }
+
                 // Flush and close current file
                 if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
                     // Always sync before close - ensures all filesystem buffers flushed
@@ -2368,6 +2565,14 @@ void sd_card_manager_ProcessState() {
                     // Close current file with error checking
                     if (SYS_FS_FileClose(gSDCardData.fileHandle) == SYS_FS_RES_FAILURE) {
                         LOG_E("[%s:%d]Error closing file before rotation", __FILE__, __LINE__);
+                        /* #757: the window was opened above, BEFORE this close,
+                         * so that bytes produced during the sync are kept. This
+                         * exit never reaches OPEN_FILE, which means nothing
+                         * will ever drain them -- close the window here or the
+                         * encoder buffers into a dead path until it fills.
+                         * This is the one early exit the reordering introduced;
+                         * the sync failure above only logs and falls through. */
+                        sd_AbandonRotationWindow("file close failed");
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                         break;
                     }
@@ -2376,11 +2581,27 @@ void sd_card_manager_ProcessState() {
                          gSDCardData.filePath, gSDCardData.currentFileBytes);
                 }
 
-                // Encoder resets are done in OPEN_FILE (after buffer clear +
-                // file open) so the streaming task cannot burn one-shot
-                // header flags before the new file is ready to accept data.
-
-                if (gSDCardData.fileCounter < SD_CARD_MANAGER_MAX_SPLIT_FILES) {
+                /* #757: open the buffer for the NEW file before the slow open.
+                 *
+                 * The previous ordering deferred both resets to OPEN_FILE so
+                 * the streaming task could not burn its one-shot header flag
+                 * before the new file existed. That ordering is precisely what
+                 * made this window lossy: the flag stayed set, no handle
+                 * existed, so the encoder was told sdSize == 0 and everything
+                 * it produced during the open was discarded and counted.
+                 *
+                 * Reversing it is safe because the drain above emptied the
+                 * buffer into the OLD file. Resetting the metadata here means
+                 * the first thing the encoder puts into the now-empty buffer
+                 * is the NEW file's header -- still at byte 0 -- and whatever
+                 * it encodes during the open follows in order. The buffer
+                 * reset is kept for the error paths where the drain could not
+                 * complete; on the normal path it is a no-op. */
+                if (willRotate) {
+                    /* The window was already opened above, before the sync and
+                     * close, so that everything the encoder produced during
+                     * them is kept rather than discarded. All that remains is
+                     * to advance to the next file. */
                     gSDCardData.fileCounter++;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
                 } else {
@@ -2957,6 +3178,25 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
     // SD task's slow f_write runs OUTSIDE the mutex, so a hung card makes
     // this return 0, never block.
     SD_TakeMutexDebug(gSDCardData.wMutex, "write_buffer_add");
+    /* #757: the accept decision must be authoritative HERE, not merely where
+     * the caller sized the write.
+     *
+     * The caller computes sdSize from IsBufferAccepting() at the top of its
+     * iteration and writes later. Between those two points the SD task can
+     * abandon the rotation window -- a bucket refusal, a teardown, a failed
+     * create -- which resets this buffer. Without this re-check the in-flight
+     * write lands in the freshly reset buffer, where nothing will drain it: it
+     * is lost silently AND can prepend a partial row to the next session's
+     * file. The enable/mode test above does not catch it, because mode is
+     * still WRITE at that moment.
+     *
+     * Re-checking under the mutex that sd_AbandonRotationWindow() also holds
+     * closes it: this either runs before the abandon (and those bytes are
+     * counted by it) or after (and refuses). */
+    if (!sd_card_manager_IsBufferAccepting()) {
+        xSemaphoreGive(gSDCardData.wMutex);
+        return 0;
+    }
     if (CircularBuf_NumBytesFree(&gSDCardData.wCirbuf) < len) {
         xSemaphoreGive(gSDCardData.wMutex);
         return 0;
@@ -3399,6 +3639,38 @@ bool sd_card_manager_IsWriteReady(void) {
         && gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE
         && gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE
         && gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID;
+}
+
+/* #757: may the streaming task keep filling the SD circular buffer?
+ *
+ * DELIBERATELY WEAKER than sd_card_manager_IsWriteReady(). That one answers
+ * "is there a file I can write to right now", which is the correct question
+ * for transport health (streaming.c's #397 auto-stop must NOT think a stuck
+ * open is healthy) and for the session-start latch. This one answers "will
+ * anything ever consume what I put in the buffer", which is the correct
+ * question for the ENCODER -- and the two differ for exactly the duration of
+ * a size rotation.
+ *
+ * During a rotation the old handle is closed before the new one is opened, and
+ * the open is slow: a FatFs create is O(N) in directory occupancy, which is
+ * why the loss this fixes grew with the number of files on the card. The
+ * buffer is empty across that window (the rotation drains it before closing)
+ * and its contents go to the NEW file, so accepting writes is safe and the
+ * header still lands at byte 0 -- Streaming_ResetSdPbMetadata() is called
+ * before the window opens, so the first thing the encoder puts in the empty
+ * buffer is the new file's header.
+ *
+ * Returns false once the open resolves, in both directions: on success the
+ * WRITE_TO_FILE arm above takes over, and on failure or teardown the flag is
+ * cleared so nothing keeps buffering into a path that will never drain. */
+bool sd_card_manager_IsBufferAccepting(void) {
+    if (sd_card_manager_IsWriteReady()) {
+        return true;
+    }
+    return gpSDCardSettings != NULL
+        && gpSDCardSettings->enable
+        && gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE
+        && gSdRotating;
 }
 
 /* #703: is the SD read scratch large enough for SD:GET to make progress?
