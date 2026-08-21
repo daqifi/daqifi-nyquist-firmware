@@ -709,9 +709,13 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
-        if (fileLen >= sizeof(pSDCardRuntimeConfig->directory)) {
+        /* #799: bound against the field actually written (opDirectory), not
+         * its sibling. They are the same size today, so this is not a live
+         * overflow -- but checking one buffer and filling another is how a
+         * later divergence becomes one silently. */
+        if (fileLen >= sizeof(pSDCardRuntimeConfig->opDirectory)) {
             LOG_E("SD:LIST? - Directory path too long: %d bytes, max: %d\r\n", 
-                  fileLen, sizeof(pSDCardRuntimeConfig->directory) - 1);
+                  fileLen, sizeof(pSDCardRuntimeConfig->opDirectory) - 1);
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
