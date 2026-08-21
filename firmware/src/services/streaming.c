@@ -174,7 +174,19 @@ static volatile uint32_t gScanStaleDropped = 0;  // ticks scan armed but no new 
  * Only the LIVE mask needs to be separate -- it is read outside the stats
  * snapshot, by the protobuf encoder and SCPI_SyncQuesBits.
  *
- * Both are published ONLY for a sample that is actually delivered --
+ * EVERY exit from a tick must leave the live mask describing that tick, or it
+ * becomes the latch it is documented not to be. The full map, because three
+ * separate rounds of review found a path that had been missed:
+ *   - delivered sample      -> publish clipMask
+ *   - queue push failed     -> publish clipMask (the frame WAS built)
+ *   - pool exhausted        -> clear (no frame could be built at all)
+ *   - priming suppression   -> neither, and that is safe rather than an
+ *                              oversight: priming only happens at session
+ *                              start, where Streaming_Start has just cleared
+ *                              the mask, so there is nothing stale to strand
+ *   - Stop / Init           -> clear
+ *
+ * Both counters are published ONLY for a sample that is actually delivered --
  * see the publish block next to gStreamStats.totalSamplesStreamed++. A frame
  * suppressed by the priming gate or lost to a full queue describes nothing
  * the consumer ever sees, and the priming window in particular can present
@@ -788,6 +800,30 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 if (pastGrace) {
                     gStreamStats.queueDroppedSamplesSteady++;
                 }
+                /* #814: no frame could be BUILT on this tick, so there is no
+                 * current rail state to report -- clear the live mask rather
+                 * than leave the last delivered frame's value standing.
+                 *
+                 * Neither answer is knowable here, and that is the point: the
+                 * bit is documented as live, 'a channel is at a rail RIGHT
+                 * NOW', explicitly not a latch. A value that survives an
+                 * indefinite pool-exhaustion stall IS a latch, and this stall
+                 * is the firmware's INTENDED back-pressure regime (see the
+                 * solo-USB comment further down), so it can last seconds.
+                 * Clearing can under-report a rail that is still physically
+                 * present; leaving it stranded QUES bit 0 and device_status
+                 * 0x100 at 'clipping now' after the rails had cleared, which
+                 * is the failure already fixed on the queue-overflow path.
+                 * The cost of clearing is bounded: no samples are reaching the
+                 * consumer during this window anyway, the loss itself is
+                 * reported loudly by QueueDropped/PoolExhausted and QUES bits
+                 * 4/8-13, and the true state is republished by the very next
+                 * delivered sample.
+                 *
+                 * Counters are untouched -- clipping counts stay
+                 * delivery-only, so a tick that produced nothing cannot
+                 * inflate a statistic about what was streamed. */
+                gClipLiveMask = 0;
                 taskEXIT_CRITICAL();
                 LOG_E_SESSION(LOG_SESSION_POOL_EXHAUST, "Streaming: Sample pool exhausted");
                 Streaming_UpdateFlowWindow(true);
