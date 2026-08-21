@@ -569,8 +569,20 @@ typedef struct {
      * that slot, so an iteration stamped N can emit tick N+1's conversion --
      * a value NEWER than its own stamp. #722 made the stamps a uniform
      * sequence; it did not change where the value comes from, so the
-     * association is still variable in exactly the regime #717 measured
-     * (0.07% of samples at 1 kHz rising to ~15% at 5 kHz over USB).
+     * association can still vary whenever the task runs behind.
+     *
+     * MEASURED, and it does not: this reads 0 at the enforced cap for 1xT1,
+     * 5xT1, 11xT2, 16ch CSV and 16ch PB (real ADC over USB, 2026-08-21). It
+     * goes non-zero only well past cap under NOCAP, and even there stays under
+     * 0.1% while QueueDroppedSamples runs to ~40,000 -- overload shows up as
+     * pool exhaustion, not as notification backlog.
+     *
+     * Do NOT cite #717's 0.07%-at-1-kHz to 15%-at-5-kHz figures as this
+     * counter's expected range, which an earlier revision of this comment did.
+     * Those were #717's DUPLICATE-TIMESTAMP rates, a different failure mode
+     * (a shared timestamp slot) that #722 fixed outright. Carrying them over
+     * misattributes one bug's measurements to another and would send the next
+     * person looking for a 15% signal that is not there.
      *
      * Nothing else detects it. ScanStaleDropped (#557/#563) fires when a scan
      * fails to COMPLETE; during catch-up the scan completes normally, so that

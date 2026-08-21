@@ -741,10 +741,23 @@ void _Streaming_Deferred_Interrupt_Task(void) {
 
         if (pRunTimeStreamConf->IsEnabled) {
             if (pendingTicks > 1u) {
-                /* Single writer (this task); 32-bit store is atomic on
-                 * PIC32MZ, and the SCPI snapshot reads it under the same
-                 * critical section as the rest of the stats. */
+                /* Critical section around the read-modify-write, per the
+                 * project's atomicity rule: ++ is not atomic on PIC32MZ even
+                 * though a 32-bit load or store is.
+                 *
+                 * A single-writer argument would also hold here -- this task
+                 * is the only one that increments, and Streaming_ClearStats
+                 * zeroes the struct from a LOWER-priority task inside its own
+                 * critical section, so it cannot interleave. But the guard is
+                 * free where it matters: it sits INSIDE the pendingTicks > 1
+                 * branch, which is not taken at any rate the firmware accepts
+                 * (measured 0 at the enforced cap on five configurations), so
+                 * the common path pays only the compare it already paid.
+                 * Cheap certainty beats a correct-but-fragile argument that
+                 * the next person has to re-derive. */
+                taskENTER_CRITICAL();
                 gStreamStats.catchUpSamples++;
+                taskEXIT_CRITICAL();
             }
             /* #486 — quiescence flag for cross-task sync against
              * SCPI_StartStreaming re-partition.  Set BEFORE any deref
