@@ -1001,7 +1001,13 @@ The sample pool lives inside the Streaming Buffer Pool (static BSS). It is re-pa
 - **Memory per sample**: depends on enabled channels (compact pool): 1ch=14 bytes, 4ch=26 bytes, 8ch=42 bytes, 16ch=74 bytes (element + 2-byte free-list entry). Stride computed at stream start from `AInSampleList_ElementSize(channelCount)`.
 - **Resize**: `StreamingBufferPool_Partition()` re-carves the pool, then `AInSampleList_InitializeExternal()` swaps the memory pointers. FreeRTOS queue is reused (not reallocated) across sessions.
 - **When resized**: At each `StartStreamData` via `SCPI_StartStreaming`
-- **Typical values**: **1100** — measured on the bench 2026-08-21 (`SYST:MEM:FREE?` during a live USB-only stream, at BOTH 1 and 16 channels). Two earlier claims in this file, "~585" here and "~1,618" in the auto-balance table, were **both** wrong: the pool does not shrink to fit, it stays at the requested depth (`DEFAULT_AIN_SAMPLE_COUNT` = 1100) whenever the partition can satisfy it, and at 16ch USB-only it can (1100 x 72 B = 79,200 B, reported as `SamplePoolBytes`). The auto-balance row below is a **capacity** estimate — how many slots would fit — not the depth actually used
+- **Typical values**: **1100 usable**, and the reason is not what you would guess. Measured 2026-08-21, 16ch USB-only, straight from the device's own log:
+  ```
+  Pool partition: USB=65536 WiFi=1400 enc=8192 sdCirc=4096 samples=1600x72 (of 1600 max, 197632 pool)
+  Sample queue resize skipped: need 6480, heap free 6536
+  ```
+  In auto mode `MemoryConfig.samplePoolCount` is **0**, which `StreamingBufferPool_Partition` reads as *maximize to fit* — so the partition really does carve **1600** slots. The depth then falls back to 1100 at the NEXT stage: `AInSampleList_InitializeExternal` will not grow the FreeRTOS sample queue unless `freeHeap >= needed + 1024`, and here 6536 < 6480 + 1024, so it logs `Sample queue resize skipped` and keeps the boot queue size (`DEFAULT_AIN_SAMPLE_COUNT` = 1100). `SYST:MEM:FREE?` reports that queue-limited number.
+  Two consequences worth knowing: the ~500-slot difference (~36 KB) is carved from the streaming pool but **not usable**, and the clamp is only visible as that one log line — see #828. Earlier revisions of this file claimed "~585" here and "~1,618" in the table below; both were wrong, and the table's figures are **capacity**, which is the 1600 the partition computes, not the depth you get
 - **Peak usage**: Typically 2-4 samples (at 3kHz 16ch). Pool depth provides burst absorption headroom.
 
 #### SCPI Dynamic Memory Configuration
@@ -1079,7 +1085,7 @@ The `StreamingInterface` enum exposes four combinations: `USB`, `WiFi`, `SD`, an
 | WiFi SPI staging (coherent) | 2,048 | 125,904 | 2,048 | 2,048 |
 | Sample pool CAPACITY (slots @16ch)¹ | ~1,618 | ~1,178 | ~1,921 | ~1,086 |
 
-¹ **Capacity, not the depth in use.** These are how many slots the leftover pool space would hold; the pool actually takes the requested depth (1100 by default) whenever that fits. Measured USB-only at 16ch on 2026-08-21: `SamplePoolCount=1100`, `SampleElementBytes=72`, `SamplePoolBytes=79200`. Only the USB-only column has been checked against hardware; the other three are unverified arithmetic, and were derived with the old (wrong) 512-byte SD-circular figure.
+¹ **Capacity, not the depth in use.** These are how many slots the leftover pool space holds — the number `StreamingBufferPool_Partition` computes and logs as `samples=<n>x<stride>`. The depth actually available is min(that, whatever the FreeRTOS sample queue could be grown to), which is usually **1100** because the queue resize is skipped for want of ~1 KB of heap (#828). Measured USB-only at 16ch on 2026-08-21: partition 1600, `SamplePoolCount=1100`, `SampleElementBytes=72`. Only the USB-only column has been checked against hardware; the other three are unverified arithmetic, and were derived with the old (wrong) 512-byte SD-circular figure.
 
 
 **Implementation:** `firmware/src/Util/StreamingBufferPool.c` (unified pool), `firmware/src/Util/CoherentPool.c` (DMA pool), `firmware/src/services/streaming.c` (`ComputeAutoBuffers`), `firmware/src/state/data/AInSample.c` (`InitializeExternal`), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks), `firmware/src/state/runtime/StreamingRuntimeConfig.h` (MemoryConfig struct), `firmware/src/config/default/driver/winc/dev/spi/wdrv_winc_spi.c` (WiFi SPI staging)
