@@ -855,9 +855,17 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 // defense alone is enough; keeping both means a future
                 // contributor can't accidentally re-introduce the bug
                 // by reverting one of the two.
+                /* #814: signedness describes the VALUE SITTING IN Values[j],
+                 * not merely the channel. A test pattern or PIPELINE run
+                 * writes a SYNTHETIC unsigned code in [0, adcMax] there --
+                 * Streaming_GenerateTestValue has no notion of AD7609's
+                 * two's-complement range -- so judging those as signed would
+                 * read a perfectly ordinary pattern value as a negative rail. */
+                const bool valueIsSynthetic =
+                        (gBenchmarkMode == BENCHMARK_PIPELINE) || (gTestPattern != 0);
                 if (pBoardConfig->AInChannels.Data[cfgIdx].Type == AIn_AD7609) {
                     adcMax = 262143u;  // 18-bit AD7609
-                    adcIsSigned = true;
+                    adcIsSigned = !valueIsSynthetic;
                 } else {
                     adcMax = 4095u;    // 12-bit MC12bADC
                     adcIsSigned = false;
@@ -1081,6 +1089,17 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                     gStreamStats.queueDroppedSamplesSteady++;
                 }
                 taskEXIT_CRITICAL();
+                /* #814: the rail state of this frame is real whether or not
+                 * the queue took it, and leaving the previous frame's mask in
+                 * place would strand device_status / QUES bit 0 reporting
+                 * 'clipping now' through a sustained overflow after the rails
+                 * had cleared. Published here as well as on the delivery path;
+                 * the COUNTERS stay delivery-only, so a dropped frame is
+                 * visible live without inflating a statistic about what was
+                 * actually streamed. (The priming path deliberately publishes
+                 * neither -- there the cache can hold a stale value that looks
+                 * exactly like the bottom rail.) */
+                gClipLiveMask = clipMask;
                 LOG_E_SESSION(LOG_SESSION_QUEUE_OVERFLOW, "Streaming: Sample queue overflow detected");
                 AInSampleList_FreeToPool(pPublicSampleList);  // Use pool!
                 Streaming_UpdateFlowWindow(true);
