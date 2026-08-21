@@ -1296,9 +1296,22 @@ SYST:STOR:SD:MAXSize?               # Query current setting
 - Split files: Sequential numbering, **not** zero-padded (e.g., `experiment-1.csv`, `experiment-2.csv`) — `generateFilename` formats `"%s/%s-%u%s"` (`sd_card_manager.c`)
 - Supports up to 9999 files per session (~39TB @ 3.9GB each)
 
-**CSV Headers:**
-- First file: Full CSV header (device info, column names with "ain" prefix)
-- Split files: Data rows only (no headers) - simplifies merging
+**CSV Headers:** ⚠️ **every split file carries its own header, including
+continuations.** The bullet here used to say "Split files: Data rows only (no
+headers) - simplifies merging". That is wrong and has been for some time —
+measured 2026-08-21 by downloading rotated files from the bench: `s2.csv`,
+`s2-1.csv` and `s2-2.csv` each begin `# Device: Nyquist 1` followed by ~1,279
+data rows.
+
+The behaviour is deliberate on the firmware side: `streaming.c` writes an
+SD-only header whenever `gSdFileWasReady` goes false→true so that "every file
+is self-describing and independently parseable", and
+`Streaming_ResetSdPbMetadata()` is called on every rotation to arm exactly
+that. Anything merging split files must therefore SKIP the `#`-prefixed lines
+of continuations rather than assuming they are absent.
+
+- First file: full CSV header (device info, column names with "ain" prefix)
+- Split files: the same header, then data rows
 
 **Safety Features:**
 - Default: 3.9GB limit (100MB below FAT32 maximum)

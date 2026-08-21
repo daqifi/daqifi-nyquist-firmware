@@ -2484,6 +2484,39 @@ void sd_card_manager_ProcessState() {
                     }
                 }
 
+                /* #757: arm the NEW file's buffer BEFORE the sync and close,
+                 * not after.
+                 *
+                 * IsWriteReady() stays true right up to the FileClose below,
+                 * so the streaming task keeps enqueuing throughout the sync --
+                 * which is the slow part. Doing the reset afterwards meant
+                 * those bytes were sitting in the buffer when it was cleared,
+                 * and they were DISCARDED: ~95 bytes per rotation, invisible,
+                 * because nothing counted them. (Measured by counting them:
+                 * 3,702 bytes across 39 rotations in one 25 s arm. The old
+                 * code discarded them too, just as silently.)
+                 *
+                 * Resetting here instead keeps them. The buffer is empty at
+                 * this point -- the drain above just emptied it into the old
+                 * file -- so clearing the metadata latch now means the encoder
+                 * writes the NEW file's header first and everything enqueued
+                 * during the sync, the close and the open follows it, in
+                 * order, into the new file. Nothing is dropped and the header
+                 * is still at byte 0.
+                 *
+                 * Conditional on actually rotating: the split-limit branch
+                 * below never opens a new file, so promising a drain there
+                 * would strand whatever accumulated. */
+                const bool willRotate =
+                        (gSDCardData.fileCounter < SD_CARD_MANAGER_MAX_SPLIT_FILES);
+                if (willRotate) {
+                    Streaming_ResetSdPbMetadata();
+                    SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_open_window");
+                    CircularBuf_Reset(&gSDCardData.wCirbuf);
+                    gSdRotating = true;
+                    xSemaphoreGive(gSDCardData.wMutex);
+                }
+
                 // Flush and close current file
                 if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
                     // Always sync before close - ensures all filesystem buffers flushed
@@ -2526,20 +2559,11 @@ void sd_card_manager_ProcessState() {
                  * it encodes during the open follows in order. The buffer
                  * reset is kept for the error paths where the drain could not
                  * complete; on the normal path it is a no-op. */
-                if (gSDCardData.fileCounter < SD_CARD_MANAGER_MAX_SPLIT_FILES) {
-                    /* Opened INSIDE this branch, deliberately. The window is a
-                     * promise that an open is coming to drain what the encoder
-                     * buffers; the split-limit branch below never enters
-                     * OPEN_FILE, so opening the window before this test would
-                     * promise an open that never happens. Structuring it this
-                     * way makes that impossible rather than leaving it to a
-                     * reachability argument about how many files it takes. */
-                    Streaming_ResetSdPbMetadata();
-                    SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_open_window");
-                    CircularBuf_Reset(&gSDCardData.wCirbuf);
-                    xSemaphoreGive(gSDCardData.wMutex);
-                    gSdRotating = true;
-
+                if (willRotate) {
+                    /* The window was already opened above, before the sync and
+                     * close, so that everything the encoder produced during
+                     * them is kept rather than discarded. All that remains is
+                     * to advance to the next file. */
                     gSDCardData.fileCounter++;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
                 } else {
