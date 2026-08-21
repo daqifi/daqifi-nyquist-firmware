@@ -822,7 +822,22 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                  *
                  * Counters are untouched -- clipping counts stay
                  * delivery-only, so a tick that produced nothing cannot
-                 * inflate a statistic about what was streamed. */
+                 * inflate a statistic about what was streamed.
+                 *
+                 * The obvious third option -- read the ADC here and publish a
+                 * TRUE answer instead of choosing between two falsehoods -- is
+                 * rejected deliberately. The T1 path reads ADCDATAx, and that
+                 * read CLEARS ARDY (#541 D-A), so sampling it on a drop tick
+                 * would consume the conversion the next successful tick is
+                 * meant to deliver. Harming the data path to service a status
+                 * bit is the wrong trade, and on an already-overloaded tick it
+                 * is also the worst moment to add work.
+                 *
+                 * A consumer can still tell 'not clipping' from 'not knowable'
+                 * without a third state: this window always coincides with
+                 * QueueDropped/PoolExhausted rising and QUES loss bits 4/8-13
+                 * being set. Bit 0 reading 0 while those are set means 'no
+                 * current measurement', not 'measured and clean'. */
                 gClipLiveMask = 0;
                 taskEXIT_CRITICAL();
                 LOG_E_SESSION(LOG_SESSION_POOL_EXHAUST, "Streaming: Sample pool exhausted");
