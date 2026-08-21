@@ -4609,6 +4609,29 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
                 (unsigned)StreamingBufferPool_SdCircularSize());
     size_t elemSize = AInSampleList_PoolElementSize();
     scpi_printf(context, "SamplePoolCount=%u\r\n", (unsigned)samplePoolCap);
+    /* #828: the partition and the queue can disagree. StreamingBufferPool_Partition
+     * carves as many slots as the pool fits (`samplePoolCount == 0` means maximize),
+     * but AInSampleList_InitializeExternal refuses to GROW the FreeRTOS sample queue
+     * unless freeHeap >= needed + 1024 -- and on a clamp it keeps the old queue size.
+     * SamplePoolCount above is the USABLE depth; without the two fields below the
+     * shortfall was announced only in a LOG_E line, so a host saw a depth that
+     * silently disagreed with the partition. Clamped=0 on a device with heap to
+     * spare. Appended, not substituted -- MEM:FREE? is a key=value list and existing
+     * keys keep their meaning.
+     *
+     * Partitioned == 0 is a FAULT, not a pre-stream state. The pool is partitioned at
+     * boot -- StreamingBufferPool_Init (app_freertos.c) calls Partition with
+     * DEFAULT_AIN_SAMPLE_COUNT -- so a healthy device reports a non-zero Partitioned
+     * before it has ever streamed (equal to Count, giving ClampedSlots 0). The only
+     * path that leaves gSampleCount at 0 is the "Pool too small" bail-out in
+     * StreamingBufferPool_Partition, which also zeroes the buffer sizes. Read a 0 here
+     * as a failed partition worth investigating. The subtraction is still guarded so
+     * ClampedSlots cannot underflow if Partitioned somehow lands below Count. */
+    uint32_t poolPartitioned = StreamingBufferPool_SampleCount();
+    scpi_printf(context, "SamplePoolPartitioned=%u\r\n", (unsigned)poolPartitioned);
+    scpi_printf(context, "SamplePoolClampedSlots=%u\r\n",
+                (unsigned)((poolPartitioned > samplePoolCap)
+                           ? (poolPartitioned - (uint32_t)samplePoolCap) : 0u));
     scpi_printf(context, "SampleElementBytes=%u\r\n", (unsigned)elemSize);
     scpi_printf(context, "SamplePoolBytes=%u\r\n",
                 (unsigned)(samplePoolCap * elemSize));
