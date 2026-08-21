@@ -390,6 +390,14 @@ extern "C" {
      */
     bool sd_card_manager_IsWriteReady(void);
 
+    /* #757: may the streaming task keep filling the SD circular buffer?
+     * Weaker than IsWriteReady: also true across a size rotation, where the
+     * old handle is closed before the slow new open completes but the drained
+     * buffer will still be written to the new file. Use this for the ENCODER
+     * gate only -- transport health must keep using IsWriteReady, or a stuck
+     * open reads as healthy. */
+    bool sd_card_manager_IsBufferAccepting(void);
+
     /**
      * @brief Gets the result of the last GET_SPACE operation.
      *

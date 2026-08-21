@@ -2007,6 +2007,28 @@ static void Streaming_CountSdDrop(size_t packetSize) {
 }
 
 /**
+ * @brief Account for SD bytes that were buffered but can never be written.
+ *
+ * #757: the SD manager lets the encoder keep filling the circular buffer
+ * across a file rotation, because those bytes belong to the next file. If the
+ * session is torn down while that open is still in flight there is no handle
+ * left to write them to, and they are dropped. They are real SD loss and must
+ * land in SdDroppedBytes like any other, rather than disappearing because the
+ * only counter for it is file-local to this module.
+ *
+ * Deliberately a narrow, purpose-named entry point rather than exporting
+ * Streaming_CountSdDrop itself: the internal one is called per encoded packet
+ * from the output path, and widening it invites use from places that should be
+ * going through that path.
+ */
+void Streaming_ReportSdDiscard(size_t bytes) {
+    if (bytes == 0u) {
+        return;
+    }
+    Streaming_CountSdDrop(bytes);
+}
+
+/**
  * #533: drain both per-session sample queues (AIN + DIO) so no sample
  * captured by one session can be encoded into the next.  Called from
  * Streaming_Stop (the session is over — discard) and Streaming_Start
@@ -2712,10 +2734,27 @@ void streaming_Task(void) {
 
         usbSize = UsbCdc_WriteBuffFreeSize(NULL);
         wifiSize = wifi_manager_GetWriteBuffFreeSize();
-        // Only check SD buffer size once the file is actually open.
-        // The SD card manager clears the circular buffer during file open,
-        // so writing before that would lose data (including headers).
-        sdSize = sd_card_manager_IsWriteReady()
+        /* #757: gate on IsBufferAccepting, not IsWriteReady.
+         *
+         * The old gate asked "is a file open right now", which is false for
+         * the whole of a size rotation -- and a FatFs create is O(N) in
+         * directory occupancy, so that window grew with the log. Every packet
+         * encoded during it was discarded and counted in SdDroppedBytes:
+         * measured ~9 KB/s on a populated card, and the loss is quadratic in
+         * encoder rate because a faster encoder both fills files sooner and
+         * produces more per window.
+         *
+         * IsBufferAccepting stays true across that window. It is safe because
+         * the rotation DRAINS the buffer before closing the old handle, so the
+         * bytes accepted here belong to the new file, and because
+         * Streaming_ResetSdPbMetadata() runs before the window opens -- so the
+         * first thing written into the empty buffer is the new file's header,
+         * still at byte 0.
+         *
+         * The old comment's premise no longer holds either: the buffer is no
+         * longer cleared during the open, it is cleared once before the window
+         * (see OPEN_FILE / the rotation close in sd_card_manager.c). */
+        sdSize = sd_card_manager_IsBufferAccepting()
                ? sd_card_manager_GetWriteBuffFreeSize()
                : 0;
 
