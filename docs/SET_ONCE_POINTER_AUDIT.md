@@ -26,8 +26,14 @@ whether the volatile-pointer pattern is needed elsewhere.
 
 ## What actually fixed ch15
 
-Commit `96e7c840` —
-**`fix(adc): TRGSRC=3 (STRIG) for shared MODULE7 channels (#406, #421)`**.
+Commit `971fac37f` (PR #422) —
+**`fix(adc): TRGSRC=3 enrolls Type-2 channels in MODULE7 scan (#406, #421)`**.
+
+> **Hash corrected 2026-08-21.** This document previously cited `96e7c840`,
+> which is not a valid object in the repository (`git cat-file -t` fails).
+> The real commit is `971fac37f`. The substance is unchanged — the fix was a
+> TRGSRC register configuration — but the citation was unverifiable, which
+> matters here because this whole audit rests on that history being checkable.
 
 Per the commit message and Section 22 of the PIC32MZ ADC FRM
 (DS60001344E):
@@ -175,7 +181,7 @@ For every site PR #443 proposed to qualify (and for the existing
 | `pModuleConfigAD7609` | `firmware/src/HAL/ADC/AD7609.c:85` | Leave non-volatile |
 | `gpStreamingConfig`, `gpRuntimeConfigStream` | `firmware/src/services/streaming.c:185, 188` | Leave non-volatile |
 | `buffer`, `bufferSize` | `firmware/src/services/streaming.c:177-178` | **Remove volatile, in this PR.** A first-pass n=1 bench (4 tests × ~150k samples) hinted the qualifier was load-bearing (1 encoder failure on no-volatile vs 0 on main); a multi-trial follow-up (8 trials × ~400k samples per branch) showed both branches produce ~2 encoder failures per 3.2M samples — a baseline rate, not a difference. The n=1 was noise. The qualifier is redundant; codegen saves 8 instructions in `streaming_Task` (528 bytes total). |
-| `gQuesBits`, `gInTimerHandler`, `gIsEnabled` | various (added in `96e7c840`) | **Keep volatile** — these are NOT set-once pointers; they are RMW flags / single-bit ISR flags where the qualifier serves the standard "volatile flag set in ISR, polled in task" pattern from CLAUDE.md atomicity rules. Different shape, different rationale. |
+| `gQuesBits`, `gInTimerHandler`, `gIsEnabled` | various (added in `971fac37f`) | **Keep volatile** — these are NOT set-once pointers; they are RMW flags / single-bit ISR flags where the qualifier serves the standard "volatile flag set in ISR, polled in task" pattern from CLAUDE.md atomicity rules. Different shape, different rationale. |
 
 ## CLAUDE.md update
 
@@ -193,8 +199,8 @@ question:
 > branches produced the same encoder-failure baseline (~2 per 3.2M
 > samples) under the bench protocol. The original #354 ch15 regression
 > (which motivated this concern) was actually fixed by a hardware
-> TRGSRC register configuration in commit `96e7c840`, not by anything
-> compiler-related.
+> TRGSRC register configuration in commit `971fac37f` (PR #422), not by
+> anything compiler-related.
 >
 > **Methodology lesson:** n=1 bench results are not enough to conclude
 > a rate difference. The initial 1-trial A/B on this audit looked like
@@ -228,6 +234,11 @@ The codegen-A/B finding is specific to this build configuration. Re-audit if:
 - #420 — closed PR with volatile-only fix attempt (never merged)
 - #421 — this audit's tracking issue
 - #430 / #433 / `docs/POOL_POINTER_AUDIT.md` — companion audit on pool publisher pointers (same conclusion: SAFE-via-barrier in 6/7 cases)
-- `96e7c840` — actual #354 ch15 fix (TRGSRC=3 for shared MODULE7 channels)
+- `971fac37f` (PR #422) — actual #354 ch15 fix (TRGSRC=3 for shared MODULE7
+  channels). PR #422's own body states the conclusion: *"Root cause is a
+  hardware-class issue, not an optimizer issue"*; see also its post-mortem
+  `docs/406_O3_INVESTIGATION.md`, archived out of the working tree in
+  `218cab263` and preserved at the fix commit — read it with
+  `git show 971fac37f:docs/406_O3_INVESTIGATION.md`.
 - ISO C11 §6.7.3 (qualifiers), §5.1.2.3 (program execution / side effects)
 - Microchip "MPLAB Harmony v3 Synchronous Drivers" tech brief DS90003269A — prescribes critical sections + mutexes for cross-context shared data, NOT volatile for set-once pointers
