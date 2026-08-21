@@ -2436,8 +2436,31 @@ void sd_card_manager_ProcessState() {
 
                 if (bufferBytes > 0) {
                     LOG_D("[SD] Draining %zu bytes from circular buffer before rotation\r\n", bufferBytes);
-                    // Process all remaining data in circular buffer
-                    while (CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf) > 0) {
+                    /* #822: drain the SNAPSHOT, not the live level.
+                     *
+                     * This loop used to run `while NumBytesAvailable() > 0`,
+                     * i.e. until the buffer was empty. The streaming task keeps
+                     * FILLING that buffer throughout, so above roughly
+                     * 340 KB/s the drain never catches up: the loop keeps
+                     * writing into the file it is trying to retire, and the
+                     * rotation never completes. Measured on 11 channels at
+                     * 2 kHz, one file grew to 8.7 MB against a 20,000 byte
+                     * limit and only a single "size limit reached" ever
+                     * appeared. Below that rate it merely overshoots -- 1.5x at
+                     * 170 KB/s, 53x at 266 KB/s -- which is the same defect
+                     * losing the race by less.
+                     *
+                     * Bytes that arrive after this point belong to the NEXT
+                     * file, which is exactly the model #757 established when
+                     * the rotation window began accepting encoder output for
+                     * the new file. Draining the snapshot makes rotation
+                     * bounded and its timing independent of throughput.
+                     *
+                     * `drained` counts what CircularBuf_ProcessBytes actually
+                     * extracted, so a partial write cannot spin the loop. */
+                    size_t drained = 0;
+                    while (drained < bufferBytes
+                           && CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf) > 0) {
                         int writeLen = -2;
                         SD_TakeMutexDebug(gSDCardData.wMutex, "drain_loop");
                         if (gSDCardData.sdCardWritePending != 1) {
@@ -2447,6 +2470,13 @@ void sd_card_manager_ProcessState() {
                             CircularBuf_ProcessBytes(&gSDCardData.wCirbuf, NULL,
                                 gSDCardData.writeBufferSize, &writeLen);
                             gSDCardData.totalBytesFlushPending += gSDCardData.writeBufferLength;
+                            /* #822: advance the bound by what was actually
+                             * EXTRACTED from the circular buffer, not by what
+                             * the write below reports -- a partial write is
+                             * retried against the same extracted chunk, and
+                             * counting it there would let the loop run past
+                             * the snapshot. */
+                            drained += gSDCardData.writeBufferLength;
                             xSemaphoreGive(gSDCardData.wMutex);
 
                             // Write immediately, loop for partial writes
