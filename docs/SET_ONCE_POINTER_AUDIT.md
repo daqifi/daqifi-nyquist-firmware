@@ -237,6 +237,8 @@ The codegen-A/B finding is specific to this build configuration. Re-audit if:
 - `971fac37f` (PR #422) — actual #354 ch15 fix (TRGSRC=3 for shared MODULE7
   channels). PR #422's own body states the conclusion: *"Root cause is a
   hardware-class issue, not an optimizer issue"*; see also its post-mortem
-  `docs/406_O3_INVESTIGATION.md`.
+  `docs/406_O3_INVESTIGATION.md`, archived out of the working tree in
+  `218cab263` and preserved at the fix commit — read it with
+  `git show 971fac37f:docs/406_O3_INVESTIGATION.md`.
 - ISO C11 §6.7.3 (qualifiers), §5.1.2.3 (program execution / side effects)
 - Microchip "MPLAB Harmony v3 Synchronous Drivers" tech brief DS90003269A — prescribes critical sections + mutexes for cross-context shared data, NOT volatile for set-once pointers
