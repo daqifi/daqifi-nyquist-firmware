@@ -162,6 +162,18 @@ static volatile uint64_t gTimerISRCalls = 0;
 static volatile uint32_t gScanEosSeq      = 1u;  // bumped per completed scan (EOS ISR); primed 1 ahead of "seen"
 static volatile uint32_t gScanEosSeqSeen  = 0u;  // last seq the timer ISR observed
 static volatile uint32_t gScanStaleDropped = 0;  // ticks scan armed but no new EOS
+
+/* #814: rail detection. `gClipLiveMask` is LIVE -- rewritten every tick, so a
+ * consumer reading device_status sees the current frame's state rather than a
+ * latch it must learn to clear. The other two accumulate for SYST:STR:STATS?.
+ *
+ * Single writer (the deferred streaming task), 32-bit aligned, so the plain
+ * store of gClipLiveMask is atomic on PIC32MZ and needs no critical section;
+ * the two accumulators are RMW but are only ever written by that same task.
+ * Readers (NanoPB encoder, SCPI) get a coherent 32-bit load either way. */
+static volatile uint32_t gClipLiveMask = 0;      // channels at a rail THIS tick
+static volatile uint32_t gClippedSamples = 0;    // samples with >=1 railed channel
+static volatile uint32_t gClipChannelMask = 0;   // OR of every slot seen railed
 /* #707/#745: ticks that fired before the session's first shared scan had
  * completed, so no sample could be built. A DRY TICK — not a sample and not a
  * drop; see the emit-path comment.
@@ -807,6 +819,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             // the field on Timestamp==0), which retires the old post-loop net.
             pPublicSampleList->Timestamp = trigStamp;
 
+            uint32_t clipMask = 0;   /* #814: rails seen in THIS sample */
             for (uint8_t j = 0; j < mapping->count; j++) {
                 uint8_t cfgIdx = mapping->configIndices[j];
 
@@ -924,6 +937,36 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                     }
                     // else: bit stays 0 in validMask (invalid)
                 }
+
+                /* #814: rail check, once per channel and after every branch
+                 * above, so it covers the ADC paths, the T1-direct path and
+                 * the test-pattern/PIPELINE paths alike. Only a channel whose
+                 * validMask bit is set is judged -- an invalid slot carries no
+                 * measurement to be at a rail.
+                 *
+                 * Both ends count: 0 is as much a rail as full scale. `>=`
+                 * rather than `==` on the top so a value that somehow exceeds
+                 * the module's range is caught rather than slipping past.
+                 *
+                 * Integer-only by construction -- this task is registered
+                 * pure-integer (no portTASK_USES_FLOATING_POINT), and adcMax
+                 * is the uint32_t constant chosen above precisely to keep the
+                 * FPU out of this loop (#368/#369). */
+                if (pPublicSampleList->validMask & (1U << j)) {
+                    const uint32_t v = pPublicSampleList->Values[j];
+                    if (v == 0u || v >= adcMax) {
+                        clipMask |= (1U << j);
+                    }
+                }
+            }
+
+            /* Publish LIVE state every tick, set or clear -- device_status
+             * must describe this frame, not the worst frame so far. The
+             * accumulators below are the cumulative view for STATS?. */
+            gClipLiveMask = clipMask;
+            if (clipMask != 0u) {
+                gClippedSamples++;
+                gClipChannelMask |= clipMask;
             }
 
             // #717: every emitted packet already carries the deterministic
@@ -1843,6 +1886,15 @@ static void Streaming_Stop(void) {
         MC12b_RestoreIdleScanList();
         gpRuntimeConfigStream->Running = false;
 
+        /* #814: clear the LIVE rail mask. It describes the current frame, and
+         * once the timer is stopped there is no current frame -- leaving it set
+         * would strand device_status bit 0x100 on until the next START, telling
+         * a status poller the device is clipping while it is idle. The
+         * cumulative counters are deliberately NOT cleared here: like the rest
+         * of the session stats they survive until the next Streaming_ClearStats
+         * so STATS? can still be read after STOP. */
+        gClipLiveMask = 0;
+
         // #533: drain BOTH sample queues at stop so nothing captured by
         // this session's final ticks can be encoded into the NEXT session.
         // The AIN queue was previously cleared only at start; the DIO list
@@ -1950,6 +2002,12 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
+    /* #814: cleared with the rest of the session counters. gClipLiveMask is
+     * cleared too so a stopped stream never reports a stale rail -- it is
+     * live state, and there is no live frame once streaming ends. */
+    gClippedSamples = 0;
+    gClipChannelMask = 0;
+    gClipLiveMask = 0;
     gDryTicks = 0;
     gPrimingPending = false;
     gScanEosSeq = 1u;       // #557/#563: prime seq one ahead of "seen" so the
@@ -2124,6 +2182,8 @@ void Streaming_GetStats(StreamingStats* out) {
                                                      : 0u;
     }
     out->scanStaleDropped = gScanStaleDropped;  // #557 (separate volatile, like timerISRCalls)
+    out->clippedSamples = gClippedSamples;          // #814
+    out->clippedChannelMask = gClipChannelMask;     // #814
     taskEXIT_CRITICAL();
 }
 
@@ -2172,6 +2232,12 @@ void Streaming_ClearStats(void) {
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
+    /* #814: cleared with the rest of the session counters. gClipLiveMask is
+     * cleared too so a stopped stream never reports a stale rail -- it is
+     * live state, and there is no live frame once streaming ends. */
+    gClippedSamples = 0;
+    gClipChannelMask = 0;
+    gClipLiveMask = 0;
     gDryTicks = 0;
     gScanEosSeq = 1u;       // #557/#563: prime seq one ahead of "seen" so the
     gScanEosSeqSeen = 0u;   // first post-start tick (no scan completed yet) reads fresh
@@ -2274,6 +2340,14 @@ static void Streaming_UpdateFlowWindow(bool dropped) {
         gQuesBits &= ~QUES_BIT_DATA_LOSS;
     }
     taskEXIT_CRITICAL();
+}
+
+bool Streaming_IsClipping(void)
+{
+    /* Plain 32-bit load -- atomic on PIC32MZ, single writer (the deferred
+     * streaming task). No critical section: taking one here would add ISR
+     * latency on a path the protobuf encoder hits once per frame. */
+    return (gClipLiveMask != 0u);
 }
 
 uint32_t Streaming_GetQuesBits(void) {

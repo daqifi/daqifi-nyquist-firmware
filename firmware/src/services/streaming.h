@@ -553,6 +553,16 @@ typedef struct {
     uint32_t dioDroppedSamplesSteady;
     uint32_t queueDroppedSamplesSteady;  // post-grace subset of queueDroppedSamples
     uint32_t eosOverruns;      // EOS notifications coalesced (>1 per wake) (#295)
+    /* #814: samples in which at least one enabled channel sat at a rail (raw
+     * code 0 or the module's full-scale code), and the OR of which channel
+     * slots did so. A railed sample is INDISTINGUISHABLE from a real reading
+     * once it leaves the device, which is the failure you cannot recover from
+     * after a long log. These are counters for diagnostics; the live signal
+     * rides the protobuf device_status word so a consumer can mark the span
+     * as it plots. NOT loss -- a clipped sample is delivered, it is just not
+     * trustworthy as a measurement, so it is never folded into any loss %. */
+    uint32_t clippedSamples;
+    uint32_t clippedChannelMask;
     uint32_t scanStaleDropped; // #557: scan armed but EOS not fired by next trigger
                                // (scan-busy/stale) — counted as a dropped sample
     // #541 D-A diagnostic: ticks where a T1 (dedicated-module) channel's
@@ -646,6 +656,21 @@ void Streaming_NoteEosFired(void);
  * Called by SCPI_SyncQuesBits() in SCPIInterface.c before register queries.
  * Bits are cleared automatically when streaming stops.
  */
+/**
+ * @brief True while at least one enabled channel is AT A RAIL right now.
+ *
+ * #814: live state, recomputed every streaming tick -- not a sticky latch and
+ * not a cumulative counter. The protobuf encoder ORs this into device_status
+ * as bit 0x100, so a consumer plotting the stream can mark the affected span
+ * as it happens rather than discovering a total afterwards. Returns false
+ * when not streaming.
+ *
+ * A railed value is delivered normally; the bit says only that it cannot be
+ * trusted as a measurement, because a genuine full-scale reading and a
+ * clamped one are the same number on the wire.
+ */
+bool Streaming_IsClipping(void);
+
 uint32_t Streaming_GetQuesBits(void);
 
 // #589: QUES condition bit 13 — shared SPI4 bus jammed (suspect SD card).
