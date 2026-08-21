@@ -2008,9 +2008,8 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
-    /* #814: cleared with the rest of the session counters. gClipLiveMask is
-     * cleared too so a stopped stream never reports a stale rail -- it is
-     * live state, and there is no live frame once streaming ends. */
+    /* #814: boot-time zeroing of both the cumulative counters and the live
+     * mask. Init runs single-threaded, like the gTimerISRCalls reset above. */
     gClippedSamples = 0;
     gClipChannelMask = 0;
     gClipLiveMask = 0;
@@ -2238,12 +2237,17 @@ void Streaming_ClearStats(void) {
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
-    /* #814: cleared with the rest of the session counters. gClipLiveMask is
-     * cleared too so a stopped stream never reports a stale rail -- it is
-     * live state, and there is no live frame once streaming ends. */
+    /* #814: the cumulative view, cleared with the rest of the session
+     * counters. */
     gClippedSamples = 0;
     gClipChannelMask = 0;
-    gClipLiveMask = 0;
+    /* #814: gClipLiveMask is deliberately NOT cleared here. This function also
+     * serves SYST:STR:STATS:CLEar, which a client may issue MID-SESSION, and
+     * the live mask is not a session statistic -- zeroing it there would report
+     * 'not clipping' for a channel still sitting on a rail until the next
+     * delivered sample republished it. Streaming_Stop clears it (there is no
+     * live frame once the timer is off) and Streaming_Init clears it at boot,
+     * which between them cover every point where it must read zero. */
     gDryTicks = 0;
     gScanEosSeq = 1u;       // #557/#563: prime seq one ahead of "seen" so the
     gScanEosSeqSeen = 0u;   // first post-start tick (no scan completed yet) reads fresh
