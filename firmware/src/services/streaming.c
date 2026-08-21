@@ -1159,7 +1159,21 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                  * actually streamed. (The priming path deliberately publishes
                  * neither -- there the cache can hold a stale value that looks
                  * exactly like the bottom rail.) */
-                gClipLiveMask = clipMask;
+                /* Guarded on Running, inside a critical section, because
+                 * Streaming_Stop clears this mask from TASK context. Without
+                 * the guard a deferred iteration already in flight when STOP
+                 * ran could publish AFTER that clear and strand the bit set
+                 * for the whole idle period -- re-creating the stuck state
+                 * this PR exists to remove. Stop writes Running=false BEFORE
+                 * it clears the mask, and a critical section cannot be
+                 * preempted by another task, so the two orderings are the
+                 * only ones possible: publish-then-clear, or see-false-and-
+                 * skip. Both end with the mask correctly clear. */
+                taskENTER_CRITICAL();
+                if (gpRuntimeConfigStream->Running) {
+                    gClipLiveMask = clipMask;
+                }
+                taskEXIT_CRITICAL();
                 LOG_E_SESSION(LOG_SESSION_QUEUE_OVERFLOW, "Streaming: Sample queue overflow detected");
                 AInSampleList_FreeToPool(pPublicSampleList);  // Use pool!
                 Streaming_UpdateFlowWindow(true);
@@ -1168,8 +1182,15 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                 gStreamStats.totalSamplesStreamed++;
                 /* #814: publish the rail state for THIS delivered sample.
                  * Live mask is rewritten every delivery, set or clear, so it
-                 * describes the current frame rather than the worst so far. */
-                gClipLiveMask = clipMask;
+                 * describes the current frame rather than the worst so far.
+                 * Guarded on Running for the STOP race described on the
+                 * queue-overflow path above; the counters are NOT guarded,
+                 * because a sample that was genuinely delivered still counts
+                 * toward the session total even if STOP lands immediately
+                 * after. */
+                if (gpRuntimeConfigStream->Running) {
+                    gClipLiveMask = clipMask;
+                }
                 if (clipMask != 0u) {
                     gStreamStats.clippedSamples++;
                     gStreamStats.clippedChannelMask |= clipMask;
