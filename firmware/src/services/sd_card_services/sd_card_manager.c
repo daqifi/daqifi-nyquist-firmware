@@ -700,8 +700,6 @@ static ListDirResult ListFilesInDirectoryChunked(const char* dirPath, uint8_t *p
             continue;
         }
 
-        LOG_D("[SD] ListFiles: Read entry '%s'\r\n", stat.fname);
-
         if (!sd_listdir_name_is_storable(stat.fname, sizeof(stat.fname))) {
             /* Log the raw bytes once. This is the observation #795 has been
              * missing: if they decode to file content the read path handed
@@ -724,6 +722,13 @@ static ListDirResult ListFilesInDirectoryChunked(const char* dirPath, uint8_t *p
             skipped = true;     /* #794: the reply is not the whole card */
             continue;
         }
+
+        /* Logged AFTER validation, deliberately. This is a %s on a name the
+         * walk does not yet trust: before the check it could be unterminated
+         * (a read past the field) and could carry control bytes that corrupt
+         * the terminal. A name that fails validation is reported above as hex
+         * instead, which is the useful form for #795 anyway. */
+        LOG_D("[SD] ListFiles: Read entry '%s'\r\n", stat.fname);
 
         if (strcmp(stat.fname, ".") == 0 || strcmp(stat.fname, "..") == 0) {
             continue;
