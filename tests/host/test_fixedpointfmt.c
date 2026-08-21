@@ -41,6 +41,14 @@
  * ------------------------------------------------------------------------- */
 static int g_checked;
 static int g_mismatch_shown;
+/* Per-precision mismatch histogram. The residual failure mode is
+ * scale-then-round: `mag * 10^p` is itself a rounded double, so a value just
+ * BELOW a tie can be lifted ONTO one, after which any tie rule rounds it the
+ * wrong way. That grows with p, so the histogram is what calibrates
+ * FIXEDFMT_MAX_PRECISION -- it shows exactly where exactness ends instead of
+ * leaving the ceiling to guesswork. */
+static int g_fail_by_prec[FIXEDFMT_MAX_PRECISION + 2];
+static int g_checked_by_prec[FIXEDFMT_MAX_PRECISION + 2];
 
 static int differs(double v, unsigned precision)
 {
@@ -65,7 +73,13 @@ static int differs(double v, unsigned precision)
     }
 
     g_checked++;
+    if (precision <= FIXEDFMT_MAX_PRECISION) {
+        g_checked_by_prec[precision]++;
+    }
     if (strcmp(mine, theirs) != 0) {
+        if (precision <= FIXEDFMT_MAX_PRECISION) {
+            g_fail_by_prec[precision]++;
+        }
         if (g_mismatch_shown < 10) {   /* cap the noise, keep the count */
             printf("  MISMATCH v=%.17g p=%u  mine=\"%s\"  snprintf=\"%s\"\n",
                    v, precision, mine, theirs);
@@ -86,8 +100,21 @@ static int differs(double v, unsigned precision)
  * ------------------------------------------------------------------------- */
 static int exhaustive_nq1(void)
 {
+    /* Divisor is the module's Resolution (4096), NOT adcMax (4095). This is
+     * the firmware's own arithmetic: MC12b_ConvertToVoltage (MC12bADC.c:257)
+     * computes (range * scale * CalM * raw) / Resolution + CalB, and
+     * NQ1BoardConfig.c:35 sets Resolution = 4096.
+     *
+     * The distinction is the whole test. 5/4096 is a DYADIC rational, exactly
+     * representable in binary, so code * scale lands on exact decimal ties
+     * (raw=128 -> 0.15625, which is a tie at precision 4). 5/4095 is not
+     * dyadic and essentially never produces one. An earlier revision of this
+     * file used 4095 and was therefore blind to the entire residue class where
+     * round-half-away-from-zero and printf's round-half-to-even disagree --
+     * 821,880 comparisons all passed while the formatter was wrong on ~8 of
+     * every 4096 codes at the shipped NQ1 default precision. */
     static const double kScales[] = {
-        3.3 / 4095.0, 10.0 / 4095.0, 5.0 / 4095.0, 24.0 / 4095.0
+        3.3 / 4096.0, 10.0 / 4096.0, 5.0 / 4096.0, 24.0 / 4096.0
     };
     int bad = 0;
     for (size_t s = 0; s < sizeof(kScales) / sizeof(kScales[0]); s++) {
@@ -107,11 +134,44 @@ static int exhaustive_nq1(void)
  * not systematically skip the interesting fractional residues. */
 static int exhaustive_nq3(void)
 {
-    static const double kScales[] = { 10.0 / 131071.0, 24.0 / 131071.0 };
+    /* Resolution again, not max code: NQ3BoardConfig.c sets 262144. Dyadic,
+     * for the same tie-generating reason as the NQ1 sweep above. */
+    static const double kScales[] = { 10.0 / 262144.0, 24.0 / 262144.0 };
     int bad = 0;
     for (size_t s = 0; s < sizeof(kScales) / sizeof(kScales[0]); s++) {
-        for (int code = -131072; code <= 131071; code += 7) {
+        for (int code = -131072; code <= 131071; code++) {
             const double v = (double)code * kScales[s];
+            for (unsigned p = 1u; p <= FIXEDFMT_MAX_PRECISION; p++) {
+                bad += differs(v, p);
+            }
+        }
+    }
+    return bad;
+}
+
+/* CALIBRATED sweep -- the configuration that actually ships.
+ *
+ * The sweeps above use CalM=1, CalB=0, which keeps every value a dyadic
+ * rational. That models a factory-default board and NOT a calibrated one:
+ * MC12b_ConvertToVoltage (MC12bADC.c:257) is
+ *     (Range * InternalScale * CalM * raw) / Resolution + CalB
+ * and on a real unit CalM/CalB are arbitrary doubles. The product mag*10^p is
+ * then an arbitrary double too, so it can land NEAR a tie without landing ON
+ * one -- the case the exact-tie test alone cannot reach, and the reason
+ * fixedfmt_can_format uses an ULP margin rather than an equality test.
+ *
+ * Values chosen to be ordinary, not adversarial: a ~0.2% gain error and a few
+ * mV of offset are typical of this hardware. */
+static int exhaustive_nq1_calibrated(void)
+{
+    static const double kCalM[] = { 1.0021734, 0.9987361, 1.0000313 };
+    static const double kCalB[] = { -0.0037219, 0.0011947, 0.0 };
+    int bad = 0;
+    for (size_t c = 0; c < sizeof(kCalM) / sizeof(kCalM[0]); c++) {
+        for (int code = 0; code <= 4095; code++) {
+            /* 5 V range, InternalScale 1, Resolution 4096 -- NQ1 defaults. */
+            const double v = (5.0 * 1.0 * kCalM[c] * (double)code) / 4096.0
+                           + kCalB[c];
             for (unsigned p = 1u; p <= FIXEDFMT_MAX_PRECISION; p++) {
                 bad += differs(v, p);
             }
@@ -131,7 +191,22 @@ static int edges(void)
         0.99999999, -0.99999999,
         0.0004, -0.0004,          /* leading zeros; negative rounds to -0.000 */
         0.00004, -0.00004,
-        0.5, -0.5, 1.5, -1.5, 2.5, -2.5,   /* exact halves */
+        0.5, -0.5, 1.5, -1.5, 2.5, -2.5,   /* exact halves at p=0 (not ties p>=1) */
+        /* REAL ties at p>=1: dyadic rationals of the form k/2^n that land
+         * exactly halfway at the tested precision. These are what the ADC
+         * actually produces (5*raw/4096), and they are the only place
+         * half-away-from-zero and printf's half-to-even can disagree. Both
+         * parities are present on purpose -- ties-to-even rounds DOWN when the
+         * preceding digit is even and UP when it is odd, so a formatter that
+         * always rounds one way fails half of these whichever way it leans. */
+        1.25, -1.25, 0.75, -0.75, 0.25, -0.25,
+        0.125, 0.375, 0.625, 0.875,
+        -0.125, -0.375, -0.625, -0.875,
+        0.15625, -0.15625,      /* raw=128 at 5V/4096, NQ1 default precision 4 */
+        0.78125, 1.40625, 2.03125, 2.65625,
+        0.0078125, -0.0078125,  /* tie at precision 6 -- NQ3 default */
+        0.00390625, 0.001953125,
+        3.0517578125e-05,       /* 2^-15: tie deep in the precision range */
         0.05, 0.005, 0.0005,
         1.0, -1.0, 9.0, -9.0,
         3.3, 5.0, 10.0, 24.0, -24.0,
@@ -201,9 +276,17 @@ int main(void)
            FIXEDFMT_MAX_PRECISION);
     failures += exhaustive_nq1();
 
-    printf("  exhaustive NQ3 (stepped 18-bit signed x 2 scales)...\n");
+    printf("  exhaustive NQ3 (full 18-bit signed x 2 scales)...\n");
     failures += exhaustive_nq3();
 
+    printf("  exhaustive NQ1 CALIBRATED (4096 codes x 3 cal pairs)...\n");
+    failures += exhaustive_nq1_calibrated();
+
+    printf("\n  mismatches by precision:\n");
+    for (unsigned p = 1u; p <= FIXEDFMT_MAX_PRECISION; p++) {
+        printf("    p=%u: %8d / %8d\n", p, g_fail_by_prec[p],
+               g_checked_by_prec[p]);
+    }
     printf("\n%d comparison(s) against snprintf, %d failure(s)\n",
            g_checked, failures);
     if (failures == 0) {
