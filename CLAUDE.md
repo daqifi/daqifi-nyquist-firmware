@@ -530,7 +530,7 @@ SYSTem:STReam:STATS:CLEar  # Reset all counters
 | `QueueDroppedSamples` | uint32 | Samples lost due to pool exhaustion or full sample queue (pool defaults 1100, re-partitioned per session) |
 | `UsbDroppedBytes` | uint32 | Data lost due to USB circular buffer full (16KB) |
 | `WifiDroppedBytes` | uint32 | Data lost due to WiFi circular buffer full (14KB) |
-| `SdDroppedBytes` | uint32 | Data lost due to SD write timeout/partial (8-64KB buf, 3 retries) |
+| `SdDroppedBytes` | uint32 | Data lost due to SD write timeout/partial (8-64KB buf, 3 retries), plus the bytes a split-file rotation strands in the circular buffer (#823 — see "SD Card File Splitting"). Not counted: bytes lost to a *failed* write mid-rotation-drain, which are still discarded silently (#825). |
 | `EncoderFailures` | uint32 | Encoding attempts that returned 0 bytes with data available |
 | `TimerISRCalls` | uint64 | Actual streaming timer ISR entry count this session (#265). Invariant: `TimerISRCalls == TotalSamplesStreamed + QueueDroppedSamples`. |
 | `EosOverruns` | uint32 | EOS notifications coalesced (>1 per wake) (#295). Task-behind-but-fresh — NOT a loss (excluded from loss total). |
@@ -1319,15 +1319,30 @@ of continuations rather than assuming they are absent.
 - Default: 3.9GB limit (100MB below FAT32 maximum)
 - Minimum: 1000 bytes (prevents rapid rotation)
 - Circular buffer draining before rotation, AND the buffer keeps accepting
-  encoder output across the file-open window (#757). Both halves are needed for
-  "zero data loss": the drain covers what was already buffered, and the second
-  covers what arrives while the next file is being created. Before #757 only
-  the drain existed, so every rotation discarded the packets encoded during the
-  open — measured ~14,000 bytes per 25 s at 2 kHz with `MAXSize 20000`, growing
-  with directory occupancy because the FatFs create is O(N) in it. The encoder
-  gate is `sd_card_manager_IsBufferAccepting()`; note that transport health
+  encoder output across the file-open window (#757). The drain covers what was
+  already buffered; the second half covers what arrives while the next file is
+  being created. Before #757 only the drain existed, so every rotation
+  discarded the packets encoded during the open — measured ~14,000 bytes per
+  25 s at 2 kHz with `MAXSize 20000`, growing with directory occupancy because
+  the FatFs create is O(N) in it. The encoder gate is
+  `sd_card_manager_IsBufferAccepting()`; note that transport health
   deliberately still uses `IsWriteReady()`, or a stuck open would read as
   healthy.
+- ⚠️ **Rotation is not zero-loss, and an earlier revision of this file claimed
+  it was.** The pre-close drain is bounded to a *snapshot* of the circular
+  buffer (#822/#823) — draining the live level livelocks against the producer
+  above ~340 KB/s, which stopped rotation outright (11ch @2 kHz produced one
+  8.7 MB file against a 20 KB `MAXSize`). Bytes the encoder appends *during*
+  that drain are therefore still buffered when the rotation resets the buffer,
+  and they cannot be saved: writing them to the old file is the livelock, and
+  they cannot go to the new one because `Streaming_ResetSdPbMetadata()` has
+  already armed the next header and they would land ahead of it. They are
+  dropped and **counted** via `Streaming_ReportSdDiscard()`, so they show up in
+  `SdDroppedBytes`. Measured ~3.6 KB per rotation (16ch CSV @2 kHz,
+  `MAXSize=20000`: 277,248 bytes across 76 rotations). It scales with rotation
+  *frequency*, not with rate — at the default 3.9 GB `MAXSize` it is a few KB
+  per multi-GB file. #824 tracks eliminating it by writing the header at file
+  open rather than through the ring buffer.
 - Unconditional filesystem flush before file close
 
 **Python Tools:**
