@@ -2535,6 +2535,14 @@ void sd_card_manager_ProcessState() {
                     // Close current file with error checking
                     if (SYS_FS_FileClose(gSDCardData.fileHandle) == SYS_FS_RES_FAILURE) {
                         LOG_E("[%s:%d]Error closing file before rotation", __FILE__, __LINE__);
+                        /* #757: the window was opened above, BEFORE this close,
+                         * so that bytes produced during the sync are kept. This
+                         * exit never reaches OPEN_FILE, which means nothing
+                         * will ever drain them -- close the window here or the
+                         * encoder buffers into a dead path until it fills.
+                         * This is the one early exit the reordering introduced;
+                         * the sync failure above only logs and falls through. */
+                        sd_AbandonRotationWindow("file close failed");
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                         break;
                     }
