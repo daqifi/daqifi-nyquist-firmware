@@ -1067,10 +1067,9 @@ All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming 
 > `STREAMING_SD_CIRCULAR_MIN`, and `StreamingBufferPool_Partition` clamps
 > anything smaller up to it, so 512 is unreachable — and a `MEM:SD:BUFfer?`
 > reading of 512 is the **fault signature of #703** (a shrunk SD circular
-> silently breaking `SD:GET`), not a normal value. The per-column
-> "Sample pool (slots @16ch)" figures below were derived with the old 512 and
-> are correspondingly ~47 slots optimistic in the USB-only and WiFi-only
-> columns; they have not been re-measured.
+> silently breaking `SD:GET`), not a normal value. The per-column capacity
+> figures below have been recomputed accordingly — see the footnote under the
+> table for the derivation and the device log that confirms it.
 
 The `StreamingInterface` enum exposes four combinations: `USB`, `WiFi`, `SD`, and `UsbAndSd` — WiFi is always solo (SPI bus shared with SD; USB+WiFi was never wired into the enum). Values below are for 16-channel `AInSampleList_ElementSize` (**72 B** + 2 B free-list = **74 B/sample**). The old "74 B + 2 B = 76" double-counted the free-list byte: 74 is already element+free-list. `AInSample.h` states the element size directly ("72 bytes (8-byte header + 16 x 4-byte values)"), and `SYST:MEM:FREE?` reports `SampleElementBytes=72` at 16 channels (measured 2026-08-21).
 
