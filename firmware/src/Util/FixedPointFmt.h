@@ -95,7 +95,7 @@ static inline bool fixedfmt_can_format(double v, unsigned precision) {
     /* Reject values this method cannot DECIDE, and let the caller's snprintf
      * settle them.
      *
-     * The fast path rounds `mag * 10^p`, but that product is ITSELF a rounded
+     * The fast path rounds `v * 10^p`, but that product is ITSELF a rounded
      * double carrying up to half an ULP of error. A true value sitting just
      * below a tie can be lifted exactly ONTO one -- 0.28359374999999998 at
      * p=7 becomes ...37.5 -- and then no tie rule recovers the right answer:
@@ -111,7 +111,11 @@ static inline bool fixedfmt_can_format(double v, unsigned precision) {
      * Costs one extra multiply per value and defers well under 0.1% of real
      * ADC output, so the hot path keeps its win -- and it is what makes the
      * byte-identity claim provable rather than merely well-tested. */
-    const double scaled = fabs(v) * (double)kFixedFmtPow10[precision];
+    /* Same signed-then-magnitude form as fixedfmt_to_str below, deliberately:
+     * if these two computed the scaled value differently, can_format could
+     * accept a value that to_str then renders from a different number. One
+     * expression, one answer. */
+    const double scaled = fabs(v * (double)kFixedFmtPow10[precision]);
     if (!isfinite(scaled)) {
         return false;
     }
@@ -164,7 +168,6 @@ static inline char* fixedfmt_to_str(double v, unsigned precision,
      * precision 3 must print "-0.000", exactly as printf does. Rounding first
      * and testing the integer would lose that minus. */
     const bool neg = signbit(v);
-    const double mag = fabs(v);
     const uint64_t scale = kFixedFmtPow10[precision];
 
     /* nearbyint(), NOT round(). This is the whole correctness hinge.
@@ -186,7 +189,16 @@ static inline char* fixedfmt_to_str(double v, unsigned precision,
      * (Resolution), and 1/4095 is not dyadic so it never generated a tie. The
      * test now uses the firmware's own divisor and carries explicit dyadic
      * tie cases of both parities. */
-    const double scaledF = nearbyint(mag * (double)scale);
+    /* Round the SIGNED product, then take the magnitude -- not the reverse.
+     * Under the default FE_TONEAREST the two are identical, because ties-to-
+     * even is symmetric about zero. They diverge under a DIRECTED mode
+     * (FE_UPWARD/FE_DOWNWARD/FE_TOWARDZERO), where rounding a magnitude and
+     * then negating rounds the wrong way: nearbyint(-1.5) is -1 under
+     * FE_UPWARD, while -nearbyint(1.5) is -2. printf follows the mode too, so
+     * rounding the signed value is what keeps byte-identity true under ANY
+     * mode rather than only the default. Nothing in this firmware calls
+     * fesetround today -- this costs nothing and removes the assumption. */
+    const double scaledF = fabs(nearbyint(v * (double)scale));
     if (!(scaledF >= 0.0) || scaledF > 1.8e19) {   /* NaN-safe bound check */
         return NULL;
     }
