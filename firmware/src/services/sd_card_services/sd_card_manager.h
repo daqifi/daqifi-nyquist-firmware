@@ -68,6 +68,16 @@ extern "C" {
          * (and left 0) when replyTarget == SD_CARD_REPLY_USB. */
         uint32_t replyGeneration;
         char directory[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1];
+        /* #799 part 3: transient operand directory for SD:LISt?, kept SEPARATE
+         * from `directory` (the persistent working directory) for the same
+         * reason #724 split opFile out of `file`: a QUERY must not change the
+         * device. Listing a directory used to copy the operand into
+         * `directory`, silently redirecting SD:GET / SD:DELete / SD:CRC and the
+         * next logging session -- a browse or a typo repointed all of them, and
+         * SD:DELete would then delete a same-named file somewhere else and
+         * report success. Empty means "list the working directory". Callers
+         * that want to MOVE the working directory use SD:DIRectory (part 2). */
+        char opDirectory[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1];
         char file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
         /* #724: transient operand filename for the READ (SD:GET) / COMPUTE_CRC /
          * DELETE ops. Kept SEPARATE from `file` (the persistent logging target set

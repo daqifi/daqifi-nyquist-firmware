@@ -709,9 +709,13 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     SCPI_ParamCharacters(context, &pBuff, &fileLen, false);
 
     if (fileLen > 0) {
-        if (fileLen >= sizeof(pSDCardRuntimeConfig->directory)) {
+        /* #799: bound against the field actually written (opDirectory), not
+         * its sibling. They are the same size today, so this is not a live
+         * overflow -- but checking one buffer and filling another is how a
+         * later divergence becomes one silently. */
+        if (fileLen >= sizeof(pSDCardRuntimeConfig->opDirectory)) {
             LOG_E("SD:LIST? - Directory path too long: %d bytes, max: %d\r\n", 
-                  fileLen, sizeof(pSDCardRuntimeConfig->directory) - 1);
+                  fileLen, sizeof(pSDCardRuntimeConfig->opDirectory) - 1);
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
@@ -720,27 +724,53 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        /* #799: same critical section as SCPI_StorageSDDirectorySet, for the
-         * same reason. This is a two-step write (copy, then terminator) to a
-         * field the new SD:DIRectory? getter reads from the OTHER SCPI
-         * transport -- USB is priority 7, WiFi TCP is 2, and there is no
-         * shared dispatch mutex between them. A reader landing between the
-         * steps sees new-prefix + old-suffix, ended by the old terminator: a
-         * well-formed path naming a directory nobody asked for.
+        /* #799 part 3: the operand goes to the TRANSIENT field, not to the
+         * persistent working directory. A query must not change the device.
          *
-         * Guarding the reader alone cannot fix this -- it only guarantees the
-         * reader sees a STABLE buffer, not a coherent one. All three sites
-         * that touch this field are now symmetric.
+         * This used to memcpy into pSDCardRuntimeConfig->directory and leave it
+         * there, which made SD:LISt? the only way to move the working
+         * directory -- and it moved it as a SIDE EFFECT. One browse, or a typo,
+         * silently redirected SD:GET, SD:DELete, SD:CRC and the next logging
+         * session. The DELete case was the sharp one: the caller named a file,
+         * the device deleted a same-named file somewhere else, and replied
+         * success. Callers that want to MOVE the working directory now use
+         * SD:DIRectory (part 2, already shipped).
          *
-         * NOTE this does not change WHETHER SD:LISt? writes the field, which
-         * is #799 part 3 and needs a client survey. Only that the write other
-         * tasks observe is indivisible -- invisible to clients. */
+         * The client survey the issue asked for came back clean: daqifi-core
+         * only ever sends the no-operand form, and python-core's
+         * sd_list_files(dir) is a standalone listing that nothing chains into a
+         * GET.
+         *
+         * On the critical section: it is NOT doing what the same guard does for
+         * `directory`, and the rationale copied from parts 1-2 would be wrong
+         * here. That field has a getter (SD:DIRectory?) reachable from the
+         * OTHER SCPI transport, so an unguarded two-step write really can be
+         * observed torn. `opDirectory` has no getter -- nothing outside the SD
+         * manager reads it -- and a writer-only critical section cannot make a
+         * reader's read coherent anyway; it only makes the WRITE indivisible
+         * with respect to task switches.
+         *
+         * What actually keeps the SD task from reading this mid-update is the
+         * IsBusy() interlock above: a second listing is refused while one is in
+         * flight, so the field is not rewritten under a running LIST_DIRECTORY.
+         *
+         * The guard is kept regardless -- it costs a few instructions and keeps
+         * all three sites that touch these path fields symmetric, so the next
+         * person to add one inherits the safe shape rather than having to
+         * work out which fields have external readers. */
         taskENTER_CRITICAL();
-        memcpy(pSDCardRuntimeConfig->directory, pBuff, fileLen);
-        pSDCardRuntimeConfig->directory[fileLen] = '\0';
+        memcpy(pSDCardRuntimeConfig->opDirectory, pBuff, fileLen);
+        pSDCardRuntimeConfig->opDirectory[fileLen] = '\0';
+        taskEXIT_CRITICAL();
+    } else {
+        /* No operand: list the working directory. Clearing is what makes the
+         * operand transient -- otherwise the PREVIOUS listing's operand would
+         * silently serve this one, which is the same defect wearing a
+         * different hat. */
+        taskENTER_CRITICAL();
+        pSDCardRuntimeConfig->opDirectory[0] = '\0';
         taskEXIT_CRITICAL();
     }
-    // If no directory specified, the sd_card_manager will use the default from settings
     
     // Set mode to LIST_DIRECTORY and let sd_card_manager handle it
     const bool listOverTcp = wifi_tcp_server_ContextIsTcp(context);   /* #598 */
