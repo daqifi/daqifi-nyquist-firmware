@@ -167,19 +167,24 @@ static volatile uint32_t gScanStaleDropped = 0;  // ticks scan armed but no new 
  * consumer reading device_status sees the current frame's state rather than a
  * latch it must learn to clear. The other two accumulate for SYST:STR:STATS?.
  *
- * All three are published ONLY for a sample that is actually delivered --
+ * The cumulative pair lives in gStreamStats (clippedSamples /
+ * clippedChannelMask) rather than in globals beside this one: they are
+ * ordinary session statistics, so the struct's bulk snapshot and its memset
+ * reset cover them for free and there is no second copy to fall out of step.
+ * Only the LIVE mask needs to be separate -- it is read outside the stats
+ * snapshot, by the protobuf encoder and SCPI_SyncQuesBits.
+ *
+ * Both are published ONLY for a sample that is actually delivered --
  * see the publish block next to gStreamStats.totalSamplesStreamed++. A frame
  * suppressed by the priming gate or lost to a full queue describes nothing
  * the consumer ever sees, and the priming window in particular can present
  * a stale cache value that looks exactly like the bottom rail.
  *
  * They are updated inside the same taskENTER_CRITICAL as that counter, which
- * the 64-bit gClippedSamples requires anyway (CLAUDE.md: 64-bit operations
+ * the 64-bit clippedSamples requires anyway (CLAUDE.md: 64-bit operations
  * always need one) and which makes the two RMWs consistent with their
  * neighbours rather than relying on a single-writer argument. */
 static volatile uint32_t gClipLiveMask = 0;      // channels at a rail THIS tick
-static volatile uint64_t gClippedSamples = 0;    // samples with >=1 railed channel
-static volatile uint32_t gClipChannelMask = 0;   // OR of every slot seen railed
 /* #707/#745: ticks that fired before the session's first shared scan had
  * completed, so no sample could be built. A DRY TICK — not a sample and not a
  * drop; see the emit-path comment.
@@ -1055,8 +1060,8 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                  * describes the current frame rather than the worst so far. */
                 gClipLiveMask = clipMask;
                 if (clipMask != 0u) {
-                    gClippedSamples++;
-                    gClipChannelMask |= clipMask;
+                    gStreamStats.clippedSamples++;
+                    gStreamStats.clippedChannelMask |= clipMask;
                 }
                 taskEXIT_CRITICAL();
                 Streaming_UpdateFlowWindow(false);
@@ -2008,10 +2013,8 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
-    /* #814: boot-time zeroing of both the cumulative counters and the live
-     * mask. Init runs single-threaded, like the gTimerISRCalls reset above. */
-    gClippedSamples = 0;
-    gClipChannelMask = 0;
+    /* #814: the cumulative pair is inside gStreamStats and is already zeroed
+     * by the memset above; only the live mask needs its own reset. */
     gClipLiveMask = 0;
     gDryTicks = 0;
     gPrimingPending = false;
@@ -2187,8 +2190,6 @@ void Streaming_GetStats(StreamingStats* out) {
                                                      : 0u;
     }
     out->scanStaleDropped = gScanStaleDropped;  // #557 (separate volatile, like timerISRCalls)
-    out->clippedSamples = gClippedSamples;          // #814
-    out->clippedChannelMask = gClipChannelMask;     // #814
     taskEXIT_CRITICAL();
 }
 
@@ -2237,10 +2238,6 @@ void Streaming_ClearStats(void) {
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
-    /* #814: the cumulative view, cleared with the rest of the session
-     * counters. */
-    gClippedSamples = 0;
-    gClipChannelMask = 0;
     /* #814: gClipLiveMask is deliberately NOT cleared here. This function also
      * serves SYST:STR:STATS:CLEar, which a client may issue MID-SESSION, and
      * the live mask is not a session statistic -- zeroing it there would report
