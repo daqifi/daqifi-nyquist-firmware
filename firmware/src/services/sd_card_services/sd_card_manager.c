@@ -1243,6 +1243,26 @@ static volatile bool gSdTeardownRequested = false;
  * The success path does NOT come here -- it just clears the flag, because the
  * WRITE_TO_FILE arm of IsBufferAccepting() takes over and the buffered bytes
  * are about to be written, not lost. */
+/* #799: which directory an operation should act on.
+
+ * Only SD:LISt? sets `opDirectory`, and only for the duration of that one
+ * listing -- it is cleared when the command is armed without an operand. Every
+ * other operation (GET / DELete / CRC / logging) reads `directory`, the
+ * persistent working directory, which now changes ONLY through SD:DIRectory.
+ *
+ * Before this, the listing copied its operand into `directory` and left it
+ * there, so a query silently repositioned all of those. */
+static const char* sd_ListDirTarget(const sd_card_manager_settings_t* cfg) {
+    if (cfg == NULL) {
+        return "";
+    }
+    if (cfg->mode == SD_CARD_MANAGER_MODE_LIST_DIRECTORY
+            && cfg->opDirectory[0] != '\0') {
+        return cfg->opDirectory;
+    }
+    return cfg->directory;
+}
+
 static void sd_AbandonRotationWindow(const char* why) {
     /* Clear INSIDE the mutex, not before taking it. sd_card_manager_WriteToBuffer
      * re-checks sd_card_manager_IsBufferAccepting() under this same mutex, so
@@ -1313,8 +1333,13 @@ void sd_card_manager_ProcessState() {
                          gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_DELETE_FILE);
                 const char* opName = isTransientOp ? gpSDCardSettings->opFile
                                                    : gpSDCardSettings->file;
-                bool dirValid = strlen(gpSDCardSettings->directory) > 0 &&
-                               strlen(gpSDCardSettings->directory) <= SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX;
+                /* #799: validate the directory this op will actually use. For
+                 * LIST that is the transient operand when present, so a listing
+                 * of a valid directory is not refused because the persistent
+                 * one happens to be empty (and vice versa). */
+                const char* dirName = sd_ListDirTarget(gpSDCardSettings);
+                bool dirValid = strlen(dirName) > 0 &&
+                               strlen(dirName) <= SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX;
                 bool fileValid = strlen(opName) > 0 &&
                                 strlen(opName) <= SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX;
 
@@ -1342,7 +1367,7 @@ void sd_card_manager_ProcessState() {
                     if (!errorLogged) {
                         LOG_E("[%s:%d]Invalid SD Card Directory or file name (dir='%s', file='%s')",
                               __FILE__, __LINE__,
-                              gpSDCardSettings->directory,
+                              dirName,
                               opName);
                         errorLogged = true;
                     }
@@ -2946,11 +2971,15 @@ void sd_card_manager_ProcessState() {
                 SD_TakeMutexDebug(gSDOpMutex, "list_operation");
             }
 
-            LOG_D("[SD] Listing directory: '%s'\r\n", gpSDCardSettings->directory);
+            /* #799: the operand directory when one was given, else the working
+             * directory. The operand is NOT copied into the working directory
+             * -- see sd_ListDirTarget(). */
+            const char* listTarget = sd_ListDirTarget(gpSDCardSettings);
+            LOG_D("[SD] Listing directory: '%s'\r\n", listTarget);
 
             // List files in chunks using static callback
             ListDirResult listResult = ListFilesInDirectoryChunked(
-                    gpSDCardSettings->directory,
+                    listTarget,
                     gSDCardData.messageBuffer,
                     SD_CARD_MANAGER_CONF_RBUFFER_SIZE,
                     sd_listdir_send_chunk);
