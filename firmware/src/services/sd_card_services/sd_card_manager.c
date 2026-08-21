@@ -2046,14 +2046,6 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
                         (SYS_FS_FILE_OPEN_WRITE_PLUS));
 
-                /* #757: the window is over the moment the open resolves, in
-                 * BOTH directions. On success the WRITE_TO_FILE arm of
-                 * IsBufferAccepting takes over and this flag stops mattering;
-                 * on failure or teardown it must be cleared here, or the
-                 * encoder would go on filling a buffer that nothing will ever
-                 * drain. Cleared before the abort check below for that reason. */
-                gSdRotating = false;
-
                 /* #782: a teardown may have landed while this open was in
                  * flight. SCPI (pri 7) preempts this task (pri 5), and
                  * sd_card_manager_UpdateSettings() tears the session down by
@@ -2084,6 +2076,25 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.currentProcessState = openAborted
                         ? SD_CARD_MANAGER_PROCESS_STATE_DEINIT
                         : SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE;
+                /* #757: close the window in the SAME critical section that
+                 * opens WRITE_TO_FILE, so the handoff is atomic.
+                 *
+                 * Clearing it any earlier reopens this issue in miniature.
+                 * Between a clear and the state assignment, gSdRotating is
+                 * false while currentProcessState is still OPEN_FILE, so
+                 * IsWriteReady() is false too and IsBufferAccepting() returns
+                 * FALSE -- the encoder (pri 6) preempts this task (pri 5)
+                 * right there and its packets are discarded. That gap was
+                 * measurable: it is where the last few stray SdDroppedBytes in
+                 * an otherwise clean rotation run came from.
+                 *
+                 * Only the success arm clears. On abort the flag stays set
+                 * until sd_AbandonRotationWindow() below clears it AND
+                 * accounts for what was buffered -- clearing it here would
+                 * silently strand those bytes instead. */
+                if (!openAborted) {
+                    gSdRotating = false;
+                }
                 taskEXIT_CRITICAL();
 
                 if (openAborted) {
@@ -2508,13 +2519,20 @@ void sd_card_manager_ProcessState() {
                  * it encodes during the open follows in order. The buffer
                  * reset is kept for the error paths where the drain could not
                  * complete; on the normal path it is a no-op. */
-                Streaming_ResetSdPbMetadata();
-                SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_open_window");
-                CircularBuf_Reset(&gSDCardData.wCirbuf);
-                xSemaphoreGive(gSDCardData.wMutex);
-                gSdRotating = true;
-
                 if (gSDCardData.fileCounter < SD_CARD_MANAGER_MAX_SPLIT_FILES) {
+                    /* Opened INSIDE this branch, deliberately. The window is a
+                     * promise that an open is coming to drain what the encoder
+                     * buffers; the split-limit branch below never enters
+                     * OPEN_FILE, so opening the window before this test would
+                     * promise an open that never happens. Structuring it this
+                     * way makes that impossible rather than leaving it to a
+                     * reachability argument about how many files it takes. */
+                    Streaming_ResetSdPbMetadata();
+                    SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_open_window");
+                    CircularBuf_Reset(&gSDCardData.wCirbuf);
+                    xSemaphoreGive(gSDCardData.wMutex);
+                    gSdRotating = true;
+
                     gSDCardData.fileCounter++;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
                 } else {
