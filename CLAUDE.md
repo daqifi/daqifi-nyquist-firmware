@@ -85,9 +85,12 @@ When the gate fails:
   regenerate the baseline (`bash tools/lint/cppcheck.sh`) and commit
   the updated `cppcheck-baseline.txt`.
 
-The current baseline is 2 style findings (both in
-`firmware/src/services/wifi_services/wifi_serial_bridge.c` —
-ergonomic, not bugs). The suppression file documents the
+The current baseline is **empty** — `tools/lint/cppcheck-baseline.txt`
+is a 0-line file, so any new finding fails the gate. (An earlier
+revision of this file said "2 style findings, both in
+`firmware/src/services/wifi_services/wifi_serial_bridge.c`"; those were
+fixed and the baseline regenerated. Verified 2026-08-21 against
+cppcheck 2.13.0, the CI version.) The suppression file documents the
 DioProbe.c array-bounds false positive and the FreeRTOS portmacro
 FPU-guard `#error` (chip-specific macro that cppcheck doesn't see).
 
@@ -1054,7 +1057,7 @@ All USB, WiFi, **SD**, encoder, and sample pool memory comes from the unified St
 | `CoherentPoolFree` | Free coherent pool bytes |
 | `SdCircularSize` | Current SD circular buffer partition size |
 | `SamplePoolCount` | Current **usable** sample pool depth — what the free-list and the FreeRTOS queue actually hold. May be lower than `SamplePoolPartitioned`; see below. |
-| `SamplePoolPartitioned` | Slots the partition carved (#828). In auto mode (`samplePoolCount == 0` = *maximize to fit*) this is what fits in the leftover pool space, and it is the number the `Pool partition: … samples=<n>x<sz>` log line reports. |
+| `SamplePoolPartitioned` | Slots the partition carved (#828). In auto mode (`samplePoolCount == 0` = *maximize to fit*) this is what fits in the leftover pool space, and it is the number the `Pool partition: … samples=<n>x<sz>` log line reports. **`0` means the pool has not been partitioned since boot** — the carve happens at `StartStreamData`, so a device that has not streamed reports `Partitioned=0` while `SamplePoolCount` still reads the boot default (1100, from `AInSampleList_Initialize` in `BoardData.c`). The two are only comparable after a stream has started once. |
 | `SamplePoolClampedSlots` | `Partitioned − Count`, i.e. slots carved but unusable (#828). Non-zero when `AInSampleList_InitializeExternal` declined to **grow** the FreeRTOS sample queue — it requires `freeHeap >= needed + 1024`, and on refusal keeps the previous queue size. Before #828 this shortfall appeared only as a `Sample queue resize skipped` LOG_E line. It is heap-state dependent, not a constant: a queue that did grow stays grown. |
 | `SamplePoolBytes` | Sample pool data memory (count × per-channel-count stride) |
 | `SampleNextFreeBytes` | Free-list array memory (count × 2) |
