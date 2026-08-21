@@ -1007,7 +1007,7 @@ The sample pool lives inside the Streaming Buffer Pool (static BSS). It is re-pa
   Sample queue resize skipped: need 6480, heap free 6536
   ```
   In auto mode `MemoryConfig.samplePoolCount` is **0**, which `StreamingBufferPool_Partition` reads as *maximize to fit* — so the partition really does carve **1600** slots. The depth then falls back to 1100 at the NEXT stage: `AInSampleList_InitializeExternal` will not grow the FreeRTOS sample queue unless `freeHeap >= needed + 1024`, and here 6536 < 6480 + 1024, so it logs `Sample queue resize skipped` and keeps the boot queue size (`DEFAULT_AIN_SAMPLE_COUNT` = 1100). `SYST:MEM:FREE?` reports that queue-limited number.
-  Two consequences worth knowing: on that run the ~500-slot difference (~36 KB) was carved from the streaming pool but **not usable**, and the clamp is only visible as that one log line — see #828. The clamp is heap-state dependent, not fixed: it fires only when the queue must GROW and the heap will not stretch, and a queue that did grow stays grown, so the gap varies by device state rather than being a constant 500. Earlier revisions of this file claimed "~585" here and "~1,618" in the table below; both were wrong, and the table's figures are **capacity**, which is the 1600 the partition computes, not the depth you get
+  Two consequences worth knowing: on that run the ~500-slot difference (~36 KB) was carved from the streaming pool but **not usable**, and the clamp is reported by `SYST:MEM:FREE?` as `SamplePoolPartitioned` (1600 here) alongside `SamplePoolCount` (the usable 1100), with the shortfall as `SamplePoolClampedSlots` (#828). Before that fix it was visible only as the `Sample queue resize skipped` log line above. The clamp is heap-state dependent, not fixed: it fires only when the queue must GROW and the heap will not stretch, and a queue that did grow stays grown, so the gap varies by device state rather than being a constant 500. Earlier revisions of this file claimed "~585" here and "~1,618" in the table below; both were wrong, and the table's figures are **capacity**, which is the 1600 the partition computes, not the depth you get
 - **Peak usage**: Typically 2-4 samples (at 3kHz 16ch). Pool depth provides burst absorption headroom.
 
 #### SCPI Dynamic Memory Configuration
@@ -1053,7 +1053,9 @@ All USB, WiFi, **SD**, encoder, and sample pool memory comes from the unified St
 | `CoherentPoolTotal` | Total coherent pool (126976) |
 | `CoherentPoolFree` | Free coherent pool bytes |
 | `SdCircularSize` | Current SD circular buffer partition size |
-| `SamplePoolCount` | Current sample pool depth |
+| `SamplePoolCount` | Current **usable** sample pool depth — what the free-list and the FreeRTOS queue actually hold. May be lower than `SamplePoolPartitioned`; see below. |
+| `SamplePoolPartitioned` | Slots the partition carved (#828). In auto mode (`samplePoolCount == 0` = *maximize to fit*) this is what fits in the leftover pool space, and it is the number the `Pool partition: … samples=<n>x<sz>` log line reports. |
+| `SamplePoolClampedSlots` | `Partitioned − Count`, i.e. slots carved but unusable (#828). Non-zero when `AInSampleList_InitializeExternal` declined to **grow** the FreeRTOS sample queue — it requires `freeHeap >= needed + 1024`, and on refusal keeps the previous queue size. Before #828 this shortfall appeared only as a `Sample queue resize skipped` LOG_E line. It is heap-state dependent, not a constant: a queue that did grow stays grown. |
 | `SamplePoolBytes` | Sample pool data memory (count × per-channel-count stride) |
 | `SampleNextFreeBytes` | Free-list array memory (count × 2) |
 | `SampleQueueBytes` | FreeRTOS queue overhead estimate |
