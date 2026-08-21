@@ -129,9 +129,10 @@ static int exhaustive_nq1(void)
 }
 
 /* NQ3 / AD7609: 18-bit SIGNED, range -131072..+131071 (see the sign-extension
- * note in AD7609.c). Stepped rather than every code purely to keep the suite
- * quick; the step is deliberately coprime-ish with powers of ten so it does
- * not systematically skip the interesting fractional residues. */
+ * note in AD7609.c). EVERY code is checked, not a sample: at 0.42 s for the
+ * full range the saving from stepping was not worth the coverage gap, and this
+ * is the ONLY coverage the NQ3 numeric path gets -- there is no NQ2/NQ3 board
+ * on this bench, so nothing downstream can catch what this misses. */
 static int exhaustive_nq3(void)
 {
     /* Resolution again, not max code: NQ3BoardConfig.c sets 262144. Dyadic,

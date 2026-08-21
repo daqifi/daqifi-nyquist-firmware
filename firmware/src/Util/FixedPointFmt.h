@@ -56,10 +56,30 @@
  * false. NaN and infinity are rejected here rather than mishandled: printf
  * spells them "nan"/"inf" and reproducing that is not this function's job.
  */
-static const uint64_t kFixedFmtPow10[FIXEDFMT_MAX_PRECISION + 1u] = {
+/* Deliberately sized BY THE INITIALIZER (empty brackets), not by the macro.
+ * With an explicit [FIXEDFMT_MAX_PRECISION + 1] the array would be padded with
+ * zeros to whatever the macro says and sizeof would agree with it by
+ * construction -- so the assertion below could never fail, which is worse than
+ * no assertion. Letting the initializer set the size is what makes the count
+ * check real. (Verified by mutation: raising the ceiling without adding an
+ * entry must break the build.) */
+static const uint64_t kFixedFmtPow10[] = {
     1ull, 10ull, 100ull, 1000ull, 10000ull, 100000ull,
     1000000ull, 10000000ull, 100000000ull, 1000000000ull
 };
+
+/* Raising FIXEDFMT_MAX_PRECISION without extending the table above would
+ * zero-fill the new entries, and a zero would flow straight into `scale` and
+ * into `divisor` -- a division by zero reached only at the new precision, with
+ * nothing at the edit site to say so. Make that impossible at build time
+ * rather than discoverable at runtime. */
+_Static_assert(sizeof(kFixedFmtPow10) / sizeof(kFixedFmtPow10[0])
+                   == (size_t)FIXEDFMT_MAX_PRECISION + 1u,
+               "kFixedFmtPow10 must have exactly FIXEDFMT_MAX_PRECISION + 1 "
+               "entries -- extend the initializer when raising the ceiling");
+_Static_assert(FIXEDFMT_MAX_PRECISION >= 1u,
+               "precision 0 is the caller's integer fast path; the table and "
+               "the divisor index (precision - 1) assume at least 1");
 
 static inline bool fixedfmt_can_format(double v, unsigned precision) {
     if (precision == 0u || precision > FIXEDFMT_MAX_PRECISION) {
