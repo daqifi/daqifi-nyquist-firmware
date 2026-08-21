@@ -1244,8 +1244,15 @@ static volatile bool gSdTeardownRequested = false;
  * WRITE_TO_FILE arm of IsBufferAccepting() takes over and the buffered bytes
  * are about to be written, not lost. */
 static void sd_AbandonRotationWindow(const char* why) {
-    gSdRotating = false;
+    /* Clear INSIDE the mutex, not before taking it. sd_card_manager_WriteToBuffer
+     * re-checks sd_card_manager_IsBufferAccepting() under this same mutex, so
+     * ordering them this way leaves no gap: a writer that gets the mutex first
+     * writes, and the count below includes its bytes; a writer that gets it
+     * after sees the flag already false and refuses. Clearing before the take
+     * would let a writer blocked on the mutex append AFTER the reset, and those
+     * bytes would be neither drained nor counted. */
     SD_TakeMutexDebug(gSDCardData.wMutex, "abandon_rotation");
+    gSdRotating = false;
     size_t buffered = CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf);
     CircularBuf_Reset(&gSDCardData.wCirbuf);
     xSemaphoreGive(gSDCardData.wMutex);
@@ -3109,6 +3116,25 @@ size_t sd_card_manager_WriteToBuffer(const char* pData, size_t len) {
     // SD task's slow f_write runs OUTSIDE the mutex, so a hung card makes
     // this return 0, never block.
     SD_TakeMutexDebug(gSDCardData.wMutex, "write_buffer_add");
+    /* #757: the accept decision must be authoritative HERE, not merely where
+     * the caller sized the write.
+     *
+     * The caller computes sdSize from IsBufferAccepting() at the top of its
+     * iteration and writes later. Between those two points the SD task can
+     * abandon the rotation window -- a bucket refusal, a teardown, a failed
+     * create -- which resets this buffer. Without this re-check the in-flight
+     * write lands in the freshly reset buffer, where nothing will drain it: it
+     * is lost silently AND can prepend a partial row to the next session's
+     * file. The enable/mode test above does not catch it, because mode is
+     * still WRITE at that moment.
+     *
+     * Re-checking under the mutex that sd_AbandonRotationWindow() also holds
+     * closes it: this either runs before the abandon (and those bytes are
+     * counted by it) or after (and refuses). */
+    if (!sd_card_manager_IsBufferAccepting()) {
+        xSemaphoreGive(gSDCardData.wMutex);
+        return 0;
+    }
     if (CircularBuf_NumBytesFree(&gSDCardData.wCirbuf) < len) {
         xSemaphoreGive(gSDCardData.wMutex);
         return 0;
