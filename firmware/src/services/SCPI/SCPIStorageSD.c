@@ -737,11 +737,23 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
          * sd_list_files(dir) is a standalone listing that nothing chains into a
          * GET.
          *
-         * Critical section retained, for the reason part 1-2 introduced it: the
-         * two-step write (copy, then terminator) is read by the SD task, and a
-         * reader landing between the steps would see new-prefix + old-suffix
-         * ended by the old terminator -- a well-formed path naming a directory
-         * nobody asked for. */
+         * On the critical section: it is NOT doing what the same guard does for
+         * `directory`, and the rationale copied from parts 1-2 would be wrong
+         * here. That field has a getter (SD:DIRectory?) reachable from the
+         * OTHER SCPI transport, so an unguarded two-step write really can be
+         * observed torn. `opDirectory` has no getter -- nothing outside the SD
+         * manager reads it -- and a writer-only critical section cannot make a
+         * reader's read coherent anyway; it only makes the WRITE indivisible
+         * with respect to task switches.
+         *
+         * What actually keeps the SD task from reading this mid-update is the
+         * IsBusy() interlock above: a second listing is refused while one is in
+         * flight, so the field is not rewritten under a running LIST_DIRECTORY.
+         *
+         * The guard is kept regardless -- it costs a few instructions and keeps
+         * all three sites that touch these path fields symmetric, so the next
+         * person to add one inherits the safe shape rather than having to
+         * work out which fields have external readers. */
         taskENTER_CRITICAL();
         memcpy(pSDCardRuntimeConfig->opDirectory, pBuff, fileLen);
         pSDCardRuntimeConfig->opDirectory[fileLen] = '\0';
