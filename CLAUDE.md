@@ -528,9 +528,9 @@ SYSTem:STReam:STATS:CLEar  # Reset all counters
 | `TotalSamplesStreamed` | uint64 | Samples successfully queued from ISR |
 | `TotalBytesStreamed` | uint64 | Total bytes encoded (offered to outputs) |
 | `QueueDroppedSamples` | uint32 | Samples lost due to pool exhaustion or full sample queue (pool defaults 1100, re-partitioned per session) |
-| `UsbDroppedBytes` | uint32 | Data lost due to USB circular buffer full (16KB) |
-| `WifiDroppedBytes` | uint32 | Data lost due to WiFi circular buffer full (14KB) |
-| `SdDroppedBytes` | uint32 | Data lost due to SD write timeout/partial (8-64KB buf, 3 retries), plus the bytes a split-file rotation strands in the circular buffer (#823 — see "SD Card File Splitting"). Not counted: bytes lost to a *failed* write mid-rotation-drain, which are still discarded silently (#825). |
+| `UsbDroppedBytes` | uint32 | Data lost due to USB circular buffer full (16KB default; auto-balance raises it to 64KB when USB is the only active interface) |
+| `WifiDroppedBytes` | uint32 | Data lost due to WiFi circular buffer full (14KB default; auto-balance raises it to 96KB when WiFi is the only active interface — `STREAMING_WIFI_WIFI_ONLY`, #497) |
+| `SdDroppedBytes` | uint32 | Data the SD path could not take. **There is no fixed retry count** — an earlier revision of this row said "3 retries", which matches nothing in the tree (the only retry constants are `SD_MOUNT_MAX_RETRIES` 10, `SD_UNMOUNT_MAX_RETRIES` 40, and `USB_TRANSFER_MAX_RETRIES`). The two real paths differ: **multi-output** (USB+SD) counts a short write **immediately, with no retry at all** (`streaming.c` — `LOG_E_SESSION "SD buffer overflow (multi-output no-retry)"`), which is deliberate so a stalled SD cannot block USB (#534/#536); **SD-only** goes through `Streaming_WriteWithRetry`, which spins, then backs off on `vTaskDelay(1)` up to `STREAM_WRITE_TIMEOUT_MS` (10 s) before counting. Also carries the bytes a split-file rotation strands in the circular buffer (#823 — see "SD Card File Splitting"). **Not** counted: bytes lost to a *failed* write mid-rotation-drain, still discarded silently (#825). |
 | `EncoderFailures` | uint32 | Encoding attempts that returned 0 bytes with data available |
 | `TimerISRCalls` | uint64 | Actual streaming timer ISR entry count this session (#265). Invariant: `TimerISRCalls == TotalSamplesStreamed + QueueDroppedSamples`. |
 | `EosOverruns` | uint32 | EOS notifications coalesced (>1 per wake) (#295). Task-behind-but-fresh — NOT a loss (excluded from loss total). |
