@@ -528,9 +528,9 @@ SYSTem:STReam:STATS:CLEar  # Reset all counters
 | `TotalSamplesStreamed` | uint64 | Samples successfully queued from ISR |
 | `TotalBytesStreamed` | uint64 | Total bytes encoded (offered to outputs) |
 | `QueueDroppedSamples` | uint32 | Samples lost due to pool exhaustion or full sample queue (pool defaults 1100, re-partitioned per session) |
-| `UsbDroppedBytes` | uint32 | Data lost due to USB circular buffer full (16KB default; auto-balance raises it to 64KB when USB is the only active interface) |
+| `UsbDroppedBytes` | uint32 | Data lost due to USB circular buffer full (16KB default; auto-balance raises it to 64KB whenever USB is active — `hasUsb` covers **USB+SD** too, which is why the auto-balance table shows 65,536 in that column as well) |
 | `WifiDroppedBytes` | uint32 | Data lost due to WiFi circular buffer full (14KB default; auto-balance raises it to 96KB when WiFi is the only active interface — `STREAMING_WIFI_WIFI_ONLY`, #497) |
-| `SdDroppedBytes` | uint32 | Data the SD path could not take. **There is no fixed retry count** — an earlier revision of this row said "3 retries", which matches nothing in the tree (the only retry constants are `SD_MOUNT_MAX_RETRIES` 10, `SD_UNMOUNT_MAX_RETRIES` 40, and `USB_TRANSFER_MAX_RETRIES`). The two real paths differ: **multi-output** (USB+SD) counts a short write **immediately, with no retry at all** (`streaming.c` — `LOG_E_SESSION "SD buffer overflow (multi-output no-retry)"`), which is deliberate so a stalled SD cannot block USB (#534/#536); **SD-only** goes through `Streaming_WriteWithRetry`, which spins, then backs off on `vTaskDelay(1)` up to `STREAM_WRITE_TIMEOUT_MS` (10 s) before counting. Also carries the bytes a split-file rotation strands in the circular buffer (#823 — see "SD Card File Splitting"). **Not** counted: bytes lost to a *failed* write mid-rotation-drain, still discarded silently (#825). |
+| `SdDroppedBytes` | uint32 | Data the SD path could not take. **There is no fixed retry count** — an earlier revision of this row said "3 retries", which matches nothing on this path (the SD manager's only retry constants are `SD_MOUNT_MAX_RETRIES` 10 and `SD_UNMOUNT_MAX_RETRIES` 40, neither governing writes; other subsystems have their own — `SCPI_WRITE_MAX_RETRIES`, `SPI_RETRY_COUNT` — none of them 3). The two real paths differ: **multi-output** (USB+SD) counts a short write **immediately, with no retry at all** (`streaming.c` — `LOG_E_SESSION "SD buffer overflow (multi-output no-retry)"`), which is deliberate so a stalled SD cannot block USB (#534/#536); **SD-only** goes through `Streaming_WriteWithRetry`, which spins, then backs off on `vTaskDelay(1)` up to `STREAM_WRITE_TIMEOUT_MS` (10 s) before counting. Also carries the bytes a split-file rotation strands in the circular buffer (#823 — see "SD Card File Splitting"). **Not** counted: bytes lost to a *failed* write mid-rotation-drain, still discarded silently (#825). |
 | `EncoderFailures` | uint32 | Encoding attempts that returned 0 bytes with data available |
 | `TimerISRCalls` | uint64 | Actual streaming timer ISR entry count this session (#265). Invariant: `TimerISRCalls == TotalSamplesStreamed + QueueDroppedSamples`. |
 | `EosOverruns` | uint32 | EOS notifications coalesced (>1 per wake) (#295). Task-behind-but-fresh — NOT a loss (excluded from loss total). |
@@ -1056,13 +1056,23 @@ All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming 
 
 **Auto-Balance Buffer Sizing by Active Interface:**
 
+> The inactive-SD circular figure is **4,096**, not the 512 an earlier revision
+> of this table showed. `Streaming_ComputeAutoBuffers` hands inactive SD
+> `STREAMING_SD_CIRCULAR_MIN`, and `StreamingBufferPool_Partition` clamps
+> anything smaller up to it, so 512 is unreachable — and a `MEM:SD:BUFfer?`
+> reading of 512 is the **fault signature of #703** (a shrunk SD circular
+> silently breaking `SD:GET`), not a normal value. The per-column
+> "Sample pool (slots @16ch)" figures below were derived with the old 512 and
+> are correspondingly ~47 slots optimistic in the USB-only and WiFi-only
+> columns; they have not been re-measured.
+
 The `StreamingInterface` enum exposes four combinations: `USB`, `WiFi`, `SD`, and `UsbAndSd` — WiFi is always solo (SPI bus shared with SD; USB+WiFi was never wired into the enum). Values below are for 16-channel `AInSampleList_ElementSize` (74 B + 2 B free-list = 76 B/sample).
 
 | Buffer | USB only | WiFi only | SD only | USB+SD |
 |--------|---:|---:|---:|---:|
 | USB circular (stream pool) | 65,536 | 2,048 | 2,048 | 65,536 |
 | WiFi circular (stream pool) | 1,400 | 98,304 | 1,400 | 1,400 |
-| SD circular (stream pool) | 512 | 512 | 32,768 | 32,768 |
+| SD circular (stream pool) | 4,096 | 4,096 | 32,768 | 32,768 |
 | Encoder (stream pool) | 8,192 | 8,192 | 16,384 | 16,384 |
 | SD DMA write (coherent) | 512 | 512 | 124,368 | 77,922 |
 | USB DMA write (coherent) | 124,368 | 512 | 512 | 46,958 |
