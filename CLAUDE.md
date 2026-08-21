@@ -877,7 +877,7 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 - **Tick rate**: 1000 Hz (1ms tick)
 - **Preemptive** with time-slicing (equal-priority tasks round-robin)
 - **Max priorities**: 10 (0=lowest, 9=highest)
-- **Heap**: heap_4, 75KB (`configTOTAL_HEAP_SIZE`)
+- **Heap**: heap_4, 74KB (`configTOTAL_HEAP_SIZE` — 75000 cut to 74000 in #667)
 - **ISR stack**: 8192 bytes
 - **Kernel interrupt priority**: 1 (lowest)
 - **Max syscall interrupt priority**: 4 (ISRs at priority 5+ are never disabled by FreeRTOS)
@@ -944,7 +944,7 @@ The firmware uses four distinct memory regions, each with different properties:
    - Layout: `[USB circ | WiFi circ | encoder | SD circ | <align> | samplePool[] | nextFree[]]`
    - Re-partitioned at each `StartStreamData` based on active interfaces
    - Zero runtime malloc — all resizing is pointer arithmetic within the pool
-   - Auto-balance: USB-only → USB=64KB, WiFi=min, ~585 samples
+   - Auto-balance: USB-only → USB=64KB, WiFi=min; the sample pool takes what is left
    - Query: `SYST:MEM:FREE?` → `SamplePoolCount`, `SamplePoolBytes`
 
 2. **Coherent Pool** (124KB static, DMA-safe, `firmware/src/Util/CoherentPool.c`)
@@ -953,7 +953,7 @@ The firmware uses four distinct memory regions, each with different properties:
    - Contains: SD DMA write buffer + USB DMA write buffer + WiFi SPI staging buffer. All three auto-balanced at stream start.
    - Query: `SYST:MEM:FREE?` → `CoherentPoolTotal`, `CoherentPoolFree`
 
-3. **FreeRTOS Heap** (75KB, cached, `configTOTAL_HEAP_SIZE` in `FreeRTOSConfig.h`)
+3. **FreeRTOS Heap** (74KB, cached, `configTOTAL_HEAP_SIZE` in `FreeRTOSConfig.h` — 75000 was cut to 74000 in #667, because #666 + #667 co-resident overflowed the linker stack region by 208 B and the heap is BSS)
    - heap_4 (best-fit with coalescence), allocated from `.bss`
    - Contains: task stacks, FreeRTOS TCBs/queues/mutexes, sample FreeRTOS queue
    - Streaming buffers and sample pool are NOT in heap (moved to Streaming Buffer Pool)
@@ -968,16 +968,16 @@ The firmware uses four distinct memory regions, each with different properties:
 
 | Region | Bytes | Source |
 |--------|------:|--------|
-| Streaming Buffer Pool | 198,656 | Static BSS (194KB) |
-| FreeRTOS Heap | 75,000 | Static BSS |
+| Streaming Buffer Pool | 197,632 | Static BSS (`STATIC_POOL_SIZE` = 194KB - 1KB) |
+| FreeRTOS Heap | 74,000 | Static BSS |
 | Coherent Pool | 126,976 | Static coherent (KSEG1) |
 | USB coherent struct | ~2,000 | Static coherent |
 | Other BSS/data (globals) | ~30,000 | Static BSS |
 | ISR stack | 8,192 | Linker-allocated |
-| **Total used** | **~441,000** | |
-| **Free (linker headroom)** | **~83,000** | |
+| **Total used** | **~438,800** | |
+| **Free (linker headroom)** | **~85,000** | |
 
-#### Heap Allocation Map (75KB total, ~62KB used at boot)
+#### Heap Allocation Map (74KB total, ~62KB used at boot)
 
 | Consumer | Bytes | Source |
 |----------|------:|--------|
@@ -1001,7 +1001,7 @@ The sample pool lives inside the Streaming Buffer Pool (static BSS). It is re-pa
 - **Memory per sample**: depends on enabled channels (compact pool): 1ch=14 bytes, 4ch=26 bytes, 8ch=42 bytes, 16ch=74 bytes (element + 2-byte free-list entry). Stride computed at stream start from `AInSampleList_ElementSize(channelCount)`.
 - **Resize**: `StreamingBufferPool_Partition()` re-carves the pool, then `AInSampleList_InitializeExternal()` swaps the memory pointers. FreeRTOS queue is reused (not reallocated) across sessions.
 - **When resized**: At each `StartStreamData` via `SCPI_StartStreaming`
-- **Typical values**: Boot=1100, USB-only auto-balance=~585, multi-interface=varies (see Auto-Balance table)
+- **Typical values**: **1100** — measured on the bench 2026-08-21 (`SYST:MEM:FREE?` during a live USB-only stream, at BOTH 1 and 16 channels). Two earlier claims in this file, "~585" here and "~1,618" in the auto-balance table, were **both** wrong: the pool does not shrink to fit, it stays at the requested depth (`DEFAULT_AIN_SAMPLE_COUNT` = 1100) whenever the partition can satisfy it, and at 16ch USB-only it can (1100 x 72 B = 79,200 B, reported as `SamplePoolBytes`). The auto-balance row below is a **capacity** estimate — how many slots would fit — not the depth actually used
 - **Peak usage**: Typically 2-4 samples (at 3kHz 16ch). Pool depth provides burst absorption headroom.
 
 #### SCPI Dynamic Memory Configuration
@@ -1040,7 +1040,7 @@ All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming 
 
 | Field | Description |
 |-------|-------------|
-| `HeapTotal` | Total FreeRTOS heap (75000) |
+| `HeapTotal` | Total FreeRTOS heap (74000) |
 | `HeapFree` | Currently free heap bytes |
 | `HeapUsed` | Currently used heap bytes |
 | `HeapMinEverFree` | Lowest heap free since boot (high-water mark) |
@@ -1066,7 +1066,7 @@ All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming 
 > are correspondingly ~47 slots optimistic in the USB-only and WiFi-only
 > columns; they have not been re-measured.
 
-The `StreamingInterface` enum exposes four combinations: `USB`, `WiFi`, `SD`, and `UsbAndSd` — WiFi is always solo (SPI bus shared with SD; USB+WiFi was never wired into the enum). Values below are for 16-channel `AInSampleList_ElementSize` (74 B + 2 B free-list = 76 B/sample).
+The `StreamingInterface` enum exposes four combinations: `USB`, `WiFi`, `SD`, and `UsbAndSd` — WiFi is always solo (SPI bus shared with SD; USB+WiFi was never wired into the enum). Values below are for 16-channel `AInSampleList_ElementSize` (**72 B** + 2 B free-list = **74 B/sample**). The old "74 B + 2 B = 76" double-counted the free-list byte: 74 is already element+free-list. `AInSample.h` states the element size directly ("72 bytes (8-byte header + 16 x 4-byte values)"), and `SYST:MEM:FREE?` reports `SampleElementBytes=72` at 16 channels (measured 2026-08-21).
 
 | Buffer | USB only | WiFi only | SD only | USB+SD |
 |--------|---:|---:|---:|---:|
@@ -1077,7 +1077,9 @@ The `StreamingInterface` enum exposes four combinations: `USB`, `WiFi`, `SD`, an
 | SD DMA write (coherent) | 512 | 512 | 124,368 | 77,922 |
 | USB DMA write (coherent) | 124,368 | 512 | 512 | 46,958 |
 | WiFi SPI staging (coherent) | 2,048 | 125,904 | 2,048 | 2,048 |
-| Sample pool (slots @16ch) | ~1,618 | ~1,178 | ~1,921 | ~1,086 |
+| Sample pool CAPACITY (slots @16ch)¹ | ~1,618 | ~1,178 | ~1,921 | ~1,086 |
+
+¹ **Capacity, not the depth in use.** These are how many slots the leftover pool space would hold; the pool actually takes the requested depth (1100 by default) whenever that fits. Measured USB-only at 16ch on 2026-08-21: `SamplePoolCount=1100`, `SampleElementBytes=72`, `SamplePoolBytes=79200`. Only the USB-only column has been checked against hardware; the other three are unverified arithmetic, and were derived with the old (wrong) 512-byte SD-circular figure.
 
 
 **Implementation:** `firmware/src/Util/StreamingBufferPool.c` (unified pool), `firmware/src/Util/CoherentPool.c` (DMA pool), `firmware/src/services/streaming.c` (`ComputeAutoBuffers`), `firmware/src/state/data/AInSample.c` (`InitializeExternal`), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks), `firmware/src/state/runtime/StreamingRuntimeConfig.h` (MemoryConfig struct), `firmware/src/config/default/driver/winc/dev/spi/wdrv_winc_spi.c` (WiFi SPI staging)
