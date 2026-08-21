@@ -532,8 +532,9 @@ static ListDirFrame gListDirStack[SD_CARD_MANAGER_MAX_LIST_DEPTH];
 
 /* #795: true if every byte of `name` is one FAT/exFAT can actually store.
  * Illegal in a long file name: the C0 controls (< 0x20), DEL, and
- * " * / : < > ? \ | . Bytes >= 0x80 ARE legal (OEM code page / UTF-8), so
- * they must not be rejected.
+ * these eight: " * / : < > ? \ | -- note '.' is NOT among them, it is the
+ * ordinary extension separator. Bytes >= 0x80 are also legal (OEM code
+ * page / UTF-8) and must not be rejected.
  *
  * `/` is rejected here because this sees ONE entry NAME from
  * SYS_FS_DirRead, never a path -- a slash inside a name is as impossible
@@ -549,17 +550,27 @@ static ListDirFrame gListDirStack[SD_CARD_MANAGER_MAX_LIST_DEPTH];
  * cannot reject them by shape -- `DAQiFi/3214741.021 825373450` parses as a
  * perfectly well-formed `<path> <size>` line. This filter is correct
  * independent of that root cause. */
-static bool sd_listdir_name_is_storable(const char *name)
+static bool sd_listdir_name_is_storable(const char *name, size_t maxLen)
 {
-    for (const unsigned char *p = (const unsigned char *)name; *p != '\0'; p++) {
-        if (*p < 0x20u || *p == 0x7Fu) {
+    for (size_t i = 0; i < maxLen; i++) {
+        const unsigned char c = (const unsigned char)name[i];
+        if (c == '\0') {
+            return true;                /* terminated, every byte legal */
+        }
+        if (c < 0x20u || c == 0x7Fu) {
             return false;
         }
-        if (strchr("\"*/:<>?\\|", (int)*p) != NULL) {
+        if (strchr("\"*/:<>?\\|", (int)c) != NULL) {
             return false;
         }
     }
-    return true;
+    /* No terminator inside the field. SYS_FS_FSTAT.fname is a fixed 256-byte
+     * array followed by lfname/lfsize, so walking to a NUL would run off it
+     * into adjacent struct members and then the stack -- and this helper is
+     * called precisely on entries already suspected of being corrupt. An
+     * unterminated name is also not a real directory entry, so rejecting it
+     * is both the safe answer and the correct one. */
+    return false;
 }
 
 static ListDirResult ListFilesInDirectoryChunked(const char* dirPath, uint8_t *pStrBuff, size_t strBuffSize, ListChunkCallback sendChunk) {
@@ -691,7 +702,7 @@ static ListDirResult ListFilesInDirectoryChunked(const char* dirPath, uint8_t *p
 
         LOG_D("[SD] ListFiles: Read entry '%s'\r\n", stat.fname);
 
-        if (!sd_listdir_name_is_storable(stat.fname)) {
+        if (!sd_listdir_name_is_storable(stat.fname, sizeof(stat.fname))) {
             /* Log the raw bytes once. This is the observation #795 has been
              * missing: if they decode to file content the read path handed
              * back a data sector, if they look like FAT structures the
