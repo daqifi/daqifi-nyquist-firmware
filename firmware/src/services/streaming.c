@@ -830,6 +830,15 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             // the field on Timestamp==0), which retires the old post-loop net.
             pPublicSampleList->Timestamp = trigStamp;
 
+            /* #814: snapshot the mode globals ONCE for this whole sample.
+             * Both are written from the SCPI task, so re-reading them per
+             * branch lets a mid-frame change disagree with itself: the
+             * signedness decision could say 'synthetic' while the value
+             * branch produced a sign-extended ADC read, or vice versa. It
+             * would also let two channels of the SAME frame take different
+             * generator branches. One read, used everywhere below. */
+            const uint32_t framePattern = gTestPattern;      /* both are volatile uint32_t */
+            const uint32_t frameBenchMode = gBenchmarkMode;
             uint32_t clipMask = 0;   /* #814: rails seen in THIS sample */
             for (uint8_t j = 0; j < mapping->count; j++) {
                 uint8_t cfgIdx = mapping->configIndices[j];
@@ -862,7 +871,7 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                  * two's-complement range -- so judging those as signed would
                  * read a perfectly ordinary pattern value as a negative rail. */
                 const bool valueIsSynthetic =
-                        (gBenchmarkMode == BENCHMARK_PIPELINE) || (gTestPattern != 0);
+                        (frameBenchMode == BENCHMARK_PIPELINE) || (framePattern != 0);
                 if (pBoardConfig->AInChannels.Data[cfgIdx].Type == AIn_AD7609) {
                     adcMax = 262143u;  // 18-bit AD7609
                     adcIsSigned = !valueIsSynthetic;
@@ -871,24 +880,24 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                     adcIsSigned = false;
                 }
 
-                if (gBenchmarkMode == BENCHMARK_PIPELINE) {
+                if (frameBenchMode == BENCHMARK_PIPELINE) {
                     // Pipeline: skip ADC entirely, generate synthetic data directly.
                     // Timestamp comes from the streaming timer tick captured by
                     // Streaming_TimerHandler (BOARDDATA_STREAMING_TIMESTAMP) — same
                     // source the ADC ISR uses for AInSample.Timestamp in normal
                     // operation, so PB/CSV/JSON output is consistent across modes.
                     pPublicSampleList->Values[j] =
-                        Streaming_GenerateTestValue(gTestPattern,
+                        Streaming_GenerateTestValue(framePattern,
                             mapping->channelIds[j],
                             gTestPatternSampleCount, adcMax);
                     pPublicSampleList->validMask |= (1U << j);
-                } else if (gTestPattern != 0) {
+                } else if (framePattern != 0) {
                     // Test pattern: always produce deterministic data regardless
                     // of ADC state. Packet Timestamp is the deterministic
                     // trigStamp set once before the loop (#717) — no ADC read
                     // needed here for the timestamp.
                     pPublicSampleList->Values[j] =
-                        Streaming_GenerateTestValue(gTestPattern,
+                        Streaming_GenerateTestValue(framePattern,
                             mapping->channelIds[j],
                             gTestPatternSampleCount, adcMax);
                     pPublicSampleList->validMask |= (1U << j);
@@ -1198,7 +1207,12 @@ pool_done:
                 DioProbe_PulseEnd(4);
             }
 
-            // Increment test pattern counter once per ISR tick (after all channels)
+            // Increment test pattern counter once per ISR tick (after all channels).
+            // Deliberately reads the global, NOT the frame snapshot: -Werror
+            // showed this point is reachable on paths where the snapshot block
+            // never ran, so the snapshot is not in scope here. The counter is
+            // per-tick bookkeeping rather than part of the frame's value
+            // decision, so the global is the right read.
             if (gTestPattern != 0) {
                 taskENTER_CRITICAL();
                 gTestPatternSampleCount++;
