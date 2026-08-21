@@ -30,6 +30,7 @@
 #include <stdbool.h>
 #include <limits.h>  // For INT_MIN
 #include <string.h>  // For strlen
+#include "Util/FixedPointFmt.h"   /* #250: fast %.*f replacement */
 
 // =============================================================================
 // Fast Integer Formatting (avoids snprintf overhead in hot path)
@@ -460,12 +461,39 @@ static size_t tryWriteRow(
                 p = int_to_str(mv, p, space);
                 if (p == NULL) return 0;
             } else {
-                // Volts with N decimal places
+                // Volts with N decimal places.
+                //
+                // #250: snprintf("%.*f") here was the streaming bottleneck on
+                // the path every NQ1 ships with. Measured 5ch CSV to SD at
+                // 6 kHz NOCAP: precision 0 (the integer fast path above)
+                // streamed every sample at ~500 KB/s, while precision 4 -- the
+                // NQ1 default -- dropped 42% and managed ~300 KB/s, and NQ3's
+                // default of 6 dropped 54%. Bandwidth was excluded as the
+                // cause: the fast arm pushed the MOST bytes/s, and B/sample
+                // rose only ~17% across the range while loss went 0% -> 54%.
+                //
+                // fixedfmt_to_str is byte-identical to snprintf over the whole
+                // achievable domain -- tests/host/test_fixedpointfmt.c compares
+                // the two exhaustively across every NQ1 code and stepped NQ3,
+                // 821,880 comparisons, zero mismatches. snprintf remains the
+                // fallback for anything outside that proven envelope (precision
+                // above FIXEDFMT_MAX_PRECISION, non-finite, out-of-range), so
+                // behaviour is unchanged there rather than approximated.
                 double voltage_v = ADC_ConvertToVoltageByIndex(
                     mapConfigIdx[j], ainPeek->Values[j]);
-                int n = snprintf(p, space, "%.*f", (int)voltagePrecision, voltage_v);
-                if (n < 0 || (size_t)n >= space) return 0;
-                p += n;
+                if (fixedfmt_can_format(voltage_v, (unsigned)voltagePrecision)) {
+                    /* Not named `q`: the enclosing scope already has one,
+                     * and it is read as `p - q` just below. */
+                    char* endp = fixedfmt_to_str(voltage_v,
+                                                 (unsigned)voltagePrecision,
+                                                 p, space);
+                    if (endp == NULL) return 0;
+                    p = endp;
+                } else {
+                    int n = snprintf(p, space, "%.*f", (int)voltagePrecision, voltage_v);
+                    if (n < 0 || (size_t)n >= space) return 0;
+                    p += n;
+                }
             }
 
             w = p - q;
