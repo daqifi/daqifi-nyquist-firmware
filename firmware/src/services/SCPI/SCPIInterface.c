@@ -3237,6 +3237,12 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     scpi_printf(context, "DioDroppedSamples=%u\r\n", (unsigned)s.dioDroppedSamples);
     scpi_printf(context, "DioDroppedSamplesSteady=%u\r\n", (unsigned)s.dioDroppedSamplesSteady);
     scpi_printf(context, "EosOverruns=%u\r\n", (unsigned)s.eosOverruns);
+    /* #735: iterations that ran with another tick already pending, so the
+     * emitted value may belong to a later tick than its stamp. NOT loss -- the
+     * sample was streamed and its value is real -- so it is excluded from the
+     * loss total, like EosOverruns. Reported so a client doing absolute phase
+     * alignment can tell that the stamp-to-value offset is not fixed. */
+    scpi_printf(context, "CatchUpSamples=%u\r\n", (unsigned)s.catchUpSamples);
     // #557/#563: ticks where the shared scan was armed but its EOS hadn't fired
     // by the next HW trigger (scan-busy / frozen data). Reported as its OWN
     // staleness metric — NOT folded into SampleLossPercent (the stale sample was

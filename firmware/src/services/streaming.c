@@ -718,10 +718,47 @@ void _Streaming_Deferred_Interrupt_Task(void) {
     uint64_t ChannelScanFreqDivCount = 0;
 
     while (1) {
-        ulTaskNotifyTake(pdFALSE, xBlockTime);
+        /* #735: the return value is the pending count BEFORE this take
+         * decrements it, and it was previously discarded. It is the only
+         * free signal we have that this iteration is running LATE.
+         *
+         * pdFALSE decrements by one, so a backlog of K drains as returns
+         * K, K-1, ... 2, 1. Every return > 1 means another tick was already
+         * queued when this iteration started -- so the ADC ISRs have had the
+         * chance to overwrite BOARDDATA_AIN_LATEST since the tick this
+         * iteration is stamped for, and the value it emits may belong to a
+         * later tick than its stamp says. The final return of 1 is the
+         * caught-up iteration and is not counted, which makes the count
+         * "iterations that ran behind", not "iterations in a burst".
+         *
+         * Conservative by construction: a return > 1 means the skew was
+         * POSSIBLE, not that it happened -- the ISR may not have fired in that
+         * window. It is an upper bound on affected samples, which is the
+         * useful direction for a client deciding whether to trust absolute
+         * phase alignment. */
+        uint32_t pendingTicks = ulTaskNotifyTake(pdFALSE, xBlockTime);
         DioProbe_Toggle(2);  /* probe 2: deferred task wake rate */
 
         if (pRunTimeStreamConf->IsEnabled) {
+            if (pendingTicks > 1u) {
+                /* Critical section around the read-modify-write, per the
+                 * project's atomicity rule: ++ is not atomic on PIC32MZ even
+                 * though a 32-bit load or store is.
+                 *
+                 * A single-writer argument would also hold here -- this task
+                 * is the only one that increments, and Streaming_ClearStats
+                 * zeroes the struct from a LOWER-priority task inside its own
+                 * critical section, so it cannot interleave. But the guard is
+                 * free where it matters: it sits INSIDE the pendingTicks > 1
+                 * branch, which is not taken at any rate the firmware accepts
+                 * (measured 0 at the enforced cap on five configurations), so
+                 * the common path pays only the compare it already paid.
+                 * Cheap certainty beats a correct-but-fragile argument that
+                 * the next person has to re-derive. */
+                taskENTER_CRITICAL();
+                gStreamStats.catchUpSamples++;
+                taskEXIT_CRITICAL();
+            }
             /* #486 — quiescence flag for cross-task sync against
              * SCPI_StartStreaming re-partition.  Set BEFORE any deref
              * of the sample pool / queue resources that re-partition

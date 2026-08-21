@@ -558,6 +558,43 @@ typedef struct {
     uint32_t dioDroppedSamplesSteady;
     uint32_t queueDroppedSamplesSteady;  // post-grace subset of queueDroppedSamples
     uint32_t eosOverruns;      // EOS notifications coalesced (>1 per wake) (#295)
+    /* #735: iterations that ran with another tick already pending, i.e. the
+     * deferred task was CATCHING UP rather than keeping pace.
+     *
+     * Why this is worth counting. A packet's two halves come from different
+     * places: the stamp is counter-derived (baseTS + tick x period, #722) and
+     * fixed when the iteration runs, but the VALUE is read live from the
+     * one-deep BOARDDATA_AIN_LATEST slot at that same instant. While the task
+     * drains a backlog, the priority-1 ADC data-ready ISRs keep overwriting
+     * that slot, so an iteration stamped N can emit tick N+1's conversion --
+     * a value NEWER than its own stamp. #722 made the stamps a uniform
+     * sequence; it did not change where the value comes from, so the
+     * association can still vary whenever the task runs behind.
+     *
+     * MEASURED, and it does not: this reads 0 at the enforced cap for 1xT1,
+     * 5xT1, 11xT2, 16ch CSV and 16ch PB (real ADC over USB, 2026-08-21). It
+     * goes non-zero only well past cap under NOCAP, and even there stays under
+     * 0.1% while QueueDroppedSamples runs to ~40,000 -- overload shows up as
+     * pool exhaustion, not as notification backlog.
+     *
+     * Do NOT cite #717's 0.07%-at-1-kHz to 15%-at-5-kHz figures as this
+     * counter's expected range, which an earlier revision of this comment did.
+     * Those were #717's DUPLICATE-TIMESTAMP rates, a different failure mode
+     * (a shared timestamp slot) that #722 fixed outright. Carrying them over
+     * misattributes one bug's measurements to another and would send the next
+     * person looking for a 15% signal that is not there.
+     *
+     * Nothing else detects it. ScanStaleDropped (#557/#563) fires when a scan
+     * fails to COMPLETE; during catch-up the scan completes normally, so that
+     * counter reads 0 while the association skews.
+     *
+     * NOT a loss counter -- the sample is streamed and its value is real, just
+     * possibly attributed to the neighbouring tick. Excluded from the loss
+     * total for the same reason as eosOverruns. It is the "inform on stale
+     * data" half of the project's SCPI visibility principle: a client doing
+     * absolute phase alignment, or correlating against #667 edge events, needs
+     * to know the offset is not fixed. */
+    uint32_t catchUpSamples;
     /* #814: samples in which at least one enabled channel sat at a rail (raw
      * code 0 or the module's full-scale code), and the OR of which channel
      * slots did so. A railed sample is INDISTINGUISHABLE from a real reading
