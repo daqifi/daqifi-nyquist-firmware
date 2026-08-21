@@ -1267,6 +1267,15 @@ void sd_card_manager_ProcessState() {
     /* #800: honour a teardown that raced a state store, before dispatching. */
     if (gSdTeardownRequested) {
         gSdTeardownRequested = false;
+        /* #757: this override can land while a rotation window is open --
+         * a STOP arriving between the rotation's close and OPEN_FILE. Forcing
+         * DEINIT here means OPEN_FILE never runs, so the abort path that would
+         * have closed the window and accounted for its bytes never runs
+         * either: the flag stays set and the bytes vanish from SdDroppedBytes.
+         * Route it through the same accounting every other abandon uses. */
+        if (gSdRotating) {
+            sd_AbandonRotationWindow("teardown during rotation");
+        }
         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
     }
 
@@ -2510,8 +2519,29 @@ void sd_card_manager_ProcessState() {
                 const bool willRotate =
                         (gSDCardData.fileCounter < SD_CARD_MANAGER_MAX_SPLIT_FILES);
                 if (willRotate) {
-                    Streaming_ResetSdPbMetadata();
+                    /* The metadata clear MUST be inside the same mutex as the
+                     * buffer reset, not before it.
+                     *
+                     * Streaming_ResetSdPbMetadata() sets gSdFileWasReady=false,
+                     * which is the encoder's cue to emit the next file's
+                     * header. The old file is still open here, so
+                     * IsBufferAccepting() is true; if the pri-6 streaming task
+                     * preempts this pri-5 one between that clear and the reset,
+                     * it generates the header, writes it into the buffer, and
+                     * sets gSdFileWasReady=true -- and then the reset below
+                     * wipes it. Nothing re-emits it (OPEN_FILE skips its own
+                     * reset while gSdRotating is true) and nothing counts it,
+                     * so the split file starts with data rows and no header,
+                     * silently. That is the same class of defect this issue is
+                     * about, arriving through the fix for it.
+                     *
+                     * Holding wMutex across both closes it, because
+                     * sd_card_manager_WriteToBuffer takes the same mutex: an
+                     * encoder that has already decided to write the header
+                     * blocks until the reset is done and then lands it in the
+                     * emptied buffer, still at byte 0. */
                     SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_open_window");
+                    Streaming_ResetSdPbMetadata();
                     CircularBuf_Reset(&gSDCardData.wCirbuf);
                     gSdRotating = true;
                     xSemaphoreGive(gSDCardData.wMutex);
