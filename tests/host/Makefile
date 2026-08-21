@@ -18,14 +18,23 @@ INCLUDES := -Istubs -I$(FW_UTIL)
 BIN := run_tests
 UUT := CircularBuffer_uut.c
 
+# #250: FixedPointFmt.h is header-only and dependency-free, so it needs no UUT
+# copy and no stubs -- the test includes the real header directly. -lm is for
+# round/fabs/isfinite/signbit.
+FMT_BIN := run_fmt_tests
+
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
 	$(CC) $(CFLAGS) $(INCLUDES) -o $(BIN) test_circularbuffer.c $(UUT)
 
-run: $(BIN)
+$(FMT_BIN): test_fixedpointfmt.c $(FW_UTIL)/FixedPointFmt.h
+	$(CC) $(CFLAGS) $(INCLUDES) -o $(FMT_BIN) test_fixedpointfmt.c -lm
+
+run: $(BIN) $(FMT_BIN)
 	./$(BIN)
+	./$(FMT_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT)
+	rm -f $(BIN) $(UUT) $(FMT_BIN)
 
 .PHONY: run clean
