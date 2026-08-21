@@ -528,9 +528,9 @@ SYSTem:STReam:STATS:CLEar  # Reset all counters
 | `TotalSamplesStreamed` | uint64 | Samples successfully queued from ISR |
 | `TotalBytesStreamed` | uint64 | Total bytes encoded (offered to outputs) |
 | `QueueDroppedSamples` | uint32 | Samples lost due to pool exhaustion or full sample queue (pool defaults 1100, re-partitioned per session) |
-| `UsbDroppedBytes` | uint32 | Data lost due to USB circular buffer full (16KB) |
-| `WifiDroppedBytes` | uint32 | Data lost due to WiFi circular buffer full (14KB) |
-| `SdDroppedBytes` | uint32 | Data lost due to SD write timeout/partial (8-64KB buf, 3 retries) |
+| `UsbDroppedBytes` | uint32 | Data lost due to USB circular buffer full (16KB default; auto-balance raises it to 64KB whenever USB is active — `hasUsb` covers **USB+SD** too, which is why the auto-balance table shows 65,536 in that column as well) |
+| `WifiDroppedBytes` | uint32 | Data lost due to WiFi circular buffer full (14KB default; auto-balance raises it to 96KB when WiFi is the only active interface — `STREAMING_WIFI_WIFI_ONLY`, #497) |
+| `SdDroppedBytes` | uint32 | Data the SD path could not take. **There is no fixed retry count** — an earlier revision of this row said "3 retries", which matches nothing on this path (the SD manager's only retry constants are `SD_MOUNT_MAX_RETRIES` 10 and `SD_UNMOUNT_MAX_RETRIES` 40, neither governing writes; other subsystems have their own — `SCPI_WRITE_MAX_RETRIES`, `SPI_RETRY_COUNT` — none of them 3). The two real paths differ: **multi-output** (USB+SD) counts a short write **immediately, with no retry at all** (`streaming.c` — `LOG_E_SESSION "SD buffer overflow (multi-output no-retry)"`), which is deliberate so a stalled SD cannot block USB (#534/#536); **SD-only** goes through `Streaming_WriteWithRetry`, which spins, then backs off on `vTaskDelay(1)` up to `STREAM_WRITE_TIMEOUT_MS` (10 s) before counting. Also carries the bytes a split-file rotation strands in the circular buffer (#823 — see "SD Card File Splitting"). **Not** counted: bytes lost to a *failed* write mid-rotation-drain, still discarded silently (#825). |
 | `EncoderFailures` | uint32 | Encoding attempts that returned 0 bytes with data available |
 | `TimerISRCalls` | uint64 | Actual streaming timer ISR entry count this session (#265). Invariant: `TimerISRCalls == TotalSamplesStreamed + QueueDroppedSamples`. |
 | `EosOverruns` | uint32 | EOS notifications coalesced (>1 per wake) (#295). Task-behind-but-fresh — NOT a loss (excluded from loss total). |
@@ -877,7 +877,7 @@ The PIC32MZ2048**EF**M144 has a hardware 64-bit double-precision FPU (Coprocesso
 - **Tick rate**: 1000 Hz (1ms tick)
 - **Preemptive** with time-slicing (equal-priority tasks round-robin)
 - **Max priorities**: 10 (0=lowest, 9=highest)
-- **Heap**: heap_4, 75KB (`configTOTAL_HEAP_SIZE`)
+- **Heap**: heap_4, 74KB (`configTOTAL_HEAP_SIZE` — 75000 cut to 74000 in #667)
 - **ISR stack**: 8192 bytes
 - **Kernel interrupt priority**: 1 (lowest)
 - **Max syscall interrupt priority**: 4 (ISRs at priority 5+ are never disabled by FreeRTOS)
@@ -938,13 +938,13 @@ All items verified against the actual errata document. Only issues affecting fea
 
 The firmware uses four distinct memory regions, each with different properties:
 
-1. **Streaming Buffer Pool** (194KB static BSS, `firmware/src/Util/StreamingBufferPool.c`)
+1. **Streaming Buffer Pool** (**197,632 B** static BSS — `STATIC_POOL_SIZE` is `(194 * 1024) - 1024`, so "194KB" is 1 KB high; `firmware/src/Util/StreamingBufferPool.c`)
    - Single `static uint8_t gPoolStorage[]` array, partitioned at each stream start
    - Contains: USB circular buffer + WiFi circular buffer + encoder buffer + SD circular buffer + sample pool + free-list
    - Layout: `[USB circ | WiFi circ | encoder | SD circ | <align> | samplePool[] | nextFree[]]`
    - Re-partitioned at each `StartStreamData` based on active interfaces
    - Zero runtime malloc — all resizing is pointer arithmetic within the pool
-   - Auto-balance: USB-only → USB=64KB, WiFi=min, ~585 samples
+   - Auto-balance: USB-only → USB=64KB, WiFi=min; the sample pool takes what is left
    - Query: `SYST:MEM:FREE?` → `SamplePoolCount`, `SamplePoolBytes`
 
 2. **Coherent Pool** (124KB static, DMA-safe, `firmware/src/Util/CoherentPool.c`)
@@ -953,7 +953,7 @@ The firmware uses four distinct memory regions, each with different properties:
    - Contains: SD DMA write buffer + USB DMA write buffer + WiFi SPI staging buffer. All three auto-balanced at stream start.
    - Query: `SYST:MEM:FREE?` → `CoherentPoolTotal`, `CoherentPoolFree`
 
-3. **FreeRTOS Heap** (75KB, cached, `configTOTAL_HEAP_SIZE` in `FreeRTOSConfig.h`)
+3. **FreeRTOS Heap** (74KB, cached, `configTOTAL_HEAP_SIZE` in `FreeRTOSConfig.h` — 75000 was cut to 74000 in #667, because #666 + #667 co-resident overflowed the linker stack region by 208 B and the heap is BSS)
    - heap_4 (best-fit with coalescence), allocated from `.bss`
    - Contains: task stacks, FreeRTOS TCBs/queues/mutexes, sample FreeRTOS queue
    - Streaming buffers and sample pool are NOT in heap (moved to Streaming Buffer Pool)
@@ -968,16 +968,16 @@ The firmware uses four distinct memory regions, each with different properties:
 
 | Region | Bytes | Source |
 |--------|------:|--------|
-| Streaming Buffer Pool | 198,656 | Static BSS (194KB) |
-| FreeRTOS Heap | 75,000 | Static BSS |
+| Streaming Buffer Pool | 197,632 | Static BSS (`STATIC_POOL_SIZE` = 194KB - 1KB) |
+| FreeRTOS Heap | 74,000 | Static BSS |
 | Coherent Pool | 126,976 | Static coherent (KSEG1) |
 | USB coherent struct | ~2,000 | Static coherent |
 | Other BSS/data (globals) | ~30,000 | Static BSS |
 | ISR stack | 8,192 | Linker-allocated |
-| **Total used** | **~441,000** | |
-| **Free (linker headroom)** | **~83,000** | |
+| **Total used** | **~438,800** | |
+| **Free (linker headroom)** | **~85,000** | |
 
-#### Heap Allocation Map (75KB total, ~62KB used at boot)
+#### Heap Allocation Map (74KB total, ~62KB used at boot)
 
 | Consumer | Bytes | Source |
 |----------|------:|--------|
@@ -1001,7 +1001,13 @@ The sample pool lives inside the Streaming Buffer Pool (static BSS). It is re-pa
 - **Memory per sample**: depends on enabled channels (compact pool): 1ch=14 bytes, 4ch=26 bytes, 8ch=42 bytes, 16ch=74 bytes (element + 2-byte free-list entry). Stride computed at stream start from `AInSampleList_ElementSize(channelCount)`.
 - **Resize**: `StreamingBufferPool_Partition()` re-carves the pool, then `AInSampleList_InitializeExternal()` swaps the memory pointers. FreeRTOS queue is reused (not reallocated) across sessions.
 - **When resized**: At each `StartStreamData` via `SCPI_StartStreaming`
-- **Typical values**: Boot=1100, USB-only auto-balance=~585, multi-interface=varies (see Auto-Balance table)
+- **Typical values**: **1100 usable**, and the reason is not what you would guess. Measured 2026-08-21, 16ch USB-only, straight from the device's own log:
+  ```
+  Pool partition: USB=65536 WiFi=1400 enc=8192 sdCirc=4096 samples=1600x72 (of 1600 max, 197632 pool)
+  Sample queue resize skipped: need 6480, heap free 6536
+  ```
+  In auto mode `MemoryConfig.samplePoolCount` is **0**, which `StreamingBufferPool_Partition` reads as *maximize to fit* — so the partition really does carve **1600** slots. The depth then falls back to 1100 at the NEXT stage: `AInSampleList_InitializeExternal` will not grow the FreeRTOS sample queue unless `freeHeap >= needed + 1024`, and here 6536 < 6480 + 1024, so it logs `Sample queue resize skipped` and keeps the boot queue size (`DEFAULT_AIN_SAMPLE_COUNT` = 1100). `SYST:MEM:FREE?` reports that queue-limited number.
+  Two consequences worth knowing: on that run the ~500-slot difference (~36 KB) was carved from the streaming pool but **not usable**, and the clamp is only visible as that one log line — see #828. The clamp is heap-state dependent, not fixed: it fires only when the queue must GROW and the heap will not stretch, and a queue that did grow stays grown, so the gap varies by device state rather than being a constant 500. Earlier revisions of this file claimed "~585" here and "~1,618" in the table below; both were wrong, and the table's figures are **capacity**, which is the 1600 the partition computes, not the depth you get
 - **Peak usage**: Typically 2-4 samples (at 3kHz 16ch). Pool depth provides burst absorption headroom.
 
 #### SCPI Dynamic Memory Configuration
@@ -1024,7 +1030,7 @@ SYSTem:MEMory:FREE?                   # Full memory diagnostics
 SYSTem:MEMory:AUTO                    # Auto-balance for enabled interfaces
 ```
 
-All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming Buffer Pool (194KB static BSS). Setting any value carves it from the pool; remaining space goes to the sample pool. Setting any field to a non-zero value disables auto-balance for all fields.
+All USB, WiFi, **SD**, encoder, and sample pool memory comes from the unified Streaming Buffer Pool (197,632 B static BSS) — the SD *circular* buffer is in this pool; the separate SD *DMA write* buffer is not, it comes from the coherent pool. Setting any value carves it from the pool; remaining space goes to the sample pool. Setting any field to a non-zero value disables auto-balance for all fields.
 
 **Setter Bounds:**
 
@@ -1040,7 +1046,7 @@ All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming 
 
 | Field | Description |
 |-------|-------------|
-| `HeapTotal` | Total FreeRTOS heap (75000) |
+| `HeapTotal` | Total FreeRTOS heap (74000) |
 | `HeapFree` | Currently free heap bytes |
 | `HeapUsed` | Currently used heap bytes |
 | `HeapMinEverFree` | Lowest heap free since boot (high-water mark) |
@@ -1056,18 +1062,31 @@ All USB, WiFi, encoder, and sample pool memory comes from the unified Streaming 
 
 **Auto-Balance Buffer Sizing by Active Interface:**
 
-The `StreamingInterface` enum exposes four combinations: `USB`, `WiFi`, `SD`, and `UsbAndSd` — WiFi is always solo (SPI bus shared with SD; USB+WiFi was never wired into the enum). Values below are for 16-channel `AInSampleList_ElementSize` (74 B + 2 B free-list = 76 B/sample).
+> The inactive-SD circular figure is **4,096**, not the 512 an earlier revision
+> of this table showed. `Streaming_ComputeAutoBuffers` hands inactive SD
+> `STREAMING_SD_CIRCULAR_MIN`, and `StreamingBufferPool_Partition` clamps
+> anything smaller up to it, so 512 is unreachable — and a `MEM:SD:BUFfer?`
+> reading of 512 is the **fault signature of #703** (a shrunk SD circular
+> silently breaking `SD:GET`), not a normal value. The per-column capacity
+> figures below have been recomputed accordingly — see the footnote under the
+> table for the derivation and the device log that confirms it.
+
+The `StreamingInterface` enum exposes four combinations: `USB`, `WiFi`, `SD`, and `UsbAndSd` — WiFi is always solo (SPI bus shared with SD; USB+WiFi was never wired into the enum). Values below are for 16-channel `AInSampleList_ElementSize` (**72 B** + 2 B free-list = **74 B/sample**). The old "74 B + 2 B = 76" double-counted the free-list byte: 74 is already element+free-list. `AInSample.h` states the element size directly ("72 bytes (8-byte header + 16 x 4-byte values)"), and `SYST:MEM:FREE?` reports `SampleElementBytes=72` at 16 channels (measured 2026-08-21).
 
 | Buffer | USB only | WiFi only | SD only | USB+SD |
 |--------|---:|---:|---:|---:|
 | USB circular (stream pool) | 65,536 | 2,048 | 2,048 | 65,536 |
 | WiFi circular (stream pool) | 1,400 | 98,304 | 1,400 | 1,400 |
-| SD circular (stream pool) | 512 | 512 | 32,768 | 32,768 |
+| SD circular (stream pool) | 4,096 | 4,096 | 32,768 | 32,768 |
 | Encoder (stream pool) | 8,192 | 8,192 | 16,384 | 16,384 |
 | SD DMA write (coherent) | 512 | 512 | 124,368 | 77,922 |
 | USB DMA write (coherent) | 124,368 | 512 | 512 | 46,958 |
 | WiFi SPI staging (coherent) | 2,048 | 125,904 | 2,048 | 2,048 |
-| Sample pool (slots @16ch) | ~1,618 | ~1,178 | ~1,921 | ~1,086 |
+| Sample pool CAPACITY (slots @16ch)¹ | 1,600 | 1,148 | 1,959 | 1,101 |
+
+¹ **Capacity, not the depth in use.** These are how many slots the leftover pool space holds — what `StreamingBufferPool_Partition` computes and logs as `samples=<n>x<elementBytes>`. Note the log's second number is the **element** size (72 at 16ch), not the per-sample cost — the free-list entry is counted separately, which is why the divisor below is 74 while the log shows 72. Reconciling `1600 x 72` against a `/ 74` formula otherwise looks like an inconsistency; it is not. The depth actually available is min(that, whatever the FreeRTOS sample queue could be grown to), which on the bench came out at **1100** because the queue resize was skipped for want of ~1 KB of heap (#828). That is **not** an invariant: `AInSampleList_InitializeExternal` only clamps when it tries to GROW the queue and the heap will not stretch, so a device with more free heap grows it — and once grown it stays grown for later sessions. Read the number, do not assume it.
+
+  All four are now derived from this table's own buffer values: `(197,632 - (USB + WiFi + SD + encoder circular)) / 74`, the 74 being the 16-channel element (72 B) plus its free-list entry. Only the stream-pool rows enter the sum — the three coherent-pool DMA rows come from a different 124 KB region. The formula is **confirmed against the device**: for USB-only it gives 1,600, and the firmware logged `samples=1600x72 (of 1600 max, 197632 pool)` on the bench 2026-08-21, alongside `SamplePoolCount=1100` for the queue-limited depth. The earlier figures (~1,618 / ~1,178 / ~1,921 / ~1,086) were computed with the old, wrong 512-byte SD-circular value.
 
 
 **Implementation:** `firmware/src/Util/StreamingBufferPool.c` (unified pool), `firmware/src/Util/CoherentPool.c` (DMA pool), `firmware/src/services/streaming.c` (`ComputeAutoBuffers`), `firmware/src/state/data/AInSample.c` (`InitializeExternal`), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks), `firmware/src/state/runtime/StreamingRuntimeConfig.h` (MemoryConfig struct), `firmware/src/config/default/driver/winc/dev/spi/wdrv_winc_spi.c` (WiFi SPI staging)
@@ -1319,15 +1338,30 @@ of continuations rather than assuming they are absent.
 - Default: 3.9GB limit (100MB below FAT32 maximum)
 - Minimum: 1000 bytes (prevents rapid rotation)
 - Circular buffer draining before rotation, AND the buffer keeps accepting
-  encoder output across the file-open window (#757). Both halves are needed for
-  "zero data loss": the drain covers what was already buffered, and the second
-  covers what arrives while the next file is being created. Before #757 only
-  the drain existed, so every rotation discarded the packets encoded during the
-  open — measured ~14,000 bytes per 25 s at 2 kHz with `MAXSize 20000`, growing
-  with directory occupancy because the FatFs create is O(N) in it. The encoder
-  gate is `sd_card_manager_IsBufferAccepting()`; note that transport health
+  encoder output across the file-open window (#757). The drain covers what was
+  already buffered; the second half covers what arrives while the next file is
+  being created. Before #757 only the drain existed, so every rotation
+  discarded the packets encoded during the open — measured ~14,000 bytes per
+  25 s at 2 kHz with `MAXSize 20000`, growing with directory occupancy because
+  the FatFs create is O(N) in it. The encoder gate is
+  `sd_card_manager_IsBufferAccepting()`; note that transport health
   deliberately still uses `IsWriteReady()`, or a stuck open would read as
   healthy.
+- ⚠️ **Rotation is not zero-loss, and an earlier revision of this file claimed
+  it was.** The pre-close drain is bounded to a *snapshot* of the circular
+  buffer (#822/#823) — draining the live level livelocks against the producer
+  above ~340 KB/s, which stopped rotation outright (11ch @2 kHz produced one
+  8.7 MB file against a 20 KB `MAXSize`). Bytes the encoder appends *during*
+  that drain are therefore still buffered when the rotation resets the buffer,
+  and they cannot be saved: writing them to the old file is the livelock, and
+  they cannot go to the new one because `Streaming_ResetSdPbMetadata()` has
+  already armed the next header and they would land ahead of it. They are
+  dropped and **counted** via `Streaming_ReportSdDiscard()`, so they show up in
+  `SdDroppedBytes`. Measured ~3.6 KB per rotation (16ch CSV @2 kHz,
+  `MAXSize=20000`: 277,248 bytes across 76 rotations). It scales with rotation
+  *frequency*, not with rate — at the default 3.9 GB `MAXSize` it is a few KB
+  per multi-GB file. #824 tracks eliminating it by writing the header at file
+  open rather than through the ring buffer.
 - Unconditional filesystem flush before file close
 
 **Python Tools:**
