@@ -269,12 +269,12 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
     if (totalChannels == 0) return STREAMING_ISR_MAX_HZ;
     /* Explicit encoding handling (Qodo): unknown encodings cap at 1 Hz so a
      * future/garbage value can never over-cap. */
-    uint32_t pb = 0u, json = 0u;
+    uint32_t pb = 0u, json = 0u;  /* init pb defensively (Qodo pass-7); every
+                                   * non-default case still assigns it explicitly */
     /* #529: set when an interface supplies MEASURED JSON coefficients, so the
      * blanket x0.5 placeholder at the bottom is skipped for that interface
      * only. Interfaces still uncharacterised keep the derate. */
-    uint32_t jsonFitted = 0u;  /* init pb defensively (Qodo pass-7); every
-                                   * non-default case still assigns it explicitly */
+    uint32_t jsonFitted = 0u;
     switch (encoding) {
         case Streaming_ProtoBuffer: pb = 1u; break;
         case Streaming_Csv:         pb = 0u; break;
