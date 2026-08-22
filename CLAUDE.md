@@ -1332,7 +1332,7 @@ data rows.
 The behaviour is deliberate on the firmware side: `streaming.c` writes an
 SD-only header whenever `gSdFileWasReady` goes false→true so that "every file
 is self-describing and independently parseable", and
-`Streaming_ResetSdPbMetadata()` is called on every rotation to arm exactly
+`Streaming_ResetSdFileHeader()` is called on every rotation to arm exactly
 that. Anything merging split files must therefore SKIP the `#`-prefixed lines
 of continuations rather than assuming they are absent.
 
@@ -1359,7 +1359,7 @@ of continuations rather than assuming they are absent.
   8.7 MB file against a 20 KB `MAXSize`). Bytes the encoder appends *during*
   that drain are therefore still buffered when the rotation resets the buffer,
   and they cannot be saved: writing them to the old file is the livelock, and
-  they cannot go to the new one because `Streaming_ResetSdPbMetadata()` has
+  they cannot go to the new one because `Streaming_ResetSdFileHeader()` has
   already armed the next header and they would land ahead of it. They are
   dropped and **counted** via `Streaming_ReportSdDiscard()`, so they show up in
   `SdDroppedBytes`. Measured ~3.6 KB per rotation (16ch CSV @2 kHz,

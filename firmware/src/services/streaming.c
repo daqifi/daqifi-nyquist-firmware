@@ -110,11 +110,6 @@ static volatile uint32_t gBenchmarkMode = BENCHMARK_OFF;
 // task.
 static volatile bool gNeedSharedScan = false;
 
-// SD protobuf metadata: emitted as first message in each SD log file.
-// volatile: written by SD card task (via Streaming_ResetSdPbMetadata),
-// read by streaming task — compiler must not cache in registers.
-static volatile bool gSdPbMetadataSent = false;
-
 // Tracks whether the SD file has become ready during this streaming session.
 // Used to reset encoder header flags when SD transitions to ready, since
 // encoding may have already fired (and burned headers) before the file opened.
@@ -1779,7 +1774,6 @@ static void Streaming_Start(void) {
         // Clear encoding buffer once to prevent stale data artifacts in SD files
         if (buffer != NULL) memset(buffer, 0, bufferSize);
 
-        gSdPbMetadataSent = false;
         // If SD file is already open and ready (SCPI_StartStreaming waited
         // for it), start with true to avoid dropping packets while the
         // encoder waits for the first sdSize > 0 detection.
@@ -2214,7 +2208,6 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
      * the very thing the flag exists to suppress (#733 audit). */
     gStreamRateConfigured = 0u;
     gBenchmarkMode = BENCHMARK_OFF;
-    gSdPbMetadataSent = false;
     gSdFileWasReady = false;
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
@@ -2371,8 +2364,16 @@ void Streaming_SdInterfaceReleased(void) {
     }
 }
 
-void Streaming_ResetSdPbMetadata(void) {
-    gSdPbMetadataSent = false;
+/* Re-arm the SD header for a new file. The SD task calls this at rotation;
+ * the streaming task then sees gSdFileWasReady false and emits a header so
+ * every split file is self-describing.
+ *
+ * Was Streaming_ResetSdPbMetadata(), which also cleared a gSdPbMetadataSent
+ * flag. That flag was assigned in five places and READ in none -- five
+ * volatile stores nobody looked at, and a name promising protobuf-metadata
+ * bookkeeping this function never did. Both removed; the header latch below
+ * is the whole of what it ever meant. */
+void Streaming_ResetSdFileHeader(void) {
     gSdFileWasReady = false;
 }
 
@@ -2784,7 +2785,7 @@ void streaming_Task(void) {
          * IsBufferAccepting stays true across that window. It is safe because
          * the rotation DRAINS the buffer before closing the old handle, so the
          * bytes accepted here belong to the new file, and because
-         * Streaming_ResetSdPbMetadata() runs before the window opens -- so the
+         * Streaming_ResetSdFileHeader() runs before the window opens -- so the
          * first thing written into the empty buffer is the new file's header,
          * still at byte 0.
          *
@@ -2800,7 +2801,6 @@ void streaming_Task(void) {
         // without injecting duplicate headers into the USB/WiFi stream.
         if (sdSize > 0 && !gSdFileWasReady) {
             gSdFileWasReady = true;
-            gSdPbMetadataSent = false;
 
             // Write SD-only header/metadata for each new file so every
             // file is self-describing and independently parseable.
@@ -2825,9 +2825,6 @@ void streaming_Task(void) {
                     BoardData_Get(BOARDDATA_ALL_DATA, true);
                 sdHdrLen = Nanopb_Encode(pBoardData,
                     &fields_sd_metadata, (uint8_t*)buffer, bufferSize);
-                if (sdHdrLen > 0) {
-                    gSdPbMetadataSent = true;
-                }
             }
             if (sdHdrLen > 0) {
                 size_t written = sd_card_manager_WriteToBuffer(
