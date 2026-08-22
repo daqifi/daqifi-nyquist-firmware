@@ -10,7 +10,7 @@
 #include "sd_card_manager.h"
 #include "services/UsbCdc/UsbCdc.h"
 #include "Util/CRC32.h"   /* #306 */
-#include "services/streaming.h"  // For Streaming_ResetSdPbMetadata on file rotation
+#include "services/streaming.h"  // For Streaming_ResetSdFileHeader on file rotation
 #include <stddef.h>
 #include "ff.h"   /* #810: FILINFO, for the layout assert below */
 
@@ -2036,7 +2036,7 @@ void sd_card_manager_ProcessState() {
                 //   1. CircularBuf_Reset() clears buffer (space available)
                 //   2. Streaming task sees gSdFileWasReady=true (stale),
                 //      encodes WITHOUT metadata, writes to buffer
-                //   3. Streaming_ResetSdPbMetadata() resets flags (too late)
+                //   3. Streaming_ResetSdFileHeader() resets flags (too late)
                 //   => Non-metadata data at byte 0 of new file
                 /* #757: skipped during a rotation -- the close path above
                  * already reset the metadata and the buffer, and the encoder
@@ -2046,7 +2046,7 @@ void sd_card_manager_ProcessState() {
                  * (session start, not rotation) gSdRotating is false and this
                  * runs as it always did. */
                 if (!gSdRotating) {
-                    Streaming_ResetSdPbMetadata();
+                    Streaming_ResetSdFileHeader();
 
                     // Now clear the buffer — streaming task won't write here
                     // because gSdFileWasReady is already false.
@@ -2621,7 +2621,7 @@ void sd_card_manager_ProcessState() {
                     /* The metadata clear MUST be inside the same mutex as the
                      * buffer reset, not before it.
                      *
-                     * Streaming_ResetSdPbMetadata() sets gSdFileWasReady=false,
+                     * Streaming_ResetSdFileHeader() sets gSdFileWasReady=false,
                      * which is the encoder's cue to emit the next file's
                      * header. The old file is still open here, so
                      * IsBufferAccepting() is true; if the pri-6 streaming task
@@ -2640,7 +2640,7 @@ void sd_card_manager_ProcessState() {
                      * blocks until the reset is done and then lands it in the
                      * emptied buffer, still at byte 0. */
                     SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_open_window");
-                    Streaming_ResetSdPbMetadata();
+                    Streaming_ResetSdFileHeader();
                     /* #822: whatever the producer appended DURING the drain is
                      * still here, and this reset is about to destroy it.
                      *
@@ -3874,7 +3874,7 @@ bool sd_card_manager_IsWriteReady(void) {
  * why the loss this fixes grew with the number of files on the card. The
  * buffer is empty across that window (the rotation drains it before closing)
  * and its contents go to the NEW file, so accepting writes is safe and the
- * header still lands at byte 0 -- Streaming_ResetSdPbMetadata() is called
+ * header still lands at byte 0 -- Streaming_ResetSdFileHeader() is called
  * before the window opens, so the first thing the encoder puts in the empty
  * buffer is the new file's header.
  *

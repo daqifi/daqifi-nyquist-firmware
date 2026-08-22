@@ -553,7 +553,7 @@ void TimestampTimer_Init( void );
  * interface is SD or USB+SD. */
 void Streaming_SdInterfaceReleased(void);
 
-void Streaming_ResetSdPbMetadata(void);
+void Streaming_ResetSdFileHeader(void);
 
 /* #757: report SD bytes that were buffered for the next file but can never be
  * written, because the session was torn down while the rotation's open was in

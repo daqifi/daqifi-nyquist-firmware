@@ -3992,7 +3992,7 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     // Reset encoder state so next session gets fresh headers
     csv_ResetEncoder();
     json_ResetEncoder();
-    Streaming_ResetSdPbMetadata();
+    Streaming_ResetSdFileHeader();
 
     // Clear STATus:OPERation condition register
     SCPI_ClearOperBits(OPER_MEASURING | OPER_SD_LOGGING);
