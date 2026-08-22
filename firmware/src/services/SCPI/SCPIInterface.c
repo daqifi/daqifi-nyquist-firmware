@@ -27,6 +27,7 @@
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
 #include "services/daqifi_settings.h"
+#include "Util/CRC32.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "state/board/AInConfig.h"  // For MAX_AIN_PUBLIC_CHANNELS
 #include "peripheral/gpio/plib_gpio.h"
@@ -5213,6 +5214,71 @@ static void EmitDioChannelJson(scpi_t* context,
  * revision scheme introduces such characters, add a small JSON
  * string escaper before embedding these fields.
  */
+/* #833: a fingerprint of the program image, so measurement data can tell two
+ * builds of the SAME release apart.
+ *
+ * identity.firmware_rev is a release string ("3.7.2"), so every build between
+ * two releases reports the same value -- two benchmark runs can carry an
+ * identical repeatability triplet and have executed different firmware.
+ *
+ * CRC32 of program flash EXCLUDING the reserved settings region: the last
+ * RESERVED_SETTINGS_SPACE bytes hold the NVM pages, so including them would
+ * change the fingerprint every time a setting is saved.
+ *
+ * The length comes from the two SIZE macros, not from
+ * (RESERVED_SETTINGS_ADDR - __KSEG0_PROGRAM_MEM_BASE). That subtraction is
+ * correct today only because every term in the unparenthesised
+ * daqifi_settings.h address macros is + or -; it would break the moment one
+ * gained a parenthesis-sensitive operator. This form does not care.
+ *
+ * Lazy and cached: ~1.9 MB costs tens of ms -- fine once, not per query. Safe
+ * straight-line because the watchdog is disabled (FWDTEN = OFF,
+ * initialization.c). Erased flash reads as a stable 0xFF, so the unused tail
+ * contributes a constant rather than making the value non-deterministic. */
+/* Both operands are compile-time constants, so the relationship is settled
+ * at build time rather than guarded at runtime: if the reserved settings
+ * region ever grew to meet or exceed program flash, the length below would
+ * underflow and the CRC would read far past the end of flash. Fail the
+ * BUILD instead. */
+_Static_assert(RESERVED_SETTINGS_SPACE < __KSEG0_PROGRAM_MEM_LENGTH,
+               "#833: the reserved settings region must be smaller than"
+               " program flash, or the image-CRC length underflows");
+
+static uint32_t SCPI_FirmwareImageCrc32(void)
+{
+    /* volatile + a compiler barrier, NOT for atomicity -- a 32-bit aligned
+     * access is already atomic on PIC32MZ, which is why the project declines
+     * volatile-for-atomicity suggestions. The hazard here is ORDERING of two
+     * DIFFERENT objects: USB SCPI (pri 7) and WiFi SCPI (pri 2) can both
+     * reach this, and nothing stops the compiler publishing sComputed before
+     * sCrc, which would let the other task read a zero CRC and report
+     * 00000000 as a build fingerprint.
+     *
+     * No critical section: this runs for tens of ms, and disabling
+     * interrupts for that long would wreck streaming. It does not need one
+     * -- the function is PURE, so the worst a race can do is compute the
+     * same value twice and store it twice, which is wasted work and not a
+     * wrong answer. */
+    static volatile uint32_t sCrc;
+    static volatile bool sComputed = false;
+
+    if (!sComputed) {
+        const uint8_t *image = (const uint8_t *)__KSEG0_PROGRAM_MEM_BASE;
+        const size_t len = (size_t)(__KSEG0_PROGRAM_MEM_LENGTH
+                                    - RESERVED_SETTINGS_SPACE);
+        uint32_t crc = CRC32_Compute(image, len);
+        sCrc = crc;
+        __asm__ __volatile__ ("" ::: "memory");   /* value before flag */
+        sComputed = true;
+    }
+    return sCrc;
+}
+
+void SCPI_PrecomputeFirmwareImageCrc32(void)
+{
+    (void)SCPI_FirmwareImageCrc32();
+}
+
 static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     const tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     const tBoardRuntimeConfig* rt =
@@ -5280,6 +5346,10 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         "\"identity\":{\"vendor\":\"DAQiFi\",\"model\":\"Nyquist\","
         "\"variant\":\"%s\",",
         variantName);
+
+    scpi_printf(context,
+        "\"firmware_crc32\":\"%08lX\",",
+        (unsigned long)SCPI_FirmwareImageCrc32());
 
     scpi_printf(context,
         "\"serial\":\"%llX\","
