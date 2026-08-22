@@ -1412,6 +1412,7 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
         pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
         /* #829: SD_ArmOrRefuse already released the claim */  /* mode must still be cleared */
         result = SCPI_RES_ERR;
+        goto __exit_point;
     }
 
     // Wait for sd_card_manager to complete deletion (up to 5 seconds)
