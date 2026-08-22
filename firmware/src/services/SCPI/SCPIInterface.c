@@ -3652,7 +3652,18 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
         // Check if SD card is busy with another operation (DELETE, FORMAT, etc.).
         // SD is a single consumer — don't start a logging file while any SD op runs.
-        if (sd_card_manager_IsBusy()) {
+        /* #836: CLAIM rather than check-then-set. This used to be a bare
+         * IsBusy() test ~37 lines above the `mode = WRITE` write below, and USB
+         * SCPI (pri 7) preempts WiFi SCPI (pri 2) with no shared dispatch mutex
+         * -- so a SCPI SD:GET could take the claim, arm MODE_READ and return OK
+         * in that gap, and this arm would then silently overwrite it. The GET
+         * caller waits forever for data that is never coming.
+         *
+         * Same interlock as #829/PR #835, which converted the six entry points
+         * in SCPIStorageSD.c. The claim reserves the manager WITHOUT arming
+         * anything; `mode` is still written last, and the claim is released
+         * once UpdateSettings has handed ownership to `mode`. */
+        if (!sd_card_manager_TryClaim()) {
             LOG_E("Cannot start SD logging - SD card busy with another operation");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
@@ -3691,6 +3702,9 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
         pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
         sd_card_manager_UpdateSettings(pSDCardSettings);
+        /* #836: ownership is now carried by `mode != MODE_NONE`, which keeps
+         * IsBusy() true, so releasing here leaves no gap. */
+        sd_card_manager_ReleaseClaim();
 
         // Wait for SD file to be open before starting streaming.
         // Without this, early samples are dropped while SD mounts/opens.
@@ -3819,10 +3833,24 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
              * total data loss on an SD-only session. Mirror the first block: clear
              * the flags, early-exit the poll, and FAIL START with the precise cause
              * so SD-logging is never falsely asserted. */
+            /* #836: the first arm released its claim before the poll above, so
+             * an SCPI SD command can own the manager by the time we re-open
+             * here. Claim again rather than overwriting whatever it armed. A
+             * refusal fails START with a precise cause, matching the
+             * dir-full / disk-full handling immediately below -- silently
+             * asserting SD logging with no file open is the failure #690
+             * already fixed once on this path. */
+            if (!sd_card_manager_TryClaim()) {
+                LOG_E("STR:START refused: SD busy with another operation at "
+                      "post-repartition re-open\r\n");
+                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+                return SCPI_RES_ERR;
+            }
             sd_card_manager_ClearStartupDirFull();
             sd_card_manager_ClearStartupDiskFull();
             pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
             sd_card_manager_UpdateSettings(pSDCardSettings);
+            sd_card_manager_ReleaseClaim();   /* #836: mode now holds it */
             int readyWait = 0;
             while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
                 if (sd_card_manager_StartupDirFull() || sd_card_manager_StartupDiskFull()) {
