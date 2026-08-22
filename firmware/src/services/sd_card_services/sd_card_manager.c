@@ -3704,7 +3704,53 @@ bool sd_card_manager_GetSpaceInfo(uint64_t *freeBytes, uint64_t *totalBytes) {
     return true;
 }
 
+/* #829: the busy predicate without the claim flag, so TryClaim can consult it
+ * from inside its own critical section. */
+static bool sd_card_manager_IsBusyLocked(void);
+
+/* #829: SCPI-side exclusive claim, separate from `mode`.
+ *
+ * `mode` cannot be used as the claim. gpSDCardSettings ALIASES the runtime
+ * config the SCPI handlers write (sd_card_manager_Init takes
+ * &gpBoardRuntimeConfig->sdCardConfig, and UpdateSettings' memcpy is a
+ * self-copy), and PROCESS_STATE_INIT starts work as soon as
+ * `mode != MODE_NONE`. So writing mode early to reserve the manager also
+ * makes the operation startable -- and app_SDCardTask (pri 5) preempts
+ * app_WifiTask (pri 2), so a TCP command could have its operation begin on
+ * STALE opFile/opDirectory/replyTarget before the handler filled them.
+ *
+ * This flag reserves the manager without arming anything. Handlers claim it,
+ * fill the operands, write `mode` LAST as before, arm, and then release the
+ * flag -- by which point `mode != MODE_NONE` keeps IsBusy() true, so there is
+ * no gap. Error paths release it with mode still MODE_NONE.
+ */
+static volatile bool gSdScpiClaim = false;
+
+bool sd_card_manager_TryClaim(void) {
+    bool got;
+    taskENTER_CRITICAL();
+    got = !gSdScpiClaim && !sd_card_manager_IsBusyLocked();
+    if (got) {
+        gSdScpiClaim = true;
+    }
+    taskEXIT_CRITICAL();
+    return got;
+}
+
+void sd_card_manager_ReleaseClaim(void) {
+    taskENTER_CRITICAL();
+    gSdScpiClaim = false;
+    taskEXIT_CRITICAL();
+}
+
 bool sd_card_manager_IsBusy(void) {
+    if (gSdScpiClaim) {
+        return true;          /* #829: reserved by a SCPI handler, not yet armed */
+    }
+    return sd_card_manager_IsBusyLocked();
+}
+
+static bool sd_card_manager_IsBusyLocked(void) {
     // If SD manager hasn't been initialized yet, treat as busy/unavailable.
     // Intentionally true: prevents WiFi FW update or other SPI consumers from
     // starting before SD init completes during early boot.

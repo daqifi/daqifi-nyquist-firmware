@@ -344,6 +344,17 @@ extern "C" {
      */
     bool sd_card_manager_IsBusy(void);
 
+/* #829: reserve the SD manager for a SCPI handler WITHOUT arming an
+ * operation. `mode` cannot serve as the claim -- PROCESS_STATE_INIT starts
+ * work as soon as mode != MODE_NONE, and gpSDCardSettings aliases the struct
+ * the handlers write, so an early mode write would let app_SDCardTask (pri 5)
+ * begin on stale operands ahead of app_WifiTask (pri 2).
+ *
+ * Handlers: TryClaim -> fill operands -> write mode -> arm -> ReleaseClaim.
+ * Any failure after a successful claim must ReleaseClaim with mode unchanged. */
+bool sd_card_manager_TryClaim(void);
+void sd_card_manager_ReleaseClaim(void);
+
     /**
      * @brief #703: is the SD read scratch buffer large enough for SD:GET?
      *
