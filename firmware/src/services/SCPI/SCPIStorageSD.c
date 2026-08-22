@@ -140,9 +140,15 @@ const char *SD_SuspendReasonText(void)
 static bool SD_ArmOrRefuse(scpi_t *context, const char *cmd,
                            sd_card_manager_settings_t *cfg)
 {
+    /* #829: the arm is where ownership hands over from the SCPI claim flag to
+     * `mode`. Release on BOTH paths and there is no gap: on success `mode !=
+     * MODE_NONE` already keeps IsBusy() true, and on failure the caller clears
+     * `mode` too. Centralised here so no entry point can leak the flag. */
     if (sd_card_manager_UpdateSettings(cfg)) {
+        sd_card_manager_ReleaseClaim();
         return true;
     }
+    sd_card_manager_ReleaseClaim();
     const char *why = SD_SuspendReasonText();
     LOG_E("SD:%s - could not arm the operation: %s\r\n", cmd,
           why ? why : "the SD task is not accepting work");
@@ -178,13 +184,9 @@ static bool SD_ClaimOrRefuse(scpi_t *context, const char *cmd,
                              sd_card_manager_settings_t *cfg,
                              sd_card_manager_mode_t mode)
 {
-    bool busy;
-    taskENTER_CRITICAL();
-    busy = sd_card_manager_IsBusy();
-    if (!busy) {
-        cfg->mode = mode;
-    }
-    taskEXIT_CRITICAL();
+    (void)cfg;    /* mode is written by the caller, AFTER its operands */
+    (void)mode;
+    bool busy = !sd_card_manager_TryClaim();
     if (busy) {
         /* LOG_SD_BUSY() concatenates a string LITERAL ("SD:" cmd " - ..."), so
          * it cannot take this const char* -- format the name instead. */
@@ -460,7 +462,6 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
             goto __exit_point;
         }
         if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
-            pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
             SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             result = SCPI_RES_ERR;
             goto __exit_point;
@@ -583,7 +584,7 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
      * answer to the request just refused (bench-confirmed before the fix). */
     if (SD_RefuseIfSuspended(context, "CRC")) {
         sd_card_manager_InvalidateCrcResult();
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
+        sd_card_manager_ReleaseClaim();  /* #829 release */
         return SCPI_RES_ERR;
     }
 
@@ -594,13 +595,14 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
      * sitting in the slot. "SD suspended" is both true and actionable; the
      * stale probe is neither. */
     if (!SCPI_CheckSDCardPresent(context)) {
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
+        sd_card_manager_ReleaseClaim();  /* #829 release */
         return SCPI_RES_ERR;
     }
 
-    /* mode already claimed above (#829) */
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_COMPUTE_CRC;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "CRC", pSDCardRuntimeConfig)) {
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        /* #829: SD_ArmOrRefuse already released the claim */
         return SCPI_RES_ERR;
     }
     return SCPI_RES_OK;
@@ -695,12 +697,12 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
 
     if (fileLen > 0) {
         if (fileLen > SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX) {
-            pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
+            sd_card_manager_ReleaseClaim();  /* #829 release */
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
         if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
-            pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
+            sd_card_manager_ReleaseClaim();  /* #829 release */
             SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             result = SCPI_RES_ERR;
             goto __exit_point;
@@ -723,9 +725,10 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
             ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;
     pSDCardRuntimeConfig->replyGeneration =
             getOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;
-    /* mode already claimed above (#829) */
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "GET", pSDCardRuntimeConfig)) {
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        /* #829: SD_ArmOrRefuse already released the claim */
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -797,12 +800,12 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
         if (fileLen >= sizeof(pSDCardRuntimeConfig->opDirectory)) {
             LOG_E("SD:LIST? - Directory path too long: %d bytes, max: %d\r\n", 
                   fileLen, sizeof(pSDCardRuntimeConfig->opDirectory) - 1);
-            pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
+            sd_card_manager_ReleaseClaim();  /* #829 release */
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
         if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
-            pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
+            sd_card_manager_ReleaseClaim();  /* #829 release */
             SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             result = SCPI_RES_ERR;
             goto __exit_point;
@@ -861,9 +864,10 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
             ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;
     pSDCardRuntimeConfig->replyGeneration =
             listOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;   /* #599 */
-    /* mode already claimed above (#829) */
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "LISt", pSDCardRuntimeConfig)) {
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        /* #829: SD_ArmOrRefuse already released the claim */
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -1405,9 +1409,10 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     LOG_D("SD:DELete - Deleting file '%s'\r\n", pSDCardRuntimeConfig->opFile);
 
     // Set mode to DELETE and trigger the operation
-    /* mode already claimed above (#829) */
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_DELETE_FILE;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "DELete", pSDCardRuntimeConfig)) {
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        /* #829: SD_ArmOrRefuse already released the claim */
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -1485,6 +1490,7 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
         goto __exit_point;
     }
     sd_card_manager_SetFormatPending();  // Immediately visible to FORmat? queries
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_FORMAT;  /* #829: LAST write */
     /* This one reported SUCCESS on a refused arm -- it returns OK without
      * waiting, so the client believed a format had started when nothing had
      * been queued at all. That is the worst of the three shapes. */
@@ -1494,7 +1500,7 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
          * so clear it -- otherwise FORmat? reports a format in flight
          * forever and a client polling for completion never stops. */
         sd_card_manager_ClearFormatStatus();
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
+        /* #829: SD_ArmOrRefuse already released the claim */
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -1806,8 +1812,9 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_GET_SPACE;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "SPACe", pSDCardRuntimeConfig)) {
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
+        /* #829: SD_ArmOrRefuse already released the claim */
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
