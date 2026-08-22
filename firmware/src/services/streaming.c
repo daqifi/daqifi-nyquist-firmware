@@ -2825,8 +2825,6 @@ void streaming_Task(void) {
                     BoardData_Get(BOARDDATA_ALL_DATA, true);
                 sdHdrLen = Nanopb_Encode(pBoardData,
                     &fields_sd_metadata, (uint8_t*)buffer, bufferSize);
-                if (sdHdrLen > 0) {
-                }
             }
             if (sdHdrLen > 0) {
                 size_t written = sd_card_manager_WriteToBuffer(
