@@ -180,12 +180,11 @@ static bool SD_ArmOrRefuse(scpi_t *context, const char *cmd,
  * a TORN write, not this race: it makes each write atomic without deciding
  * which caller's value survives.
  */
-static bool SD_ClaimOrRefuse(scpi_t *context, const char *cmd,
-                             sd_card_manager_settings_t *cfg,
-                             sd_card_manager_mode_t mode)
+static bool SD_ClaimOrRefuse(scpi_t *context, const char *cmd)
 {
-    (void)cfg;    /* mode is written by the caller, AFTER its operands */
-    (void)mode;
+    /* Takes no cfg/mode: the claim is a flag inside the manager, and `mode`
+     * is written by the CALLER after its operands (see sd_card_manager.h).
+     * Passing them here would suggest this function arms something. */
     bool busy = !sd_card_manager_TryClaim();
     if (busy) {
         /* LOG_SD_BUSY() concatenates a string LITERAL ("SD:" cmd " - ..."), so
@@ -563,8 +562,7 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
      * reads the SCPI context, so it stays ahead of the claim -- which also
      * preserves the #610 behaviour that a MALFORMED request is rejected
      * without disturbing a cached CRC. */
-    if (!SD_ClaimOrRefuse(context, "CRC", pSDCardRuntimeConfig,
-                          SD_CARD_MANAGER_MODE_COMPUTE_CRC)) {
+    if (!SD_ClaimOrRefuse(context, "CRC")) {
         return SCPI_RES_ERR;
     }
     /* #724: transient operand, not the logging target `file`. */
@@ -689,8 +687,7 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
      * decides which interface this file is delivered to, so a lost race here
      * sends a client's file to the OTHER transport. The two validation paths
      * inside the block release the claim before bailing. */
-    if (!SD_ClaimOrRefuse(context, "GET", pSDCardRuntimeConfig,
-                          SD_CARD_MANAGER_MODE_READ)) {
+    if (!SD_ClaimOrRefuse(context, "GET")) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -785,8 +782,7 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
      * above only reads the SCPI context, so it is safe ahead of the claim;
      * everything from here down is owner-only, and the two validation failures
      * inside the block release the claim before bailing. */
-    if (!SD_ClaimOrRefuse(context, "LISt", pSDCardRuntimeConfig,
-                          SD_CARD_MANAGER_MODE_LIST_DIRECTORY)) {
+    if (!SD_ClaimOrRefuse(context, "LISt")) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -1396,8 +1392,7 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     /* #829: claim before writing the shared operand -- otherwise a second
      * caller could overwrite opFile between this write and the mode
      * assignment, and the winner would delete the LOSER's filename. */
-    if (!SD_ClaimOrRefuse(context, "DELete", pSDCardRuntimeConfig,
-                          SD_CARD_MANAGER_MODE_DELETE_FILE)) {
+    if (!SD_ClaimOrRefuse(context, "DELete")) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -1482,8 +1477,7 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
      * progress" to FORmat? queries, so a caller that then loses the claim
      * would have advertised a format nobody is going to run. Claiming first
      * means only the owner ever publishes. */
-    if (!SD_ClaimOrRefuse(context, "FORmat", pSDCardRuntimeConfig,
-                          SD_CARD_MANAGER_MODE_FORMAT)) {
+    if (!SD_ClaimOrRefuse(context, "FORmat")) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -1806,8 +1800,7 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
     // Set mode to GET_SPACE and let sd_card_manager handle mount/query/unmount
     /* #829: atomic claim -- the plain assignment could race a second caller
      * that had already passed the IsBusy() fast path above. */
-    if (!SD_ClaimOrRefuse(context, "SPACe", pSDCardRuntimeConfig,
-                          SD_CARD_MANAGER_MODE_GET_SPACE)) {
+    if (!SD_ClaimOrRefuse(context, "SPACe")) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
