@@ -594,6 +594,7 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
      * sitting in the slot. "SD suspended" is both true and actionable; the
      * stale probe is neither. */
     if (!SCPI_CheckSDCardPresent(context)) {
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
         return SCPI_RES_ERR;
     }
 
@@ -801,6 +802,7 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
             goto __exit_point;
         }
         if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
+            pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;  /* #829 release */
             SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             result = SCPI_RES_ERR;
             goto __exit_point;
