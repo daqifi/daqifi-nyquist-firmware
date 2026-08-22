@@ -39,6 +39,16 @@ extern "C" {
      */
     void SCPI_InitIdentification(void);
 
+    /* #833: compute the program-image CRC that CONF:CAP:JSON? reports as
+     * identity.firmware_crc32. Call ONCE from main(), BEFORE the scheduler
+     * starts: it takes ~120 ms (measured on the bench -- a cold
+     * CONF:CAP:JSON? was 128 ms against 5-12 ms warm), which is invisible in
+     * a multi-second boot but far too long to spend inside a SCPI query, and
+     * doing it here means the cache is written by a single caller with no
+     * task running -- so the USB/WiFi SCPI concurrency question never
+     * arises. Safe to call more than once; the second call is a no-op. */
+    void SCPI_PrecomputeFirmwareImageCrc32(void);
+
     /**
      * Creates a new SCPI context object.
      * This allows us to have multiple independent consoles.

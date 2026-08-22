@@ -5274,6 +5274,11 @@ static uint32_t SCPI_FirmwareImageCrc32(void)
     return sCrc;
 }
 
+void SCPI_PrecomputeFirmwareImageCrc32(void)
+{
+    (void)SCPI_FirmwareImageCrc32();
+}
+
 static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     const tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     const tBoardRuntimeConfig* rt =

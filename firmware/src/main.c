@@ -34,10 +34,19 @@
 // *****************************************************************************
 // *****************************************************************************
 
+#include "services/SCPI/SCPIInterface.h"
+
 int main ( void )
 {
     /* Initialize all modules */
     SYS_Initialize ( NULL );
+
+    /* #833: fold the program image into its CRC fingerprint here, before
+     * SYS_Tasks() starts the scheduler. It is ~120 ms of straight-line work,
+     * which is nothing against a multi-second boot but would be a poor thing
+     * to do inside a SCPI query -- and doing it with no task running means
+     * the value is published before anything can read it. */
+    SCPI_PrecomputeFirmwareImageCrc32();
 
     while ( true )
     {
