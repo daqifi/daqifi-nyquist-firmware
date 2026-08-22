@@ -2427,6 +2427,13 @@ void sd_card_manager_ProcessState() {
                         LOG_E("[SD] Error flushing pending write before rotation");
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                         gSDCardData.sdCardWritePending = 0;
+                        /* #825: same obligation as the drain loop below. This chunk was
+                         * extracted from wCirbuf by the chunk loop (which exits with
+                         * sdCardWritePending=1 on its 4th chunk -- see the comment above),
+                         * so the bytes are already gone from the buffer. Nothing else can
+                         * see them: the drain loop counts its OWN writeBufferLength, and
+                         * the strand/abandon paths only count what is still in wCirbuf. */
+                        Streaming_ReportSdDiscard(gSDCardData.writeBufferLength);
                         gSDCardData.writeBufferLength = 0;
                         gSDCardData.sdCardWriteBufferOffset = 0;
                         break;
@@ -2448,6 +2455,13 @@ void sd_card_manager_ProcessState() {
                         LOG_E("[SD] Zero-byte write during rotation flush");
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                         gSDCardData.sdCardWritePending = 0;
+                        /* #825: same obligation as the drain loop below. This chunk was
+                         * extracted from wCirbuf by the chunk loop (which exits with
+                         * sdCardWritePending=1 on its 4th chunk -- see the comment above),
+                         * so the bytes are already gone from the buffer. Nothing else can
+                         * see them: the drain loop counts its OWN writeBufferLength, and
+                         * the strand/abandon paths only count what is still in wCirbuf. */
+                        Streaming_ReportSdDiscard(gSDCardData.writeBufferLength);
                         gSDCardData.writeBufferLength = 0;
                         gSDCardData.sdCardWriteBufferOffset = 0;
                         break;
