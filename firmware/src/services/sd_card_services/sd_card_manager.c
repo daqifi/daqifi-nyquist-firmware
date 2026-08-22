@@ -2743,6 +2743,23 @@ void sd_card_manager_ProcessState() {
                         }
                         gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                     }
+                    /* #825: the split limit means no further file will EVER be opened, so
+                     * anything still in the circular buffer is unwritable -- and routing
+                     * ERROR onward does not save it either: UNMOUNT_DISK guards its whole
+                     * drain on `fileHandle != SYS_FS_HANDLE_INVALID` and the handle was
+                     * just closed above. Count it here rather than let the next reset
+                     * discard it silently, which is the same obligation the drain has.
+                     * A clean stop already drained the buffer, so this is a no-op then.
+                     * Mirrors the #823 stranded-remainder accounting in the rotation path. */
+                    SD_TakeMutexDebug(gSDCardData.wMutex, "split_limit_strand");
+                    size_t splitStranded = CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf);
+                    CircularBuf_Reset(&gSDCardData.wCirbuf);
+                    xSemaphoreGive(gSDCardData.wMutex);
+                    if (splitStranded > 0u) {
+                        Streaming_ReportSdDiscard(splitStranded);
+                        LOG_E("[SD] split limit reached: discarded %u unwritable buffered byte(s)",
+                              (unsigned)splitStranded);
+                    }
                     /* #825: do not clobber an ERROR the drain above set. This branch is
                      * the twin of the rotation tail: it too transitioned unconditionally,
                      * so a stop that failed to write its backlog reported as a clean one.
