@@ -2427,6 +2427,13 @@ void sd_card_manager_ProcessState() {
                         LOG_E("[SD] Error flushing pending write before rotation");
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                         gSDCardData.sdCardWritePending = 0;
+                        /* #825: same obligation as the drain loop below. This chunk was
+                         * extracted from wCirbuf by the chunk loop (which exits with
+                         * sdCardWritePending=1 on its 4th chunk -- see the comment above),
+                         * so the bytes are already gone from the buffer. Nothing else can
+                         * see them: the drain loop counts its OWN writeBufferLength, and
+                         * the strand/abandon paths only count what is still in wCirbuf. */
+                        Streaming_ReportSdDiscard(gSDCardData.writeBufferLength);
                         gSDCardData.writeBufferLength = 0;
                         gSDCardData.sdCardWriteBufferOffset = 0;
                         break;
@@ -2448,6 +2455,13 @@ void sd_card_manager_ProcessState() {
                         LOG_E("[SD] Zero-byte write during rotation flush");
                         gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                         gSDCardData.sdCardWritePending = 0;
+                        /* #825: same obligation as the drain loop below. This chunk was
+                         * extracted from wCirbuf by the chunk loop (which exits with
+                         * sdCardWritePending=1 on its 4th chunk -- see the comment above),
+                         * so the bytes are already gone from the buffer. Nothing else can
+                         * see them: the drain loop counts its OWN writeBufferLength, and
+                         * the strand/abandon paths only count what is still in wCirbuf. */
+                        Streaming_ReportSdDiscard(gSDCardData.writeBufferLength);
                         gSDCardData.writeBufferLength = 0;
                         gSDCardData.sdCardWriteBufferOffset = 0;
                         break;
@@ -2485,6 +2499,8 @@ void sd_card_manager_ProcessState() {
                      * extracted, so a partial write cannot spin the loop. */
                     size_t drained = 0;
                     while (drained < bufferBytes
+                           && gSDCardData.currentProcessState
+                              != SD_CARD_MANAGER_PROCESS_STATE_ERROR
                            && CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf) > 0) {
                         int writeLen = -2;
                         SD_TakeMutexDebug(gSDCardData.wMutex, "drain_loop");
@@ -2532,6 +2548,11 @@ void sd_card_manager_ProcessState() {
                                     }
                                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                                     gSDCardData.sdCardWritePending = 0;
+                                    /* #825: this chunk already left wCirbuf via CircularBuf_ProcessBytes,
+                                     * so these bytes are gone whether or not they reached the card.
+                                     * Count them BEFORE the length is cleared, or the loss is silent --
+                                     * the same class #823 closed for the stranded remainder. */
+                                    Streaming_ReportSdDiscard(gSDCardData.writeBufferLength);
                                     gSDCardData.writeBufferLength = 0;
                                     gSDCardData.sdCardWriteBufferOffset = 0;
                                     break;
@@ -2554,6 +2575,11 @@ void sd_card_manager_ProcessState() {
                                     }
                                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                                     gSDCardData.sdCardWritePending = 0;
+                                    /* #825: this chunk already left wCirbuf via CircularBuf_ProcessBytes,
+                                     * so these bytes are gone whether or not they reached the card.
+                                     * Count them BEFORE the length is cleared, or the loss is silent --
+                                     * the same class #823 closed for the stranded remainder. */
+                                    Streaming_ReportSdDiscard(gSDCardData.writeBufferLength);
                                     gSDCardData.writeBufferLength = 0;
                                     gSDCardData.sdCardWriteBufferOffset = 0;
                                     break;
@@ -2699,8 +2725,22 @@ void sd_card_manager_ProcessState() {
                      * close, so that everything the encoder produced during
                      * them is kept rather than discarded. All that remains is
                      * to advance to the next file. */
-                    gSDCardData.fileCounter++;
-                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+                    if (gSDCardData.currentProcessState
+                        == SD_CARD_MANAGER_PROCESS_STATE_ERROR) {
+                        /* #825: the drain above could not write its backlog and set
+                         * ERROR. Advancing to OPEN_FILE would overwrite that state and
+                         * report a failed rotation as a successful one -- the ERROR is
+                         * what routes the session through UNMOUNT_DISK with
+                         * lastOperationSuccess = false. Leave it standing.
+                         *
+                         * The #757 window was opened above, before the sync and close,
+                         * and skipping OPEN_FILE means nothing will ever drain it, so
+                         * close it here exactly as the file-close failure does. */
+                        sd_AbandonRotationWindow("drain write failed");
+                    } else {
+                        gSDCardData.fileCounter++;
+                        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+                    }
                 } else {
                     LOG_E("[%s:%d]File counter limit reached (%d files). Stopping streaming.",
                           __FILE__, __LINE__, SD_CARD_MANAGER_MAX_SPLIT_FILES);
@@ -2717,7 +2757,38 @@ void sd_card_manager_ProcessState() {
                         }
                         gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                     }
-                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                    /* #825: the split limit means no further file will EVER be opened, so
+                     * anything still in the circular buffer is unwritable -- and routing
+                     * ERROR onward does not save it either: UNMOUNT_DISK guards its whole
+                     * drain on `fileHandle != SYS_FS_HANDLE_INVALID` and the handle was
+                     * just closed above. Count it here rather than let the next reset
+                     * discard it silently, which is the same obligation the drain has.
+                     * A clean stop already drained the buffer, so this is a no-op then.
+                     * Mirrors the #823 stranded-remainder accounting in the rotation path. */
+                    SD_TakeMutexDebug(gSDCardData.wMutex, "split_limit_strand");
+                    size_t splitStranded = CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf);
+                    CircularBuf_Reset(&gSDCardData.wCirbuf);
+                    xSemaphoreGive(gSDCardData.wMutex);
+                    if (splitStranded > 0u) {
+                        Streaming_ReportSdDiscard(splitStranded);
+                        LOG_E("[SD] split limit reached: discarded %u unwritable buffered byte(s)",
+                              (unsigned)splitStranded);
+                    }
+                    /* #825: do not clobber an ERROR the drain above set. This branch is
+                     * the twin of the rotation tail: it too transitioned unconditionally,
+                     * so a stop that failed to write its backlog reported as a clean one.
+                     * Leaving ERROR standing routes the session through UNMOUNT_DISK with
+                     * lastOperationSuccess = false.
+                     *
+                     * No sd_AbandonRotationWindow() here, unlike the rotation tail: the
+                     * #757 window is armed only under `willRotate`, and this is the branch
+                     * where that is false, so there is no open window to close. */
+                    if (gSDCardData.currentProcessState
+                        != SD_CARD_MANAGER_PROCESS_STATE_ERROR) {
+                        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                    }
+                    /* Signal either way -- the operation IS over, and skipping the give
+                     * would hang the waiter, which is what this give exists to prevent. */
                     xSemaphoreGive(gSDCardData.opCompleteSemaphore);
                 }
                 break;  // Exit to reopen with new filename or error
