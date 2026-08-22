@@ -5235,16 +5235,40 @@ static void EmitDioChannelJson(scpi_t* context,
  * straight-line because the watchdog is disabled (FWDTEN = OFF,
  * initialization.c). Erased flash reads as a stable 0xFF, so the unused tail
  * contributes a constant rather than making the value non-deterministic. */
+/* Both operands are compile-time constants, so the relationship is settled
+ * at build time rather than guarded at runtime: if the reserved settings
+ * region ever grew to meet or exceed program flash, the length below would
+ * underflow and the CRC would read far past the end of flash. Fail the
+ * BUILD instead. */
+_Static_assert(RESERVED_SETTINGS_SPACE < __KSEG0_PROGRAM_MEM_LENGTH,
+               "#833: the reserved settings region must be smaller than"
+               " program flash, or the image-CRC length underflows");
+
 static uint32_t SCPI_FirmwareImageCrc32(void)
 {
-    static uint32_t sCrc;
-    static bool sComputed = false;
+    /* volatile + a compiler barrier, NOT for atomicity -- a 32-bit aligned
+     * access is already atomic on PIC32MZ, which is why the project declines
+     * volatile-for-atomicity suggestions. The hazard here is ORDERING of two
+     * DIFFERENT objects: USB SCPI (pri 7) and WiFi SCPI (pri 2) can both
+     * reach this, and nothing stops the compiler publishing sComputed before
+     * sCrc, which would let the other task read a zero CRC and report
+     * 00000000 as a build fingerprint.
+     *
+     * No critical section: this runs for tens of ms, and disabling
+     * interrupts for that long would wreck streaming. It does not need one
+     * -- the function is PURE, so the worst a race can do is compute the
+     * same value twice and store it twice, which is wasted work and not a
+     * wrong answer. */
+    static volatile uint32_t sCrc;
+    static volatile bool sComputed = false;
 
     if (!sComputed) {
         const uint8_t *image = (const uint8_t *)__KSEG0_PROGRAM_MEM_BASE;
         const size_t len = (size_t)(__KSEG0_PROGRAM_MEM_LENGTH
                                     - RESERVED_SETTINGS_SPACE);
-        sCrc = CRC32_Compute(image, len);
+        uint32_t crc = CRC32_Compute(image, len);
+        sCrc = crc;
+        __asm__ __volatile__ ("" ::: "memory");   /* value before flag */
         sComputed = true;
     }
     return sCrc;
