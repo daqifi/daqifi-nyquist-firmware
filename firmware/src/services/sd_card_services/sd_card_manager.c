@@ -2485,6 +2485,8 @@ void sd_card_manager_ProcessState() {
                      * extracted, so a partial write cannot spin the loop. */
                     size_t drained = 0;
                     while (drained < bufferBytes
+                           && gSDCardData.currentProcessState
+                              != SD_CARD_MANAGER_PROCESS_STATE_ERROR
                            && CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf) > 0) {
                         int writeLen = -2;
                         SD_TakeMutexDebug(gSDCardData.wMutex, "drain_loop");
@@ -2532,6 +2534,11 @@ void sd_card_manager_ProcessState() {
                                     }
                                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                                     gSDCardData.sdCardWritePending = 0;
+                                    /* #825: this chunk already left wCirbuf via CircularBuf_ProcessBytes,
+                                     * so these bytes are gone whether or not they reached the card.
+                                     * Count them BEFORE the length is cleared, or the loss is silent --
+                                     * the same class #823 closed for the stranded remainder. */
+                                    Streaming_ReportSdDiscard(gSDCardData.writeBufferLength);
                                     gSDCardData.writeBufferLength = 0;
                                     gSDCardData.sdCardWriteBufferOffset = 0;
                                     break;
@@ -2554,6 +2561,11 @@ void sd_card_manager_ProcessState() {
                                     }
                                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                                     gSDCardData.sdCardWritePending = 0;
+                                    /* #825: this chunk already left wCirbuf via CircularBuf_ProcessBytes,
+                                     * so these bytes are gone whether or not they reached the card.
+                                     * Count them BEFORE the length is cleared, or the loss is silent --
+                                     * the same class #823 closed for the stranded remainder. */
+                                    Streaming_ReportSdDiscard(gSDCardData.writeBufferLength);
                                     gSDCardData.writeBufferLength = 0;
                                     gSDCardData.sdCardWriteBufferOffset = 0;
                                     break;
@@ -2699,8 +2711,22 @@ void sd_card_manager_ProcessState() {
                      * close, so that everything the encoder produced during
                      * them is kept rather than discarded. All that remains is
                      * to advance to the next file. */
-                    gSDCardData.fileCounter++;
-                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+                    if (gSDCardData.currentProcessState
+                        == SD_CARD_MANAGER_PROCESS_STATE_ERROR) {
+                        /* #825: the drain above could not write its backlog and set
+                         * ERROR. Advancing to OPEN_FILE would overwrite that state and
+                         * report a failed rotation as a successful one -- the ERROR is
+                         * what routes the session through UNMOUNT_DISK with
+                         * lastOperationSuccess = false. Leave it standing.
+                         *
+                         * The #757 window was opened above, before the sync and close,
+                         * and skipping OPEN_FILE means nothing will ever drain it, so
+                         * close it here exactly as the file-close failure does. */
+                        sd_AbandonRotationWindow("drain write failed");
+                    } else {
+                        gSDCardData.fileCounter++;
+                        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE;
+                    }
                 } else {
                     LOG_E("[%s:%d]File counter limit reached (%d files). Stopping streaming.",
                           __FILE__, __LINE__, SD_CARD_MANAGER_MAX_SPLIT_FILES);
