@@ -602,7 +602,7 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_COMPUTE_CRC;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "CRC", pSDCardRuntimeConfig)) {
         pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
-        /* #829: SD_ArmOrRefuse already released the claim */
+        /* #829: SD_ArmOrRefuse already released the claim */  /* mode must still be cleared */
         return SCPI_RES_ERR;
     }
     return SCPI_RES_OK;
@@ -728,7 +728,6 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "GET", pSDCardRuntimeConfig)) {
         pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
-        /* #829: SD_ArmOrRefuse already released the claim */
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -867,8 +866,7 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "LISt", pSDCardRuntimeConfig)) {
         pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
-        /* #829: SD_ArmOrRefuse already released the claim */
-        result = SCPI_RES_ERR;
+        /* #829: SD_ArmOrRefuse already released the claim */  /* mode must still be cleared */
         goto __exit_point;
     }
 
@@ -1412,9 +1410,8 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_DELETE_FILE;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "DELete", pSDCardRuntimeConfig)) {
         pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
-        /* #829: SD_ArmOrRefuse already released the claim */
+        /* #829: SD_ArmOrRefuse already released the claim */  /* mode must still be cleared */
         result = SCPI_RES_ERR;
-        goto __exit_point;
     }
 
     // Wait for sd_card_manager to complete deletion (up to 5 seconds)
@@ -1500,7 +1497,8 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
          * so clear it -- otherwise FORmat? reports a format in flight
          * forever and a client polling for completion never stops. */
         sd_card_manager_ClearFormatStatus();
-        /* #829: SD_ArmOrRefuse already released the claim */
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        /* #829: SD_ArmOrRefuse already released the claim */  /* mode must still be cleared */
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -1814,7 +1812,8 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
     }
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_GET_SPACE;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "SPACe", pSDCardRuntimeConfig)) {
-        /* #829: SD_ArmOrRefuse already released the claim */
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        /* #829: SD_ArmOrRefuse already released the claim */  /* mode must still be cleared */
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
