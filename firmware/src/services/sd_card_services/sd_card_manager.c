@@ -2743,7 +2743,21 @@ void sd_card_manager_ProcessState() {
                         }
                         gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                     }
-                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                    /* #825: do not clobber an ERROR the drain above set. This branch is
+                     * the twin of the rotation tail: it too transitioned unconditionally,
+                     * so a stop that failed to write its backlog reported as a clean one.
+                     * Leaving ERROR standing routes the session through UNMOUNT_DISK with
+                     * lastOperationSuccess = false.
+                     *
+                     * No sd_AbandonRotationWindow() here, unlike the rotation tail: the
+                     * #757 window is armed only under `willRotate`, and this is the branch
+                     * where that is false, so there is no open window to close. */
+                    if (gSDCardData.currentProcessState
+                        != SD_CARD_MANAGER_PROCESS_STATE_ERROR) {
+                        gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                    }
+                    /* Signal either way -- the operation IS over, and skipping the give
+                     * would hang the waiter, which is what this give exists to prevent. */
                     xSemaphoreGive(gSDCardData.opCompleteSemaphore);
                 }
                 break;  // Exit to reopen with new filename or error
