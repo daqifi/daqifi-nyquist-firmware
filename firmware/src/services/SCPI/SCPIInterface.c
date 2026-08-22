@@ -27,6 +27,7 @@
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
 #include "services/daqifi_settings.h"
+#include "Util/CRC32.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "state/board/AInConfig.h"  // For MAX_AIN_PUBLIC_CHANNELS
 #include "peripheral/gpio/plib_gpio.h"
@@ -5213,6 +5214,42 @@ static void EmitDioChannelJson(scpi_t* context,
  * revision scheme introduces such characters, add a small JSON
  * string escaper before embedding these fields.
  */
+/* #833: a fingerprint of the program image, so measurement data can tell two
+ * builds of the SAME release apart.
+ *
+ * identity.firmware_rev is a release string ("3.7.2"), so every build between
+ * two releases reports the same value -- two benchmark runs can carry an
+ * identical repeatability triplet and have executed different firmware.
+ *
+ * CRC32 of program flash EXCLUDING the reserved settings region: the last
+ * RESERVED_SETTINGS_SPACE bytes hold the NVM pages, so including them would
+ * change the fingerprint every time a setting is saved.
+ *
+ * The length comes from the two SIZE macros, not from
+ * (RESERVED_SETTINGS_ADDR - __KSEG0_PROGRAM_MEM_BASE). That subtraction is
+ * correct today only because every term in the unparenthesised
+ * daqifi_settings.h address macros is + or -; it would break the moment one
+ * gained a parenthesis-sensitive operator. This form does not care.
+ *
+ * Lazy and cached: ~1.9 MB costs tens of ms -- fine once, not per query. Safe
+ * straight-line because the watchdog is disabled (FWDTEN = OFF,
+ * initialization.c). Erased flash reads as a stable 0xFF, so the unused tail
+ * contributes a constant rather than making the value non-deterministic. */
+static uint32_t SCPI_FirmwareImageCrc32(void)
+{
+    static uint32_t sCrc;
+    static bool sComputed = false;
+
+    if (!sComputed) {
+        const uint8_t *image = (const uint8_t *)__KSEG0_PROGRAM_MEM_BASE;
+        const size_t len = (size_t)(__KSEG0_PROGRAM_MEM_LENGTH
+                                    - RESERVED_SETTINGS_SPACE);
+        sCrc = CRC32_Compute(image, len);
+        sComputed = true;
+    }
+    return sCrc;
+}
+
 static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     const tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     const tBoardRuntimeConfig* rt =
@@ -5280,6 +5317,10 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         "\"identity\":{\"vendor\":\"DAQiFi\",\"model\":\"Nyquist\","
         "\"variant\":\"%s\",",
         variantName);
+
+    scpi_printf(context,
+        "\"firmware_crc32\":\"%08lX\",",
+        (unsigned long)SCPI_FirmwareImageCrc32());
 
     scpi_printf(context,
         "\"serial\":\"%llX\","
