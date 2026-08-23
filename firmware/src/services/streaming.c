@@ -664,10 +664,19 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
          * those terms were both over-conservative (T1) AND wrong (inflated T2).
          * monitoring channels in the scan = scanCount - userT2 (8 when OBDiag). */
         uint32_t nMon = (scanCount > userT2) ? (scanCount - userT2) : 0u;
+        /* Read Encoding ONCE. Deriving isProtoBuf and isJson from two separate
+         * reads let a concurrent change between them produce a flag pair that
+         * matches NO encoding -- e.g. both 0, which is the CSV class, for a
+         * session that is actually JSON. That would hand JSON the pure-T1 CSV
+         * raise, which is the one thing the isJson argument exists to prevent.
+         * One read cannot be internally inconsistent (32-bit loads are atomic
+         * on PIC32MZ). It does not close the wider start-window race -- that is
+         * #844 -- but this part costs nothing to get right. */
+        StreamingEncoding enc = sc->Encoding;
         maxFreq = Streaming_AdcAdditiveCap_NQ1(
                 type1, userT2, nMon,
-                (sc->Encoding == Streaming_ProtoBuffer) ? 1u : 0u,
-                (sc->Encoding == Streaming_Json) ? 1u : 0u,
+                (enc == Streaming_ProtoBuffer) ? 1u : 0u,
+                (enc == Streaming_Json) ? 1u : 0u,
                 (uint32_t)sc->VoltagePrecision);
         /* #563: the additive model was fit at the default SAMC. It replaces the
          * EOS-rate/event-rate caps, but the SAMC/divider-dependent scan-busy
@@ -685,7 +694,7 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
         if (iface == StreamingInterface_SD) {
             uint32_t sdMax = Streaming_SdAdditiveCap_NQ1(
                     type1, userT2, nMon,
-                    (sc->Encoding == Streaming_ProtoBuffer) ? 1u : 0u);
+                    (enc == Streaming_ProtoBuffer) ? 1u : 0u);
             if (sdMax < maxFreq) maxFreq = sdMax;
         }
     } else {
