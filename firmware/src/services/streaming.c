@@ -1819,10 +1819,26 @@ static void Streaming_Start(void) {
         // Clear encoding buffer once to prevent stale data artifacts in SD files
         if (buffer != NULL) memset(buffer, 0, bufferSize);
 
-        /* #824: this session gets its own header. Safe to clear HERE rather
-         * than at stop precisely because only a rotation consumes it, and a
-         * rotation needs MAXSize bytes of encoder output first. */
-        gSdHeaderValid = false;
+        /* #824: a STARTING session gets its own header.
+         *
+         * The IsEnabled guard is the whole point and was missing (audit round
+         * 4). Streaming_UpdateState() is Stop-then-Start UNCONDITIONALLY, so
+         * Streaming_Start() also runs on the STOP path -- and an unguarded
+         * clear here is therefore still a clear at stop, reached one call
+         * deeper. That put back the exact race rounds 2-3 were spent removing:
+         * a SYST:STR:STOP landing between a rotation's SYS_FS_FileOpen and its
+         * Streaming_GetSdFileHeader() call, leaving that split file with data
+         * and no header.
+         *
+         * Guarded, a stop-path Start leaves the cache alone -- so an in-flight
+         * rotation open still finds its header -- and the next real session
+         * clears it here before its encoder rebuilds. Safe because only a
+         * ROTATION consumes the cache and a rotation needs MAXSize bytes of
+         * encoder output first, so the live session has always rebuilt it in
+         * time. */
+        if (gpRuntimeConfigStream->IsEnabled) {
+            gSdHeaderValid = false;
+        }
 
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
