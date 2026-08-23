@@ -57,6 +57,12 @@ extern "C" {
 // override it. NQ1 note: the ADC additive model binds T1-only cells below this
 // anyway; NQ2/NQ3's legacy formula keeps its own 16000 start via
 // STREAMING_ISR_MAX_HZ_LEGACY below.
+// #832: the highest CONF:VOLTage:PRECision the pure-T1 CSV refit was measured
+// at, and therefore the highest it may be applied at. NQ1's shipped default is
+// 4; 0..3 drive an encoder that is cheaper or equal (0 is int_to_str, 1..3 emit
+// fewer characters), so the precision-4 basis is never-over for them. 5..10
+// emit MORE per value and have no basis, so they keep the #563 law.
+#define STREAMING_CSV_REFIT_MAX_PRECISION 4
 #define STREAMING_ISR_MAX_HZ        22000
 // NQ2/NQ3 legacy-formula start value and additive-clamp ceiling for paths
 // characterized only at 16 kHz (pre-252 MHz basis). Do not raise without a
@@ -130,7 +136,8 @@ static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t to
  */
 static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2user,
                                                     uint32_t nMon, uint32_t isProtoBuf,
-                                                    uint32_t isJson) {
+                                                    uint32_t isJson,
+                                                    uint32_t voltagePrecision) {
     uint32_t armed = (nT2user > 0u || nMon > 0u) ? 1u : 0u;
     uint64_t period_ns, num;
     if (isProtoBuf) {
@@ -163,7 +170,8 @@ static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2us
             period_ns = 52700ULL + 3000ULL*nT1;
         }
         num = 880000000ULL;   /* 1e9 * 0.88 (PB safe envelope) */
-    } else if (armed == 0u && isJson == 0u) {
+    } else if (armed == 0u && isJson == 0u
+               && voltagePrecision <= STREAMING_CSV_REFIT_MAX_PRECISION) {
         /* #832 (2026-08-23): pure-T1 CSV/CsvCompact, re-fitted at 252 MHz AND
          * at CONF:VOLTage:PRECision 4 -- the NQ1 SHIPPED DEFAULT.
          *
@@ -215,6 +223,18 @@ static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2us
          * basis is #529 follow-up work. CsvCompact IS included: it emits
          * strictly fewer bytes per row than CSV (#619), so a CSV-fitted cap is
          * never-over for it. */
+        /* PRECISION-GATED. The basis is precision 4, and precision changes how
+         * much work csv_encoder does per value, so the raise may only be
+         * applied where the encoder is no more expensive than it was when
+         * measured:
+         *   0      integer fast path (int_to_str) -- strictly cheaper.
+         *   1..4   same float path, FEWER OR EQUAL characters emitted.
+         *   5..10  MORE characters per value, and NOT measured.
+         * So >4 falls through to the #563 law, which is unchanged and already
+         * safe at every precision. Without this gate a user who set precision
+         * 7 or 10 on an NQ1 would get a cap fitted for a cheaper encoder --
+         * an over-cap of exactly the kind this ticket exists to prevent, just
+         * reached through a setting instead of through a fit. */
         if (nT1 <= 1u) {
             /* 52412 ns -> 800e6/52412 = 15263 Hz. The MINIMAL never-over
              * period is 52411 (the fit recipe prints that); both floor to the

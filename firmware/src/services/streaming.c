@@ -667,7 +667,8 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
         maxFreq = Streaming_AdcAdditiveCap_NQ1(
                 type1, userT2, nMon,
                 (sc->Encoding == Streaming_ProtoBuffer) ? 1u : 0u,
-                (sc->Encoding == Streaming_Json) ? 1u : 0u);
+                (sc->Encoding == Streaming_Json) ? 1u : 0u,
+                (uint32_t)sc->VoltagePrecision);
         /* #563: the additive model was fit at the default SAMC. It replaces the
          * EOS-rate/event-rate caps, but the SAMC/divider-dependent scan-busy
          * limit (#539) must still apply so a non-default SAMC can't push the cap
