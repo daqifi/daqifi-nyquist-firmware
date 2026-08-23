@@ -3890,7 +3890,61 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
     }
 
-    pRunTimeStreamConfig->IsEnabled = true;
+    /* #844: re-validate the cap against the configuration actually being armed.
+     *
+     * The admitting check ~340 lines above runs while IsEnabled is still false,
+     * and every "reject while streaming" guard on a cap input keys off
+     * `IsEnabled || Running` -- so for that whole window (which contains
+     * multi-second vTaskDelay polls on the SD path) those guards read false and
+     * a command on the OTHER SCPI transport can move an input to the cap. The
+     * session would then arm at a rate admitted against a configuration it no
+     * longer has. Every cap-input guard shares this window: CONF:ADC:CHANnel
+     * (#116), USECal (#158/#270), OBDiag/SAMC, SYST:STR:FORmat, and
+     * CONF:VOLTage:PRECision / :LOAD (#832).
+     *
+     * The recompute, the comparison and the store share ONE critical section
+     * because recomputing alone would only SHRINK the window: a START hosted on
+     * the WiFi task (pri 2) can be preempted by USB SCPI (pri 7) at any
+     * instruction boundary. Holding interrupts off across the computation is
+     * legal and affordable -- it is integer-only and non-blocking (two bounded
+     * channel-array walks plus 64-bit arithmetic; no locks, logging, waits or
+     * SFR writes) and runs once per START. Once IsEnabled is published the
+     * ordinary guards take over, so Streaming_UpdateState() stays outside.
+     *
+     * Benchmark mode bypasses this exactly as it bypasses the front door; the
+     * resulting asymmetry is the correct direction (benchmark turned OFF inside
+     * the window means an uncapped rate now faces the real cap).
+     *
+     * Logging and the SCPI error stay OUTSIDE the section (the #759 pattern). */
+    bool capRevoked = false;
+    uint32_t revalidatedMax = 0;
+    taskENTER_CRITICAL();
+    if (Streaming_GetBenchmarkMode() == BENCHMARK_OFF) {
+        revalidatedMax = Streaming_ComputeMaxFreqForConfig();
+        /* freq >= 1 was validated above, so the unsigned compare is exact and,
+         * unlike the front door's (int32_t) cast, cannot misread a cap above
+         * INT32_MAX as negative. */
+        capRevoked = ((uint32_t)freq > revalidatedMax);
+    }
+    if (!capRevoked) {
+        pRunTimeStreamConfig->IsEnabled = true;
+    }
+    taskEXIT_CRITICAL();
+
+    if (capRevoked) {
+        /* Mirror the SD aborts immediately above: never leave a logging file
+         * open behind a start that did not happen (#690). */
+        if (sdLoggingRequested) {
+            pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+            sd_card_manager_UpdateSettings(pSDCardSettings);
+        }
+        LOG_E("STR:START refused (#844): config changed during start - %d Hz now "
+              "exceeds max %u Hz. Re-read CONF:CAP:JSON? and retry",
+              (int)freq, (unsigned)revalidatedMax);
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
+
     Streaming_UpdateState();
 
     // Update STATus:OPERation condition register
