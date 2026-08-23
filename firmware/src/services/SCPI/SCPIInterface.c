@@ -4348,9 +4348,22 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
      * Logging and the SCPI error stay OUTSIDE the section. */
     bool rejectSdNotEnabled = false;
     bool rejectWifiDuringSdWrite = false;
+    bool rejectStreaming = false;
 
     taskENTER_CRITICAL();
-    if ((param1 == StreamingInterface_SD ||
+    if (pRunTimeStreamConfig->IsEnabled || pRunTimeStreamConfig->Running) {
+        /* #844: ActiveInterface is a CAP INPUT -- Streaming_ComputeMaxFreqForConfig
+         * selects the whole transport term from it -- and it was the one such
+         * input with no stream-state guard at all. Without this, a running
+         * session could be redirected mid-flight (SYST:STR:INT 1 on a 15 kHz
+         * USB PB stream re-points it at WiFi, whose 1-channel PB cap is far
+         * lower) with buffers still partitioned for the old interface: the cap
+         * that admitted the session no longer describes where its bytes go.
+         *
+         * Inside the SAME critical section as the test-and-publish below, so
+         * the refusal cannot itself race the store it guards. */
+        rejectStreaming = true;
+    } else if ((param1 == StreamingInterface_SD ||
          param1 == StreamingInterface_UsbAndSd) && !pSDCardSettings->enable) {
         // Cannot stream to a card that is not enabled.
         rejectSdNotEnabled = true;
@@ -4366,6 +4379,12 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
     }
     taskEXIT_CRITICAL();
 
+    if (rejectStreaming) {
+        LOG_E("Stream interface change rejected: streaming is active "
+              "(stop streaming first)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
     if (rejectSdNotEnabled) {
         LOG_E("Cannot set SD/USB+SD interface - SD card not enabled. Use SYSTem:STORage:SD:ENAble 1");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
