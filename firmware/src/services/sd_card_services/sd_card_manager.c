@@ -931,6 +931,27 @@ done:
 }
 
 bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
+    /* Defensive zero-init for retained-RAM safety (#409), same idiom and same
+     * reason as Streaming_Init(): with -fdata-sections each file-static lands
+     * in its own .bss.<name> section, which the best-fit allocator often
+     * places OUTSIDE [_bss_begin,_bss_end] -- so the compile-time `= false`
+     * initializers below are NOT honoured across MCLR or an IPE flash.
+     *
+     * These three are the ones that decide a FILE'S CONTENT since #824, which
+     * is why they are scrubbed and the file's other statics (pre-existing, and
+     * only affecting behaviour after they are written) are left alone: a
+     * stale gSdRotating plus a stale gWriteSessionIsStreamingLog would put a
+     * header at the front of the first file of the first session after a
+     * flash, which no rotation had asked for.
+     *
+     * OUTSIDE the isInitDone guard deliberately -- that flag is a retained
+     * static too, so a scrub placed under it is skipped in exactly the case
+     * it exists for. Runs pre-scheduler with interrupts off; no critical
+     * section needed. */
+    gWriteArmDeclaredStreaming = false;
+    gWriteSessionIsStreamingLog = false;
+    gSdRotating = false;
+
     static bool isInitDone = false;
     if (!isInitDone) {
         // Get SD circular buffer from streaming pool (CPU-only, no DMA needed)
