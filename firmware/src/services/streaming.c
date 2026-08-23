@@ -2473,7 +2473,22 @@ static void Streaming_BuildSdFileHeader(StreamingEncoding encoding) {
  *     predicate; every protobuf file from the first ROTATION onward carries
  *     its sd_metadata. */
 size_t Streaming_GetSdFileHeader(const uint8_t** ppHeader) {
-    if (ppHeader == NULL || !gSdHeaderBuilt || gSdHeaderLen == 0u) {
+    if (ppHeader == NULL || !gSdHeaderBuilt) {
+        return 0;
+    }
+
+    /* ONE read of the length, in publish order (gSdHeaderBuilt is stored
+     * last, so testing it first cannot see a half-published cache).
+     *
+     * A SCPI stop on the USB task (pri 7) can preempt this one (pri 5) at
+     * any point and zero the cache. Reading the length twice -- once to
+     * test, once to return -- would let the second read see that zero and
+     * hand the caller a length of 0 with *ppHeader already assigned. That
+     * is harmless today because the caller re-tests the length, but it is
+     * the kind of two-read gap that stops being harmless when someone
+     * later trusts the pointer instead. */
+    uint32_t len = gSdHeaderLen;
+    if (len == 0u) {
         return 0;
     }
 
@@ -2489,7 +2504,7 @@ size_t Streaming_GetSdFileHeader(const uint8_t** ppHeader) {
     }
 
     *ppHeader = gSdHeaderBytes;
-    return (size_t)gSdHeaderLen;
+    return (size_t)len;
 }
 
 void Streaming_GetStats(StreamingStats* out) {
