@@ -243,24 +243,33 @@ static volatile bool gSdRotating = false;
  * start's declaration and its own UpdateSettings() consumed the declaration
  * and latched ITSELF as a streaming log. A parameter cannot be taken by
  * another caller; there is nothing global left to race for. A declaring arm
- * SETS the latch, a session teardown (mode NONE) CLEARS it, and nothing else
- * touches it. See the decision block
- * in sd_card_manager_UpdateSettings() for why that last clause is not
- * "re-latch on every WRITE" -- a config setter called during a live session
- * carries mode==WRITE without declaring anything, and re-latching there
- * silently stopped a running log from writing its rotation headers.
+ * SETS the latch, an arm that declares itself PLAIN clears it, a teardown
+ * (mode NONE) clears it, and nothing else touches it. That last clause is
+ * why it is not "re-latch on every WRITE": a config setter called during a
+ * live session carries mode==WRITE without arming anything, and re-latching
+ * there silently stopped a running log from writing its rotation headers.
  *
- * A non-streaming WRITE arm therefore needs no call and cannot get this wrong
- * by omission: an undeclared arm that finds the manager outside WRITE_TO_FILE
- * is starting a new session and clears the latch. Do NOT weaken that to "the
- * teardown clears it" -- this file sets mode NONE directly in sixteen places
- * that never reach UpdateSettings, so a session can end with the latch still
- * set. At boot it is false by the #409 scrub in sd_card_manager_Init().
+ * A non-streaming WRITE arm says so too, by calling
+ * sd_card_manager_UpdateSettingsForPlainWrite() -- SYST:STOR:SD:BENCHmark is
+ * the one in the tree. Do NOT replace that with "the teardown clears it":
+ * this file sets mode NONE directly in sixteen places that never reach
+ * UpdateSettings, so a session can end with the latch still set. At boot it
+ * is false by the #409 scrub in sd_card_manager_Init().
  *
- * Single writer per field in practice (SCPI task arms; the SD task only reads
- * the latch), both plain aligned bools -- atomic on PIC32MZ. volatile because
- * the arming task and the SD task are different contexts. */
+ * Single writer in practice (SCPI task arms; the SD task only reads it), a
+ * plain aligned bool -- atomic on PIC32MZ. volatile because the arming task
+ * and the SD task are different contexts. */
 static volatile bool gWriteSessionIsStreamingLog = false; /* latched at arm */
+
+/* #824: what a sd_UpdateSettingsImpl() caller is doing. See the three public
+ * wrappers in sd_card_manager.h for why this is a parameter and not something
+ * inferred from the manager's state. */
+typedef enum {
+    SD_WRITE_ARM_NONE = 0,   /* not arming a write session (config update,
+                              * teardown, or a non-WRITE operation) */
+    SD_WRITE_ARM_STREAMING,  /* arming a WRITE that IS a streaming log */
+    SD_WRITE_ARM_PLAIN,      /* arming a WRITE that is NOT one */
+} SdWriteArmKind;
 static int gFormatStatus = 0;  // 0=idle, 1=in progress, 2=success, -1=failed
 static uint32_t gFormatSectorsEstimate = 0;  // Estimated total sectors written during format
 
@@ -3484,12 +3493,12 @@ bool sd_card_manager_Deinit() {
     return true;
 }
 
-/* #824: the real entry point. `declaredStreaming` says whether the caller is
- * arming a STREAMING LOG, and it is a PARAMETER rather than a global precisely
- * so that no other caller can consume or clobber it (audit round 8). The two
- * public wrappers below are the whole API. */
+/* #824: the real entry point. `arm` says what the CALLER is doing, and it is a
+ * PARAMETER rather than a global precisely so that no other caller can consume
+ * or clobber it (audit round 8). The three public wrappers below are the whole
+ * API. */
 static bool sd_UpdateSettingsImpl(sd_card_manager_settings_t *pSettings,
-                                  bool declaredStreaming) {
+                                  SdWriteArmKind arm) {
     /* #589 P1: SD activity expected - restore the fast detect-poll cadence.
        (extern kept per the app_freertos.c pattern; prototype now also lives
        in drv_sdspi.h so signatures are checkable.) */
@@ -3554,52 +3563,32 @@ static bool sd_UpdateSettingsImpl(sd_card_manager_settings_t *pSettings,
 
     /* #824: decide the "is this WRITE session a streaming log?" latch.
      *
-     * Three rules, and each one is a review round:
+     * Only an ARM answers it, and it answers by which wrapper it called. A
+     * teardown (mode NONE) clears it. Everything else -- notably a config
+     * setter like SYST:STOR:SD:MAXSize, which reaches here with `mode`
+     * already WRITE and no intention of arming anything -- leaves it alone.
      *
-     *  1. A DECLARING arm sets it. Only whoever armed the write knows.
-     *  2. A NON-declaring arm clears it -- UNLESS the manager is already in
-     *     WRITE_TO_FILE, i.e. this call is a CONFIG UPDATE to a session
-     *     already in flight rather than a new session. An earlier revision
-     *     had no exception and re-latched on every mode==WRITE call, and
-     *     several setters call this with the mode unchanged:
-     *     SYST:STOR:SD:MAXSize during a live SD log re-latched "not a
-     *     streaming log", and every rotation after it lost its header.
-     *  3. mode NONE clears it.
+     * THIS USED TO BE INFERRED FROM THE MANAGER'S STATE, and every version of
+     * that inference was wrong in a different window. Recorded so nobody
+     * reintroduces one:
      *
-     * RULE 2 CANNOT BE REPLACED BY RULE 3 ALONE, which an earlier revision of
-     * this comment claimed by asserting that every WRITE session ends through
-     * mode NONE. It does not: this file makes SIXTEEN direct
-     * `gpSDCardSettings->mode = MODE_NONE` assignments that never pass through
-     * here. The OPEN_FILE no-writable-bucket path is the concrete one -- it
-     * closes the handle, sets mode NONE and goes IDLE in place, so a protobuf
-     * log that died there left the latch set, SCPI_StopStreaming then saw mode
-     * already NONE and skipped its teardown call, and the next
-     * SYST:STOR:SD:BENCHmark inherited a true latch and prepended stale
-     * sd_metadata to its rotated part. The state test closes that: whatever
-     * route the session took to end, the manager is no longer in
-     * WRITE_TO_FILE when the benchmark arms.
+     *   - "re-latch on every mode==WRITE call": SYST:STOR:SD:MAXSize during a
+     *     live log re-latched "not a streaming log" and every rotation after
+     *     it lost its header.
+     *   - "clear on mode NONE, else leave alone": this file sets
+     *     gpSDCardSettings->mode = MODE_NONE DIRECTLY in sixteen places that
+     *     never reach here -- the OPEN_FILE no-writable-bucket path among
+     *     them -- so a session could end with the latch still set, and the
+     *     next benchmark inherited it (audit round 6).
+     *   - "...unless currentProcessState == WRITE_TO_FILE": during a ROTATION
+     *     the manager sits in OPEN_FILE, so a config update landing there was
+     *     read as a new session (round 7).
+     *   - "...or gSdRotating": that then let a benchmark ARMED during a
+     *     rotation be read as a config update and inherit the latch (round 9).
      *
-     * RESIDUALS, stated rather than hidden. Note the asymmetry first: every
-     * path below that gets the latch WRONG in the "false" direction merely
-     * leaves a split file without its "# Device:" header. Only (b) can put a
-     * header where none belongs, and only through a path that has already
-     * destroyed the session.
-     *
-     * (a) A config update landing in the FIRST file's open -- before any
-     * rotation has occurred, so gSdRotating is still false and the state is
-     * OPEN_FILE -- is covered by neither half of the in-flight test and clears
-     * the latch. That window is one file-open wide and SCPI_StartStreaming is
-     * blocked on IsWriteReady() throughout it, so the setter would have to
-     * arrive on the OTHER SCPI transport.
-     *
-     * (b) A benchmark issued while a log is genuinely still in WRITE_TO_FILE
-     * is indistinguishable here from a config update, so it would inherit the
-     * latch. That is reachable only because SYST:STOR:SD:BENCHmark has no
-     * IsBusy guard by design (#736 -- a running benchmark OWNS the logging
-     * target), and on that path it has already clobbered the logging target
-     * out from under the live session (#728). A wrong header is the least of
-     * what is wrong there, and adding the guard is a behaviour change on the
-     * #736 claim machinery.
+     * Each of the last three put a stale protobuf sd_metadata into a
+     * benchmark output file, or took a header off a live log's split files.
+     * The caller knows what it is doing; the state does not say.
      *
      * Placed AFTER the #589 refusal gate on purpose: that gate clears the
      * requested mode and returns, so a refused STR:START must not leave the
@@ -3607,28 +3596,10 @@ static bool sd_UpdateSettingsImpl(sd_card_manager_settings_t *pSettings,
      * the #409 scrub in sd_card_manager_Init(). */
     if (pSettings != NULL) {
         taskENTER_CRITICAL();
-        if (pSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
-            if (declaredStreaming) {
-                gWriteSessionIsStreamingLog = true;
-            } else if (gSDCardData.currentProcessState
-                           != SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE
-                       && !gSdRotating) {
-                /* An undeclared arm that is NOT a config update to a session
-                 * already in flight is a NEW write session, and it did not
-                 * claim to be a streaming log -- so it is not one.
-                 *
-                 * `!gSdRotating` is the second half of "in flight" and it is
-                 * not optional (audit round 7): DURING a rotation the manager
-                 * sits in OPEN_FILE, not WRITE_TO_FILE, so the state test
-                 * alone read a config update landing in that window as a new
-                 * session and cleared the latch -- costing the split file
-                 * being opened right then, and every rotation after it, its
-                 * header. gSdRotating is true for exactly that window (set
-                 * while the old handle is still open, cleared in the critical
-                 * block that opens WRITE_TO_FILE), so the two together cover
-                 * the whole steady-state life of a rotating write session. */
-                gWriteSessionIsStreamingLog = false;
-            }
+        if (arm == SD_WRITE_ARM_STREAMING) {
+            gWriteSessionIsStreamingLog = true;
+        } else if (arm == SD_WRITE_ARM_PLAIN) {
+            gWriteSessionIsStreamingLog = false;
         } else if (pSettings->mode == SD_CARD_MANAGER_MODE_NONE) {
             gWriteSessionIsStreamingLog = false;
         }
@@ -3680,12 +3651,17 @@ static bool sd_UpdateSettingsImpl(sd_card_manager_settings_t *pSettings,
 }
 
 bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
-    return sd_UpdateSettingsImpl(pSettings, false);
+    return sd_UpdateSettingsImpl(pSettings, SD_WRITE_ARM_NONE);
 }
 
 bool sd_card_manager_UpdateSettingsForStreamingLog(
         sd_card_manager_settings_t *pSettings) {
-    return sd_UpdateSettingsImpl(pSettings, true);
+    return sd_UpdateSettingsImpl(pSettings, SD_WRITE_ARM_STREAMING);
+}
+
+bool sd_card_manager_UpdateSettingsForPlainWrite(
+        sd_card_manager_settings_t *pSettings) {
+    return sd_UpdateSettingsImpl(pSettings, SD_WRITE_ARM_PLAIN);
 }
 
 bool sd_card_manager_IsIdle() {
