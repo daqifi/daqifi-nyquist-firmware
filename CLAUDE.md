@@ -629,7 +629,8 @@ until it has a precision-4 basis of its own (#529 follow-up).
 `voltagePrecision` gates the refit to `<= 4`: 0 is `int_to_str` and 1..4 emit
 fewer or equal characters than the precision-4 basis, while 5..10 emit **more**
 and were never measured, so they fall through to the #563 law.
-`CONFigure:VOLTage:PRECision` and `:LOAD` are both rejected while streaming
+`CONFigure:VOLTage:PRECision` and `CONFigure:VOLTage:LOAD` are both
+rejected while streaming
 (same idiom as the `CONF:ADC:CHANnel` #116 guard) so a session cannot move onto
 a costlier encoder after its rate was admitted — see #844 for the residual
 start-window race, which every cap-input guard shares.
