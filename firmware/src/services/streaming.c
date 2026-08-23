@@ -666,9 +666,12 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
      * configuration that never existed.
      *
      * One read cannot be internally inconsistent (32-bit loads are atomic on
-     * PIC32MZ). This does not close the wider start-window race -- that is
-     * #844, and it needs a re-validate-before-arming change to the START path
-     * -- but a single computation contradicting itself costs nothing to fix. */
+     * PIC32MZ). The wider start-window race -- an input moving between START's
+     * admitting check and the arm -- is a separate problem, closed since #844
+     * by re-validating this function's result inside the same critical section
+     * that publishes IsEnabled (SCPI_StartStreaming). Both fixes are needed:
+     * this one keeps a single computation self-consistent, #844 keeps the
+     * admitted computation true of the session that actually starts. */
     StreamingEncoding enc = sc->Encoding;
 
     uint32_t maxFreq;
