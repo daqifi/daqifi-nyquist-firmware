@@ -3381,6 +3381,38 @@ static bool SCPI_QuiesceAndResetCoherentPool(void) {
  * interface changes inside one START. */
 static volatile uint32_t gStreamIfaceGen = 0;
 
+/* #848: undo START's interface publish when the start does not happen.
+ *
+ * The publish has to land before PrepareStreamingBuffers (which sizes the
+ * rings from ActiveInterface), and several refusal paths follow it: the
+ * partition abort, the post-repartition SD re-open, and the three arm-time
+ * re-validations. Without this, a START refused there left the interface on
+ * the value it auto-detected, and because the auto-detect only adopts when
+ * the stored value is USB, that leftover is then read as an EXPLICIT choice:
+ * a WiFi START that failed leaves USB starts streaming to WiFi, returning OK
+ * with no USB data (adversarial audit on PR #849).
+ *
+ * COMPARE-and-restore, not a plain store: if some other writer has moved the
+ * field since our publish, that writer's choice is the current one and
+ * stamping ours back over it would be the bug this function exists to
+ * prevent, inverted.
+ *
+ * The generation counter is deliberately NOT bumped -- it counts SETTER
+ * changes, and START's publish does not bump it either, so the pair stays
+ * symmetric. */
+static void SCPI_UnpublishStartInterface(StreamingRuntimeConfig *cfg,
+                                         StreamingInterface published,
+                                         StreamingInterface original) {
+    if (published == original) {
+        return;      /* nothing was adopted; nothing to undo */
+    }
+    taskENTER_CRITICAL();
+    if (cfg->ActiveInterface == published) {
+        cfg->ActiveInterface = original;
+    }
+    taskEXIT_CRITICAL();
+}
+
 static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     int32_t freq;
 
@@ -3945,7 +3977,13 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * a START with no previous session spends multi-second SD polls here.
      *
      * The arm-time check further down repeats both tests: this publish closes
-     * detect->publish, that one closes publish->arm. */
+     * detect->publish, that one closes publish->arm.
+     *
+     * "Point of no return" is about the PREVIOUS SESSION, which is now gone --
+     * it is NOT a claim that nothing after this can refuse. Several things
+     * can, so every refusal below calls SCPI_UnpublishStartInterface: a start
+     * that did not happen must not leave the interface somewhere the caller
+     * never asked for. */
     bool ifaceRaced = false;
     taskENTER_CRITICAL();
     if (pRunTimeStreamConfig->ActiveInterface != ifaceAtDetect ||
@@ -3981,6 +4019,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         if (!PrepareStreamingBuffers(mc->samplePoolCount,
                                      AInSampleList_ElementSize(enabledChannels))) {
+            SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart, ifaceAtDetect);
             SCPI_ExecutionError(context, "STR:START: buffer partition failed (USB DMA / tasks not quiescent, or pool error)");
             return SCPI_RES_ERR;
         }
@@ -4004,6 +4043,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
              * asserting SD logging with no file open is the failure #690
              * already fixed once on this path. */
             if (!sd_card_manager_TryClaim()) {
+                SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart, ifaceAtDetect);
                 LOG_E("STR:START refused: SD busy with another operation at "
                       "post-repartition re-open\r\n");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -4042,6 +4082,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                  * but no file open (would silently drop every sample). */
                 pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                 sd_card_manager_UpdateSettings(pSDCardSettings);
+                SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart, ifaceAtDetect);
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
                 return SCPI_RES_ERR;
             }
@@ -4168,6 +4209,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardSettings);
         }
+        SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart, ifaceAtDetect);
         LOG_E("STR:START refused (#844): every ADC and DIO input was disabled "
               "during start - nothing left to stream");
         SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
@@ -4175,6 +4217,10 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     }
 
     if (ifaceMoved) {
+        /* No SCPI_UnpublishStartInterface here, deliberately: this branch
+         * fires BECAUSE another writer owns the field now, so restoring our
+         * value would overwrite the choice that caused the refusal. Leaving
+         * it is the whole point. */
         if (sdLoggingRequested) {
             pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardSettings);
@@ -4193,6 +4239,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardSettings);
         }
+        SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart, ifaceAtDetect);
         LOG_E("STR:START refused (#844): config changed during start - %d Hz now "
               "exceeds max %u Hz. Re-read CONF:CAP:JSON? and retry",
               (int)freq, (unsigned)revalidatedMax);
