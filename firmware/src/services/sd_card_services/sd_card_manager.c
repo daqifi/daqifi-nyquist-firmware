@@ -235,9 +235,19 @@ static volatile bool gSdRotating = false;
  * rotation race those earlier rounds closed.
  *
  * The answer is only known at ARM time, by whoever armed the write, so that is
- * where it is recorded. DEFAULT-DENY: the arm declares itself streaming or it
- * is not one. A new non-streaming WRITE arm added later therefore gets the
- * safe answer without having to know this exists.
+ * where it is recorded: a declaring arm SETS the latch, a session teardown
+ * (mode NONE) CLEARS it, and nothing else touches it. See the decision block
+ * in sd_card_manager_UpdateSettings() for why that last clause is not
+ * "re-latch on every WRITE" -- a config setter called during a live session
+ * carries mode==WRITE without declaring anything, and re-latching there
+ * silently stopped a running log from writing its rotation headers.
+ *
+ * A non-streaming WRITE arm therefore needs no call and cannot get this wrong
+ * by omission, but the reason is the teardown, not the arm: every WRITE
+ * session ends through mode NONE (SCPI_StopStreaming for an enabled WRITE,
+ * SYST:STOR:SD:BENCHmark for its own, app_SDCard_GracefulShutdown), so the
+ * latch is already false when the next non-declaring arm opens one. At boot it
+ * is false by the #409 scrub in sd_card_manager_Init().
  *
  * Single writer per field in practice (SCPI task arms; the SD task only reads
  * the latch), both plain aligned bools -- atomic on PIC32MZ. volatile because

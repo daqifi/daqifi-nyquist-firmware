@@ -359,12 +359,17 @@ void sd_card_manager_ReleaseClaim(void);
  * so its rotated split files get this session's self-describing header.
  *
  * Call it immediately before the `mode = MODE_WRITE` + UpdateSettings() pair.
- * It is a ONE-SHOT token: the next UpdateSettings() consumes it, and an arm
- * that did not set it latches "not a streaming log". That default-deny is the
- * point -- SYST:STOR:SD:BENCHmark arms WRITE through the same split-file
- * rotation path, and inheriting the header there corrupts its output file
- * (#824 audit round 5). A non-streaming WRITE arm needs no call and cannot get
- * it wrong by omission. */
+ * It is a ONE-SHOT token: the next UpdateSettings() consumes it and sets the
+ * session latch. Nothing else sets that latch -- a session teardown (mode
+ * NONE) clears it, and every other call leaves it alone, which is what keeps a
+ * mid-session config setter such as SYST:STOR:SD:MAXSize from silently
+ * stopping a running log's rotation headers.
+ *
+ * A non-streaming WRITE arm needs no call: SYST:STOR:SD:BENCHmark arms WRITE
+ * through the same split-file rotation path, and inheriting the header there
+ * corrupts its output file (#824 audit round 5) -- but the teardown of the
+ * previous session has already cleared the latch by then, so omission is
+ * safe. */
 void sd_card_manager_DeclareWriteIsStreamingLog(void);
 
     /**
