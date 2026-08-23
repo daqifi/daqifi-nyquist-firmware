@@ -355,22 +355,22 @@ extern "C" {
 bool sd_card_manager_TryClaim(void);
 void sd_card_manager_ReleaseClaim(void);
 
-/* #824: declare that the WRITE session about to be armed is a STREAMING log,
- * so its rotated split files get this session's self-describing header.
+/* #824: arm a WRITE that IS a streaming log, so its rotated split files get
+ * this session's self-describing header. Use it in place of
+ * sd_card_manager_UpdateSettings() at a stream-start arm; everything else
+ * keeps using the plain form.
  *
- * Call it immediately before the `mode = MODE_WRITE` + UpdateSettings() pair.
- * It is a ONE-SHOT token: the next UpdateSettings() consumes it and sets the
- * session latch. Nothing else sets that latch -- a session teardown (mode
- * NONE) clears it, and every other call leaves it alone, which is what keeps a
- * mid-session config setter such as SYST:STOR:SD:MAXSize from silently
- * stopping a running log's rotation headers.
+ * It is a separate ENTRY POINT rather than a flag set beforehand because the
+ * flag was stealable: SYST:STOR:SD:BENCHmark takes no claim (#736), so a
+ * benchmark arming from USB SCPI could land between a WiFi-SCPI stream
+ * start's flag write and its own UpdateSettings(), consume the declaration,
+ * and latch itself as a streaming log — putting the previous stream's
+ * protobuf sd_metadata into a rotated benchmark part (#824 audit round 8).
  *
- * A non-streaming WRITE arm needs no call: SYST:STOR:SD:BENCHmark arms WRITE
- * through the same split-file rotation path, and inheriting the header there
- * corrupts its output file (#824 audit round 5) -- but the teardown of the
- * previous session has already cleared the latch by then, so omission is
- * safe. */
-void sd_card_manager_DeclareWriteIsStreamingLog(void);
+ * A non-streaming WRITE arm needs no call and cannot get this wrong by
+ * omission: the plain wrapper declares false. */
+bool sd_card_manager_UpdateSettingsForStreamingLog(
+        sd_card_manager_settings_t *pSettings);
 
     /**
      * @brief #703: is the SD read scratch buffer large enough for SD:GET?

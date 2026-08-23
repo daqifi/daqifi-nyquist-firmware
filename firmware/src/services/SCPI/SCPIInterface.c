@@ -3702,11 +3702,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         sd_card_manager_ClearStartupDirFull();   /* #689 */
 
         /* #824: this WRITE is a streaming log, so its rotated split files must
-         * carry the session header. Declared per-arm because the SD manager
-         * defaults to "not a streaming log" -- see the header's comment. */
-        sd_card_manager_DeclareWriteIsStreamingLog();
+         * carry the session header. Stated as an ARGUMENT of the arm, not a
+         * flag set beforehand -- a flag was stealable by a concurrent
+         * benchmark arm (audit round 8; see the header's comment). */
         pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
-        sd_card_manager_UpdateSettings(pSDCardSettings);
+        sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings);
         /* #836: ownership is now carried by `mode != MODE_NONE`, which keeps
          * IsBusy() true, so releasing here leaves no gap. */
         sd_card_manager_ReleaseClaim();
@@ -3853,13 +3853,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             }
             sd_card_manager_ClearStartupDirFull();
             sd_card_manager_ClearStartupDiskFull();
-            /* #824: re-declare. The token is consumed by the FIRST arm's
-             * UpdateSettings above, and PrepareStreamingBuffers tore that
-             * session down (WRITE -> NONE) in between, so this re-open is a
-             * fresh arm and must state its own case. */
-            sd_card_manager_DeclareWriteIsStreamingLog();
+            /* #824: PrepareStreamingBuffers tore the first arm's session down
+             * (WRITE -> NONE) in between, so this re-open is a fresh arm and
+             * must state its own case. */
             pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
-            sd_card_manager_UpdateSettings(pSDCardSettings);
+            sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings);
             sd_card_manager_ReleaseClaim();   /* #836: mode now holds it */
             int readyWait = 0;
             while (!sd_card_manager_IsWriteReady() && readyWait < 500) {

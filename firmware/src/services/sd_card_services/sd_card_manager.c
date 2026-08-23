@@ -234,9 +234,17 @@ static volatile bool gSdRotating = false;
  * is a session latch that stays true after the stream ends. Each reopens the
  * rotation race those earlier rounds closed.
  *
- * The answer is only known at ARM time, by whoever armed the write, so that is
- * where it is recorded: a declaring arm SETS the latch, a session teardown
- * (mode NONE) CLEARS it, and nothing else touches it. See the decision block
+ * The answer is only known at ARM time, by whoever armed the write, so the arm
+ * states it AS AN ARGUMENT: sd_card_manager_UpdateSettingsForStreamingLog()
+ * instead of sd_card_manager_UpdateSettings(). An earlier revision used a
+ * global one-shot token set just before the arm, and audit round 8 showed it
+ * was STEALABLE -- SYST:STOR:SD:BENCHmark takes no claim (#736), so a
+ * benchmark arming from USB SCPI in the window between a WiFi-SCPI stream
+ * start's declaration and its own UpdateSettings() consumed the declaration
+ * and latched ITSELF as a streaming log. A parameter cannot be taken by
+ * another caller; there is nothing global left to race for. A declaring arm
+ * SETS the latch, a session teardown (mode NONE) CLEARS it, and nothing else
+ * touches it. See the decision block
  * in sd_card_manager_UpdateSettings() for why that last clause is not
  * "re-latch on every WRITE" -- a config setter called during a live session
  * carries mode==WRITE without declaring anything, and re-latching there
@@ -252,7 +260,6 @@ static volatile bool gSdRotating = false;
  * Single writer per field in practice (SCPI task arms; the SD task only reads
  * the latch), both plain aligned bools -- atomic on PIC32MZ. volatile because
  * the arming task and the SD task are different contexts. */
-static volatile bool gWriteArmDeclaredStreaming = false;  /* one-shot token */
 static volatile bool gWriteSessionIsStreamingLog = false; /* latched at arm */
 static int gFormatStatus = 0;  // 0=idle, 1=in progress, 2=success, -1=failed
 static uint32_t gFormatSectorsEstimate = 0;  // Estimated total sectors written during format
@@ -947,7 +954,7 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
      * places OUTSIDE [_bss_begin,_bss_end] -- so the compile-time `= false`
      * initializers below are NOT honoured across MCLR or an IPE flash.
      *
-     * These three are the ones that decide a FILE'S CONTENT since #824, which
+     * These two are the ones that decide a FILE'S CONTENT since #824, which
      * is why they are scrubbed and the file's other statics (pre-existing, and
      * only affecting behaviour after they are written) are left alone: a
      * stale gSdRotating plus a stale gWriteSessionIsStreamingLog would put a
@@ -958,7 +965,6 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
      * static too, so a scrub placed under it is skipped in exactly the case
      * it exists for. Runs pre-scheduler with interrupts off; no critical
      * section needed. */
-    gWriteArmDeclaredStreaming = false;
     gWriteSessionIsStreamingLog = false;
     gSdRotating = false;
 
@@ -3478,19 +3484,12 @@ bool sd_card_manager_Deinit() {
     return true;
 }
 
-bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
-    /* #824: consume the one-shot streaming declaration HERE, ahead of every
-     * early return below, so it can never survive into a later arm that did
-     * not make it. The latch it feeds is decided further down, after the #589
-     * refusal gate -- a refused arm must not leave the latch set. */
-    bool declaredStreaming = false;
-    if (pSettings != NULL) {
-        taskENTER_CRITICAL();
-        declaredStreaming = gWriteArmDeclaredStreaming;
-        gWriteArmDeclaredStreaming = false;
-        taskEXIT_CRITICAL();
-    }
-
+/* #824: the real entry point. `declaredStreaming` says whether the caller is
+ * arming a STREAMING LOG, and it is a PARAMETER rather than a global precisely
+ * so that no other caller can consume or clobber it (audit round 8). The two
+ * public wrappers below are the whole API. */
+static bool sd_UpdateSettingsImpl(sd_card_manager_settings_t *pSettings,
+                                  bool declaredStreaming) {
     /* #589 P1: SD activity expected - restore the fast detect-poll cadence.
        (extern kept per the app_freertos.c pattern; prototype now also lives
        in drv_sdspi.h so signatures are checkable.) */
@@ -3604,9 +3603,8 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
      *
      * Placed AFTER the #589 refusal gate on purpose: that gate clears the
      * requested mode and returns, so a refused STR:START must not leave the
-     * latch set for whatever arms WRITE next. The token itself was consumed at
-     * the top either way, so it cannot leak forward. At boot the latch is
-     * false by the #409 scrub in sd_card_manager_Init(). */
+     * latch set for whatever arms WRITE next. At boot the latch is false by
+     * the #409 scrub in sd_card_manager_Init(). */
     if (pSettings != NULL) {
         taskENTER_CRITICAL();
         if (pSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
@@ -3679,6 +3677,15 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
     }
     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_DEINIT;
     return true;
+}
+
+bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
+    return sd_UpdateSettingsImpl(pSettings, false);
+}
+
+bool sd_card_manager_UpdateSettingsForStreamingLog(
+        sd_card_manager_settings_t *pSettings) {
+    return sd_UpdateSettingsImpl(pSettings, true);
 }
 
 bool sd_card_manager_IsIdle() {
@@ -3999,10 +4006,6 @@ void sd_card_manager_ReleaseClaim(void) {
     taskENTER_CRITICAL();
     gSdScpiClaim = false;
     taskEXIT_CRITICAL();
-}
-
-void sd_card_manager_DeclareWriteIsStreamingLog(void) {
-    gWriteArmDeclaredStreaming = true;
 }
 
 bool sd_card_manager_IsBusy(void) {
