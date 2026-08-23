@@ -4107,6 +4107,23 @@ static scpi_result_t SCPI_SetDataPrecision(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
+    /* #832: reject while streaming, mirroring the CONF:ADC:CHANnel (#116) and
+     * CONF:ADC:USECal (#158/#270) guards, and for the same reason: the session
+     * cap is computed at START and precision is an INPUT to it. csv_Encode
+     * reads VoltagePrecision live per buffer, so raising it mid-session would
+     * make the encoder do more work per sample than the admitted rate was
+     * checked against -- silently, since nothing recomputes the cap. Concretely
+     * a 1xT1 CSV session admitted at 15263 Hz (precision <= 4) could be pushed
+     * to precision 10, whose cap for the same config is 10589.
+     *
+     * Rejecting is right rather than re-capping: the cap is a hard limit at
+     * START (#524), there is no mechanism to lower an already-running session,
+     * and silently changing the rate under a client is what #524 removed. */
+    if (pRunTimeStreamConfig->IsEnabled || pRunTimeStreamConfig->Running) {
+        LOG_E("Voltage-precision change rejected: streaming is active (stop streaming first)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
     pRunTimeStreamConfig->VoltagePrecision = (uint8_t)param1;
     return SCPI_RES_OK;
 }
