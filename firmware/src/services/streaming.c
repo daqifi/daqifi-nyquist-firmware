@@ -656,6 +656,21 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
     uint32_t scanCount = MC12b_ComputeScanList(true, sc->OnboardDiagEnabled, NULL, NULL);
     uint32_t userT2    = MC12b_ComputeScanList(true, false, NULL, NULL);
 
+    /* Read Encoding ONCE, for EVERY term of the min() below. Deriving the
+     * flags from separate reads let a concurrent change between them produce a
+     * pair matching NO encoding -- e.g. both 0, the CSV class, for a session
+     * that is actually JSON, which would hand JSON the pure-T1 CSV raise that
+     * the isJson argument exists to prevent. Worse, the ADDITIVE and TRANSPORT
+     * terms could disagree with each other inside one computation: a CSV
+     * additive of 15263 min()'d with a JSON transport of 11000 is a cap for a
+     * configuration that never existed.
+     *
+     * One read cannot be internally inconsistent (32-bit loads are atomic on
+     * PIC32MZ). This does not close the wider start-window race -- that is
+     * #844, and it needs a re-validate-before-arming change to the START path
+     * -- but a single computation contradicting itself costs nothing to fix. */
+    StreamingEncoding enc = sc->Encoding;
+
     uint32_t maxFreq;
     if (bc != NULL && bc->BoardVariant == 1u && total > 0u) {
         /* NQ1 (#557): freeze-aware additive ADC/scan cap replaces the
@@ -664,15 +679,6 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
          * those terms were both over-conservative (T1) AND wrong (inflated T2).
          * monitoring channels in the scan = scanCount - userT2 (8 when OBDiag). */
         uint32_t nMon = (scanCount > userT2) ? (scanCount - userT2) : 0u;
-        /* Read Encoding ONCE. Deriving isProtoBuf and isJson from two separate
-         * reads let a concurrent change between them produce a flag pair that
-         * matches NO encoding -- e.g. both 0, which is the CSV class, for a
-         * session that is actually JSON. That would hand JSON the pure-T1 CSV
-         * raise, which is the one thing the isJson argument exists to prevent.
-         * One read cannot be internally inconsistent (32-bit loads are atomic
-         * on PIC32MZ). It does not close the wider start-window race -- that is
-         * #844 -- but this part costs nothing to get right. */
-        StreamingEncoding enc = sc->Encoding;
         maxFreq = Streaming_AdcAdditiveCap_NQ1(
                 type1, userT2, nMon,
                 (enc == Streaming_ProtoBuffer) ? 1u : 0u,
@@ -717,7 +723,7 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
      * (#595 — NQ1-only basis) vs the conservative pre-#595 PB caps for NQ2/NQ3
      * (their wider ADC samples push more PB bytes/sample per Hz). */
     uint32_t transportMax = Streaming_TransportMaxFreq(
-            iface, sc->Encoding, total,
+            iface, enc, total,
             (bc != NULL && bc->BoardVariant == 1u) ? 1u : 0u);
     if (transportMax < maxFreq) maxFreq = transportMax;
     return maxFreq;
