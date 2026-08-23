@@ -3469,19 +3469,15 @@ bool sd_card_manager_Deinit() {
 }
 
 bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
-    /* #824: consume the one-shot streaming declaration, ahead of every early
-     * return below so it can never survive into a later arm that did not make
-     * it. Only a WRITE arm updates the latch: a NONE teardown or a READ/LIST
-     * op must not strip the header from a WRITE session it is not replacing.
-     * An arm that made no declaration latches FALSE -- that is the default-deny
-     * this rests on. */
+    /* #824: consume the one-shot streaming declaration HERE, ahead of every
+     * early return below, so it can never survive into a later arm that did
+     * not make it. The latch it feeds is decided further down, after the #589
+     * refusal gate -- a refused arm must not leave the latch set. */
+    bool declaredStreaming = false;
     if (pSettings != NULL) {
         taskENTER_CRITICAL();
-        bool declaredStreaming = gWriteArmDeclaredStreaming;
+        declaredStreaming = gWriteArmDeclaredStreaming;
         gWriteArmDeclaredStreaming = false;
-        if (pSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
-            gWriteSessionIsStreamingLog = declaredStreaming;
-        }
         taskEXIT_CRITICAL();
     }
 
@@ -3545,6 +3541,40 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
         }
         pSettings->mode = SD_CARD_MANAGER_MODE_NONE;
         return false;
+    }
+
+    /* #824: decide the "is this WRITE session a streaming log?" latch.
+     *
+     * SET on a declaring arm, CLEARED when a session is torn down, and
+     * OTHERWISE LEFT ALONE. That last clause is the part that took a review
+     * round to get right: an earlier revision re-decided the latch on ANY call
+     * carrying mode==WRITE, and several setters call this with the mode
+     * unchanged -- SYST:STOR:SD:MAXSize is the plain one. Issued during a live
+     * SD logging session it re-latched "not a streaming log", and every
+     * rotation after it lost its header. A config update to a session in
+     * flight must not re-answer a question only the ARM can answer.
+     *
+     * Default-deny survives that relaxation because every WRITE session ends
+     * through mode NONE -- SCPI_StopStreaming closes an enabled WRITE that
+     * way, SYST:STOR:SD:BENCHmark ends its own the same way, and
+     * app_SDCard_GracefulShutdown too -- so the latch is already false by the
+     * time a non-declaring arm (the benchmark, or RestoreSdMode after
+     * SYST:STR:THRoughput) opens one. At boot it is false by the #409 scrub in
+     * sd_card_manager_Init().
+     *
+     * Placed AFTER the #589 refusal gate on purpose: that gate clears the
+     * requested mode and returns, so a refused STR:START must not leave the
+     * latch set for whatever arms WRITE next. The token itself was consumed at
+     * the top either way, so it cannot leak forward. */
+    if (pSettings != NULL) {
+        taskENTER_CRITICAL();
+        if (declaredStreaming
+            && pSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+            gWriteSessionIsStreamingLog = true;
+        } else if (pSettings->mode == SD_CARD_MANAGER_MODE_NONE) {
+            gWriteSessionIsStreamingLog = false;
+        }
+        taskEXIT_CRITICAL();
     }
 
     if (pSettings != NULL && gpSDCardSettings != NULL) {
