@@ -864,7 +864,21 @@ The PBxDIV /3 writes live in `SystemInit`/`initialization.c` (Harmony's `CLK_Ini
 
 **SPI4 (SD + WINC) is clocked from PBCLK2, not REFCLK1** — `MCLKSEL=0` in `plib_spi4_master.c`, and no `REFO1CON` configuration exists anywhere in the tree (the pre-#487 revision of this table claiming "REFCLK1 passthrough, MCLKSEL=1" was stale: the measured 16.67 MHz SPI4 clock matched PBCLK2=100/BRG=2 exactly, not REFCLK1=200). SPI4 BRG formula: `SPI_CLK = 84MHz / (2 × (BRG + 1))` — SDSPI's 20 MHz request now rounds to 21 MHz (BRG=1); at the old 100 MHz PBCLK2 it rounded to 16.67 MHz (BRG=2).
 
-> **⚠️ The descriptive throughput TABLES below (Session-24 soaks, fit basis) pre-date #487 — measured at 200 MHz/100 MHz.** They are historical characterization, not the enforced caps. **The ENFORCED caps HAVE been re-fit for 252 MHz** (contrary to older revisions of this note): PB transport + additive were raised (**#595/#600** — USB PB single 15000→22000 curve 120000/(1+n), SD PB single 9000→13000 curve 99000/(4+n), ISR_MAX 16000→22000); USB CSV transport was raised (**#712**); and the pure-T1 PB additive was **lowered** (**#715/#714** — the 252 MHz PB refit had over-capped pure-T1 PB, silently dropping data at cap: USB PB 1×T1 19340→15799, SD PB 1×T1 9852→7900). **Still on the 200 MHz-era fit (real remaining headroom):** the CSV *additive* grid, JSON (`CSV×0.5` placeholder, **#529**), the WiFi PB curve, and all NQ2/NQ3 caps (legacy 200 MHz envelope by design). The authoritative, current cap dataset is `daqifi-python-test-suite/benchmarks/` (e.g. `atcap_20260723_*.csv`), not the tables in this file; the enforced values live in `firmware/src/services/streaming.h` (`Streaming_AdcAdditiveCap_NQ1` / `Streaming_SdAdditiveCap_NQ1` / `Streaming_TransportMaxFreq`). Cross-check those + the `#595/#600/#712/#715` PRs before running any 252 MHz cap work.
+> **⚠️ The descriptive throughput TABLES below (Session-24 soaks, fit basis) pre-date #487 — measured at 200 MHz/100 MHz.** They are historical characterization, not the enforced caps. **The ENFORCED caps HAVE been re-fit for 252 MHz** (contrary to older revisions of this note): PB transport + additive were raised (**#595/#600** — USB PB single 15000→22000 curve 120000/(1+n), SD PB single 9000→13000 curve 99000/(4+n), ISR_MAX 16000→22000); USB CSV transport was raised (**#712**); and the pure-T1 PB additive was **lowered** (**#715/#714** — the 252 MHz PB refit had over-capped pure-T1 PB, silently dropping data at cap: USB PB 1×T1 19340→15799, SD PB 1×T1 9852→7900). **Still on the 200 MHz-era fit (real remaining headroom):** the CSV *additive* grid for **nT1 >= 2** (its **single-channel** case was re-fitted by **#832**, 10589 -> 15263), JSON (`CSV×0.5` placeholder except USB/NQ1, **#529**), the WiFi PB curve, and all NQ2/NQ3 caps (legacy 200 MHz envelope by design). The authoritative, current cap dataset is `daqifi-python-test-suite/benchmarks/` (e.g. `atcap_20260723_*.csv`), not the tables in this file; the enforced values live in `firmware/src/services/streaming.h` (`Streaming_AdcAdditiveCap_NQ1` / `Streaming_SdAdditiveCap_NQ1` / `Streaming_TransportMaxFreq`). Cross-check those + the `#595/#600/#712/#715` PRs before running any 252 MHz cap work.
+>
+> **⚠️ CAP WORK MUST PIN `CONFigure:VOLTage:PRECision` (#832 / test-suite #233).**
+> `csv_encoder` takes an integer fast path (`int_to_str`) at precision **0** and
+> formats a float per channel per sample at **4**, which is what NQ1 **ships**.
+> That is a first-order cost, not a rounding detail: an A/B at one rate measured
+> precision 0 clean against precision **4 losing 10.8 %**, at byte rates within
+> 1 % of each other — encoder CPU, not bandwidth. Precision is NVM-backed, so a
+> board that some earlier test pinned and never restored silently changes what
+> every subsequent ceiling means. A #832 CSV refit fitted to unpinned
+> (precision-0) ceilings dropped **21,286 samples at its own new cap** when
+> flashed. `test_overnight_characterization.py --precision <0-10|device>` pins it
+> and records the READ-BACK value per row as `precision_actual`; use it for
+> anything whose numbers will be fitted, and treat any CSV without that column as
+> being of unknown precision.
 
 #### Hardware FPU
 

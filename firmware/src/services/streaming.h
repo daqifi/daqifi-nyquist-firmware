@@ -116,7 +116,11 @@ static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t to
  * PB path as a PIECEWISE model split by scan class — pure-T1 (no scan),
  * armed OBDiag-off, and OBDiag-on (the last keeps the #563 coefficients,
  * 600 s at-cap revalidated) — because a single additive law under-fit the
- * grid (tightness 0.74). CSV keeps the #563 single law (no CSV grid basis).
+ * grid (tightness 0.74). CSV keeps the #563 single law EXCEPT for the pure-T1
+ * (no-scan) class, which #832 re-fitted at 252 MHz and at CONF:VOLT:PRECision 4
+ * -- the NQ1 shipped default, and a materially more expensive encoder path than
+ * the precision-0 integer fast path every earlier CSV basis was measured on.
+ * JSON shares the CSV branch but is EXCLUDED from that refit (see below).
  *   - PB: margin 0.88 keeps each class a safe never-over envelope.
  *   - CSV is byte/transport-bound (noisier) -> margin 0.80 here, AND the
  *     per-format transport term is still min()'d downstream (binds CSV lower).
@@ -125,7 +129,8 @@ static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t to
  * channels in the scan (8 when OBDiag on, else 0); arm = any scanned channel.
  */
 static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2user,
-                                                    uint32_t nMon, uint32_t isProtoBuf) {
+                                                    uint32_t nMon, uint32_t isProtoBuf,
+                                                    uint32_t isJson) {
     uint32_t armed = (nT2user > 0u || nMon > 0u) ? 1u : 0u;
     uint64_t period_ns, num;
     if (isProtoBuf) {
@@ -158,6 +163,76 @@ static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2us
             period_ns = 52700ULL + 3000ULL*nT1;
         }
         num = 880000000ULL;   /* 1e9 * 0.88 (PB safe envelope) */
+    } else if (armed == 0u && isJson == 0u) {
+        /* #832 (2026-08-23): pure-T1 CSV/CsvCompact, re-fitted at 252 MHz AND
+         * at CONF:VOLTage:PRECision 4 -- the NQ1 SHIPPED DEFAULT.
+         *
+         * WHY PRECISION IS NAMED HERE. csv_encoder takes an integer fast path
+         * (int_to_str) at precision 0 and formats a float per channel per
+         * sample at 4. The first attempt at this refit was fitted to ceilings
+         * measured on a bench board whose NVM held 0, and the device then
+         * dropped 21,286 samples AT ITS OWN NEW CAP -- the #714/#715 failure
+         * mode, reached through the instrument rather than through the fit.
+         * An A/B at one rate measured precision 0 clean vs precision 4 losing
+         * 10.8%, at byte rates within 1% of each other: encoder CPU, not
+         * bandwidth. The basis below is measured with precision PINNED to 4
+         * and recorded per row (test-suite #233), 600 s freeze-aware soaks
+         * (ScanStaleDropped and T1ArdyMisses both count as loss), real ADC,
+         * OBDiag off, USB, board 7E2898F46200E8A7.
+         *
+         * BASIS (600 s per step, board 7E2898F46200E8A7, fw 3.7.2 crc32
+         * 62067B0C, atcap_20260823_0737/0809/0850 in the test suite):
+         *   nT1=1  clean 16413   FAIL 17472 (T1ArdyMisses 845)
+         *   nT1=3  clean 12285   FAIL 13230 (T1ArdyMisses 228)
+         *   nT1=5  clean  9386   FAIL 10240 (T1ArdyMisses   5)
+         * Every ceiling here is bounded by T1ArdyMisses -- the ARDY-gated
+         * direct read missing a conversion (#541) -- NOT by a transport drop,
+         * so this really is an ADC-side term and belongs in this model.
+         *
+         * ONLY nT1==1 MOVES: 10589 -> 15263 Hz (800e6/52412, i.e. 93.0% of the
+         * measured 16413). n=3 and n=5 have real headroom (12285 against an
+         * enforced 9450; 9386 against 8533) but n=2 and n=4 have no
+         * measurement, and bracketing them by the nearest measured ceiling
+         * ABOVE (ceilings fall monotonically with channel count) puts n=4's
+         * never-over bound at 0.93*9386 = 8729 -- BELOW its current enforced
+         * 8968. So any line covering n>=2 would have to REGRESS n=4 to stay
+         * never-over, and raising it instead would be an unmeasured guess.
+         * n=4 is not over-capped today (8968 <= 9386); there is simply no
+         * basis to move it. A 2/4-channel grid is the follow-up that unlocks
+         * the rest, the way #596's fine-grain grid did for PB.
+         *
+         * SINGLE-CHANNEL SPECIAL CASE, for the reason Streaming_TransportMaxFreq
+         * gives for its own: "1-channel sits far above the multi-channel curve,
+         * which a single A/(B+n) cannot hug". Forcing one straight line through
+         * the 1-channel and multi-channel points spends nearly all of the
+         * 1-channel headroom to reach the others.
+         *
+         * JSON IS EXCLUDED and keeps the #563 law. It shares this branch, and
+         * at USB 1ch the additive is its BINDING term (10589, below its own
+         * #529/#831 transport single of 11000) -- so raising this branch would
+         * lift JSON's enforced cap on the strength of a CSV measurement, and
+         * JSON has never been characterised at precision 4. Its own precision-4
+         * basis is #529 follow-up work. CsvCompact IS included: it emits
+         * strictly fewer bytes per row than CSV (#619), so a CSV-fitted cap is
+         * never-over for it. */
+        if (nT1 <= 1u) {
+            /* 52412 ns -> 800e6/52412 = 15263 Hz. The MINIMAL never-over
+             * period is 52411 (the fit recipe prints that); both floor to the
+             * same 15263 Hz, so the extra nanosecond is free conservatism and
+             * the two numbers do not disagree. */
+            period_ns = 52412ULL;
+        } else {
+            /* nT1 >= 2 keeps the #563 single law, unchanged. The 3xT1 and 5xT1
+             * ceilings measured at precision 4 leave no room to raise n=2 and
+             * n=4 under the never-over + no-regress constraints, and n=2/n=4
+             * have no measurement of their own -- bracketing them by the
+             * nearest measured ceiling ABOVE (ceilings fall monotonically with
+             * channel count) puts the bound below their CURRENT enforced cap.
+             * Raising them would be a guess, and this ticket exists because
+             * the last guess here dropped data at its own cap. */
+            period_ns = 71000ULL + 4550ULL*nT1;
+        }
+        num = 800000000ULL;   /* 1e9 * 0.80 (CSV; transport min'd downstream) */
     } else {
         period_ns = 71000ULL + 21300ULL*armed + 4550ULL*nT1 + 15190ULL*nT2user + 2680ULL*nMon;
         num = 800000000ULL;   /* 1e9 * 0.80 (CSV; transport min'd downstream) */
