@@ -110,11 +110,29 @@ static volatile uint32_t gBenchmarkMode = BENCHMARK_OFF;
 // task.
 static volatile bool gNeedSharedScan = false;
 
-// Tracks whether the SD file has become ready during this streaming session.
-// Used to reset encoder header flags when SD transitions to ready, since
-// encoding may have already fired (and burned headers) before the file opened.
-// volatile: written by SD card task, read by streaming task.
-static volatile bool gSdFileWasReady = false;
+/* #824: the per-file SD header, built ONCE per streaming session by the
+ * streaming task and written into every new SD file by the SD task at open.
+ *
+ * It replaces gSdFileWasReady, which existed only to notice a new file and
+ * push a header through the SD circular buffer. That is what forced the
+ * rotation to reset the buffer -- the header had to land at byte 0 -- and the
+ * reset is what discarded the bytes encoded during the pre-close drain.
+ *
+ * 512 bytes bounds every encoding with margin. Measured on the bench
+ * 2026-08-22 with all 16 analog channels enabled and DIO on: CSV 444 B,
+ * CsvCompact 304 B, JSON 244 B. The protobuf sd_metadata message is 69 B,
+ * derived rather than sampled from its six bounded fields (#824).
+ *
+ * volatile on the scalars, not on the bytes: the scalars cross the streaming
+ * task -> SD task boundary, and the bytes are read only after gSdHeaderLen
+ * has been published non-zero. Each is an aligned scalar of 32 bits or less,
+ * so its store is atomic on PIC32MZ and a single-writer publish needs no
+ * critical section (CLAUDE.md atomicity rules). */
+#define STREAMING_SD_HEADER_MAX  512u
+static uint8_t gSdHeaderBytes[STREAMING_SD_HEADER_MAX];
+static volatile uint32_t gSdHeaderLen = 0;
+static volatile uint8_t gSdHeaderEnc = 0;     // StreamingEncoding it was built for
+static volatile bool gSdHeaderBuilt = false;
 
 // Per-session streaming statistics.
 // Written by: deferred ISR task (queueDroppedSamples, poolExhaustedSamples,
@@ -1774,11 +1792,6 @@ static void Streaming_Start(void) {
         // Clear encoding buffer once to prevent stale data artifacts in SD files
         if (buffer != NULL) memset(buffer, 0, bufferSize);
 
-        // If SD file is already open and ready (SCPI_StartStreaming waited
-        // for it), start with true to avoid dropping packets while the
-        // encoder waits for the first sdSize > 0 detection.
-        gSdFileWasReady = sd_card_manager_IsWriteReady();
-
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
@@ -2084,6 +2097,28 @@ static void Streaming_DrainSessionSampleQueues(void) {
 }
 
 static void Streaming_Stop(void) {
+    /* #824: invalidate this session's cached SD file header.
+     *
+     * HERE and not in Streaming_Start(), which would be too late to be safe.
+     * SCPI_StartStreaming arms SD logging and waits for the file to open
+     * BEFORE it calls Streaming_UpdateState(), so the next session's FIRST
+     * OPEN_FILE runs while Streaming_Start() still has not. A cache left
+     * valid across that boundary would be handed to that open -- and for
+     * protobuf, whose header has no encoder-side "already sent" predicate to
+     * fall back on, the new file would begin with the PREVIOUS session's
+     * sd_metadata, describing a channel set that may since have changed.
+     * (CSV/JSON happen to be covered anyway: SCPI_StopStreaming's
+     * csv_ResetEncoder()/json_ResetEncoder() make their predicate false.)
+     *
+     * Clearing at stop closes it, because every start path reaches here first
+     * -- Streaming_UpdateState() is Stop-then-Start, and a session that ended
+     * normally already ran a Stop of its own.
+     *
+     * Outside the Running guard on purpose: the flag must end up false
+     * whether or not this call had a live session to tear down. */
+    gSdHeaderBuilt = false;
+    gSdHeaderLen = 0;
+
     if (gpRuntimeConfigStream->Running) {
         TimerApi_Stop(gpStreamingConfig->TimerIndex);
         TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
@@ -2208,7 +2243,8 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
      * the very thing the flag exists to suppress (#733 audit). */
     gStreamRateConfigured = 0u;
     gBenchmarkMode = BENCHMARK_OFF;
-    gSdFileWasReady = false;
+    gSdHeaderBuilt = false;
+    gSdHeaderLen = 0;
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
@@ -2364,17 +2400,96 @@ void Streaming_SdInterfaceReleased(void) {
     }
 }
 
-/* Re-arm the SD header for a new file. The SD task calls this at rotation;
- * the streaming task then sees gSdFileWasReady false and emits a header so
- * every split file is self-describing.
+/* #824: build this session's per-file SD header into gSdHeaderBytes.
  *
- * Was Streaming_ResetSdPbMetadata(), which also cleared a gSdPbMetadataSent
- * flag. That flag was assigned in five places and READ in none -- five
- * volatile stores nobody looked at, and a name promising protobuf-metadata
- * bookkeeping this function never did. Both removed; the header latch below
- * is the whole of what it ever meant. */
-void Streaming_ResetSdFileHeader(void) {
-    gSdFileWasReady = false;
+ * Called from the encoder loop on the streaming task, once per session -- see
+ * the call site for why that placement, and not an earlier one, is the correct
+ * one. It must NOT move to the SD task: Nanopb_Encode's stack frame is 1,744
+ * bytes and app_SDCardTask has 4,096 with 1,872 peak-used, and the
+ * DaqifiOutMessage it builds has float members while that task is on
+ * CLAUDE.md's pure-integer list -- the #369 corruption pattern.
+ *
+ * Building once is correct rather than merely cheap: everything the header
+ * reports is frozen for the session. SYST:STR:FORmat is rejected while
+ * streaming (#619) and CONF:ADC:CHANnel / OBDiag / SAMC are too (#116/#541),
+ * so no split file can legitimately disagree with the first. */
+static void Streaming_BuildSdFileHeader(StreamingEncoding encoding) {
+    size_t len = 0;
+
+    if (Streaming_EncodingIsCsv(encoding)) {
+        len = csv_GenerateHeaderToBuffer((char*)gSdHeaderBytes,
+                                         sizeof(gSdHeaderBytes));
+    } else if (encoding == Streaming_Json) {
+        len = json_GenerateHeaderToBuffer((char*)gSdHeaderBytes,
+                                          sizeof(gSdHeaderBytes));
+    } else {
+        tBoardData* pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, true);
+        len = Nanopb_Encode(pBoardData, &fields_sd_metadata,
+                            gSdHeaderBytes, sizeof(gSdHeaderBytes));
+    }
+
+    /* Reject a header that filled the buffer to the brim rather than ship it
+     * truncated. csv_GenerateHeaderToBuffer hands generateHeader (size - 1),
+     * and generateHeader's fast_strcpy_bounded stops at the bound WITHOUT
+     * reporting it -- so a header that did not fit comes back as exactly
+     * size - 1 bytes of valid-looking prefix. A file with no header is
+     * recoverable by a client that knows the configuration; a file whose
+     * column list is silently cut in half is not.
+     *
+     * Rejecting a genuine 511-byte header is the accepted false positive:
+     * the worst real case measured is 444 B (16ch CSV, DIO on). */
+    if (len >= sizeof(gSdHeaderBytes) - 1u) {
+        LOG_E("SD: per-file header did not fit %u bytes (got %u) - split "
+              "files will have no header", (unsigned)sizeof(gSdHeaderBytes),
+              (unsigned)len);
+        len = 0;
+    }
+
+    gSdHeaderEnc = (uint8_t)encoding;
+    gSdHeaderLen = (uint32_t)len;
+    gSdHeaderBuilt = true;   // published LAST: gates the two stores above
+}
+
+/* #824: hand the SD task the bytes to write at the head of a newly opened
+ * log file, or 0 when this file should not carry one.
+ *
+ * Runs on app_SDCardTask. Everything it touches is integer: the cached bytes,
+ * two scalars, and the encoders' header-sent getters. Those getters return a
+ * file-static bool that only ever transitions false -> true, once, early in
+ * the session -- a byte-wide load that cannot tear, reached through an
+ * ordinary cross-translation-unit call, which is why it does not need to be
+ * volatile at -O3 with no LTO on XC32 (the SET_ONCE_POINTER_AUDIT reasoning).
+ *
+ * Two things make it return 0, and together they reproduce exactly what the
+ * old streaming-task block wrote:
+ *
+ *   - no header BUILT yet. The session's first file is opened before the
+ *     encoder has run, so it gets none -- matching the old gSdFileWasReady
+ *     latch, which SCPI_StartStreaming's readiness wait had already made true
+ *     by the time the SD-only header block could have fired for file 1.
+ *   - CSV/JSON with the encoder's inline header not yet emitted. That inline
+ *     header is itself what lands at byte 0 of such a file, so writing here as
+ *     well would duplicate it. Protobuf has no inline header and so no such
+ *     predicate; every protobuf file from the first ROTATION onward carries
+ *     its sd_metadata. */
+size_t Streaming_GetSdFileHeader(const uint8_t** ppHeader) {
+    if (ppHeader == NULL || !gSdHeaderBuilt || gSdHeaderLen == 0u) {
+        return 0;
+    }
+
+    StreamingEncoding enc = (StreamingEncoding)gSdHeaderEnc;
+    if (Streaming_EncodingIsCsv(enc)) {
+        if (!csv_IsHeaderSent()) {
+            return 0;
+        }
+    } else if (enc == Streaming_Json) {
+        if (!json_IsHeaderSent()) {
+            return 0;
+        }
+    }
+
+    *ppHeader = gSdHeaderBytes;
+    return (size_t)gSdHeaderLen;
 }
 
 void Streaming_GetStats(StreamingStats* out) {
@@ -2783,58 +2898,53 @@ void streaming_Task(void) {
          * produces more per window.
          *
          * IsBufferAccepting stays true across that window. It is safe because
-         * the rotation DRAINS the buffer before closing the old handle, so the
-         * bytes accepted here belong to the new file, and because
-         * Streaming_ResetSdFileHeader() runs before the window opens -- so the
-         * first thing written into the empty buffer is the new file's header,
-         * still at byte 0.
+         * the rotation drains the buffer (to a snapshot, #822) before closing
+         * the old handle, so the bytes accepted here belong to the new file.
          *
-         * The old comment's premise no longer holds either: the buffer is no
-         * longer cleared during the open, it is cleared once before the window
-         * (see OPEN_FILE / the rotation close in sd_card_manager.c). */
+         * #824 removed the byte-0 constraint that used to come with that: the
+         * header is now written into the new file directly by the SD task at
+         * open, not pushed through this buffer, so the rotation no longer
+         * resets the buffer at all and whatever is still in it simply becomes
+         * the new file's first data. */
         sdSize = sd_card_manager_IsBufferAccepting()
                ? sd_card_manager_GetWriteBuffFreeSize()
                : 0;
 
-        // When SD file first becomes ready (new file or rotation), write
-        // an SD-only header/metadata so each file is self-describing
-        // without injecting duplicate headers into the USB/WiFi stream.
-        if (sdSize > 0 && !gSdFileWasReady) {
-            gSdFileWasReady = true;
-
-            // Write SD-only header/metadata for each new file so every
-            // file is self-describing and independently parseable.
-            size_t sdHdrLen = 0;
-            if (Streaming_EncodingIsCsv(pRunTimeStreamConf->Encoding)) {
-                // On rotation (header already sent to USB), generate
-                // SD-only header.  First file: encoder flag is false,
-                // so the encoder naturally includes the header for ALL
-                // interfaces — no special handling needed.
-                if (csv_IsHeaderSent()) {
-                    sdHdrLen = csv_GenerateHeaderToBuffer(
-                            (char*)buffer, bufferSize);
-                }
-            } else if (pRunTimeStreamConf->Encoding == Streaming_Json) {
-                if (json_IsHeaderSent()) {
-                    sdHdrLen = json_GenerateHeaderToBuffer(
-                            (char*)buffer, bufferSize);
-                }
-            } else {
-                // Protobuf: encode a standalone metadata message for SD
-                tBoardData* pBoardData =
-                    BoardData_Get(BOARDDATA_ALL_DATA, true);
-                sdHdrLen = Nanopb_Encode(pBoardData,
-                    &fields_sd_metadata, (uint8_t*)buffer, bufferSize);
-            }
-            if (sdHdrLen > 0) {
-                size_t written = sd_card_manager_WriteToBuffer(
-                        (const char*)buffer, sdHdrLen);
-                if (written != sdHdrLen) {
-                    LOG_E("SD: header write failed, expected=%u written=%u",
-                          (unsigned)sdHdrLen, (unsigned)written);
-                }
-                memset(buffer, 0, sdHdrLen);
-            }
+        /* #824: the per-file SD header no longer travels through the SD
+         * circular buffer. The SD task now writes it straight into each new
+         * file at open (sd_card_manager.c OPEN_FILE), which is what lets a
+         * rotation KEEP the bytes the encoder appended during the pre-close
+         * drain instead of resetting the buffer so the header lands at byte 0.
+         *
+         * All this task still owns is BUILDING the header, once per session.
+         * The content is fixed for the session anyway: SYST:STR:FORmat and
+         * CONF:ADC:CHANnel are both rejected while streaming (#619 / #116),
+         * so there is nothing to re-read per file.
+         *
+         * HERE rather than in Streaming_Start(), and that placement is
+         * load-bearing in two ways.
+         *
+         * It keeps generation off app_SDCardTask, which cannot afford it:
+         * Nanopb_Encode's frame measures 1,744 bytes (xc32-objdump: `addiu
+         * sp,sp,-1744`) against that task's 4,096-byte stack with 1,872 already
+         * peak-used, and the DaqifiOutMessage it builds there carries float
+         * members while the task is on CLAUDE.md's pure-integer list -- the
+         * #369 pattern. The SCPI task calling Streaming_Start() could afford
+         * it (SCPI_SysInfoGet already pays the same frame), so this is about
+         * the reader, not the writer.
+         *
+         * And it preserves what the session's FIRST file gets. That file is
+         * opened by SCPI_StartStreaming BEFORE Streaming_Start() runs -- it
+         * waits on sd_card_manager_IsWriteReady() -- so building the header
+         * any earlier would hand OPEN_FILE a header for file 1, which never
+         * had a separately-written one: the old gSdFileWasReady latch was
+         * initialised from IsWriteReady() precisely so the SD-only header
+         * block skipped it. For CSV/JSON that is right (the encoder's inline
+         * header lands there instead); for protobuf it means file 1 carries
+         * no sd_metadata, which is a pre-existing #196 gap this change
+         * deliberately does not alter. */
+        if (!gSdHeaderBuilt && gSdExpectedThisSession) {
+            Streaming_BuildSdFileHeader(pRunTimeStreamConf->Encoding);
         }
 
         // Compute hasSD for the SD write block below.  ActiveInterface
@@ -3120,7 +3230,7 @@ void streaming_Task(void) {
                 // else: wifiWr == packetSize (success) or
                 //       STREAM_WRITE_RETURN_STOPPED (stop-abort, no bookkeeping).
             }
-            if (hasSD && gSdFileWasReady) {
+            if (hasSD) {
                 if (pRunTimeStreamConf->ActiveInterface != StreamingInterface_SD) {
                     /* #534: multi-output — a stalled SD must never block the
                      * (healthy) USB path through this shared encoder loop.
@@ -3185,7 +3295,7 @@ void streaming_Task(void) {
                     pRunTimeStreamConf->ActiveInterface == StreamingInterface_UsbAndSd ||
                     (gSdExpectedThisSession &&
                      pRunTimeStreamConf->ActiveInterface != StreamingInterface_WiFi));
-                bool sdWritten = hasSD && gSdFileWasReady;
+                bool sdWritten = hasSD;
 
                 if (sdExpected && !sdWritten) {
                     // Gate on IsEnabled, mirroring the #484 encoder-failure

@@ -533,7 +533,7 @@ SYSTem:STReam:STATS:CLEar  # Reset all counters
 | `QueueDroppedSamples` | uint32 | Samples lost due to pool exhaustion or full sample queue (pool defaults 1100, re-partitioned per session) |
 | `UsbDroppedBytes` | uint32 | Data lost due to USB circular buffer full (16KB default; auto-balance raises it to 64KB whenever USB is active — `hasUsb` covers **USB+SD** too, which is why the auto-balance table shows 65,536 in that column as well) |
 | `WifiDroppedBytes` | uint32 | Data lost due to WiFi circular buffer full (14KB default; auto-balance raises it to 96KB when WiFi is the only active interface — `STREAMING_WIFI_WIFI_ONLY`, #497) |
-| `SdDroppedBytes` | uint32 | Data the SD path could not take. **There is no fixed retry count** — an earlier revision of this row said "3 retries", which matches nothing on this path (the SD manager's only retry constants are `SD_MOUNT_MAX_RETRIES` 10 and `SD_UNMOUNT_MAX_RETRIES` 40, neither governing writes; other subsystems have their own — `SCPI_WRITE_MAX_RETRIES`, `SPI_RETRY_COUNT` — none of them 3). The two real paths differ: **multi-output** (USB+SD) counts a short write **immediately, with no retry at all** (`streaming.c` — `LOG_E_SESSION "SD buffer overflow (multi-output no-retry)"`), which is deliberate so a stalled SD cannot block USB (#534/#536); **SD-only** goes through `Streaming_WriteWithRetry`, which spins, then backs off on `vTaskDelay(1)` up to `STREAM_WRITE_TIMEOUT_MS` (10 s) before counting. Also carries the bytes a split-file rotation strands in the circular buffer (#823 — see "SD Card File Splitting"). **Not** counted: bytes lost to a *failed* write mid-rotation-drain, still discarded silently (#825). |
+| `SdDroppedBytes` | uint32 | Data the SD path could not take. **There is no fixed retry count** — an earlier revision of this row said "3 retries", which matches nothing on this path (the SD manager's only retry constants are `SD_MOUNT_MAX_RETRIES` 10 and `SD_UNMOUNT_MAX_RETRIES` 40, neither governing writes; other subsystems have their own — `SCPI_WRITE_MAX_RETRIES`, `SPI_RETRY_COUNT` — none of them 3). The two real paths differ: **multi-output** (USB+SD) counts a short write **immediately, with no retry at all** (`streaming.c` — `LOG_E_SESSION "SD buffer overflow (multi-output no-retry)"`), which is deliberate so a stalled SD cannot block USB (#534/#536); **SD-only** goes through `Streaming_WriteWithRetry`, which spins, then backs off on `vTaskDelay(1)` up to `STREAM_WRITE_TIMEOUT_MS` (10 s) before counting. It no longer carries a split-file rotation strand: #823 made that visible here and **#824 eliminated it** by writing each file's header at open instead of through the ring (see "SD Card File Splitting"). **Not** counted: bytes lost to a *failed* write mid-rotation-drain, still discarded silently (#825). |
 | `EncoderFailures` | uint32 | Encoding attempts that returned 0 bytes with data available |
 | `TimerISRCalls` | uint64 | Actual streaming timer ISR entry count this session (#265). Invariant: `TimerISRCalls == TotalSamplesStreamed + QueueDroppedSamples`. |
 | `EosOverruns` | uint32 | EOS notifications coalesced (>1 per wake) (#295). Task-behind-but-fresh — NOT a loss (excluded from loss total). |
@@ -1329,15 +1329,23 @@ measured 2026-08-21 by downloading rotated files from the bench: `s2.csv`,
 `s2-1.csv` and `s2-2.csv` each begin `# Device: Nyquist 1` followed by ~1,279
 data rows.
 
-The behaviour is deliberate on the firmware side: `streaming.c` writes an
-SD-only header whenever `gSdFileWasReady` goes false→true so that "every file
-is self-describing and independently parseable", and
-`Streaming_ResetSdFileHeader()` is called on every rotation to arm exactly
-that. Anything merging split files must therefore SKIP the `#`-prefixed lines
-of continuations rather than assuming they are absent.
+The behaviour is deliberate on the firmware side, though **which task writes
+the header changed in #824**. It is now rendered once per session by the
+streaming task (`Streaming_BuildSdFileHeader`, into a 512 B static) and written
+by the **SD task** straight into each newly opened file with `SYS_FS_FileWrite`
+(`Streaming_GetSdFileHeader`, called from `OPEN_FILE`). Before #824 it was
+pushed through the SD circular buffer whenever a `gSdFileWasReady` latch went
+false→true, which is what forced the rotation to reset that buffer and made
+rotation lossy — see the ⚠️ under Safety Features. Anything merging split files
+must SKIP the `#`-prefixed lines of continuations rather than assuming they are
+absent.
 
-- First file: full CSV header (device info, column names with "ain" prefix)
-- Split files: the same header, then data rows
+- First file: full CSV header (device info, column names with "ain" prefix),
+  written **inline by the encoder** — the file is open before the encoder runs,
+  so the SD task has nothing to write yet, which is also why a **protobuf**
+  session's first file carries no `sd_metadata` (files 2..N do; pre-existing
+  #196 gap)
+- Split files: the same header, written at file open, then data rows
 
 **Safety Features:**
 - Default: 3.9GB limit (100MB below FAT32 maximum)
@@ -1352,21 +1360,24 @@ of continuations rather than assuming they are absent.
   `sd_card_manager_IsBufferAccepting()`; note that transport health
   deliberately still uses `IsWriteReady()`, or a stuck open would read as
   healthy.
-- ⚠️ **Rotation is not zero-loss, and an earlier revision of this file claimed
-  it was.** The pre-close drain is bounded to a *snapshot* of the circular
-  buffer (#822/#823) — draining the live level livelocks against the producer
-  above ~340 KB/s, which stopped rotation outright (11ch @2 kHz produced one
-  8.7 MB file against a 20 KB `MAXSize`). Bytes the encoder appends *during*
-  that drain are therefore still buffered when the rotation resets the buffer,
-  and they cannot be saved: writing them to the old file is the livelock, and
-  they cannot go to the new one because `Streaming_ResetSdFileHeader()` has
-  already armed the next header and they would land ahead of it. They are
-  dropped and **counted** via `Streaming_ReportSdDiscard()`, so they show up in
-  `SdDroppedBytes`. Measured ~3.6 KB per rotation (16ch CSV @2 kHz,
-  `MAXSize=20000`: 277,248 bytes across 76 rotations). It scales with rotation
-  *frequency*, not with rate — at the default 3.9 GB `MAXSize` it is a few KB
-  per multi-GB file. #824 tracks eliminating it by writing the header at file
-  open rather than through the ring buffer.
+- ⚠️ **Rotation used to discard ~3.6 KB per split; #824 removed that.** The
+  pre-close drain is still bounded to a *snapshot* of the circular buffer
+  (#822/#823) — draining the live level livelocks against the producer above
+  ~340 KB/s, which stopped rotation outright (11ch @2 kHz produced one 8.7 MB
+  file against a 20 KB `MAXSize`) — so bytes the encoder appends *during* that
+  drain are still buffered when the old file closes. What changed is where they
+  can go. They used to be unsaveable: not the old file (that is the livelock),
+  and not the new one either, because the next header was about to travel
+  through the same ring and they would have landed ahead of it. So the rotation
+  reset the buffer and `Streaming_ReportSdDiscard()` counted the loss into
+  `SdDroppedBytes` — measured 277,248 bytes across 76 rotations at 16ch CSV
+  @2 kHz with `MAXSize=20000`. #824 writes the header directly into the new
+  file at open instead, so byte 0 is guaranteed by call order, the reset is
+  gone, and those bytes simply become the new file's first data rows. Rotation
+  now contributes nothing to `SdDroppedBytes`; what remains there is genuine
+  buffer-full loss. (`test_824_rotation_no_discard.py` measures this as an A/B
+  — same config with and without rotation — because the counter aggregates both
+  and a bare `== 0` would fail at any saturating shape.)
 - Unconditional filesystem flush before file close
 
 **Python Tools:**

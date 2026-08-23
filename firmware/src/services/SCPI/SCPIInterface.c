@@ -3989,10 +3989,14 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
         }
     }
 
-    // Reset encoder state so next session gets fresh headers
+    /* Reset encoder state so the next session gets fresh headers.
+     *
+     * #824: the SD per-file header used to need clearing here too. It no
+     * longer does -- Streaming_Stop(), which Streaming_UpdateState() below
+     * runs, invalidates it, and the next session's encoder loop rebuilds it.
+     * Clearing it here as well would only re-state that in a second place. */
     csv_ResetEncoder();
     json_ResetEncoder();
-    Streaming_ResetSdFileHeader();
 
     // Clear STATus:OPERation condition register
     SCPI_ClearOperBits(OPER_MEASURING | OPER_SD_LOGGING);
