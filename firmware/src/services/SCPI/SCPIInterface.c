@@ -2048,7 +2048,17 @@ static scpi_result_t SCPI_SetBenchmarkMode(scpi_t * context) {
     // Block changes while streaming
     StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (pStreamCfg->IsEnabled && pStreamCfg->Running) {
+    /* #844: `||`, not `&&` -- this guard was the one holdout from the form
+     * every other stream-state guard uses (#116 and its mirrors all say so
+     * explicitly). IsEnabled and Running are set in SEPARATE steps at start,
+     * so an `&&` test reads false for the whole interval between them, and
+     * SYST:STR:BENCH lands in it: the START has already committed the rate
+     * that benchmark mode admitted, and flipping the mode there leaves the
+     * session running with a benchmark-only rate while reporting itself as a
+     * normal capped session. Refusing in the transition window costs nothing
+     * -- SYST:STR:THRoughput restores the mode through
+     * Streaming_SetBenchmarkMode directly, not through this callback. */
+    if (pStreamCfg->IsEnabled || pStreamCfg->Running) {
         SCPI_ExecutionError(context, "SYST:STR:BENCH: cannot change while streaming");
         return SCPI_RES_ERR;
     }
@@ -3914,6 +3924,14 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * Benchmark mode bypasses this exactly as it bypasses the front door; the
      * resulting asymmetry is the correct direction (benchmark turned OFF inside
      * the window means an uncapped rate now faces the real cap).
+     *
+     * SCOPE -- this closes the RATE hazard, not the whole window. A change that
+     * leaves the cap UNCHANGED still gets through: swapping AIN0 for AIN1 keeps
+     * the channel count, so the recomputed cap matches and the start is
+     * admitted while gChannelMapping (built ~500 lines up) still describes the
+     * old set. That mislabels CSV columns and needs a mapping fingerprint
+     * rather than a cap comparison -- tracked as #846. Do not read the
+     * critical section below as making the window safe for every input.
      *
      * Logging and the SCPI error stay OUTSIDE the section (the #759 pattern). */
     bool capRevoked = false;
