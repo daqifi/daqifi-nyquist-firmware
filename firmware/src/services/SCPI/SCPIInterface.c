@@ -3603,6 +3603,15 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
     }
 
+    /* #824: open this session's SD-header epoch HERE, before anything below
+     * arms SD logging. Everything after this point may cause the SD task to
+     * open a log file, and the invariant is that the session's FIRST file
+     * finds no valid cached header -- which is what the pre-#824
+     * gSdFileWasReady latch produced, and what keeps the previous session's
+     * protobuf sd_metadata off this session's file 1. Invalidating at STOP
+     * instead raced an in-flight rotation open (audit round 2). */
+    Streaming_BeginSdHeaderEpoch();
+
     /* Interface_All is USB+SD (WiFi excluded by SPI bus conflict). Any
      * interface other than WiFi-only can drive SD logging when the SD
      * card is enabled and a filename is set. */

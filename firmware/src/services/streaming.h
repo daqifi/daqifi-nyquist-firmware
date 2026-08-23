@@ -560,6 +560,13 @@ void Streaming_SdInterfaceReleased(void);
  * streaming task and are valid until streaming stops. */
 size_t Streaming_GetSdFileHeader(const uint8_t** ppHeader);
 
+/* #824: open a new SD-header epoch, invalidating any cache from the previous
+ * session. MUST be called by a start path BEFORE SD logging is armed --
+ * that ordering is what keeps the previous session's header off the new
+ * session's first file, and it is deliberately NOT done at stop, where it
+ * would race an in-flight rotation open (audit round 2). */
+void Streaming_BeginSdHeaderEpoch(void);
+
 /* #757: report SD bytes that were buffered for the next file but can never be
  * written, because the session was torn down while the rotation's open was in
  * flight. Counts into SdDroppedBytes so the loss is visible instead of silent. */
