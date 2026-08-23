@@ -3686,6 +3686,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     StreamingInterface ifaceAtDetect;
     uint32_t ifaceGenPinned;
     uint32_t ifaceSetsPinned;
+    /* The arm compares against the state at the PUBLISH, not at the detect --
+     * see the publish site. Initialised to the detect pins so a read before
+     * the publish (there is none) could not be garbage. */
+    uint32_t ifaceGenAtPublish = 0;
+    uint32_t ifaceSetsAtPublish = 0;
     {
         /* Outside the section: SCPI_GetInterface only compares the caller's
          * context pointer against the two transports' contexts. */
@@ -3697,6 +3702,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         ifaceGenPinned = gStreamIfaceGen;
         ifaceSetsPinned = gStreamIfaceSetCount;
         taskEXIT_CRITICAL();
+        ifaceGenAtPublish = ifaceGenPinned;
+        ifaceSetsAtPublish = ifaceSetsPinned;
         ifaceForStart = (ifaceAtDetect == detectedInterface ||
                          ifaceAtDetect == StreamingInterface_USB)
                         ? detectedInterface : ifaceAtDetect;
@@ -4128,6 +4135,21 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         /* nothing to publish */
     } else {
         pRunTimeStreamConfig->ActiveInterface = ifaceForStart;
+        /* RE-PIN for the arm. Everything between the detect and this line has
+         * just been validated by the test above, so carrying the DETECT-time
+         * counters forward would make the arm refuse a start for movement this
+         * publish already accepted -- an agreeing SYST:STR:INT before the
+         * partition bumps the generation, the partition is then carved for the
+         * very interface the user chose, and the arm failed it anyway
+         * (adversarial audit, sixth pass). The arm's question is about ITS own
+         * window: did anything move while the partition was being carved?
+         *
+         * The rollback keeps the DETECT-time pins, not these: its question is
+         * whether the user expressed any selection at all since START began,
+         * and an agreeing set before the publish is exactly the one it must
+         * not undo. */
+        ifaceGenAtPublish = gStreamIfaceGen;
+        ifaceSetsAtPublish = gStreamIfaceSetCount;
     }
     taskEXIT_CRITICAL();
 
@@ -4322,8 +4344,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     if (inputsGone) {
         /* handled below; skip the rest so the reasons stay mutually exclusive */
     } else if (ifaceObserved != ifaceForStart ||
-        gStreamIfaceGen != ifaceGenPinned ||
-        SCPI_StartIfaceContradicted(ifaceSetsPinned, ifaceForStart)) {
+        gStreamIfaceGen != ifaceGenAtPublish ||
+        SCPI_StartIfaceContradicted(ifaceSetsAtPublish, ifaceForStart)) {
         /* The generation is what makes this an ABA-proof test. Comparing the
          * value alone accepts A->B->A, and the partition carved in the middle
          * of that -- PrepareStreamingBuffers reads ActiveInterface to size the
