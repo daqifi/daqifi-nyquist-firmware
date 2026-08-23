@@ -3463,9 +3463,16 @@ static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
  * would ignore an accepted command and stream somewhere the caller did not
  * ask for (adversarial audit, fourth pass).
  *
- * Must be called with interrupts already disabled -- both call sites are
- * inside the critical section that also tests the value and the generation,
- * because the three have to describe one instant. */
+ * "Must not refuse" holds at the PUBLISH, which drops the generation test for
+ * exactly this reason. The ARM keeps it, so an agreeing set that lands in the
+ * publish->arm window can still refuse the start: by then the buffer partition
+ * has run, and a value that left and came back may have been carved for the
+ * value in between (#844's ABA case). That is the #844/#845 direction on
+ * purpose -- a retry is cheap, streaming through the wrong partition is not.
+ *
+ * Must be called with interrupts already disabled -- every call site is inside
+ * the critical section that also tests the value, because they have to
+ * describe one instant. */
 static bool SCPI_StartIfaceContradicted(uint32_t pinnedSets,
                                         StreamingInterface ifaceForStart) {
     if (gStreamIfaceSetCount == pinnedSets) {
@@ -4096,10 +4103,29 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * never asked for. */
     bool ifaceRaced = false;
     taskENTER_CRITICAL();
-    if (pRunTimeStreamConfig->ActiveInterface != ifaceAtDetect ||
-        gStreamIfaceGen != ifaceGenPinned ||
-        SCPI_StartIfaceContradicted(ifaceSetsPinned, ifaceForStart)) {
-        ifaceRaced = true;
+    {
+        /* The value may legitimately have become ifaceForStart already: a set
+         * naming the interface this start is FOR agrees with it, and publishing
+         * is then a no-op. Refusing there was a false refusal -- the setup was
+         * computed for that same interface, so nothing about it is stale
+         * (adversarial audit, fifth pass).
+         *
+         * No generation test HERE. Nothing has been carved for the interface
+         * yet -- PrepareStreamingBuffers runs after this -- so only the value
+         * the partition will read matters, and an A->B->A by the setter is
+         * caught semantically by the contradiction test: if the user's last
+         * expressed selection disagrees with this start, it refuses. The ARM
+         * keeps the generation test, because by then the partition HAS run and
+         * a value that left and came back may have been carved for the value
+         * in between. */
+        StreamingInterface liveIface = pRunTimeStreamConfig->ActiveInterface;
+        if (SCPI_StartIfaceContradicted(ifaceSetsPinned, ifaceForStart) ||
+            (liveIface != ifaceAtDetect && liveIface != ifaceForStart)) {
+            ifaceRaced = true;
+        }
+    }
+    if (ifaceRaced) {
+        /* nothing to publish */
     } else {
         pRunTimeStreamConfig->ActiveInterface = ifaceForStart;
     }
