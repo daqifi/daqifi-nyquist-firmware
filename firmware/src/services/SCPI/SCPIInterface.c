@@ -3397,17 +3397,24 @@ static volatile uint32_t gStreamIfaceGen = 0;
  * stamping ours back over it would be the bug this function exists to
  * prevent, inverted.
  *
- * The generation counter is deliberately NOT bumped -- it counts SETTER
- * changes, and START's publish does not bump it either, so the pair stays
- * symmetric. */
+ * The compare tests the GENERATION as well as the value, for the same reason
+ * the publish and the arm do: comparing the value alone accepts A->B->A, so a
+ * setter that deliberately moved the interface away and back would have its
+ * choice rolled back by us on the way out (Qodo, importance 9). `expectedGen`
+ * is the pin taken at the auto-detect -- any setter activity at all since then
+ * means the field is not ours to put back.
+ *
+ * The counter is deliberately not BUMPED here -- it counts SETTER changes, and
+ * START's publish does not bump it either, so the pair stays symmetric. */
 static void SCPI_UnpublishStartInterface(StreamingRuntimeConfig *cfg,
                                          StreamingInterface published,
-                                         StreamingInterface original) {
+                                         StreamingInterface original,
+                                         uint32_t expectedGen) {
     if (published == original) {
         return;      /* nothing was adopted; nothing to undo */
     }
     taskENTER_CRITICAL();
-    if (cfg->ActiveInterface == published) {
+    if (cfg->ActiveInterface == published && gStreamIfaceGen == expectedGen) {
         cfg->ActiveInterface = original;
     }
     taskEXIT_CRITICAL();
@@ -4019,7 +4026,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         if (!PrepareStreamingBuffers(mc->samplePoolCount,
                                      AInSampleList_ElementSize(enabledChannels))) {
-            SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart, ifaceAtDetect);
+            SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
+                                     ifaceAtDetect, ifaceGenPinned);
             SCPI_ExecutionError(context, "STR:START: buffer partition failed (USB DMA / tasks not quiescent, or pool error)");
             return SCPI_RES_ERR;
         }
@@ -4043,7 +4051,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
              * asserting SD logging with no file open is the failure #690
              * already fixed once on this path. */
             if (!sd_card_manager_TryClaim()) {
-                SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart, ifaceAtDetect);
+                SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
+                                     ifaceAtDetect, ifaceGenPinned);
                 LOG_E("STR:START refused: SD busy with another operation at "
                       "post-repartition re-open\r\n");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -4082,7 +4091,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                  * but no file open (would silently drop every sample). */
                 pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                 sd_card_manager_UpdateSettings(pSDCardSettings);
-                SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart, ifaceAtDetect);
+                SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
+                                     ifaceAtDetect, ifaceGenPinned);
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
                 return SCPI_RES_ERR;
             }
@@ -4209,7 +4219,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardSettings);
         }
-        SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart, ifaceAtDetect);
+        SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
+                                     ifaceAtDetect, ifaceGenPinned);
         LOG_E("STR:START refused (#844): every ADC and DIO input was disabled "
               "during start - nothing left to stream");
         SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
@@ -4239,7 +4250,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardSettings);
         }
-        SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart, ifaceAtDetect);
+        SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
+                                     ifaceAtDetect, ifaceGenPinned);
         LOG_E("STR:START refused (#844): config changed during start - %d Hz now "
               "exceeds max %u Hz. Re-read CONF:CAP:JSON? and retry",
               (int)freq, (unsigned)revalidatedMax);
