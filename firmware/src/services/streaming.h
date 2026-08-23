@@ -564,7 +564,13 @@ size_t Streaming_GetSdFileHeader(const uint8_t** ppHeader);
  * session. MUST be called by a start path BEFORE SD logging is armed --
  * that ordering is what keeps the previous session's header off the new
  * session's first file, and it is deliberately NOT done at stop, where it
- * would race an in-flight rotation open (audit round 2). */
+ * would race an in-flight rotation open (audit round 2).
+ *
+ * INVARIANT: every site that sets StreamingRuntimeConfig.IsEnabled = true
+ * calls this first. There are three, all in SCPIInterface.c -- the
+ * SYST:STR:START path, SYST:STR:THRoughput, and the WiFi rate finder's
+ * per-step start. A FOURTH start path must call it too, or its first SD file
+ * inherits the previous session's header; grep `IsEnabled = true` to check. */
 void Streaming_BeginSdHeaderEpoch(void);
 
 /* #757: report SD bytes that were buffered for the next file but can never be

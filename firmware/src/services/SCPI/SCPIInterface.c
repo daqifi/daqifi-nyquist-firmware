@@ -2201,6 +2201,11 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     if (periodCycles < 2) periodCycles = 2;
     pStreamCfg->ClockPeriod = periodCycles - 1;
     StreamFreq_Set(pStreamCfg, freq);
+    /* #824: every path that starts a session must open an SD-header epoch, or
+     * this session's first SD file inherits the PREVIOUS session's header.
+     * This one saves and restores the SD mode rather than forcing it off, so
+     * it can run with SD logging armed. */
+    Streaming_BeginSdHeaderEpoch();
     pStreamCfg->IsEnabled = true;
     Streaming_UpdateState();
 
@@ -2366,6 +2371,9 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
     Streaming_ClearStats();
     cfg->ClockPeriod = periodCycles - 1;
     StreamFreq_Set(cfg, freq);
+    /* #824: same invariant as the other two start sites -- each finder step is
+     * its own session, so each opens its own epoch. */
+    Streaming_BeginSdHeaderEpoch();
     cfg->IsEnabled = true;
     Streaming_UpdateState();
     if (!cfg->Running) {
