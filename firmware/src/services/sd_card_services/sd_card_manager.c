@@ -217,6 +217,33 @@ static volatile bool gTransferAbortRequested = false;
  * PIC32MZ; volatile is here because the two contexts differ, not to imply
  * read-modify-write safety. */
 static volatile bool gSdRotating = false;
+
+/* #824: is the CURRENT write session a streaming log?
+ *
+ * The header write in OPEN_FILE below needs "is this file part of a streaming
+ * log?", and gSdRotating alone does not answer it. WRITE mode also serves
+ * SYST:STOR:SD:BENCHmark, which uses the same split-file rotation path -- so a
+ * benchmark that rotates has gSdRotating set, and an unconditional fetch there
+ * prepends the last protobuf stream's still-valid sd_metadata to the rotated
+ * benchmark part (#824 audit round 5). Gating on gSdRotating excludes only the
+ * benchmark's FIRST open, not its rotations.
+ *
+ * Nothing on the streaming side can answer it either, and every candidate was
+ * tried: IsEnabled is cleared by SCPI_StopStreaming BEFORE Streaming_UpdateState
+ * runs, Running is cleared inside Streaming_Stop(), and gSdExpectedThisSession
+ * is a session latch that stays true after the stream ends. Each reopens the
+ * rotation race those earlier rounds closed.
+ *
+ * The answer is only known at ARM time, by whoever armed the write, so that is
+ * where it is recorded. DEFAULT-DENY: the arm declares itself streaming or it
+ * is not one. A new non-streaming WRITE arm added later therefore gets the
+ * safe answer without having to know this exists.
+ *
+ * Single writer per field in practice (SCPI task arms; the SD task only reads
+ * the latch), both plain aligned bools -- atomic on PIC32MZ. volatile because
+ * the arming task and the SD task are different contexts. */
+static volatile bool gWriteArmDeclaredStreaming = false;  /* one-shot token */
+static volatile bool gWriteSessionIsStreamingLog = false; /* latched at arm */
 static int gFormatStatus = 0;  // 0=idle, 1=in progress, 2=success, -1=failed
 static uint32_t gFormatSectorsEstimate = 0;  // Estimated total sectors written during format
 
@@ -2125,10 +2152,15 @@ void sd_card_manager_ProcessState() {
                  * until sd_AbandonRotationWindow() below clears it AND
                  * accounts for what was buffered -- clearing it here would
                  * silently strand those bytes instead. */
-                /* #824: latch whether THIS open is a rotation, in the same
-                 * critical section that clears the flag -- the header write
-                 * below needs the answer and the flag is gone by then. */
-                bool openWasRotation = gSdRotating;
+                /* #824: latch whether THIS open must carry the streaming
+                 * header, in the same critical section that clears the
+                 * rotation flag -- the header write below needs the answer and
+                 * the flag is gone by then. Both halves are load-bearing:
+                 * gSdRotating excludes the session's first file, and
+                 * gWriteSessionIsStreamingLog excludes a NON-streaming write
+                 * session entirely, rotations included (see its definition). */
+                bool openNeedsStreamHeader = gSdRotating
+                                          && gWriteSessionIsStreamingLog;
                 if (!openAborted) {
                     gSdRotating = false;
                 }
@@ -2200,8 +2232,9 @@ void sd_card_manager_ProcessState() {
                      * left alone and its contents become this file's first
                      * data rows.
                      *
-                     * ONLY FOR A ROTATION, and that narrowness is doing
-                     * three jobs at once (#824 audit rounds 2-3):
+                     * ONLY FOR A ROTATION OF A STREAMING LOG, and that
+                     * narrowness is doing three jobs at once (#824 audit
+                     * rounds 2-3 and 5):
                      *   - the session's FIRST file is excluded, which is what
                      *     the old gSdFileWasReady latch produced: it was
                      *     initialised from IsWriteReady(), already true
@@ -2210,12 +2243,15 @@ void sd_card_manager_ProcessState() {
                      *     CSV/JSON the encoder's inline header lands there
                      *     instead; under protobuf file 1 carries no
                      *     sd_metadata, a pre-existing #196 gap left untouched.
-                     *   - a NON-STREAMING write open is excluded, which
-                     *     matters because this state also serves
-                     *     SYST:STOR:SD:BENCHmark. That arms WRITE mode
-                     *     directly, and an unconditional fetch here prepended
-                     *     the last protobuf stream's sd_metadata to the
-                     *     benchmark's output file.
+                     *   - and a NON-STREAMING write session is excluded by
+                     *     the second half of the predicate, because this state
+                     *     also serves SYST:STOR:SD:BENCHmark. An unconditional
+                     *     fetch here prepended the last protobuf stream's
+                     *     still-valid sd_metadata to the benchmark's output
+                     *     file. The rotation test alone does NOT cover that
+                     *     case -- it excludes the benchmark's first open and
+                     *     nothing else, and the benchmark rotates through this
+                     *     same path (#824 audit round 5).
                      *   - and it is why the cache can be cleared at session
                      *     START rather than at stop: a rotation cannot happen
                      *     before the encoder has run, so the live session has
@@ -2231,7 +2267,7 @@ void sd_card_manager_ProcessState() {
                      * currentFileBytes takes what actually landed, so the
                      * split threshold stays honest either way. */
                     const uint8_t* hdr = NULL;
-                    size_t hdrLen = openWasRotation
+                    size_t hdrLen = openNeedsStreamHeader
                                   ? Streaming_GetSdFileHeader(&hdr) : 0u;
                     if (hdrLen > 0u && hdr != NULL) {
                         TickType_t hdrStart = xTaskGetTickCount();
@@ -3412,6 +3448,22 @@ bool sd_card_manager_Deinit() {
 }
 
 bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
+    /* #824: consume the one-shot streaming declaration, ahead of every early
+     * return below so it can never survive into a later arm that did not make
+     * it. Only a WRITE arm updates the latch: a NONE teardown or a READ/LIST
+     * op must not strip the header from a WRITE session it is not replacing.
+     * An arm that made no declaration latches FALSE -- that is the default-deny
+     * this rests on. */
+    if (pSettings != NULL) {
+        taskENTER_CRITICAL();
+        bool declaredStreaming = gWriteArmDeclaredStreaming;
+        gWriteArmDeclaredStreaming = false;
+        if (pSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
+            gWriteSessionIsStreamingLog = declaredStreaming;
+        }
+        taskEXIT_CRITICAL();
+    }
+
     /* #589 P1: SD activity expected - restore the fast detect-poll cadence.
        (extern kept per the app_freertos.c pattern; prototype now also lives
        in drv_sdspi.h so signatures are checkable.) */
@@ -3836,6 +3888,10 @@ void sd_card_manager_ReleaseClaim(void) {
     taskENTER_CRITICAL();
     gSdScpiClaim = false;
     taskEXIT_CRITICAL();
+}
+
+void sd_card_manager_DeclareWriteIsStreamingLog(void) {
+    gWriteArmDeclaredStreaming = true;
 }
 
 bool sd_card_manager_IsBusy(void) {

@@ -355,6 +355,18 @@ extern "C" {
 bool sd_card_manager_TryClaim(void);
 void sd_card_manager_ReleaseClaim(void);
 
+/* #824: declare that the WRITE session about to be armed is a STREAMING log,
+ * so its rotated split files get this session's self-describing header.
+ *
+ * Call it immediately before the `mode = MODE_WRITE` + UpdateSettings() pair.
+ * It is a ONE-SHOT token: the next UpdateSettings() consumes it, and an arm
+ * that did not set it latches "not a streaming log". That default-deny is the
+ * point -- SYST:STOR:SD:BENCHmark arms WRITE through the same split-file
+ * rotation path, and inheriting the header there corrupts its output file
+ * (#824 audit round 5). A non-streaming WRITE arm needs no call and cannot get
+ * it wrong by omission. */
+void sd_card_manager_DeclareWriteIsStreamingLog(void);
+
     /**
      * @brief #703: is the SD read scratch buffer large enough for SD:GET?
      *
