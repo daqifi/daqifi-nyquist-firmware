@@ -1087,7 +1087,7 @@ The `StreamingInterface` enum exposes four combinations: `USB`, `WiFi`, `SD`, an
 | SD DMA write (coherent) | 512 | 512 | 124,368 | 77,922 |
 | USB DMA write (coherent) | 124,368 | 512 | 512 | 46,958 |
 | WiFi SPI staging (coherent) | 2,048 | 125,904 | 2,048 | 2,048 |
-| Sample pool CAPACITY (slots @16ch)¹ | 1,593 | 1,141 | 1,953 | 1,095 |
+| Sample pool CAPACITY (slots @16ch)¹ | 1,593 | 1,141 | 1,952 | 1,095 |
 
 ¹ **Capacity, not the depth in use.** These are how many slots the leftover pool space holds — what `StreamingBufferPool_Partition` computes and logs as `samples=<n>x<elementBytes>`. Note the log's second number is the **element** size (72 at 16ch), not the per-sample cost — the free-list entry is counted separately, which is why the divisor below is 74 while the log shows 72. Reconciling `1600 x 72` against a `/ 74` formula otherwise looks like an inconsistency; it is not. The depth actually available is min(that, whatever the FreeRTOS sample queue could be grown to), which on the bench came out at **1100** because the queue resize was skipped for want of ~1 KB of heap (#828). That is **not** an invariant: `AInSampleList_InitializeExternal` only clamps when it tries to GROW the queue and the heap will not stretch, so a device with more free heap grows it — and once grown it stays grown for later sessions. Read the number, do not assume it.
 
