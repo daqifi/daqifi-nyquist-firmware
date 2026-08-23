@@ -3580,14 +3580,27 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
      * route the session took to end, the manager is no longer in
      * WRITE_TO_FILE when the benchmark arms.
      *
-     * RESIDUAL, stated rather than hidden: a benchmark issued while a log is
-     * genuinely still in WRITE_TO_FILE is indistinguishable here from a config
-     * update, so it would inherit the latch. That is reachable only because
-     * SYST:STOR:SD:BENCHmark has no IsBusy guard by design (#736 -- a running
-     * benchmark OWNS the logging target), and on that path it has already
-     * clobbered the logging target out from under the live session (#728). A
-     * wrong header is the least of what is wrong there, and adding the guard
-     * is a behaviour change on the #736 claim machinery.
+     * RESIDUALS, stated rather than hidden. Note the asymmetry first: every
+     * path below that gets the latch WRONG in the "false" direction merely
+     * leaves a split file without its "# Device:" header. Only (b) can put a
+     * header where none belongs, and only through a path that has already
+     * destroyed the session.
+     *
+     * (a) A config update landing in the FIRST file's open -- before any
+     * rotation has occurred, so gSdRotating is still false and the state is
+     * OPEN_FILE -- is covered by neither half of the in-flight test and clears
+     * the latch. That window is one file-open wide and SCPI_StartStreaming is
+     * blocked on IsWriteReady() throughout it, so the setter would have to
+     * arrive on the OTHER SCPI transport.
+     *
+     * (b) A benchmark issued while a log is genuinely still in WRITE_TO_FILE
+     * is indistinguishable here from a config update, so it would inherit the
+     * latch. That is reachable only because SYST:STOR:SD:BENCHmark has no
+     * IsBusy guard by design (#736 -- a running benchmark OWNS the logging
+     * target), and on that path it has already clobbered the logging target
+     * out from under the live session (#728). A wrong header is the least of
+     * what is wrong there, and adding the guard is a behaviour change on the
+     * #736 claim machinery.
      *
      * Placed AFTER the #589 refusal gate on purpose: that gate clears the
      * requested mode and returns, so a refused STR:START must not leave the
@@ -3600,10 +3613,22 @@ bool sd_card_manager_UpdateSettings(sd_card_manager_settings_t *pSettings) {
             if (declaredStreaming) {
                 gWriteSessionIsStreamingLog = true;
             } else if (gSDCardData.currentProcessState
-                       != SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE) {
+                           != SD_CARD_MANAGER_PROCESS_STATE_WRITE_TO_FILE
+                       && !gSdRotating) {
                 /* An undeclared arm that is NOT a config update to a session
                  * already in flight is a NEW write session, and it did not
-                 * claim to be a streaming log -- so it is not one. */
+                 * claim to be a streaming log -- so it is not one.
+                 *
+                 * `!gSdRotating` is the second half of "in flight" and it is
+                 * not optional (audit round 7): DURING a rotation the manager
+                 * sits in OPEN_FILE, not WRITE_TO_FILE, so the state test
+                 * alone read a config update landing in that window as a new
+                 * session and cleared the latch -- costing the split file
+                 * being opened right then, and every rotation after it, its
+                 * header. gSdRotating is true for exactly that window (set
+                 * while the old handle is still open, cleared in the critical
+                 * block that opens WRITE_TO_FILE), so the two together cover
+                 * the whole steady-state life of a rotating write session. */
                 gWriteSessionIsStreamingLog = false;
             }
         } else if (pSettings->mode == SD_CARD_MANAGER_MODE_NONE) {
