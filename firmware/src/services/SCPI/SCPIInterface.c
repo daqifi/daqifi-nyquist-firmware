@@ -3405,7 +3405,35 @@ static volatile uint32_t gStreamIfaceGen = 0;
  * means the field is not ours to put back.
  *
  * The counter is deliberately not BUMPED here -- it counts SETTER changes, and
- * START's publish does not bump it either, so the pair stays symmetric. */
+ * START's publish does not bump it either, so the pair stays symmetric.
+ * (Bumping on publish would not help the concurrent-START case in #850 and
+ * would break this one: a START would then trip its own arm-time generation
+ * test on its own publish.) */
+/* #848: release the SD logging arm behind a START that did not happen.
+ *
+ * Six abort paths in SCPI_StartStreaming carried the same three lines with the
+ * UpdateSettings return DISCARDED. Qodo flagged the newest of them; fixing
+ * only that one would have left five identical twins, so the class moves here.
+ *
+ * The return is now surfaced. A failed release is not a lost arm request the
+ * way a failed ARM is -- `mode` is already NONE, so the manager stops treating
+ * the file as a streaming log either way -- but it means the manager did not
+ * take the transition when asked (suspension, lost SPI arbitration), and the
+ * next SD command will meet a state nobody announced. LOG_E, not a changed
+ * return: every one of these sites is already returning an error for its own
+ * reason, and replacing that reason with an SD one would misreport why the
+ * start failed. */
+static void SCPI_ReleaseSdLoggingArm(sd_card_manager_settings_t *sd) {
+    if (sd == NULL) {
+        return;
+    }
+    sd->mode = SD_CARD_MANAGER_MODE_NONE;
+    if (!sd_card_manager_UpdateSettings(sd)) {
+        LOG_E("[SD] could not release the streaming-log arm while aborting "
+              "STR:START - SD may still consider itself armed");
+    }
+}
+
 static void SCPI_UnpublishStartInterface(StreamingRuntimeConfig *cfg,
                                          StreamingInterface published,
                                          StreamingInterface original,
@@ -3923,8 +3951,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             } else {
                 LOG_E("SD file not ready after %d ms", readyWait * 10);
             }
-            pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-            sd_card_manager_UpdateSettings(pSDCardSettings);
+            SCPI_ReleaseSdLoggingArm(pSDCardSettings);
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
         }
@@ -3983,6 +4010,18 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * Neither is reachable while the old session runs (both guard on it), but
      * a START with no previous session spends multi-second SD polls here.
      *
+     * WHAT THE PIN DOES NOT COVER: another START, on the other transport,
+     * inside its own pre-arm window. Its publish is visible here and does not
+     * advance the generation, so this one reads it as an explicit selection
+     * and adopts it -- a USB START landing inside a WiFi START's partition
+     * wait streams to WiFi and returns OK. That is PRE-EXISTING (before #848
+     * the store happened even earlier in START, so the window was wider) and
+     * is not fixable by bookkeeping: two STARTs also re-partition the same
+     * buffer pool concurrently. It needs mutual exclusion between STARTs --
+     * #850, whose real answer is the serialized SCPI worker of #694. The
+     * generation identifies SETTER ownership, which is what the ABA case
+     * above needs; it was never a START-vs-START interlock.
+     *
      * The arm-time check further down repeats both tests: this publish closes
      * detect->publish, that one closes publish->arm.
      *
@@ -4005,8 +4044,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         /* Mirror the other aborts: never leave a logging file open behind a
          * start that did not happen (#690). */
         if (sdLoggingRequested) {
-            pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-            sd_card_manager_UpdateSettings(pSDCardSettings);
+            SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
         LOG_E("STR:START refused (#848): stream interface changed during start "
               "setup (was %d); the SD/buffer setup no longer matches. Retry.",
@@ -4089,8 +4127,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                 }
                 /* Abort START — never enable streaming with SD logging asserted
                  * but no file open (would silently drop every sample). */
-                pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-                sd_card_manager_UpdateSettings(pSDCardSettings);
+                SCPI_ReleaseSdLoggingArm(pSDCardSettings);
                 SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned);
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -4216,8 +4253,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
     if (inputsGone) {
         if (sdLoggingRequested) {
-            pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-            sd_card_manager_UpdateSettings(pSDCardSettings);
+            SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned);
@@ -4233,8 +4269,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * value would overwrite the choice that caused the refusal. Leaving
          * it is the whole point. */
         if (sdLoggingRequested) {
-            pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-            sd_card_manager_UpdateSettings(pSDCardSettings);
+            SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
         LOG_E("STR:START refused (#844): stream interface changed during start "
               "(%d -> %d); the SD/buffer setup no longer matches. Retry.",
@@ -4247,8 +4282,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         /* Mirror the SD aborts immediately above: never leave a logging file
          * open behind a start that did not happen (#690). */
         if (sdLoggingRequested) {
-            pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-            sd_card_manager_UpdateSettings(pSDCardSettings);
+            SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned);
