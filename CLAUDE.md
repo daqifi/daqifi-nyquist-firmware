@@ -616,10 +616,23 @@ SYSTem:STReam:LOSS:WINDow?           # Query current override (0=auto)
 The firmware computes a maximum safe streaming frequency as a `min()` of an **ADC/scan** term and a **per-interface/per-format TRANSPORT** term. Since #524 the cap is a **HARD limit**: `SYST:STR:START <freq>` above the cap is **rejected** with SCPI `-222` plus a `LOG_E` detail line stating the achievable max — the rate is never silently changed. Clients pre-validate against `current_max_rate_hz` (`CONF:CAP:JSON?` — equals this cap) or handle the error. Mid-stream `CONF:ADC:CHANnel` / `OBDiag` / `SAMC` are likewise **rejected** (#116/#541). `SYST:STR:BENCHmark 1/2` bypasses the cap — bench use only.
 
 **The ADC/scan term is board-variant-specific (#563/#557):**
-- **NQ1** (v3.6.2+): a fitted **freeze-aware additive model** `Streaming_AdcAdditiveCap_NQ1(nT1, nT2user, nMon, isPB)` (streaming.h), min()'d **only** with the SAMC-dependent **scan-busy** bound `MC12b_HardwareScanMaxFreq()` (the real FRM-documented **#539** limit). This **replaced** the old EOS-rate (10,400 Hz) / event-rate (60,000 ev/s) / tick-budget / `MC12b_ScanMaxFreq` terms: those old sweeps were **drop-blind** (counted frozen scanned data as clean → inflated T2 ceilings). The additive model was fitted to the 2026-06-22 freeze-aware sweep (the first to count `ScanStaleDropped` as loss) with a safe never-over margin (PB ×0.88, CSV ×0.80) and revalidated at-cap (see `validate_557_additive_cap.py` + `benchmarks/557_additive_cap/`). The former "USB-fatal" rationale for the EOS/event caps was the **#525** EOS-task `vsnprintf` overflow, re-tested **gone** on v3.6.1 (#557) — never a silicon limit.
+- **NQ1** (v3.6.2+): a fitted **freeze-aware additive model** `Streaming_AdcAdditiveCap_NQ1(nT1, nT2user, nMon, isPB, isJson, voltagePrecision)` (streaming.h), min()'d **only** with the SAMC-dependent **scan-busy** bound `MC12b_HardwareScanMaxFreq()` (the real FRM-documented **#539** limit). This **replaced** the old EOS-rate (10,400 Hz) / event-rate (60,000 ev/s) / tick-budget / `MC12b_ScanMaxFreq` terms: those old sweeps were **drop-blind** (counted frozen scanned data as clean → inflated T2 ceilings). The additive model was fitted to the 2026-06-22 freeze-aware sweep (the first to count `ScanStaleDropped` as loss) with a safe never-over margin (PB ×0.88, CSV ×0.80) and revalidated at-cap (see `validate_557_additive_cap.py` + `benchmarks/557_additive_cap/`). The former "USB-fatal" rationale for the EOS/event caps was the **#525** EOS-task `vsnprintf` overflow, re-tested **gone** on v3.6.1 (#557) — never a silicon limit.
 - **NQ2/NQ3** (AD7609 — no MODULE7 scan): the legacy `min(ISR_MAX 16000, 55000/type1Count, 110000/(6+totalEnabled), MC12b_ScanMaxFreq)` formula, which still carries the (conservative, placeholder) EOS/event terms pending a per-variant headroom review.
 
-**Effective limit (NQ1):** `min(Streaming_AdcAdditiveCap_NQ1(nT1, nT2user, nMon, isPB), MC12b_HardwareScanMaxFreq(scanCount) [only when a scan is armed], TransportMax(interface, encoding, n))`
+**Effective limit (NQ1):** `min(Streaming_AdcAdditiveCap_NQ1(nT1, nT2user, nMon, isPB, isJson, voltagePrecision), MC12b_HardwareScanMaxFreq(scanCount) [only when a scan is armed], TransportMax(interface, encoding, n))`
+
+The last two additive arguments are **#832** and both exist to keep a raise
+inside the conditions it was measured under. `isJson` excludes JSON from the
+pure-T1 CSV refit — it shares that branch and is *additive-bound* at USB 1ch,
+so a CSV-measured raise would silently lift JSON's cap; it keeps the #563 law
+until it has a precision-4 basis of its own (#529 follow-up).
+`voltagePrecision` gates the refit to `<= 4`: 0 is `int_to_str` and 1..4 emit
+fewer or equal characters than the precision-4 basis, while 5..10 emit **more**
+and were never measured, so they fall through to the #563 law.
+`CONFigure:VOLTage:PRECision` and `:LOAD` are both rejected while streaming
+(same idiom as the `CONF:ADC:CHANnel` #116 guard) so a session cannot move onto
+a costlier encoder after its rate was admitted — see #844 for the residual
+start-window race, which every cap-input guard shares.
 
 **Effective limit (NQ2/NQ3):** `min(ISR_MAX 16000, 55000/type1Count, 110000/(6+totalEnabled), TransportMax(interface, encoding, n), ScanBounds(scan list, SAMC))`
 
