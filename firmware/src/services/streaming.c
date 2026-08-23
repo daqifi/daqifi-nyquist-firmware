@@ -2523,15 +2523,24 @@ size_t Streaming_GetSdFileHeader(const uint8_t** ppHeader) {
     }
 
     /* ONE read of the length, in publish order (gSdHeaderValid is stored
-     * last, so testing it first cannot see a half-published cache).
+     * last by the builder, so testing it first cannot see a half-published
+     * cache).
      *
-     * A SCPI stop on the USB task (pri 7) can preempt this one (pri 5) at
-     * any point and zero the cache. Reading the length twice -- once to
-     * test, once to return -- would let the second read see that zero and
-     * hand the caller a length of 0 with *ppHeader already assigned. That
-     * is harmless today because the caller re-tests the length, but it is
-     * the kind of two-read gap that stops being harmless when someone
-     * later trusts the pointer instead. */
+     * An earlier revision of this comment justified the single read by
+     * "a SCPI stop can zero the cache". That is no longer true and had
+     * become misdocumentation of the concurrency model: nothing at stop
+     * touches the cache -- only a STARTING session clears it, and that
+     * cannot overlap a rotation open belonging to a live one.
+     *
+     * The single read is still the right shape. The writer runs on the
+     * streaming task (pri 6) and this runs on the SD task (pri 5), so a
+     * preemption between two reads of gSdHeaderLen is possible in
+     * principle; reading it twice -- once to test, once to return -- would
+     * let the second read disagree with the first and hand the caller a
+     * length of 0 with *ppHeader already assigned. Harmless against
+     * today's caller, which re-tests the length, and exactly the kind of
+     * two-read gap that stops being harmless when someone later trusts the
+     * pointer instead. */
     uint32_t len = gSdHeaderLen;
     if (len == 0u) {
         return 0;
