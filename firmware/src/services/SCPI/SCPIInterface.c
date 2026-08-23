@@ -3985,6 +3985,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     bool capRevoked = false;
     bool ifaceMoved = false;
     uint32_t revalidatedMax = 0;
+    /* Captured INSIDE the section so the refusal log names the value that
+     * actually triggered the decision. Re-reading it for the message after
+     * taskEXIT_CRITICAL can print a THIRD interface -- whatever a later
+     * command set -- which is precisely the wrong thing to hand someone
+     * debugging this refusal (Qodo). */
+    StreamingInterface ifaceObserved = ifaceAtSetup;
     taskENTER_CRITICAL();
     /* The interface must still be the one everything above was set up for.
      * The rate check alone does not catch this, because the new interface's
@@ -3994,7 +4000,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * against the SD cap and arms -- with the SD manager still in mode NONE.
      * streaming_Task then writes to neither SD nor WiFi, and START returns OK
      * on a session that emits nothing at all. */
-    if (pRunTimeStreamConfig->ActiveInterface != ifaceAtSetup ||
+    ifaceObserved = pRunTimeStreamConfig->ActiveInterface;
+    if (ifaceObserved != ifaceAtSetup ||
         gStreamIfaceGen != ifaceGenAtSetup) {
         /* The generation is what makes this an ABA-proof test. Comparing the
          * value alone accepts A->B->A, and the partition carved in the middle
@@ -4023,7 +4030,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
         LOG_E("STR:START refused (#844): stream interface changed during start "
               "(%d -> %d); the SD/buffer setup no longer matches. Retry.",
-              (int)ifaceAtSetup, (int)pRunTimeStreamConfig->ActiveInterface);
+              (int)ifaceAtSetup, (int)ifaceObserved);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
