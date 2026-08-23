@@ -3984,6 +3984,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * Logging and the SCPI error stay OUTSIDE the section (the #759 pattern). */
     bool capRevoked = false;
     bool ifaceMoved = false;
+    bool inputsGone = false;
     uint32_t revalidatedMax = 0;
     /* Captured INSIDE the section so the refusal log names the value that
      * actually triggered the decision. Re-reading it for the message after
@@ -4000,8 +4001,30 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * against the SD cap and arms -- with the SD manager still in mode NONE.
      * streaming_Task then writes to neither SD nor WiFi, and START returns OK
      * on a session that emits nothing at all. */
+    /* The other admission check START made up front: at least one input. It
+     * can be taken away inside the window too -- DIO:PORT:ENABLE 0 on a
+     * DIO-only session is the reachable case, since SCPI_GPIOEnableSet has no
+     * stream-state guard and IsEnabled is still false. The cap recompute below
+     * cannot catch it: Streaming_ComputeMaxFreqForConfig ignores DIO entirely
+     * and returns a perfectly healthy max for zero analog channels, so the
+     * session would arm and then emit nothing at all -- the same "START says
+     * OK, nothing comes out" failure as the interface case (merge-gate audit).
+     *
+     * With this, the arm re-checks every admission test START performed up
+     * front: inputs exist, the interface is the one that was set up, and the
+     * rate is still admissible. */
+    {
+        uint16_t t1Now = 0, totNow = 0;
+        Streaming_CountActiveChannels(&t1Now, &totNow, NULL);
+        bool dioNow = (pDIOGlobalEnable != NULL && *pDIOGlobalEnable);
+        if (totNow == 0u && !dioNow) {
+            inputsGone = true;
+        }
+    }
     ifaceObserved = pRunTimeStreamConfig->ActiveInterface;
-    if (ifaceObserved != ifaceAtSetup ||
+    if (inputsGone) {
+        /* handled below; skip the rest so the reasons stay mutually exclusive */
+    } else if (ifaceObserved != ifaceAtSetup ||
         gStreamIfaceGen != ifaceGenAtSetup) {
         /* The generation is what makes this an ABA-proof test. Comparing the
          * value alone accepts A->B->A, and the partition carved in the middle
@@ -4018,10 +4041,21 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * INT32_MAX as negative. */
         capRevoked = ((uint32_t)freq > revalidatedMax);
     }
-    if (!capRevoked && !ifaceMoved) {
+    if (!capRevoked && !ifaceMoved && !inputsGone) {
         pRunTimeStreamConfig->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
+
+    if (inputsGone) {
+        if (sdLoggingRequested) {
+            pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+            sd_card_manager_UpdateSettings(pSDCardSettings);
+        }
+        LOG_E("STR:START refused (#844): every ADC and DIO input was disabled "
+              "during start - nothing left to stream");
+        SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
+        return SCPI_RES_ERR;
+    }
 
     if (ifaceMoved) {
         if (sdLoggingRequested) {
