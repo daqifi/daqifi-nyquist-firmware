@@ -3381,6 +3381,20 @@ static bool SCPI_QuiesceAndResetCoherentPool(void) {
  * interface changes inside one START. */
 static volatile uint32_t gStreamIfaceGen = 0;
 
+/* #848: bumped on every ACCEPTED SYST:STR:INT, including one that stores the
+ * value the field already holds. gStreamIfaceGen deliberately does not count
+ * those -- clients re-send the current interface routinely, and counting it
+ * there would make START's arm-time check refuse a perfectly good start (#844).
+ *
+ * But SCPI_UnpublishStartInterface needs the opposite question answered: not
+ * "did the selection change" but "did the user express a selection at all
+ * since we published". A same-value set is invisible to the change counter,
+ * and a set that names the interface START has just published IS a same-value
+ * set -- so the rollback would erase an accepted SYST:STR:INT and silently
+ * put the field back (adversarial audit, third pass). Two counters, because
+ * the two call sites are asking two different questions. */
+static volatile uint32_t gStreamIfaceSetCount = 0;
+
 /* #848: undo START's interface publish when the start does not happen.
  *
  * The publish has to land before PrepareStreamingBuffers (which sizes the
@@ -3397,12 +3411,15 @@ static volatile uint32_t gStreamIfaceGen = 0;
  * stamping ours back over it would be the bug this function exists to
  * prevent, inverted.
  *
- * The compare tests the GENERATION as well as the value, for the same reason
+ * The compare tests the counters as well as the value, for the same reason
  * the publish and the arm do: comparing the value alone accepts A->B->A, so a
  * setter that deliberately moved the interface away and back would have its
- * choice rolled back by us on the way out (Qodo, importance 9). `expectedGen`
- * is the pin taken at the auto-detect -- any setter activity at all since then
- * means the field is not ours to put back.
+ * choice rolled back by us on the way out (Qodo, importance 9).
+ *
+ * It tests BOTH counters. `expectedGen` catches a setter that changed the
+ * value; `expectedSets` catches one that was ACCEPTED without changing it --
+ * which is exactly what a set naming the interface we just published is, and
+ * therefore the shape most likely to be erased here (adversarial audit).
  *
  * The counter is deliberately not BUMPED here -- it counts SETTER changes, and
  * START's publish does not bump it either, so the pair stays symmetric.
@@ -3437,12 +3454,15 @@ static void SCPI_ReleaseSdLoggingArm(sd_card_manager_settings_t *sd) {
 static void SCPI_UnpublishStartInterface(StreamingRuntimeConfig *cfg,
                                          StreamingInterface published,
                                          StreamingInterface original,
-                                         uint32_t expectedGen) {
+                                         uint32_t expectedGen,
+                                         uint32_t expectedSets) {
     if (published == original) {
         return;      /* nothing was adopted; nothing to undo */
     }
     taskENTER_CRITICAL();
-    if (cfg->ActiveInterface == published && gStreamIfaceGen == expectedGen) {
+    if (cfg->ActiveInterface == published &&
+        gStreamIfaceGen == expectedGen &&
+        gStreamIfaceSetCount == expectedSets) {
         cfg->ActiveInterface = original;
     }
     taskEXIT_CRITICAL();
@@ -3624,6 +3644,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     StreamingInterface ifaceForStart;
     StreamingInterface ifaceAtDetect;
     uint32_t ifaceGenPinned;
+    uint32_t ifaceSetsPinned;
     {
         /* Outside the section: SCPI_GetInterface only compares the caller's
          * context pointer against the two transports' contexts. */
@@ -3633,6 +3654,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         taskENTER_CRITICAL();
         ifaceAtDetect = pRunTimeStreamConfig->ActiveInterface;
         ifaceGenPinned = gStreamIfaceGen;
+        ifaceSetsPinned = gStreamIfaceSetCount;
         taskEXIT_CRITICAL();
         ifaceForStart = (ifaceAtDetect == detectedInterface ||
                          ifaceAtDetect == StreamingInterface_USB)
@@ -3812,6 +3834,14 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     }
 
     // If SD logging is requested, set mode to WRITE now (deferred from LOGging command)
+    /* #851: this arm lands BEFORE the previous session is stopped, so a
+     * still-running USB session whose START had no filename will begin writing
+     * its own rows into the file this START is opening -- and if this START
+     * then aborts, the file holds data from a start that returned an error.
+     * Pre-existing and deliberately NOT changed here: moving the arm after the
+     * stop changes which refusals kill a running session, which wants its own
+     * bench validation. #848 moved the INTERFACE publish after the stop; the
+     * SD output route is the other half and is tracked separately. */
     if (sdLoggingRequested) {
         /* #589: the SD task is parked while WiFi streaming, a WiFi firmware
          * update, or the jam quarantine owns SPI4, so a WRITE armed here could
@@ -4065,7 +4095,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         if (!PrepareStreamingBuffers(mc->samplePoolCount,
                                      AInSampleList_ElementSize(enabledChannels))) {
             SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
-                                     ifaceAtDetect, ifaceGenPinned);
+                                     ifaceAtDetect, ifaceGenPinned,
+                                     ifaceSetsPinned);
             SCPI_ExecutionError(context, "STR:START: buffer partition failed (USB DMA / tasks not quiescent, or pool error)");
             return SCPI_RES_ERR;
         }
@@ -4090,7 +4121,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
              * already fixed once on this path. */
             if (!sd_card_manager_TryClaim()) {
                 SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
-                                     ifaceAtDetect, ifaceGenPinned);
+                                     ifaceAtDetect, ifaceGenPinned,
+                                     ifaceSetsPinned);
                 LOG_E("STR:START refused: SD busy with another operation at "
                       "post-repartition re-open\r\n");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -4129,7 +4161,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                  * but no file open (would silently drop every sample). */
                 SCPI_ReleaseSdLoggingArm(pSDCardSettings);
                 SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
-                                     ifaceAtDetect, ifaceGenPinned);
+                                     ifaceAtDetect, ifaceGenPinned,
+                                     ifaceSetsPinned);
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
                 return SCPI_RES_ERR;
             }
@@ -4256,7 +4289,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
-                                     ifaceAtDetect, ifaceGenPinned);
+                                     ifaceAtDetect, ifaceGenPinned,
+                                     ifaceSetsPinned);
         LOG_E("STR:START refused (#844): every ADC and DIO input was disabled "
               "during start - nothing left to stream");
         SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
@@ -4285,7 +4319,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
-                                     ifaceAtDetect, ifaceGenPinned);
+                                     ifaceAtDetect, ifaceGenPinned,
+                                     ifaceSetsPinned);
         LOG_E("STR:START refused (#844): config changed during start - %d Hz now "
               "exceeds max %u Hz. Re-read CONF:CAP:JSON? and retry",
               (int)freq, (unsigned)revalidatedMax);
@@ -4715,6 +4750,10 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
             pRunTimeStreamConfig->ActiveInterface = newIface;
             gStreamIfaceGen++;      /* #844: see the counter's declaration */
         }
+        /* #848: counts the ACCEPTANCE, not the change -- a redundant set is
+         * still the user expressing a selection, and START's rollback must
+         * not undo it. Same critical section, so the RMW is safe. */
+        gStreamIfaceSetCount++;
     }
     taskEXIT_CRITICAL();
 
