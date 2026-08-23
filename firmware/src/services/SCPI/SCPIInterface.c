@@ -4152,6 +4152,18 @@ static scpi_result_t SCPI_SaveDataPrecision(scpi_t * context) {
 
 static scpi_result_t SCPI_LoadDataPrecision(scpi_t * context) {
     DaqifiSettings settings;
+    /* #832: the SAME guard as SCPI_SetDataPrecision, for the same reason —
+     * this is the other way the live VoltagePrecision moves. Guarding only the
+     * setter left LOAD as an unguarded twin: `CONF:VOLT:PREC 10` +
+     * `CONF:VOLT:SAVE` while idle, then `CONF:VOLT:LOAD` mid-session, reaches
+     * precision 10 on a stream admitted under the precision-4 cap. */
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (pRunTimeStreamConfig->IsEnabled || pRunTimeStreamConfig->Running) {
+        LOG_E("Voltage-precision load rejected: streaming is active (stop streaming first)");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
     memset(&settings, 0, sizeof(DaqifiSettings));
     if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &settings)) {
         return SCPI_RES_ERR;
