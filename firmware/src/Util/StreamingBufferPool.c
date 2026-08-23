@@ -12,8 +12,16 @@
  * Trimmed 1KB from 194KB (#665) to make room for the DIO-peripheral epic's
  * static footprint (SPI1 mutex + DIO ownership registry) — the device was at
  * the RAM edge and the extra statics overflowed the main stack region. 1KB is
- * ~13 samples off the stream-time partition; negligible to throughput. */
-#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U)
+ * ~13 samples off the stream-time partition; negligible to throughput.
+ *
+ * Trimmed a further 512 B (#824) to pay for streaming.c's gSdHeaderBytes, the
+ * per-session SD file header that rotation now writes straight into each new
+ * file. Same reason as #665 — without it the link fails with "Not enough
+ * memory for stack (8208 bytes needed, 7816 available)" — and the cost is
+ * nil in practice, not merely small: at 16 channels this is ~7 slots off a
+ * PARTITIONED depth that already exceeds the usable one by ~500, because the
+ * FreeRTOS sample queue is what clamps it (#828). */
+#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
 /* The overcommit fallback below carves these four minimums and expects the

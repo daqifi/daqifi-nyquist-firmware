@@ -1071,7 +1071,12 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * (mirrors SCPI_StartStreaming / the #503 disk-full pattern). */
     sd_card_manager_ClearStartupDirFull();
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    /* #824: the benchmark ARMS a write session and it is NOT a streaming log,
+     * so it says so. Staying silent here is what let a benchmark inherit a
+     * live log's header cache and prepend that stream's protobuf sd_metadata
+     * to a rotated benchmark_*.dat part (audit rounds 5, 6, 9) -- output that
+     * no longer matches the requested pattern. */
+    sd_card_manager_UpdateSettingsForPlainWrite(pSDCardRuntimeConfig);
 
     // Wait for file to be open and ready before writing
     {

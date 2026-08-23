@@ -355,6 +355,36 @@ extern "C" {
 bool sd_card_manager_TryClaim(void);
 void sd_card_manager_ReleaseClaim(void);
 
+/* #824: WHAT IS THIS CALL DOING? Three entry points, and the choice decides
+ * whether the rotated split files of the resulting WRITE session carry this
+ * session's self-describing header.
+ *
+ *   ...ForStreamingLog()  arming a WRITE that IS a streaming log  -> header
+ *   ...ForPlainWrite()    arming a WRITE that is NOT one          -> no header
+ *   ...UpdateSettings()   not arming a write session at all       -> unchanged
+ *
+ * The third case is the one worth spelling out: a CONFIG SETTER such as
+ * SYST:STOR:SD:MAXSize calls UpdateSettings() with `mode` already WRITE,
+ * without arming anything. It must not re-answer a question only an arm can
+ * answer -- doing so cost a running log its rotation headers. So "leave it
+ * alone" is the default, and the two arming forms are the only things that
+ * change the latch (a teardown to mode NONE also clears it).
+ *
+ * WHY THE KIND IS A PARAMETER, and not state inspected here: every attempt to
+ * INFER it from the manager's own state was wrong in a different window.
+ * A global one-shot flag set just before the arm was stealable, because
+ * SYST:STOR:SD:BENCHmark takes no claim by design (#736) and could consume
+ * another transport's declaration (audit round 8). Testing
+ * currentProcessState missed the rotation window, where the manager sits in
+ * OPEN_FILE rather than WRITE_TO_FILE (round 7), and adding gSdRotating to
+ * that test then let a benchmark armed DURING a rotation inherit the latch
+ * (round 9). Each of those put a stale protobuf sd_metadata into a benchmark
+ * output file. The caller knows; nothing else reliably does. */
+bool sd_card_manager_UpdateSettingsForStreamingLog(
+        sd_card_manager_settings_t *pSettings);
+bool sd_card_manager_UpdateSettingsForPlainWrite(
+        sd_card_manager_settings_t *pSettings);
+
     /**
      * @brief #703: is the SD read scratch buffer large enough for SD:GET?
      *

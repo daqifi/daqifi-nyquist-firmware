@@ -3701,8 +3701,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         sd_card_manager_ClearStartupDiskFull();
         sd_card_manager_ClearStartupDirFull();   /* #689 */
 
+        /* #824: this WRITE is a streaming log, so its rotated split files must
+         * carry the session header. Stated as an ARGUMENT of the arm, not a
+         * flag set beforehand -- a flag was stealable by a concurrent
+         * benchmark arm (audit round 8; see the header's comment). */
         pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
-        sd_card_manager_UpdateSettings(pSDCardSettings);
+        sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings);
         /* #836: ownership is now carried by `mode != MODE_NONE`, which keeps
          * IsBusy() true, so releasing here leaves no gap. */
         sd_card_manager_ReleaseClaim();
@@ -3849,8 +3853,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             }
             sd_card_manager_ClearStartupDirFull();
             sd_card_manager_ClearStartupDiskFull();
+            /* #824: PrepareStreamingBuffers tore the first arm's session down
+             * (WRITE -> NONE) in between, so this re-open is a fresh arm and
+             * must state its own case. */
             pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
-            sd_card_manager_UpdateSettings(pSDCardSettings);
+            sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings);
             sd_card_manager_ReleaseClaim();   /* #836: mode now holds it */
             int readyWait = 0;
             while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
@@ -3989,10 +3996,14 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
         }
     }
 
-    // Reset encoder state so next session gets fresh headers
+    /* Reset encoder state so the next session gets fresh headers.
+     *
+     * #824: the SD per-file header used to need clearing here too. It no
+     * longer does -- Streaming_Stop(), which Streaming_UpdateState() below
+     * runs, invalidates it, and the next session's encoder loop rebuilds it.
+     * Clearing it here as well would only re-state that in a second place. */
     csv_ResetEncoder();
     json_ResetEncoder();
-    Streaming_ResetSdFileHeader();
 
     // Clear STATus:OPERation condition register
     SCPI_ClearOperBits(OPER_MEASURING | OPER_SD_LOGGING);

@@ -544,16 +544,21 @@ void Streaming_Tasks(   StreamingRuntimeConfig* pStreamConfig, tBoardData* board
  */
 void TimestampTimer_Init( void );
 
-/**
- * Resets the SD protobuf metadata flag so the next SD log file
- * gets a self-describing metadata header as its first message.
- */
 /* #759: release a streaming selection that points at the SD card once the card
  * is no longer available. Safe to call from any task; no-op unless the active
  * interface is SD or USB+SD. */
 void Streaming_SdInterfaceReleased(void);
 
-void Streaming_ResetSdFileHeader(void);
+/* #824: the bytes to write at the head of a newly opened SD log file, so every
+ * split file is self-describing. Returns 0 -- and leaves *ppHeader untouched --
+ * when this file should not carry one: the session's FIRST file in any
+ * encoding (it is opened before the header exists, and under CSV/JSON the
+ * encoder's own inline header lands at its byte 0 instead).
+ *
+ * Called by the SD task from OPEN_FILE, before anything from the circular
+ * buffer reaches the new handle. The bytes are built once per session by the
+ * streaming task and are valid until streaming stops. */
+size_t Streaming_GetSdFileHeader(const uint8_t** ppHeader);
 
 /* #757: report SD bytes that were buffered for the next file but can never be
  * written, because the session was torn down while the rotation's open was in
