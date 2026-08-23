@@ -3371,6 +3371,16 @@ static bool SCPI_QuiesceAndResetCoherentPool(void) {
     return true;
 }
 
+/* #844: bumped on every accepted SYST:STR:INT store. SCPI_StartStreaming pins
+ * it alongside ActiveInterface so its arm-time check catches an A->B->A
+ * sequence: comparing the VALUE alone passes if the interface is put back,
+ * even though the buffer partition in between was carved for B (WiFi would
+ * then stream through the 1400-byte inactive ring instead of its 96 KB one).
+ * Written only inside the setter's critical section, so the RMW is safe;
+ * 32-bit reads are atomic on PIC32MZ. Wrap is harmless -- it would take 2^32
+ * interface changes inside one START. */
+static volatile uint32_t gStreamIfaceGen = 0;
+
 static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     int32_t freq;
 
@@ -3642,11 +3652,19 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * re-validation refuses on a mismatch; see the arm site for the concrete
      * failure it prevents. */
     const StreamingInterface ifaceAtSetup = pRunTimeStreamConfig->ActiveInterface;
+    const uint32_t ifaceGenAtSetup = gStreamIfaceGen;
     bool sdLoggingRequested = (ifaceAtSetup != StreamingInterface_WiFi) &&
                               pSDCardSettings != NULL && pSDCardSettings->enable &&
                               pSDCardSettings->file[0] != '\0';
 
-    if (pRunTimeStreamConfig->ActiveInterface == StreamingInterface_WiFi &&
+    /* ifaceAtSetup, not a fresh read: every setup-phase decision must be made
+     * against the SAME interface value, or two of them can disagree. A live
+     * read here could see WiFi while sdLoggingRequested one line above was
+     * computed for USB, refusing a start for a conflict that does not apply to
+     * the interface actually being set up (Qodo, importance 9). The arm site
+     * is the one place that deliberately reads it live -- comparing against
+     * this pin is the whole point there. */
+    if (ifaceAtSetup == StreamingInterface_WiFi &&
         pSDCardSettings != NULL && pSDCardSettings->enable &&
         pSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
         LOG_E("Cannot start WiFi streaming while SD logging is active (SPI bus conflict)");
@@ -3976,7 +3994,15 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * against the SD cap and arms -- with the SD manager still in mode NONE.
      * streaming_Task then writes to neither SD nor WiFi, and START returns OK
      * on a session that emits nothing at all. */
-    if (pRunTimeStreamConfig->ActiveInterface != ifaceAtSetup) {
+    if (pRunTimeStreamConfig->ActiveInterface != ifaceAtSetup ||
+        gStreamIfaceGen != ifaceGenAtSetup) {
+        /* The generation is what makes this an ABA-proof test. Comparing the
+         * value alone accepts A->B->A, and the partition carved in the middle
+         * of that -- PrepareStreamingBuffers reads ActiveInterface to size the
+         * rings -- would be the one for B. The session would then stream over
+         * A through B's buffers: WiFi on the 1400-byte inactive ring rather
+         * than its 96 KB one, or SD on the 4 KB inactive circular buffer, at a
+         * rate the cap admitted for the real partition. */
         ifaceMoved = true;
     } else if (Streaming_GetBenchmarkMode() == BENCHMARK_OFF) {
         revalidatedMax = Streaming_ComputeMaxFreqForConfig();
@@ -4429,6 +4455,7 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
         rejectWifiDuringSdWrite = true;
     } else {
         pRunTimeStreamConfig->ActiveInterface = (StreamingInterface) param1;
+        gStreamIfaceGen++;      /* #844: see the counter's declaration */
     }
     taskEXIT_CRITICAL();
 
