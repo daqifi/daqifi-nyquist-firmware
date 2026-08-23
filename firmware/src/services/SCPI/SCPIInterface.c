@@ -2201,11 +2201,6 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     if (periodCycles < 2) periodCycles = 2;
     pStreamCfg->ClockPeriod = periodCycles - 1;
     StreamFreq_Set(pStreamCfg, freq);
-    /* #824: every path that starts a session must open an SD-header epoch, or
-     * this session's first SD file inherits the PREVIOUS session's header.
-     * This one saves and restores the SD mode rather than forcing it off, so
-     * it can run with SD logging armed. */
-    Streaming_BeginSdHeaderEpoch();
     pStreamCfg->IsEnabled = true;
     Streaming_UpdateState();
 
@@ -2371,9 +2366,6 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
     Streaming_ClearStats();
     cfg->ClockPeriod = periodCycles - 1;
     StreamFreq_Set(cfg, freq);
-    /* #824: same invariant as the other two start sites -- each finder step is
-     * its own session, so each opens its own epoch. */
-    Streaming_BeginSdHeaderEpoch();
     cfg->IsEnabled = true;
     Streaming_UpdateState();
     if (!cfg->Running) {
@@ -3610,15 +3602,6 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             return SCPI_RES_ERR;
         }
     }
-
-    /* #824: open this session's SD-header epoch HERE, before anything below
-     * arms SD logging. Everything after this point may cause the SD task to
-     * open a log file, and the invariant is that the session's FIRST file
-     * finds no valid cached header -- which is what the pre-#824
-     * gSdFileWasReady latch produced, and what keeps the previous session's
-     * protobuf sd_metadata off this session's file 1. Invalidating at STOP
-     * instead raced an in-flight rotation open (audit round 2). */
-    Streaming_BeginSdHeaderEpoch();
 
     /* Interface_All is USB+SD (WiFi excluded by SPI bus conflict). Any
      * interface other than WiFi-only can drive SD logging when the SD

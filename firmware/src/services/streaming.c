@@ -133,28 +133,33 @@ static uint8_t gSdHeaderBytes[STREAMING_SD_HEADER_MAX];
 static volatile uint32_t gSdHeaderLen = 0;
 static volatile uint8_t gSdHeaderEnc = 0;     // StreamingEncoding it was built for
 
-/* Validity is an EPOCH match, not a boolean, and that is the fix for a race
- * the boolean had (#824 audit round 2).
+/* Cleared at Streaming_START, set by the builder, and never touched at stop.
  *
- * The cache used to be cleared in Streaming_Stop(). SCPI runs at priority 7
- * (USB) against the SD task's 5, so a SYST:STR:STOP could land between the SD
- * task opening a rotation's new file and its Streaming_GetSdFileHeader() call
- * -- clearing the cache in that gap, while the SD manager was still in WRITE
- * mode, so the open completed and the file then received the rotation
- * window's buffered DATA with no header in front of it. That was a REGRESSION
- * against the pre-#824 design, where the header was already sitting in the
- * circular buffer ahead of the data and a late stop could not remove it.
+ * The stop/start asymmetry is deliberate and was arrived at the hard way
+ * (#824 audit rounds 2-3). Clearing at STOP is a race: SCPI runs at priority
+ * 7 against the SD task's 5, so a SYST:STR:STOP can land between the SD task
+ * opening a rotation's new file and its Streaming_GetSdFileHeader() call --
+ * the open completes while the manager is still in WRITE mode, the fetch
+ * returns 0, and the file takes the rotation window's DATA with no header in
+ * front of it. Pre-#824 that could not happen, because the header was already
+ * queued in the circular buffer ahead of the data.
  *
- * An epoch removes the gap instead of narrowing it. Stop clears nothing, so a
- * teardown cannot invalidate a header for a file that is already being
- * opened; the epoch is bumped at session START (Streaming_BeginSdHeaderEpoch,
- * called from SCPI_StartStreaming BEFORE the SD file is armed), which is what
- * keeps the NEXT session's first file from being handed the previous
- * session's bytes -- the hazard that put the clear in Stop to begin with.
- * Protobuf needs that: its sd_metadata has no encoder-side "already sent"
- * predicate to fall back on. */
-static volatile uint32_t gSdHeaderEpoch = 0;       // bumped once per session
-static volatile uint32_t gSdHeaderBuiltEpoch = 0;  // epoch the cache was built in
+ * Clearing at START is safe here ONLY because the SD task writes this header
+ * for ROTATIONS and nothing else (see OPEN_FILE). A rotation cannot occur
+ * before the encoder has run -- it takes MAXSize bytes to trigger one -- so
+ * the cache is always rebuilt for the live session well before any file that
+ * consumes it. The session's FIRST file needs no header from here: under
+ * CSV/JSON the encoder's own inline header lands at its byte 0, and under
+ * protobuf it has never had one (a pre-existing #196 gap).
+ *
+ * An intermediate revision used a session EPOCH bumped before the SD arm.
+ * That worked for the race but made the gate global, and the audit found two
+ * ways to lose: SYST:STOR:SD:BENCHmark arms WRITE with no epoch of its own
+ * and would have had the previous stream's sd_metadata prepended to its
+ * output file, and a REFUSED SYST:STR:START bumped the epoch before failing
+ * its claim, invalidating a running session's cache mid-rotation. Gating on
+ * the rotation itself removes the need for the epoch entirely. */
+static volatile bool gSdHeaderValid = false;
 
 // Per-session streaming statistics.
 // Written by: deferred ISR task (queueDroppedSamples, poolExhaustedSamples,
@@ -1814,6 +1819,11 @@ static void Streaming_Start(void) {
         // Clear encoding buffer once to prevent stale data artifacts in SD files
         if (buffer != NULL) memset(buffer, 0, bufferSize);
 
+        /* #824: this session gets its own header. Safe to clear HERE rather
+         * than at stop precisely because only a rotation consumes it, and a
+         * rotation needs MAXSize bytes of encoder output first. */
+        gSdHeaderValid = false;
+
         TimerApi_Initialize(gpStreamingConfig->TimerIndex);
         TimerApi_PeriodSet(gpStreamingConfig->TimerIndex, gpRuntimeConfigStream->ClockPeriod);
         TimerApi_CallbackRegister(gpStreamingConfig->TimerIndex, Streaming_TimerHandler, 0);
@@ -2119,10 +2129,8 @@ static void Streaming_DrainSessionSampleQueues(void) {
 }
 
 static void Streaming_Stop(void) {
-    /* #824: deliberately does NOT touch the SD header cache. An earlier
-     * revision cleared it here and that was a race -- see the epoch comment
-     * at gSdHeaderEpoch. Invalidation is Streaming_BeginSdHeaderEpoch()'s
-     * job, at session start, before the SD file is armed. */
+    /* #824: deliberately does NOT touch the SD header cache -- clearing it
+     * here races an in-flight rotation open. See gSdHeaderValid. */
     if (gpRuntimeConfigStream->Running) {
         TimerApi_Stop(gpStreamingConfig->TimerIndex);
         TimerApi_InterruptDisable(gpStreamingConfig->TimerIndex);
@@ -2248,8 +2256,7 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
     gStreamRateConfigured = 0u;
     gBenchmarkMode = BENCHMARK_OFF;
     gSdHeaderLen = 0;
-    gSdHeaderEpoch = 0;
-    gSdHeaderBuiltEpoch = 0;
+    gSdHeaderValid = false;
     memset((void*)&gStreamStats, 0, sizeof(gStreamStats));
     gTimerISRCalls = 0;
     gScanStaleDropped = 0;
@@ -2450,7 +2457,7 @@ static void Streaming_BuildSdFileHeader(StreamingEncoding encoding) {
         len = 0;
     }
 
-    /* Publish. gSdHeaderBuiltEpoch is stored LAST and gates the two scalars above,
+    /* Publish. gSdHeaderValid is stored LAST and gates the two scalars above,
      * which in turn gate the byte array.
      *
      * The barrier makes that ordering explicit rather than incidental (Qodo
@@ -2469,18 +2476,7 @@ static void Streaming_BuildSdFileHeader(StreamingEncoding encoding) {
     gSdHeaderEnc = (uint8_t)encoding;
     gSdHeaderLen = (uint32_t)len;
     __asm__ volatile ("" ::: "memory");
-    gSdHeaderBuiltEpoch = gSdHeaderEpoch;
-}
-
-/* #824: open a new SD-header epoch, invalidating any cache from the previous
- * session. Called from SCPI_StartStreaming BEFORE SD logging is armed, which
- * is the ordering the whole scheme rests on: the session's first OPEN_FILE
- * then finds no valid header and writes none -- matching the pre-#824
- * behaviour, where SCPI_StartStreaming's IsWriteReady() wait had already made
- * the gSdFileWasReady latch true before the SD-only header block could fire
- * for file 1. */
-void Streaming_BeginSdHeaderEpoch(void) {
-    gSdHeaderEpoch++;
+    gSdHeaderValid = true;
 }
 
 /* #824: hand the SD task the bytes to write at the head of a newly opened
@@ -2506,11 +2502,11 @@ void Streaming_BeginSdHeaderEpoch(void) {
  *     predicate; every protobuf file from the first ROTATION onward carries
  *     its sd_metadata. */
 size_t Streaming_GetSdFileHeader(const uint8_t** ppHeader) {
-    if (ppHeader == NULL || gSdHeaderBuiltEpoch != gSdHeaderEpoch) {
+    if (ppHeader == NULL || !gSdHeaderValid) {
         return 0;
     }
 
-    /* ONE read of the length, in publish order (gSdHeaderBuiltEpoch is stored
+    /* ONE read of the length, in publish order (gSdHeaderValid is stored
      * last, so testing it first cannot see a half-published cache).
      *
      * A SCPI stop on the USB task (pri 7) can preempt this one (pri 5) at
@@ -2991,7 +2987,7 @@ void streaming_Task(void) {
          * header lands there instead); for protobuf it means file 1 carries
          * no sd_metadata, which is a pre-existing #196 gap this change
          * deliberately does not alter. */
-        if (gSdHeaderBuiltEpoch != gSdHeaderEpoch && gSdExpectedThisSession) {
+        if (!gSdHeaderValid && gSdExpectedThisSession) {
             Streaming_BuildSdFileHeader(pRunTimeStreamConf->Encoding);
         }
 

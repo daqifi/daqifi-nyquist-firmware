@@ -2125,6 +2125,10 @@ void sd_card_manager_ProcessState() {
                  * until sd_AbandonRotationWindow() below clears it AND
                  * accounts for what was buffered -- clearing it here would
                  * silently strand those bytes instead. */
+                /* #824: latch whether THIS open is a rotation, in the same
+                 * critical section that clears the flag -- the header write
+                 * below needs the answer and the flag is gone by then. */
+                bool openWasRotation = gSdRotating;
                 if (!openAborted) {
                     gSdRotating = false;
                 }
@@ -2196,18 +2200,26 @@ void sd_card_manager_ProcessState() {
                      * left alone and its contents become this file's first
                      * data rows.
                      *
-                     * Returns 0 for the session's FIRST file, in every
-                     * encoding, because this open happens before the encoder
-                     * has run and so before the header exists. That is what
-                     * the old code did too, for the same reason in different
-                     * clothes: gSdFileWasReady was initialised from
-                     * IsWriteReady(), which SCPI_StartStreaming has already
-                     * waited for, so the SD-only header block never fired for
-                     * file 1 either. For CSV/JSON that is correct -- the
-                     * encoder's own inline header lands there instead. For
-                     * protobuf it means file 1 carries no sd_metadata, a
-                     * pre-existing #196 gap left deliberately untouched here
-                     * (files 2..N do carry it, as they always did).
+                     * ONLY FOR A ROTATION, and that narrowness is doing
+                     * three jobs at once (#824 audit rounds 2-3):
+                     *   - the session's FIRST file is excluded, which is what
+                     *     the old gSdFileWasReady latch produced: it was
+                     *     initialised from IsWriteReady(), already true
+                     *     because SCPI_StartStreaming waits for it, so the
+                     *     SD-only header block never fired for file 1. Under
+                     *     CSV/JSON the encoder's inline header lands there
+                     *     instead; under protobuf file 1 carries no
+                     *     sd_metadata, a pre-existing #196 gap left untouched.
+                     *   - a NON-STREAMING write open is excluded, which
+                     *     matters because this state also serves
+                     *     SYST:STOR:SD:BENCHmark. That arms WRITE mode
+                     *     directly, and an unconditional fetch here prepended
+                     *     the last protobuf stream's sd_metadata to the
+                     *     benchmark's output file.
+                     *   - and it is why the cache can be cleared at session
+                     *     START rather than at stop: a rotation cannot happen
+                     *     before the encoder has run, so the live session has
+                     *     always rebuilt it in time.
                      *
                      * A short or failed write is logged, not retried, and
                      * the session continues. FatFs returns short only on a
@@ -2219,7 +2231,8 @@ void sd_card_manager_ProcessState() {
                      * currentFileBytes takes what actually landed, so the
                      * split threshold stays honest either way. */
                     const uint8_t* hdr = NULL;
-                    size_t hdrLen = Streaming_GetSdFileHeader(&hdr);
+                    size_t hdrLen = openWasRotation
+                                  ? Streaming_GetSdFileHeader(&hdr) : 0u;
                     if (hdrLen > 0u && hdr != NULL) {
                         TickType_t hdrStart = xTaskGetTickCount();
                         int hdrWritten = (int)SYS_FS_FileWrite(
