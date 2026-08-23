@@ -3401,8 +3401,62 @@ static volatile uint32_t gStreamIfaceSetCount = 0;
  * two need opposite answers: contradicting must refuse the start, agreeing
  * must not -- refusing there is the false refusal #844 removed when it made
  * gStreamIfaceGen count changes only. Written in the setter's critical
- * section; only meaningful when the count has moved. */
+ * section; only meaningful when the count has moved.
+ *
+ * Wrap is harmless, for the same reason gStreamIfaceGen's is: a false
+ * "nobody set anything" needs 2^32 accepted SYST:STR:INT commands to land
+ * INSIDE one START's window, which is seconds long (Qodo). */
 static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
+
+/* #848: did an accepted SYST:STR:INT since `pinnedSets` CONTRADICT the start
+ * this call is about?
+ *
+ * A set that names `ifaceForStart` agrees with the start and must not refuse
+ * it -- clients re-send the current interface routinely, and refusing there is
+ * exactly the false refusal #844 removed. A set that names anything else is
+ * the user choosing a different transport, and letting the start proceed
+ * would ignore an accepted command and stream somewhere the caller did not
+ * ask for (adversarial audit, fourth pass).
+ *
+ * "Must not refuse" holds at the PUBLISH, which carries no generation test for
+ * exactly this reason. The ARM keeps one, so an agreeing set that lands in the
+ * publish->arm window can still refuse the start: by then the buffer partition
+ * has run, and a value that left and came back may have been carved for the
+ * value in between (#844's ABA case). That is the #844/#845 direction on
+ * purpose -- a retry is cheap, streaming through the wrong partition is not.
+ *
+ * Must be called with interrupts already disabled -- every call site is inside
+ * the critical section that also tests the value, because they have to
+ * describe one instant. */
+static bool SCPI_StartIfaceContradicted(uint32_t pinnedSets,
+                                        StreamingInterface ifaceForStart) {
+    if (gStreamIfaceSetCount == pinnedSets) {
+        return false;                       /* nobody set anything */
+    }
+    return (gStreamIfaceLastSet != ifaceForStart);
+}
+
+/* #848: release the SD logging arm behind a START that did not happen.
+ *
+ * Seven abort paths in SCPI_StartStreaming carried the same two lines, with
+ * the UpdateSettings return DISCARDED. Qodo flagged the newest of them; fixing
+ * only that one would have left six identical twins, so the class moves here.
+ *
+ * The return stays unchecked, and that is a statement about this call rather
+ * than an omission. `sd_UpdateSettingsImpl` has exactly one `return false`,
+ * gated on `mode != SD_CARD_MANAGER_MODE_NONE` -- the #589 arm-time refusal,
+ * which exempts NONE precisely so teardown paths cannot be stranded. This
+ * function always writes NONE first, so that branch is unreachable from here.
+ * An earlier revision logged on it, which was dead code advertising a
+ * diagnostic it could never emit (Qodo). If that exemption is ever removed,
+ * this is the comment to come back to. */
+static void SCPI_ReleaseSdLoggingArm(sd_card_manager_settings_t *sd) {
+    if (sd == NULL) {
+        return;
+    }
+    sd->mode = SD_CARD_MANAGER_MODE_NONE;
+    (void)sd_card_manager_UpdateSettings(sd);
+}
 
 /* #848: undo START's interface publish when the start does not happen.
  *
@@ -3439,59 +3493,6 @@ static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
  * (Bumping on publish would not help the concurrent-START case in #850 and
  * would break this one: a START would then trip its own arm-time generation
  * test on its own publish.) */
-/* #848: release the SD logging arm behind a START that did not happen.
- *
- * Six abort paths in SCPI_StartStreaming carried the same three lines with the
- * UpdateSettings return DISCARDED. Qodo flagged the newest of them; fixing
- * only that one would have left five identical twins, so the class moves here.
- *
- * The return is now surfaced. A failed release is not a lost arm request the
- * way a failed ARM is -- `mode` is already NONE, so the manager stops treating
- * the file as a streaming log either way -- but it means the manager did not
- * take the transition when asked (suspension, lost SPI arbitration), and the
- * next SD command will meet a state nobody announced. LOG_E, not a changed
- * return: every one of these sites is already returning an error for its own
- * reason, and replacing that reason with an SD one would misreport why the
- * start failed. */
-/* #848: did an accepted SYST:STR:INT since `pinnedSets` CONTRADICT the start
- * this call is about?
- *
- * A set that names `ifaceForStart` agrees with the start and must not refuse
- * it -- clients re-send the current interface routinely, and refusing there is
- * exactly the false refusal #844 removed. A set that names anything else is
- * the user choosing a different transport, and letting the start proceed
- * would ignore an accepted command and stream somewhere the caller did not
- * ask for (adversarial audit, fourth pass).
- *
- * "Must not refuse" holds at the PUBLISH, which drops the generation test for
- * exactly this reason. The ARM keeps it, so an agreeing set that lands in the
- * publish->arm window can still refuse the start: by then the buffer partition
- * has run, and a value that left and came back may have been carved for the
- * value in between (#844's ABA case). That is the #844/#845 direction on
- * purpose -- a retry is cheap, streaming through the wrong partition is not.
- *
- * Must be called with interrupts already disabled -- every call site is inside
- * the critical section that also tests the value, because they have to
- * describe one instant. */
-static bool SCPI_StartIfaceContradicted(uint32_t pinnedSets,
-                                        StreamingInterface ifaceForStart) {
-    if (gStreamIfaceSetCount == pinnedSets) {
-        return false;                       /* nobody set anything */
-    }
-    return (gStreamIfaceLastSet != ifaceForStart);
-}
-
-static void SCPI_ReleaseSdLoggingArm(sd_card_manager_settings_t *sd) {
-    if (sd == NULL) {
-        return;
-    }
-    sd->mode = SD_CARD_MANAGER_MODE_NONE;
-    if (!sd_card_manager_UpdateSettings(sd)) {
-        LOG_E("[SD] could not release the streaming-log arm while aborting "
-              "STR:START - SD may still consider itself armed");
-    }
-}
-
 static void SCPI_UnpublishStartInterface(StreamingRuntimeConfig *cfg,
                                          StreamingInterface published,
                                          StreamingInterface original,
@@ -4109,6 +4110,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * that did not happen must not leave the interface somewhere the caller
      * never asked for. */
     bool ifaceRaced = false;
+    /* Captured INSIDE the section, like the arm's ifaceObserved and for the
+     * same reason: re-reading ActiveInterface for the message after
+     * taskEXIT_CRITICAL can print a THIRD value -- whatever a later command
+     * set -- which is the wrong thing to hand someone debugging this refusal
+     * (#844). */
+    StreamingInterface ifaceAtPublish;
     taskENTER_CRITICAL();
     {
         /* The value may legitimately have become ifaceForStart already: a set
@@ -4125,9 +4132,10 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * keeps the generation test, because by then the partition HAS run and
          * a value that left and came back may have been carved for the value
          * in between. */
-        StreamingInterface liveIface = pRunTimeStreamConfig->ActiveInterface;
+        ifaceAtPublish = pRunTimeStreamConfig->ActiveInterface;
         if (SCPI_StartIfaceContradicted(ifaceSetsPinned, ifaceForStart) ||
-            (liveIface != ifaceAtDetect && liveIface != ifaceForStart)) {
+            (ifaceAtPublish != ifaceAtDetect &&
+             ifaceAtPublish != ifaceForStart)) {
             ifaceRaced = true;
         }
     }
@@ -4159,9 +4167,13 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         if (sdLoggingRequested) {
             SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
-        LOG_E("STR:START refused (#848): stream interface changed during start "
-              "setup (was %d); the SD/buffer setup no longer matches. Retry.",
-              (int)ifaceForStart);
+        /* All three values, because any one alone misleads: this message used
+         * to print ifaceForStart under the word "was", which is the interface
+         * the start WANTED, not one it ever held (Qodo). */
+        LOG_E("STR:START refused (#848): stream interface moved during start "
+              "setup - set up for %d, pinned %d at detect, found %d at "
+              "publish. Retry.",
+              (int)ifaceForStart, (int)ifaceAtDetect, (int)ifaceAtPublish);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
