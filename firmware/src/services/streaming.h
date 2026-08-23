@@ -116,7 +116,9 @@ static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t to
  * PB path as a PIECEWISE model split by scan class — pure-T1 (no scan),
  * armed OBDiag-off, and OBDiag-on (the last keeps the #563 coefficients,
  * 600 s at-cap revalidated) — because a single additive law under-fit the
- * grid (tightness 0.74). CSV keeps the #563 single law (no CSV grid basis).
+ * grid (tightness 0.74). #832 (2026-08-23) gave the CSV path the same
+ * treatment for its PURE-T1 class only; CSV's scan-armed cells keep the #563
+ * single law (still no CSV grid basis for them -- see the branch comment).
  *   - PB: margin 0.88 keeps each class a safe never-over envelope.
  *   - CSV is byte/transport-bound (noisier) -> margin 0.80 here, AND the
  *     per-format transport term is still min()'d downstream (binds CSV lower).
@@ -158,7 +160,54 @@ static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2us
             period_ns = 52700ULL + 3000ULL*nT1;
         }
         num = 880000000ULL;   /* 1e9 * 0.88 (PB safe envelope) */
+    } else if (armed == 0u && nT1 > 0u) {
+        /* #832 (2026-08-23, 252 MHz): dedicated pure-T1 CSV class. The CSV
+         * branch had none, so one #563 law -- fitted at 200 MHz, with no
+         * scan-free basis cell -- governed a config in which no MODULE7 scan
+         * competes with the encoder at all. This is the same split #596 gave
+         * the PB branch and #714 later re-fitted downward.
+         * Basis: freeze-aware --above-cap escalation, 600 s per step, real ADC,
+         * USB CSV, OBDiag confirmed 0 against the device before each step
+         * (NQ1 ...E8A7 fw 3.7.2; instrument + CSVs in test-suite #230):
+         *     proven clean  1xT1 21178   3xT1 14175   5xT1 12800
+         *     first FAIL    1xT1 23825 (qd=150728)
+         *                   3xT1 16538 (ardy=9)
+         *                   5xT1 14933 (ardy=3486)
+         * Every proven row had QueueDroppedSamples = T1ArdyMisses =
+         * ScanStaleDropped = 0. Control for reading those FAILs: all three
+         * configs show T1ArdyMisses = 0 AT their currently enforced caps, so a
+         * nonzero ardy is a real failure and not a yardstick stricter than the
+         * shipped caps. The proven column is a step-quantised LOWER bound (the
+         * escalator's multipliers), not a measured ceiling.
+         * Fit: ~7% under the proven rates, per #714's never-over precedent ->
+         *     1xT1 19696   3xT1 13182   5xT1 9906   (+86% / +39% / +16%)
+         * The 1->3 span binds c, which is why 5xT1 lands at 9906 against 12800
+         * proven; a linear model cannot hold all three and leaving that
+         * headroom is the conservative direction.
+         * RAISE-ONLY over the whole NQ1 domain: this law exceeds the old one
+         * for nT1 <= 7 (5484*nT1 <= 40417), and NQ1 has exactly five Type 1
+         * channels (NQ1BoardConfig.c: CH4/CH0/CH1/CH2/CH3 on MODULE4/0/1/2/3),
+         * so nT1 <= 5 always.
+         * `nT1 > 0` keeps the class inside the MEASURED domain (nT1 in 1,3,5).
+         * nT1 = 0 with armed = 0 is reachable -- SCPI_StartStreaming admits a
+         * DIO-only session (hasEnabledChannels comes from the DIO global
+         * enable) -- and there this term is the ONLY bound, because
+         * Streaming_TransportMaxFreq returns ISR_MAX for totalChannels == 0.
+         * Extrapolating the fit there would raise 11267 -> 22000 on a config
+         * nothing has measured, which is precisely the #714/#715 over-cap
+         * mistake. It keeps the old law instead.
+         * NOT extended to the scan-armed cells either: --above-cap refuses
+         * them because NOCAP bypasses the #539 scan-busy bound, and driving an
+         * armed scan past it is documented-undefined (ADC FRM DS60001344E
+         * 22.3.2). Their headroom needs a different instrument.
+         * Reaches JSON too -- it runs this CSV-class branch (see the JSON
+         * transport fit below, whose n=1 `single` this wakes). */
+        period_ns = 30583ULL + 10034ULL*nT1;
+        num = 800000000ULL;   /* 1e9 * 0.80 (CSV; transport min'd downstream) */
     } else {
+        /* armed != 0 here -- the pure-T1 case is handled above. The #563 law is
+         * kept verbatim, the now-constant `armed` term included, so it stays
+         * directly diffable against the fit it came from. */
         period_ns = 71000ULL + 21300ULL*armed + 4550ULL*nT1 + 15190ULL*nT2user + 2680ULL*nMon;
         num = 800000000ULL;   /* 1e9 * 0.80 (CSV; transport min'd downstream) */
     }
@@ -322,9 +371,13 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
              * wider ADC samples cost more bytes/sample -> the NQ1 Hz cap would
              * over-cap them). JSON is DECOUPLED (kept on the old CSV coeffs, then
              * /2 downstream): its 2-3x-CSV byte cost is uncharacterized, so the
-             * ×0.5 placeholder must not inherit the raise. The CSV *additive*
-             * refit (unlocks the additive-bound 1ch/T2 cells, e.g. 1xT1 10589 vs
-             * measured 20000) needs a fine grid -> tracked #562/#529 follow-up. */
+             * ×0.5 placeholder must not inherit the raise. (JSON has since been
+             * measured and fitted for USB — #529/PR #831, below — so it no
+             * longer takes the /2 on this interface.) The CSV *additive* refit
+             * that unlocks the additive-bound cells is PARTLY done: #832 fitted
+             * the pure-T1 class (1xT1 10589 -> 19696, proven clean at 21178),
+             * leaving the T2 / OBDiag=ON cells, which need an instrument that
+             * respects the #539 scan-busy bound -> still #562/#529 follow-up. */
             else if (json && isNQ1) {
                 /* #529 JSON transport fit, measured 2026-08-21 on NQ1/USB.
                  * NOCAP ceiling sweep, each ceiling then held 120 s with zero
@@ -345,17 +398,19 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
                  * 5ch headroom is real but unreachable through this curve,
                  * the same way CsvCompact's is.
                  *
-                 * NOTE the single (n=1) value is currently DORMANT. The
-                 * enforced cap is min(additive, transport), and for JSON the
-                 * additive model runs its CSV-class branch (isProtoBuf=0,
-                 * x0.80 envelope): 1xT1 gives 800e6/(71000+4550) = 10589 Hz,
-                 * below this 11000, so the additive binds and the single never
-                 * applies. Confirmed on the bench -- the device reports exactly
-                 * 10589 for that config. It is set to the measured-safe
-                 * transport value anyway (<= the 12000 ceiling) so it is
-                 * correct if a JSON-specific ADDITIVE fit later lifts that
-                 * bound; characterising the additive for JSON is the follow-up
-                 * that would unlock the remaining 1-channel headroom.
+                 * NOTE the single (n=1) value is LIVE as of #832. The enforced
+                 * cap is min(additive, transport), and for JSON the additive
+                 * model runs its CSV-class branch (isProtoBuf=0, x0.80
+                 * envelope). That branch used to give 1xT1
+                 * 800e6/(71000+4550) = 10589 Hz -- below this 11000 -- so the
+                 * additive bound it and this single never applied. #832 fitted
+                 * a pure-T1 class for that branch, 800e6/(30583+10034) =
+                 * 19696 Hz, which is above 11000, so JSON 1xT1 is now
+                 * TRANSPORT-bound here: 10589 -> 11000 (+3.9%). This value was
+                 * chosen to be measured-safe (<= the 12000 ceiling) precisely
+                 * so it would be correct when woken, which is what happened.
+                 * n >= 2 is unaffected -- already transport-bound (3ch 6400,
+                 * 5ch 4571) and well under the raised additive.
                  *
                  * NQ2/NQ3 are NOT covered: their wider ADC codes cost more
                  * bytes/sample, so an NQ1-fitted Hz cap would over-cap them.
