@@ -3395,6 +3395,15 @@ static volatile uint32_t gStreamIfaceGen = 0;
  * the two call sites are asking two different questions. */
 static volatile uint32_t gStreamIfaceSetCount = 0;
 
+/* #848: the interface the last accepted SYST:STR:INT NAMED. The count alone
+ * cannot tell a set that CONTRADICTS the start in flight ("use USB") from one
+ * that AGREES with it ("use WiFi", sent while START is adopting WiFi), and the
+ * two need opposite answers: contradicting must refuse the start, agreeing
+ * must not -- refusing there is the false refusal #844 removed when it made
+ * gStreamIfaceGen count changes only. Written in the setter's critical
+ * section; only meaningful when the count has moved. */
+static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
+
 /* #848: undo START's interface publish when the start does not happen.
  *
  * The publish has to land before PrepareStreamingBuffers (which sizes the
@@ -3416,10 +3425,14 @@ static volatile uint32_t gStreamIfaceSetCount = 0;
  * setter that deliberately moved the interface away and back would have its
  * choice rolled back by us on the way out (Qodo, importance 9).
  *
- * It tests BOTH counters. `expectedGen` catches a setter that changed the
- * value; `expectedSets` catches one that was ACCEPTED without changing it --
- * which is exactly what a set naming the interface we just published is, and
- * therefore the shape most likely to be erased here (adversarial audit).
+ * It tests BOTH counters, and it is STRICTER than the publish and the arm on
+ * purpose. Those two ask "did a set CONTRADICT this start", and let an
+ * agreeing set through. This one asks "did the user express a selection at
+ * all", because an AGREEING set is precisely what the rollback would destroy:
+ * the user asked for the interface START had adopted, START then failed for
+ * an unrelated reason, and restoring the pre-START value would silently undo
+ * an accepted command (adversarial audit). Any movement in either counter
+ * means the field is not ours to put back.
  *
  * The counter is deliberately not BUMPED here -- it counts SETTER changes, and
  * START's publish does not bump it either, so the pair stays symmetric.
@@ -3440,6 +3453,27 @@ static volatile uint32_t gStreamIfaceSetCount = 0;
  * return: every one of these sites is already returning an error for its own
  * reason, and replacing that reason with an SD one would misreport why the
  * start failed. */
+/* #848: did an accepted SYST:STR:INT since `pinnedSets` CONTRADICT the start
+ * this call is about?
+ *
+ * A set that names `ifaceForStart` agrees with the start and must not refuse
+ * it -- clients re-send the current interface routinely, and refusing there is
+ * exactly the false refusal #844 removed. A set that names anything else is
+ * the user choosing a different transport, and letting the start proceed
+ * would ignore an accepted command and stream somewhere the caller did not
+ * ask for (adversarial audit, fourth pass).
+ *
+ * Must be called with interrupts already disabled -- both call sites are
+ * inside the critical section that also tests the value and the generation,
+ * because the three have to describe one instant. */
+static bool SCPI_StartIfaceContradicted(uint32_t pinnedSets,
+                                        StreamingInterface ifaceForStart) {
+    if (gStreamIfaceSetCount == pinnedSets) {
+        return false;                       /* nobody set anything */
+    }
+    return (gStreamIfaceLastSet != ifaceForStart);
+}
+
 static void SCPI_ReleaseSdLoggingArm(sd_card_manager_settings_t *sd) {
     if (sd == NULL) {
         return;
@@ -4063,7 +4097,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     bool ifaceRaced = false;
     taskENTER_CRITICAL();
     if (pRunTimeStreamConfig->ActiveInterface != ifaceAtDetect ||
-        gStreamIfaceGen != ifaceGenPinned) {
+        gStreamIfaceGen != ifaceGenPinned ||
+        SCPI_StartIfaceContradicted(ifaceSetsPinned, ifaceForStart)) {
         ifaceRaced = true;
     } else {
         pRunTimeStreamConfig->ActiveInterface = ifaceForStart;
@@ -4094,6 +4129,15 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         if (!PrepareStreamingBuffers(mc->samplePoolCount,
                                      AInSampleList_ElementSize(enabledChannels))) {
+            /* The first SD arm is still open here -- PrepareStreamingBuffers
+             * can fail BEFORE the quiesce that tears it down (its USB-DMA wait
+             * times out first). Every sibling abort releases it; this one did
+             * not, so a failed partition left mode==WRITE and the file open,
+             * and the manager read as busy to every later SD command
+             * (adversarial audit, fourth pass). */
+            if (sdLoggingRequested) {
+                SCPI_ReleaseSdLoggingArm(pSDCardSettings);
+            }
             SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
@@ -4252,7 +4296,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     if (inputsGone) {
         /* handled below; skip the rest so the reasons stay mutually exclusive */
     } else if (ifaceObserved != ifaceForStart ||
-        gStreamIfaceGen != ifaceGenPinned) {
+        gStreamIfaceGen != ifaceGenPinned ||
+        SCPI_StartIfaceContradicted(ifaceSetsPinned, ifaceForStart)) {
         /* The generation is what makes this an ABA-proof test. Comparing the
          * value alone accepts A->B->A, and the partition carved in the middle
          * of that -- PrepareStreamingBuffers reads ActiveInterface to size the
@@ -4754,6 +4799,7 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
          * still the user expressing a selection, and START's rollback must
          * not undo it. Same critical section, so the RMW is safe. */
         gStreamIfaceSetCount++;
+        gStreamIfaceLastSet = newIface;
     }
     taskEXIT_CRITICAL();
 
