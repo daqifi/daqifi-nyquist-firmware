@@ -4461,8 +4461,16 @@ static scpi_result_t SCPI_SetStreamInterface(scpi_t * context) {
          * (no WiFi), so no check needed for All. */
         rejectWifiDuringSdWrite = true;
     } else {
-        pRunTimeStreamConfig->ActiveInterface = (StreamingInterface) param1;
-        gStreamIfaceGen++;      /* #844: see the counter's declaration */
+        /* Bump ONLY on a real change. Counting a redundant write (SYST:STR:INT
+         * set to the value it already has -- clients do this routinely) would
+         * make START's arm-time check conclude the interface moved and refuse
+         * a perfectly good start. ABA detection is unaffected: A->B->A is two
+         * REAL changes and still bumps twice (Qodo). */
+        StreamingInterface newIface = (StreamingInterface) param1;
+        if (pRunTimeStreamConfig->ActiveInterface != newIface) {
+            pRunTimeStreamConfig->ActiveInterface = newIface;
+            gStreamIfaceGen++;      /* #844: see the counter's declaration */
+        }
     }
     taskEXIT_CRITICAL();
 
