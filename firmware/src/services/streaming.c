@@ -2445,9 +2445,26 @@ static void Streaming_BuildSdFileHeader(StreamingEncoding encoding) {
         len = 0;
     }
 
+    /* Publish. gSdHeaderBuilt is stored LAST and gates the two scalars above,
+     * which in turn gate the byte array.
+     *
+     * The barrier makes that ordering explicit rather than incidental (Qodo
+     * pass 1). It is not load-bearing on this part -- PIC32MZ is a
+     * single-core, in-order M-class core, so a preempting task cannot observe
+     * a store order different from program order, and the byte writes happen
+     * inside csv_GenerateHeaderToBuffer / Nanopb_Encode, opaque cross-TU calls
+     * that XC32 (no LTO) cannot sink stores across. But both of those are
+     * properties of the current build, not of the source, and the cost here is
+     * exactly zero instructions.
+     *
+     * `volatile` on gSdHeaderBytes was the suggested alternative and does not
+     * work: csv_GenerateHeaderToBuffer takes a plain `char *`, so the
+     * qualifier would be cast away at the call and buy nothing while
+     * pessimising every byte access that survived. */
     gSdHeaderEnc = (uint8_t)encoding;
     gSdHeaderLen = (uint32_t)len;
-    gSdHeaderBuilt = true;   // published LAST: gates the two stores above
+    __asm__ volatile ("" ::: "memory");
+    gSdHeaderBuilt = true;
 }
 
 /* #824: hand the SD task the bytes to write at the head of a newly opened

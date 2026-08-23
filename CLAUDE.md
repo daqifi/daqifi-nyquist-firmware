@@ -941,7 +941,7 @@ All items verified against the actual errata document. Only issues affecting fea
 
 The firmware uses four distinct memory regions, each with different properties:
 
-1. **Streaming Buffer Pool** (**197,632 B** static BSS — `STATIC_POOL_SIZE` is `(194 * 1024) - 1024`, so "194KB" is 1 KB high; `firmware/src/Util/StreamingBufferPool.c`)
+1. **Streaming Buffer Pool** (**197,120 B** static BSS — `STATIC_POOL_SIZE` is `(194 * 1024) - 1024 - 512`, so the "194KB" label is 1.5 KB high; `firmware/src/Util/StreamingBufferPool.c`. Was 197,632 until #824 trimmed a further 512 B to pay for `streaming.c`'s `gSdHeaderBytes`, the per-session SD file header — net BSS unchanged, the bytes just moved.)
    - Single `static uint8_t gPoolStorage[]` array, partitioned at each stream start
    - Contains: USB circular buffer + WiFi circular buffer + encoder buffer + SD circular buffer + sample pool + free-list
    - Layout: `[USB circ | WiFi circ | encoder | SD circ | <align> | samplePool[] | nextFree[]]`
@@ -971,7 +971,7 @@ The firmware uses four distinct memory regions, each with different properties:
 
 | Region | Bytes | Source |
 |--------|------:|--------|
-| Streaming Buffer Pool | 197,632 | Static BSS (`STATIC_POOL_SIZE` = 194KB - 1KB) |
+| Streaming Buffer Pool | 197,120 | Static BSS (`STATIC_POOL_SIZE` = 194KB - 1KB - 512B) |
 | FreeRTOS Heap | 74,000 | Static BSS |
 | Coherent Pool | 126,976 | Static coherent (KSEG1) |
 | USB coherent struct | ~2,000 | Static coherent |
@@ -1033,7 +1033,7 @@ SYSTem:MEMory:FREE?                   # Full memory diagnostics
 SYSTem:MEMory:AUTO                    # Auto-balance for enabled interfaces
 ```
 
-All USB, WiFi, **SD**, encoder, and sample pool memory comes from the unified Streaming Buffer Pool (197,632 B static BSS) — the SD *circular* buffer is in this pool; the separate SD *DMA write* buffer is not, it comes from the coherent pool. Setting any value carves it from the pool; remaining space goes to the sample pool. Setting any field to a non-zero value disables auto-balance for all fields.
+All USB, WiFi, **SD**, encoder, and sample pool memory comes from the unified Streaming Buffer Pool (197,120 B static BSS) — the SD *circular* buffer is in this pool; the separate SD *DMA write* buffer is not, it comes from the coherent pool. Setting any value carves it from the pool; remaining space goes to the sample pool. Setting any field to a non-zero value disables auto-balance for all fields.
 
 **Setter Bounds:**
 
@@ -1087,11 +1087,11 @@ The `StreamingInterface` enum exposes four combinations: `USB`, `WiFi`, `SD`, an
 | SD DMA write (coherent) | 512 | 512 | 124,368 | 77,922 |
 | USB DMA write (coherent) | 124,368 | 512 | 512 | 46,958 |
 | WiFi SPI staging (coherent) | 2,048 | 125,904 | 2,048 | 2,048 |
-| Sample pool CAPACITY (slots @16ch)¹ | 1,600 | 1,148 | 1,959 | 1,101 |
+| Sample pool CAPACITY (slots @16ch)¹ | 1,593 | 1,141 | 1,953 | 1,095 |
 
 ¹ **Capacity, not the depth in use.** These are how many slots the leftover pool space holds — what `StreamingBufferPool_Partition` computes and logs as `samples=<n>x<elementBytes>`. Note the log's second number is the **element** size (72 at 16ch), not the per-sample cost — the free-list entry is counted separately, which is why the divisor below is 74 while the log shows 72. Reconciling `1600 x 72` against a `/ 74` formula otherwise looks like an inconsistency; it is not. The depth actually available is min(that, whatever the FreeRTOS sample queue could be grown to), which on the bench came out at **1100** because the queue resize was skipped for want of ~1 KB of heap (#828). That is **not** an invariant: `AInSampleList_InitializeExternal` only clamps when it tries to GROW the queue and the heap will not stretch, so a device with more free heap grows it — and once grown it stays grown for later sessions. Read the number, do not assume it.
 
-  All four are now derived from this table's own buffer values: `(197,632 - (USB + WiFi + SD + encoder circular)) / 74`, the 74 being the 16-channel element (72 B) plus its free-list entry. Only the stream-pool rows enter the sum — the three coherent-pool DMA rows come from a different 124 KB region. The formula is **confirmed against the device**: for USB-only it gives 1,600, and the firmware logged `samples=1600x72 (of 1600 max, 197632 pool)` on the bench 2026-08-21, alongside `SamplePoolCount=1100` for the queue-limited depth. The earlier figures (~1,618 / ~1,178 / ~1,921 / ~1,086) were computed with the old, wrong 512-byte SD-circular value.
+  All four are derived from this table's own buffer values: `(197,120 - (USB + WiFi + SD + encoder circular)) / 74`, the 74 being the 16-channel element (72 B) plus its free-list entry. Only the stream-pool rows enter the sum — the three coherent-pool DMA rows come from a different 124 KB region. The formula was **confirmed against the device** at the pre-#824 pool size: with 197,632 it gives 1,600 for USB-only, and the firmware logged `samples=1600x72 (of 1600 max, 197632 pool)` on the bench 2026-08-21 alongside `SamplePoolCount=1100` for the queue-limited depth. #824 trimmed the pool by 512 B, so each column drops by ~7 slots — off a *partitioned* capacity that already exceeds the usable depth by ~500, which is why the change costs nothing in practice. The figures above are the recomputed ones and have **not** been re-confirmed on the bench; expect `samples=1593x72 (of 1593 max, 197120 pool)` in that log line. Earlier figures still in circulation (~1,618 / ~1,178 / ~1,921 / ~1,086) were computed with the old, wrong 512-byte SD-circular value and are wrong twice over.
 
 
 **Implementation:** `firmware/src/Util/StreamingBufferPool.c` (unified pool), `firmware/src/Util/CoherentPool.c` (DMA pool), `firmware/src/services/streaming.c` (`ComputeAutoBuffers`), `firmware/src/state/data/AInSample.c` (`InitializeExternal`), `firmware/src/services/SCPI/SCPIInterface.c` (SCPI callbacks), `firmware/src/state/runtime/StreamingRuntimeConfig.h` (MemoryConfig struct), `firmware/src/config/default/driver/winc/dev/spi/wdrv_winc_spi.c` (WiFi SPI staging)
