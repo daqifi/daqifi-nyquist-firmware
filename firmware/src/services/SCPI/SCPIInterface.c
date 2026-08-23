@@ -3532,17 +3532,44 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     }
 
     // Auto-detect the streaming interface BEFORE the frequency cap (#524 Qodo
-    // fix): the per-interface/per-format transport cap depends on ActiveInterface,
-    // so it must be resolved first or the cap is computed for the wrong interface.
+    // fix): the per-interface/per-format transport cap depends on the interface,
+    // so it must be resolved first or the cap is computed for the wrong one.
     // If the current setting matches the detected interface (or is the default
     // USB), adopt auto-detection; otherwise keep the user's explicit choice
     // (e.g. SD or USB+SD).
+    /* #848: resolve it into a LOCAL, and publish it later.
+     *
+     * This used to store straight into the shared runtime config, several
+     * refusal paths before the session was actually armed -- and none of those
+     * refusals put it back. A second START issued on a different transport
+     * while a session was RUNNING therefore retargeted that live session
+     * before rejecting itself: START over WiFi while a USB+SD stream runs and
+     * the WiFi/SD conflict check below refuses, but ActiveInterface is already
+     * WiFi, so streaming_Task stops writing USB and suppresses the SD override
+     * -- an accepted, still-running session silently stops emitting because a
+     * LATER start failed. PR #845 guarded SCPI_SetStreamInterface against
+     * exactly this redirect; START is the other writer, and it bypassed that
+     * guard by living inside START.
+     *
+     * Everything in the setup phase now reads ifaceForStart. The publish
+     * happens at the point of no return, once the previous session (if any)
+     * has been stopped -- see that site for what it verifies first. */
+    StreamingInterface ifaceForStart;
+    StreamingInterface ifaceAtDetect;
+    uint32_t ifaceGenPinned;
     {
+        /* Outside the section: SCPI_GetInterface only compares the caller's
+         * context pointer against the two transports' contexts. */
         StreamingInterface detectedInterface = SCPI_GetInterface(context);
-        StreamingInterface currentInterface = pRunTimeStreamConfig->ActiveInterface;
-        if (currentInterface == detectedInterface || currentInterface == StreamingInterface_USB) {
-            pRunTimeStreamConfig->ActiveInterface = detectedInterface;
-        }
+        /* Value and generation pinned TOGETHER, so the pair the publish
+         * compares against describes one instant. */
+        taskENTER_CRITICAL();
+        ifaceAtDetect = pRunTimeStreamConfig->ActiveInterface;
+        ifaceGenPinned = gStreamIfaceGen;
+        taskEXIT_CRITICAL();
+        ifaceForStart = (ifaceAtDetect == detectedInterface ||
+                         ifaceAtDetect == StreamingInterface_USB)
+                        ? detectedInterface : ifaceAtDetect;
     }
 
     // #524 (Qodo): a no-argument START reuses the stored frequency — resolve it
@@ -3565,6 +3592,9 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
+    /* #848: the timer period this start would run at, held until the arm
+     * publishes it. Zero means "not computed"; the check below enforces it. */
+    uint32_t periodCycles = 0;
     {
         // NQ3 Smart Frequency Management:
         // When external AD7609 channels are active WITHOUT any Type 1 MC12bADC channels,
@@ -3590,7 +3620,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
             // Includes the WiFi wire-rate term when ActiveInterface==WiFi
             // (#522) on top of the ADC/ISR/tick constraints.
-            uint32_t maxFreq = Streaming_ComputeMaxFreqForConfig();
+            /* #848: ...Iface(ifaceForStart), because ActiveInterface is no
+             * longer written by the auto-detect above. Same value the old
+             * store made ComputeMaxFreqForConfig() read; the difference is
+             * that a refusal here now leaves the shared field untouched. */
+            uint32_t maxFreq = Streaming_ComputeMaxFreqForConfigIface(ifaceForStart);
             if (freq > (int32_t)maxFreq) {
                 /* #524: HARD cap — reject the over-ask with a SCPI error instead
                  * of silently lowering the rate. Silent capping left the client
@@ -3624,20 +3658,43 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             // PIC32MZ type-B timer counts 0..PR inclusive (PR+1 cycles per match).
             // Compute the period in timer cycles, then subtract 1 for the PR value.
             // Ceiling division ensures actual freq <= requested freq (no overspeed).
-            uint32_t periodCycles = (clkFreq + freq - 1) / freq;
+            /* #848: computed here, PUBLISHED at the arm. The four rate fields
+             * and the #730 configured-rate flag used to be stored right here,
+             * with no refusal path after this point restoring them -- not the
+             * SD aborts, not the buffer-partition abort, not the #844 arm-time
+             * refusals. A refused START therefore left its rejected rate
+             * committed, so CONF:CAP:JSON? reported an actual rate that had
+             * never been accepted and a later NO-ARGUMENT START (which reads
+             * the stored Frequency) silently ran at it.
+             *
+             * Publishing at the arm rather than snapshotting-and-restoring is
+             * what makes that exact rather than nearly-exact: there is no
+             * window in which the rejected rate is visible at all, and no
+             * refusal path that has to remember to undo anything. Nothing
+             * between here and the arm reads these fields -- Streaming_UpdateState
+             * (timer PR, flow window), the PB encoder's ClockPeriod and the SD
+             * header all run after IsEnabled is published. */
+            periodCycles = (clkFreq + freq - 1) / freq;
             if (periodCycles < 2) periodCycles = 2;  // PR must be >= 1
-            pRunTimeStreamConfig->ClockPeriod = periodCycles - 1;
-            Streaming_NoteRateConfigured();   /* #730 */
-            pRunTimeStreamConfig->Frequency = freq;
-            pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
             // #107: scan the shared MODULE7 (Type-2) mux on EVERY tick so T2 yields
             // real full-rate conversions (not 1 kHz held values). The mux scan keeps
             // up to >=40 kHz (HW-characterized); the streaming rate is bounded by the
             // #524 transport cap above, well within the scan's capability.
-            pRunTimeStreamConfig->ChannelScanFreqDiv = 1;
+            // (ChannelScanFreqDiv = 1 is published with the rest of the rate.)
         } else {
             return SCPI_RES_ERR;
         }
+    }
+
+    /* #848: the arm publishes periodCycles - 1, so make the invariant that
+     * feeds it a CHECKED precondition rather than a comment. The branch above
+     * either assigns >= 2 or returns, so this cannot fire; keeping it means a
+     * future edit that adds a path around the assignment gets a refusal
+     * instead of a 0xFFFFFFFF timer period. */
+    if (periodCycles < 2u) {
+        LOG_E("Streaming rejected: timer period not resolved for %d Hz", (int)freq);
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
     }
 
     /* Interface_All is USB+SD (WiFi excluded by SPI bus conflict). Any
@@ -3645,26 +3702,25 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * card is enabled and a filename is set. */
     sd_card_manager_settings_t* pSDCardSettings =
         BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    /* #844: remember WHICH interface the setup below is being done for. The
-     * whole rest of START -- sdLoggingRequested, the SD file open, the buffer
-     * partition -- is derived from this value, so if it moves before the arm,
-     * that setup describes an interface the session is no longer using. The
-     * re-validation refuses on a mismatch; see the arm site for the concrete
-     * failure it prevents. */
-    const StreamingInterface ifaceAtSetup = pRunTimeStreamConfig->ActiveInterface;
-    const uint32_t ifaceGenAtSetup = gStreamIfaceGen;
-    bool sdLoggingRequested = (ifaceAtSetup != StreamingInterface_WiFi) &&
+    /* #844/#848: ifaceForStart is WHICH interface the setup below is being
+     * done for. The whole rest of START -- sdLoggingRequested, the SD file
+     * open, the buffer partition -- derives from it, so if the shared field
+     * moves before the arm, that setup describes an interface the session is
+     * no longer using; both the publish and the arm refuse on a mismatch. It
+     * is a local rather than a read of the runtime config because the
+     * auto-detect no longer stores into it -- see its declaration. */
+    bool sdLoggingRequested = (ifaceForStart != StreamingInterface_WiFi) &&
                               pSDCardSettings != NULL && pSDCardSettings->enable &&
                               pSDCardSettings->file[0] != '\0';
 
-    /* ifaceAtSetup, not a fresh read: every setup-phase decision must be made
+    /* ifaceForStart, not a fresh read: every setup-phase decision must be made
      * against the SAME interface value, or two of them can disagree. A live
      * read here could see WiFi while sdLoggingRequested one line above was
      * computed for USB, refusing a start for a conflict that does not apply to
      * the interface actually being set up (Qodo, importance 9). The arm site
      * is the one place that deliberately reads it live -- comparing against
      * this pin is the whole point there. */
-    if (ifaceAtSetup == StreamingInterface_WiFi &&
+    if (ifaceForStart == StreamingInterface_WiFi &&
         pSDCardSettings != NULL && pSDCardSettings->enable &&
         pSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
         LOG_E("Cannot start WiFi streaming while SD logging is active (SPI bus conflict)");
@@ -3864,6 +3920,56 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         Streaming_UpdateState();  // Stop timer + streaming task
     }
 
+    /* #848: the point of no return -- publish the interface this start was set
+     * up for, and not one line earlier.
+     *
+     * AFTER the stop above, deliberately: publishing while the previous
+     * session is still Running is the bug this fixes, and the ordering is the
+     * fix. From here on there is no live session to retarget, and
+     * PrepareStreamingBuffers below needs the field set because it sizes the
+     * rings from it (Streaming_ComputeAutoBuffers reads ActiveInterface).
+     *
+     * Verified against the pin taken at the auto-detect, and refused rather
+     * than written if either half moved, because two other writers can land in
+     * that window while IsEnabled and Running are both false:
+     *   - SCPI_SetStreamInterface on the other transport. Its own guard is
+     *     open (nothing is streaming), and it bumps the generation. The VALUE
+     *     test alone would miss A->B->A; the generation is what makes this
+     *     ABA-proof.
+     *   - Streaming_SdInterfaceReleased (#759), which forces SD/USB+SD back to
+     *     USB when the card goes away, and does NOT bump the generation. The
+     *     value test is what catches that one -- without it this publish would
+     *     write SD back over the USB that helper just chose and recreate the
+     *     exact ActiveInterface=SD-with-SD-disabled pairing #759 removed.
+     * Neither is reachable while the old session runs (both guard on it), but
+     * a START with no previous session spends multi-second SD polls here.
+     *
+     * The arm-time check further down repeats both tests: this publish closes
+     * detect->publish, that one closes publish->arm. */
+    bool ifaceRaced = false;
+    taskENTER_CRITICAL();
+    if (pRunTimeStreamConfig->ActiveInterface != ifaceAtDetect ||
+        gStreamIfaceGen != ifaceGenPinned) {
+        ifaceRaced = true;
+    } else {
+        pRunTimeStreamConfig->ActiveInterface = ifaceForStart;
+    }
+    taskEXIT_CRITICAL();
+
+    if (ifaceRaced) {
+        /* Mirror the other aborts: never leave a logging file open behind a
+         * start that did not happen (#690). */
+        if (sdLoggingRequested) {
+            pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+            sd_card_manager_UpdateSettings(pSDCardSettings);
+        }
+        LOG_E("STR:START refused (#848): stream interface changed during start "
+              "setup (was %d); the SD/buffer setup no longer matches. Retry.",
+              (int)ifaceForStart);
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     // Partition the streaming buffer pool (auto or static per MemoryConfig) +
     // DMA coherent pool + sample pool, via the shared helper — same path used
     // by SYST:STR:THR, the WiFi finder, and SYST:MEM:AUTO (issue #229).  The
@@ -3991,7 +4097,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * taskEXIT_CRITICAL can print a THIRD interface -- whatever a later
      * command set -- which is precisely the wrong thing to hand someone
      * debugging this refusal (Qodo). */
-    StreamingInterface ifaceObserved = ifaceAtSetup;
+    StreamingInterface ifaceObserved = ifaceForStart;
     taskENTER_CRITICAL();
     /* The interface must still be the one everything above was set up for.
      * The rate check alone does not catch this, because the new interface's
@@ -4024,8 +4130,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     ifaceObserved = pRunTimeStreamConfig->ActiveInterface;
     if (inputsGone) {
         /* handled below; skip the rest so the reasons stay mutually exclusive */
-    } else if (ifaceObserved != ifaceAtSetup ||
-        gStreamIfaceGen != ifaceGenAtSetup) {
+    } else if (ifaceObserved != ifaceForStart ||
+        gStreamIfaceGen != ifaceGenPinned) {
         /* The generation is what makes this an ABA-proof test. Comparing the
          * value alone accepts A->B->A, and the partition carved in the middle
          * of that -- PrepareStreamingBuffers reads ActiveInterface to size the
@@ -4042,6 +4148,17 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         capRevoked = ((uint32_t)freq > revalidatedMax);
     }
     if (!capRevoked && !ifaceMoved && !inputsGone) {
+        /* #848: the rate becomes visible HERE, in the same section that
+         * publishes IsEnabled, so no refusal path can leave a rejected rate
+         * behind and no reader can see a rate the session is not running at.
+         * All four stores plus the #730 flag are plain assignments to fields
+         * nothing else writes at this point -- the section is not lengthened
+         * in any way that matters. */
+        pRunTimeStreamConfig->ClockPeriod = periodCycles - 1;
+        pRunTimeStreamConfig->Frequency = (uint64_t)freq;
+        pRunTimeStreamConfig->TSClockPeriod = 0xFFFFFFFF;
+        pRunTimeStreamConfig->ChannelScanFreqDiv = 1;
+        Streaming_NoteRateConfigured();   /* #730 -- a single 32-bit store */
         pRunTimeStreamConfig->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
@@ -4064,7 +4181,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
         LOG_E("STR:START refused (#844): stream interface changed during start "
               "(%d -> %d); the SD/buffer setup no longer matches. Retry.",
-              (int)ifaceAtSetup, (int)ifaceObserved);
+              (int)ifaceForStart, (int)ifaceObserved);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
