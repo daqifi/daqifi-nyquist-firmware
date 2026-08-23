@@ -57,7 +57,7 @@ extern "C" {
 // override it. NQ1 note: the ADC additive model binds T1-only cells below this
 // anyway; NQ2/NQ3's legacy formula keeps its own 16000 start via
 // STREAMING_ISR_MAX_HZ_LEGACY below.
-// #832: the highest CONF:VOLTage:PRECision the pure-T1 CSV refit was measured
+// #832: the highest CONFigure:VOLTage:PRECision the pure-T1 CSV refit was measured
 // at, and therefore the highest it may be applied at. NQ1's shipped default is
 // 4; 0..3 drive an encoder that is cheaper or equal (0 is int_to_str, 1..3 emit
 // fewer characters), so the precision-4 basis is never-over for them. 5..10
@@ -123,7 +123,7 @@ static inline uint32_t Streaming_ComputeMaxFreq(uint32_t type1Count, uint32_t to
  * armed OBDiag-off, and OBDiag-on (the last keeps the #563 coefficients,
  * 600 s at-cap revalidated) — because a single additive law under-fit the
  * grid (tightness 0.74). CSV keeps the #563 single law EXCEPT for the pure-T1
- * (no-scan) class, which #832 re-fitted at 252 MHz and at CONF:VOLT:PRECision 4
+ * (no-scan) class, which #832 re-fitted at 252 MHz and at CONFigure:VOLTage:PRECision 4
  * -- the NQ1 shipped default, and a materially more expensive encoder path than
  * the precision-0 integer fast path every earlier CSV basis was measured on.
  * JSON shares the CSV branch but is EXCLUDED from that refit (see below).
@@ -173,7 +173,7 @@ static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2us
     } else if (armed == 0u && isJson == 0u
                && voltagePrecision <= STREAMING_CSV_REFIT_MAX_PRECISION) {
         /* #832 (2026-08-23): pure-T1 CSV/CsvCompact, re-fitted at 252 MHz AND
-         * at CONF:VOLTage:PRECision 4 -- the NQ1 SHIPPED DEFAULT.
+         * at CONFigure:VOLTage:PRECision 4 -- the NQ1 SHIPPED DEFAULT.
          *
          * WHY PRECISION IS NAMED HERE. csv_encoder takes an integer fast path
          * (int_to_str) at precision 0 and formats a float per channel per
