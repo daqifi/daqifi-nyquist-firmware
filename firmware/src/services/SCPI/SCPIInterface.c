@@ -2228,12 +2228,28 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     if (periodCycles < 2) periodCycles = 2;
     pStreamCfg->ClockPeriod = periodCycles - 1;
     StreamFreq_Set(pStreamCfg, freq);
-    pStreamCfg->IsEnabled = true;
+    /* #847: this is an ARM, so it observes the config-change claim exactly as
+     * SCPI_StartStreaming's does -- read and publish in ONE critical section,
+     * because a read that merely precedes the publish still lets a setter take
+     * the claim in between and store onto the session armed here.
+     *
+     * No new unwind: leaving IsEnabled false makes Streaming_UpdateState() a
+     * no-op, Running stays false, and the existing "failed to start" branch
+     * below restores every saved value. */
+    bool cfgBusy;
+    taskENTER_CRITICAL();
+    cfgBusy = Streaming_ConfigChangeInProgress();
+    if (!cfgBusy) {
+        pStreamCfg->IsEnabled = true;
+    }
+    taskEXIT_CRITICAL();
     Streaming_UpdateState();
 
     // Verify streaming actually started
     if (!pStreamCfg->Running) {
-        LOG_E("Throughput benchmark: streaming failed to start");
+        LOG_E("Throughput benchmark: streaming failed to start%s",
+              cfgBusy ? " (a streaming config change was in flight - #847)"
+                      : "");
         pStreamCfg->IsEnabled = false;
         Streaming_SetBenchmarkMode(savedBenchmark);
         Streaming_SetTestPattern(savedPattern);
@@ -2393,7 +2409,16 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
     Streaming_ClearStats();
     cfg->ClockPeriod = periodCycles - 1;
     StreamFreq_Set(cfg, freq);
-    cfg->IsEnabled = true;
+    /* #847: same arm-time claim observation as SCPI_StartStreaming and
+     * SYST:STR:THRoughput -- read and publish in ONE critical section. If a
+     * config change holds the claim, IsEnabled stays false, Running stays
+     * false, and the existing start-failure branch just below unwinds and
+     * reports it through *outStartFailed, so no new exit path is introduced. */
+    taskENTER_CRITICAL();
+    if (!Streaming_ConfigChangeInProgress()) {
+        cfg->IsEnabled = true;
+    }
+    taskEXIT_CRITICAL();
     Streaming_UpdateState();
     if (!cfg->Running) {
         // Clean teardown so the start-fail path leaves IsEnabled=false like the

@@ -660,15 +660,14 @@ void Streaming_CountActiveChannels(uint16_t* out_type1Count,
  * advisory-only -- nothing blocks on it. The loser is refused with an error,
  * which is the behaviour these guards already had.
  *
- * The "ARM" it excludes is SCPI_StartStreaming's, and only that one. TWO OTHER
- * SITES publish IsEnabled without consulting the claim -- SYST:STR:THRoughput
- * and the WiFi rate finder, both in SCPIInterface.c -- so a setter racing
- * either of those is still exposed. Left that way deliberately: both are
- * self-contained BENCH commands that arm, measure and stop inside one SCPI
- * callback, neither appears in a production client, and wiring the claim into
- * the finder's per-step arm would need a refusal path through its search loop.
- * Named here rather than left implicit, because "nothing can arm while the
- * claim is held" is what the rest of this comment would otherwise imply.
+ * ALL THREE sites that publish IsEnabled observe it: SCPI_StartStreaming's arm,
+ * SYST:STR:THRoughput, and the WiFi rate finder's per-step arm (the latter two
+ * in SCPIInterface.c). Each reads the claim and publishes IsEnabled in ONE
+ * critical section -- a read that merely PRECEDES the publish is not enough,
+ * because a setter can take the claim in between and store onto the session
+ * that arm is about to publish. So "no session can arm while the claim is
+ * held" is unconditional; if a fourth arm site is ever added it must join
+ * them, and grepping for Streaming_ConfigChangeInProgress finds the pattern.
  */
 typedef enum {
     STREAM_CFG_CLAIM_OK = 0,      /* claim taken -- caller MUST release it */

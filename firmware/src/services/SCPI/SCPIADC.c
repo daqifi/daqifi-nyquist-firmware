@@ -355,9 +355,9 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
     // Frequency, TSClockPeriod and ChannelScanFreqDiv on the session START had
     // just armed -- a channel-enable command silently re-rating a live stream
     // to its own locally-capped freq. It is kept as a defensive path rather
-    // than deleted because two benchmark-only arm sites (SYST:STR:THRoughput
-    // and the WiFi rate finder, both in SCPIInterface.c) still set IsEnabled
-    // without consulting the claim.
+    // than deleted because "unreachable" here rests on every arm site
+    // observing the claim, which is an invariant across three call sites in
+    // another file rather than something this function can enforce.
     if (!pRunTimeStreamConfig->IsEnabled) {
         return SCPI_RES_OK;
     }
