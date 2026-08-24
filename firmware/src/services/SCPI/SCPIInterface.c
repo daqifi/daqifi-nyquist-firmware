@@ -4014,14 +4014,21 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * PrepareStreamingBuffers). The two refusals between here and the arm run
      * BEFORE that quiesce, so they are the only ones that have to close it
      * themselves, and this flag is what tells them the WRITE is that session's
-     * and not some other consumer's: START no longer arms SD before this
-     * point, so it cannot be ours. */
+     * and not some other consumer's.
+     *
+     * `mode == WRITE` alone does NOT establish that. SYST:STOR:SD:BENCHmark
+     * arms a WRITE too and takes no claim by design (#736), so a benchmark
+     * running on the other transport while this start tears a session down
+     * would be read as "the session we stopped" and have its file closed
+     * mid-run by the two aborts below (Qodo). The #824 latch is what answers
+     * the question the mode cannot: it is set only by the STREAMING arm. */
     bool stoppedSdLoggingSession = false;
     if (pRunTimeStreamConfig->IsEnabled && pRunTimeStreamConfig->Running) {
         stoppedSdLoggingSession = (pSDCardSettings != NULL) &&
                                   pSDCardSettings->enable &&
                                   (pSDCardSettings->mode ==
-                                       SD_CARD_MANAGER_MODE_WRITE);
+                                       SD_CARD_MANAGER_MODE_WRITE) &&
+                                  sd_card_manager_WriteIsStreamingLog();
         pRunTimeStreamConfig->IsEnabled = false;
         Streaming_UpdateState();  // Stop timer + streaming task
     }

@@ -385,6 +385,22 @@ bool sd_card_manager_UpdateSettingsForStreamingLog(
 bool sd_card_manager_UpdateSettingsForPlainWrite(
         sd_card_manager_settings_t *pSettings);
 
+/* #851: is the WRITE session currently armed a STREAMING LOG?
+ *
+ * The read side of the latch above. `mode == WRITE` alone does not say WHOSE
+ * write it is -- SYST:STOR:SD:BENCHmark arms one too, and takes no claim by
+ * design (#736) -- so a caller that closes "the WRITE" on the strength of the
+ * mode can tear down another consumer's file. SCPI_StartStreaming needs
+ * exactly this distinction on the two abort paths that run between stopping
+ * the previous session and arming its own SD.
+ *
+ * Latched at the arm and cleared on teardown, so it describes the session that
+ * is open right now, not the last one that asked. A plain read of a volatile
+ * bool: 8-bit loads are atomic on PIC32MZ and the caller pairs it with its own
+ * read of `mode`, which is the same snapshot-not-a-lock contract every other
+ * reader of these two fields has. */
+bool sd_card_manager_WriteIsStreamingLog(void);
+
     /**
      * @brief #703: is the SD read scratch buffer large enough for SD:GET?
      *

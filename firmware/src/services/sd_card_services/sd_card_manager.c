@@ -3669,6 +3669,10 @@ bool sd_card_manager_UpdateSettingsForPlainWrite(
     return sd_UpdateSettingsImpl(pSettings, SD_WRITE_ARM_PLAIN);
 }
 
+bool sd_card_manager_WriteIsStreamingLog(void) {
+    return gWriteSessionIsStreamingLog;      /* #851 -- see the header */
+}
+
 bool sd_card_manager_IsIdle() {
     return (gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_IDLE ||
             gSDCardData.currentProcessState == SD_CARD_MANAGER_PROCESS_STATE_INIT);
