@@ -1166,10 +1166,25 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * immediately before the mode write is the same "re-validate at the arm,
      * not just at the gate" shape #845 gave SCPI_StartStreaming's cap inputs.
      *
-     * The exit path is already correct for a refusal here: `file` has been
-     * clobbered, so logFileClobbered restores it, and nothing has been
-     * published to the manager yet (no UpdateSettings call has run since the
-     * clobber), so the manager's own copy still holds the user's name.
+     * Why refusing HERE is safe even though `file` has already been
+     * clobbered, and it is NOT the reason you would guess. The manager does
+     * not keep a private copy to fall back on: sd_card_manager_Init stores
+     * the caller's POINTER (`gpSDCardSettings = pSettings`,
+     * sd_card_manager.c:1012) and app_freertos.c:447 hands it
+     * `&gpBoardRuntimeConfig->sdCardConfig` -- the very object
+     * BoardRunTimeConfig_Get returns here (BoardRuntimeConfig.c:59). The two
+     * ALIAS, which is also why UpdateSettings' memcpy is a self-copy for every
+     * SCPI caller. So the benchmark name written above is visible to the SD
+     * task the instant it is written.
+     *
+     * It is INERT, which is the actual guarantee. The SD task does no work
+     * unless `mode != SD_CARD_MANAGER_MODE_NONE` (sd_card_manager.c:1397), and
+     * this refusal returns BEFORE the `mode = WRITE` write below -- so `mode`
+     * is still whatever it was when the enable/present/claim checks passed,
+     * and the only mode that would open `file` is the WRITE this refusal
+     * declines to arm (READ / CRC / DELETE open the transient `opFile`
+     * instead, :1407). logFileClobbered then restores the name at
+     * __exit_point, under the same critical section every other writer uses.
      *
      * It DOES leave the result counters zeroed, so a `BENCH?` afterwards
      * reports "no benchmark result available" rather than the previous run's
@@ -1179,14 +1194,39 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * at the claim draws: destroying results is only wrong for a caller that
      * never became the owner. This one did.
      *
-     * What REMAINS after this, stated plainly: a START that publishes
-     * IsEnabled in the few instructions between this test and the mode write
-     * still overlaps. Closing that needs the gate on START's side -- an
-     * exported "benchmark in progress" accessor -- which is #739, closed
-     * won't-fix by the owner because it needs simultaneous two-transport use
-     * and costs a scratch artifact rather than user data. This test does not
-     * change that trade; it just removes the millisecond-scale part of the
-     * window that had nothing to do with it. */
+     * WHAT THIS DOES NOT CATCH, and it is much bigger than it looks. An
+     * earlier revision of this comment said the residual was "the few
+     * instructions between this test and the mode write". That is wrong by
+     * about three orders of magnitude, and the adversarial audit on PR #855
+     * is what corrected it.
+     *
+     * SCPI_StartStreaming publishes IsEnabled LAST. It arms SD -- `mode =
+     * WRITE` plus sd_card_manager_UpdateSettingsForStreamingLog
+     * (SCPIInterface.c:4329-4330) -- and then waits for the file to open in a
+     * `readyWait < 500` loop of `vTaskDelay(10 ms)` (:4338), i.e. up to FIVE
+     * SECONDS, all before `IsEnabled = true` at :4508. `Running` is set later
+     * still, inside Streaming_Start. So for that entire span both flags read
+     * false and every test in this function -- fast path, claim and this one
+     * -- sees "no stream".
+     *
+     * The consequence is the #728 hazard from the other direction: this
+     * callback has already published benchmark_<tick>.dat into the SHARED
+     * `file` (the manager aliases it, see below), so a START arriving in that
+     * span opens the BENCHMARK'S name and logs the user's session into it.
+     *
+     * That race is pre-existing and is NOT widened here: the clobber, its
+     * duration and START's ordering are all unchanged by this PR, and these
+     * guards only ever refuse more than before. Closing it needs the gate on
+     * START's side -- an exported "benchmark in progress" accessor -- which is
+     * #739, closed won't-fix. Note though that #739 was decided against a
+     * "~10 ms teardown window"; THIS window is a different and much larger one,
+     * which is worth knowing before inheriting that decision. The evidence is
+     * posted on #739 rather than acted on here.
+     *
+     * What this test DOES catch is a session that was already fully live when
+     * this callback reached the arm -- the ordinary single-transport case, and
+     * any START that got as far as publishing IsEnabled while we were between
+     * the claim and here. */
     if (SD_StreamingIsLive()) {
         SCPI_ExecutionError(context,
                             "SYST:STOR:SD:BENCH: rejected, streaming started "
@@ -1380,15 +1420,31 @@ __exit_point:
      * #728: put the user's logging target back before returning, on EVERY
      * path — normal completion, the not-ready timeout, the buffer-take
      * failure, the write failure and the #854 arm-time streaming refusal all
-     * land here. That last one is the only refusal that lands here having
-     * clobbered `file` WITHOUT having published it, which is why it needs
-     * nothing else: the restore below puts the field back, and the manager
-     * never saw the benchmark name. Re-publishing through
-     * UpdateSettings matters as much as the field itself: the manager keeps
-     * its own memcpy'd copy, so restoring only the runtime config would leave
-     * the benchmark name live inside sd_card_manager.
-     * The early parameter/enable/present errors return before the name is
-     * overwritten, so the flag keeps this a no-op for them. */
+     * land here.
+     *
+     * Restoring the FIELD is sufficient, and an earlier revision of this
+     * comment said the opposite -- that "the manager keeps its own memcpy'd
+     * copy, so restoring only the runtime config would leave the benchmark
+     * name live inside sd_card_manager". There is no such copy.
+     * sd_card_manager_Init stores the caller's POINTER (`gpSDCardSettings =
+     * pSettings`, sd_card_manager.c:1012) and app_freertos.c:447 hands it
+     * `&gpBoardRuntimeConfig->sdCardConfig` -- the same object
+     * BoardRunTimeConfig_Get returns here (BoardRuntimeConfig.c:59). The two
+     * ALIAS, which is why UpdateSettings' memcpy is a self-copy for every SCPI
+     * caller, and why the block below can deliberately skip UpdateSettings
+     * without stranding the name. That contradiction -- a paragraph arguing
+     * re-publication is essential, sitting above a block explaining why it is
+     * deliberately omitted -- is how the wrong belief was visible.
+     *
+     * What restoring the name CANNOT undo is a file already OPEN under it: the
+     * handle outlives the field. That is the real reason this runs only after
+     * the idle poll above, not the phantom second copy.
+     *
+     * The early parameter / enable / present / streaming errors return before
+     * the name is overwritten, so the flag keeps this a no-op for them. The
+     * #854 arm-time refusal is the one path that lands here having clobbered
+     * `file` while never arming a WRITE against it -- inert, because the SD
+     * task needs `mode != MODE_NONE` to act at all (sd_card_manager.c:1397). */
     /* #736 audit: restore ONLY if the field still holds the name we wrote.
      * Once the manager reaches IDLE (polled just above), SD:FILE from the
      * OTHER transport is accepted — USB and WiFi run separate SCPI contexts
