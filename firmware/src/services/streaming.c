@@ -3590,6 +3590,42 @@ bool Streaming_ConfigChangeInProgress(void) {
     return (gCfgChangeBusy != 0u);
 }
 
+/* --- #850: the session-start claim ----------------------------------------
+ *
+ * Rationale, why it is a second flag rather than a reuse of the config-change
+ * claim above, and why all three arm sites take it: see the block comment on
+ * StreamingStartClaim in streaming.h.
+ *
+ * uint32_t for the same reason as gCfgChangeBusy: a 32-bit load/store is
+ * atomic on PIC32MZ. Here that matters only for the release, which is a plain
+ * unconditional store outside any section; the test-and-take is a read-modify-
+ * write and is inside one, because `if (!busy) busy = 1` is exactly the
+ * non-atomic sequence two transports must not interleave.
+ */
+static volatile uint32_t gSessionStartBusy = 0u;
+
+StreamingStartClaim Streaming_BeginSessionStart(void) {
+    StreamingStartClaim result;
+
+    taskENTER_CRITICAL();
+    if (gSessionStartBusy != 0u) {
+        result = STREAM_START_CLAIM_BUSY;
+    } else {
+        gSessionStartBusy = 1u;
+        result = STREAM_START_CLAIM_OK;
+    }
+    taskEXIT_CRITICAL();
+
+    return result;
+}
+
+void Streaming_EndSessionStart(void) {
+    /* A single unconditional 32-bit store, atomic on PIC32MZ -- no read-modify-
+     * write, so no critical section is needed. It is also the ONLY writer of 0,
+     * and only the holder ever calls it. Mirrors Streaming_EndConfigChange. */
+    gSessionStartBusy = 0u;
+}
+
 /* #730: the rate the hardware ACTUALLY runs, in millihertz.
  *
  * `StreamingRuntimeConfig.Frequency` stores what the client ASKED for; the

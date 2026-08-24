@@ -655,10 +655,11 @@ void Streaming_CountActiveChannels(uint16_t* out_type1Count,
  * both directions, and a setter's store can no longer land on a live session.
  *
  * SCOPE. This is not a lock over the runtime config in general. It excludes a
- * guarded setter against an ARM; two STARTs racing each other is #850, and
- * serialising SCPI execution across transports outright is #694. It is also
- * advisory-only -- nothing blocks on it. The loser is refused with an error,
- * which is the behaviour these guards already had.
+ * guarded setter against an ARM; two STARTs racing each other is the SEPARATE
+ * session-start claim below (#850), and serialising SCPI execution across
+ * transports outright is #694. It is also advisory-only -- nothing blocks
+ * on it. The loser is refused with an error, which is the behaviour these
+ * guards already had.
  *
  * ALL THREE sites that publish IsEnabled observe it: SCPI_StartStreaming's arm,
  * SYST:STR:THRoughput, and the WiFi rate finder's per-step arm (the latter two
@@ -694,6 +695,84 @@ void Streaming_EndConfigChange(void);
  * PIC32MZ.
  */
 bool Streaming_ConfigChangeInProgress(void);
+
+/* --- #850: the session-start claim ----------------------------------------
+ *
+ * A SECOND claim, deliberately not the config-change one above. It excludes
+ * session STARTS against each other; that claim excludes guarded config
+ * SETTERS against an arm. The two are orthogonal, and START holds this one
+ * while OBSERVING that one.
+ *
+ * WHY START CANNOT SIMPLY TAKE Streaming_BeginConfigChange(). Two independent
+ * reasons, either one fatal:
+ *
+ *   1. That claim refuses when `IsEnabled || Running`. A START is EXPRESSLY
+ *      allowed to run while a session is live -- stopping the previous session
+ *      and starting a new one is what it does -- so it would refuse itself on
+ *      every restart.
+ *   2. START's arm-time critical section OBSERVES the config claim and refuses
+ *      while it is held (#847). Taking that claim would make START read its
+ *      own claim at the arm and refuse itself unconditionally.
+ *
+ * WHAT IT CLOSES. SCPI runs on two transports at different priorities (USB
+ * SCPI at 7, the WifiTask at 2), so a USB START can preempt a WiFi START at
+ * any instruction boundary -- including inside the multi-second waits in the
+ * SD readiness poll and in PrepareStreamingBuffers. Two STARTs in flight then:
+ *
+ *   - re-partition the SAME streaming buffer pool, one of them potentially
+ *     mid-swap (PrepareStreamingBuffers -> StreamingBufferPool_Partition ->
+ *     AInSampleList_InitializeExternal swaps the sample-pool pointers);
+ *   - arm and tear down the SAME SD manager;
+ *   - each publish IsEnabled from its own critical section, so whichever lands
+ *     last wins with the other's setup.
+ *
+ * The symptom #850 was filed for -- the second START reading the first's
+ * interface publish as an explicit user selection, returning OK, and handing
+ * its caller a session on the wrong transport -- is the bookkeeping face of
+ * that, which is why fixing the bookkeeping alone would not have been the fix.
+ *
+ * ALL THREE ARM SITES TAKE IT, not just START. SYST:STR:THRoughput and the
+ * WiFi rate finder also partition the pool and publish IsEnabled, and both
+ * guard their front door on `Running` ALONE -- which reads false for the whole
+ * pre-arm window of a START, and again between START's IsEnabled publish and
+ * Streaming_UpdateState flipping Running. Guarding START against itself while
+ * leaving those two would close one pairing out of four. Holding the claim
+ * across the whole of START's body (Streaming_UpdateState included) is also
+ * what lets those front-door tests stay as they are: no caller can observe the
+ * IsEnabled-set-but-Running-clear gap, because the claim is held throughout it.
+ *
+ * A FLAG, NOT A CRITICAL SECTION, and not a FreeRTOS mutex. Not a critical
+ * section because the bodies call vTaskDelay -- PrepareStreamingBuffers and
+ * SCPI_QuiesceAndResetCoherentPool both yield -- and a single vTaskDelay with
+ * interrupts disabled is fatal at any duration. Not a mutex because the
+ * required semantics are refuse-don't-block (a blocking take would park a
+ * priority-7 USB SCPI callback behind a priority-2 WifiTask for the length of
+ * a multi-second start), and because this mirrors the audited gCfgChangeBusy
+ * idiom one screen up rather than introducing a second mechanism for one job.
+ *
+ * ADVISORY. Nothing blocks on it; the loser is refused with -200 and retries.
+ * That is a BEHAVIOUR CHANGE -- a concurrent START previously returned OK and
+ * raced -- which is why it ships with its own companion test.
+ */
+typedef enum {
+    STREAM_START_CLAIM_OK = 0,   /* claim taken -- caller MUST release it */
+    STREAM_START_CLAIM_BUSY      /* another session start is in flight */
+} StreamingStartClaim;
+
+/**
+ * Take the session-start claim. Tests and takes inside ONE critical section,
+ * so two STARTs on the two SCPI transports cannot both pass the test.
+ *
+ * Deliberately does NOT test IsEnabled/Running: a START may legitimately
+ * restart a live session. See the block comment above.
+ *
+ * @return STREAM_START_CLAIM_OK when taken -- and ONLY then must the caller
+ *         call Streaming_EndSessionStart() on every path out.
+ */
+StreamingStartClaim Streaming_BeginSessionStart(void);
+
+/** Release a claim taken by Streaming_BeginSessionStart(). */
+void Streaming_EndSessionStart(void);
 
 /*! Initializes the streaming component
  * @param[in] pStreamingConfigInit Streaming configuration

@@ -2143,7 +2143,42 @@ static inline void StreamFreq_Set(StreamingRuntimeConfig* c, uint64_t f) {
     taskEXIT_CRITICAL();
 }
 
-static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
+/* --- #850: the session-start claim runner ---------------------------------
+ *
+ * Every command that arms a streaming session runs its body through here, so
+ * two of them can never be in flight at once. Rationale and the list of arm
+ * sites: the StreamingStartClaim block comment in streaming.h.
+ *
+ * The claim is taken and released in ONE place, with the command body passed
+ * in. That is the property #857's SCPI_MemRunClaimed established and the
+ * reason this is a runner rather than a take/release pair pasted into three
+ * functions: SCPI_StartStreaming alone has more than twenty return sites, and
+ * a claim released at only nineteen of them would wedge every subsequent
+ * START until reboot. Each body keeps its own error returns and cannot leak
+ * the claim.
+ *
+ * `body` and `what` are deliberately not NULL-checked: every caller is a
+ * three-line wrapper in this file passing a named static function and a string
+ * literal, so a NULL is a compile-time impossibility rather than a runtime
+ * one. Same reasoning, and the same statement of it, as SCPI_MemRunClaimed.
+ */
+static scpi_result_t SCPI_RunSessionStartClaimed(scpi_t * context,
+                                                 scpi_result_t (*body)(scpi_t *),
+                                                 const char *what) {
+    if (Streaming_BeginSessionStart() != STREAM_START_CLAIM_OK) {
+        LOG_E("%s refused (#850): another streaming session start is in "
+              "flight on the other SCPI transport. Retry.", what);
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+    scpi_result_t result = body(context);
+    Streaming_EndSessionStart();
+    return result;
+}
+
+/* #850: the session-start claim is taken by the SCPI_RunThroughputBench wrapper
+ * below, which is the only caller of this body. */
+static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
     int32_t freq, duration;
     if (!SCPI_ParamInt32(context, &freq, TRUE)) return SCPI_RES_ERR;
     if (!SCPI_ParamInt32(context, &duration, TRUE)) return SCPI_RES_ERR;
@@ -2341,6 +2376,11 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     scpi_printf(context, "PoolMaxUsed=%u\r\n", (unsigned)AInSampleList_PoolMaxUsed());
 
     return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
+    return SCPI_RunSessionStartClaimed(context, SCPI_RunThroughputBenchClaimed,
+                                       "SYSTem:STReam:THRoughput");
 }
 
 // =====================================================================
@@ -2543,7 +2583,9 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
     return tripped;
 }
 
-static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
+/* #850: the session-start claim is taken by the SCPI_WifiFindRate wrapper
+ * below, which is the only caller of this body. */
+static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     // Optional params: startHz, maxHz (0/absent => defaults).
     int32_t startArg = 0, maxArg = 0;
     SCPI_ParamInt32(context, &startArg, FALSE);
@@ -2790,6 +2832,11 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
                 (unsigned)recommendedHz, (unsigned)recommendedKBps,
                 reason, (unsigned)lastGoodHz, (unsigned)lastGoodKBps);
     return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
+    return SCPI_RunSessionStartClaimed(context, SCPI_WifiFindRateClaimed,
+                                       "SYSTem:STReam:WIFI:FINd?");
 }
 
 // =====================================================================
@@ -3639,7 +3686,9 @@ static void SCPI_UnpublishStartInterface(StreamingRuntimeConfig *cfg,
     taskEXIT_CRITICAL();
 }
 
-static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
+/* #850: the session-start claim is taken by the SCPI_StartStreaming wrapper
+ * below, which is the only caller of this body. */
+static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context) {
     int32_t freq;
 
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
@@ -4692,6 +4741,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     SCPI_ClearOperBits(OPER_SD_FINALIZING);
 
     return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
+    return SCPI_RunSessionStartClaimed(context, SCPI_StartStreamingClaimed,
+                                       "SYSTem:STReam:START");
 }
 
 static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
