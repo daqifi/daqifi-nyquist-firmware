@@ -229,7 +229,12 @@ extern "C" {
      * new with the claim and would otherwise have been silent at some sites.
      *
      * Takes a bool rather than StreamingCfgClaim so this header does not have
-     * to pull in streaming.h; the callers already have the enum in scope.
+     * to pull in streaming.h (which every SCPI translation unit would then
+     * inherit, cap math included); the callers already have the enum in scope.
+     * The cost is that the bool collapses "not OK" into exactly two messages --
+     * if a THIRD refusal reason is ever added to StreamingCfgClaim it will
+     * report as "streaming is active", so add a parameter here at the same
+     * time rather than letting it fall through.
      *
      * @param context SCPI context
      * @param busy    true when the claim was refused because ANOTHER config

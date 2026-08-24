@@ -142,6 +142,11 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
             BOARDCONFIG_AIN_CHANNELS,
             0);
 
+    // The stream-state rejection for this command is in the WRAPPER above, not
+    // here: Streaming_BeginConfigChange() performs it and takes the claim in
+    // one critical section (#847). The rationale it enforces is #116's, and is
+    // kept here because it is about THIS body:
+    //
     // #116: reject channel enable/disable while streaming is active. The sample
     // pool element stride is fixed at StartStreamData for the then-current channel
     // count (AInSampleList_InitializeExternal is only called at stream start, never
@@ -152,13 +157,12 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
     // reconfigure, restart. Rejecting BEFORE ADC_WriteChannelStateAll() leaves both
     // runtime config and ADC hardware untouched (no snapshot/rollback needed).
     //
-    // The stream-state test itself now lives in the wrapper's
-    // Streaming_BeginConfigChange() (#847), which tests IsEnabled || Running --
-    // never && -- and TAKES the claim in the same critical section. The two
-    // flags are set/cleared in separate steps at stream start/stop
-    // (StartStreaming arms IsEnabled, then Streaming_UpdateState flips Running;
-    // stop clears them in turn), so an && test would read false for the whole
-    // interval between them. Reject unless streaming is FULLY idle.
+    // The claim tests IsEnabled || Running -- never && -- because the two flags
+    // are set/cleared in separate steps at stream start/stop (StartStreaming
+    // arms IsEnabled, then Streaming_UpdateState flips Running; stop clears
+    // them in turn), so an && test would read false for the whole interval
+    // between them and a concurrent SCPI session (USB pri 7 vs WiFi pri 2)
+    // could slip a channel change through after the pool/mapping was sized.
 
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         return SCPI_RES_ERR;
