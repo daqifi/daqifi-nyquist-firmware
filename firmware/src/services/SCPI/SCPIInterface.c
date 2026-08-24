@@ -3948,6 +3948,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * own account if either condition appears in between. They are not a
      * check-then-set -- the set they used to precede is gone.
      *
+     * "Advisory here, authoritative there" is only sound because the arm
+     * re-validates the PREDICATE too, not just the manager. Moving the arm
+     * turned the gap between deciding `sdLoggingRequested` and acting on it
+     * from a few statements into seconds, which is long enough for
+     * `SYST:STOR:SD:ENAble 0` to land in it -- see the re-check at the arm.
+     *
      * The cost of the move is the contract #851 names: an SD-open failure now
      * leaves the device stopped, because the previous session is already gone
      * by the time the open is attempted. That is the contract every other
@@ -4203,6 +4209,54 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * stop is above, IsEnabled is published below -- so nothing can write
          * into it until this start is the thing writing. */
         if (sdLoggingRequested) {
+            /* #851: is SD logging STILL requested? `sdLoggingRequested` was
+             * decided far above, and moving the arm down here turned the gap
+             * between the two from a few statements into the whole stop +
+             * publish + partition -- which contains multi-second waits.
+             *
+             * `SYST:STOR:SD:ENAble 0` on the other transport is accepted in
+             * that gap (it has no stream-state guard: it is the manual escape
+             * hatch, and #759 has it release the interface rather than refuse).
+             * Arming on the stale `true` then sets mode = WRITE with
+             * `enable == false`, and `sd_card_manager_IsWriteReady()` requires
+             * `enable` -- so the poll below spends its full 5 s and refuses, by
+             * which point the previous session is already stopped. The claim
+             * does not cover this: it reserves the MANAGER, not the predicate
+             * (adversarial audit on PR #853).
+             *
+             * Refuse rather than continue without SD, because the partition is
+             * already carved for an SD session: Streaming_ComputeAutoBuffers
+             * reads the SAME `enable && file[0]` predicate, so a session that
+             * dropped SD here would stream through SD-shaped rings. Same
+             * direction as the #844 arm-time re-validations immediately below.
+             *
+             * A CHANGED filename keeps the predicate true and is deliberately
+             * allowed through -- an accepted SYST:STOR:SD:FILE takes effect,
+             * and the partition does not depend on the name.
+             *
+             * A snapshot, not a lock: the section pairs with
+             * SCPI_StorageSDLoggingSet's critical-section write of `file` so
+             * the two fields describe one instant, but nothing stops a disable
+             * landing immediately after. That residue is the concurrent-command
+             * class of #850/#694; what this closes is the SECONDS-wide window
+             * this PR opened. */
+            bool sdStillRequested;
+            taskENTER_CRITICAL();
+            sdStillRequested = (pSDCardSettings != NULL) &&
+                               pSDCardSettings->enable &&
+                               (pSDCardSettings->file[0] != '\0');
+            taskEXIT_CRITICAL();
+            if (!sdStillRequested) {
+                SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
+                SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
+                                     ifaceAtDetect, ifaceGenPinned,
+                                     ifaceSetsPinned);
+                LOG_E("STR:START refused (#851): SD logging was turned off "
+                      "during start setup - the buffers were carved for an SD "
+                      "session. Retry.");
+                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+                return SCPI_RES_ERR;
+            }
             /* #690 (adversarial audit): this arm passes through the #689
              * dir-file-cap guard. If there is no writable location the guard
              * refuses and IsWriteReady stays false. The OLD code only logged and
