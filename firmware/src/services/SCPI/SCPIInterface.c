@@ -2233,9 +2233,15 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
      * because a read that merely precedes the publish still lets a setter take
      * the claim in between and store onto the session armed here.
      *
-     * No new unwind: leaving IsEnabled false makes Streaming_UpdateState() a
-     * no-op, Running stays false, and the existing "failed to start" branch
-     * below restores every saved value. */
+     * No new unwind is needed, and the reason is precise rather than "it is a
+     * no-op": with IsEnabled false, Streaming_Stop() does nothing (Running is
+     * already false) and Streaming_Start() skips its `if (IsEnabled)` session
+     * setup, so RUNNING STAYS FALSE -- which is the condition the existing
+     * "failed to start" branch below already tests, and that branch restores
+     * every saved value. Streaming_Start() does still drain the sample queues
+     * and invalidate BOARDDATA_AIN_LATEST on the way through; that is the same
+     * work an ordinary STOP does, on a device with no session running, so it
+     * is harmless here rather than merely absent. */
     bool cfgBusy;
     taskENTER_CRITICAL();
     cfgBusy = Streaming_ConfigChangeInProgress();
@@ -2411,9 +2417,13 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
     StreamFreq_Set(cfg, freq);
     /* #847: same arm-time claim observation as SCPI_StartStreaming and
      * SYST:STR:THRoughput -- read and publish in ONE critical section. If a
-     * config change holds the claim, IsEnabled stays false, Running stays
-     * false, and the existing start-failure branch just below unwinds and
-     * reports it through *outStartFailed, so no new exit path is introduced. */
+     * config change holds the claim IsEnabled stays false, so Streaming_Start()
+     * skips its `if (IsEnabled)` setup and Running stays false -- which is
+     * exactly what the existing start-failure branch just below tests. It
+     * unwinds and reports through *outStartFailed, so no new exit path is
+     * introduced. (Not a no-op: Streaming_Start still drains the sample queues
+     * on the way through, which is what a STOP does anyway and is harmless
+     * with nothing running.) */
     taskENTER_CRITICAL();
     if (!Streaming_ConfigChangeInProgress()) {
         cfg->IsEnabled = true;
