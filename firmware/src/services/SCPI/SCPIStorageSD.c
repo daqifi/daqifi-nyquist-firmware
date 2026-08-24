@@ -886,6 +886,43 @@ __exit_point:
 
 }
 
+/* #854: is a streaming session live right now?
+ *
+ * SYST:STOR:SD:BENCHmark arms SD_CARD_MANAGER_MODE_WRITE on the SHARED SD
+ * settings, and streaming_Task recomputes its SD routing from that mode on
+ * EVERY task wake (streaming.c, the "SD card logging enabled" override):
+ *
+ *     enable && mode == WRITE && ActiveInterface != WiFi  ->  hasSD
+ *
+ * So a benchmark started during a USB-only session -- one that never asked
+ * for SD at all -- flips that session's hasSD true, and its encoded rows go
+ * into benchmark_<tick>.dat beside the requested pattern. Three things are
+ * wrong at once: the artifact no longer matches `size_kb x 1024` bytes of the
+ * pattern; `writeSpeedBps` times a card that is absorbing someone else's
+ * writes and reports the result as the card's speed; and the session's rows
+ * land in a file the user never named, which the benchmark's own exit restore
+ * then erases the last pointer to.
+ *
+ * `IsEnabled || Running`, not `&&`: the two flags are set (and cleared) in
+ * separate steps at start and stop, so an `&&` test leaves a window open in
+ * both directions. Same form as SCPI_SetStreamFormat's #619 guard and
+ * SCPI_ADCChanEnableSet's #116 guard.
+ *
+ * Read under a critical section so the PAIR is one snapshot. Each flag is
+ * individually atomic on PIC32MZ, but reading them a few instructions apart
+ * can straddle a start that sets IsEnabled between the two loads. That is a
+ * snapshot and not a lock -- see the arm site for what remains. */
+static bool SD_StreamingIsLive(void) {
+    const StreamingRuntimeConfig *cfg =
+            (const StreamingRuntimeConfig *)BoardRunTimeConfig_Get(
+                    BOARDRUNTIME_STREAMING_CONFIGURATION);
+    bool live;
+    taskENTER_CRITICAL();
+    live = (cfg->IsEnabled || (cfg->Running != 0u));
+    taskEXIT_CRITICAL();
+    return live;
+}
+
 /**
  * @brief Perform SD card write speed benchmark
  * 
@@ -963,7 +1000,30 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
-    
+
+    /* #854: refuse while a streaming session is live -- see SD_StreamingIsLive
+     * for the coupling. A refusal, rather than a narrower window, is the only
+     * option available here: unlike SCPI_StartStreaming (#851) the benchmark
+     * has no "stop the previous session" step to arm below, and it cannot arm
+     * a write the streaming task would ignore, because that task routes on the
+     * shared mode and not on the arming caller.
+     *
+     * This is a fast path only, like the testInProgress check above it --
+     * parameter parsing follows, and USB SCPI (pri 7) preempts WiFi SCPI
+     * (pri 2) with no shared dispatch mutex. The authoritative tests are the
+     * one folded into the ownership claim below and the one at the arm.
+     *
+     * Before parsing, deliberately: the command is refused whatever its
+     * operands say, and the enable / card-present rejects above return before
+     * parsing too. */
+    if (SD_StreamingIsLive()) {
+        SCPI_ExecutionError(context,
+                            "SYST:STOR:SD:BENCH: rejected, streaming is active "
+                            "(stop streaming first)");
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     // Get test size parameter (required)
     if (!SCPI_ParamInt32(context, &testSizeKB, TRUE)) {
         SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
@@ -1007,14 +1067,44 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * letting BENCH? read resultAvailable=true beside zeroed counters, from a
      * call that never ran. Everything below this point is owner-only. */
     bool benchAlreadyRunning;
+    bool streamWentLive;
     taskENTER_CRITICAL();
+    /* #854: the streaming test belongs INSIDE this critical section, not
+     * beside it. Split out, it would be a second check-then-act on the same
+     * decision -- and the whole point of claiming under a critical section is
+     * that the claim is taken only when the conditions to run were true at
+     * the instant of the claim. Folding it in means a claimed benchmark never
+     * exists concurrently with a session that was ALREADY live; only a start
+     * that publishes IsEnabled afterwards can still overlap, and that is what
+     * the arm-time test below is for.
+     *
+     * The helper is CALLED rather than its predicate re-typed here, even
+     * though it takes a critical section of its own. FreeRTOS critical
+     * sections nest -- vTaskEnterCritical counts into
+     * pxCurrentTCB->uxCriticalNesting (FreeRTOS_tasks.c) and only the
+     * outermost exit re-enables interrupts -- so the read still happens with
+     * this section held. Inlining the test instead would have put a second
+     * copy of `IsEnabled || Running` two hundred lines from the first, which
+     * is how the two drift apart. */
+    streamWentLive = SD_StreamingIsLive();
     benchAlreadyRunning = gSDBenchmarkResults.testInProgress;
-    if (!benchAlreadyRunning) {
+    if (!benchAlreadyRunning && !streamWentLive) {
         gSDBenchmarkResults.testInProgress = true;
     }
     taskEXIT_CRITICAL();
     if (benchAlreadyRunning) {
         SCPI_ExecutionError(context, "SYST:STOR:SD:BENCH: benchmark already in progress");
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+    if (streamWentLive) {
+        /* Reported separately from the fast path above so the log says which
+         * of the two observed it: reaching HERE means streaming started while
+         * this command was parsing its operands, which is a different fact
+         * about the device from "streaming was already running". */
+        SCPI_ExecutionError(context,
+                            "SYST:STOR:SD:BENCH: rejected, streaming started "
+                            "during parameter validation");
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -1065,6 +1155,46 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     taskEXIT_CRITICAL();
     logFileClobbered = true;   /* #728: restore the logging target on exit */
     
+    /* #854: re-validate at the ARM, not only at the claim.
+     *
+     * The claim above is the last point at which this callback observed the
+     * streaming flags, and everything between there and here -- the target
+     * snapshot, the counter reset, building and publishing benchmark_<tick>
+     * -- is preemptible by the other transport's SCPI task. A START landing
+     * in that gap would publish IsEnabled and then find mode == WRITE waiting
+     * for it, which is exactly the adoption this issue is about. Re-testing
+     * immediately before the mode write is the same "re-validate at the arm,
+     * not just at the gate" shape #845 gave SCPI_StartStreaming's cap inputs.
+     *
+     * The exit path is already correct for a refusal here: `file` has been
+     * clobbered, so logFileClobbered restores it, and nothing has been
+     * published to the manager yet (no UpdateSettings call has run since the
+     * clobber), so the manager's own copy still holds the user's name.
+     *
+     * It DOES leave the result counters zeroed, so a `BENCH?` afterwards
+     * reports "no benchmark result available" rather than the previous run's
+     * numbers. That is the existing contract for every post-claim failure --
+     * the not-ready timeout, the buffer-take failure and the write failure all
+     * do the same -- and it is the right side of the line the ordering comment
+     * at the claim draws: destroying results is only wrong for a caller that
+     * never became the owner. This one did.
+     *
+     * What REMAINS after this, stated plainly: a START that publishes
+     * IsEnabled in the few instructions between this test and the mode write
+     * still overlaps. Closing that needs the gate on START's side -- an
+     * exported "benchmark in progress" accessor -- which is #739, closed
+     * won't-fix by the owner because it needs simultaneous two-transport use
+     * and costs a scratch artifact rather than user data. This test does not
+     * change that trade; it just removes the millisecond-scale part of the
+     * window that had nothing to do with it. */
+    if (SD_StreamingIsLive()) {
+        SCPI_ExecutionError(context,
+                            "SYST:STOR:SD:BENCH: rejected, streaming started "
+                            "while arming the benchmark");
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     // Set SD card to write mode
     /* #690: this WRITE-mode open goes through the #689 dir-file-cap guard too.
      * Clear the flag first so the poll observes only THIS request's outcome
@@ -1249,7 +1379,11 @@ __exit_point:
      *
      * #728: put the user's logging target back before returning, on EVERY
      * path — normal completion, the not-ready timeout, the buffer-take
-     * failure and the write failure all land here. Re-publishing through
+     * failure, the write failure and the #854 arm-time streaming refusal all
+     * land here. That last one is the only refusal that lands here having
+     * clobbered `file` WITHOUT having published it, which is why it needs
+     * nothing else: the restore below puts the field back, and the manager
+     * never saw the benchmark name. Re-publishing through
      * UpdateSettings matters as much as the field itself: the manager keeps
      * its own memcpy'd copy, so restoring only the runtime config would leave
      * the benchmark name live inside sd_card_manager.
