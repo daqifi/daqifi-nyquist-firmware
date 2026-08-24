@@ -3464,8 +3464,25 @@ static bool SCPI_StartIfaceContradicted(uint32_t pinnedSets,
  * Clearing both is right: the SD arm is released alongside, so nothing is
  * logging either. Refusals BEFORE the stop deliberately do NOT call this --
  * the previous session is still running and its bits are still true. */
-static void SCPI_ClearStreamingOperBits(void) {
-    SCPI_ClearOperBits(OPER_MEASURING | OPER_SD_LOGGING);
+static void SCPI_ClearStreamingOperBits(StreamingRuntimeConfig *cfg) {
+    /* Only when nothing is streaming. A START on the other transport can arm
+     * a session while this one is unwinding (the concurrent-START hazard of
+     * #850), and clearing then would report "not measuring" over a live
+     * stream -- the opposite error, and the worse one (Qodo).
+     *
+     * The read is a snapshot, not a lock: SCPI_ClearOperBits cannot go inside
+     * a critical section, because SCPI_RegSet may call writeControl() to
+     * assert SRQ, and that is I/O. So a session arming in the microseconds
+     * after this read is still mis-reported -- which is strictly better than
+     * the unconditional clear, and the residue belongs to #850 rather than to
+     * a wider critical section. */
+    bool live;
+    taskENTER_CRITICAL();
+    live = (cfg != NULL) && (cfg->IsEnabled || cfg->Running);
+    taskEXIT_CRITICAL();
+    if (!live) {
+        SCPI_ClearOperBits(OPER_MEASURING | OPER_SD_LOGGING);
+    }
 }
 
 static void SCPI_ReleaseSdLoggingArm(sd_card_manager_settings_t *sd) {
@@ -4134,6 +4151,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * set -- which is the wrong thing to hand someone debugging this refusal
      * (#844). */
     StreamingInterface ifaceAtPublish;
+    /* WHICH of the two conditions fired. Without it the one message covers
+     * both, and the contradiction case prints "pinned X, found X" -- a log
+     * that reads like nothing moved, on a refusal caused by a SYST:STR:INT
+     * naming a third interface (Qodo). */
+    bool ifaceRacedBySet = false;
     taskENTER_CRITICAL();
     {
         /* The value may legitimately have become ifaceForStart already: a set
@@ -4151,9 +4173,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * a value that left and came back may have been carved for the value
          * in between. */
         ifaceAtPublish = pRunTimeStreamConfig->ActiveInterface;
-        if (SCPI_StartIfaceContradicted(ifaceSetsPinned, ifaceForStart) ||
-            (ifaceAtPublish != ifaceAtDetect &&
-             ifaceAtPublish != ifaceForStart)) {
+        if (SCPI_StartIfaceContradicted(ifaceSetsPinned, ifaceForStart)) {
+            ifaceRaced = true;
+            ifaceRacedBySet = true;
+        } else if (ifaceAtPublish != ifaceAtDetect &&
+                   ifaceAtPublish != ifaceForStart) {
             ifaceRaced = true;
         }
     }
@@ -4188,12 +4212,19 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         /* All three values, because any one alone misleads: this message used
          * to print ifaceForStart under the word "was", which is the interface
          * the start WANTED, not one it ever held (Qodo). */
-        LOG_E("STR:START refused (#848): stream interface moved during start "
-              "setup - set up for %d, pinned %d at detect, found %d at "
-              "publish. Retry.",
-              (int)ifaceForStart, (int)ifaceAtDetect, (int)ifaceAtPublish);
+        if (ifaceRacedBySet) {
+            LOG_E("STR:START refused (#848): SYST:STR:INT selected interface "
+                  "%d during start setup, but this start was set up for %d. "
+                  "Retry.",
+                  (int)gStreamIfaceLastSet, (int)ifaceForStart);
+        } else {
+            LOG_E("STR:START refused (#848): stream interface moved during "
+                  "start setup - set up for %d, pinned %d at detect, found %d "
+                  "at publish. Retry.",
+                  (int)ifaceForStart, (int)ifaceAtDetect, (int)ifaceAtPublish);
+        }
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        SCPI_ClearStreamingOperBits();
+        SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
         return SCPI_RES_ERR;
     }
 
@@ -4221,7 +4252,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
             SCPI_ExecutionError(context, "STR:START: buffer partition failed (USB DMA / tasks not quiescent, or pool error)");
-            SCPI_ClearStreamingOperBits();
+            SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
             return SCPI_RES_ERR;
         }
 
@@ -4244,7 +4275,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
              * asserting SD logging with no file open is the failure #690
              * already fixed once on this path. */
             if (!sd_card_manager_TryClaim()) {
-                SCPI_ClearStreamingOperBits();
+                SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
                 SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
@@ -4289,7 +4320,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-                SCPI_ClearStreamingOperBits();
+                SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
                 return SCPI_RES_ERR;
             }
         }
@@ -4415,7 +4446,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         if (sdLoggingRequested) {
             SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
-        SCPI_ClearStreamingOperBits();
+        SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
@@ -4437,7 +4468,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
               "(%d -> %d); the SD/buffer setup no longer matches. Retry.",
               (int)ifaceForStart, (int)ifaceObserved);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        SCPI_ClearStreamingOperBits();
+        SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
         return SCPI_RES_ERR;
     }
 
@@ -4447,7 +4478,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         if (sdLoggingRequested) {
             SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
-        SCPI_ClearStreamingOperBits();
+        SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
