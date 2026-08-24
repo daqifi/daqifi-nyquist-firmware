@@ -2226,26 +2226,33 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
     // PIC32MZ type-B timer counts 0..PR inclusive (PR+1 cycles per match).
     uint32_t periodCycles = (clkFreq + freq - 1) / freq;
     if (periodCycles < 2) periodCycles = 2;
-    pStreamCfg->ClockPeriod = periodCycles - 1;
-    StreamFreq_Set(pStreamCfg, freq);
     /* #847: this is an ARM, so it observes the config-change claim exactly as
-     * SCPI_StartStreaming's does -- read and publish in ONE critical section,
-     * because a read that merely precedes the publish still lets a setter take
-     * the claim in between and store onto the session armed here.
+     * SCPI_StartStreaming's does -- and, like #848 made START do, it makes ALL
+     * of its shared-config writes inside the SAME critical section as the
+     * claim test. Checking the claim only at the publish, with ClockPeriod and
+     * Frequency already written above it, leaves a refused arm having mutated
+     * the config anyway and then restoring saved values over whatever else
+     * moved (Qodo). Frequency is uint64_t, so the section is what makes that
+     * store atomic too -- assigned directly here rather than through
+     * StreamFreq_Set, which would merely nest another critical section.
      *
-     * No new unwind is needed, and the reason is precise rather than "it is a
-     * no-op": with IsEnabled false, Streaming_Stop() does nothing (Running is
-     * already false) and Streaming_Start() skips its `if (IsEnabled)` session
-     * setup, so RUNNING STAYS FALSE -- which is the condition the existing
-     * "failed to start" branch below already tests, and that branch restores
-     * every saved value. Streaming_Start() does still drain the sample queues
-     * and invalidate BOARDDATA_AIN_LATEST on the way through; that is the same
-     * work an ordinary STOP does, on a device with no session running, so it
-     * is harmless here rather than merely absent. */
+     * On the refused path nothing was written, so the "failed to start" branch
+     * below restores values that never changed -- correct, and a no-op.
+     *
+     * The refusal leaves IsEnabled false, so Streaming_Stop() does nothing
+     * (Running is already false) and Streaming_Start() skips its
+     * `if (IsEnabled)` session setup: RUNNING STAYS FALSE, which is the
+     * condition that branch tests. Streaming_Start() does still drain the
+     * sample queues and invalidate BOARDDATA_AIN_LATEST on the way through --
+     * NOT "the same work a STOP does" (Streaming_Stop is itself a no-op when
+     * Running is false); it is the same work the NEXT successful start would
+     * do, and with no session running it can only discard stale samples. */
     bool cfgBusy;
     taskENTER_CRITICAL();
     cfgBusy = Streaming_ConfigChangeInProgress();
     if (!cfgBusy) {
+        pStreamCfg->ClockPeriod = periodCycles - 1;
+        pStreamCfg->Frequency = (uint64_t)freq;
         pStreamCfg->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
@@ -2413,19 +2420,24 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
     if (periodCycles < 2) periodCycles = 2;
 
     Streaming_ClearStats();
-    cfg->ClockPeriod = periodCycles - 1;
-    StreamFreq_Set(cfg, freq);
     /* #847: same arm-time claim observation as SCPI_StartStreaming and
-     * SYST:STR:THRoughput -- read and publish in ONE critical section. If a
-     * config change holds the claim IsEnabled stays false, so Streaming_Start()
-     * skips its `if (IsEnabled)` setup and Running stays false -- which is
-     * exactly what the existing start-failure branch just below tests. It
-     * unwinds and reports through *outStartFailed, so no new exit path is
-     * introduced. (Not a no-op: Streaming_Start still drains the sample queues
-     * on the way through, which is what a STOP does anyway and is harmless
-     * with nothing running.) */
+     * SYST:STR:THRoughput, and like them ALL the shared-config writes happen
+     * inside the SAME critical section as the claim test -- a refused arm must
+     * not have mutated ClockPeriod/Frequency on its way to refusing (Qodo).
+     * Frequency is uint64_t, so the section is also what makes that store
+     * atomic; assigned directly rather than through StreamFreq_Set, which
+     * would nest a second critical section for no benefit.
+     *
+     * A held claim leaves IsEnabled false, so Streaming_Start() skips its
+     * `if (IsEnabled)` setup and Running stays false -- exactly what the
+     * start-failure branch just below tests. It unwinds and reports through
+     * *outStartFailed, so no new exit path is introduced. (Streaming_Start
+     * still drains the sample queues on the way through: the same work the
+     * next successful start would do, harmless with nothing running.) */
     taskENTER_CRITICAL();
     if (!Streaming_ConfigChangeInProgress()) {
+        cfg->ClockPeriod = periodCycles - 1;
+        cfg->Frequency = (uint64_t)freq;
         cfg->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
