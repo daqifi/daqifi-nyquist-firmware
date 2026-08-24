@@ -220,6 +220,40 @@ extern "C" {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
     }
 
+    /**
+     * #847: report a refused streaming config-change claim.
+     *
+     * Shared so every converted cap-input setter reports the same two refusal
+     * reasons the same way -- the old inline `IsEnabled || Running` guards each
+     * wrote their own message, and the "another change is in flight" case is
+     * new with the claim and would otherwise have been silent at some sites.
+     *
+     * Takes a bool rather than StreamingCfgClaim so this header does not have
+     * to pull in streaming.h (which every SCPI translation unit would then
+     * inherit, cap math included); the callers already have the enum in scope.
+     * The cost is that the bool collapses "not OK" into exactly two messages --
+     * if a THIRD refusal reason is ever added to StreamingCfgClaim it will
+     * report as "streaming is active", so add a parameter here at the same
+     * time rather than letting it fall through.
+     *
+     * @param context SCPI context
+     * @param busy    true when the claim was refused because ANOTHER config
+     *                change holds it, false when a session is armed/running
+     * @param what    the command name, e.g. "CONF:ADC:CHANnel"
+     */
+    static inline scpi_result_t SCPI_RejectCfgClaim(scpi_t *context, bool busy,
+                                                    const char *what) {
+        if (busy) {
+            LOG_E("%s rejected: another streaming config change is in flight "
+                  "(retry)", what);
+        } else {
+            LOG_E("%s rejected: streaming is active (stop streaming first)",
+                  what);
+        }
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
 #ifdef	__cplusplus
 }
 #endif
