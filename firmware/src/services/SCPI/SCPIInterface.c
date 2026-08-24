@@ -3450,6 +3450,24 @@ static bool SCPI_StartIfaceContradicted(uint32_t pinnedSets,
  * An earlier revision logged on it, which was dead code advertising a
  * diagnostic it could never emit (Qodo). If that exemption is ever removed,
  * this is the comment to come back to. */
+/* #848: a START that has already STOPPED the previous session, and then
+ * refuses, must not leave OPER claiming a session is running.
+ *
+ * Only SCPI_StopStreaming clears these bits, and it is not on any of these
+ * paths. So after the point of no return every refusal -- the partition
+ * abort, the post-repartition SD claim and re-open, and the three arm-time
+ * re-validations -- returned an error with `SYST:STR:DATA?` reading 0 and
+ * `STAT:OPER:COND?` still reporting bit 4 from the session it had just torn
+ * down (adversarial audit). Pre-existing on the older paths; the new ones
+ * would have joined them.
+ *
+ * Clearing both is right: the SD arm is released alongside, so nothing is
+ * logging either. Refusals BEFORE the stop deliberately do NOT call this --
+ * the previous session is still running and its bits are still true. */
+static void SCPI_ClearStreamingOperBits(void) {
+    SCPI_ClearOperBits(OPER_MEASURING | OPER_SD_LOGGING);
+}
+
 static void SCPI_ReleaseSdLoggingArm(sd_card_manager_settings_t *sd) {
     if (sd == NULL) {
         return;
@@ -4175,6 +4193,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
               "publish. Retry.",
               (int)ifaceForStart, (int)ifaceAtDetect, (int)ifaceAtPublish);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ClearStreamingOperBits();
         return SCPI_RES_ERR;
     }
 
@@ -4202,6 +4221,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
             SCPI_ExecutionError(context, "STR:START: buffer partition failed (USB DMA / tasks not quiescent, or pool error)");
+            SCPI_ClearStreamingOperBits();
             return SCPI_RES_ERR;
         }
 
@@ -4224,6 +4244,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
              * asserting SD logging with no file open is the failure #690
              * already fixed once on this path. */
             if (!sd_card_manager_TryClaim()) {
+                SCPI_ClearStreamingOperBits();
                 SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
@@ -4268,6 +4289,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+                SCPI_ClearStreamingOperBits();
                 return SCPI_RES_ERR;
             }
         }
@@ -4393,6 +4415,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         if (sdLoggingRequested) {
             SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
+        SCPI_ClearStreamingOperBits();
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
@@ -4414,6 +4437,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
               "(%d -> %d); the SD/buffer setup no longer matches. Retry.",
               (int)ifaceForStart, (int)ifaceObserved);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        SCPI_ClearStreamingOperBits();
         return SCPI_RES_ERR;
     }
 
@@ -4423,6 +4447,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         if (sdLoggingRequested) {
             SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
+        SCPI_ClearStreamingOperBits();
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
