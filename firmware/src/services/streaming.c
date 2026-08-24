@@ -3541,9 +3541,20 @@ void Streaming_RestoreRateConfigured(bool configured) {
 static volatile uint32_t gCfgChangeBusy = 0u;
 
 StreamingCfgClaim Streaming_BeginConfigChange(void) {
-    /* Fetched OUTSIDE the section: BoardRunTimeConfig_Get is an index into a
-     * static array initialised at boot and never returns NULL, so there is
-     * nothing to gain from holding interrupts off across it. */
+    /* Fetched OUTSIDE the section: it is a switch over a compile-time constant
+     * returning the address of a member of one static struct, so it neither
+     * blocks nor touches shared state and there is nothing to gain from
+     * holding interrupts off across it.
+     *
+     * No NULL check, and the reason is narrower than the shorthand usually
+     * given. BoardRunTimeConfig_Get is NOT total: its `NUM_OF_ELEMENTS` /
+     * `default` arm returns NULL (BoardRuntimeConfig.c:62-64). It returns
+     * non-NULL for every OTHER eBoardRunTimeParameter, and every call site
+     * including this one passes a named constant, so the NULL arm is
+     * unreachable here by construction. A check would be dead code, which is
+     * why the project declines to add them (CLAUDE.md) -- but "never returns
+     * NULL" is not true of the function, and stating it that way is what
+     * licenses an unsafe refactor later (Qodo, citing PR #752). */
     StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     StreamingCfgClaim result;

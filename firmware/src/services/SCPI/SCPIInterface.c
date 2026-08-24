@@ -4895,10 +4895,14 @@ static scpi_result_t SCPI_LoadDataPrecision(scpi_t * context) {
      * made atomic with respect to a concurrent START.
      *
      * One fetch of the streaming config, used for the store below. The
-     * pre-#847 code fetched it twice and NULL-checked the second: this
-     * accessor indexes a static array initialised at boot and never returns
-     * NULL, so the check was dead (CLAUDE.md, "Atomicity & Concurrency
-     * Rules"). */
+     * pre-#847 code fetched it twice and NULL-checked the second, and the
+     * check was dead -- but for a narrower reason than the usual shorthand:
+     * BoardRunTimeConfig_Get returns NULL on its `NUM_OF_ELEMENTS`/`default`
+     * arm (BoardRuntimeConfig.c:62-64), and non-NULL for every other
+     * eBoardRunTimeParameter. Called with a named constant, as here, the NULL
+     * arm is unreachable. Also: the SAME pointer is dereferenced above, so a
+     * check placed after that would guard nothing anyway (Qodo, citing
+     * PR #752). */
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     StreamingCfgClaim claim = Streaming_BeginConfigChange();
