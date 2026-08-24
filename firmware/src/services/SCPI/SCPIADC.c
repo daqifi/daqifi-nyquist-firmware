@@ -153,8 +153,13 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
     // mid-stream), so changing the channel set live would desync the pool layout
     // from the ISR write width. The old behavior here silently re-capped the
     // frequency (LOG_I only) without re-partitioning the pool — unsound and
-    // invisible to the client. Mirror SCPI_MemRejectIfStreaming: stop streaming,
-    // reconfigure, restart. Rejecting BEFORE ADC_WriteChannelStateAll() leaves both
+    // invisible to the client. The contract is: stop streaming, reconfigure,
+    // restart -- the same one every SYST:MEM:* command states, and since #857
+    // they reach it through this same claim. (This sentence used to say "mirror
+    // SCPI_MemRejectIfStreaming", which #857 deleted; that guard was also the
+    // one hand-rolling the && form this comment goes on to warn against, so it
+    // was the wrong thing to point at even while it existed.)
+    // Rejecting BEFORE ADC_WriteChannelStateAll() leaves both
     // runtime config and ADC hardware untouched (no snapshot/rollback needed).
     //
     // The claim tests IsEnabled || Running -- never && -- because the two flags
