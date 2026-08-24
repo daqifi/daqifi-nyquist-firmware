@@ -639,8 +639,8 @@ void Streaming_CountActiveChannels(uint16_t* out_type1Count,
  * testing and storing in ONE critical section. That idiom does not generalise
  * to the rest of the family, because their "store" is not a store:
  *
- *   - CONF:ADC:SAMC -> MC12b_SetAcquisitionSamc() spins up to ~20 ms waiting
- *     on ADCCON2bits.BGVRRDY (MC12bADC.c);
+ *   - CONF:ADC:SAMC -> MC12b_SetAcquisitionSamc() spins up to 2,000,000 poll
+ *     iterations waiting on ADCCON2bits.BGVRRDY (MC12bADC.c);
  *   - CONF:ADC:THREshold -> AdcThreshold_Configure() takes a FreeRTOS mutex
  *     with portMAX_DELAY (AdcThreshold.c) -- blocking with interrupts off;
  *   - CONF:ADC:CHANnel -> LOG_I plus ADC_WriteChannelStateAll() SFR writes;

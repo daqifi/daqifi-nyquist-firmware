@@ -113,7 +113,7 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
 static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context);
 
 /* #847: the claim is taken HERE and released on the single path out, so no
- * error return inside the body can leak it. The body is ~200 lines with ten
+ * error return inside the body can leak it. The body is 259 lines with twelve
  * returns; wrapping it is what makes the release provably unconditional.
  *
  * The claim replaces the old inline stream-state guard, in the same position,
@@ -739,7 +739,7 @@ scpi_result_t SCPI_ADCCalFLoad(scpi_t * context) {
 static scpi_result_t ADCUseCalSetClaimed(scpi_t * context);
 
 /* #847: wrapped for the same reason as SCPI_ADCChanEnableSet -- the body has
- * seven returns and its "store" reaches an NVM save, which cannot run inside a
+ * nine returns and its "store" reaches an NVM save, which cannot run inside a
  * critical section. One claim, one release, no path that skips it. */
 scpi_result_t SCPI_ADCUseCalSet(scpi_t * context) {
     StreamingCfgClaim claim = Streaming_BeginConfigChange();
@@ -990,8 +990,9 @@ static scpi_result_t SamcSetCommon(scpi_t *context, bool isDedicated) {
     // mid-stream change would invalidate the cap the session was admitted
     // under. The claim performs the IsEnabled || Running test (#116 / OBDiag
     // form) and holds the exclusion across the write (#847) -- which it must,
-    // because MC12b_SetAcquisitionSamc spins up to ~20 ms on BGVRRDY and so
-    // cannot share a critical section with the test.
+    // because MC12b_SetAcquisitionSamc spins up to 2,000,000 poll iterations
+    // on ADCCON2bits.BGVRRDY and so cannot share a critical section with the
+    // test.
     StreamingCfgClaim claim = Streaming_BeginConfigChange();
     if (claim != STREAM_CFG_CLAIM_OK) {
         return SCPI_RejectCfgClaim(context,
