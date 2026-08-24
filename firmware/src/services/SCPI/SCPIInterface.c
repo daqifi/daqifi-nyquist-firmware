@@ -3442,6 +3442,13 @@ static bool SCPI_StartIfaceContradicted(uint32_t pinnedSets,
  * the UpdateSettings return DISCARDED. Qodo flagged the newest of them; fixing
  * only that one would have left six identical twins, so the class moves here.
  *
+ * #851 left six of those call sites, and split what they mean in two. The four
+ * AFTER the arm release the file THIS start opened. The two between the stop
+ * and the arm -- the interface publish and the partition abort -- release the
+ * file of the session this start just STOPPED, because START no longer arms SD
+ * before that point; they are gated on `stoppedSdLoggingSession` rather than
+ * on `sdLoggingRequested` and say so at the site.
+ *
  * The return stays unchecked, and that is a statement about this call rather
  * than an omission. `sd_UpdateSettingsImpl` has exactly one `return false`,
  * gated on `mode != SD_CARD_MANAGER_MODE_NONE` -- the #589 arm-time refusal,
@@ -3455,7 +3462,7 @@ static bool SCPI_StartIfaceContradicted(uint32_t pinnedSets,
  *
  * Only SCPI_StopStreaming clears these bits, and it is not on any of these
  * paths. So after the point of no return every refusal -- the partition
- * abort, the post-repartition SD claim and re-open, and the three arm-time
+ * abort, the post-partition SD claim and open, and the three arm-time
  * re-validations -- returned an error with `SYST:STR:DATA?` reading 0 and
  * `STAT:OPER:COND?` still reporting bit 4 from the session it had just torn
  * down (adversarial audit). Pre-existing on the older paths; the new ones
@@ -3497,7 +3504,7 @@ static void SCPI_ReleaseSdLoggingArm(sd_card_manager_settings_t *sd) {
  *
  * The publish has to land before PrepareStreamingBuffers (which sizes the
  * rings from ActiveInterface), and several refusal paths follow it: the
- * partition abort, the post-repartition SD re-open, and the three arm-time
+ * partition abort, the post-partition SD arm, and the three arm-time
  * re-validations. Without this, a START refused there left the interface on
  * the value it auto-detected, and because the auto-detect only adopts when
  * the stored value is USB, that leftover is then read as an EXPLICIT choice:
@@ -3917,22 +3924,47 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    // If SD logging is requested, set mode to WRITE now (deferred from LOGging command)
-    /* #851: this arm lands BEFORE the previous session is stopped, so a
-     * still-running USB session whose START had no filename will begin writing
-     * its own rows into the file this START is opening -- and if this START
-     * then aborts, the file holds data from a start that returned an error.
-     * Pre-existing and deliberately NOT changed here: moving the arm after the
-     * stop changes which refusals kill a running session, which wants its own
-     * bench validation. #848 moved the INTERFACE publish after the stop; the
-     * SD output route is the other half and is tracked separately. */
+    /* #851: SD is ARMED after the previous session is stopped, not here.
+     *
+     * This block used to set `mode = WRITE`, open the file and wait up to 5 s
+     * for it -- all BEFORE the stop below. streaming_Task routes to SD on the
+     * MANAGER's state (`enable && mode == WRITE` and the interface is not
+     * WiFi), not on the requesting START's `sdLoggingRequested`, so for that
+     * whole window a session that was still running had a ready SD sink and
+     * wrote its own rows into the file THIS start was opening. Two things came
+     * out of that: the file's header described a different session's channel
+     * set / precision, and a start that then refused had already left rows in
+     * a file it returned an error for.
+     *
+     * The arm now happens once, after the stop and after the partition, at the
+     * re-open site that already existed (PrepareStreamingBuffers quiesces SD
+     * WRITE->NONE, so that site was always a fresh arm, not a "re-enable").
+     * By then there is no session left to write into the file.
+     *
+     * What stays here is only what can refuse WITHOUT touching the manager, so
+     * the two everyday "SD is unavailable" cases still refuse a start without
+     * tearing down a live session. Both are ADVISORY: neither claims anything,
+     * and the authoritative claim-and-open after the partition refuses on its
+     * own account if either condition appears in between. They are not a
+     * check-then-set -- the set they used to precede is gone.
+     *
+     * "Advisory here, authoritative there" is only sound because the arm
+     * re-validates the PREDICATE too, not just the manager. Moving the arm
+     * turned the gap between deciding `sdLoggingRequested` and acting on it
+     * from a few statements into seconds, which is long enough for
+     * `SYST:STOR:SD:ENAble 0` to land in it -- see the re-check at the arm.
+     *
+     * The cost of the move is the contract #851 names: an SD-open failure now
+     * leaves the device stopped, because the previous session is already gone
+     * by the time the open is attempted. That is the contract every other
+     * post-teardown refusal in this function already has (#848). */
     if (sdLoggingRequested) {
         /* #589: the SD task is parked while WiFi streaming, a WiFi firmware
-         * update, or the jam quarantine owns SPI4, so a WRITE armed here could
-         * never be advanced -- the start would wait out its open poll and then
-         * assert SD logging with no file open. Refuse with the cause instead.
-         * This one check covers both arming sites in this flow (the initial
-         * open and the re-open retry below). */
+         * update, or the jam quarantine owns SPI4, so a WRITE armed later
+         * could never be advanced -- the start would wait out its open poll
+         * and then assert SD logging with no file open. Refuse with the cause
+         * instead, and do it here so the refusal costs a running session
+         * nothing. */
         if (app_SDCard_SpiOwnedByWifi() || SpiBusHealth_IsSdSuspended()) {
             const char *why = SD_SuspendReasonText();
             LOG_E("Cannot start SD logging - SD suspended: %s\r\n",
@@ -3940,132 +3972,13 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
         }
-        // Check if SD card is busy with another operation (DELETE, FORMAT, etc.).
-        // SD is a single consumer — don't start a logging file while any SD op runs.
-        /* #836: CLAIM rather than check-then-set. This used to be a bare
-         * IsBusy() test ~37 lines above the `mode = WRITE` write below, and USB
-         * SCPI (pri 7) preempts WiFi SCPI (pri 2) with no shared dispatch mutex
-         * -- so a SCPI SD:GET could take the claim, arm MODE_READ and return OK
-         * in that gap, and this arm would then silently overwrite it. The GET
-         * caller waits forever for data that is never coming.
-         *
-         * Same interlock as #829/PR #835, which converted the six entry points
-         * in SCPIStorageSD.c. The claim reserves the manager WITHOUT arming
-         * anything; `mode` is still written last, and the claim is released
-         * once UpdateSettings has handed ownership to `mode`. */
-        if (!sd_card_manager_TryClaim()) {
+        /* SD is a single consumer -- don't tear down a running session for a
+         * start that is going to lose the claim to a DELETE or FORMAT anyway.
+         * `sd_card_manager_TryClaim()` after the partition is what actually
+         * decides; this only moves the common refusal to the side of the stop
+         * where it is free. */
+        if (sd_card_manager_IsBusy()) {
             LOG_E("Cannot start SD logging - SD card busy with another operation");
-            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-            return SCPI_RES_ERR;
-        }
-        // #498 / #503: pre-start disk-full gate consolidated INTO the
-        // SD task's WRITE init.  A single UpdateSettings(WRITE) call now
-        // does the mount + (optional) disk-full check + file open in one
-        // pass.  Previously this site set mode=GET_SPACE, waited, then
-        // set mode=WRITE, which triggered two DEINIT/MOUNT cycles per
-        // STR:START.  Now: one cycle.
-        //
-        // Behavior contract preserved:
-        //   - If minFreeBytes == 0, the SD task skips the check and
-        //     proceeds straight to file open (same as legacy zero-gate).
-        //   - If minFreeBytes > 0 and free space is below the floor, the
-        //     SD task transitions to ERROR with startupDiskFull=true.
-        //     IsWriteReady never returns true; the loop below times out;
-        //     we then check StartupDiskFull() to surface the friendly
-        //     "out of space" message instead of generic "WRITE timeout."
-        //   - If minFreeBytes > 0 but the free-space query itself fails
-        //     (transient mount glitch), the SD task logs and falls
-        //     through to file open — caller gets the existing
-        //     SCPI_ERROR_EXECUTION_ERROR if the open then fails.
-        // Synchronously clear the disk-full flag BEFORE arming the
-        // new WRITE request — otherwise a stale `true` from a previous
-        // disk-full rejection causes the early-exit poll below to bail
-        // instantly before the SD task has had a chance to clear the
-        // flag itself in CURRENT_DRIVE.  Without this pre-clear, every
-        // STR:START after a single disk-full rejection would fail
-        // nondeterministically with a misleading "out of space" message
-        // even when free space is fine on the current attempt.
-        // (Qodo /agentic_review pass-1 finding on PR #508: "Stale
-        // disk-full short-circuits start".)
-        sd_card_manager_ClearStartupDiskFull();
-        sd_card_manager_ClearStartupDirFull();   /* #689 */
-
-        /* #824: this WRITE is a streaming log, so its rotated split files must
-         * carry the session header. Stated as an ARGUMENT of the arm, not a
-         * flag set beforehand -- a flag was stealable by a concurrent
-         * benchmark arm (audit round 8; see the header's comment). */
-        pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
-        sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings);
-        /* #836: ownership is now carried by `mode != MODE_NONE`, which keeps
-         * IsBusy() true, so releasing here leaves no gap. */
-        sd_card_manager_ReleaseClaim();
-
-        // Wait for SD file to be open before starting streaming.
-        // Without this, early samples are dropped while SD mounts/opens.
-        //
-        // Early-exit when the SD task signals startupDiskFull — without
-        // it, a disk-full rejection costs the caller a full 5 s
-        // (500 × 10 ms) wait before we read the flag below.  The SD
-        // task knows the answer within milliseconds of CHECK_DISK_FULL
-        // running; polling that flag in the loop gets the friendly
-        // -200 back to the operator promptly.  The pre-clear above
-        // guarantees this flag reflects ONLY the current request's
-        // outcome.  (Qodo follow-up to #503, "Exit early on disk-full".)
-        int readyWait = 0;
-        while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
-            if (sd_card_manager_StartupDiskFull()) {
-                break;
-            }
-            if (sd_card_manager_StartupDirFull()) {   /* #689: early-exit */
-                break;
-            }
-            vTaskDelay(pdMS_TO_TICKS(10));
-            readyWait++;
-        }
-        if (!sd_card_manager_IsWriteReady()) {
-            // #503: distinguish disk-full rejection from a generic open
-            // failure.  The SD task sets startupDiskFull=true and routes
-            // to ERROR when the free-space pre-check fails the floor;
-            // surface that as the precise log line operators expect.
-            if (sd_card_manager_StartupDiskFull()) {
-                uint64_t freeBytes = 0, totalBytes = 0;
-                bool haveSpace = sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes);
-                /* Snapshot the 64-bit floor under critical section per
-                 * CLAUDE.md atomicity rules — pairs with the setter's
-                 * critical-section write in SCPI_StorageSDMinFreeSet. */
-                uint64_t floor;
-                taskENTER_CRITICAL();
-                floor = pSDCardSettings->minFreeBytes;
-                taskEXIT_CRITICAL();
-                /* CHECK_DISK_FULL caches spaceResult before the
-                 * rejection branch, so haveSpace SHOULD be true in this
-                 * path.  The fallback exists for defense-in-depth: if a
-                 * future code change clears spaceResultValid between
-                 * the SD task's reject and the SCPI read, log "unknown"
-                 * instead of formatting a misleading 0 B value. */
-                if (haveSpace) {
-                    LOG_E("[SD] STR:START refused: %llu B free < %llu B floor",
-                          (unsigned long long)freeBytes,
-                          (unsigned long long)floor);
-                } else {
-                    LOG_E("[SD] STR:START refused: disk full (space unknown), floor=%llu B",
-                          (unsigned long long)floor);
-                }
-            } else if (sd_card_manager_StartupDirFull()) {
-                /* #689: SD target directory holds too many files — file-create
-                 * would wedge the SD op timeout. Surface the precise cause and
-                 * remedy instead of a generic "not ready". */
-                /* Report the RECORDED cause, like the post-repartition and
-                 * SD:BENCH sites. This is the site that fires on the initial
-                 * bucket scan -- the most common refusal -- and it was the one
-                 * left hardcoded, so a media fault or a bucket-name collision
-                 * still told the operator to clear a card that is not full. */
-                LOG_E("[SD] STR:START refused (#689): %s",
-                      sd_card_manager_WriteRefuseText());
-            } else {
-                LOG_E("SD file not ready after %d ms", readyWait * 10);
-            }
-            SCPI_ReleaseSdLoggingArm(pSDCardSettings);
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             return SCPI_RES_ERR;
         }
@@ -4095,7 +4008,27 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     // (priority 2, same as streaming task), the streaming task could
     // round-robin mid-swap and use partially-swapped buffer pointers.
     // Stopping first ensures no task is using the old buffers.
+    /* #851: was the session we are stopping an SD-logging one? Its file is
+     * still open at mode == WRITE -- the inline stop here does not close it
+     * (SCPI_StopStreaming does; this path leaves it to the quiesce inside
+     * PrepareStreamingBuffers). The two refusals between here and the arm run
+     * BEFORE that quiesce, so they are the only ones that have to close it
+     * themselves, and this flag is what tells them the WRITE is that session's
+     * and not some other consumer's.
+     *
+     * `mode == WRITE` alone does NOT establish that. SYST:STOR:SD:BENCHmark
+     * arms a WRITE too and takes no claim by design (#736), so a benchmark
+     * running on the other transport while this start tears a session down
+     * would be read as "the session we stopped" and have its file closed
+     * mid-run by the two aborts below (Qodo). The #824 latch is what answers
+     * the question the mode cannot: it is set only by the STREAMING arm. */
+    bool stoppedSdLoggingSession = false;
     if (pRunTimeStreamConfig->IsEnabled && pRunTimeStreamConfig->Running) {
+        stoppedSdLoggingSession = (pSDCardSettings != NULL) &&
+                                  pSDCardSettings->enable &&
+                                  (pSDCardSettings->mode ==
+                                       SD_CARD_MANAGER_MODE_WRITE) &&
+                                  sd_card_manager_WriteIsStreamingLog();
         pRunTimeStreamConfig->IsEnabled = false;
         Streaming_UpdateState();  // Stop timer + streaming task
     }
@@ -4205,8 +4138,18 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 
     if (ifaceRaced) {
         /* Mirror the other aborts: never leave a logging file open behind a
-         * start that did not happen (#690). */
-        if (sdLoggingRequested) {
+         * start that did not happen (#690).
+         *
+         * #851: what is released here is the SESSION WE JUST STOPPED, not our
+         * own arm -- START does not arm SD until after the partition now, so
+         * on this path it never took one. The stopped session's file is still
+         * open and nothing else is going to close it: this path returns before
+         * PrepareStreamingBuffers, whose quiesce is the close on the success
+         * path, and a file left open keeps the manager busy to every later SD
+         * command. Gated on the flag rather than on `sdLoggingRequested` so it
+         * cannot close a WRITE some other consumer owns, and so it still fires
+         * when the stopped session was logging and this start is not. */
+        if (stoppedSdLoggingSession) {
             SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
         /* All three values, because any one alone misleads: this message used
@@ -4239,13 +4182,18 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
         if (!PrepareStreamingBuffers(mc->samplePoolCount,
                                      AInSampleList_ElementSize(enabledChannels))) {
-            /* The first SD arm is still open here -- PrepareStreamingBuffers
-             * can fail BEFORE the quiesce that tears it down (its USB-DMA wait
+            /* An SD file can still be open here -- PrepareStreamingBuffers can
+             * fail BEFORE the quiesce that tears it down (its USB-DMA wait
              * times out first). Every sibling abort releases it; this one did
              * not, so a failed partition left mode==WRITE and the file open,
              * and the manager read as busy to every later SD command
-             * (adversarial audit, fourth pass). */
-            if (sdLoggingRequested) {
+             * (adversarial audit, fourth pass).
+             *
+             * #851: the open file is the STOPPED SESSION's, not this start's
+             * -- the arm moved below the partition, so on this path START has
+             * not armed anything. Same flag, same reasoning as the ifaceRaced
+             * abort above. */
+            if (stoppedSdLoggingSession) {
                 SCPI_ReleaseSdLoggingArm(pSDCardSettings);
             }
             SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
@@ -4256,42 +4204,136 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             return SCPI_RES_ERR;
         }
 
-        // Re-enable SD if it was closed for DMA quiesce
+        /* #851: THE SD arm. Singular now -- START used to arm once before the
+         * stop and again here, and the first of those is what let the outgoing
+         * session write into the incoming session's file. What is left is this
+         * one, which was always a fresh arm rather than a "re-enable":
+         * PrepareStreamingBuffers quiesces SD (WRITE -> NONE) before the
+         * destructive re-partition, so whatever the first arm opened was closed
+         * again by the time control reached here.
+         *
+         * Arming HERE means the file is opened with no session running -- the
+         * stop is above, IsEnabled is published below -- so nothing can write
+         * into it until this start is the thing writing. */
         if (sdLoggingRequested) {
-            /* #690 (adversarial audit): this post-repartition re-open ALSO passes
-             * through the #689 dir-file-cap guard. If the directory reached the cap
-             * between the first open and this re-open (e.g. the first open created
-             * the boundary file, or disk filled), the guard refuses and IsWriteReady
-             * stays false. The OLD code only logged and fell through to enable
-             * streaming with OPER_SD_LOGGING asserted but NO file open — silent
-             * total data loss on an SD-only session. Mirror the first block: clear
-             * the flags, early-exit the poll, and FAIL START with the precise cause
-             * so SD-logging is never falsely asserted. */
-            /* #836: the first arm released its claim before the poll above, so
-             * an SCPI SD command can own the manager by the time we re-open
-             * here. Claim again rather than overwriting whatever it armed. A
-             * refusal fails START with a precise cause, matching the
-             * dir-full / disk-full handling immediately below -- silently
-             * asserting SD logging with no file open is the failure #690
-             * already fixed once on this path. */
+            /* #851: is SD logging STILL requested? `sdLoggingRequested` was
+             * decided far above, and moving the arm down here turned the gap
+             * between the two from a few statements into the whole stop +
+             * publish + partition -- which contains multi-second waits.
+             *
+             * `SYST:STOR:SD:ENAble 0` on the other transport is accepted in
+             * that gap (it has no stream-state guard: it is the manual escape
+             * hatch, and #759 has it release the interface rather than refuse).
+             * Arming on the stale `true` then sets mode = WRITE with
+             * `enable == false`, and `sd_card_manager_IsWriteReady()` requires
+             * `enable` -- so the poll below spends its full 5 s and refuses, by
+             * which point the previous session is already stopped. The claim
+             * does not cover this: it reserves the MANAGER, not the predicate
+             * (adversarial audit on PR #853).
+             *
+             * Refuse rather than continue without SD, because the partition is
+             * already carved for an SD session: Streaming_ComputeAutoBuffers
+             * reads the SAME `enable && file[0]` predicate, so a session that
+             * dropped SD here would stream through SD-shaped rings. Same
+             * direction as the #844 arm-time re-validations immediately below.
+             *
+             * A CHANGED filename keeps the predicate true and is deliberately
+             * allowed through -- an accepted SYST:STOR:SD:FILE takes effect,
+             * and the partition does not depend on the name.
+             *
+             * A snapshot, not a lock: the section pairs with
+             * SCPI_StorageSDLoggingSet's critical-section write of `file` so
+             * the two fields describe one instant, but nothing stops a disable
+             * landing immediately after. That residue is the concurrent-command
+             * class of #850/#694; what this closes is the SECONDS-wide window
+             * this PR opened. */
+            bool sdStillRequested;
+            taskENTER_CRITICAL();
+            sdStillRequested = (pSDCardSettings != NULL) &&
+                               pSDCardSettings->enable &&
+                               (pSDCardSettings->file[0] != '\0');
+            taskEXIT_CRITICAL();
+            if (!sdStillRequested) {
+                SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
+                SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
+                                     ifaceAtDetect, ifaceGenPinned,
+                                     ifaceSetsPinned);
+                LOG_E("STR:START refused (#851): SD logging was turned off "
+                      "during start setup - the buffers were carved for an SD "
+                      "session. Retry.");
+                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+                return SCPI_RES_ERR;
+            }
+            /* #690 (adversarial audit): this arm passes through the #689
+             * dir-file-cap guard. If there is no writable location the guard
+             * refuses and IsWriteReady stays false. The OLD code only logged and
+             * fell through to enable streaming with OPER_SD_LOGGING asserted but
+             * NO file open — silent total data loss on an SD-only session. So:
+             * clear the flags, early-exit the poll, and FAIL START with the
+             * precise cause so SD-logging is never falsely asserted. */
+            /* #589: re-check that SPI4 is still ours. The pre-stop check is
+             * advisory and ran before a multi-second partition, and a WRITE
+             * armed while the SD task is parked can never be advanced -- the
+             * poll below would spend its full 5 s and then report the generic
+             * "not ready" for a cause the device already knows. Name it. */
+            if (app_SDCard_SpiOwnedByWifi() || SpiBusHealth_IsSdSuspended()) {
+                const char *why = SD_SuspendReasonText();
+                SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
+                SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
+                                     ifaceAtDetect, ifaceGenPinned,
+                                     ifaceSetsPinned);
+                LOG_E("Cannot start SD logging - SD suspended: %s\r\n",
+                      why ? why : "SPI4 is owned elsewhere");
+                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+                return SCPI_RES_ERR;
+            }
+            /* #836: CLAIM rather than check-then-set. USB SCPI (pri 7) preempts
+             * WiFi SCPI (pri 2) with no shared dispatch mutex, so an SCPI
+             * SD:GET can arm MODE_READ and return OK in the gap between a bare
+             * IsBusy() test and the `mode = WRITE` write below -- and this arm
+             * would then silently overwrite it, leaving the GET caller waiting
+             * forever for data that is never coming. Same interlock as
+             * #829/PR #835. The claim reserves the manager WITHOUT arming
+             * anything; `mode` is still written last, and the claim is released
+             * once UpdateSettings has handed ownership to `mode`.
+             *
+             * This is the authoritative test; the pre-stop IsBusy() is only an
+             * early out that saves a running session from being torn down for a
+             * start that was going to lose the claim anyway. */
             if (!sd_card_manager_TryClaim()) {
                 SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
                 SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
-                LOG_E("STR:START refused: SD busy with another operation at "
-                      "post-repartition re-open\r\n");
+                LOG_E("Cannot start SD logging - SD card busy with another operation");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
                 return SCPI_RES_ERR;
             }
+            /* #498 / #503: the disk-full gate lives INSIDE the SD task's WRITE
+             * init -- one UpdateSettings(WRITE) does mount + (optional)
+             * free-space check + file open in a single pass. Clear the flags
+             * SYNCHRONOUSLY first: a stale `true` from a previous rejection
+             * would make the early-exit poll below bail instantly and report
+             * "out of space" on an attempt where space is fine (Qodo, PR #508).
+             *
+             * Contract: minFreeBytes == 0 skips the check; below the floor the
+             * SD task routes to ERROR with startupDiskFull=true and
+             * IsWriteReady never becomes true; a failed free-space QUERY falls
+             * through to the open, and a failing open surfaces below. */
             sd_card_manager_ClearStartupDirFull();
             sd_card_manager_ClearStartupDiskFull();
-            /* #824: PrepareStreamingBuffers tore the first arm's session down
-             * (WRITE -> NONE) in between, so this re-open is a fresh arm and
-             * must state its own case. */
+            /* #824: this WRITE is a streaming log, so its rotated split files
+             * must carry the session header. Stated as an ARGUMENT of the arm,
+             * not a flag set beforehand -- a flag was stealable by a concurrent
+             * benchmark arm (see the header's comment). */
             pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
             sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings);
             sd_card_manager_ReleaseClaim();   /* #836: mode now holds it */
+            /* Wait for the file to be open before streaming starts, or early
+             * samples are dropped while SD mounts/opens. The two startup flags
+             * are polled so a rejection costs milliseconds instead of the full
+             * 5 s; the pre-clear above guarantees they describe ONLY this
+             * request. */
             int readyWait = 0;
             while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
                 if (sd_card_manager_StartupDirFull() || sd_card_manager_StartupDiskFull()) {
@@ -4306,12 +4348,37 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
                      * full directory AND a bucket that could not be created or read.
                      * Naming only fullness misdirects the operator when the real
                      * fault is the media; the SD-side LOG_E names which it was. */
-                    LOG_E("STR:START refused after buffer repartition (#689): %s\r\n",
+                    LOG_E("[SD] STR:START refused (#689): %s",
                           sd_card_manager_WriteRefuseText());
                 } else if (sd_card_manager_StartupDiskFull()) {
-                    LOG_E("STR:START refused: SD disk full after buffer repartition\r\n");
+                    /* #851: the numbers, not just the verdict. This detail used
+                     * to exist only on the pre-stop arm that this change
+                     * deleted, so the surviving message would have been a bare
+                     * "disk full" -- strictly less than the device knew. */
+                    uint64_t freeBytes = 0, totalBytes = 0;
+                    bool haveSpace = sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes);
+                    /* Snapshot the 64-bit floor under critical section per
+                     * CLAUDE.md atomicity rules — pairs with the setter's
+                     * critical-section write in SCPI_StorageSDMinFreeSet. */
+                    uint64_t floor;
+                    taskENTER_CRITICAL();
+                    floor = pSDCardSettings->minFreeBytes;
+                    taskEXIT_CRITICAL();
+                    /* CHECK_DISK_FULL caches spaceResult before the rejection
+                     * branch, so haveSpace SHOULD be true here. The fallback is
+                     * defense-in-depth: if a future change clears
+                     * spaceResultValid between the SD task's reject and this
+                     * read, log "unknown" rather than a misleading 0 B. */
+                    if (haveSpace) {
+                        LOG_E("[SD] STR:START refused: %llu B free < %llu B floor",
+                              (unsigned long long)freeBytes,
+                              (unsigned long long)floor);
+                    } else {
+                        LOG_E("[SD] STR:START refused: disk full (space unknown), floor=%llu B",
+                              (unsigned long long)floor);
+                    }
                 } else {
-                    LOG_E("SD file not ready after DMA resize (%d ms)\r\n", readyWait * 10);
+                    LOG_E("SD file not ready after %d ms\r\n", readyWait * 10);
                 }
                 /* Abort START — never enable streaming with SD logging asserted
                  * but no file open (would silently drop every sample). */

@@ -1928,12 +1928,17 @@ void sd_card_manager_ProcessState() {
                 /* Re-opening a file that ALREADY EXISTS in this bucket adds no
                  * directory entry, so it must not be treated as a new one.
                  *
-                 * STR:START opens the file once to prove readiness, then
-                 * PrepareStreamingBuffers closes it and re-opens for the actual
-                 * stream. With the directory at exactly MAX-1 entries, that
-                 * first open filled the bucket, and the re-open then rolled the
-                 * live stream into P001 -- leaving a zero-byte file at the path
-                 * the caller configured while the samples went elsewhere.
+                 * The case that produced it: STR:START used to open the file
+                 * once to prove readiness, let PrepareStreamingBuffers close
+                 * it, then re-open for the actual stream. With the directory
+                 * at exactly MAX-1 entries, that first open filled the bucket
+                 * and the re-open rolled the live stream into P001 -- leaving
+                 * a zero-byte file at the path the caller configured while the
+                 * samples went elsewhere. #851 removed that double open, so
+                 * STR:START no longer reaches here twice; the guard stays
+                 * because re-opening an existing name is still ordinary (a
+                 * session logging to a filename a previous one used, and the
+                 * SD benchmark's own WRITE arm).
                  *
                  * Cheaper and more precise than tracking the pre-open: ask the
                  * filesystem whether the exact target is already there.
@@ -3662,6 +3667,10 @@ bool sd_card_manager_UpdateSettingsForStreamingLog(
 bool sd_card_manager_UpdateSettingsForPlainWrite(
         sd_card_manager_settings_t *pSettings) {
     return sd_UpdateSettingsImpl(pSettings, SD_WRITE_ARM_PLAIN);
+}
+
+bool sd_card_manager_WriteIsStreamingLog(void) {
+    return gWriteSessionIsStreamingLog;      /* #851 -- see the header */
 }
 
 bool sd_card_manager_IsIdle() {
