@@ -5397,9 +5397,17 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
  * streaming buffer pool and swaps the sample-pool pointers
  * (StreamingBufferPool_Partition -> AInSampleList_InitializeExternal). Landing
  * that on a session armed inside the window re-carves the memory the deferred
- * task and the encoder are actively using. PrepareStreamingBuffers also blocks
- * (it quiesces SD), which is exactly why the claim is a flag rather than a
- * critical section -- the whole body can hold it at task priority.
+ * task and the encoder are actively using.
+ *
+ * PrepareStreamingBuffers also CALLS vTaskDelay, which is exactly why the claim
+ * is a flag rather than a critical section -- the whole body can hold it at task
+ * priority. Note the justification is that it yields AT ALL, not that it is slow:
+ * its two vTaskDelay(1) loops are bounded at 1000 ms and 100 ms and
+ * SCPI_QuiesceAndResetCoherentPool has a third bounded at 500 x 10 ms, but all
+ * three are conditioned on work being in flight and fall straight through on an
+ * idle device ("No-op for idle callers", as the quiescence loop says of itself).
+ * A single vTaskDelay with interrupts disabled is fatal at any duration, so the
+ * flag is required either way -- do not read a duration into this.
  *
  * The claim is taken and released in ONE place, here, with the command body
  * passed in. Each body keeps its own error returns and cannot leak the claim,
