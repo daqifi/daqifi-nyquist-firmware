@@ -110,7 +110,27 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context);
+
+/* #847: the claim is taken HERE and released on the single path out, so no
+ * error return inside the body can leak it. The body is ~200 lines with ten
+ * returns; wrapping it is what makes the release provably unconditional.
+ *
+ * The claim replaces the old inline stream-state guard, in the same position,
+ * so the order in which this command reports its errors is unchanged. */
 scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "CONF:ADC:CHANnel");
+    }
+    scpi_result_t result = ADCChanEnableSetClaimed(context);
+    Streaming_EndConfigChange();
+    return result;
+}
+
+static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
     int param1, param2;
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -132,18 +152,13 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
     // reconfigure, restart. Rejecting BEFORE ADC_WriteChannelStateAll() leaves both
     // runtime config and ADC hardware untouched (no snapshot/rollback needed).
     //
-    // Use IsEnabled || Running (not &&): the two flags are set/cleared in separate
-    // steps at stream start/stop (StartStreaming arms IsEnabled, then
-    // Streaming_UpdateState flips Running; stop clears them in turn). An && guard
-    // would leave a transition window — IsEnabled set but Running not yet, or vice
-    // versa — through which a concurrent SCPI session (USB pri 7 vs WiFi pri 2)
-    // could slip a channel change after the pool/mapping was sized. Reject unless
-    // streaming is FULLY idle (both flags clear).
-    if (pRunTimeStreamConfig->IsEnabled || pRunTimeStreamConfig->Running) {
-        LOG_E("Channel enable rejected: streaming is active (stop streaming first)");
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
-    }
+    // The stream-state test itself now lives in the wrapper's
+    // Streaming_BeginConfigChange() (#847), which tests IsEnabled || Running --
+    // never && -- and TAKES the claim in the same critical section. The two
+    // flags are set/cleared in separate steps at stream start/stop
+    // (StartStreaming arms IsEnabled, then Streaming_UpdateState flips Running;
+    // stop clears them in turn), so an && test would read false for the whole
+    // interval between them. Reject unless streaming is FULLY idle.
 
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         return SCPI_RES_ERR;
@@ -322,7 +337,23 @@ scpi_result_t SCPI_ADCChanEnableSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    // If streaming is globally disabled, channel states updated but no timer recalculation needed
+    // If streaming is globally disabled, channel states updated but no timer
+    // recalculation needed.
+    //
+    // #847: this is now the branch taken on every normal path. The wrapper
+    // holds the config-change claim for the whole of this function, and
+    // SCPI_StartStreaming's arm-time critical section refuses to publish
+    // IsEnabled while it is held -- so START can no longer flip it under us.
+    //
+    // That matters because of what the fall-through DID: before #847 it was
+    // reachable ONLY through the race (the guard at entry rejects when
+    // IsEnabled is already set), and there it overwrote ClockPeriod,
+    // Frequency, TSClockPeriod and ChannelScanFreqDiv on the session START had
+    // just armed -- a channel-enable command silently re-rating a live stream
+    // to its own locally-capped freq. It is kept as a defensive path rather
+    // than deleted because two benchmark-only arm sites (SYST:STR:THRoughput
+    // and the WiFi rate finder, both in SCPIInterface.c) still set IsEnabled
+    // without consulting the claim.
     if (!pRunTimeStreamConfig->IsEnabled) {
         return SCPI_RES_OK;
     }
@@ -701,7 +732,24 @@ scpi_result_t SCPI_ADCCalFLoad(scpi_t * context) {
     }
 }
 
+static scpi_result_t ADCUseCalSetClaimed(scpi_t * context);
+
+/* #847: wrapped for the same reason as SCPI_ADCChanEnableSet -- the body has
+ * seven returns and its "store" reaches an NVM save, which cannot run inside a
+ * critical section. One claim, one release, no path that skips it. */
 scpi_result_t SCPI_ADCUseCalSet(scpi_t * context) {
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "CONF:ADC:USECal");
+    }
+    scpi_result_t result = ADCUseCalSetClaimed(context);
+    Streaming_EndConfigChange();
+    return result;
+}
+
+static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
     int param1;
     DaqifiSettings tmpTopLevelSettings;
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
@@ -711,14 +759,11 @@ scpi_result_t SCPI_ADCUseCalSet(scpi_t * context) {
 
     // #158/#270: this command also switches the encoder output format
     // (value 2 = raw codes), so changing it mid-stream would alter the wire
-    // format under an active session. Reject while streaming (mirrors the
-    // CONF:ADC:CHANnel #116 guard); it also protects the mid-stream cal
-    // coefficient reload for values 0/1.
-    if (pRunTimeStreamConfig->IsEnabled || pRunTimeStreamConfig->Running) {
-        LOG_E("Calibration-mode change rejected: streaming is active (stop streaming first)");
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
-    }
+    // format under an active session. Rejecting while streaming (mirrors the
+    // CONF:ADC:CHANnel #116 guard) also protects the mid-stream cal
+    // coefficient reload for values 0/1. The test now lives in the wrapper's
+    // Streaming_BeginConfigChange() (#847), which performs it and takes the
+    // claim in one critical section.
 
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         return SCPI_RES_ERR;
@@ -808,15 +853,19 @@ scpi_result_t SCPI_ADCOnboardDiagSet(scpi_t * context) {
     }
     StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
-    // IsEnabled || Running (matches the #116 channel-enable gate): the two
-    // flags transition in separate steps at start/stop, and a change slipped
-    // through the window would desync the session scan list (#541 D-B builds
-    // ADCCSS from OnboardDiagEnabled at stream start).
-    if (pStreamCfg->IsEnabled || pStreamCfg->Running) {
-        SCPI_ExecutionError(context, "CONF:ADC:OBDiag: cannot change while streaming");
-        return SCPI_RES_ERR;
+    // #847: the claim performs the IsEnabled || Running test (the two flags
+    // transition in separate steps at start/stop, and a change slipped through
+    // that window would desync the session scan list -- #541 D-B builds ADCCSS
+    // from OnboardDiagEnabled at stream start) AND excludes a concurrent arm
+    // until the store below has landed.
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "CONF:ADC:OBDiag");
     }
     pStreamCfg->OnboardDiagEnabled = (val != 0);
+    Streaming_EndConfigChange();
     LOG_I("Onboard diagnostics during streaming: %s", val ? "enabled" : "disabled");
     return SCPI_RES_OK;
 }
@@ -859,15 +908,23 @@ scpi_result_t SCPI_ADCThresholdSet(scpi_t * context) {
     }
     // Config change: reject while streaming (consistent with the CONF:ADC family;
     // the session scan is frozen at start, #116/#541).
-    StreamingRuntimeConfig *pStreamCfg =
-            BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (pStreamCfg->IsEnabled || pStreamCfg->Running) {
-        SCPI_ExecutionError(context, "CONF:ADC:THRE: cannot change while streaming");
-        return SCPI_RES_ERR;
+    //
+    // #847: via the claim rather than a bare read, because AdcThreshold_Configure
+    // takes a FreeRTOS mutex with portMAX_DELAY -- it cannot share a critical
+    // section with the test, so the exclusion has to outlive one.
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "CONF:ADC:THREshold");
     }
     const char* err = NULL;
-    if (!AdcThreshold_Configure((uint8_t)ch, (AdcThresholdMode)mode,
-                                (uint16_t)lo, (uint16_t)hi, &err)) {
+    bool configured = AdcThreshold_Configure((uint8_t)ch, (AdcThresholdMode)mode,
+                                             (uint16_t)lo, (uint16_t)hi, &err);
+    /* Released as soon as the hardware write is done, on the single path that
+     * covers both outcomes -- the error return below must not skip it. */
+    Streaming_EndConfigChange();
+    if (!configured) {
         SCPI_ExecutionError(context, (err != NULL) ? err : "CONF:ADC:THRE: rejected");
         return SCPI_RES_ERR;
     }
@@ -925,17 +982,22 @@ static scpi_result_t SamcSetCommon(scpi_t *context, bool isDedicated) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
-    StreamingRuntimeConfig *pStreamCfg =
-            BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    // IsEnabled || Running (matches #116 / OBDiag): SAMC feeds the live
-    // scan-rate bound (#541 D-C reads ADCCON2.SAMC), so a mid-stream change
-    // would invalidate the cap the session was admitted under.
-    if (pStreamCfg->IsEnabled || pStreamCfg->Running) {
-        SCPI_ExecutionError(context, "CONF:ADC:SAMC: cannot change while streaming");
-        return SCPI_RES_ERR;
+    // SAMC feeds the live scan-rate bound (#541 D-C reads ADCCON2.SAMC), so a
+    // mid-stream change would invalidate the cap the session was admitted
+    // under. The claim performs the IsEnabled || Running test (#116 / OBDiag
+    // form) and holds the exclusion across the write (#847) -- which it must,
+    // because MC12b_SetAcquisitionSamc spins up to ~20 ms on BGVRRDY and so
+    // cannot share a critical section with the test.
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "CONF:ADC:SAMC");
     }
     bool ok = isDedicated ? MC12b_SetAcquisitionSamc(val, -1)
                           : MC12b_SetAcquisitionSamc(-1, val);
+    /* Single release, before the branch, so the error return cannot skip it. */
+    Streaming_EndConfigChange();
     if (!ok) {
         SCPI_ExecutionError(context, "CONF:ADC:SAMC: set failed");
         return SCPI_RES_ERR;

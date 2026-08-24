@@ -616,6 +616,86 @@ void Streaming_CountActiveChannels(uint16_t* out_type1Count,
                                    uint16_t* out_totalPublic,
                                    bool* out_hasAD7609);
 
+/* --- #847: the streaming config-change claim ------------------------------
+ *
+ * Every cap-input setter is guarded by `IsEnabled || Running`, and #844 closed
+ * that window from START's side (the arm re-validates the cap it was admitted
+ * under). The SAME window exists inverted, on the SETTER's side, and no cap
+ * re-validation can see it:
+ *
+ *   1. a setter on transport A reads the flags -- idle -- and proceeds;
+ *   2. a SYST:STR:START on transport B preempts it (USB SCPI is priority 7,
+ *      WiFi SCPI priority 2, so either can preempt the other), computes the
+ *      cap, re-validates it and ARMS the session;
+ *   3. the setter resumes and performs its store -- onto a RUNNING stream,
+ *      which is exactly the state its guard exists to refuse.
+ *
+ * #844's re-validation happens at step 2, BEFORE the store, so it cannot see
+ * it: the session is left running with a cap input the cap was never computed
+ * for. The trigger window is a few instructions; the consequence window is
+ * not -- step 2 contains START's SD readiness poll, which runs for seconds.
+ *
+ * PR #845 fixed the two setters it touched (SYST:STR:BENCH, SYST:STR:INT) by
+ * testing and storing in ONE critical section. That idiom does not generalise
+ * to the rest of the family, because their "store" is not a store:
+ *
+ *   - CONF:ADC:SAMC -> MC12b_SetAcquisitionSamc() spins up to ~20 ms waiting
+ *     on ADCCON2bits.BGVRRDY (MC12bADC.c);
+ *   - CONF:ADC:THREshold -> AdcThreshold_Configure() takes a FreeRTOS mutex
+ *     with portMAX_DELAY (AdcThreshold.c) -- blocking with interrupts off;
+ *   - CONF:ADC:CHANnel -> LOG_I plus ADC_WriteChannelStateAll() SFR writes;
+ *   - CONF:ADC:USECal -> an NVM save.
+ *
+ * None of those may run with interrupts disabled, so for them the guard and
+ * the store cannot share a critical section. This claim is the same exclusion
+ * expressed as a flag instead: the setter takes it (atomically with the idle
+ * test), does its work at task priority, and releases it. SCPI_StartStreaming
+ * OBSERVES it in the arm-time critical section #844 added and refuses to arm
+ * while it is held -- so a config change and an arm are mutually exclusive in
+ * both directions, and a setter's store can no longer land on a live session.
+ *
+ * SCOPE. This is not a lock over the runtime config in general. It excludes a
+ * guarded setter against an ARM; two STARTs racing each other is #850, and
+ * serialising SCPI execution across transports outright is #694. It is also
+ * advisory-only -- nothing blocks on it. The loser is refused with an error,
+ * which is the behaviour these guards already had.
+ *
+ * The "ARM" it excludes is SCPI_StartStreaming's, and only that one. TWO OTHER
+ * SITES publish IsEnabled without consulting the claim -- SYST:STR:THRoughput
+ * and the WiFi rate finder, both in SCPIInterface.c -- so a setter racing
+ * either of those is still exposed. Left that way deliberately: both are
+ * self-contained BENCH commands that arm, measure and stop inside one SCPI
+ * callback, neither appears in a production client, and wiring the claim into
+ * the finder's per-step arm would need a refusal path through its search loop.
+ * Named here rather than left implicit, because "nothing can arm while the
+ * claim is held" is what the rest of this comment would otherwise imply.
+ */
+typedef enum {
+    STREAM_CFG_CLAIM_OK = 0,      /* claim taken -- caller MUST release it */
+    STREAM_CFG_CLAIM_STREAMING,   /* a session is armed or running */
+    STREAM_CFG_CLAIM_BUSY         /* another config change is in flight */
+} StreamingCfgClaim;
+
+/**
+ * Take the config-change claim if the stream is fully idle and no other config
+ * change holds it. Tests IsEnabled/Running and takes the claim inside ONE
+ * critical section, so the pair cannot be split by a preempting START.
+ *
+ * @return STREAM_CFG_CLAIM_OK when taken -- and ONLY then must the caller call
+ *         Streaming_EndConfigChange() on every path out.
+ */
+StreamingCfgClaim Streaming_BeginConfigChange(void);
+
+/** Release a claim taken by Streaming_BeginConfigChange(). */
+void Streaming_EndConfigChange(void);
+
+/**
+ * True while a guarded config change is in flight. Read by the START arm to
+ * refuse a session whose configuration is mid-change. 32-bit read, atomic on
+ * PIC32MZ.
+ */
+bool Streaming_ConfigChangeInProgress(void);
+
 /*! Initializes the streaming component
  * @param[in] pStreamingConfigInit Streaming configuration
  * @param[out] pStreamingRuntimeConfigInit Streaming configuration in runtime

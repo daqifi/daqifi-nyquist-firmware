@@ -4436,6 +4436,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     bool capRevoked = false;
     bool ifaceMoved = false;
     bool inputsGone = false;
+    bool cfgChanging = false;
     uint32_t revalidatedMax = 0;
     /* Captured INSIDE the section so the refusal log names the value that
      * actually triggered the decision. Re-reading it for the message after
@@ -4464,7 +4465,15 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * With this, the arm re-checks every admission test START performed up
      * front: inputs exist, the interface is the one that was set up, and the
      * rate is still admissible. */
-    {
+    /* #847: a guarded cap-input setter is mid-flight on the other transport.
+     * Its guard read the flags as idle before this section ran, so publishing
+     * IsEnabled here would let its store land on the session we are about to
+     * arm -- the setter-side half of the #844 window, which no amount of cap
+     * re-validation below can catch (the store happens AFTER it). Tested first
+     * so the refusal reasons stay mutually exclusive, and because the checks
+     * below read a configuration that is being mutated right now. */
+    cfgChanging = Streaming_ConfigChangeInProgress();
+    if (!cfgChanging) {
         uint16_t t1Now = 0, totNow = 0;
         Streaming_CountActiveChannels(&t1Now, &totNow, NULL);
         bool dioNow = (pDIOGlobalEnable != NULL && *pDIOGlobalEnable);
@@ -4473,7 +4482,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         }
     }
     ifaceObserved = pRunTimeStreamConfig->ActiveInterface;
-    if (inputsGone) {
+    if (cfgChanging || inputsGone) {
         /* handled below; skip the rest so the reasons stay mutually exclusive */
     } else if (ifaceObserved != ifaceForStart ||
         gStreamIfaceGen != ifaceGenAtPublish ||
@@ -4493,7 +4502,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * INT32_MAX as negative. */
         capRevoked = ((uint32_t)freq > revalidatedMax);
     }
-    if (!capRevoked && !ifaceMoved && !inputsGone) {
+    if (!capRevoked && !ifaceMoved && !inputsGone && !cfgChanging) {
         /* #848: the rate becomes visible HERE, in the same section that
          * publishes IsEnabled, so no refusal path can leave a rejected rate
          * behind and no reader can see a rate the session is not running at.
@@ -4508,6 +4517,24 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         pRunTimeStreamConfig->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
+
+    if (cfgChanging) {
+        /* Same unwind as the inputsGone branch below: the interface WAS
+         * published by this START, so it must be put back (unlike ifaceMoved,
+         * where another writer owns the field). */
+        if (sdLoggingRequested) {
+            SCPI_ReleaseSdLoggingArm(pSDCardSettings);
+        }
+        SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
+        SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
+                                     ifaceAtDetect, ifaceGenPinned,
+                                     ifaceSetsPinned);
+        LOG_E("STR:START refused (#847): a streaming config change is in "
+              "flight on the other SCPI transport - its store would land on "
+              "this session. Retry.");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     if (inputsGone) {
         if (sdLoggingRequested) {
@@ -4710,12 +4737,17 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
      *
      * Mirrors SCPI_ADCChanEnableSet's #116 guard, including its IsEnabled ||
      * Running form -- the two flags are set and cleared in separate steps at
-     * start/stop, so an && test would leave a window open. */
-    if (pRunTimeStreamConfig->IsEnabled || pRunTimeStreamConfig->Running) {
-        LOG_E("Stream format change rejected: streaming is active "
-              "(stop streaming first)");
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
+     * start/stop, so an && test would leave a window open.
+     *
+     * #847: taken as a CLAIM, not a bare read, so a START on the other SCPI
+     * transport cannot arm between this test and the store below and receive
+     * the encoding change on a session whose cap was computed for the old
+     * one. */
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "SYST:STR:FORmat");
     }
 
     /* #801: reject an unrecognised encoding rather than quietly picking one.
@@ -4738,19 +4770,25 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
      * Bounded by the enum's own COUNT rather than by naming the highest
      * encoding here, so adding one does not leave a second place to update
      * (Qodo). */
+    scpi_result_t result = SCPI_RES_OK;
     if (param1 < (int)Streaming_ProtoBuffer
             || param1 >= (int)Streaming_Encoding_COUNT) {
         LOG_E("Stream format %d is not a known encoding (0=PB, 1=JSON, "
               "2=CSV, 3=CsvCompact)", param1);
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
-        return SCPI_RES_ERR;
+        result = SCPI_RES_ERR;
+    } else {
+        /* Assigned only after the range check, so a rejected set cannot leave
+         * the encoding half-changed: FORmat? still reports what it reported
+         * before. */
+        pRunTimeStreamConfig->Encoding = (StreamingEncoding)param1;
     }
 
-    /* Assigned only after the range check, so a rejected set cannot leave the
-     * encoding half-changed: FORmat? still reports what it reported before. */
-    pRunTimeStreamConfig->Encoding = (StreamingEncoding)param1;
-
-    return SCPI_RES_OK;
+    /* #847: single release, reached by both outcomes. Structured as one exit
+     * rather than a release before each `return` so a later edit cannot add a
+     * third path that leaks the claim. */
+    Streaming_EndConfigChange();
+    return result;
 }
 
 static scpi_result_t SCPI_GetStreamFormat(scpi_t * context) {
@@ -4784,12 +4822,17 @@ static scpi_result_t SCPI_SetDataPrecision(scpi_t * context) {
      * Rejecting is right rather than re-capping: the cap is a hard limit at
      * START (#524), there is no mechanism to lower an already-running session,
      * and silently changing the rate under a client is what #524 removed. */
-    if (pRunTimeStreamConfig->IsEnabled || pRunTimeStreamConfig->Running) {
-        LOG_E("Voltage-precision change rejected: streaming is active (stop streaming first)");
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
+    /* #847: a claim rather than a bare read of the two flags -- the store
+     * below must not be able to land on a session a concurrent START armed in
+     * between, which is precisely the cap input this guard exists to pin. */
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "CONF:VOLTage:PRECision");
     }
     pRunTimeStreamConfig->VoltagePrecision = (uint8_t)param1;
+    Streaming_EndConfigChange();
     return SCPI_RES_OK;
 }
 
@@ -4822,26 +4865,36 @@ static scpi_result_t SCPI_LoadDataPrecision(scpi_t * context) {
      * setter left LOAD as an unguarded twin: `CONF:VOLT:PREC 10` +
      * `CONF:VOLT:SAVE` while idle, then `CONF:VOLT:LOAD` mid-session, reaches
      * precision 10 on a stream admitted under the precision-4 cap. */
+    /* #847: as a claim, held across the NVM read below -- which cannot run in
+     * a critical section, so the test and the store could not otherwise be
+     * made atomic with respect to a concurrent START.
+     *
+     * One fetch of the streaming config, used for the store below. The
+     * pre-#847 code fetched it twice and NULL-checked the second: this
+     * accessor indexes a static array initialised at boot and never returns
+     * NULL, so the check was dead (CLAUDE.md, "Atomicity & Concurrency
+     * Rules"). */
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (pRunTimeStreamConfig->IsEnabled || pRunTimeStreamConfig->Running) {
-        LOG_E("Voltage-precision load rejected: streaming is active (stop streaming first)");
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "CONFigure:VOLTage:LOAD");
     }
     memset(&settings, 0, sizeof(DaqifiSettings));
+    scpi_result_t result = SCPI_RES_OK;
     if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &settings)) {
-        return SCPI_RES_ERR;
-    }
-    uint8_t savedPrec = settings.settings.topLevelSettings.voltagePrecision;
-    if (savedPrec <= 10) {
-        StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
-                BOARDRUNTIME_STREAMING_CONFIGURATION);
-        if (pStreamCfg != NULL) {
-            pStreamCfg->VoltagePrecision = savedPrec;
+        result = SCPI_RES_ERR;
+    } else {
+        uint8_t savedPrec = settings.settings.topLevelSettings.voltagePrecision;
+        if (savedPrec <= 10) {
+            pRunTimeStreamConfig->VoltagePrecision = savedPrec;
         }
     }
-    return SCPI_RES_OK;
+    /* Single release covering both outcomes (see SCPI_SetStreamFormat). */
+    Streaming_EndConfigChange();
+    return result;
 }
 
 // #14: user-definable device friendly name (emitted in the PB/JSON info

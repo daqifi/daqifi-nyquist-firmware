@@ -3527,6 +3527,58 @@ void Streaming_RestoreRateConfigured(bool configured) {
     gStreamRateConfigured = configured ? 1u : 0u;
 }
 
+/* --- #847: the streaming config-change claim ------------------------------
+ *
+ * Rationale, the sequence it closes, and why the #845 critical-section idiom
+ * could not be reused for these setters: see the block comment on
+ * StreamingCfgClaim in streaming.h.
+ *
+ * uint32_t rather than bool so the READ side (Streaming_ConfigChangeInProgress,
+ * called from START's arm-time critical section) is an atomic 32-bit load on
+ * PIC32MZ -- the same reason gBenchmarkMode and gStreamRateConfigured above are
+ * uint32_t. Every WRITE happens inside a critical section anyway.
+ */
+static volatile uint32_t gCfgChangeBusy = 0u;
+
+StreamingCfgClaim Streaming_BeginConfigChange(void) {
+    /* Fetched OUTSIDE the section: BoardRunTimeConfig_Get is an index into a
+     * static array initialised at boot and never returns NULL, so there is
+     * nothing to gain from holding interrupts off across it. */
+    StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+    StreamingCfgClaim result;
+
+    taskENTER_CRITICAL();
+    if (pStreamCfg->IsEnabled || pStreamCfg->Running) {
+        /* IsEnabled || Running, not &&: the two flags are set and cleared in
+         * separate steps at start/stop, so an && test reads false for the whole
+         * interval between them (#116 and every mirror of it says so). */
+        result = STREAM_CFG_CLAIM_STREAMING;
+    } else if (gCfgChangeBusy != 0u) {
+        /* Two config changes from the two SCPI transports. Pre-existing and
+         * not what #847 is about, but the claim makes it visible instead of
+         * letting them interleave, and refusing costs the loser a retry. */
+        result = STREAM_CFG_CLAIM_BUSY;
+    } else {
+        gCfgChangeBusy = 1u;
+        result = STREAM_CFG_CLAIM_OK;
+    }
+    taskEXIT_CRITICAL();
+
+    return result;
+}
+
+void Streaming_EndConfigChange(void) {
+    /* A single unconditional 32-bit store, atomic on PIC32MZ -- no read-modify-
+     * write, so no critical section is needed to make it safe. It is also the
+     * ONLY writer of 0, and only the holder ever calls it. */
+    gCfgChangeBusy = 0u;
+}
+
+bool Streaming_ConfigChangeInProgress(void) {
+    return (gCfgChangeBusy != 0u);
+}
+
 /* #730: the rate the hardware ACTUALLY runs, in millihertz.
  *
  * `StreamingRuntimeConfig.Frequency` stores what the client ASKED for; the
