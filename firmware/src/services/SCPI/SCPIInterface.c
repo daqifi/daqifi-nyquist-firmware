@@ -3442,6 +3442,13 @@ static bool SCPI_StartIfaceContradicted(uint32_t pinnedSets,
  * the UpdateSettings return DISCARDED. Qodo flagged the newest of them; fixing
  * only that one would have left six identical twins, so the class moves here.
  *
+ * #851 left six of those call sites, and split what they mean in two. The four
+ * AFTER the arm release the file THIS start opened. The two between the stop
+ * and the arm -- the interface publish and the partition abort -- release the
+ * file of the session this start just STOPPED, because START no longer arms SD
+ * before that point; they are gated on `stoppedSdLoggingSession` rather than
+ * on `sdLoggingRequested` and say so at the site.
+ *
  * The return stays unchecked, and that is a statement about this call rather
  * than an omission. `sd_UpdateSettingsImpl` has exactly one `return false`,
  * gated on `mode != SD_CARD_MANAGER_MODE_NONE` -- the #589 arm-time refusal,
@@ -3455,7 +3462,7 @@ static bool SCPI_StartIfaceContradicted(uint32_t pinnedSets,
  *
  * Only SCPI_StopStreaming clears these bits, and it is not on any of these
  * paths. So after the point of no return every refusal -- the partition
- * abort, the post-repartition SD claim and re-open, and the three arm-time
+ * abort, the post-partition SD claim and open, and the three arm-time
  * re-validations -- returned an error with `SYST:STR:DATA?` reading 0 and
  * `STAT:OPER:COND?` still reporting bit 4 from the session it had just torn
  * down (adversarial audit). Pre-existing on the older paths; the new ones
@@ -3497,7 +3504,7 @@ static void SCPI_ReleaseSdLoggingArm(sd_card_manager_settings_t *sd) {
  *
  * The publish has to land before PrepareStreamingBuffers (which sizes the
  * rings from ActiveInterface), and several refusal paths follow it: the
- * partition abort, the post-repartition SD re-open, and the three arm-time
+ * partition abort, the post-partition SD arm, and the three arm-time
  * re-validations. Without this, a START refused there left the interface on
  * the value it auto-detected, and because the auto-detect only adopts when
  * the stored value is USB, that leftover is then read as an EXPLICIT choice:
