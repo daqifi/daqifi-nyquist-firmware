@@ -2256,14 +2256,28 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
         pStreamCfg->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
-    Streaming_UpdateState();
 
-    // Verify streaming actually started
-    if (!pStreamCfg->Running) {
-        LOG_E("Throughput benchmark: streaming failed to start%s",
-              cfgBusy ? " (a streaming config change was in flight - #847)"
-                      : "");
-        pStreamCfg->IsEnabled = false;
+    /* Only pump the state machine if we actually armed. On the refused path
+     * Streaming_UpdateState() would call Streaming_Stop(), and if a concurrent
+     * session were running that would STOP SOMEONE ELSE'S STREAM. */
+    if (!cfgBusy) {
+        Streaming_UpdateState();
+    }
+
+    /* Verify streaming actually started -- and treat the refusal as its OWN
+     * reason rather than inferring it from Running. Inferring was wrong: a
+     * concurrent session that armed after this command's front-door check
+     * leaves Running true, and the benchmark would then adopt that session as
+     * its own and stop it after the dwell (Qodo). */
+    if (cfgBusy || !pStreamCfg->Running) {
+        LOG_E("Throughput benchmark: %s",
+              cfgBusy ? "refused, a streaming config change is in flight (#847)"
+                      : "streaming failed to start");
+        if (!cfgBusy) {
+            /* Disarm only what THIS call armed. On the refused path IsEnabled
+             * was never set here, and a concurrent session may own it. */
+            pStreamCfg->IsEnabled = false;
+        }
         Streaming_SetBenchmarkMode(savedBenchmark);
         Streaming_SetTestPattern(savedPattern);
         StreamFreq_Set(pStreamCfg, savedFrequency);
@@ -2434,19 +2448,32 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
      * *outStartFailed, so no new exit path is introduced. (Streaming_Start
      * still drains the sample queues on the way through: the same work the
      * next successful start would do, harmless with nothing running.) */
+    bool cfgBusy;
     taskENTER_CRITICAL();
-    if (!Streaming_ConfigChangeInProgress()) {
+    cfgBusy = Streaming_ConfigChangeInProgress();
+    if (!cfgBusy) {
         cfg->ClockPeriod = periodCycles - 1;
         cfg->Frequency = (uint64_t)freq;
         cfg->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
-    Streaming_UpdateState();
-    if (!cfg->Running) {
+    /* Only pump the state machine if we actually armed -- on the refused path
+     * Streaming_UpdateState() would Streaming_Stop() a concurrent session. */
+    if (!cfgBusy) {
+        Streaming_UpdateState();
+    }
+    /* The refusal is its OWN reason, not an inference from Running: a
+     * concurrent session leaves Running true, and this step would otherwise
+     * adopt it as its own and measure/stop it (Qodo). */
+    if (cfgBusy || !cfg->Running) {
         // Clean teardown so the start-fail path leaves IsEnabled=false like the
         // normal path (the finder's exit assumes streaming is stopped) (Qodo #521).
-        cfg->IsEnabled = false;
-        Streaming_UpdateState();
+        // Skipped when refused: IsEnabled was never set here, and a concurrent
+        // session may own it.
+        if (!cfgBusy) {
+            cfg->IsEnabled = false;
+            Streaming_UpdateState();
+        }
         *outStartFailed = true; *outKBps = 0;
         return false;   // not "saturated" — start failure is signaled via *outStartFailed
     }
