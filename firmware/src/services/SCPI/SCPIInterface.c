@@ -2799,7 +2799,20 @@ static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
 static bool Iperf2_RefuseIfStreaming(scpi_t * context) {
     StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (pStreamCfg->IsEnabled && pStreamCfg->Running) {
+    /* #857: `IsEnabled || Running`, not &&. Found as the twin of the SYST:MEM:*
+     * guard this PR converts -- the same defect, in the other direction: an &&
+     * test reads FALSE for the whole interval between the two flags (START
+     * publishes IsEnabled, then Streaming_UpdateState flips Running; stop
+     * clears them in turn), so it refused only the fully-established middle of
+     * a session and admitted both ends. Starting an iperf2 server or client
+     * there puts a saturating TCP load on the WINC while a session arms.
+     *
+     * Only the test is corrected. This command is NOT converted to the
+     * config-change claim, because it is not a config change: it starts a
+     * network task rather than mutating a cap input or MemoryConfig, so it has
+     * nothing for START's arm-time observation to protect, and taking the claim
+     * would refuse unrelated setters for the length of an iperf run. */
+    if (pStreamCfg->IsEnabled || pStreamCfg->Running) {
         SCPI_ExecutionError(context, "SYST:WIFI:IPERF: stop streaming first");
         return true;
     }
@@ -5356,22 +5369,88 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
 //   Sample pool:   0 (auto = DEFAULT_AIN_SAMPLE_COUNT), or 100 - MAX_AIN_SAMPLE_COUNT (10000)
 // =============================================================================
 
-/**
- * @brief Guard: reject memory config changes while streaming is active.
- * @return true if streaming is active (caller should return SCPI_RES_ERR)
+/* --- #857: the SYST:MEM:* stream-state guard ------------------------------
+ *
+ * This family had BOTH defects #847 found in the cap-input setters, and one of
+ * them with a worse payload.
+ *
+ * 1. The old guard tested `IsEnabled && Running`. Those two flags are set in
+ *    separate steps at stream start (SCPI_StartStreaming publishes IsEnabled,
+ *    then Streaming_UpdateState flips Running) and cleared in turn at stop, so
+ *    an && test reads FALSE for the whole interval between them -- it refuses
+ *    only the fully-established middle of a session and admits both ends. Every
+ *    other stream-state guard in the tree says `IsEnabled || Running` and says
+ *    why (#116, #619, #832, OBDiag, SAMC); this was the second holdout after
+ *    the one PR #845 fixed. Streaming_BeginConfigChange performs the || form,
+ *    so the fix here is to stop hand-rolling the test at all.
+ *
+ * 2. Test-then-store: the guard read the flags, then the body parsed, validated
+ *    and stored, and a SYST:STR:START on the OTHER SCPI transport (USB SCPI is
+ *    priority 7, WiFi SCPI priority 2) could arm in between -- the #847 window,
+ *    reached through a different family. The claim closes it in both directions:
+ *    the test and the take share one critical section here, and all three sites
+ *    that publish IsEnabled refuse to arm while the claim is held.
+ *
+ * WHY THIS FAMILY IS WORSE THAN A LATE SCALAR STORE. SYST:MEM:AUTO and
+ * SYST:MEM:RESet do not merely store a number. AUTO memsets the whole
+ * MemoryConfig and calls PrepareStreamingBuffers, which re-partitions the
+ * streaming buffer pool and swaps the sample-pool pointers
+ * (StreamingBufferPool_Partition -> AInSampleList_InitializeExternal). Landing
+ * that on a session armed inside the window re-carves the memory the deferred
+ * task and the encoder are actively using.
+ *
+ * PrepareStreamingBuffers also CALLS vTaskDelay, which is exactly why the claim
+ * is a flag rather than a critical section -- the whole body can hold it at task
+ * priority. Note the justification is that it yields AT ALL, not that it is slow:
+ * its two vTaskDelay(1) loops are bounded at 1000 ms and 100 ms and
+ * SCPI_QuiesceAndResetCoherentPool has a third bounded at 500 x 10 ms, but all
+ * three are conditioned on work being in flight and fall straight through on an
+ * idle device ("No-op for idle callers", as the quiescence loop says of itself).
+ * A single vTaskDelay with interrupts disabled is fatal at any duration, so the
+ * flag is required either way -- do not read a duration into this.
+ *
+ * The claim is taken and released in ONE place, here, with the command body
+ * passed in. Each body keeps its own error returns and cannot leak the claim,
+ * which is the same property #847's per-command wrappers buy; a single runner
+ * is used because all seven commands share one guard and always did.
+ *
+ * `body` and `what` are deliberately not NULL-checked. Every caller is a
+ * three-line wrapper in this file passing a named static function and a string
+ * literal, so a NULL is a compile-time impossibility rather than a runtime one,
+ * and the check would be dead code -- the same reasoning the project applies to
+ * BoardRunTimeConfig_Get. Stated because they are NEW parameters, and an
+ * unexplained absence reads as an oversight.
+ *
+ * NOT CLOSED HERE, and pre-existing rather than introduced. SYST:STR:THRoughput
+ * and the WiFi rate finder call PrepareStreamingBuffers BEFORE they observe the
+ * claim (SCPIInterface.c -- the prepare, then the arm-time critical section), so
+ * a SYST:MEM:AUTO holding the claim can still be re-partitioning while one of
+ * them partitions too. The old && guard admitted exactly the same overlap, so
+ * this is unchanged by the conversion, and the outcome is strictly better: the
+ * arm now sees the claim and refuses instead of arming onto a pool being
+ * re-carved. Making it airtight needs those two to TAKE the claim rather than
+ * observe it, which they cannot do as written -- they would then read their own
+ * claim at the arm and refuse themselves. What the claim does close outright is
+ * two SYST:MEM:AUTO commands racing each other: the loser now gets
+ * STREAM_CFG_CLAIM_BUSY instead of a second concurrent re-partition.
  */
-static bool SCPI_MemRejectIfStreaming(scpi_t * context) {
-    StreamingRuntimeConfig* sc = BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (sc->IsEnabled && sc->Running) {
-        LOG_E("Memory config rejected: streaming is active");
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return true;
+static scpi_result_t SCPI_MemRunClaimed(scpi_t * context,
+                                        scpi_result_t (*body)(scpi_t *),
+                                        const char *what) {
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   what);
     }
-    return false;
+    scpi_result_t result = body(context);
+    Streaming_EndConfigChange();
+    return result;
 }
 
-static scpi_result_t SCPI_SetMemSdBuf(scpi_t * context) {
-    if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
+static scpi_result_t SCPI_SetMemSdBufClaimed(scpi_t * context) {
+    /* #857: the stream-state rejection lives in this command's
+     * SCPI_MemRunClaimed wrapper below, not here. */
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
     // Must be 4096-65536 and a multiple of 512 (SD sector alignment)
@@ -5382,6 +5461,11 @@ static scpi_result_t SCPI_SetMemSdBuf(scpi_t * context) {
     MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
     mc->sdCircularBufSize = (uint32_t)val;
     return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_SetMemSdBuf(scpi_t * context) {
+    return SCPI_MemRunClaimed(context, SCPI_SetMemSdBufClaimed,
+                              "SYSTem:MEMory:SD:BUFfer");
 }
 
 static scpi_result_t SCPI_GetMemSdBuf(scpi_t * context) {
@@ -5397,8 +5481,9 @@ static scpi_result_t SCPI_GetMemSdBuf(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_SetMemWifiBuf(scpi_t * context) {
-    if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
+static scpi_result_t SCPI_SetMemWifiBufClaimed(scpi_t * context) {
+    /* #857: the stream-state rejection lives in this command's
+     * SCPI_MemRunClaimed wrapper below, not here. */
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
     // Min = SOCKET_BUFFER_MAX_LENGTH (1400), max = 65536
@@ -5411,14 +5496,20 @@ static scpi_result_t SCPI_SetMemWifiBuf(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_SetMemWifiBuf(scpi_t * context) {
+    return SCPI_MemRunClaimed(context, SCPI_SetMemWifiBufClaimed,
+                              "SYSTem:MEMory:WIFI:BUFfer");
+}
+
 static scpi_result_t SCPI_GetMemWifiBuf(scpi_t * context) {
     // #494: see SCPI_GetMemSdBuf.
     SCPI_ResultInt32(context, (int32_t)StreamingBufferPool_WifiSize());
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_SetMemUsbBuf(scpi_t * context) {
-    if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
+static scpi_result_t SCPI_SetMemUsbBufClaimed(scpi_t * context) {
+    /* #857: the stream-state rejection lives in this command's
+     * SCPI_MemRunClaimed wrapper below, not here. */
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
     // Min = USBCDC_WBUFFER_SIZE (circular buffer must hold one full USB CDC write), max = 65536
@@ -5431,14 +5522,20 @@ static scpi_result_t SCPI_SetMemUsbBuf(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_SetMemUsbBuf(scpi_t * context) {
+    return SCPI_MemRunClaimed(context, SCPI_SetMemUsbBufClaimed,
+                              "SYSTem:MEMory:USB:BUFfer");
+}
+
 static scpi_result_t SCPI_GetMemUsbBuf(scpi_t * context) {
     // #494: see SCPI_GetMemSdBuf.
     SCPI_ResultInt32(context, (int32_t)StreamingBufferPool_UsbSize());
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_SetMemSamplePool(scpi_t * context) {
-    if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
+static scpi_result_t SCPI_SetMemSamplePoolClaimed(scpi_t * context) {
+    /* #857: the stream-state rejection lives in this command's
+     * SCPI_MemRunClaimed wrapper below, not here. */
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
     // 0 = auto (DEFAULT_AIN_SAMPLE_COUNT), MIN..MAX_AIN_SAMPLE_COUNT (100-10000) = explicit
@@ -5451,6 +5548,11 @@ static scpi_result_t SCPI_SetMemSamplePool(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_SetMemSamplePool(scpi_t * context) {
+    return SCPI_MemRunClaimed(context, SCPI_SetMemSamplePoolClaimed,
+                              "SYSTem:MEMory:SAMPle:POOL");
+}
+
 static scpi_result_t SCPI_GetMemSamplePool(scpi_t * context) {
     MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
     uint32_t effective = mc->samplePoolCount ? mc->samplePoolCount : DEFAULT_AIN_SAMPLE_COUNT;
@@ -5458,8 +5560,9 @@ static scpi_result_t SCPI_GetMemSamplePool(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_SetMemEncoderBuf(scpi_t * context) {
-    if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
+static scpi_result_t SCPI_SetMemEncoderBufClaimed(scpi_t * context) {
+    /* #857: the stream-state rejection lives in this command's
+     * SCPI_MemRunClaimed wrapper below, not here. */
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
     // 0 = auto (ENCODER_BUFFER_DEFAULT), 1024-65536 = explicit
@@ -5470,6 +5573,11 @@ static scpi_result_t SCPI_SetMemEncoderBuf(scpi_t * context) {
     MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
     mc->encoderBufSize = (uint32_t)val;
     return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_SetMemEncoderBuf(scpi_t * context) {
+    return SCPI_MemRunClaimed(context, SCPI_SetMemEncoderBufClaimed,
+                              "SYSTem:MEMory:ENCoder:BUFfer");
 }
 
 static scpi_result_t SCPI_GetMemEncoderBuf(scpi_t * context) {
@@ -5713,8 +5821,9 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     return true;
 }
 
-static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
-    if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
+static scpi_result_t SCPI_MemAutoBalanceClaimed(scpi_t * context) {
+    /* #857: the stream-state rejection lives in this command's
+     * SCPI_MemRunClaimed wrapper below, not here. */
     MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
 
     // Force auto mode by zeroing mc BEFORE partitioning, so the shared helper
@@ -5731,11 +5840,22 @@ static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-static scpi_result_t SCPI_MemReset(scpi_t * context) {
-    if (SCPI_MemRejectIfStreaming(context)) return SCPI_RES_ERR;
+static scpi_result_t SCPI_MemAutoBalance(scpi_t * context) {
+    return SCPI_MemRunClaimed(context, SCPI_MemAutoBalanceClaimed,
+                              "SYSTem:MEMory:AUTO");
+}
+
+static scpi_result_t SCPI_MemResetClaimed(scpi_t * context) {
+    /* #857: the stream-state rejection lives in this command's
+     * SCPI_MemRunClaimed wrapper below, not here. */
     MemoryConfig* mc = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
     memset(mc, 0, sizeof(MemoryConfig));
     return SCPI_RES_OK;
+}
+
+static scpi_result_t SCPI_MemReset(scpi_t * context) {
+    return SCPI_MemRunClaimed(context, SCPI_MemResetClaimed,
+                              "SYSTem:MEMory:RESet");
 }
 
 // =============================================================================
