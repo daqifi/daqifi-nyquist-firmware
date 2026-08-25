@@ -4933,6 +4933,12 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     return SCPI_RES_OK;
 }
 
+/* #860: the shared streaming teardown. Defined next to SCPI_StopStreaming,
+ * whose body it is; forward-declared here because the START 0 disable form
+ * below is the other spelling of the same stop and must perform the same
+ * teardown, not a subset of it. */
+static void SCPI_PerformStreamingStop(void);
+
 /* #850 + pre-merge audit: START parses BEFORE it claims.
  *
  * This one does not use SCPI_RunSessionStartClaimed, unlike the other two arm
@@ -4994,22 +5000,15 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * SYSTem:STReam:STOP has no such gates either, and stopping should not
          * depend on the device still being in a state fit to START.
          *
-         * IT IS NOT, HOWEVER, EQUIVALENT TO SYSTem:STReam:STOP, and an earlier
-         * revision of this comment said it performed "the identical three
-         * actions", which is false (pre-merge audit). STOP additionally tears
-         * down SD logging -- mode to SD_CARD_MANAGER_MODE_NONE,
-         * sd_card_manager_UpdateSettings, then a bounded wait for the manager
-         * to drain and close the file -- and clears the streaming OPER bits.
-         * This branch does neither, so `START 0` on a logging session leaves
-         * the file open in WRITE mode and OPER reading MEASURING.
-         *
-         * Both gaps are PRE-EXISTING: main's disable branch is these same
-         * three statements. They are tracked in #860 rather than fixed here,
-         * because the fix is to make this branch a real stop, which is a
-         * behaviour change of its own and wants its own test. What changes
-         * here is only that the code no longer CLAIMS an equivalence it does
-         * not have -- a client that needs a complete stop should send
-         * SYSTem:STReam:STOP.
+         * #860: it now performs the SAME TEARDOWN as SYSTem:STReam:STOP,
+         * because it calls that function's body instead of re-implementing
+         * three of its statements. It used to do IsEnabled,
+         * Streaming_UpdateState and the USB flush and return OK, leaving SD
+         * logging open in WRITE mode and OPER reading MEASURING -- a half-stop
+         * reported as success. Both gaps were pre-existing (main's disable
+         * branch was those same three statements) and both are closed by the
+         * shared body; see SCPI_PerformStreamingStop for what it does and,
+         * importantly, what it still does not.
          *
          * Always allowed, including under heap pressure (the user may be
          * trying to stop streaming as a recovery action).
@@ -5023,14 +5022,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * predate the #850 claim, which serialises STARTS against each
          * other and never claimed to order a stop against a start. Closing
          * it needs the arm to observe a stop-requested generation, the way
-         * it already observes ifaceMoved/cfgChanging -- tracked separately,
+         * it already observes ifaceMoved/cfgChanging -- tracked as #861,
          * because the fix belongs to STOP as much as to this branch
-         * (pre-merge audit round 2). */
-        StreamingRuntimeConfig * cfg = BoardRunTimeConfig_Get(
-                BOARDRUNTIME_STREAMING_CONFIGURATION);
-        cfg->IsEnabled = false;
-        Streaming_UpdateState();
-        UsbCdc_FlushWriteBuffer();
+         * (pre-merge audit round 2). Making the two spellings identical does
+         * NOT close it; it closes the difference between them. */
+        SCPI_PerformStreamingStop();
         return SCPI_RES_OK;
     }
 
@@ -5043,7 +5039,66 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     return result;
 }
 
-static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
+/* #860: the complete streaming teardown, shared by BOTH spellings of stop.
+ *
+ * SYSTem:STReam:STOP and the SYSTem:STReam:START 0 disable form are documented
+ * and used as the same operation, and were not. The disable branch performed
+ * three of the statements below -- IsEnabled, Streaming_UpdateState, the USB
+ * flush -- and returned OK, so it left SD logging open in
+ * SD_CARD_MANAGER_MODE_WRITE and OPER still reporting MEASURING. Bench-measured
+ * on main: after START 0 the data flow stopped (0 bytes in 2.0 s) while
+ * STAT:OPER:COND? still read 16, and only STR:STOP brought it to 0. A client
+ * that stops with START 0 and polls the CONDition register -- documented as
+ * CURRENT state, not a latch -- concludes the device is acquiring
+ * indefinitely, and its next SD command is refused busy because the log file
+ * from the previous session was never closed.
+ *
+ * FACTORED, not copied, and that is the fix rather than an incidental tidy-up:
+ * the two spellings drifted apart precisely because the disable branch
+ * re-implemented a subset of this. There is now one body, so a teardown step
+ * added later cannot reach one spelling and miss the other.
+ *
+ * This body is SCPI_StopStreaming's, unchanged -- only its name and its
+ * signature moved. STOP's behaviour is deliberately not touched, so the
+ * regression this closes cannot be confused with a change to the spelling that
+ * was already correct.
+ *
+ * BLOCKING, up to 5 s, but only on the path that already blocked: the bounded
+ * idle wait runs solely when SD logging is genuinely open (enable && mode ==
+ * WRITE), which is exactly the case the disable branch used to abandon. An
+ * idle device, or a session with no SD logging, skips it entirely, so START 0
+ * as a recovery action costs what it always did.
+ *
+ * NOT claimed, deliberately. A stop must never be refusable because another
+ * transport is mid-START (#850) -- see the disable branch's own comment -- and
+ * SCPI_StopStreaming has never taken the claim either. Calling this changes
+ * what the disable branch DOES, not where it sits relative to the claim.
+ *
+ * SCOPE. This makes the two spellings identical; it does not make either of
+ * them ordered against a concurrent START. A stop issued inside another
+ * transport's pre-arm window still clears an IsEnabled that is still false and
+ * returns OK while that START publishes true on its way out. That is #861, it
+ * is shared by both spellings, and closing it needs the ARM to observe a
+ * stop-requested generation the way it already observes ifaceMoved/cfgChanging.
+ * What changes here is that START 0 no longer carries that hazard PLUS two of
+ * its own.
+ *
+ * The clear at the end stays UNCONDITIONAL rather than moving to
+ * SCPI_ClearStreamingOperBits, which tests `IsEnabled || Running` first. That
+ * helper answers a different question -- "did another transport arm a session
+ * while this START was unwinding" (#848) -- and on a stop the same test would
+ * SKIP the clear in exactly the #861 interleaving above, leaving behind the
+ * stale bit this ticket is about. Switching it is a behaviour change to STOP
+ * and belongs to #861, not here.
+ *
+ * NOT extended to SYST:STR:THRoughput / SYST:STR:WIFI:FINd?, which also end a
+ * session with a bare IsEnabled = false + Streaming_UpdateState(). Those two
+ * are already symmetric: they arm by poking IsEnabled directly and so never
+ * set OPER_MEASURING (its only setter is SCPI_StartStreamingClaimed), and they
+ * save and restore the SD mode around the run themselves (RestoreSdMode).
+ * Routing them through here would clear bits they never set and fight their
+ * own restore. Their hazard is the stale channel mapping instead -- #868. */
+static void SCPI_PerformStreamingStop(void) {
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
 
@@ -5138,7 +5193,14 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
 
     // Sync STATus:QUEStionable condition register (streaming health bits cleared in Streaming_Stop)
     SCPI_SyncQuesBits();
+}
 
+/* Both registered spellings of stop -- SYSTem:STReam:STOP and its
+ * SYSTem:StopStreamData alias -- are this and nothing else. The disable form
+ * SYSTem:STReam:START 0 calls the same body from SCPI_StartStreaming. */
+static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
+    (void)context;
+    SCPI_PerformStreamingStop();
     return SCPI_RES_OK;
 }
 
