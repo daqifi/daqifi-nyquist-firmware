@@ -232,6 +232,46 @@ extern "C" {
     /**
      * #847: report a refused streaming config-change claim.
      *
+     * ORDERING CONTRACT (#862). A setter that can be refused by the claim must
+     * take the claim BEFORE it looks at its arguments, and must report every
+     * outcome from inside it. Mid-stream that makes the refusal independent of
+     * the argument: `CONF:ADC:SAMC:DEDicated 99999` and `CONF:ADC:SAMC:DEDicated 5`
+     * both answer -200, and a client reading the error queue learns the one
+     * fact it can act on -- the device is streaming -- instead of being sent to
+     * re-check a value that was never going to be applied.
+     *
+     * The split this replaced was the defect, not either ordering on its own.
+     * Five setters validated first and so answered -222/-224 mid-stream while
+     * three answered -200 on the same image, which made the error code useless
+     * for deciding WHY a setter was refused: the answer depended on which
+     * setter you called.
+     *
+     * Concretely: `Streaming_BeginConfigChange()` is the first statement of the
+     * entry function, the body lives in a separate `...Claimed` function, and
+     * `Streaming_EndConfigChange()` is on the single path out. Splitting the
+     * body out is what makes the release unconditional -- these bodies have
+     * multiple error returns, and a release written before each one is a leak
+     * waiting for the next branch to be added.
+     *
+     * Two consequences that are deliberate, not oversights:
+     *  - the claim is now held across the body's argument parsing and its
+     *    LOG_I/LOG_E calls. Both are bounded and neither blocks, and the claim
+     *    is a flag rather than a critical section, so this costs a concurrent
+     *    START only microseconds of "config change in flight".
+     *  - a mid-stream setter is refused without consuming its parameters. That
+     *    is already how CONF:ADC:CHANnel and the seven SYSTem:MEMory:* setters
+     *    behave (#847/#857) and libscpi discards the rest of the line either
+     *    way.
+     *
+     * Written as a per-command wrapper at each site rather than one shared
+     * runner. SCPI_MemRunClaimed is the runner form and works because its seven
+     * bodies share a signature and a file; these do not -- SamcSetCommon's body
+     * needs an `isDedicated` argument a `scpi_result_t (*)(scpi_t *)` cannot
+     * carry, and SCPIADC.c cannot see a static in SCPIInterface.c. Promoting
+     * the runner into this header would also move the target that
+     * tools/lint/scpi_claim_path.py asserts on, which is a separate change
+     * (#864) and not one to make while fixing an ordering bug.
+     *
      * Shared so every converted cap-input setter reports the same two refusal
      * reasons the same way -- the old inline `IsEnabled || Running` guards each
      * wrote their own message, and the "another change is in flight" case is
