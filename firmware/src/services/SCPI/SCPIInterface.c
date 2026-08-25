@@ -2269,6 +2269,12 @@ static sd_card_manager_mode_t SaveSdMode(void) {
             BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     return pSd->mode;
 }
+/* Defined below, next to the START refusal paths that are its other callers.
+ * Declared here because the two direct-poke session paths (SYST:STR:THRoughput
+ * and SYST:STR:WIFI:FINd?) need it at their teardown -- see #870 at those call
+ * sites. */
+static void SCPI_ClearStreamingOperBits(StreamingRuntimeConfig *cfg);
+
 static void RestoreSdMode(sd_card_manager_mode_t savedMode) {
     sd_card_manager_settings_t* pSd =
             BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
@@ -2493,6 +2499,26 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
     // Stop
     pStreamCfg->IsEnabled = false;
     Streaming_UpdateState();
+    /* #870: repair OPER after a run that never set it.
+     *
+     * This path deliberately never sets OPER_MEASURING -- it arms by poking
+     * IsEnabled rather than through SCPI_StartStreamingClaimed. That was
+     * harmless while the STOP path cleared the bits unconditionally. It is not
+     * any more: a STOP on another transport, parked in the SD close, can have
+     * this run publish IsEnabled=true underneath it, and the STOP's now
+     * CONDITIONAL clear then skips. Nothing else would clear bit 4, so the
+     * device would report MEASURING with nothing streaming once this run ends
+     * -- the precise error the conditional clear exists to prevent, arrived at
+     * from the other side (codex pre-merge audit).
+     *
+     * Unlike a START, this path is NOT interlocked against that window: it
+     * runs no buffer partition and no SCPI_QuiesceAndResetCoherentPool, so it
+     * is not gated on the same SD-idle condition the STOP is waiting on.
+     *
+     * The helper clears only when nothing is live, so a genuinely concurrent
+     * session keeps its bits. On the ordinary path the bits are already clear
+     * and this is a no-op. */
+    SCPI_ClearStreamingOperBits(pStreamCfg);
 
     // Restore previous state
     Streaming_SetBenchmarkMode(savedBenchmark);
@@ -2701,6 +2727,10 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
     // stream transitions — #425/#467/#517).
     cfg->IsEnabled = false;
     Streaming_UpdateState();
+    /* #870: same repair as SYST:STR:THRoughput -- see the comment there. This
+     * path also arms by poking IsEnabled, never sets OPER_MEASURING, and is
+     * not interlocked against a STOP parked in the SD close. */
+    SCPI_ClearStreamingOperBits(cfg);
 
     // Primary trip: the SAMPLE POOL high-water reached ~full (>= FIND_BUF_FULL_PCT
     // of capacity).  After the #520 backpressure fix (streaming.c, solo WiFi/USB
