@@ -46,8 +46,11 @@
 // #682 had to undo.
 //
 // Kept as one helper rather than a copy per call site so the invariant is
-// greppable: #678 added this test inline at two sites and left its twins, and
-// that is what #877 is.
+// greppable. Two sites carried this test inline before #877 and NEITHER was
+// propagated: SCPI_ADCVoltageGet's predates #678 entirely, and #678 itself
+// (1c5f5ef2) added exactly one, in SCPI_ADCChanEnableSet -- as
+// `> maxUserChannel`, which #682 then had to narrow to `> 255`. Nine other
+// call sites went on casting unchecked, which is what #877 is.
 //
 // SCPIDIO.c solves the same problem, but it does NOT need this shape, and the
 // difference is the sparse id space. DIO ids are dense 0..Size-1, so a single
