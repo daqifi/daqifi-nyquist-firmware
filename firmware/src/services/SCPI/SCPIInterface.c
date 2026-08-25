@@ -4791,7 +4791,20 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * device still being in a state fit to START.
          *
          * Always allowed, including under heap pressure (the user may be
-         * trying to stop streaming as a recovery action). */
+         * trying to stop streaming as a recovery action).
+         *
+         * "ALLOWED" MEANS NOT REFUSED -- it does not mean the stop is
+         * guaranteed to take effect. A stop issued while ANOTHER transport
+         * is inside its pre-arm window clears an IsEnabled that is still
+         * false, and that start then publishes IsEnabled=true on its way
+         * out -- so the caller gets OK and the device streams anyway.
+         * SYSTem:STReam:STOP has the identical hole and always has; both
+         * predate the #850 claim, which serialises STARTS against each
+         * other and never claimed to order a stop against a start. Closing
+         * it needs the arm to observe a stop-requested generation, the way
+         * it already observes ifaceMoved/cfgChanging -- tracked separately,
+         * because the fix belongs to STOP as much as to this branch
+         * (pre-merge audit round 2). */
         StreamingRuntimeConfig * cfg = BoardRunTimeConfig_Get(
                 BOARDRUNTIME_STREAMING_CONFIGURATION);
         cfg->IsEnabled = false;
