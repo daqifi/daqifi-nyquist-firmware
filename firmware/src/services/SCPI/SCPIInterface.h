@@ -363,6 +363,17 @@ extern "C" {
             return SCPI_ParamErrorOccurred(context) ? SCPI_OPT_BAD
                                                     : SCPI_OPT_ABSENT;
         }
+        if (!SCPI_ParamIsNumber(&param, FALSE)) {
+            /* Classify exactly as SCPI_ParamInt32 does, because this helper
+             * REPLACES it and must not quietly widen what the command accepts.
+             * SCPI_ParamToInt32 alone would take the SUFFIX token type and
+             * parse its leading digits, so `DIO:PORt:STATe 0,1V` would have
+             * become state 1 instead of -131 (#875 pre-merge audit). */
+            SCPI_ErrorPush(context, SCPI_ParamIsNumber(&param, TRUE)
+                                    ? SCPI_ERROR_SUFFIX_NOT_ALLOWED
+                                    : SCPI_ERROR_DATA_TYPE_ERROR);
+            return SCPI_OPT_BAD;
+        }
         if (!SCPI_ParamToInt32(context, &param, value)) {
             if (!SCPI_ParamErrorOccurred(context)) {
                 /* The silent-failure case above. Push what libscpi would have
@@ -388,6 +399,14 @@ extern "C" {
         if (!SCPI_Parameter(context, &param, FALSE)) {
             return SCPI_ParamErrorOccurred(context) ? SCPI_OPT_BAD
                                                     : SCPI_OPT_ABSENT;
+        }
+        if (!SCPI_ParamIsNumber(&param, FALSE)) {
+            /* Same classification as SCPI_ParamDouble -- see the integer
+             * helper above. `SOUR:VOLT:LEV 0,5mV` must be -131, not 5 V. */
+            SCPI_ErrorPush(context, SCPI_ParamIsNumber(&param, TRUE)
+                                    ? SCPI_ERROR_SUFFIX_NOT_ALLOWED
+                                    : SCPI_ERROR_DATA_TYPE_ERROR);
+            return SCPI_OPT_BAD;
         }
         if (!SCPI_ParamToDouble(context, &param, value)) {
             if (!SCPI_ParamErrorOccurred(context)) {

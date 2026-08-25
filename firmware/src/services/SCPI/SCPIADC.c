@@ -466,10 +466,13 @@ scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
-    uint32_t *pAInLatestSize;
     int param1, param2;
     AInArray * pBoardConfigAInChannels = BoardConfig_Get(
             BOARDCONFIG_AIN_CHANNELS,
+            0);
+
+    tBoardConfig * pBoardConfig = BoardConfig_Get(
+            BOARDCONFIG_VARIANT,
             0);
 
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
@@ -497,17 +500,21 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
 
         pRuntimeAInChannels->Data[index].IsDifferential = (param2 == 0);
     } else {
-        pAInLatestSize = BoardData_Get(
-                BOARDDATA_AIN_LATEST_SIZE,
-                0);
-
-        // Bounded to the width of the mask. BOARDDATA_AIN_LATEST_SIZE is
-        // MAX_AIN_CHANNEL (48) -- more slots than the mask has bits -- and
-        // `1 << i` for i >= 32 is undefined in C. On MIPS32 `sll` uses only
-        // the low five bits of the shift count, so slots 32..47 aliased back
-        // onto bits 0..15 and could flip a real channel from a bit the caller
-        // never set (#875 pre-merge audit).
-        size_t maskable = (*pAInLatestSize < 32u) ? (size_t)*pAInLatestSize : 32u;
+        // Bounded by the ADC MODULE's channel count -- the same bound the
+        // sibling mask getter SCPI_ADCChanEnableGet uses, so the two agree on
+        // what a channel mask covers (16 on NQ1, 8 on NQ3).
+        //
+        // It used to run to BOARDDATA_AIN_LATEST_SIZE, which is
+        // MAX_AIN_CHANNEL (48): more slots than the mask has bits, and more
+        // than the board has channels. Two defects came out of that (#875
+        // pre-merge audit): `1 << i` for i >= 32 is undefined in C -- on
+        // MIPS32 `sll` takes only the low five bits of the shift count, so
+        // slots 32..47 aliased back onto bits 0..15 -- and the write reached
+        // monitoring and nonexistent slots that no mask bit is supposed to
+        // address. The min() with 32 is kept as a hard guarantee about the
+        // shift, independent of what a future variant sets Size to.
+        size_t chanCount = (size_t) pBoardConfig->AInModules.Data[0].Size;
+        size_t maskable = (chanCount < 32u) ? chanCount : 32u;
 
         size_t i = 0;
         for (i = 0; i < maskable; ++i) {
@@ -532,9 +539,11 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
 
 scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
     int param1;
-    uint32_t *pAInLatestSize;
     AInArray * pBoardConfigAInChannels = BoardConfig_Get(
             BOARDCONFIG_AIN_CHANNELS,
+            0);
+    tBoardConfig * pBoardConfig = BoardConfig_Get(
+            BOARDCONFIG_VARIANT,
             0);
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
@@ -560,13 +569,14 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
         uint32_t mask = 0;
         size_t i = 0;
 
-        pAInLatestSize = BoardData_Get(
-                BOARDDATA_AIN_LATEST_SIZE,
-                0);
-        // Bounded to the width of the mask, for the reason spelled out in
-        // SCPI_ADCChanSingleEndSet above: 48 slots, 32 bits, and `1 << i`
-        // beyond bit 31 is undefined (#875 pre-merge audit).
-        size_t maskable = (*pAInLatestSize < 32u) ? (size_t)*pAInLatestSize : 32u;
+        // Same bound as SCPI_ADCChanSingleEndSet's mask branch and as the
+        // sibling SCPI_ADCChanEnableGet -- see the comment there. Reporting
+        // slots past the module's channel count set bits for channels the
+        // board does not have (every unused slot is zero-initialised, so
+        // IsDifferential reads false and the bit went UP), on top of the
+        // undefined shift past bit 31.
+        size_t chanCount = (size_t) pBoardConfig->AInModules.Data[0].Size;
+        size_t maskable = (chanCount < 32u) ? chanCount : 32u;
         for (i = 0; i < maskable; ++i) {
             if (!pRuntimeAInChannels->Data[i].IsDifferential) {
                 mask |= (1u << i);
