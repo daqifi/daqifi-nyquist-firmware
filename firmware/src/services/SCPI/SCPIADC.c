@@ -422,8 +422,16 @@ scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context) {
             BOARDCONFIG_AIN_CHANNELS,
             0);
 
+    // BOARDCONFIG_ALL_CONFIG, not BOARDCONFIG_VARIANT: the latter returns
+    // &boardConfig.BoardVariant -- a uint8_t*, widened to void* so nothing
+    // diagnoses it -- and every `pBoardConfig->` below then reads at a member
+    // offset from THAT byte's address. It resolves correctly today only
+    // because BoardVariant happens to be the first member of tBoardConfig, so
+    // the two addresses coincide; reordering the struct would silently
+    // mis-resolve these loops. ALL_CONFIG returns &boardConfig, which is what
+    // the declared type says -- the idiom already used earlier in this file.
     tBoardConfig * pBoardConfig = BoardConfig_Get(
-            BOARDCONFIG_VARIANT,
+            BOARDCONFIG_ALL_CONFIG,
             0);
 
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
@@ -471,8 +479,16 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
             BOARDCONFIG_AIN_CHANNELS,
             0);
 
+    // BOARDCONFIG_ALL_CONFIG, not BOARDCONFIG_VARIANT: the latter returns
+    // &boardConfig.BoardVariant -- a uint8_t*, widened to void* so nothing
+    // diagnoses it -- and every `pBoardConfig->` below then reads at a member
+    // offset from THAT byte's address. It resolves correctly today only
+    // because BoardVariant happens to be the first member of tBoardConfig, so
+    // the two addresses coincide; reordering the struct would silently
+    // mis-resolve these loops. ALL_CONFIG returns &boardConfig, which is what
+    // the declared type says -- the idiom already used earlier in this file.
     tBoardConfig * pBoardConfig = BoardConfig_Get(
-            BOARDCONFIG_VARIANT,
+            BOARDCONFIG_ALL_CONFIG,
             0);
 
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
@@ -523,15 +539,28 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
 
         size_t i = 0;
         for (i = 0; i <= (size_t) maxUserChannel; ++i) {
-            // Bit i addresses CHANNEL i, which is not runtime slot i: the
-            // channel table is sparse (on NQ1 the public analog channels sit
-            // at AInChannels indices 8..15, interleaved), so the id has to be
-            // resolved the way every other path resolves it. Indexing Data[i]
-            // directly wrote a DIFFERENT channel than the two-argument form
-            // and than the enable mask, while this file's comments claimed
-            // the three agreed (Qodo, #875 cycle). An id with no table entry
-            // is skipped rather than failing the whole command -- exactly
-            // what the enable-mask branch does.
+            // Bit i addresses CHANNEL i, which is not necessarily runtime
+            // slot i, so resolve the id the way every other path in this file
+            // resolves it rather than indexing Data[i] directly.
+            //
+            // Be precise about what this does and does not fix. On BOTH
+            // shipping variants the mapping is currently the IDENTITY, so
+            // this is behaviour-neutral today, not a bug fix: NQ1's
+            // AInChannels holds DaqifiAdcChannelId 0..15 at indices 0..15 in
+            // order (the 8 monitoring entries follow at 16..23, ids 248..255
+            // -- NQ1BoardConfig.c, AInConfig.h), and NQ3's holds ids 0..7 at
+            // indices 0..7. An earlier revision of this comment claimed NQ1's
+            // table was sparse with the public channels "at indices 8..15,
+            // interleaved"; that is false, and so was the matching claim that
+            // the old Data[i] form addressed a different channel. It did not.
+            //
+            // It is kept because the id->slot mapping is ADC_FindChannelIndex's
+            // to define, not this loop's to assume, and because the sibling
+            // paths (the two-argument form and the enable mask) already
+            // resolve it -- a future variant whose table is not ordered would
+            // break exactly the paths that open-code the identity. An id with
+            // no table entry is skipped rather than failing the whole command,
+            // matching the enable-mask branch.
             size_t channelIndex = ADC_FindChannelIndex((uint8_t) i);
             if (channelIndex >= (size_t) pBoardConfigAInChannels->Size) {
                 continue;
@@ -560,8 +589,16 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
     AInArray * pBoardConfigAInChannels = BoardConfig_Get(
             BOARDCONFIG_AIN_CHANNELS,
             0);
+    // BOARDCONFIG_ALL_CONFIG, not BOARDCONFIG_VARIANT: the latter returns
+    // &boardConfig.BoardVariant -- a uint8_t*, widened to void* so nothing
+    // diagnoses it -- and every `pBoardConfig->` below then reads at a member
+    // offset from THAT byte's address. It resolves correctly today only
+    // because BoardVariant happens to be the first member of tBoardConfig, so
+    // the two addresses coincide; reordering the struct would silently
+    // mis-resolve these loops. ALL_CONFIG returns &boardConfig, which is what
+    // the declared type says -- the idiom already used earlier in this file.
     tBoardConfig * pBoardConfig = BoardConfig_Get(
-            BOARDCONFIG_VARIANT,
+            BOARDCONFIG_ALL_CONFIG,
             0);
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
