@@ -47,9 +47,18 @@
 //
 // Kept as one helper rather than a copy per call site so the invariant is
 // greppable: #678 added this test inline at two sites and left its twins, and
-// that is what #877 is. SCPIDIO.c has the same shape for the same reason
-// (DIO_SingleChannelIndexValid, #671) -- though its ids are dense, so it can
-// bound by Size where this one cannot.
+// that is what #877 is.
+//
+// SCPIDIO.c solves the same problem, but it does NOT need this shape, and the
+// difference is the sparse id space. DIO ids are dense 0..Size-1, so a single
+// `index >= Size` test on an UNSIGNED comparison bounds both ends at once: its
+// getters compare an `int` against a `size_t` Size, which promotes the int, so
+// -1 becomes 0xFFFFFFFF and is rejected by the same test that rejects 256
+// (verified on the bench 2026-08-25 -- `PWM:CHannel:ENable? -1` answers no
+// value and queues an error, while `? 0` answers 0). #671's
+// DIO_SingleChannelIndexValid is that one test factored out, not a separate
+// range check. Here the id space is sparse, so a resolved-index test cannot
+// bound the ARGUMENT and this range test has to exist in its own right.
 //
 // The message is short on purpose: the log buffer is 128 B wide and a longer
 // line loses its tail. That is what the PRE-#682 form of this guard did --

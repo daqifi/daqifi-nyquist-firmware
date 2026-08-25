@@ -192,8 +192,19 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // Written as a positive range test rather than `< 0 || > 255` so a NaN
         // first parameter -- which compares false against everything -- is
         // rejected too, and so the (int) cast, whose result is undefined for a
-        // double outside int range, is never reached. Fractional values keep
-        // their existing truncate-toward-zero behaviour.
+        // double outside int range, is never reached.
+        //
+        // Fractional values INSIDE the range keep their existing
+        // truncate-toward-zero behaviour: `3.7` still selects channel 3. The
+        // bounds are deliberately the closed [0.0, 255.0] and not the wider
+        // (-1.0, 256.0) that would preserve truncation at both ends: `(int)`
+        // truncates toward zero, so widening the LOW end to admit -0.5 would
+        // make it select channel 0 -- a negative channel silently becoming a
+        // real one, which is the alias this guard exists to stop. Nothing is
+        // lost at the HIGH end either: no value in (255, 256) can name a DAC
+        // channel on any variant (DaqifiDacChannelId is 0..7), so 255.5 was
+        // already refused before this change -- only its error code moves from
+        // the resolved-index path's -200 to -222.
         if (!(voltage >= 0.0 && voltage <= 255.0)) {
             LOG_E("SOUR:VOLT:LEV: channel out of range (max 255)");
             SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
