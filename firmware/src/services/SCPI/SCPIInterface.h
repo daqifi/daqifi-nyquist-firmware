@@ -25,6 +25,15 @@ extern "C" {
     void SCPI_ResponseBuf_Init(void);
 
     /**
+     * #852: create the mutex that serialises OPER/QUES status-register
+     * updates across the two SCPI transports. MUST be called before any
+     * SCPI command can be dispatched; CreateSCPIContext calls it too, which
+     * is what makes that guarantee structural (no context, no dispatch).
+     * Idempotent -- subsequent calls are no-ops.
+     */
+    void SCPI_StatusLock_Init(void);
+
+    /**
      * Build the device-wide model and serial-number strings used in *IDN?
      * (#436).  Reads BoardConfig once and writes module-scope statics that
      * CreateSCPIContext later passes to SCPI_Init.  MUST be called from
