@@ -5001,6 +5001,12 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     return SCPI_RES_OK;
 }
 
+/* #860: the shared streaming teardown. Defined next to SCPI_StopStreaming,
+ * whose body it is; forward-declared here because the START 0 disable form
+ * below is the other spelling of the same stop and must perform the same
+ * teardown, not a subset of it. */
+static void SCPI_PerformStreamingStop(void);
+
 /* #850 + pre-merge audit: START parses BEFORE it claims.
  *
  * This one does not use SCPI_RunSessionStartClaimed, unlike the other two arm
@@ -5062,22 +5068,15 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * SYSTem:STReam:STOP has no such gates either, and stopping should not
          * depend on the device still being in a state fit to START.
          *
-         * IT IS NOT, HOWEVER, EQUIVALENT TO SYSTem:STReam:STOP, and an earlier
-         * revision of this comment said it performed "the identical three
-         * actions", which is false (pre-merge audit). STOP additionally tears
-         * down SD logging -- mode to SD_CARD_MANAGER_MODE_NONE,
-         * sd_card_manager_UpdateSettings, then a bounded wait for the manager
-         * to drain and close the file -- and clears the streaming OPER bits.
-         * This branch does neither, so `START 0` on a logging session leaves
-         * the file open in WRITE mode and OPER reading MEASURING.
-         *
-         * Both gaps are PRE-EXISTING: main's disable branch is these same
-         * three statements. They are tracked in #860 rather than fixed here,
-         * because the fix is to make this branch a real stop, which is a
-         * behaviour change of its own and wants its own test. What changes
-         * here is only that the code no longer CLAIMS an equivalence it does
-         * not have -- a client that needs a complete stop should send
-         * SYSTem:STReam:STOP.
+         * #860: it now performs the SAME TEARDOWN as SYSTem:STReam:STOP,
+         * because it calls that function's body instead of re-implementing
+         * three of its statements. It used to do IsEnabled,
+         * Streaming_UpdateState and the USB flush and return OK, leaving SD
+         * logging open in WRITE mode and OPER reading MEASURING -- a half-stop
+         * reported as success. Both gaps were pre-existing (main's disable
+         * branch was those same three statements) and both are closed by the
+         * shared body; see SCPI_PerformStreamingStop for what it does and,
+         * importantly, what it still does not.
          *
          * Always allowed, including under heap pressure (the user may be
          * trying to stop streaming as a recovery action).
@@ -5091,14 +5090,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * predate the #850 claim, which serialises STARTS against each
          * other and never claimed to order a stop against a start. Closing
          * it needs the arm to observe a stop-requested generation, the way
-         * it already observes ifaceMoved/cfgChanging -- tracked separately,
+         * it already observes ifaceMoved/cfgChanging -- tracked as #861,
          * because the fix belongs to STOP as much as to this branch
-         * (pre-merge audit round 2). */
-        StreamingRuntimeConfig * cfg = BoardRunTimeConfig_Get(
-                BOARDRUNTIME_STREAMING_CONFIGURATION);
-        cfg->IsEnabled = false;
-        Streaming_UpdateState();
-        UsbCdc_FlushWriteBuffer();
+         * (pre-merge audit round 2). Making the two spellings identical does
+         * NOT close it; it closes the difference between them. */
+        SCPI_PerformStreamingStop();
         return SCPI_RES_OK;
     }
 
@@ -5111,9 +5107,177 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     return result;
 }
 
-static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
+/* #860: "is the SD card's armed WRITE a STREAMING LOG, right now?"
+ *
+ * ONE body, read atomically, called at both points that need the answer --
+ * deliberately, in a PR whose entire subject is two copies of one question
+ * drifting apart. `enable && mode == WRITE` alone does not say WHOSE write it
+ * is: exactly two sites arm WRITE -- SCPI_StartStreamingClaimed()'s SD arm
+ * and SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark) -- and the benchmark
+ * takes no claim by design (#736). The #851 latch is what separates them.
+ *
+ * The critical section makes the composite a snapshot rather than three
+ * independent reads; the latch is written under one in the SD manager
+ * (sd_UpdateSettingsImpl), and SCPI_StorageSDLoggingSet reads the benchmark's
+ * ownership flag the same way. Nothing in here can block.
+ *
+ * The predicate lives in ONE place and gets two wrappers -- a plain read and a
+ * check-and-claim -- rather than being written out at each site. Writing it
+ * twice is what this whole ticket is about. */
+static inline bool SdWriteIsStreamingLogUnlocked(
+        const sd_card_manager_settings_t *sd) {
+    return (sd != NULL) && sd->enable &&
+           (sd->mode == SD_CARD_MANAGER_MODE_WRITE) &&
+           sd_card_manager_WriteIsStreamingLog();
+}
+
+static bool SCPI_SdWriteIsStreamingLog(const sd_card_manager_settings_t *sd) {
+    bool armed;
+    taskENTER_CRITICAL();
+    armed = SdWriteIsStreamingLogUnlocked(sd);
+    taskEXIT_CRITICAL();
+    return armed;
+}
+
+/* Check AND take, atomically: if the armed WRITE is still a streaming log,
+ * claim it by setting mode = NONE in the same critical section.
+ *
+ * Two of them, not one, because the store IS the claim -- mode = NONE is what
+ * takes the write away from whoever holds it. Testing and storing separately
+ * leaves a window in which a benchmark arms between the two and has its brand
+ * new session cancelled by a decision made before it existed: the same defect
+ * as the audit's, just narrower, and narrower is not closed. Same reasoning
+ * and the same idiom as SCPI_StorageSDLoggingSet, which checks the benchmark's
+ * ownership flag and writes the filename under one critical section for
+ * exactly this reason.
+ *
+ * `sd_card_manager_UpdateSettings()` is deliberately left OUTSIDE -- it is not
+ * O(1) and takes its own locks, and the claim is already made by the time it
+ * runs. */
+static bool SCPI_SdClaimStreamingLogTeardown(sd_card_manager_settings_t *sd) {
+    bool mine;
+    taskENTER_CRITICAL();
+    mine = SdWriteIsStreamingLogUnlocked(sd);
+    if (mine) {
+        sd->mode = SD_CARD_MANAGER_MODE_NONE;
+    }
+    taskEXIT_CRITICAL();
+    return mine;
+}
+
+/* #860: the complete streaming teardown, shared by BOTH spellings of stop.
+ *
+ * SYSTem:STReam:STOP and the SYSTem:STReam:START 0 disable form are documented
+ * and used as the same operation, and were not. The disable branch performed
+ * three of the statements below -- IsEnabled, Streaming_UpdateState, the USB
+ * flush -- and returned OK, so it left SD logging open in
+ * SD_CARD_MANAGER_MODE_WRITE and OPER still reporting MEASURING. Bench-measured
+ * on main: after START 0 the data flow stopped (0 bytes in 2.0 s) while
+ * STAT:OPER:COND? still read 16, and only STR:STOP brought it to 0. A client
+ * that stops with START 0 and polls the CONDition register -- documented as
+ * CURRENT state, not a latch -- concludes the device is acquiring
+ * indefinitely, and its next SD command is refused busy because the log file
+ * from the previous session was never closed.
+ *
+ * FACTORED, not copied, and that is the fix rather than an incidental tidy-up:
+ * the two spellings drifted apart precisely because the disable branch
+ * re-implemented a subset of this. There is now one body, so a teardown step
+ * added later cannot reach one spelling and miss the other.
+ *
+ * This body is SCPI_StopStreaming's with ONE added term -- the
+ * sd_card_manager_WriteIsStreamingLog() test on the SD teardown, called out at
+ * its own site below. Everything else is byte-identical; only the name and the
+ * signature moved. That one term also changes STOP, deliberately and for the
+ * better: it is the #851 twin, and without it sharing this body would give
+ * START 0 a defect STOP already had (see there).
+ *
+ * BLOCKING, up to 5 s, but only when a STREAMING LOG is genuinely open. The
+ * gate is enable && mode == WRITE && WriteIsStreamingLog() -- the last term
+ * because the first two are also true of a running SYST:STOR:SD:BENCHmark,
+ * which is not this body's to close. An idle device, a session with no SD
+ * logging, or a device busy with a benchmark all skip it entirely, so START 0
+ * as a recovery action costs what it always did.
+ *
+ * NOT claimed, deliberately. A stop must never be refusable because another
+ * transport is mid-START (#850) -- see the disable branch's own comment -- and
+ * SCPI_StopStreaming has never taken the claim either. Calling this changes
+ * what the disable branch DOES, not where it sits relative to the claim.
+ *
+ * SCOPE. This makes the two spellings identical; it does not make either of
+ * them ordered against a concurrent START. A stop issued inside another
+ * transport's pre-arm window still clears an IsEnabled that is still false and
+ * returns OK while that START publishes true on its way out. That is #861, it
+ * is shared by both spellings, and closing it needs the ARM to observe a
+ * stop-requested generation the way it already observes ifaceMoved/cfgChanging.
+ * What changes here is that START 0 no longer carries that hazard PLUS two of
+ * its own.
+ *
+ * The clear at the end stays UNCONDITIONAL rather than moving to
+ * SCPI_ClearStreamingOperBits, which tests `IsEnabled || Running` first. That
+ * helper answers a different question -- "did another transport arm a session
+ * while this START was unwinding" (#848) -- and on a stop the same test would
+ * SKIP the clear in exactly the #861 interleaving above, leaving behind the
+ * stale bit this ticket is about. Switching it is a behaviour change to STOP
+ * and belongs to #861, not here.
+ *
+ * NOT extended to SYST:STR:THRoughput / SYST:STR:WIFI:FINd?, which also end a
+ * session with a bare IsEnabled = false + Streaming_UpdateState(). Those two
+ * are already symmetric: they arm by poking IsEnabled directly and so never
+ * set OPER_MEASURING (its only setter is SCPI_StartStreamingClaimed), and they
+ * save and restore the SD mode around the run themselves (RestoreSdMode).
+ * Routing them through here would clear bits they never set and fight their
+ * own restore. Their hazard is the stale channel mapping instead -- #868. */
+static void SCPI_PerformStreamingStop(void) {
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    /* The SD-teardown question is asked TWICE -- here, and again at the act
+     * point below -- and the teardown runs only if BOTH say yes. Two pre-merge
+     * audit rounds each produced one direction of this, and each single answer
+     * is wrong on its own.
+     *
+     * ASKED HERE, because asking only at the act point loses the answer
+     * (Qodo). SYST:STOR:SD:BENCHmark is refused while a stream is live (#854)
+     * and arms a PLAIN write, which CLEARS the streaming-log latch
+     * (in sd_UpdateSettingsImpl). Clearing IsEnabled and running
+     * Streaming_UpdateState() below is exactly what stops that refusal
+     * refusing -- so a benchmark on the other transport can arm in the window,
+     * and a predicate evaluated only afterwards reads latch=false and skips
+     * closing THIS session's log. Here, the session is still live and the
+     * benchmark is still refused. Same shape as #851's
+     * stoppedSdLoggingSession in SCPI_StartStreamingClaimed.
+     *
+     * ASKED AGAIN AT THE ACT POINT, because acting only on this snapshot
+     * aborts whatever took the WRITE in that same window (codex). The
+     * teardown's first statement is mode = NONE, so a stale "yes" cancels the
+     * benchmark that was legitimately accepted a microsecond ago -- the very
+     * defect this PR exists to stop, re-entered through a narrower door. The
+     * fix for one direction was the finding in the other; requiring both is
+     * what holds.
+     *
+     *   early yes, late no   the WRITE is no longer ours -- skip. The log file
+     *                        is closed by the new owner's own arm anyway
+     *                        (UpdateSettings parks at DEINIT and closes).
+     *   early no, late yes   a session that started AFTER ours ended -- not
+     *                        ours to close, skip.
+     *   both yes             nobody moved; tear down, with the bounded wait.
+     *
+     * What two yeses still cannot distinguish is a stop racing another
+     * transport's START. That is #861, it is shared by both spellings, and it
+     * is exactly what main does today on the mode alone -- not a regression
+     * introduced here.
+     *
+     * Each read is one critical section, which is NOT the reflexive "wrap a
+     * shared read" the project declines: the predicate is a composite of three
+     * independently written fields whose latch half is WRITTEN under a
+     * critical section in the SD manager (sd_UpdateSettingsImpl), so
+     * reading the set together matches the writer's own discipline.
+     * SCPI_StorageSDLoggingSet reads the benchmark's ownership flag the same
+     * way for the same reason. O(1) loads, no call that can block. */
+    const bool ownedSdLoggingSession =
+            SCPI_SdWriteIsStreamingLog(pSDCardRuntimeConfig);
 
     if (pRunTimeStreamConfig) {
         pRunTimeStreamConfig->IsEnabled = false;
@@ -5127,11 +5291,73 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     UsbCdc_FlushWriteBuffer();
 
     // Close SD card file if logging was enabled
-    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    if (pSDCardRuntimeConfig != NULL &&
-        pSDCardRuntimeConfig->enable && pSDCardRuntimeConfig->mode == SD_CARD_MANAGER_MODE_WRITE) {
-        // Set mode to NONE and update to trigger file close (DEINIT → UNMOUNT → close)
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+    /* #860 pre-merge audit: BOTH the snapshot taken at the top of this
+     * function and a fresh read here must say yes -- see the comment at the
+     * snapshot for why one answer alone is wrong in either direction.
+     * `sd_card_manager_WriteIsStreamingLog()` is the term that makes sharing
+     * this body safe at all. The second read is a check-and-CLAIM: mode = NONE
+     * is what takes the write away from whoever holds it, so testing and
+     * storing separately would leave the same race one instruction wide.
+     *
+     * `enable && mode == WRITE` does not mean "a streaming log is open" -- it
+     * means "somebody armed the shared WRITE". There are exactly two arms in
+     * the tree: SCPI_StartStreamingClaimed()'s SD arm and
+     * SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark), and the benchmark
+     * takes no claim by design
+     * (#736). So on the mode alone this teardown closes a running benchmark's
+     * file: it sets mode to NONE, sd_card_manager_WriteToBuffer then returns 0,
+     * and the benchmark stalls to its 10 s drain timeout and reports a
+     * truncated result.
+     *
+     * That is PRE-EXISTING on SYSTem:STReam:STOP, which has always run this
+     * body -- and it is the twin site of #851, which added the latch for
+     * exactly this distinction and wired it into SCPI_StartStreaming's abort
+     * paths (see the comment there) without reaching here. Left alone, #860
+     * would hand the same defect to a SECOND spelling, on a command whose
+     * whole point is to be a safe recovery action. Both spellings are fixed
+     * instead: the latch is set only by the STREAMING arm, so a benchmark's
+     * WRITE is no longer mistaken for a session's.
+     *
+     * IT CAN OVER-NARROW, in one exotic interleaving, and an earlier revision
+     * of this comment claimed it could not (audit round 6). Normally the latch
+     * is set at the streaming arm, cleared by a PLAIN arm or by a mode -> NONE
+     * that goes THROUGH sd_UpdateSettingsImpl's latch block,
+     * and #854 keeps a benchmark out for the whole session -- so it is true
+     * for the whole of any session this body is called to end. But #854 tests
+     * IsEnabled/Running, which START publishes AFTER it arms SD: a benchmark
+     * landing inside that window passes the test, arms PLAIN, and clears the
+     * latch under a session that then goes live. A later stop reads false and
+     * skips the teardown, leaving mode = WRITE and the file open.
+     *
+     * That session is already broken -- the stream and the benchmark are
+     * sharing one file -- and main is not better, it is differently wrong: with
+     * no latch term at all, main's stop tears down whichever WRITE it finds,
+     * which in that same interleaving is the benchmark's. The one thing main
+     * does do is leave mode = NONE, so SD commands work again afterwards. Both
+     * are #871, whose ownership interlock is the only thing that distinguishes
+     * these cases; the latch cannot, because the benchmark clears it before
+     * this body can read it.
+     *
+     * It CAN be stale-true, though, and an earlier revision of this comment
+     * said "cleared only by ... mode -> NONE" without that qualifier, which is
+     * a false claim in a comment (audit round 5). The manager sets
+     * gpSDCardSettings->mode = NONE DIRECTLY in many places that never reach
+     * the clear (grep that assignment in sd_card_manager.c) -- the
+     * no-writable-bucket exit in sd_card_manager_ProcessState's OPEN_FILE
+     * among them -- so a session that ended by one of those routes leaves the
+     * latch set. A stop landing in the two statements between a benchmark's
+     * `mode = WRITE` and its UpdateSettingsForPlainWrite() would then see all
+     * three terms true and claim the benchmark's write. That window is #871; it
+     * exists on main too, whose predicate has no latch term at all and so hits
+     * it in EVERY state rather than only the stale one. The latch narrows this,
+     * it does not open it. The
+     * companion test's part 2 is the guard on that direction: it asserts
+     * SYST:STOR:SD:SPACe? answers straight after `START 0` on a logging
+     * session, which can only happen if this block still fires. */
+    if (ownedSdLoggingSession &&
+        SCPI_SdClaimStreamingLogTeardown(pSDCardRuntimeConfig)) {
+        // mode is already NONE -- the claim above set it. Update to trigger
+        // the file close (DEINIT → UNMOUNT → close).
         sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
         // Wait for SD card manager to drain buffer, close file, and go idle
         {
@@ -5181,7 +5407,13 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
                 /* Kept under LOG_MESSAGE_SIZE (128) with the longest state
                  * name: the previous wording was 149 chars and lost its own
                  * "Poll STAT:OPER:COND?" advice to truncation. */
-                LOG_E("[SD] StopStreaming: SD still finalising in state=%s "
+                /* "Streaming stop", not "StopStreaming": since #860 the
+                 * SYSTem:STReam:START 0 disable form reaches this line too, and
+                 * a message naming a command the caller never sent sends the
+                 * next reader of SYST:LOG? looking for the wrong one. 122 chars
+                 * with the longest state/mode names (CURDRIVE / GETSPACE),
+                 * inside LOG_MESSAGE_SIZE (128). */
+                LOG_E("[SD] Streaming stop: SD still finalising in state=%s "
                       "mode=%s; OPER bit 11 set until idle. "
                       "Poll STAT:OPER:COND?",
                       sd_card_manager_GetStateName(),
@@ -5206,7 +5438,17 @@ static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
 
     // Sync STATus:QUEStionable condition register (streaming health bits cleared in Streaming_Stop)
     SCPI_SyncQuesBits();
+}
 
+/* Every registered pattern that maps to a bare stop is this and nothing else
+ * -- grep the command table for SCPI_StopStreaming to see which; one of them
+ * is a legacy alias kept for compatibility and deliberately not spelled out
+ * here, so this comment does not put a non-canonical form into new lines.
+ * The disable form SYSTem:STReam:START 0 calls the same body from
+ * SCPI_StartStreaming. */
+static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
+    (void)context;
+    SCPI_PerformStreamingStop();
     return SCPI_RES_OK;
 }
 
