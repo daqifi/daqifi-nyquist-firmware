@@ -1,0 +1,54 @@
+name: scpi-claim-path
+
+# #857 gave the seven SYSTem:MEMory:* setters their mutual exclusion against a
+# starting or running session through ONE shared helper, SCPI_MemRunClaimed.
+# That is what makes them safe, and it is also why the protection can be
+# removed quietly: route a single command off the helper and the other six keep
+# working, or gut the helper and all seven keep "going through the claim path"
+# while claiming nothing.
+#
+# The bench cannot catch either. test_857's race arm is the only arm that
+# separates a real claim from a plain stream-state guard, and it can only
+# hammer SYST:MEM:AUTO -- that is the one setter holding the claim across work
+# (PrepareStreamingBuffers, ~1 s), while the other six are a parse, a range
+# check and one scalar store. Racing those six would miss a window that does
+# not exist and report a false negative (test-suite #246).
+#
+# So the property is checked here, at its source, for no bench time.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'firmware/src/services/SCPI/**'
+      - 'tools/lint/scpi_claim_path.py'
+      - 'tools/lint/scpi_wiki_sync.py'
+      - '.github/workflows/scpi-claim-path.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'firmware/src/services/SCPI/**'
+      - 'tools/lint/scpi_claim_path.py'
+      - 'tools/lint/scpi_wiki_sync.py'
+      - '.github/workflows/scpi-claim-path.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  claim-path:
+    name: SYSTem:MEMory:* setters take the config-change claim
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Runs first and separately: the checker's own logic is what decides
+      # whether the gate below means anything, and a checker that examines
+      # nothing reports a pass. Its --self-test covers the vacuity case
+      # explicitly.
+      - name: Self-test the checker
+        run: python3 tools/lint/scpi_claim_path.py --self-test
+
+      - name: Check the claim path
+        run: python3 tools/lint/scpi_claim_path.py

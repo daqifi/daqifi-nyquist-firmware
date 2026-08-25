@@ -397,6 +397,30 @@ The SCPI command reference is in `01-SCPI-Interface.md`. Update the relevant tab
 
 Commit and push wiki changes after updating.
 
+#### `SYSTem:MEMory:*` claim-path gate
+
+`tools/lint/scpi_claim_path.py` (CI: `.github/workflows/scpi-claim-path.yml`)
+asserts that every registered `SYSTem:MEMory:*` **setter** reaches the streaming
+config-change claim through the shared `SCPI_MemRunClaimed` helper, and that the
+helper itself still calls `Streaming_BeginConfigChange` / `EndConfigChange`.
+Queries (trailing `?`) are exempt — they read and cannot corrupt a partition.
+
+Both halves matter. Checking only the routing passes a gutted helper, where all
+seven commands still "go through the claim path" and none of them claims
+anything; checking only the helper passes a command routed off it.
+
+**Why a source lint and not a bench test.** `test_857`'s race arm is the only
+arm that separates a real claim from a plain stream-state guard, and it can only
+hammer `SYST:MEM:AUTO` — the one setter that holds the claim across work
+(`PrepareStreamingBuffers`, ~1 s quiesce). The other six are a parse, a range
+check and one scalar store, so there is no window to race; hammering them would
+miss it every time and report a false negative. That is why test-suite #246's
+proposal to rotate the hammered command was **not** adopted — see the ticket.
+
+Run locally: `python3 tools/lint/scpi_claim_path.py` (add `--self-test` for the
+device-free checks, which include the vacuity case — a checker that examines
+nothing must fail, not pass).
+
 ### Data Flow
 
 1. **Acquisition Path**:
