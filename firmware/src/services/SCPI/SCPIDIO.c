@@ -134,7 +134,17 @@ scpi_result_t SCPI_GPIODirectionSet(scpi_t * context)
         return SCPI_RES_ERR;
     }
 
-    if (!SCPI_ParamInt32(context, &param2, FALSE))
+    // #874: ABSENT selects the one-argument MASK form; PRESENT-but-unparseable
+    // must not -- see SCPI_OptionalParamInt32 (SCPIInterface.h).
+    // `DIO:PORt:DIRection 3,BANANA` used to queue -104 and then set the
+    // direction of EVERY DIO line from ~3, which can turn a pin driving
+    // external hardware into an input (or the reverse).
+    SCPI_OptionalParam dirOpt = SCPI_OptionalParamInt32(context, &param2);
+    if (dirOpt == SCPI_OPT_BAD)
+    {
+        return SCPI_RES_ERR;
+    }
+    if (dirOpt == SCPI_OPT_ABSENT)
     {
         return SCPI_GPIOMultiDirectionSet(context, (uint32_t)~param1); // Interpret the input as a bit mask (invert because 1=output but we use isInput as the test)
     }
@@ -156,7 +166,15 @@ scpi_result_t SCPI_GPIODirectionGet(scpi_t * context)
     
     int param1;
     int converted = 0;
-    if (!SCPI_ParamInt32(context, &param1, FALSE))
+    // #874: a malformed channel argument must not silently answer with the
+    // whole port mask instead -- see SCPI_OptionalParamInt32
+    // (SCPIInterface.h).
+    SCPI_OptionalParam chanOpt = SCPI_OptionalParamInt32(context, &param1);
+    if (chanOpt == SCPI_OPT_BAD)
+    {
+        return SCPI_RES_ERR;
+    }
+    if (chanOpt == SCPI_OPT_ABSENT)
     {
         uint32_t result = 0;
         if (SCPI_GPIOMultiDirectionGet(&result) == SCPI_RES_ERR)
@@ -201,7 +219,16 @@ scpi_result_t SCPI_GPIOStateSet(scpi_t * context)
         return SCPI_RES_ERR;
     }
 
-    if (!SCPI_ParamInt32(context, &param2, FALSE))
+    // #874: ABSENT selects the one-argument MASK form; PRESENT-but-unparseable
+    // must not -- see SCPI_OptionalParamInt32 (SCPIInterface.h).
+    // `DIO:PORt:STATe 3,BANANA` used to queue -104 and then drive EVERY DIO
+    // output from the mask 3.
+    SCPI_OptionalParam stateOpt = SCPI_OptionalParamInt32(context, &param2);
+    if (stateOpt == SCPI_OPT_BAD)
+    {
+        return SCPI_RES_ERR;
+    }
+    if (stateOpt == SCPI_OPT_ABSENT)
     {
         return SCPI_GPIOMultiStateSet(context, (uint32_t)param1); // Interpret the input as a bit mask
     }
@@ -223,7 +250,15 @@ scpi_result_t SCPI_GPIOStateGet(scpi_t * context)
     
     int param1;
     int converted = 0;
-    if (!SCPI_ParamInt32(context, &param1, FALSE))
+    // #874: a malformed channel argument must not silently answer with the
+    // whole port mask instead -- see SCPI_OptionalParamInt32
+    // (SCPIInterface.h).
+    SCPI_OptionalParam chanOpt = SCPI_OptionalParamInt32(context, &param1);
+    if (chanOpt == SCPI_OPT_BAD)
+    {
+        return SCPI_RES_ERR;
+    }
+    if (chanOpt == SCPI_OPT_ABSENT)
     {
         uint32_t result = 0;
         if (SCPI_GPIOMultiStateGet(&result) == SCPI_RES_ERR)

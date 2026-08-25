@@ -165,8 +165,19 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
     }
 
     // Try to parse second parameter as double (voltage)
+    //
+    // #874: ABSENT selects the one-parameter all-channel form;
+    // PRESENT-but-unparseable must not -- see SCPI_OptionalParamDouble
+    // (SCPIInterface.h). `SOUR:VOLT:LEV 5,BANANA` used to queue -104 and then
+    // drive EVERY analog output to 5 V, reading the channel index as the
+    // voltage. This is the one site in the family whose fall-through moves
+    // real hardware.
     double voltage2;
-    if (SCPI_ParamDouble(context, &voltage2, FALSE)) {
+    SCPI_OptionalParam voltOpt = SCPI_OptionalParamDouble(context, &voltage2);
+    if (voltOpt == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
+    if (voltOpt == SCPI_OPT_PRESENT) {
         // Two parameters: first is channel (convert to int), second is voltage
         channel = (int)voltage;
         voltage = voltage2;
@@ -241,7 +252,13 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
 
     // Note: DAC7718 does not support hardware readback
     // Return last commanded voltage from BoardData
-    if (SCPI_ParamInt32(context, &channel, FALSE)) {
+    // #874: a malformed channel argument must not silently answer with every
+    // channel instead -- see SCPI_OptionalParamInt32 (SCPIInterface.h).
+    SCPI_OptionalParam chanOpt = SCPI_OptionalParamInt32(context, &channel);
+    if (chanOpt == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
+    if (chanOpt == SCPI_OPT_PRESENT) {
         // Get single channel
         size_t index = DAC_FindChannelIndex((uint8_t)channel);
         if (index >= pBoardConfigAOutChannels->Size) {

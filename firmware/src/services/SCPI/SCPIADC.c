@@ -41,7 +41,15 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     uint8_t precision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
 
-    if (SCPI_ParamInt32(context, &channel, FALSE)) {
+    // #874: ABSENT selects the all-channel form; PRESENT-but-unparseable must
+    // not -- see SCPI_OptionalParamInt32 (SCPIInterface.h) for the contract.
+    // `MEAS:VOLT:DC? BANANA` used to answer with every channel's voltage,
+    // which a client reading one value parses as its channel's.
+    SCPI_OptionalParam chanOpt = SCPI_OptionalParamInt32(context, &channel);
+    if (chanOpt == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
+    if (chanOpt == SCPI_OPT_PRESENT) {
         // Get single
         volatile double val = 0;
         if (channel < 0 || channel > 255) {
@@ -173,7 +181,19 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    if (SCPI_ParamInt32(context, &param2, FALSE)) {
+    // #874: this is THE bug the issue was filed for. ABSENT selects the
+    // one-argument MASK form; PRESENT-but-unparseable must not -- see
+    // SCPI_OptionalParamInt32 (SCPIInterface.h). Before this guard,
+    // `CONF:ADC:CHAN 0,BANANA` (and the same command's other spelling,
+    // `ENAble:VOLTage:DC 0,BANANA`) queued -104 and then ran the mask form
+    // with param1 as the mask -- mask 0 disables EVERY analog channel, and the
+    // client was never told its channel configuration had been replaced.
+    // Measured on hardware: mask 7 -> `CONF:ADC:CHAN 0,BANANA` -> mask 0.
+    SCPI_OptionalParam stateOpt = SCPI_OptionalParamInt32(context, &param2);
+    if (stateOpt == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
+    if (stateOpt == SCPI_OPT_PRESENT) {
         // Single-channel form: (channel, state). NOT a bitmask — the one-arg
         // form CONF:ADC:CHAN <mask> is the bitmask path (see #630).
 
@@ -402,14 +422,30 @@ scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context) {
             BOARDCONFIG_AIN_CHANNELS,
             0);
 
+    // BOARDCONFIG_ALL_CONFIG, not BOARDCONFIG_VARIANT: the latter returns
+    // &boardConfig.BoardVariant -- a uint8_t*, widened to void* so nothing
+    // diagnoses it -- and every `pBoardConfig->` below then reads at a member
+    // offset from THAT byte's address. It resolves correctly today only
+    // because BoardVariant happens to be the first member of tBoardConfig, so
+    // the two addresses coincide; reordering the struct would silently
+    // mis-resolve these loops. ALL_CONFIG returns &boardConfig, which is what
+    // the declared type says -- the idiom already used earlier in this file.
     tBoardConfig * pBoardConfig = BoardConfig_Get(
-            BOARDCONFIG_VARIANT,
+            BOARDCONFIG_ALL_CONFIG,
             0);
 
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
 
-    if (SCPI_ParamInt32(context, &param1, FALSE)) {
+    // #874: a malformed channel argument must not silently answer with the
+    // whole enable MASK instead -- see SCPI_OptionalParamInt32
+    // (SCPIInterface.h). A client asking for one channel and parsing "7" as
+    // that channel's state is the failure this prevents.
+    SCPI_OptionalParam chanOpt = SCPI_OptionalParamInt32(context, &param1);
+    if (chanOpt == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
+    if (chanOpt == SCPI_OPT_PRESENT) {
         // Single channel
         size_t index = ADC_FindChannelIndex((uint8_t) param1);
         // TODO: This function should be able to read which version of the board we are using and assign the ADC channels associated that version
@@ -438,10 +474,21 @@ scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context) {
 }
 
 scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
-    uint32_t *pAInLatestSize;
     int param1, param2;
     AInArray * pBoardConfigAInChannels = BoardConfig_Get(
             BOARDCONFIG_AIN_CHANNELS,
+            0);
+
+    // BOARDCONFIG_ALL_CONFIG, not BOARDCONFIG_VARIANT: the latter returns
+    // &boardConfig.BoardVariant -- a uint8_t*, widened to void* so nothing
+    // diagnoses it -- and every `pBoardConfig->` below then reads at a member
+    // offset from THAT byte's address. It resolves correctly today only
+    // because BoardVariant happens to be the first member of tBoardConfig, so
+    // the two addresses coincide; reordering the struct would silently
+    // mis-resolve these loops. ALL_CONFIG returns &boardConfig, which is what
+    // the declared type says -- the idiom already used earlier in this file.
+    tBoardConfig * pBoardConfig = BoardConfig_Get(
+            BOARDCONFIG_ALL_CONFIG,
             0);
 
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
@@ -451,7 +498,16 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    if (SCPI_ParamInt32(context, &param2, FALSE)) {
+    // #874: ABSENT selects the one-argument MASK form; PRESENT-but-unparseable
+    // must not -- see SCPI_OptionalParamInt32 (SCPIInterface.h).
+    // `CONF:ADC:SINGleend 0,BANANA` used to rewrite the single-ended /
+    // differential state of EVERY channel -- and from the UNINITIALIZED param2
+    // at that, which is the separate defect fixed below.
+    SCPI_OptionalParam stateOpt = SCPI_OptionalParamInt32(context, &param2);
+    if (stateOpt == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
+    if (stateOpt == SCPI_OPT_PRESENT) {
         // Single channel
         size_t index = ADC_FindChannelIndex((uint8_t) param1);
         if (index >= pBoardConfigAInChannels->Size) {
@@ -460,14 +516,64 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
 
         pRuntimeAInChannels->Data[index].IsDifferential = (param2 == 0);
     } else {
-        pAInLatestSize = BoardData_Get(
-                BOARDDATA_AIN_LATEST_SIZE,
-                0);
+        // Bounded to the USER channels, variant-aware, exactly as the mask
+        // branch of SCPI_ADCChanEnableSet above does -- that command is the
+        // authority on what a channel mask addresses, and these two must not
+        // disagree.
+        //
+        // It used to run to BOARDDATA_AIN_LATEST_SIZE, which is
+        // MAX_AIN_CHANNEL (48): more slots than the mask has bits, and more
+        // than any board has user channels. Two defects came out of that
+        // (#875 pre-merge audit): `1 << i` for i >= 32 is undefined in C --
+        // on MIPS32 `sll` takes only the low five bits of the shift count, so
+        // slots 32..47 aliased back onto bits 0..15 -- and the write reached
+        // monitoring and nonexistent slots that no mask bit is supposed to
+        // address. An intermediate revision bounded by
+        // `AInModules.Data[0].Size`, which is what the sibling
+        // SCPI_ADCChanEnableGet uses; that is 16 even on an NQ3, because
+        // Data[0] there is the MC12b MONITORING module and the AD7609 user
+        // channels are Data[1] (NQ3BoardConfig.c). The variant test below is
+        // the bound that is actually right on both boards, and being <= 16 it
+        // makes the shift safe by construction.
+        uint8_t maxUserChannel = (pBoardConfig->BoardVariant == 3) ? 7 : 15;
 
         size_t i = 0;
-        for (i = 0; i<*pAInLatestSize; ++i) {
-            pRuntimeAInChannels->Data[i].IsDifferential =
-                    (param2 & (1 << i)) == 0;
+        for (i = 0; i <= (size_t) maxUserChannel; ++i) {
+            // Bit i addresses CHANNEL i, which is not necessarily runtime
+            // slot i, so resolve the id the way every other path in this file
+            // resolves it rather than indexing Data[i] directly.
+            //
+            // Be precise about what this does and does not fix. On BOTH
+            // shipping variants the mapping is currently the IDENTITY, so
+            // this is behaviour-neutral today, not a bug fix: NQ1's
+            // AInChannels holds DaqifiAdcChannelId 0..15 at indices 0..15 in
+            // order (the 8 monitoring entries follow at 16..23, ids 248..255
+            // -- NQ1BoardConfig.c, AInConfig.h), and NQ3's holds ids 0..7 at
+            // indices 0..7. An earlier revision of this comment claimed NQ1's
+            // table was sparse with the public channels "at indices 8..15,
+            // interleaved"; that is false, and so was the matching claim that
+            // the old Data[i] form addressed a different channel. It did not.
+            //
+            // It is kept because the id->slot mapping is ADC_FindChannelIndex's
+            // to define, not this loop's to assume, and because the sibling
+            // paths (the two-argument form and the enable mask) already
+            // resolve it -- a future variant whose table is not ordered would
+            // break exactly the paths that open-code the identity. An id with
+            // no table entry is skipped rather than failing the whole command,
+            // matching the enable-mask branch.
+            size_t channelIndex = ADC_FindChannelIndex((uint8_t) i);
+            if (channelIndex >= (size_t) pBoardConfigAInChannels->Size) {
+                continue;
+            }
+            // The mask is param1 -- the ONE argument this branch was given.
+            // It read param2, which a failed optional parse leaves
+            // uninitialized (ParamSignUInt32 does not write *value when it
+            // fails), so the legal one-argument form
+            // `CONF:ADC:SINGleend <mask>` wrote every channel's
+            // IsDifferential from an indeterminate stack value. Mirrors the
+            // mask branch of SCPI_ADCChanEnableSet above, which uses param1.
+            pRuntimeAInChannels->Data[channelIndex].IsDifferential =
+                    ((uint32_t)param1 & (1u << i)) == 0u;
         }
     }
 
@@ -480,13 +586,29 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
 
 scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
     int param1;
-    uint32_t *pAInLatestSize;
     AInArray * pBoardConfigAInChannels = BoardConfig_Get(
             BOARDCONFIG_AIN_CHANNELS,
             0);
+    // BOARDCONFIG_ALL_CONFIG, not BOARDCONFIG_VARIANT: the latter returns
+    // &boardConfig.BoardVariant -- a uint8_t*, widened to void* so nothing
+    // diagnoses it -- and every `pBoardConfig->` below then reads at a member
+    // offset from THAT byte's address. It resolves correctly today only
+    // because BoardVariant happens to be the first member of tBoardConfig, so
+    // the two addresses coincide; reordering the struct would silently
+    // mis-resolve these loops. ALL_CONFIG returns &boardConfig, which is what
+    // the declared type says -- the idiom already used earlier in this file.
+    tBoardConfig * pBoardConfig = BoardConfig_Get(
+            BOARDCONFIG_ALL_CONFIG,
+            0);
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
-    if (SCPI_ParamInt32(context, &param1, FALSE)) {
+    // #874: a malformed channel argument must not silently answer with the
+    // whole mask instead -- see SCPI_OptionalParamInt32 (SCPIInterface.h).
+    SCPI_OptionalParam chanOpt = SCPI_OptionalParamInt32(context, &param1);
+    if (chanOpt == SCPI_OPT_BAD) {
+        return SCPI_RES_ERR;
+    }
+    if (chanOpt == SCPI_OPT_PRESENT) {
         // Single channel
         size_t index = ADC_FindChannelIndex((uint8_t) param1);
         if (index >= pBoardConfigAInChannels->Size) {
@@ -502,14 +624,30 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
         uint32_t mask = 0;
         size_t i = 0;
 
-        pAInLatestSize = BoardData_Get(
-                BOARDDATA_AIN_LATEST_SIZE,
-                0);
-        for (i = 0; i<*pAInLatestSize; ++i) {
-            if (!pRuntimeAInChannels->Data[i].IsDifferential) {
-                mask |= (1 << i);
+        // Same variant-aware user-channel bound as SCPI_ADCChanSingleEndSet's
+        // mask branch -- see the comment there for why it is not the module
+        // size. Reporting slots past the user channels set bits for channels
+        // the board does not have (every unused slot is zero-initialised, so
+        // IsDifferential reads false and the bit went UP), on top of the
+        // undefined shift past bit 31.
+        uint8_t maxUserChannel = (pBoardConfig->BoardVariant == 3) ? 7 : 15;
+        for (i = 0; i <= (size_t) maxUserChannel; ++i) {
+            // Channel i, not slot i -- see SCPI_ADCChanSingleEndSet's mask
+            // branch. A channel with no table entry contributes no bit, which
+            // is the honest answer for a channel the board does not have.
+            size_t channelIndex = ADC_FindChannelIndex((uint8_t) i);
+            if (channelIndex >= (size_t) pBoardConfigAInChannels->Size) {
+                continue;
+            }
+            if (!pRuntimeAInChannels->Data[channelIndex].IsDifferential) {
+                mask |= (1u << i);
             }
         }
+        // The mask was computed and then discarded: the no-argument form of
+        // this query answered NOTHING while returning OK, so a client waiting
+        // on `CONF:ADC:SINGleend?` waited for its read timeout. Emit it, the
+        // way the sibling getter SCPI_ADCChanEnableGet does.
+        SCPI_ResultInt32(context, (int32_t) mask);
     }
 
     return SCPI_RES_OK;

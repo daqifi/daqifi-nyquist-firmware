@@ -303,6 +303,120 @@ extern "C" {
         return SCPI_RES_ERR;
     }
 
+    /**
+     * @brief The three outcomes of reading an OPTIONAL parameter (#874).
+     *
+     * `SCPI_ParamInt32(context, &v, FALSE)` collapses two of them into one
+     * FALSE and the caller cannot tell them apart:
+     *
+     *   1. the parameter is ABSENT -- the caller used the short form; or
+     *   2. the parameter is PRESENT but is not an integer.
+     *
+     * Commands that overload their argument count read that FALSE as case 1.
+     * Where the short form does something DIFFERENT -- a bitmask write, an
+     * all-channel write, an all-channel query -- case 2 therefore executes the
+     * OTHER FORM using the first argument as its operand, and the client is
+     * told only "-104", never that its request was replaced.
+     * `CONF:ADC:CHAN 0,BANANA` disabled every analog channel that way (#874);
+     * `DIO:PORt:STATe 3,BANANA` drove every DIO line from a mask.
+     */
+    typedef enum {
+        SCPI_OPT_ABSENT = 0,   /**< no token -- the short form was asked for */
+        SCPI_OPT_PRESENT,      /**< a token, and it parsed */
+        SCPI_OPT_BAD           /**< a token, and it did NOT parse -- reject */
+    } SCPI_OptionalParam;
+
+    /**
+     * @brief Read an optional integer, distinguishing ABSENT from UNPARSEABLE.
+     *
+     * THE CONTRACT (#874) is written down here ONCE; callers point at this
+     * comment instead of restating it. Take the short-form branch on
+     * SCPI_OPT_ABSENT only, and return SCPI_RES_ERR on SCPI_OPT_BAD.
+     *
+     * PRESENCE is decided by SCPI_Parameter(), not by the error queue, and
+     * that is the whole point of the helper. An earlier revision asked
+     * SCPI_ParamErrorOccurred() instead, which is NOT equivalent: libscpi
+     * queues nothing for a decimal token that contains no integer digits.
+     * `ParamSignToUInt32` (libscpi/src/parser.c) hands `.5` to `strBaseToInt32`,
+     * which consumes zero digits and returns 0, so the parse fails SILENTLY --
+     * `CONF:ADC:CHAN 0,.5` still reached the mask branch and disabled every
+     * channel with no error at all. (Found by the #875 pre-merge audit.)
+     *
+     * On SCPI_OPT_BAD an error is guaranteed to be queued: libscpi's own
+     * -104 where it pushed one, and ours where it did not -- so the client
+     * always has something to read from SYSTem:ERRor?.
+     *
+     * The same "present-but-unparseable is a reject" idiom already guards
+     * CONF:ADC:THREshold (#683), CONF:ADC:THREshold:CLEar, and the SPI/UART
+     * optional arguments in SCPILAN.c; this helper is the shared home those
+     * comments would have had if it had existed.
+     *
+     * @param context SCPI context
+     * @param value   written only on SCPI_OPT_PRESENT
+     */
+    static inline SCPI_OptionalParam SCPI_OptionalParamInt32(scpi_t *context,
+                                                             int32_t *value) {
+        scpi_parameter_t param;
+        if (!SCPI_Parameter(context, &param, FALSE)) {
+            /* No token. SCPI_Parameter DOES queue an error for a malformed
+             * separator (`CHAN 0,,`), and that is a reject, not an absence. */
+            return SCPI_ParamErrorOccurred(context) ? SCPI_OPT_BAD
+                                                    : SCPI_OPT_ABSENT;
+        }
+        if (!SCPI_ParamIsNumber(&param, FALSE)) {
+            /* Classify exactly as SCPI_ParamInt32 does, because this helper
+             * REPLACES it and must not quietly widen what the command accepts.
+             * SCPI_ParamToInt32 alone would take the SUFFIX token type and
+             * parse its leading digits, so `DIO:PORt:STATe 0,1V` would have
+             * become state 1 instead of -131 (#875 pre-merge audit). */
+            SCPI_ErrorPush(context, SCPI_ParamIsNumber(&param, TRUE)
+                                    ? SCPI_ERROR_SUFFIX_NOT_ALLOWED
+                                    : SCPI_ERROR_DATA_TYPE_ERROR);
+            return SCPI_OPT_BAD;
+        }
+        if (!SCPI_ParamToInt32(context, &param, value)) {
+            if (!SCPI_ParamErrorOccurred(context)) {
+                /* The silent-failure case above. Push what libscpi would have
+                 * pushed for a non-numeric token so every rejection is
+                 * classifiable through SYSTem:ERRor?. */
+                SCPI_ErrorPush(context, SCPI_ERROR_DATA_TYPE_ERROR);
+            }
+            return SCPI_OPT_BAD;
+        }
+        return SCPI_OPT_PRESENT;
+    }
+
+    /**
+     * @brief `SCPI_OptionalParamInt32` for a double-valued optional parameter.
+     *
+     * Same contract, same reason -- see that comment. SCPI_ParamToDouble has
+     * the same silent-failure shape (`strToDouble` returning 0 characters
+     * consumed), so the queued-error guarantee is provided the same way.
+     */
+    static inline SCPI_OptionalParam SCPI_OptionalParamDouble(scpi_t *context,
+                                                              double *value) {
+        scpi_parameter_t param;
+        if (!SCPI_Parameter(context, &param, FALSE)) {
+            return SCPI_ParamErrorOccurred(context) ? SCPI_OPT_BAD
+                                                    : SCPI_OPT_ABSENT;
+        }
+        if (!SCPI_ParamIsNumber(&param, FALSE)) {
+            /* Same classification as SCPI_ParamDouble -- see the integer
+             * helper above. `SOUR:VOLT:LEV 0,5mV` must be -131, not 5 V. */
+            SCPI_ErrorPush(context, SCPI_ParamIsNumber(&param, TRUE)
+                                    ? SCPI_ERROR_SUFFIX_NOT_ALLOWED
+                                    : SCPI_ERROR_DATA_TYPE_ERROR);
+            return SCPI_OPT_BAD;
+        }
+        if (!SCPI_ParamToDouble(context, &param, value)) {
+            if (!SCPI_ParamErrorOccurred(context)) {
+                SCPI_ErrorPush(context, SCPI_ERROR_DATA_TYPE_ERROR);
+            }
+            return SCPI_OPT_BAD;
+        }
+        return SCPI_OPT_PRESENT;
+    }
+
 #ifdef	__cplusplus
 }
 #endif
