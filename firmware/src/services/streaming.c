@@ -1895,6 +1895,30 @@ static void Streaming_Start(void) {
         if (gpRuntimeConfigStream->IsEnabled) {
             Streaming_ClearStats();
             Streaming_InitFlowWindow(gpRuntimeConfigStream->Frequency);
+            /* #870: the SESSION owns its header, so the session's start is
+             * what clears "header already sent". This used to live at the end
+             * of the stop path instead -- the only caller either encoder reset
+             * had -- which made a stop responsible for the NEXT session's
+             * header and put the reset in a window a concurrent START can
+             * land in: the stop gets past Streaming_UpdateState(), the other
+             * transport arms and begins emitting rows, and the stop then
+             * resumes and clears the flag underneath it, so a header block
+             * appears in the middle of a live stream.
+             *
+             * Here there is no such window. Streaming_UpdateState() is
+             * Stop-then-Start, so by this line the previous session's timer is
+             * off and its Running is false; the streaming task is not armed
+             * until Streaming_Start() finishes below. The `if (!Running)`
+             * guard above also means a START that finds a session already
+             * running does NOT reset -- correct, since that session's header
+             * has already gone out.
+             *
+             * Placed beside the test-pattern counter deliberately: same
+             * question ("what must be true at sample 0 of a new session"),
+             * same enabled-only condition. The disable pass through
+             * Streaming_UpdateState() has IsEnabled false and so skips it. */
+            csv_ResetEncoder();
+            json_ResetEncoder();
             // Reset test pattern counter so each session starts at 0
             taskENTER_CRITICAL();
             gTestPatternSampleCount = 0;
