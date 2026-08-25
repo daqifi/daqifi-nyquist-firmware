@@ -1186,6 +1186,37 @@ uint8_t Streaming_BuildChannelMapping(const tBoardConfig* pBoardConfig,
  */
 const AInChannelMapping* Streaming_GetChannelMapping(void);
 
+/**
+ * #846: the enabled-public-channel set, as a bitmask of board-config channel
+ * indices. This is the ONE predicate the channel mapping is built from --
+ * Streaming_BuildChannelMapping derives its packed arrays from this mask
+ * rather than re-testing the predicate -- so a mask computed here is directly
+ * comparable to the one the mapping recorded.
+ *
+ * Bit i is set when runtime channel i is enabled AND board channel i is
+ * public, walked in ascending index order and stopped after
+ * MAX_AIN_PUBLIC_CHANNELS selections so the mask describes exactly what the
+ * mapping CONSUMED. Bounded, integer-only and non-blocking: safe to call
+ * inside a critical section, which is where START uses it.
+ *
+ * @param pBoardConfig     Board hardware configuration
+ * @param pRuntimeChannels Runtime channel enable/disable state
+ * @return Bitmask of selected board-config channel indices
+ */
+uint64_t Streaming_ComputeChannelSelection(const tBoardConfig* pBoardConfig,
+                                           const AInRuntimeArray* pRuntimeChannels);
+
+/**
+ * #846: the selection mask the CURRENT channel mapping (and the sample-pool
+ * partition sized from it) was built from.
+ *
+ * Read it back rather than recomputing it when you need the mapping's
+ * provenance: recomputing samples the runtime config a second time, and a
+ * preemption between the build and that recompute would record the NEW set
+ * against the OLD mapping -- the very hazard this exists to catch, inverted.
+ */
+uint64_t Streaming_GetChannelMappingSelection(void);
+
 #ifdef	__cplusplus
 }
 #endif
