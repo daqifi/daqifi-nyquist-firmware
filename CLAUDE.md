@@ -51,6 +51,17 @@ The previous `FreeRTOS_tasks.c -O1` override was replaced (issue #426) by defini
 | `Util/Logger.c:483` | `strncpy` → `memcpy` | `strncpy(dst, src, strlen(src))` never null-terminates; memcpy is what the code actually means (next line does manual null-term) | **Yes** — genuine bug fix |
 | `services/wifi_services/wifi_serial_bridge_interface.c:68,80` | `__attribute__((noinline))` on `UARTReadGetBuffer` | GCC -O3 inlines 512-byte ring buffer read into 1-byte caller, triggers false `-Warray-bounds`. Function takes a mutex so inlining is counterproductive anyway. | No — reevaluate after XC32/GCC upgrade |
 
+#### Behavioural Patches to Vendored Third-Party Sources
+
+Distinct from the -O3 table above: those exist to make the compiler happy and
+are expected to evaporate on a toolchain upgrade. **These change what the
+library DOES**, so an upgrade that drops one silently reopens a shipped defect.
+Re-apply or re-verify every row after any upgrade of the named library.
+
+| File | Patch | Reason | On upgrade |
+|------|-------|--------|-----------|
+| `libraries/scpi/libscpi/src/parser.c` (`DaqifiIntTokenFullyConsumed`, used by `ParamSignToUInt32` / `ParamSignToUInt64`) | An integer parameter must be a decimal token the conversion consumed IN FULL; a partly-read token pushes `-104` instead of yielding its truncated prefix | #880. `strtol`/`strtoul` stop at the first unusable character and upstream tested only "converted ≥1 character", so `-0.5` → `0`, `0.5` → `0`, `1E1` → `1`, `1.7` → `1` were accepted with `0,"No error"`. `CONF:ADC:SINGleend -0.5,1` therefore WROTE channel 0 while the integer `-1` was correctly refused. It is a **parser**-level defect reaching all ~147 integer-parameter call sites, so no callback guard can see it — #877's `AdcChannelArgInRange` receives the already-truncated integer. Chosen over a firmware-side wrapper because the wrapper would mean editing every one of those call sites, which is precisely how the "fixed one site, left the twin" class recurs | **Re-apply.** Upstream libscpi has the same behaviour, so an upgrade will drop this. `test_880_decimal_token_truncation.py` is the check |
+
 #### Known Linker Issue (Issue #271, informational)
 
 The XC32 linker script (`p32MZ2048EFM144.ld`) uses a "best-fit allocator" for `.bss.*` sections. At O2+ with `-fdata-sections`, this can place variables at two addresses (`.sbss` GP-relative vs `.bss.*` best-fit), causing dual-address bugs. This was the original symptom that triggered investigation of the O2 FreeRTOS crash, but the actual fix landed elsewhere: defining `configLIST_VOLATILE volatile` in `FreeRTOSConfig.h` forces the kernel's list-item link fields to be volatile, preventing the reorder of `listINSERT_END` stores that was the real cause. With that macro defined, `FreeRTOS_tasks.c` is *intended* to build at -O3 alongside the rest of the firmware — see the ⚠️ above for why it currently does not, in `default`. The linker script is left at Microchip default.
