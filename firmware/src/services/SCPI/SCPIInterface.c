@@ -2143,6 +2143,18 @@ static inline void StreamFreq_Set(StreamingRuntimeConfig* c, uint64_t f) {
     taskEXIT_CRITICAL();
 }
 
+/* #850: the shared refusal. SCPI_StartStreaming does NOT go through the
+ * runner (it must parse before claiming -- see its wrapper), so without this
+ * the two refusal sites would drift apart and an operator could not tell them
+ * apart in the log. */
+static scpi_result_t SCPI_RefuseSessionStartBusy(scpi_t * context,
+                                                 const char *what) {
+    LOG_E("%s refused (#850): another streaming session start is in "
+          "flight on the other SCPI transport. Retry.", what);
+    SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    return SCPI_RES_ERR;
+}
+
 /* --- #850: the session-start claim runner ---------------------------------
  *
  * Every command that arms a streaming session runs its body through here, so
@@ -2166,10 +2178,7 @@ static scpi_result_t SCPI_RunSessionStartClaimed(scpi_t * context,
                                                  scpi_result_t (*body)(scpi_t *),
                                                  const char *what) {
     if (Streaming_BeginSessionStart() != STREAM_START_CLAIM_OK) {
-        LOG_E("%s refused (#850): another streaming session start is in "
-              "flight on the other SCPI transport. Retry.", what);
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
+        return SCPI_RefuseSessionStartBusy(context, what);
     }
     scpi_result_t result = body(context);
     Streaming_EndSessionStart();
@@ -3687,9 +3696,17 @@ static void SCPI_UnpublishStartInterface(StreamingRuntimeConfig *cfg,
 }
 
 /* #850: the session-start claim is taken by the SCPI_StartStreaming wrapper
- * below, which is the only caller of this body. */
-static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context) {
-    int32_t freq;
+ * below, which is the only caller of this body.
+ *
+ * The frequency arrives ALREADY PARSED, and that is load-bearing rather than
+ * tidiness: the wrapper has to parse before it claims, because `START 0` is the
+ * explicit DISABLE form -- a stop, not an arm -- and a stop must not be refused
+ * because some other transport is mid-start (pre-merge audit). `freqProvided`
+ * false means no argument was given and the stored Frequency is reused, which
+ * is resolved further down exactly as before. */
+static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
+                                                int32_t freq,
+                                                bool freqProvided) {
 
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -3765,38 +3782,6 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context) {
     // "abc", "100Hz") instead of starting. Mirrors libscpi's own
     // ParamSignUInt32 number-check. A no-argument START still reuses the stored
     // Frequency (resolved further down).
-    scpi_parameter_t freqParam;
-    bool freqProvided = SCPI_Parameter(context, &freqParam, FALSE);
-    // #674 (Qodo): a token that is PRESENT but unparseable — invalid string data,
-    // not a mnemonic (e.g. `SYST:STR:START #`) — makes SCPI_Parameter return FALSE
-    // with type SCPI_TOKEN_UNKNOWN, whereas a genuinely ABSENT parameter leaves
-    // type SCPI_TOKEN_PROGRAM_MNEMONIC. Distinguish them so invalid-syntax garbage
-    // is rejected too, instead of the number-check below only covering mnemonic
-    // garbage while non-mnemonic garbage falls through to the stored-rate restart.
-    // libscpi already queued -150 for the bad token; add a LOG_E and stop here.
-    if (!freqProvided && freqParam.type == SCPI_TOKEN_UNKNOWN) {
-        LOG_E("Streaming rejected: invalid frequency argument syntax "
-              "(expected an integer Hz, e.g. SYST:STR:START 5000)");
-        return SCPI_RES_ERR;
-    }
-    if (freqProvided) {
-        if (!SCPI_ParamIsNumber(&freqParam, FALSE) ||
-            !SCPI_ParamToInt32(context, &freqParam, &freq)) {
-            LOG_E("Streaming rejected: malformed frequency argument "
-                  "(expected an integer Hz, e.g. SYST:STR:START 5000)");
-            SCPI_ErrorPush(context, SCPI_ERROR_DATA_TYPE_ERROR);
-            return SCPI_RES_ERR;
-        }
-    }
-    if (freqProvided && freq == 0) {
-        // Frequency = 0 is the explicit disable form.  Always allowed,
-        // including under heap pressure (the user may be trying to
-        // stop streaming as a recovery action).
-        pRunTimeStreamConfig->IsEnabled = false;
-        Streaming_UpdateState();
-        UsbCdc_FlushWriteBuffer();
-        return SCPI_RES_OK;
-    }
 
     // #475 step 4 — heap-floor enforcement applied to every new-start
     // path (freq > 0 explicit, or no-argument re-start with current
@@ -4743,9 +4728,85 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #850 + pre-merge audit: START parses BEFORE it claims.
+ *
+ * This one does not use SCPI_RunSessionStartClaimed, unlike the other two arm
+ * sites, because `SYST:STR:START 0` is the explicit DISABLE form -- a stop.
+ * A runner that claims on entry refuses it whenever another session start is
+ * in flight, so a stop could be blocked for the length of a 60 s throughput
+ * benchmark on the other transport. The claim is therefore taken only once we
+ * know this is actually an ARM.
+ *
+ * A malformed rate (`START abc`) now also fails ahead of the claim, which is a
+ * side benefit rather than the goal: a garbage START no longer takes the claim
+ * nor reaches Streaming_BuildChannelMapping's shared-state write.
+ *
+ * ERROR PRECEDENCE MOVED, deliberately. The parse used to run AFTER the power,
+ * ADC-pointer and channel-count gates, so `START abc` on an unpowered device
+ * reported -200 (not powered); it now reports -104 (malformed). A malformed
+ * command is malformed regardless of device state, and the alternative was to
+ * leave a stop refusable -- but it IS a behaviour change and the companion
+ * test pins both spellings. The claim/release pair stays a single take, one
+ * call, one release, so the body's twenty-plus return sites still cannot leak
+ * it. */
 static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
-    return SCPI_RunSessionStartClaimed(context, SCPI_StartStreamingClaimed,
-                                       "SYSTem:STReam:START");
+    int32_t freq = 0;
+    scpi_parameter_t freqParam;
+    bool freqProvided = SCPI_Parameter(context, &freqParam, FALSE);
+    // #674 (Qodo): a token that is PRESENT but unparseable — invalid string data,
+    // not a mnemonic (e.g. `SYST:STR:START #`) — makes SCPI_Parameter return FALSE
+    // with type SCPI_TOKEN_UNKNOWN, whereas a genuinely ABSENT parameter leaves
+    // type SCPI_TOKEN_PROGRAM_MNEMONIC. Distinguish them so invalid-syntax garbage
+    // is rejected too, instead of the number-check below only covering mnemonic
+    // garbage while non-mnemonic garbage falls through to the stored-rate restart.
+    // libscpi already queued -150 for the bad token; add a LOG_E and stop here.
+    if (!freqProvided && freqParam.type == SCPI_TOKEN_UNKNOWN) {
+        LOG_E("Streaming rejected: invalid frequency argument syntax "
+              "(expected an integer Hz, e.g. SYST:STR:START 5000)");
+        return SCPI_RES_ERR;
+    }
+    if (freqProvided) {
+        if (!SCPI_ParamIsNumber(&freqParam, FALSE) ||
+            !SCPI_ParamToInt32(context, &freqParam, &freq)) {
+            LOG_E("Streaming rejected: malformed frequency argument "
+                  "(expected an integer Hz, e.g. SYST:STR:START 5000)");
+            SCPI_ErrorPush(context, SCPI_ERROR_DATA_TYPE_ERROR);
+            return SCPI_RES_ERR;
+        }
+    }
+    if (freqProvided && freq == 0) {
+        /* Frequency = 0 is the explicit DISABLE form: a stop, not an arm.
+         *
+         * Handled HERE, ahead of the claim, and that placement is the whole
+         * point (pre-merge audit). Taking the claim first made this path
+         * refusable with -200 while a SYST:STR:THRoughput -- up to 60 s --
+         * held the claim on the other transport, which contradicts what this
+         * branch has always promised and what the interlock is FOR: #850
+         * serialises session STARTS against each other, and a stop is neither.
+         *
+         * It also now runs ahead of the power and channel-count gates, so it
+         * is unconditional in a way it previously was not. That is deliberate
+         * and matches SYST:STR:STOP, which has no such gates and performs the
+         * identical three actions -- stopping should never depend on the
+         * device still being in a state fit to START.
+         *
+         * Always allowed, including under heap pressure (the user may be
+         * trying to stop streaming as a recovery action). */
+        StreamingRuntimeConfig * cfg = BoardRunTimeConfig_Get(
+                BOARDRUNTIME_STREAMING_CONFIGURATION);
+        cfg->IsEnabled = false;
+        Streaming_UpdateState();
+        UsbCdc_FlushWriteBuffer();
+        return SCPI_RES_OK;
+    }
+
+    if (Streaming_BeginSessionStart() != STREAM_START_CLAIM_OK) {
+        return SCPI_RefuseSessionStartBusy(context, "SYSTem:STReam:START");
+    }
+    scpi_result_t result = SCPI_StartStreamingClaimed(context, freq,
+                                                      freqProvided);
+    Streaming_EndSessionStart();
+    return result;
 }
 
 static scpi_result_t SCPI_StopStreaming(scpi_t * context) {

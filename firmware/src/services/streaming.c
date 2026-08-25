@@ -3601,6 +3601,21 @@ bool Streaming_ConfigChangeInProgress(void) {
  * unconditional store outside any section; the test-and-take is a read-modify-
  * write and is inside one, because `if (!busy) busy = 1` is exactly the
  * non-atomic sequence two transports must not interleave.
+ *
+ * NOT in Streaming_Init's #409 retained-RAM reset list, and that is checked
+ * rather than assumed. The hazard #409 describes is a file-static landing in
+ * its own `.bss.<name>` section placed by the best-fit allocator OUTSIDE
+ * [_bss_begin,_bss_end], where crt0 never zeroes it. This one is small enough
+ * to be GP-relative, so it lands in `.sbss.gSessionStartBusy` INSIDE that
+ * window and is zeroed on every reset including MCLR and an IPE flash --
+ * verified in the .map at 0x80000394, against _bss_begin 0x80000090 /
+ * _bss_end 0x800030c0. gCfgChangeBusy sits at 0x80000398 with the same
+ * property, which is why it is absent from that list too.
+ *
+ * Worth stating because the consequence of being wrong is asymmetric: a flag
+ * that survived a reset set would refuse EVERY streaming command until a
+ * power cycle. If a future change grows this past the GP-relative threshold
+ * or moves it out of that window, it must join the reset list.
  */
 static volatile uint32_t gSessionStartBusy = 0u;
 

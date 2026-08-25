@@ -738,8 +738,17 @@ bool Streaming_ConfigChangeInProgress(void);
  * Streaming_UpdateState flipping Running. Guarding START against itself while
  * leaving those two would close one pairing out of four. Holding the claim
  * across the whole of START's body (Streaming_UpdateState included) is also
- * what lets those front-door tests stay as they are: no caller can observe the
- * IsEnabled-set-but-Running-clear gap, because the claim is held throughout it.
+ * what lets those two front-door tests stay as they are: neither command can
+ * reach its `Running` test while a START is in that gap, because it must take
+ * this claim first and will be refused.
+ *
+ * Stated narrowly on purpose. It is NOT true that nothing can observe the
+ * IsEnabled-set-but-Running-clear window -- Streaming_BeginConfigChange reads
+ * `IsEnabled || Running` (streaming.c) and never takes this claim, so a cap-
+ * input or SYST:MEM:* setter still sees it. That is correct and wanted: the
+ * `||` form is precisely what makes it refuse there (#116, #857). The claim
+ * closes the gap for the two commands whose test is `Running` ALONE, and for
+ * nothing else.
  *
  * A FLAG, NOT A CRITICAL SECTION, and not a FreeRTOS mutex. Not a critical
  * section because the bodies call vTaskDelay -- PrepareStreamingBuffers and
