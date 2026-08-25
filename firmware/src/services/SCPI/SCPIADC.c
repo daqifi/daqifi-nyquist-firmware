@@ -523,6 +523,19 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
 
         size_t i = 0;
         for (i = 0; i <= (size_t) maxUserChannel; ++i) {
+            // Bit i addresses CHANNEL i, which is not runtime slot i: the
+            // channel table is sparse (on NQ1 the public analog channels sit
+            // at AInChannels indices 8..15, interleaved), so the id has to be
+            // resolved the way every other path resolves it. Indexing Data[i]
+            // directly wrote a DIFFERENT channel than the two-argument form
+            // and than the enable mask, while this file's comments claimed
+            // the three agreed (Qodo, #875 cycle). An id with no table entry
+            // is skipped rather than failing the whole command -- exactly
+            // what the enable-mask branch does.
+            size_t channelIndex = ADC_FindChannelIndex((uint8_t) i);
+            if (channelIndex >= (size_t) pBoardConfigAInChannels->Size) {
+                continue;
+            }
             // The mask is param1 -- the ONE argument this branch was given.
             // It read param2, which a failed optional parse leaves
             // uninitialized (ParamSignUInt32 does not write *value when it
@@ -530,7 +543,7 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
             // `CONF:ADC:SINGleend <mask>` wrote every channel's
             // IsDifferential from an indeterminate stack value. Mirrors the
             // mask branch of SCPI_ADCChanEnableSet above, which uses param1.
-            pRuntimeAInChannels->Data[i].IsDifferential =
+            pRuntimeAInChannels->Data[channelIndex].IsDifferential =
                     ((uint32_t)param1 & (1u << i)) == 0u;
         }
     }
@@ -582,7 +595,14 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
         // undefined shift past bit 31.
         uint8_t maxUserChannel = (pBoardConfig->BoardVariant == 3) ? 7 : 15;
         for (i = 0; i <= (size_t) maxUserChannel; ++i) {
-            if (!pRuntimeAInChannels->Data[i].IsDifferential) {
+            // Channel i, not slot i -- see SCPI_ADCChanSingleEndSet's mask
+            // branch. A channel with no table entry contributes no bit, which
+            // is the honest answer for a channel the board does not have.
+            size_t channelIndex = ADC_FindChannelIndex((uint8_t) i);
+            if (channelIndex >= (size_t) pBoardConfigAInChannels->Size) {
+                continue;
+            }
+            if (!pRuntimeAInChannels->Data[channelIndex].IsDifferential) {
                 mask |= (1u << i);
             }
         }
