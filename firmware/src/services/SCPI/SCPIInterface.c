@@ -413,7 +413,16 @@ void SCPI_StatusLock_Init(void) {
  * a future misuse, and it performs the update UNLOCKED rather than skipping
  * it: an unprotected write may lose a bit (the pre-#852 behaviour), whereas a
  * skipped write leaves the register permanently wrong -- the #691 class of
- * bug, and strictly the worse of the two. */
+ * bug, and strictly the worse of the two.
+ *
+ * portMAX_DELAY is deliberate rather than a bounded wait. With
+ * INCLUDE_vTaskSuspend 1 (FreeRTOSConfig.h) it blocks indefinitely and the
+ * take cannot report failure, which is the behaviour we want here: the
+ * held region does no I/O, no allocation and no nested take, so it is
+ * bounded by a handful of register writes, and configUSE_MUTEXES 1 gives
+ * priority inheritance so a pri-2 holder is lifted rather than left behind
+ * a pri-7 waiter. A timeout would only add a branch that reintroduces the
+ * very race the lock removes, on a path that cannot reach it. */
 static bool SCPI_StatusLock_Take(void) {
     if (gScpiStatusMutex == NULL) {
         return false;
@@ -493,9 +502,10 @@ static scpi_reg_val_t SCPI_ComputeQuesBits(void) {
 }
 
 /**
- * Sync QUESC bits from the streaming engine to both SCPI contexts.
- * Called from SCPI_StopStreaming (to clear) and can be called
- * periodically or on-demand to refresh from streaming state.
+ * Publish the QUESC bits computed by SCPI_ComputeQuesBits to both SCPI
+ * contexts. Reached from SCPI_SyncQuesBits (the stop path and the stats
+ * commands) and directly from the two QUES query wrappers, which hold the
+ * lock across this write and their own read.
  *
  * Uses a single SCPI_RegSet (read-modify-write) instead of separate
  * clear+set to avoid a transient 0-state that would latch a spurious
