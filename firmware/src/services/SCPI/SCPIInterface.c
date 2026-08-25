@@ -49,8 +49,6 @@
 #include "../Capabilities.h"
 #include "Util/StreamingBufferPool.h"
 #include "state/data/AInSample.h"
-#include "../csv_encoder.h"
-#include "../JSON_Encoder.h"
 #include "../../HAL/TimerApi/TimerApi.h"
 #include "../UsbCdc/UsbCdc.h"
 #include "config/default/driver/usb/usbhs/src/plib_usbhs_header.h"
@@ -2271,6 +2269,12 @@ static sd_card_manager_mode_t SaveSdMode(void) {
             BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
     return pSd->mode;
 }
+/* Defined below, next to the START refusal paths that are its other callers.
+ * Declared here because the two direct-poke session paths (SYST:STR:THRoughput
+ * and SYST:STR:WIFI:FINd?) need it at their teardown -- see #870 at those call
+ * sites. */
+static void SCPI_ClearStreamingOperBits(StreamingRuntimeConfig *cfg);
+
 static void RestoreSdMode(sd_card_manager_mode_t savedMode) {
     sd_card_manager_settings_t* pSd =
             BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
@@ -2495,6 +2499,26 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
     // Stop
     pStreamCfg->IsEnabled = false;
     Streaming_UpdateState();
+    /* #870: repair OPER after a run that never set it.
+     *
+     * This path deliberately never sets OPER_MEASURING -- it arms by poking
+     * IsEnabled rather than through SCPI_StartStreamingClaimed. That was
+     * harmless while the STOP path cleared the bits unconditionally. It is not
+     * any more: a STOP on another transport, parked in the SD close, can have
+     * this run publish IsEnabled=true underneath it, and the STOP's now
+     * CONDITIONAL clear then skips. Nothing else would clear bit 4, so the
+     * device would report MEASURING with nothing streaming once this run ends
+     * -- the precise error the conditional clear exists to prevent, arrived at
+     * from the other side (codex pre-merge audit).
+     *
+     * Unlike a START, this path is NOT interlocked against that window: it
+     * runs no buffer partition and no SCPI_QuiesceAndResetCoherentPool, so it
+     * is not gated on the same SD-idle condition the STOP is waiting on.
+     *
+     * The helper clears only when nothing is live, so a genuinely concurrent
+     * session keeps its bits. On the ordinary path the bits are already clear
+     * and this is a no-op. */
+    SCPI_ClearStreamingOperBits(pStreamCfg);
 
     // Restore previous state
     Streaming_SetBenchmarkMode(savedBenchmark);
@@ -2703,6 +2727,10 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
     // stream transitions — #425/#467/#517).
     cfg->IsEnabled = false;
     Streaming_UpdateState();
+    /* #870: same repair as SYST:STR:THRoughput -- see the comment there. This
+     * path also arms by poking IsEnabled, never sets OPER_MEASURING, and is
+     * not interlocked against a STOP parked in the SD close. */
+    SCPI_ClearStreamingOperBits(cfg);
 
     // Primary trip: the SAMPLE POOL high-water reached ~full (>= FIND_BUF_FULL_PCT
     // of capacity).  After the #520 backpressure fix (streaming.c, solo WiFi/USB
@@ -4983,6 +5011,22 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     SCPI_SetOperBits(OPER_MEASURING);
     if (sdLoggingRequested) {
         SCPI_SetOperBits(OPER_SD_LOGGING);
+    } else {
+        /* STATE, not an assertion: a START publishes what IS true of ITS
+         * session, both ways round. Only setting the bit leaves a non-logging
+         * session wearing the previous session's OPER_SD_LOGGING whenever
+         * something skipped the clear -- and #870 made that reachable, because
+         * SCPI_ClearStreamingOperBits declines to clear while a replacement
+         * session is live, and it is all-or-nothing across both bits (Qodo).
+         * Nothing else repairs bit 10: SCPI_SyncOperSdBit covers the
+         * FINALIZING bit, not this one, so the stale value would persist
+         * between commands and swallow the next genuine 0->1 SD-logging event.
+         *
+         * On every ordinary start this is a no-op -- the preceding stop
+         * already cleared it -- so it costs nothing and closes the case the
+         * conditional clear opened. Same principle as the rest of this
+         * change: the session owns its own state. */
+        SCPI_ClearOperBits(OPER_SD_LOGGING);
     }
     /* #783: a successful START PROVES the previous session's SD finalise
      * completed -- PrepareStreamingBuffers -> QuiesceAndResetCoherentPool
@@ -5212,13 +5256,31 @@ static bool SCPI_SdClaimStreamingLogTeardown(sd_card_manager_settings_t *sd) {
  * What changes here is that START 0 no longer carries that hazard PLUS two of
  * its own.
  *
- * The clear at the end stays UNCONDITIONAL rather than moving to
- * SCPI_ClearStreamingOperBits, which tests `IsEnabled || Running` first. That
- * helper answers a different question -- "did another transport arm a session
- * while this START was unwinding" (#848) -- and on a stop the same test would
- * SKIP the clear in exactly the #861 interleaving above, leaving behind the
- * stale bit this ticket is about. Switching it is a behaviour change to STOP
- * and belongs to #861, not here.
+ * The clear at the end now goes through SCPI_ClearStreamingOperBits, and the
+ * encoder resets have moved out of this body entirely (#870). This paragraph
+ * previously said the opposite -- that the clear "stays UNCONDITIONAL", because
+ * the helper's `IsEnabled || Running` test "would SKIP the clear in exactly the
+ * #861 interleaving above, leaving behind the stale bit this ticket is about".
+ * That is recorded here rather than deleted because it was the deliberate #860
+ * decision and it is WRONG, for a reason worth not re-deriving:
+ *
+ *   - In #861's interleaving the other transport is in its PRE-ARM window. It
+ *     has not published IsEnabled yet (that store is the end of the window, not
+ *     the start), and Running is false. So `live` is false and the helper
+ *     clears -- byte-identical to the unconditional form, not a skip.
+ *   - On the ordinary stop path IsEnabled was just cleared and Streaming_Stop()
+ *     (run by Streaming_UpdateState() above) sets Running false synchronously,
+ *     so `live` is false there too. Again identical.
+ *   - The forms therefore differ in exactly ONE state: a START that has already
+ *     published IsEnabled=true while this stop was unwinding. That is #870, and
+ *     there the conditional form is the right answer -- clearing would report
+ *     "not measuring" over a live stream, which the helper's own comment names
+ *     as the worse error.
+ *
+ * So this is a behaviour change to STOP, as that paragraph said, but it is a
+ * strictly-correcting one and it belongs with #870 rather than #861: #861 is
+ * about a stop being LOST, this is about a lost stop DAMAGING the session that
+ * replaced it. #861 remains open and is not closed by this.
  *
  * NOT extended to SYST:STR:THRoughput / SYST:STR:WIFI:FINd?, which also end a
  * session with a bare IsEnabled = false + Streaming_UpdateState(). Those two
@@ -5226,7 +5288,13 @@ static bool SCPI_SdClaimStreamingLogTeardown(sd_card_manager_settings_t *sd) {
  * set OPER_MEASURING (its only setter is SCPI_StartStreamingClaimed), and they
  * save and restore the SD mode around the run themselves (RestoreSdMode).
  * Routing them through here would clear bits they never set and fight their
- * own restore. Their hazard is the stale channel mapping instead -- #868. */
+ * own restore. Their hazard is the stale channel mapping instead -- #868.
+ *
+ * #870 does change one thing for them, for the better: the encoder reset they
+ * used to get only as a side effect of somebody else's preceding stop is now
+ * done by Streaming_Start(), which they DO reach (they arm IsEnabled and then
+ * call Streaming_UpdateState()). A THRoughput run that followed a session
+ * without an intervening stop previously emitted no header at all. */
 static void SCPI_PerformStreamingStop(void) {
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -5424,17 +5492,33 @@ static void SCPI_PerformStreamingStop(void) {
         }
     }
 
-    /* Reset encoder state so the next session gets fresh headers.
+    /* #870: the encoder resets that used to be here have MOVED to
+     * Streaming_Start()'s enabled-session block, next to the test-pattern
+     * counter reset.
      *
-     * #824: the SD per-file header used to need clearing here too. It no
-     * longer does -- Streaming_Stop(), which Streaming_UpdateState() below
-     * runs, invalidates it, and the next session's encoder loop rebuilds it.
-     * Clearing it here as well would only re-state that in a second place. */
-    csv_ResetEncoder();
-    json_ResetEncoder();
+     * The MEASURED reason is ownership, not the race. This body was the ONLY
+     * caller of either reset, so a stop was responsible for the NEXT session's
+     * header -- and any path that begins a session without coming through here
+     * inherited whatever the last one left behind. SYST:STR:THRoughput and
+     * SYST:STR:WIFI:FINd? are exactly those paths (they poke IsEnabled and call
+     * Streaming_UpdateState directly), and on 3.7.2 a session following a
+     * THRoughput run emitted NO header at all. That is what the companion test
+     * asserts, and it needs no race.
+     *
+     * The ticket's own hazard -- a START arming between Streaming_UpdateState()
+     * above and this line, so the reset lands mid-stream -- is closed by the
+     * move as well, but it could NOT be reproduced on hardware: both blocking
+     * calls in this window interlock the racing START (recorded on #870).
+     *
+     * #824 (kept, still true): the SD per-file header is NOT cleared on either
+     * side -- Streaming_Stop(), which Streaming_UpdateState() above ran,
+     * invalidates it and the next session's encoder loop rebuilds it. */
 
-    // Clear STATus:OPERation condition register
-    SCPI_ClearOperBits(OPER_MEASURING | OPER_SD_LOGGING);
+    /* Clear STATus:OPERation -- but only if nothing is streaming, which is what
+     * SCPI_ClearStreamingOperBits tests. This was an unconditional
+     * SCPI_ClearOperBits; the header comment above records why the argument for
+     * keeping it that way does not hold (#870), rather than repeating it here. */
+    SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
 
     // Sync STATus:QUEStionable condition register (streaming health bits cleared in Streaming_Stop)
     SCPI_SyncQuesBits();
