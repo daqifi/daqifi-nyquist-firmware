@@ -555,6 +555,7 @@ void app_SystemInit() {
     // #347 / #350: init the shared SCPI response-buffer mutex before any
     // transport creates its SCPI context or dispatches a callback.
     SCPI_ResponseBuf_Init();
+    SCPI_StatusLock_Init();   /* #852: OPER/QUES status-register lock */
 
     // Initialize SPI coordination framework (currently disabled)
     // Note: Coordination disabled (SPI0_COORDINATION_ENABLED=0) - no runtime overhead

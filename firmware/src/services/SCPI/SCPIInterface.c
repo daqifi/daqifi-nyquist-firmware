@@ -341,36 +341,138 @@ static StreamingInterface SCPI_GetInterface(scpi_t* context) {
     return StreamingInterface_USB;
 }
 
+/* #852: the OPER/QUES condition registers are written by TWO tasks.
+ *
+ * Every writer below is a SCPI command callback, and the SAME command table
+ * serves both transports: app_USBDeviceTask (priority 7) and app_WifiTask
+ * (priority 2) each run SCPI_Input() on their own context. Device state
+ * (streaming, SD logging) is global, so the helpers deliberately fan out and
+ * write BOTH contexts from whichever task observed the change.
+ *
+ * libscpi implements that write as a read-modify-write --
+ * `SCPI_RegSetBits(ctx, n, bits)` is `SCPI_RegSet(ctx, n, SCPI_RegGet(ctx, n)
+ * | bits)` (ieee488.c:247/256) -- and SCPI_RegSet then cascades
+ * CONDition -> EVENt -> STB with a further RMW at each level. A preemption
+ * between the get and the set therefore loses the other task's bit, and
+ * STAT:OPER:COND? reports a state the device is not in, in either direction.
+ * The reachable direction on this scheduler is WiFi-interrupted-by-USB: the
+ * pri-2 WifiTask is mid-RMW when a USB SCPI command becomes runnable at
+ * pri 7, USB completes a whole RMW, and the WifiTask then stores its stale
+ * value over the top of it.
+ *
+ * A critical section is NOT the fix. SCPI_RegSet may call
+ * `writeControl(context, SCPI_CTRL_SRQ, ...)` (ieee488.c:180), a transport
+ * callback -- I/O under masked interrupts is worse than the race it removes.
+ * A mutex has neither problem: interrupts stay enabled, and FreeRTOS mutexes
+ * carry priority inheritance, so a pri-7 waiter lifts the pri-2 holder rather
+ * than inverting behind it.
+ *
+ * Legal at every call site: all fifteen trace up to one of eight SCPI
+ * command-table callbacks, so none is reachable from an ISR, from
+ * _Streaming_Deferred_Interrupt_Task, or from streaming_Task -- streaming.c
+ * has no call into the SCPI layer at all, it only exposes
+ * Streaming_GetQuesBits() for this file to poll.
+ *
+ * Held region: register accesses, plus the SD/streaming state reads inside
+ * SCPI_SyncOperSdBitLocked(). None of those takes this mutex or blocks, so
+ * there is no lock cycle and no unbounded hold. The QUES side evaluates its
+ * inputs before taking the lock (SCPI_ComputeQuesBits).
+ *
+ * NOT covered, deliberately: libscpi's own single-context writers that the
+ * command table reaches directly (*CLS, *ESE, *SRE, *ESR?, *OPC, the ENABle
+ * setters, and SCPI_ErrorPush from ~170 sites) still RMW their own context's
+ * STB and EVENt registers without this lock, so a fan-out cascade into the
+ * FOREIGN context's STB can still race one of those on that context's own
+ * task. That is a different hazard, far lower impact (SRQ is a no-op on both
+ * transports here -- UsbCdc.c SCPI_USB_Control / wifi_tcp_server.c
+ * SCPI_TCP_Control both just return OK), and closing it means editing the
+ * command table or libscpi itself. Tracked separately rather than smuggled
+ * in here.
+ */
+static StaticSemaphore_t gScpiStatusMutexStorage;
+static SemaphoreHandle_t gScpiStatusMutex = NULL;
+
+void SCPI_StatusLock_Init(void) {
+    /* Idempotent, and guarded exactly like SCPI_ResponseBuf_Init: the
+     * intended callers (app_SystemInit, then each transport's
+     * CreateSCPIContext) are sequential in practice, but the guard is free
+     * before the scheduler runs and catches a future concurrent caller. */
+    taskENTER_CRITICAL();
+    if (gScpiStatusMutex == NULL) {
+        gScpiStatusMutex = xSemaphoreCreateMutexStatic(&gScpiStatusMutexStorage);
+    }
+    taskEXIT_CRITICAL();
+}
+
+/* Returns true when the lock is held and must be given back.
+ *
+ * A NULL handle means SCPI_StatusLock_Init() has not run. That cannot happen
+ * for a real call site -- every one is a SCPI command callback, and no
+ * command can dispatch before CreateSCPIContext() built the context it
+ * dispatches on, which initialises the lock. The fall-through exists only for
+ * a future misuse, and it performs the update UNLOCKED rather than skipping
+ * it: an unprotected write may lose a bit (the pre-#852 behaviour), whereas a
+ * skipped write leaves the register permanently wrong -- the #691 class of
+ * bug, and strictly the worse of the two. */
+static bool SCPI_StatusLock_Take(void) {
+    if (gScpiStatusMutex == NULL) {
+        return false;
+    }
+    return (xSemaphoreTake(gScpiStatusMutex, portMAX_DELAY) == pdTRUE);
+}
+
+static void SCPI_StatusLock_Give(bool held) {
+    if (held) {
+        xSemaphoreGive(gScpiStatusMutex);
+    }
+}
+
 /**
  * Set or clear OPERC bits on both USB and WiFi SCPI contexts.
  * Device state (streaming, SD logging) is global, so both contexts
  * must reflect the same condition register values.
+ *
+ * The _Locked forms require the status lock to be held already; the plain
+ * forms take it. The mutex is NOT recursive -- never call a plain form from
+ * inside a locked region.
  */
-static void SCPI_SetOperBits(scpi_reg_val_t bits) {
+static void SCPI_SetOperBitsLocked(scpi_reg_val_t bits) {
     UsbCdcData_t* usb = UsbCdc_GetSettings();
     if (usb) SCPI_RegSetBits(&usb->scpiContext, SCPI_REG_OPERC, bits);
     wifi_tcp_server_context_t* wifi = wifi_manager_GetTcpServerContext();
     if (wifi) SCPI_RegSetBits(&wifi->client.scpiContext, SCPI_REG_OPERC, bits);
 }
 
-/** Clear OPERC bits on both USB and WiFi SCPI contexts. */
-static void SCPI_ClearOperBits(scpi_reg_val_t bits) {
+static void SCPI_SetOperBits(scpi_reg_val_t bits) {
+    const bool held = SCPI_StatusLock_Take();
+    SCPI_SetOperBitsLocked(bits);
+    SCPI_StatusLock_Give(held);
+}
+
+/** Clear OPERC bits on both USB and WiFi SCPI contexts. Lock held. */
+static void SCPI_ClearOperBitsLocked(scpi_reg_val_t bits) {
     UsbCdcData_t* usb = UsbCdc_GetSettings();
     if (usb) SCPI_RegClearBits(&usb->scpiContext, SCPI_REG_OPERC, bits);
     wifi_tcp_server_context_t* wifi = wifi_manager_GetTcpServerContext();
     if (wifi) SCPI_RegClearBits(&wifi->client.scpiContext, SCPI_REG_OPERC, bits);
 }
 
+/** Clear OPERC bits on both USB and WiFi SCPI contexts. Takes the lock. */
+static void SCPI_ClearOperBits(scpi_reg_val_t bits) {
+    const bool held = SCPI_StatusLock_Take();
+    SCPI_ClearOperBitsLocked(bits);
+    SCPI_StatusLock_Give(held);
+}
+
 /**
- * Sync QUESC bits from the streaming engine to both SCPI contexts.
- * Called from SCPI_StopStreaming (to clear) and can be called
- * periodically or on-demand to refresh from streaming state.
+ * Snapshot the device-global QUESC bits.
  *
- * Uses a single SCPI_RegSet (read-modify-write) instead of separate
- * clear+set to avoid a transient 0-state that would latch a spurious
- * 1→0 event in the QUES event register.
+ * Deliberately evaluated OUTSIDE the status lock: these are the only foreign
+ * calls on the QUES sync path, and hoisting them keeps the held region to
+ * register accesses. The value is a snapshot either way -- taking the lock
+ * first would not make it any fresher.
  */
-static void SCPI_SyncQuesBits(void) {
+static scpi_reg_val_t SCPI_ComputeQuesBits(void) {
     uint32_t bits = Streaming_GetQuesBits();
     // The analog-limit bit (#670) is derived from the comparator latch state
     // rather than stored in gQuesBits: the trip ISR only touches its own latch,
@@ -385,6 +487,24 @@ static void SCPI_SyncQuesBits(void) {
      * already means 'this measurement is suspect', and it is queryable at any
      * time with STAT:QUES:COND?. */
     if (Streaming_IsClipping()) { bits |= QUES_VOLT_CLIPPED; }
+    /* Every QUES_* bit is <= bit 14, so the narrowing to scpi_reg_val_t
+     * (uint16_t) cannot drop one. */
+    return (scpi_reg_val_t)bits;
+}
+
+/**
+ * Sync QUESC bits from the streaming engine to both SCPI contexts.
+ * Called from SCPI_StopStreaming (to clear) and can be called
+ * periodically or on-demand to refresh from streaming state.
+ *
+ * Uses a single SCPI_RegSet (read-modify-write) instead of separate
+ * clear+set to avoid a transient 0-state that would latch a spurious
+ * 1->0 event in the QUES event register.
+ *
+ * Requires the status lock to be held (#852) -- that RMW is exactly the one
+ * the lock exists to serialise.
+ */
+static void SCPI_SyncQuesBitsLocked(scpi_reg_val_t bits) {
     UsbCdcData_t* usb = UsbCdc_GetSettings();
     wifi_tcp_server_context_t* wifi = wifi_manager_GetTcpServerContext();
     // Replace streaming-related QUES bits in a single write to avoid
@@ -399,6 +519,14 @@ static void SCPI_SyncQuesBits(void) {
         val = (val & ~QUES_ALL_BITS) | bits;
         SCPI_RegSet(&wifi->client.scpiContext, SCPI_REG_QUESC, val);
     }
+}
+
+/** Compute the QUESC bits and publish them to both contexts under the lock. */
+static void SCPI_SyncQuesBits(void) {
+    const scpi_reg_val_t bits = SCPI_ComputeQuesBits();
+    const bool held = SCPI_StatusLock_Take();
+    SCPI_SyncQuesBitsLocked(bits);
+    SCPI_StatusLock_Give(held);
 }
 
 /**
@@ -3211,8 +3339,14 @@ static scpi_result_t SCPI_GetLossGrace(scpi_t * context) {
  * The CONDition register — which is what this fixes and what the companion
  * test asserts — does reflect it. (An earlier revision of this comment
  * claimed the 1->0 would latch; that was wrong, and Qodo caught it.)
+ *
+ * #852: requires the status lock to be held. Its two callers are the OPER
+ * query wrappers below, and they hold it across this sync AND their own read
+ * of the register, so the value a client is handed is the one this sync just
+ * wrote rather than one the other transport overwrote in between. The SD /
+ * streaming predicates it evaluates do not take this mutex and do not block.
  */
-static void SCPI_SyncOperSdBit(void) {
+static void SCPI_SyncOperSdBitLocked(void) {
     const sd_card_manager_settings_t* sd =
         (const sd_card_manager_settings_t*)BoardRunTimeConfig_Get(
             BOARDRUNTIME_SD_CARD_SETTINGS);
@@ -3258,9 +3392,9 @@ static void SCPI_SyncOperSdBit(void) {
                          !sd_card_manager_StartupDirFull() &&
                          !sd_card_manager_StartupDiskFull();
     if (logging) {
-        SCPI_SetOperBits(OPER_SD_LOGGING);
+        SCPI_SetOperBitsLocked(OPER_SD_LOGGING);
     } else {
-        SCPI_ClearOperBits(OPER_SD_LOGGING);
+        SCPI_ClearOperBitsLocked(OPER_SD_LOGGING);
     }
 
     /* #783: clear the finalising bit once the manager actually reaches idle.
@@ -3269,23 +3403,62 @@ static void SCPI_SyncOperSdBit(void) {
      * the bit drop by itself the moment the drain completes. Set in one place
      * (the stop path, on expiry), cleared in one place (here, on idle). */
     if (sd_card_manager_IsIdle()) {
-        SCPI_ClearOperBits(OPER_SD_FINALIZING);
+        SCPI_ClearOperBitsLocked(OPER_SD_FINALIZING);
     }
 }
 
+/* #852: the four STATus query wrappers below hold the status lock across the
+ * sync AND the register access, then format the reply outside it.
+ *
+ * The sync has to be inside for the obvious reason -- it is a fan-out RMW of
+ * both contexts. The read has to be inside it too, for two less obvious ones:
+ *
+ *   - CONDition: without the lock, the other transport can rewrite the
+ *     register between this task's sync and this task's read, so the client
+ *     is handed a value its own query did not produce.
+ *   - EVENt: libscpi's SCPI_StatusOperationEventQ / ...QuestionableEventQ
+ *     (minimal.c:171/119) are themselves a read-then-clear of the event
+ *     register, and the fan-out cascade CONDition -> EVENt writes that same
+ *     register on the foreign context. Interleaving the two drops a latched
+ *     event or resurrects a cleared one.
+ *
+ * The read-and-clear is spelled out here rather than delegated to libscpi
+ * because libscpi emits the RESULT between its read and its clear, and
+ * SCPI_ResultInt32 reaches the transport write callback. Holding a mutex
+ * across a transport write would let one transport's back-pressure stall the
+ * other's status queries. Value-for-value identical to the libscpi original;
+ * only the ordering of the (lock-free) result write moves.
+ */
 static scpi_result_t SCPI_OperConditionQ(scpi_t * context) {
-    SCPI_SyncOperSdBit();
-    return SCPI_StatusOperationConditionQ(context);
+    scpi_reg_val_t val;
+    const bool held = SCPI_StatusLock_Take();
+    SCPI_SyncOperSdBitLocked();
+    val = SCPI_RegGet(context, SCPI_REG_OPERC);
+    SCPI_StatusLock_Give(held);
+    SCPI_ResultInt32(context, (int32_t)val);
+    return SCPI_RES_OK;
 }
 
 static scpi_result_t SCPI_OperEventQ(scpi_t * context) {
-    SCPI_SyncOperSdBit();
-    return SCPI_StatusOperationEventQ(context);
+    scpi_reg_val_t val;
+    const bool held = SCPI_StatusLock_Take();
+    SCPI_SyncOperSdBitLocked();
+    val = SCPI_RegGet(context, SCPI_REG_OPER);
+    SCPI_RegSet(context, SCPI_REG_OPER, 0);
+    SCPI_StatusLock_Give(held);
+    SCPI_ResultInt32(context, (int32_t)val);
+    return SCPI_RES_OK;
 }
 
 static scpi_result_t SCPI_QuesConditionQ(scpi_t * context) {
-    SCPI_SyncQuesBits();
-    return SCPI_StatusQuestionableConditionQ(context);
+    const scpi_reg_val_t bits = SCPI_ComputeQuesBits();
+    scpi_reg_val_t val;
+    const bool held = SCPI_StatusLock_Take();
+    SCPI_SyncQuesBitsLocked(bits);
+    val = SCPI_RegGet(context, SCPI_REG_QUESC);
+    SCPI_StatusLock_Give(held);
+    SCPI_ResultInt32(context, (int32_t)val);
+    return SCPI_RES_OK;
 }
 
 /**
@@ -3293,8 +3466,15 @@ static scpi_result_t SCPI_QuesConditionQ(scpi_t * context) {
  * bits before reading (and clearing) the event register.
  */
 static scpi_result_t SCPI_QuesEventQ(scpi_t * context) {
-    SCPI_SyncQuesBits();
-    return SCPI_StatusQuestionableEventQ(context);
+    const scpi_reg_val_t bits = SCPI_ComputeQuesBits();
+    scpi_reg_val_t val;
+    const bool held = SCPI_StatusLock_Take();
+    SCPI_SyncQuesBitsLocked(bits);
+    val = SCPI_RegGet(context, SCPI_REG_QUES);
+    SCPI_RegSet(context, SCPI_REG_QUES, 0);
+    SCPI_StatusLock_Give(held);
+    SCPI_ResultInt32(context, (int32_t)val);
+    return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
@@ -7418,6 +7598,7 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
     // Call it again here — it's idempotent — so the shared response-buffer
     // mutex is guaranteed to exist before any callback could dispatch.
     SCPI_ResponseBuf_Init();
+    SCPI_StatusLock_Init();   /* #852 */
 
     // Create a context
     scpi_t daqifiScpiContext;
