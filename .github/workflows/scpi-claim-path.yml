@@ -15,12 +15,25 @@ name: scpi-claim-path
 # not exist and report a false negative (test-suite #246).
 #
 # So the property is checked here, at its source, for no bench time.
+#
+# `streaming.*` is in the trigger because the claim primitive itself
+# (Streaming_BeginConfigChange / EndConfigChange) lives there, so a refactor
+# that MOVED the helper or a setter out of the SCPI sources would otherwise
+# land without this gate running at all.
+#
+# Being precise about what that does NOT buy: the checker reads
+# SCPIInterface.c and verifies the helper CALLS those two functions. It does
+# not inspect their implementations, so a Begin that returned OK without
+# taking a real exclusion would still pass -- triggering is necessary for that
+# case, not sufficient. Closing it needs a separate assertion about
+# streaming.c; tracked in #864.
 
 on:
   pull_request:
     branches: [main]
     paths:
       - 'firmware/src/services/SCPI/**'
+      - 'firmware/src/services/streaming.*'
       - 'tools/lint/scpi_claim_path.py'
       - 'tools/lint/scpi_wiki_sync.py'
       - '.github/workflows/scpi-claim-path.yml'
@@ -28,6 +41,7 @@ on:
     branches: [main]
     paths:
       - 'firmware/src/services/SCPI/**'
+      - 'firmware/src/services/streaming.*'
       - 'tools/lint/scpi_claim_path.py'
       - 'tools/lint/scpi_wiki_sync.py'
       - '.github/workflows/scpi-claim-path.yml'
