@@ -5249,11 +5249,25 @@ static void SCPI_PerformStreamingStop(void) {
      * instead: the latch is set only by the STREAMING arm, so a benchmark's
      * WRITE is no longer mistaken for a session's.
      *
-     * It cannot over-narrow a real stop. The latch is set at the streaming arm
-     * and cleared by a PLAIN arm or by a mode -> NONE that goes THROUGH
-     * sd_UpdateSettingsImpl (sd_card_manager.c:3603-3610), and #854 refuses a
-     * benchmark while a stream is live, so it is true for the whole of any
-     * session this body is called to end.
+     * IT CAN OVER-NARROW, in one exotic interleaving, and an earlier revision
+     * of this comment claimed it could not (audit round 6). Normally the latch
+     * is set at the streaming arm, cleared by a PLAIN arm or by a mode -> NONE
+     * that goes THROUGH sd_UpdateSettingsImpl (sd_card_manager.c:3603-3610),
+     * and #854 keeps a benchmark out for the whole session -- so it is true
+     * for the whole of any session this body is called to end. But #854 tests
+     * IsEnabled/Running, which START publishes AFTER it arms SD: a benchmark
+     * landing inside that window passes the test, arms PLAIN, and clears the
+     * latch under a session that then goes live. A later stop reads false and
+     * skips the teardown, leaving mode = WRITE and the file open.
+     *
+     * That session is already broken -- the stream and the benchmark are
+     * sharing one file -- and main is not better, it is differently wrong: with
+     * no latch term at all, main's stop tears down whichever WRITE it finds,
+     * which in that same interleaving is the benchmark's. The one thing main
+     * does do is leave mode = NONE, so SD commands work again afterwards. Both
+     * are #871, whose ownership interlock is the only thing that distinguishes
+     * these cases; the latch cannot, because the benchmark clears it before
+     * this body can read it.
      *
      * It CAN be stale-true, though, and an earlier revision of this comment
      * said "cleared only by ... mode -> NONE" without that qualifier, which is
