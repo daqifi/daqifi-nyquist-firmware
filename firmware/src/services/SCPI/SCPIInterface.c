@@ -3962,6 +3962,14 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     // Build channel mapping for compact sample pool (#177).
     // Must happen before pool partitioning (needs channel count for element sizing).
     Streaming_BuildChannelMapping(pBoardConfig, (const AInRuntimeArray*)pRuntimeAInChannels);
+    /* #846: the enabled-channel set this mapping -- and, further down, the
+     * sample-pool partition sized from its count -- was built from. Read back
+     * from the mapping itself, NOT recomputed here: a recompute samples the
+     * runtime config a second time, and a preemption in between would capture
+     * the NEW set as this mapping's provenance and defeat the check below.
+     * Re-checked against the live config in the critical section that
+     * publishes IsEnabled. */
+    const uint64_t mappingSelAtBuild = Streaming_GetChannelMappingSelection();
 
     // Check if DIO is globally enabled
     bool *pDIOGlobalEnable = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
@@ -4744,14 +4752,17 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
      * resulting asymmetry is the correct direction (benchmark turned OFF inside
      * the window means an uncapped rate now faces the real cap).
      *
-     * SCOPE -- this closes the RATE hazard from START's side, and not more
-     * than that. Two neighbours remain, both tracked, and neither is a reason
-     * to read the section below as making the window safe:
-     *   - A CAP-NEUTRAL change still gets through: swapping AIN0 for AIN1 keeps
-     *     the channel count, so the recomputed cap matches and the start is
-     *     admitted while gChannelMapping (built ~500 lines up) still describes
-     *     the old set. That mislabels CSV columns and needs a mapping
-     *     fingerprint rather than a cap comparison -- #846.
+     * SCOPE -- this closes the RATE hazard from START's side. Two more hazards
+     * share the same window; the first is closed just below, the second is not
+     * and is tracked separately, so do not read this section on its own as
+     * making the window safe:
+     *   - A CAP-NEUTRAL change no longer gets through: swapping AIN0 for AIN1
+     *     keeps the channel count, so the recomputed cap matches and the rate
+     *     check below is happy, while gChannelMapping (built ~500 lines up)
+     *     still describes the old set -- CSV columns named from the live
+     *     config, rows read through the stale mapping. That is caught by the
+     *     separate mapping-selection comparison below (#846), which is a
+     *     fingerprint test rather than a cap comparison.
      *   - The SETTER side is the same window inverted: a cap-input setter that
      *     has read the flags as idle can be PREEMPTED by a START on the other
      *     transport and store afterwards, onto a session this code just armed.
@@ -4763,7 +4774,9 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     bool ifaceMoved = false;
     bool inputsGone = false;
     bool cfgChanging = false;
+    bool mappingMoved = false;
     uint32_t revalidatedMax = 0;
+    uint64_t mappingSelNow = 0;
     /* Captured INSIDE the section so the refusal log names the value that
      * actually triggered the decision. Re-reading it for the message after
      * taskEXIT_CRITICAL can print a THIRD interface -- whatever a later
@@ -4806,6 +4819,15 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         if (totNow == 0u && !dioNow) {
             inputsGone = true;
         }
+        /* #846: the live enabled-channel set, to compare against the one the
+         * mapping recorded. Same shape and cost as the walk immediately above
+         * -- a bounded integer scan of the channel array, no locks, no logging,
+         * no waits -- so it does not change what this section is allowed to be.
+         * It has to be computed HERE rather than before taskENTER_CRITICAL for
+         * the same reason the cap recompute is: computing it outside would only
+         * shrink the window, not close it. */
+        mappingSelNow = Streaming_ComputeChannelSelection(
+                pBoardConfig, (const AInRuntimeArray*)pRuntimeAInChannels);
     }
     ifaceObserved = pRunTimeStreamConfig->ActiveInterface;
     if (cfgChanging || inputsGone) {
@@ -4821,6 +4843,26 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
          * than its 96 KB one, or SD on the 4 KB inactive circular buffer, at a
          * rate the cap admitted for the real partition. */
         ifaceMoved = true;
+    } else if (mappingSelNow != mappingSelAtBuild) {
+        /* #846: the enabled-channel set moved after the mapping was built.
+         * Tested BEFORE the rate below because it is the stronger statement:
+         * the cap comparison only sees changes that move the NUMBER of
+         * channels, and the corruption this catches is worst precisely when
+         * the number does not move (AIN0 swapped for AIN1 -- csv_encoder names
+         * the columns from the live config at csv_encoder.c:321/:596 and reads
+         * the values through the stale mapping at :381, so the header says one
+         * channel and the rows carry another with every loss counter clean).
+         *
+         * Unconditional on benchmark mode, unlike the cap: BENCHmark buys a
+         * rate the cap would refuse, not a mapping that disagrees with the
+         * pool partition. A count change inside the window under BENCHmark
+         * would otherwise leave the sample-pool element stride sized for the
+         * old count, which this catches too.
+         *
+         * The refusal is deliberate: rebuilding the mapping here would leave
+         * it describing a set the already-carved sample pool was not
+         * partitioned for, which is worse than the stale mapping it replaces. */
+        mappingMoved = true;
     } else if (Streaming_GetBenchmarkMode() == BENCHMARK_OFF) {
         revalidatedMax = Streaming_ComputeMaxFreqForConfig();
         /* freq >= 1 was validated above, so the unsigned compare is exact and,
@@ -4828,7 +4870,8 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
          * INT32_MAX as negative. */
         capRevoked = ((uint32_t)freq > revalidatedMax);
     }
-    if (!capRevoked && !ifaceMoved && !inputsGone && !cfgChanging) {
+    if (!capRevoked && !ifaceMoved && !inputsGone && !cfgChanging &&
+        !mappingMoved) {
         /* #848: the rate becomes visible HERE, in the same section that
          * publishes IsEnabled, so no refusal path can leave a rejected rate
          * behind and no reader can see a rate the session is not running at.
@@ -4889,6 +4932,31 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
               (int)ifaceForStart, (int)ifaceObserved);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
+        return SCPI_RES_ERR;
+    }
+
+    if (mappingMoved) {
+        /* Same unwind as capRevoked below: this START published the interface,
+         * so it must put it back, and it must never leave a logging file open
+         * behind a start that did not happen (#690). */
+        if (sdLoggingRequested) {
+            SCPI_ReleaseSdLoggingArm(pSDCardSettings);
+        }
+        SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
+        SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
+                                     ifaceAtDetect, ifaceGenPinned,
+                                     ifaceSetsPinned);
+        /* SETTINGS_CONFLICT, not EXECUTION_ERROR: this is the same family as
+         * the inputsGone refusal above -- the enabled-channel set is now at
+         * odds with the session being armed -- and -200 is overloaded enough
+         * on this path (SD not ready, #589 SPI gate, #847) that a distinct
+         * code is worth having. The log line is what names WHICH guard fired.
+         *
+         * Kept under LOG_MESSAGE_SIZE (128, so 127 usable): the logger stores
+         * a fixed-size message and TRUNCATES past it, silently. 117 chars. */
+        LOG_E("STR:START refused (#846): the enabled-channel set changed during "
+              "start; the mapping and sample pool are stale. Retry.");
+        SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
         return SCPI_RES_ERR;
     }
 

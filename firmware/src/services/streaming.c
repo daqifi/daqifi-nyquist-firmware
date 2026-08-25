@@ -426,6 +426,52 @@ static const NanopbFlagsArray fields_sd_metadata = {
 // any reader sees it. On PIC32MZ single-core, no memory barriers are needed.
 static AInChannelMapping gChannelMapping = {0};
 
+/* #846: the set of board-config channel indices the mapping above was built
+ * from -- its provenance, recorded by Streaming_BuildChannelMapping.
+ *
+ * The ordering note above is true and is NOT an exclusion.  Nothing stops the
+ * runtime config from moving AFTER the build and BEFORE IsEnabled is
+ * published, and every "reject while streaming" guard reads
+ * `IsEnabled || Running` -- so for that whole window (multi-second on the SD
+ * path, which polls for the log file) a CONF:ADC:CHANnel from the OTHER SCPI
+ * transport is accepted.  #844 re-validates the frequency cap at the publish
+ * point, but a CAP-NEUTRAL swap -- AIN0 for AIN1 -- keeps the channel count
+ * and therefore the cap, so it passes that check while this mapping still
+ * describes the old set.  csv_encoder then names its columns from the live
+ * runtime config and reads the values through this mapping, i.e. the header
+ * names one channel and the rows carry another, with every loss counter
+ * clean.  SCPI_StartStreamingClaimed compares this against a live recompute
+ * inside the same critical section that publishes IsEnabled and refuses the
+ * start when they differ.
+ *
+ * A mask, not a hash: MAX_AIN_CHANNEL indices fit in 64 bits (asserted at the
+ * definition of Streaming_ComputeChannelSelection), so the comparison is
+ * exact and cannot alias.  Rebuilding the mapping in place at the publish
+ * point is deliberately NOT the fix -- the sample pool was already
+ * partitioned from the old mapping, so a rebuilt mapping without a
+ * re-partition is worse than a stale one.
+ *
+ * Concurrency: 64-bit, so BOTH the store and the read take a critical section
+ * -- CLAUDE.md's atomicity rule is categorical for 64-bit ("always need a
+ * critical section"), and a torn access here would compare half of one mask
+ * against half of another, deciding a refusal or an admission on a value that
+ * never existed.
+ *
+ * The narrower argument -- that tearing is unreachable because the only writer
+ * is Streaming_BuildChannelMapping, whose three callers (SYST:STR:START,
+ * SYST:STR:THRoughput, SYST:STR:WIFI:FINd) all run under the #850
+ * session-start claim, with reader == writer -- is true today.  It is not what
+ * this rests on: it is an invariant owned by another module, and one unclaimed
+ * caller added later would silently retire it.  Two instructions once per
+ * START is not a price worth arguing about, so pay it rather than depend on it
+ * (Qodo).
+ *
+ * Per #409 (.bss is not re-zeroed on an MCLR/IPE reset) the initializer is not
+ * load-bearing: the only reader reads it immediately after a build, and a
+ * hypothetical stale value would cause a spurious refusal, never a silent arm.
+ */
+static uint64_t gChannelMappingSelection = 0;
+
 // Encoder buffer — allocated from StreamingBufferPool, runtime-adjustable.
 // ENCODER_BUFFER_DEFAULT (8192) and ENCODER_BUFFER_MIN (1024) defined in
 // StreamingBufferPool.h. Benchmark: 8KB optimal for USB, 16KB helps SD.
@@ -571,38 +617,90 @@ static uint32_t Streaming_GenerateTestValue(uint32_t pattern, uint8_t channel,
 
 // --- Channel mapping API ---
 
+/* #846: one index bit per board-config channel slot.  The mask is the exact
+ * selection, not a digest, so widening MAX_AIN_CHANNEL past 64 must widen
+ * this type -- fail the build rather than silently drop the top slots. */
+_Static_assert(MAX_AIN_CHANNEL <= 64,
+        "#846: channel-selection mask is 64-bit; widen it if MAX_AIN_CHANNEL grows");
+
+uint64_t Streaming_ComputeChannelSelection(const tBoardConfig* pBoardConfig,
+                                           const AInRuntimeArray* pRuntimeChannels) {
+    uint64_t selection = 0;
+
+    size_t count = pBoardConfig->AInChannels.Size < pRuntimeChannels->Size
+                 ? pBoardConfig->AInChannels.Size : pRuntimeChannels->Size;
+
+    /* The `packed` guard is not bookkeeping here -- it makes the mask record
+     * what the mapping actually CONSUMED.  Past MAX_AIN_PUBLIC_CHANNELS the
+     * build stops packing, so channels beyond it are not part of the
+     * mapping's provenance and must not be part of its fingerprint either. */
+    uint8_t packed = 0;
+    for (size_t i = 0; i < count && packed < MAX_AIN_PUBLIC_CHANNELS; i++) {
+        if (pRuntimeChannels->Data[i].IsEnabled &&
+            AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[i])) {
+            selection |= ((uint64_t)1u << i);
+            packed++;
+        }
+    }
+    return selection;
+}
+
 uint8_t Streaming_BuildChannelMapping(const tBoardConfig* pBoardConfig,
                                        const AInRuntimeArray* pRuntimeChannels) {
     memset(&gChannelMapping, 0, sizeof(gChannelMapping));
+
+    /* #846: build FROM the selection mask instead of re-testing the
+     * enable/public predicate here.  One predicate in one place is what makes
+     * the recorded fingerprint provably describe THIS mapping -- a second
+     * copy of the predicate could drift from it and leave the START guard
+     * quietly over- or under-sensitive.  The walk below is the same bounded
+     * walk as before: the mask has a bit set only for i < count, and at most
+     * MAX_AIN_PUBLIC_CHANNELS bits set, so it visits exactly the slots the
+     * old inline predicate did, in the same ascending order. */
+    const uint64_t selection =
+            Streaming_ComputeChannelSelection(pBoardConfig, pRuntimeChannels);
 
     size_t count = pBoardConfig->AInChannels.Size < pRuntimeChannels->Size
                  ? pBoardConfig->AInChannels.Size : pRuntimeChannels->Size;
 
     uint8_t packed = 0;
     for (size_t i = 0; i < count && packed < MAX_AIN_PUBLIC_CHANNELS; i++) {
-        if (pRuntimeChannels->Data[i].IsEnabled &&
-            AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[i])) {
-            const AInChannel* ch = &pBoardConfig->AInChannels.Data[i];
-            gChannelMapping.channelIds[packed] = ch->DaqifiAdcChannelId;
-            gChannelMapping.configIndices[packed] = (uint8_t)i;
-            // #541 D-A: T1 (dedicated-module) channels are read directly
-            // from their ADC result registers in the deferred task, gated
-            // on per-input ARDY.  Record the hardware channel number here
-            // so the hot loop doesn't have to chase board-config pointers.
-            if (ch->Type == AIn_MC12bADC && ch->Config.MC12b.ChannelType == 1) {
-                gChannelMapping.t1DirectMask |= (uint16_t)(1U << packed);
-                gChannelMapping.hwChannelIds[packed] =
-                        (uint8_t)ch->Config.MC12b.ChannelId;
-            }
-            packed++;
+        if ((selection & ((uint64_t)1u << i)) == 0u) {
+            continue;
         }
+        const AInChannel* ch = &pBoardConfig->AInChannels.Data[i];
+        gChannelMapping.channelIds[packed] = ch->DaqifiAdcChannelId;
+        gChannelMapping.configIndices[packed] = (uint8_t)i;
+        // #541 D-A: T1 (dedicated-module) channels are read directly
+        // from their ADC result registers in the deferred task, gated
+        // on per-input ARDY.  Record the hardware channel number here
+        // so the hot loop doesn't have to chase board-config pointers.
+        if (ch->Type == AIn_MC12bADC && ch->Config.MC12b.ChannelType == 1) {
+            gChannelMapping.t1DirectMask |= (uint16_t)(1U << packed);
+            gChannelMapping.hwChannelIds[packed] =
+                    (uint8_t)ch->Config.MC12b.ChannelId;
+        }
+        packed++;
     }
     gChannelMapping.count = packed;
+    /* Published last, after the mapping it describes is complete; 64-bit, so
+     * under a critical section -- see the definition's concurrency note. */
+    taskENTER_CRITICAL();
+    gChannelMappingSelection = selection;
+    taskEXIT_CRITICAL();
     return packed;
 }
 
 const AInChannelMapping* Streaming_GetChannelMapping(void) {
     return &gChannelMapping;
+}
+
+uint64_t Streaming_GetChannelMappingSelection(void) {
+    uint64_t selection;
+    taskENTER_CRITICAL();
+    selection = gChannelMappingSelection;
+    taskEXIT_CRITICAL();
+    return selection;
 }
 
 void Streaming_CountActiveChannels(uint16_t* out_type1Count,
