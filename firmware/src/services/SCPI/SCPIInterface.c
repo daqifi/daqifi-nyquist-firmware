@@ -5051,15 +5051,50 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
  * The critical section makes the composite a snapshot rather than three
  * independent reads; the latch is written under one in the SD manager
  * (sd_card_manager.c:3602-3611), and SCPIStorageSD.c:496 reads the benchmark's
- * ownership flag the same way. Nothing in here can block. */
+ * ownership flag the same way. Nothing in here can block.
+ *
+ * The predicate lives in ONE place and gets two wrappers -- a plain read and a
+ * check-and-claim -- rather than being written out at each site. Writing it
+ * twice is what this whole ticket is about. */
+static inline bool SdWriteIsStreamingLogUnlocked(
+        const sd_card_manager_settings_t *sd) {
+    return (sd != NULL) && sd->enable &&
+           (sd->mode == SD_CARD_MANAGER_MODE_WRITE) &&
+           sd_card_manager_WriteIsStreamingLog();
+}
+
 static bool SCPI_SdWriteIsStreamingLog(const sd_card_manager_settings_t *sd) {
     bool armed;
     taskENTER_CRITICAL();
-    armed = (sd != NULL) && sd->enable &&
-            (sd->mode == SD_CARD_MANAGER_MODE_WRITE) &&
-            sd_card_manager_WriteIsStreamingLog();
+    armed = SdWriteIsStreamingLogUnlocked(sd);
     taskEXIT_CRITICAL();
     return armed;
+}
+
+/* Check AND take, atomically: if the armed WRITE is still a streaming log,
+ * claim it by setting mode = NONE in the same critical section.
+ *
+ * Two of them, not one, because the store IS the claim -- mode = NONE is what
+ * takes the write away from whoever holds it. Testing and storing separately
+ * leaves a window in which a benchmark arms between the two and has its brand
+ * new session cancelled by a decision made before it existed: the same defect
+ * as the audit's, just narrower, and narrower is not closed. Same reasoning
+ * and the same idiom as SCPIStorageSD.c:496, which checks the benchmark's
+ * ownership flag and writes the filename under one critical section for
+ * exactly this reason.
+ *
+ * `sd_card_manager_UpdateSettings()` is deliberately left OUTSIDE -- it is not
+ * O(1) and takes its own locks, and the claim is already made by the time it
+ * runs. */
+static bool SCPI_SdClaimStreamingLogTeardown(sd_card_manager_settings_t *sd) {
+    bool mine;
+    taskENTER_CRITICAL();
+    mine = SdWriteIsStreamingLogUnlocked(sd);
+    if (mine) {
+        sd->mode = SD_CARD_MANAGER_MODE_NONE;
+    }
+    taskEXIT_CRITICAL();
+    return mine;
 }
 
 /* #860: the complete streaming teardown, shared by BOTH spellings of stop.
@@ -5192,7 +5227,9 @@ static void SCPI_PerformStreamingStop(void) {
      * function and a fresh read here must say yes -- see the comment at the
      * snapshot for why one answer alone is wrong in either direction.
      * `sd_card_manager_WriteIsStreamingLog()` is the term that makes sharing
-     * this body safe at all.
+     * this body safe at all. The second read is a check-and-CLAIM: mode = NONE
+     * is what takes the write away from whoever holds it, so testing and
+     * storing separately would leave the same race one instruction wide.
      *
      * `enable && mode == WRITE` does not mean "a streaming log is open" -- it
      * means "somebody armed the shared WRITE". There are exactly two arms in
@@ -5220,9 +5257,9 @@ static void SCPI_PerformStreamingStop(void) {
      * SYST:STOR:SD:SPACe? answers straight after `START 0` on a logging
      * session, which can only happen if this block still fires. */
     if (ownedSdLoggingSession &&
-        SCPI_SdWriteIsStreamingLog(pSDCardRuntimeConfig)) {
-        // Set mode to NONE and update to trigger file close (DEINIT → UNMOUNT → close)
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        SCPI_SdClaimStreamingLogTeardown(pSDCardRuntimeConfig)) {
+        // mode is already NONE -- the claim above set it. Update to trigger
+        // the file close (DEINIT → UNMOUNT → close).
         sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
         // Wait for SD card manager to drain buffer, close file, and go idle
         {
