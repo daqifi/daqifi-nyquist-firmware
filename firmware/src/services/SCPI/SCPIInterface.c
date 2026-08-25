@@ -5093,7 +5093,16 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
             !SCPI_ParamToInt32(context, &freqParam, &freq)) {
             LOG_E("Streaming rejected: malformed frequency argument "
                   "(expected an integer Hz, e.g. SYST:STR:START 5000)");
-            SCPI_ErrorPush(context, SCPI_ERROR_DATA_TYPE_ERROR);
+            /* #880: only push if the layer below did NOT already. It used to
+             * push unconditionally, which was right while SCPI_ParamToInt32
+             * could fail SILENTLY -- but a partly-consumed decimal token now
+             * pushes -104 itself, so `SYST:STR:START 1.5` queued -104 TWICE
+             * for one bad parameter and filled the 17-entry queue in 9
+             * commands. Same guard `SCPI_OptionalParamInt32` already uses
+             * (SCPIInterface.h). */
+            if (!SCPI_ParamErrorOccurred(context)) {
+                SCPI_ErrorPush(context, SCPI_ERROR_DATA_TYPE_ERROR);
+            }
             return SCPI_RES_ERR;
         }
     }

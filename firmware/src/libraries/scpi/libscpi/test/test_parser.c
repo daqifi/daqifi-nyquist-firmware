@@ -538,7 +538,10 @@ static void testIEEE4882(void) {
 static void testSCPI_ParamInt32(void) {
     TEST_ParamInt32("10", TRUE, 10, TRUE, 0);
     TEST_ParamInt32("", FALSE, 0, FALSE, 0);
-    TEST_ParamInt32("10.5", TRUE, 10, TRUE, 0); /* TODO: should be FALSE, -104 */
+    /* DAQiFi #880: upstream's own TODO here read "should be FALSE, -104",
+     * and that is now what the parser does -- a decimal token an integer
+     * conversion only partly consumed is rejected instead of truncated. */
+    TEST_ParamInt32("10.5", TRUE, 0, FALSE, SCPI_ERROR_DATA_TYPE_ERROR);
     TEST_ParamInt32("#B101010", TRUE, 42, TRUE, 0);
     TEST_ParamInt32("#H101010", TRUE, 1052688, TRUE, 0);
     TEST_ParamInt32("#Q10", TRUE, 8, TRUE, 0);
@@ -577,7 +580,10 @@ static void testSCPI_ParamInt32(void) {
 static void testSCPI_ParamUInt32(void) {
     TEST_ParamUInt32("10", TRUE, 10, TRUE, 0);
     TEST_ParamUInt32("", FALSE, 0, FALSE, 0);
-    TEST_ParamUInt32("10.5", TRUE, 10, TRUE, 0); /* TODO: should be FALSE, -104 */
+    /* DAQiFi #880: upstream's own TODO here read "should be FALSE, -104",
+     * and that is now what the parser does -- a decimal token an integer
+     * conversion only partly consumed is rejected instead of truncated. */
+    TEST_ParamUInt32("10.5", TRUE, 0, FALSE, SCPI_ERROR_DATA_TYPE_ERROR);
     TEST_ParamUInt32("#B101010", TRUE, 42, TRUE, 0);
     TEST_ParamUInt32("#H101010", TRUE, 1052688, TRUE, 0);
     TEST_ParamUInt32("#Q10", TRUE, 8, TRUE, 0);
@@ -616,7 +622,10 @@ static void testSCPI_ParamUInt32(void) {
 static void testSCPI_ParamInt64(void) {
     TEST_ParamInt64("10", TRUE, 10, TRUE, 0);
     TEST_ParamInt64("", FALSE, 0, FALSE, 0);
-    TEST_ParamInt64("10.5", TRUE, 10, TRUE, 0); /* TODO: should be FALSE, -104 */
+    /* DAQiFi #880: upstream's own TODO here read "should be FALSE, -104",
+     * and that is now what the parser does -- a decimal token an integer
+     * conversion only partly consumed is rejected instead of truncated. */
+    TEST_ParamInt64("10.5", TRUE, 0, FALSE, SCPI_ERROR_DATA_TYPE_ERROR);
     TEST_ParamInt64("#B101010", TRUE, 42, TRUE, 0);
     TEST_ParamInt64("#H101010", TRUE, 1052688, TRUE, 0);
     TEST_ParamInt64("#Q10", TRUE, 8, TRUE, 0);
@@ -657,7 +666,10 @@ static void testSCPI_ParamInt64(void) {
 static void testSCPI_ParamUInt64(void) {
     TEST_ParamUInt64("10", TRUE, 10, TRUE, 0);
     TEST_ParamUInt64("", FALSE, 0, FALSE, 0);
-    TEST_ParamUInt64("10.5", TRUE, 10, TRUE, 0); /* TODO: should be FALSE, -104 */
+    /* DAQiFi #880: upstream's own TODO here read "should be FALSE, -104",
+     * and that is now what the parser does -- a decimal token an integer
+     * conversion only partly consumed is rejected instead of truncated. */
+    TEST_ParamUInt64("10.5", TRUE, 0, FALSE, SCPI_ERROR_DATA_TYPE_ERROR);
     TEST_ParamUInt64("#B101010", TRUE, 42, TRUE, 0);
     TEST_ParamUInt64("#H101010", TRUE, 1052688, TRUE, 0);
     TEST_ParamUInt64("#Q10", TRUE, 8, TRUE, 0);
