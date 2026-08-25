@@ -451,14 +451,24 @@ static AInChannelMapping gChannelMapping = {0};
  * partitioned from the old mapping, so a rebuilt mapping without a
  * re-partition is worse than a stale one.
  *
- * Concurrency: written only by Streaming_BuildChannelMapping, whose three
- * callers (SYST:STR:START, SYST:STR:THRoughput, SYST:STR:WIFI:FINd) all run
- * under the #850 session-start claim, and read back by that same task.  One
- * writer at a time, reader == writer, so no torn 64-bit access is reachable
- * and no critical section is needed on the store.  Per #409 (.bss is not
- * re-zeroed on an MCLR/IPE reset) the initializer is not load-bearing: the
- * only reader reads it immediately after a build, and a hypothetical stale
- * value would cause a spurious refusal, never a silent arm.
+ * Concurrency: 64-bit, so BOTH the store and the read take a critical section
+ * -- CLAUDE.md's atomicity rule is categorical for 64-bit ("always need a
+ * critical section"), and a torn access here would compare half of one mask
+ * against half of another, deciding a refusal or an admission on a value that
+ * never existed.
+ *
+ * The narrower argument -- that tearing is unreachable because the only writer
+ * is Streaming_BuildChannelMapping, whose three callers (SYST:STR:START,
+ * SYST:STR:THRoughput, SYST:STR:WIFI:FINd) all run under the #850
+ * session-start claim, with reader == writer -- is true today.  It is not what
+ * this rests on: it is an invariant owned by another module, and one unclaimed
+ * caller added later would silently retire it.  Two instructions once per
+ * START is not a price worth arguing about, so pay it rather than depend on it
+ * (Qodo).
+ *
+ * Per #409 (.bss is not re-zeroed on an MCLR/IPE reset) the initializer is not
+ * load-bearing: the only reader reads it immediately after a build, and a
+ * hypothetical stale value would cause a spurious refusal, never a silent arm.
  */
 static uint64_t gChannelMappingSelection = 0;
 
@@ -673,8 +683,11 @@ uint8_t Streaming_BuildChannelMapping(const tBoardConfig* pBoardConfig,
         packed++;
     }
     gChannelMapping.count = packed;
-    /* Published last, after the mapping it describes is complete. */
+    /* Published last, after the mapping it describes is complete; 64-bit, so
+     * under a critical section -- see the definition's concurrency note. */
+    taskENTER_CRITICAL();
     gChannelMappingSelection = selection;
+    taskEXIT_CRITICAL();
     return packed;
 }
 
@@ -683,7 +696,11 @@ const AInChannelMapping* Streaming_GetChannelMapping(void) {
 }
 
 uint64_t Streaming_GetChannelMappingSelection(void) {
-    return gChannelMappingSelection;
+    uint64_t selection;
+    taskENTER_CRITICAL();
+    selection = gChannelMappingSelection;
+    taskEXIT_CRITICAL();
+    return selection;
 }
 
 void Streaming_CountActiveChannels(uint16_t* out_type1Count,

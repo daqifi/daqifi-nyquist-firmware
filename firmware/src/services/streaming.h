@@ -1214,6 +1214,9 @@ uint64_t Streaming_ComputeChannelSelection(const tBoardConfig* pBoardConfig,
  * provenance: recomputing samples the runtime config a second time, and a
  * preemption between the build and that recompute would record the NEW set
  * against the OLD mapping -- the very hazard this exists to catch, inverted.
+ *
+ * Takes a critical section (the value is 64-bit), so call it from task context
+ * -- which every caller is, being a SCPI handler. Not for ISR use.
  */
 uint64_t Streaming_GetChannelMappingSelection(void);
 
