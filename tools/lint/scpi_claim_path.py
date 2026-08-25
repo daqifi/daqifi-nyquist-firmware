@@ -71,7 +71,42 @@ _ROW_NULL = re.compile(r"\.pattern\s*=\s*NULL\b")
 CLAIM_HELPER = "SCPI_MemRunClaimed"
 CLAIM_BEGIN = "Streaming_BeginConfigChange"
 CLAIM_END = "Streaming_EndConfigChange"
-MEM_PREFIX = "SYSTem:MEMory:"
+# The namespace, as NODES rather than one spelling. libscpi gives each node
+# exactly two legal spellings -- the full node, or the node truncated at its
+# first lowercase letter (CLAUDE.md, "SCPI Abbreviation Rule"; the authority is
+# matchPattern in libscpi/src/utils.c). Each node is independently full or
+# short, so `SYSTem:MEMory:` has FOUR legal spellings and a registration may
+# use any of them.
+#
+# Matching only the full spelling meant an abbreviated row -- a legal command
+# libscpi accepts -- was not recognised as a memory setter and was never
+# examined, while the summary still reported having checked them all
+# (pre-merge audit on PR #863). All 14 current registrations use the full
+# form, so this is a convention the checker was relying on rather than a
+# constraint it could count on.
+MEM_NODES = ("SYSTem", "MEMory")
+
+
+def _node_spellings(node):
+    """The legal spellings of one SCPI node: full, and truncated at the first
+    lowercase letter. A node with no lowercase has exactly ONE spelling."""
+    short = node
+    for i, ch in enumerate(node):
+        if ch.islower():
+            short = node[:i]
+            break
+    return (node,) if short == node else (node, short)
+
+
+def _mem_prefixes():
+    """Every legal spelling of the `SYSTem:MEMory:` prefix."""
+    out = [""]
+    for node in MEM_NODES:
+        out = [p + sp + ":" for p in out for sp in _node_spellings(node)]
+    return tuple(sorted(set(out)))
+
+
+MEM_PREFIXES = _mem_prefixes()
 
 # The seven that existed when this checker was written. Used ONLY as a floor:
 # a new setter must also claim (it is discovered from the table, not from this
@@ -132,7 +167,7 @@ def mem_setters(registrations):
     session's partition, so they are deliberately outside the claim.
     """
     return [(p, cb) for p, cb in registrations
-            if p.startswith(MEM_PREFIX) and not p.endswith("?")]
+            if p.startswith(MEM_PREFIXES) and not p.endswith("?")]
 
 
 def parse_registrations(text):
@@ -324,6 +359,35 @@ static scpi_result_t decoy(scpi_t * c) {
         probs, _ = check(mention)
         _ck("a string mention is not accepted as a call",
             any("does not go through" in p for p in probs), True)
+
+        # (3) an ABBREVIATED registration is a legal command and must be
+        # examined. libscpi accepts each node full or truncated at its first
+        # lowercase letter, independently, so `SYSTem:MEMory:` has four legal
+        # spellings; matching only the full one meant an abbreviated setter was
+        # never checked while the summary claimed otherwise.
+        _ck("SYSTem spells full and short", _node_spellings("SYSTem"),
+            ("SYSTem", "SYST"))
+        _ck("an all-caps node has exactly ONE spelling",
+            _node_spellings("APPLY"), ("APPLY",))
+        _ck("all four prefix spellings are accepted", set(MEM_PREFIXES),
+            {"SYSTem:MEMory:", "SYST:MEMory:", "SYSTem:MEM:", "SYST:MEM:"})
+
+        abbrev = _GOOD.replace(
+            '{.pattern = "SYSTem:MEMory:WIFI:BUFfer", .callback = SCPI_SetMemWifiBuf,},',
+            '{.pattern = "SYST:MEM:FOO", .callback = SCPI_SetMemFoo,},'
+        ).replace(
+            'static scpi_result_t SCPI_SetMemWifiBuf(scpi_t * context) {\n'
+            '    return SCPI_MemRunClaimed(context, SCPI_SetMemWifiBufClaimed, "x");\n}',
+            'static scpi_result_t SCPI_SetMemFoo(scpi_t * context) {\n'
+            '    return SCPI_SetMemFooClaimed(context);\n}')
+        probs, n = check(abbrev)
+        _ck("an abbreviated registration is still examined", n, 2)
+        _ck("...and an unclaimed abbreviated setter is caught",
+            any("SYST:MEM:FOO" in p for p in probs), True)
+
+        # queries are still excluded whichever spelling they use
+        _ck("an abbreviated QUERY is not counted as a setter",
+            mem_setters([("SYST:MEM:FREE?", "SCPI_GetMemFree")]), [])
 
         # a row with a .pattern it cannot read is REPORTED, not skipped
         bad_row = _GOOD.replace(
