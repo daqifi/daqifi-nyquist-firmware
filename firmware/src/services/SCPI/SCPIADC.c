@@ -500,24 +500,29 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
 
         pRuntimeAInChannels->Data[index].IsDifferential = (param2 == 0);
     } else {
-        // Bounded by the ADC MODULE's channel count -- the same bound the
-        // sibling mask getter SCPI_ADCChanEnableGet uses, so the two agree on
-        // what a channel mask covers (16 on NQ1, 8 on NQ3).
+        // Bounded to the USER channels, variant-aware, exactly as the mask
+        // branch of SCPI_ADCChanEnableSet above does -- that command is the
+        // authority on what a channel mask addresses, and these two must not
+        // disagree.
         //
         // It used to run to BOARDDATA_AIN_LATEST_SIZE, which is
         // MAX_AIN_CHANNEL (48): more slots than the mask has bits, and more
-        // than the board has channels. Two defects came out of that (#875
-        // pre-merge audit): `1 << i` for i >= 32 is undefined in C -- on
-        // MIPS32 `sll` takes only the low five bits of the shift count, so
+        // than any board has user channels. Two defects came out of that
+        // (#875 pre-merge audit): `1 << i` for i >= 32 is undefined in C --
+        // on MIPS32 `sll` takes only the low five bits of the shift count, so
         // slots 32..47 aliased back onto bits 0..15 -- and the write reached
         // monitoring and nonexistent slots that no mask bit is supposed to
-        // address. The min() with 32 is kept as a hard guarantee about the
-        // shift, independent of what a future variant sets Size to.
-        size_t chanCount = (size_t) pBoardConfig->AInModules.Data[0].Size;
-        size_t maskable = (chanCount < 32u) ? chanCount : 32u;
+        // address. An intermediate revision bounded by
+        // `AInModules.Data[0].Size`, which is what the sibling
+        // SCPI_ADCChanEnableGet uses; that is 16 even on an NQ3, because
+        // Data[0] there is the MC12b MONITORING module and the AD7609 user
+        // channels are Data[1] (NQ3BoardConfig.c). The variant test below is
+        // the bound that is actually right on both boards, and being <= 16 it
+        // makes the shift safe by construction.
+        uint8_t maxUserChannel = (pBoardConfig->BoardVariant == 3) ? 7 : 15;
 
         size_t i = 0;
-        for (i = 0; i < maskable; ++i) {
+        for (i = 0; i <= (size_t) maxUserChannel; ++i) {
             // The mask is param1 -- the ONE argument this branch was given.
             // It read param2, which a failed optional parse leaves
             // uninitialized (ParamSignUInt32 does not write *value when it
@@ -569,15 +574,14 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
         uint32_t mask = 0;
         size_t i = 0;
 
-        // Same bound as SCPI_ADCChanSingleEndSet's mask branch and as the
-        // sibling SCPI_ADCChanEnableGet -- see the comment there. Reporting
-        // slots past the module's channel count set bits for channels the
-        // board does not have (every unused slot is zero-initialised, so
+        // Same variant-aware user-channel bound as SCPI_ADCChanSingleEndSet's
+        // mask branch -- see the comment there for why it is not the module
+        // size. Reporting slots past the user channels set bits for channels
+        // the board does not have (every unused slot is zero-initialised, so
         // IsDifferential reads false and the bit went UP), on top of the
         // undefined shift past bit 31.
-        size_t chanCount = (size_t) pBoardConfig->AInModules.Data[0].Size;
-        size_t maskable = (chanCount < 32u) ? chanCount : 32u;
-        for (i = 0; i < maskable; ++i) {
+        uint8_t maxUserChannel = (pBoardConfig->BoardVariant == 3) ? 7 : 15;
+        for (i = 0; i <= (size_t) maxUserChannel; ++i) {
             if (!pRuntimeAInChannels->Data[i].IsDifferential) {
                 mask |= (1u << i);
             }
