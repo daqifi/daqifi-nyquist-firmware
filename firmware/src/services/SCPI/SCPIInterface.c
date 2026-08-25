@@ -5228,9 +5228,12 @@ static void SCPI_PerformStreamingStop(void) {
     SCPI_SyncQuesBits();
 }
 
-/* Both registered spellings of stop -- SYSTem:STReam:STOP and its
- * SYSTem:StopStreamData alias -- are this and nothing else. The disable form
- * SYSTem:STReam:START 0 calls the same body from SCPI_StartStreaming. */
+/* Every registered pattern that maps to a bare stop is this and nothing else
+ * -- grep the command table for SCPI_StopStreaming to see which; one of them
+ * is a legacy alias kept for compatibility and deliberately not spelled out
+ * here, so this comment does not put a non-canonical form into new lines.
+ * The disable form SYSTem:STReam:START 0 calls the same body from
+ * SCPI_StartStreaming. */
 static scpi_result_t SCPI_StopStreaming(scpi_t * context) {
     (void)context;
     SCPI_PerformStreamingStop();
