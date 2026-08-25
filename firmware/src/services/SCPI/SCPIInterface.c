@@ -5044,13 +5044,13 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
  * ONE body, read atomically, called at both points that need the answer --
  * deliberately, in a PR whose entire subject is two copies of one question
  * drifting apart. `enable && mode == WRITE` alone does not say WHOSE write it
- * is: exactly two sites arm WRITE, SCPI_StartStreamingClaimed (:4655) and
- * SYST:STOR:SD:BENCHmark (SCPIStorageSD.c:1243), and the benchmark takes no
- * claim by design (#736). The #851 latch is what separates them.
+ * is: exactly two sites arm WRITE -- SCPI_StartStreamingClaimed()'s SD arm
+ * and SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark) -- and the benchmark
+ * takes no claim by design (#736). The #851 latch is what separates them.
  *
  * The critical section makes the composite a snapshot rather than three
  * independent reads; the latch is written under one in the SD manager
- * (sd_card_manager.c:3602-3611), and SCPIStorageSD.c:496 reads the benchmark's
+ * (sd_UpdateSettingsImpl), and SCPI_StorageSDLoggingSet reads the benchmark's
  * ownership flag the same way. Nothing in here can block.
  *
  * The predicate lives in ONE place and gets two wrappers -- a plain read and a
@@ -5079,7 +5079,7 @@ static bool SCPI_SdWriteIsStreamingLog(const sd_card_manager_settings_t *sd) {
  * leaves a window in which a benchmark arms between the two and has its brand
  * new session cancelled by a decision made before it existed: the same defect
  * as the audit's, just narrower, and narrower is not closed. Same reasoning
- * and the same idiom as SCPIStorageSD.c:496, which checks the benchmark's
+ * and the same idiom as SCPI_StorageSDLoggingSet, which checks the benchmark's
  * ownership flag and writes the filename under one critical section for
  * exactly this reason.
  *
@@ -5173,13 +5173,13 @@ static void SCPI_PerformStreamingStop(void) {
      * ASKED HERE, because asking only at the act point loses the answer
      * (Qodo). SYST:STOR:SD:BENCHmark is refused while a stream is live (#854)
      * and arms a PLAIN write, which CLEARS the streaming-log latch
-     * (sd_card_manager.c:3603-3610). Clearing IsEnabled and running
+     * (in sd_UpdateSettingsImpl). Clearing IsEnabled and running
      * Streaming_UpdateState() below is exactly what stops that refusal
      * refusing -- so a benchmark on the other transport can arm in the window,
      * and a predicate evaluated only afterwards reads latch=false and skips
      * closing THIS session's log. Here, the session is still live and the
      * benchmark is still refused. Same shape as #851's
-     * stoppedSdLoggingSession at :4351.
+     * stoppedSdLoggingSession in SCPI_StartStreamingClaimed.
      *
      * ASKED AGAIN AT THE ACT POINT, because acting only on this snapshot
      * aborts whatever took the WRITE in that same window (codex). The
@@ -5204,10 +5204,10 @@ static void SCPI_PerformStreamingStop(void) {
      * Each read is one critical section, which is NOT the reflexive "wrap a
      * shared read" the project declines: the predicate is a composite of three
      * independently written fields whose latch half is WRITTEN under a
-     * critical section in the SD manager (sd_card_manager.c:3602-3611), so
+     * critical section in the SD manager (sd_UpdateSettingsImpl), so
      * reading the set together matches the writer's own discipline.
-     * SCPIStorageSD.c:496 reads the benchmark's ownership flag the same way
-     * for the same reason. O(1) loads, no call that can block. */
+     * SCPI_StorageSDLoggingSet reads the benchmark's ownership flag the same
+     * way for the same reason. O(1) loads, no call that can block. */
     const bool ownedSdLoggingSession =
             SCPI_SdWriteIsStreamingLog(pSDCardRuntimeConfig);
 
@@ -5233,8 +5233,9 @@ static void SCPI_PerformStreamingStop(void) {
      *
      * `enable && mode == WRITE` does not mean "a streaming log is open" -- it
      * means "somebody armed the shared WRITE". There are exactly two arms in
-     * the tree: SCPI_StartStreamingClaimed (:4655) and SYST:STOR:SD:BENCHmark
-     * (SCPIStorageSD.c:1243), and the benchmark takes no claim by design
+     * the tree: SCPI_StartStreamingClaimed()'s SD arm and
+     * SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark), and the benchmark
+     * takes no claim by design
      * (#736). So on the mode alone this teardown closes a running benchmark's
      * file: it sets mode to NONE, sd_card_manager_WriteToBuffer then returns 0,
      * and the benchmark stalls to its 10 s drain timeout and reports a
@@ -5243,7 +5244,7 @@ static void SCPI_PerformStreamingStop(void) {
      * That is PRE-EXISTING on SYSTem:STReam:STOP, which has always run this
      * body -- and it is the twin site of #851, which added the latch for
      * exactly this distinction and wired it into SCPI_StartStreaming's abort
-     * paths (see the comment at :4345) without reaching here. Left alone, #860
+     * paths (see the comment there) without reaching here. Left alone, #860
      * would hand the same defect to a SECOND spelling, on a command whose
      * whole point is to be a safe recovery action. Both spellings are fixed
      * instead: the latch is set only by the STREAMING arm, so a benchmark's
@@ -5252,7 +5253,7 @@ static void SCPI_PerformStreamingStop(void) {
      * IT CAN OVER-NARROW, in one exotic interleaving, and an earlier revision
      * of this comment claimed it could not (audit round 6). Normally the latch
      * is set at the streaming arm, cleared by a PLAIN arm or by a mode -> NONE
-     * that goes THROUGH sd_UpdateSettingsImpl (sd_card_manager.c:3603-3610),
+     * that goes THROUGH sd_UpdateSettingsImpl's latch block,
      * and #854 keeps a benchmark out for the whole session -- so it is true
      * for the whole of any session this body is called to end. But #854 tests
      * IsEnabled/Running, which START publishes AFTER it arms SD: a benchmark
@@ -5272,10 +5273,11 @@ static void SCPI_PerformStreamingStop(void) {
      * It CAN be stale-true, though, and an earlier revision of this comment
      * said "cleared only by ... mode -> NONE" without that qualifier, which is
      * a false claim in a comment (audit round 5). The manager sets
-     * gpSDCardSettings->mode = NONE DIRECTLY in sixteen places that never reach
-     * the clear -- the no-writable-bucket exit at sd_card_manager.c:2075 among
-     * them -- so a session that ended by one of those routes leaves the latch
-     * set. A stop landing in the two statements between a benchmark's
+     * gpSDCardSettings->mode = NONE DIRECTLY in many places that never reach
+     * the clear (grep that assignment in sd_card_manager.c) -- the
+     * no-writable-bucket exit in sd_card_manager_ProcessState's OPEN_FILE
+     * among them -- so a session that ended by one of those routes leaves the
+     * latch set. A stop landing in the two statements between a benchmark's
      * `mode = WRITE` and its UpdateSettingsForPlainWrite() would then see all
      * three terms true and claim the benchmark's write. That window is #871; it
      * exists on main too, whose predicate has no latch term at all and so hits
