@@ -179,6 +179,26 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
     }
     if (voltOpt == SCPI_OPT_PRESENT) {
         // Two parameters: first is channel (convert to int), second is voltage
+        //
+        // #877: the channel arrives here as a DOUBLE -- the first parameter is
+        // parsed as one so the single-argument all-channel form can take a
+        // voltage -- so it is narrowed TWICE before the lookup: double -> int
+        // -> uint8_t. Reject outside [0,255] BEFORE either narrowing.
+        // (uint8_t)256 is 0, so `SOUR:VOLT:LEV 256,5` resolved DAC channel 0,
+        // passed the resolved-index guard below, and DROVE THAT OUTPUT TO 5 V
+        // while returning OK. This is the one site in the truncation family
+        // that moves real hardware.
+        //
+        // Written as a positive range test rather than `< 0 || > 255` so a NaN
+        // first parameter -- which compares false against everything -- is
+        // rejected too, and so the (int) cast, whose result is undefined for a
+        // double outside int range, is never reached. Fractional values keep
+        // their existing truncate-toward-zero behaviour.
+        if (!(voltage >= 0.0 && voltage <= 255.0)) {
+            LOG_E("SOUR:VOLT:LEV: channel out of range (max 255)");
+            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+            return SCPI_RES_ERR;
+        }
         channel = (int)voltage;
         voltage = voltage2;
 
@@ -260,6 +280,15 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
     }
     if (chanOpt == SCPI_OPT_PRESENT) {
         // Get single channel
+        // #877: reject before the (uint8_t) narrowing -- 256 would alias onto
+        // DAC channel 0 and report ITS last commanded voltage as this
+        // channel's. Same test as the setter above, on an int rather than a
+        // double because this form parses the channel directly.
+        if (channel < 0 || channel > 255) {
+            LOG_E("SOUR:VOLT:LEV?: channel out of range (max 255)");
+            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+            return SCPI_RES_ERR;
+        }
         size_t index = DAC_FindChannelIndex((uint8_t)channel);
         if (index >= pBoardConfigAOutChannels->Size) {
             LOG_E("SCPI_DACVoltageGet: Invalid channel %d", channel);
