@@ -5250,9 +5250,23 @@ static void SCPI_PerformStreamingStop(void) {
      * WRITE is no longer mistaken for a session's.
      *
      * It cannot over-narrow a real stop. The latch is set at the streaming arm
-     * and cleared only by a PLAIN arm or by mode -> NONE (sd_card_manager.c
-     * :3603-3610), and #854 refuses a benchmark while a stream is live, so it
-     * is true for the whole of any session this body is called to end. The
+     * and cleared by a PLAIN arm or by a mode -> NONE that goes THROUGH
+     * sd_UpdateSettingsImpl (sd_card_manager.c:3603-3610), and #854 refuses a
+     * benchmark while a stream is live, so it is true for the whole of any
+     * session this body is called to end.
+     *
+     * It CAN be stale-true, though, and an earlier revision of this comment
+     * said "cleared only by ... mode -> NONE" without that qualifier, which is
+     * a false claim in a comment (audit round 5). The manager sets
+     * gpSDCardSettings->mode = NONE DIRECTLY in sixteen places that never reach
+     * the clear -- the no-writable-bucket exit at sd_card_manager.c:2075 among
+     * them -- so a session that ended by one of those routes leaves the latch
+     * set. A stop landing in the two statements between a benchmark's
+     * `mode = WRITE` and its UpdateSettingsForPlainWrite() would then see all
+     * three terms true and claim the benchmark's write. That window is #871; it
+     * exists on main too, whose predicate has no latch term at all and so hits
+     * it in EVERY state rather than only the stale one. The latch narrows this,
+     * it does not open it. The
      * companion test's part 2 is the guard on that direction: it asserts
      * SYST:STOR:SD:SPACe? answers straight after `START 0` on a logging
      * session, which can only happen if this block still fires. */
