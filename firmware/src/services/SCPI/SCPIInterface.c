@@ -5219,7 +5219,33 @@ static scpi_result_t SCPI_IsStreaming(scpi_t * context) {
 }
 
 
+static scpi_result_t SCPI_SetStreamFormatClaimed(scpi_t * context);
+
+/* #862: the claim moved ahead of SCPI_ParamInt32.
+ *
+ * This setter was the PARTIAL case, and it is the reason the fix enumerates
+ * more sites than the issue's table lists. Its RANGE check already sat after
+ * the claim, so `SYST:STR:FOR 99` mid-stream answered -200 and looked
+ * compliant -- but the PARSE sat before it, so `SYST:STR:FOR banana` (or the
+ * argument omitted entirely) answered its own -104/-109 and bypassed the
+ * guard. Two of the three error exits obeyed the contract and one did not,
+ * which no test row using a well-formed out-of-range value can see.
+ *
+ * Only that one case changes: idle behaviour is identical, and a mid-stream
+ * out-of-range value answered -200 before and after. */
 static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "SYST:STR:FORmat");
+    }
+    scpi_result_t result = SCPI_SetStreamFormatClaimed(context);
+    Streaming_EndConfigChange();
+    return result;
+}
+
+static scpi_result_t SCPI_SetStreamFormatClaimed(scpi_t * context) {
     int param1;
 
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
@@ -5243,16 +5269,11 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
      * Running form -- the two flags are set and cleared in separate steps at
      * start/stop, so an && test would leave a window open.
      *
-     * #847: taken as a CLAIM, not a bare read, so a START on the other SCPI
-     * transport cannot arm between this test and the store below and receive
-     * the encoding change on a session whose cap was computed for the old
-     * one. */
-    StreamingCfgClaim claim = Streaming_BeginConfigChange();
-    if (claim != STREAM_CFG_CLAIM_OK) {
-        return SCPI_RejectCfgClaim(context,
-                                   claim == STREAM_CFG_CLAIM_BUSY,
-                                   "SYST:STR:FORmat");
-    }
+     * #847: enforced by a CLAIM, not a bare read, so a START on the other SCPI
+     * transport cannot arm between the guard and the store below and receive
+     * the encoding change on a session whose cap was computed for the old one.
+     * The claim is taken by the WRAPPER above since #862, which is also what
+     * puts the parse above under it. */
 
     /* #801: reject an unrecognised encoding rather than quietly picking one.
      *
@@ -5288,10 +5309,10 @@ static scpi_result_t SCPI_SetStreamFormat(scpi_t * context) {
         pRunTimeStreamConfig->Encoding = (StreamingEncoding)param1;
     }
 
-    /* #847: single release, reached by both outcomes. Structured as one exit
-     * rather than a release before each `return` so a later edit cannot add a
-     * third path that leaks the claim. */
-    Streaming_EndConfigChange();
+    /* #847: single release, reached by every outcome -- it lives in the
+     * wrapper since #862, which extends that property to the parse failure
+     * above as well. Structured this way rather than a release before each
+     * `return` so a later edit cannot add a path that leaks the claim. */
     return result;
 }
 
@@ -5303,7 +5324,25 @@ static scpi_result_t SCPI_GetStreamFormat(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t SCPI_SetDataPrecisionClaimed(scpi_t * context);
+
+/* #862: the claim is the first statement, ahead of SCPI_ParamInt32, so
+ * `CONF:VOLT:PREC 11` mid-stream answers -200 rather than -222 -- see the
+ * ordering contract on SCPI_RejectCfgClaim (SCPIInterface.h). Its LOAD twin
+ * below already behaved this way, because it takes no argument at all. */
 static scpi_result_t SCPI_SetDataPrecision(scpi_t * context) {
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "CONF:VOLTage:PRECision");
+    }
+    scpi_result_t result = SCPI_SetDataPrecisionClaimed(context);
+    Streaming_EndConfigChange();
+    return result;
+}
+
+static scpi_result_t SCPI_SetDataPrecisionClaimed(scpi_t * context) {
     int32_t param1;
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -5325,18 +5364,13 @@ static scpi_result_t SCPI_SetDataPrecision(scpi_t * context) {
      *
      * Rejecting is right rather than re-capping: the cap is a hard limit at
      * START (#524), there is no mechanism to lower an already-running session,
-     * and silently changing the rate under a client is what #524 removed. */
-    /* #847: a claim rather than a bare read of the two flags -- the store
-     * below must not be able to land on a session a concurrent START armed in
-     * between, which is precisely the cap input this guard exists to pin. */
-    StreamingCfgClaim claim = Streaming_BeginConfigChange();
-    if (claim != STREAM_CFG_CLAIM_OK) {
-        return SCPI_RejectCfgClaim(context,
-                                   claim == STREAM_CFG_CLAIM_BUSY,
-                                   "CONF:VOLTage:PRECision");
-    }
+     * and silently changing the rate under a client is what #524 removed.
+     *
+     * #847: the guard is a claim rather than a bare read of the two flags --
+     * the store below must not be able to land on a session a concurrent START
+     * armed in between, which is precisely the cap input it exists to pin. It
+     * is taken by the WRAPPER above (#862), not here. */
     pRunTimeStreamConfig->VoltagePrecision = (uint8_t)param1;
-    Streaming_EndConfigChange();
     return SCPI_RES_OK;
 }
 

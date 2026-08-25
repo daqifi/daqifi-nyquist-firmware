@@ -853,7 +853,31 @@ scpi_result_t SCPI_ADCUseCalGet(scpi_t * context) {
     }
 }
 
+static scpi_result_t ADCOnboardDiagSetClaimed(scpi_t * context);
+
+// #847: the claim performs the IsEnabled || Running test (the two flags
+// transition in separate steps at start/stop, and a change slipped through
+// that window would desync the session scan list -- #541 D-B builds ADCCSS
+// from OnboardDiagEnabled at stream start) AND excludes a concurrent arm
+// until the body's store has landed.
+//
+// #862: taken HERE, before SCPI_ParamInt32 runs, so the refusal does not
+// depend on the argument -- see the ordering contract on SCPI_RejectCfgClaim
+// (SCPIInterface.h). This setter used to validate first and so answered -222
+// mid-stream where CONF:ADC:CHANnel answered -200.
 scpi_result_t SCPI_ADCOnboardDiagSet(scpi_t * context) {
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "CONF:ADC:OBDiag");
+    }
+    scpi_result_t result = ADCOnboardDiagSetClaimed(context);
+    Streaming_EndConfigChange();
+    return result;
+}
+
+static scpi_result_t ADCOnboardDiagSetClaimed(scpi_t * context) {
     int32_t val;
     if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
     if (val < 0 || val > 1) {
@@ -862,19 +886,7 @@ scpi_result_t SCPI_ADCOnboardDiagSet(scpi_t * context) {
     }
     StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
-    // #847: the claim performs the IsEnabled || Running test (the two flags
-    // transition in separate steps at start/stop, and a change slipped through
-    // that window would desync the session scan list -- #541 D-B builds ADCCSS
-    // from OnboardDiagEnabled at stream start) AND excludes a concurrent arm
-    // until the store below has landed.
-    StreamingCfgClaim claim = Streaming_BeginConfigChange();
-    if (claim != STREAM_CFG_CLAIM_OK) {
-        return SCPI_RejectCfgClaim(context,
-                                   claim == STREAM_CFG_CLAIM_BUSY,
-                                   "CONF:ADC:OBDiag");
-    }
     pStreamCfg->OnboardDiagEnabled = (val != 0);
-    Streaming_EndConfigChange();
     LOG_I("Onboard diagnostics during streaming: %s", val ? "enabled" : "disabled");
     return SCPI_RES_OK;
 }
@@ -888,7 +900,37 @@ scpi_result_t SCPI_ADCOnboardDiagGet(scpi_t * context) {
 
 // --- #670: ADC hardware threshold alarms (ADCHS digital comparators) --------
 // CONF:ADC:THREshold <ch>,<mode 0=off|1=below|2=above|3=inside|4=outside>,<lo>,<hi>
+static scpi_result_t ADCThresholdSetClaimed(scpi_t * context);
+
+// #862: the claim is taken HERE, before any parameter is read, so a mid-stream
+// call is refused as streaming whatever its arguments -- see the ordering
+// contract on SCPI_RejectCfgClaim (SCPIInterface.h). This is the setter with
+// the most ways to escape the old ordering: SIX returns sat above where the
+// claim used to be -- two parse failures, a libscpi param error, two range
+// checks, and the "modes 1-4 require lo,hi" case. The last of those is the
+// subtle one, because it DOES answer -200 -- via SCPI_ExecutionError with its
+// own text -- so a client matching only the code would have called it
+// compliant while the log said nothing about streaming.
+//
+// #847: via the claim rather than a bare read of the two flags, because
+// AdcThreshold_Configure takes a FreeRTOS mutex with portMAX_DELAY -- it cannot
+// share a critical section with the test, so the exclusion has to outlive one.
+//
+// The release moved out of the body with it, so it now also covers the
+// `!configured` error return that it used to sit above.
 scpi_result_t SCPI_ADCThresholdSet(scpi_t * context) {
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "CONF:ADC:THREshold");
+    }
+    scpi_result_t result = ADCThresholdSetClaimed(context);
+    Streaming_EndConfigChange();
+    return result;
+}
+
+static scpi_result_t ADCThresholdSetClaimed(scpi_t * context) {
     int32_t ch, mode, lo = 0, hi = 0;
     if (!SCPI_ParamInt32(context, &ch, TRUE))   return SCPI_RES_ERR;
     if (!SCPI_ParamInt32(context, &mode, TRUE)) return SCPI_RES_ERR;
@@ -915,24 +957,13 @@ scpi_result_t SCPI_ADCThresholdSet(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
     }
-    // Config change: reject while streaming (consistent with the CONF:ADC family;
-    // the session scan is frozen at start, #116/#541).
-    //
-    // #847: via the claim rather than a bare read, because AdcThreshold_Configure
-    // takes a FreeRTOS mutex with portMAX_DELAY -- it cannot share a critical
-    // section with the test, so the exclusion has to outlive one.
-    StreamingCfgClaim claim = Streaming_BeginConfigChange();
-    if (claim != STREAM_CFG_CLAIM_OK) {
-        return SCPI_RejectCfgClaim(context,
-                                   claim == STREAM_CFG_CLAIM_BUSY,
-                                   "CONF:ADC:THREshold");
-    }
+    // The config change itself. Rejecting it while streaming (consistent with
+    // the CONF:ADC family; the session scan is frozen at start, #116/#541) is
+    // the WRAPPER's job now, not this body's -- see the comment on
+    // SCPI_ADCThresholdSet above.
     const char* err = NULL;
     bool configured = AdcThreshold_Configure((uint8_t)ch, (AdcThresholdMode)mode,
                                              (uint16_t)lo, (uint16_t)hi, &err);
-    /* Released as soon as the hardware write is done, on the single path that
-     * covers both outcomes -- the error return below must not skip it. */
-    Streaming_EndConfigChange();
     if (!configured) {
         SCPI_ExecutionError(context, (err != NULL) ? err : "CONF:ADC:THRE: rejected");
         return SCPI_RES_ERR;
@@ -984,30 +1015,44 @@ scpi_result_t SCPI_ADCThresholdClear(scpi_t * context) {
 // --- #328 phase 1: ADC acquisition-time runtime control ------------------
 // Wrapper that rejects SAMC writes while streaming is active. Calls into
 // MC12b_SetAcquisitionSamc for the register work.
+//
+// SAMC feeds the live scan-rate bound (#541 D-C reads ADCCON2.SAMC), so a
+// mid-stream change would invalidate the cap the session was admitted under.
+// The claim performs the IsEnabled || Running test (#116 / OBDiag form) and
+// holds the exclusion across the write (#847) -- which it must, because
+// MC12b_SetAcquisitionSamc spins up to 2,000,000 poll iterations on
+// ADCCON2bits.BGVRRDY and so cannot share a critical section with the test.
+//
+// #862: the claim is the first statement, ahead of SCPI_ParamInt32, so
+// `CONF:ADC:SAMC:DEDicated 99999` mid-stream answers -200 like every other
+// converted setter instead of -222 -- see the ordering contract on
+// SCPI_RejectCfgClaim (SCPIInterface.h). Both registered spellings route
+// through here, so both are fixed by the one wrapper.
+//
+// The refusal names "CONF:ADC:SAMC" for either spelling, as it did before.
+static scpi_result_t SamcSetCommonClaimed(scpi_t *context, bool isDedicated);
+
 static scpi_result_t SamcSetCommon(scpi_t *context, bool isDedicated) {
-    int32_t val;
-    if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
-    if (val < 0 || val > (int32_t)MC12B_SAMC_MAX) {
-        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
-        return SCPI_RES_ERR;
-    }
-    // SAMC feeds the live scan-rate bound (#541 D-C reads ADCCON2.SAMC), so a
-    // mid-stream change would invalidate the cap the session was admitted
-    // under. The claim performs the IsEnabled || Running test (#116 / OBDiag
-    // form) and holds the exclusion across the write (#847) -- which it must,
-    // because MC12b_SetAcquisitionSamc spins up to 2,000,000 poll iterations
-    // on ADCCON2bits.BGVRRDY and so cannot share a critical section with the
-    // test.
     StreamingCfgClaim claim = Streaming_BeginConfigChange();
     if (claim != STREAM_CFG_CLAIM_OK) {
         return SCPI_RejectCfgClaim(context,
                                    claim == STREAM_CFG_CLAIM_BUSY,
                                    "CONF:ADC:SAMC");
     }
+    scpi_result_t result = SamcSetCommonClaimed(context, isDedicated);
+    Streaming_EndConfigChange();
+    return result;
+}
+
+static scpi_result_t SamcSetCommonClaimed(scpi_t *context, bool isDedicated) {
+    int32_t val;
+    if (!SCPI_ParamInt32(context, &val, TRUE)) return SCPI_RES_ERR;
+    if (val < 0 || val > (int32_t)MC12B_SAMC_MAX) {
+        SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        return SCPI_RES_ERR;
+    }
     bool ok = isDedicated ? MC12b_SetAcquisitionSamc(val, -1)
                           : MC12b_SetAcquisitionSamc(-1, val);
-    /* Single release, before the branch, so the error return cannot skip it. */
-    Streaming_EndConfigChange();
     if (!ok) {
         SCPI_ExecutionError(context, "CONF:ADC:SAMC: set failed");
         return SCPI_RES_ERR;
