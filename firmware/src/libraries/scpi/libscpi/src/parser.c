@@ -789,6 +789,11 @@ scpi_bool_t SCPI_ParamIsNumber(scpi_parameter_t * parameter, scpi_bool_t suffixA
  * -104 when it did not -- the error libscpi itself pushes one layer up
  * (ParamSignUInt32) for a token that is not numeric at all.
  *
+ * `consumed` is taken as int, matching scpi_token_t::len's own type, so the
+ * comparison is not signed-vs-unsigned (this tree builds -Werror). The value
+ * is a count of characters within one token of the SCPI input buffer, so it
+ * cannot approach INT_MAX.
+ *
  * Only the two decimal arms need this.  The HEXNUM/OCTNUM/BINNUM tokens carry a
  * ptr past the "#H"/"#Q"/"#B" prefix and a len covering only digits valid in
  * that base (scpiLex_NondecimalNumericData), so their conversion always
