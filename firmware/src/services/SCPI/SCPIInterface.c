@@ -4785,10 +4785,26 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
          * serialises session STARTS against each other, and a stop is neither.
          *
          * It also now runs ahead of the power and channel-count gates, so it
-         * is unconditional in a way it previously was not. That is deliberate
-         * and matches SYST:STR:STOP, which has no such gates and performs the
-         * identical three actions -- stopping should never depend on the
-         * device still being in a state fit to START.
+         * is unconditional in a way it previously was not. That is deliberate:
+         * SYSTem:STReam:STOP has no such gates either, and stopping should not
+         * depend on the device still being in a state fit to START.
+         *
+         * IT IS NOT, HOWEVER, EQUIVALENT TO SYSTem:STReam:STOP, and an earlier
+         * revision of this comment said it performed "the identical three
+         * actions", which is false (pre-merge audit). STOP additionally tears
+         * down SD logging -- mode to SD_CARD_MANAGER_MODE_NONE,
+         * sd_card_manager_UpdateSettings, then a bounded wait for the manager
+         * to drain and close the file -- and clears the streaming OPER bits.
+         * This branch does neither, so `START 0` on a logging session leaves
+         * the file open in WRITE mode and OPER reading MEASURING.
+         *
+         * Both gaps are PRE-EXISTING: main's disable branch is these same
+         * three statements. They are tracked in #860 rather than fixed here,
+         * because the fix is to make this branch a real stop, which is a
+         * behaviour change of its own and wants its own test. What changes
+         * here is only that the code no longer CLAIMS an equivalence it does
+         * not have -- a client that needs a complete stop should send
+         * SYSTem:STReam:STOP.
          *
          * Always allowed, including under heap pressure (the user may be
          * trying to stop streaming as a recovery action).
