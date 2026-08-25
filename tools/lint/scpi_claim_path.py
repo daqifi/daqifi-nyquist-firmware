@@ -50,8 +50,23 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # commands that are not shipped. `_REGISTRATION` / `_joined` handle adjacent
 # string-literal concatenation, which is legal C and appears in that table.
 from scpi_wiki_sync import (               # noqa: E402
-    strip_c_comments, _REGISTRATION, _joined,
+    strip_c_comments, _joined,
 )
+
+# A table row, e.g. `{.pattern = "A", .callback = X,}`. Rows contain no nested
+# braces, so a non-greedy brace pair is an exact row match.
+#
+# NOT scpi_wiki_sync's `_REGISTRATION`: that one requires `.pattern` to be
+# IMMEDIATELY followed by `.callback`. Designated initializers are legal in any
+# order, so `{.callback = X, .pattern = "..."}` is a valid registration it does
+# not match -- and a setter this checker never examines is exactly the silent
+# pass it exists to prevent (pre-merge audit on PR #863). Each field is found
+# independently within the row instead.
+_ROW = re.compile(r"\{([^{}]*)\}")
+_ROW_PATTERN = re.compile(r'\.pattern\s*=\s*((?:"[^"]*"\s*)+)')
+_ROW_CALLBACK = re.compile(r"\.callback\s*=\s*([A-Za-z_]\w*)")
+_ROW_PATTERN_FIELD = re.compile(r"\.pattern\s*=")
+_ROW_NULL = re.compile(r"\.pattern\s*=\s*NULL\b")
 
 CLAIM_HELPER = "SCPI_MemRunClaimed"
 CLAIM_BEGIN = "Streaming_BeginConfigChange"
@@ -97,6 +112,19 @@ def function_body(text, name):
     return None
 
 
+def _calls(body, name):
+    """True iff `body` CALLS `name`, rather than merely mentioning it.
+
+    A raw substring test passes a body that only names the helper -- e.g.
+    `const char *marker = "SCPI_MemRunClaimed";` beside a direct call to the
+    unclaimed inner body. That reports OK on a setter with no claim at all
+    (pre-merge audit on PR #863). String literals are blanked first so a
+    mention inside one cannot satisfy the call form either.
+    """
+    return re.search(r"\b%s\s*\(" % re.escape(name),
+                     _STR_OR_CHAR.sub(lambda m: " " * len(m.group(0)), body)) is not None
+
+
 def mem_setters(registrations):
     """Registered SYSTem:MEMory:* patterns that MUTATE config -> callbacks.
 
@@ -108,15 +136,40 @@ def mem_setters(registrations):
 
 
 def parse_registrations(text):
-    """[(pattern, callback)] from an already-comment-stripped command table."""
-    return [(_joined(lit), cb) for lit, cb in _REGISTRATION.findall(text)]
+    """-> (registrations, unparsed) from an already-comment-stripped table.
+
+    Fields are read independently within each row, so either designated-
+    initializer order works. `unparsed` counts rows that HAVE a `.pattern`
+    field but from which a (pattern, callback) pair could not be recovered --
+    reported rather than skipped, because a row this cannot read is a command
+    it cannot check.
+    """
+    regs, unparsed = [], 0
+    for row in _ROW.findall(text):
+        if not _ROW_PATTERN_FIELD.search(row):
+            continue
+        if _ROW_NULL.search(row):
+            continue                      # libscpi's end-of-table sentinel
+        pat, cb = _ROW_PATTERN.search(row), _ROW_CALLBACK.search(row)
+        if pat and cb:
+            regs.append((_joined(pat.group(1)), cb.group(1)))
+        else:
+            unparsed += 1
+    return regs, unparsed
 
 
 def check(source_text):
     """-> (problems, examined_count). Pure, so --self-test can drive it."""
     text = strip_c_comments(source_text)
-    setters = mem_setters(parse_registrations(text))
+    registrations, unparsed = parse_registrations(text)
+    setters = mem_setters(registrations)
     problems = []
+
+    if unparsed:
+        problems.append(
+            "%d command-table row(s) have a .pattern field this checker could "
+            "not read. A row it cannot parse is a command it cannot check, so "
+            "this fails rather than reporting on the rest." % unparsed)
 
     if not setters:
         problems.append(
@@ -139,7 +192,7 @@ def check(source_text):
             problems.append(
                 "%s -> %s(): could not find that function to check it"
                 % (pattern, callback))
-        elif CLAIM_HELPER not in body:
+        elif not _calls(body, CLAIM_HELPER):
             problems.append(
                 "%s -> %s() does not go through %s(), so it can mutate the "
                 "memory config while a session is arming or running (#857)."
@@ -155,7 +208,7 @@ def check(source_text):
             "function that does not exist." % CLAIM_HELPER)
     else:
         for needed, why in ((CLAIM_BEGIN, "take"), (CLAIM_END, "release")):
-            if needed not in helper:
+            if not _calls(helper, needed):
                 problems.append(
                     "%s() does not call %s(), so it does not %s the claim -- "
                     "routing through it protects nothing."
@@ -243,6 +296,42 @@ static scpi_result_t decoy(scpi_t * c) {
             any(CLAIM_BEGIN in p for p in probs), True)
         _ck("...and the gutted case is NOT reported as a routing problem",
             any("does not go through" in p for p in probs), False)
+
+        # --- pre-merge audit on PR #863: two ways this reported a false OK ---
+
+        # (1) reversed designated-initializer order. Legal C, and the old
+        # parser required .pattern to be immediately followed by .callback, so
+        # a setter written this way was never examined -- while the summary
+        # line still claimed to have checked them all.
+        rev = _GOOD.replace(
+            '{.pattern = "SYSTem:MEMory:WIFI:BUFfer", .callback = SCPI_SetMemWifiBuf,},',
+            '{.callback = SCPI_SetMemFoo, .pattern = "SYSTem:MEMory:FOO",},'
+        ).replace(
+            'static scpi_result_t SCPI_SetMemWifiBuf(scpi_t * context) {\n'
+            '    return SCPI_MemRunClaimed(context, SCPI_SetMemWifiBufClaimed, "x");\n}',
+            'static scpi_result_t SCPI_SetMemFoo(scpi_t * context) {\n'
+            '    return SCPI_SetMemFooClaimed(context);\n}')
+        probs, n = check(rev)
+        _ck("a reversed-order registration is still examined", n, 2)
+        _ck("...and an unclaimed one is caught",
+            any("SYSTem:MEMory:FOO" in p for p in probs), True)
+
+        # (2) a body that only MENTIONS the helper must not count as calling it.
+        mention = _GOOD.replace(
+            'return SCPI_MemRunClaimed(context, SCPI_SetMemSdBufClaimed, "a{b}c");',
+            'const char *marker = "SCPI_MemRunClaimed"; (void)marker;\n'
+            '    return SCPI_SetMemSdBufClaimed(context);')
+        probs, _ = check(mention)
+        _ck("a string mention is not accepted as a call",
+            any("does not go through" in p for p in probs), True)
+
+        # a row with a .pattern it cannot read is REPORTED, not skipped
+        bad_row = _GOOD.replace(
+            '{.pattern = "SYSTem:MEMory:SD:BUFfer", .callback = SCPI_SetMemSdBuf,},',
+            '{.pattern = "SYSTem:MEMory:SD:BUFfer", .callback = ,},')
+        probs, _ = check(bad_row)
+        _ck("an unreadable table row fails rather than being skipped",
+            any("could not read" in p for p in probs), True)
 
         # a commented-out registration must not be counted
         commented = _GOOD.replace(
