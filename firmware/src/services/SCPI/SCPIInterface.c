@@ -5058,15 +5058,18 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
  * re-implemented a subset of this. There is now one body, so a teardown step
  * added later cannot reach one spelling and miss the other.
  *
- * This body is SCPI_StopStreaming's, unchanged -- only its name and its
- * signature moved. STOP's behaviour is deliberately not touched, so the
- * regression this closes cannot be confused with a change to the spelling that
- * was already correct.
+ * This body is SCPI_StopStreaming's with ONE added term -- the
+ * sd_card_manager_WriteIsStreamingLog() test on the SD teardown, called out at
+ * its own site below. Everything else is byte-identical; only the name and the
+ * signature moved. That one term also changes STOP, deliberately and for the
+ * better: it is the #851 twin, and without it sharing this body would give
+ * START 0 a defect STOP already had (see there).
  *
- * BLOCKING, up to 5 s, but only on the path that already blocked: the bounded
- * idle wait runs solely when SD logging is genuinely open (enable && mode ==
- * WRITE), which is exactly the case the disable branch used to abandon. An
- * idle device, or a session with no SD logging, skips it entirely, so START 0
+ * BLOCKING, up to 5 s, but only when a STREAMING LOG is genuinely open. The
+ * gate is enable && mode == WRITE && WriteIsStreamingLog() -- the last term
+ * because the first two are also true of a running SYST:STOR:SD:BENCHmark,
+ * which is not this body's to close. An idle device, a session with no SD
+ * logging, or a device busy with a benchmark all skip it entirely, so START 0
  * as a recovery action costs what it always did.
  *
  * NOT claimed, deliberately. A stop must never be refusable because another
@@ -5115,8 +5118,38 @@ static void SCPI_PerformStreamingStop(void) {
 
     // Close SD card file if logging was enabled
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
+    /* #860 pre-merge audit: the `sd_card_manager_WriteIsStreamingLog()` term is
+     * the ONE change to this body, and it is what makes sharing it safe.
+     *
+     * `enable && mode == WRITE` does not mean "a streaming log is open" -- it
+     * means "somebody armed the shared WRITE". There are exactly two arms in
+     * the tree: SCPI_StartStreamingClaimed (:4655) and SYST:STOR:SD:BENCHmark
+     * (SCPIStorageSD.c:1243), and the benchmark takes no claim by design
+     * (#736). So on the mode alone this teardown closes a running benchmark's
+     * file: it sets mode to NONE, sd_card_manager_WriteToBuffer then returns 0,
+     * and the benchmark stalls to its 10 s drain timeout and reports a
+     * truncated result.
+     *
+     * That is PRE-EXISTING on SYSTem:STReam:STOP, which has always run this
+     * body -- and it is the twin site of #851, which added the latch for
+     * exactly this distinction and wired it into SCPI_StartStreaming's abort
+     * paths (see the comment at :4345) without reaching here. Left alone, #860
+     * would hand the same defect to a SECOND spelling, on a command whose
+     * whole point is to be a safe recovery action. Both spellings are fixed
+     * instead: the latch is set only by the STREAMING arm, so a benchmark's
+     * WRITE is no longer mistaken for a session's.
+     *
+     * It cannot over-narrow a real stop. The latch is set at the streaming arm
+     * and cleared only by a PLAIN arm or by mode -> NONE (sd_card_manager.c
+     * :3603-3610), and #854 refuses a benchmark while a stream is live, so it
+     * is true for the whole of any session this body is called to end. The
+     * companion test's part 2 is the guard on that direction: it asserts
+     * SYST:STOR:SD:SPACe? answers straight after `START 0` on a logging
+     * session, which can only happen if this block still fires. */
     if (pSDCardRuntimeConfig != NULL &&
-        pSDCardRuntimeConfig->enable && pSDCardRuntimeConfig->mode == SD_CARD_MANAGER_MODE_WRITE) {
+        pSDCardRuntimeConfig->enable &&
+        pSDCardRuntimeConfig->mode == SD_CARD_MANAGER_MODE_WRITE &&
+        sd_card_manager_WriteIsStreamingLog()) {
         // Set mode to NONE and update to trigger file close (DEINIT → UNMOUNT → close)
         pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
         sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
