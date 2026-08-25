@@ -198,6 +198,15 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         BoardData_Set(BOARDDATA_AOUT_LATEST, index, &sample);
 
     } else {
+        // #874: "absent" selects the one-parameter all-channel form; "present
+        // but unparseable" must not -- see SCPI_OptionalParamMalformed
+        // (SCPIInterface.h). `SOUR:VOLT:LEV 5,BANANA` used to queue -104 and
+        // then drive EVERY analog output to 5 V, reading the channel index as
+        // the voltage. This is the one site in the family whose fall-through
+        // moves real hardware.
+        if (SCPI_OptionalParamMalformed(context)) {
+            return SCPI_RES_ERR;
+        }
         // One parameter: voltage for all channels
         uint32_t counts = DAC_VoltageToCounts(voltage, pDACModule);
 
@@ -257,6 +266,12 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
             SCPI_ResultVoltage(context, 0.0, precision);
         }
     } else {
+        // #874: a malformed channel argument must not silently answer with
+        // every channel instead -- see SCPI_OptionalParamMalformed
+        // (SCPIInterface.h).
+        if (SCPI_OptionalParamMalformed(context)) {
+            return SCPI_RES_ERR;
+        }
         // Get all channels
         for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
             AOutSample* pSample = (AOutSample*)BoardData_Get(BOARDDATA_AOUT_LATEST, i);

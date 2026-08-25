@@ -85,6 +85,14 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
         val = ADC_ConvertToVoltage(pAInLatest);
         SCPI_ResultVoltage(context, val, precision);
     } else {
+        // #874: "absent" selects the all-channel form; "present but
+        // unparseable" must NOT -- see SCPI_OptionalParamMalformed
+        // (SCPIInterface.h). `MEAS:VOLT:DC? BANANA` used to answer with every
+        // channel's voltage, which a client reading one value parses as its
+        // channel.
+        if (SCPI_OptionalParamMalformed(context)) {
+            return SCPI_RES_ERR;
+        }
         // Get all
         size_t i = 0;
 
@@ -279,6 +287,23 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
                 break;
         }
     } else {
+        // #874: this is THE bug the issue was filed for. "absent" selects the
+        // one-argument MASK form; "present but unparseable" must not -- see
+        // SCPI_OptionalParamMalformed (SCPIInterface.h). Before this guard,
+        // `CONF:ADC:CHAN 0,BANANA` (and the same command's other spelling,
+        // `ENAble:VOLTage:DC 0,BANANA`) queued -104 and then ran the mask form
+        // with param1 as the mask -- mask 0 disables EVERY analog channel, and
+        // the client was never told its channel configuration had been
+        // replaced. Measured on hardware: mask 7 -> `CONF:ADC:CHAN 0,BANANA`
+        // -> mask 0.
+        //
+        // Placed here, inside the else, rather than after the parse: the
+        // two-argument branch cannot be reached with a malformed param2 (the
+        // parse succeeded), and this position leaves the order in which this
+        // command reports its errors otherwise unchanged.
+        if (SCPI_OptionalParamMalformed(context)) {
+            return SCPI_RES_ERR;
+        }
         // Channel mask - board variant-aware bulk enable
         uint8_t boardVariant = pBoardConfig->BoardVariant;
         uint8_t maxUserChannel = (boardVariant == 3) ? 7 : 15; // NQ3: 0-7, others: 0-15
@@ -423,6 +448,13 @@ scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context) {
             SCPI_ResultInt32(context, 0);
         }
     } else {
+        // #874: a malformed channel argument must not silently answer with the
+        // whole enable MASK instead -- see SCPI_OptionalParamMalformed
+        // (SCPIInterface.h). A client asking for one channel and parsing "7"
+        // as that channel's state is the failure this prevents.
+        if (SCPI_OptionalParamMalformed(context)) {
+            return SCPI_RES_ERR;
+        }
         uint32_t mask = 0;
         size_t i = 0;
         // TODO: This function should be able to read which version of the board we are using and report the ADC channels associated that version
@@ -460,14 +492,30 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
 
         pRuntimeAInChannels->Data[index].IsDifferential = (param2 == 0);
     } else {
+        // #874: "absent" selects the one-argument MASK form; "present but
+        // unparseable" must not -- see SCPI_OptionalParamMalformed
+        // (SCPIInterface.h). `CONF:ADC:SINGleend 0,BANANA` used to rewrite the
+        // single-ended/differential state of EVERY channel -- and from the
+        // UNINITIALIZED param2 at that, which is the separate defect fixed
+        // just below.
+        if (SCPI_OptionalParamMalformed(context)) {
+            return SCPI_RES_ERR;
+        }
         pAInLatestSize = BoardData_Get(
                 BOARDDATA_AIN_LATEST_SIZE,
                 0);
 
         size_t i = 0;
         for (i = 0; i<*pAInLatestSize; ++i) {
+            // The mask is param1 -- the ONE argument this branch was given.
+            // It read param2, which the FALSE parse above leaves
+            // uninitialized (ParamSignUInt32 does not write *value when it
+            // fails), so the legal one-argument form
+            // `CONF:ADC:SINGleend <mask>` wrote every channel's
+            // IsDifferential from an indeterminate stack value. Mirrors the
+            // mask branch of SCPI_ADCChanEnableSet above, which uses param1.
             pRuntimeAInChannels->Data[i].IsDifferential =
-                    (param2 & (1 << i)) == 0;
+                    (param1 & (1 << i)) == 0;
         }
     }
 
@@ -499,6 +547,12 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
             SCPI_ResultInt32(context, 1);
         }
     } else {
+        // #874: a malformed channel argument must not silently answer with the
+        // whole mask instead -- see SCPI_OptionalParamMalformed
+        // (SCPIInterface.h).
+        if (SCPI_OptionalParamMalformed(context)) {
+            return SCPI_RES_ERR;
+        }
         uint32_t mask = 0;
         size_t i = 0;
 
@@ -510,6 +564,11 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
                 mask |= (1 << i);
             }
         }
+        // The mask was computed and then discarded: the no-argument form of
+        // this query answered NOTHING while returning OK, so a client waiting
+        // on `CONF:ADC:SINGleend?` waited for its read timeout. Emit it, the
+        // way the sibling getter SCPI_ADCChanEnableGet does.
+        SCPI_ResultInt32(context, (int32_t) mask);
     }
 
     return SCPI_RES_OK;

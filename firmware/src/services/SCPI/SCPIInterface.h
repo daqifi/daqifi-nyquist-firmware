@@ -303,6 +303,47 @@ extern "C" {
         return SCPI_RES_ERR;
     }
 
+    /**
+     * @brief Did the OPTIONAL parameter just read exist but fail to parse?
+     *
+     * THE CONTRACT (#874) is written down here ONCE; callers point at this
+     * comment instead of restating it.
+     *
+     * `SCPI_ParamInt32(context, &v, FALSE)` returns FALSE for TWO different
+     * situations, and the return value alone cannot tell them apart:
+     *
+     *   1. the parameter is ABSENT -- the caller used the short form; or
+     *   2. the parameter is PRESENT but is not a number (`0,BANANA`) -- libscpi
+     *      pushed SCPI_ERROR_DATA_TYPE_ERROR (-104) from ParamSignUInt32
+     *      (libscpi/src/parser.c) and returned FALSE.
+     *
+     * Commands that overload their argument count read that FALSE as case 1.
+     * Where the short form does something DIFFERENT -- a bitmask write, an
+     * all-channel write, an all-channel query -- case 2 therefore executes the
+     * OTHER FORM using the first argument as its operand, and the client is
+     * told only "-104", never that its request was replaced.
+     * `CONF:ADC:CHAN 0,BANANA` disabled every analog channel that way (#874);
+     * `DIO:PORt:STATe 3,BANANA` drove every DIO line from a mask.
+     *
+     * So: after an OPTIONAL parse that returned FALSE, and BEFORE taking the
+     * short-form branch, call this. true = reject (case 2); false = the
+     * argument really is absent, and the short form is what was asked for.
+     *
+     * Call it before pushing any error of your own: it reports whether ANY
+     * error has been queued during THIS command (`context->cmd_error`, cleared
+     * per command in libscpi's processCommand()), not specifically a parse one.
+     *
+     * The same idiom already guards CONF:ADC:THREshold (#683) and
+     * CONF:ADC:THREshold:CLEar; this helper is the shared home those two
+     * comments would have had if it had existed.
+     *
+     * @param context SCPI context
+     * @return true when a token was present and unparseable -- reject.
+     */
+    static inline bool SCPI_OptionalParamMalformed(scpi_t *context) {
+        return SCPI_ParamErrorOccurred(context) ? true : false;
+    }
+
 #ifdef	__cplusplus
 }
 #endif
