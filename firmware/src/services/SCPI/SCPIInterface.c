@@ -378,25 +378,40 @@ static StreamingInterface SCPI_GetInterface(scpi_t* context) {
  * there is no lock cycle and no unbounded hold. The QUES side evaluates its
  * inputs before taking the lock (SCPI_ComputeQuesBits).
  *
- * NOT covered, deliberately: libscpi's own single-context writers that the
- * command table reaches directly (*CLS, *ESE, *SRE, *ESR?, *OPC, the ENABle
- * setters, and SCPI_ErrorPush from ~170 sites) still RMW their own context's
- * STB and EVENt registers without this lock, so a fan-out cascade into the
- * FOREIGN context's STB can still race one of those on that context's own
- * task. That is a different hazard, far lower impact (SRQ is a no-op on both
- * transports here -- UsbCdc.c SCPI_USB_Control / wifi_tcp_server.c
- * SCPI_TCP_Control both just return OK), and closing it means editing the
- * command table or libscpi itself. Tracked separately rather than smuggled
- * in here.
+ * NOT covered, deliberately (#866). libscpi's own writers that the command
+ * table reaches DIRECTLY still RMW their own context's registers without this
+ * lock, so a fan-out cascade into the FOREIGN context can still race one of
+ * them on that context's own task. Two flavours, and the second is easy to
+ * overlook:
+ *
+ *   - STB / ESR: SCPI_ErrorPush (~170 sites), *CLS, *ESR?, *OPC, *ESE, *SRE,
+ *     the ENABle setters. Lowest impact -- STB's only consumer here is SRQ,
+ *     and both transports' control callbacks are no-ops (UsbCdc.c
+ *     SCPI_USB_Control, wifi_tcp_server.c SCPI_TCP_Control just return OK).
+ *   - OPER / QUES EVENt: STATus:PRESet (SCPI_StatusPreset writes
+ *     SCPI_REG_QUES <- 0, minimal.c:211) and *CLS (clears every group's event
+ *     register, ieee488.c:266). Those are plain stores; the cascade's event
+ *     step is an RMW, so a PRESet racing a sync on the other transport can
+ *     have its clear silently undone. The wrappers below guard the event
+ *     registers only on the paths THIS file owns.
+ *
+ * The CONDition registers are fully covered: SCPI_REG_OPERC and SCPI_REG_QUESC
+ * have no writer anywhere outside the three helpers below.
+ *
+ * Closing either flavour means editing the SCPI command table's .callback
+ * column or patching libscpi. Tracked in #866 rather than smuggled in here.
  */
 static StaticSemaphore_t gScpiStatusMutexStorage;
 static SemaphoreHandle_t gScpiStatusMutex = NULL;
 
 void SCPI_StatusLock_Init(void) {
-    /* Idempotent, and guarded exactly like SCPI_ResponseBuf_Init: the
-     * intended callers (app_SystemInit, then each transport's
-     * CreateSCPIContext) are sequential in practice, but the guard is free
-     * before the scheduler runs and catches a future concurrent caller. */
+    /* Idempotent, and guarded exactly like SCPI_ResponseBuf_Init immediately
+     * above. The scheduler IS already running by the time app_SystemInit
+     * calls this -- it runs inside the priority-1 APP_FREERTOS_Tasks task --
+     * but the intended callers (app_SystemInit, then each transport's
+     * CreateSCPIContext) are sequential: the transport tasks are created
+     * later in the same app_SystemInit body. The critical section costs a
+     * few cycles once and catches a future concurrent caller. */
     taskENTER_CRITICAL();
     if (gScpiStatusMutex == NULL) {
         gScpiStatusMutex = xSemaphoreCreateMutexStatic(&gScpiStatusMutexStorage);
