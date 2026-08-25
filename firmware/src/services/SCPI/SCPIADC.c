@@ -28,6 +28,65 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+// #877: reject a channel argument that a (uint8_t) cast would TRUNCATE --
+// i.e. one outside [0,255] -- BEFORE the cast, so it cannot alias mod-256
+// onto a channel that exists: 256 -> 0, 257 -> 1, and -1 -> 255 (a
+// monitoring id on NQ1). ADC_FindChannelIndex then RESOLVES that aliased
+// channel, so the #630 resolved-index guard downstream passes and the
+// command reads or writes the wrong channel while returning OK.
+//
+// The range is the truncation range ONLY -- the #682 narrowing. Values in
+// [0,255] are not truncated and fall through to each caller's existing
+// resolved-index guard, which keeps its own handling for the sparse id space.
+// That space is sparse on BOTH variants: user ids 0..15 on NQ1 and 0..7 on
+// NQ3, plus the same monitoring block 248..255 on each (ADC_CHANNEL_3_3V ..
+// ADC_CHANNEL_5VREF, AInConfig.h:240-247, pulled in by
+// COMMON_MONITORING_CHANNELS_BOARDCONFIG). Widening this test to the
+// per-variant user maximum would usurp that handling, which is the regression
+// #682 had to undo.
+//
+// Kept as one helper rather than a copy per call site so the invariant is
+// greppable. Two sites carried this test inline before #877 and NEITHER was
+// propagated: SCPI_ADCVoltageGet's predates #678 entirely, and #678 itself
+// (1c5f5ef2) added exactly one, in SCPI_ADCChanEnableSet -- as
+// `> maxUserChannel`, which #682 then had to narrow to `> 255`. Nine other
+// call sites went on casting unchecked, which is what #877 is.
+//
+// SCPIDIO.c solves the same problem, but it does NOT need this shape, and the
+// difference is the sparse id space. DIO ids are dense 0..Size-1, so a single
+// `index >= Size` test on an UNSIGNED comparison bounds both ends at once: its
+// getters compare an `int` against a `size_t` Size, which promotes the int, so
+// -1 becomes 0xFFFFFFFF and is rejected by the same test that rejects 256
+// (verified on the bench 2026-08-25 -- `PWM:CHannel:ENable? -1` answers no
+// value and queues an error, while `? 0` answers 0). #671's
+// DIO_SingleChannelIndexValid is that one test factored out, not a separate
+// range check. Here the id space is sparse, so a resolved-index test cannot
+// bound the ARGUMENT and this range test has to exist in its own right.
+//
+// The message is short on purpose: the log buffer is 128 B wide and a longer
+// line loses its tail. That is what the PRE-#682 form of this guard did --
+// its text ran past the width and hid the hint, regressing test_630 -- and
+// narrowing the guard is what fixed it.
+//
+// WHAT THIS DOES NOT COVER, and cannot: a token libscpi lexes as a DECIMAL
+// number is already TRUNCATED to an integer by the time it arrives, so
+// `CONF:ADC:SINGleend -0.5,1` hands this function 0 -- in range, and it
+// writes channel 0. Measured on the bench 2026-08-25 (`SYST:ERR?` reads
+// `0,"No error"` and channel 0's state changes), while the integer `-1` on
+// the same command is correctly refused with -222. That is a parser-level
+// class affecting EVERY integer channel parameter in the firmware, not just
+// the ones cast to uint8_t, and is tracked as #880 -- no range test placed
+// here could see it.
+static bool AdcChannelArgInRange(scpi_t * context, int channel, const char * cmd)
+{
+    if (channel >= 0 && channel <= 255) {
+        return true;
+    }
+    LOG_E("%s: channel %d out of range (max 255)", cmd, channel);
+    SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+    return false;
+}
+
 scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
     int channel;
     AInSample *pAInLatest;
@@ -52,8 +111,11 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
     if (chanOpt == SCPI_OPT_PRESENT) {
         // Get single
         volatile double val = 0;
-        if (channel < 0 || channel > 255) {
-            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        // #877: same truncation test as before, now via the shared helper so
+        // every site in this file is found by one grep. It also gains the
+        // LOG_E the bare push did not emit (standing rule: the reason for a
+        // SCPI error is retrievable through SYST:LOG?).
+        if (!AdcChannelArgInRange(context, channel, "MEAS:VOLT:DC?")) {
             return SCPI_RES_ERR;
         }
         uint8_t ch = (uint8_t)channel;
@@ -210,6 +272,10 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
         // replaced #630's message, and its longer text truncated past the 128 B
         // log-buffer width, hiding the hint (regressed test_630). Message kept
         // short so the hint survives untruncated.
+        // #877: deliberately NOT AdcChannelArgInRange -- this is the one site
+        // whose hint is worth its own text, because the two-arg and one-arg
+        // (mask) forms are told apart by the argument COUNT, so a client that
+        // meant a mask lands here. Same predicate, same -222.
         if (param1 < 0 || param1 > 255) {
             LOG_E("CONF:ADC:CHAN: channel %d out of range (max 255); use one-arg "
                   "<mask> to enable by bitmask", param1);
@@ -447,6 +513,11 @@ scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context) {
     }
     if (chanOpt == SCPI_OPT_PRESENT) {
         // Single channel
+        // #877: reject before the (uint8_t) narrowing -- see
+        // AdcChannelArgInRange.
+        if (!AdcChannelArgInRange(context, param1, "CONF:ADC:CHAN?")) {
+            return SCPI_RES_ERR;
+        }
         size_t index = ADC_FindChannelIndex((uint8_t) param1);
         // TODO: This function should be able to read which version of the board we are using and assign the ADC channels associated that version
         if (index >= pBoardConfigAInChannels->Size) {
@@ -509,6 +580,11 @@ scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
     }
     if (stateOpt == SCPI_OPT_PRESENT) {
         // Single channel
+        // #877: reject before the (uint8_t) narrowing -- see
+        // AdcChannelArgInRange.
+        if (!AdcChannelArgInRange(context, param1, "CONF:ADC:SINGleend")) {
+            return SCPI_RES_ERR;
+        }
         size_t index = ADC_FindChannelIndex((uint8_t) param1);
         if (index >= pBoardConfigAInChannels->Size) {
             return SCPI_RES_ERR;
@@ -610,6 +686,11 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
     }
     if (chanOpt == SCPI_OPT_PRESENT) {
         // Single channel
+        // #877: reject before the (uint8_t) narrowing -- see
+        // AdcChannelArgInRange.
+        if (!AdcChannelArgInRange(context, param1, "CONF:ADC:SINGleend?")) {
+            return SCPI_RES_ERR;
+        }
         size_t index = ADC_FindChannelIndex((uint8_t) param1);
         if (index >= pBoardConfigAInChannels->Size) {
             return SCPI_RES_ERR;
@@ -756,6 +837,11 @@ scpi_result_t SCPI_ADCChanCalmSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // #877: reject before the (uint8_t) narrowing -- see
+    // AdcChannelArgInRange.
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALM")) {
+        return SCPI_RES_ERR;
+    }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
     if (index >= pBoardConfigAInChannels->Size) {
         return SCPI_RES_ERR;
@@ -782,6 +868,11 @@ scpi_result_t SCPI_ADCChanCalbSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // #877: reject before the (uint8_t) narrowing -- see
+    // AdcChannelArgInRange.
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALB")) {
+        return SCPI_RES_ERR;
+    }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
     if (index >= pBoardConfigAInChannels->Size) {
         return SCPI_RES_ERR;
@@ -802,6 +893,11 @@ scpi_result_t SCPI_ADCChanCalmGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // #877: reject before the (uint8_t) narrowing -- see
+    // AdcChannelArgInRange.
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALM?")) {
+        return SCPI_RES_ERR;
+    }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
     if (index >= pBoardConfigAInChannels->Size) {
         return SCPI_RES_ERR;
@@ -822,6 +918,11 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // #877: reject before the (uint8_t) narrowing -- see
+    // AdcChannelArgInRange.
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALB?")) {
+        return SCPI_RES_ERR;
+    }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
     if (index >= pBoardConfigAInChannels->Size) {
         return SCPI_RES_ERR;
