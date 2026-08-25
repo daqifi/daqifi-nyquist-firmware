@@ -3784,6 +3784,48 @@ static volatile uint32_t gStreamIfaceSetCount = 0;
  * INSIDE one START's window, which is seconds long (Qodo). */
 static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
 
+/* #861: bumped by every SCPI-issued stop -- both spellings, one body.
+ *
+ * A stop that lands while ANOTHER transport is inside a START's PRE-ARM window
+ * used to be silently lost: it clears an `IsEnabled` that is still false,
+ * Streaming_UpdateState() does nothing because `Running` is false too, and the
+ * caller gets OK -- and then that START reaches its arm and publishes
+ * IsEnabled = true. The operator got a successful stop and the device is
+ * acquiring.
+ *
+ * So the ARM observes this counter, exactly the way it already observes
+ * gStreamIfaceGen: START pins it before it does anything, re-reads it inside
+ * the critical section that publishes IsEnabled, and refuses if it moved.
+ *
+ * Observed by the START rather than enforced by the STOP, deliberately. The
+ * obvious alternative -- have the stop take the #850 session-start claim -- is
+ * a bug, and a shipped-and-reverted one: it makes a stop answer -200 for the
+ * length of another transport's SYSTem:STReam:THRoughput (up to 60 s), which
+ * was #859's own round-1 finding. A stop must never be refusable. This shape
+ * refuses the START instead, and the START is the command that can be retried.
+ *
+ * Written only inside the bump's critical section (both transports can be
+ * stopping at once), so the read-modify-write is safe; aligned 32-bit reads
+ * are atomic on PIC32MZ, so the pin and the arm-time re-read are bare loads.
+ * Wrap is harmless for the same reason gStreamIfaceGen's is: it would take
+ * 2^32 stops landing inside ONE start.
+ *
+ * NOT bumped by START's own inline teardown of the previous session --
+ * SCPI_StartStreamingClaimed writes IsEnabled = false and calls
+ * Streaming_UpdateState() directly rather than calling the shared stop body --
+ * because a START that bumped this would refuse itself, every time.
+ *
+ * The other two arm sites do NOT pin or observe it: SYSTem:STReam:THRoughput
+ * (SCPI_RunThroughputBenchClaimed) and the WiFi rate finder (FindMeasureStep)
+ * poke IsEnabled themselves, so a stop racing THEIR pre-arm windows is still
+ * lost. Both are bench/diagnostic paths, and the finder arms once per rate in
+ * a sweep -- so a stop there is an abort-the-sweep decision, not a refusal,
+ * and it lands on a WINC-delicate path that wants its own bench run. They are
+ * already tracked for this same class of arm-time re-validation in #868;
+ * enumerated here so the gap is a recorded scope line rather than something
+ * to rediscover. */
+static volatile uint32_t gStreamStopGen = 0;
+
 /* #848: did an accepted SYST:STR:INT since `pinnedSets` CONTRADICT the start
  * this call is about?
  *
@@ -3940,6 +3982,19 @@ static void SCPI_UnpublishStartInterface(StreamingRuntimeConfig *cfg,
 static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                                                 int32_t freq,
                                                 bool freqProvided) {
+
+    /* #861: pinned FIRST, ahead of every gate below, so the window inside
+     * which this start can be stopped is the whole of its body rather than
+     * whatever is left after some arbitrary check. A stop that lands EARLIER
+     * than this line is not lost -- it is a stop that happened BEFORE this
+     * start, and the start is then the operator's later intent, which is
+     * exactly what should win.
+     *
+     * A bare 32-bit load, not a critical section: unlike the interface pins
+     * further down it has no partner field it must describe one instant with,
+     * and CLAUDE.md's atomicity rule is explicit that wrapping a plain aligned
+     * 32-bit load only costs interrupt latency. */
+    const uint32_t stopGenPinned = gStreamStopGen;
 
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -4803,6 +4858,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     bool inputsGone = false;
     bool cfgChanging = false;
     bool mappingMoved = false;
+    bool stopRequested = false;
     uint32_t revalidatedMax = 0;
     uint64_t mappingSelNow = 0;
     /* Captured INSIDE the section so the refusal log names the value that
@@ -4812,6 +4868,19 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
      * debugging this refusal (Qodo). */
     StreamingInterface ifaceObserved = ifaceForStart;
     taskENTER_CRITICAL();
+    /* #861: did a stop land since this START began? Read INSIDE this section,
+     * because the section is what makes the answer usable: a stop cannot slip
+     * between the test and the publish below, since the publish happens with
+     * interrupts masked and both stop paths are task context.
+     *
+     * What it does NOT cover, stated so nobody reads more into it: a stop that
+     * lands between taskEXIT_CRITICAL below and the Streaming_UpdateState()
+     * that follows the refusal branches. There the stop's own IsEnabled=false
+     * wins and the device ends up stopped -- the stop is honoured, and it is
+     * START's OK that is then the wrong report. Safe direction, and closing it
+     * would mean making the publish and Streaming_UpdateState one atomic step,
+     * which is impossible: UpdateState starts a timer and a task. */
+    stopRequested = (gStreamStopGen != stopGenPinned);
     /* The interface must still be the one everything above was set up for.
      * The rate check alone does not catch this, because the new interface's
      * cap can be perfectly happy with the requested rate: a WiFi START whose
@@ -4858,7 +4927,14 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                 pBoardConfig, (const AInRuntimeArray*)pRuntimeAInChannels);
     }
     ifaceObserved = pRunTimeStreamConfig->ActiveInterface;
-    if (cfgChanging || inputsGone) {
+    if (stopRequested) {
+        /* handled below; skip the rest so the reasons stay mutually exclusive.
+         * First in the chain because it is the only reason here that is an
+         * explicit operator instruction rather than a consistency failure: if
+         * the user said STOP while this start was setting up, that is what the
+         * refusal should say. The publish is a conjunction of all of them, so
+         * the ordering decides only which message is logged. */
+    } else if (cfgChanging || inputsGone) {
         /* handled below; skip the rest so the reasons stay mutually exclusive */
     } else if (ifaceObserved != ifaceForStart ||
         gStreamIfaceGen != ifaceGenAtPublish ||
@@ -4899,7 +4975,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         capRevoked = ((uint32_t)freq > revalidatedMax);
     }
     if (!capRevoked && !ifaceMoved && !inputsGone && !cfgChanging &&
-        !mappingMoved) {
+        !mappingMoved && !stopRequested) {
         /* #848: the rate becomes visible HERE, in the same section that
          * publishes IsEnabled, so no refusal path can leave a rejected rate
          * behind and no reader can see a rate the session is not running at.
@@ -4914,6 +4990,31 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         pRunTimeStreamConfig->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
+
+    if (stopRequested) {
+        /* Same unwind as the cfgChanging branch below -- this START published
+         * the interface, so it must put it back -- plus the #690 rule that a
+         * start which did not happen never leaves a logging file open.
+         *
+         * The stop that raced us has already run Streaming_UpdateState() and
+         * its own SCPI_ClearStreamingOperBits; calling it again here is a
+         * no-op by construction (it tests "is anything streaming" first, #870)
+         * and is kept so this branch is complete on its own, exactly like its
+         * siblings. */
+        if (sdLoggingRequested) {
+            SCPI_ReleaseSdLoggingArm(pSDCardSettings);
+        }
+        SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
+        SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
+                                     ifaceAtDetect, ifaceGenPinned,
+                                     ifaceSetsPinned);
+        /* Kept under LOG_MESSAGE_SIZE (128, so 127 usable) -- the logger
+         * truncates past it silently. 96 chars. */
+        LOG_E("STR:START refused (#861): a stop was issued during start setup; "
+              "the device stays stopped. Retry.");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
 
     if (cfgChanging) {
         /* Same unwind as the inputsGone branch below: the interface WAS
@@ -5300,6 +5401,33 @@ static void SCPI_PerformStreamingStop(void) {
             BOARDRUNTIME_STREAMING_CONFIGURATION);
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    /* #861: announce the stop BEFORE performing any of it.
+     *
+     * First, not last, and the order is the whole point. A START on the other
+     * transport re-reads this counter inside the critical section that
+     * publishes IsEnabled; a bump that landed after this body's
+     * IsEnabled/Streaming_UpdateState work would leave a window in which that
+     * arm still sees the pinned value, arms, and the stop we have just
+     * performed is lost anyway -- the defect relocated, not closed.
+     *
+     * Reached from both spellings and only those two: SYSTem:STReam:STOP (and
+     * its legacy alias) through SCPI_StopStreaming, and the
+     * SYSTem:STReam:START 0 disable branch in SCPI_StartStreaming. START's own
+     * teardown of the previous session does NOT come through here, which is
+     * what stops a start refusing itself.
+     *
+     * Bumping unconditionally -- including when nothing is streaming -- is
+     * deliberate: "nothing is streaming" is precisely the state a START's
+     * pre-arm window presents, so a bump conditioned on a live session would
+     * skip the only case this counter exists for.
+     *
+     * Critical section because ++ is a read-modify-write and both transports
+     * can stop concurrently (USB SCPI at priority 7 preempts the WifiTask at
+     * 2); a lost bump is a missed refusal. O(1), nothing called inside. */
+    taskENTER_CRITICAL();
+    gStreamStopGen++;
+    taskEXIT_CRITICAL();
 
     /* The SD-teardown question is asked TWICE -- here, and again at the act
      * point below -- and the teardown runs only if BOTH say yes. Two pre-merge
