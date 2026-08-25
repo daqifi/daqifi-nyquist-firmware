@@ -5104,6 +5104,40 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
 static void SCPI_PerformStreamingStop(void) {
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
+    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_SD_CARD_SETTINGS);
+
+    /* The SD-teardown question is asked HERE, before the session is torn down,
+     * and the ordering is the load-bearing part -- see the block that uses it
+     * further down for what the three terms mean.
+     *
+     * Asking it later is a check-then-act race with a real interleaving, not a
+     * theoretical one. SYST:STOR:SD:BENCHmark is refused while a stream is
+     * live (#854) and arms a PLAIN write, which CLEARS the streaming-log latch
+     * (sd_card_manager.c:3603-3610). Clearing IsEnabled and running
+     * Streaming_UpdateState() below is exactly what makes that refusal stop
+     * refusing -- so a benchmark on the other transport can arm in the window
+     * between them and a predicate evaluated after would read latch=false and
+     * skip closing THIS session's log. Evaluated here, the session is still
+     * live, the benchmark is still refused, and the answer cannot be stolen.
+     * Same shape and same reason as #851's stoppedSdLoggingSession at :4351.
+     *
+     * Under one critical section, which is NOT the reflexive "wrap a shared
+     * read" the project declines: this is a composite of three independently
+     * written fields, and the latch half is WRITTEN under a critical section
+     * in the SD manager (sd_card_manager.c:3602-3611), so reading the set
+     * together matches the writer's own discipline. SCPIStorageSD.c:496 reads
+     * the benchmark's ownership flag the same way for the same reason. O(1)
+     * loads, no call that can block -- WriteIsStreamingLog() is a single
+     * volatile read. */
+    bool closeSdLoggingSession;
+    taskENTER_CRITICAL();
+    closeSdLoggingSession = (pSDCardRuntimeConfig != NULL) &&
+                            pSDCardRuntimeConfig->enable &&
+                            (pSDCardRuntimeConfig->mode ==
+                                 SD_CARD_MANAGER_MODE_WRITE) &&
+                            sd_card_manager_WriteIsStreamingLog();
+    taskEXIT_CRITICAL();
 
     if (pRunTimeStreamConfig) {
         pRunTimeStreamConfig->IsEnabled = false;
@@ -5117,9 +5151,9 @@ static void SCPI_PerformStreamingStop(void) {
     UsbCdc_FlushWriteBuffer();
 
     // Close SD card file if logging was enabled
-    sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
-    /* #860 pre-merge audit: the `sd_card_manager_WriteIsStreamingLog()` term is
-     * the ONE change to this body, and it is what makes sharing it safe.
+    /* #860 pre-merge audit: the `sd_card_manager_WriteIsStreamingLog()` term in
+     * the snapshot at the top of this function is what makes sharing this body
+     * safe.
      *
      * `enable && mode == WRITE` does not mean "a streaming log is open" -- it
      * means "somebody armed the shared WRITE". There are exactly two arms in
@@ -5146,10 +5180,7 @@ static void SCPI_PerformStreamingStop(void) {
      * companion test's part 2 is the guard on that direction: it asserts
      * SYST:STOR:SD:SPACe? answers straight after `START 0` on a logging
      * session, which can only happen if this block still fires. */
-    if (pSDCardRuntimeConfig != NULL &&
-        pSDCardRuntimeConfig->enable &&
-        pSDCardRuntimeConfig->mode == SD_CARD_MANAGER_MODE_WRITE &&
-        sd_card_manager_WriteIsStreamingLog()) {
+    if (closeSdLoggingSession) {
         // Set mode to NONE and update to trigger file close (DEINIT → UNMOUNT → close)
         pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
         sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
@@ -5201,7 +5232,13 @@ static void SCPI_PerformStreamingStop(void) {
                 /* Kept under LOG_MESSAGE_SIZE (128) with the longest state
                  * name: the previous wording was 149 chars and lost its own
                  * "Poll STAT:OPER:COND?" advice to truncation. */
-                LOG_E("[SD] StopStreaming: SD still finalising in state=%s "
+                /* "Streaming stop", not "StopStreaming": since #860 the
+                 * SYSTem:STReam:START 0 disable form reaches this line too, and
+                 * a message naming a command the caller never sent sends the
+                 * next reader of SYST:LOG? looking for the wrong one. 122 chars
+                 * with the longest state/mode names (CURDRIVE / GETSPACE),
+                 * inside LOG_MESSAGE_SIZE (128). */
+                LOG_E("[SD] Streaming stop: SD still finalising in state=%s "
                       "mode=%s; OPER bit 11 set until idle. "
                       "Poll STAT:OPER:COND?",
                       sd_card_manager_GetStateName(),
