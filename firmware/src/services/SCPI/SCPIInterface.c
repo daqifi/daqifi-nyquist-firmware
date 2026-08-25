@@ -4981,6 +4981,22 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     SCPI_SetOperBits(OPER_MEASURING);
     if (sdLoggingRequested) {
         SCPI_SetOperBits(OPER_SD_LOGGING);
+    } else {
+        /* STATE, not an assertion: a START publishes what IS true of ITS
+         * session, both ways round. Only setting the bit leaves a non-logging
+         * session wearing the previous session's OPER_SD_LOGGING whenever
+         * something skipped the clear -- and #870 made that reachable, because
+         * SCPI_ClearStreamingOperBits declines to clear while a replacement
+         * session is live, and it is all-or-nothing across both bits (Qodo).
+         * Nothing else repairs bit 10: SCPI_SyncOperSdBit covers the
+         * FINALIZING bit, not this one, so the stale value would persist
+         * between commands and swallow the next genuine 0->1 SD-logging event.
+         *
+         * On every ordinary start this is a no-op -- the preceding stop
+         * already cleared it -- so it costs nothing and closes the case the
+         * conditional clear opened. Same principle as the rest of this
+         * change: the session owns its own state. */
+        SCPI_ClearOperBits(OPER_SD_LOGGING);
     }
     /* #783: a successful START PROVES the previous session's SD finalise
      * completed -- PrepareStreamingBuffers -> QuiesceAndResetCoherentPool
