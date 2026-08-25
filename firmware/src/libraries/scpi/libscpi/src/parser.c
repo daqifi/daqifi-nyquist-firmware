@@ -1358,8 +1358,23 @@ scpi_bool_t SCPI_ParamBool(scpi_t * context, scpi_bool_t * value, scpi_bool_t ma
 
     if (result) {
         if (param.type == SCPI_TOKEN_DECIMAL_NUMERIC_PROGRAM_DATA) {
-            SCPI_ParamToInt32(context, &param, &intval);
-            *value = intval ? TRUE : FALSE;
+            /* DAQiFi #880: honour the return. It was discarded, which was
+             * survivable while this conversion could only fail on a token
+             * SCPI_Parameter had already accepted -- but a partly-consumed
+             * decimal now fails here, and ignoring that returned TRUE with
+             * `*value` set from the TRUNCATED integer while -104 sat in the
+             * queue. `SCPI_ParamBool("1.5")` answered TRUE, so a boolean
+             * setter would have applied a value from a rejected token.
+             *
+             * Unreachable in this firmware today -- nothing in services/SCPI
+             * calls SCPI_ParamBool, and no libscpi-internal registered command
+             * does either (grepped) -- but it is a public API in the file this
+             * patch already diverges in, and leaving it inconsistent is how
+             * the divergence rots. */
+            result = SCPI_ParamToInt32(context, &param, &intval);
+            if (result) {
+                *value = intval ? TRUE : FALSE;
+            }
         } else {
             result = SCPI_ParamToChoice(context, &param, scpi_bool_def, &intval);
             if (result) {

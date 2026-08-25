@@ -879,6 +879,9 @@ static void testSCPI_ParamBool(void) {
     TEST_ParamBool("100", TRUE, TRUE, TRUE, 0);
     TEST_ParamBool("OFF", TRUE, FALSE, TRUE, 0);
     TEST_ParamBool("0", TRUE, FALSE, TRUE, 0);
+    /* DAQiFi #880: a fractional token is not a boolean. It used to answer
+     * TRUE with the value taken from the truncated `1`. */
+    TEST_ParamBool("1.5", TRUE, FALSE, FALSE, SCPI_ERROR_DATA_TYPE_ERROR);
     TEST_ParamBool("XYZ", TRUE, FALSE, FALSE, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
 }
 
