@@ -295,6 +295,13 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
         // DAC channel 0 and report ITS last commanded voltage as this
         // channel's. Same test as the setter above, on an int rather than a
         // double because this form parses the channel directly.
+        //
+        // Which also means this one does NOT cover a decimal token: libscpi
+        // truncates `-0.5` to 0 before the callback sees it, so this test
+        // passes and the reply is channel 0's (#880). The SETTER above is
+        // immune only because its first parameter arrives as a double and is
+        // range-checked in that form -- the accidental upside of a shape that
+        // exists for a different reason.
         if (channel < 0 || channel > 255) {
             LOG_E("SOUR:VOLT:LEV?: channel out of range (max 255)");
             SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);

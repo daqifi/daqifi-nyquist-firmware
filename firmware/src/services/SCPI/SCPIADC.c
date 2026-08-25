@@ -67,6 +67,16 @@
 // line loses its tail. That is what the PRE-#682 form of this guard did --
 // its text ran past the width and hid the hint, regressing test_630 -- and
 // narrowing the guard is what fixed it.
+//
+// WHAT THIS DOES NOT COVER, and cannot: a token libscpi lexes as a DECIMAL
+// number is already TRUNCATED to an integer by the time it arrives, so
+// `CONF:ADC:SINGleend -0.5,1` hands this function 0 -- in range, and it
+// writes channel 0. Measured on the bench 2026-08-25 (`SYST:ERR?` reads
+// `0,"No error"` and channel 0's state changes), while the integer `-1` on
+// the same command is correctly refused with -222. That is a parser-level
+// class affecting EVERY integer channel parameter in the firmware, not just
+// the ones cast to uint8_t, and is tracked as #880 -- no range test placed
+// here could see it.
 static bool AdcChannelArgInRange(scpi_t * context, int channel, const char * cmd)
 {
     if (channel >= 0 && channel <= 255) {
