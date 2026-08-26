@@ -734,10 +734,74 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t ADCChanRangeSetClaimed(scpi_t * context);
+
+/* #873: converted to the claim-in-wrapper shape the nine already-converted
+ * setters use. Those nine are cap INPUTS -- they move the rate the session was
+ * admitted under -- and this one is not: Range feeds the voltage CONVERSION,
+ * not Streaming_ComputeMaxFreq. The exclusion it needs against an arm is the
+ * same one, for a different reason, which is why it takes the same claim.
+ *
+ * It closes three separate defects at once, and the claim is what closes all
+ * three:
+ *
+ *  1. It took NO claim, so SCPI_StartStreaming's arm-time observation of
+ *     Streaming_ConfigChangeInProgress() could not see it (#847 class). A range
+ *     change on one SCPI transport could pass its guard and then land on a
+ *     session the other transport armed.
+ *  2. Its guard read `Running` ALONE. The two flags move in separate steps at
+ *     start/stop, so that test reads false for the whole interval between them
+ *     -- it refused only the fully-established middle of a session and admitted
+ *     both ends (#857/#844 class). Streaming_BeginConfigChange performs
+ *     `IsEnabled || Running` inside one critical section instead.
+ *  3. It parsed and range-checked BEFORE it guarded, so mid-stream
+ *     `CONF:ADC:RANGe 5` answered -224 about the argument -- and an unparseable
+ *     token -104 -- where every converted setter answers -200 about the stream
+ *     (#862 class). Taking the
+ *     claim as the first statement makes the refusal independent of the
+ *     argument -- see the ordering contract on SCPI_RejectCfgClaim.
+ *
+ * The window this closes is milliseconds wide, not instruction-narrow: the body
+ * holds an explicit vTaskDelay(2ms) for AD7609 analog settling BETWEEN the
+ * hardware pin write and the runtime store, and that is a guaranteed yield
+ * point. Holding the claim across it is correct and is the reason the exclusion
+ * is a flag rather than a critical section (streaming.h, StreamingCfgClaim):
+ * nothing blocks on the flag, so a START that lands inside those 2 ms is
+ * refused with -200 instead of arming onto a range change that has written the
+ * pin but not yet stored the scale. This is the first holder that yields, so it
+ * is also the first for which a concurrent config setter on the other transport
+ * can see STREAM_CFG_CLAIM_BUSY for a bounded couple of milliseconds; that is
+ * the intended cost, and it is reported rather than silent.
+ *
+ * Range is read live per conversion by MC12b_ConvertToVoltage (MC12bADC.c:248-
+ * 258) and its AD7609 counterpart, so the unguarded store rescaled a
+ * running session's samples on a header already emitted -- and the pin moved
+ * under a live acquisition. AD7609/NQ3-only in EFFECT (ADC_FindModule returns
+ * NULL on NQ1, below), but the refusal semantics above are variant-independent.
+ */
 scpi_result_t SCPI_ADCChanRangeSet(scpi_t * context) {
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "CONF:ADC:RANGe");
+    }
+    scpi_result_t result = ADCChanRangeSetClaimed(context);
+    Streaming_EndConfigChange();
+    return result;
+}
+
+static scpi_result_t ADCChanRangeSetClaimed(scpi_t * context) {
     int32_t rangeParam;
 
     // Get range parameter (0=±5V, 1=±10V)
+    //
+    // The second push is PRE-EXISTING and deliberately left alone by #873:
+    // SCPI_ParamInt32 has already queued on every failure path (-109 absent,
+    // -138 suffix, -104 not-a-number), so this adds a second, usually wrong,
+    // code. Filed as #885 rather than fixed here -- it changes which error a
+    // malformed argument reports, which is its own behaviour change with its
+    // own test arm, and this PR's subject is the claim.
     if (!SCPI_ParamInt32(context, &rangeParam, TRUE)) {
         SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
         return SCPI_RES_ERR;
@@ -766,14 +830,12 @@ scpi_result_t SCPI_ADCChanRangeSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    // Prevent changing range while streaming is active
-    // Changing range during streaming can corrupt ADC data
-    StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    if (pStreamCfg && pStreamCfg->Running) {
-        LOG_E("SCPI_ADCChanRangeSet: Rejecting range change during active streaming");
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return SCPI_RES_ERR;
-    }
+    // The stream-state test that used to sit here is gone deliberately: the
+    // wrapper's Streaming_BeginConfigChange() performs it (IsEnabled || Running,
+    // atomically with taking the claim) and holds the exclusion across
+    // everything below, including the vTaskDelay. A second test here would be
+    // dead code AND would re-answer -200 from inside the claim, where the
+    // wrapper has already decided the session state.
 
     // Convert parameter to voltage range
     double rangeVoltage = (rangeParam == 1) ? 10.0 : 5.0;
