@@ -779,15 +779,26 @@ static const scpi_command_t scpi_commands[] = {
 # anything. `gSomethingElse` is the declarator anchor's mutation target: it is
 # the only `static volatile` declaration in this fixture whose initialiser
 # could be mistaken for a flag name -- `gCfgChangeBusy`'s `0u` is not
-# identifier-shaped, so it is never offered as a candidate. It changes no
-# verdict here -- the anchor already rejects it -- but it is what makes an
-# anchor loosening detectable AT ALL. Loosen `[\w\s\*]` to `[\w\s\*=]` and
-# FOUR arms go red: the two `init_reader` arms below, and the two
-# pre-existing `gutted_reader` arms. Delete this line and all four go green
-# on the broken anchor (60/60). So the line outlives any single arm that
-# depends on it -- do NOT retire it alongside one: retiring the `init_reader`
-# arms AND deleting this line takes a caught loosening (56/58) to a silent
-# pass (58/58), which is the shape #899 exists to refuse.
+# identifier-shaped, so it yields no candidate token at all. It changes no
+# verdict HERE, and NOT because the anchor rejects it: `_GOOD_STREAM`'s own
+# reader never says `false`, so `false` is never offered and the anchor never
+# runs on it (it is evaluated exactly twice, on `return` and on
+# `gCfgChangeBusy`). The rejection happens in the `init_reader` and
+# `gutted_reader` variants below, whose readers DO say `false` -- and that is
+# what this line buys. Widen the character class `[\w\s\*]` so it can cross
+# `=` (to `[\w\s\*=]`, or `.`, or `[^;]`) and FOUR arms go red: the two
+# `init_reader` arms below, and the two pre-existing `gutted_reader` arms.
+# Delete this line and all four go green on that broken anchor (60/60). So
+# the line outlives any single arm that depends on it -- do NOT retire it
+# alongside one: retiring the `init_reader` arms AND deleting this line takes
+# a caught loosening (56/58) to a silent pass (58/58).
+#
+# Scope, so this is not read as more than it is. It is NOT true that the line
+# makes anchor loosenings detectable in general: a class widened all the way
+# to `[\s\S]` is still caught without it (56/60 -- the surviving declaration
+# then reaches the readers' own `false`/`true`), and loosening the anchor's
+# `\b` or its `(?:=|;|\[)` tail is caught by nothing, with or without it. The
+# self-test constrains the character class only (#899; limits tracked in #896).
 _GOOD_STREAM = '''
 static volatile bool gSomethingElse = false;
 static volatile uint32_t gCfgChangeBusy = 0u;
