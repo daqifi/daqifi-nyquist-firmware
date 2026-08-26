@@ -436,7 +436,10 @@ than exactly one `Begin`+one `End`, or exactly one `taskENTER_CRITICAL`+one
 `taskEXIT_CRITICAL`, is **refused** rather than passed on a looser bound — and
 that includes an *unbalanced* count (one opener, a second closer on an early
 return), which is correct C refused only because deciding it needs control flow.
-The refusal prints the counts, so the message says which case you have. Property
+A refusal with both an opener and a closer prints the counts, so the message
+says which case you have; a *missing* opener or closer takes a different arm
+whose message names no counts — and reads the same either way round, so it
+does not distinguish those two from each other either. Property
 4's read requirement establishes that the flag is read in the same section that
 sets it — **not** that the read gates the grant, which regex cannot show.
 
