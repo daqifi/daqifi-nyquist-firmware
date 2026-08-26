@@ -207,6 +207,57 @@ def _blank(text):
     return _STR_OR_CHAR.sub(lambda m: " " * len(m.group(0)), text)
 
 
+# The last non-blank line before a definition whose return type sits on its
+# own line. It must LOOK like the tail of a declaration: end in an identifier
+# character or a `*`, with its parentheses balanced. `if (`, `if (foo(a)`,
+# `while (x &&` all fail it, which is the point -- see `_signature`.
+_DECL_TAIL = re.compile(r"[\w\*]\s*$")
+
+
+def _signature(text, name):
+    r"""Match object for a DEFINITION of C function `name`, or None.
+
+    Two layouts, tried in that order, because both are ordinary C and
+    accepting only the first reported "could not find that function to check
+    it" about a definition that is right there -- a false red, and a false red
+    is how a gate gets deleted (#896 section B).
+
+    1. `static scpi_result_t SCPI_Foo(args) {` -- return type and name on one
+       line. Anchored to the line start, because the unanchored form
+       `\bNAME\s*\([^;{]*\)\s*\{` also matches a CALL inside a condition: in
+       `if (foo(a)) {` the parameter span absorbs `a)` and takes the OUTER `)`
+       before the brace, so the `if` body is returned as the function body. A
+       prototype is excluded either way -- it ends in `;`, which `[^;{]*`
+       cannot cross.
+
+    2. Return type on its own line, name at column 0. Making the return type
+       merely OPTIONAL in 1 is NOT enough here, and the difference is a real
+       hole rather than a nicety: a condition split across lines with the call
+       at column 0 --
+
+           if (
+       helper_probe(c)) { ... }
+
+       -- puts the CALLED NAME at the start of a line, so the parameter span
+       absorbs the inner `)` exactly as in the unanchored case. (Verified by
+       running it: the first attempt at this fix returned the `if` body.) So
+       layout 2 additionally requires the preceding non-blank line to look
+       like the tail of a declaration.
+    """
+    esc = re.escape(name)
+    m = re.search(r"(?m)^[A-Za-z_][\w \t\*]*\b%s\s*\(([^;{]*)\)\s*\{"
+                  % esc, text)
+    if m:
+        return m
+    for m in re.finditer(r"(?m)^%s\s*\(([^;{]*)\)\s*\{" % esc, text):
+        before = [ln for ln in text[:m.start()].split("\n") if ln.strip()]
+        prev = before[-1] if before else ""
+        if (_DECL_TAIL.search(prev)
+                and prev.count("(") == prev.count(")")):
+            return m
+    return None
+
+
 def function_body(text, name):
     """The brace-delimited body of C function `name`, or None if not found.
 
@@ -214,14 +265,7 @@ def function_body(text, name):
     are blanked before brace counting so a brace inside a literal -- e.g. a
     format string -- cannot unbalance the scan.
     """
-    # Anchored to a line that STARTS with a return type, because the bare
-    # form `\bNAME\s*\([^;{]*\)\s*\{` also matches a CALL inside a
-    # condition: in `if (foo(a)) {` the group can absorb `a)` and take the
-    # outer `)` before the brace, so a call would be read as a definition and
-    # the wrong body returned. A prototype is still excluded -- it ends in `;`,
-    # which `[^;{]*` cannot cross.
-    sig = re.search(r"(?m)^[A-Za-z_][\w \t\*]*\b%s\s*\([^;{]*\)\s*\{"
-                    % re.escape(name), text)
+    sig = _signature(text, name)
     if not sig:
         return None
     start = text.index("{", sig.start())
@@ -266,8 +310,10 @@ def dispatch_param(text, name):
     Discovered from the signature rather than hard-coded, for the same reason
     as CLAIM_READER: the checker should follow a rename, not stop asserting.
     """
-    sig = re.search(r"(?m)^[A-Za-z_][\w \t\*]*\b%s\s*\(([^;{]*)\)\s*\{"
-                    % re.escape(name), text)
+    # Same matcher as `function_body`, for the same reason: a helper whose
+    # return type sits on its own line has a dispatch parameter too, and
+    # failing to find it there is the same false red (#896 section B).
+    sig = _signature(text, name)
     if not sig:
         return None
     m = re.search(r"\(\s*\*\s*([A-Za-z_]\w*)\s*\)\s*\(", sig.group(1))
@@ -287,6 +333,22 @@ _ZERO_RHS = re.compile(r"^(?:0[uUlL]*|0[xX]0+[uUlL]*|false)$")
 _STATIC_VOLATILE = (r"(?:static\s+volatile|volatile\s+static)\s+"
                     r"[A-Za-z_][\w\s\*]*?\b%s\s*(?:=|;|\[)")
 
+# The SECOND and later declarators of one declaration:
+# `static volatile uint32_t gOther = 0u, gCfgChangeBusy = 0u;`. The anchor
+# above cannot cross the first `=`, so that flag was invisible and the gate
+# redded correct C with "reads 0 file-scope static volatile variable(s)"
+# (#896 section B).
+#
+# Added as a SEPARATE alternative rather than by loosening the anchor, which
+# would put back the defect #899 armed: the name here must follow a comma
+# DIRECTLY, so an initialiser still cannot be offered as a declarator. In
+# `... = false;` there is no comma at all; in `... = f(x, y);` the `y` does
+# follow one but is followed by `)`, which the declarator tail rejects. The
+# `[^;{}]` body keeps the search inside one declaration and out of a braced
+# initialiser.
+_MULTI_DECLARATOR = (r"(?:static\s+volatile|volatile\s+static)\s+"
+                     r"[A-Za-z_][^;{}]*?,\s*\**\s*%s\s*(?:=|;|\[|,)")
+
 
 def _assignments(body, name):
     r"""[(offset, assigns_zero)] for every plain `name = <rhs>;` in `body`.
@@ -302,14 +364,21 @@ def _assignments(body, name):
     whitespace, so `!=`, `>=` and `+=` cannot reach the operator in the first
     place, and no arm could tell the two versions apart.
 
-    Only `=`, `|=` and `&=` are recognised. `&= ~MASK` -- the idiomatic
-    bit-clear -- is NOT a clear here, because the only `&=` right-hand side
-    this can evaluate is a literal zero. NOT handled, and known: a
-    multi-declarator declaration
-    (`static volatile uint32_t gA = 0u, gFlag = 0u;`) hides the second name
-    from the declarator search, and a macro-wrapped write
-    (`CLAIM_CLEAR(gFlag);`) is invisible here. Both would red the gate on
-    correct code; neither occurs in this tree. See #896.
+    Only `=`, `|=` and `&=` are recognised, and `&= ~MASK` is DELIBERATELY not
+    a clear. #896 filed that as a false red on idiomatic C; it is not one, and
+    fixing it would be a hole. This flag is binary -- `Begin` sets it to `1u`
+    and `End` must take it back to zero -- so `flag &= ~SOME_MASK` clears the
+    claim only if that mask covers the bit `Begin` set, which needs the mask's
+    value. Crediting it regardless would turn a LOUD red into a SILENT pass on
+    an `End` that releases nothing, and a silent pass is the failure this file
+    exists to prevent. The red stands until an `End` in this tree is actually
+    written that way, at which point the mask is a known constant.
+
+    NOT handled, and known: a macro-wrapped write (`CLAIM_CLEAR(gFlag);`) is
+    invisible here and would red the gate on correct code. It does not occur
+    in this tree. See #896. (The multi-declarator case listed beside it there
+    was a different search -- the flag DECLARATION, not its writes -- and is
+    handled by `_MULTI_DECLARATOR`.)
     """
     out = []
     for m in re.finditer(
@@ -494,12 +563,31 @@ def _stmt_prefix(blanked, pos):
 # (opus verifier, PR #894 round 4). `(void)` is not special: any bare cast
 # throws the value away just as thoroughly.
 _CAST_ONLY = re.compile(r"\(\s*[A-Za-z_][\w\s\*]*\)")
-_LABEL_ONLY = re.compile(r"[A-Za-z_]\w*\s*:")
+# Both label forms C11 6.8.1 gives a statement: an identifier label (which
+# covers `default:`, an ordinary identifier) and `case constant-expression :`.
+# The `case` half was missing while the docstring below said "a labelled
+# statement", so `case 1: Streaming_BeginConfigChange();` was credited as
+# USING the verdict -- the enumeration promising a form it did not catch, in
+# the function whose whole purpose is to enumerate (#896 (f)).
+_LABEL_ONLY = re.compile(r"(?:case\b[^:]*|[A-Za-z_]\w*)\s*:")
 _FOR_INIT = re.compile(r"\bfor\s*\($")
+
+# An assignment whose value the DIRECTLY enclosing construct tests or returns:
+# `if ((claim = Begin()) != OK)`, `while (...)`, `switch (...)`, `return`.
+# That is an inspection at the assignment itself, so the store-and-ignore scan
+# below must not run on it -- it used to, and reported "stores but never
+# inspects" about a helper that branches on the verdict two characters later
+# (#896 (e)). Only a DIRECTLY enclosing construct counts: in
+# `if (foo(claim = Begin()))` the value goes to `foo`, not to the `if`.
+_TESTED_TAIL = re.compile(r"(?:\b(?:if|while|switch)\s*\(+|\breturn\b\s*\(*)$")
 
 
 def _discards(prefix):
-    """True iff a value produced at this statement prefix goes nowhere."""
+    """True iff a value produced at this statement prefix goes nowhere.
+
+    A labelled statement means BOTH C label forms -- `retry:`/`default:` and
+    `case <expr>:`. Enumerating one and describing both is what #896 (f) was.
+    """
     return (prefix == ""
             or _CAST_ONLY.fullmatch(prefix) is not None
             or _LABEL_ONLY.fullmatch(prefix) is not None
@@ -522,12 +610,20 @@ def _verdict_used(body, name):
       (opus verifier, round 4). A read whose own prefix discards does not
       count as an inspection.
 
-    A call used inline -- in an `if`, in a `return` -- is a use.
+    A call used inline -- in an `if`, in a `return` -- is a use, and so is an
+    assignment the enclosing construct immediately tests:
+    `if ((claim = Begin()) != STREAM_CFG_CLAIM_OK)` is a correct helper, and
+    reporting it as "stores but never inspects" was a FALSE RED on the most
+    ordinary refactor of the shape this tree already uses. The store-and-ignore
+    scan cannot see those inspections at all -- both of them sit BEFORE the
+    `;` it starts scanning from, because that `;` is the one ending the
+    `return` inside the if-body (#896 (e)).
 
-    KNOWN LIMIT: passing the verdict to another function counts as a use, so
+    KNOWN LIMITS, both control flow, which this checker does not have (#896):
+    passing the verdict to another function counts as a use, so
     `LOG_I("claim=%u", Streaming_BeginConfigChange());` followed by an
-    unconditional dispatch passes. Separating "inspected" from "branched on"
-    is control flow, which this checker does not have. #896.
+    unconditional dispatch passes; and only a DIRECTLY enclosing test counts,
+    so `if (foo(claim = Begin()))` falls through to the store scan.
     """
     b = _blank(body)
     for m in re.finditer(r"\b%s\s*\(" % re.escape(name), b):
@@ -536,6 +632,8 @@ def _verdict_used(body, name):
             return "discards the result of"
         target = re.search(r"([A-Za-z_]\w*)\s*=$", prefix)
         if target:
+            if _TESTED_TAIL.search(prefix[:target.start()]):
+                continue          # the enclosing if/while/switch/return uses it
             var = target.group(1)
             after = b.find(";", m.start())
             if after < 0:
@@ -640,11 +738,16 @@ def claim_flag(text):
         # the wrong thing, which is the shape of finding this file exists to
         # refuse in others.
         #
+        # `_MULTI_DECLARATOR` beside it is the second and later declarators of
+        # one declaration; it is a separate pattern precisely so this anchor
+        # stays as it is.
+        #
         # This is the ONLY filter. A keyword blocklist was written here first
         # and then removed: with the anchor in place no arm could tell the two
         # apart, so it was defensive code that could not fail -- and a check
         # that cannot fail is what this checker is about.
-        if re.search(_STATIC_VOLATILE % re.escape(name), text):
+        if (re.search(_STATIC_VOLATILE % re.escape(name), text)
+                or re.search(_MULTI_DECLARATOR % re.escape(name), text)):
             cands.add(name)
     if len(cands) != 1:
         return None, (
@@ -855,6 +958,37 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("a call inside a condition is not read as a definition",
             function_body(called, "helper_probe"), None)
 
+        # #896 section B: a return type on its own line is ordinary C, and
+        # reporting "could not find that function to check it" about a
+        # definition that is present is a false red -- which is how a gate
+        # gets bypassed or deleted.
+        split = _GOOD.replace(
+            "static scpi_result_t SCPI_MemRunClaimed(scpi_t *c, scpi_result_t (*b)(scpi_t *),\n"
+            "                                        const char *what) {",
+            "static scpi_result_t\n"
+            "SCPI_MemRunClaimed(scpi_t *c, scpi_result_t (*b)(scpi_t *),\n"
+            "                   const char *what) {")
+        assert split != _GOOD
+        _ck("a return type on its own line is still a definition",
+            check(split)[0], [])
+        _ck("...and its dispatch parameter is still found there",
+            dispatch_param(split, CLAIM_HELPER), "b")
+
+        # ...and the hole that layout costs if it is taken as merely making
+        # the return type optional. A condition split across lines puts the
+        # CALLED name at column 0, and the parameter span then absorbs the
+        # inner `)` exactly as an unanchored pattern would. The first attempt
+        # at the arm above returned the `if` body here.
+        split_cond = _GOOD + """
+static scpi_result_t decoy2(scpi_t * c) {
+    if (
+helper_probe2(c)) { return SCPI_RES_ERR; }
+    return SCPI_RES_OK;
+}
+"""
+        _ck("a call at column 0 inside a split condition is not a definition",
+            function_body(split_cond, "helper_probe2"), None)
+
         # (1) one command routed off the helper
         off = _GOOD.replace(
             'return SCPI_MemRunClaimed(context, SCPI_SetMemWifiBufClaimed, "x");',
@@ -900,6 +1034,19 @@ static scpi_result_t decoy(scpi_t * c) {
         probs, _ = check(mention)
         _ck("a string mention is not accepted as a call",
             any("does not go through" in p for p in probs), True)
+
+        # ...and the arm above passes with `_blank` gutted, because its
+        # fixture has no `(` and the CALL FORM alone rejects it. This one has
+        # the parenthesis, so it is the arm that actually holds `_blank`
+        # up: without literal-blanking the mention satisfies `_calls` and a
+        # setter with no claim at all reports OK (#896 (g)).
+        spelled = _GOOD.replace(
+            'return SCPI_MemRunClaimed(context, SCPI_SetMemSdBufClaimed, "a{b}c");',
+            'const char *m = "SCPI_MemRunClaimed(context, cb, why)"; (void)m;\n'
+            '    return SCPI_SetMemSdBufClaimed(context);')
+        assert spelled != _GOOD
+        _ck("a literal spelling a whole CALL is not accepted as one",
+            any("does not go through" in p for p in check(spelled)[0]), True)
 
         # (3) an ABBREVIATED registration is a legal command and must be
         # examined. libscpi accepts each node full or truncated at its first
@@ -1067,6 +1214,56 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("...and a helper that tests it inline is not accused",
             check(inline)[0], [])
 
+        # #896 (e): assignment-in-condition. A correct helper, reported with a
+        # message that says the opposite of what it does -- the store scan
+        # starts at the first `;` after the call, which here ends the `return`
+        # INSIDE the if-body, so both real inspections sit before it.
+        condtest = _GOOD.replace(
+            "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
+            "    if (claim != STREAM_CFG_CLAIM_OK) { return SCPI_RejectCfgClaim(c, 1, what); }",
+            "    StreamingCfgClaim claim;\n"
+            "    if ((claim = Streaming_BeginConfigChange()) != STREAM_CFG_CLAIM_OK) {\n"
+            "        return SCPI_RejectCfgClaim(c, claim == STREAM_CFG_CLAIM_BUSY, what);\n"
+            "    }")
+        assert condtest != _GOOD
+        _ck("an assignment the `if` tests is an inspection, not a false red",
+            check(condtest)[0], [])
+
+        # ...and the exemption is only for a DIRECTLY enclosing test. Handing
+        # the verdict to another function and never looking at it again must
+        # still be caught, or the fix above would have widened the hole it
+        # was closing.
+        handed = _GOOD.replace(
+            "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
+            "    if (claim != STREAM_CFG_CLAIM_OK) { return SCPI_RejectCfgClaim(c, 1, what); }",
+            "    StreamingCfgClaim claim;\n"
+            "    log_claim(claim = Streaming_BeginConfigChange());")
+        assert handed != _GOOD
+        _ck("...but a verdict merely handed to another call is still caught",
+            any("never inspects the verdict" in p for p in check(handed)[0]),
+            True)
+
+        # #896 (g): the BARE discarded call -- the module docstring's own
+        # edit #2, "keep the call and throw the verdict away". Round 4 armed
+        # the other three clauses of `_discards` and not this one, so deleting
+        # its `prefix == ""` clause left the suite green.
+        barecall = _GOOD.replace(
+            "StreamingCfgClaim claim = Streaming_BeginConfigChange();",
+            "Streaming_BeginConfigChange();")
+        assert barecall != _GOOD
+        _ck("a bare discarded call is caught",
+            any("discards the result" in p for p in check(barecall)[0]), True)
+
+        # #896 (f): `case <expr>:` is a labelled statement too (C11 6.8.1),
+        # and `_discards` enumerated only the identifier form while its
+        # docstring said "a labelled statement".
+        cased = _GOOD.replace(
+            "StreamingCfgClaim claim = Streaming_BeginConfigChange();",
+            "case 1: Streaming_BeginConfigChange();")
+        assert cased != _GOOD
+        _ck("a `case` label discards just as an identifier label does",
+            any("discards the result" in p for p in check(cased)[0]), True)
+
         # ---- #864(1) residual: the claim PRIMITIVE, in streaming.c --------
         sprobs, sflag = check_streaming(_GOOD_STREAM)
         _ck("a compliant claim primitive is clean", sprobs, [])
@@ -1189,6 +1386,32 @@ static scpi_result_t decoy(scpi_t * c) {
                                       "    gCfgChangeBusy &= 0u;\n}")
         assert andclr != _GOOD_STREAM
         _ck("`&= 0u` counts as releasing it", check_streaming(andclr)[0], [])
+        # #896 (g): `|= 0u` in BEGIN. The existing `|= 0u` arm is on End, so
+        # crediting `|= 0` as a SET left the suite green.
+        _ck("`|= 0u` is not taking the claim either (it is a no-op)",
+            any("never sets" in p for p in check_streaming(_GOOD_STREAM.replace(
+                "        gCfgChangeBusy = 1u;",
+                "        gCfgChangeBusy |= 0u;"))[0]), True)
+        # #896 filed `&= ~MASK` as a false red. It is not one, and this arm
+        # pins the refusal so a future "fix" trips it: the flag is binary, so
+        # `&= ~MASK` releases the claim only if MASK covers the bit Begin set,
+        # which needs the mask value. Crediting it regardless would turn a
+        # loud red into a SILENT pass on an End that releases nothing.
+        maskclr = _GOOD_STREAM.replace("    gCfgChangeBusy = 0u;\n}",
+                                       "    gCfgChangeBusy &= ~CFG_BUSY;\n}")
+        assert maskclr != _GOOD_STREAM
+        _ck("`&= ~MASK` is deliberately NOT credited as releasing the claim",
+            any("never clears" in p for p in check_streaming(maskclr)[0]), True)
+        # #896 section B: a second declarator in one declaration is ordinary
+        # C, and the anchor that stops an initialiser being read as a
+        # declarator cannot cross the first `=`, so the flag was invisible and
+        # the gate redded correct code.
+        multi = _GOOD_STREAM.replace(
+            "static volatile uint32_t gCfgChangeBusy = 0u;",
+            "static volatile uint32_t gPoolBytes = 0u, gCfgChangeBusy = 0u;")
+        assert multi != _GOOD_STREAM
+        _ck("a second declarator in one declaration is still found",
+            check_streaming(multi)[0], [])
 
         # V1 (opus verifier): testing through the public accessor is the
         # same test-and-set, and is if anything the better shape. Rejecting it
