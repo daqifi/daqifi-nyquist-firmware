@@ -15,11 +15,13 @@ Four edits would silently remove the protection, and none is loud:
 1. **Route one command off the helper** -- give it back a plain body that does
    its own stream-state test, or none. The other six keep working, so nothing
    on the bench necessarily notices.
-2. **Gut the helper** -- keep all seven routed through it while removing the
-   `Streaming_BeginConfigChange()` call inside it, or keep the call and throw
-   its verdict away (`(void)Streaming_BeginConfigChange();`, one `(void)` away
-   from an unused-variable warning). Every command still "goes through the
-   claim path" and none of them refuses anything.
+2. **Gut the helper** -- remove the `Streaming_BeginConfigChange()` call
+   inside it; or keep the call and throw the verdict away
+   (`(void)Streaming_BeginConfigChange();`, one `(void)` away from an
+   unused-variable warning); or keep the assignment and delete only the
+   `if (claim != STREAM_CFG_CLAIM_OK) return ...;` arm, so the verdict is
+   STORED and never read. All seven commands still "go through the claim
+   path" and none of them refuses anything.
 3. **Reorder the helper** to take the claim, release it, and dispatch the
    command body afterwards (#864). Both calls are still there and every setter
    still routes through them, so 1 and 2 both pass -- while the command that
@@ -304,10 +306,49 @@ def _assignments(body, name):
     """
     out = []
     for m in re.finditer(
-            r"\b%s\s*(?:\|=|&=|=(?!=))\s*([^;]+);" % re.escape(name),
+            r"\b%s\s*(\|=|&=|=(?!=))\s*([^;]+);" % re.escape(name),
             _blank(body)):
-        out.append((m.start(), bool(_ZERO_RHS.match(m.group(1).strip()))))
+        out.append((m.start(), _write_kind(m.group(1), m.group(2))))
     return out
+
+
+def _unparen(rhs):
+    """`rhs` with balanced outer parentheses peeled off."""
+    r = rhs.strip()
+    while len(r) > 1 and r[0] == "(" and r[-1] == ")":
+        depth = 0
+        for i, ch in enumerate(r):
+            depth += (ch == "(") - (ch == ")")
+            if depth == 0 and i < len(r) - 1:
+                return r          # the leading `(` closes early: not wrapping
+        r = r[1:-1].strip()
+    return r
+
+
+def _write_kind(op, rhs):
+    """"set" | "clear" | None, for a binary flag.
+
+    The operator matters, not only the value. Classifying `|=` and `&=` by
+    their right-hand side alone credited `flag &= 1u` as taking the claim and
+    `flag |= 0u` as releasing it, when both LEAVE THE FLAG AS IT WAS -- a
+    checker certifying a Begin that never acquires (Qodo /agentic_review, PR
+    #894 round 3). Only definite transitions count:
+
+        =  0      clear        =  nonzero   set
+        &= 0      clear        &= nonzero   neither (preserving)
+        |= 0      neither      |= nonzero   set
+
+    Parentheses are peeled first, or `flag = (0u)` reads as a set (same
+    review). An RHS this cannot evaluate -- a macro, a variable -- is not zero,
+    so it counts as a set and never as a clear: the safe direction, since a
+    missed clear is a loud red and a wrongly-credited clear is a silent pass.
+    """
+    zero = bool(_ZERO_RHS.match(_unparen(rhs)))
+    if op == "=":
+        return "clear" if zero else "set"
+    if op == "&=":
+        return "clear" if zero else None
+    return None if zero else "set"          # `|=`
 
 
 def mem_setters(registrations):
@@ -398,14 +439,16 @@ def check(source_text):
                     "%s() does not call %s(), so it does not %s the claim -- "
                     "routing through it protects nothing."
                     % (CLAIM_HELPER, needed, why))
-        if _calls(helper, CLAIM_BEGIN) and not _result_used(helper, CLAIM_BEGIN):
+        verdict = (_verdict_used(helper, CLAIM_BEGIN)
+                   if _calls(helper, CLAIM_BEGIN) else None)
+        if verdict:
             problems.append(
-                "%s() discards the result of %s(): a claim that is taken but "
-                "whose verdict is never acted on refuses nothing, so every "
-                "setter runs mid-session while checks above still pass. This "
-                "is a one-line refactor away -- `claim` goes unused and the "
-                "warning gets silenced with `(void)` (#864, opus hunter on "
-                "PR #894)." % (CLAIM_HELPER, CLAIM_BEGIN))
+                "%s() %s %s(): a claim that is taken but whose verdict is "
+                "never looked at refuses nothing, so every setter runs "
+                "mid-session while checks above still pass. Both shapes are a "
+                "one-line refactor away -- delete the rejection arm, or "
+                "silence the now-unused variable with `(void)` (#864, PR #894 "
+                "rounds 2 and 3)." % (CLAIM_HELPER, verdict, CLAIM_BEGIN))
         problems.extend(_helper_order_problems(text, helper))
 
     return problems, len(setters)
@@ -429,16 +472,21 @@ _ONE_REGION = (
     "refused, and the counts above say which you have. See #896.")
 
 
-def _result_used(body, name):
-    """True iff EVERY call to `name` in `body` has its return value consumed.
+def _verdict_used(body, name):
+    """-> None if every call to `name` has its verdict looked at, else a reason.
 
-    Consumption is judged from the statement prefix: empty means the call
-    stands alone as a statement, and `(void)` means it was deliberately
-    thrown away. Anything else -- an assignment, an `if`/`while` condition,
-    a `return` -- is treated as a use. That is coarse on purpose; it separates
-    "the verdict is looked at" from "the verdict is dropped", which is the
-    distinction that matters, and it cannot show that the verdict is acted on
-    CORRECTLY (see the reachability note in the docstring).
+    Two ways to drop it, and the second is the one that got through first:
+
+    * DISCARD -- the call stands alone as a statement, or is cast to `(void)`.
+    * STORE AND IGNORE -- `claim = Begin();` and then nothing ever reads
+      `claim`. Treating the assignment itself as consumption meant deleting
+      only the `if (claim != STREAM_CFG_CLAIM_OK) return ...;` arm still
+      passed, and the helper then dispatches every setter after a BUSY or
+      STREAMING verdict (Qodo /agentic_review, PR #894 round 3).
+
+    A call used inline -- in an `if`, as an argument, in a `return` -- is a
+    use. As everywhere here this is textual: it shows the verdict is READ, not
+    that the code branches on it correctly. See #896.
     """
     b = _blank(body)
     for m in re.finditer(r"\b%s\s*\(" % re.escape(name), b):
@@ -446,8 +494,17 @@ def _result_used(body, name):
                   b.rfind("}", 0, m.start()))
         prefix = b[cut + 1:m.start()].strip()
         if prefix == "" or re.fullmatch(r"\(\s*void\s*\)", prefix):
-            return False
-    return True
+            return "discards the result of"
+        target = re.search(r"([A-Za-z_]\w*)\s*=$", prefix)
+        if target:
+            var = target.group(1)
+            after = b.find(";", m.start())
+            if after < 0:
+                after = m.start()
+            if not any(x.start() > after for x in
+                       re.finditer(r"\b%s\b" % re.escape(var), b)):
+                return "stores but never inspects the verdict of"
+    return None
 
 
 def _helper_order_problems(text, helper):
@@ -599,7 +656,7 @@ def check_streaming(streaming_text):
     if begin is None or end is None:
         return problems, flag
 
-    sets = [pos for pos, is_zero in _assignments(begin, flag) if not is_zero]
+    sets = [pos for pos, kind in _assignments(begin, flag) if kind == "set"]
     if not sets:
         problems.append(
             "%s() never sets %s to a non-zero value, so it can report a claim "
@@ -642,7 +699,7 @@ def check_streaming(streaming_text):
                 "gates the grant, which regex cannot show."
                 % (CLAIM_BEGIN, flag, flag))
 
-    if not any(is_zero for _, is_zero in _assignments(end, flag)):
+    if not any(kind == "clear" for _, kind in _assignments(end, flag)):
         problems.append(
             "%s() never clears %s, so a claim once taken is never released and "
             "every later SYSTem:MEMory:* setter is refused for the rest of the "
@@ -909,6 +966,17 @@ static scpi_result_t decoy(scpi_t * c) {
         probs, _ = check(discarded)
         _ck("a helper that DISCARDS the claim verdict is caught",
             any("discards the result" in p for p in probs), True)
+        # Round 3 (Qodo): STORING the verdict is not INSPECTING it. Delete
+        # only the rejection arm and the assignment remains, so round 2's
+        # check still passed while the helper dispatched after a BUSY verdict.
+        stored = _GOOD.replace(
+            "    if (claim != STREAM_CFG_CLAIM_OK) { return SCPI_RejectCfgClaim(c, 1, what); }\n",
+            "")
+        assert stored != _GOOD
+        probs, _ = check(stored)
+        _ck("a verdict stored but never read is caught",
+            any("never inspects the verdict" in p for p in probs), True)
+
         _ck("...and a helper that tests it inline is not accused",
             check(_GOOD.replace(
                 "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
@@ -987,6 +1055,30 @@ static scpi_result_t decoy(scpi_t * c) {
             check_streaming(_GOOD_STREAM.replace(
                 "static volatile uint32_t gCfgChangeBusy",
                 "volatile static uint32_t gCfgChangeBusy"))[0], [])
+        # Round 3 (Qodo): the OPERATOR matters, not only the value. `&= 1u`
+        # and `|= 0u` leave the flag exactly as it was; crediting them by RHS
+        # alone certified a Begin that never acquires and an End that never
+        # releases.
+        _ck("`&= 1u` is not taking the claim (it preserves)",
+            any("never sets" in p for p in check_streaming(_GOOD_STREAM.replace(
+                "        gCfgChangeBusy = 1u;",
+                "        gCfgChangeBusy &= 1u;"))[0]), True)
+        _ck("`|= 0u` is not releasing it (it is a no-op)",
+            any("never clears" in p for p in check_streaming(_GOOD_STREAM.replace(
+                "    gCfgChangeBusy = 0u;\n}",
+                "    gCfgChangeBusy |= 0u;\n}"))[0]), True)
+        # ...and a parenthesised zero is still zero, both ways round.
+        _ck("`= (0u)` is not a set",
+            any("never sets" in p for p in check_streaming(_GOOD_STREAM.replace(
+                "        gCfgChangeBusy = 1u;",
+                "        gCfgChangeBusy = (0u);"))[0]), True)
+        _ck("`= (0u)` IS a clear",
+            check_streaming(_GOOD_STREAM.replace(
+                "    gCfgChangeBusy = 0u;\n}",
+                "    gCfgChangeBusy = (0u);\n}"))[0], [])
+        _ck("a wrapping paren is peeled, an early-closing one is not",
+            (_unparen("(0u)"), _unparen("(a) + (0u)")), ("0u", "(a) + (0u)"))
+
         _ck("`|= 1u` counts as taking the claim",
             check_streaming(_GOOD_STREAM.replace(
                 "        gCfgChangeBusy = 1u;",

@@ -417,7 +417,7 @@ Queries (trailing `?`) are exempt — they read and cannot corrupt a partition.
 | # | asserted | what passes it if the others are the only checks |
 |---|---|---|
 | 1 | every registered `SYSTem:MEMory:*` **setter** reaches the claim through the shared `SCPI_MemRunClaimed` helper | a command routed off the helper — nothing else looks at where a setter goes |
-| 2 | the helper **calls** `Streaming_BeginConfigChange` / `EndConfigChange`, and **uses Begin's verdict** rather than discarding it | a gutted helper — all seven still "go through the claim path", none claims anything; or `(void)Begin();`, which refuses nothing |
+| 2 | the helper **calls** `Streaming_BeginConfigChange` / `EndConfigChange`, and **looks at Begin's verdict** — neither discarding it nor storing it unread | a gutted helper — all seven still "go through the claim path", none claims anything; `(void)Begin();`, which refuses nothing; or `claim = Begin();` with the rejection arm deleted, which dispatches after a BUSY verdict |
 | 3 | the helper **holds** the claim across its dispatch — the call through its function-pointer parameter falls inside the single Begin…End pair | a helper reordered to Begin → End → body: both calls present, nothing held |
 | 4 | in `streaming.c`, `Begin` **sets** the claim flag inside a single critical section that also **reads** it (a test-and-set, not a plain set) and `End` **clears** it | a `Begin` that returns `STREAM_CFG_CLAIM_OK` having set nothing — 1–3 all read `SCPIInterface.c` only |
 
