@@ -778,10 +778,16 @@ static const scpi_command_t scpi_commands[] = {
 # The claim primitive, as it must look for the SCPI-side routing to mean
 # anything. `gSomethingElse` is the declarator anchor's mutation target: it is
 # the only `static volatile` declaration in this fixture whose initialiser
-# could be mistaken for a flag name. It changes no verdict here -- the anchor
-# already rejects it -- but it is what makes the `init_reader` arm in
-# `self_test` FAIL when the anchor is loosened. Delete it and that mutation
-# goes undetected, so the line and the arm travel together (#899).
+# could be mistaken for a flag name -- `gCfgChangeBusy`'s `0u` is not
+# identifier-shaped, so it is never offered as a candidate. It changes no
+# verdict here -- the anchor already rejects it -- but it is what makes an
+# anchor loosening detectable AT ALL. Loosen `[\w\s\*]` to `[\w\s\*=]` and
+# FOUR arms go red: the two `init_reader` arms below, and the two
+# pre-existing `gutted_reader` arms. Delete this line and all four go green
+# on the broken anchor (60/60). So the line outlives any single arm that
+# depends on it -- do NOT retire it alongside one: retiring the `init_reader`
+# arms AND deleting this line takes a caught loosening (56/58) to a silent
+# pass (58/58), which is the shape #899 exists to refuse.
 _GOOD_STREAM = '''
 static volatile bool gSomethingElse = false;
 static volatile uint32_t gCfgChangeBusy = 0u;
