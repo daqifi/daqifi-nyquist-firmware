@@ -3794,8 +3794,10 @@ static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
  * acquiring.
  *
  * So the ARM observes this counter, exactly the way it already observes
- * gStreamIfaceGen: START pins it before it does anything, re-reads it inside
- * the critical section that publishes IsEnabled, and refuses if it moved.
+ * gStreamIfaceGen: START pins it before its first observable effect -- ahead
+ * of the #850 session-start claim, in SCPI_StartStreaming, and passes the
+ * pinned value down -- re-reads it inside the critical section that publishes
+ * IsEnabled, and refuses if it moved.
  *
  * Observed by the START rather than enforced by the STOP, deliberately. The
  * obvious alternative -- have the stop take the #850 session-start claim -- is
@@ -3981,20 +3983,8 @@ static void SCPI_UnpublishStartInterface(StreamingRuntimeConfig *cfg,
  * is resolved further down exactly as before. */
 static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                                                 int32_t freq,
-                                                bool freqProvided) {
-
-    /* #861: pinned FIRST, ahead of every gate below, so the window inside
-     * which this start can be stopped is the whole of its body rather than
-     * whatever is left after some arbitrary check. A stop that lands EARLIER
-     * than this line is not lost -- it is a stop that happened BEFORE this
-     * start, and the start is then the operator's later intent, which is
-     * exactly what should win.
-     *
-     * A bare 32-bit load, not a critical section: unlike the interface pins
-     * further down it has no partner field it must describe one instant with,
-     * and CLAUDE.md's atomicity rule is explicit that wrapping a plain aligned
-     * 32-bit load only costs interrupt latency. */
-    const uint32_t stopGenPinned = gStreamStopGen;
+                                                bool freqProvided,
+                                                uint32_t stopGenPinned) {
 
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -5243,11 +5233,33 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         return SCPI_RES_OK;
     }
 
+    /* #861: pinned BEFORE the claim is taken, and passed down, rather than
+     * read at the top of the claimed body.
+     *
+     * The claim is this start's FIRST OBSERVABLE EFFECT -- once it is held, a
+     * START on the other transport answers -200 -- so a stop landing between
+     * the claim and the pin would be a stop issued while this start was
+     * already in flight, and pinning after the claim made exactly that stop
+     * invisible to the arm (pre-merge audit). The window was a few
+     * instructions wide, not a design choice, and it was the one case that
+     * made the pin's own comment untrue.
+     *
+     * What is left ahead of the pin is the argument parse and the
+     * SYSTem:STReam:START 0 disable branch. Neither touches streaming state,
+     * so a stop landing there really did happen before this start and the
+     * start is then the operator's later intent -- which is what should win.
+     *
+     * A bare 32-bit load, not a critical section: unlike the interface pins
+     * inside the body it has no partner field it must describe one instant
+     * with, and CLAUDE.md's atomicity rule is explicit that wrapping a plain
+     * aligned 32-bit load only costs interrupt latency. */
+    const uint32_t stopGenPinned = gStreamStopGen;
     if (Streaming_BeginSessionStart() != STREAM_START_CLAIM_OK) {
         return SCPI_RefuseSessionStartBusy(context, "SYSTem:STReam:START");
     }
     scpi_result_t result = SCPI_StartStreamingClaimed(context, freq,
-                                                      freqProvided);
+                                                      freqProvided,
+                                                      stopGenPinned);
     Streaming_EndSessionStart();
     return result;
 }
