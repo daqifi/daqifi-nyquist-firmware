@@ -3812,6 +3812,22 @@ static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
  * Wrap is harmless for the same reason gStreamIfaceGen's is: it would take
  * 2^32 stops landing inside ONE start.
  *
+ * THE RESIDUAL, stated so it is not rediscovered as a finding: a stop is
+ * announced when its BODY runs, so the interval between a stop command's
+ * callback entry and that first statement is invisible to a START racing it.
+ * Both spellings have it -- SYSTem:STReam:STOP through one call, and
+ * SYSTem:STReam:START 0 through its argument parse, which is the longer of
+ * the two. A START that arms inside that interval returns OK and the stop
+ * then stops it, so the device ends STOPPED with a start reporting success.
+ *
+ * That is the same irreducible boundary the pin has at the other end, and it
+ * is not closable from here: a command cannot announce itself before its
+ * callback runs, and announcing every START-callback entry as a possible stop
+ * would refuse every concurrent START pair. It is also the SAFE direction --
+ * no unwanted acquisition, and a client sees it with SYSTem:STReam:DATA? --
+ * unlike the hazard this issue is about, which leaves the device acquiring
+ * after the operator asked it to stop. Recorded, deliberately not chased.
+ *
  * NOT bumped by START's own inline teardown of the previous session --
  * SCPI_StartStreamingClaimed writes IsEnabled = false and calls
  * Streaming_UpdateState() directly rather than calling the shared stop body --
