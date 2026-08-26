@@ -550,11 +550,22 @@ static scpi_result_t ADCChanSingleEndSetClaimed(scpi_t * context);
  * Running-only test #873 replaced. It writes AInRuntime.Data[i].IsDifferential
  * and then pushes the whole channel state to the ADC SFRs via
  * ADC_WriteChannelStateAll(), so a mid-session call re-wires the input
- * multiplexer under a running acquisition AND changes what the protobuf
- * metadata says the stream is (analog_in_int_scale / is_differential is
- * emitted once, at session start -- NanoPB_Encoder.c). A client that flipped a
- * channel to differential at sample 10,000 got samples whose meaning no longer
- * matched the header it had already parsed.
+ * multiplexer under a running acquisition AND invalidates the description of
+ * the stream that the client is already holding. That description is
+ * `analog_in_port_rse` -- one bit per channel, built from IsDifferential in
+ * NanoPB_Encoder.c -- and it does NOT ride the stream: the only session-start
+ * metadata is the SD file header's six tags (fields_sd_metadata, streaming.c),
+ * and rse appears only in the on-demand fields_all / fields_info reply
+ * (SCPI_SysInfoGet, SCPIInterface.c). So a client that read the channel map
+ * before START and then flipped a channel to differential at sample 10,000
+ * gets samples whose meaning no longer matches the map it parsed, with nothing
+ * in the stream marking where it changed.
+ *
+ * Two things an earlier revision of this comment got wrong, corrected here
+ * rather than quietly dropped: there is no `is_differential` field anywhere in
+ * the tree (grep finds only that comment), and `analog_in_int_scale_m` is read
+ * from BOARD CONFIG (NanoPB_Encoder.c), not from runtime, so this setter
+ * cannot move it and it is not part of the defect.
  *
  * Same shape as SCPI_ADCChanEnableSet above, and for the same two reasons: the
  * body has six returns so the release must be unconditional, and the claim is
@@ -876,8 +887,15 @@ static scpi_result_t ADCChanRangeSetClaimed(scpi_t * context) {
     //     four token types the switch enumerates.
     //
     // If a libscpi upgrade adds a numeric token type, or lets the lexer emit a
-    // digitless HEXNUM, that `default:` becomes live and this command would
-    // then fail with NO error queued at all. Re-check this list at that point.
+    // digitless HEXNUM, that `default:` becomes live -- and this command would
+    // then report only libscpi's GENERIC -200 instead of the specific parameter
+    // error, which is a real loss of diagnosability but is NOT a silent
+    // failure. processCommand queues -200 for any callback that returns non-OK
+    // with cmd_error unset, and it clears cmd_error on entry (parser.c). An
+    // earlier revision of this comment said "NO error queued at all", which
+    // contradicts both that code and this file's own correct account of the
+    // same mechanism in SCPI_ADCChanCalmSet below. Re-check this list at that
+    // point.
     if (!SCPI_ParamInt32(context, &rangeParam, TRUE)) {
         return SCPI_RES_ERR;
     }
@@ -988,12 +1006,20 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context);
  * pushing anything ITSELF. libscpi then queues its generic -200 --
  * processCommand does `if (!context->cmd_error) SCPI_ErrorPush(...
  * EXECUTION_ERROR)` -- so the command is not literally silent, it is
- * UNSPECIFIC: -200 where the sibling MEASure:VOLTage:DC? pushes -222 and names
- * the channel. Pre-existing, shared with chanCALB and both SINGleend paths,
- * and NOT this change's subject -- filed as #888. An earlier revision said
- * "without pushing anything at all", called it a silent-error path, and listed
- * MEASure:VOLTage:DC? as sharing it when that is the one site which gets it
- * right; all three were wrong (codex pre-merge audit).) */
+ * UNSPECIFIC: -200 where TWO siblings push a specific -222 at that same
+ * ADC_FindChannelIndex bound -- MEASure:VOLTage:DC? and the two-arg
+ * CONF:ADC:CHANnel. Only CONF:ADC:CHANnel also LOG_Es the channel;
+ * MEAS:VOLT:DC? pushes a BARE -222 (SCPI_ErrorPush passes a NULL info string)
+ * with no log, so nothing there names the channel either. Pre-existing, shared
+ * with chanCALB and both SINGleend paths, and NOT this change's subject --
+ * filed as #888; the site to converge the other four onto is
+ * CONF:ADC:CHANnel's logged form, not MEAS:VOLT:DC?'s bare push.
+ *
+ * Successive revisions of this paragraph have said "without pushing anything
+ * at all", called it a silent-error path, called MEASure:VOLTage:DC? the one
+ * site that gets it right, and said that site names the channel. All four were
+ * wrong; the corrections came from the pre-merge audits, not from a reader
+ * trusting the paragraph.) */
 scpi_result_t SCPI_ADCChanCalmSet(scpi_t * context) {
     StreamingCfgClaim claim = Streaming_BeginConfigChange();
     if (claim != STREAM_CFG_CLAIM_OK) {
