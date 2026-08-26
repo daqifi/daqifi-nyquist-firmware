@@ -444,6 +444,9 @@ sets it — **not** that the read gates the grant, which regex cannot show.
 checker is textual: it has no control flow and no reachability, and that limits
 **every** property, not just #864(3)'s dead-call case.
 
+- Row 2 shows the verdict is **read**, not **branched on**. Passing it to
+  another function counts, so a `LOG_I(..., Begin())` above an unconditional
+  dispatch passes.
 - Row 4 does **not** assert what the grant is *conditioned on*. Deleting
   `Begin`'s `if (pStreamCfg->IsEnabled || pStreamCfg->Running)` arm leaves a
   `Begin` that hands the claim out mid-session and still passes — the flag is

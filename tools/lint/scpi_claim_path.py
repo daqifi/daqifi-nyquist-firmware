@@ -67,6 +67,10 @@ was getting through.
 There is no control flow here and no reachability, and that bounds EVERY
 property, not only the dead-call case above. Known and filed as #896:
 
+* Property 2's verdict requirement shows the verdict is READ, not BRANCHED
+  ON. Passing it to another function counts, so
+  `LOG_I("claim=%u", Streaming_BeginConfigChange());` above an unconditional
+  dispatch passes.
 * Property 4's read requirement is satisfied by ANY mention of the flag in
   the section, gating or not: a read in the non-granting arm, a read after the
   set, a `(void)flag;`, or a log line's format argument. Instrument
@@ -298,7 +302,10 @@ def _assignments(body, name):
     whitespace, so `!=`, `>=` and `+=` cannot reach the operator in the first
     place, and no arm could tell the two versions apart.
 
-    NOT handled, and known: a multi-declarator declaration
+    Only `=`, `|=` and `&=` are recognised. `&= ~MASK` -- the idiomatic
+    bit-clear -- is NOT a clear here, because the only `&=` right-hand side
+    this can evaluate is a literal zero. NOT handled, and known: a
+    multi-declarator declaration
     (`static volatile uint32_t gA = 0u, gFlag = 0u;`) hides the second name
     from the declarator search, and a macro-wrapped write
     (`CLAIM_CLEAR(gFlag);`) is invisible here. Both would red the gate on
@@ -445,10 +452,11 @@ def check(source_text):
             problems.append(
                 "%s() %s %s(): a claim that is taken but whose verdict is "
                 "never looked at refuses nothing, so every setter runs "
-                "mid-session while checks above still pass. Both shapes are a "
-                "one-line refactor away -- delete the rejection arm, or "
-                "silence the now-unused variable with `(void)` (#864, PR #894 "
-                "rounds 2 and 3)." % (CLAIM_HELPER, verdict, CLAIM_BEGIN))
+                "mid-session while checks above still pass. Every shape here "
+                "is a one-line refactor away -- delete the rejection arm, cast "
+                "the call away, or silence the now-unused variable with "
+                "`(void)claim;` (#864, PR #894 rounds 2-4)."
+                % (CLAIM_HELPER, verdict, CLAIM_BEGIN))
         problems.extend(_helper_order_problems(text, helper))
 
     return problems, len(setters)
@@ -472,28 +480,59 @@ _ONE_REGION = (
     "refused, and the counts above say which you have. See #896.")
 
 
+def _stmt_prefix(blanked, pos):
+    """The text between the previous statement boundary and `pos`, stripped."""
+    cut = max(blanked.rfind(";", 0, pos), blanked.rfind("{", 0, pos),
+              blanked.rfind("}", 0, pos))
+    return blanked[cut + 1:pos].strip()
+
+
+# A statement prefix that means "the value goes nowhere". Enumerated rather
+# than described as "empty", because a standalone discarded call does NOT
+# always have an empty prefix -- a label and a `for` init clause were both
+# credited as uses when this said "empty means the call stands alone"
+# (opus verifier, PR #894 round 4). `(void)` is not special: any bare cast
+# throws the value away just as thoroughly.
+_CAST_ONLY = re.compile(r"\(\s*[A-Za-z_][\w\s\*]*\)")
+_LABEL_ONLY = re.compile(r"[A-Za-z_]\w*\s*:")
+_FOR_INIT = re.compile(r"\bfor\s*\($")
+
+
+def _discards(prefix):
+    """True iff a value produced at this statement prefix goes nowhere."""
+    return (prefix == ""
+            or _CAST_ONLY.fullmatch(prefix) is not None
+            or _LABEL_ONLY.fullmatch(prefix) is not None
+            or _FOR_INIT.search(prefix) is not None)
+
+
 def _verdict_used(body, name):
     """-> None if every call to `name` has its verdict looked at, else a reason.
 
     Two ways to drop it, and the second is the one that got through first:
 
-    * DISCARD -- the call stands alone as a statement, or is cast to `(void)`.
-    * STORE AND IGNORE -- `claim = Begin();` and then nothing ever reads
-      `claim`. Treating the assignment itself as consumption meant deleting
-      only the `if (claim != STREAM_CFG_CLAIM_OK) return ...;` arm still
-      passed, and the helper then dispatches every setter after a BUSY or
-      STREAMING verdict (Qodo /agentic_review, PR #894 round 3).
+    * DISCARD -- the value goes nowhere: a bare statement, a bare cast
+      (`(void)`, and equally `(int)`), a labelled statement, or a `for` init
+      clause.
+    * STORE AND IGNORE -- `claim = Begin();` and then nothing INSPECTS `claim`.
+      Treating the assignment as consumption meant deleting only the
+      `if (claim != STREAM_CFG_CLAIM_OK) return ...;` arm still passed (Qodo,
+      round 3); then `(void)claim;` -- the very thing this check's own message
+      described -- still passed, because a discarding cast is textually a read
+      (opus verifier, round 4). A read whose own prefix discards does not
+      count as an inspection.
 
-    A call used inline -- in an `if`, as an argument, in a `return` -- is a
-    use. As everywhere here this is textual: it shows the verdict is READ, not
-    that the code branches on it correctly. See #896.
+    A call used inline -- in an `if`, in a `return` -- is a use.
+
+    KNOWN LIMIT: passing the verdict to another function counts as a use, so
+    `LOG_I("claim=%u", Streaming_BeginConfigChange());` followed by an
+    unconditional dispatch passes. Separating "inspected" from "branched on"
+    is control flow, which this checker does not have. #896.
     """
     b = _blank(body)
     for m in re.finditer(r"\b%s\s*\(" % re.escape(name), b):
-        cut = max(b.rfind(";", 0, m.start()), b.rfind("{", 0, m.start()),
-                  b.rfind("}", 0, m.start()))
-        prefix = b[cut + 1:m.start()].strip()
-        if prefix == "" or re.fullmatch(r"\(\s*void\s*\)", prefix):
+        prefix = _stmt_prefix(b, m.start())
+        if _discards(prefix):
             return "discards the result of"
         target = re.search(r"([A-Za-z_]\w*)\s*=$", prefix)
         if target:
@@ -501,8 +540,10 @@ def _verdict_used(body, name):
             after = b.find(";", m.start())
             if after < 0:
                 after = m.start()
-            if not any(x.start() > after for x in
-                       re.finditer(r"\b%s\b" % re.escape(var), b)):
+            inspected = any(
+                x.start() > after and not _discards(_stmt_prefix(b, x.start()))
+                for x in re.finditer(r"\b%s\b" % re.escape(var), b))
+            if not inspected:
                 return "stores but never inspects the verdict of"
     return None
 
@@ -954,6 +995,13 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("a dispatch between two claim pairs is refused, not passed",
             any("2 Streaming_BeginConfigChange() and 2 "
                 "Streaming_EndConfigChange()" in p for p in probs), True)
+        # Round 4: the counts are built at the call site, so the arm above
+        # passes a gutted _ONE_REGION template. Round 2 rewrote that template
+        # BECAUSE it was false and removed the only assertion on its wording
+        # in the same edit -- the "a fix becomes the next finding" shape.
+        _ck("...and the refusal says WHY, not just the counts",
+            any("Positional containment is only decidable" in p
+                for p in probs), True)
 
         # Round 2 (opus hunter): CALLING Begin is not USING it. A helper that
         # throws the verdict away refuses nothing, and `(void)` on an
@@ -977,12 +1025,36 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("a verdict stored but never read is caught",
             any("never inspects the verdict" in p for p in probs), True)
 
+        # Round 4 (opus verifier): a "read" whose own prefix throws the value
+        # away is not an inspection -- and this check's OWN message used to
+        # advertise catching `(void)claim;`, which it did not.
+        voided = stored.replace(
+            "    scpi_result_t r = b(c);",
+            "    (void)claim;\n    scpi_result_t r = b(c);")
+        assert voided != stored
+        _ck("`(void)claim;` is not an inspection",
+            any("never inspects the verdict" in p for p in check(voided)[0]), True)
+        for label, mutated in (
+                ("a non-void cast still discards",
+                 _GOOD.replace("StreamingCfgClaim claim = Streaming_BeginConfigChange();",
+                               "(int)Streaming_BeginConfigChange();")),
+                ("a labelled statement still discards",
+                 _GOOD.replace("StreamingCfgClaim claim = Streaming_BeginConfigChange();",
+                               "retry: Streaming_BeginConfigChange();")),
+                ("a for-init clause still discards",
+                 _GOOD.replace("StreamingCfgClaim claim = Streaming_BeginConfigChange();",
+                               "for (Streaming_BeginConfigChange(); 0; ) { }"))):
+            assert mutated != _GOOD, label
+            _ck(label, any("discards the result" in p
+                           for p in check(mutated)[0]), True)
+
+        inline = _GOOD.replace(
+            "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
+            "    if (claim != STREAM_CFG_CLAIM_OK) {",
+            "    if (Streaming_BeginConfigChange() != STREAM_CFG_CLAIM_OK) {")
+        assert inline != _GOOD
         _ck("...and a helper that tests it inline is not accused",
-            check(_GOOD.replace(
-                "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
-                "    if (claim != STREAM_CFG_CLAIM_OK) {",
-                "    if (Streaming_BeginConfigChange() != STREAM_CFG_CLAIM_OK) {"))[0],
-            [])
+            check(inline)[0], [])
 
         # ---- #864(1) residual: the claim PRIMITIVE, in streaming.c --------
         sprobs, sflag = check_streaming(_GOOD_STREAM)
@@ -1051,10 +1123,11 @@ static scpi_result_t decoy(scpi_t * c) {
         # Round 2 (opus hunter): three forms of CORRECT C that used to red the
         # gate. A false red is how a gate gets deleted, and the `|=` message
         # was the worst of them -- it said "never sets" about code that sets.
+        qual = _GOOD_STREAM.replace("static volatile uint32_t gCfgChangeBusy",
+                                    "volatile static uint32_t gCfgChangeBusy")
+        assert qual != _GOOD_STREAM
         _ck("`volatile static` (legal qualifier order) is accepted",
-            check_streaming(_GOOD_STREAM.replace(
-                "static volatile uint32_t gCfgChangeBusy",
-                "volatile static uint32_t gCfgChangeBusy"))[0], [])
+            check_streaming(qual)[0], [])
         # Round 3 (Qodo): the OPERATOR matters, not only the value. `&= 1u`
         # and `|= 0u` leave the flag exactly as it was; crediting them by RHS
         # alone certified a Begin that never acquires and an End that never
@@ -1072,29 +1145,31 @@ static scpi_result_t decoy(scpi_t * c) {
             any("never sets" in p for p in check_streaming(_GOOD_STREAM.replace(
                 "        gCfgChangeBusy = 1u;",
                 "        gCfgChangeBusy = (0u);"))[0]), True)
-        _ck("`= (0u)` IS a clear",
-            check_streaming(_GOOD_STREAM.replace(
-                "    gCfgChangeBusy = 0u;\n}",
-                "    gCfgChangeBusy = (0u);\n}"))[0], [])
+        parenclr = _GOOD_STREAM.replace("    gCfgChangeBusy = 0u;\n}",
+                                        "    gCfgChangeBusy = (0u);\n}")
+        assert parenclr != _GOOD_STREAM
+        _ck("`= (0u)` IS a clear", check_streaming(parenclr)[0], [])
         _ck("a wrapping paren is peeled, an early-closing one is not",
             (_unparen("(0u)"), _unparen("(a) + (0u)")), ("0u", "(a) + (0u)"))
 
-        _ck("`|= 1u` counts as taking the claim",
-            check_streaming(_GOOD_STREAM.replace(
-                "        gCfgChangeBusy = 1u;",
-                "        gCfgChangeBusy |= 1u;"))[0], [])
-        _ck("`&= 0u` counts as releasing it",
-            check_streaming(_GOOD_STREAM.replace(
-                "    gCfgChangeBusy = 0u;\n}",
-                "    gCfgChangeBusy &= 0u;\n}"))[0], [])
+        orset = _GOOD_STREAM.replace("        gCfgChangeBusy = 1u;",
+                                     "        gCfgChangeBusy |= 1u;")
+        assert orset != _GOOD_STREAM
+        _ck("`|= 1u` counts as taking the claim", check_streaming(orset)[0], [])
+        andclr = _GOOD_STREAM.replace("    gCfgChangeBusy = 0u;\n}",
+                                      "    gCfgChangeBusy &= 0u;\n}")
+        assert andclr != _GOOD_STREAM
+        _ck("`&= 0u` counts as releasing it", check_streaming(andclr)[0], [])
 
         # V1 (opus verifier): testing through the public accessor is the
         # same test-and-set, and is if anything the better shape. Rejecting it
         # told the author their test-and-set was "a plain set" -- false.
+        via_accessor = _GOOD_STREAM.replace(
+            "    } else if (gCfgChangeBusy != 0u) {",
+            "    } else if (Streaming_ConfigChangeInProgress()) {")
+        assert via_accessor != _GOOD_STREAM
         _ck("a test-and-set through the accessor is accepted as a read",
-            check_streaming(_GOOD_STREAM.replace(
-                "    } else if (gCfgChangeBusy != 0u) {",
-                "    } else if (Streaming_ConfigChangeInProgress()) {"))[0], [])
+            check_streaming(via_accessor)[0], [])
 
         _ck("renaming the claim flag is followed, not flagged",
             check_streaming(_GOOD_STREAM.replace(
