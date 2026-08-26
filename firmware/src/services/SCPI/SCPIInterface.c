@@ -3034,7 +3034,22 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
             uint32_t kbps = 0;
             bool sf = false;
             bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, mid, FIND_DWELL_MS, &kbps, &sf);
-            if (sf) break;          // unexpected start failure — keep coarse lastGood
+            if (sf) {
+                /* #868: PROPAGATE, don't just leave the loop. This branch used
+                 * to break with startFailed still false ("keep coarse
+                 * lastGood"), which sends the sweep on to the soak stage on a
+                 * basis it could not verify -- and once #868 can refuse an arm
+                 * here, that is a basis that has MOVED. The soak's own arm is
+                 * then refused too and sets this a second later, so the common
+                 * outcome was merely one wasted arm; but when the soak
+                 * candidate falls below FIND_SOAK_MIN_HZ the soak loop never
+                 * runs at all, and the sweep returns NO_CLEAN_SOAK for what is
+                 * actually a refused arm (Qodo). All three call sites now
+                 * agree: *outStartFailed means the step did not happen, and a
+                 * sweep whose basis moved or is moving reports START_FAIL. */
+                startFailed = true;
+                break;
+            }
             if (sat) {
                 hi = mid;
             } else {
