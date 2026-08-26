@@ -411,14 +411,28 @@ Commit and push wiki changes after updating.
 #### `SYSTem:MEMory:*` claim-path gate
 
 `tools/lint/scpi_claim_path.py` (CI: `.github/workflows/scpi-claim-path.yml`)
-asserts that every registered `SYSTem:MEMory:*` **setter** reaches the streaming
-config-change claim through the shared `SCPI_MemRunClaimed` helper, and that the
-helper itself still calls `Streaming_BeginConfigChange` / `EndConfigChange`.
+asserts **four** things, each of which the other three pass without (#863, #864).
 Queries (trailing `?`) are exempt — they read and cannot corrupt a partition.
 
-Both halves matter. Checking only the routing passes a gutted helper, where all
-seven commands still "go through the claim path" and none of them claims
-anything; checking only the helper passes a command routed off it.
+| # | asserted | what passes it if the others are the only checks |
+|---|---|---|
+| 1 | every registered `SYSTem:MEMory:*` **setter** reaches the claim through the shared `SCPI_MemRunClaimed` helper | a gutted helper — all seven still "go through the claim path", none claims anything |
+| 2 | the helper still **calls** `Streaming_BeginConfigChange` / `EndConfigChange` | a command routed off the helper |
+| 3 | the helper **holds** the claim across its dispatch — the call through its function-pointer parameter falls between the two | a helper reordered to Begin → End → body: both calls present, nothing held |
+| 4 | in `streaming.c`, `Begin` **sets** the claim flag inside a critical section and `End` **clears** it | a `Begin` that returns `STREAM_CFG_CLAIM_OK` having taken nothing — 1–3 all read `SCPIInterface.c` |
+
+4 is why the CI trigger includes `firmware/src/services/streaming.*`. That
+trigger landed in #863 and, until #864, fired on a file the checker asserted
+nothing about — the gate ran and established nothing, which is the same defect
+one level up. The flag name is **discovered** from `Streaming_ConfigChangeInProgress`
+rather than hard-coded, so a rename is followed instead of silently disarming it.
+The critical section is load-bearing because granting the claim is a
+read-modify-write (test the flag, then set it), which is not atomic on PIC32MZ.
+
+**Not** asserted, deliberately (#864(3)): reachability — a dead
+`if (0) return SCPI_MemRunClaimed(...);` above a direct unclaimed call satisfies
+1. That needs real reachability analysis rather than regex and takes deliberate
+sabotage a reviewer would see; catching an honest regression is the goal.
 
 **Why a source lint and not a bench test.** `test_857`'s race arm is the only
 arm that separates a real claim from a plain stream-state guard, and it can only
@@ -428,9 +442,11 @@ check and one scalar store, so there is no window to race; hammering them would
 miss it every time and report a false negative. That is why test-suite #246's
 proposal to rotate the hammered command was **not** adopted — see the ticket.
 
-Run locally: `python3 tools/lint/scpi_claim_path.py` (add `--self-test` for the
-device-free checks, which include the vacuity case — a checker that examines
-nothing must fail, not pass).
+Run locally: `python3 tools/lint/scpi_claim_path.py` (reads `SCPIInterface.c`
+**and** `streaming.c`; `--scpi` / `--streaming` override the paths). Add
+`--self-test` for the 37 device-free checks, which include the vacuity cases —
+an unreadable command table, and a claim flag that cannot be identified, must
+each **fail** rather than quietly examine nothing.
 
 ### Data Flow
 

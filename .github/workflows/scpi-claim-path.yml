@@ -21,12 +21,14 @@ name: scpi-claim-path
 # that MOVED the helper or a setter out of the SCPI sources would otherwise
 # land without this gate running at all.
 #
-# Being precise about what that does NOT buy: the checker reads
-# SCPIInterface.c and verifies the helper CALLS those two functions. It does
-# not inspect their implementations, so a Begin that returned OK without
-# taking a real exclusion would still pass -- triggering is necessary for that
-# case, not sufficient. Closing it needs a separate assertion about
-# streaming.c; tracked in #864.
+# That trigger was necessary and, on its own, not sufficient: the checker used
+# to read only SCPIInterface.c, so a Begin that returned OK without taking a
+# real exclusion passed the whole gate -- it ran on streaming.c and asserted
+# nothing about it. #864 closed that. The checker now also reads streaming.c
+# and requires the claim flag (discovered from the reader, not hard-coded) to
+# be SET by Begin inside a critical section and CLEARED by End, and requires
+# the SCPI helper to hold the claim ACROSS its dispatch rather than merely
+# calling Begin and End somewhere.
 
 on:
   pull_request:
