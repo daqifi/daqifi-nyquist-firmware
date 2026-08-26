@@ -552,20 +552,31 @@ static scpi_result_t ADCChanSingleEndSetClaimed(scpi_t * context);
  * ADC_WriteChannelStateAll(), so a mid-session call re-wires the input
  * multiplexer under a running acquisition AND invalidates the description of
  * the stream that the client is already holding. That description is
- * `analog_in_port_rse` -- one bit per channel, built from IsDifferential in
- * NanoPB_Encoder.c -- and it does NOT ride the stream: the only session-start
- * metadata is the SD file header's six tags (fields_sd_metadata, streaming.c),
- * and rse appears only in the on-demand fields_all / fields_info reply
- * (SCPI_SysInfoGet, SCPIInterface.c). So a client that read the channel map
- * before START and then flipped a channel to differential at sample 10,000
- * gets samples whose meaning no longer matches the map it parsed, with nothing
- * in the stream marking where it changed.
+ * `analog_in_port_rse` -- one bit per channel, built from IsDifferential
+ * (NanoPB_Encoder.c). Exactly two statements about it are load-bearing here,
+ * and both were checked rather than assumed:
  *
- * Two things an earlier revision of this comment got wrong, corrected here
- * rather than quietly dropped: there is no `is_differential` field anywhere in
- * the tree (grep finds only that comment), and `analog_in_int_scale_m` is read
- * from BOARD CONFIG (NanoPB_Encoder.c), not from runtime, so this setter
- * cannot move it and it is not part of the defect.
+ *   * it is NOT in the streaming field set -- the per-sample flags built in
+ *     streaming.c are msg_time_stamp / analog_in_data / digital_data /
+ *     digital_port_dir, and rse is in neither those nor the SD file header;
+ *   * the only path that encodes it is the on-demand SYST:SYSInfoPB? reply
+ *     (fields_info -> SCPI_SysInfoGet, SCPIInterface.c).
+ *
+ * So a client that read the channel map before START and then flipped a
+ * channel to differential at sample 10,000 gets samples whose meaning no
+ * longer matches the map it parsed, with nothing in the stream marking where
+ * it changed. (Deliberately NOT claimed here: anything about what the CSV and
+ * JSON encoders put at the head of a session. They do each emit a header, on
+ * every interface, and neither carries rse -- but that is a second subject and
+ * this comment does not need it to be true.)
+ *
+ * Earlier revisions of this comment claimed a protobuf field
+ * `is_differential`, which does not exist anywhere in the tree (grep finds
+ * only the comment), and `analog_in_int_scale_m`, which is read from BOARD
+ * CONFIG (NanoPB_Encoder.c) and so cannot be moved by this setter. Both are
+ * corrected here rather than quietly dropped, because the pattern -- a
+ * justification asserting more than anyone checked -- is what this comment now
+ * deliberately keeps narrow.
  *
  * Same shape as SCPI_ADCChanEnableSet above, and for the same two reasons: the
  * body has six returns so the release must be unconditional, and the claim is
@@ -1011,15 +1022,20 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context);
  * CONF:ADC:CHANnel. Only CONF:ADC:CHANnel also LOG_Es the channel;
  * MEAS:VOLT:DC? pushes a BARE -222 (SCPI_ErrorPush passes a NULL info string)
  * with no log, so nothing there names the channel either. Pre-existing, shared
- * with chanCALB and both SINGleend paths, and NOT this change's subject --
- * filed as #888; the site to converge the other four onto is
+ * with chanCALB and with the SINGleend and the ...Get paths -- EVERY site in
+ * this file that returns SCPI_RES_ERR straight off the ADC_FindChannelIndex
+ * bound is in it, so #888's scope is "grep the bound", not a counted list
+ * (a counted list is how this repo gets "fixed one site, left the twin").
+ * NOT this change's subject. Whatever #888 converges them onto should be
  * CONF:ADC:CHANnel's logged form, not MEAS:VOLT:DC?'s bare push.
  *
  * Successive revisions of this paragraph have said "without pushing anything
  * at all", called it a silent-error path, called MEASure:VOLTage:DC? the one
- * site that gets it right, and said that site names the channel. All four were
- * wrong; the corrections came from the pre-merge audits, not from a reader
- * trusting the paragraph.) */
+ * site that gets it right, said that site names the channel, and put the
+ * affected-site count at four. All five were wrong, and every correction came
+ * from a pre-merge audit rather than from a reader trusting the paragraph --
+ * which is the argument for the narrower wording above, not against writing
+ * the rationale down.) */
 scpi_result_t SCPI_ADCChanCalmSet(scpi_t * context) {
     StreamingCfgClaim claim = Streaming_BeginConfigChange();
     if (claim != STREAM_CFG_CLAIM_OK) {
