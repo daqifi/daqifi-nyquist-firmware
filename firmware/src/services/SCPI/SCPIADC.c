@@ -795,6 +795,13 @@ static scpi_result_t ADCChanRangeSetClaimed(scpi_t * context) {
     int32_t rangeParam;
 
     // Get range parameter (0=±5V, 1=±10V)
+    //
+    // The second push is PRE-EXISTING and deliberately left alone by #873:
+    // SCPI_ParamInt32 has already queued on every failure path (-109 absent,
+    // -138 suffix, -104 not-a-number), so this adds a second, usually wrong,
+    // code. Filed as #885 rather than fixed here -- it changes which error a
+    // malformed argument reports, which is its own behaviour change with its
+    // own test arm, and this PR's subject is the claim.
     if (!SCPI_ParamInt32(context, &rangeParam, TRUE)) {
         SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
         return SCPI_RES_ERR;
