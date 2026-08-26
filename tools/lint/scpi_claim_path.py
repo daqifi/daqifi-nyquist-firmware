@@ -207,13 +207,6 @@ def _blank(text):
     return _STR_OR_CHAR.sub(lambda m: " " * len(m.group(0)), text)
 
 
-# The last non-blank line before a definition whose return type sits on its
-# own line. It must LOOK like the tail of a declaration: end in an identifier
-# character or a `*`, with its parentheses balanced. `if (`, `if (foo(a)`,
-# `while (x &&` all fail it, which is the point -- see `_signature`.
-_DECL_TAIL = re.compile(r"[\w\*]\s*$")
-
-
 def _signature(text, name):
     r"""Match object for a DEFINITION of C function `name`, or None.
 
@@ -241,20 +234,40 @@ def _signature(text, name):
        -- puts the CALLED NAME at the start of a line, so the parameter span
        absorbs the inner `)` exactly as in the unanchored case. (Verified by
        running it: the first attempt at this fix returned the `if` body.) So
-       layout 2 additionally requires the preceding non-blank line to look
-       like the tail of a declaration.
+       layout 2 additionally requires that the text since the previous
+       statement boundary have BALANCED parentheses -- an unclosed `(` means
+       a condition is still open, whatever the last line happens to end with
+       -- which is the whole of layout 2's extra guard.
+
+       TWO further clauses were written here and then removed, both for the
+       same measured reason: a per-line "does the previous line look like the
+       tail of a declaration" test, and a "something precedes the name at
+       all" test. With the balance check in place, mutating either away left
+       the suite fully green -- no arm on valid C could tell the versions
+       apart, which makes them defensive code that CANNOT FAIL, and a check
+       that cannot fail is precisely what this file refuses elsewhere. (The
+       same reasoning retired a keyword blocklist in `claim_flag`.) Measured,
+       not assumed.
+
+       The balance check is what a per-LINE test cannot do: a three-line
+       split whose middle line ends in `*` (`if (` / `scale *` /
+       `helper_probe(c)) {`) satisfies any "looks like a return type" test on
+       that line, and `main` REFUSES that shape -- so accepting it would turn
+       a loud red into a WRONG BODY (skeptic leg, PR #901 round 4).
     """
     esc = re.escape(name)
     m = re.search(r"(?m)^[A-Za-z_][\w \t\*]*\b%s\s*\(([^;{]*)\)\s*\{"
                   % esc, text)
     if m:
         return m
+    masked = _blank(text)
     for m in re.finditer(r"(?m)^%s\s*\(([^;{]*)\)\s*\{" % esc, text):
-        before = [ln for ln in text[:m.start()].split("\n") if ln.strip()]
-        prev = before[-1] if before else ""
-        if (_DECL_TAIL.search(prev)
-                and prev.count("(") == prev.count(")")):
-            return m
+        head = masked[:m.start()]
+        cut = max(head.rfind(";"), head.rfind("{"), head.rfind("}"))
+        region = head[cut + 1:]
+        if region.count("(") != region.count(")"):
+            continue              # a condition is still open: not a signature
+        return m
     return None
 
 
@@ -344,8 +357,15 @@ _STATIC_VOLATILE = (r"(?:static\s+volatile|volatile\s+static)\s+"
 # DIRECTLY, so an initialiser still cannot be offered as a declarator -- in
 # `... = false;` there is no comma at all.
 #
-# `[^;{}()]` bounds the body to ONE declaration and, crucially, keeps it OUT
-# OF ANY PARENTHESISED INITIALISER. Allowing parentheses made
+# `[^;{}()#]` bounds the body to ONE declaration and, crucially, keeps it OUT
+# OF ANY PARENTHESISED INITIALISER -- and off a PREPROCESSOR line. The class
+# spans newlines, and a `#define` line contains none of the other excluded
+# characters, so the search crossed from a `static volatile` declaration head
+# THROUGH a macro definition's body to a name declared plain `uint32_t`
+# elsewhere, certifying a claim flag that is neither static nor volatile
+# (skeptic leg, PR #901 round 4, with the fix it validated). A `#` cannot
+# occur in a declarator list outside a literal, and literals are blanked.
+# Allowing parentheses made
 # `static volatile uint32_t gOther = FOO(1, gCfgChangeBusy, 2);` offer a MACRO
 # ARGUMENT as a declarator, so a flag that was not `static volatile` at all
 # was accepted and the gate reported OK -- a silent pass, which is worse than
@@ -356,7 +376,7 @@ _STATIC_VOLATILE = (r"(?:static\s+volatile|volatile\s+static)\s+"
 # actually closes it. Cost: a legitimate declarator list whose initialiser
 # calls a macro is no longer matched -- a red, i.e. the safe direction.
 _MULTI_DECLARATOR = (r"(?:static\s+volatile|volatile\s+static)\s+"
-                     r"[A-Za-z_][^;{}()]*?,\s*\**\s*%s\s*(?:=|;|\[|,)")
+                     r"[A-Za-z_][^;{}()#]*?,\s*\**\s*%s\s*(?:=|;|\[|,)")
 
 
 def _assignments(body, name):
@@ -558,7 +578,7 @@ _ONE_REGION = (
     "refused, and the counts above say which you have. See #896.")
 
 
-def _comma_discards(blanked, prefix, open_paren):
+def _comma_discards(blanked, head, open_paren):
     """True iff a COMMA OPERATOR throws the assignment's value away before the
     enclosing test can see it.
 
@@ -575,25 +595,41 @@ def _comma_discards(blanked, prefix, open_paren):
     `/agentic_review` and the codex leg, PR #901 round 3). A fixed lookahead
     cannot decide this; the walk below can.
 
-    It scans forward from the call, tracking parenthesis depth relative to
-    it. `prefix` gives how many parentheses are still OPEN at the assignment,
-    whose outermost is the construct's own -- so descending past that level
-    means the test has ended and nothing discarded the value. A `,` at or
-    outside the assignment's own nesting is a comma operator; a `,` deeper
-    than that separates the arguments of a nested call and is not.
+    It scans forward from the call and counts two things SEPARATELY, because
+    one relative-depth counter conflates them: `inner` is the nesting of
+    groups opened AFTER the call, and `outer` is how many already-open
+    parentheses have been closed. A `,` is a comma operator only at
+    `inner == 0`; inside a group opened after the call it separates that
+    call's ARGUMENTS. A single net-depth counter reads those two situations
+    identically once the assignment's own parenthesis has closed, and that
+    version reported `if ((claim = Begin()) != f(a, b))` -- a correct helper
+    -- as discarding its verdict (skeptic leg, PR #901 round 4, which also
+    named this fix).
+
+    `head` is the statement prefix UP TO the assignment -- the same substring
+    `_TESTED_TAIL` matched, not the whole prefix, because the parentheses to
+    count are the ones the CONSTRUCT opened and `... (claim =` contributes
+    none. It also decides which construct this is: an `if`/`while`/`switch`
+    owns the outermost open parenthesis, so closing more than the REST of
+    them means the test has ended and nothing discarded the value; a `return`
+    owns none, and its expression runs to the `;`.
     """
-    open_here = prefix.count("(") - prefix.count(")")
-    floor = -(open_here - 1) if open_here > 0 else 0
-    depth = 0
+    open_here = head.count("(") - head.count(")")
+    owned = 0 if _RETURN_TAIL.search(head) else 1
+    allowed = max(open_here - owned, 0)
+    inner = outer = 0
     for i in range(_call_end(blanked, open_paren), len(blanked)):
         ch = blanked[i]
         if ch == "(":
-            depth += 1
+            inner += 1
         elif ch == ")":
-            depth -= 1
-            if depth < floor:
-                return False          # left the construct: nothing discarded
-        elif depth <= 0:
+            if inner:
+                inner -= 1
+            else:
+                outer += 1
+                if outer > allowed:
+                    return False      # left the construct: nothing discarded
+        elif inner == 0:
             if ch == ",":
                 return True
             if ch == ";":
@@ -657,6 +693,13 @@ _FOR_INIT = re.compile(r"\bfor\s*\($")
 # still cannot reach an assignment whose value goes to a CALL.
 _TESTED_TAIL = re.compile(
     r"(?:\b(?:if|while|switch)\s*\([\s(]*|\breturn\b[\s(]*)$")
+# ...and which of the two matched changes the arithmetic in `_comma_discards`:
+# an `if`/`while`/`switch` owns the OUTERMOST open parenthesis, a `return`
+# owns none -- its expression ends at the `;`. Charging `return` for a
+# parenthesis it does not own made the walk stop at the first `)`, so
+# `return (claim = Begin()), body(c), (End(), SCPI_RES_OK);` -- a helper that
+# dispatches after a refused claim -- passed (codex leg, PR #901 round 4).
+_RETURN_TAIL = re.compile(r"\breturn\b[\s(]*$")
 
 
 
@@ -768,12 +811,22 @@ def _verdict_used(body, name):
         target = re.search(r"([A-Za-z_]\w*)\s*=$", prefix)
         if target:
             if (_TESTED_TAIL.search(prefix[:target.start()])
-                    and not _comma_discards(b, prefix, m.end() - 1)):
+                    and not _comma_discards(
+                        b, prefix[:target.start()], m.end() - 1)):
                 continue          # the enclosing if/while/switch/return uses it
             var = target.group(1)
-            after = b.find(";", m.start())
-            if after < 0:
-                after = m.start()
+            # From the END OF THE CALL, not from the next `;`. The `;` is the
+            # wrong boundary whenever the assignment sits inside a larger
+            # expression: in
+            # `if ((claim = Begin()), claim != OK) { return f(c, claim ...); }`
+            # -- a correct helper that inspects the verdict in the comma's
+            # RIGHT operand -- the first `;` is the one ending that `return`,
+            # so both real inspections sat before the scan even started and
+            # the helper was reported as ignoring its verdict (codex leg, PR
+            # #901 round 4). Starting at the call cannot see the assignment's
+            # own mention of `var`, which is what the `;` was protecting
+            # against, because that mention precedes the call.
+            after = _call_end(b, m.end() - 1)
             inspected = any(
                 x.start() > after and not _discards(_stmt_prefix(b, x.start()))
                 for x in re.finditer(r"\b%s\b" % re.escape(var), b))
@@ -1161,6 +1214,21 @@ helper_probe2(c)) { return SCPI_RES_ERR; }
         _ck("a call at column 0 inside a split condition is not a definition",
             function_body(split_cond, "helper_probe2"), None)
 
+        # PR #901 round 4 (skeptic leg): the same, three lines, with the
+        # middle line ending in `*` so it passes any per-LINE "looks like a
+        # return type" test. `main` refuses this shape, so accepting it would
+        # turn a loud red into a wrong body.
+        split3 = _GOOD + """
+static scpi_result_t decoy3(scpi_t * c) {
+    if (
+scale *
+helper_probe3(c)) { return SCPI_RES_ERR; }
+    return SCPI_RES_OK;
+}
+"""
+        _ck("an unclosed condition is not a signature, whatever the line ends in",
+            function_body(split3, "helper_probe3"), None)
+
         # (1) one command routed off the helper
         off = _GOOD.replace(
             'return SCPI_MemRunClaimed(context, SCPI_SetMemWifiBufClaimed, "x");',
@@ -1526,6 +1594,68 @@ helper_probe2(c)) { return SCPI_RES_ERR; }
                 any("never inspects the verdict" in p
                     for p in check(mutated)[0]), True)
 
+        # PR #901 round 4 (skeptic leg): two more separators, both OUTSIDE
+        # the assignment's parenthesis, which is where a net-depth walk and a
+        # fixed lookahead differ.
+        for label, cond in (
+                ("an arithmetic term outside the parens",
+                 "if ((claim = Streaming_BeginConfigChange()) + 0, 1)"),
+                ("a logical operator outside them",
+                 "if ((claim = Streaming_BeginConfigChange()) && 0, 1)")):
+            mutated = _GOOD.replace(
+                "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
+                "    if (claim != STREAM_CFG_CLAIM_OK) { return SCPI_RejectCfgClaim(c, 1, what); }",
+                "    StreamingCfgClaim claim;\n    %s { ; }" % cond)
+            assert mutated != _GOOD, label
+            _ck("%s does not hide the comma either" % label,
+                any("never inspects the verdict" in p
+                    for p in check(mutated)[0]), True)
+
+        # ...and the arm that keeps that walk honest: a comma separating a
+        # NESTED call's arguments is not a comma operator. A net-depth
+        # version of the walk called this correct helper a discard.
+        nested = _GOOD.replace(
+            "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
+            "    if (claim != STREAM_CFG_CLAIM_OK) { return SCPI_RejectCfgClaim(c, 1, what); }",
+            "    StreamingCfgClaim claim;\n"
+            "    if ((claim = Streaming_BeginConfigChange()) != reject_code(c, what)) {\n"
+            "        return SCPI_RES_ERR;\n    }")
+        assert nested != _GOOD
+        _ck("a comma inside a nested call is not a comma operator",
+            check(nested)[0], [])
+
+        # PR #901 round 4 (codex leg): a `return` owns no parenthesis of its
+        # own, so charging it for one stopped the walk at the first `)` and
+        # let a helper that dispatches after a refused claim through.
+        ret_comma = _GOOD.replace(
+            "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
+            "    if (claim != STREAM_CFG_CLAIM_OK) { return SCPI_RejectCfgClaim(c, 1, what); }\n"
+            "    scpi_result_t r = b(c);\n"
+            "    Streaming_EndConfigChange();\n"
+            "    return r;",
+            "    StreamingCfgClaim claim;\n"
+            "    return (claim = Streaming_BeginConfigChange()), b(c),\n"
+            "           (Streaming_EndConfigChange(), SCPI_RES_OK);")
+        assert ret_comma != _GOOD
+        _ck("a comma expression in a `return` still discards the verdict",
+            any("never inspects the verdict" in p
+                for p in check(ret_comma)[0]), True)
+
+        # ...and its counterpart: a comma whose RIGHT operand DOES inspect
+        # the verdict is a correct helper. Reporting it as ignoring the
+        # verdict was a false red caused by starting the store scan at the
+        # next `;` -- which, inside a condition, is the one ending the
+        # rejection arm, i.e. after both real inspections (same leg).
+        comma_tests = _GOOD.replace(
+            "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
+            "    if (claim != STREAM_CFG_CLAIM_OK) { return SCPI_RejectCfgClaim(c, 1, what); }",
+            "    StreamingCfgClaim claim;\n"
+            "    if ((claim = Streaming_BeginConfigChange()), claim != STREAM_CFG_CLAIM_OK) {\n"
+            "        return SCPI_RejectCfgClaim(c, claim == STREAM_CFG_CLAIM_BUSY, what);\n    }")
+        assert comma_tests != _GOOD
+        _ck("a comma whose right operand inspects the verdict is not a discard",
+            check(comma_tests)[0], [])
+
         # PR #901 round 3 (codex leg): a label AND a cast, neither of which
         # alone matched the prefix. Missed before this PR too -- stripping
         # labels rather than fullmatching them makes it fall out.
@@ -1749,6 +1879,20 @@ helper_probe2(c)) { return SCPI_RES_ERR; }
             _ck("%s is not the file-scope claim flag" % label,
                 any("static volatile" in p
                     for p in check_streaming(mutated)[0]), True)
+        # PR #901 round 4 (skeptic leg): the declarator body spans newlines,
+        # and a `#define` line carries none of the other excluded characters,
+        # so the search bridged a declaration head to a name declared plain
+        # `uint32_t` further down -- certifying a flag that is neither static
+        # nor volatile.
+        directive = _GOOD_STREAM.replace(
+            "static volatile uint32_t gCfgChangeBusy = 0u;",
+            "static volatile uint32_t gJunk\n"
+            "#define GLUE 1, gCfgChangeBusy\n"
+            ";\nuint32_t gCfgChangeBusy = 0u;")
+        assert directive != _GOOD_STREAM
+        _ck("a preprocessor line does not bridge a declarator list",
+            any("static volatile" in p
+                for p in check_streaming(directive)[0]), True)
 
         # V1 (opus verifier): testing through the public accessor is the
         # same test-and-set, and is if anything the better shape. Rejecting it
