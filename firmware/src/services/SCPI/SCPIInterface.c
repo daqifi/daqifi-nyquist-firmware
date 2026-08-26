@@ -2482,7 +2482,20 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
          * Refuse rather than rebuild, for the same reason START does: the
          * sample pool above was already carved from the OLD mapping's count,
          * so a mapping rebuilt here would describe a set the partition was not
-         * sized for -- worse than the stale mapping it replaced. */
+         * sized for -- worse than the stale mapping it replaced.
+         *
+         * #891 deliberately adds NO inputs-present test here, though the WiFi
+         * finder's arm now has one.  The difference is what each command
+         * promises: the finder refuses at its front door when no ADC channel
+         * is enabled, so an arm-time re-check RESTORES an invariant it already
+         * advertises, and its OUTPUT is a recommended rate -- derived from a
+         * stream that would carry no channels, i.e. wrong rather than empty.
+         * This benchmark has never had such a front door, and its output is
+         * the sample/byte count it measured, which stays true of a run with
+         * nothing enabled.  Refusing here would therefore be a NEW refusal on
+         * a command that has always accepted this, so if it is ever wanted it
+         * belongs at this command's front door as a deliberate behaviour
+         * change -- not inherited from the finder's arm by symmetry. */
         mappingMoved = (Streaming_ComputeChannelSelection(
                                 pBoardConfig, (const AInRuntimeArray*)pRtAin)
                         != mappingSelAtBuild);
@@ -2741,6 +2754,7 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * next successful start would do, harmless with nothing running.) */
     bool cfgBusy;
     bool mappingMoved = false;
+    bool inputsGone = false;
     taskENTER_CRITICAL();
     cfgBusy = Streaming_ConfigChangeInProgress();
     if (!cfgBusy) {
@@ -2760,19 +2774,48 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
          * pool re-partitioned with it -- a mid-sweep teardown the WINC is
          * documented to dislike (#425/#467/#517) -- and would silently change
          * the basis of a measurement already in progress. */
-        mappingMoved = (Streaming_ComputeChannelSelection(basis->pBoardConfig,
-                                                          basis->pRuntimeChannels)
-                        != basis->mappingSelAtBuild);
+        const uint64_t selNow = Streaming_ComputeChannelSelection(
+                basis->pBoardConfig, basis->pRuntimeChannels);
+        mappingMoved = (selNow != basis->mappingSelAtBuild);
+        /* #891: the same mask is also the command's OTHER admission test, and
+         * that one the comparison above cannot stand in for.  The front door
+         * refused the sweep when no public ADC channel was enabled, but the
+         * front door and the mapping build below it are not one step: a
+         * CONF:ADC:CHANnel 0 landing between them leaves the mapping recording
+         * selection 0, so at every arm the comparison above is SATISFIED --
+         * and correctly so, the mapping does still describe the live set.  The
+         * provenance invariant holds; the inputs-present one is the one that
+         * broke, which is why it needs a test of its own rather than a
+         * widening of #868's.
+         *
+         * An empty mask is exactly the front door's `totalEnabled == 0`: both
+         * are (IsEnabled && AInChannel_IsPublic) over the same channel array,
+         * and the mask's MAX_AIN_PUBLIC_CHANNELS packing bound cannot make the
+         * two disagree at zero (that bound only stops the walk once a bit has
+         * been set).  Read from the value already computed above, so this adds
+         * a comparison to the critical section and not a second walk.
+         *
+         * Without it the sweep measures a session with no analog channels in
+         * it.  No channel data means no back-pressure, so neither trip fires,
+         * the climb runs to hardMax and the command reports a recommended rate
+         * it never measured -- clean-looking output that is entirely wrong,
+         * which is the shape this family of fixes exists to stop.
+         *
+         * Ordered ahead of mappingMoved in the reason chain below, the way
+         * SCPI_StartStreamingClaimed orders its own two: when a disable lands
+         * between steps both are true, and "no ADC channels are enabled" is
+         * the more actionable of the two statements. */
+        inputsGone = (selNow == 0u);
     }
-    if (!cfgBusy && !mappingMoved) {
+    if (!cfgBusy && !mappingMoved && !inputsGone) {
         cfg->ClockPeriod = periodCycles - 1;
         cfg->Frequency = (uint64_t)freq;
         cfg->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
-    /* #868: this step armed nothing on either refusal, so every "did WE arm
-     * it?" test below is this rather than cfgBusy alone. */
-    const bool armRefused = cfgBusy || mappingMoved;
+    /* #868/#891: this step armed nothing on any of the three refusals, so
+     * every "did WE arm it?" test below is this rather than cfgBusy alone. */
+    const bool armRefused = cfgBusy || mappingMoved || inputsGone;
     /* Only pump the state machine if we actually armed -- on the refused path
      * Streaming_UpdateState() would Streaming_Stop() a concurrent session. */
     if (!armRefused) {
@@ -2783,11 +2826,15 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * adopt it as its own and measure/stop it (Qodo). */
     if (armRefused || !cfg->Running) {
         if (armRefused) {
-            /* #868: the sweep reports START_FAIL for both refusals -- one
-             * outcome, two causes -- so name the cause in the log, which is
-             * where this project puts error detail (SYSTem:LOG?). */
+            /* #868/#891: the sweep reports START_FAIL for every refusal --
+             * one outcome, three causes -- so name the cause in the log, which
+             * is where this project puts error detail (SYSTem:LOG?).  Same
+             * order as the tests above, so the message always names the reason
+             * that actually withheld the arm. */
             LOG_E("WIFI:FIND %u Hz: arm refused - %s", (unsigned)freq,
                   cfgBusy ? "a streaming config change is in flight (#847)"
+                          : inputsGone
+                          ? "no ADC channels are enabled (#891)"
                           : "the enabled-channel set moved after the mapping was built (#868)");
         }
         // Clean teardown so the start-fail path leaves IsEnabled=false like the
