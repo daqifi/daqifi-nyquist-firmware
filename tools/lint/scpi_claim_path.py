@@ -776,9 +776,20 @@ static const scpi_command_t scpi_commands[] = {
 '''
 
 # The claim primitive, as it must look for the SCPI-side routing to mean
-# anything. `gSomethingElse` is present so the fixture exercises the
-# declarator anchoring too: its `= false` initialiser must not be offered as a
-# candidate flag name.
+# anything. `gSomethingElse` is the declarator anchor's mutation target: its
+# `= false` is the only identifier-shaped initialiser in this fixture, so it
+# is the only one a loosened anchor could offer as a flag name. It changes no
+# verdict here. Widen `[\w\s\*]` so it can cross `=` (to `[\w\s\*=]`, `.`, or
+# `[^;]`) and FOUR arms go red -- the two `init_reader` arms and the two
+# pre-existing `gutted_reader` arms below; delete this line and all four go
+# green on that same broken anchor (60/60). The line therefore outlives any
+# one of them: do NOT retire it alongside one. Retiring either pair AND
+# deleting this line takes a caught loosening (56/58) to a silent pass
+# (58/58).
+#
+# It buys that and no more: a class widened all the way to `[\s\S]` is caught
+# with or without this line, and loosening the anchor's `\b` or its
+# `(?:=|;|\[)` tail is caught by nothing. (#899; limits tracked in #896.)
 _GOOD_STREAM = '''
 static volatile bool gSomethingElse = false;
 static volatile uint32_t gCfgChangeBusy = 0u;
@@ -1061,8 +1072,26 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("a compliant claim primitive is clean", sprobs, [])
         _ck("the flag is discovered from the reader, not hard-coded",
             sflag, "gCfgChangeBusy")
+        # The declarator anchor in `claim_flag`. Deciding it needs a reader
+        # that MENTIONS the initialiser's token: candidates come from the
+        # READER's identifiers, and `_GOOD_STREAM`'s reader never says
+        # `false`, so it is never offered there and the anchor never runs on
+        # it. Written against `_GOOD_STREAM` this arm computed
+        # `check_streaming(_GOOD_STREAM)[1]` a second time -- dominated by the
+        # arm above it, and green with the anchor loosened to `[\w\s\*=]`
+        # (#899). This variant's reader mentions `false`, so
+        # `gSomethingElse`'s initialiser is a candidate the anchor must reject:
+        # loosening the anchor makes `claim_flag` see TWO flags and refuse.
+        init_reader = _GOOD_STREAM.replace(
+            "    return (gCfgChangeBusy != 0u);",
+            "    if (gCfgChangeBusy == 0u) { return false; }\n"
+            "    return true;")
+        assert init_reader != _GOOD_STREAM
         _ck("an initialiser is not mistaken for a declarator",
-            claim_flag(strip_c_comments(_GOOD_STREAM))[0], "gCfgChangeBusy")
+            claim_flag(strip_c_comments(init_reader)),
+            ("gCfgChangeBusy", None))
+        _ck("...and that reader is otherwise a compliant primitive",
+            check_streaming(init_reader)[0], [])
 
         # THE case the CI trigger existed for and could not detect: a Begin
         # that hands out STREAM_CFG_CLAIM_OK without taking anything. Every
