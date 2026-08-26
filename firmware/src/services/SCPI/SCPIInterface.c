@@ -4023,7 +4023,8 @@ static void SCPI_UnpublishStartInterface(StreamingRuntimeConfig *cfg,
 static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                                                 int32_t freq,
                                                 bool freqProvided,
-                                                uint32_t stopGenPinned) {
+                                                uint32_t stopGenPinned,
+                                                bool stopActivePinned) {
 
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
@@ -4910,7 +4911,20 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
      * START's OK that is then the wrong report. Safe direction, and closing it
      * would mean making the publish and Streaming_UpdateState one atomic step,
      * which is impossible: UpdateState starts a timer and a task. */
-    stopInFlight = (gStreamStopsActive != 0u);
+    /* THREE terms, and each covers a case the other two cannot (Qodo,
+     * importance 10):
+     *   stopActivePinned  a stop was ALREADY RUNNING when this start began,
+     *                     and finished before this check. Neither of the other
+     *                     two sees it: the count is back to zero, and the
+     *                     generation was bumped BEFORE the pin so it compares
+     *                     equal. Its teardown ran straight through this
+     *                     start's setup -- the SD arm included -- so arming on
+     *                     top of it is arming over a torn-down session.
+     *   gStreamStopsActive a stop is running RIGHT NOW, so it will clear
+     *                     IsEnabled after we publish it.
+     *   gStreamStopGen    a stop began and ended entirely inside this start's
+     *                     window: the original #861 case. */
+    stopInFlight = stopActivePinned || (gStreamStopsActive != 0u);
     stopRequested = stopInFlight || (gStreamStopGen != stopGenPinned);
     /* The interface must still be the one everything above was set up for.
      * The rate check alone does not catch this, because the new interface's
@@ -5235,6 +5249,12 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * Unused on the SYSTem:STReam:START 0 disable path, which returns before
      * the claim -- that path is a stop, and a stop never observes this. */
     const uint32_t stopGenPinned = gStreamStopGen;
+    /* Was a stop ALREADY in flight when this command arrived? Pinned here
+     * rather than only sampled at the arm, because a stop that finishes in
+     * between is invisible to both of the other terms -- see the arm-time
+     * comment for the three-way split. A plain 32-bit load, like the
+     * generation beside it. */
+    const bool stopActivePinned = (gStreamStopsActive != 0u);
     int32_t freq = 0;
     scpi_parameter_t freqParam;
     bool freqProvided = SCPI_Parameter(context, &freqParam, FALSE);
@@ -5309,7 +5329,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
     }
     scpi_result_t result = SCPI_StartStreamingClaimed(context, freq,
                                                       freqProvided,
-                                                      stopGenPinned);
+                                                      stopGenPinned,
+                                                      stopActivePinned);
     Streaming_EndSessionStart();
     return result;
 }
