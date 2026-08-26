@@ -558,6 +558,49 @@ _ONE_REGION = (
     "refused, and the counts above say which you have. See #896.")
 
 
+def _comma_discards(blanked, prefix, open_paren):
+    """True iff a COMMA OPERATOR throws the assignment's value away before the
+    enclosing test can see it.
+
+    Being inside an `if`/`while`/`switch`/`return` is not by itself an
+    inspection: `if (claim = Begin(), allowed)` tests `allowed`, and the
+    verdict is stored and dropped -- the gutted-helper shape this file exists
+    to catch. The exemption's first version skipped the store scan on it,
+    making the checker WEAKER than the code it was fixing (`main` caught it,
+    by accident, through the very mis-scan #896 (e) is about).
+
+    Its second version looked only at the characters immediately following
+    the call, so `if (claim = Begin() + 0, allowed)` and
+    `if ((claim = Begin()) == OK, 0)` walked straight past it (Qodo
+    `/agentic_review` and the codex leg, PR #901 round 3). A fixed lookahead
+    cannot decide this; the walk below can.
+
+    It scans forward from the call, tracking parenthesis depth relative to
+    it. `prefix` gives how many parentheses are still OPEN at the assignment,
+    whose outermost is the construct's own -- so descending past that level
+    means the test has ended and nothing discarded the value. A `,` at or
+    outside the assignment's own nesting is a comma operator; a `,` deeper
+    than that separates the arguments of a nested call and is not.
+    """
+    open_here = prefix.count("(") - prefix.count(")")
+    floor = -(open_here - 1) if open_here > 0 else 0
+    depth = 0
+    for i in range(_call_end(blanked, open_paren), len(blanked)):
+        ch = blanked[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < floor:
+                return False          # left the construct: nothing discarded
+        elif depth <= 0:
+            if ch == ",":
+                return True
+            if ch == ";":
+                return False
+    return False
+
+
 def _call_end(blanked, open_paren):
     """Index just past the `)` closing the call whose `(` sits at `open_paren`.
 
@@ -595,19 +638,9 @@ _CAST_ONLY = re.compile(r"\(\s*[A-Za-z_][\w\s\*]*\)")
 # statement", so `case 1: Streaming_BeginConfigChange();` was credited as
 # USING the verdict -- the enumeration promising a form it did not catch, in
 # the function whose whole purpose is to enumerate (#896 (f)).
-# `.*` and not `[^:]*`, because a case expression may CONTAIN a colon:
-# `case (1 ? 1 : 3):` is a valid label and `[^:]*` stopped at the ternary's
-# colon, so the whole prefix never matched (codex leg, PR #901 round 1). The
-# greedy form backtracks to the LAST colon, which is the label's.
-#
-# The trailing `+` is for STACKED labels: C11 6.8.1 lets any number of labels
-# precede one statement, and `retry: again: Begin();` credited the discarded
-# call as a use while a single-label `fullmatch` looked at the whole prefix
-# (Qodo `/improve`, PR #901 round 2). `case 1: case 2:` happened to work
-# already, because the greedy `.*` swallows the inner colons -- so the
-# stacked-IDENTIFIER form is the one that was actually missing, not the
-# stacked-`case` form the report named.
-_LABEL_ONLY = re.compile(r"(?:(?:case\b.*|[A-Za-z_]\w*)\s*:\s*)+")
+# ONE identifier label at the head of a prefix. `default:` is an ordinary
+# identifier and needs no separate arm; `(?!:)` keeps it off a `::`.
+_LABEL_ONLY = re.compile(r"[A-Za-z_]\w*\s*:(?!:)")
 _FOR_INIT = re.compile(r"\bfor\s*\($")
 
 # An assignment whose value the DIRECTLY enclosing construct tests or returns:
@@ -625,28 +658,75 @@ _FOR_INIT = re.compile(r"\bfor\s*\($")
 _TESTED_TAIL = re.compile(
     r"(?:\b(?:if|while|switch)\s*\([\s(]*|\breturn\b[\s(]*)$")
 
-# ...and being inside a test is not enough, because a COMMA OPERATOR throws
-# the left operand away before the test ever sees it:
-# `if ((claim = Begin(), 1))` tests the constant, not the verdict. The first
-# version of this exemption skipped the store scan on that shape, which made
-# the checker WEAKER than the version it was fixing -- pre-#901 caught it, by
-# accident, through the very mis-scan #896 (e) is about (codex leg, PR #901
-# round 1). So the exemption is refused when a comma follows the assignment
-# before anything else does; closing parentheses are stepped over, so both
-# `(claim = Begin(), 1)` and `(claim = Begin()) , 1` are refused.
-_COMMA_FIRST = re.compile(r"[\s)]*,")
+
+
+
+def _case_label_colon(s, start):
+    r"""Index of the `:` ending a `case` label that begins at `start`, or -1.
+
+    A case label's constant-expression may itself contain colons -- both
+    `case (1 ? 1 : 3):` and `case 1 ? 2 : 3:` are legal C11 -- so the
+    terminator is the first `:` outside brackets that is not the middle of a
+    `?:`. That is balancing, which a regex cannot do: a greedy `case\b.*`
+    took the LAST colon and read
+    `case 1: claim = cond ? OK : Begin();` as a bare labelled call, a FALSE
+    RED on valid C (Qodo `/agentic_review`, PR #901 round 3); the earlier
+    non-greedy `case\b[^:]*` took the first colon anywhere and missed the
+    parenthesised form entirely (codex leg, round 1).
+    """
+    depth = tern = 0
+    for i in range(start, len(s)):
+        ch = s[i]
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        elif depth:
+            continue
+        elif ch == "?":
+            tern += 1
+        elif ch == ":":
+            if tern:
+                tern -= 1
+            else:
+                return i
+    return -1
+
+
+def _strip_labels(prefix):
+    """`prefix` with any leading label sequence removed.
+
+    C11 6.8.1 puts any number of labels before one statement, in three forms:
+    an identifier label, `default:`, and `case <constant-expression> :`.
+    STRIPPING them and judging the remainder replaces trying to `fullmatch`
+    the whole prefix as a label, which failed in both directions: it missed
+    stacked labels (`retry: again: Begin();` was credited as a USE, Qodo
+    `/improve`, round 2) and, once made greedy enough to catch them, it
+    swallowed a following statement (round 3). It also makes
+    `retry: (void)Begin();` -- a label AND a cast, neither alone -- fall out
+    for free; that one was missed before this PR as well (codex leg, round 3).
+    """
+    while True:
+        s = prefix.lstrip()
+        if re.match(r"case\b", s):
+            end = _case_label_colon(s, 4)
+            if end < 0:
+                return s
+            prefix = s[end + 1:]
+            continue
+        m = _LABEL_ONLY.match(s)
+        if m:
+            prefix = s[m.end():]
+            continue
+        return s
 
 
 def _discards(prefix):
-    """True iff a value produced at this statement prefix goes nowhere.
-
-    A labelled statement means BOTH C label forms -- `retry:`/`default:` and
-    `case <expr>:`. Enumerating one and describing both is what #896 (f) was.
-    """
-    return (prefix == ""
-            or _CAST_ONLY.fullmatch(prefix) is not None
-            or _LABEL_ONLY.fullmatch(prefix) is not None
-            or _FOR_INIT.search(prefix) is not None)
+    """True iff a value produced at this statement prefix goes nowhere."""
+    rest = _strip_labels(prefix)
+    return (rest == ""
+            or _CAST_ONLY.fullmatch(rest) is not None
+            or _FOR_INIT.search(rest) is not None)
 
 
 def _verdict_used(body, name):
@@ -688,7 +768,7 @@ def _verdict_used(body, name):
         target = re.search(r"([A-Za-z_]\w*)\s*=$", prefix)
         if target:
             if (_TESTED_TAIL.search(prefix[:target.start()])
-                    and not _COMMA_FIRST.match(b, _call_end(b, m.end() - 1))):
+                    and not _comma_discards(b, prefix, m.end() - 1)):
                 continue          # the enclosing if/while/switch/return uses it
             var = target.group(1)
             after = b.find(";", m.start())
@@ -769,6 +849,35 @@ def _helper_order_problems(text, helper):
 # checker exists to catch, one level up -- so the trigger now has something to
 # do when it fires.
 # --------------------------------------------------------------------------
+def _file_scope(blanked):
+    """`blanked` with every brace-enclosed region replaced by spaces.
+
+    Offsets are preserved, so a match index still refers to the real text.
+    `claim_flag`'s message promises a FILE-SCOPE `static volatile`, and
+    nothing enforced it: a function-local `static volatile` matched too. That
+    was already true of `_STATIC_VOLATILE` before this PR (a local FIRST
+    declarator passes on `main` as well), and `_MULTI_DECLARATOR` added a
+    second route into the same hole -- an unrelated function containing
+    `static volatile uint32_t gTmp = 0u, gCfgChangeBusy = 0u;` let a
+    NON-volatile file-scope flag through (Qodo `/agentic_review` and the
+    codex leg, PR #901 round 3). Restricting the search to depth 0 closes
+    both routes and makes the message true.
+    """
+    out = list(blanked)
+    depth = 0
+    for i, ch in enumerate(blanked):
+        if ch == "{":
+            depth += 1
+            out[i] = " "
+        elif ch == "}":
+            if depth:
+                depth -= 1
+            out[i] = " "
+        elif depth:
+            out[i] = " "
+    return "".join(out)
+
+
 def claim_flag(text):
     """-> (flag_name, None) | (None, reason). Comment-stripped text.
 
@@ -784,14 +893,13 @@ def claim_flag(text):
             "turns on could not be identified and %s()/%s() were NOT checked."
             % (CLAIM_READER, CLAIM_BEGIN, CLAIM_END))
     cands = set()
-    # Declarations are searched in BLANKED text: a string literal spelling a
-    # declarator list -- `static volatile char gMsg[] = "x, gFlag, y";` --
-    # otherwise satisfies `_MULTI_DECLARATOR` and the checker follows a name
-    # that has no such declaration (found while verifying the codex leg's
-    # macro-argument finding, PR #901 round 1). `_STATIC_VOLATILE` could not
-    # reach into a literal, because it cannot cross the `=`; the second
-    # alternative can, so both now read the blanked copy.
-    decls = _blank(text)
+    # Declarations are searched in BLANKED, FILE-SCOPE text. Blanking: a
+    # string literal spelling a declarator list --
+    # `static volatile char gMsg[] = "x, gFlag, y";` -- otherwise satisfies
+    # `_MULTI_DECLARATOR` and the checker follows a name that has no such
+    # declaration (found while verifying the codex leg's macro-argument
+    # finding, PR #901 round 1). File scope: see `_file_scope`.
+    decls = _file_scope(_blank(text))
     for m in re.finditer(r"\b([A-Za-z_]\w*)\b", _blank(reader)):
         name = m.group(1)
         # The name must be the DECLARATOR, not an initialiser: `[\w\s\*]`
@@ -1400,6 +1508,56 @@ helper_probe2(c)) { return SCPI_RES_ERR; }
             any("never inspects the verdict" in p
                 for p in check(bare_comma)[0]), True)
 
+        # PR #901 round 3: the comma need not follow the call immediately.
+        # A fixed lookahead saw `) ==` / ` + 0` and exempted both; the walk
+        # in `_comma_discards` is what decides it. Qodo /agentic_review found
+        # the first, the codex leg the second, independently.
+        for label, cond in (
+                ("an arithmetic term before the comma",
+                 "if (claim = Streaming_BeginConfigChange() + 0, allowed)"),
+                ("a comparison before it",
+                 "if ((claim = Streaming_BeginConfigChange()) == STREAM_CFG_CLAIM_OK, 0)")):
+            mutated = _GOOD.replace(
+                "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
+                "    if (claim != STREAM_CFG_CLAIM_OK) { return SCPI_RejectCfgClaim(c, 1, what); }",
+                "    StreamingCfgClaim claim;\n    %s { ; }" % cond)
+            assert mutated != _GOOD, label
+            _ck("%s does not hide the comma" % label,
+                any("never inspects the verdict" in p
+                    for p in check(mutated)[0]), True)
+
+        # PR #901 round 3 (codex leg): a label AND a cast, neither of which
+        # alone matched the prefix. Missed before this PR too -- stripping
+        # labels rather than fullmatching them makes it fall out.
+        label_cast = _GOOD.replace(
+            "StreamingCfgClaim claim = Streaming_BeginConfigChange();",
+            "retry: (void)Streaming_BeginConfigChange();")
+        assert label_cast != _GOOD
+        _ck("a label followed by a cast still discards",
+            any("discards the result" in p for p in check(label_cast)[0]), True)
+
+        # PR #901 round 3 (Qodo /agentic_review): the FALSE RED that round
+        # 1's greedy `case\b.*` introduced -- the ternary's colon was taken
+        # for the label's, so an ASSIGNED verdict read as a bare labelled
+        # call. Valid C, and `main` is clean on it.
+        ternary_rhs = _GOOD.replace(
+            "    StreamingCfgClaim claim = Streaming_BeginConfigChange();",
+            "    StreamingCfgClaim claim;\n"
+            "    case 1: claim = cond ? STREAM_CFG_CLAIM_OK : Streaming_BeginConfigChange();")
+        assert ternary_rhs != _GOOD
+        _ck("a ternary on the RHS of a labelled assignment is not a discard",
+            check(ternary_rhs)[0], [])
+
+        # ...and the label form that motivated the greedy version still works
+        # without parentheses around the conditional.
+        bare_ternary_case = _GOOD.replace(
+            "StreamingCfgClaim claim = Streaming_BeginConfigChange();",
+            "switch (1) { case 1 ? 2 : 3: Streaming_BeginConfigChange(); break; }")
+        assert bare_ternary_case != _GOOD
+        _ck("an unparenthesised ternary case label still discards",
+            any("discards the result" in p
+                for p in check(bare_ternary_case)[0]), True)
+
         # ---- #864(1) residual: the claim PRIMITIVE, in streaming.c --------
         sprobs, sflag = check_streaming(_GOOD_STREAM)
         _ck("a compliant claim primitive is clean", sprobs, [])
@@ -1573,6 +1731,24 @@ helper_probe2(c)) { return SCPI_RES_ERR; }
         _ck("a declarator list spelled inside a literal is not a declaration",
             any("static volatile" in p
                 for p in check_streaming(litdecl)[0]), True)
+        # PR #901 round 3 (Qodo /agentic_review and the codex leg, agreeing):
+        # the message promises a FILE-SCOPE declaration and nothing enforced
+        # it. Both routes are armed -- the second declarator is the one this
+        # PR opened, the FIRST one was open on `main` too.
+        for label, decl in (
+                ("a block-scope second declarator",
+                 "void unrelated(void) { static volatile uint32_t gTmp = 0u, "
+                 "gCfgChangeBusy = 0u; (void)gTmp; }"),
+                ("a block-scope first declarator",
+                 "void unrelated(void) { static volatile uint32_t "
+                 "gCfgChangeBusy = 0u; (void)gCfgChangeBusy; }")):
+            mutated = _GOOD_STREAM.replace(
+                "static volatile uint32_t gCfgChangeBusy = 0u;",
+                "uint32_t gCfgChangeBusy = 0u;\n%s" % decl)
+            assert mutated != _GOOD_STREAM, label
+            _ck("%s is not the file-scope claim flag" % label,
+                any("static volatile" in p
+                    for p in check_streaming(mutated)[0]), True)
 
         # V1 (opus verifier): testing through the public accessor is the
         # same test-and-set, and is if anything the better shape. Rejecting it
