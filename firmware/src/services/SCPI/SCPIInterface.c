@@ -3951,6 +3951,12 @@ static void SCPI_ClearStreamingOperBits(StreamingRuntimeConfig *cfg) {
     }
 }
 
+/* #860's discriminator: "is the armed SD WRITE a STREAMING LOG, right now?".
+ * Forward-declared because SCPI_StartStreamingClaimed's #861 refusal asks it
+ * far above the definition -- see that branch for why the question has to be
+ * asked there at all. */
+static bool SCPI_SdWriteIsStreamingLog(const sd_card_manager_settings_t *sd);
+
 static void SCPI_ReleaseSdLoggingArm(sd_card_manager_settings_t *sd) {
     if (sd == NULL) {
         return;
@@ -5045,8 +5051,26 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
          * its own SCPI_ClearStreamingOperBits; calling it again here is a
          * no-op by construction (it tests "is anything streaming" first, #870)
          * and is kept so this branch is complete on its own, exactly like its
-         * siblings. */
-        if (sdLoggingRequested) {
+         * siblings.
+         *
+         * The SD release is NOT unconditional here, and that is the one place
+         * this branch deliberately differs from those siblings (pre-merge
+         * audit). This is the refusal that fires AFTER a stop has run, and a
+         * stop's teardown ends with mode = NONE -- so SYSTem:STOR:SD:BENCHmark
+         * is no longer refused (#854 gates on a live stream) and can arm its
+         * own plain WRITE in the window. Releasing on `sdLoggingRequested`
+         * alone would then close the BENCHMARK's file: it sets mode = NONE and
+         * the benchmark stalls to its 10 s drain timeout reporting a truncated
+         * result. `SCPI_SdWriteIsStreamingLog` is the discriminator the stop
+         * body already uses for exactly this question -- is the armed WRITE
+         * OURS -- and it answers false for a benchmark's plain write.
+         *
+         * The siblings keep the unconditional form on purpose: they fire on a
+         * config/interface/cap change with no preceding teardown, so the
+         * window this closes does not exist for them. Their shared exposure is
+         * the shared-struct-with-no-owner shape of #871 and is not changed
+         * here in either direction. */
+        if (sdLoggingRequested && SCPI_SdWriteIsStreamingLog(pSDCardSettings)) {
             SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
         SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
