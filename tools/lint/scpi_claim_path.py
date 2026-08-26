@@ -599,7 +599,15 @@ _CAST_ONLY = re.compile(r"\(\s*[A-Za-z_][\w\s\*]*\)")
 # `case (1 ? 1 : 3):` is a valid label and `[^:]*` stopped at the ternary's
 # colon, so the whole prefix never matched (codex leg, PR #901 round 1). The
 # greedy form backtracks to the LAST colon, which is the label's.
-_LABEL_ONLY = re.compile(r"(?:case\b.*|[A-Za-z_]\w*)\s*:")
+#
+# The trailing `+` is for STACKED labels: C11 6.8.1 lets any number of labels
+# precede one statement, and `retry: again: Begin();` credited the discarded
+# call as a use while a single-label `fullmatch` looked at the whole prefix
+# (Qodo `/improve`, PR #901 round 2). `case 1: case 2:` happened to work
+# already, because the greedy `.*` swallows the inner colons -- so the
+# stacked-IDENTIFIER form is the one that was actually missing, not the
+# stacked-`case` form the report named.
+_LABEL_ONLY = re.compile(r"(?:(?:case\b.*|[A-Za-z_]\w*)\s*:\s*)+")
 _FOR_INIT = re.compile(r"\bfor\s*\($")
 
 # An assignment whose value the DIRECTLY enclosing construct tests or returns:
@@ -609,7 +617,13 @@ _FOR_INIT = re.compile(r"\bfor\s*\($")
 # inspects" about a helper that branches on the verdict two characters later
 # (#896 (e)). Only a DIRECTLY enclosing construct counts: in
 # `if (foo(claim = Begin()))` the value goes to `foo`, not to the `if`.
-_TESTED_TAIL = re.compile(r"(?:\b(?:if|while|switch)\s*\(+|\breturn\b\s*\(*)$")
+# `[\s(]*` and not `\(+`, so whitespace may sit BETWEEN the parentheses:
+# `if ( (claim = Begin()) != OK )` is ordinary formatting and the contiguous
+# form redded it (Qodo `/improve`, PR #901 round 2). `if (foo(` is still
+# excluded -- the class admits no identifier characters, so the exemption
+# still cannot reach an assignment whose value goes to a CALL.
+_TESTED_TAIL = re.compile(
+    r"(?:\b(?:if|while|switch)\s*\([\s(]*|\breturn\b[\s(]*)$")
 
 # ...and being inside a test is not enough, because a COMMA OPERATOR throws
 # the left operand away before the test ever sees it:
@@ -1279,6 +1293,19 @@ helper_probe2(c)) { return SCPI_RES_ERR; }
         _ck("an assignment the `if` tests is an inspection, not a false red",
             check(condtest)[0], [])
 
+        # PR #901 round 2 (Qodo): the same helper with a space between the
+        # `if`'s parenthesis and the assignment's. Ordinary formatting, and
+        # the contiguous `\(+` form redded it.
+        spaced = _GOOD.replace(
+            "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
+            "    if (claim != STREAM_CFG_CLAIM_OK) { return SCPI_RejectCfgClaim(c, 1, what); }",
+            "    StreamingCfgClaim claim;\n"
+            "    if ( (claim = Streaming_BeginConfigChange()) != STREAM_CFG_CLAIM_OK ) {\n"
+            "        return SCPI_RES_ERR;\n    }")
+        assert spaced != _GOOD
+        _ck("...and a space between the two parentheses is not a false red",
+            check(spaced)[0], [])
+
         # ...and the exemption is only for a DIRECTLY enclosing test. Handing
         # the verdict to another function and never looking at it again must
         # still be caught, or the fix above would have widened the hole it
@@ -1325,6 +1352,17 @@ helper_probe2(c)) { return SCPI_RES_ERR; }
             any("discards the result" in p for p in check(ternary_case)[0]),
             True)
 
+        # PR #901 round 2 (Qodo): C11 6.8.1 allows any number of labels before
+        # one statement. The stacked-IDENTIFIER form is the one that was
+        # missed; stacked `case` already worked because the greedy `.*`
+        # swallows the inner colons.
+        stacked = _GOOD.replace(
+            "StreamingCfgClaim claim = Streaming_BeginConfigChange();",
+            "retry: again: Streaming_BeginConfigChange();")
+        assert stacked != _GOOD
+        _ck("stacked labels discard just as a single label does",
+            any("discards the result" in p for p in check(stacked)[0]), True)
+
         # PR #901 round 1 (codex leg), and the most important arm here: being
         # inside a test is NOT an inspection if a COMMA OPERATOR throws the
         # value away first. The exemption's first version skipped the store
@@ -1347,6 +1385,20 @@ helper_probe2(c)) { return SCPI_RES_ERR; }
             _ck("%s still discards the verdict" % label,
                 any("never inspects the verdict" in p
                     for p in check(mutated)[0]), True)
+
+        # ...and the same with NO parentheses around the assignment at all,
+        # which the widened `_TESTED_TAIL` above newly reaches (independent
+        # opus hunter, PR #901). gcc warns "set but not used" on this shape,
+        # confirming the verdict is genuinely never inspected.
+        bare_comma = _GOOD.replace(
+            "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
+            "    if (claim != STREAM_CFG_CLAIM_OK) { return SCPI_RejectCfgClaim(c, 1, what); }",
+            "    StreamingCfgClaim claim;\n"
+            "    if (claim = Streaming_BeginConfigChange(), allowed) { ; }")
+        assert bare_comma != _GOOD
+        _ck("an unparenthesised comma operator still discards the verdict",
+            any("never inspects the verdict" in p
+                for p in check(bare_comma)[0]), True)
 
         # ---- #864(1) residual: the claim PRIMITIVE, in streaming.c --------
         sprobs, sflag = check_streaming(_GOOD_STREAM)
