@@ -769,6 +769,45 @@ scpi_bool_t SCPI_ParamIsNumber(scpi_parameter_t * parameter, scpi_bool_t suffixA
 }
 
 /**
+ * DAQiFi patch (issue #880) -- an integer parameter must be a WHOLE decimal token.
+ *
+ * strtol()/strtoul() stop at the first character they cannot use and report how
+ * far they got, so upstream libscpi's "converted at least one character" test
+ * accepts a token it only partly read:
+ *
+ *     "-0.5" -> 0      (stops at '.')      "0.5" -> 0
+ *     "1E3"  -> 1      (stops at 'E')      "5 V" -> 5   (suffixed token)
+ *
+ * Each of those was handed to the caller as its value with nothing queued, so a
+ * fractional or exponent-form channel index silently addressed a DIFFERENT
+ * channel than the client asked for -- the same user-visible failure as an
+ * out-of-range index, which the callbacks already reject (#877).  No guard
+ * inside a callback can see it: by the time one runs, the value is the
+ * truncated integer.
+ *
+ * Require the conversion to have consumed the whole token instead, and push
+ * -104 when it did not -- the error libscpi itself pushes one layer up
+ * (ParamSignUInt32) for a token that is not numeric at all.
+ *
+ * `consumed` is taken as int, matching scpi_token_t::len's own type, so the
+ * comparison is not signed-vs-unsigned (this tree builds -Werror). The value
+ * is a count of characters within one token of the SCPI input buffer, so it
+ * cannot approach INT_MAX.
+ *
+ * Only the two decimal arms need this.  The HEXNUM/OCTNUM/BINNUM tokens carry a
+ * ptr past the "#H"/"#Q"/"#B" prefix and a len covering only digits valid in
+ * that base (scpiLex_NondecimalNumericData), so their conversion always
+ * consumes the whole token and the check would be a no-op there.
+ */
+static scpi_bool_t DaqifiIntTokenFullyConsumed(scpi_t * context, const scpi_parameter_t * parameter, int consumed) {
+    if ((consumed > 0) && (consumed == parameter->len)) {
+        return TRUE;
+    }
+    SCPI_ErrorPush(context, SCPI_ERROR_DATA_TYPE_ERROR);
+    return FALSE;
+}
+
+/**
  * Convert parameter to signed/unsigned 32 bit integer
  * @param context
  * @param parameter
@@ -792,10 +831,13 @@ static scpi_bool_t ParamSignToUInt32(scpi_t * context, scpi_parameter_t * parame
             return strBaseToUInt32(parameter->ptr, value, 2) > 0 ? TRUE : FALSE;
         case SCPI_TOKEN_DECIMAL_NUMERIC_PROGRAM_DATA:
         case SCPI_TOKEN_DECIMAL_NUMERIC_PROGRAM_DATA_WITH_SUFFIX:
+            /* DAQiFi #880: the whole token, not a truncated prefix. */
             if (sign) {
-                return strBaseToInt32(parameter->ptr, (int32_t *) value, 10) > 0 ? TRUE : FALSE;
+                return DaqifiIntTokenFullyConsumed(context, parameter,
+                        (int) strBaseToInt32(parameter->ptr, (int32_t *) value, 10));
             } else {
-                return strBaseToUInt32(parameter->ptr, value, 10) > 0 ? TRUE : FALSE;
+                return DaqifiIntTokenFullyConsumed(context, parameter,
+                        (int) strBaseToUInt32(parameter->ptr, value, 10));
             }
         default:
             return FALSE;
@@ -826,10 +868,13 @@ static scpi_bool_t ParamSignToUInt64(scpi_t * context, scpi_parameter_t * parame
             return strBaseToUInt64(parameter->ptr, value, 2) > 0 ? TRUE : FALSE;
         case SCPI_TOKEN_DECIMAL_NUMERIC_PROGRAM_DATA:
         case SCPI_TOKEN_DECIMAL_NUMERIC_PROGRAM_DATA_WITH_SUFFIX:
+            /* DAQiFi #880: the whole token, not a truncated prefix. */
             if (sign) {
-                return strBaseToInt64(parameter->ptr, (int64_t *) value, 10) > 0 ? TRUE : FALSE;
+                return DaqifiIntTokenFullyConsumed(context, parameter,
+                        (int) strBaseToInt64(parameter->ptr, (int64_t *) value, 10));
             } else {
-                return strBaseToUInt64(parameter->ptr, value, 10) > 0 ? TRUE : FALSE;
+                return DaqifiIntTokenFullyConsumed(context, parameter,
+                        (int) strBaseToUInt64(parameter->ptr, value, 10));
             }
         default:
             return FALSE;
@@ -1313,8 +1358,23 @@ scpi_bool_t SCPI_ParamBool(scpi_t * context, scpi_bool_t * value, scpi_bool_t ma
 
     if (result) {
         if (param.type == SCPI_TOKEN_DECIMAL_NUMERIC_PROGRAM_DATA) {
-            SCPI_ParamToInt32(context, &param, &intval);
-            *value = intval ? TRUE : FALSE;
+            /* DAQiFi #880: honour the return. It was discarded, which was
+             * survivable while this conversion could only fail on a token
+             * SCPI_Parameter had already accepted -- but a partly-consumed
+             * decimal now fails here, and ignoring that returned TRUE with
+             * `*value` set from the TRUNCATED integer while -104 sat in the
+             * queue. `SCPI_ParamBool("1.5")` answered TRUE, so a boolean
+             * setter would have applied a value from a rejected token.
+             *
+             * Unreachable in this firmware today -- nothing in services/SCPI
+             * calls SCPI_ParamBool, and no libscpi-internal registered command
+             * does either (grepped) -- but it is a public API in the file this
+             * patch already diverges in, and leaving it inconsistent is how
+             * the divergence rots. */
+            result = SCPI_ParamToInt32(context, &param, &intval);
+            if (result) {
+                *value = intval ? TRUE : FALSE;
+            }
         } else {
             result = SCPI_ParamToChoice(context, &param, scpi_bool_def, &intval);
             if (result) {
