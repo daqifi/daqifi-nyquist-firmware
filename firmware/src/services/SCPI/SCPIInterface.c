@@ -3828,6 +3828,29 @@ static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
  * to rediscover. */
 static volatile uint32_t gStreamStopGen = 0;
 
+/* #861 (Qodo, importance 9): stops CURRENTLY IN FLIGHT, not stops completed.
+ *
+ * The generation alone closes only half the race. It answers "did a stop
+ * happen between my pin and my arm", and a stop that is still RUNNING at the
+ * arm has already bumped it -- at its first statement -- so a START that pins
+ * AFTER that bump sees no movement and arms. The stop then resumes and clears
+ * IsEnabled on its way out. START returned OK and the device is stopped: the
+ * mirror image of this issue's own defect, and pre-existing on main for the
+ * same reason (nothing there ordered the two at all).
+ *
+ * The safety directions differ -- a start silently lost leaves the device
+ * IDLE, which a client sees with SYST:STR:DATA? -- but the interlock is two
+ * lines and refusing a START while a stop is in flight is exactly the contract
+ * #850 already established for STARTs: refusable, retryable.
+ *
+ * A COUNT, not a flag: both transports can be stopping at once. Safe from
+ * leaking because SCPI_PerformStreamingStop has a single exit -- 255 lines,
+ * zero `return` statements -- so the decrement cannot be skipped. A leaked
+ * count would refuse every START until reboot, which is why that property is
+ * stated here rather than assumed; test_861's parts 1-4 are what would catch
+ * it, since they start a session repeatedly. */
+static volatile uint32_t gStreamStopsActive = 0;
+
 /* #848: did an accepted SYST:STR:INT since `pinnedSets` CONTRADICT the start
  * this call is about?
  *
@@ -4849,6 +4872,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     bool cfgChanging = false;
     bool mappingMoved = false;
     bool stopRequested = false;
+    bool stopInFlight = false;
     uint32_t revalidatedMax = 0;
     uint64_t mappingSelNow = 0;
     /* Captured INSIDE the section so the refusal log names the value that
@@ -4870,7 +4894,8 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
      * START's OK that is then the wrong report. Safe direction, and closing it
      * would mean making the publish and Streaming_UpdateState one atomic step,
      * which is impossible: UpdateState starts a timer and a task. */
-    stopRequested = (gStreamStopGen != stopGenPinned);
+    stopInFlight = (gStreamStopsActive != 0u);
+    stopRequested = stopInFlight || (gStreamStopGen != stopGenPinned);
     /* The interface must still be the one everything above was set up for.
      * The rate check alone does not catch this, because the new interface's
      * cap can be perfectly happy with the requested rate: a WiFi START whose
@@ -4998,10 +5023,14 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
-        /* Kept under LOG_MESSAGE_SIZE (128, so 127 usable) -- the logger
-         * truncates past it silently. 96 chars. */
-        LOG_E("STR:START refused (#861): a stop was issued during start setup; "
-              "the device stays stopped. Retry.");
+        /* Which of the two terms fired, because the operator's next move
+         * differs: an in-flight stop clears by itself in at most the SD
+         * finalise wait, while a completed one means the session this start
+         * was setting up was deliberately ended. Kept under LOG_MESSAGE_SIZE
+         * (128, so 127 usable) with the longer arm -- 108 chars. */
+        LOG_E("STR:START refused (#861): %s; the device stays stopped. Retry.",
+              stopInFlight ? "a stop is still in flight on the other transport"
+                           : "a stop was issued during start setup");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
@@ -5164,6 +5193,32 @@ static void SCPI_PerformStreamingStop(void);
  * call, one release, so the body's twenty-plus return sites still cannot leak
  * it. */
 static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
+    /* #861: the FIRST statement of the callback, ahead of the argument parse
+     * and the #850 session-start claim, and passed down to the claimed body.
+     *
+     * Where the pin sits IS the definition of "before this start", so it
+     * belongs before anything this command does. Two pre-merge audit rounds
+     * moved it here one step at a time: first from the top of the claimed body
+     * to ahead of the claim (the claim is the start's first OBSERVABLE effect
+     * -- once held, a START on the other transport answers -200), then ahead
+     * of the parse (the callback is already executing there, so a stop landing
+     * in it is a stop issued while this START is in flight).
+     *
+     * What remains ahead of it is the gap between the callback's entry and
+     * this line, and that one is not a window to be closed -- a preemption
+     * there orders the stop before this start did anything at all, which is
+     * what "before" means. The complementary hazard, a stop still RUNNING when
+     * the arm is reached, is covered by gStreamStopsActive rather than by the
+     * pin's position.
+     *
+     * A bare 32-bit load, not a critical section: unlike the interface pins
+     * inside the body it has no partner field it must describe one instant
+     * with, and CLAUDE.md's atomicity rule is explicit that wrapping a plain
+     * aligned 32-bit load only costs interrupt latency.
+     *
+     * Unused on the SYSTem:STReam:START 0 disable path, which returns before
+     * the claim -- that path is a stop, and a stop never observes this. */
+    const uint32_t stopGenPinned = gStreamStopGen;
     int32_t freq = 0;
     scpi_parameter_t freqParam;
     bool freqProvided = SCPI_Parameter(context, &freqParam, FALSE);
@@ -5233,27 +5288,6 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
         return SCPI_RES_OK;
     }
 
-    /* #861: pinned BEFORE the claim is taken, and passed down, rather than
-     * read at the top of the claimed body.
-     *
-     * The claim is this start's FIRST OBSERVABLE EFFECT -- once it is held, a
-     * START on the other transport answers -200 -- so a stop landing between
-     * the claim and the pin would be a stop issued while this start was
-     * already in flight, and pinning after the claim made exactly that stop
-     * invisible to the arm (pre-merge audit). The window was a few
-     * instructions wide, not a design choice, and it was the one case that
-     * made the pin's own comment untrue.
-     *
-     * What is left ahead of the pin is the argument parse and the
-     * SYSTem:STReam:START 0 disable branch. Neither touches streaming state,
-     * so a stop landing there really did happen before this start and the
-     * start is then the operator's later intent -- which is what should win.
-     *
-     * A bare 32-bit load, not a critical section: unlike the interface pins
-     * inside the body it has no partner field it must describe one instant
-     * with, and CLAUDE.md's atomicity rule is explicit that wrapping a plain
-     * aligned 32-bit load only costs interrupt latency. */
-    const uint32_t stopGenPinned = gStreamStopGen;
     if (Streaming_BeginSessionStart() != STREAM_START_CLAIM_OK) {
         return SCPI_RefuseSessionStartBusy(context, "SYSTem:STReam:START");
     }
@@ -5439,6 +5473,7 @@ static void SCPI_PerformStreamingStop(void) {
      * 2); a lost bump is a missed refusal. O(1), nothing called inside. */
     taskENTER_CRITICAL();
     gStreamStopGen++;
+    gStreamStopsActive++;
     taskEXIT_CRITICAL();
 
     /* The SD-teardown question is asked TWICE -- here, and again at the act
@@ -5662,6 +5697,17 @@ static void SCPI_PerformStreamingStop(void) {
 
     // Sync STATus:QUEStionable condition register (streaming health bits cleared in Streaming_Stop)
     SCPI_SyncQuesBits();
+
+    /* #861: the stop is over -- release the in-flight count LAST, after every
+     * statement above, so `gStreamStopsActive != 0` covers the whole body
+     * including the SD finalise wait. Paired with the increment at the top;
+     * this function has a single exit, so the pair cannot be broken by an
+     * early return. */
+    taskENTER_CRITICAL();
+    if (gStreamStopsActive > 0u) {
+        gStreamStopsActive--;
+    }
+    taskEXIT_CRITICAL();
 }
 
 /* Every registered pattern that maps to a bare stop is this and nothing else
