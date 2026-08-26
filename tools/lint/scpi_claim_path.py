@@ -23,13 +23,30 @@ Four edits would silently remove the protection, and none is loud:
    still routes through them, so 1 and 2 both pass -- while the command that
    was supposed to be protected runs with nothing held.
 4. **Gut the primitive** -- leave `Streaming_BeginConfigChange()` returning
-   `STREAM_CFG_CLAIM_OK` without setting its busy flag, or set that flag
-   outside the critical section that makes the test-and-set atomic (#864).
-   Checks 1-3 all read `SCPIInterface.c`, so every one of them passes.
+   `STREAM_CFG_CLAIM_OK` without setting its busy flag, set that flag outside
+   the critical section that makes the test-and-set atomic, or set it there
+   without ever TESTING it, which grants the claim to both transports at once
+   (#864). Checks 1-3 all read `SCPIInterface.c`, so every one of them passes.
 
 This checker fails on all four. 4 lives in `streaming.c`, which is why the CI
 gate triggers on `firmware/src/services/streaming.*` as well -- a trigger that
 until #864 fired on a file the checker asserted nothing about.
+
+## Positional reasoning, and where it stops
+
+Properties 3 and 4 are about position, and position is only meaningful inside
+ONE region. "Between the first opener and the last closer" is NOT "inside a
+region" -- the gap BETWEEN two regions satisfies it. Both were first written
+that way here and both were defeatable (round 1 of PR #894, found independently
+by the codex leg and Qodo `/agentic_review`). More than one claim pair, or more
+than one critical section, is therefore REFUSED as beyond what this checker can
+reason about, rather than passed on a looser bound.
+
+Being exact about property 4's last clause: it establishes that the flag is
+READ inside the same critical section that sets it. It does not establish that
+the read is what gates the grant -- regex cannot show that. It is the
+difference between a plain set and a test-and-set, which is the mutation that
+was getting through.
 
 ## Why it is a source check and not a bench test
 
@@ -334,6 +351,21 @@ def check(source_text):
     return problems, len(setters)
 
 
+# Positional reasoning is only sound over ONE region. Given several, "between
+# the first opener and the last closer" is not "inside a region" -- the gap
+# BETWEEN two regions satisfies it. Both the claim pair and the critical
+# section were written that way and both were defeatable (Qodo /agentic_review
+# and the codex leg on PR #894, independently). Rather than grow a matcher,
+# more than one region is treated as beyond what this checker can reason about
+# and REFUSED, which is the same stance it takes on a table row it cannot read.
+_ONE_REGION = (
+    "%(who)s contains %(counts)s. This checker reasons positionally, so it "
+    "can only establish containment inside ONE %(what)s -- with more than one "
+    "it cannot, and refuses rather than reporting a pass it did not establish "
+    "(#864). Concretely: %(defeat)s. If the code genuinely needs two, this "
+    "checker needs a real matcher, not a looser bound.")
+
+
 def _helper_order_problems(text, helper):
     """#864(2): the dispatch must happen BETWEEN the take and the release.
 
@@ -356,18 +388,29 @@ def _helper_order_problems(text, helper):
         return problems
     if not begins or not ends:
         return problems           # already reported as a missing call, above
-    first_begin, last_end = begins[0], ends[-1]
+    if len(begins) != 1 or len(ends) != 1:
+        problems.append(_ONE_REGION % {
+            "who": "%s()" % CLAIM_HELPER,
+            "what": "claim region",
+            "counts": "%d %s() and %d %s()"
+                      % (len(begins), CLAIM_BEGIN, len(ends), CLAIM_END),
+            "defeat": "a helper with TWO claim pairs can dispatch between "
+                      "them -- inside first-Begin..last-End, outside every "
+                      "claim",
+        })
+        return problems
+    begin_pos, end_pos = begins[0], ends[0]
     dispatches = _call_positions(helper, param)
     if not dispatches:
         problems.append(
             "%s() never calls its %s() parameter, so it takes and releases "
             "the claim around no work at all (#864)." % (CLAIM_HELPER, param))
-    elif last_end < first_begin:
+    elif end_pos < begin_pos:
         problems.append(
             "%s() calls %s() before %s(): the claim is released before it is "
             "taken, so nothing is held across the dispatch (#864)."
             % (CLAIM_HELPER, CLAIM_END, CLAIM_BEGIN))
-    elif not all(first_begin < d < last_end for d in dispatches):
+    elif not all(begin_pos < d < end_pos for d in dispatches):
         problems.append(
             "%s() dispatches %s() outside the claim -- every call must fall "
             "between %s() and %s(), or the command it wraps runs unclaimed "
@@ -429,6 +472,14 @@ def claim_flag(text):
     return cands.pop(), None
 
 
+def _reads_in(body, name, lo, hi):
+    """True iff `name` appears in (lo, hi) somewhere OTHER than as the target
+    of an assignment -- i.e. it is read there, not only written."""
+    written = {pos for pos, _ in _assignments(body, name)}
+    return any(lo < m.start() < hi and m.start() not in written
+               for m in re.finditer(r"\b%s\b" % re.escape(name), _blank(body)))
+
+
 def check_streaming(streaming_text):
     """-> (problems, flag_name_or_None) for the claim primitive itself."""
     text = strip_c_comments(streaming_text)
@@ -465,11 +516,31 @@ def check_streaming(streaming_text):
                 "NOT atomic on PIC32MZ, so both SCPI transports can be granted "
                 "it at once (CLAUDE.md, Atomicity & Concurrency Rules)."
                 % (CLAIM_BEGIN, flag, TASK_ENTER, TASK_EXIT))
-        elif not all(enters[0] < pos < exits[-1] for pos in sets):
+        elif len(enters) != 1 or len(exits) != 1:
+            problems.append(_ONE_REGION % {
+                "who": "%s()" % CLAIM_BEGIN,
+                "what": "critical section",
+                "counts": "%d %s() and %d %s()"
+                          % (len(enters), TASK_ENTER, len(exits), TASK_EXIT),
+                "defeat": "a %s assigned BETWEEN two disjoint sections is "
+                          "inside first-enter..last-exit and inside neither "
+                          "section" % flag,
+            })
+        elif not all(enters[0] < pos < exits[0] for pos in sets):
             problems.append(
                 "%s() sets %s outside its critical section -- the test-and-set "
                 "must be bracketed by %s()/%s() to be atomic on PIC32MZ."
                 % (CLAIM_BEGIN, flag, TASK_ENTER, TASK_EXIT))
+        elif not _reads_in(begin, flag, enters[0], exits[0]):
+            problems.append(
+                "%s() sets %s inside its critical section but never READS it "
+                "there, so it is a plain set, not a test-and-set: drop the "
+                "`else if (%s != 0)` arm and two transports are both granted "
+                "the claim while every other check here still passes (#864, "
+                "codex leg on PR #894). This establishes that the flag is read "
+                "in the same section as the set -- NOT that the read is what "
+                "gates the grant, which regex cannot show."
+                % (CLAIM_BEGIN, flag, flag))
 
     if not any(is_zero for _, is_zero in _assignments(end, flag)):
         problems.append(
@@ -711,6 +782,21 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("a claim released before it is taken is named as such",
             any("released before it is taken" in p for p in probs), True)
 
+        # Round 1 of PR #894's review, found independently by the codex leg
+        # and by Qodo /agentic_review: "between the FIRST Begin and the LAST
+        # End" is not "inside a claim" -- the gap between two claim pairs
+        # satisfies it while holding nothing.
+        twopair = _GOOD.replace(
+            "    scpi_result_t r = b(c);\n    Streaming_EndConfigChange();\n    return r;",
+            "    Streaming_EndConfigChange();\n"
+            "    scpi_result_t r = b(c);\n"
+            "    (void)Streaming_BeginConfigChange();\n"
+            "    Streaming_EndConfigChange();\n    return r;")
+        assert twopair != _GOOD
+        probs, _ = check(twopair)
+        _ck("a dispatch between two claim pairs is refused, not passed",
+            any("ONE claim region" in p for p in probs), True)
+
         # ---- #864(1) residual: the claim PRIMITIVE, in streaming.c --------
         sprobs, sflag = check_streaming(_GOOD_STREAM)
         _ck("a compliant claim primitive is clean", sprobs, [])
@@ -750,6 +836,30 @@ static scpi_result_t decoy(scpi_t * c) {
             any("read-modify-write" in p for p in check_streaming(
                 outside.replace("    taskENTER_CRITICAL();\n", "").replace(
                     "    taskEXIT_CRITICAL();\n", ""))[0]), True)
+
+        # Same round-1 class on the streaming side, and its twin: a set
+        # between two disjoint critical sections is inside neither.
+        split_cs = _GOOD_STREAM.replace(
+            "        gCfgChangeBusy = 1u;\n        result = STREAM_CFG_CLAIM_OK;\n"
+            "    }\n    taskEXIT_CRITICAL();",
+            "        result = STREAM_CFG_CLAIM_OK;\n"
+            "    }\n    taskEXIT_CRITICAL();\n"
+            "    gCfgChangeBusy = 1u;\n"
+            "    taskENTER_CRITICAL();\n    (void)pCfg;\n    taskEXIT_CRITICAL();")
+        assert split_cs != _GOOD_STREAM
+        _ck("a set between two disjoint critical sections is refused",
+            any("ONE critical section" in p
+                for p in check_streaming(split_cs)[0]), True)
+
+        # A plain SET is not a test-and-set. Dropping the busy arm leaves a
+        # Begin that grants unconditionally -- every other check still passes.
+        plainset = _GOOD_STREAM.replace(
+            "    } else if (gCfgChangeBusy != 0u) {\n"
+            "        result = STREAM_CFG_CLAIM_BUSY;\n", "    ")
+        assert plainset != _GOOD_STREAM
+        _ck("a Begin that sets but never READS the flag is caught",
+            any("never READS it there" in p
+                for p in check_streaming(plainset)[0]), True)
 
         _ck("renaming the claim flag is followed, not flagged",
             check_streaming(_GOOD_STREAM.replace(
@@ -831,8 +941,8 @@ def main():
     # summary naming only the SCPI half would report a pass on a file it had
     # not spoken about.
     print("OK: all %d SYSTem:MEMory:* setters take the claim via %s(), which "
-          "holds it across the dispatch; %s()/%s() set and clear %s, the set "
-          "inside a critical section"
+          "holds it across the dispatch; %s() sets and %s() clears %s, the set "
+          "inside a single critical section that also reads it"
           % (examined, CLAIM_HELPER, CLAIM_BEGIN, CLAIM_END, claimflag))
     return 0
 

@@ -419,7 +419,7 @@ Queries (trailing `?`) are exempt — they read and cannot corrupt a partition.
 | 1 | every registered `SYSTem:MEMory:*` **setter** reaches the claim through the shared `SCPI_MemRunClaimed` helper | a gutted helper — all seven still "go through the claim path", none claims anything |
 | 2 | the helper still **calls** `Streaming_BeginConfigChange` / `EndConfigChange` | a command routed off the helper |
 | 3 | the helper **holds** the claim across its dispatch — the call through its function-pointer parameter falls between the two | a helper reordered to Begin → End → body: both calls present, nothing held |
-| 4 | in `streaming.c`, `Begin` **sets** the claim flag inside a critical section and `End` **clears** it | a `Begin` that returns `STREAM_CFG_CLAIM_OK` having taken nothing — 1–3 all read `SCPIInterface.c` |
+| 4 | in `streaming.c`, `Begin` **sets** the claim flag inside a critical section that also **reads** it (a test-and-set, not a plain set) and `End` **clears** it | a `Begin` that returns `STREAM_CFG_CLAIM_OK` having taken nothing, or that grants unconditionally — 1–3 all read `SCPIInterface.c` |
 
 4 is why the CI trigger includes `firmware/src/services/streaming.*`. That
 trigger landed in #863 and, until #864, fired on a file the checker asserted
@@ -428,6 +428,14 @@ one level up. The flag name is **discovered** from `Streaming_ConfigChangeInProg
 rather than hard-coded, so a rename is followed instead of silently disarming it.
 The critical section is load-bearing because granting the claim is a
 read-modify-write (test the flag, then set it), which is not atomic on PIC32MZ.
+
+3 and 4 are positional, and position only means anything inside **one** region:
+"between the first opener and the last closer" is not "inside a region", because
+the gap *between two* regions satisfies it. So more than one claim pair, or more
+than one critical section, is **refused as unverifiable** rather than passed on
+a looser bound. Property 4's read requirement establishes that the flag is read
+in the same section that sets it — **not** that the read gates the grant, which
+regex cannot show.
 
 **Not** asserted, deliberately (#864(3)): reachability — a dead
 `if (0) return SCPI_MemRunClaimed(...);` above a direct unclaimed call satisfies
@@ -444,7 +452,7 @@ proposal to rotate the hammered command was **not** adopted — see the ticket.
 
 Run locally: `python3 tools/lint/scpi_claim_path.py` (reads `SCPIInterface.c`
 **and** `streaming.c`; `--scpi` / `--streaming` override the paths). Add
-`--self-test` for the 37 device-free checks, which include the vacuity cases —
+`--self-test` for the 42 device-free checks, which include the vacuity cases —
 an unreadable command table, and a claim flag that cannot be identified, must
 each **fail** rather than quietly examine nothing.
 
