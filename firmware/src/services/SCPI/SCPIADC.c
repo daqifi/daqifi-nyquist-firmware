@@ -843,12 +843,23 @@ static scpi_result_t ADCChanRangeSetClaimed(scpi_t * context) {
     // site (parser.c), SCPI_ParamInt32 -> ParamSignUInt32 has exactly these
     // exits, and every REACHABLE one queues:
     //
-    //   absent + mandatory      -109  SCPI_Parameter (:713)
-    //   bad separator           -115  SCPI_Parameter (:723)
-    //   not a number at all     -104  ParamSignUInt32 else-arm (:1078)
-    //   number with a suffix    -138  ParamSignUInt32 (:1075)
-    //   partial decimal token   -104  DaqifiIntTokenFullyConsumed (:806, #880)
+    //   absent + mandatory      -109  SCPI_Parameter, missing-parameter arm
+    //   bad separator           -103  SCPI_Parameter, comma arm
+    //   unusable token type     -151  SCPI_Parameter, DEFAULT arm -- reached by
+    //                                 e.g. `#H` with no digits, which the lexer
+    //                                 types SCPI_TOKEN_UNKNOWN
+    //   not a number at all     -104  ParamSignUInt32 else-arm
+    //   number with a suffix    -138  ParamSignUInt32
+    //   partial decimal token   -104  DaqifiIntTokenFullyConsumed (#880)
     //   value == NULL           -310  (we pass &rangeParam, so unreachable)
+    //
+    // The -151 row and the -103 code are BOTH corrections. An earlier revision
+    // omitted the default arm entirely and numbered the separator error -115
+    // (it is -103 -- error.h). Neither changes the conclusion, because both of
+    // those exits QUEUE and queueing is the whole property being established --
+    // but a proof presented as exhaustive has to BE exhaustive, or the next
+    // reader trusts a list nobody checked (codex pre-merge audit re-walked it
+    // and found both).
     //
     // TWO exits queue NOTHING, and both are unreachable BY CONSTRUCTION rather
     // than by luck -- which is the part a future libscpi bump could break:
@@ -947,12 +958,21 @@ scpi_result_t SCPI_ADCChanRangeGet(scpi_t * context) {
 static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context);
 
 /* #885: CalM/CalB are read PER CONVERSION by MC12b_ConvertToVoltage
- * (HAL/ADC/MC12bADC.c) and by AD7609_ConvertToVoltage, so a cal write that
- * lands on a running session rescales every sample from that instant on --
- * inside a stream whose header was already emitted, and with no marker in the
- * data saying where the scale changed. That is the same consequence #873
- * describes for the AD7609 Range pin, except this pair is reachable on every
- * variant.
+ * (HAL/ADC/MC12bADC.c), so a cal write that lands on a running session
+ * rescales every sample from that instant on -- inside a stream whose header
+ * was already emitted, and with no marker in the data saying where the scale
+ * changed. That is the same consequence #873 describes for the AD7609 Range
+ * pin, except this pair is reachable on the NQ1 this bench has.
+ *
+ * MC12b ONLY, and the AD7609 half is deliberately NOT claimed: an earlier
+ * revision of this comment said "and by AD7609_ConvertToVoltage", which is
+ * FALSE. That function's first statement is UNUSED(runtimeConfig)
+ * (HAL/ADC/AD7609.c) -- it reads the module Range and nothing else, so on an
+ * NQ3 these coefficients never reach the conversion and this guard is
+ * defensive there rather than load-bearing. The wrong claim mattered because
+ * it WAS the stated justification for refusing the command during an AD7609
+ * stream (codex pre-merge audit). That the AD7609 path ignores user
+ * calibration outright is a separate defect, filed on its own.
  *
  * Note what this does NOT change: CONF:ADC:SAVEcal / SAVEFcal stay unguarded.
  * They copy runtime cal INTO NVM and mutate nothing the conversion path reads,
@@ -965,9 +985,15 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context);
  * converted setter rather than the -222 AdcChannelArgInRange would give.
  * (300, not 99: 99 is <= 255 so it PASSES AdcChannelArgInRange and then fails
  * the ADC_FindChannelIndex bound below, which returns SCPI_RES_ERR without
- * pushing anything at all. That silent-error path is pre-existing, shared with
- * chanCALB / SINGleend / MEASure:VOLTage:DC?, and is not this change's
- * subject.) */
+ * pushing anything ITSELF. libscpi then queues its generic -200 --
+ * processCommand does `if (!context->cmd_error) SCPI_ErrorPush(...
+ * EXECUTION_ERROR)` -- so the command is not literally silent, it is
+ * UNSPECIFIC: -200 where the sibling MEASure:VOLTage:DC? pushes -222 and names
+ * the channel. Pre-existing, shared with chanCALB and both SINGleend paths,
+ * and NOT this change's subject -- filed as #888. An earlier revision said
+ * "without pushing anything at all", called it a silent-error path, and listed
+ * MEASure:VOLTage:DC? as sharing it when that is the one site which gets it
+ * right; all three were wrong (codex pre-merge audit).) */
 scpi_result_t SCPI_ADCChanCalmSet(scpi_t * context) {
     StreamingCfgClaim claim = Streaming_BeginConfigChange();
     if (claim != STREAM_CFG_CLAIM_OK) {
