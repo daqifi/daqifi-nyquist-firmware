@@ -141,18 +141,9 @@ scpi_expr_result_t SCPI_ExprNumericListEntryInt(scpi_t * context, scpi_parameter
     res = SCPI_ExprNumericListEntry(context, param, index, &range, &paramFrom, &paramTo);
     if (res == SCPI_EXPR_OK) {
         *isRange = range;
-        /* DAQiFi #880: honour the return. These were discarded, so a token the
-         * integer conversion REJECTS -- `(1.5)` since #880 -- was reported as
-         * SCPI_EXPR_OK with the caller's value set to the truncated `1` while
-         * -104 sat in the queue. Same defect, same reason, as SCPI_ParamBool
-         * in parser.c; fixing one and not these would leave the twin. */
-        if (!SCPI_ParamToInt32(context, &paramFrom, valueFrom)) {
-            return SCPI_EXPR_ERROR;
-        }
+        SCPI_ParamToInt32(context, &paramFrom, valueFrom);
         if (range) {
-            if (!SCPI_ParamToInt32(context, &paramTo, valueTo)) {
-                return SCPI_EXPR_ERROR;
-            }
+            SCPI_ParamToInt32(context, &paramTo, valueTo);
         }
     }
 
@@ -203,10 +194,7 @@ static scpi_expr_result_t channelSpec(scpi_t * context, lex_state_t * state, int
     size_t i = 0;
     while (scpiLex_DecimalNumericProgramData(state, &param)) {
         if (i < length) {
-            /* DAQiFi #880: see SCPI_ExprNumericListEntryInt above. */
-            if (!SCPI_ParamToInt32(context, &param, &values[i])) {
-                return SCPI_EXPR_ERROR;
-            }
+            SCPI_ParamToInt32(context, &param, &values[i]);
         }
 
         if (scpiLex_SpecificCharacter(state, &param, '!')) {
