@@ -828,16 +828,45 @@ static scpi_result_t ADCChanRangeSetClaimed(scpi_t * context) {
 
     // Get range parameter (0=±5V, 1=±10V)
     //
-    // #885: no second SCPI_ErrorPush here. SCPI_ParamInt32 has ALREADY queued
-    // an error on every failure path it can take -- -109 when the parameter is
-    // absent, -138 for a suffix, -104 for a non-number, and (since #880) -104
-    // for a decimal token -- so the -109 that used to sit here queued a SECOND
-    // and usually WRONG code: `CONF:ADC:RANGe BANANA` reported -104 followed by
-    // a spurious -109 "Missing parameter". A client draining the queue saw two
-    // errors for one command and the last one it read was the wrong one.
-    // Returning the error unmodified is what every peer setter in this file
-    // does (ADCOnboardDiagSetClaimed, SamcSetCommonClaimed) and is the same fix
-    // PR #882 made in SCPI_StartStreaming.
+    // #885: no second SCPI_ErrorPush here. The -109 that used to sit here
+    // queued a SECOND and usually WRONG code on top of the one libscpi had
+    // already pushed: `CONF:ADC:RANGe BANANA` reported -104 followed by a
+    // spurious -109 "Missing parameter", and bare `CONF:ADC:RANGe` reported
+    // -109 TWICE. A client draining the queue saw two errors for one command
+    // and the last one it read was the wrong one. Returning the error
+    // unmodified is what every peer setter in this file does
+    // (ADCOnboardDiagSetClaimed, SamcSetCommonClaimed) and is the same fix PR
+    // #882 made in SCPI_StartStreaming.
+    //
+    // REMOVING a push is only safe if the callee ALWAYS queues, so that claim
+    // is established here rather than asserted. Walking libscpi from this call
+    // site (parser.c), SCPI_ParamInt32 -> ParamSignUInt32 has exactly these
+    // exits, and every REACHABLE one queues:
+    //
+    //   absent + mandatory      -109  SCPI_Parameter (:713)
+    //   bad separator           -115  SCPI_Parameter (:723)
+    //   not a number at all     -104  ParamSignUInt32 else-arm (:1078)
+    //   number with a suffix    -138  ParamSignUInt32 (:1075)
+    //   partial decimal token   -104  DaqifiIntTokenFullyConsumed (:806, #880)
+    //   value == NULL           -310  (we pass &rangeParam, so unreachable)
+    //
+    // TWO exits queue NOTHING, and both are unreachable BY CONSTRUCTION rather
+    // than by luck -- which is the part a future libscpi bump could break:
+    //
+    //   * ParamSignToUInt32's HEXNUM/OCTNUM/BINNUM arms (:827-831) return
+    //     FALSE when zero characters convert. scpiLex_NondecimalNumericData
+    //     (lexer.c:597-627) only ASSIGNS those token types when it consumed at
+    //     least one digit -- otherwise the token becomes SCPI_TOKEN_UNKNOWN --
+    //     so a token of that type always has a digit at ptr[0] and the
+    //     conversion always consumes it.
+    //   * ParamSignToUInt32's `default:` arm (:842) returns FALSE silently.
+    //     ParamSignUInt32 only calls it when SCPI_ParamIsNumber(param, FALSE)
+    //     is true, and that function (:757-769) returns TRUE for exactly the
+    //     four token types the switch enumerates.
+    //
+    // If a libscpi upgrade adds a numeric token type, or lets the lexer emit a
+    // digitless HEXNUM, that `default:` becomes live and this command would
+    // then fail with NO error queued at all. Re-check this list at that point.
     if (!SCPI_ParamInt32(context, &rangeParam, TRUE)) {
         return SCPI_RES_ERR;
     }
