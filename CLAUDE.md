@@ -416,10 +416,10 @@ Queries (trailing `?`) are exempt — they read and cannot corrupt a partition.
 
 | # | asserted | what passes it if the others are the only checks |
 |---|---|---|
-| 1 | every registered `SYSTem:MEMory:*` **setter** reaches the claim through the shared `SCPI_MemRunClaimed` helper | a gutted helper — all seven still "go through the claim path", none claims anything |
-| 2 | the helper still **calls** `Streaming_BeginConfigChange` / `EndConfigChange` | a command routed off the helper |
-| 3 | the helper **holds** the claim across its dispatch — the call through its function-pointer parameter falls between the two | a helper reordered to Begin → End → body: both calls present, nothing held |
-| 4 | in `streaming.c`, `Begin` **sets** the claim flag inside a critical section that also **reads** it (a test-and-set, not a plain set) and `End` **clears** it | a `Begin` that returns `STREAM_CFG_CLAIM_OK` having taken nothing, or that grants unconditionally — 1–3 all read `SCPIInterface.c` |
+| 1 | every registered `SYSTem:MEMory:*` **setter** reaches the claim through the shared `SCPI_MemRunClaimed` helper | a command routed off the helper — nothing else looks at where a setter goes |
+| 2 | the helper **calls** `Streaming_BeginConfigChange` / `EndConfigChange`, and **uses Begin's verdict** rather than discarding it | a gutted helper — all seven still "go through the claim path", none claims anything; or `(void)Begin();`, which refuses nothing |
+| 3 | the helper **holds** the claim across its dispatch — the call through its function-pointer parameter falls inside the single Begin…End pair | a helper reordered to Begin → End → body: both calls present, nothing held |
+| 4 | in `streaming.c`, `Begin` **sets** the claim flag inside a single critical section that also **reads** it (a test-and-set, not a plain set) and `End` **clears** it | a `Begin` that returns `STREAM_CFG_CLAIM_OK` having set nothing — 1–3 all read `SCPIInterface.c` only |
 
 4 is why the CI trigger includes `firmware/src/services/streaming.*`. That
 trigger landed in #863 and, until #864, fired on a file the checker asserted
@@ -429,18 +429,37 @@ rather than hard-coded, so a rename is followed instead of silently disarming it
 The critical section is load-bearing because granting the claim is a
 read-modify-write (test the flag, then set it), which is not atomic on PIC32MZ.
 
-3 and 4 are positional, and position only means anything inside **one** region:
-"between the first opener and the last closer" is not "inside a region", because
-the gap *between two* regions satisfies it. So more than one claim pair, or more
-than one critical section, is **refused as unverifiable** rather than passed on
-a looser bound. Property 4's read requirement establishes that the flag is read
-in the same section that sets it — **not** that the read gates the grant, which
-regex cannot show.
+3 and 4 are positional, and position only means anything against **one opener
+and one closer**: "between the first opener and the last closer" is not "inside
+a region", because the gap *between two* regions satisfies it. So anything other
+than exactly one `Begin`+one `End`, or exactly one `taskENTER_CRITICAL`+one
+`taskEXIT_CRITICAL`, is **refused** rather than passed on a looser bound — and
+that includes an *unbalanced* count (one opener, a second closer on an early
+return), which is correct C refused only because deciding it needs control flow.
+The refusal prints the counts, so the message says which case you have. Property
+4's read requirement establishes that the flag is read in the same section that
+sets it — **not** that the read gates the grant, which regex cannot show.
 
-**Not** asserted, deliberately (#864(3)): reachability — a dead
-`if (0) return SCPI_MemRunClaimed(...);` above a direct unclaimed call satisfies
-1. That needs real reachability analysis rather than regex and takes deliberate
-sabotage a reviewer would see; catching an honest regression is the goal.
+**What it does NOT establish — read this before trusting a green gate.** The
+checker is textual: it has no control flow and no reachability, and that limits
+**every** property, not just #864(3)'s dead-call case.
+
+- Row 4 does **not** assert what the grant is *conditioned on*. Deleting
+  `Begin`'s `if (pStreamCfg->IsEnabled || pStreamCfg->Running)` arm leaves a
+  `Begin` that hands the claim out mid-session and still passes — the flag is
+  set, in the section, and read. Row 4 separates a test-and-set from a plain
+  set; it does not verify the test.
+- Row 3 does not see branches. A helper releasing the claim only on the body's
+  success path passes, and leaks `gCfgChangeBusy` — which then refuses every
+  later `SYST:STR:START`.
+- A dead branch satisfies rows 3 and 4 as readily as row 1: an `End` whose only
+  clear sits in `if (0)`, or a `Begin` that sets then immediately clears, both
+  pass.
+
+These are **#896**, filed rather than fixed: closing them means real
+reachability analysis, which is a different tool. Recorded here so a green gate
+is read for what it is — a guard against honest regression, not against a
+determined or half-finished refactor.
 
 **Why a source lint and not a bench test.** `test_857`'s race arm is the only
 arm that separates a real claim from a plain stream-state guard, and it can only
@@ -452,9 +471,10 @@ proposal to rotate the hammered command was **not** adopted — see the ticket.
 
 Run locally: `python3 tools/lint/scpi_claim_path.py` (reads `SCPIInterface.c`
 **and** `streaming.c`; `--scpi` / `--streaming` override the paths). Add
-`--self-test` for the 42 device-free checks, which include the vacuity cases —
-an unreadable command table, and a claim flag that cannot be identified, must
-each **fail** rather than quietly examine nothing.
+`--self-test` for the device-free checks — it prints its own count, which is
+why one is not repeated here — including the vacuity cases: an unreadable
+command table, and a claim flag that cannot be identified, must each **fail**
+rather than quietly examine nothing.
 
 ### Data Flow
 

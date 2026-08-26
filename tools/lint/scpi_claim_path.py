@@ -16,8 +16,10 @@ Four edits would silently remove the protection, and none is loud:
    its own stream-state test, or none. The other six keep working, so nothing
    on the bench necessarily notices.
 2. **Gut the helper** -- keep all seven routed through it while removing the
-   `Streaming_BeginConfigChange()` call inside it. Every command still "goes
-   through the claim path" and none of them claims anything.
+   `Streaming_BeginConfigChange()` call inside it, or keep the call and throw
+   its verdict away (`(void)Streaming_BeginConfigChange();`, one `(void)` away
+   from an unused-variable warning). Every command still "goes through the
+   claim path" and none of them refuses anything.
 3. **Reorder the helper** to take the claim, release it, and dispatch the
    command body afterwards (#864). Both calls are still there and every setter
    still routes through them, so 1 and 2 both pass -- while the command that
@@ -25,8 +27,13 @@ Four edits would silently remove the protection, and none is loud:
 4. **Gut the primitive** -- leave `Streaming_BeginConfigChange()` returning
    `STREAM_CFG_CLAIM_OK` without setting its busy flag, set that flag outside
    the critical section that makes the test-and-set atomic, or set it there
-   without ever TESTING it, which grants the claim to both transports at once
-   (#864). Checks 1-3 all read `SCPIInterface.c`, so every one of them passes.
+   without the flag being read there AT ALL (#864). Checks 1-3 all read
+   `SCPIInterface.c`, so every one of them passes.
+
+   Read that last clause narrowly, because it is narrow: it separates a set
+   from a set-beside-a-read. A `Begin` that grants unconditionally while the
+   flag is mentioned in the section for any other reason -- another arm, a
+   `(void)` cast, a log line -- passes. See "What a green run does NOT mean".
 
 This checker fails on all four. 4 lives in `streaming.c`, which is why the CI
 gate triggers on `firmware/src/services/streaming.*` as well -- a trigger that
@@ -34,19 +41,47 @@ until #864 fired on a file the checker asserted nothing about.
 
 ## Positional reasoning, and where it stops
 
-Properties 3 and 4 are about position, and position is only meaningful inside
-ONE region. "Between the first opener and the last closer" is NOT "inside a
-region" -- the gap BETWEEN two regions satisfies it. Both were first written
-that way here and both were defeatable (round 1 of PR #894, found independently
-by the codex leg and Qodo `/agentic_review`). More than one claim pair, or more
-than one critical section, is therefore REFUSED as beyond what this checker can
-reason about, rather than passed on a looser bound.
+Properties 3 and 4 are about position, and position is only meaningful against
+ONE opener and ONE closer. "Between the first opener and the last closer" is NOT
+"inside a region" -- the gap BETWEEN two regions satisfies it. Both were first
+written that way here and both were defeatable (round 1 of PR #894, found
+independently by the codex leg and Qodo `/agentic_review`).
+
+Anything other than exactly one of each is therefore REFUSED rather than passed
+on a looser bound. Two of each is the unsound case. An UNBALANCED count -- one
+opener with a second closer on an early-return path -- is correct C, and is
+refused only because deciding it needs control flow: the extra closer may sit
+before or after the item depending on which branch runs. The refusal prints the
+counts so the message distinguishes the two. #896 tracks it.
 
 Being exact about property 4's last clause: it establishes that the flag is
 READ inside the same critical section that sets it. It does not establish that
 the read is what gates the grant -- regex cannot show that. It is the
 difference between a plain set and a test-and-set, which is the mutation that
 was getting through.
+
+## What a green run does NOT mean
+
+There is no control flow here and no reachability, and that bounds EVERY
+property, not only the dead-call case above. Known and filed as #896:
+
+* Property 4's read requirement is satisfied by ANY mention of the flag in
+  the section, gating or not: a read in the non-granting arm, a read after the
+  set, a `(void)flag;`, or a log line's format argument. Instrument
+  `Streaming_BeginConfigChange` once and the arm is disarmed for good.
+* Property 4 says nothing about what the grant is CONDITIONED on. Delete
+  `Streaming_BeginConfigChange`'s `if (pStreamCfg->IsEnabled ||
+  pStreamCfg->Running)` arm and it hands the claim out mid-session, with the
+  flag still set, in the section, and read.
+* Property 3 cannot see branches. A helper that releases the claim only on the
+  body's success path passes and leaks `gCfgChangeBusy`, which then refuses
+  every later `SYST:STR:START`.
+* A dead branch satisfies 3 and 4 as readily as 1 -- an `End` whose only clear
+  sits inside `if (0)`, or a `Begin` that sets then immediately clears.
+
+Closing these means real reachability analysis, i.e. a different tool. The
+honest description of this one is: it catches an honest regression, not a
+determined or half-finished refactor.
 
 ## Why it is a source check and not a bench test
 
@@ -239,20 +274,37 @@ def dispatch_param(text, name):
 # red on correct code.
 _ZERO_RHS = re.compile(r"^(?:0[uUlL]*|0[xX]0+[uUlL]*|false)$")
 
+# A file-scope declaration of `%s`. Both qualifier orders are legal C and the
+# tree uses the first; accepting only it redded the gate on correct code (opus
+# hunter, PR #894 round 2). `[\w\s\*]` cannot cross `=`, which is what keeps
+# another declaration's INITIALISER from being offered as a candidate name.
+_STATIC_VOLATILE = (r"(?:static\s+volatile|volatile\s+static)\s+"
+                    r"[A-Za-z_][\w\s\*]*?\b%s\s*(?:=|;|\[)")
+
 
 def _assignments(body, name):
     r"""[(offset, assigns_zero)] for every plain `name = <rhs>;` in `body`.
+
+    `|=` and `&=` count: `flag |= 1u` sets and `flag &= 0` clears, and reading
+    the first as "never sets" was worse than refusing -- the message actively
+    misdescribed correct code (opus hunter, PR #894 round 2).
 
     `(?!=)` is what keeps comparisons out, and it is load-bearing: `flag == 0`
     is a read, and crediting it as a write would let a Begin that only TESTS
     the flag pass as one that takes it. A lookbehind excluding `!<>+-*/%&|^`
     was written beside it and removed as dead -- `\s*` consumes only
-    whitespace, so `!=`, `>=` and `+=` cannot reach the `=` in the first place,
-    and no arm could tell the two versions apart.
+    whitespace, so `!=`, `>=` and `+=` cannot reach the operator in the first
+    place, and no arm could tell the two versions apart.
+
+    NOT handled, and known: a multi-declarator declaration
+    (`static volatile uint32_t gA = 0u, gFlag = 0u;`) hides the second name
+    from the declarator search, and a macro-wrapped write
+    (`CLAIM_CLEAR(gFlag);`) is invisible here. Both would red the gate on
+    correct code; neither occurs in this tree. See #896.
     """
     out = []
     for m in re.finditer(
-            r"\b%s\s*=(?!=)\s*([^;]+);" % re.escape(name),
+            r"\b%s\s*(?:\|=|&=|=(?!=))\s*([^;]+);" % re.escape(name),
             _blank(body)):
         out.append((m.start(), bool(_ZERO_RHS.match(m.group(1).strip()))))
     return out
@@ -346,6 +398,14 @@ def check(source_text):
                     "%s() does not call %s(), so it does not %s the claim -- "
                     "routing through it protects nothing."
                     % (CLAIM_HELPER, needed, why))
+        if _calls(helper, CLAIM_BEGIN) and not _result_used(helper, CLAIM_BEGIN):
+            problems.append(
+                "%s() discards the result of %s(): a claim that is taken but "
+                "whose verdict is never acted on refuses nothing, so every "
+                "setter runs mid-session while checks above still pass. This "
+                "is a one-line refactor away -- `claim` goes unused and the "
+                "warning gets silenced with `(void)` (#864, opus hunter on "
+                "PR #894)." % (CLAIM_HELPER, CLAIM_BEGIN))
         problems.extend(_helper_order_problems(text, helper))
 
     return problems, len(setters)
@@ -359,11 +419,35 @@ def check(source_text):
 # more than one region is treated as beyond what this checker can reason about
 # and REFUSED, which is the same stance it takes on a table row it cannot read.
 _ONE_REGION = (
-    "%(who)s contains %(counts)s. This checker reasons positionally, so it "
-    "can only establish containment inside ONE %(what)s -- with more than one "
-    "it cannot, and refuses rather than reporting a pass it did not establish "
-    "(#864). Concretely: %(defeat)s. If the code genuinely needs two, this "
-    "checker needs a real matcher, not a looser bound.")
+    "%(who)s contains %(counts)s. Positional containment is only decidable "
+    "against exactly ONE opener and ONE closer, so this refuses rather than "
+    "reporting a pass it did not establish (#864). TWO of each is the unsound "
+    "case -- %(defeat)s. An UNBALANCED count (one opener, an extra closer on "
+    "an early-return path) is correct C and is refused only because deciding "
+    "it needs control flow this checker does not have: the extra closer may "
+    "sit before or after the %(item)s depending on the branch. Both are "
+    "refused, and the counts above say which you have. See #896.")
+
+
+def _result_used(body, name):
+    """True iff EVERY call to `name` in `body` has its return value consumed.
+
+    Consumption is judged from the statement prefix: empty means the call
+    stands alone as a statement, and `(void)` means it was deliberately
+    thrown away. Anything else -- an assignment, an `if`/`while` condition,
+    a `return` -- is treated as a use. That is coarse on purpose; it separates
+    "the verdict is looked at" from "the verdict is dropped", which is the
+    distinction that matters, and it cannot show that the verdict is acted on
+    CORRECTLY (see the reachability note in the docstring).
+    """
+    b = _blank(body)
+    for m in re.finditer(r"\b%s\s*\(" % re.escape(name), b):
+        cut = max(b.rfind(";", 0, m.start()), b.rfind("{", 0, m.start()),
+                  b.rfind("}", 0, m.start()))
+        prefix = b[cut + 1:m.start()].strip()
+        if prefix == "" or re.fullmatch(r"\(\s*void\s*\)", prefix):
+            return False
+    return True
 
 
 def _helper_order_problems(text, helper):
@@ -391,11 +475,11 @@ def _helper_order_problems(text, helper):
     if len(begins) != 1 or len(ends) != 1:
         problems.append(_ONE_REGION % {
             "who": "%s()" % CLAIM_HELPER,
-            "what": "claim region",
+            "item": "dispatch",
             "counts": "%d %s() and %d %s()"
                       % (len(begins), CLAIM_BEGIN, len(ends), CLAIM_END),
-            "defeat": "a helper with TWO claim pairs can dispatch between "
-                      "them -- inside first-Begin..last-End, outside every "
+            "defeat": "a helper with two claim pairs can dispatch between "
+                      "them, inside first-Begin..last-End and outside every "
                       "claim",
         })
         return problems
@@ -403,8 +487,11 @@ def _helper_order_problems(text, helper):
     dispatches = _call_positions(helper, param)
     if not dispatches:
         problems.append(
-            "%s() never calls its %s() parameter, so it takes and releases "
-            "the claim around no work at all (#864)." % (CLAIM_HELPER, param))
+            "%s() has no visible call to its %s() parameter, so either it "
+            "takes and releases the claim around no work at all, or the "
+            "dispatch goes through a local copy this checker cannot follow. "
+            "Either way the claim's position around it is UNVERIFIED (#864)."
+            % (CLAIM_HELPER, param))
     elif end_pos < begin_pos:
         problems.append(
             "%s() calls %s() before %s(): the claim is released before it is "
@@ -459,8 +546,7 @@ def claim_flag(text):
         # and then removed: with the anchor in place no arm could tell the two
         # apart, so it was defensive code that could not fail -- and a check
         # that cannot fail is what this checker is about.
-        if re.search(r"static\s+volatile\s+[A-Za-z_][\w\s\*]*?\b%s\s*(?:=|;|\[)"
-                     % re.escape(name), text):
+        if re.search(_STATIC_VOLATILE % re.escape(name), text):
             cands.add(name)
     if len(cands) != 1:
         return None, (
@@ -473,11 +559,25 @@ def claim_flag(text):
 
 
 def _reads_in(body, name, lo, hi):
-    """True iff `name` appears in (lo, hi) somewhere OTHER than as the target
-    of an assignment -- i.e. it is read there, not only written."""
+    """True iff the claim flag is READ in (lo, hi), not only written.
+
+    A call to CLAIM_READER counts. Testing through the public accessor instead
+    of touching the raw global is an ordinary DRY refactor and is if anything
+    the better shape; rejecting it told the author their test-and-set was "a
+    plain set", which was simply false (opus verifier, PR #894 round 2).
+
+    KNOWN LIMIT, and it is not small: ANY mention counts, including a
+    diagnostic one. A `LOG_D(..., "%u", flag)` inside the section satisfies
+    this permanently, so a later deletion of the real test would pass. See
+    #896 -- distinguishing a gating read from an incidental one needs control
+    flow, which this checker does not have.
+    """
     written = {pos for pos, _ in _assignments(body, name)}
-    return any(lo < m.start() < hi and m.start() not in written
-               for m in re.finditer(r"\b%s\b" % re.escape(name), _blank(body)))
+    reads = [m.start() for m in re.finditer(r"\b%s\b" % re.escape(name),
+                                            _blank(body))
+             if m.start() not in written]
+    reads += _call_positions(body, CLAIM_READER)
+    return any(lo < pos < hi for pos in reads)
 
 
 def check_streaming(streaming_text):
@@ -519,10 +619,10 @@ def check_streaming(streaming_text):
         elif len(enters) != 1 or len(exits) != 1:
             problems.append(_ONE_REGION % {
                 "who": "%s()" % CLAIM_BEGIN,
-                "what": "critical section",
+                "item": "assignment",
                 "counts": "%d %s() and %d %s()"
                           % (len(enters), TASK_ENTER, len(exits), TASK_EXIT),
-                "defeat": "a %s assigned BETWEEN two disjoint sections is "
+                "defeat": "a %s assigned between two disjoint sections is "
                           "inside first-enter..last-exit and inside neither "
                           "section" % flag,
             })
@@ -790,12 +890,31 @@ static scpi_result_t decoy(scpi_t * c) {
             "    scpi_result_t r = b(c);\n    Streaming_EndConfigChange();\n    return r;",
             "    Streaming_EndConfigChange();\n"
             "    scpi_result_t r = b(c);\n"
-            "    (void)Streaming_BeginConfigChange();\n"
+            "    claim = Streaming_BeginConfigChange();\n"
             "    Streaming_EndConfigChange();\n    return r;")
         assert twopair != _GOOD
         probs, _ = check(twopair)
         _ck("a dispatch between two claim pairs is refused, not passed",
-            any("ONE claim region" in p for p in probs), True)
+            any("2 Streaming_BeginConfigChange() and 2 "
+                "Streaming_EndConfigChange()" in p for p in probs), True)
+
+        # Round 2 (opus hunter): CALLING Begin is not USING it. A helper that
+        # throws the verdict away refuses nothing, and `(void)` on an
+        # otherwise-unused result is an ordinary way to silence a warning.
+        discarded = _GOOD.replace(
+            "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
+            "    if (claim != STREAM_CFG_CLAIM_OK) { return SCPI_RejectCfgClaim(c, 1, what); }",
+            "    (void)Streaming_BeginConfigChange();")
+        assert discarded != _GOOD
+        probs, _ = check(discarded)
+        _ck("a helper that DISCARDS the claim verdict is caught",
+            any("discards the result" in p for p in probs), True)
+        _ck("...and a helper that tests it inline is not accused",
+            check(_GOOD.replace(
+                "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
+                "    if (claim != STREAM_CFG_CLAIM_OK) {",
+                "    if (Streaming_BeginConfigChange() != STREAM_CFG_CLAIM_OK) {"))[0],
+            [])
 
         # ---- #864(1) residual: the claim PRIMITIVE, in streaming.c --------
         sprobs, sflag = check_streaming(_GOOD_STREAM)
@@ -848,7 +967,7 @@ static scpi_result_t decoy(scpi_t * c) {
             "    taskENTER_CRITICAL();\n    (void)pCfg;\n    taskEXIT_CRITICAL();")
         assert split_cs != _GOOD_STREAM
         _ck("a set between two disjoint critical sections is refused",
-            any("ONE critical section" in p
+            any("2 taskENTER_CRITICAL() and 2 taskEXIT_CRITICAL()" in p
                 for p in check_streaming(split_cs)[0]), True)
 
         # A plain SET is not a test-and-set. Dropping the busy arm leaves a
@@ -860,6 +979,30 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("a Begin that sets but never READS the flag is caught",
             any("never READS it there" in p
                 for p in check_streaming(plainset)[0]), True)
+
+        # Round 2 (opus hunter): three forms of CORRECT C that used to red the
+        # gate. A false red is how a gate gets deleted, and the `|=` message
+        # was the worst of them -- it said "never sets" about code that sets.
+        _ck("`volatile static` (legal qualifier order) is accepted",
+            check_streaming(_GOOD_STREAM.replace(
+                "static volatile uint32_t gCfgChangeBusy",
+                "volatile static uint32_t gCfgChangeBusy"))[0], [])
+        _ck("`|= 1u` counts as taking the claim",
+            check_streaming(_GOOD_STREAM.replace(
+                "        gCfgChangeBusy = 1u;",
+                "        gCfgChangeBusy |= 1u;"))[0], [])
+        _ck("`&= 0u` counts as releasing it",
+            check_streaming(_GOOD_STREAM.replace(
+                "    gCfgChangeBusy = 0u;\n}",
+                "    gCfgChangeBusy &= 0u;\n}"))[0], [])
+
+        # V1 (opus verifier): testing through the public accessor is the
+        # same test-and-set, and is if anything the better shape. Rejecting it
+        # told the author their test-and-set was "a plain set" -- false.
+        _ck("a test-and-set through the accessor is accepted as a read",
+            check_streaming(_GOOD_STREAM.replace(
+                "    } else if (gCfgChangeBusy != 0u) {",
+                "    } else if (Streaming_ConfigChangeInProgress()) {"))[0], [])
 
         _ck("renaming the claim flag is followed, not flagged",
             check_streaming(_GOOD_STREAM.replace(
@@ -941,8 +1084,9 @@ def main():
     # summary naming only the SCPI half would report a pass on a file it had
     # not spoken about.
     print("OK: all %d SYSTem:MEMory:* setters take the claim via %s(), which "
-          "holds it across the dispatch; %s() sets and %s() clears %s, the set "
-          "inside a single critical section that also reads it"
+          "uses its verdict and holds it across the dispatch; %s() sets and "
+          "%s() clears %s, the set inside a single critical section that also "
+          "reads it"
           % (examined, CLAIM_HELPER, CLAIM_BEGIN, CLAIM_END, claimflag))
     return 0
 
