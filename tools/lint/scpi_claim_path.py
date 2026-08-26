@@ -1066,9 +1066,9 @@ static scpi_result_t decoy(scpi_t * c) {
             sflag, "gCfgChangeBusy")
         # The declarator anchor in `claim_flag`. Deciding it needs a reader
         # that MENTIONS the initialiser's token: candidates come from the
-        # READER's identifiers, and `_GOOD_STREAM`'s reader says only
-        # `gCfgChangeBusy`, so `false` is never offered there and the anchor
-        # never runs on it. Written against `_GOOD_STREAM` this arm computed
+        # READER's identifiers, and `_GOOD_STREAM`'s reader never says
+        # `false`, so it is never offered there and the anchor never runs on
+        # it. Written against `_GOOD_STREAM` this arm computed
         # `check_streaming(_GOOD_STREAM)[1]` a second time -- dominated by the
         # arm above it, and green with the anchor loosened to `[\w\s\*=]`
         # (#899). This variant's reader mentions `false`, so
