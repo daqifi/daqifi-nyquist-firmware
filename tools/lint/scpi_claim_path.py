@@ -341,13 +341,22 @@ _STATIC_VOLATILE = (r"(?:static\s+volatile|volatile\s+static)\s+"
 #
 # Added as a SEPARATE alternative rather than by loosening the anchor, which
 # would put back the defect #899 armed: the name here must follow a comma
-# DIRECTLY, so an initialiser still cannot be offered as a declarator. In
-# `... = false;` there is no comma at all; in `... = f(x, y);` the `y` does
-# follow one but is followed by `)`, which the declarator tail rejects. The
-# `[^;{}]` body keeps the search inside one declaration and out of a braced
-# initialiser.
+# DIRECTLY, so an initialiser still cannot be offered as a declarator -- in
+# `... = false;` there is no comma at all.
+#
+# `[^;{}()]` bounds the body to ONE declaration and, crucially, keeps it OUT
+# OF ANY PARENTHESISED INITIALISER. Allowing parentheses made
+# `static volatile uint32_t gOther = FOO(1, gCfgChangeBusy, 2);` offer a MACRO
+# ARGUMENT as a declarator, so a flag that was not `static volatile` at all
+# was accepted and the gate reported OK -- a silent pass, which is worse than
+# anything it was fixing (codex leg, PR #901 round 1). An earlier version of
+# this comment reasoned about `... = f(x, y)` and concluded the tail rejected
+# it; that is true of the LAST argument only, and every earlier argument is
+# followed by a comma, which the tail accepts. Excluding parentheses is what
+# actually closes it. Cost: a legitimate declarator list whose initialiser
+# calls a macro is no longer matched -- a red, i.e. the safe direction.
 _MULTI_DECLARATOR = (r"(?:static\s+volatile|volatile\s+static)\s+"
-                     r"[A-Za-z_][^;{}]*?,\s*\**\s*%s\s*(?:=|;|\[|,)")
+                     r"[A-Za-z_][^;{}()]*?,\s*\**\s*%s\s*(?:=|;|\[|,)")
 
 
 def _assignments(body, name):
@@ -549,6 +558,23 @@ _ONE_REGION = (
     "refused, and the counts above say which you have. See #896.")
 
 
+def _call_end(blanked, open_paren):
+    """Index just past the `)` closing the call whose `(` sits at `open_paren`.
+
+    Length of the text if the parentheses do not balance, which makes the
+    caller's lookahead match nothing rather than match the wrong thing.
+    """
+    depth = 0
+    for i in range(open_paren, len(blanked)):
+        if blanked[i] == "(":
+            depth += 1
+        elif blanked[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return len(blanked)
+
+
 def _stmt_prefix(blanked, pos):
     """The text between the previous statement boundary and `pos`, stripped."""
     cut = max(blanked.rfind(";", 0, pos), blanked.rfind("{", 0, pos),
@@ -569,7 +595,11 @@ _CAST_ONLY = re.compile(r"\(\s*[A-Za-z_][\w\s\*]*\)")
 # statement", so `case 1: Streaming_BeginConfigChange();` was credited as
 # USING the verdict -- the enumeration promising a form it did not catch, in
 # the function whose whole purpose is to enumerate (#896 (f)).
-_LABEL_ONLY = re.compile(r"(?:case\b[^:]*|[A-Za-z_]\w*)\s*:")
+# `.*` and not `[^:]*`, because a case expression may CONTAIN a colon:
+# `case (1 ? 1 : 3):` is a valid label and `[^:]*` stopped at the ternary's
+# colon, so the whole prefix never matched (codex leg, PR #901 round 1). The
+# greedy form backtracks to the LAST colon, which is the label's.
+_LABEL_ONLY = re.compile(r"(?:case\b.*|[A-Za-z_]\w*)\s*:")
 _FOR_INIT = re.compile(r"\bfor\s*\($")
 
 # An assignment whose value the DIRECTLY enclosing construct tests or returns:
@@ -580,6 +610,17 @@ _FOR_INIT = re.compile(r"\bfor\s*\($")
 # (#896 (e)). Only a DIRECTLY enclosing construct counts: in
 # `if (foo(claim = Begin()))` the value goes to `foo`, not to the `if`.
 _TESTED_TAIL = re.compile(r"(?:\b(?:if|while|switch)\s*\(+|\breturn\b\s*\(*)$")
+
+# ...and being inside a test is not enough, because a COMMA OPERATOR throws
+# the left operand away before the test ever sees it:
+# `if ((claim = Begin(), 1))` tests the constant, not the verdict. The first
+# version of this exemption skipped the store scan on that shape, which made
+# the checker WEAKER than the version it was fixing -- pre-#901 caught it, by
+# accident, through the very mis-scan #896 (e) is about (codex leg, PR #901
+# round 1). So the exemption is refused when a comma follows the assignment
+# before anything else does; closing parentheses are stepped over, so both
+# `(claim = Begin(), 1)` and `(claim = Begin()) , 1` are refused.
+_COMMA_FIRST = re.compile(r"[\s)]*,")
 
 
 def _discards(prefix):
@@ -632,7 +673,8 @@ def _verdict_used(body, name):
             return "discards the result of"
         target = re.search(r"([A-Za-z_]\w*)\s*=$", prefix)
         if target:
-            if _TESTED_TAIL.search(prefix[:target.start()]):
+            if (_TESTED_TAIL.search(prefix[:target.start()])
+                    and not _COMMA_FIRST.match(b, _call_end(b, m.end() - 1))):
                 continue          # the enclosing if/while/switch/return uses it
             var = target.group(1)
             after = b.find(";", m.start())
@@ -728,6 +770,14 @@ def claim_flag(text):
             "turns on could not be identified and %s()/%s() were NOT checked."
             % (CLAIM_READER, CLAIM_BEGIN, CLAIM_END))
     cands = set()
+    # Declarations are searched in BLANKED text: a string literal spelling a
+    # declarator list -- `static volatile char gMsg[] = "x, gFlag, y";` --
+    # otherwise satisfies `_MULTI_DECLARATOR` and the checker follows a name
+    # that has no such declaration (found while verifying the codex leg's
+    # macro-argument finding, PR #901 round 1). `_STATIC_VOLATILE` could not
+    # reach into a literal, because it cannot cross the `=`; the second
+    # alternative can, so both now read the blanked copy.
+    decls = _blank(text)
     for m in re.finditer(r"\b([A-Za-z_]\w*)\b", _blank(reader)):
         name = m.group(1)
         # The name must be the DECLARATOR, not an initialiser: `[\w\s\*]`
@@ -746,8 +796,8 @@ def claim_flag(text):
         # and then removed: with the anchor in place no arm could tell the two
         # apart, so it was defensive code that could not fail -- and a check
         # that cannot fail is what this checker is about.
-        if (re.search(_STATIC_VOLATILE % re.escape(name), text)
-                or re.search(_MULTI_DECLARATOR % re.escape(name), text)):
+        if (re.search(_STATIC_VOLATILE % re.escape(name), decls)
+                or re.search(_MULTI_DECLARATOR % re.escape(name), decls)):
             cands.add(name)
     if len(cands) != 1:
         return None, (
@@ -1264,6 +1314,40 @@ helper_probe2(c)) { return SCPI_RES_ERR; }
         _ck("a `case` label discards just as an identifier label does",
             any("discards the result" in p for p in check(cased)[0]), True)
 
+        # PR #901 round 1 (codex leg): a case EXPRESSION may contain a colon.
+        # `[^:]*` stopped at the ternary's, so the label was not recognised
+        # and the discarded call was credited as a use.
+        ternary_case = _GOOD.replace(
+            "StreamingCfgClaim claim = Streaming_BeginConfigChange();",
+            "switch (1) { case (1 ? 1 : 3): Streaming_BeginConfigChange(); break; }")
+        assert ternary_case != _GOOD
+        _ck("a `case` label whose expression contains a colon still discards",
+            any("discards the result" in p for p in check(ternary_case)[0]),
+            True)
+
+        # PR #901 round 1 (codex leg), and the most important arm here: being
+        # inside a test is NOT an inspection if a COMMA OPERATOR throws the
+        # value away first. The exemption's first version skipped the store
+        # scan on these, making the checker weaker than the code it fixed --
+        # pre-#901 caught them, by accident, through the very mis-scan #896
+        # (e) is about. Both comma placements, because stepping over the
+        # closing parenthesis is what makes the second one reachable.
+        for label, body in (
+                ("a comma operator inside the assignment's parens",
+                 "    StreamingCfgClaim claim;\n"
+                 "    if ((claim = Streaming_BeginConfigChange(), 1)) { ; }"),
+                ("a comma operator after them",
+                 "    StreamingCfgClaim claim;\n"
+                 "    if ((claim = Streaming_BeginConfigChange()) , 1) { ; }")):
+            mutated = _GOOD.replace(
+                "    StreamingCfgClaim claim = Streaming_BeginConfigChange();\n"
+                "    if (claim != STREAM_CFG_CLAIM_OK) { return SCPI_RejectCfgClaim(c, 1, what); }",
+                body)
+            assert mutated != _GOOD, label
+            _ck("%s still discards the verdict" % label,
+                any("never inspects the verdict" in p
+                    for p in check(mutated)[0]), True)
+
         # ---- #864(1) residual: the claim PRIMITIVE, in streaming.c --------
         sprobs, sflag = check_streaming(_GOOD_STREAM)
         _ck("a compliant claim primitive is clean", sprobs, [])
@@ -1412,6 +1496,31 @@ helper_probe2(c)) { return SCPI_RES_ERR; }
         assert multi != _GOOD_STREAM
         _ck("a second declarator in one declaration is still found",
             check_streaming(multi)[0], [])
+        # PR #901 round 1 (codex leg): the declarator search must not enter a
+        # parenthesised initialiser. Here the flag is NOT `static volatile` at
+        # all -- accepting a macro ARGUMENT as a declarator made the gate
+        # report OK on a claim flag with no such declaration, which is a
+        # silent pass.
+        macroarg = _GOOD_STREAM.replace(
+            "static volatile uint32_t gCfgChangeBusy = 0u;",
+            "static volatile uint32_t gOther2 = FOO(1, gCfgChangeBusy, 2);\n"
+            "uint32_t gCfgChangeBusy = 0u;")
+        assert macroarg != _GOOD_STREAM
+        _ck("a macro ARGUMENT is not a declarator",
+            any("static volatile" in p
+                for p in check_streaming(macroarg)[0]), True)
+        # ...and the same search must not read a string literal. Found while
+        # verifying the finding above: `_STATIC_VOLATILE` could never reach
+        # into a literal (it cannot cross the `=`), but the second alternative
+        # can, so both now read a blanked copy.
+        litdecl = _GOOD_STREAM.replace(
+            "static volatile uint32_t gCfgChangeBusy = 0u;",
+            'static volatile char gMsg[] = "x, gCfgChangeBusy, y";\n'
+            "uint32_t gCfgChangeBusy = 0u;")
+        assert litdecl != _GOOD_STREAM
+        _ck("a declarator list spelled inside a literal is not a declaration",
+            any("static volatile" in p
+                for p in check_streaming(litdecl)[0]), True)
 
         # V1 (opus verifier): testing through the public accessor is the
         # same test-and-set, and is if anything the better shape. Rejecting it
