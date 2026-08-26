@@ -2396,15 +2396,31 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
     // doesn't stream to SD, so restore it on every exit below (Qodo #521).
     sd_card_manager_mode_t savedSdMode = SaveSdMode();
 
+    /* #868: hoisted out of the block below so the arm point re-checks the
+     * enabled-channel set against the SAME board config and runtime array the
+     * mapping was built from, rather than against a second lookup.  (They are
+     * singleton accessors, so a second lookup would return the same pointers;
+     * using one pair is what makes that visible instead of assumed.)  The
+     * later `pBoardConfig` fetch this replaces was that second lookup. */
+    volatile AInRuntimeArray* pRtAin =
+        BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    uint64_t mappingSelAtBuild = 0;
+
     // Establish the buffer partition + sample pool that the cfg-poke start
     // below does NOT do on its own (this was a latent bug — THR relied on a
     // prior STR:START having partitioned; standalone it streamed 0 bytes, the
     // same #520 failure mode).  Shared helper, same path as StartStreaming.
     {
-        volatile AInRuntimeArray* pRtAin =
-            BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
-        const tBoardConfig* pBcfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
-        Streaming_BuildChannelMapping(pBcfg, (const AInRuntimeArray*)pRtAin);
+        Streaming_BuildChannelMapping(pBoardConfig, (const AInRuntimeArray*)pRtAin);
+        /* #868: the enabled-channel set this mapping -- and the sample-pool
+         * partition sized from its count, carved just below -- was built from.
+         * Read back FROM the mapping, never recomputed here: a recompute
+         * samples the runtime config a second time, and a preemption in
+         * between would record the NEW set as this mapping's provenance and
+         * defeat the arm-point check (the #846 reasoning, verbatim from
+         * SCPI_StartStreamingClaimed). */
+        mappingSelAtBuild = Streaming_GetChannelMappingSelection();
         const AInChannelMapping* chMap = Streaming_GetChannelMapping();
         uint8_t ec = (chMap != NULL && chMap->count > 0) ? chMap->count : 1;
         MemoryConfig* mcfg = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
@@ -2422,7 +2438,6 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
     }
 
     // Set frequency and start
-    const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     uint32_t clkFreq = TimerApi_FrequencyGet(pBoardConfig->StreamingConfig.TimerIndex);
     // PIC32MZ type-B timer counts 0..PR inclusive (PR+1 cycles per match).
     uint32_t periodCycles = (clkFreq + freq - 1) / freq;
@@ -2449,19 +2464,46 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
      * Running is false); it is the same work the NEXT successful start would
      * do, and with no session running it can only discard stale samples. */
     bool cfgBusy;
+    bool mappingMoved = false;
     taskENTER_CRITICAL();
     cfgBusy = Streaming_ConfigChangeInProgress();
     if (!cfgBusy) {
+        /* #868: the enabled-channel set moved after this command built its
+         * mapping and partitioned the sample pool from that mapping's count.
+         * Streaming_ConfigChangeInProgress() above does NOT cover it: that
+         * catches only a change in flight AT THIS INSTANT (the #847
+         * setter-side hazard), and a change that already COMPLETED -- claim
+         * taken and released inside this command's build-to-arm window --
+         * leaves it reading false.  Same fingerprint, same reasoning and same
+         * placement as SCPI_StartStreamingClaimed's #846 check: computed HERE,
+         * inside the section that publishes IsEnabled, because computing it
+         * outside would only shrink the window rather than close it.
+         *
+         * Refuse rather than rebuild, for the same reason START does: the
+         * sample pool above was already carved from the OLD mapping's count,
+         * so a mapping rebuilt here would describe a set the partition was not
+         * sized for -- worse than the stale mapping it replaced. */
+        mappingMoved = (Streaming_ComputeChannelSelection(
+                                pBoardConfig, (const AInRuntimeArray*)pRtAin)
+                        != mappingSelAtBuild);
+    }
+    if (!cfgBusy && !mappingMoved) {
         pStreamCfg->ClockPeriod = periodCycles - 1;
         pStreamCfg->Frequency = (uint64_t)freq;
         pStreamCfg->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
 
+    /* #868: this call armed nothing -- neither refusal reason reaches the
+     * writes above -- so every "did WE arm it?" test below is this, not
+     * cfgBusy alone.  Getting that wrong would disarm a concurrent session's
+     * IsEnabled on the mapping-moved path. */
+    const bool armRefused = cfgBusy || mappingMoved;
+
     /* Only pump the state machine if we actually armed. On the refused path
      * Streaming_UpdateState() would call Streaming_Stop(), and if a concurrent
      * session were running that would STOP SOMEONE ELSE'S STREAM. */
-    if (!cfgBusy) {
+    if (!armRefused) {
         Streaming_UpdateState();
     }
 
@@ -2470,13 +2512,16 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
      * concurrent session that armed after this command's front-door check
      * leaves Running true, and the benchmark would then adopt that session as
      * its own and stop it after the dwell (Qodo). */
-    if (cfgBusy || !pStreamCfg->Running) {
+    if (armRefused || !pStreamCfg->Running) {
         LOG_E("Throughput benchmark: %s",
               cfgBusy ? "refused, a streaming config change is in flight (#847)"
+                      : mappingMoved
+                      ? "refused, the enabled-channel set moved after the mapping was built (#868)"
                       : "streaming failed to start");
-        if (!cfgBusy) {
-            /* Disarm only what THIS call armed. On the refused path IsEnabled
-             * was never set here, and a concurrent session may own it. */
+        if (!armRefused) {
+            /* Disarm only what THIS call armed. On either refused path
+             * IsEnabled was never set here, and a concurrent session may own
+             * it. */
             pStreamCfg->IsEnabled = false;
         }
         Streaming_SetBenchmarkMode(savedBenchmark);
@@ -2641,16 +2686,36 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 #define FIND_SOAK_MAX_ITERS     12u     // bound total soaks (≤12 × 60s) so a flaky link can't spin
 #define FIND_SOAK_MIN_HZ        100u    // absolute floor — below this, report NO_CLEAN_SOAK
 
+/* #868: what the sweep's channel mapping and sample-pool partition were built
+ * from, carried into every measurement step so each arm can re-check it.
+ *
+ * The finder is the worse of #846's two uncovered arm sites precisely because
+ * this basis is established ONCE, outside the loop, and then armed against
+ * many times: between two steps IsEnabled and Running are both false, so every
+ * "reject while streaming" guard reads false and a CONF:ADC:CHANnel from the
+ * other SCPI transport is accepted and its config claim released.  The stale
+ * window is therefore the whole inter-step gap, repeated once per rate --
+ * not the microseconds a START is exposed for. */
+typedef struct {
+    const tBoardConfig*    pBoardConfig;
+    const AInRuntimeArray* pRuntimeChannels;
+    uint64_t               mappingSelAtBuild;
+} FindStepBasis;
+
 // One measurement cycle for SCPI_WifiFindRate: start streaming at `freq`, dwell,
 // observe the sample-pool high-water mark (the last-to-fill buffer — see header),
 // tear down cleanly, and return whether the buffers SATURATED at this rate.
 // Returns false on start failure (NOT "saturated") — that case is signaled via
 // *outStartFailed, which callers must check first.
 // Outputs the measured wire KB/s.  *outStartFailed is set if the stream never
-// went Running (caller aborts).  Factored (#520, 2026-05-31) so the coarse AIMD
-// climb and the binary-search refinement share one code path.  wRingCap is used
-// only for the diagnostic log line.
-static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
+// went Running, or if the arm was refused (caller aborts).  Factored (#520,
+// 2026-05-31) so the coarse AIMD climb and the binary-search refinement share
+// one code path.  wRingCap is used only for the diagnostic log line.
+// `basis` is the sweep's #868 channel-mapping provenance and is required --
+// the sole caller passes the address of its own local, so it is never NULL and
+// is not tested for it.
+static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
+                            const FindStepBasis* basis, uint32_t clkFreq,
                             uint32_t wRingCap, uint32_t freq, uint32_t obsMs,
                             uint32_t* outKBps, bool* outStartFailed) {
     if (freq == 0u) { *outStartFailed = true; *outKBps = 0; return false; }  // guard div-by-zero (Qodo)
@@ -2675,28 +2740,61 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg, uint32_t clkFreq,
      * still drains the sample queues on the way through: the same work the
      * next successful start would do, harmless with nothing running.) */
     bool cfgBusy;
+    bool mappingMoved = false;
     taskENTER_CRITICAL();
     cfgBusy = Streaming_ConfigChangeInProgress();
     if (!cfgBusy) {
+        /* #868: the enabled-channel set moved since the sweep built its
+         * mapping and partitioned the sample pool from that mapping's count.
+         * The claim test above cannot see it -- that catches only a change in
+         * flight at this instant, and the change this catches has already
+         * completed and released its claim, typically during a previous
+         * inter-step gap.  Computed inside the section that publishes
+         * IsEnabled for the same reason START's is: outside would shrink the
+         * window, not close it.
+         *
+         * Refusing aborts the sweep (the caller breaks on *outStartFailed),
+         * which is the honest outcome: the points already measured describe a
+         * different channel set, so the remaining ones would not be comparable
+         * to them.  Rebuilding the mapping here instead would need the sample
+         * pool re-partitioned with it -- a mid-sweep teardown the WINC is
+         * documented to dislike (#425/#467/#517) -- and would silently change
+         * the basis of a measurement already in progress. */
+        mappingMoved = (Streaming_ComputeChannelSelection(basis->pBoardConfig,
+                                                          basis->pRuntimeChannels)
+                        != basis->mappingSelAtBuild);
+    }
+    if (!cfgBusy && !mappingMoved) {
         cfg->ClockPeriod = periodCycles - 1;
         cfg->Frequency = (uint64_t)freq;
         cfg->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
+    /* #868: this step armed nothing on either refusal, so every "did WE arm
+     * it?" test below is this rather than cfgBusy alone. */
+    const bool armRefused = cfgBusy || mappingMoved;
     /* Only pump the state machine if we actually armed -- on the refused path
      * Streaming_UpdateState() would Streaming_Stop() a concurrent session. */
-    if (!cfgBusy) {
+    if (!armRefused) {
         Streaming_UpdateState();
     }
     /* The refusal is its OWN reason, not an inference from Running: a
      * concurrent session leaves Running true, and this step would otherwise
      * adopt it as its own and measure/stop it (Qodo). */
-    if (cfgBusy || !cfg->Running) {
+    if (armRefused || !cfg->Running) {
+        if (armRefused) {
+            /* #868: the sweep reports START_FAIL for both refusals -- one
+             * outcome, two causes -- so name the cause in the log, which is
+             * where this project puts error detail (SYSTem:LOG?). */
+            LOG_E("WIFI:FIND %u Hz: arm refused - %s", (unsigned)freq,
+                  cfgBusy ? "a streaming config change is in flight (#847)"
+                          : "the enabled-channel set moved after the mapping was built (#868)");
+        }
         // Clean teardown so the start-fail path leaves IsEnabled=false like the
         // normal path (the finder's exit assumes streaming is stopped) (Qodo #521).
         // Skipped when refused: IsEnabled was never set here, and a concurrent
         // session may own it.
-        if (!cfgBusy) {
+        if (!armRefused) {
             cfg->IsEnabled = false;
             Streaming_UpdateState();
         }
@@ -2848,10 +2946,23 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     // this the pipeline has no buffers and the encoder produces 0 bytes.
     // Build the channel mapping first (sizes the sample-pool element), then
     // auto-balance-partition with the actual channel count.
+    volatile AInRuntimeArray* pRtAin =
+        BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
+    FindStepBasis basis = {
+        .pBoardConfig     = pBoardConfig,
+        .pRuntimeChannels = (const AInRuntimeArray*)pRtAin,
+        .mappingSelAtBuild = 0,
+    };
     {
-        volatile AInRuntimeArray* pRtAin =
-            BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
         Streaming_BuildChannelMapping(pBoardConfig, (const AInRuntimeArray*)pRtAin);
+        /* #868: read the provenance back FROM the mapping rather than
+         * recomputing it here -- a recompute samples the runtime config a
+         * second time, and a preemption in between would record the NEW set as
+         * this mapping's provenance and defeat every step's check (the #846
+         * reasoning, verbatim from SCPI_StartStreamingClaimed).  It covers the
+         * sample-pool partition carved just below too: that is sized from this
+         * mapping's count. */
+        basis.mappingSelAtBuild = Streaming_GetChannelMappingSelection();
         const AInChannelMapping* chMap = Streaming_GetChannelMapping();
         uint8_t ec = (chMap != NULL && chMap->count > 0) ? chMap->count : 1;
         MemoryConfig* mcfg = BoardRunTimeConfig_Get(BOARDRUNTIME_MEMORY_CONFIG);
@@ -2881,7 +2992,7 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     while (freq <= hardMax) {
         uint32_t kbps = 0;
         bool sf = false;
-        bool sat = FindMeasureStep(cfg, clkFreq, wRingCap, freq, FIND_DWELL_MS, &kbps, &sf);
+        bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, freq, FIND_DWELL_MS, &kbps, &sf);
         if (sf) { startFailed = true; break; }
 
         if (!sat) {
@@ -2922,8 +3033,23 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
             uint32_t mid = lo + (hi - lo) / 2;
             uint32_t kbps = 0;
             bool sf = false;
-            bool sat = FindMeasureStep(cfg, clkFreq, wRingCap, mid, FIND_DWELL_MS, &kbps, &sf);
-            if (sf) break;          // unexpected start failure — keep coarse lastGood
+            bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, mid, FIND_DWELL_MS, &kbps, &sf);
+            if (sf) {
+                /* #868: PROPAGATE, don't just leave the loop. This branch used
+                 * to break with startFailed still false ("keep coarse
+                 * lastGood"), which sends the sweep on to the soak stage on a
+                 * basis it could not verify -- and once #868 can refuse an arm
+                 * here, that is a basis that has MOVED. The soak's own arm is
+                 * then refused too and sets this a second later, so the common
+                 * outcome was merely one wasted arm; but when the soak
+                 * candidate falls below FIND_SOAK_MIN_HZ the soak loop never
+                 * runs at all, and the sweep returns NO_CLEAN_SOAK for what is
+                 * actually a refused arm (Qodo). All three call sites now
+                 * agree: *outStartFailed means the step did not happen, and a
+                 * sweep whose basis moved or is moving reports START_FAIL. */
+                startFailed = true;
+                break;
+            }
             if (sat) {
                 hi = mid;
             } else {
@@ -2949,7 +3075,7 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
         uint32_t streak = 0;   // consecutive clean 60 s soaks at the current cand
         for (uint32_t it = 0; it < FIND_SOAK_MAX_ITERS && cand >= FIND_SOAK_MIN_HZ; it++) {
             uint32_t kbps = 0; bool sf = false;
-            bool sat = FindMeasureStep(cfg, clkFreq, wRingCap, cand, FIND_SOAK_MS, &kbps, &sf);
+            bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, cand, FIND_SOAK_MS, &kbps, &sf);
             if (sf) { startFailed = true; break; }
             if (!sat) {                       // a clean 60 s soak
                 streak++;
