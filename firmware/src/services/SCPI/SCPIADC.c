@@ -1181,8 +1181,17 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
 
 /* #885 follow-up (pre-merge audit on this PR): SAVEcal / SAVEFcal are the
  * read side of the same cal store the five setters this PR converts write, and
- * they were the last commands touching AInRuntimeArray's CalM/CalB with no
- * claim at all.
+ * they were the last commands that MUTATE PERSISTENT STATE from CalM/CalB with
+ * no claim at all.
+ *
+ * Not "the last commands touching CalM/CalB" -- an earlier revision of this
+ * comment said that and it is false. SCPI_ADCChanCalmGet / ChanCalbGet read the
+ * same 64-bit doubles with no claim either, and a concurrent setter on the
+ * other transport can tear either read (Qodo, this PR). Those are QUERIES: they
+ * corrupt nothing, they are exempt from the claim by the family's own
+ * convention (tools/lint/scpi_claim_path.py exempts trailing-? commands), and
+ * the failure is a garbled reply rather than a bad NVM image -- a real but
+ * different defect, filed rather than widened into this PR.
  *
  * The defect is NOT the one the five setters have -- these two mutate nothing
  * the conversion path reads, so they cannot rescale a running stream. It is a
@@ -1192,8 +1201,16 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
  *     and copies two `double`s per channel out of the live runtime array. Every
  *     OTHER command that writes that array -- chanCALM, chanCALB, LOADcal,
  *     LOADFcal, USECal -- now holds the claim while it writes, and the two SCPI
- *     transports run as separate preemptible tasks at different priorities (USB
- *     7, WiFi 2). Without the claim a write from the other transport can land
+ *     transports run as separate preemptible tasks at different priorities.
+ *     Read those priorities from the RUNTIME, not from xTaskCreate: SCPI over
+ *     USB runs on app_USBDeviceTask, which is created at 2 and BOOSTS ITSELF to
+ *     7 immediately after UsbCdc_Initialize() (app_freertos.c, "Boost priority
+ *     after initialization complete"), while SCPI over TCP is dispatched on
+ *     app_WifiTask at 2. A reader who checks only the creation call sees 2 and
+ *     2 and concludes there is no asymmetry (Qodo raised exactly that), so the
+ *     boost is named here. Nothing in this fix depends on WHICH is higher --
+ *     two preemptible tasks are enough. Without the claim a write from the
+ *     other transport can land
  *     mid-copy, so the image persisted to NVM is a MIX of pre- and post-write
  *     channels; and because CalM/CalB are 64-bit, a single channel's value can
  *     itself be torn (CLAUDE.md: 64-bit ops always need a critical section).
