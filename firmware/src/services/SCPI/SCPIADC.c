@@ -1179,28 +1179,69 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-scpi_result_t SCPI_ADCCalSave(scpi_t * context) {
+/* #885 follow-up (pre-merge audit on this PR): SAVEcal / SAVEFcal are the
+ * read side of the same cal store the five setters this PR converts write, and
+ * they were the last commands touching AInRuntimeArray's CalM/CalB with no
+ * claim at all.
+ *
+ * The defect is NOT the one the five setters have -- these two mutate nothing
+ * the conversion path reads, so they cannot rescale a running stream. It is a
+ * torn READ, and it needs the claim for two reasons:
+ *
+ *  1. The copy loop in daqifi_settings_SaveADCCalSettings walks every channel
+ *     and copies two `double`s per channel out of the live runtime array. Every
+ *     OTHER command that writes that array -- chanCALM, chanCALB, LOADcal,
+ *     LOADFcal, USECal -- now holds the claim while it writes, and the two SCPI
+ *     transports run as separate preemptible tasks at different priorities (USB
+ *     7, WiFi 2). Without the claim a write from the other transport can land
+ *     mid-copy, so the image persisted to NVM is a MIX of pre- and post-write
+ *     channels; and because CalM/CalB are 64-bit, a single channel's value can
+ *     itself be torn (CLAUDE.md: 64-bit ops always need a critical section).
+ *     Taking the claim makes the concurrent writer lose the race visibly, with
+ *     -200 and STREAM_CFG_CLAIM_BUSY, instead of silently interleaving.
+ *  2. It closes the same START race as the rest of the family (#844/#857): the
+ *     body reaches daqifi_settings_SaveToNvm, so a session could be armed while
+ *     a flash write is in flight.
+ *
+ * Refusing while streaming is a behaviour change and is the point: persisting
+ * a calibration snapshot taken from an array nobody is allowed to modify is
+ * the only way the saved image can be known to be self-consistent.
+ *
+ * No `...Claimed` split, for the reason CalLoadCommon gives below: this body is
+ * one call whose boolean result maps to OK/ERR, so a ternary makes it a single
+ * path out and the wrapper would add indirection without adding a guarantee.
+ * One claim, one release, one return.
+ *
+ * The two commands share this helper but each names ITSELF in the refusal --
+ * distinct commands selecting distinct NVM banks, exactly as LOADcal/LOADFcal
+ * do. Boot's first-run factory save (app_freertos.c) calls
+ * daqifi_settings_SaveADCCalSettings directly, never through these callbacks,
+ * so it cannot meet the claim. */
+static scpi_result_t CalSaveCommon(scpi_t * context,
+                                   DaqifiSettingsType type,
+                                   const char * what) {
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   what);
+    }
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
-    if (daqifi_settings_SaveADCCalSettings(
-            DaqifiSettings_UserAInCalParams,
-            pRuntimeAInChannels)) {
-        return SCPI_RES_OK;
-    } else {
-        return SCPI_RES_ERR;
-    }
+    scpi_result_t result = daqifi_settings_SaveADCCalSettings(
+            type, pRuntimeAInChannels) ? SCPI_RES_OK : SCPI_RES_ERR;
+    Streaming_EndConfigChange();
+    return result;
+}
+
+scpi_result_t SCPI_ADCCalSave(scpi_t * context) {
+    return CalSaveCommon(context, DaqifiSettings_UserAInCalParams,
+                         "CONF:ADC:SAVEcal");
 }
 
 scpi_result_t SCPI_ADCCalFSave(scpi_t * context) {
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
-            BOARDRUNTIMECONFIG_AIN_CHANNELS);
-    if (daqifi_settings_SaveADCCalSettings(
-            DaqifiSettings_FactAInCalParams,
-            pRuntimeAInChannels)) {
-        return SCPI_RES_OK;
-    } else {
-        return SCPI_RES_ERR;
-    }
+    return CalSaveCommon(context, DaqifiSettings_FactAInCalParams,
+                         "CONF:ADC:SAVEFcal");
 }
 
 /* #885: LOADcal / LOADFcal overwrite EVERY channel's CalM and CalB from NVM,
