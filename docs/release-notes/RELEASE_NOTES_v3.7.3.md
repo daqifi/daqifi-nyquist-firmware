@@ -152,5 +152,14 @@ No configuration migration. No SCPI command was removed or renamed; the only
 protocol-visible change is the new `__TRANSFER_ERROR__` sentinel on a failed
 `SD:GET`, which previously produced silence.
 
-As always, flashing via PICkit erases NVM (WiFi credentials and calibration).
-The in-app updater path preserves it.
+**Settings are reset by this update.** Flashing via PICkit erases NVM, as
+always — but so does the in-app updater. Verified end to end on hardware
+(2026-08-30): a device on v3.7.2 with `CONFigure:VOLTage:PRECision` saved as 7
+reported 0 after a successful in-app update to v3.7.3, and the reported firmware
+revision advanced correctly to 3.7.3 precisely because settings reload from
+factory defaults. Expect to re-enter WiFi credentials and re-apply any saved
+calibration or precision setting after updating, by either route.
+
+This is not new in v3.7.3 — it is how the update path already behaves — but an
+earlier draft of these notes claimed the in-app path preserved NVM, which the
+hardware test disproved.
