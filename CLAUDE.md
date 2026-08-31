@@ -599,9 +599,27 @@ CONFigure:VOLTage:LOAD               # Load from NVM
 | 6 | Volts, 6 decimal places | `1.220703` (NQ3 default, 18-bit AD7609) |
 | 7 | Volts, 7 decimal places | `1.2207031` (NQ2 default, 24-bit AD7173) |
 
-**Board-specific defaults** (`tBoardConfig.DefaultVoltagePrecision`): NQ1=4, NQ3=6, NQ2=7.
+**Board-specific defaults** (`tBoardConfig.DefaultVoltagePrecision`): NQ1=4, NQ3=6, NQ2=7 — but see the warning below: these are what the board config *declares*, not what a fresh device actually comes up with.
 
-**NVM persistence**: Stored in `TopLevelSettings.voltagePrecision`. Saved via `CONF:DATA:SAVE`, loaded at boot from NVM. Falls back to board config default on first boot.
+**NVM persistence**: Stored in `TopLevelSettings.voltagePrecision`. Saved via `CONF:DATA:SAVE`, loaded at boot from NVM.
+
+⚠️ **A fresh device boots at precision 0, NOT the board default** (#910). This
+file previously said "falls back to board config default on first boot"; that is
+wrong. On the first-boot path `daqifi_settings_SaveToNvm` runs at
+`app_freertos.c:574`, five lines *before* `InitBoardRuntimeConfig` at 579 — and
+it captures precision from the not-yet-initialised runtime config, overwriting
+the 4 that `LoadFactoryDeafult` just set with 0, in NVM and in place. The guard
+at line 609 is `if (savedPrec <= 10)`, and 0 satisfies it, so nothing catches it.
+Verified on hardware 2026-08-30/31: NQ1 reads `CONF:VOLT:PREC?` = 0 on v3.7.2 and
+v3.7.3, after a PICkit flash and after an in-app bootloader update.
+
+Practical consequences: **0 is the de facto shipped default** the desktop app and
+daqifi-core have always seen, so it is not safe to "fix" unilaterally (#910
+explains the coordination needed). And **any cap or ceiling measurement must pin
+precision explicitly** — 0 takes the `int_to_str` fast path while 4 formats a
+float per channel per sample, a first-order encoder cost, so an unpinned board
+silently measures the cheap path (`--precision` in
+`test_overnight_characterization.py`; see #832 / test-suite #233).
 
 **Implementation:** `firmware/src/services/csv_encoder.c`, `firmware/src/services/JSON_Encoder.c`, `firmware/src/services/SCPI/SCPIInterface.h` (SCPI_ResultVoltage helper), `firmware/src/services/SCPI/SCPIADC.c`, `firmware/src/services/SCPI/SCPIDAC.c`
 
