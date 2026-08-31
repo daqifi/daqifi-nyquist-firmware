@@ -1,7 +1,14 @@
 # DAQiFi Nyquist Firmware v3.7.3
 
-**Release date:** 2026-08-29
+**Release date:** 2026-08-31
 **Baseline:** v3.7.2
+
+> **Published as a PRE-RELEASE.** The Windows in-app updater only offers the
+> newest **non-prerelease** release carrying a `.hex`, so it will **not** offer
+> this build — v3.7.2 stays the version it advertises. That is deliberate: this
+> tag is for bench and beta validation. Flash it with a PICkit, or point the
+> updater at the attached `.hex` manually. It will be promoted to a full release
+> once soaked.
 
 A narrow, single-subsystem point release that restores **SD card file
 download**. Every fix here is in the SD / SCPI-storage / USB-reply path; nothing
