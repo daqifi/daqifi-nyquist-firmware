@@ -224,10 +224,12 @@ claim, taken **before** parsing:
 Every PR in this release was reviewed pre-tag. Nothing found was release-blocking; these
 are the items worth knowing about, all ticketed.
 
-**Coordinate with the desktop app.** The new end-of-listing marker (#794/#796) is filtered
-by `Daqifi.Core` **v1.7.0**, but daqifi-desktop still pins **1.4.0**. Until that pin moves,
-the desktop SD browser shows a `__END_OF_LIST__` entry
-(daqifi-desktop#835).
+**Legacy Windows app only — the SD browser shows a `__END_OF_LIST__` entry.** The new
+end-of-listing marker (#794/#796) is filtered by `Daqifi.Core` **v1.7.0**. The go-forward
+app, **daqifi-avalonia, already pins 1.7.0 and is unaffected**. The legacy WPF app
+(daqifi-desktop) still pins **1.4.0**, so until that pin moves its SD browser lists an
+extra `__END_OF_LIST__` entry, which a user can select but not usefully open. Cosmetic —
+nothing is corrupted (daqifi-desktop#835).
 
 **SD**
 - The stop-time (`UNMOUNT`) drain still discards a failed write uncounted — the surviving
