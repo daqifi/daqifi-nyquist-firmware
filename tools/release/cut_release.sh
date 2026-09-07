@@ -255,11 +255,27 @@ Bootloader-linked v${VER} hex built, VERIFIED, and packaged. Next (manual):
   1. Ensure the release notes exist:
        docs/release-notes/RELEASE_NOTES_v${VER}.md
 
-  2. Publish (irreversible — review first):
+  2. Publish (irreversible — review first). PICK ONE; they are not
+     interchangeable, and the flags are what decide who gets this build:
+
+     (a) FULL release — the in-app updater WILL offer it to customers:
        gh release create v${VER} --repo daqifi/daqifi-nyquist-firmware --target main \\
          --title "v${VER} — <headline>" \\
          --notes-file docs/release-notes/RELEASE_NOTES_v${VER}.md --latest \\
          "${ASSET_HEX}" "${ASSET_ZIP}"
+
+     (b) PRE-RELEASE / soak tier — kept OUT of the customer update path:
+       gh release create v${VER} --repo daqifi/daqifi-nyquist-firmware --target release/v${VER} \\
+         --prerelease \\
+         --title "v${VER} (pre-release) — <headline>" \\
+         --notes-file docs/release-notes/RELEASE_NOTES_v${VER}.md \\
+         "${ASSET_HEX}" "${ASSET_ZIP}"
+
+     Note --prerelease and --latest are mutually exclusive in intent: the
+     updater picks the newest non-draft, NON-prerelease release carrying a
+     .hex, so omitting --prerelease on a soak build silently ships it. Form
+     (a) also targets main, which requires the version bump to have merged
+     there; a soak tag usually targets its release branch (see #906).
 
   3. Verify the in-app updater will pick it up (newest non-draft/non-prerelease
      release that HAS a .hex asset):
