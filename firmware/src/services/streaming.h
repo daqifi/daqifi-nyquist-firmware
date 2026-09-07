@@ -555,6 +555,14 @@ void Streaming_SdInterfaceReleased(void);
 
 void Streaming_ResetSdFileHeader(void);
 
+/* #824: render the SD-only file header for the CURRENT encoding into `buf`,
+ * returning bytes written or 0. Callable from the SD task -- every input on
+ * all three encoding paths is integer or string, so it does not trip the
+ * pure-integer-task FPU rule (#369). Returns 0 rather than truncating when
+ * `size` is too small, so a partial header cannot be mistaken for a valid
+ * one. See the definition in streaming.c for the field-by-field audit. */
+size_t Streaming_GenerateSdFileHeader(uint8_t* buf, size_t size);
+
 /* #757: report SD bytes that were buffered for the next file but can never be
  * written, because the session was torn down while the rotation's open was in
  * flight. Counts into SdDroppedBytes so the loss is visible instead of silent. */

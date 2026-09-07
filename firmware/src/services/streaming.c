@@ -2377,6 +2377,60 @@ void Streaming_ResetSdFileHeader(void) {
     gSdFileWasReady = false;
 }
 
+/* #824: generate the SD-only file header into a caller-supplied buffer.
+ *
+ * Split out of the streaming task's inline block so the SD TASK can call it at
+ * file open and write the header with f_write directly, instead of the header
+ * being injected through the circular buffer. That inversion is the whole
+ * point: a rotation currently cannot keep the bytes the producer appended
+ * during the drain, because the next header is already armed to go through the
+ * ring and those bytes would land AHEAD of it. With the header written
+ * directly they no longer would.
+ *
+ * SAFE ON A PURE-INTEGER TASK. app_SDCardTask does not call
+ * portTASK_USES_FLOATING_POINT(), so per the project rule it must not read or
+ * cast double/float -- that is #369, where such a cast in the pure-integer
+ * streaming task produced 0x80000FE6 instead of 4095. All three paths were
+ * checked field by field:
+ *   CSV  -- TimerApi_FrequencyGet() (uint32_t), TSTimerIndex (integer), the
+ *           static string tables, and snprintf("%016llX") on the serial, which
+ *           is a 64-bit INTEGER
+ *   JSON -- the same two inputs
+ *   PB   -- the six tags of fields_sd_metadata resolve to uint32_t x3,
+ *           uint64_t, and two char arrays; Nanopb_Encode switches per tag, so
+ *           the message struct's float members are never read
+ *
+ * Returns bytes written, or 0. Zero is unambiguous rather than a truncation
+ * risk: generateHeader() returns 0 on ANY overflow instead of writing a short
+ * header, so a buffer that is too small cannot yield a partial header that
+ * looks valid.
+ */
+size_t Streaming_GenerateSdFileHeader(uint8_t* buf, size_t size) {
+    if (buf == NULL || size == 0u) return 0u;
+
+    StreamingRuntimeConfig* cfg =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    if (cfg == NULL) return 0u;
+
+    if (Streaming_EncodingIsCsv(cfg->Encoding)) {
+        /* Only once the encoder has already emitted the header to the other
+         * interfaces. On the FIRST file of a session the encoder includes it
+         * for every interface, so emitting it here too would duplicate it. */
+        if (!csv_IsHeaderSent()) return 0u;
+        return csv_GenerateHeaderToBuffer((char*)buf, size);
+    }
+    if (cfg->Encoding == Streaming_Json) {
+        if (!json_IsHeaderSent()) return 0u;
+        return json_GenerateHeaderToBuffer((char*)buf, size);
+    }
+    {
+        /* Protobuf: a standalone metadata message. */
+        tBoardData* pBoardData = BoardData_Get(BOARDDATA_ALL_DATA, true);
+        if (pBoardData == NULL) return 0u;
+        return Nanopb_Encode(pBoardData, &fields_sd_metadata, buf, size);
+    }
+}
+
 void Streaming_GetStats(StreamingStats* out) {
     if (out == NULL) return;
     taskENTER_CRITICAL();

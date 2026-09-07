@@ -10,7 +10,9 @@
 #include "sd_card_manager.h"
 #include "services/UsbCdc/UsbCdc.h"
 #include "Util/CRC32.h"   /* #306 */
-#include "services/streaming.h"  // For Streaming_ResetSdFileHeader on file rotation
+#include "services/streaming.h"  // Streaming_ResetSdFileHeader (first open),
+                                 // Streaming_GenerateSdFileHeader (#824, rotation),
+                                 // Streaming_ReportSdDiscard
 #include <stddef.h>
 #include "ff.h"   /* #810: FILINFO, for the layout assert below */
 
@@ -217,6 +219,7 @@ static volatile bool gTransferAbortRequested = false;
  * PIC32MZ; volatile is here because the two contexts differ, not to imply
  * read-modify-write safety. */
 static volatile bool gSdRotating = false;
+
 static int gFormatStatus = 0;  // 0=idle, 1=in progress, 2=success, -1=failed
 static uint32_t gFormatSectorsEstimate = 0;  // Estimated total sectors written during format
 
@@ -2111,7 +2114,13 @@ void sd_card_manager_ProcessState() {
                  * for. It spans one compare and one store; the file close and
                  * the log stay outside it. */
                 bool openAborted;
+                /* #824: remember whether this open is a ROTATION before the
+                 * flag is cleared below. The header for a rotated file is
+                 * written here, directly, and only for a rotation -- on a
+                 * first open the encoder still emits it for every interface. */
+                bool wasRotation;
                 taskENTER_CRITICAL();
+                wasRotation = gSdRotating;
                 openAborted = (gpSDCardSettings->mode
                                != SD_CARD_MANAGER_MODE_WRITE);
                 gSDCardData.currentProcessState = openAborted
@@ -2137,6 +2146,62 @@ void sd_card_manager_ProcessState() {
                     gSdRotating = false;
                 }
                 taskEXIT_CRITICAL();
+
+                /* #824: write the rotated file's header HERE, straight to the
+                 * file, before any buffered data can reach it.
+                 *
+                 * This is what lets a rotation stop discarding bytes. The old
+                 * shape armed the next header to travel through the circular
+                 * buffer, so anything the producer appended during the drain
+                 * was unsaveable: too new for the old file, and it would have
+                 * landed AHEAD of the header in the new one. Writing the
+                 * header directly removes that ordering constraint -- the
+                 * leftovers are simply the first data after it.
+                 *
+                 * Ordering: the file is open and WRITE_TO_FILE is set, but
+                 * this task owns the state machine, so no buffered byte is
+                 * written until this function returns and WRITE_TO_FILE runs.
+                 *
+                 * FPU: Streaming_GenerateSdFileHeader touches no double/float
+                 * on any encoding path -- see its definition. That matters
+                 * because this task is on the pure-integer list (#369).
+                 *
+                 * A zero return is not an error here: it is also how "the
+                 * encoder has not sent a header yet" is reported, which is the
+                 * FIRST-file case where the encoder emits it instead. */
+                if (wasRotation && !openAborted
+                        && gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
+                    /* Render into the SD write buffer rather than into new
+                     * storage. It is idle at this instant -- the pipeline
+                     * reset above set writeBufferLength = 0, and nothing
+                     * touches it until WRITE_TO_FILE runs, which cannot happen
+                     * until this function returns -- and it is already
+                     * allocated from the COHERENT pool, so this costs no
+                     * memory. A dedicated 512 B static did not fit: it failed
+                     * the link with "Not enough memory for stack (8208 bytes
+                     * needed, 7832 bytes available)", BSS being effectively
+                     * full on this build.
+                     *
+                     * Passing writeBufferSize makes the fit self-guarding: if
+                     * that buffer were ever smaller than the header, the
+                     * generator returns 0 rather than truncating. */
+                    size_t hdrLen = Streaming_GenerateSdFileHeader(
+                            gSDCardData.writeBuffer,
+                            gSDCardData.writeBufferSize);
+                    if (hdrLen > 0u) {
+                        size_t w = SYS_FS_FileWrite(gSDCardData.fileHandle,
+                                                    gSDCardData.writeBuffer,
+                                                    hdrLen);
+                        if (w != hdrLen) {
+                            /* Counted, not swallowed. A split file without its
+                             * header is not self-describing, and #825 exists
+                             * because losses on this path used to be silent. */
+                            Streaming_ReportSdDiscard(hdrLen);
+                            LOG_E("[SD] rotation header short write: %u of %u",
+                                  (unsigned)w, (unsigned)hdrLen);
+                        }
+                    }
+                }
 
                 if (openAborted) {
                     /* Deliberately do NOT close here. DEINIT -> UNMOUNT_DISK
@@ -2640,34 +2705,33 @@ void sd_card_manager_ProcessState() {
                      * blocks until the reset is done and then lands it in the
                      * emptied buffer, still at byte 0. */
                     SD_TakeMutexDebug(gSDCardData.wMutex, "rotation_open_window");
-                    Streaming_ResetSdFileHeader();
-                    /* #822: whatever the producer appended DURING the drain is
-                     * still here, and this reset is about to destroy it.
+                    /* #824: the bytes the producer appended DURING the drain
+                     * used to be destroyed here, and they no longer are.
                      *
-                     * It cannot be saved. It is newer than everything drained,
-                     * so it cannot go into the old file without reopening the
-                     * unbounded-drain livelock that #822 is; and it cannot be
-                     * carried into the new one, because ResetSdPbMetadata()
-                     * above has just armed the next header and these bytes
-                     * would land AHEAD of it.
+                     * #822/#823 could not save them, for one reason: this
+                     * spot armed the next header to travel through the
+                     * circular buffer (Streaming_ResetSdFileHeader), so
+                     * carrying the leftovers into the new file would have put
+                     * them AHEAD of that header. They could not go into the
+                     * old file either -- that is the unbounded drain #822 is.
+                     * So they were dropped, and counted, which was the honest
+                     * choice available at the time.
                      *
-                     * So it is dropped -- but it is COUNTED. The bounded drain
-                     * traded #822's visible overshoot for a discard, and an
-                     * uncounted discard would be the worse of the two: the
-                     * bytes were ACCEPTED by WriteToBuffer, so without this
-                     * they appear in neither file nor in SdDroppedBytes, and
-                     * the gap is invisible. Same reasoning, same accounting, as
-                     * sd_AbandonRotationWindow(). */
-                    size_t stranded =
-                            CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf);
-                    CircularBuf_Reset(&gSDCardData.wCirbuf);
+                     * The header is now written straight to the new file by
+                     * OPEN_FILE, so that ordering constraint is gone. Neither
+                     * the re-arm nor the reset happens here any more: the
+                     * leftovers stay in the buffer and become the first data
+                     * after the header, in order, in the new file.
+                     *
+                     * gSdFileWasReady deliberately stays TRUE. It is the
+                     * encoder's cue to inject a header through the ring; the
+                     * SD task writing one directly is the replacement, and
+                     * clearing it would produce two.
+                     *
+                     * The mutex still spans the flag store: the streaming task
+                     * reads gSdRotating through IsBufferAccepting(). */
                     gSdRotating = true;
                     xSemaphoreGive(gSDCardData.wMutex);
-                    if (stranded > 0u) {
-                        Streaming_ReportSdDiscard(stranded);
-                        LOG_D("[SD] rotation dropped %u byte(s) buffered during drain\r\n",
-                              (unsigned)stranded);
-                    }
                 }
 
                 // Flush and close current file
