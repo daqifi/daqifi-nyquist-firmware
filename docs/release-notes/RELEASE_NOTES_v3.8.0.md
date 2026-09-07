@@ -1,6 +1,10 @@
 # DAQiFi Nyquist Firmware v3.8.0
 
-**Release date:** 2026-08-31
+**Release date:** 2026-09-06
+**Status:** **PRE-RELEASE (soak tier).** The in-app updater only offers the
+newest non-draft, *non-prerelease* release carrying a `.hex`, so tagging this a
+pre-release deliberately keeps it out of the customer update path while it
+soaks. Devices on the updater continue to receive **v3.7.2**.
 **Baseline:** v3.7.2 (last full release). Supersedes the **v3.7.3 pre-release**,
 whose 15 cherry-picked SD/cap fixes are all included here.
 
@@ -219,6 +223,36 @@ claim, taken **before** parsing:
 
 ---
 
+## Validation
+
+Built at -O3 from `a0faba92` and validated as the **bootloader-linked** artifact — the
+image that actually ships, not the standalone bench build. `sha256` of the published
+`.hex` was checked back against the binary that ran on the board.
+
+- **Customer update path** — the release hex was loaded through the HID bootloader
+  (v1.4, `VID=0x04D8 PID=0x003C`), 52,028 records programmed with every record ACKed,
+  jumped to application, `*IDN?` answered. This path had never previously been exercised
+  (#764).
+- **252 MHz on real fielded fuses (#741/#742)** — a PICkit-flashed board cannot test the
+  raise: the application fuses `MUL_63`, so `DAQIFI_ApplyTargetPll` early-returns. The
+  bootloader fuses `MUL_50`, which is what customer devices latch. On the
+  bootloader-loaded image `CONF:CAP:JSON?` reports `pbclk_hz 84000000`,
+  `pbclk_built_hz 84000000`, `clock_ok true` — 84 MHz PBCLK on fuses that alone give
+  66.7 MHz, so SYSCLK is 252 MHz and the raise ran.
+- **Regression gate** — 71 PASS on the shipping image. Every non-PASS was re-run
+  standalone and none was a firmware defect (harness defects, card-state coupling
+  between tests, two manifest timeouts below actual runtime, and transient WiFi); tracked
+  in daqifi-python-test-suite#279.
+- **DIO terminal family (epic #664)** — validated on hardware: #15 18 checks, #16 24,
+  #653 17, #665 30, #666 2, #667 11, #668 22, #670 59, #700 5 — all 0 FAIL, with #666's
+  and #667's hardware subsets exercised against a DIO0+DIO3+DIO5 rig.
+- **Review** — every PR in the release was reviewed pre-tag across ten subsystem passes.
+  No blocker was found in any. Findings are ticketed and listed below.
+
+Not covered on this bench: the 2 V reference rig (#541 ADC value liveness), and the
+soak-tier work this pre-release exists for — rotation-integrity battery, kernel -O3 soak,
+CRC32-settings migration on pre-existing NVM, and the full at-cap matrix.
+
 ## Known issues and follow-ups
 
 Every PR in this release was reviewed pre-tag. Nothing found was release-blocking; these
@@ -236,9 +270,11 @@ nothing is corrupted (daqifi-desktop#835).
   twin of the rotation fix #838 (#912). Error path only.
 - `SYST:STOR:SD:MAXSize` issued mid-session truncates the active log and returns OK
   (#915). Pre-existing; use it before starting a session.
-- `SD:LISt? "<dir>"` (operand form) prints paths that `SD:GET` will not resolve — the
-  failure is a silent empty transfer (#914). Use `SD:DIRectory` to change directory
-  first; the no-operand form is unaffected.
+- `SD:LISt? "<dir>"` (operand form): review found that `SD:GET`/`DELete`/`CRC` resolve a
+  path against the *configured* directory, so a path printed by the operand form is not
+  expected to fetch directly, and the failure shape would be a silent empty transfer
+  (#914). **Established by code review, not yet reproduced on hardware.** The no-operand
+  form is unaffected, and `SD:DIRectory` followed by `SD:GET` is the sanctioned flow.
 
 **DIO terminal**
 - `SYST:COMM:SPI:TRANsfer?` busy-spins at the SCPI task's priority with no yield (#913).
