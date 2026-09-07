@@ -255,8 +255,11 @@ CRC32-settings migration on pre-existing NVM, and the full at-cap matrix.
 
 ## Known issues and follow-ups
 
-Every PR in this release was reviewed pre-tag. Nothing found was release-blocking; these
-are the items worth knowing about, all ticketed.
+Every PR in this release was reviewed pre-tag. Nothing found was a **regression
+introduced by this release**, which is the sense in which nothing was release-blocking.
+Two of the items below are **pre-existing data-loss/corruption bugs reachable from
+ordinary SCPI commands** — they are not new in v3.8.0, but do not read them as cosmetic.
+All are ticketed.
 
 **Legacy Windows app only — the SD browser shows a `__END_OF_LIST__` entry.** The new
 end-of-listing marker (#794/#796) is filtered by `Daqifi.Core` **v1.7.0**. The go-forward
@@ -268,8 +271,12 @@ nothing is corrupted (daqifi-desktop#835).
 **SD**
 - The stop-time (`UNMOUNT`) drain still discards a failed write uncounted — the surviving
   twin of the rotation fix #838 (#912). Error path only.
-- `SYST:STOR:SD:MAXSize` issued mid-session truncates the active log and returns OK
-  (#915). Pre-existing; use it before starting a session.
+- **DATA LOSS — `SYST:STOR:SD:MAXSize` issued mid-session destroys the active log.** It
+  calls `sd_card_manager_UpdateSettings()` with the manager still in WRITE mode, which
+  forces the state machine through DEINIT; the next `OPEN_FILE` reopens with
+  `SYS_FS_FILE_OPEN_WRITE_PLUS` and **truncates** the file. The command returns OK.
+  Pre-existing (no commit in this release touches it) — but set `MAXSize` **before**
+  starting a session, never during (#915).
 - `SD:LISt? "<dir>"` (operand form): review found that `SD:GET`/`DELete`/`CRC` resolve a
   path against the *configured* directory, so a path printed by the operand form is not
   expected to fetch directly, and the failure shape would be a silent empty transfer
@@ -282,8 +289,12 @@ nothing is corrupted (daqifi-desktop#835).
   `QueueDroppedSamples`.
 
 **Streaming**
-- `DIO:PORt:ENAble` is not guarded against mid-session changes, so toggling it mid-stream
-  changes the CSV column count after the header has been sent.
+- **OUTPUT CORRUPTION — `DIO:PORt:ENAble` toggled mid-stream desynchronises CSV framing.**
+  It has no streaming guard, and `csv_Encode()` reads the flag live, so enabling or
+  disabling DIO after the header has been sent adds or removes the `dio_ts,dio_val`
+  columns from subsequent rows while the header still describes the old shape. Rows then
+  no longer match their header. Pre-existing — set the DIO enable state before starting a
+  stream.
 - The JSON transport caps (#529) were fitted at the precision a device actually boots with
   (**0** — see #910, where the declared default of 4 is never applied). Explicitly raising
   precision to 4+ costs roughly 10% more encoder time, against a fit margin of about the
