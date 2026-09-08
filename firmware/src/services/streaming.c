@@ -741,7 +741,8 @@ void Streaming_CountActiveChannels(uint16_t* out_type1Count,
     if (out_hasAD7609   != NULL) *out_hasAD7609   = has7609;
 }
 
-uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
+uint32_t Streaming_ComputeMaxFreqTermsForConfigIface(StreamingInterface iface,
+                                                     StreamingCapTerms* outTerms) {
     uint16_t type1 = 0, total = 0;
     Streaming_CountActiveChannels(&type1, &total, NULL);
 
@@ -772,6 +773,18 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
      * admitted computation true of the session that actually starts. */
     StreamingEncoding enc = sc->Encoding;
 
+    /* #921: each term is ALSO recorded so the capability document can publish
+     * which one binds. They are recorded where they are already computed --
+     * this function is not re-entered and Encoding is not re-read -- so a
+     * published term always describes the same computation as the returned
+     * composite. Terms that do not apply to this configuration stay 0; see the
+     * StreamingCapTerms doc comment for why 0 is unambiguous (no producer can
+     * return it). The min() arithmetic below is unchanged. */
+    uint32_t termAdc      = 0u;
+    uint32_t termScan     = 0u;
+    uint32_t termSd       = 0u;
+    uint32_t termTransport;
+
     uint32_t maxFreq;
     if (bc != NULL && bc->BoardVariant == 1u && total > 0u) {
         /* NQ1 (#557): freeze-aware additive ADC/scan cap replaces the
@@ -785,6 +798,7 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
                 (enc == Streaming_ProtoBuffer) ? 1u : 0u,
                 (enc == Streaming_Json) ? 1u : 0u,
                 (uint32_t)sc->VoltagePrecision);
+        termAdc = maxFreq;   /* #921: the term, captured before any min() */
         /* #563: the additive model was fit at the default SAMC. It replaces the
          * EOS-rate/event-rate caps, but the SAMC/divider-dependent scan-busy
          * limit (#539) must still apply so a non-default SAMC can't push the cap
@@ -792,6 +806,7 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
          * (not full ScanMaxFreq, whose EOS/event caps the additive model supersedes). */
         if (scanCount > 0) {
             uint32_t hwScanMax = MC12b_HardwareScanMaxFreq(scanCount);
+            termScan = hwScanMax;   /* #921 */
             if (hwScanMax < maxFreq) maxFreq = hwScanMax;
         }
         /* #574: SD-PB writer-vs-scan cap. The SD writer task loses CPU to the
@@ -802,6 +817,7 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
             uint32_t sdMax = Streaming_SdAdditiveCap_NQ1(
                     type1, userT2, nMon,
                     (enc == Streaming_ProtoBuffer) ? 1u : 0u);
+            termSd = sdMax;   /* #921 */
             if (sdMax < maxFreq) maxFreq = sdMax;
         }
     } else {
@@ -809,10 +825,12 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
          * conservative formula (#541). Mirror ComputeMaxFreq's ISR_MAX-for-0
          * behavior so disabling the last channel doesn't cap to 0. */
         maxFreq = Streaming_ComputeMaxFreq(type1, total);
+        termAdc = maxFreq;   /* #921: legacy envelope occupies the ADC slot here */
         /* #541 D-C shared-scan rate bound (documented-undefined retrigger,
          * FRM §22.3.2 / #539). N_active==0 arms no scan -> no bound. */
         if (scanCount > 0) {
             uint32_t scanMax = MC12b_ScanMaxFreq(scanCount, userT2);
+            termScan = scanMax;   /* #921 */
             if (scanMax < maxFreq) maxFreq = scanMax;
         }
     }
@@ -826,14 +844,34 @@ uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
     uint32_t transportMax = Streaming_TransportMaxFreq(
             iface, enc, total,
             (bc != NULL && bc->BoardVariant == 1u) ? 1u : 0u);
+    termTransport = transportMax;   /* #921 */
     if (transportMax < maxFreq) maxFreq = transportMax;
+
+    /* #921: single write point, on the only return path, so outTerms is never
+     * left partially filled. maxFreq above is folded from exactly these values,
+     * which is what makes min(non-zero terms) == the returned composite an
+     * identity rather than a coincidence that could drift. */
+    if (outTerms != NULL) {
+        outTerms->adcAdditiveHz = termAdc;
+        outTerms->transportHz   = termTransport;
+        outTerms->scanBoundHz   = termScan;
+        outTerms->sdAdditiveHz  = termSd;
+    }
     return maxFreq;
 }
 
+uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface) {
+    return Streaming_ComputeMaxFreqTermsForConfigIface(iface, NULL);
+}
+
 uint32_t Streaming_ComputeMaxFreqForConfig(void) {
+    return Streaming_ComputeMaxFreqTermsForConfig(NULL);
+}
+
+uint32_t Streaming_ComputeMaxFreqTermsForConfig(StreamingCapTerms* outTerms) {
     StreamingRuntimeConfig* sc =
         BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    return Streaming_ComputeMaxFreqForConfigIface(sc->ActiveInterface);
+    return Streaming_ComputeMaxFreqTermsForConfigIface(sc->ActiveInterface, outTerms);
 }
 
 /**

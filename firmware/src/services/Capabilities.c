@@ -122,7 +122,18 @@ void Capabilities_GetStreamingSummary(CapabilitiesStreamingSummary* out) {
      * per-format TRANSPORT cap, not just the channel-count/ADC terms. Without
      * this the capability query would advertise a higher rate than the device
      * delivers (clients pre-validate against current_max_rate_hz). */
-    out->maxFreqHz = (total > 0) ? Streaming_ComputeMaxFreqForConfig() : 0;
+    /* #921: take the terms from the SAME call that yields maxFreqHz. A second
+     * call would re-read Encoding, which is the desync the single read inside
+     * Streaming_ComputeMaxFreqTermsForConfigIface exists to prevent. memset
+     * above already left every term 0, which is the correct report for the
+     * no-channel case (no valid rate, so no binding term). */
+    StreamingCapTerms terms;
+    memset(&terms, 0, sizeof(terms));
+    out->maxFreqHz = (total > 0) ? Streaming_ComputeMaxFreqTermsForConfig(&terms) : 0;
+    out->capAdcAdditiveHz = terms.adcAdditiveHz;
+    out->capTransportHz   = terms.transportHz;
+    out->capScanBoundHz   = terms.scanBoundHz;
+    out->capSdAdditiveHz  = terms.sdAdditiveHz;
     /* Qodo #595: advertise the variant-appropriate ISR ceiling. NQ1's basis
      * supports 22 kHz (2026-07-05 refit); NQ2/NQ3 remain characterized only
      * to the legacy 16 kHz and their legacy formula still enforces it -

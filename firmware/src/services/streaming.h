@@ -581,6 +581,51 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
 }
 
 /**
+ * The individual terms the streaming cap is the min() of (#921).
+ *
+ * The enforced cap is a min() over several independently-derived bounds, but
+ * only the composite was ever published, so a host could not tell WHICH term
+ * was binding and therefore could not tell how far it might safely escalate.
+ * These fields expose each term so that question is answerable from the device
+ * instead of re-derived by hand from this header.
+ *
+ * ZERO MEANS "NOT APPLICABLE TO THIS CONFIGURATION", never "a cap of 0 Hz".
+ * That is unambiguous rather than conventional: every producer of these values
+ * is floored at 1 Hz on its own return path -- Streaming_AdcAdditiveCap_NQ1,
+ * Streaming_SdAdditiveCap_NQ1, Streaming_TransportMaxFreq and
+ * Streaming_ComputeMaxFreq all end in `(hz == 0u) ? 1u : hz` (or `maxFreq == 0
+ * -> 1`), and MC12b_HardwareScanMaxFreq / MC12b_ScanMaxFreq do the same for
+ * every nActive > 0. So a genuine term can never BE 0, and a consumer may take
+ * min() over the non-zero fields without a separate applicability flag.
+ *
+ * INVARIANT: min(non-zero terms) == the composite this struct was filled
+ * alongside. It holds by construction, not by agreement -- the composite is
+ * folded from these very values inside one call, with ONE read of Encoding for
+ * all of them (see Streaming_ComputeMaxFreqTermsForConfigIface). Filling this
+ * struct from a SECOND computation would reintroduce exactly the desync hazard
+ * that single read exists to prevent.
+ */
+typedef struct {
+    /** ADC-class term. On NQ1 this is Streaming_AdcAdditiveCap_NQ1 (the
+     *  freeze-aware additive model). On NQ2/NQ3, which have no MODULE7 scan and
+     *  still use the legacy envelope, it carries Streaming_ComputeMaxFreq
+     *  instead -- the same POSITION in the min(), a different law. Never 0. */
+    uint32_t adcAdditiveHz;
+    /** Per-interface, per-format transport term (Streaming_TransportMaxFreq).
+     *  Always applicable, so never 0. */
+    uint32_t transportHz;
+    /** Scan-retrigger bound, 0 when no MODULE7 scan is armed. NQ1:
+     *  MC12b_HardwareScanMaxFreq (the FRM-documented #539 limit). NQ2/NQ3:
+     *  MC12b_ScanMaxFreq (legacy, additionally carrying the placeholder
+     *  EOS/event terms). */
+    uint32_t scanBoundHz;
+    /** SD writer-vs-scan term (Streaming_SdAdditiveCap_NQ1, #574). Non-zero
+     *  only on NQ1 with ActiveInterface == SD; 0 everywhere else, including
+     *  UsbAndSd, which is uncharacterized and deliberately not bounded here. */
+    uint32_t sdAdditiveHz;
+} StreamingCapTerms;
+
+/**
  * Max safe streaming frequency for the CURRENTLY configured interface + format
  * + enabled channels.  Reads ActiveInterface / Encoding from the streaming
  * runtime config and the enabled-channel counts, then returns
@@ -594,12 +639,41 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
 uint32_t Streaming_ComputeMaxFreqForConfig(void);
 
 /**
+ * Same as Streaming_ComputeMaxFreqForConfig() but also reports the individual
+ * terms the returned cap is the min() of (#921).
+ *
+ * @param[out] outTerms  May be NULL, in which case this is exactly
+ *                       Streaming_ComputeMaxFreqForConfig().
+ * @return The composite cap -- identical to Streaming_ComputeMaxFreqForConfig()
+ *         for the same configuration.
+ */
+uint32_t Streaming_ComputeMaxFreqTermsForConfig(StreamingCapTerms* outTerms);
+
+/**
  * Same as Streaming_ComputeMaxFreqForConfig() but for an explicitly-supplied
  * interface instead of the live ActiveInterface — lets the capabilities query
  * advertise the cap for a client's detected interface without mutating the
  * shared runtime config (#524). Encoding + channel counts still come from config.
  */
 uint32_t Streaming_ComputeMaxFreqForConfigIface(StreamingInterface iface);
+
+/**
+ * Same as Streaming_ComputeMaxFreqForConfigIface() but also reports the
+ * individual terms the returned cap is the min() of (#921).
+ *
+ * This is the REAL implementation; the three plain-cap entry points above are
+ * thin wrappers that pass NULL. Keeping one body is the point: the terms and
+ * the composite then come from one traversal and one read of Encoding, so a
+ * published term cannot describe a different computation than the cap the
+ * device actually enforces.
+ *
+ * @param[in]  iface     Interface to compute for (not written back to config).
+ * @param[out] outTerms  May be NULL. When non-NULL it is fully written on every
+ *                       return path -- fields that do not apply are set to 0.
+ * @return The composite cap in Hz.
+ */
+uint32_t Streaming_ComputeMaxFreqTermsForConfigIface(StreamingInterface iface,
+                                                     StreamingCapTerms* outTerms);
 
 /**
  * Count enabled public ADC channels from current board + runtime config.
