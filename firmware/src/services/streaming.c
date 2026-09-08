@@ -856,6 +856,10 @@ uint32_t Streaming_ComputeMaxFreqTermsForConfigIface(StreamingInterface iface,
         outTerms->transportHz   = termTransport;
         outTerms->scanBoundHz   = termScan;
         outTerms->sdAdditiveHz  = termSd;
+        /* The count THIS computation used, so a caller needing the
+         * zero-channel case does not have to take a second one that can
+         * disagree with it. */
+        outTerms->totalChannels = total;
     }
     return maxFreq;
 }

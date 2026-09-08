@@ -7464,11 +7464,26 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
          * interfaces have different transport (or SD-additive) coefficients. */
         StreamingCapTerms terms;
         memset(&terms, 0, sizeof(terms));
-        st.maxFreqHz = Streaming_ComputeMaxFreqTermsForConfigIface(effIf, &terms);
-        st.capAdcAdditiveHz = terms.adcAdditiveHz;
-        st.capTransportHz   = terms.transportHz;
-        st.capScanBoundHz   = terms.scanBoundHz;
-        st.capSdAdditiveHz  = terms.sdAdditiveHz;
+        uint32_t ifaceMaxHz = Streaming_ComputeMaxFreqTermsForConfigIface(effIf, &terms);
+        /* Gate on the count THIS recompute used. st.maxFreqHz > 0 above came
+         * from an earlier count inside Capabilities_GetStreamingSummary; the
+         * other SCPI transport can disable the last channel in between, and the
+         * zero-channel branch of the cap deliberately returns ISR_MAX rather
+         * than 0. Without this check the blob would advertise a healthy rate,
+         * and non-zero terms, for a device with no inputs. */
+        if (terms.totalChannels > 0) {
+            st.maxFreqHz        = ifaceMaxHz;
+            st.capAdcAdditiveHz = terms.adcAdditiveHz;
+            st.capTransportHz   = terms.transportHz;
+            st.capScanBoundHz   = terms.scanBoundHz;
+            st.capSdAdditiveHz  = terms.sdAdditiveHz;
+        } else {
+            st.maxFreqHz        = 0;
+            st.capAdcAdditiveHz = 0;
+            st.capTransportHz   = 0;
+            st.capScanBoundHz   = 0;
+            st.capSdAdditiveHz  = 0;
+        }
     }
     Capabilities_GetStorageSummary(&stor);
     Capabilities_GetPowerSummary(&pw);

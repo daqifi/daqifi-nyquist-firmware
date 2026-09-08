@@ -623,6 +623,22 @@ typedef struct {
      *  only on NQ1 with ActiveInterface == SD; 0 everywhere else, including
      *  UsbAndSd, which is uncharacterized and deliberately not bounded here. */
     uint32_t sdAdditiveHz;
+    /** Enabled public channel count THIS computation used.
+     *
+     *  Reported so a caller that must treat the zero-channel case specially can
+     *  decide from the same count the terms were computed with, instead of
+     *  taking its own. Those are not interchangeable: channel enables are
+     *  runtime state written by SCPI on either transport (USB task at priority
+     *  7, WiFi task at 2), so a caller's separate count can disagree with this
+     *  one, and the zero-channel branch of the cap is DELIBERATELY non-zero
+     *  (Streaming_ComputeMaxFreq mirrors ISR_MAX for 0 so disabling the last
+     *  channel does not cap a running session to 0). A caller that counted
+     *  "1 channel", raced a disable, and then published this computation's
+     *  numbers would report a healthy rate for a device with no inputs.
+     *
+     *  Not emitted in the capability JSON — it describes the computation, not
+     *  the device's advertised capability. */
+    uint16_t totalChannels;
 } StreamingCapTerms;
 
 /**
