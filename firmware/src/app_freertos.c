@@ -359,6 +359,13 @@ static void app_WifiTask(void* p_arg) {
     }
 }
 
+/* DAQiFi SDSPI extensions. Declared here rather than in drv_sdspi.h because
+ * that header is vendor-generated; keeping the declaration on the consumer
+ * side is how DRV_SDSPI_ReleaseBus has been wired since #WINC-recovery. One
+ * declaration for the file, so the two consumers below cannot drift apart. */
+extern void DRV_SDSPI_ReleaseBus(SYS_MODULE_OBJ object);
+extern bool DRV_SDSPI_HoldsBus(SYS_MODULE_OBJ object);
+
 /**
  * Gracefully shut down SD card operations from within the SD task context.
  * Drives the state machine through DEINIT -> UNMOUNT_DISK to drain buffers,
@@ -376,8 +383,6 @@ static bool app_SDCard_GracefulShutdown(uint32_t timeoutMs, const char* reason) 
     // the shared SPI0 bus's exclusive lock — a mid-cycle park used to leave the
     // lock held forever, silently rejecting every WINC transfer (WiFi FW
     // version 0.0.0, bogus chip IDs, NACKed WINC flash updates) until reboot.
-    extern void DRV_SDSPI_ReleaseBus(SYS_MODULE_OBJ object);
-
     if (sd_card_manager_IsIdle()) {
         DRV_SDSPI_ReleaseBus(sysObj.drvSDSPI0);
         return true;
@@ -413,6 +418,50 @@ static bool app_SDCard_GracefulShutdown(uint32_t timeoutMs, const char* reason) 
     return true;
 }
 
+/* #925: how long the SDSPI client may be observed holding the shared SPI4
+ * exclusive lock, with no SD operation armed, before the SD task treats it as
+ * leaked and force-unwinds it.
+ *
+ * Chosen to sit above every hold the driver can legitimately take, not tuned.
+ * Each individual transfer is bounded by the #567 bus-completion watchdog
+ * (DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS, 500 ms in drv_sdspi_local.h). The longest
+ * single lock-to-unlock span in the driver is media initialisation
+ * (DRV_SDSPI_INIT_INCR_CLK_SPD_STAT acquires, DRV_SDSPI_INIT_PROCESS_CID
+ * releases) which issues on the order of ten commands, so ~5 s is its
+ * worst-case even if every one of them times out. 10 s is comfortably past
+ * that. Erring long is nearly free: a leaked lock is held forever, so the
+ * threshold only sets recovery LATENCY, whereas erring short would abort real
+ * work. */
+#define SD_BUS_LEAK_DWELL_MS  (10000U)
+
+/* #925: how often the watchdog SAMPLES the lock state. The SD task spins at
+ * SD_CARD_MANAGER_TASK_DELAY_MS (1 ms), and reading the lock takes a short
+ * critical section, which briefly masks the streaming timer ISR. Sampling at
+ * 1 kHz would spend 10,000 of those per dwell to answer a question 10 Hz
+ * answers identically -- the thing being sampled is a condition that must
+ * persist for ten seconds to mean anything. */
+#define SD_BUS_LEAK_POLL_MS   (100U)
+
+/* #925: force-unwinds performed by the leak watchdog below, since boot.
+ *
+ * Deliberately not a file-scope initialiser alone: per #409, .bss is not
+ * zeroed by crt0 on an MCLR/IPE-flash reset, so this is also assigned in
+ * app_SDCardTask's prologue -- the one task that writes it -- before the loop
+ * that can increment it. Read by SYSTem:DIAGnostic:SPIBus:STATs? on an SCPI
+ * task; a 32-bit aligned load/store is atomic on PIC32MZ, and the increment is
+ * a read-modify-write with exactly one writer (this task), so no critical
+ * section is needed -- volatile only stops the compiler caching it across the
+ * two contexts. */
+static volatile uint32_t gSdBusRecoveries = 0;
+
+uint32_t app_SDCard_BusRecoveryCount(void) {
+    return gSdBusRecoveries;
+}
+
+bool app_SDCard_HoldsSpiBus(void) {
+    return DRV_SDSPI_HoldsBus(sysObj.drvSDSPI0);
+}
+
 /**
  * Check if WiFi needs the SPI bus (streaming to WiFi or firmware update).
  */
@@ -444,9 +493,20 @@ static void app_SDCardTask(void* p_arg) {
         APP_SD_STATE_SUSPENDED = 2,
     };
 
+    /* #409: before anything else in the task, so the window in which an SCPI
+     * read could see an unzeroed .bss value is as short as task creation. */
+    gSdBusRecoveries = 0;
+
     sd_card_manager_Init(&gpBoardRuntimeConfig->sdCardConfig);
     const tPowerData* pPowerState = BoardData_Get(BOARDDATA_POWER_DATA, 0);
     uint8_t state = APP_SD_STATE_WAIT_POWER_UP;
+
+    /* #925 leak-watchdog state. Task locals, not file statics: there is exactly
+     * one instance of this task, nothing outside it reads them, and a local is
+     * immune to the #409 uninitialised-.bss trap by construction. */
+    bool busHoldTiming = false;
+    TickType_t busHoldSince = 0;
+    TickType_t busPolledAt = 0;
 
     while (1) {
         /* #589: publish the suspension so the SD SCPI callbacks can refuse an
@@ -503,6 +563,73 @@ static void app_SDCardTask(void* p_arg) {
                 DRV_SDSPI_Tasks(sysObj.drvSDSPI0);
                 sd_card_manager_ProcessState();
                 SYS_FS_Tasks();
+
+                /* #925: shared-SPI4 exclusive-lock leak watchdog.
+                 *
+                 * app_SDCard_GracefulShutdown() unwinds the lock, but its only
+                 * callers are the power-drop and WiFi-ownership branches above.
+                 * An ordinary SD session that starts and stops with WiFi off
+                 * therefore has NO path that unwinds it, and if the SDSPI FSM
+                 * parks holding the lock (the ratchet documented at
+                 * DRV_SDSPI_CMD_DETECT_CHK_FOR_CARD, where a rejected write
+                 * re-enters the state and re-acquires) every later transfer by
+                 * the other client on the bus is rejected until a power cycle.
+                 * #589 gave the WiFi/power teardown that net; this is its twin.
+                 *
+                 * Written as a dwell rather than as a session-end edge, and
+                 * both terms are load-bearing:
+                 *
+                 *  - sd_card_manager_IsIdle() -- no SD operation is armed, so
+                 *    there is nothing the caller asked for that this could
+                 *    abort.
+                 *  - the dwell -- this is what separates a leak from a
+                 *    legitimate hold, and FSM state cannot: media init holds
+                 *    the lock with sdState == TASK_STATE_IDLE for its whole
+                 *    span (see DRV_SDSPI_HoldsBus). Every legitimate hold is
+                 *    bounded by the #567 transfer watchdog; a leaked one is
+                 *    not, so any hold that survives SD_BUS_LEAK_DWELL_MS with
+                 *    nothing armed is leaked.
+                 *
+                 * A session-end edge would also be WRONG rather than merely
+                 * different: DRV_SDSPI_ReleaseBus resets the detect FSM, which
+                 * unmounts a mounted card (again, see DRV_SDSPI_HoldsBus), so
+                 * calling it unconditionally at every stop would remount the
+                 * card after every healthy logging session.
+                 *
+                 * The timer is reset, not merely not-advanced, whenever either
+                 * term goes false -- a hold that is released and legitimately
+                 * re-taken must start its dwell again, or a busy bus would
+                 * accumulate its way to a spurious release.
+                 *
+                 * All of it is behind an SD_BUS_LEAK_POLL_MS sampling gate, so
+                 * the ~1 ms task loop does not pay for a lock read it cannot
+                 * use. Both deadline comparisons use the unsigned-difference
+                 * form, which is correct across the ~49-day TickType_t wrap. */
+                const TickType_t nowTicks = xTaskGetTickCount();
+                if ((TickType_t)(nowTicks - busPolledAt) >=
+                        pdMS_TO_TICKS(SD_BUS_LEAK_POLL_MS)) {
+                    busPolledAt = nowTicks;
+                    if (!sd_card_manager_IsIdle() ||
+                        !app_SDCard_HoldsSpiBus()) {
+                        busHoldTiming = false;
+                    } else if (!busHoldTiming) {
+                        busHoldTiming = true;
+                        busHoldSince = nowTicks;
+                    } else if ((TickType_t)(nowTicks - busHoldSince) >=
+                               pdMS_TO_TICKS(SD_BUS_LEAK_DWELL_MS)) {
+                        /* Static string: this task has 1024 words of stack
+                         * and a profiled 468-word peak, and a format-arg
+                         * LOG_* runs vsnprintf on it. ReleaseBus logs the
+                         * unwind depth itself, which is the number worth
+                         * having. */
+                        LOG_E("[SD] SPI bus held with nothing armed - "
+                              "unwinding leaked exclusive lock (#925)");
+                        DRV_SDSPI_ReleaseBus(sysObj.drvSDSPI0);
+                        gSdBusRecoveries++;
+                        busHoldTiming = false;
+                    }
+                }
+
                 vTaskDelay(SD_CARD_MANAGER_TASK_DELAY_MS / portTICK_PERIOD_MS);
                 break;
             }

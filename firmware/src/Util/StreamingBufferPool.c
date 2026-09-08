@@ -20,8 +20,15 @@
  * memory for stack (8208 bytes needed, 7816 available)" — and the cost is
  * nil in practice, not merely small: at 16 channels this is ~7 slots off a
  * PARTITIONED depth that already exceeds the usable one by ~500, because the
- * FreeRTOS sample queue is what clamps it (#828). */
-#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U)
+ * FreeRTOS sample queue is what clamps it (#828).
+ *
+ * Trimmed a further 512 B (#925) to pay for app_freertos.c's gSdBusRecoveries,
+ * the SPI-bus leak-watchdog recovery counter. Same mechanism again -- main at
+ * 78a0ab07 links with EIGHT bytes of slack ("8208 bytes needed, 8200
+ * available"), so a single uint32_t of new BSS does not fit and any future
+ * static must come with its own payment. Cost as above: ~7 more slots off a
+ * partitioned capacity that is not the binding constraint. */
+#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
 /* The overcommit fallback below carves these four minimums and expects the

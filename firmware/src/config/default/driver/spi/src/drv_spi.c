@@ -94,6 +94,69 @@ void DRV_SPI_GetRejectCounters(uint32_t *stale, uint32_t *exclusive,
     if (queueFull != NULL) { *queueFull = gSpiRejQueueFull; }
 }
 
+/* DAQiFi addition (#925): read-only view of one instance's exclusive-use lock.
+ *
+ * The reject counters above only move when SOMEBODY ELSE attempts a transfer
+ * while the lock is held. That makes them useless as a leak detector on their
+ * own: with the WINC quiet, a permanently-held lock produces a reject count of
+ * exactly zero -- indistinguishable from a healthy bus -- and with the WINC
+ * busy they climb during ordinary, correctly-released contention (the
+ * reject/retry dance test_589 documents). This function reports the state
+ * itself rather than the trace it leaves in another client.
+ *
+ * The three fields are read under a critical section, not because any one of
+ * them is a torn read (all are aligned <=32-bit and atomic on PIC32MZ), but
+ * because a caller acting on the TRIPLE needs the three to describe the same
+ * instant: DRV_SPI_ExclusiveUse clears the handle and the mode flag in
+ * sequence, so an unguarded read can see mode=true with the handle already
+ * DRV_HANDLE_INVALID. Callers include a force-release decision, which must not
+ * fire on a half-torn snapshot. O(1) field copy, per the project's rule on
+ * keeping critical sections short. */
+void DRV_SPI_GetExclusiveState(const SYS_MODULE_INDEX drvIndex,
+                               bool *inExclusive, uint32_t *holderHandle,
+                               uint32_t *depth)
+{
+    const DRV_SPI_OBJ* dObj;
+    bool     mode   = false;
+    uint32_t holder = (uint32_t)DRV_HANDLE_INVALID;
+    uint32_t cntr   = 0U;
+
+    if (drvIndex < DRV_SPI_INSTANCES_NUMBER)
+    {
+        dObj = (const DRV_SPI_OBJ*)&gDrvSPIObj[drvIndex];
+        taskENTER_CRITICAL();
+        mode   = dObj->drvInExclusiveMode;
+        holder = (uint32_t)dObj->exclusiveUseClientHandle;
+        cntr   = dObj->exclusiveUseCntr;
+        taskEXIT_CRITICAL();
+    }
+
+    if (inExclusive != NULL)  { *inExclusive  = mode; }
+    if (holderHandle != NULL) { *holderHandle = holder; }
+    if (depth != NULL)        { *depth        = cntr; }
+}
+
+static DRV_SPI_CLIENT_OBJ * lDRV_SPI_DriverHandleValidate(DRV_HANDLE handle);
+
+/* DAQiFi addition (#925): true iff `handle` is the client currently holding
+ * its own instance's exclusive lock. The instance index is decoded from the
+ * handle by the same rule lDRV_SPI_MAKE_HANDLE builds it with, so no caller
+ * outside this file has to know the encoding. */
+bool DRV_SPI_IsExclusiveHolder(const DRV_HANDLE handle)
+{
+    const DRV_SPI_CLIENT_OBJ* clientObj = lDRV_SPI_DriverHandleValidate(handle);
+    bool     inExclusive = false;
+    uint32_t holder      = (uint32_t)DRV_HANDLE_INVALID;
+
+    if (clientObj == NULL)
+    {
+        return false;
+    }
+
+    DRV_SPI_GetExclusiveState(clientObj->drvIndex, &inExclusive, &holder, NULL);
+    return inExclusive && (holder == (uint32_t)handle);
+}
+
 
 // *****************************************************************************
 // *****************************************************************************

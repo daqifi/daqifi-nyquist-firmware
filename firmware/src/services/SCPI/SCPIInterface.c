@@ -7856,7 +7856,14 @@ static scpi_result_t SCPI_DiagADCGet(scpi_t * context)
     size_t* pAInLatestSize = BoardData_Get(BOARDDATA_AIN_LATEST_SIZE, 0);
     size_t sampleCount = pAInLatestSize ? *pAInLatestSize : 0;
 
-    char out[192];
+    /* 224, not 192: the worst case is 193 characters plus the NUL, which
+     * 192 truncates. Field-by-field, with every counter at its 10-digit
+     * maximum -- RejStale 20, RejExclusive 24, RejLock 19, RejQueueFull 24,
+     * ExclusiveHeld 16, ExclusiveDepth 26, ExclusiveHolder 25, SdHoldsBus 13,
+     * SdBusRecoveries 26 (no trailing comma). Recompute this if a field is
+     * added. Stays a stack local rather than the shared response buffer
+     * because it is under the 256 B threshold that rule applies to. */
+    char out[224];
     int len = 0;
 
     for (size_t i = 0; i < sampleCount && len < (int)sizeof(out); i++) {
@@ -7903,11 +7910,31 @@ static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
                                           uint32_t *lockFail, uint32_t *queueFull);
     uint32_t st, ex, lk, qf;
     DRV_SPI_GetRejectCounters(&st, &ex, &lk, &qf);
-    char out[96];
+
+    /* #925: the four Rej* counters above are a SHADOW of the bus state, not the
+     * state. They move only when some other client attempts a transfer while
+     * the lock is held, so they read exactly 0 for a lock that has been leaked
+     * but not yet bumped into, and they climb during ordinary, correctly
+     * released contention (the reject/retry dance test_589 documents). Neither
+     * direction can be asserted on. The five fields below report the lock
+     * itself, so a client can ask "is the shared bus stuck?" and get an answer
+     * that does not depend on somebody else's traffic. */
+    bool held = false, sdHolds = false;
+    uint32_t holder = 0, depth = 0, recovered = 0;
+    SpiBusHealth_GetExclusive(&held, &holder, &depth);
+    sdHolds = app_SDCard_HoldsSpiBus();
+    recovered = app_SDCard_BusRecoveryCount();
+
+    char out[192];
     snprintf(out, sizeof(out),
-             "RejStale=%lu,RejExclusive=%lu,RejLock=%lu,RejQueueFull=%lu",
+             "RejStale=%lu,RejExclusive=%lu,RejLock=%lu,RejQueueFull=%lu,"
+             "ExclusiveHeld=%u,ExclusiveDepth=%lu,ExclusiveHolder=%08lx,"
+             "SdHoldsBus=%u,SdBusRecoveries=%lu",
              (unsigned long)st, (unsigned long)ex, (unsigned long)lk,
-             (unsigned long)qf);
+             (unsigned long)qf,
+             (unsigned)(held ? 1U : 0U), (unsigned long)depth,
+             (unsigned long)holder,
+             (unsigned)(sdHolds ? 1U : 0U), (unsigned long)recovered);
     SCPI_ResultText(context, out);
     return SCPI_RES_OK;
 }

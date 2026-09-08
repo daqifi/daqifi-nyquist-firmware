@@ -2589,6 +2589,39 @@ void DRV_SDSPI_Tasks
     lDRV_SDSPI_BufferIOTasks (object);
 }
 
+/* DAQiFi addition (#925): does THIS driver currently hold the shared bus's
+ * exclusive lock?
+ *
+ * Read-only companion to DRV_SDSPI_ReleaseBus below. It exists because
+ * ReleaseBus is not free to call speculatively: it resets cmdDetectState to
+ * DRV_SDSPI_CMD_DETECT_START_INIT, whose first pass returns IS_DETACHED (the
+ * local cardStatus is initialised DETACHED and that state never sets it), so
+ * on a mounted card lDRV_SDSPI_Tasks sees ATTACHED -> DETACHED, publishes
+ * SYS_MEDIA_DETACHED and drops the buffer objects -- an unmount. That is the
+ * right price when the bus really is stuck; it is a gratuitous remount when it
+ * is not. Callers gate on this first.
+ *
+ * Deliberately NOT expressed as "sdState == TASK_STATE_IDLE while the lock is
+ * held", which looks like the leak signature and is not one: media
+ * initialisation takes the lock in DRV_SDSPI_INIT_INCR_CLK_SPD_STAT and
+ * releases it in DRV_SDSPI_INIT_PROCESS_CID, and sdState is IDLE across that
+ * whole span (the attach transition set it in DRV_SDSPI_CMD_DETECT_RESET_SDCARD).
+ * Separating a leak from a legitimate hold is therefore the CALLER's job, and
+ * it is done with time, not with FSM state -- every legitimate hold is bounded
+ * by the #567 transfer watchdog, a leaked one is not. */
+bool DRV_SDSPI_HoldsBus(SYS_MODULE_OBJ object)
+{
+    const DRV_SDSPI_OBJ* dObj;
+
+    if (object >= DRV_SDSPI_INSTANCES_NUMBER)
+    {
+        return false;
+    }
+
+    dObj = (const DRV_SDSPI_OBJ*)&gDrvSDSPIObj[object];
+    return DRV_SPI_IsExclusiveHolder(dObj->spiDrvHandle);
+}
+
 /* DAQiFi addition (#WINC-recovery, 2026-07-02): release the shared-bus
  * exclusive lock before the app stops driving DRV_SDSPI_Tasks.
  *
