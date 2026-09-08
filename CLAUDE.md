@@ -119,13 +119,13 @@ Watch for "Program Succeeded". Flags: `-M` = program mode, `-OL` = use loaded me
 ### Bench tool inventory (this dev station)
 | Item | Identifier | Notes |
 |------|-----------|-------|
-| Lane registry (authoritative) | `~/.claude/bench/devices.conf` | Box-local. One row per **lane** (`nq-a`, `nq-b`, ...): owner, COM port, firmware serial, PICkit serial. The bench device-guard enforces it; a lane's identity is its worktree/workspace name. Re-settled 2026-09-08 after the box reconfiguration; the rows below are a snapshot of that file. |
-| Primary PICkit 4 | `BUR184882598` | Lane **nq-a**. ICSP pairing to the primary board **PROVEN 2026-09-08** with `~/.claude/skills/flash/pairing-proof.sh nq-a` (crc32 changed on the board's port, serial unchanged). Always pass `-TS<serial>` when more than one PICkit is attached: without it ipecmd exits 0 having programmed nothing. Re-run the proof after any re-cabling. |
-| Secondary PICkit 4 | `BUR202272588` | **Not attached** since the 2026-09-08 reconfiguration. Re-register only after a pairing proof. |
+| Lane registry (authoritative) | `~/.claude/bench/devices.conf` | Box-local; one row per **lane** (owner, COM port, firmware serial, PICkit serial), enforced by the bench device-guard. A lane's identity is its worktree name. Rows below are a 2026-09-08 snapshot. |
+| Primary PICkit 4 | `BUR184882598` | Lane **nq-a**. Pairing to the primary board **PROVEN 2026-09-08** (`~/.claude/skills/flash/pairing-proof.sh nq-a`); re-run after any re-cabling. Pass `-TS<serial>` when more than one PICkit is attached, else ipecmd exits 0 having programmed nothing. |
+| Secondary PICkit 4 | `BUR202272588` | **Not attached** since 2026-09-08; re-register only after a pairing proof. |
 | MCU device target | `PIC32MZ2048EFM144` | Pass to ipecmd as `-P32MZ2048EFM144` (no `PIC` prefix — see ipecmd gotchas above) |
-| Serial port (USB CDC) | Windows **COM7** = primary board (lane nq-a). **usbipd is not installed on this box**: there is no WSL bridge and no `/dev/ttyACMn`; drive COM ports natively (Windows `python.exe`, or `bench serial COMn ...`, which asserts DTR — the CDC does not answer without it). | COM numbers moved at the reconfiguration (the primary was COM3). The board exposes no USB iSerial, so its PnP identity is the hub port: **verify by the `*IDN?` serial before any SCPI**, never by port number. |
-| Bench primary device serial | `7E2898F46200E8A7` | Lane **nq-a**, COM7, PICkit `BUR184882598`. Demo unit: flashing it (which wipes NVM) is pre-authorized for its lane. |
-| Bench secondary device serial | `7E28A4206200EAD1` | **Not attached** since 2026-09-08, nor are `7E28517F62010292` (was COM12) and `7E2837886201026A` (was COM10). Re-add as lanes `nq-b` / `nq-c` only after `pairing-proof.sh` passes for each. |
+| Serial port (USB CDC) | Windows **COM7** = primary board (was COM3). No usbipd on this box, so no `/dev/ttyACMn`: drive COM ports natively (Windows `python.exe`, or `bench serial`, which asserts DTR). | The board has no USB iSerial (PnP identity = hub port): **verify by the `*IDN?` serial before any SCPI**, never by port number. |
+| Bench primary device serial | `7E2898F46200E8A7` | Lane **nq-a**, COM7, PICkit `BUR184882598`. Demo unit: its lane may flash it (wipes NVM) without asking. |
+| Bench secondary device serial | `7E28A4206200EAD1` | **Not attached** since 2026-09-08 (nor `7E28517F62010292`, `7E2837886201026A`). Re-add as `nq-b` / `nq-c` only after a pairing proof. |
 | Bench WiFi AP | SSID `Tesla` | Credentials in `~/.daqifi.env` (chmod 600) — never commit |
 | Bench PC iperf2 | `C:\Users\User\Downloads\iperf-2.2.1-win64.exe` | Run `-s -p 5002 -i 1`; redirect stdout to `C:\temp\iperf2.log` for log-side correlation |
 
