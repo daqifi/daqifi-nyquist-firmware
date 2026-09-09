@@ -850,7 +850,7 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
 
                 // Log outside critical section using snapshotted counts
                 if (isPartial && partialCount == 1) {
-                    LOG_I("WiFi TCP partial send: %d/%u bytes (normal segmentation)", (int)sentBytes, (unsigned)sendSize);
+                    LOG_I("WiFi TCP partial send: %d/%u bytes (expected in the ~23-26 KB/s band, #500; not a loss)", (int)sentBytes, (unsigned)sendSize);
                 } else if (isError && errorCount == 1) {
                     LOG_E("WiFi TCP send error: %d", (int)sentBytes);
                 }
