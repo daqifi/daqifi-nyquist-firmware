@@ -8,6 +8,7 @@
 #include "state/board/AInConfig.h"
 #include "state/runtime/AInRuntimeConfig.h"
 #include "state/data/AInSample.h"
+#include "AD7609Scale.h"
 
 
 #ifdef	__cplusplus
@@ -19,9 +20,11 @@ extern "C" {
 #define AD7609_BITS_PER_CHANNEL  18      // 18-bit resolution per channel
 #define AD7609_TOTAL_BITS        144     // Total bitstream: 8 × 18 = 144 bits
 #define AD7609_BUFFER_BYTES      18      // 144 bits = 18 bytes
-#define AD7609_MAX_VALUE         0x1FFFF // 18-bit max value (131071)
-#define AD7609_SIGN_BIT          0x20000 // Bit 17 (sign bit for 2's complement)
-#define AD7609_SIGN_EXTEND       0xFFFC0000U // Sign extension mask for negative values
+
+// AD7609_MAX_VALUE / AD7609_SIGN_BIT / AD7609_SIGN_EXTEND, and the pure
+// code -> volts arithmetic that uses them, live in AD7609Scale.h (included
+// above) so they can be host-tested without this header's Harmony
+// dependencies. Consumers of AD7609.h see them exactly as before.
 
 /*!
  * Performs board initialization
@@ -75,9 +78,10 @@ bool AD7609_ReadSamples(AInSampleArray* samples,                            \
 bool AD7609_TriggerConversion(const AD7609ModuleConfig* moduleConfig);
     
 /*!
- * Calculates a voltage based on the given sample
+ * Calculates a voltage based on the given sample, applying the channel's
+ * user calibration (CalM / CalB) the same way MC12b_ConvertToVoltage does.
  * NOTE: This is NOT safe to call in an ISR
- * @param[in] runtimeConfig Runtime channel information (unused, kept for API symmetry)
+ * @param[in] runtimeConfig Runtime channel information; supplies CalM / CalB
  * @param[in] rawValue Raw 18-bit ADC code
  * @return The converted voltage
  */
