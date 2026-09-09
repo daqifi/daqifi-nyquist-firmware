@@ -1308,19 +1308,34 @@ scpi_result_t SCPI_ADCCalFSave(scpi_t * context) {
 }
 
 /* #885: LOADcal / LOADFcal overwrite EVERY channel's CalM and CalB from NVM,
- * and those two are read per conversion (see SCPI_ADCChanCalmSet above), so
- * this is the whole-board version of the same defect -- a mid-session load
- * rescales every entry daqifi_settings_LoadADCCalSettings iterates
- * (channelRuntimeConfig->Size, services/daqifi_settings.c:304, loop at :333),
- * monitoring channels included: 24 on NQ1 (16 user + 8 monitoring,
+ * so this is the whole-board version of the single-channel write
+ * SCPI_ADCChanCalmSet / SCPI_ADCChanCalbSet perform above -- a load landing
+ * mid-session would overwrite every entry daqifi_settings_LoadADCCalSettings
+ * iterates (channelRuntimeConfig->Size, services/daqifi_settings.c:304, loop
+ * at :333), monitoring channels included: 24 on NQ1 (16 user + 8 monitoring,
  * state/runtime/NQ1RuntimeDefaults.c:49) and 16 on NQ3 (8 user + 8 monitoring,
  * state/runtime/NQ3RuntimeDefaults.c:41) -- per-variant, and never just the
  * user-channel count. An earlier revision said "all sixteen channels at once":
  * that is NQ1's USER count, not its bound of 24, and NQ3's sixteen is 8 user
- * plus 8 monitoring, not the sixteen user channels that revision meant. It is
- * also the exact mutation that CONF:ADC:USECal already performs UNDER the claim
- * (ADCUseCalSetClaimed -> daqifi_settings_LoadADCCalSettings, below): two
- * commands reaching one store, one of them guarded and one not.
+ * plus 8 monitoring, not the sixteen user channels that revision meant.
+ *
+ * That store overwrite reaches every entry the loop counts, regardless of
+ * channel type, but the conversion-side rescale does not: CalM/CalB are read
+ * per conversion only on the MC12b path (MC12b_ConvertToVoltage,
+ * HAL/ADC/MC12bADC.c:255,258; dispatch is per-channel Type,
+ * ADC_ConvertToVoltageByIndex, HAL/ADC.c:479), which is all 24 NQ1 entries but
+ * only the 8 monitoring channels on NQ3 (NQ3BoardConfig.c:122 splices them in
+ * as .Type = AIn_MC12bADC). NQ3's other 8 entries -- its AD7609 USER channels
+ * -- get the same store overwrite as every other entry, but
+ * AD7609_ConvertToVoltage ignores runtimeConfig outright
+ * (HAL/ADC/AD7609.c:517), so for those the new coefficients never reach a
+ * conversion -- the same carve-out as SCPI_ADCChanCalmSet above.
+ *
+ * It is also the exact mutation CONF:ADC:USECal performs at values 0/1
+ * (ADCUseCalSetClaimed -> daqifi_settings_LoadADCCalSettings, below; value 2
+ * returns before that call). That path was already claimed by #847 while this
+ * one was not: one store, reached by commands that did not agree on the guard.
+ * Taking the claim here is what makes them agree.
  *
  * No `...Claimed` split here, unlike the setters above. That split exists to
  * make the release unconditional across a body with many returns; this body is
