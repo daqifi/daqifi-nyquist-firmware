@@ -468,3 +468,12 @@ SpiBusHealthResult_t SpiBusHealth_TryRelease(void)
           (after == SPI_BUS_BUSY) ? "BUSY" : "INDETERMINATE");
     return after;
 }
+
+/* #925: see the header. Thin pass-through to the driver so SCPI (and anything
+ * else) does not have to know the shared bus is DRV_SPI instance 0 -- that
+ * mapping lives here, next to the rest of the shared-SPI4 knowledge, and is
+ * asserted by drvSPI0InitData binding SPI4_* in initialization.c. */
+void SpiBusHealth_GetExclusive(bool *held, uint32_t *holder, uint32_t *depth)
+{
+    DRV_SPI_GetExclusiveState(DRV_SPI_INDEX_0, held, holder, depth);
+}

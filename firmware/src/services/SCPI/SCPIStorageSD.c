@@ -54,6 +54,25 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
 #define SCPI_SD_FORMAT_TIMEOUT_MS 30000
 #define SCPI_SD_SPACE_TIMEOUT_MS 10000
 
+/* #943: the two numbers that bound SYST:STOR:SD:BENCHmark's per-chunk write
+ * loop. STALL_TIMEOUT_MS is now measured as ELAPSED TICKS since the last byte
+ * the SD task accepted; until #943 the loop accumulated POLL_MS once per
+ * iteration and compared that against 10000, which counted iterations and only
+ * read as milliseconds because the poll is nominally 5 ms -- vTaskDelay
+ * guarantees AT LEAST its argument, so under preemption 2000 iterations could
+ * span far more than 10 s of wall clock.
+ *
+ * STALL_TIMEOUT_MS bounds the WHOLE per-chunk iteration -- acquiring the
+ * shared SCPI response buffer AND getting bytes accepted by the SD task --
+ * rather than each stage carrying its own separately-guessed number. An
+ * earlier revision of this change gave the take a private BUF_TIMEOUT_MS of
+ * 2000; that was withdrawn because no fixed number can be justified as "above
+ * every legitimate peer hold" (see the loop, and the caller enumeration in
+ * the #946 PR body) and two independent bounds are harder to reason about
+ * than one. */
+#define SCPI_SD_BENCH_STALL_TIMEOUT_MS 10000U
+#define SCPI_SD_BENCH_STALL_POLL_MS    5U
+
 /* ************************************************************************** */
 /* ************************************************************************** */
 /* Section: File Scope or Global Data                                         */
@@ -939,8 +958,11 @@ static bool SD_StreamingIsLive(void) {
 scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     /* #589: the benchmark arms a WRITE like any other SD operation, so
      * it is refused while the SD task is suspended for the same reason.
-     * It has no IsBusy guard of its own (#736: a running benchmark OWNS
-     * the logging target), which is why it needed naming separately. */
+     * It has no IsBusy fast-path guard at entry (#736: a running benchmark
+     * OWNS the logging target, and re-entrancy is excluded by its own
+     * testInProgress flag), which is why it needed naming separately. It DOES
+     * take the #829 manager claim at the arm, like every other SD command --
+     * see the block above the mode write. */
     if (SD_RefuseIfSuspended(context, "BENCHmark")) {
         return SCPI_RES_ERR;
     }
@@ -1154,11 +1176,70 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     pSDCardRuntimeConfig->file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
     taskEXIT_CRITICAL();
     logFileClobbered = true;   /* #728: restore the logging target on exit */
-    
+
+    /* #925: take the manager's #829 claim across the arm, the same way every
+     * other SD entry point in this file does (SD_ClaimOrRefuse -> operands ->
+     * `mode` LAST -> SD_ArmOrRefuse, which releases on both of its paths).
+     *
+     * BENCHmark used to be the ONE arm that took no #829 claim. That was
+     * defensible while the flag only had to serialise SCPI handlers against
+     * each other: #736's testInProgress interlock already excludes a second
+     * benchmark, and this callback owns the logging target for its duration.
+     * It stopped being defensible when #925 added the shared-SPI4
+     * exclusive-lock leak watchdog to app_SDCardTask. That watchdog holds THIS
+     * flag across its "still idle, still holding the lock" re-check AND its
+     * DRV_SDSPI_ReleaseBus() call, specifically so that no SCPI command can
+     * arm inside the unwind -- and ReleaseBus resets the SDSPI
+     * transfer/detect/command FSM, which unmounts the card. Every other SD
+     * command was excluded by the claim; this one was not, so a BENCHmark
+     * arriving from the pri-7 USB SCPI task could arm a WRITE that the pri-5
+     * SD task then tore down underneath it, mid-benchmark. Taking the same
+     * flag here closes that hole by reusing an already-vetted primitive rather
+     * than inventing a second interlock.
+     *
+     * SD_ClaimOrRefuse()/SD_ArmOrRefuse() are not reused verbatim only because
+     * the benchmark arms through sd_card_manager_UpdateSettingsForPlainWrite()
+     * (#824) instead of the generic sd_card_manager_UpdateSettings() that
+     * SD_ArmOrRefuse wraps. The claim/write-mode-last/arm/release SHAPE is
+     * identical -- see SCPI_StorageSDCrcStart for the wrapped form.
+     *
+     * Placed before the #854 streaming re-check below so both refusals are
+     * covered by one claim and the arm sequence is contiguous: nothing between
+     * this point and sd_card_manager_UpdateSettingsForPlainWrite() blocks or
+     * yields, so the window the watchdog has to exclude is a handful of
+     * stores.
+     *
+     * A refusal here is safe on exactly the same argument as the #854 refusal
+     * below: it lands on the shared __exit_point with `logFileClobbered`
+     * already true (so the user's logging target is restored) and
+     * `ownsBenchFlag` true (so testInProgress is cleared), and nothing has
+     * been armed -- `mode` is still MODE_NONE and the SD task does no work
+     * without it (sd_card_manager.c:1397), so the clobbered name is inert.
+     *
+     * The message is deliberately distinct from the streaming refusals: from
+     * the bench, "the manager is busy / the bus is being unwound" and
+     * "streaming started while arming" are different device facts and want
+     * different next actions. */
+    if (!sd_card_manager_TryClaim()) {
+        SCPI_ExecutionError(context,
+                            "SYST:STOR:SD:BENCH: rejected, the SD manager is "
+                            "busy (another SD command, or the #925 leak "
+                            "watchdog is unwinding the SPI4 lock) - retry");
+        /* LOG_SD_BUSY() takes a string literal; format the state instead, the
+         * same way SD_ClaimOrRefuse does for its named commands. */
+        LOG_E("SD:BENCH - could not claim the SD manager, state=%s mode=%s\r\n",
+              sd_card_manager_GetStateName(),
+              sd_card_manager_GetModeName());
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     /* #854: re-validate at the ARM, not only at the claim.
      *
-     * The claim above is the last point at which this callback observed the
-     * streaming flags, and everything between there and here -- the target
+     * The OWNERSHIP claim above (testInProgress -- not the #829 manager claim
+     * just taken, which observes no streaming state at all) is the last point
+     * at which this callback observed the streaming flags, and everything
+     * between there and here -- the target
      * snapshot, the counter reset, building and publishing benchmark_<tick>
      * -- is preemptible by the other transport's SCPI task. A START landing
      * in that gap would publish IsEnabled and then find mode == WRITE waiting
@@ -1228,6 +1309,12 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * any START that got as far as publishing IsEnabled while we were between
      * the claim and here. */
     if (SD_StreamingIsLive()) {
+        /* #829: every failure path after a successful claim releases it with
+         * `mode` still MODE_NONE -- same contract SD_ArmOrRefuse's refusal arm
+         * honours. Leaking it here would wedge the manager: IsBusy() would
+         * stay true for every later SD command AND the #925 watchdog's
+         * TryClaim would fail forever, disarming the leak recovery. */
+        sd_card_manager_ReleaseClaim();
         SCPI_ExecutionError(context,
                             "SYST:STOR:SD:BENCH: rejected, streaming started "
                             "while arming the benchmark");
@@ -1240,13 +1327,39 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * Clear the flag first so the poll observes only THIS request's outcome
      * (mirrors SCPI_StartStreaming / the #503 disk-full pattern). */
     sd_card_manager_ClearStartupDirFull();
-    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;  /* #829: LAST write */
     /* #824: the benchmark ARMS a write session and it is NOT a streaming log,
      * so it says so. Staying silent here is what let a benchmark inherit a
      * live log's header cache and prepend that stream's protobuf sd_metadata
      * to a rotated benchmark_*.dat part (audit rounds 5, 6, 9) -- output that
      * no longer matches the requested pattern. */
     sd_card_manager_UpdateSettingsForPlainWrite(pSDCardRuntimeConfig);
+    /* #829/#925: WHEN THE ARM SUCCEEDS, ownership has handed over from the
+     * claim flag to `mode`, which is now MODE_WRITE and keeps IsBusy() true --
+     * so there is no gap between releasing here and the manager being busy.
+     *
+     * The line above discards sd_card_manager_UpdateSettingsForPlainWrite()'s
+     * return, so this release also runs on the REFUSED path (the #589 suspend
+     * check): there, the callee has already reset `mode` back to MODE_NONE
+     * before returning false (sd_UpdateSettingsImpl, sd_card_manager.c:3566).
+     * Releasing here is still correct on that path, but for the opposite
+     * reason -- nothing was armed and there is nothing to hold, not that
+     * ownership moved. This mirrors SD_ArmOrRefuse's release-on-both-paths but
+     * NOT its return check; the gap is tracked as #936, with the
+     * SCPI_StartStreaming SD-arm twin as #942.
+     *
+     * Released rather than held for the whole benchmark on purpose: the write
+     * loop below yields for seconds, and the flag is a reservation for ARMING,
+     * not a session lock -- no other SD command holds it across its operation
+     * either.
+     *
+     * Deliberately NOT accompanied by an argument that the #925 watchdog
+     * cannot act while this callback runs. Earlier revisions of this
+     * comment each asserted such an argument and each was false; the
+     * callback's own lifetime is unbounded (#943), so no version of that
+     * claim is true. The watchdog's own recovery conditions are documented
+     * at its site in app_freertos.c. */
+    sd_card_manager_ReleaseClaim();
 
     // Wait for file to be open and ready before writing
     {
@@ -1298,9 +1411,51 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         uint32_t chunkSize = (bytesToWrite - bytesWritten > kTestBufferChunk) ?
                             kTestBufferChunk : (bytesToWrite - bytesWritten);
 
-        uint8_t* testBuffer = (uint8_t*)SCPI_ResponseBuf_Take();
+        /* #943: ONE deadline for the whole iteration. lastProgressTick is
+         * sampled HERE, before the take, so SCPI_SD_BENCH_STALL_TIMEOUT_MS
+         * bounds "this chunk made no progress" across both stages the
+         * iteration can wait in. Acquiring the buffer is not progress, so it
+         * spends the same budget; a late take leaves the write loop little or
+         * none of it, and that is intended -- at that point the iteration HAS
+         * made no progress for the full timeout, which is the condition the
+         * bound exists to catch.
+         *
+         * What this bound is NOT: it is not sized to exceed every legitimate
+         * hold of gScpiRespMutex by a peer SCPI callback. It cannot be. The
+         * full caller enumeration is in the #946 PR body; the long tail is
+         * SCPI_SysInfoTextGet (SCPIInterface.c:747-1214), which holds the
+         * buffer across ~90 transport writes, each bounded by
+         * SCPI_WriteWithRetry at ~1 s (SCPI_WRITE_MAX_RETRIES 200 x
+         * SCPI_WRITE_RETRY_DELAY_MS 5) against a host that stopped reading --
+         * so ~90 s. HELP (~7 s) and the UART getters (~15 s, blocked behind
+         * UserUart_Write's own 15 s hold of the UART mutex) sit between that
+         * and here. A concurrent SCPI command on the OTHER transport can
+         * therefore abort a benchmark. That trade is deliberate: a budget big
+         * enough to dominate that tail would be ~2 minutes of hang on a
+         * genuine deadlock, which is barely distinguishable from the
+         * portMAX_DELAY this replaces, and the quiescence rule already says
+         * not to issue SCPI during a benchmarked run. The abort is a clean,
+         * logged SCPI error; the old behaviour was an unbounded hang.
+         *
+         * Single call, not a re-take loop: xSemaphoreTake blocks the task
+         * rather than spinning, and zero time has elapsed since
+         * lastProgressTick, so this IS the full budget -- a poll-and-retry
+         * loop against the same deadline has the identical worst case with
+         * more code. NULL means either "mutex missing" or "the wait expired";
+         * SCPI_ResponseBuf_TakeTimeout deliberately merges those and the
+         * benchmark can act on neither, so both abort here. */
+        TickType_t lastProgressTick = xTaskGetTickCount();
+        uint8_t* testBuffer = (uint8_t*)SCPI_ResponseBuf_TakeTimeout(
+            SCPI_SD_BENCH_STALL_TIMEOUT_MS);
         if (testBuffer == NULL) {
-            LOG_E("SD:BENCH - Could not acquire SCPI response buffer\r\n");
+            /* Deliberately distinct from the drain message below: the remedies
+             * differ. This one means a peer SCPI callback held the shared
+             * response buffer, NOT that the card is slow -- so it must not
+             * point at the SD-card-compatibility page. */
+            LOG_E("SD:BENCH - shared SCPI response buffer not free within %u ms "
+                  "at %u/%u bytes (a concurrent SCPI command held it)\r\n",
+                  (unsigned int)SCPI_SD_BENCH_STALL_TIMEOUT_MS,
+                  bytesWritten, bytesToWrite);
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
@@ -1332,24 +1487,76 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         // failure. The pre-2026-07-04 code aborted on the first short
         // write, which killed every benchmark at exactly the circular
         // buffer size (32768) and was misdiagnosed as a card problem.
-        // Only a sustained stall (no drain progress for 10 s) is an error.
+        // Only a sustained stall (no drain progress for
+        // SCPI_SD_BENCH_STALL_TIMEOUT_MS) is an error.
+        /* #943: what this iteration does and does not bound.
+         *
+         * BOUNDED, and this is new: both waits the iteration performs, under
+         * ONE deadline. lastProgressTick is sampled before the take, so the
+         * take and this loop share a single SCPI_SD_BENCH_STALL_TIMEOUT_MS
+         * budget measured since the last accepted byte -- elapsed being read
+         * from the tick counter, not counted in iterations. This loop exits at
+         * its first iteration at or after that deadline. (At or after, not
+         * exactly: the deadline is tested once per poll, and the poll is what
+         * preemption can stretch. What it can no longer do is stretch the
+         * DEADLINE, which is the #943 defect.)
+         *
+         * That makes SCPI_SD_BENCH_STALL_TIMEOUT_MS the whole per-chunk bound
+         * rather than the per-no-progress-run bound, because
+         * sd_card_manager_WriteToBuffer is all-or-nothing: it returns 0 or the
+         * full length it was offered (sd_card_manager.c, "All-or-nothing,
+         * NON-BLOCKING"), so at most ONE iteration can make progress and that
+         * iteration ends the loop. The reset on progress below is kept anyway
+         * -- it is what the comment above claims the rule is, and it keeps the
+         * loop correct if that callee ever starts accepting partial writes.
+         *
+         * NOT bounded, and deliberately not claimed to be: the callback as a
+         * whole. A card that keeps accepting bytes keeps the benchmark
+         * running, which is the thing being measured. Nor does this cover
+         * waits inside callees -- WriteToBuffer takes the SD write mutex via
+         * SD_TakeMutexDebug, which logs at 30 s and then waits portMAX_DELAY
+         * (sd_card_manager.c). That hold is microseconds by design (the slow
+         * f_write runs outside it), but it is that module's property to state,
+         * not this loop's.
+         *
+         * The stall this bound exists for is an OPEN_FILE refusal: "no
+         * writable bucket" sets mode = NONE and parks the manager in IDLE,
+         * with no automatic transition back into work, and WriteToBuffer
+         * returns 0 for every later call because mode is no longer WRITE. The
+         * reachable shape is a ROTATION open failing mid-benchmark; a refusal
+         * on the FIRST open is caught by the IsWriteReady / StartupDirFull
+         * gate above, before this loop is entered. */
         size_t written = 0;
-        uint32_t stallMs = 0;
-        while ((written < chunkSize) && (stallMs < 10000U)) {
+        while (written < chunkSize) {
             size_t w = sd_card_manager_WriteToBuffer(
                 (const char*)testBuffer + written, chunkSize - written);
             if (w == 0U) {
-                vTaskDelay(pdMS_TO_TICKS(5));
-                stallMs += 5U;
+                /* Unsigned difference, deliberately. TickType_t is uint32_t
+                 * here (configTICK_TYPE_WIDTH_IN_BITS = TICK_TYPE_WIDTH_32_BITS)
+                 * and neither operand promotes to a signed type, so the
+                 * subtraction is modulo 2^32 and yields the true elapsed count
+                 * even when the tick counter wrapped between the two samples
+                 * (~49 days at configTICK_RATE_HZ 1000) -- provided the true
+                 * elapsed is itself under 2^32 ticks, which it is, because
+                 * this loop exits at 10,000. Compare only the DIFFERENCE:
+                 * comparing the two tick values against each other is what
+                 * breaks across the wrap. */
+                if ((TickType_t)(xTaskGetTickCount() - lastProgressTick) >=
+                        pdMS_TO_TICKS(SCPI_SD_BENCH_STALL_TIMEOUT_MS)) {
+                    break;  /* leaves written < chunkSize -> stall error below */
+                }
+                vTaskDelay(pdMS_TO_TICKS(SCPI_SD_BENCH_STALL_POLL_MS));
             } else {
                 written += w;
-                stallMs = 0U;
+                lastProgressTick = xTaskGetTickCount();
             }
         }
         SCPI_ResponseBuf_Give();
 
         if (written != chunkSize) {
-            LOG_E("SD:BENCH - drain stalled >10s at %u/%u bytes\r\n", bytesWritten, bytesToWrite);
+            LOG_E("SD:BENCH - drain stalled >%u ms at %u/%u bytes\r\n",
+                  (unsigned int)SCPI_SD_BENCH_STALL_TIMEOUT_MS,
+                  bytesWritten, bytesToWrite);
             LOG_E("SD:BENCH - if reads/LIST work but writes stall, the card is "
                   "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);

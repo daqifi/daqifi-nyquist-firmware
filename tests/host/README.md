@@ -13,6 +13,13 @@ make run
 `make run` builds and runs the suite; the process exit code is non-zero if any
 test fails, so it drops straight into CI. `make clean` removes build artifacts.
 
+**Wired into CI as of #946**: `.github/workflows/host-tests.yml` runs `make
+run` in this directory on every PR/push touching `tests/host/**` or the
+firmware sources these tests compile or grep (see that workflow's `paths:`
+list). Before #946 this sentence described the exit-code *contract* only —
+no workflow anywhere in the repo actually invoked `make run`, for any of the
+three tests here, not just the one #946 added.
+
 ## What's covered
 
 `test_circularbuffer.c` exercises `firmware/src/Util/CircularBuffer.c`:
@@ -31,6 +38,23 @@ test fails, so it drops straight into CI. `make clean` removes build artifacts.
   `produced - consumed` math and a round-trip through the real
   `AddBytes` / `ProcessBytes` API across the 2^32 boundary
 - NULL-argument safety on every entry point
+
+`test_943_bench_stall_bound.c` covers the per-chunk write loop inside
+`SYST:STOR:SD:BENCHmark` (issue #943). Unlike the other two it does **not**
+include any firmware source: `SCPIStorageSD.c` drags in libscpi, FreeRTOS and
+the SD manager, so the test re-implements the pre-fix and post-fix loop
+**shapes** against an injected mock clock and mock `WriteToBuffer`, then
+compares their verdicts on identical inputs. What it proves is that the old
+shape's exit condition counted *iterations* (invariant under preemption, so its
+"10 s" bound really took 10 s × the preemption stretch) while the new one
+counts *elapsed ticks* and holds to `[10 s, 10 s + one poll)` at every stretch.
+Also covered: the happy path takes no sleep at all, progress resets the
+deadline (so a slow-but-draining card is not killed), and the tick-counter
+wrap.
+
+Because the test re-implements rather than includes, the two firmware timeout
+constants are a copy. The Makefile target greps them out of `SCPIStorageSD.c`
+and **fails the build** if either drifts, so a stale copy cannot pass silently.
 
 ## Framework
 

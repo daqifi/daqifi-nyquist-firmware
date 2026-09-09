@@ -654,6 +654,40 @@ uint8_t* SCPI_ResponseBuf_Take(void) {
     return gScpiRespBuf;
 }
 
+/* #943: bounded-wait variant of SCPI_ResponseBuf_Take, added for
+ * SYST:STOR:SD:BENCHmark's per-chunk take. That callback takes and gives the
+ * shared buffer once per 512 B chunk (#347 / #350) so other SCPI callbacks can
+ * interleave; with an unbounded take there, the callback had no deadline of
+ * its own, which is half of what #943 is about.
+ *
+ * Deliberately a SEPARATE function rather than a timeout parameter added to
+ * SCPI_ResponseBuf_Take. Every other call site is a short one-shot info /
+ * help / settings / LAN callback for which "block until the buffer is free"
+ * is the correct behaviour, and none of them has an error path that a
+ * spurious timeout should start exercising. Adding a variant leaves all of
+ * them byte-for-byte unchanged.
+ *
+ * Returns NULL both when the mutex does not exist and when the wait expires,
+ * so a caller's existing NULL branch covers both. Nothing needs to tell them
+ * apart today; a caller that did would have to test gScpiRespMutex itself.
+ *
+ * Pairing is the same as SCPI_ResponseBuf_Take: a non-NULL return MUST be
+ * matched by exactly one SCPI_ResponseBuf_Give, a NULL return by none.
+ *
+ * timeoutMs == 0 polls. pdMS_TO_TICKS truncates, so any value below one tick
+ * period (1 ms at configTICK_RATE_HZ 1000) also degenerates to a poll --
+ * callers wanting a real wait must pass at least 1 ms.
+ */
+uint8_t* SCPI_ResponseBuf_TakeTimeout(uint32_t timeoutMs) {
+    if (gScpiRespMutex == NULL) {
+        return NULL;
+    }
+    if (xSemaphoreTake(gScpiRespMutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
+        return NULL;
+    }
+    return gScpiRespBuf;
+}
+
 void SCPI_ResponseBuf_Give(void) {
     if (gScpiRespMutex != NULL) {
         xSemaphoreGive(gScpiRespMutex);
@@ -2423,7 +2457,21 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
          * nothing enabled.  Refusing here would therefore be a NEW refusal on
          * a command that has always accepted this, so if it is ever wanted it
          * belongs at this command's front door as a deliberate behaviour
-         * change -- not inherited from the finder's arm by symmetry. */
+         * change -- not inherited from the finder's arm by symmetry.
+         *
+         * #895 likewise changes NOTHING here, for reasons of the same shape.
+         * It splits the finder's single refusal token in two -- START_REFUSED
+         * when the sweep's first arm was withheld, START_FAIL when a later
+         * one was -- because a five-field reply reporting one token for both
+         * cannot be told apart by a client, and the finder's own front door
+         * already refuses the empty-input case outright, so its reply
+         * contract is where the inconsistency showed.  This command has no
+         * reason token to split: its output is the sample and byte counts it
+         * measured, a refused arm simply ends the run, and the counts
+         * themselves already say whether anything was measured.  Adding a
+         * token here would be new reply syntax on a command nothing asked to
+         * change -- again a deliberate behaviour change belonging at its own
+         * front door, not inherited by symmetry. */
         mappingMoved = (Streaming_ComputeChannelSelection(
                                 pBoardConfig, (const AInRuntimeArray*)pRtAin)
                         != mappingSelAtBuild);
@@ -2563,8 +2611,14 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 //   -> <recommendedHz>,<recommendedKBps>,<reason>,<ceilingHz>,<ceilingKBps>
 //   recommendedHz/KBps = soak-confirmed clean rate, clamped to the bench wire
 //                        ceiling (WIFI_BENCH_CEILING_KBPS) — the rate to stream.
-//   reason             = START_FAIL | NO_LINK | NO_CLEAN_SOAK | BENCH_CAP |
-//                        LINK_SATURATED | HIT_MAX
+//   reason             = START_REFUSED | START_FAIL | NO_LINK | NO_CLEAN_SOAK |
+//                        BENCH_CAP | LINK_SATURATED | HIT_MAX
+//                        #895 splits what used to be one START_FAIL token in
+//                        two: START_REFUSED = the sweep never measured
+//                        anything, its FIRST step's arm was withheld;
+//                        START_FAIL = a LATER step's was, so the reply
+//                        describes a partial sweep. Same five fields either
+//                        way; a first-step refusal reads 0,0,START_REFUSED,0,0.
 //   ceilingHz/KBps     = raw arc/refine ceiling (the pre-soak, pre-clamp
 //                        overestimate) — kept unclamped for diagnostics/testing.
 //
@@ -2754,11 +2808,15 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * adopt it as its own and measure/stop it (Qodo). */
     if (armRefused || !cfg->Running) {
         if (armRefused) {
-            /* #868/#891: the sweep reports START_FAIL for every refusal --
-             * one outcome, three causes -- so name the cause in the log, which
-             * is where this project puts error detail (SYSTem:LOG?).  Same
-             * order as the tests above, so the message always names the reason
-             * that actually withheld the arm. */
+            /* #868/#891/#895: the sweep reports one of TWO tokens for a
+             * refusal -- START_REFUSED when this was the first step and
+             * nothing had been measured yet, START_FAIL otherwise -- and
+             * neither of them says which of the three causes fired.  That
+             * split is about WHERE in the sweep it happened, not WHY, so the
+             * cause still goes in the log, which is where this project puts
+             * error detail (SYSTem:LOG?).  Same order as the tests above, so
+             * the message always names the reason that actually withheld the
+             * arm. */
             LOG_E("WIFI:FIND %u Hz: arm refused - %s", (unsigned)freq,
                   cfgBusy ? "a streaming config change is in flight (#847)"
                           : inputsGone
@@ -2954,6 +3012,13 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     uint32_t lastGoodHz = 0;
     uint32_t lastGoodKBps = 0;
     bool startFailed = false;
+    /* #895: has ANY step completed a full arm+dwell+observe+teardown cycle?
+     * This is what separates the sweep's two failure tokens (see the reason
+     * chain at the end).  A step that TRIPPED counts -- FindMeasureStep did
+     * real work and returned a real verdict, it just wasn't a clean one -- so
+     * this is deliberately not `lastGoodHz > 0`, which would misreport a
+     * refusal following the debounce's first trip as "never started". */
+    bool anyStepMeasured = false;
     bool saturated = false;
     bool confirmTrip = false;   // debounce: require 2 consecutive trips to lock
 
@@ -2969,6 +3034,14 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
         bool sf = false;
         bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, freq, FIND_DWELL_MS, &kbps, &sf);
         if (sf) { startFailed = true; break; }
+        /* #895: past the refusal test, so this step measured.  Set at ALL
+         * THREE call sites even though sites 2 and 3 cannot reach it with the
+         * flag still false (both are gated on lastGoodHz > 0, which only a
+         * clean step here can set).  Uniform on purpose: the three refusal
+         * CAUSES are already folded into one bool by FindMeasureStep, and
+         * treating one call site as special is how the twin gets left behind
+         * when the gating on 2/3 is next changed. */
+        anyStepMeasured = true;
 
         if (!sat) {
             confirmTrip = false;   // clean step clears any pending debounce
@@ -3021,10 +3094,15 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
                  * runs at all, and the sweep returns NO_CLEAN_SOAK for what is
                  * actually a refused arm (Qodo). All three call sites now
                  * agree: *outStartFailed means the step did not happen, and a
-                 * sweep whose basis moved or is moving reports START_FAIL. */
+                 * sweep whose basis moved or is moving reports a refusal.
+                 * #895: which of the two refusal tokens that is depends on
+                 * whether anything had been measured yet -- from HERE it is
+                 * always START_FAIL, because reaching this loop requires a
+                 * clean step to have set lastGoodHz. */
                 startFailed = true;
                 break;
             }
+            anyStepMeasured = true;   /* #895, see site 1 */
             if (sat) {
                 hi = mid;
             } else {
@@ -3052,6 +3130,7 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
             uint32_t kbps = 0; bool sf = false;
             bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, cand, FIND_SOAK_MS, &kbps, &sf);
             if (sf) { startFailed = true; break; }
+            anyStepMeasured = true;   /* #895, see site 1 */
             if (!sat) {                       // a clean 60 s soak
                 streak++;
                 recommendedKBps = kbps;       // track the clean rate's wire rate
@@ -3108,7 +3187,22 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     }
 
     const char* reason;
-    if (startFailed)            reason = "START_FAIL";
+    /* #895: the two refusal tokens are decided HERE rather than latched at the
+     * call sites, and that is exact rather than approximate: once startFailed
+     * is set no further FindMeasureStep call can run (site 1 breaks without
+     * setting `saturated`, so site 2's gate fails; sites 2 and 3 are gated on
+     * !startFailed / lastGoodHz), so anyStepMeasured is frozen at the instant
+     * of the failure and reading it here is reading it then.
+     *
+     * The token says WHETHER the sweep produced data, never WHY it stopped:
+     * all three arm-refusal causes (#847 cfgBusy, #868 mappingMoved, #891
+     * inputsGone) reach here through one bool, and so does the fourth
+     * *outStartFailed producer -- a stream that armed but never went Running,
+     * which is the one case FindMeasureStep does NOT log a cause for. Callers
+     * wanting the cause read SYSTem:LOG?; that is unchanged. */
+    if (startFailed && !anyStepMeasured)
+                                reason = "START_REFUSED"; // refused at the first arm — nothing was measured
+    else if (startFailed)       reason = "START_FAIL";    // refused mid-sweep — the fields are a partial sweep
     else if (lastGoodHz == 0)   reason = "NO_LINK";        // nothing sustainable, even the start freq
     else if (!soakClean)        reason = "NO_CLEAN_SOAK";  // walked to floor without a clean 20 s — link unstable
     else if (benchClamped)      reason = "BENCH_CAP";      // soak clean but clamped to bench wire ceiling
@@ -4571,11 +4665,14 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
      * and not some other consumer's.
      *
      * `mode == WRITE` alone does NOT establish that. SYST:STOR:SD:BENCHmark
-     * arms a WRITE too and takes no claim by design (#736), so a benchmark
-     * running on the other transport while this start tears a session down
-     * would be read as "the session we stopped" and have its file closed
-     * mid-run by the two aborts below (Qodo). The #824 latch is what answers
-     * the question the mode cannot: it is set only by the STREAMING arm. */
+     * arms a WRITE too, and the #829 claim does not distinguish them: since
+     * #925 the benchmark takes that claim, but only ACROSS ITS ARM (same shape
+     * as the SD arm below), so it is released for the whole run and says
+     * nothing about whose WRITE is open. A benchmark running on the other
+     * transport while this start tears a session down would therefore still be
+     * read as "the session we stopped" and have its file closed mid-run by the
+     * two aborts below (Qodo). The #824 latch is what answers the question the
+     * mode cannot: it is set only by the STREAMING arm. */
     bool stoppedSdLoggingSession = false;
     if (pRunTimeStreamConfig->IsEnabled && pRunTimeStreamConfig->Running) {
         stoppedSdLoggingSession = (pSDCardSettings != NULL) &&
@@ -5475,8 +5572,10 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
  * deliberately, in a PR whose entire subject is two copies of one question
  * drifting apart. `enable && mode == WRITE` alone does not say WHOSE write it
  * is: exactly two sites arm WRITE -- SCPI_StartStreamingClaimed()'s SD arm
- * and SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark) -- and the benchmark
- * takes no claim by design (#736). The #851 latch is what separates them.
+ * and SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark) -- and BOTH now hold
+ * the #829 claim only across the arm itself (#836 / #925), releasing it for
+ * the run, so the claim cannot tell them apart either. The #851 latch is what
+ * separates them.
  *
  * The critical section makes the composite a snapshot rather than three
  * independent reads; the latch is written under one in the SD manager
@@ -5716,9 +5815,10 @@ static void SCPI_PerformStreamingStop(void) {
      * `enable && mode == WRITE` does not mean "a streaming log is open" -- it
      * means "somebody armed the shared WRITE". There are exactly two arms in
      * the tree: SCPI_StartStreamingClaimed()'s SD arm and
-     * SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark), and the benchmark
-     * takes no claim by design
-     * (#736). So on the mode alone this teardown closes a running benchmark's
+     * SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark), and both hold the #829
+     * claim only across their arm (#836 / #925), never for the run, so the
+     * claim does not tell them apart.
+     * So on the mode alone this teardown closes a running benchmark's
      * file: it sets mode to NONE, sd_card_manager_WriteToBuffer then returns 0,
      * and the benchmark stalls to its 10 s drain timeout and reports a
      * truncated result.
@@ -7933,11 +8033,38 @@ static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
                                           uint32_t *lockFail, uint32_t *queueFull);
     uint32_t st, ex, lk, qf;
     DRV_SPI_GetRejectCounters(&st, &ex, &lk, &qf);
-    char out[96];
+
+    /* #925: the four Rej* counters above are a SHADOW of the bus state, not the
+     * state. They move only when some other client attempts a transfer while
+     * the lock is held, so they read exactly 0 for a lock that has been leaked
+     * but not yet bumped into, and they climb during ordinary, correctly
+     * released contention (the reject/retry dance test_589 documents). Neither
+     * direction can be asserted on. The five fields below report the lock
+     * itself, so a client can ask "is the shared bus stuck?" and get an answer
+     * that does not depend on somebody else's traffic. */
+    bool held = false, sdHolds = false;
+    uint32_t holder = 0, depth = 0, recovered = 0;
+    SpiBusHealth_GetExclusive(&held, &holder, &depth);
+    sdHolds = app_SDCard_HoldsSpiBus();
+    recovered = app_SDCard_BusRecoveryCount();
+
+    /* 224, not 192: the worst case is 193 characters plus the NUL, which
+     * 192 truncates. Field-by-field, with every counter at its 10-digit
+     * maximum -- RejStale 20, RejExclusive 24, RejLock 19, RejQueueFull 24,
+     * ExclusiveHeld 16, ExclusiveDepth 26, ExclusiveHolder 25, SdHoldsBus 13,
+     * SdBusRecoveries 26 (no trailing comma). Recompute this if a field is
+     * added. Stays a stack local rather than the shared response buffer
+     * because it is under the 256 B threshold that rule applies to. */
+    char out[224];
     snprintf(out, sizeof(out),
-             "RejStale=%lu,RejExclusive=%lu,RejLock=%lu,RejQueueFull=%lu",
+             "RejStale=%lu,RejExclusive=%lu,RejLock=%lu,RejQueueFull=%lu,"
+             "ExclusiveHeld=%u,ExclusiveDepth=%lu,ExclusiveHolder=%08lx,"
+             "SdHoldsBus=%u,SdBusRecoveries=%lu",
              (unsigned long)st, (unsigned long)ex, (unsigned long)lk,
-             (unsigned long)qf);
+             (unsigned long)qf,
+             (unsigned)(held ? 1U : 0U), (unsigned long)depth,
+             (unsigned long)holder,
+             (unsigned)(sdHolds ? 1U : 0U), (unsigned long)recovered);
     SCPI_ResultText(context, out);
     return SCPI_RES_OK;
 }
