@@ -1,4 +1,5 @@
 run_tests
 run_fmt_tests
+run_943_tests
 CircularBuffer_uut.c
 *.o

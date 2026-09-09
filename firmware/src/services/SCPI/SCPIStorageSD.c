@@ -54,6 +54,24 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
 #define SCPI_SD_FORMAT_TIMEOUT_MS 30000
 #define SCPI_SD_SPACE_TIMEOUT_MS 10000
 
+/* #943: the three numbers that bound SYST:STOR:SD:BENCHmark's per-chunk write
+ * loop. STALL_TIMEOUT_MS is now measured as ELAPSED TICKS since the last byte
+ * the SD task accepted; until #943 the loop accumulated POLL_MS once per
+ * iteration and compared that against 10000, which counted iterations and only
+ * read as milliseconds because the poll is nominally 5 ms -- vTaskDelay
+ * guarantees AT LEAST its argument, so under preemption 2000 iterations could
+ * span far more than 10 s of wall clock.
+ *
+ * BUF_TIMEOUT_MS bounds the per-chunk shared-response-buffer take, which was
+ * portMAX_DELAY. Sized to be (a) comfortably above the ~1 s a single retrying
+ * transport write can take while a peer callback holds the buffer
+ * (SCPI_WRITE_MAX_RETRIES 200 x SCPI_WRITE_RETRY_DELAY_MS 5, SCPIInterface.c)
+ * and (b) well under STALL_TIMEOUT_MS, so the take is never the loop's
+ * dominant wait. See the loop for the residual this trade leaves. */
+#define SCPI_SD_BENCH_STALL_TIMEOUT_MS 10000U
+#define SCPI_SD_BENCH_STALL_POLL_MS    5U
+#define SCPI_SD_BENCH_BUF_TIMEOUT_MS   2000U
+
 /* ************************************************************************** */
 /* ************************************************************************** */
 /* Section: File Scope or Global Data                                         */
@@ -1392,9 +1410,17 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         uint32_t chunkSize = (bytesToWrite - bytesWritten > kTestBufferChunk) ?
                             kTestBufferChunk : (bytesToWrite - bytesWritten);
 
-        uint8_t* testBuffer = (uint8_t*)SCPI_ResponseBuf_Take();
+        /* #943: bounded take (was portMAX_DELAY). NULL now means either
+         * "mutex missing" or "another SCPI callback held the shared buffer
+         * for longer than SCPI_SD_BENCH_BUF_TIMEOUT_MS"; both are reported the
+         * same way, because the benchmark can do nothing useful about either
+         * and both are a hard stop for this run rather than something to
+         * retry into an unbounded loop. */
+        uint8_t* testBuffer =
+            (uint8_t*)SCPI_ResponseBuf_TakeTimeout(SCPI_SD_BENCH_BUF_TIMEOUT_MS);
         if (testBuffer == NULL) {
-            LOG_E("SD:BENCH - Could not acquire SCPI response buffer\r\n");
+            LOG_E("SD:BENCH - Could not acquire SCPI response buffer within %u ms\r\n",
+                  (unsigned int)SCPI_SD_BENCH_BUF_TIMEOUT_MS);
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
@@ -1426,24 +1452,76 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         // failure. The pre-2026-07-04 code aborted on the first short
         // write, which killed every benchmark at exactly the circular
         // buffer size (32768) and was misdiagnosed as a card problem.
-        // Only a sustained stall (no drain progress for 10 s) is an error.
+        // Only a sustained stall (no drain progress for
+        // SCPI_SD_BENCH_STALL_TIMEOUT_MS) is an error.
+        /* #943: what this iteration does and does not bound.
+         *
+         * BOUNDED, and this is new: both waits the iteration performs. The
+         * take above expires after SCPI_SD_BENCH_BUF_TIMEOUT_MS, and this loop
+         * exits at its first iteration at or after SCPI_SD_BENCH_STALL_TIMEOUT_MS
+         * has elapsed since the last accepted byte -- elapsed being read from
+         * the tick counter, not counted in iterations. (At or after, not
+         * exactly: the deadline is tested once per poll, and the poll is what
+         * preemption can stretch. What it can no longer do is stretch the
+         * DEADLINE, which is the #943 defect.)
+         *
+         * That makes SCPI_SD_BENCH_STALL_TIMEOUT_MS the whole per-chunk bound
+         * rather than the per-no-progress-run bound, because
+         * sd_card_manager_WriteToBuffer is all-or-nothing: it returns 0 or the
+         * full length it was offered (sd_card_manager.c, "All-or-nothing,
+         * NON-BLOCKING"), so at most ONE iteration can make progress and that
+         * iteration ends the loop. The reset on progress below is kept anyway
+         * -- it is what the comment above claims the rule is, and it keeps the
+         * loop correct if that callee ever starts accepting partial writes.
+         *
+         * NOT bounded, and deliberately not claimed to be: the callback as a
+         * whole. A card that keeps accepting bytes keeps the benchmark
+         * running, which is the thing being measured. Nor does this cover
+         * waits inside callees -- WriteToBuffer takes the SD write mutex via
+         * SD_TakeMutexDebug, which logs at 30 s and then waits portMAX_DELAY
+         * (sd_card_manager.c). That hold is microseconds by design (the slow
+         * f_write runs outside it), but it is that module's property to state,
+         * not this loop's.
+         *
+         * The stall this bound exists for is an OPEN_FILE refusal: "no
+         * writable bucket" sets mode = NONE and parks the manager in IDLE,
+         * with no automatic transition back into work, and WriteToBuffer
+         * returns 0 for every later call because mode is no longer WRITE. The
+         * reachable shape is a ROTATION open failing mid-benchmark; a refusal
+         * on the FIRST open is caught by the IsWriteReady / StartupDirFull
+         * gate above, before this loop is entered. */
         size_t written = 0;
-        uint32_t stallMs = 0;
-        while ((written < chunkSize) && (stallMs < 10000U)) {
+        TickType_t lastProgressTick = xTaskGetTickCount();
+        while (written < chunkSize) {
             size_t w = sd_card_manager_WriteToBuffer(
                 (const char*)testBuffer + written, chunkSize - written);
             if (w == 0U) {
-                vTaskDelay(pdMS_TO_TICKS(5));
-                stallMs += 5U;
+                /* Unsigned difference, deliberately. TickType_t is uint32_t
+                 * here (configTICK_TYPE_WIDTH_IN_BITS = TICK_TYPE_WIDTH_32_BITS)
+                 * and neither operand promotes to a signed type, so the
+                 * subtraction is modulo 2^32 and yields the true elapsed count
+                 * even when the tick counter wrapped between the two samples
+                 * (~49 days at configTICK_RATE_HZ 1000) -- provided the true
+                 * elapsed is itself under 2^32 ticks, which it is, because
+                 * this loop exits at 10,000. Compare only the DIFFERENCE:
+                 * comparing the two tick values against each other is what
+                 * breaks across the wrap. */
+                if ((TickType_t)(xTaskGetTickCount() - lastProgressTick) >=
+                        pdMS_TO_TICKS(SCPI_SD_BENCH_STALL_TIMEOUT_MS)) {
+                    break;  /* leaves written < chunkSize -> stall error below */
+                }
+                vTaskDelay(pdMS_TO_TICKS(SCPI_SD_BENCH_STALL_POLL_MS));
             } else {
                 written += w;
-                stallMs = 0U;
+                lastProgressTick = xTaskGetTickCount();
             }
         }
         SCPI_ResponseBuf_Give();
 
         if (written != chunkSize) {
-            LOG_E("SD:BENCH - drain stalled >10s at %u/%u bytes\r\n", bytesWritten, bytesToWrite);
+            LOG_E("SD:BENCH - drain stalled >%u ms at %u/%u bytes\r\n",
+                  (unsigned int)SCPI_SD_BENCH_STALL_TIMEOUT_MS,
+                  bytesWritten, bytesToWrite);
             LOG_E("SD:BENCH - if reads/LIST work but writes stall, the card is "
                   "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
