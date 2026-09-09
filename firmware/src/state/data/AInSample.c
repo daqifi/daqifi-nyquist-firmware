@@ -148,8 +148,28 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
         return;
     }
 
-    if (maxSize < MIN_AIN_SAMPLE_COUNT) maxSize = MIN_AIN_SAMPLE_COUNT;
     if (maxSize > MAX_AIN_SAMPLE_COUNT) maxSize = MAX_AIN_SAMPLE_COUNT;
+    /* #931: maxSize here is the capacity StreamingBufferPool_Partition
+     * ACTUALLY carved for poolMem/freeMem (via
+     * StreamingBufferPool_GetSamplePool) -- it is never a "give me at least
+     * this many" request, unlike the heap-fallback path above. Clamping it
+     * UP, as this line used to (to MIN_AIN_SAMPLE_COUNT), builds the free-list
+     * chain past the end of freeMem and, once allocation reaches those slots,
+     * writes sample data past the end of poolMem -- both run off the end of
+     * the static gPoolStorage[] array into whatever the linker placed next in
+     * BSS. Partition legitimately returns fewer than MIN when manual
+     * SYST:MEM:*:BUFfer sizes consume most of the pool; a smaller pool still
+     * works correctly, it just has less burst-absorption headroom. Clamping
+     * DOWN (above) stays safe -- it only uses less than the caller was given.
+     * AInSampleList_Initialize()'s heap path (above) keeps its own up-clamp
+     * because it allocates memory sized to maxSize AFTER the clamp; here the
+     * memory is fixed-size and caller-owned, so inflating the count is a
+     * straightforward overrun rather than a request for more. Inform, don't
+     * hide (SCPI data-visibility rule) instead of silently under-provisioning. */
+    if (maxSize < MIN_AIN_SAMPLE_COUNT) {
+        LOG_E("Sample pool: %u slots, below min %u - less burst headroom",
+              (unsigned)maxSize, (unsigned)MIN_AIN_SAMPLE_COUNT);
+    }
 
     // Create mutex if first call (boot-time malloc)
     if (poolMutex == NULL) {
