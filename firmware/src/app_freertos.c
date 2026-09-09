@@ -688,13 +688,17 @@ static void app_SDCardTask(void* p_arg) {
                          * inside a critical section, and #829 requires every
                          * SCPI handler to take it BEFORE filling operands.
                          *
-                         * Not closed for SYST:STOR:SD:BENCHmark, which takes
-                         * no claim by design (#736). Stated rather than
-                         * papered over: that one command can still arm inside
-                         * the window. It is a bench-only diagnostic, and the
-                         * bus it would be racing has been stuck for
-                         * SD_BUS_LEAK_DWELL_MS, so its operation was going to
-                         * fail either way.
+                         * That now covers EVERY SD arm in the tree.
+                         * SYST:STOR:SD:BENCHmark used to be the exception --
+                         * #736 gave it its own testInProgress interlock and no
+                         * #829 claim, so it was the one command that could arm
+                         * inside this window and have its freshly-armed write
+                         * reset underneath it. It takes the claim across its
+                         * arm now (SCPI_StorageSDBenchmark, same
+                         * claim/mode-last/arm/release shape as the #836
+                         * streaming arm), so the TryClaim below excludes it
+                         * exactly as it excludes CRC/GET/LISt/DELete/FORmat/
+                         * SPACe.
                          *
                          * Failing to claim is not a missed leak: the manager
                          * is busy, so the "held with nothing armed" condition
@@ -711,20 +715,27 @@ static void app_SDCardTask(void* p_arg) {
                              * write `mode` LAST and release the flag after
                              * arming, so `mode != MODE_NONE` keeps
                              * IsBusyLocked() true and TryClaim would have
-                             * FAILED. Re-checking buys nothing there.
+                             * FAILED. Since BENCHmark joined that contract
+                             * there is no arm outside it, so re-reading
+                             * IsIdle() buys nothing against an arm at all.
                              *
-                             * It buys two other things, and both are real.
-                             * (1) SYST:STOR:SD:BENCHmark takes no claim by
-                             * design (#736), so it is the one arm this claim
-                             * cannot exclude -- re-reading IsIdle() narrows
-                             * that window to the two calls below. (2) The lock
-                             * may have been released legitimately since the
-                             * sample, and DRV_SDSPI_ReleaseBus resets the
-                             * detect FSM UNCONDITIONALLY -- its unwind loop
-                             * simply finds nothing to unwind -- so calling it
-                             * on a free bus costs a gratuitous card remount
-                             * for no benefit. HoldsBus is exactly the gate
-                             * that exists to prevent that. */
+                             * It is kept for the OTHER condition, which the
+                             * claim says nothing about: the lock may have been
+                             * released legitimately since the sample, and
+                             * DRV_SDSPI_ReleaseBus resets the detect FSM
+                             * UNCONDITIONALLY -- its unwind loop simply finds
+                             * nothing to unwind -- so calling it on a free bus
+                             * costs a gratuitous card remount for no benefit.
+                             * HoldsBus is exactly the gate that exists to
+                             * prevent that.
+                             *
+                             * IsIdle() is re-read alongside it rather than
+                             * dropped: it costs one predicate, it keeps the
+                             * two terms of the dwell tested as a pair, and it
+                             * is the term that would have to carry the weight
+                             * again if a future SD path armed without taking
+                             * the claim -- which is precisely the state this
+                             * watchdog was first written against. */
                             if (sd_card_manager_IsIdle() &&
                                 app_SDCard_HoldsSpiBus()) {
                                 /* Static string: this task has 1024 words of

@@ -939,8 +939,11 @@ static bool SD_StreamingIsLive(void) {
 scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     /* #589: the benchmark arms a WRITE like any other SD operation, so
      * it is refused while the SD task is suspended for the same reason.
-     * It has no IsBusy guard of its own (#736: a running benchmark OWNS
-     * the logging target), which is why it needed naming separately. */
+     * It has no IsBusy fast-path guard at entry (#736: a running benchmark
+     * OWNS the logging target, and re-entrancy is excluded by its own
+     * testInProgress flag), which is why it needed naming separately. It DOES
+     * take the #829 manager claim at the arm, like every other SD command --
+     * see the block above the mode write. */
     if (SD_RefuseIfSuspended(context, "BENCHmark")) {
         return SCPI_RES_ERR;
     }
@@ -1154,11 +1157,70 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     pSDCardRuntimeConfig->file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
     taskEXIT_CRITICAL();
     logFileClobbered = true;   /* #728: restore the logging target on exit */
-    
+
+    /* #925: take the manager's #829 claim across the arm, the same way every
+     * other SD entry point in this file does (SD_ClaimOrRefuse -> operands ->
+     * `mode` LAST -> SD_ArmOrRefuse, which releases on both of its paths).
+     *
+     * BENCHmark used to be the ONE arm that took no #829 claim. That was
+     * defensible while the flag only had to serialise SCPI handlers against
+     * each other: #736's testInProgress interlock already excludes a second
+     * benchmark, and this callback owns the logging target for its duration.
+     * It stopped being defensible when #925 added the shared-SPI4
+     * exclusive-lock leak watchdog to app_SDCardTask. That watchdog holds THIS
+     * flag across its "still idle, still holding the lock" re-check AND its
+     * DRV_SDSPI_ReleaseBus() call, specifically so that no SCPI command can
+     * arm inside the unwind -- and ReleaseBus resets the SDSPI
+     * transfer/detect/command FSM, which unmounts the card. Every other SD
+     * command was excluded by the claim; this one was not, so a BENCHmark
+     * arriving from the pri-7 USB SCPI task could arm a WRITE that the pri-5
+     * SD task then tore down underneath it, mid-benchmark. Taking the same
+     * flag here closes that hole by reusing an already-vetted primitive rather
+     * than inventing a second interlock.
+     *
+     * SD_ClaimOrRefuse()/SD_ArmOrRefuse() are not reused verbatim only because
+     * the benchmark arms through sd_card_manager_UpdateSettingsForPlainWrite()
+     * (#824) instead of the generic sd_card_manager_UpdateSettings() that
+     * SD_ArmOrRefuse wraps. The claim/write-mode-last/arm/release SHAPE is
+     * identical -- see SCPI_StorageSDCrcStart for the wrapped form.
+     *
+     * Placed before the #854 streaming re-check below so both refusals are
+     * covered by one claim and the arm sequence is contiguous: nothing between
+     * this point and sd_card_manager_UpdateSettingsForPlainWrite() blocks or
+     * yields, so the window the watchdog has to exclude is a handful of
+     * stores.
+     *
+     * A refusal here is safe on exactly the same argument as the #854 refusal
+     * below: it lands on the shared __exit_point with `logFileClobbered`
+     * already true (so the user's logging target is restored) and
+     * `ownsBenchFlag` true (so testInProgress is cleared), and nothing has
+     * been armed -- `mode` is still MODE_NONE and the SD task does no work
+     * without it (sd_card_manager.c:1397), so the clobbered name is inert.
+     *
+     * The message is deliberately distinct from the streaming refusals: from
+     * the bench, "the manager is busy / the bus is being unwound" and
+     * "streaming started while arming" are different device facts and want
+     * different next actions. */
+    if (!sd_card_manager_TryClaim()) {
+        SCPI_ExecutionError(context,
+                            "SYST:STOR:SD:BENCH: rejected, the SD manager is "
+                            "busy (another SD command, or the #925 leak "
+                            "watchdog is unwinding the SPI4 lock) - retry");
+        /* LOG_SD_BUSY() takes a string literal; format the state instead, the
+         * same way SD_ClaimOrRefuse does for its named commands. */
+        LOG_E("SD:BENCH - could not claim the SD manager, state=%s mode=%s\r\n",
+              sd_card_manager_GetStateName(),
+              sd_card_manager_GetModeName());
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
+
     /* #854: re-validate at the ARM, not only at the claim.
      *
-     * The claim above is the last point at which this callback observed the
-     * streaming flags, and everything between there and here -- the target
+     * The OWNERSHIP claim above (testInProgress -- not the #829 manager claim
+     * just taken, which observes no streaming state at all) is the last point
+     * at which this callback observed the streaming flags, and everything
+     * between there and here -- the target
      * snapshot, the counter reset, building and publishing benchmark_<tick>
      * -- is preemptible by the other transport's SCPI task. A START landing
      * in that gap would publish IsEnabled and then find mode == WRITE waiting
@@ -1228,6 +1290,12 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * any START that got as far as publishing IsEnabled while we were between
      * the claim and here. */
     if (SD_StreamingIsLive()) {
+        /* #829: every failure path after a successful claim releases it with
+         * `mode` still MODE_NONE -- same contract SD_ArmOrRefuse's refusal arm
+         * honours. Leaking it here would wedge the manager: IsBusy() would
+         * stay true for every later SD command AND the #925 watchdog's
+         * TryClaim would fail forever, disarming the leak recovery. */
+        sd_card_manager_ReleaseClaim();
         SCPI_ExecutionError(context,
                             "SYST:STOR:SD:BENCH: rejected, streaming started "
                             "while arming the benchmark");
@@ -1240,13 +1308,26 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * Clear the flag first so the poll observes only THIS request's outcome
      * (mirrors SCPI_StartStreaming / the #503 disk-full pattern). */
     sd_card_manager_ClearStartupDirFull();
-    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;
+    pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_WRITE;  /* #829: LAST write */
     /* #824: the benchmark ARMS a write session and it is NOT a streaming log,
      * so it says so. Staying silent here is what let a benchmark inherit a
      * live log's header cache and prepend that stream's protobuf sd_metadata
      * to a rotated benchmark_*.dat part (audit rounds 5, 6, 9) -- output that
      * no longer matches the requested pattern. */
     sd_card_manager_UpdateSettingsForPlainWrite(pSDCardRuntimeConfig);
+    /* #829/#925: the arm is complete, so ownership has handed over from the
+     * claim flag to `mode`, which is now MODE_WRITE and keeps IsBusy() true --
+     * exactly the handover SD_ArmOrRefuse performs for every other command, so
+     * there is no gap between releasing here and the manager being busy.
+     *
+     * Released rather than held for the whole benchmark on purpose: the write
+     * loop below yields for seconds, and the flag is a reservation for ARMING,
+     * not a session lock -- no other SD command holds it across its operation
+     * either. The run itself is covered by the watchdog's OTHER term: arming
+     * forces the manager to DEINIT and it then runs MOUNT/OPEN/WRITE_TO_FILE,
+     * none of which are IDLE or INIT, so sd_card_manager_IsIdle() is false and
+     * the dwell cannot start. */
+    sd_card_manager_ReleaseClaim();
 
     // Wait for file to be open and ready before writing
     {

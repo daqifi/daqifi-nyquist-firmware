@@ -4596,11 +4596,14 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
      * and not some other consumer's.
      *
      * `mode == WRITE` alone does NOT establish that. SYST:STOR:SD:BENCHmark
-     * arms a WRITE too and takes no claim by design (#736), so a benchmark
-     * running on the other transport while this start tears a session down
-     * would be read as "the session we stopped" and have its file closed
-     * mid-run by the two aborts below (Qodo). The #824 latch is what answers
-     * the question the mode cannot: it is set only by the STREAMING arm. */
+     * arms a WRITE too, and the #829 claim does not distinguish them: since
+     * #925 the benchmark takes that claim, but only ACROSS ITS ARM (same shape
+     * as the SD arm below), so it is released for the whole run and says
+     * nothing about whose WRITE is open. A benchmark running on the other
+     * transport while this start tears a session down would therefore still be
+     * read as "the session we stopped" and have its file closed mid-run by the
+     * two aborts below (Qodo). The #824 latch is what answers the question the
+     * mode cannot: it is set only by the STREAMING arm. */
     bool stoppedSdLoggingSession = false;
     if (pRunTimeStreamConfig->IsEnabled && pRunTimeStreamConfig->Running) {
         stoppedSdLoggingSession = (pSDCardSettings != NULL) &&
@@ -5500,8 +5503,10 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
  * deliberately, in a PR whose entire subject is two copies of one question
  * drifting apart. `enable && mode == WRITE` alone does not say WHOSE write it
  * is: exactly two sites arm WRITE -- SCPI_StartStreamingClaimed()'s SD arm
- * and SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark) -- and the benchmark
- * takes no claim by design (#736). The #851 latch is what separates them.
+ * and SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark) -- and BOTH now hold
+ * the #829 claim only across the arm itself (#836 / #925), releasing it for
+ * the run, so the claim cannot tell them apart either. The #851 latch is what
+ * separates them.
  *
  * The critical section makes the composite a snapshot rather than three
  * independent reads; the latch is written under one in the SD manager
@@ -5741,9 +5746,10 @@ static void SCPI_PerformStreamingStop(void) {
      * `enable && mode == WRITE` does not mean "a streaming log is open" -- it
      * means "somebody armed the shared WRITE". There are exactly two arms in
      * the tree: SCPI_StartStreamingClaimed()'s SD arm and
-     * SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark), and the benchmark
-     * takes no claim by design
-     * (#736). So on the mode alone this teardown closes a running benchmark's
+     * SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark), and both hold the #829
+     * claim only across their arm (#836 / #925), never for the run, so the
+     * claim does not tell them apart.
+     * So on the mode alone this teardown closes a running benchmark's
      * file: it sets mode to NONE, sd_card_manager_WriteToBuffer then returns 0,
      * and the benchmark stalls to its 10 s drain timeout and reports a
      * truncated result.
