@@ -1332,10 +1332,14 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * Released rather than held for the whole benchmark on purpose: the write
      * loop below yields for seconds, and the flag is a reservation for ARMING,
      * not a session lock -- no other SD command holds it across its operation
-     * either. The run itself is protected by TryClaim, not IsIdle(): arming
-     * sets mode = MODE_WRITE, which keeps IsBusyLocked() true for the run's
-     * whole span, so TryClaim() fails and the watchdog's unwind cannot run,
-     * whatever IsIdle() reports meanwhile. */
+     * either.
+     *
+     * Deliberately NOT accompanied by an argument that the #925 watchdog
+     * cannot act while this callback runs. Four earlier revisions of this
+     * comment each asserted such an argument and each was false; the
+     * callback's own lifetime is unbounded (#943), so no version of that
+     * claim is true. The watchdog's own recovery conditions are documented
+     * at its site in app_freertos.c. */
     sd_card_manager_ReleaseClaim();
 
     // Wait for file to be open and ready before writing
