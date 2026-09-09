@@ -617,16 +617,22 @@ CONFigure:VOLTage:LOAD               # Load from NVM
 ⚠️ **A fresh device boots at precision 0, NOT the board default** (#910). This
 file previously said "falls back to board config default on first boot"; that is
 wrong. On the first-boot path `daqifi_settings_SaveToNvm` runs at
-`app_freertos.c:574`, five lines *before* `InitBoardRuntimeConfig` at 579 — and
+`app_freertos.c:593`, five lines *before* `InitBoardRuntimeConfig` at 598 — and
 it captures precision from the not-yet-initialised runtime config, overwriting
-the 4 that `LoadFactoryDeafult` just set with 0, in NVM and in place. The guard
-at line 609 is `if (savedPrec <= 10)`, and 0 satisfies it, so nothing catches it.
-Verified on hardware 2026-08-30/31: NQ1 reads `CONF:VOLT:PREC?` = 0 on v3.7.2 and
-v3.7.3, after a PICkit flash and after an in-app bootloader update.
+the 4 that `LoadFactoryDeafult` just set with 0, in NVM and in the in-memory
+`tmpTopLevelSettings`. The guard at line 628 is `if (savedPrec <= 10)`, and 0
+satisfies it, so the already-corrupted 0 is what gets written into the runtime
+config a few lines later — nothing along this path can tell "deliberately
+integer millivolts" from "never initialised". Verified on hardware
+2026-08-30/31: NQ1 reads `CONF:VOLT:PREC?` = 0 on v3.7.2 and v3.7.3, after a
+PICkit flash and after an in-app bootloader update.
 
-Practical consequences: **0 is the de facto shipped default** the desktop app and
-daqifi-core have always seen, so it is not safe to "fix" unilaterally (#910
-explains the coordination needed). And **any cap or ceiling measurement must pin
+Practical consequences: **0 is the de facto shipped default** for every text
+consumer of it — CSV/JSON streaming and the `MEAS:VOLT:DC?` / `SOUR:VOLT:LEV?`
+replies — since ProtoBuf ships raw ADC codes and is agnostic to this setting;
+daqifi-core and the desktop app have always seen 0 through those text paths, so
+it is not safe to "fix" unilaterally (#910 explains the coordination needed).
+And **any cap or ceiling measurement must pin
 precision explicitly** — 0 takes the `int_to_str` fast path while 4 formats a
 float per channel per sample, a first-order encoder cost, so an unpinned board
 silently measures the cheap path (`--precision` in
@@ -1000,9 +1006,12 @@ The PBxDIV /3 writes live in `SystemInit`/`initialization.c` (Harmony's `CLK_Ini
 > **⚠️ The descriptive throughput TABLES below (Session-24 soaks, fit basis) pre-date #487 — measured at 200 MHz/100 MHz.** They are historical characterization, not the enforced caps. **The ENFORCED caps HAVE been re-fit for 252 MHz** (contrary to older revisions of this note): PB transport + additive were raised (**#595/#600** — USB PB single 15000→22000 curve 120000/(1+n), SD PB single 9000→13000 curve 99000/(4+n), ISR_MAX 16000→22000); USB CSV transport was raised (**#712**); and the pure-T1 PB additive was **lowered** (**#715/#714** — the 252 MHz PB refit had over-capped pure-T1 PB, silently dropping data at cap: USB PB 1×T1 19340→15799, SD PB 1×T1 9852→7900). **Still on the 200 MHz-era fit (real remaining headroom):** the CSV *additive* grid for **nT1 >= 2** (its **single-channel** case was re-fitted by **#832**, 10589 -> 15263), JSON (`CSV×0.5` placeholder except USB/NQ1, **#529**), the WiFi PB curve, and all NQ2/NQ3 caps (legacy 200 MHz envelope by design). The authoritative, current cap dataset is `daqifi-python-test-suite/benchmarks/` (e.g. `atcap_20260723_*.csv`), not the tables in this file; the enforced values live in `firmware/src/services/streaming.h` (`Streaming_AdcAdditiveCap_NQ1` / `Streaming_SdAdditiveCap_NQ1` / `Streaming_TransportMaxFreq`). Cross-check those + the `#595/#600/#712/#715` PRs before running any 252 MHz cap work.
 >
 > **⚠️ CAP WORK MUST PIN `CONFigure:VOLTage:PRECision` (#832 / test-suite #233).**
-> `csv_encoder` takes an integer fast path (`int_to_str`) at precision **0** and
-> formats a float per channel per sample at **4**, which is what NQ1 **ships**.
-> That is a first-order cost, not a rounding detail: an A/B at one rate measured
+> `csv_encoder` takes an integer fast path (`int_to_str`) at precision **0** —
+> the value a fresh NQ1 actually persists (see the ⚠️ under "Voltage Output
+> Precision" above — #910) — and formats a float per channel per sample at
+> precision **4**, the value `NQ1BoardConfig.c` *declares* as the board default
+> but that a fresh device never reaches. That is a first-order cost, not a
+> rounding detail: an A/B at one rate measured
 > precision 0 clean against precision **4 losing 10.8 %**, at byte rates within
 > 1 % of each other — encoder CPU, not bandwidth. Precision is NVM-backed, so a
 > board that some earlier test pinned and never restored silently changes what
