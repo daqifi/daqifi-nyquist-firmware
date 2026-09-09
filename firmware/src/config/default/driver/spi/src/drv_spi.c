@@ -104,14 +104,30 @@ void DRV_SPI_GetRejectCounters(uint32_t *stale, uint32_t *exclusive,
  * reject/retry dance test_589 documents). This function reports the state
  * itself rather than the trace it leaves in another client.
  *
- * The three fields are read under a critical section, not because any one of
- * them is a torn read (all are aligned <=32-bit and atomic on PIC32MZ), but
- * because a caller acting on the TRIPLE needs the three to describe the same
- * instant: DRV_SPI_ExclusiveUse clears the handle and the mode flag in
- * sequence, so an unguarded read can see mode=true with the handle already
- * DRV_HANDLE_INVALID. Callers include a force-release decision, which must not
- * fire on a half-torn snapshot. O(1) field copy, per the project's rule on
- * keeping critical sections short. */
+ * The three fields are read under a critical section so that a caller acting
+ * on the TRIPLE sees three values that were not modified DURING its own read.
+ * No single one of them is a torn read -- all are aligned <=32-bit and atomic
+ * on PIC32MZ.
+ *
+ * Be precise about what that does NOT buy, because an earlier revision of this
+ * comment overstated it and an adversarial audit caught it. The WRITER is not
+ * symmetric: DRV_SPI_ExclusiveUse's release path clears
+ * exclusiveUseClientHandle and then drvInExclusiveMode as two separate,
+ * UNPROTECTED statements. A reader preempting between them still observes
+ * mode=true with the handle already DRV_HANDLE_INVALID, and no critical
+ * section on this side can undo a state the writer already published.
+ * Protecting the writer would mean a critical section on the shared SPI hot
+ * path and is deliberately not done here.
+ *
+ * The residual window is benign for both consumers, which is why it is
+ * documented rather than closed. DRV_SPI_IsExclusiveHolder evaluates
+ * inExclusive && (holder == handle), which is FALSE in that window -- so the
+ * leak watchdog reads "not held" for one sample and delays detection by one
+ * poll interval; it can never falsely fire. The SCPI diagnostic can print one
+ * self-contradictory line (ExclusiveHeld=1 with an INVALID holder) in a
+ * microseconds-wide window, which is a cosmetic artefact of a bus being
+ * released as it was read. O(1) field copy, per the project's rule on keeping
+ * critical sections short. */
 void DRV_SPI_GetExclusiveState(const SYS_MODULE_INDEX drvIndex,
                                bool *inExclusive, uint32_t *holderHandle,
                                uint32_t *depth)

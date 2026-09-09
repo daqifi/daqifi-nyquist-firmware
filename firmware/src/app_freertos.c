@@ -422,17 +422,43 @@ static bool app_SDCard_GracefulShutdown(uint32_t timeoutMs, const char* reason) 
  * exclusive lock, with no SD operation armed, before the SD task treats it as
  * leaked and force-unwinds it.
  *
- * Chosen to sit above every hold the driver can legitimately take, not tuned.
- * Each individual transfer is bounded by the #567 bus-completion watchdog
- * (DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS, 500 ms in drv_sdspi_local.h). The longest
- * single lock-to-unlock span in the driver is media initialisation
+ * Derived, not tuned -- but read the second half before trusting the first.
+ *
+ * The BOUNDED holds are bounded by two constants together, not by one:
+ * lDRV_SDSPI_CommandSend retries a command up to
+ * DRV_SDSPI_COMMAND_RESPONSE_TRIES (10) times, and each transfer inside it is
+ * capped by the #567 bus-completion watchdog DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS
+ * (500 ms) -- so one command is worst-case 5 s. The longest continuously-held
+ * span in the driver is media initialisation
  * (DRV_SDSPI_INIT_INCR_CLK_SPD_STAT acquires, DRV_SDSPI_INIT_PROCESS_CID
- * releases) which issues on the order of ten commands, so ~5 s is its
- * worst-case even if every one of them times out. 10 s is comfortably past
- * that. Erring long is nearly free: a leaked lock is held forever, so the
- * threshold only sets recovery LATENCY, whereas erring short would abort real
+ * releases), and it issues TWO commands inside that one hold, CMD9 for the CSD
+ * and CMD10 for the CID. Its bounded worst case is therefore ~10 s, not the
+ * ~5 s an earlier revision of this comment claimed. 15 s clears it by half
+ * again.
+ *
+ * The UNBOUNDED ones are the important correction. An earlier revision said
+ * "every legitimate hold is bounded by the #567 transfer watchdog". That is
+ * FALSE, and an adversarial audit of this PR caught it: three wait states hold
+ * the lock while polling spiTransferStatus with NO timer armed and a bare
+ * "nothing to do" else-branch -- DRV_SDSPI_CMD_DETECT_CHK_FOR_DETACH_PRCS_CID_DAT
+ * on the once-per-second post-attach re-verify path, and the CSD and CID data
+ * waits inside media init. A lost completion there hangs forever. That is
+ * pre-existing (the driver is byte-identical to v3.7.2 here) and is a member
+ * of the very failure family #567 and #WINC-recovery were written for.
+ *
+ * So no threshold can be "above every legitimate hold" -- some have no bound
+ * at all. What this one is above is every BOUNDED hold. Firing on one of the
+ * unbounded ones is not a false positive: the alternative is a bus held until
+ * power-cycle, and the cost of acting is a card remount (DRV_SDSPI_ReleaseBus
+ * resets the detect FSM -- see DRV_SDSPI_HoldsBus), which is self-healing.
+ * Arming those three states with the #567 watchdog would be the better fix and
+ * belongs to that issue, not this one: it changes vendor-driver timing and
+ * needs its own bench validation.
+ *
+ * Erring long is nearly free either way: a leaked lock is held forever, so the
+ * threshold sets recovery LATENCY, whereas erring short would abort real
  * work. */
-#define SD_BUS_LEAK_DWELL_MS  (10000U)
+#define SD_BUS_LEAK_DWELL_MS  (15000U)
 
 /* #925: how often the watchdog SAMPLES the lock state. The SD task spins at
  * SD_CARD_MANAGER_TASK_DELAY_MS (1 ms), and reading the lock takes a short
@@ -602,10 +628,12 @@ static void app_SDCardTask(void* p_arg) {
                  *  - the dwell -- this is what separates a leak from a
                  *    legitimate hold, and FSM state cannot: media init holds
                  *    the lock with sdState == TASK_STATE_IDLE for its whole
-                 *    span (see DRV_SDSPI_HoldsBus). Every legitimate hold is
-                 *    bounded by the #567 transfer watchdog; a leaked one is
-                 *    not, so any hold that survives SD_BUS_LEAK_DWELL_MS with
-                 *    nothing armed is leaked.
+                 *    span (see DRV_SDSPI_HoldsBus). It separates them by
+                 *    OUTLASTING every hold the driver can complete, which is
+                 *    not the same as "every legitimate hold is bounded" --
+                 *    three of them are not bounded at all. See
+                 *    SD_BUS_LEAK_DWELL_MS for which, and for why firing on one
+                 *    of those is a rescue rather than a false positive.
                  *
                  * A session-end edge would also be WRONG rather than merely
                  * different: DRV_SDSPI_ReleaseBus resets the detect FSM, which
