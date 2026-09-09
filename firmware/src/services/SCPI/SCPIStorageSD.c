@@ -1315,10 +1315,19 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * to a rotated benchmark_*.dat part (audit rounds 5, 6, 9) -- output that
      * no longer matches the requested pattern. */
     sd_card_manager_UpdateSettingsForPlainWrite(pSDCardRuntimeConfig);
-    /* #829/#925: the arm is complete, so ownership has handed over from the
+    /* #829/#925: WHEN THE ARM SUCCEEDS, ownership has handed over from the
      * claim flag to `mode`, which is now MODE_WRITE and keeps IsBusy() true --
-     * exactly the handover SD_ArmOrRefuse performs for every other command, so
-     * there is no gap between releasing here and the manager being busy.
+     * so there is no gap between releasing here and the manager being busy.
+     *
+     * The line above discards sd_card_manager_UpdateSettingsForPlainWrite()'s
+     * return, so this release also runs on the REFUSED path (the #589 suspend
+     * check): there, the callee has already reset `mode` back to MODE_NONE
+     * before returning false (sd_UpdateSettingsImpl, sd_card_manager.c:3566).
+     * Releasing here is still correct on that path, but for the opposite
+     * reason -- nothing was armed and there is nothing to hold, not that
+     * ownership moved. This mirrors SD_ArmOrRefuse's release-on-both-paths but
+     * NOT its return check; the gap is tracked as #936, with the
+     * SCPI_StartStreaming SD-arm twin as #942.
      *
      * Released rather than held for the whole benchmark on purpose: the write
      * loop below yields for seconds, and the flag is a reservation for ARMING,
