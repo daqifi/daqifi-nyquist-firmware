@@ -29,11 +29,27 @@ name: host-tests
 #     Found by the #941 pre-merge adversarial audit, which is also the PR that
 #     added the test -- it wired up the suite and not its trigger.
 #
-# NOT listed: firmware/src/HAL/ADC/MC12bADC.c, the NQ1 sibling converter whose
-# CalM/CalB ordering AD7609Scale.h is written to match. No host test compiles
-# or greps it, and a trigger with no test behind it would break the invariant
-# above in the other direction -- every path here must have a test that reads
-# that source.
+# THE ADC ENTRY IS A DIRECTORY, AND THAT IS BROADER THAN THE INVARIANT ABOVE.
+# firmware/src/HAL/ADC/ holds nine files; exactly one (AD7609Scale.h) is read
+# by a host test. The glob matches the other eight too -- MC12bADC.c, AD7173.*,
+# AdcThreshold.*, AD7609.c/.h -- so an edit to any of them queues this job,
+# which then builds and passes having exercised nothing related. That costs a
+# CI run and establishes nothing; it does not weaken any gate.
+#
+# It is deliberate, and a narrower list is the worse trade. The whole point of
+# #889's split was to move the arithmetic OUT of AD7609.h into a file a host
+# test can compile -- so the arithmetic has already moved once, and a
+# file-scoped trigger is escaped by moving it again, into a sibling in this
+# same directory. A trigger that a refactor can silently step out of is the
+# defect this entry was added to fix (a PR editing only AD7609Scale.h used to
+# match no path at all), so it is scoped where a refactor cannot escape it.
+#
+# So read the invariant at the granularity that is actually true: every path
+# listed here CONTAINS at least one source a host test reads. Per-FILE it holds
+# for the Util entries and not for this directory, and an earlier revision of
+# this comment claimed the opposite -- it said MC12bADC.c was "NOT listed",
+# which the glob added in the same commit plainly matches. Caught by #941's
+# round-2 pre-merge audit.
 
 on:
   pull_request:
