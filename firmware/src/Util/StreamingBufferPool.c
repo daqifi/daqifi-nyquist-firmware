@@ -23,10 +23,13 @@
  * FreeRTOS sample queue is what clamps it (#828).
  *
  * Trimmed a further 512 B (#925) to pay for app_freertos.c's gSdBusRecoveries,
- * the SPI-bus leak-watchdog recovery counter. Same mechanism again -- main at
- * 78a0ab07 links with EIGHT bytes of slack ("8208 bytes needed, 8200
- * available"), so a single uint32_t of new BSS does not fit and any future
- * static must come with its own payment. Cost as above: ~7 more slots off a
+ * the SPI-bus leak-watchdog recovery counter. Same mechanism again, and the
+ * margin is worth stating precisely because it is so small: on main at
+ * 78a0ab07 the link succeeds, and adding the single uint32_t made it FAIL with
+ * "Not enough memory for stack (8208 bytes needed, 8200 bytes available)" --
+ * i.e. the counter's 8 bytes of BSS (4 plus alignment) are exactly what pushed
+ * it over, so main had 8 bytes to spare and has none now. Any future static
+ * must come with its own payment. Cost as above: ~7 more slots off a
  * partitioned capacity that is not the binding constraint. */
 #define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];

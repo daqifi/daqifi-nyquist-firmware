@@ -2607,8 +2607,19 @@ void DRV_SDSPI_Tasks
  * releases it in DRV_SDSPI_INIT_PROCESS_CID, and sdState is IDLE across that
  * whole span (the attach transition set it in DRV_SDSPI_CMD_DETECT_RESET_SDCARD).
  * Separating a leak from a legitimate hold is therefore the CALLER's job, and
- * it is done with time, not with FSM state -- every legitimate hold is bounded
- * by the #567 transfer watchdog, a leaked one is not. */
+ * it is done with time, not with FSM state. Read
+ * SD_BUS_LEAK_DWELL_MS in app_freertos.c for the rule the caller actually
+ * applies -- and note in particular that "every legitimate hold is bounded by
+ * the #567 transfer watchdog" is FALSE, so do not reason from it here either.
+ * Three wait states in THIS file hold the lock while polling
+ * spiTransferStatus with no timer armed and a bare "nothing to do" else:
+ * DRV_SDSPI_CMD_DETECT_CHK_FOR_DETACH_PRCS_CID_DAT on the once-per-second
+ * post-attach re-verify path, and DRV_SDSPI_INIT_PROCESS_CSD /
+ * DRV_SDSPI_INIT_PROCESS_CID inside media init. A hold observed there for
+ * minutes is not necessarily a #567 regression to escalate; it may be one of
+ * those, which the #925 dwell recovers from by design. (This sentence is the
+ * TWIN of the one #925's round-1 audit corrected in app_freertos.c; round 2
+ * found it still standing here.) */
 bool DRV_SDSPI_HoldsBus(SYS_MODULE_OBJ object)
 {
     const DRV_SDSPI_OBJ* dObj;

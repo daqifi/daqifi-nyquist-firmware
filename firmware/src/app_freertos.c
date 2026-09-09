@@ -463,9 +463,14 @@ static bool app_SDCard_GracefulShutdown(uint32_t timeoutMs, const char* reason) 
 /* #925: how often the watchdog SAMPLES the lock state. The SD task spins at
  * SD_CARD_MANAGER_TASK_DELAY_MS (1 ms), and reading the lock takes a short
  * critical section, which briefly masks the streaming timer ISR. Sampling at
- * 1 kHz would spend 10,000 of those per dwell to answer a question 10 Hz
- * answers identically -- the thing being sampled is a condition that must
- * persist for ten seconds to mean anything. */
+ * 1 kHz would spend SD_BUS_LEAK_DWELL_MS / 1 ms of those per dwell to answer a
+ * question 10 Hz answers identically -- the thing being sampled is a condition
+ * that must persist for SD_BUS_LEAK_DWELL_MS to mean anything.
+ *
+ * Written symbolically on purpose: the literals that used to be here (10,000
+ * samples, "ten seconds") were correct for the original 10 s dwell and were
+ * orphaned the moment it moved to 15 s, one #define above. An audit caught
+ * that; deriving them keeps the next change from doing it again. */
 #define SD_BUS_LEAK_POLL_MS   (100U)
 
 /* #925: force-unwinds performed by the leak watchdog below, since boot.
