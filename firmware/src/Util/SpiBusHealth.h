@@ -96,6 +96,21 @@ bool SpiBusHealth_IsSdQuarantined(void);
 void SpiBusHealth_SetSdSuspended(bool suspended);
 bool SpiBusHealth_IsSdSuspended(void);
 
+/**
+ * #925: snapshot of the shared SPI4 (DRV_SPI instance 0) exclusive-use lock.
+ *
+ * Reports the state itself rather than its shadow in the reject counters,
+ * which only move when some other client happens to attempt a transfer while
+ * the lock is held -- zero on a leaked lock nobody has bumped into, non-zero
+ * during healthy contention. Pass NULL for any output not wanted.
+ *
+ * @param held    true while some client holds the lock
+ * @param holder  the holding client's DRV_HANDLE (DRV_HANDLE_INVALID if none)
+ * @param depth   recursive acquire count (DRV_SPI_ExclusiveUse is re-entrant
+ *                for the SAME handle, so >1 means a nested/ratcheted hold)
+ */
+void SpiBusHealth_GetExclusive(bool *held, uint32_t *holder, uint32_t *depth);
+
 #ifdef __cplusplus
 }
 #endif

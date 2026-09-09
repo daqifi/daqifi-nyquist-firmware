@@ -94,6 +94,97 @@ void DRV_SPI_GetRejectCounters(uint32_t *stale, uint32_t *exclusive,
     if (queueFull != NULL) { *queueFull = gSpiRejQueueFull; }
 }
 
+/* DAQiFi addition (#925): read-only view of one instance's exclusive-use lock.
+ *
+ * The reject counters above only move when SOMEBODY ELSE attempts a transfer
+ * while the lock is held. That makes them useless as a leak detector on their
+ * own: with the WINC quiet, a permanently-held lock produces a reject count of
+ * exactly zero -- indistinguishable from a healthy bus -- and with the WINC
+ * busy they climb during ordinary, correctly-released contention (the
+ * reject/retry dance test_589 documents). This function reports the state
+ * itself rather than the trace it leaves in another client.
+ *
+ * The three fields are read under a critical section so that a caller acting
+ * on the TRIPLE sees three values that were not modified DURING its own read.
+ * No single one of them is a torn read -- all are aligned <=32-bit and atomic
+ * on PIC32MZ.
+ *
+ * Be precise about what that does NOT buy, because an earlier revision of this
+ * comment overstated it and an adversarial audit caught it. The WRITER is not
+ * symmetric: DRV_SPI_ExclusiveUse's release path clears
+ * exclusiveUseClientHandle and then drvInExclusiveMode as two separate,
+ * UNPROTECTED statements. A reader preempting between them still observes
+ * mode=true with the handle already DRV_HANDLE_INVALID, and no critical
+ * section on this side can undo a state the writer already published.
+ * Protecting the writer would mean a critical section on the shared SPI hot
+ * path and is deliberately not done here.
+ *
+ * The residual window is benign for both consumers, which is why it is
+ * documented rather than closed. DRV_SPI_IsExclusiveHolder evaluates
+ * inExclusive && (holder == handle); in that window the handle no longer
+ * matches, so it reads FALSE -- the leak watchdog sees "not held" for one
+ * sample and delays detection by one poll interval, and can never falsely
+ * fire. The SCPI diagnostic can report ExclusiveHeld=1 with the holder shown
+ * as DRV_HANDLE_INVALID for a microseconds-wide window, which is the honest
+ * picture of a bus being released as it was read. O(1) field copy, per the
+ * project's rule on keeping critical sections short. */
+void DRV_SPI_GetExclusiveState(const SYS_MODULE_INDEX drvIndex,
+                               bool *inExclusive, uint32_t *holderHandle,
+                               uint32_t *depth)
+{
+    const DRV_SPI_OBJ* dObj;
+    bool     mode   = false;
+    uint32_t holder = (uint32_t)DRV_HANDLE_INVALID;
+    uint32_t cntr   = 0U;
+
+    if (drvIndex < DRV_SPI_INSTANCES_NUMBER)
+    {
+        dObj = (const DRV_SPI_OBJ*)&gDrvSPIObj[drvIndex];
+        taskENTER_CRITICAL();
+        mode = dObj->drvInExclusiveMode;
+        /* Report the holder ONLY while one exists. exclusiveUseClientHandle
+         * is never initialised to DRV_HANDLE_INVALID -- DRV_SPI_Initialize
+         * sets drvInExclusiveMode and exclusiveUseCntr and not this field --
+         * so before the first-ever acquire it holds the zero it was born with
+         * in .bss, and copying it out unconditionally published `00000000` as
+         * a lock holder on a bus nobody had ever locked. Leaving the caller's
+         * DRV_HANDLE_INVALID default in place makes the field mean one thing
+         * in both directions: the holder when held, DRV_HANDLE_INVALID when
+         * not, whether or not the bus has ever been taken. */
+        if (mode)
+        {
+            holder = (uint32_t)dObj->exclusiveUseClientHandle;
+        }
+        cntr = dObj->exclusiveUseCntr;
+        taskEXIT_CRITICAL();
+    }
+
+    if (inExclusive != NULL)  { *inExclusive  = mode; }
+    if (holderHandle != NULL) { *holderHandle = holder; }
+    if (depth != NULL)        { *depth        = cntr; }
+}
+
+static DRV_SPI_CLIENT_OBJ * lDRV_SPI_DriverHandleValidate(DRV_HANDLE handle);
+
+/* DAQiFi addition (#925): true iff `handle` is the client currently holding
+ * its own instance's exclusive lock. The instance index is decoded from the
+ * handle by the same rule lDRV_SPI_MAKE_HANDLE builds it with, so no caller
+ * outside this file has to know the encoding. */
+bool DRV_SPI_IsExclusiveHolder(const DRV_HANDLE handle)
+{
+    const DRV_SPI_CLIENT_OBJ* clientObj = lDRV_SPI_DriverHandleValidate(handle);
+    bool     inExclusive = false;
+    uint32_t holder      = (uint32_t)DRV_HANDLE_INVALID;
+
+    if (clientObj == NULL)
+    {
+        return false;
+    }
+
+    DRV_SPI_GetExclusiveState(clientObj->drvIndex, &inExclusive, &holder, NULL);
+    return inExclusive && (holder == (uint32_t)handle);
+}
+
 
 // *****************************************************************************
 // *****************************************************************************

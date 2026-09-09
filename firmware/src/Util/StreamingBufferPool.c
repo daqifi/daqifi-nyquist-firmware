@@ -20,8 +20,25 @@
  * memory for stack (8208 bytes needed, 7816 available)" — and the cost is
  * nil in practice, not merely small: at 16 channels this is ~7 slots off a
  * PARTITIONED depth that already exceeds the usable one by ~500, because the
- * FreeRTOS sample queue is what clamps it (#828). */
-#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U)
+ * FreeRTOS sample queue is what clamps it (#828).
+ *
+ * Trimmed a further 512 B (#925) to pay for app_freertos.c's gSdBusRecoveries,
+ * the SPI-bus leak-watchdog recovery counter. Same mechanism again, and the
+ * margin is worth stating precisely because it is so small -- but state only
+ * what was observed. On main at 78a0ab07 the link SUCCEEDS; adding the single
+ * uint32_t made it FAIL with "Not enough memory for stack (8208 bytes needed,
+ * 8200 bytes available)". The requirement is fixed, so main had at least the
+ * 8208 and the addition left it 8 bytes short.
+ *
+ * That does NOT establish how much main had spare, and an earlier revision of
+ * this comment asserted "8 bytes" as if it did -- an audit caught the algebra:
+ * spare_on_main = (what the counter actually occupies) - 8, and a 4-byte
+ * static can occupy 4 or 8 after alignment, so the answer is somewhere around
+ * zero and was never measured. The operative fact needs no such number:
+ * ONE uint32_t did not fit, so any future static must come with its own
+ * payment. Cost as above: ~7 more slots off a
+ * partitioned capacity that is not the binding constraint. */
+#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
 /* The overcommit fallback below carves these four minimums and expects the

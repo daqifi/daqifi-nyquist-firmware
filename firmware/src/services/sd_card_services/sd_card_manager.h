@@ -373,7 +373,8 @@ void sd_card_manager_ReleaseClaim(void);
  * WHY THE KIND IS A PARAMETER, and not state inspected here: every attempt to
  * INFER it from the manager's own state was wrong in a different window.
  * A global one-shot flag set just before the arm was stealable, because
- * SYST:STOR:SD:BENCHmark takes no claim by design (#736) and could consume
+ * SYST:STOR:SD:BENCHmark took no #829 claim at the time (#736; #925 later gave
+ * it one, but only across its own arm) and could consume
  * another transport's declaration (audit round 8). Testing
  * currentProcessState missed the rotation window, where the manager sits in
  * OPEN_FILE rather than WRITE_TO_FILE (round 7), and adding gSdRotating to
@@ -388,11 +389,11 @@ bool sd_card_manager_UpdateSettingsForPlainWrite(
 /* #851: is the WRITE session currently armed a STREAMING LOG?
  *
  * The read side of the latch above. `mode == WRITE` alone does not say WHOSE
- * write it is -- SYST:STOR:SD:BENCHmark arms one too, and takes no claim by
- * design (#736) -- so a caller that closes "the WRITE" on the strength of the
- * mode can tear down another consumer's file. SCPI_StartStreaming needs
- * exactly this distinction on the two abort paths that run between stopping
- * the previous session and arming its own SD.
+ * write it is -- SYST:STOR:SD:BENCHmark arms one too, and its #829 claim
+ * (#925) covers only the arm, not the run -- so a caller that closes "the
+ * WRITE" on the strength of the mode can tear down another consumer's file.
+ * SCPI_StartStreaming needs exactly this distinction on the two abort paths
+ * that run between stopping the previous session and arming its own SD.
  *
  * Latched at the arm and cleared on teardown, so it describes the session that
  * is open right now, not the last one that asked. A plain read of a volatile

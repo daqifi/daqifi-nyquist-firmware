@@ -238,7 +238,8 @@ static volatile bool gSdRotating = false;
  * states it AS AN ARGUMENT: sd_card_manager_UpdateSettingsForStreamingLog()
  * instead of sd_card_manager_UpdateSettings(). An earlier revision used a
  * global one-shot token set just before the arm, and audit round 8 showed it
- * was STEALABLE -- SYST:STOR:SD:BENCHmark takes no claim (#736), so a
+ * was STEALABLE -- SYST:STOR:SD:BENCHmark took no #829 claim then (#736;
+ * #925 later gave it one, across its arm only), so a
  * benchmark arming from USB SCPI in the window between a WiFi-SCPI stream
  * start's declaration and its own UpdateSettings() consumed the declaration
  * and latched ITSELF as a streaming log. A parameter cannot be taken by

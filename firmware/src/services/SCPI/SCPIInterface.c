@@ -4571,11 +4571,14 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
      * and not some other consumer's.
      *
      * `mode == WRITE` alone does NOT establish that. SYST:STOR:SD:BENCHmark
-     * arms a WRITE too and takes no claim by design (#736), so a benchmark
-     * running on the other transport while this start tears a session down
-     * would be read as "the session we stopped" and have its file closed
-     * mid-run by the two aborts below (Qodo). The #824 latch is what answers
-     * the question the mode cannot: it is set only by the STREAMING arm. */
+     * arms a WRITE too, and the #829 claim does not distinguish them: since
+     * #925 the benchmark takes that claim, but only ACROSS ITS ARM (same shape
+     * as the SD arm below), so it is released for the whole run and says
+     * nothing about whose WRITE is open. A benchmark running on the other
+     * transport while this start tears a session down would therefore still be
+     * read as "the session we stopped" and have its file closed mid-run by the
+     * two aborts below (Qodo). The #824 latch is what answers the question the
+     * mode cannot: it is set only by the STREAMING arm. */
     bool stoppedSdLoggingSession = false;
     if (pRunTimeStreamConfig->IsEnabled && pRunTimeStreamConfig->Running) {
         stoppedSdLoggingSession = (pSDCardSettings != NULL) &&
@@ -5475,8 +5478,10 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
  * deliberately, in a PR whose entire subject is two copies of one question
  * drifting apart. `enable && mode == WRITE` alone does not say WHOSE write it
  * is: exactly two sites arm WRITE -- SCPI_StartStreamingClaimed()'s SD arm
- * and SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark) -- and the benchmark
- * takes no claim by design (#736). The #851 latch is what separates them.
+ * and SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark) -- and BOTH now hold
+ * the #829 claim only across the arm itself (#836 / #925), releasing it for
+ * the run, so the claim cannot tell them apart either. The #851 latch is what
+ * separates them.
  *
  * The critical section makes the composite a snapshot rather than three
  * independent reads; the latch is written under one in the SD manager
@@ -5716,9 +5721,10 @@ static void SCPI_PerformStreamingStop(void) {
      * `enable && mode == WRITE` does not mean "a streaming log is open" -- it
      * means "somebody armed the shared WRITE". There are exactly two arms in
      * the tree: SCPI_StartStreamingClaimed()'s SD arm and
-     * SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark), and the benchmark
-     * takes no claim by design
-     * (#736). So on the mode alone this teardown closes a running benchmark's
+     * SYST:STOR:SD:BENCHmark (SCPI_StorageSDBenchmark), and both hold the #829
+     * claim only across their arm (#836 / #925), never for the run, so the
+     * claim does not tell them apart.
+     * So on the mode alone this teardown closes a running benchmark's
      * file: it sets mode to NONE, sd_card_manager_WriteToBuffer then returns 0,
      * and the benchmark stalls to its 10 s drain timeout and reports a
      * truncated result.
@@ -7933,11 +7939,38 @@ static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
                                           uint32_t *lockFail, uint32_t *queueFull);
     uint32_t st, ex, lk, qf;
     DRV_SPI_GetRejectCounters(&st, &ex, &lk, &qf);
-    char out[96];
+
+    /* #925: the four Rej* counters above are a SHADOW of the bus state, not the
+     * state. They move only when some other client attempts a transfer while
+     * the lock is held, so they read exactly 0 for a lock that has been leaked
+     * but not yet bumped into, and they climb during ordinary, correctly
+     * released contention (the reject/retry dance test_589 documents). Neither
+     * direction can be asserted on. The five fields below report the lock
+     * itself, so a client can ask "is the shared bus stuck?" and get an answer
+     * that does not depend on somebody else's traffic. */
+    bool held = false, sdHolds = false;
+    uint32_t holder = 0, depth = 0, recovered = 0;
+    SpiBusHealth_GetExclusive(&held, &holder, &depth);
+    sdHolds = app_SDCard_HoldsSpiBus();
+    recovered = app_SDCard_BusRecoveryCount();
+
+    /* 224, not 192: the worst case is 193 characters plus the NUL, which
+     * 192 truncates. Field-by-field, with every counter at its 10-digit
+     * maximum -- RejStale 20, RejExclusive 24, RejLock 19, RejQueueFull 24,
+     * ExclusiveHeld 16, ExclusiveDepth 26, ExclusiveHolder 25, SdHoldsBus 13,
+     * SdBusRecoveries 26 (no trailing comma). Recompute this if a field is
+     * added. Stays a stack local rather than the shared response buffer
+     * because it is under the 256 B threshold that rule applies to. */
+    char out[224];
     snprintf(out, sizeof(out),
-             "RejStale=%lu,RejExclusive=%lu,RejLock=%lu,RejQueueFull=%lu",
+             "RejStale=%lu,RejExclusive=%lu,RejLock=%lu,RejQueueFull=%lu,"
+             "ExclusiveHeld=%u,ExclusiveDepth=%lu,ExclusiveHolder=%08lx,"
+             "SdHoldsBus=%u,SdBusRecoveries=%lu",
              (unsigned long)st, (unsigned long)ex, (unsigned long)lk,
-             (unsigned long)qf);
+             (unsigned long)qf,
+             (unsigned)(held ? 1U : 0U), (unsigned long)depth,
+             (unsigned long)holder,
+             (unsigned)(sdHolds ? 1U : 0U), (unsigned long)recovered);
     SCPI_ResultText(context, out);
     return SCPI_RES_OK;
 }
