@@ -2423,7 +2423,21 @@ static scpi_result_t SCPI_RunThroughputBenchClaimed(scpi_t * context) {
          * nothing enabled.  Refusing here would therefore be a NEW refusal on
          * a command that has always accepted this, so if it is ever wanted it
          * belongs at this command's front door as a deliberate behaviour
-         * change -- not inherited from the finder's arm by symmetry. */
+         * change -- not inherited from the finder's arm by symmetry.
+         *
+         * #895 likewise changes NOTHING here, for reasons of the same shape.
+         * It splits the finder's single refusal token in two -- START_REFUSED
+         * when the sweep's first arm was withheld, START_FAIL when a later
+         * one was -- because a five-field reply reporting one token for both
+         * cannot be told apart by a client, and the finder's own front door
+         * already refuses the empty-input case outright, so its reply
+         * contract is where the inconsistency showed.  This command has no
+         * reason token to split: its output is the sample and byte counts it
+         * measured, a refused arm simply ends the run, and the counts
+         * themselves already say whether anything was measured.  Adding a
+         * token here would be new reply syntax on a command nothing asked to
+         * change -- again a deliberate behaviour change belonging at its own
+         * front door, not inherited by symmetry. */
         mappingMoved = (Streaming_ComputeChannelSelection(
                                 pBoardConfig, (const AInRuntimeArray*)pRtAin)
                         != mappingSelAtBuild);
@@ -2563,8 +2577,14 @@ static scpi_result_t SCPI_RunThroughputBench(scpi_t * context) {
 //   -> <recommendedHz>,<recommendedKBps>,<reason>,<ceilingHz>,<ceilingKBps>
 //   recommendedHz/KBps = soak-confirmed clean rate, clamped to the bench wire
 //                        ceiling (WIFI_BENCH_CEILING_KBPS) — the rate to stream.
-//   reason             = START_FAIL | NO_LINK | NO_CLEAN_SOAK | BENCH_CAP |
-//                        LINK_SATURATED | HIT_MAX
+//   reason             = START_REFUSED | START_FAIL | NO_LINK | NO_CLEAN_SOAK |
+//                        BENCH_CAP | LINK_SATURATED | HIT_MAX
+//                        #895 splits what used to be one START_FAIL token in
+//                        two: START_REFUSED = the sweep never measured
+//                        anything, its FIRST step's arm was withheld;
+//                        START_FAIL = a LATER step's was, so the reply
+//                        describes a partial sweep. Same five fields either
+//                        way; a first-step refusal reads 0,0,START_REFUSED,0,0.
 //   ceilingHz/KBps     = raw arc/refine ceiling (the pre-soak, pre-clamp
 //                        overestimate) — kept unclamped for diagnostics/testing.
 //
@@ -2754,11 +2774,15 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * adopt it as its own and measure/stop it (Qodo). */
     if (armRefused || !cfg->Running) {
         if (armRefused) {
-            /* #868/#891: the sweep reports START_FAIL for every refusal --
-             * one outcome, three causes -- so name the cause in the log, which
-             * is where this project puts error detail (SYSTem:LOG?).  Same
-             * order as the tests above, so the message always names the reason
-             * that actually withheld the arm. */
+            /* #868/#891/#895: the sweep reports one of TWO tokens for a
+             * refusal -- START_REFUSED when this was the first step and
+             * nothing had been measured yet, START_FAIL otherwise -- and
+             * neither of them says which of the three causes fired.  That
+             * split is about WHERE in the sweep it happened, not WHY, so the
+             * cause still goes in the log, which is where this project puts
+             * error detail (SYSTem:LOG?).  Same order as the tests above, so
+             * the message always names the reason that actually withheld the
+             * arm. */
             LOG_E("WIFI:FIND %u Hz: arm refused - %s", (unsigned)freq,
                   cfgBusy ? "a streaming config change is in flight (#847)"
                           : inputsGone
@@ -2954,6 +2978,13 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     uint32_t lastGoodHz = 0;
     uint32_t lastGoodKBps = 0;
     bool startFailed = false;
+    /* #895: has ANY step completed a full arm+dwell+observe+teardown cycle?
+     * This is what separates the sweep's two failure tokens (see the reason
+     * chain at the end).  A step that TRIPPED counts -- FindMeasureStep did
+     * real work and returned a real verdict, it just wasn't a clean one -- so
+     * this is deliberately not `lastGoodHz > 0`, which would misreport a
+     * refusal following the debounce's first trip as "never started". */
+    bool anyStepMeasured = false;
     bool saturated = false;
     bool confirmTrip = false;   // debounce: require 2 consecutive trips to lock
 
@@ -2969,6 +3000,14 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
         bool sf = false;
         bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, freq, FIND_DWELL_MS, &kbps, &sf);
         if (sf) { startFailed = true; break; }
+        /* #895: past the refusal test, so this step measured.  Set at ALL
+         * THREE call sites even though sites 2 and 3 cannot reach it with the
+         * flag still false (both are gated on lastGoodHz > 0, which only a
+         * clean step here can set).  Uniform on purpose: the three refusal
+         * CAUSES are already folded into one bool by FindMeasureStep, and
+         * treating one call site as special is how the twin gets left behind
+         * when the gating on 2/3 is next changed. */
+        anyStepMeasured = true;
 
         if (!sat) {
             confirmTrip = false;   // clean step clears any pending debounce
@@ -3021,10 +3060,15 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
                  * runs at all, and the sweep returns NO_CLEAN_SOAK for what is
                  * actually a refused arm (Qodo). All three call sites now
                  * agree: *outStartFailed means the step did not happen, and a
-                 * sweep whose basis moved or is moving reports START_FAIL. */
+                 * sweep whose basis moved or is moving reports a refusal.
+                 * #895: which of the two refusal tokens that is depends on
+                 * whether anything had been measured yet -- from HERE it is
+                 * always START_FAIL, because reaching this loop requires a
+                 * clean step to have set lastGoodHz. */
                 startFailed = true;
                 break;
             }
+            anyStepMeasured = true;   /* #895, see site 1 */
             if (sat) {
                 hi = mid;
             } else {
@@ -3052,6 +3096,7 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
             uint32_t kbps = 0; bool sf = false;
             bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, cand, FIND_SOAK_MS, &kbps, &sf);
             if (sf) { startFailed = true; break; }
+            anyStepMeasured = true;   /* #895, see site 1 */
             if (!sat) {                       // a clean 60 s soak
                 streak++;
                 recommendedKBps = kbps;       // track the clean rate's wire rate
@@ -3108,7 +3153,22 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     }
 
     const char* reason;
-    if (startFailed)            reason = "START_FAIL";
+    /* #895: the two refusal tokens are decided HERE rather than latched at the
+     * call sites, and that is exact rather than approximate: once startFailed
+     * is set no further FindMeasureStep call can run (site 1 breaks without
+     * setting `saturated`, so site 2's gate fails; sites 2 and 3 are gated on
+     * !startFailed / lastGoodHz), so anyStepMeasured is frozen at the instant
+     * of the failure and reading it here is reading it then.
+     *
+     * The token says WHETHER the sweep produced data, never WHY it stopped:
+     * all three arm-refusal causes (#847 cfgBusy, #868 mappingMoved, #891
+     * inputsGone) reach here through one bool, and so does the fourth
+     * *outStartFailed producer -- a stream that armed but never went Running,
+     * which is the one case FindMeasureStep does NOT log a cause for. Callers
+     * wanting the cause read SYSTem:LOG?; that is unchanged. */
+    if (startFailed && !anyStepMeasured)
+                                reason = "START_REFUSED"; // refused at the first arm — nothing was measured
+    else if (startFailed)       reason = "START_FAIL";    // refused mid-sweep — the fields are a partial sweep
     else if (lastGoodHz == 0)   reason = "NO_LINK";        // nothing sustainable, even the start freq
     else if (!soakClean)        reason = "NO_CLEAN_SOAK";  // walked to floor without a clean 20 s — link unstable
     else if (benchClamped)      reason = "BENCH_CAP";      // soak clean but clamped to bench wire ceiling
