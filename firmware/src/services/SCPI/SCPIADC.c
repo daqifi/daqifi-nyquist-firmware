@@ -549,12 +549,32 @@ static scpi_result_t ADCChanSingleEndSetClaimed(scpi_t * context);
 /* #885: this setter had NO stream guard of any kind -- not even the
  * Running-only test #873 replaced. It writes AInRuntime.Data[i].IsDifferential
  * and then pushes the whole channel state to the ADC SFRs via
- * ADC_WriteChannelStateAll(), so a mid-session call re-wires the input
- * multiplexer under a running acquisition AND invalidates the description of
- * the stream that the client is already holding. That description is
- * `analog_in_port_rse` -- one bit per channel, built from IsDifferential
- * (NanoPB_Encoder.c). Exactly two statements about it are load-bearing here,
- * and both were checked rather than assumed:
+ * ADC_WriteChannelStateAll(), so a mid-session call re-runs the whole-board
+ * ADC state write (ADC_WriteChannelStateAll, HAL/ADC.c:218) under a running
+ * acquisition AND invalidates the description of the stream that the client
+ * is already holding.
+ *
+ * What that write does NOT do is move a multiplexer. An earlier revision of
+ * this comment said it "re-wires the input multiplexer"; that is false on
+ * both variants this repo builds. MC12b_WriteStateAll
+ * (HAL/ADC/MC12bADC.c:161-206) never reads IsDifferential -- it clears
+ * gpModuleRuntimeConfigMC12->IsEnabled for the duration, calls
+ * MC12b_WriteStateSingle for each MC12b entry it iterates
+ * (ADCHS_ModulesEnable / ADCHS_ModulesDisable), rebuilds gType1EnabledMask,
+ * and re-issues ADCHS_ChannelResultInterruptDisable for every Type-1 channel
+ * and for CH3. The only code that turns IsDifferential into a mux setting is
+ * AD7173_WriteStateSingle (HAL/ADC/AD7173.c:227), which
+ * ADC_WriteChannelStateAll cannot reach: it dispatches only to
+ * MC12b_WriteStateAll and to AD7609_WriteStateAll, and the latter is a NULL
+ * check and nothing else (HAL/ADC/AD7609.c:327). AD7173.c is excluded from
+ * BOTH build configurations, and there are only two -- `default` and `Nq3`
+ * (firmware/daqifi.X/nbproject/configurations.xml). The mid-session hazard is
+ * therefore the stale description plus a whole-list ADC re-write during
+ * acquisition, not a mux change.
+ *
+ * That description is `analog_in_port_rse` -- one bit per channel, built from
+ * IsDifferential (NanoPB_Encoder.c). Exactly two statements about it are
+ * load-bearing here, and both were checked rather than assumed:
  *
  *   * it is NOT in the streaming field set -- the per-sample flags built in
  *     streaming.c are msg_time_stamp / analog_in_data / digital_data /
@@ -857,8 +877,16 @@ static scpi_result_t ADCChanRangeSetClaimed(scpi_t * context) {
     // -109 TWICE. A client draining the queue saw two errors for one command
     // and the last one it read was the wrong one. Returning the error
     // unmodified is what every peer setter in this file does
-    // (ADCOnboardDiagSetClaimed, SamcSetCommonClaimed) and is the same fix PR
-    // #882 made in SCPI_StartStreaming.
+    // (ADCOnboardDiagSetClaimed, SamcSetCommonClaimed). It is a DIFFERENT
+    // remedy from PR #882's in SCPI_StartStreaming: there the push was KEPT
+    // and made conditional on !SCPI_ParamErrorOccurred(context), because that
+    // site tests `!SCPI_ParamIsNumber(...) || !SCPI_ParamToInt32(...)`
+    // (SCPIInterface.c) and the first disjunct queues nothing at all --
+    // SCPI_ParamIsNumber is a pure type predicate (parser.c:757-769) -- so
+    // deleting the push there would have left a genuinely silent failure.
+    // Here the push is deleted outright, which is safe only because the one
+    // callee, SCPI_ParamInt32 -> ParamSignUInt32, is established below to
+    // queue on every reachable failure exit.
     //
     // REMOVING a push is only safe if the callee ALWAYS queues, so that claim
     // is established here rather than asserted. Walking libscpi from this call
@@ -883,8 +911,10 @@ static scpi_result_t ADCChanRangeSetClaimed(scpi_t * context) {
     // reader trusts a list nobody checked (codex pre-merge audit re-walked it
     // and found both).
     //
-    // TWO exits queue NOTHING, and both are unreachable BY CONSTRUCTION rather
-    // than by luck -- which is the part a future libscpi bump could break:
+    // THREE exits queue NOTHING, and all three are unreachable BY CONSTRUCTION
+    // rather than by luck. The first two are held dead by libscpi internals, so
+    // they are what a future libscpi bump could break; the third is held dead by
+    // this call site's own argument:
     //
     //   * ParamSignToUInt32's HEXNUM/OCTNUM/BINNUM arms (:827-831) return
     //     FALSE when zero characters convert. scpiLex_NondecimalNumericData
@@ -907,6 +937,14 @@ static scpi_result_t ADCChanRangeSetClaimed(scpi_t * context) {
     // contradicts both that code and this file's own correct account of the
     // same mechanism in SCPI_ADCChanCalmSet below. Re-check this list at that
     // point.
+    //
+    //   * SCPI_Parameter's non-mandatory absent arm (:714-716) sets the token
+    //     type and returns FALSE without calling SCPI_ErrorPush at all. It is
+    //     reachable only when `mandatory` is FALSE; this call site passes
+    //     SCPI_ParamInt32(context, &rangeParam, TRUE), and that TRUE threads
+    //     unchanged through ParamSignUInt32 (:1073) into SCPI_Parameter, so the
+    //     arm cannot execute here. No libscpi change can make it live -- only
+    //     changing that argument, in this file.
     if (!SCPI_ParamInt32(context, &rangeParam, TRUE)) {
         return SCPI_RES_ERR;
     }
@@ -1006,7 +1044,7 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context);
  * Note what this does NOT change: CONF:ADC:SAVEcal / SAVEFcal stay unguarded.
  * They copy runtime cal INTO NVM and mutate nothing the conversion path reads,
  * and every other NVM-persisting setter in the tree (CONF:VOLTage:SAVE,
- * SYSTem:NAME, the LAN saves) is likewise unguarded -- guarding these two
+ * SYSTem:DEVice:NAME:SAVE, the LAN saves) is likewise unguarded -- guarding these two
  * would be a new and inconsistent restriction, not this fix.
  *
  * The claim is the first statement (#862 ordering contract, SCPIInterface.h),
@@ -1264,7 +1302,13 @@ scpi_result_t SCPI_ADCCalFSave(scpi_t * context) {
 /* #885: LOADcal / LOADFcal overwrite EVERY channel's CalM and CalB from NVM,
  * and those two are read per conversion (see SCPI_ADCChanCalmSet above), so
  * this is the whole-board version of the same defect -- a mid-session load
- * rescales all sixteen channels at once. It is also the exact mutation that
+ * rescales every entry daqifi_settings_LoadADCCalSettings iterates
+ * (channelRuntimeConfig->Size, services/daqifi_settings.c:304, loop at :333),
+ * monitoring channels included: 24 on NQ1 (16 user + 8 monitoring,
+ * state/runtime/NQ1RuntimeDefaults.c:49) and 16 on NQ3 (8 user + 8 monitoring,
+ * state/runtime/NQ3RuntimeDefaults.c:41). Not sixteen on either variant -- an
+ * earlier revision said "all sixteen channels at once", which is the NQ1 USER
+ * channel count and the bound on neither. It is also the exact mutation that
  * CONF:ADC:USECal already performs UNDER the claim
  * (ADCUseCalSetClaimed -> daqifi_settings_LoadADCCalSettings, below): two
  * commands reaching one store, one of them guarded and one not.
@@ -1275,8 +1319,16 @@ scpi_result_t SCPI_ADCCalFSave(scpi_t * context) {
  * without adding a guarantee. One claim, one release, one return.
  *
  * The two commands share this helper but each names ITSELF in the refusal --
- * they are distinct commands selecting distinct NVM banks, not two spellings
- * of one node the way CONF:ADC:SAMC:DEDicated/SHARed are. */
+ * they are distinct commands selecting distinct NVM banks, and the LOG_E line
+ * says which one was refused. Contrast SamcSetCommon below:
+ * CONFigure:ADC:SAMC:DEDicated and CONFigure:ADC:SAMC:SHARed are equally
+ * distinct commands -- two registered patterns with two callbacks
+ * (SCPIInterface.c) -- but that helper passes the literal "CONF:ADC:SAMC" for
+ * both, so its log line does not say which was refused, and that string is not
+ * itself a registered pattern. (An earlier revision of this comment called
+ * those two "two spellings of one node". They are not: a spelling in this
+ * tree's sense is the full-vs-truncated form of ONE node -- CLAUDE.md's SCPI
+ * abbreviation rule.) */
 static scpi_result_t CalLoadCommon(scpi_t * context,
                                    DaqifiSettingsType type,
                                    const char * what) {
@@ -1553,6 +1605,31 @@ scpi_result_t SCPI_ADCThresholdGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+// #918: deliberately NOT put on the streaming config-change claim, unlike
+// SCPI_ADCThresholdSet above. AdcThreshold_Clear (HAL/ADC/AdcThreshold.c:275)
+// zeroes a per-unit trip latch and counter and re-arms the unit's interrupt.
+// It is not a conversion input and moves nothing the encoder or the cap
+// depends on, so it does not share the reason the converted setters in this
+// file are claimed.
+//
+// Refusing it mid-stream would remove the only re-arm path left during a run.
+// A latched alarm outlives an unrelated stream by design -- the persistence
+// contract in AdcThreshold_RevalidateForStream (HAL/ADC/AdcThreshold.c:302-309)
+// names this command as the only thing that clears it -- and the other way to
+// re-arm a unit, a reconfigure via CONF:ADC:THREshold, IS claimed and so is
+// itself refused while streaming. Blocking this one too would make a tripped
+// alarm permanent for the rest of the session.
+//
+// Known cost of leaving it unclaimed: AdcThreshold_Clear disables the unit's
+// interrupt across the clear (thr_IntDisable -> zero tripCount/latched -> read
+// CON to drop a pending DCMPED -> thr_IntClearFlag -> thr_IntEnable), so a trip
+// asserting inside that window is dropped and uncounted. Bounded, not
+// open-ended: the comparator is LEVEL-evaluated (see AdcThreshold_IsrTrip), so
+// a condition still past the limit re-asserts on the next conversion and trips
+// again once the interrupt is back on -- only an excursion that both starts and
+// ends inside the window is lost. A dedicated dropped-trip counter would close
+// even that; it is a separate feature, not this fix (#897 option 3).
+//
 // CONF:ADC:THREshold:CLEar [<ch>] -> clear latch+counter (no arg = all)
 scpi_result_t SCPI_ADCThresholdClear(scpi_t * context) {
     int32_t ch;
@@ -1589,10 +1666,14 @@ scpi_result_t SCPI_ADCThresholdClear(scpi_t * context) {
 // #862: the claim is the first statement, ahead of SCPI_ParamInt32, so
 // `CONF:ADC:SAMC:DEDicated 99999` mid-stream answers -200 like every other
 // converted setter instead of -222 -- see the ordering contract on
-// SCPI_RejectCfgClaim (SCPIInterface.h). Both registered spellings route
+// SCPI_RejectCfgClaim (SCPIInterface.h). Both registered commands --
+// CONFigure:ADC:SAMC:DEDicated and CONFigure:ADC:SAMC:SHARed, two distinct
+// patterns with two callbacks rather than two spellings of one node -- route
 // through here, so both are fixed by the one wrapper.
 //
-// The refusal names "CONF:ADC:SAMC" for either spelling, as it did before.
+// The refusal's LOG_E names "CONF:ADC:SAMC" whichever of the two was sent --
+// an unregistered, ambiguous label, not "either spelling" of one node -- as it
+// did before.
 static scpi_result_t SamcSetCommonClaimed(scpi_t *context, bool isDedicated);
 
 static scpi_result_t SamcSetCommon(scpi_t *context, bool isDedicated) {
