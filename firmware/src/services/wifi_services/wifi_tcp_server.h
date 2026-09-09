@@ -82,9 +82,24 @@ typedef struct s_tcpClientContext
     uint64_t wifiTcpBytesConfirmed;
     /** Radio send errors (negative sentBytes in callback — real failures) */
     uint32_t wifiTcpSendErrors;
-    /** Partial sends (callback confirmed fewer bytes than requested — normal TCP segmentation) */
+    /** Partial sends (callback confirmed fewer bytes than requested).  #500: an
+     *  elevated band around 23-26 KB/s of WIRE BYTE RATE is EXPECTED, not a
+     *  fault — it keys on byte rate rather than sample rate (1xT1 @ 2250 Hz and
+     *  5xT1 @ 1250 Hz peak together), it is near-zero below ~22 KB/s and low
+     *  again by ~33 KB/s, and it is not circular-buffer-size dependent.
+     *  Throughout the band wifiTcpBytesSent == wifiTcpBytesConfirmed exactly,
+     *  with wifiTcpSendErrors == 0 and no dropped bytes, so a rise here is the
+     *  leading indicator working, not data loss.  Nothing is lost: the
+     *  shortfall bytes are completed on a subsequent send.
+     *  See CLAUDE.md, "WiFi characterization — lessons
+     *  that survive", before treating a rise as a defect. */
     uint32_t wifiTcpPartialSends;
-    /** #367 diagnostics: cumulative byte shortfall (sendSize - sentBytes) across all partial sends */
+    /** #367 diagnostics: cumulative byte shortfall (sendSize - sentBytes) across
+     *  all partial sends.  #500: inside the band documented on
+     *  wifiTcpPartialSends above this averages 11-19 B against the 1400 B
+     *  WIFI_WBUFFER_SIZE cap (~1% of a send), and is roughly constant while the
+     *  partial-send FREQUENCY varies.  The shortfall bytes are completed on a
+     *  subsequent send, not dropped — this is not a loss counter. */
     uint32_t wifiPartialBytesMissing;
     /** #371 diagnostics: count of wifi_tcp_server_WriteBuffer calls that returned 0
      *  because the circular buffer didn't have enough free space.  Streaming task
