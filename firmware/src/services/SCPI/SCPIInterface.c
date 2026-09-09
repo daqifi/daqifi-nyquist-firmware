@@ -7385,7 +7385,33 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         StreamingInterface effIf =
             (scq->ActiveInterface == detIf || scq->ActiveInterface == StreamingInterface_USB)
                 ? detIf : scq->ActiveInterface;
-        st.maxFreqHz = Streaming_ComputeMaxFreqForConfigIface(effIf);
+        /* #921: this recompute REPLACES the composite for effIf, so it must
+         * replace the terms too -- otherwise the published terms would still
+         * describe ActiveInterface while current_max_rate_hz describes effIf,
+         * and min(terms) would not equal the composite whenever the two
+         * interfaces have different transport (or SD-additive) coefficients. */
+        StreamingCapTerms terms;
+        memset(&terms, 0, sizeof(terms));
+        uint32_t ifaceMaxHz = Streaming_ComputeMaxFreqTermsForConfigIface(effIf, &terms);
+        /* Gate on the count THIS recompute used. st.maxFreqHz > 0 above came
+         * from an earlier count inside Capabilities_GetStreamingSummary; the
+         * other SCPI transport can disable the last channel in between, and the
+         * zero-channel branch of the cap deliberately returns ISR_MAX rather
+         * than 0. Without this check the blob would advertise a healthy rate,
+         * and non-zero terms, for a device with no inputs. */
+        if (terms.totalChannels > 0) {
+            st.maxFreqHz        = ifaceMaxHz;
+            st.capAdcAdditiveHz = terms.adcAdditiveHz;
+            st.capTransportHz   = terms.transportHz;
+            st.capScanBoundHz   = terms.scanBoundHz;
+            st.capSdAdditiveHz  = terms.sdAdditiveHz;
+        } else {
+            st.maxFreqHz        = 0;
+            st.capAdcAdditiveHz = 0;
+            st.capTransportHz   = 0;
+            st.capScanBoundHz   = 0;
+            st.capSdAdditiveHz  = 0;
+        }
     }
     Capabilities_GetStorageSummary(&stor);
     Capabilities_GetPowerSummary(&pw);
@@ -7557,6 +7583,35 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         (unsigned)st.isrMaxHz,
         (unsigned)cfg->CapabilitiesFlags.streamingConservativeEnvelopeHz,
         (unsigned)st.maxFreqHz);
+
+    /* #921 cap_terms — the individual bounds current_max_rate_hz is the min()
+     * of. Published because the composite alone cannot say WHICH term binds, so
+     * a host escalating a rate (a cap re-fit campaign, say) had to re-derive the
+     * terms by hand from streaming.h and guess how far it could safely go.
+     * scan_bound_hz in particular is the FRM-documented scan-retrigger limit
+     * (#539) — the one term that is a hardware safety bound rather than a
+     * fitted throughput envelope — so a bench sweep can now cap itself at the
+     * value the DEVICE reports instead of at the host's guess.
+     *
+     * The two guarantees a client may rely on — 0 means "not applicable" and
+     * never a 0 Hz cap, and min(non-zero terms) == current_max_rate_hz — are
+     * stated once, canonically, on StreamingCapTerms in streaming.h. Do not
+     * restate them here; they are properties of how that struct is FILLED, not
+     * of this emit, and a copy here would be the one to go stale.
+     * test_921_cap_terms.py asserts both.
+     *
+     * Emitted as its own scpi_printf: the helper caps each call at 192 bytes
+     * (SCPIInterface.h), and four %u of up to 10 digits plus 84 bytes of
+     * literal would leave no headroom if appended to the chunk above.
+     * These are ADDITIVE keys — older clients ignore unknown keys, so no
+     * schema_version bump (see the escape-hatch note at the top of this blob). */
+    scpi_printf(context,
+        "\"cap_terms\":{\"adc_additive_hz\":%u,\"transport_hz\":%u,"
+        "\"scan_bound_hz\":%u,\"sd_additive_hz\":%u},",
+        (unsigned)st.capAdcAdditiveHz,
+        (unsigned)st.capTransportHz,
+        (unsigned)st.capScanBoundHz,
+        (unsigned)st.capSdAdditiveHz);
 
     /* #730 timing block — the streaming timebase, so a client never has to
      * assume a clock or a prescale ratio, and can see the rate the hardware
