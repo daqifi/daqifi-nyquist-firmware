@@ -17,6 +17,23 @@ name: host-tests
 #     constants and fails the build (not just the test) if either drifts --
 #     scoped to the whole SCPI/ directory rather than just that one file so a
 #     future move of the constants still trips this.
+#   - test_ad7609_scale.c (#889): compiles firmware/src/HAL/ADC/AD7609Scale.h
+#     directly. Scoped to the whole HAL/ADC/ directory for the same reason as
+#     SCPI/ above -- the arithmetic was split OUT of AD7609.h to make it
+#     host-testable, so a future move back, or into a sibling file, must still
+#     trip this trigger. Without the entry this test was unreachable by CI: a
+#     PR editing only AD7609Scale.h matched no path here, and no other
+#     workflow can catch a semantically-valid reordering (cppcheck fires on
+#     firmware/src/** but diffs a byte-exact baseline, so
+#     `scaled * calM + calB` -> `(scaled + calB) * calM` is invisible to it).
+#     Found by the #941 pre-merge adversarial audit, which is also the PR that
+#     added the test -- it wired up the suite and not its trigger.
+#
+# NOT listed: firmware/src/HAL/ADC/MC12bADC.c, the NQ1 sibling converter whose
+# CalM/CalB ordering AD7609Scale.h is written to match. No host test compiles
+# or greps it, and a trigger with no test behind it would break the invariant
+# above in the other direction -- every path here must have a test that reads
+# that source.
 
 on:
   pull_request:
@@ -27,6 +44,7 @@ on:
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
       - 'firmware/src/services/SCPI/**'
+      - 'firmware/src/HAL/ADC/**'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -36,6 +54,7 @@ on:
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
       - 'firmware/src/services/SCPI/**'
+      - 'firmware/src/HAL/ADC/**'
       - '.github/workflows/host-tests.yml'
 
 permissions:
