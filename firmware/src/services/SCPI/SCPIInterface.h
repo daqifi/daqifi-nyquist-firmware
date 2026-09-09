@@ -115,8 +115,32 @@ extern "C" {
     uint8_t* SCPI_ResponseBuf_Take(void);
 
     /**
+     * #943: acquire the shared SCPI response scratch buffer, waiting at most
+     * timeoutMs. Same buffer, same mutex and same Give as
+     * SCPI_ResponseBuf_Take -- only the wait is bounded.
+     *
+     * Exists for SYST:STOR:SD:BENCHmark, whose per-chunk take (#347 / #350)
+     * must not be able to park the SCPI task indefinitely. Callbacks that
+     * simply want the buffer should keep using SCPI_ResponseBuf_Take: an
+     * unbounded wait is correct for them, and a timeout would only add an
+     * error path they have no way to act on.
+     *
+     * Returns NULL on expiry AND when the mutex has not been created, so one
+     * NULL branch covers both. A non-NULL return MUST be paired with exactly
+     * one SCPI_ResponseBuf_Give; a NULL return must NOT be.
+     *
+     * @param timeoutMs Maximum wait in milliseconds. 0 polls; so does any
+     *                  value below one tick period (1 ms here), because
+     *                  pdMS_TO_TICKS truncates.
+     * @return Pointer to the shared buffer (SCPI_RESPONSE_BUF_SIZE bytes)
+     *         or NULL if it could not be acquired in time.
+     */
+    uint8_t* SCPI_ResponseBuf_TakeTimeout(uint32_t timeoutMs);
+
+    /**
      * Release the shared SCPI response scratch buffer.
-     * Must only be called after a successful SCPI_ResponseBuf_Take.
+     * Must only be called after a successful SCPI_ResponseBuf_Take or
+     * SCPI_ResponseBuf_TakeTimeout.
      */
     void SCPI_ResponseBuf_Give(void);
 

@@ -654,6 +654,40 @@ uint8_t* SCPI_ResponseBuf_Take(void) {
     return gScpiRespBuf;
 }
 
+/* #943: bounded-wait variant of SCPI_ResponseBuf_Take, added for
+ * SYST:STOR:SD:BENCHmark's per-chunk take. That callback takes and gives the
+ * shared buffer once per 512 B chunk (#347 / #350) so other SCPI callbacks can
+ * interleave; with an unbounded take there, the callback had no deadline of
+ * its own, which is half of what #943 is about.
+ *
+ * Deliberately a SEPARATE function rather than a timeout parameter added to
+ * SCPI_ResponseBuf_Take. Every other call site is a short one-shot info /
+ * help / settings / LAN callback for which "block until the buffer is free"
+ * is the correct behaviour, and none of them has an error path that a
+ * spurious timeout should start exercising. Adding a variant leaves all of
+ * them byte-for-byte unchanged.
+ *
+ * Returns NULL both when the mutex does not exist and when the wait expires,
+ * so a caller's existing NULL branch covers both. Nothing needs to tell them
+ * apart today; a caller that did would have to test gScpiRespMutex itself.
+ *
+ * Pairing is the same as SCPI_ResponseBuf_Take: a non-NULL return MUST be
+ * matched by exactly one SCPI_ResponseBuf_Give, a NULL return by none.
+ *
+ * timeoutMs == 0 polls. pdMS_TO_TICKS truncates, so any value below one tick
+ * period (1 ms at configTICK_RATE_HZ 1000) also degenerates to a poll --
+ * callers wanting a real wait must pass at least 1 ms.
+ */
+uint8_t* SCPI_ResponseBuf_TakeTimeout(uint32_t timeoutMs) {
+    if (gScpiRespMutex == NULL) {
+        return NULL;
+    }
+    if (xSemaphoreTake(gScpiRespMutex, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
+        return NULL;
+    }
+    return gScpiRespBuf;
+}
+
 void SCPI_ResponseBuf_Give(void) {
     if (gScpiRespMutex != NULL) {
         xSemaphoreGive(gScpiRespMutex);
