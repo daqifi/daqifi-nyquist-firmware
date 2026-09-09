@@ -1333,20 +1333,41 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * live log's header cache and prepend that stream's protobuf sd_metadata
      * to a rotated benchmark_*.dat part (audit rounds 5, 6, 9) -- output that
      * no longer matches the requested pattern. */
-    sd_card_manager_UpdateSettingsForPlainWrite(pSDCardRuntimeConfig);
-    /* #829/#925: WHEN THE ARM SUCCEEDS, ownership has handed over from the
-     * claim flag to `mode`, which is now MODE_WRITE and keeps IsBusy() true --
-     * so there is no gap between releasing here and the manager being busy.
+    bool benchArmed = sd_card_manager_UpdateSettingsForPlainWrite(pSDCardRuntimeConfig);
+    /* #829/#925/#936: the arm above can be refused by the same #589 suspend
+     * check SD_ArmOrRefuse guards every other SD-arming command with (WiFi
+     * streaming owns SPI4, a WiFi FW update is in progress, or the bus is
+     * quarantined after a jam) -- so, unlike before, its return is now
+     * checked and acted on below, mirroring SD_ArmOrRefuse's contract in
+     * full: release the claim on BOTH paths, AND clear `mode` back to
+     * MODE_NONE on the refused one. SD_ArmOrRefuse itself is not reused
+     * verbatim because it wraps sd_card_manager_UpdateSettings(), not the
+     * ...ForPlainWrite() arm this callback needs. The SCPI_StartStreaming
+     * SD-arm twin, #942, still discards its return.
      *
-     * The line above discards sd_card_manager_UpdateSettingsForPlainWrite()'s
-     * return, so this release also runs on the REFUSED path (the #589 suspend
-     * check): there, the callee has already reset `mode` back to MODE_NONE
-     * before returning false (sd_UpdateSettingsImpl, sd_card_manager.c:3566).
-     * Releasing here is still correct on that path, but for the opposite
-     * reason -- nothing was armed and there is nothing to hold, not that
-     * ownership moved. This mirrors SD_ArmOrRefuse's release-on-both-paths but
-     * NOT its return check; the gap is tracked as #936, with the
-     * SCPI_StartStreaming SD-arm twin as #942.
+     * WHEN THE ARM SUCCEEDS, ownership has handed over from the claim flag
+     * to `mode`, which is now MODE_WRITE and keeps IsBusy() true -- so there
+     * is no gap between releasing here and the manager being busy.
+     *
+     * This release also runs on the REFUSED path: there, the callee's own
+     * #589 gate has already reset `mode` back to MODE_NONE before returning
+     * false (sd_UpdateSettingsImpl, sd_card_manager.c:3566). Releasing here
+     * is still correct on that path, but for the opposite reason -- nothing
+     * was armed and there is nothing to hold, not that ownership moved. The
+     * explicit clear just below is not redundant with that fact: every OTHER
+     * SD-arming command in this file (CRC/GET/LISt/DELete/FORmat/SPACe) also
+     * clears `mode` itself after a refused arm, because the contract
+     * SD_ArmOrRefuse's own comment states is that the CALLER clears it, not
+     * that some callee happens to. Depending on the callee's internal #589
+     * gate instead would make this the one site where that invariant is not
+     * locally provable, and silently break if a future second refusal path
+     * inside sd_UpdateSettingsImpl ever forgot the clear.
+     *
+     * This release must stay ABOVE the refusal check below, not inside its
+     * failure branch: if a later edit moves it into the success arm only,
+     * the refusal path leaks the #829 claim and wedges the manager
+     * permanently -- IsBusy() stays true for every later SD command AND the
+     * #925 watchdog's own TryClaim then fails forever too.
      *
      * Released rather than held for the whole benchmark on purpose: the write
      * loop below yields for seconds, and the flag is a reservation for ARMING,
@@ -1360,6 +1381,42 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * claim is true. The watchdog's own recovery conditions are documented
      * at its site in app_freertos.c. */
     sd_card_manager_ReleaseClaim();
+
+    if (!benchArmed) {
+        /* Report the refusal now instead of falling into the "wait for file
+         * ready" loop below: nothing was armed, so that loop can only time
+         * out at its full 5 s and then blame the wrong thing -- a
+         * "SPI-mode incompatible" card diagnosis -- for what is actually the
+         * SD task not running at all.
+         *
+         * pSDCardRuntimeConfig->mode is ALREADY MODE_NONE here (the callee's
+         * #589 gate cleared it before returning false, see above); this
+         * write is the same belt-and-braces every sibling arm site in this
+         * file already does on its own refused path, not a correction of a
+         * stale value.
+         *
+         * logFileClobbered and ownsBenchFlag are already both true at this
+         * point (set above, before the claim), so __exit_point still
+         * restores the caller's logging target and clears the testInProgress
+         * re-entrancy flag correctly -- the same "arm-time refusal lands here
+         * having clobbered `file` but never armed a WRITE" shape __exit_point's
+         * own comment already documents for the #854 streaming check just
+         * above this one. One difference from that #854 path: this one has
+         * already called sd_card_manager_ClearStartupDirFull() (just above
+         * the mode=WRITE write), so it is the first refusal to reach
+         * __exit_point with that flag cleared. Benign -- it is a transient
+         * advisory the SD task re-raises on its next failing open, and its
+         * only cross-module reader additionally gates on mode==WRITE, which
+         * this path just cleared -- but noted so a future audit does not
+         * have to re-derive it. */
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        const char *why = SD_SuspendReasonText();
+        LOG_E("SD:BENCH - could not arm the operation: %s\r\n",
+              why ? why : "the SD task is not accepting work");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        result = SCPI_RES_ERR;
+        goto __exit_point;
+    }
 
     // Wait for file to be open and ready before writing
     {
