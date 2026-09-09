@@ -1332,10 +1332,10 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * Released rather than held for the whole benchmark on purpose: the write
      * loop below yields for seconds, and the flag is a reservation for ARMING,
      * not a session lock -- no other SD command holds it across its operation
-     * either. The run itself is covered by the watchdog's OTHER term: arming
-     * forces the manager to DEINIT and it then runs MOUNT/OPEN/WRITE_TO_FILE,
-     * none of which are IDLE or INIT, so sd_card_manager_IsIdle() is false and
-     * the dwell cannot start. */
+     * either. The run itself is protected by TryClaim, not IsIdle(): arming
+     * sets mode = MODE_WRITE, which keeps IsBusyLocked() true for the run's
+     * whole span, so TryClaim() fails and the watchdog's unwind cannot run,
+     * whatever IsIdle() reports meanwhile. */
     sd_card_manager_ReleaseClaim();
 
     // Wait for file to be open and ready before writing
