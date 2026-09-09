@@ -692,22 +692,51 @@ static void app_SDCardTask(void* p_arg) {
                          * is busy, so the "held with nothing armed" condition
                          * no longer holds and the dwell correctly restarts. */
                         if (sd_card_manager_TryClaim()) {
-                            /* Static string: this task has 1024 words of
-                             * stack and a profiled 468-word peak, and a
-                             * format-arg LOG_* runs vsnprintf on it.
-                             * ReleaseBus logs the unwind depth itself, which
-                             * is the number worth having. */
-                            LOG_E("[SD] SPI bus held with nothing armed - "
-                                  "unwinding leaked exclusive lock (#925)");
-                            DRV_SDSPI_ReleaseBus(sysObj.drvSDSPI0);
-                            /* ++ is a read-modify-write, which is not atomic
-                             * on PIC32MZ. One writer today, so nothing can be
-                             * lost -- but the project rule is unconditional
-                             * and this path runs at most once per leak, so
-                             * the guard costs nothing to keep it true. */
-                            taskENTER_CRITICAL();
-                            gSdBusRecoveries++;
-                            taskEXIT_CRITICAL();
+                            /* Re-establish BOTH conditions now that the claim
+                             * is held, rather than acting on the samples taken
+                             * earlier in this iteration.
+                             *
+                             * Not for the reason it looks like. The race of
+                             * "a handler arms and releases its claim between
+                             * the sample and the TryClaim" is already
+                             * prevented by #829's ordering contract: handlers
+                             * write `mode` LAST and release the flag after
+                             * arming, so `mode != MODE_NONE` keeps
+                             * IsBusyLocked() true and TryClaim would have
+                             * FAILED. Re-checking buys nothing there.
+                             *
+                             * It buys two other things, and both are real.
+                             * (1) SYST:STOR:SD:BENCHmark takes no claim by
+                             * design (#736), so it is the one arm this claim
+                             * cannot exclude -- re-reading IsIdle() narrows
+                             * that window to the two calls below. (2) The lock
+                             * may have been released legitimately since the
+                             * sample, and DRV_SDSPI_ReleaseBus resets the
+                             * detect FSM UNCONDITIONALLY -- its unwind loop
+                             * simply finds nothing to unwind -- so calling it
+                             * on a free bus costs a gratuitous card remount
+                             * for no benefit. HoldsBus is exactly the gate
+                             * that exists to prevent that. */
+                            if (sd_card_manager_IsIdle() &&
+                                app_SDCard_HoldsSpiBus()) {
+                                /* Static string: this task has 1024 words of
+                                 * stack and a profiled 468-word peak, and a
+                                 * format-arg LOG_* runs vsnprintf on it.
+                                 * ReleaseBus logs the unwind depth itself,
+                                 * which is the number worth having. */
+                                LOG_E("[SD] SPI bus held with nothing armed - "
+                                      "unwinding leaked exclusive lock (#925)");
+                                DRV_SDSPI_ReleaseBus(sysObj.drvSDSPI0);
+                                /* ++ is a read-modify-write, which is not
+                                 * atomic on PIC32MZ. One writer today, so
+                                 * nothing can be lost -- but the project rule
+                                 * is unconditional and this path runs at most
+                                 * once per leak, so the guard costs nothing to
+                                 * keep it true. */
+                                taskENTER_CRITICAL();
+                                gSdBusRecoveries++;
+                                taskEXIT_CRITICAL();
+                            }
                             sd_card_manager_ReleaseClaim();
                         }
                         busHoldTiming = false;
