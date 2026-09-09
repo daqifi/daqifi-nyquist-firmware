@@ -7856,14 +7856,7 @@ static scpi_result_t SCPI_DiagADCGet(scpi_t * context)
     size_t* pAInLatestSize = BoardData_Get(BOARDDATA_AIN_LATEST_SIZE, 0);
     size_t sampleCount = pAInLatestSize ? *pAInLatestSize : 0;
 
-    /* 224, not 192: the worst case is 193 characters plus the NUL, which
-     * 192 truncates. Field-by-field, with every counter at its 10-digit
-     * maximum -- RejStale 20, RejExclusive 24, RejLock 19, RejQueueFull 24,
-     * ExclusiveHeld 16, ExclusiveDepth 26, ExclusiveHolder 25, SdHoldsBus 13,
-     * SdBusRecoveries 26 (no trailing comma). Recompute this if a field is
-     * added. Stays a stack local rather than the shared response buffer
-     * because it is under the 256 B threshold that rule applies to. */
-    char out[224];
+    char out[192];
     int len = 0;
 
     for (size_t i = 0; i < sampleCount && len < (int)sizeof(out); i++) {
@@ -7925,7 +7918,14 @@ static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
     sdHolds = app_SDCard_HoldsSpiBus();
     recovered = app_SDCard_BusRecoveryCount();
 
-    char out[192];
+    /* 224, not 192: the worst case is 193 characters plus the NUL, which
+     * 192 truncates. Field-by-field, with every counter at its 10-digit
+     * maximum -- RejStale 20, RejExclusive 24, RejLock 19, RejQueueFull 24,
+     * ExclusiveHeld 16, ExclusiveDepth 26, ExclusiveHolder 25, SdHoldsBus 13,
+     * SdBusRecoveries 26 (no trailing comma). Recompute this if a field is
+     * added. Stays a stack local rather than the shared response buffer
+     * because it is under the 256 B threshold that rule applies to. */
+    char out[224];
     snprintf(out, sizeof(out),
              "RejStale=%lu,RejExclusive=%lu,RejLock=%lu,RejQueueFull=%lu,"
              "ExclusiveHeld=%u,ExclusiveDepth=%lu,ExclusiveHolder=%08lx,"
