@@ -422,21 +422,29 @@ static bool app_SDCard_GracefulShutdown(uint32_t timeoutMs, const char* reason) 
  * exclusive lock, with no SD operation armed, before the SD task treats it as
  * leaked and force-unwinds it.
  *
- * Derived, not tuned -- but read the second half before trusting the first.
+ * NO ARITHMETIC WORST CASE IS GIVEN HERE, DELIBERATELY. Two successive audits
+ * corrected one: first ~5 s to ~10 s (the media-init hold issues TWO commands,
+ * CMD9 for the CSD and CMD10 for the CID, not one), then ~10 s upward again
+ * (each command is more transfers than the response reads alone). Every
+ * revision was wrong in the same direction and each invited the next
+ * recalculation. The reason it kept being wrong is structural, not arithmetic,
+ * and it is the next paragraph: part of that span is NOT BOUNDED AT ALL, so
+ * there is no finite worst case for a number to be. A margin quoted against an
+ * unbounded quantity is meaningless however carefully it is computed, and a
+ * maintainer who re-derives one from this comment will be misled by whatever
+ * figure sits here. So: none does.
  *
- * The BOUNDED holds are bounded by two constants together, not by one:
- * lDRV_SDSPI_CommandSend retries a command up to
- * DRV_SDSPI_COMMAND_RESPONSE_TRIES (10) times, and each transfer inside it is
- * capped by the #567 bus-completion watchdog DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS
- * (500 ms) -- so one command is worst-case 5 s. The longest continuously-held
- * span in the driver is media initialisation
- * (DRV_SDSPI_INIT_INCR_CLK_SPD_STAT acquires, DRV_SDSPI_INIT_PROCESS_CID
- * releases), and it issues TWO commands inside that one hold, CMD9 for the CSD
- * and CMD10 for the CID. Its bounded worst case is therefore ~10 s, not the
- * ~5 s an earlier revision of this comment claimed. 15 s clears it by half
- * again.
+ * What IS true and sufficient. The longest continuously-held span is media
+ * initialisation (DRV_SDSPI_INIT_INCR_CLK_SPD_STAT acquires,
+ * DRV_SDSPI_INIT_PROCESS_CID releases). Its watchdog-covered parts are each
+ * capped at DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS (500 ms) with at most
+ * DRV_SDSPI_COMMAND_RESPONSE_TRIES (10) retries per command, so they are
+ * finite; its payload reads are not covered at all. 15 s is set above what the
+ * covered parts can take on a card that is responding, and firing on the
+ * uncovered parts is the intended behaviour, not an error -- see below. If you
+ * are considering LOWERING it, measure, do not calculate.
  *
- * The UNBOUNDED ones are the important correction. An earlier revision said
+ * The UNBOUNDED waits are the important part. An earlier revision said
  * "every legitimate hold is bounded by the #567 transfer watchdog". That is
  * FALSE, and an adversarial audit of this PR caught it: three wait states hold
  * the lock while polling spiTransferStatus with NO timer armed and a bare
