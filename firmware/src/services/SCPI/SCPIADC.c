@@ -544,7 +544,81 @@ scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t ADCChanSingleEndSetClaimed(scpi_t * context);
+
+/* #885: this setter had NO stream guard of any kind -- not even the
+ * Running-only test #873 replaced. It writes AInRuntime.Data[i].IsDifferential
+ * and then pushes the whole channel state to the ADC SFRs via
+ * ADC_WriteChannelStateAll(), so a mid-session call re-runs the whole-board
+ * ADC state write (ADC_WriteChannelStateAll, HAL/ADC.c:218) under a running
+ * acquisition AND invalidates the description of the stream that the client
+ * is already holding.
+ *
+ * What that write does NOT do is move a multiplexer. An earlier revision of
+ * this comment said it "re-wires the input multiplexer"; that is false on
+ * both variants this repo builds. MC12b_WriteStateAll
+ * (HAL/ADC/MC12bADC.c:161-206) never reads IsDifferential -- it clears
+ * gpModuleRuntimeConfigMC12->IsEnabled for the duration, calls
+ * MC12b_WriteStateSingle for each MC12b entry it iterates
+ * (ADCHS_ModulesEnable / ADCHS_ModulesDisable), rebuilds gType1EnabledMask,
+ * and re-issues ADCHS_ChannelResultInterruptDisable for every Type-1 channel
+ * and for CH3. The only code that turns IsDifferential into a mux setting is
+ * AD7173_WriteStateSingle (HAL/ADC/AD7173.c:227), which
+ * ADC_WriteChannelStateAll cannot reach: it dispatches only to
+ * MC12b_WriteStateAll and to AD7609_WriteStateAll, and the latter is a NULL
+ * check and nothing else (HAL/ADC/AD7609.c:327). AD7173.c is excluded from
+ * BOTH build configurations, and there are only two -- `default` and `Nq3`
+ * (firmware/daqifi.X/nbproject/configurations.xml). The mid-session hazard is
+ * therefore the stale description plus a whole-list ADC re-write during
+ * acquisition, not a mux change.
+ *
+ * That description is `analog_in_port_rse` -- one bit per channel, built from
+ * IsDifferential (NanoPB_Encoder.c). Exactly two statements about it are
+ * load-bearing here, and both were checked rather than assumed:
+ *
+ *   * it is NOT in the streaming field set -- the per-sample flags built in
+ *     streaming.c are msg_time_stamp / analog_in_data / digital_data /
+ *     digital_port_dir, and rse is in neither those nor the SD file header;
+ *   * the only path that encodes it is the on-demand SYST:SYSInfoPB? reply
+ *     (fields_info -> SCPI_SysInfoGet, SCPIInterface.c).
+ *
+ * So a client that read the channel map before START and then flipped a
+ * channel to differential at sample 10,000 gets samples whose meaning no
+ * longer matches the map it parsed, with nothing in the stream marking where
+ * it changed. (Deliberately NOT claimed here: anything about what the CSV and
+ * JSON encoders put at the head of a session. They do each emit a header, on
+ * every interface, and neither carries rse -- but that is a second subject and
+ * this comment does not need it to be true.)
+ *
+ * Earlier revisions of this comment claimed a protobuf field
+ * `is_differential`, which does not exist anywhere in the tree (grep finds
+ * only the comment), and `analog_in_int_scale_m`, which is read from BOARD
+ * CONFIG (NanoPB_Encoder.c) and so cannot be moved by this setter. Both are
+ * corrected here rather than quietly dropped, because the pattern -- a
+ * justification asserting more than anyone checked -- is what this comment now
+ * deliberately keeps narrow.
+ *
+ * Same shape as SCPI_ADCChanEnableSet above, and for the same two reasons: the
+ * body has six returns so the release must be unconditional, and the claim is
+ * the FIRST statement so the refusal does not depend on the arguments (#862's
+ * ordering contract on SCPI_RejectCfgClaim, SCPIInterface.h). That ordering
+ * matters more here than usual: the body's #874 optional-argument branch picks
+ * the MASK form vs the single-channel form from the arguments, so a guard
+ * placed after the parse would answer a different error for the two forms of
+ * the same mid-stream call. */
 scpi_result_t SCPI_ADCChanSingleEndSet(scpi_t * context) {
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "CONF:ADC:SINGleend");
+    }
+    scpi_result_t result = ADCChanSingleEndSetClaimed(context);
+    Streaming_EndConfigChange();
+    return result;
+}
+
+static scpi_result_t ADCChanSingleEndSetClaimed(scpi_t * context) {
     int param1, param2;
     AInArray * pBoardConfigAInChannels = BoardConfig_Get(
             BOARDCONFIG_AIN_CHANNELS,
@@ -796,14 +870,82 @@ static scpi_result_t ADCChanRangeSetClaimed(scpi_t * context) {
 
     // Get range parameter (0=±5V, 1=±10V)
     //
-    // The second push is PRE-EXISTING and deliberately left alone by #873:
-    // SCPI_ParamInt32 has already queued on every failure path (-109 absent,
-    // -138 suffix, -104 not-a-number), so this adds a second, usually wrong,
-    // code. Filed as #885 rather than fixed here -- it changes which error a
-    // malformed argument reports, which is its own behaviour change with its
-    // own test arm, and this PR's subject is the claim.
+    // #885: no second SCPI_ErrorPush here. The -109 that used to sit here
+    // queued a SECOND and usually WRONG code on top of the one libscpi had
+    // already pushed: `CONF:ADC:RANGe BANANA` reported -104 followed by a
+    // spurious -109 "Missing parameter", and bare `CONF:ADC:RANGe` reported
+    // -109 TWICE. A client draining the queue saw two errors for one command
+    // and the last one it read was the wrong one. Returning the error
+    // unmodified is what every peer setter in this file does
+    // (ADCOnboardDiagSetClaimed, SamcSetCommonClaimed). It is a DIFFERENT
+    // remedy from PR #882's in SCPI_StartStreaming: there the push was KEPT
+    // and made conditional on !SCPI_ParamErrorOccurred(context), because that
+    // site tests `!SCPI_ParamIsNumber(...) || !SCPI_ParamToInt32(...)`
+    // (SCPIInterface.c) and the first disjunct queues nothing at all --
+    // SCPI_ParamIsNumber is a pure type predicate (parser.c:757-769) -- so
+    // deleting the push there would have left a genuinely silent failure.
+    // Here the push is deleted outright, which is safe only because the one
+    // callee, SCPI_ParamInt32 -> ParamSignUInt32, is established below to
+    // queue on every reachable failure exit.
+    //
+    // REMOVING a push is only safe if the callee ALWAYS queues, so that claim
+    // is established here rather than asserted. Walking libscpi from this call
+    // site (parser.c), SCPI_ParamInt32 -> ParamSignUInt32 has exactly these
+    // exits, and every REACHABLE one queues:
+    //
+    //   absent + mandatory      -109  SCPI_Parameter, missing-parameter arm
+    //   bad separator           -103  SCPI_Parameter, comma arm
+    //   unusable token type     -151  SCPI_Parameter, DEFAULT arm -- reached by
+    //                                 e.g. `#H` with no digits, which the lexer
+    //                                 types SCPI_TOKEN_UNKNOWN
+    //   not a number at all     -104  ParamSignUInt32 else-arm
+    //   number with a suffix    -138  ParamSignUInt32
+    //   partial decimal token   -104  DaqifiIntTokenFullyConsumed (#880)
+    //   value == NULL           -310  (we pass &rangeParam, so unreachable)
+    //
+    // The -151 row and the -103 code are BOTH corrections. An earlier revision
+    // omitted the default arm entirely and numbered the separator error -115
+    // (it is -103 -- error.h). Neither changes the conclusion, because both of
+    // those exits QUEUE and queueing is the whole property being established --
+    // but a proof presented as exhaustive has to BE exhaustive, or the next
+    // reader trusts a list nobody checked (codex pre-merge audit re-walked it
+    // and found both).
+    //
+    // THREE exits queue NOTHING, and all three are unreachable BY CONSTRUCTION
+    // rather than by luck. The first two are held dead by libscpi internals, so
+    // they are what a future libscpi bump could break; the third is held dead by
+    // this call site's own argument:
+    //
+    //   * ParamSignToUInt32's HEXNUM/OCTNUM/BINNUM arms (:827-831) return
+    //     FALSE when zero characters convert. scpiLex_NondecimalNumericData
+    //     (lexer.c:597-627) only ASSIGNS those token types when it consumed at
+    //     least one digit -- otherwise the token becomes SCPI_TOKEN_UNKNOWN --
+    //     so a token of that type always has a digit at ptr[0] and the
+    //     conversion always consumes it.
+    //   * ParamSignToUInt32's `default:` arm (:842) returns FALSE silently.
+    //     ParamSignUInt32 only calls it when SCPI_ParamIsNumber(param, FALSE)
+    //     is true, and that function (:757-769) returns TRUE for exactly the
+    //     four token types the switch enumerates.
+    //
+    // If a libscpi upgrade adds a numeric token type, or lets the lexer emit a
+    // digitless HEXNUM, that `default:` becomes live -- and this command would
+    // then report only libscpi's GENERIC -200 instead of the specific parameter
+    // error, which is a real loss of diagnosability but is NOT a silent
+    // failure. processCommand queues -200 for any callback that returns non-OK
+    // with cmd_error unset, and it clears cmd_error on entry (parser.c). An
+    // earlier revision of this comment said "NO error queued at all", which
+    // contradicts both that code and this file's own correct account of the
+    // same mechanism in SCPI_ADCChanCalmSet below. Re-check this list at that
+    // point.
+    //
+    //   * SCPI_Parameter's non-mandatory absent arm (:714-716) sets the token
+    //     type and returns FALSE without calling SCPI_ErrorPush at all. It is
+    //     reachable only when `mandatory` is FALSE; this call site passes
+    //     SCPI_ParamInt32(context, &rangeParam, TRUE), and that TRUE threads
+    //     unchanged through ParamSignUInt32 (:1073) into SCPI_Parameter, so the
+    //     arm cannot execute here. No libscpi change can make it live -- only
+    //     changing that argument, in this file.
     if (!SCPI_ParamInt32(context, &rangeParam, TRUE)) {
-        SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
         return SCPI_RES_ERR;
     }
 
@@ -880,7 +1022,79 @@ scpi_result_t SCPI_ADCChanRangeGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context);
+
+/* #885: CalM/CalB are read PER CONVERSION by MC12b_ConvertToVoltage
+ * (HAL/ADC/MC12bADC.c), so a cal write that lands on a running session
+ * rescales every sample from that instant on -- inside a stream whose header
+ * was already emitted, and with no marker in the data saying where the scale
+ * changed. That is the same consequence #873 describes for the AD7609 Range
+ * pin, except this pair is reachable on the NQ1 this bench has.
+ *
+ * That is an MC12b-path fact, and this comment deliberately stops there: an
+ * earlier revision extended it with "and by AD7609_ConvertToVoltage", which is
+ * FALSE. That function's first statement is UNUSED(runtimeConfig)
+ * (HAL/ADC/AD7609.c:517) -- it reads the module Range and nothing else -- so
+ * for NQ3's eight AD7609 USER channels these coefficients never reach the
+ * conversion, and for those the guard is defensive rather than load-bearing.
+ * That verdict does NOT generalise to the variant: ADC_ConvertToVoltageByIndex
+ * switches on the PER-CHANNEL Type, not on the board (HAL/ADC.c:479), and
+ * NQ3BoardConfig.c:122 splices the same COMMON_MONITORING_CHANNELS_BOARDCONFIG
+ * entries -- all eight .Type = AIn_MC12bADC -- into AInChannels, so NQ3's other
+ * eight channels convert through MC12b_ConvertToVoltage and DO read CalM/CalB
+ * (MC12bADC.c:255,258), exactly as on NQ1. These setters reach them: ids
+ * 248-255 (AInConfig.h) pass AdcChannelArgInRange, and MEAS:VOLT:DC? converts
+ * them by the same dispatch. The wrong claim mattered because it WAS the stated
+ * justification for refusing the command during an AD7609 stream (codex
+ * pre-merge audit). That the AD7609 USER-channel path ignores user calibration
+ * outright is a separate defect, filed on its own.
+ *
+ * Note what this ALSO changes: CONF:ADC:SAVEcal / SAVEFcal take the claim too,
+ * through CalSaveCommon below. Not for the reason this pair does -- they mutate
+ * nothing the conversion path reads, so they cannot rescale a running stream --
+ * but because the per-channel copy into NVM can be torn by a concurrent write
+ * from the other transport. That function's own comment has the argument.
+ *
+ * The claim is the first statement (#862 ordering contract, SCPIInterface.h),
+ * so `CONF:ADC:chanCALM 300,1.0` mid-stream answers -200 like every other
+ * converted setter rather than the -222 AdcChannelArgInRange would give.
+ * (300, not 99: 99 is <= 255 so it PASSES AdcChannelArgInRange and then fails
+ * the ADC_FindChannelIndex bound below, which returns SCPI_RES_ERR without
+ * pushing anything ITSELF. libscpi then queues its generic -200 --
+ * processCommand does `if (!context->cmd_error) SCPI_ErrorPush(...
+ * EXECUTION_ERROR)` -- so the command is not literally silent, it is
+ * UNSPECIFIC: -200 where TWO siblings push a specific -222 at that same
+ * ADC_FindChannelIndex bound -- MEASure:VOLTage:DC? and the two-arg
+ * CONF:ADC:CHANnel. Only CONF:ADC:CHANnel also LOG_Es the channel;
+ * MEAS:VOLT:DC? pushes a BARE -222 (SCPI_ErrorPush passes a NULL info string)
+ * with no log, so nothing there names the channel either. Pre-existing, shared
+ * with chanCALB and with the SINGleend and the ...Get paths -- EVERY site in
+ * this file that returns SCPI_RES_ERR straight off the ADC_FindChannelIndex
+ * bound is in it, so #888's scope is "grep the bound", not a counted list
+ * (a counted list is how this repo gets "fixed one site, left the twin").
+ * NOT this change's subject. Whatever #888 converges them onto should be
+ * CONF:ADC:CHANnel's logged form, not MEAS:VOLT:DC?'s bare push.
+ *
+ * Successive revisions of this paragraph have said "without pushing anything
+ * at all", called it a silent-error path, called MEASure:VOLTage:DC? the one
+ * site that gets it right, said that site names the channel, and put the
+ * affected-site count at four. All five were wrong, and every correction came
+ * from a pre-merge audit rather than from a reader trusting the paragraph --
+ * which is the argument for the narrower wording above, not against writing
+ * the rationale down.) */
 scpi_result_t SCPI_ADCChanCalmSet(scpi_t * context) {
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "CONF:ADC:chanCALM");
+    }
+    scpi_result_t result = ADCChanCalmSetClaimed(context);
+    Streaming_EndConfigChange();
+    return result;
+}
+
+static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context) {
     int param1;
     double param2;
     AInArray * pBoardConfigAInChannels = BoardConfig_Get(
@@ -913,7 +1127,24 @@ scpi_result_t SCPI_ADCChanCalmSet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t ADCChanCalbSetClaimed(scpi_t * context);
+
+/* #885: the offset half of the pair above -- see the comment on
+ * SCPI_ADCChanCalmSet for why a live cal write is a stream-integrity defect,
+ * and CalSaveCommon below for why the SAVE commands are claimed too. */
 scpi_result_t SCPI_ADCChanCalbSet(scpi_t * context) {
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   "CONF:ADC:chanCALB");
+    }
+    scpi_result_t result = ADCChanCalbSetClaimed(context);
+    Streaming_EndConfigChange();
+    return result;
+}
+
+static scpi_result_t ADCChanCalbSetClaimed(scpi_t * context) {
     int param1;
     double param2;
     AInArray * pBoardConfigAInChannels = BoardConfig_Get(
@@ -994,52 +1225,159 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-scpi_result_t SCPI_ADCCalSave(scpi_t * context) {
+/* #885 follow-up (pre-merge audit on this PR): SAVEcal / SAVEFcal are the
+ * read side of the same cal store the five setters this PR converts write, and
+ * they were the last commands that MUTATE PERSISTENT STATE from CalM/CalB with
+ * no claim at all.
+ *
+ * Not "the last commands touching CalM/CalB" -- an earlier revision of this
+ * comment said that and it is false. SCPI_ADCChanCalmGet / ChanCalbGet read the
+ * same 64-bit doubles with no claim either, and a concurrent setter on the
+ * other transport can tear either read (Qodo, this PR). Those are QUERIES: they
+ * corrupt nothing, they are exempt from the claim by the family's own
+ * convention (tools/lint/scpi_claim_path.py exempts trailing-? commands), and
+ * the failure is a garbled reply rather than a bad NVM image -- a real but
+ * different defect, filed rather than widened into this PR.
+ *
+ * The defect is NOT the one the five setters have -- these two mutate nothing
+ * the conversion path reads, so they cannot rescale a running stream. It is a
+ * torn READ, and it needs the claim for two reasons:
+ *
+ *  1. The copy loop in daqifi_settings_SaveADCCalSettings walks every channel
+ *     and copies two `double`s per channel out of the live runtime array. Every
+ *     OTHER command that writes that array -- chanCALM, chanCALB, LOADcal,
+ *     LOADFcal, USECal -- now holds the claim while it writes, and the two SCPI
+ *     transports run as separate preemptible tasks at different priorities.
+ *     Read those priorities from the RUNTIME, not from xTaskCreate: SCPI over
+ *     USB runs on app_USBDeviceTask, which is created at 2 and BOOSTS ITSELF to
+ *     7 immediately after UsbCdc_Initialize() (app_freertos.c, "Boost priority
+ *     after initialization complete"), while SCPI over TCP is dispatched on
+ *     app_WifiTask at 2. A reader who checks only the creation call sees 2 and
+ *     2 and concludes there is no asymmetry (Qodo raised exactly that), so the
+ *     boost is named here. Nothing in this fix depends on WHICH is higher --
+ *     two preemptible tasks are enough. Without the claim a write from the
+ *     other transport can land
+ *     mid-copy, so the image persisted to NVM is a MIX of pre- and post-write
+ *     channels; and because CalM/CalB are 64-bit, a single channel's value can
+ *     itself be torn (CLAUDE.md: 64-bit ops always need a critical section).
+ *     Taking the claim makes the concurrent writer lose the race visibly, with
+ *     -200 and STREAM_CFG_CLAIM_BUSY, instead of silently interleaving.
+ *  2. It closes the same START race as the rest of the family (#844/#857): the
+ *     body reaches daqifi_settings_SaveToNvm, so a session could be armed while
+ *     a flash write is in flight.
+ *
+ * Refusing while streaming is a behaviour change and is the point: persisting
+ * a calibration snapshot taken from an array nobody is allowed to modify is
+ * the only way the saved image can be known to be self-consistent.
+ *
+ * No `...Claimed` split, for the reason CalLoadCommon gives below: this body is
+ * one call whose boolean result maps to OK/ERR, so a ternary makes it a single
+ * path out and the wrapper would add indirection without adding a guarantee.
+ * One claim, one release, one return.
+ *
+ * The two commands share this helper but each names ITSELF in the refusal --
+ * distinct commands selecting distinct NVM banks, exactly as LOADcal/LOADFcal
+ * do. Boot's first-run factory save (app_freertos.c) calls
+ * daqifi_settings_SaveADCCalSettings directly, never through these callbacks,
+ * so it cannot meet the claim. */
+static scpi_result_t CalSaveCommon(scpi_t * context,
+                                   DaqifiSettingsType type,
+                                   const char * what) {
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   what);
+    }
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
-    if (daqifi_settings_SaveADCCalSettings(
-            DaqifiSettings_UserAInCalParams,
-            pRuntimeAInChannels)) {
-        return SCPI_RES_OK;
-    } else {
-        return SCPI_RES_ERR;
-    }
+    scpi_result_t result = daqifi_settings_SaveADCCalSettings(
+            type, pRuntimeAInChannels) ? SCPI_RES_OK : SCPI_RES_ERR;
+    Streaming_EndConfigChange();
+    return result;
+}
+
+scpi_result_t SCPI_ADCCalSave(scpi_t * context) {
+    return CalSaveCommon(context, DaqifiSettings_UserAInCalParams,
+                         "CONF:ADC:SAVEcal");
 }
 
 scpi_result_t SCPI_ADCCalFSave(scpi_t * context) {
+    return CalSaveCommon(context, DaqifiSettings_FactAInCalParams,
+                         "CONF:ADC:SAVEFcal");
+}
+
+/* #885: LOADcal / LOADFcal overwrite EVERY channel's CalM and CalB from NVM,
+ * so this is the whole-board version of the single-channel write
+ * SCPI_ADCChanCalmSet / SCPI_ADCChanCalbSet perform above -- a load landing
+ * mid-session would overwrite every entry daqifi_settings_LoadADCCalSettings
+ * iterates (channelRuntimeConfig->Size, services/daqifi_settings.c:304, loop
+ * at :333), monitoring channels included: 24 on NQ1 (16 user + 8 monitoring,
+ * state/runtime/NQ1RuntimeDefaults.c:49) and 16 on NQ3 (8 user + 8 monitoring,
+ * state/runtime/NQ3RuntimeDefaults.c:41) -- per-variant, and never just the
+ * user-channel count. An earlier revision said "all sixteen channels at once":
+ * that is NQ1's USER count, not its bound of 24, and NQ3's sixteen is 8 user
+ * plus 8 monitoring, not the sixteen user channels that revision meant.
+ *
+ * That store overwrite reaches every entry the loop counts, regardless of
+ * channel type, but the conversion-side rescale does not: CalM/CalB are read
+ * per conversion only on the MC12b path (MC12b_ConvertToVoltage,
+ * HAL/ADC/MC12bADC.c:255,258; dispatch is per-channel Type,
+ * ADC_ConvertToVoltageByIndex, HAL/ADC.c:479), which is all 24 NQ1 entries but
+ * only the 8 monitoring channels on NQ3 (NQ3BoardConfig.c:122 splices them in
+ * as .Type = AIn_MC12bADC). NQ3's other 8 entries -- its AD7609 USER channels
+ * -- get the same store overwrite as every other entry, but
+ * AD7609_ConvertToVoltage ignores runtimeConfig outright
+ * (HAL/ADC/AD7609.c:517), so for those the new coefficients never reach a
+ * conversion -- the same carve-out as SCPI_ADCChanCalmSet above.
+ *
+ * It is also the exact mutation CONF:ADC:USECal performs at values 0/1
+ * (ADCUseCalSetClaimed -> daqifi_settings_LoadADCCalSettings, below; value 2
+ * returns before that call). That path was already claimed by #847 while this
+ * one was not: one store, reached by commands that did not agree on the guard.
+ * Taking the claim here is what makes them agree.
+ *
+ * No `...Claimed` split here, unlike the setters above. That split exists to
+ * make the release unconditional across a body with many returns; this body is
+ * one call and has a single path out, so the wrapper would add indirection
+ * without adding a guarantee. One claim, one release, one return.
+ *
+ * The two commands share this helper but each names ITSELF in the refusal --
+ * they are distinct commands selecting distinct NVM banks, and the LOG_E line
+ * says which one was refused. Contrast SamcSetCommon below:
+ * CONFigure:ADC:SAMC:DEDicated and CONFigure:ADC:SAMC:SHARed are equally
+ * distinct commands -- two registered patterns with two callbacks
+ * (SCPIInterface.c) -- but that helper passes the literal "CONF:ADC:SAMC" for
+ * both, so its log line does not say which was refused, and that string is not
+ * itself a registered pattern. (An earlier revision of this comment called
+ * those two "two spellings of one node". They are not: a spelling in this
+ * tree's sense is the full-vs-truncated form of ONE node -- CLAUDE.md's SCPI
+ * abbreviation rule.) */
+static scpi_result_t CalLoadCommon(scpi_t * context,
+                                   DaqifiSettingsType type,
+                                   const char * what) {
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context,
+                                   claim == STREAM_CFG_CLAIM_BUSY,
+                                   what);
+    }
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
-    if (daqifi_settings_SaveADCCalSettings(
-            DaqifiSettings_FactAInCalParams,
-            pRuntimeAInChannels)) {
-        return SCPI_RES_OK;
-    } else {
-        return SCPI_RES_ERR;
-    }
+    scpi_result_t result = daqifi_settings_LoadADCCalSettings(
+            type, pRuntimeAInChannels) ? SCPI_RES_OK : SCPI_RES_ERR;
+    Streaming_EndConfigChange();
+    return result;
 }
 
 scpi_result_t SCPI_ADCCalLoad(scpi_t * context) {
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
-            BOARDRUNTIMECONFIG_AIN_CHANNELS);
-    if (daqifi_settings_LoadADCCalSettings(
-            DaqifiSettings_UserAInCalParams,
-            pRuntimeAInChannels)) {
-        return SCPI_RES_OK;
-    } else {
-        return SCPI_RES_ERR;
-    }
+    return CalLoadCommon(context, DaqifiSettings_UserAInCalParams,
+                         "CONF:ADC:LOADcal");
 }
 
 scpi_result_t SCPI_ADCCalFLoad(scpi_t * context) {
-    AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
-            BOARDRUNTIMECONFIG_AIN_CHANNELS);
-    if (daqifi_settings_LoadADCCalSettings(
-            DaqifiSettings_FactAInCalParams,
-            pRuntimeAInChannels)) {
-        return SCPI_RES_OK;
-    } else {
-        return SCPI_RES_ERR;
-    }
+    return CalLoadCommon(context, DaqifiSettings_FactAInCalParams,
+                         "CONF:ADC:LOADFcal");
 }
 
 static scpi_result_t ADCUseCalSetClaimed(scpi_t * context);
@@ -1291,6 +1629,31 @@ scpi_result_t SCPI_ADCThresholdGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+// #918: deliberately NOT put on the streaming config-change claim, unlike
+// SCPI_ADCThresholdSet above. AdcThreshold_Clear (HAL/ADC/AdcThreshold.c:275)
+// zeroes a per-unit trip latch and counter and re-arms the unit's interrupt.
+// It is not a conversion input and moves nothing the encoder or the cap
+// depends on, so it does not share the reason the converted setters in this
+// file are claimed.
+//
+// Refusing it mid-stream would remove the only re-arm path left during a run.
+// A latched alarm outlives an unrelated stream by design -- the persistence
+// contract in AdcThreshold_RevalidateForStream (HAL/ADC/AdcThreshold.c:302-309)
+// names this command as the only thing that clears it -- and the other way to
+// re-arm a unit, a reconfigure via CONF:ADC:THREshold, IS claimed and so is
+// itself refused while streaming. Blocking this one too would make a tripped
+// alarm permanent for the rest of the session.
+//
+// Known cost of leaving it unclaimed: AdcThreshold_Clear disables the unit's
+// interrupt across the clear (thr_IntDisable -> zero tripCount/latched -> read
+// CON to drop a pending DCMPED -> thr_IntClearFlag -> thr_IntEnable), so a trip
+// asserting inside that window is dropped and uncounted. Bounded, not
+// open-ended: the comparator is LEVEL-evaluated (see AdcThreshold_IsrTrip), so
+// a condition still past the limit re-asserts on the next conversion and trips
+// again once the interrupt is back on -- only an excursion that both starts and
+// ends inside the window is lost. A dedicated dropped-trip counter would close
+// even that; it is a separate feature, not this fix (#897 option 3).
+//
 // CONF:ADC:THREshold:CLEar [<ch>] -> clear latch+counter (no arg = all)
 scpi_result_t SCPI_ADCThresholdClear(scpi_t * context) {
     int32_t ch;
@@ -1327,10 +1690,14 @@ scpi_result_t SCPI_ADCThresholdClear(scpi_t * context) {
 // #862: the claim is the first statement, ahead of SCPI_ParamInt32, so
 // `CONF:ADC:SAMC:DEDicated 99999` mid-stream answers -200 like every other
 // converted setter instead of -222 -- see the ordering contract on
-// SCPI_RejectCfgClaim (SCPIInterface.h). Both registered spellings route
+// SCPI_RejectCfgClaim (SCPIInterface.h). Both registered commands --
+// CONFigure:ADC:SAMC:DEDicated and CONFigure:ADC:SAMC:SHARed, two distinct
+// patterns with two callbacks rather than two spellings of one node -- route
 // through here, so both are fixed by the one wrapper.
 //
-// The refusal names "CONF:ADC:SAMC" for either spelling, as it did before.
+// The refusal's LOG_E names "CONF:ADC:SAMC" whichever of the two was sent --
+// an unregistered, ambiguous label, not "either spelling" of one node -- as it
+// did before.
 static scpi_result_t SamcSetCommonClaimed(scpi_t *context, bool isDedicated);
 
 static scpi_result_t SamcSetCommon(scpi_t *context, bool isDedicated) {
