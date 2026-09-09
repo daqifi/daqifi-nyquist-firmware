@@ -662,15 +662,49 @@ static void app_SDCardTask(void* p_arg) {
                         busHoldSince = nowTicks;
                     } else if ((TickType_t)(nowTicks - busHoldSince) >=
                                pdMS_TO_TICKS(SD_BUS_LEAK_DWELL_MS)) {
-                        /* Static string: this task has 1024 words of stack
-                         * and a profiled 468-word peak, and a format-arg
-                         * LOG_* runs vsnprintf on it. ReleaseBus logs the
-                         * unwind depth itself, which is the number worth
-                         * having. */
-                        LOG_E("[SD] SPI bus held with nothing armed - "
-                              "unwinding leaked exclusive lock (#925)");
-                        DRV_SDSPI_ReleaseBus(sysObj.drvSDSPI0);
-                        gSdBusRecoveries++;
+                        /* Hold the manager's #829 claim across the unwind.
+                         *
+                         * "Idle" was established by a check that ran earlier
+                         * in this same iteration, and the SCPI tasks are
+                         * HIGHER priority than this one (USB 7, SD 5), so an
+                         * operation can be armed between that check and this
+                         * call -- and DRV_SDSPI_ReleaseBus would then reset
+                         * the detect FSM underneath a request the user just
+                         * made. TryClaim is the primitive that actually
+                         * serialises against an arm: it is a test-and-set
+                         * inside a critical section, and #829 requires every
+                         * SCPI handler to take it BEFORE filling operands.
+                         *
+                         * Not closed for SYST:STOR:SD:BENCHmark, which takes
+                         * no claim by design (#736). Stated rather than
+                         * papered over: that one command can still arm inside
+                         * the window. It is a bench-only diagnostic, and the
+                         * bus it would be racing has been stuck for
+                         * SD_BUS_LEAK_DWELL_MS, so its operation was going to
+                         * fail either way.
+                         *
+                         * Failing to claim is not a missed leak: the manager
+                         * is busy, so the "held with nothing armed" condition
+                         * no longer holds and the dwell correctly restarts. */
+                        if (sd_card_manager_TryClaim()) {
+                            /* Static string: this task has 1024 words of
+                             * stack and a profiled 468-word peak, and a
+                             * format-arg LOG_* runs vsnprintf on it.
+                             * ReleaseBus logs the unwind depth itself, which
+                             * is the number worth having. */
+                            LOG_E("[SD] SPI bus held with nothing armed - "
+                                  "unwinding leaked exclusive lock (#925)");
+                            DRV_SDSPI_ReleaseBus(sysObj.drvSDSPI0);
+                            /* ++ is a read-modify-write, which is not atomic
+                             * on PIC32MZ. One writer today, so nothing can be
+                             * lost -- but the project rule is unconditional
+                             * and this path runs at most once per leak, so
+                             * the guard costs nothing to keep it true. */
+                            taskENTER_CRITICAL();
+                            gSdBusRecoveries++;
+                            taskEXIT_CRITICAL();
+                            sd_card_manager_ReleaseClaim();
+                        }
                         busHoldTiming = false;
                     }
                 }

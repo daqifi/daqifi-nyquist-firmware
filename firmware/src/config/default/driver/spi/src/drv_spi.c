@@ -121,13 +121,13 @@ void DRV_SPI_GetRejectCounters(uint32_t *stale, uint32_t *exclusive,
  *
  * The residual window is benign for both consumers, which is why it is
  * documented rather than closed. DRV_SPI_IsExclusiveHolder evaluates
- * inExclusive && (holder == handle), which is FALSE in that window -- so the
- * leak watchdog reads "not held" for one sample and delays detection by one
- * poll interval; it can never falsely fire. The SCPI diagnostic can print one
- * self-contradictory line (ExclusiveHeld=1 with an INVALID holder) in a
- * microseconds-wide window, which is a cosmetic artefact of a bus being
- * released as it was read. O(1) field copy, per the project's rule on keeping
- * critical sections short. */
+ * inExclusive && (holder == handle); in that window the handle no longer
+ * matches, so it reads FALSE -- the leak watchdog sees "not held" for one
+ * sample and delays detection by one poll interval, and can never falsely
+ * fire. The SCPI diagnostic can report ExclusiveHeld=1 with the holder shown
+ * as DRV_HANDLE_INVALID for a microseconds-wide window, which is the honest
+ * picture of a bus being released as it was read. O(1) field copy, per the
+ * project's rule on keeping critical sections short. */
 void DRV_SPI_GetExclusiveState(const SYS_MODULE_INDEX drvIndex,
                                bool *inExclusive, uint32_t *holderHandle,
                                uint32_t *depth)
@@ -141,9 +141,21 @@ void DRV_SPI_GetExclusiveState(const SYS_MODULE_INDEX drvIndex,
     {
         dObj = (const DRV_SPI_OBJ*)&gDrvSPIObj[drvIndex];
         taskENTER_CRITICAL();
-        mode   = dObj->drvInExclusiveMode;
-        holder = (uint32_t)dObj->exclusiveUseClientHandle;
-        cntr   = dObj->exclusiveUseCntr;
+        mode = dObj->drvInExclusiveMode;
+        /* Report the holder ONLY while one exists. exclusiveUseClientHandle
+         * is never initialised to DRV_HANDLE_INVALID -- DRV_SPI_Initialize
+         * sets drvInExclusiveMode and exclusiveUseCntr and not this field --
+         * so before the first-ever acquire it holds the zero it was born with
+         * in .bss, and copying it out unconditionally published `00000000` as
+         * a lock holder on a bus nobody had ever locked. Leaving the caller's
+         * DRV_HANDLE_INVALID default in place makes the field mean one thing
+         * in both directions: the holder when held, DRV_HANDLE_INVALID when
+         * not, whether or not the bus has ever been taken. */
+        if (mode)
+        {
+            holder = (uint32_t)dObj->exclusiveUseClientHandle;
+        }
+        cntr = dObj->exclusiveUseCntr;
         taskEXIT_CRITICAL();
     }
 
