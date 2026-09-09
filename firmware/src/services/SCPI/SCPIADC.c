@@ -1031,21 +1031,29 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context);
  * changed. That is the same consequence #873 describes for the AD7609 Range
  * pin, except this pair is reachable on the NQ1 this bench has.
  *
- * MC12b ONLY, and the AD7609 half is deliberately NOT claimed: an earlier
- * revision of this comment said "and by AD7609_ConvertToVoltage", which is
+ * That is an MC12b-path fact, and this comment deliberately stops there: an
+ * earlier revision extended it with "and by AD7609_ConvertToVoltage", which is
  * FALSE. That function's first statement is UNUSED(runtimeConfig)
- * (HAL/ADC/AD7609.c) -- it reads the module Range and nothing else, so on an
- * NQ3 these coefficients never reach the conversion and this guard is
- * defensive there rather than load-bearing. The wrong claim mattered because
- * it WAS the stated justification for refusing the command during an AD7609
- * stream (codex pre-merge audit). That the AD7609 path ignores user
- * calibration outright is a separate defect, filed on its own.
+ * (HAL/ADC/AD7609.c:517) -- it reads the module Range and nothing else -- so
+ * for NQ3's eight AD7609 USER channels these coefficients never reach the
+ * conversion, and for those the guard is defensive rather than load-bearing.
+ * That verdict does NOT generalise to the variant: ADC_ConvertToVoltageByIndex
+ * switches on the PER-CHANNEL Type, not on the board (HAL/ADC.c:479), and
+ * NQ3BoardConfig.c:122 splices the same COMMON_MONITORING_CHANNELS_BOARDCONFIG
+ * entries -- all eight .Type = AIn_MC12bADC -- into AInChannels, so NQ3's other
+ * eight channels convert through MC12b_ConvertToVoltage and DO read CalM/CalB
+ * (MC12bADC.c:255,258), exactly as on NQ1. These setters reach them: ids
+ * 248-255 (AInConfig.h) pass AdcChannelArgInRange, and MEAS:VOLT:DC? converts
+ * them by the same dispatch. The wrong claim mattered because it WAS the stated
+ * justification for refusing the command during an AD7609 stream (codex
+ * pre-merge audit). That the AD7609 USER-channel path ignores user calibration
+ * outright is a separate defect, filed on its own.
  *
- * Note what this does NOT change: CONF:ADC:SAVEcal / SAVEFcal stay unguarded.
- * They copy runtime cal INTO NVM and mutate nothing the conversion path reads,
- * and every other NVM-persisting setter in the tree (CONF:VOLTage:SAVE,
- * SYSTem:DEVice:NAME:SAVE, the LAN saves) is likewise unguarded -- guarding these two
- * would be a new and inconsistent restriction, not this fix.
+ * Note what this ALSO changes: CONF:ADC:SAVEcal / SAVEFcal take the claim too,
+ * through CalSaveCommon below. Not for the reason this pair does -- they mutate
+ * nothing the conversion path reads, so they cannot rescale a running stream --
+ * but because the per-channel copy into NVM can be torn by a concurrent write
+ * from the other transport. That function's own comment has the argument.
  *
  * The claim is the first statement (#862 ordering contract, SCPIInterface.h),
  * so `CONF:ADC:chanCALM 300,1.0` mid-stream answers -200 like every other
@@ -1122,8 +1130,8 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context) {
 static scpi_result_t ADCChanCalbSetClaimed(scpi_t * context);
 
 /* #885: the offset half of the pair above -- see the comment on
- * SCPI_ADCChanCalmSet for why a live cal write is a stream-integrity defect
- * and why the SAVE commands are deliberately left alone. */
+ * SCPI_ADCChanCalmSet for why a live cal write is a stream-integrity defect,
+ * and CalSaveCommon below for why the SAVE commands are claimed too. */
 scpi_result_t SCPI_ADCChanCalbSet(scpi_t * context) {
     StreamingCfgClaim claim = Streaming_BeginConfigChange();
     if (claim != STREAM_CFG_CLAIM_OK) {
@@ -1306,10 +1314,11 @@ scpi_result_t SCPI_ADCCalFSave(scpi_t * context) {
  * (channelRuntimeConfig->Size, services/daqifi_settings.c:304, loop at :333),
  * monitoring channels included: 24 on NQ1 (16 user + 8 monitoring,
  * state/runtime/NQ1RuntimeDefaults.c:49) and 16 on NQ3 (8 user + 8 monitoring,
- * state/runtime/NQ3RuntimeDefaults.c:41). Not sixteen on either variant -- an
- * earlier revision said "all sixteen channels at once", which is the NQ1 USER
- * channel count and the bound on neither. It is also the exact mutation that
- * CONF:ADC:USECal already performs UNDER the claim
+ * state/runtime/NQ3RuntimeDefaults.c:41) -- per-variant, and never just the
+ * user-channel count. An earlier revision said "all sixteen channels at once":
+ * that is NQ1's USER count, not its bound of 24, and NQ3's sixteen is 8 user
+ * plus 8 monitoring, not the sixteen user channels that revision meant. It is
+ * also the exact mutation that CONF:ADC:USECal already performs UNDER the claim
  * (ADCUseCalSetClaimed -> daqifi_settings_LoadADCCalSettings, below): two
  * commands reaching one store, one of them guarded and one not.
  *
