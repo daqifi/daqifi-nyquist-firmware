@@ -17,6 +17,39 @@ name: host-tests
 #     constants and fails the build (not just the test) if either drifts --
 #     scoped to the whole SCPI/ directory rather than just that one file so a
 #     future move of the constants still trips this.
+#   - test_ad7609_scale.c (#889): compiles firmware/src/HAL/ADC/AD7609Scale.h
+#     directly. Scoped to the whole HAL/ADC/ directory for the same reason as
+#     SCPI/ above -- the arithmetic was split OUT of AD7609.h to make it
+#     host-testable, so a future move back, or into a sibling file, must still
+#     trip this trigger. Without the entry this test was unreachable by CI: a
+#     PR editing only AD7609Scale.h matched no path here, and no other
+#     workflow can catch a semantically-valid reordering (cppcheck fires on
+#     firmware/src/** but diffs a byte-exact baseline, so
+#     `scaled * calM + calB` -> `(scaled + calB) * calM` is invisible to it).
+#     Found by the #941 pre-merge adversarial audit, which is also the PR that
+#     added the test -- it wired up the suite and not its trigger.
+#
+# THE ADC ENTRY IS A DIRECTORY, AND THAT IS BROADER THAN THE INVARIANT ABOVE.
+# firmware/src/HAL/ADC/ holds nine files; exactly one (AD7609Scale.h) is read
+# by a host test. The glob matches the other eight too -- MC12bADC.c, AD7173.*,
+# AdcThreshold.*, AD7609.c/.h -- so an edit to any of them queues this job,
+# which then builds and passes having exercised nothing related. That costs a
+# CI run and establishes nothing; it does not weaken any gate.
+#
+# It is deliberate, and a narrower list is the worse trade. The whole point of
+# #889's split was to move the arithmetic OUT of AD7609.h into a file a host
+# test can compile -- so the arithmetic has already moved once, and a
+# file-scoped trigger is escaped by moving it again, into a sibling in this
+# same directory. A trigger that a refactor can silently step out of is the
+# defect this entry was added to fix (a PR editing only AD7609Scale.h used to
+# match no path at all), so it is scoped where a refactor cannot escape it.
+#
+# So read the invariant at the granularity that is actually true: every path
+# listed here CONTAINS at least one source a host test reads. Per-FILE it holds
+# for the Util entries and not for this directory, and an earlier revision of
+# this comment claimed the opposite -- it said MC12bADC.c was "NOT listed",
+# which the glob added in the same commit plainly matches. Caught by #941's
+# round-2 pre-merge audit.
 
 on:
   pull_request:
@@ -27,6 +60,7 @@ on:
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
       - 'firmware/src/services/SCPI/**'
+      - 'firmware/src/HAL/ADC/**'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -36,6 +70,7 @@ on:
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
       - 'firmware/src/services/SCPI/**'
+      - 'firmware/src/HAL/ADC/**'
       - '.github/workflows/host-tests.yml'
 
 permissions:
