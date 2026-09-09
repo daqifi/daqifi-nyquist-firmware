@@ -13,6 +13,13 @@ make run
 `make run` builds and runs the suite; the process exit code is non-zero if any
 test fails, so it drops straight into CI. `make clean` removes build artifacts.
 
+**Wired into CI as of #946**: `.github/workflows/host-tests.yml` runs `make
+run` in this directory on every PR/push touching `tests/host/**` or the
+firmware sources these tests compile or grep (see that workflow's `paths:`
+list). Before #946 this sentence described the exit-code *contract* only —
+no workflow anywhere in the repo actually invoked `make run`, for any of the
+three tests here, not just the one #946 added.
+
 ## What's covered
 
 `test_circularbuffer.c` exercises `firmware/src/Util/CircularBuffer.c`:

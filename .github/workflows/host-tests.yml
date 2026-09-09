@@ -1,0 +1,54 @@
+name: host-tests
+
+# tests/host/ (issue #124) is a PC-based (gcc) unit-test suite for
+# self-contained firmware utility modules -- no hardware, no MPLAB X, no
+# RTOS. The suite's own README has claimed since its creation that
+# `make run`'s non-zero exit code "drops straight into CI", but until this
+# workflow no CI job anywhere in this repo ever built or ran it -- for any
+# of its three tests, not just the one added by #946. So the claim was
+# false, and cppcheck/scpi-claim-path/scpi-wiki-sync/release-hex were the
+# only real gates. This workflow makes the README's claim true.
+#
+# Triggers cover every firmware source each host test either compiles
+# directly or greps for drift (see tests/host/Makefile and README.md):
+#   - test_circularbuffer.c: firmware/src/Util/CircularBuffer.c/.h
+#   - test_fixedpointfmt.c:  firmware/src/Util/FixedPointFmt.h
+#   - test_943_bench_stall_bound.c: greps SCPIStorageSD.c for the two timeout
+#     constants and fails the build (not just the test) if either drifts --
+#     scoped to the whole SCPI/ directory rather than just that one file so a
+#     future move of the constants still trips this.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tests/host/**'
+      - 'firmware/src/Util/CircularBuffer.c'
+      - 'firmware/src/Util/CircularBuffer.h'
+      - 'firmware/src/Util/FixedPointFmt.h'
+      - 'firmware/src/services/SCPI/**'
+      - '.github/workflows/host-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/host/**'
+      - 'firmware/src/Util/CircularBuffer.c'
+      - 'firmware/src/Util/CircularBuffer.h'
+      - 'firmware/src/Util/FixedPointFmt.h'
+      - 'firmware/src/services/SCPI/**'
+      - '.github/workflows/host-tests.yml'
+
+permissions:
+  contents: read   # checkout + gcc build + run only, no writes
+
+jobs:
+  host-tests:
+    name: tests/host (gcc, no hardware)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: make run
+        working-directory: tests/host
+        run: make run
