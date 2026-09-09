@@ -126,19 +126,27 @@ Watch for "Program Succeeded". Flags: `-M` = program mode, `-OL` = use loaded me
 | MCU device target | `PIC32MZ2048EFM144` | Pass to ipecmd as `-P32MZ2048EFM144` (no `PIC` prefix — see ipecmd gotchas above) |
 | Serial port (USB CDC) | Windows **COM7** = primary (was COM3). No usbipd here, so no `/dev/ttyACMn`: use Windows `python.exe` or `bench serial` (asserts DTR). | The board has no USB iSerial: **verify by the `*IDN?` serial**, never by port number. |
 | Bench primary device serial | `7E2898F46200E8A7` | Lane nq-a, COM7, PICkit `BUR184882598`; demo unit, its lane may flash it. |
-| Bench secondary device serial | `7E28A4206200EAD1` | Not attached since 2026-09-08 (nor `7E28517F62010292`, `7E2837886201026A`); re-add as `nq-b`/`nq-c` after a pairing proof. |
+| Bench secondary device serial | `7E28A4206200EAD1` | Not attached since 2026-09-08 (nor `7E28517F62010292`, `7E2837886201026A`); re-add as `nq-c` onward after a pairing proof (`nq-b` is taken, see the row above). |
 | Bench WiFi AP | SSID `Tesla` | Credentials in `~/.daqifi.env` (chmod 600) — never commit |
 | Bench PC iperf2 | `C:\Users\User\Downloads\iperf-2.2.1-win64.exe` | Run `-s -p 5002 -i 1`; redirect stdout to `C:\temp\iperf2.log` for log-side correlation |
 
 #### ⚠️ Device verification protocol — ALWAYS run before SCPI tests
 
-**`/dev/ttyACMn` assignment is volatile** — Linux numbers devices in usbipd attach order, not hardware identity, so the same board can move between `ACM0`/`ACM1` across reattaches. The **stable** identifiers are the Windows COM number and the firmware serial (third field of `*IDN?`, format `DAQiFi,Nq1,<serial>,01-02`). Never trust `/dev/ttyACMn` alone (this caused a 30-minute false bisect on 2026-05-06 — every firmware "looked the same" because the script was reading an unflashed second board).
+**Never identify a board by port number alone.** The stable identifier is the firmware serial (third field of `*IDN?`, `DAQiFi,Nq1,<serial>,01-02`); a port number is an enumeration artefact. Getting this wrong caused a 30-minute false bisect on 2026-05-06 — every firmware "looked the same" because the script was reading an unflashed second board.
 
-Before any SCPI work:
+**Which steps apply depends on whether your box has usbipd — check the inventory table above, it is per-box.**
 
-1. Map busid → COM on the Windows side, and list WSL ports:
+**Boxes WITHOUT usbipd** (this station as of 2026-09-08: no bridge, no `/dev/ttyACMn`, boards on COM ports):
+
+1. List ports and identify each natively — `bench ports`, then `bench serial COMn '*IDN?'` per port (it asserts DTR; the CDC does not answer without it).
+2. Match each serial against the lane registry `~/.claude/bench/devices.conf`, and drive only the board your lane owns. `bench whoami` prints what you own.
+3. A serial of `0` means *this firmware does not read DEVSN*, not that the board has no identity — reflash before concluding anything (see the nq-b row above).
+
+**Boxes WITH usbipd** (`/dev/ttyACMn` exists; numbering follows attach order, so the same board moves between `ACM0`/`ACM1`):
+
+1. Map busid → COM and list WSL ports:
    ```bash
-   powershell.exe -Command "usbipd list" | grep "04d8:f794"   # 2-4=COM3 primary, 2-3=COM9 secondary
+   powershell.exe -Command "usbipd list" | grep "04d8:f794"
    ls -la /dev/ttyACM* 2>/dev/null || echo "no ttyACM nodes — attach may still be in progress"
    ```
 2. Query each port's serial and match it to the inventory table above:
@@ -151,7 +159,8 @@ Before any SCPI work:
    done
    ```
 3. Store the result in a variable (`DEV_PRIMARY=/dev/ttyACMn`) for the session instead of hardcoding. Later examples in this file use the literal `/dev/ttyACM0` as a stand-in for "the primary device".
-4. Wrong board selected? Re-target — don't detach boards that aren't yours (other workflows may be using them).
+
+**Either way:** wrong board selected? Re-target — never detach or drive a board that is not yours; another lane may be using it, and the bench device-guard will refuse you.
 
 ### Bootloader Entry
 - Hold the user button for ~20 seconds until board resets
