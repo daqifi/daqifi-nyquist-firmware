@@ -525,6 +525,23 @@ static void app_SDCardTask(void* p_arg) {
         SpiBusHealth_SetSdSuspended(state == APP_SD_STATE_SUSPENDED ||
                                     app_SDCard_SpiOwnedByWifi());
 
+        /* #925: the leak watchdog only samples inside APP_SD_STATE_PROCESS, so
+         * its dwell must not survive a trip through any other state. Without
+         * this, a hold that had been timing for T seconds when WiFi took the
+         * bus would resume its OLD start tick on return -- and the first
+         * sample after resuming can legitimately observe a lock the detect FSM
+         * acquired one iteration earlier, whose dwell would then read as
+         * (T + the whole WiFi session) and fire immediately. That force-unwind
+         * would abort a legitimate detect and unmount a mounted card.
+         *
+         * Derived from `state` on every iteration rather than cleared at each
+         * exit, for the same reason the suspension flag above is: PROCESS
+         * already has more than one exit, and a reset written per-transition
+         * goes stale the moment another is added. */
+        if (state != APP_SD_STATE_PROCESS) {
+            busHoldTiming = false;
+        }
+
         switch (state) {
             case APP_SD_STATE_WAIT_POWER_UP:
             {
