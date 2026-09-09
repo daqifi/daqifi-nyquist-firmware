@@ -1335,7 +1335,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * either.
      *
      * Deliberately NOT accompanied by an argument that the #925 watchdog
-     * cannot act while this callback runs. Four earlier revisions of this
+     * cannot act while this callback runs. Earlier revisions of this
      * comment each asserted such an argument and each was false; the
      * callback's own lifetime is unbounded (#943), so no version of that
      * claim is true. The watchdog's own recovery conditions are documented
