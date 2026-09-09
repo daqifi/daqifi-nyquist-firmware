@@ -82,9 +82,33 @@ typedef struct s_tcpClientContext
     uint64_t wifiTcpBytesConfirmed;
     /** Radio send errors (negative sentBytes in callback — real failures) */
     uint32_t wifiTcpSendErrors;
-    /** Partial sends (callback confirmed fewer bytes than requested — normal TCP segmentation) */
+    /** Partial sends (callback confirmed fewer bytes than requested).  #500: an
+     *  elevated band around 23-26 KB/s of WIRE BYTE RATE is EXPECTED (that it
+     *  is HARMLESS is a separate claim, and is NOT established — see below).
+     *  It keys on byte rate rather than sample rate (1xT1 @ 2250 Hz and
+     *  5xT1 @ 1250 Hz peak together), it is near-zero below ~22 KB/s and low
+     *  again by ~33 KB/s, and it is not circular-buffer-size dependent.
+     *  wifiTcpSendErrors and WifiDroppedBytes were 0 throughout, but they see
+     *  only negative send() returns and circular-buffer overflow — NOT this
+     *  shortfall.  Do NOT read the band as proven lossless: #500 concluded that
+     *  and #935 reopened it, because Sent - Confirmed is identically
+     *  wifiPartialBytesMissing (see that field below) and #500 reported both an
+     *  exact Sent == Confirmed and a non-zero shortfall, which cannot both
+     *  hold.  See CLAUDE.md, "WiFi characterization — lessons
+     *  that survive", before treating a rise as either a defect or benign. */
     uint32_t wifiTcpPartialSends;
-    /** #367 diagnostics: cumulative byte shortfall (sendSize - sentBytes) across all partial sends */
+    /** #367 diagnostics: cumulative byte shortfall (sendSize - sentBytes) across
+     *  all partial sends.  #500: inside the band documented on
+     *  wifiTcpPartialSends above this averages 11-19 B against the 1400 B
+     *  WIFI_WBUFFER_SIZE cap (~1% of a send), and is roughly constant while the
+     *  partial-send FREQUENCY varies.  These bytes are NOT re-queued:
+     *  TcpServerFlush zeroes writeBufferLength immediately after a successful
+     *  send() (wifi_tcp_server.c), and no retry path exists — so this counts
+     *  bytes the WINC did not accept and the firmware did not resend.  Because
+     *  wifiTcpBytesSent counts the REQUESTED length and wifiTcpBytesConfirmed
+     *  the callback's, this field is identically their difference whenever
+     *  wifiTcpSendErrors == 0.  Whether that constitutes real stream loss is
+     *  OPEN — see #935. */
     uint32_t wifiPartialBytesMissing;
     /** #371 diagnostics: count of wifi_tcp_server_WriteBuffer calls that returned 0
      *  because the circular buffer didn't have enough free space.  Streaming task
