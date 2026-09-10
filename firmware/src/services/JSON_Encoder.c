@@ -28,11 +28,29 @@
 //! Temporal buffer used for JSON encoding purposes
 static char tmp[ TMP_MAX_LEN ];
 
-/* #164: every closer that MUST still fit after the bytes it closes have been
- * written. Each reserve is derived from sizeof() the literal that is actually
- * emitted, so a reservation and its literal can never drift apart. These
- * replace the old ">= 65" magic pre-check, which reserved a byte count with no
- * relationship to anything it was protecting. */
+/* #164: the literals every closer emits, and -- for the "di" array only -- the
+ * byte counts reserved against them. These replace the old ">= 65" magic
+ * pre-check, which reserved a byte count with no relationship to anything it
+ * was protecting.
+ *
+ * #164 (audit r3): an earlier revision of this comment claimed that deriving
+ * each reserve from sizeof() its literal meant "a reservation and its literal
+ * can never drift apart". That is FALSE, and the drift it missed is not
+ * between a reserve and its literal -- it is between a reserve and the CODE it
+ * predicts. The object close-out at the bottom of Json_Encode() STRIPS a
+ * trailing ",\n" before writing JSON_OBJ_CLOSE, so reserving
+ * JSON_OBJ_CLOSE_LEN after the ",\n"-terminated JSON_AI_CLOSE over-charged the
+ * ADC commit site by exactly those 2 bytes and permanently dropped samples
+ * that fit. sizeof() cannot catch that class; only having ONE implementation
+ * can. The ai/object pair therefore no longer predicts -- it calls
+ * json_CloseObject() in trial mode and observes the real answer.
+ *
+ * JSON_OBJ_CLOSE_LEN survives as a RESERVATION only inside the "di" block,
+ * where the same 2-byte conservatism is harmless both times it appears: in the
+ * element loop a rejected element was only peeked, so it stays queued for the
+ * next call, and at the array closer the element loop has already guaranteed
+ * >= 8 bytes remain, so the over-tight branch there is unreachable. Neither
+ * feeds a permanent-drop decision, unlike the ADC loop's `sampleDidNotFit`. */
 #define JSON_OBJ_CLOSE      "\n}\n"
 #define JSON_OBJ_CLOSE_LEN  (sizeof(JSON_OBJ_CLOSE) - 1u)   /* 3 */
 #define JSON_DI_CLOSE       "],\n"
@@ -132,6 +150,72 @@ bool json_IsHeaderSent(void) {
 size_t json_GenerateHeaderToBuffer(char* buffer, size_t size) {
     if (!buffer || size == 0) return 0;
     return generateJsonHeader(buffer, size);
+}
+
+/**
+ * @brief Close the enclosing JSON object -- the ONE implementation of that
+ *        sequence, used both to write the real closer and to ask whether it
+ *        would still fit.
+ *
+ * #164 (audit r3). Rounds 1 and 2 of this PR each patched arithmetic that
+ * PREDICTED this sequence's cost from the ADC commit site, and each got it
+ * wrong in the direction of silent data loss. That prediction was a second,
+ * independently-maintained implementation of what this function does, and it
+ * never modelled the comma strip below -- so it over-charged the commit by 2
+ * bytes. There is now nothing to keep in sync: the commit site runs THIS code,
+ * in trial mode, and believes the answer.
+ *
+ * @param charBuffer  output buffer
+ * @param buffSize    its total size
+ * @param endIndex    index just past the object's last committed byte.
+ *                    PRECONDITION endIndex <= buffSize: every caller reaches
+ *                    it from a successful snprintf, which by its own
+ *                    `written < size` test leaves the index inside the buffer.
+ * @param trial       when true every byte this function touched is restored
+ *                    before returning, so the buffer is left byte-for-byte as
+ *                    it was found and the call answers only "would it fit?"
+ * @param pOutIndex   may be NULL. On success set to the index just past the
+ *                    closer; on failure to the POST-strip index -- which is
+ *                    where the close-out's failure path has always placed its
+ *                    NUL, so factoring it out preserves that shape exactly.
+ * @return true if the closer fit.
+ *
+ * Runs on streaming_Task (task context, never an ISR). No allocation, no
+ * floating point; `saved` is a 4-byte fixed local, so the added frame is
+ * negligible against that task's 1392-word stack (692 measured peak).
+ */
+static bool json_CloseObject(char *charBuffer, size_t buffSize,
+        size_t endIndex, bool trial, size_t *pOutIndex) {
+    /* Every record this object can end with -- a channel entry, a DI element,
+     * or the array closers "\n],\n" / "],\n" -- ends in ",\n". Strip that
+     * comma so the object closes after the last real value. */
+    if (endIndex >= 2 && charBuffer[endIndex - 2] == ',') {
+        endIndex -= 2;
+    }
+    size_t room = buffSize - endIndex;
+    /* snprintf writes at most `room` bytes, and at most JSON_OBJ_CLOSE_LEN + 1
+     * (the closer plus its NUL); saving the smaller of the two covers
+     * everything it can modify without reading past buffSize. */
+    char saved[JSON_OBJ_CLOSE_LEN + 1u] = {0};
+    size_t savedLen = 0;
+    size_t k;
+    if (trial) {
+        savedLen = (room < sizeof(saved)) ? room : sizeof(saved);
+        for (k = 0; k < savedLen; k++) {
+            saved[k] = charBuffer[endIndex + k];
+        }
+    }
+    int written = snprintf(charBuffer + endIndex, room, JSON_OBJ_CLOSE);
+    bool fits = !(written < 0 || written >= (int) room);
+    if (trial) {
+        for (k = 0; k < savedLen; k++) {
+            charBuffer[endIndex + k] = saved[k];
+        }
+    }
+    if (pOutIndex != NULL) {
+        *pOutIndex = fits ? (endIndex + (size_t) written) : endIndex;
+    }
+    return fits;
 }
 
 size_t Json_Encode(tBoardData* state,
@@ -767,22 +851,44 @@ size_t Json_Encode(tBoardData* state,
             if (closeIndex >= 2 && charBuffer[closeIndex - 2] == ',') {
                 closeIndex -= 2; // Remove trailing comma
             }
-            /* Reserve the object closer: a sample may only commit if the
-             * object can still be closed after it. Without this a committed
-             * sample could leave the final "\n}\n" unable to fit, and that
-             * path returns 0 -- discarding every sample already popped by this
-             * call, not just the one that did not fit. */
-            size_t closeRoom = buffSize - closeIndex;
-            if (closeRoom <= JSON_OBJ_CLOSE_LEN) {
-                startIndex = sampleStart;
-                sampleDidNotFit = true;   /* #164 audit -- see loop end */
+            /* #164 (audit r3): ATTEMPT the object closer, do not RESERVE it.
+             *
+             * A sample may only commit if the object can still be closed after
+             * it: otherwise the close-out at the bottom of this function
+             * returns 0, discarding every sample this call already popped, not
+             * just the one that did not fit. Rounds 1 and 2 each expressed that
+             * requirement as arithmetic here, predicting what the close-out
+             * would consume; both were wrong, both toward silent loss. The
+             * prediction missed that the close-out STRIPS the ",\n" that
+             * JSON_AI_CLOSE writes, so it charged this commit 8 bytes where 6
+             * suffice -- and the rejection is not a retry, it feeds
+             * `sampleDidNotFit` and from there the permanent-drop arm at this
+             * loop's end.
+             *
+             * So write the array closer for real, then ask json_CloseObject()
+             * -- the close-out's own code -- whether the object still closes.
+             * In trial mode it restores every byte it touched, so a successful
+             * trial leaves the buffer byte-identical and nothing on the wire
+             * changes. There is no threshold left to keep in sync: this test
+             * and the real close ARE the same function.
+             *
+             * The invariant it establishes -- "the object is closeable at
+             * startIndex" -- carries inductively across the loop: the next
+             * sample either commits under its own trial, or rolls back to this
+             * sample's already-proven position. So the close-out below cannot
+             * fail on any path that popped a sample. */
+            size_t aiRoom = buffSize - closeIndex;
+            int closeWritten = snprintf(charBuffer + closeIndex,
+                    aiRoom,
+                    JSON_AI_CLOSE);
+            if (closeWritten < 0 || closeWritten >= (int)aiRoom) {
+                startIndex = sampleStart;   // whole block rolls back
+                sampleDidNotFit = true;     /* #164 audit -- see loop end */
                 break;
             }
-            closeRoom -= JSON_OBJ_CLOSE_LEN;
-            int closeWritten = snprintf(charBuffer + closeIndex,
-                    closeRoom,
-                    JSON_AI_CLOSE);
-            if (closeWritten < 0 || closeWritten >= (int)closeRoom) {
+            size_t afterAiClose = closeIndex + (size_t) closeWritten;
+            if (!json_CloseObject(charBuffer, buffSize, afterAiClose,
+                    true /* trial -- restores the buffer */, NULL)) {
                 startIndex = sampleStart;   // whole block rolls back
                 sampleDidNotFit = true;     /* #164 audit -- see loop end */
                 break;
@@ -799,7 +905,7 @@ size_t Json_Encode(tBoardData* state,
                 startIndex = sampleStart;
                 break;
             }
-            startIndex = closeIndex + closeWritten;
+            startIndex = afterAiClose;
             objHasPayload = true;
             AInSampleList_FreeToPool(pPublicSampleList);
             qSize--;
@@ -856,12 +962,31 @@ size_t Json_Encode(tBoardData* state,
          * call when a committed DI array was what stood in the way) or
          * diStart, that is 2 + that "ts" field and so <= 19, when the tag was
          * present but the DI array rolled back without committing. The ceiling
-         * any call can ever offer is buffSize - 2. So the test is EXACT
-         * whenever the DI array did not commit, and in the single remaining
-         * shape -- tag requested, array rolled back -- conservative by at most
-         * 17 bytes: only a sample needing within 17 bytes of the ENTIRE
-         * encoder buffer is affected, and the cost there is one dropped
-         * sample, not a stall. Closing even that means changing what
+         * any call can ever offer is buffSize - 2.
+         *
+         * So when the DI array did not commit, this call measured the sample
+         * against the largest room that will ever exist -- and, since #164
+         * audit r3, measured it with the same code that would have emitted it:
+         * the commit site above ATTEMPTS json_CloseObject() instead of
+         * predicting its cost, so a "did not fit" here cannot disagree with
+         * what an emission would have done. Until r3 the two disagreed by 2
+         * bytes and this arm dropped samples that fit; there is now no margin
+         * in either direction.
+         *
+         * Read that as a claim about ROOM, and only about room: it says no
+         * future call can offer more space, NOT that the sample's encoded SIZE
+         * is fixed. Size also depends on precision, rawMode, the channel
+         * mapping and the calibration coefficients -- and the reachable trigger
+         * named above (CONFigure:ADC:chanCALB 1e300) is itself one of those
+         * inputs, which an operator can set back afterwards. A sample dropped
+         * here was unencodable under the settings in force when it was
+         * measured; that is the strongest statement this test supports.
+         *
+         * In the single remaining shape -- tag requested, array rolled back --
+         * the room measured falls short of that ceiling by at most 17 bytes:
+         * only a sample needing within 17 bytes of the ENTIRE encoder buffer is
+         * affected, and the cost there is one dropped sample, not a stall.
+         * Closing even that means changing what
          * initialOffsetIndex is when the DI array rolls back, which moves the
          * emitted field order and belongs to #959, not here. The case that IS
          * a stall -- a DI array that committed -- is NOT left as a residual:
@@ -964,22 +1089,24 @@ size_t Json_Encode(tBoardData* state,
         return startIndex;
     }
 
-    // Close the JSON object
-    if (startIndex >= 2 && charBuffer[startIndex - 2] == ',') {
-        startIndex -= 2; // Remove trailing comma
-    }
-    int written = snprintf(charBuffer + startIndex,
-            buffSize - startIndex,
-            JSON_OBJ_CLOSE);
-    if (written < 0 || written >= (int)(buffSize - startIndex)) {
+    /* Close the JSON object. #164 (audit r3): the strip-then-write sequence
+     * that used to be spelled out here now lives in json_CloseObject(), and
+     * the ADC commit site calls that same function in trial mode -- one
+     * implementation, so the two can no longer drift. The helper reports the
+     * POST-strip index on failure, which is where this path has always placed
+     * its NUL. */
+    size_t closedIndex = startIndex;
+    if (!json_CloseObject(charBuffer, buffSize, startIndex,
+            false /* commit */, &closedIndex)) {
         // Truncated or error; incomplete JSON is invalid, signal failure
+        startIndex = closedIndex;
         if (buffSize > 0) {
             size_t term = (startIndex < buffSize) ? startIndex : (buffSize - 1);
             charBuffer[term] = '\0';
         }
         return 0;  // Invalid/incomplete JSON - return failure
     }
-    startIndex += written;
+    startIndex = closedIndex;
 
     // Ensure safe null-termination without exceeding buffer
     if (buffSize > 0) {
