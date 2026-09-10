@@ -6998,6 +6998,42 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
         sd_card_manager_UnlockBuffer();   /* #703: release SD buffer lock on abort */
         return false;
     }
+    /* #950: a partition that left no room for a single sample slot is a FAILED
+     * partition, and it is checked HERE -- beside its siblings, before any
+     * buffer pointer is applied -- so the all-or-nothing property the note
+     * below establishes still holds. Every caller already treats `false` as
+     * "do not start" and unwinds its own arm, so this one guard refuses all
+     * four entry points (START, SYST:MEM:AUTO, the throughput bench and the
+     * WiFi rate finder) rather than each of them growing a copy.
+     *
+     * Without it the start proceeded on a pool with no slots. AInSampleList's
+     * own bail-out now invalidates that pool rather than leaving it aliasing
+     * the transport ring this same repartition just carved (the first half of
+     * #950), so the samples were no longer written into somebody else's
+     * buffer -- but every one of them was dropped, and the operator was told
+     * the stream had started. Refusing is the honest answer: the acceptance
+     * line on #950 asks for the safe state, which is no streaming session. */
+    void* sPoolMem; int16_t* sFreeMem; uint32_t sCount; size_t sElemSz;
+    StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSz);
+    if (sPoolMem == NULL || sFreeMem == NULL || sCount == 0 || sElemSz == 0) {
+        /* INVALIDATE AS WE REFUSE. Returning without this would leave the
+         * previous partition's pool live -- the very state the first half of
+         * #950 fixes -- because the re-carve above has already reassigned that
+         * address range and nothing else clears it on an abort. This is the
+         * same call the success path makes below; with these arguments it
+         * takes its own bail-out, which is where the invalidation lives, so
+         * the two paths share one implementation rather than keeping two in
+         * step. It also makes SYSTem:MEMory:FREE? coherent afterwards:
+         * SamplePoolCount and SamplePoolPartitioned both read 0, instead of
+         * the count reporting a capacity the partition no longer backs. */
+        AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount, sElemSz);
+        LOG_E("PrepareStreamingBuffers: refused - partition left no sample "
+              "slots (pool=%p free=%p count=%u elem=%u); reduce "
+              "SYST:MEM:USB/WIFI/SD/ENCoder:BUFfer or SYST:MEM:AUTO",
+              sPoolMem, (void*)sFreeMem, (unsigned)sCount, (unsigned)sElemSz);
+        sd_card_manager_UnlockBuffer();   /* #703: release SD buffer lock on abort */
+        return false;
+    }
     // NOTE: buffer-pointer Set calls are deferred to the END (after the coherent
     // DMA allocs also succeed) so a later alloc failure can't leave a partially
     // applied configuration — all-or-nothing (Qodo #521 transactional setup).
@@ -7049,8 +7085,9 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
      * against the new buffer size. */
     sd_card_manager_UnlockBuffer();
 
-    void* sPoolMem; int16_t* sFreeMem; uint32_t sCount; size_t sElemSz;
-    StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSz);
+    /* Values fetched and validated above, next to the other partition
+     * outputs -- re-reading them here would sample the partition twice and
+     * let the checked values and the installed ones differ. */
     AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount, sElemSz);
     return true;
 }
