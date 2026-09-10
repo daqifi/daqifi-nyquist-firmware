@@ -112,12 +112,17 @@ typedef struct s_tcpClientContext
      *  That difference ALREADY INCLUDES payload still in flight -- BytesSent is
      *  incremented when the send is issued and BytesConfirmed only when the
      *  completion fires -- so do not add the in-flight amount to it again.
-     *  Outstanding payload is bounded by WIFI_TCP_MAX_IN_FLIGHT *
-     *  WIFI_WBUFFER_SIZE = 5600 B, so a difference under that bound is not
-     *  evidence of loss at all; judge permanent loss only after outstanding
+     *  Outstanding payload is NOMINALLY bounded by WIFI_TCP_MAX_IN_FLIGHT *
+     *  WIFI_WBUFFER_SIZE = 5600 B, but that is design intent, NOT a guaranteed
+     *  ceiling: TransmitBufferedData() tests tcpInFlight BEFORE taking the
+     *  mutex while TcpServerFlush() increments it inside a later critical
+     *  section, so two producers can pass the same check at 3 and both
+     *  increment -- the same unlocked cap that mis-pairs the ring (#956).  So a
+     *  difference under that figure is CONSISTENT WITH zero loss, not proof of
+     *  it; the reading the race cannot inflate is one taken after outstanding
      *  completions have drained.  #935 measured 187 B and 190 B in two
      *  independent bench runs (~0.016-0.017% of bytes sent), far inside that
-     *  bound and far below this field's reading in the same run.  Until #956
+     *  figure and far below this field's reading in the same run.  Until #956
      *  lands, do not cite a rise here as evidence of lost stream bytes. */
     uint32_t wifiPartialBytesMissing;
     /** #371 diagnostics: count of wifi_tcp_server_WriteBuffer calls that returned 0
