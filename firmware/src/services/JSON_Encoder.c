@@ -17,10 +17,7 @@
 #include "../HAL/TimerApi/TimerApi.h"
 #include "streaming.h"
 #include "services/daqifi_settings.h"
-
-#ifndef min
-#define min(x,y) x <= y ? x : y
-#endif // min
+#include "JSON_StringEscape.h"
 
 #ifndef max
 #define max(x,y) x >= y ? x : y
@@ -31,14 +28,58 @@
 //! Temporal buffer used for JSON encoding purposes
 static char tmp[ TMP_MAX_LEN ];
 
+/* #164: the literals every closer emits, and -- for the "di" array only -- the
+ * byte counts reserved against them. These replace the old ">= 65" magic
+ * pre-check, which reserved a byte count with no relationship to anything it
+ * was protecting.
+ *
+ * #164 (audit r3): an earlier revision of this comment claimed that deriving
+ * each reserve from sizeof() its literal meant "a reservation and its literal
+ * can never drift apart". That is FALSE, and the drift it missed is not
+ * between a reserve and its literal -- it is between a reserve and the CODE it
+ * predicts. The object close-out at the bottom of Json_Encode() STRIPS a
+ * trailing ",\n" before writing JSON_OBJ_CLOSE, so reserving
+ * JSON_OBJ_CLOSE_LEN after the ",\n"-terminated JSON_AI_CLOSE over-charged the
+ * ADC commit site by exactly those 2 bytes and permanently dropped samples
+ * that fit. sizeof() cannot catch that class; only having ONE implementation
+ * can. The ai/object pair therefore no longer predicts -- it calls
+ * json_CloseObject() in trial mode and observes the real answer.
+ *
+ * JSON_OBJ_CLOSE_LEN survives as a RESERVATION only inside the "di" block,
+ * where the same 2-byte conservatism is harmless both times it appears: in the
+ * element loop a rejected element was only peeked, so it stays queued for the
+ * next call, and at the array closer the element loop has already guaranteed
+ * >= 8 bytes remain, so the over-tight branch there is unreachable. Neither
+ * feeds a permanent-drop decision, unlike the ADC loop's `sampleDidNotFit`. */
+#define JSON_OBJ_CLOSE      "\n}\n"
+#define JSON_OBJ_CLOSE_LEN  (sizeof(JSON_OBJ_CLOSE) - 1u)   /* 3 */
+#define JSON_DI_CLOSE       "],\n"
+#define JSON_DI_CLOSE_LEN   (sizeof(JSON_DI_CLOSE) - 1u)    /* 3 */
+#define JSON_AI_CLOSE       "\n],\n"
+#define JSON_AI_CLOSE_LEN   (sizeof(JSON_AI_CLOSE) - 1u)    /* 4 */
+
 // Track whether JSON header has been sent (reset when streaming stops)
 static bool jsonHeaderSent = false;
+
+/* #164 (audit): one-call DIO deferral -- see the note beside `deferDio` in
+ * Json_Encode. Set when an ADC sample failed to fit a max-room call ONLY
+ * because a committed "di":[...] had already taken room ahead of it, which is
+ * the one shape that leaves the permanence test at the end of the ADC loop
+ * unable to fire. It makes the next max-room call skip the DIO block so that
+ * test gets the whole-buffer measurement it needs, and is spent by that call
+ * whether or not it changed the answer, so it can never latch DIO off.
+ * Written and read only on streaming_Task inside Json_Encode, and cleared
+ * below on the SCPI task at session start -- the same single-writer plus
+ * quiescent-reset discipline jsonHeaderSent already relies on there
+ * (streaming.c, beside csv_ResetEncoder()). */
+static bool jsonDioDeferred = false;
 
 /**
  * @brief Reset JSON encoder state (call when streaming stops)
  */
 void json_ResetEncoder(void) {
     jsonHeaderSent = false;
+    jsonDioDeferred = false;
 }
 
 /**
@@ -111,6 +152,72 @@ size_t json_GenerateHeaderToBuffer(char* buffer, size_t size) {
     return generateJsonHeader(buffer, size);
 }
 
+/**
+ * @brief Close the enclosing JSON object -- the ONE implementation of that
+ *        sequence, used both to write the real closer and to ask whether it
+ *        would still fit.
+ *
+ * #164 (audit r3). Rounds 1 and 2 of this PR each patched arithmetic that
+ * PREDICTED this sequence's cost from the ADC commit site, and each got it
+ * wrong in the direction of silent data loss. That prediction was a second,
+ * independently-maintained implementation of what this function does, and it
+ * never modelled the comma strip below -- so it over-charged the commit by 2
+ * bytes. There is now nothing to keep in sync: the commit site runs THIS code,
+ * in trial mode, and believes the answer.
+ *
+ * @param charBuffer  output buffer
+ * @param buffSize    its total size
+ * @param endIndex    index just past the object's last committed byte.
+ *                    PRECONDITION endIndex <= buffSize: every caller reaches
+ *                    it from a successful snprintf, which by its own
+ *                    `written < size` test leaves the index inside the buffer.
+ * @param trial       when true every byte this function touched is restored
+ *                    before returning, so the buffer is left byte-for-byte as
+ *                    it was found and the call answers only "would it fit?"
+ * @param pOutIndex   may be NULL. On success set to the index just past the
+ *                    closer; on failure to the POST-strip index -- which is
+ *                    where the close-out's failure path has always placed its
+ *                    NUL, so factoring it out preserves that shape exactly.
+ * @return true if the closer fit.
+ *
+ * Runs on streaming_Task (task context, never an ISR). No allocation, no
+ * floating point; `saved` is a 4-byte fixed local, so the added frame is
+ * negligible against that task's 1392-word stack (692 measured peak).
+ */
+static bool json_CloseObject(char *charBuffer, size_t buffSize,
+        size_t endIndex, bool trial, size_t *pOutIndex) {
+    /* Every record this object can end with -- a channel entry, a DI element,
+     * or the array closers "\n],\n" / "],\n" -- ends in ",\n". Strip that
+     * comma so the object closes after the last real value. */
+    if (endIndex >= 2 && charBuffer[endIndex - 2] == ',') {
+        endIndex -= 2;
+    }
+    size_t room = buffSize - endIndex;
+    /* snprintf writes at most `room` bytes, and at most JSON_OBJ_CLOSE_LEN + 1
+     * (the closer plus its NUL); saving the smaller of the two covers
+     * everything it can modify without reading past buffSize. */
+    char saved[JSON_OBJ_CLOSE_LEN + 1u] = {0};
+    size_t savedLen = 0;
+    size_t k;
+    if (trial) {
+        savedLen = (room < sizeof(saved)) ? room : sizeof(saved);
+        for (k = 0; k < savedLen; k++) {
+            saved[k] = charBuffer[endIndex + k];
+        }
+    }
+    int written = snprintf(charBuffer + endIndex, room, JSON_OBJ_CLOSE);
+    bool fits = !(written < 0 || written >= (int) room);
+    if (trial) {
+        for (k = 0; k < savedLen; k++) {
+            charBuffer[endIndex + k] = saved[k];
+        }
+    }
+    if (pOutIndex != NULL) {
+        *pOutIndex = fits ? (endIndex + (size_t) written) : endIndex;
+    }
+    return fits;
+}
+
 size_t Json_Encode(tBoardData* state,
         NanopbFlagsArray* fields,
         uint8_t* pBuffer, size_t buffSize) {
@@ -118,9 +225,16 @@ size_t Json_Encode(tBoardData* state,
     char* charBuffer = (char*) pBuffer;
     size_t startIndex = 0;
     size_t initialOffsetIndex = 0;
+    size_t objStart = 0;
     size_t i = 0;
     bool encodeDIO = false;
     bool encodeADC = false;
+    /* #164: set only when an ARRAY of samples has been committed into THIS
+     * object and not subsequently rolled back -- a "di":[...] that closed, or
+     * an "ai":[...] whose sample was popped. Deliberately NOT set by the
+     * scalar fields above: when the digital_data tag is absent the ADC block
+     * rewinds over every one of them (see the guard after that block). */
+    bool objHasPayload = false;
 
     if (pBuffer == NULL) {
         return 0; // Return 0 if buffer is NULL
@@ -155,6 +269,10 @@ size_t Json_Encode(tBoardData* state,
     }
 
     // Start JSON sample object (write at current offset)
+    /* #164: rollback point for the object as a whole. Any failure that would
+     * leave this object open must restore startIndex to here -- never emit a
+     * bare "{\n" and call it a return value. */
+    objStart = startIndex;
     int objWritten = snprintf(charBuffer + startIndex, buffSize - startIndex, "{\n");
     if (objWritten < 0 || objWritten >= (int)(buffSize - startIndex)) {
         // Could not start a new JSON object; return what we have (e.g., header)
@@ -176,7 +294,11 @@ size_t Json_Encode(tBoardData* state,
                         "\"ts\":%u,\n",
                         state->StreamTrigStamp);
                 if (written < 0 || written >= (int)(buffSize - startIndex)) {
-                    // Null-terminate safely before early return
+                    /* #164: this used to `return startIndex`, which emitted a
+                     * bare "{\n" -- an object opened and never closed. Roll the
+                     * object back and return only bytes that are complete on
+                     * their own (the metadata header, or nothing at all). */
+                    startIndex = objStart;
                     if (buffSize > 0) {
                         size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
                         charBuffer[term] = '\0';
@@ -213,6 +335,8 @@ size_t Json_Encode(tBoardData* state,
                 inet_ntop(AF_INET, &wifiSettings->ipAddr.Val, tmp, TMP_MAX_LEN);
                 tmpLen = strlen(tmp);
                 if (tmpLen > 0) {
+                    /* Fixed-format dotted quad from inet_ntop() -- no character
+                     * outside [0-9.] can occur, so no escaping is needed. */
                     int written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "\"ip\":\"%s\",\n",
@@ -249,6 +373,8 @@ size_t Json_Encode(tBoardData* state,
                 wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 tmpLen = MacAddr_ToString(wifiSettings->macAddr.addr, tmp, TMP_MAX_LEN);
                 if (tmpLen > 0) {
+                    /* Fixed-format hex-and-colons from MacAddr_ToString() -- no
+                     * character needing an escape can occur. */
                     int written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "\"mac\":\"%s\",\n",
@@ -264,12 +390,52 @@ size_t Json_Encode(tBoardData* state,
             case DaqifiOutMessage_ssid_tag:
             {
                 wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
-                tmpLen = min(strlen(wifiSettings->ssid), WDRV_WINC_MAX_SSID_LEN);
+                /* #164 (Qodo catch): strlen() must not run on ssid before it
+                 * is bounded -- ssid is a fixed-size field written by
+                 * SCPI_SafeParamString(), which is NUL-terminating in the
+                 * normal write path, but nothing here may assume that holds
+                 * for every possible source (a boot-time / NVM-loaded value
+                 * that never went through that setter). Calling strlen()
+                 * FIRST and clamping the result SECOND still reads past the
+                 * field if no NUL exists anywhere in it -- the exact
+                 * over-read this fix exists to close. Scan bounded by
+                 * WDRV_WINC_MAX_SSID_LEN from the start, matching the bound
+                 * escape_json_string() itself already enforces on inLen. */
+                tmpLen = 0;
+                while (tmpLen < (int)WDRV_WINC_MAX_SSID_LEN
+                        && wifiSettings->ssid[tmpLen] != '\0') {
+                    tmpLen++;
+                }
                 if (tmpLen > 0) {
+                    /* #164: the SSID is free-form. SCPI_LANSsidSet() ->
+                     * SCPI_SafeParamString() does a bare memcpy with NO
+                     * character validation, so a '"' or '\' in the SSID landed
+                     * verbatim in the output and produced invalid JSON.
+                     *
+                     * Escape into the existing `tmp` scratch buffer (already
+                     * used by the ip/mac cases above) rather than a new
+                     * stack-local: this file's `Json_Encode` runs only on
+                     * streaming_Task, whose measured peak (692 words) already
+                     * sits right at the documented 2x-of-1392 margin, so ANY
+                     * new stack frame narrows it (Qodo catch). TMP_MAX_LEN
+                     * (64) is smaller than the theoretical worst case
+                     * JSON_ESC_MAX_LEN (193, every one of 32 SSID bytes
+                     * needing a full \u00XX) -- that only matters if this
+                     * field is ever wired into the streaming path (it is not
+                     * today, see the module-level note above) AND carries a
+                     * pathological SSID; the fallback there is the same
+                     * "does not fit escaped -- omit" path every optional
+                     * field in this encoder already takes. */
+                    size_t escLen = escape_json_string(wifiSettings->ssid,
+                            (size_t)tmpLen, tmp, TMP_MAX_LEN);
+                    if (escLen == 0) {
+                        // Does not fit escaped - omit the optional field
+                        break;
+                    }
                     int written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "\"ssid\":\"%s\",\n",
-                            wifiSettings->ssid);
+                            tmp);
                     if (written < 0 || written >= (int)(buffSize - startIndex)) {
                         // Optional field - skip on buffer full, continue processing
                         break;
@@ -336,10 +502,48 @@ size_t Json_Encode(tBoardData* state,
                 if (friendlyName[0] == '\0') {
                     break;  // unset — omit the field
                 }
+                /* #164: defence in depth, in two parts.
+                 *
+                 * (a) daqifi_settings_FriendlyNameIsValid() (#625) already
+                 * rejects '"', '\' and every byte outside 0x20..0x7E, and
+                 * SetFriendlyName() clears the cache when that check fails --
+                 * so nothing reaching here needs ESCAPING today. The encoder
+                 * must not depend on a validator in another module staying
+                 * that strict, and routing both free-form fields through one
+                 * helper is what keeps them from diverging.
+                 *
+                 * (b) bound the length SCAN itself, mirroring the ssid_tag
+                 * fix above (Qodo catch on an earlier version of this
+                 * comment: it cited "CLAUDE.md #409" for a BSS-init claim
+                 * that section does not make -- verified against the actual
+                 * file, not memory, before rewriting this). The scan is
+                 * bounded on its own merits, independent of any reset-path
+                 * claim: gFriendlyDeviceName is declared as a fixed
+                 * FRIENDLY_DEVICE_NAME_SIZE array, and a read of it must
+                 * respect that declared bound rather than trust every
+                 * possible producer of its contents to have NUL-terminated
+                 * it -- the same discipline escape_json_string() itself
+                 * already applies via its own inLen parameter.
+                 *
+                 * `tmp` (64 bytes, shared with the ip/mac/ssid cases -- see
+                 * the ssid_tag comment above) is far more than the max
+                 * FRIENDLY_DEVICE_NAME_SIZE-1 (31) unescaped chars this field
+                 * can ever hold. */
+                size_t friendlyNameLen = 0;
+                while (friendlyNameLen < (size_t)(FRIENDLY_DEVICE_NAME_SIZE - 1)
+                        && friendlyName[friendlyNameLen] != '\0') {
+                    friendlyNameLen++;
+                }
+                size_t escLen = escape_json_string(friendlyName,
+                        friendlyNameLen, tmp, TMP_MAX_LEN);
+                if (escLen == 0) {
+                    // Does not fit escaped - omit the optional field
+                    break;
+                }
                 int written = snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
                         "\"friendlyName\":\"%s\",\n",
-                        friendlyName);
+                        tmp);
                 if (written < 0 || written >= (int)(buffSize - startIndex)) {
                     // Optional field - skip on buffer full, continue processing
                     break;
@@ -353,15 +557,64 @@ size_t Json_Encode(tBoardData* state,
         }
     }
 
+    /* #164 (audit): half the proof that a "did not fit" is PERMANENT and not
+     * merely "full right now". streaming.c hands us `bufferSize - packetSize`
+     * and resets packetSize to 0 before every packet-build loop, so its
+     * batchIdx == 0 call -- which runs on EVERY encoder wake while the AIN
+     * queue is non-empty -- passes the whole encoder buffer, and no call can
+     * ever pass more. Equality therefore means "this call already offered the
+     * most room that will ever exist"; anything less is a partially-filled
+     * buffer a later call will beat, and must keep today's retry-forever
+     * behaviour. Read through the accessor rather than assumed, so a
+     * non-streaming caller with a buffer of its own simply never satisfies it
+     * and stays on the old, non-consuming path. The other half is at the ADC
+     * loop's end; this is declared above the DIO block because the deferral
+     * immediately below needs it too. */
+    const bool fullCapacityCall =
+            (buffSize == (size_t) Streaming_GetEncoderBufferSize());
+
+    /* #164 (audit): the permanence test needs the largest room that will ever
+     * exist, which means BOTH a full-capacity call AND nothing committed
+     * ahead of the ADC block in this object. A committed "di":[...] breaks
+     * the second half, and DIO_StreamingTrigger() (DIO.c) pushes one DIO
+     * sample per streaming tick whenever DIOGlobalEnable is set, so in a
+     * DIO-co-streaming session that can hold on every wake -- leaving a
+     * sample that fits NO buffer stalled at the head of the AIN queue
+     * forever, which is exactly the defect the test exists to break.
+     *
+     * Nothing inside a single call can tell that apart from an honestly-full
+     * buffer, and no bound on the DI array's share exists to test against:
+     * its worst case is MAX_DIO_SAMPLE_COUNT (256, DIOConfig.h) elements of
+     * ~50 B, past even the 65536 B maximum encoder buffer, and 21 of them
+     * already exceed the 1024 B ENCODER_BUFFER_MIN.
+     *
+     * So rather than guess, ARRANGE for the measurement: skip the DIO block
+     * for exactly one max-room call. Nothing is lost -- DI elements are
+     * popped only inside that block, so a skipped call leaves all of them
+     * queued for the next one, and an object carrying "ai" but no "di" while
+     * digital_data was requested is the same shape this encoder already
+     * emits whenever the DI array rolls back (see that path below). The skip
+     * is gated on encodeADC so a DIO-only message can never be turned into a
+     * payload-free object, and on the same fullCapacityCall/objStart == 0
+     * pair the test itself requires, so the latch is spent only on a call
+     * that can actually settle the question. */
+    const bool deferDio = jsonDioDeferred && encodeADC && fullCapacityCall
+            && objStart == 0;
+    if (encodeADC && fullCapacityCall && objStart == 0) {
+        jsonDioDeferred = false;
+    }
+
     // Encode DIO if needed
-    if (encodeDIO) {
+    if (encodeDIO && !deferDio) {
         size_t diStart = startIndex;
 
         int written = snprintf(charBuffer + startIndex,
                 buffSize - startIndex,
                 "\"di\":[");
         if (written < 0 || written >= (int)(buffSize - startIndex)) {
-            // Null-terminate safely before early return
+            /* #164: was `return startIndex`, i.e. a bare "{\n". Roll the object
+             * back instead -- if six bytes will not fit, nothing else will. */
+            startIndex = objStart;
             if (buffSize > 0) {
                 size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
                 charBuffer[term] = '\0';
@@ -372,18 +625,30 @@ size_t Json_Encode(tBoardData* state,
 
         size_t diElementsStart = startIndex;
 
-        while (((buffSize - startIndex) >= 65) && (!DIOSampleList_IsEmpty(&state->DIOSamples))) {
+        /* #164: the ">= 65" pre-check is gone. A DIO element is popped as soon
+         * as it is written and cannot be put back, so instead of a magic
+         * margin each element reserves exactly the two closers that must still
+         * fit after it: this array's "],\n" and the enclosing object's "\n}\n".
+         * That is what makes the two failure branches below unreachable rather
+         * than merely unlikely. */
+        while (!DIOSampleList_IsEmpty(&state->DIOSamples)) {
             DIOSample data;
             // Peek first to avoid data loss if write fails
             if (!DIOSampleList_PeekFront(&state->DIOSamples, &data)) break;
 
+            size_t elemRoom = buffSize - startIndex;
+            if (elemRoom <= (JSON_DI_CLOSE_LEN + JSON_OBJ_CLOSE_LEN)) {
+                break;  // no room for an element plus the closers it owes
+            }
+            elemRoom -= (JSON_DI_CLOSE_LEN + JSON_OBJ_CLOSE_LEN);
+
             int elemWritten = snprintf(charBuffer + startIndex,
-                    buffSize - startIndex,
+                    elemRoom,
                     "{\"ts\":%u, \"mask\":%u, \"val\":%u},",
                     state->StreamTrigStamp - data.Timestamp,
                     data.Mask,
                     data.Values);
-            if (elemWritten < 0 || elemWritten >= (int)(buffSize - startIndex)) {
+            if (elemWritten < 0 || elemWritten >= (int)elemRoom) {
                 break;  // Keep sample for next attempt
             }
 
@@ -400,18 +665,30 @@ size_t Json_Encode(tBoardData* state,
             if (startIndex > 0 && charBuffer[startIndex - 1] == ',') {
                 startIndex -= 1;
             }
-            int closeWritten = snprintf(charBuffer + startIndex,
-                    buffSize - startIndex,
-                    "],\n");
-            if (closeWritten < 0 || closeWritten >= (int)(buffSize - startIndex)) {
-                // Null-terminate safely before early return
-                if (buffSize > 0) {
-                    size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
-                    charBuffer[term] = '\0';
+            /* Reserve the object closer here too: the elements above are
+             * already popped, so a `return 0` at the bottom of this function
+             * would destroy them. The element reservation guarantees this
+             * branch cannot be taken; it rolls back rather than emitting an
+             * unclosed array if that guarantee is ever broken. */
+            size_t closeRoom = buffSize - startIndex;
+            if (closeRoom <= JSON_OBJ_CLOSE_LEN) {
+                startIndex = diStart;
+            } else {
+                closeRoom -= JSON_OBJ_CLOSE_LEN;
+                int closeWritten = snprintf(charBuffer + startIndex,
+                        closeRoom,
+                        JSON_DI_CLOSE);
+                if (closeWritten < 0 || closeWritten >= (int)closeRoom) {
+                    startIndex = diStart;
+                } else {
+                    startIndex += closeWritten;
+                    /* Committed and closed. Nothing after this point rolls it
+                     * back: the ADC block rewinds only as far as
+                     * initialOffsetIndex, which is set to this post-DIO
+                     * position immediately below. */
+                    objHasPayload = true;
                 }
-                return startIndex;
             }
-            startIndex += closeWritten;
         }
 
         initialOffsetIndex = startIndex; // so that analog data can be appended
@@ -433,13 +710,32 @@ size_t Json_Encode(tBoardData* state,
                 BOARDRUNTIME_STREAMING_CONFIGURATION);
         uint8_t precision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
         bool rawMode = (pStreamCfg != NULL) ? pStreamCfg->RawOutputMode : false;   /* #158/#270 */
-        while (((buffSize - startIndex) >= 65) && (qSize > 0)) {
-            if (!AInSampleList_PopFront(&pPublicSampleList)) {
+        /* #164: the ">= 65" pre-check is gone; the loop now ends when a sample
+         * does not fit, which the per-sample rollback below makes safe. */
+        /* #164 (audit): `fullCapacityCall`, declared above the DIO block, is
+         * half the proof that a "did not fit" is PERMANENT rather than merely
+         * "full right now". The other half is at this loop's end. */
+        bool sampleDidNotFit = false;
+        while (qSize > 0) {
+            /* #164: PEEK -- never pop -- until this sample's whole block is on
+             * the wire, exactly as csv_encoder.c's tryWriteRow() has always
+             * done. The old code did PopFront() up front and FreeToPool() at
+             * the bottom, so a buffer-full part way through the channel loop
+             * destroyed a sample that had only been partly encoded. */
+            if (!AInSampleList_PeekFront(&pPublicSampleList)) {
                 break;
             }
             if (pPublicSampleList == NULL)
                 break;
-            qSize--;
+
+            /* Rollback point for this sample's atomic unit, which is the whole
+             * of  "ts":<t>,\n"ai":[\n <channels> \n],\n  -- not just one
+             * snprintf. The old code advanced startIndex past "ts":<t>,\n and
+             * only then tried "ai":[\n; on failure it left the timestamp
+             * committed, and the close-out below then stripped the ",\n" and
+             * appended "\n],\n", emitting a ']' that closes nothing. */
+            size_t sampleStart = startIndex;
+            bool sampleOk = true;
             bool timestampAdded = false;
             // Clamp to the sample's own channelCount in case the mapping and
             // the sample fall out of sync. Defensive — they should always match.
@@ -459,13 +755,19 @@ size_t Json_Encode(tBoardData* state,
                             buffSize - startIndex,
                             "\"ts\":%u,\n",
                             pPublicSampleList->Timestamp);
-                    if (written < 0 || written >= (int)(buffSize - startIndex)) break;
+                    if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                        sampleOk = false;
+                        break;
+                    }
                     startIndex += written;
 
                     written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "\"ai\":[\n");
-                    if (written < 0 || written >= (int)(buffSize - startIndex)) break;
+                    if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                        sampleOk = false;
+                        break;
+                    }
                     startIndex += written;
                     timestampAdded = true;
                 }
@@ -509,41 +811,302 @@ size_t Json_Encode(tBoardData* state,
                             channelId,
                             (int)precision, voltage);
                 }
-                if (written < 0 || written >= (int)(buffSize - startIndex)) break;
+                if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                    sampleOk = false;
+                    break;
+                }
                 startIndex += written;
             }
 
-            AInSampleList_FreeToPool(pPublicSampleList);
-            if(startIndex == initialOffsetIndex) //no adc data added
+            if (!sampleOk) {
+                /* Buffer filled part way through this sample. Discard the
+                 * fragment and LEAVE the sample queued -- the next encoder
+                 * call re-encodes it whole. Nothing has been popped. */
+                startIndex = sampleStart;
+                sampleDidNotFit = true;   /* #164 audit -- see loop end */
                 break;
-            // Remove trailing comma and close adc array
-            if (startIndex >= 2 && charBuffer[startIndex - 2] == ',') {
-                startIndex -= 2; // Remove trailing comma
             }
-            int written = snprintf(charBuffer + startIndex,
-                    buffSize - startIndex,
-                    "\n],\n");
-            if (written < 0 || written >= (int)(buffSize - startIndex)) break;
-            startIndex += written;
+
+            if (!timestampAdded) {
+                /* validMask selected no channel: the sample is real but
+                 * carries nothing to emit. Consume it and move on to the
+                 * NEXT queued sample rather than ending the batch here --
+                 * this branch writes nothing to charBuffer, so there is
+                 * nothing to close and no reason to stop draining the
+                 * queue. (Qodo catch: an earlier version of this fix used
+                 * `break`, which -- unlike the old `startIndex ==
+                 * initialOffsetIndex` first-iteration check it replaced --
+                 * could stall an entire encoder call on a single
+                 * all-invalid tick, one sample per call, while the queue
+                 * behind it kept growing.) */
+                if (AInSampleList_PopFront(&pPublicSampleList)) {
+                    AInSampleList_FreeToPool(pPublicSampleList);
+                }
+                qSize--;
+                continue;
+            }
+
+            // Remove trailing comma and close adc array
+            size_t closeIndex = startIndex;
+            if (closeIndex >= 2 && charBuffer[closeIndex - 2] == ',') {
+                closeIndex -= 2; // Remove trailing comma
+            }
+            /* #164 (audit r3): ATTEMPT the object closer, do not RESERVE it.
+             *
+             * A sample may only commit if the object can still be closed after
+             * it: otherwise the close-out at the bottom of this function
+             * returns 0, discarding every sample this call already popped, not
+             * just the one that did not fit. Rounds 1 and 2 each expressed that
+             * requirement as arithmetic here, predicting what the close-out
+             * would consume; both were wrong, both toward silent loss. The
+             * prediction missed that the close-out STRIPS the ",\n" that
+             * JSON_AI_CLOSE writes, so it charged this commit 8 bytes where 6
+             * suffice -- and the rejection is not a retry, it feeds
+             * `sampleDidNotFit` and from there the permanent-drop arm at this
+             * loop's end.
+             *
+             * So write the array closer for real, then ask json_CloseObject()
+             * -- the close-out's own code -- whether the object still closes.
+             * In trial mode it restores every byte it touched, so a successful
+             * trial leaves the buffer byte-identical and nothing on the wire
+             * changes. There is no threshold left to keep in sync: this test
+             * and the real close ARE the same function.
+             *
+             * The invariant it establishes -- "the object is closeable at
+             * startIndex" -- carries inductively across the loop: the next
+             * sample either commits under its own trial, or rolls back to this
+             * sample's already-proven position. So the close-out below cannot
+             * fail on any path that popped a sample. */
+            size_t aiRoom = buffSize - closeIndex;
+            int closeWritten = snprintf(charBuffer + closeIndex,
+                    aiRoom,
+                    JSON_AI_CLOSE);
+            if (closeWritten < 0 || closeWritten >= (int)aiRoom) {
+                startIndex = sampleStart;   // whole block rolls back
+                sampleDidNotFit = true;     /* #164 audit -- see loop end */
+                break;
+            }
+            size_t afterAiClose = closeIndex + (size_t) closeWritten;
+            if (!json_CloseObject(charBuffer, buffSize, afterAiClose,
+                    true /* trial -- restores the buffer */, NULL)) {
+                startIndex = sampleStart;   // whole block rolls back
+                sampleDidNotFit = true;     /* #164 audit -- see loop end */
+                break;
+            }
+            /* Committed: only now is it safe to consume the queue entry. Do
+             * NOT advance startIndex past the write yet -- PopFront is
+             * documented fallible (queue teardown / a torn-down receive
+             * mid-encode), and if it returns false the entry we just wrote
+             * is STILL queued. Returning those bytes anyway would let the
+             * same sample be encoded and transmitted again on the next
+             * call (Qodo catch). Only commit startIndex, free the pool
+             * entry and decrement qSize once the pop actually succeeds. */
+            if (!AInSampleList_PopFront(&pPublicSampleList)) {
+                startIndex = sampleStart;
+                break;
+            }
+            startIndex = afterAiClose;
+            objHasPayload = true;
+            AInSampleList_FreeToPool(pPublicSampleList);
+            qSize--;
+        }
+
+        /* #164 (audit, CONFIRMED HIGH): break the head-of-line block that a
+         * sample which can NEVER fit would otherwise create.
+         *
+         * The rollback sites above leave the sample queued. That is right for
+         * "the buffer is full right now" and is an infinite stall for "this
+         * sample does not fit even an EMPTY buffer": the queue is FIFO and
+         * drained only from the front, so such a sample is re-peeked, fails
+         * and is rolled back on every call, forever, taking every sample
+         * behind it with it -- the stream simply stops carrying ADC data with
+         * no error raised. main's loop popped up front, so it LOST the sample
+         * but the queue advanced; this PR's peek-before-pop plus the object
+         * rollback removed the only thing that was advancing it. Reachable on
+         * legal SCPI: CONFigure:ADC:chanCALB accepts any finite double, so a
+         * value like 1e300 makes "%.*f" emit ~324 bytes for ONE channel and a
+         * few channels then exceed a 1024-byte encoder buffer (the accepted
+         * ENCODER_BUFFER_MIN, i.e. SYST:MEM:ENC:BUFfer 1024). It fails toward
+         * silence, the direction CLAUDE.md's SCPI visibility principle calls
+         * out as the worst one.
+         *
+         * Each condition is load-bearing:
+         *
+         *   sampleDidNotFit  -- set ONLY by the three room failures, never by
+         *      the PopFront arm (a queue teardown, where consuming the sample
+         *      is the double-transmit bug that arm exists to prevent).
+         *   fullCapacityCall -- no future call can offer more room; see its
+         *      definition above. Excludes streaming.c's batchIdx > 0 calls,
+         *      which ARE partially-filled buffers and must keep retrying.
+         *   objStart == 0    -- no metadata header sits ahead of this object.
+         *      True on every call but the session's first; excluding that one
+         *      costs a tick and keeps the header's bytes out of the bound
+         *      below (it also has no accounting: that call returns headerLen,
+         *      not 0, so streaming.c would book nothing).
+         *   !objHasPayload   -- nothing else in this object committed. This
+         *      SUBSUMES "this was the first sample the ADC section tried":
+         *      inside the loop startIndex advances only at the commit that
+         *      sets objHasPayload (the all-invalid-validMask path consumes
+         *      its sample without writing a byte), so !objHasPayload means
+         *      sampleStart was still initialOffsetIndex. It also means no
+         *      "di":[...] committed ahead of the ADC block and ate room --
+         *      without it a DIO-co-streaming session would drop samples a
+         *      DIO-free call could have carried, and DIO_StreamingTrigger()
+         *      pushes one sample per streaming tick, so that is the norm, not
+         *      a corner case.
+         *
+         * The bound this buys: the room the sample got was
+         * buffSize - initialOffsetIndex, and on this arm initialOffsetIndex is
+         * either 2 (no digital_data tag -- the ADC block rewinds over the
+         * message-level "ts" too; the deferral above forces this case for one
+         * call when a committed DI array was what stood in the way) or
+         * diStart, that is 2 + that "ts" field and so <= 19, when the tag was
+         * present but the DI array rolled back without committing. The ceiling
+         * any call can ever offer is buffSize - 2.
+         *
+         * So when the DI array did not commit, this call measured the sample
+         * against the largest room that will ever exist -- and, since #164
+         * audit r3, measured it with the same code that would have emitted it:
+         * the commit site above ATTEMPTS json_CloseObject() instead of
+         * predicting its cost, so a "did not fit" here cannot disagree with
+         * what an emission would have done. Until r3 the two disagreed by 2
+         * bytes and this arm dropped samples that fit; there is now no margin
+         * in either direction.
+         *
+         * Read that as a claim about ROOM, and only about room: it says no
+         * future call can offer more space, NOT that the sample's encoded SIZE
+         * is fixed. Size also depends on precision, rawMode, the channel
+         * mapping and the calibration coefficients -- and the reachable trigger
+         * named above (CONFigure:ADC:chanCALB 1e300) is itself one of those
+         * inputs, which an operator can set back afterwards. A sample dropped
+         * here was unencodable under the settings in force when it was
+         * measured; that is the strongest statement this test supports.
+         *
+         * In the single remaining shape -- tag requested, array rolled back --
+         * the room measured falls short of that ceiling by at most 17 bytes:
+         * only a sample needing within 17 bytes of the ENTIRE encoder buffer is
+         * affected, and the cost there is one dropped sample, not a stall.
+         * Closing even that means changing what
+         * initialOffsetIndex is when the DI array rolls back, which moves the
+         * emitted field order and belongs to #959, not here. The case that IS
+         * a stall -- a DI array that committed -- is NOT left as a residual:
+         * it routes to the deferral arm below, which re-runs this test one
+         * call later at buffSize - 2.
+         *
+         * Action: consume the sample so the queue head advances, and say so
+         * once per session. Nothing here books the loss, deliberately:
+         * objHasPayload is false, so the guard below rolls the object back to
+         * objStart and returns 0, and streaming.c's existing `encoded == 0`
+         * arm books exactly one encoder failure and one dropped sample. That
+         * count is now TRUE -- one sample really was lost -- where before this
+         * fix the same arm re-counted a still-queued sample on every retry. A
+         * dedicated Streaming_Report* entry point (the Streaming_ReportSdDiscard
+         * shape) was considered and rejected for exactly that reason: it would
+         * double-count against the `encoded == 0` arm this path unavoidably
+         * takes. PopFront's return is honoured rather than assumed -- it
+         * rewrites pPublicSampleList with the real head, so nothing stale is
+         * ever freed.
+         *
+         * LOG_E_SESSION, not LOG_E: one line per streaming session (the bit is
+         * cleared by Streaming_ClearStats() at start), on a path that runs at
+         * most once per encoder call, on streaming_Task (1392 words, 692 peak)
+         * -- the same task that already carries streaming.c's LOG_E_SESSION
+         * vsnprintf frames. */
+        if (sampleDidNotFit && fullCapacityCall && objStart == 0) {
+            if (!objHasPayload) {
+                if (AInSampleList_PopFront(&pPublicSampleList)) {
+                    AInSampleList_FreeToPool(pPublicSampleList);
+                }
+                LOG_E_SESSION(LOG_SESSION_JSON_SAMPLE_TOO_LARGE,
+                        "JSON: sample (%u ch) does not fit a %u B encoder "
+                        "buffer at precision %u - dropped",
+                        (unsigned) mapCount, (unsigned) buffSize,
+                        (unsigned) precision);
+            } else if (startIndex == initialOffsetIndex) {
+                /* #164 (audit): the DIO-blocked shape, and the reason the
+                 * `!objHasPayload` arm above stays exact instead of becoming
+                 * a residual. This call offered the most room that will ever
+                 * exist; the ADC block committed nothing into it (startIndex
+                 * never left initialOffsetIndex -- inside the loop it advances
+                 * only at the commit that also sets objHasPayload, and the
+                 * all-invalid-validMask path writes no bytes); yet
+                 * objHasPayload is set, so the payload can only be a
+                 * "di":[...] that took room ahead of us. Whether the sample is
+                 * oversized or the DI array merely happened to be large this
+                 * tick is not decidable here, so decide nothing: ask the next
+                 * max-room call to skip the DIO block and re-run the test
+                 * against the whole buffer. Bounded -- that call spends the
+                 * latch and either fits the sample or takes the drop arm
+                 * above -- so this cannot itself become a new unbounded
+                 * retry. */
+                jsonDioDeferred = true;
+            }
         }
     }
 
-    // Close the JSON object
-    if (startIndex >= 2 && charBuffer[startIndex - 2] == ',') {
-        startIndex -= 2; // Remove trailing comma
+    /* #164: an object that committed no sample payload must not ship at all.
+     *
+     * Every rollback above restores startIndex to the start of the unit that
+     * failed -- the DIO element run, or ONE ADC sample -- which is correct for
+     * that unit and says nothing about the enclosing object. When the failed
+     * unit was the first thing this object would have carried, the close-out
+     * below strips the message-level timestamp's trailing ",\n", appends
+     * "\n}\n" and returns a NON-ZERO byte count for `{\n"ts":1000\n}\n` --
+     * or, when the digital_data tag was not requested and the ADC block
+     * therefore rewound over that timestamp too (initialOffsetIndex is still
+     * just past "{\n"), for the empty `{\n\n}\n`. Both are well-formed JSON
+     * records carrying no measurement, reported to the caller as bytes
+     * successfully encoded.
+     *
+     * Checked ONCE here rather than at each `startIndex = sampleStart` site:
+     * none of those can tell on its own whether the object still holds DIO
+     * elements committed before the ADC block ran, and an object with
+     * "di":[...] and no "ai" is a legitimate partial record that must ship.
+     * objHasPayload records exactly that distinction.
+     *
+     * Scoped to messages that ASKED for sample data: a caller requesting only
+     * scalar fields is entitled to an object built from them. streaming.c is
+     * the sole caller today and always sets at least one of the two tags (it
+     * breaks out of its batch loop when both queues are empty), so the scope
+     * is about not making the rule wider than the defect.
+     *
+     * Rolls back to objStart -- not to sampleStart -- so the object never
+     * exists, and returns the same two values the msg_time_stamp failure path
+     * above can return: the metadata header this call just wrote, or nothing.
+     * No sample is lost by returning here. A sample that did not fit is still
+     * queued (nothing was popped), and a sample whose validMask selected no
+     * channel was consumed deliberately, having nothing to emit either way.
+     * Returning 0 makes streaming.c book one encoder failure and one dropped
+     * sample, which is the shape that path already has for a tick that
+     * produced nothing -- see its own #707/#745 note, "the encoder emits
+     * nothing, and it was booked as a lost sample and an encoder failure". */
+    if ((encodeADC || encodeDIO) && !objHasPayload) {
+        startIndex = objStart;
+        if (buffSize > 0) {
+            size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
+            charBuffer[term] = '\0';
+        }
+        return startIndex;
     }
-    int written = snprintf(charBuffer + startIndex,
-            buffSize - startIndex,
-            "\n}\n");
-    if (written < 0 || written >= (int)(buffSize - startIndex)) {
+
+    /* Close the JSON object. #164 (audit r3): the strip-then-write sequence
+     * that used to be spelled out here now lives in json_CloseObject(), and
+     * the ADC commit site calls that same function in trial mode -- one
+     * implementation, so the two can no longer drift. The helper reports the
+     * POST-strip index on failure, which is where this path has always placed
+     * its NUL. */
+    size_t closedIndex = startIndex;
+    if (!json_CloseObject(charBuffer, buffSize, startIndex,
+            false /* commit */, &closedIndex)) {
         // Truncated or error; incomplete JSON is invalid, signal failure
+        startIndex = closedIndex;
         if (buffSize > 0) {
             size_t term = (startIndex < buffSize) ? startIndex : (buffSize - 1);
             charBuffer[term] = '\0';
         }
         return 0;  // Invalid/incomplete JSON - return failure
     }
-    startIndex += written;
+    startIndex = closedIndex;
 
     // Ensure safe null-termination without exceeding buffer
     if (buffSize > 0) {
