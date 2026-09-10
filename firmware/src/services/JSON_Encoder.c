@@ -131,6 +131,12 @@ size_t Json_Encode(tBoardData* state,
     size_t i = 0;
     bool encodeDIO = false;
     bool encodeADC = false;
+    /* #164: set only when an ARRAY of samples has been committed into THIS
+     * object and not subsequently rolled back -- a "di":[...] that closed, or
+     * an "ai":[...] whose sample was popped. Deliberately NOT set by the
+     * scalar fields above: when the digital_data tag is absent the ADC block
+     * rewinds over every one of them (see the guard after that block). */
+    bool objHasPayload = false;
 
     if (pBuffer == NULL) {
         return 0; // Return 0 if buffer is NULL
@@ -531,6 +537,11 @@ size_t Json_Encode(tBoardData* state,
                     startIndex = diStart;
                 } else {
                     startIndex += closeWritten;
+                    /* Committed and closed. Nothing after this point rolls it
+                     * back: the ADC block rewinds only as far as
+                     * initialOffsetIndex, which is set to this post-DIO
+                     * position immediately below. */
+                    objHasPayload = true;
                 }
             }
         }
@@ -721,9 +732,55 @@ size_t Json_Encode(tBoardData* state,
                 break;
             }
             startIndex = closeIndex + closeWritten;
+            objHasPayload = true;
             AInSampleList_FreeToPool(pPublicSampleList);
             qSize--;
         }
+    }
+
+    /* #164: an object that committed no sample payload must not ship at all.
+     *
+     * Every rollback above restores startIndex to the start of the unit that
+     * failed -- the DIO element run, or ONE ADC sample -- which is correct for
+     * that unit and says nothing about the enclosing object. When the failed
+     * unit was the first thing this object would have carried, the close-out
+     * below strips the message-level timestamp's trailing ",\n", appends
+     * "\n}\n" and returns a NON-ZERO byte count for `{\n"ts":1000\n}\n` --
+     * or, when the digital_data tag was not requested and the ADC block
+     * therefore rewound over that timestamp too (initialOffsetIndex is still
+     * just past "{\n"), for the empty `{\n\n}\n`. Both are well-formed JSON
+     * records carrying no measurement, reported to the caller as bytes
+     * successfully encoded.
+     *
+     * Checked ONCE here rather than at each `startIndex = sampleStart` site:
+     * none of those can tell on its own whether the object still holds DIO
+     * elements committed before the ADC block ran, and an object with
+     * "di":[...] and no "ai" is a legitimate partial record that must ship.
+     * objHasPayload records exactly that distinction.
+     *
+     * Scoped to messages that ASKED for sample data: a caller requesting only
+     * scalar fields is entitled to an object built from them. streaming.c is
+     * the sole caller today and always sets at least one of the two tags (it
+     * breaks out of its batch loop when both queues are empty), so the scope
+     * is about not making the rule wider than the defect.
+     *
+     * Rolls back to objStart -- not to sampleStart -- so the object never
+     * exists, and returns the same two values the msg_time_stamp failure path
+     * above can return: the metadata header this call just wrote, or nothing.
+     * No sample is lost by returning here. A sample that did not fit is still
+     * queued (nothing was popped), and a sample whose validMask selected no
+     * channel was consumed deliberately, having nothing to emit either way.
+     * Returning 0 makes streaming.c book one encoder failure and one dropped
+     * sample, which is the shape that path already has for a tick that
+     * produced nothing -- see its own #707/#745 note, "the encoder emits
+     * nothing, and it was booked as a lost sample and an encoder failure". */
+    if ((encodeADC || encodeDIO) && !objHasPayload) {
+        startIndex = objStart;
+        if (buffSize > 0) {
+            size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
+            charBuffer[term] = '\0';
+        }
+        return startIndex;
     }
 
     // Close the JSON object
