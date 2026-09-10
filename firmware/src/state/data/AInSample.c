@@ -160,25 +160,39 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
          * command -- that still needs a change in SCPIInterface.c -- but it
          * guarantees no sample is ever written into the repartitioned buffer:
          * AllocateFromPool returns NULL until the next successful (re)init. */
+        if (poolOwnsMemory) {
+            /* HEAP-OWNED POOL: hand it to Destroy rather than freeing here.
+             * That state is narrow but reachable -- BoardData.c falls back to
+             * AInSampleList_Initialize()'s malloc when the streaming pool is
+             * unavailable at boot, and a later stream-start re-partition can
+             * then land here, at which point dropping samplePoolBase without
+             * freeing strands ~60 KB of a 74 KB heap, since Destroy()'s free
+             * is guarded on that same pointer being non-NULL.
+             *
+             * An earlier revision of this branch freed samplePoolBase inline,
+             * and a review pass found two defects in those three lines that
+             * Destroy does not have: it never DRAINED analogInputsQueue, whose
+             * entries are pointers INTO the block being freed, so a consumer
+             * could pop and dereference freed memory; and it left `nextFree`,
+             * which the fallback initializer allocates separately, unreachable
+             * for the rest of the boot. Reusing the one correct teardown beats
+             * keeping a second, shorter one in step with it.
+             *
+             * Destroy also deletes the sample queue, which is why this is the
+             * OWNED branch only: the external path below is the common one and
+             * has no reason to pay that. A later successful init re-creates the
+             * queue -- its `analogInputsQueue != NULL` test already handles
+             * being called with none. Task context either way (this runs under
+             * a SCPI callback), which is Destroy's stated precondition. */
+            AInSampleList_Destroy();
+            poolAllocCount = 0;      /* Destroy clears the pool, not the counters */
+            poolMaxAllocCount = 0;
+            return;
+        }
         poolActive = false;
         if (poolMutex != NULL) {
             xSemaphoreTake(poolMutex, portMAX_DELAY);
         }
-        /* If the CURRENT pool is heap-owned, free it before dropping the only
-         * pointer to it. That state is narrow but reachable: BoardData.c falls
-         * back to AInSampleList_Initialize()'s malloc when the streaming pool
-         * is unavailable at boot, and a later stream-start re-partition can
-         * then land here -- at which point nulling samplePoolBase alone would
-         * strand ~60 KB of a 74 KB heap, because Destroy()'s free is guarded on
-         * that same pointer being non-NULL. Clearing the ownership flag with it
-         * keeps the pair consistent: no memory, no claim to own any. The
-         * external path below sets poolOwnsMemory = false for the same reason
-         * it is set here -- what this function leaves behind is never
-         * heap-owned. */
-        if (poolOwnsMemory && samplePoolBase != NULL) {
-            vPortFree(samplePoolBase);
-        }
-        poolOwnsMemory = false;
         samplePoolBase = NULL;
         nextFree = NULL;
         poolCapacity = 0;
