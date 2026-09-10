@@ -40,7 +40,8 @@ three tests here, not just the one #946 added.
 - NULL-argument safety on every entry point
 
 `test_943_bench_stall_bound.c` covers the per-chunk write loop inside
-`SYST:STOR:SD:BENCHmark` (issue #943). Unlike the other two it does **not**
+`SYST:STOR:SD:BENCHmark` (issue #943). Unlike the CircularBuffer /
+FixedPointFmt / AD7609Scale tests it does **not**
 include any firmware source: `SCPIStorageSD.c` drags in libscpi, FreeRTOS and
 the SD manager, so the test re-implements the pre-fix and post-fix loop
 **shapes** against an injected mock clock and mock `WriteToBuffer`, then
@@ -55,6 +56,30 @@ wrap.
 Because the test re-implements rather than includes, the two firmware timeout
 constants are a copy. The Makefile target greps them out of `SCPIStorageSD.c`
 and **fails the build** if either drifts, so a stale copy cannot pass silently.
+
+`test_953_bench_suspend_diagnosis.c` covers the branch a little further down
+the same function (issue #953): the one that has to say *why* the benchmark's
+file never opened. Same technique as `test_943` and for the same reason — the
+decision cascade is re-implemented against injected values rather than
+included. Until #953 it had two arms, so a benchmark whose arm succeeded and
+whose SD task was then suspended mid-wait (WiFi streaming taking SPI4, a WiFi
+FW update, the #925 jam quarantine) hit the fallback and blamed the *card* —
+"likely SPI-mode incompatible" — for a task that had simply stopped running.
+The fix adds a third arm reporting `SD_SuspendReasonText()`.
+
+The test asserts all four quadrants of (suspended × dir-full) against **both**
+the pre-fix and post-fix shapes, and its headline property is that **exactly
+one** quadrant moves. That is what pins the ordering decision: the recorded
+`#689`/`#690` dir-full verdict is tested **before** the live suspend reason,
+because it can only have been set by the SD task actually running and refusing
+this request's open — so with both true the refusal is the real cause and the
+suspend is incidental. Testing the suspend first (as #953's ticket proposed)
+would have moved that quadrant too, silently narrowing #690.
+
+No constants are copied here, so this target has no equivalent of `test_943`'s
+two greps. What it copies is the **order of the three arms**, so the Makefile
+guards that instead: it locates each arm's marker in `SCPIStorageSD.c` and
+**fails the build** unless they still appear as dir-full → suspend → card.
 
 ## Framework
 

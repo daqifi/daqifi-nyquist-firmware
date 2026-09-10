@@ -1481,6 +1481,54 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
             readyWait++;
         }
         if (!sd_card_manager_IsWriteReady()) {
+            /* #953: three arms, and the ORDER is the substance of this fix.
+             *
+             * Reaching here means the file never opened. Three different
+             * things cause that and each wants a different next action from
+             * the operator, so the cascade is ordered by how much each arm
+             * actually KNOWS -- recorded verdict first, live condition second,
+             * inference last.
+             *
+             * 1. StartupDirFull is a RECORDED VERDICT, and it is necessarily
+             *    THIS request's. sd_card_manager_ClearStartupDirFull() ran
+             *    synchronously a few lines above the mode=WRITE write, and the
+             *    only writer is the SD task's own OPEN_FILE refusal
+             *    (sd_card_manager.c:2070) -- which cannot run while that task
+             *    is suspended, and which no other SD command can reach in this
+             *    window because `mode` is WRITE and keeps IsBusy() true. So a
+             *    `true` here PROVES the SD task ran, attempted the open, and
+             *    refused it for a named reason. It is also the condition the
+             *    loop's #690 early-exit `break` above stops for. It stays
+             *    first.
+             *
+             *    #953's ticket proposed putting the suspend test first. That
+             *    would re-diagnose this arm whenever a suspend merely landed
+             *    AFTER the refusal -- telling the operator to stop streaming
+             *    for a card that will refuse the open identically once
+             *    streaming stops. That is the same mis-diagnosis this issue is
+             *    about, pointed the other way, and it would have silently
+             *    narrowed #690. Ordered as below, #953 changes exactly one
+             *    quadrant of (suspended x dirFull): the one it was filed for.
+             *
+             * 2. Otherwise, a live suspend reason -- THIS is #953. The
+             *    `!benchArmed` branch above already reports a suspend that was
+             *    present at the arm (#936/#955); a suspend that lands DURING
+             *    this wait was covered by nothing. Once app_SDCardTask parks
+             *    in APP_SD_STATE_SUSPENDED it pumps neither DRV_SDSPI_Tasks()
+             *    nor sd_card_manager_ProcessState() (app_freertos.c), so
+             *    IsWriteReady() can never become true and the wait can only
+             *    end at its full 5 s -- blaming the card for a task that
+             *    stopped running.
+             *
+             * 3. Only with neither of the above is the card diagnosis honest:
+             *    the SD task was running, recorded no refusal, and the open
+             *    still never completed.
+             *
+             * Sampled ONCE, before the cascade, rather than called again
+             * inside the arm that logs it: a second call could observe a
+             * different owner (or none) and print a reason other than the one
+             * that steered the branch. */
+            const char *why = SD_SuspendReasonText();
             if (sd_card_manager_StartupDirFull()) {
                 /* #690: name the real cause instead of the card advisory.
                  * #689: the flag covers every "no writable location" cause, not
@@ -1489,12 +1537,26 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
                  * card that is not the problem. */
                 LOG_E("SD:BENCH refused (#689): %s\r\n",
                       sd_card_manager_WriteRefuseText());
+            } else if (why != NULL) {
+                LOG_E("SD:BENCH - could not complete the arm: %s\r\n", why);
             } else {
                 LOG_E("SD:BENCH - File not ready after timeout\r\n");
                 LOG_E("SD:BENCH - if reads/LIST work but writes hang, the card is "
                       "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
             }
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            /* #953: this teardown is NOT a no-op under a suspend -- which is
+             * the natural worry, since sd_card_manager_UpdateSettings() DOES
+             * refuse while the SD task is suspended and
+             * SD_ArmOrRefuseWithCleanup above depends on exactly that. The
+             * gate is `mode != MODE_NONE && suspended` (sd_UpdateSettingsImpl,
+             * sd_card_manager.c), and mode NONE is DELIBERATELY exempt -- its
+             * own comment says NONE is how the timeout and shutdown paths TEAR
+             * DOWN an operation, and refusing it would strand the machine. The
+             * store below runs first, so this call passes the gate, raises
+             * gSdTeardownRequested and parks the machine at DEINIT exactly as
+             * it does un-suspended. Unchanged by #953; written down so the
+             * next reader need not re-derive it. */
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
             result = SCPI_RES_ERR;

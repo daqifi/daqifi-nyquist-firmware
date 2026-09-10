@@ -47,6 +47,19 @@ AD7609_BIN := run_ad7609_tests
 BENCH_BIN := run_943_tests
 SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 
+# #953: SD:BENCHmark's "file never opened" diagnosis. Same file as BENCH_BIN
+# and, for the same reason, the same technique -- no UUT copy, no stubs, the
+# decision cascade re-implemented against injected values.
+#
+# It copies no CONSTANTS, so it needs no equivalent of the two greps above.
+# What it copies is the ORDER of the three arms, which is the entire substance
+# of #953: recorded dir-full verdict, then live suspend reason, then the card
+# diagnosis. So the guard checks THAT -- the three arms' markers must still
+# appear in that order in the real source. It fails (loudly) if they are
+# reordered, reworded or moved, each of which invalidates the test's premise
+# and should be looked at rather than skipped.
+SUSPEND_BIN := run_953_tests
+
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
 	$(CC) $(CFLAGS) $(INCLUDES) -o $(BIN) test_circularbuffer.c $(UUT)
@@ -68,16 +81,33 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC)
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 
-# BOTH suites, and every one of the four binaries. Merge conflict resolved by
+$(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_SRC)
+	@a=`grep -nF 'SD:BENCH refused' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 b=`grep -nF '} else if (why != NULL) {' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 c=`grep -nF 'SD:BENCH - File not ready after timeout' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 test -n "$$a" && test -n "$$b" && test -n "$$c" \
+	   && test "$$a" -lt "$$b" && test "$$b" -lt "$$c" \
+	   || { echo "ERROR: the SD:BENCHmark file-not-ready cascade in $(SD_BENCH_SRC)"; \
+	        echo "       is no longer dirFull -> suspend -> card, or an arm was"; \
+	        echo "       reworded, moved or duplicated (markers found at a='$$a'"; \
+	        echo "       b='$$b' c='$$c')."; \
+	        echo "       test_953_bench_suspend_diagnosis.c models THAT ordering and"; \
+	        echo "       its whole point is that the order is the fix -- re-read both"; \
+	        echo "       before changing either."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
+
+# BOTH suites, and every one of the five binaries. Merge conflict resolved by
 # keeping each side's target intact and merging only `run` and `clean` -- a
 # duplicated rule here would silently shadow one of them.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN)
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(SUSPEND_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
+	./$(SUSPEND_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(SUSPEND_BIN)
 
 .PHONY: run clean
