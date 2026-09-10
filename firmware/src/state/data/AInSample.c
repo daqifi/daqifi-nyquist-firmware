@@ -164,11 +164,38 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
         if (poolMutex != NULL) {
             xSemaphoreTake(poolMutex, portMAX_DELAY);
         }
+        /* If the CURRENT pool is heap-owned, free it before dropping the only
+         * pointer to it. That state is narrow but reachable: BoardData.c falls
+         * back to AInSampleList_Initialize()'s malloc when the streaming pool
+         * is unavailable at boot, and a later stream-start re-partition can
+         * then land here -- at which point nulling samplePoolBase alone would
+         * strand ~60 KB of a 74 KB heap, because Destroy()'s free is guarded on
+         * that same pointer being non-NULL. Clearing the ownership flag with it
+         * keeps the pair consistent: no memory, no claim to own any. The
+         * external path below sets poolOwnsMemory = false for the same reason
+         * it is set here -- what this function leaves behind is never
+         * heap-owned. */
+        if (poolOwnsMemory && samplePoolBase != NULL) {
+            vPortFree(samplePoolBase);
+        }
+        poolOwnsMemory = false;
         samplePoolBase = NULL;
         nextFree = NULL;
         poolCapacity = 0;
         poolElementStride = 0;
         freeHead = -1;
+        /* #950, second half: the two USE counters are pool state too, and
+         * leaving them is the same defect one field over. A pool with no
+         * slots has nothing allocated and has never had anything allocated,
+         * so `SYST:MEM:FREE?` must not answer SamplePoolCount=0 beside
+         * SamplePoolMaxUsed=1 -- an incoherent pair a reader can only resolve
+         * by guessing which field lied. The successful path below already
+         * zeroes both for exactly this reason; the bail-out returned before
+         * reaching it. Found on hardware: the companion test's phase-2 check
+         * read a high-water mark carried over from its own phase 1 and could
+         * not tell that from a sample allocated out of the invalidated pool. */
+        poolAllocCount = 0;
+        poolMaxAllocCount = 0;
         if (poolMutex != NULL) {
             xSemaphoreGive(poolMutex);
         }
