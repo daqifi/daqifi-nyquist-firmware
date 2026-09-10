@@ -2695,6 +2695,13 @@ typedef struct {
     const tBoardConfig*    pBoardConfig;
     const AInRuntimeArray* pRuntimeChannels;
     uint64_t               mappingSelAtBuild;
+    /* #938: the sweep's stop-request pin -- generation and "a stop is running
+     * right now", read together in one critical section at basis build. It
+     * lives in the basis, not in FindMeasureStep, because a per-step re-pin
+     * cannot see a stop that began and ended between two steps; see that
+     * function's header. */
+    uint32_t               stopGenAtBuild;
+    bool                   stopActiveAtBuild;
 } FindStepBasis;
 
 /* #938: tentative (no-initializer) forward declarations. The full definitions,
@@ -2725,46 +2732,49 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
                             const FindStepBasis* basis, uint32_t clkFreq,
                             uint32_t wRingCap, uint32_t freq, uint32_t obsMs,
                             uint32_t* outKBps, bool* outStartFailed) {
-    /* #938: pinned as the first statement of this call, ahead of even the
-     * div-by-zero guard just below -- mirroring SCPI_StartStreaming's #861
-     * placement ahead of its own argument parse. Each call to this function
-     * IS one arm attempt (the sweep's per-rate loop calls it once per rate),
-     * so "before this attempt does anything" is this line, not the sweep's
-     * own entry.
+    /* #938: THE STOP PIN IS THE SWEEP'S, NOT THIS STEP'S. It is taken once,
+     * under one critical section, where the caller builds `basis` -- the same
+     * place, and for the same reason, as the #868 channel-mapping provenance
+     * that sits beside it in that struct -- and every step compares against
+     * that one instant.
      *
-     * BOTH READS UNDER ONE CRITICAL SECTION, mirroring the WRITER rather than
-     * the other reader. Each load is individually atomic (aligned 32-bit on
-     * PIC32MZ), so the section is not there to make a load atomic -- it is
-     * there to make the PAIR describe one instant.
+     * An earlier revision pinned it HERE instead, once per call, arguing that
+     * "each call to this function IS one arm attempt, so before this attempt
+     * does anything is this line". That is true of the ARM and false of the
+     * STOP, and the difference is what an unsteered adversarial leg found: a
+     * stop that begins AND ENDS inside an inter-step gap bumps the generation
+     * and returns the active count to zero, so a per-step re-pin adopts the
+     * already-bumped generation as its own baseline and the next step arms
+     * over an operator stop that has already completed. A pin can only see a
+     * stop it overlaps; calling each iteration a new arm attempt does not
+     * make it a new operator request.
      *
-     * As two separate loads they did not, and an adversarial audit found the
-     * interleaving. A stop bumps gen and active together at its START (one
-     * critical section, below) and finishes by decrementing active LAST. Let
-     * that stop's bump land BEFORE the first load and its completion land
-     * BETWEEN the two loads: `stopGenPinned` then already holds the bumped
-     * generation, so the later re-read sees no delta, and `stopActivePinned`
-     * reads the post-decrement zero, so the later re-read sees nothing
-     * active. Both signals miss a stop that was RUNNING when this attempt
-     * began, and the arm publishes IsEnabled over it -- silently, which is
-     * the exact shape #938 and #861 exist to eliminate.
+     * The sweep pin SUBSUMES the per-step one rather than joining it, which is
+     * why the per-step pin is gone rather than kept alongside: every bump a
+     * per-step pin could catch is also a bump since the sweep's. It closes the
+     * torn-read window a previous round fixed here too, and closes it by
+     * construction rather than by pairing -- the pair is still read under one
+     * critical section, but at an instant that precedes every stop this sweep
+     * can race, so no step can pin a value a racing stop has already moved.
      *
-     * The tempting refutation is that "generation new, active zero" means the
-     * stop finished before this arm began. It does not: the arm's zero point
-     * is the FIRST load, and in that interleaving the stop was still active
-     * then. The release-last invariant proves only that the stop had finished
-     * by the SECOND load, which is a weaker and different claim.
+     * The precedent is immediately next door. #868 refuses a step whose
+     * enabled-channel set moved since the mapping was built, and its own
+     * comment names the case explicitly: a change that "has already completed,
+     * typically during a previous inter-step gap". A stop completed in that
+     * same gap is the identical shape, and until this change it was the one
+     * such event the sweep looked straight past.
+     *
+     * A refusal aborts the sweep -- the caller breaks on *outStartFailed --
+     * which is the honest outcome for an explicit operator stop: the points
+     * already measured were taken before it, and climbing on afterwards would
+     * answer a question the operator has withdrawn.
      *
      * NOTE THE ASYMMETRY WITH SCPI_StartStreaming, which takes the same two
      * pins as separate loads several lines apart and therefore still carries
-     * this window. That is pre-existing (#861) and sits on the primary START
-     * path, so it is filed rather than changed here; this site is
-     * deliberately STRICTER than the one whose placement it mirrors. */
-    uint32_t stopGenPinned;
-    bool stopActivePinned;
-    taskENTER_CRITICAL();
-    stopGenPinned = gStreamStopGen;
-    stopActivePinned = (gStreamStopsActive != 0u);
-    taskEXIT_CRITICAL();
+     * the torn-read window. That is pre-existing (#861) and sits on the
+     * primary START path, so it is filed as #969 rather than changed here;
+     * this site is deliberately STRICTER than the one whose placement it
+     * mirrors. */
     if (freq == 0u) {
         /* #938: logs, like every other *outStartFailed producer in this
          * function -- see the reason chain below. Unreachable from the three
@@ -2806,14 +2816,15 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
     bool stopRequested = false;
     taskENTER_CRITICAL();
     /* #938: same three-way split SCPI_StartStreamingClaimed uses -- see
-     * gStreamStopsActive's declaration below for why all three terms
-     * (stopActivePinned, a fresh gStreamStopsActive re-read, and the
-     * generation compare) are each needed. Computed first, ahead of cfgBusy,
-     * matching that function's ordering, so a stop that landed during this
-     * step's own arm setup is reported as itself and not folded into
-     * whichever consistency check also happens to be true. */
-    stopInFlight = stopActivePinned || (gStreamStopsActive != 0u);
-    stopRequested = stopInFlight || (gStreamStopGen != stopGenPinned);
+     * gStreamStopsActive's declaration below for why all three terms are
+     * each needed. The two PINNED terms are the SWEEP's, not this step's:
+     * see this function's header for why a per-step re-pin loses a stop that
+     * began and ended in an inter-step gap. Computed first, ahead of cfgBusy,
+     * matching that function's ordering, so a stop that landed anywhere in
+     * this sweep is reported as itself and not folded into whichever
+     * consistency check also happens to be true. */
+    stopInFlight = basis->stopActiveAtBuild || (gStreamStopsActive != 0u);
+    stopRequested = stopInFlight || (gStreamStopGen != basis->stopGenAtBuild);
     cfgBusy = Streaming_ConfigChangeInProgress();
     if (!cfgBusy) {
         /* #868: the enabled-channel set moved since the sweep built its
@@ -2898,7 +2909,7 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
             LOG_E("WIFI:FIND %u Hz: arm refused - %s", (unsigned)freq,
                   stopRequested
                       ? (stopInFlight ? "a stop is still in flight on the other transport (#938/#861)"
-                                      : "a stop was issued during this step's arm (#938/#861)")
+                                      : "a stop was issued and completed after this sweep began (#938/#861)")
                       : cfgBusy ? "a streaming config change is in flight (#847)"
                       : inputsGone
                       ? "no ADC channels are enabled (#891)"
@@ -3097,7 +3108,21 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
         .pBoardConfig     = pBoardConfig,
         .pRuntimeChannels = (const AInRuntimeArray*)pRtAin,
         .mappingSelAtBuild = 0,
+        .stopGenAtBuild    = 0,
+        .stopActiveAtBuild = false,
     };
+    /* #938: the sweep's stop pin, taken HERE and once, in one critical
+     * section, beside the #868 mapping provenance it sits next to in the
+     * struct -- both are "the instant this sweep committed to what it is
+     * measuring", and both are compared against by every step. Taken before
+     * the mapping build and the pool partition below, because a stop issued
+     * while the sweep is still setting up is as much an operator stop as one
+     * issued mid-climb. Two loads in one section for the reason the writer
+     * uses one: the pair has to describe a single instant, not two. */
+    taskENTER_CRITICAL();
+    basis.stopGenAtBuild    = gStreamStopGen;
+    basis.stopActiveAtBuild = (gStreamStopsActive != 0u);
+    taskEXIT_CRITICAL();
     {
         Streaming_BuildChannelMapping(pBoardConfig, (const AInRuntimeArray*)pRtAin);
         /* #868: read the provenance back FROM the mapping rather than
