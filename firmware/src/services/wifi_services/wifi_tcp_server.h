@@ -83,32 +83,36 @@ typedef struct s_tcpClientContext
     /** Radio send errors (negative sentBytes in callback — real failures) */
     uint32_t wifiTcpSendErrors;
     /** Partial sends (callback confirmed fewer bytes than requested).  #500: an
-     *  elevated band around 23-26 KB/s of WIRE BYTE RATE is EXPECTED (that it
-     *  is HARMLESS is a separate claim, and is NOT established — see below).
-     *  It keys on byte rate rather than sample rate (1xT1 @ 2250 Hz and
-     *  5xT1 @ 1250 Hz peak together), it is near-zero below ~22 KB/s and low
-     *  again by ~33 KB/s, and it is not circular-buffer-size dependent.
-     *  wifiTcpSendErrors and WifiDroppedBytes were 0 throughout, but they see
-     *  only negative send() returns and circular-buffer overflow — NOT this
-     *  shortfall.  Do NOT read the band as proven lossless: #500 concluded that
-     *  and #935 reopened it, because Sent - Confirmed is identically
-     *  wifiPartialBytesMissing (see that field below) and #500 reported both an
-     *  exact Sent == Confirmed and a non-zero shortfall, which cannot both
-     *  hold.  See CLAUDE.md, "WiFi characterization — lessons
-     *  that survive", before treating a rise as either a defect or benign. */
+     *  elevated band around 23-26 KB/s of WIRE BYTE RATE is EXPECTED — it keys
+     *  on byte rate rather than sample rate (1xT1 @ 2250 Hz and 5xT1 @ 1250 Hz
+     *  peak together), is near-zero below ~22 KB/s and low again by ~33 KB/s,
+     *  and is not circular-buffer-size dependent.  **#935/#956: this counter is
+     *  NOT a loss indicator — it is inflated by a send-completion ring-pairing
+     *  defect** (see wifiPartialBytesMissing below and #956 for the mechanism),
+     *  which is also why the band is byte-rate-keyed: the pairing only shows up
+     *  when consecutive send lengths differ, which peaks mid-band and vanishes
+     *  once sends saturate to a constant 1400 B above it.  Treat a rise as a
+     *  diagnostic-counter artifact, not stream damage, until #956 lands.  See
+     *  CLAUDE.md, "WiFi characterization — lessons that survive". */
     uint32_t wifiTcpPartialSends;
     /** #367 diagnostics: cumulative byte shortfall (sendSize - sentBytes) across
-     *  all partial sends.  #500: inside the band documented on
-     *  wifiTcpPartialSends above this averages 11-19 B against the 1400 B
-     *  WIFI_WBUFFER_SIZE cap (~1% of a send), and is roughly constant while the
-     *  partial-send FREQUENCY varies.  These bytes are NOT re-queued:
-     *  TcpServerFlush zeroes writeBufferLength immediately after a successful
-     *  send() (wifi_tcp_server.c), and no retry path exists — so this counts
-     *  bytes the WINC did not accept and the firmware did not resend.  Because
-     *  wifiTcpBytesSent counts the REQUESTED length and wifiTcpBytesConfirmed
-     *  the callback's, this field is identically their difference whenever
-     *  wifiTcpSendErrors == 0.  Whether that constitutes real stream loss is
-     *  OPEN — see #935. */
+     *  all partial sends, summed only where the difference is positive
+     *  (wifi_manager.c's `<` test at the increment site silently discards the
+     *  negative direction).  **#935/#956: this is NOT a permanent-loss counter.**
+     *  It assumes `inflightSizes[inflightTail]` (popped in SOCKET_MSG_SEND)
+     *  always belongs to the completion currently firing; #956 documents two
+     *  independently-verified ways that pairing breaks (an unlocked
+     *  WIFI_TCP_MAX_IN_FLIGHT check racing the ring push in TcpServerFlush, and
+     *  SYST:STR:START / SYST:STR:STATS:CLEar zeroing the ring without
+     *  tcpInFlight — the missed twin of #519's ResetInflightRing fix). When
+     *  mis-paired, this field sums the positive half of a length difference
+     *  between two UNRELATED sends and the matching negative half is discarded,
+     *  so it grows with no byte actually lost.  The counter that DOES bound
+     *  real un-confirmed payload is wifiTcpBytesSent - wifiTcpBytesConfirmed
+     *  (plus whatever is still in flight): #935 measured that at ~0.016-0.017%
+     *  of bytes sent in two independent bench runs, both far below this
+     *  field's reading in the same run.  Until #956 lands, do not cite a rise
+     *  here as evidence of lost stream bytes. */
     uint32_t wifiPartialBytesMissing;
     /** #371 diagnostics: count of wifi_tcp_server_WriteBuffer calls that returned 0
      *  because the circular buffer didn't have enough free space.  Streaming task
