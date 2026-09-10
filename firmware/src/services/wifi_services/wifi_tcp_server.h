@@ -108,11 +108,17 @@ typedef struct s_tcpClientContext
      *  mis-paired, this field sums the positive half of a length difference
      *  between two UNRELATED sends and the matching negative half is discarded,
      *  so it grows with no byte actually lost.  The counter that DOES bound
-     *  real un-confirmed payload is wifiTcpBytesSent - wifiTcpBytesConfirmed
-     *  (plus whatever is still in flight): #935 measured that at ~0.016-0.017%
-     *  of bytes sent in two independent bench runs, both far below this
-     *  field's reading in the same run.  Until #956 lands, do not cite a rise
-     *  here as evidence of lost stream bytes. */
+     *  real un-confirmed payload is wifiTcpBytesSent - wifiTcpBytesConfirmed.
+     *  That difference ALREADY INCLUDES payload still in flight -- BytesSent is
+     *  incremented when the send is issued and BytesConfirmed only when the
+     *  completion fires -- so do not add the in-flight amount to it again.
+     *  Outstanding payload is bounded by WIFI_TCP_MAX_IN_FLIGHT *
+     *  WIFI_WBUFFER_SIZE = 5600 B, so a difference under that bound is not
+     *  evidence of loss at all; judge permanent loss only after outstanding
+     *  completions have drained.  #935 measured 187 B and 190 B in two
+     *  independent bench runs (~0.016-0.017% of bytes sent), far inside that
+     *  bound and far below this field's reading in the same run.  Until #956
+     *  lands, do not cite a rise here as evidence of lost stream bytes. */
     uint32_t wifiPartialBytesMissing;
     /** #371 diagnostics: count of wifi_tcp_server_WriteBuffer calls that returned 0
      *  because the circular buffer didn't have enough free space.  Streaming task
