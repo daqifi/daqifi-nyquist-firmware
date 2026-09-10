@@ -155,9 +155,24 @@ const char *SD_SuspendReasonText(void)
  * and then lost a race to a WiFi FW-update or a quarantine would either report
  * SUCCESS having armed nothing (FORmat, CRC and GET return OK immediately) or
  * sit out its WaitForCompletion timeout. Both are worse than saying no.
+ *
+ * #964: `onRefused`, when non-NULL, runs on the REFUSAL path ONLY, and runs
+ * while the claim is STILL HELD. It exists for state a caller published
+ * BEFORE the arm and must retract if the arm is refused -- the same problem
+ * #955 solved for `mode`, for the one field only the caller knows about.
+ * FORmat is the only such caller (SCPI_StorageSDFormat publishes
+ * SetFormatPending() before arming); the other five reach this through the
+ * SD_ArmOrRefuse() wrapper below and pass NULL.
+ *
+ * Deliberately NOT unconditional. Under the claim a previously COMPLETED
+ * format's terminal status (2/-1) may still be parked awaiting a FORmat?
+ * read -- mode is already MODE_NONE by then, so TryClaim succeeds. Clearing
+ * format state from a refused CRC/GET/LISt/DELete/SPACe would destroy a
+ * result those commands never published. Only the publisher retracts.
  */
-static bool SD_ArmOrRefuse(scpi_t *context, const char *cmd,
-                           sd_card_manager_settings_t *cfg)
+static bool SD_ArmOrRefuseWithCleanup(scpi_t *context, const char *cmd,
+                                      sd_card_manager_settings_t *cfg,
+                                      void (*onRefused)(void))
 {
     /* #829: the arm is where ownership hands over from the SCPI claim flag to
      * `mode`. Release on BOTH paths and there is no gap: on success `mode !=
@@ -179,6 +194,12 @@ static bool SD_ArmOrRefuse(scpi_t *context, const char *cmd,
         return true;
     }
     cfg->mode = SD_CARD_MANAGER_MODE_NONE;
+    /* #964: retract caller-published state HERE, under the claim, for exactly
+     * the reason #955 moved the `mode` clear here -- past the release it is an
+     * unowned write and can land on the NEXT owner's state. */
+    if (onRefused != NULL) {
+        onRefused();
+    }
     sd_card_manager_ReleaseClaim();
     const char *why = SD_SuspendReasonText();
     LOG_E("SD:%s - could not arm the operation: %s\r\n", cmd,
@@ -187,6 +208,13 @@ static bool SD_ArmOrRefuse(scpi_t *context, const char *cmd,
     return false;
 }
 
+/* The five commands with no pre-arm published state. Kept as its own name so
+ * their call sites stay free of a NULL that would say nothing. */
+static bool SD_ArmOrRefuse(scpi_t *context, const char *cmd,
+                           sd_card_manager_settings_t *cfg)
+{
+    return SD_ArmOrRefuseWithCleanup(context, cmd, cfg, NULL);
+}
 
 /* #829: ATOMIC claim of the SD manager, modelled on the #736 BENCH interlock.
  *
@@ -1972,20 +2000,18 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     /* This one reported SUCCESS on a refused arm -- it returns OK without
      * waiting, so the client believed a format had started when nothing had
      * been queued at all. That is the worst of the three shapes. */
-    if (!SD_ArmOrRefuse(context, "FORmat", pSDCardRuntimeConfig)) {
-        /* SetFormatPending() above already published "in progress" so
-         * FORmat? would answer immediately. Nothing is going to run it now,
-         * so clear it -- otherwise FORmat? reports a format in flight
-         * forever and a client polling for completion never stops.
-         *
-         * #955 residual, deliberately NOT fixed here: this call is itself an
-         * unowned write -- SD_ArmOrRefuse has already released the claim, and
-         * only the callee knows the arm failed, so the clear cannot be
-         * hoisted inside the claim without restructuring the helper. `mode`
-         * no longer has that problem; the format-pending flag still does.
-         * Recorded as a separate finding, not fixed by this change. */
-        sd_card_manager_ClearFormatStatus();
-        /* #955: `mode` is cleared inside SD_ArmOrRefuse, under the claim. */
+    /* #964: the retraction of SetFormatPending() now runs INSIDE the helper,
+     * under the claim, beside the `mode` clear. It used to run here, after
+     * SD_ArmOrRefuse had already released -- an unowned write. In that gap
+     * the other SCPI transport (USB pri 7 preempts WiFi pri 2, no shared
+     * dispatch mutex) could claim, publish and successfully arm ITS format,
+     * and this late store would then report "no format in progress" over a
+     * format that was really running, or erase its terminal result before any
+     * client read it. Passing the setter itself keeps publish-before-arm
+     * ordering intact -- see the #829 note above, which the #964 analysis
+     * confirms rather than reverses. */
+    if (!SD_ArmOrRefuseWithCleanup(context, "FORmat", pSDCardRuntimeConfig,
+                                   sd_card_manager_ClearFormatStatus)) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
