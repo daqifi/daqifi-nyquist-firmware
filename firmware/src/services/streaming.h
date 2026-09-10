@@ -1186,6 +1186,18 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
  */
 void Streaming_SetEncoderBuffer(uint8_t* buf, uint32_t size);
 
+/**
+ * Size of the session encoder buffer, i.e. the LARGEST buffSize any encoder
+ * call can ever be handed.  The packet-build loop passes
+ * `bufferSize - packetSize` and resets packetSize to 0 before every packet,
+ * so its first message per wake gets exactly this many bytes and no call gets
+ * more.  An encoder that must tell "the buffer is full right now" from "this
+ * sample can never fit any buffer" needs that ceiling; JSON_Encoder.c is the
+ * caller (#164 audit).  Returns 0 before a buffer is set, which reads as
+ * "cannot prove anything" at every call site.
+ */
+uint32_t Streaming_GetEncoderBufferSize(void);
+
 // Flow window configuration (configurable via SCPI SYST:STR:LOSS commands).
 // Loss threshold: percentage (1-100) that triggers QUES data loss bit (default 5).
 uint32_t Streaming_GetLossThreshold(void);

@@ -1664,6 +1664,12 @@ void Streaming_SetEncoderBuffer(uint8_t* buf, uint32_t size) {
     LOG_I("Encoder buffer: %u bytes", (unsigned)size);
 }
 
+uint32_t Streaming_GetEncoderBufferSize(void) {
+    /* Plain 32-bit read -- atomic on PIC32MZ, and the value is written once
+     * per session by SCPI_StartStreaming before the encoder runs. */
+    return bufferSize;
+}
+
 /**
  * Write an encoded packet to an output buffer. All-or-nothing semantics:
  * the full packet is written or nothing is. No partial writes, no garbled

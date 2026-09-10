@@ -50,6 +50,17 @@ name: host-tests
 # this comment claimed the opposite -- it said MC12bADC.c was "NOT listed",
 # which the glob added in the same commit plainly matches. Caught by #941's
 # round-2 pre-merge audit.
+#
+#   - test_json_string_escape.c (#164): compiles
+#     firmware/src/services/JSON_StringEscape.h directly. Scoped to that one
+#     file PLUS firmware/src/services/JSON_Encoder.c (its sole consumer, and
+#     the file the escaping logic was split OUT of), not the whole
+#     services/ directory -- unlike AD7609Scale.h, which came out of a
+#     multi-file HAL/ADC/ family, this header has exactly one file it could
+#     be folded back into, so listing that file by name closes the same
+#     "refactor escapes the trigger" gap without dragging in every unrelated
+#     services/ file (streaming.c, wifi_manager.c, sd_card_manager.c, the
+#     whole SCPI/ subdirectory, ...).
 
 on:
   pull_request:
@@ -61,6 +72,8 @@ on:
       - 'firmware/src/Util/FixedPointFmt.h'
       - 'firmware/src/services/SCPI/**'
       - 'firmware/src/HAL/ADC/**'
+      - 'firmware/src/services/JSON_StringEscape.h'
+      - 'firmware/src/services/JSON_Encoder.c'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -71,6 +84,8 @@ on:
       - 'firmware/src/Util/FixedPointFmt.h'
       - 'firmware/src/services/SCPI/**'
       - 'firmware/src/HAL/ADC/**'
+      - 'firmware/src/services/JSON_StringEscape.h'
+      - 'firmware/src/services/JSON_Encoder.c'
       - '.github/workflows/host-tests.yml'
 
 permissions:
