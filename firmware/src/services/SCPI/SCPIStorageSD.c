@@ -1484,9 +1484,13 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
          * buffer across ~90 transport writes, each bounded by
          * SCPI_WriteWithRetry at ~1 s (SCPI_WRITE_MAX_RETRIES 200 x
          * SCPI_WRITE_RETRY_DELAY_MS 5) against a host that stopped reading --
-         * so ~90 s. HELP (~7 s) and the UART getters (~15 s, blocked behind
-         * UserUart_Write's own 15 s hold of the UART mutex) sit between that
-         * and here. A concurrent SCPI command on the OTHER transport can
+         * so ~90 s. HELP (~7 s) sits between that and here. (The UART getters
+         * -- SCPI_UartRead / SCPI_UartCount -- used to belong on this list too,
+         * transitively blocked behind UserUart_Write's own 15 s hold of the
+         * UART mutex; #948 reordered them to sample the UART state before
+         * taking the shared buffer, so their hold is now the same short
+         * formatting-only duration as every other short caller.) A concurrent
+         * SCPI command on the OTHER transport can
          * therefore abort a benchmark. That trade is deliberate: a budget big
          * enough to dominate that tail would be ~2 minutes of hang on a
          * genuine deadlock, which is barely distinguishable from the
