@@ -11,6 +11,8 @@
 #include "peripheral/spi/spi_master/plib_spi2_master.h"
 #include "peripheral/coretimer/plib_coretimer.h"
 #include "Util/Logger.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include "semphr.h"
 
 // Simple delay function using core timer (wrap-around safe, overflow-safe)
@@ -108,16 +110,41 @@ uint8_t DAC7718_NewConfig(const tDAC7718Config *newDAC7718Config)
     // advance the counter once the entry is actually stored -- so a rejected
     // call leaves no state behind and m_DAC7718ConfigCount keeps meaning
     // "number of valid entries", which is the invariant this check reads.
+    //
+    // Round-2 follow-up (concurrency): the bound check, the slot choice, the
+    // copy and the increment are ONE atomic step. The command table is shared
+    // by both SCPI transports -- app_USBDeviceTask (pri 7) and app_WifiTask
+    // (pri 2) each run SCPI_Input() on their own context
+    // (SCPIInterface.c:271-275) over the same scpi_commands[]
+    // (SCPIInterface.c:8142, DAC rows 8382-8394) -- so two first-time DAC
+    // commands can be inside SCPIDAC.c DAC_EnsureHardwareInitialized at the
+    // same time and both reach here. Unguarded,
+    // both read count==0, both take slot 0, and the counter lands at 2, which
+    // breaks the invariant DAC7718_GetConfig below now depends on ("NewConfig
+    // caps the counter at MAX, so id < count implies id < MAX") and would let
+    // an id of 1 index past this one-element array -- re-opening the very #64
+    // OOB this PR exists to close. Advancing the counter only after the copy
+    // also means a reader on the other task sees either "no entry" or a fully
+    // copied one, never a half-written config.
+    //
+    // Same idiom and rationale as SCPIDIO.c's cross-interface guard: the
+    // region is a comparison, a fixed-size memcpy (~50 B) and one increment --
+    // no loops, no I/O, no blocking call -- so the section is sub-microsecond.
+    // LOG_E stays OUTSIDE it (it formats and takes a mutex).
+    uint8_t id;
+
+    taskENTER_CRITICAL();
     if (m_DAC7718ConfigCount >= MAX_DAC7718_CONFIG) {
+        taskEXIT_CRITICAL();
         LOG_E("DAC7718_NewConfig: config table full (max %u)",
               (unsigned)MAX_DAC7718_CONFIG);
         return 0xFFU;   // sentinel: no id allocated
     }
 
-    uint8_t id = m_DAC7718ConfigCount;
-
+    id = m_DAC7718ConfigCount;
     memcpy(&m_DAC7718Config[id], newDAC7718Config, sizeof(tDAC7718Config));
     ++m_DAC7718ConfigCount;
+    taskEXIT_CRITICAL();
 
     return id;
 }
