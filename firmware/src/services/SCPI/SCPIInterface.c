@@ -2725,15 +2725,46 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
                             const FindStepBasis* basis, uint32_t clkFreq,
                             uint32_t wRingCap, uint32_t freq, uint32_t obsMs,
                             uint32_t* outKBps, bool* outStartFailed) {
-    /* #938: pinned as the first two statements of this call, ahead of even
-     * the div-by-zero guard just below -- mirroring SCPI_StartStreaming's
-     * #861 placement ahead of its own argument parse. Each call to this
-     * function IS one arm attempt (the sweep's per-rate loop calls it once
-     * per rate), so "before this attempt does anything" is this line, not the
-     * sweep's own entry. Bare 32-bit loads, not a critical section -- same
-     * reasoning as SCPI_StartStreaming's pin, see its declaration below. */
-    const uint32_t stopGenPinned = gStreamStopGen;
-    const bool stopActivePinned = (gStreamStopsActive != 0u);
+    /* #938: pinned as the first statement of this call, ahead of even the
+     * div-by-zero guard just below -- mirroring SCPI_StartStreaming's #861
+     * placement ahead of its own argument parse. Each call to this function
+     * IS one arm attempt (the sweep's per-rate loop calls it once per rate),
+     * so "before this attempt does anything" is this line, not the sweep's
+     * own entry.
+     *
+     * BOTH READS UNDER ONE CRITICAL SECTION, mirroring the WRITER rather than
+     * the other reader. Each load is individually atomic (aligned 32-bit on
+     * PIC32MZ), so the section is not there to make a load atomic -- it is
+     * there to make the PAIR describe one instant.
+     *
+     * As two separate loads they did not, and an adversarial audit found the
+     * interleaving. A stop bumps gen and active together at its START (one
+     * critical section, below) and finishes by decrementing active LAST. Let
+     * that stop's bump land BEFORE the first load and its completion land
+     * BETWEEN the two loads: `stopGenPinned` then already holds the bumped
+     * generation, so the later re-read sees no delta, and `stopActivePinned`
+     * reads the post-decrement zero, so the later re-read sees nothing
+     * active. Both signals miss a stop that was RUNNING when this attempt
+     * began, and the arm publishes IsEnabled over it -- silently, which is
+     * the exact shape #938 and #861 exist to eliminate.
+     *
+     * The tempting refutation is that "generation new, active zero" means the
+     * stop finished before this arm began. It does not: the arm's zero point
+     * is the FIRST load, and in that interleaving the stop was still active
+     * then. The release-last invariant proves only that the stop had finished
+     * by the SECOND load, which is a weaker and different claim.
+     *
+     * NOTE THE ASYMMETRY WITH SCPI_StartStreaming, which takes the same two
+     * pins as separate loads several lines apart and therefore still carries
+     * this window. That is pre-existing (#861) and sits on the primary START
+     * path, so it is filed rather than changed here; this site is
+     * deliberately STRICTER than the one whose placement it mirrors. */
+    uint32_t stopGenPinned;
+    bool stopActivePinned;
+    taskENTER_CRITICAL();
+    stopGenPinned = gStreamStopGen;
+    stopActivePinned = (gStreamStopsActive != 0u);
+    taskEXIT_CRITICAL();
     if (freq == 0u) {
         /* #938: logs, like every other *outStartFailed producer in this
          * function -- see the reason chain below. Unreachable from the three
