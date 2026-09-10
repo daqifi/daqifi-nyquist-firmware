@@ -1031,23 +1031,36 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context);
  * changed. That is the same consequence #873 describes for the AD7609 Range
  * pin, except this pair is reachable on the NQ1 this bench has.
  *
- * That is an MC12b-path fact, and this comment deliberately stops there: an
- * earlier revision extended it with "and by AD7609_ConvertToVoltage", which is
- * FALSE. That function's first statement is UNUSED(runtimeConfig)
- * (HAL/ADC/AD7609.c:517) -- it reads the module Range and nothing else -- so
- * for NQ3's eight AD7609 USER channels these coefficients never reach the
- * conversion, and for those the guard is defensive rather than load-bearing.
- * That verdict does NOT generalise to the variant: ADC_ConvertToVoltageByIndex
- * switches on the PER-CHANNEL Type, not on the board (HAL/ADC.c:479), and
- * NQ3BoardConfig.c:122 splices the same COMMON_MONITORING_CHANNELS_BOARDCONFIG
- * entries -- all eight .Type = AIn_MC12bADC -- into AInChannels, so NQ3's other
- * eight channels convert through MC12b_ConvertToVoltage and DO read CalM/CalB
- * (MC12bADC.c:255,258), exactly as on NQ1. These setters reach them: ids
- * 248-255 (AInConfig.h) pass AdcChannelArgInRange, and MEAS:VOLT:DC? converts
- * them by the same dispatch. The wrong claim mattered because it WAS the stated
- * justification for refusing the command during an AD7609 stream (codex
- * pre-merge audit). That the AD7609 USER-channel path ignores user calibration
- * outright is a separate defect, filed on its own.
+ * That was an MC12b-path fact when this paragraph was first written: an
+ * earlier revision had extended it with "and by AD7609_ConvertToVoltage",
+ * which was FALSE at the time -- that function opened by discarding its
+ * runtimeConfig parameter and read only the module Range, so for NQ3's eight
+ * AD7609 USER channels these coefficients never reached the conversion, and
+ * the guard was defensive there rather than load-bearing. #889 -- fixed by
+ * #941 (merged e309cb945) -- closed that gap: AD7609_ConvertToVoltage now
+ * applies runtimeConfig->CalM/CalB on every call, via AD7609_ScaleToVolts
+ * (HAL/ADC/AD7609.c:547-548; arithmetic in AD7609Scale.h:81). The
+ * parameter-discarding statement is gone -- HAL/ADC/AD7609.c:517 is a
+ * comment line now -- so as of #941 the guard IS load-bearing for those
+ * eight channels too, the same as it always was for the MC12b path.
+ *
+ * ADC_ConvertToVoltageByIndex still switches on the PER-CHANNEL Type, not on
+ * the board (HAL/ADC.c:479), and NQ3BoardConfig.c:122 splices the same
+ * COMMON_MONITORING_CHANNELS_BOARDCONFIG entries -- all eight
+ * .Type = AIn_MC12bADC -- into AInChannels, so NQ3's other eight channels
+ * convert through MC12b_ConvertToVoltage and read CalM/CalB
+ * (MC12bADC.c:255,258), exactly as on NQ1. Post-#941 the two paths agree:
+ * every channel either board exposes through this pair now rescales a
+ * running stream, AD7609 USER channels included. These setters reach them:
+ * ids 248-255 (AInConfig.h) pass AdcChannelArgInRange, and MEAS:VOLT:DC?
+ * converts them by the same dispatch.
+ *
+ * The pre-#941 wrong claim mattered anyway: it WAS the stated justification
+ * for refusing the command during an AD7609 stream (codex pre-merge audit).
+ * The guard here is taken unconditionally, before any channel-type
+ * inspection (SCPI_ADCChanCalmSet below), so that refusal was correct by
+ * accident of the guard's unconditional scope even while the stated reason
+ * was false -- #941 has since made the reason true too.
  *
  * Note what this ALSO changes: CONF:ADC:SAVEcal / SAVEFcal take the claim too,
  * through CalSaveCommon below. Not for the reason this pair does -- they mutate
@@ -1320,16 +1333,19 @@ scpi_result_t SCPI_ADCCalFSave(scpi_t * context) {
  * plus 8 monitoring, not the sixteen user channels that revision meant.
  *
  * That store overwrite reaches every entry the loop counts, regardless of
- * channel type, but the conversion-side rescale does not: CalM/CalB are read
- * per conversion only on the MC12b path (MC12b_ConvertToVoltage,
- * HAL/ADC/MC12bADC.c:255,258; dispatch is per-channel Type,
- * ADC_ConvertToVoltageByIndex, HAL/ADC.c:479), which is all 24 NQ1 entries but
- * only the 8 monitoring channels on NQ3 (NQ3BoardConfig.c:122 splices them in
- * as .Type = AIn_MC12bADC). NQ3's other 8 entries -- its AD7609 USER channels
- * -- get the same store overwrite as every other entry, but
- * AD7609_ConvertToVoltage ignores runtimeConfig outright
- * (HAL/ADC/AD7609.c:517), so for those the new coefficients never reach a
- * conversion -- the same carve-out as SCPI_ADCChanCalmSet above.
+ * channel type, and -- since #889, fixed by #941 (merged e309cb945) -- so
+ * does the conversion-side rescale: CalM/CalB are now read per conversion on
+ * both paths, MC12b (MC12b_ConvertToVoltage, HAL/ADC/MC12bADC.c:255,258;
+ * dispatch is per-channel Type, ADC_ConvertToVoltageByIndex, HAL/ADC.c:479)
+ * and AD7609 (AD7609_ConvertToVoltage, HAL/ADC/AD7609.c:547-548, via
+ * AD7609_ScaleToVolts, AD7609Scale.h:81). That is all 24 NQ1 entries and all
+ * 16 NQ3 entries -- 8 monitoring (NQ3BoardConfig.c:122 splices them in as
+ * .Type = AIn_MC12bADC) plus the 8 AD7609 USER channels that used to be a
+ * carve-out here: before #941 AD7609_ConvertToVoltage discarded
+ * runtimeConfig outright, so those 8 entries got the store overwrite from
+ * this load but no conversion-side rescale from it. #941 closed that gap
+ * (see the comment on SCPI_ADCChanCalmSet above), so the carve-out this
+ * paragraph used to describe no longer exists.
  *
  * It is also the exact mutation CONF:ADC:USECal performs at values 0/1
  * (ADCUseCalSetClaimed -> daqifi_settings_LoadADCCalSettings, below; value 2
