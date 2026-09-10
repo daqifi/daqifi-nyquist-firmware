@@ -161,12 +161,24 @@ static bool SD_ArmOrRefuse(scpi_t *context, const char *cmd,
 {
     /* #829: the arm is where ownership hands over from the SCPI claim flag to
      * `mode`. Release on BOTH paths and there is no gap: on success `mode !=
-     * MODE_NONE` already keeps IsBusy() true, and on failure the caller clears
-     * `mode` too. Centralised here so no entry point can leak the flag. */
+     * MODE_NONE` already keeps IsBusy() true, and on failure `mode` is put
+     * back to MODE_NONE first, HERE, under the claim. Centralised so no entry
+     * point can leak the flag.
+     *
+     * #955: that clear used to be the CALLER's, executed after this function
+     * had already released. Between the release and the caller's store the
+     * other SCPI transport (USB pri 7 preempts WiFi pri 2, no shared dispatch
+     * mutex) could TryClaim successfully, arm its own operation, and be
+     * preempted back -- whereupon the first caller's unowned store put `mode`
+     * to MODE_NONE and silently killed an operation that had legitimately
+     * armed. Clearing before the release closes that window: while the claim
+     * is held nobody else can be the owner, and once it is released `mode` is
+     * already the value the next owner may overwrite. */
     if (sd_card_manager_UpdateSettings(cfg)) {
         sd_card_manager_ReleaseClaim();
         return true;
     }
+    cfg->mode = SD_CARD_MANAGER_MODE_NONE;
     sd_card_manager_ReleaseClaim();
     const char *why = SD_SuspendReasonText();
     LOG_E("SD:%s - could not arm the operation: %s\r\n", cmd,
@@ -618,8 +630,7 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
 
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_COMPUTE_CRC;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "CRC", pSDCardRuntimeConfig)) {
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
-        /* #829: SD_ArmOrRefuse already released the claim */  /* mode must still be cleared */
+        /* #955: `mode` is cleared inside SD_ArmOrRefuse, under the claim. */
         return SCPI_RES_ERR;
     }
     return SCPI_RES_OK;
@@ -743,7 +754,7 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
             getOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_READ;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "GET", pSDCardRuntimeConfig)) {
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        /* #955: `mode` is cleared inside SD_ArmOrRefuse, under the claim. */
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -880,8 +891,9 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
             listOverTcp ? wifi_tcp_server_GetConnGeneration() : 0u;   /* #599 */
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_LIST_DIRECTORY;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "LISt", pSDCardRuntimeConfig)) {
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
-        /* #829: SD_ArmOrRefuse already released the claim */  /* mode must still be cleared */
+        /* #955: `mode` is cleared inside SD_ArmOrRefuse, under the claim.
+         * `result` is already SCPI_RES_ERR from its initialiser -- do not add
+         * an assignment here, that would be a behaviour change. */
         goto __exit_point;
     }
 
@@ -1340,34 +1352,36 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * quarantined after a jam) -- so, unlike before, its return is now
      * checked and acted on below, mirroring SD_ArmOrRefuse's contract in
      * full: release the claim on BOTH paths, AND clear `mode` back to
-     * MODE_NONE on the refused one. SD_ArmOrRefuse itself is not reused
-     * verbatim because it wraps sd_card_manager_UpdateSettings(), not the
-     * ...ForPlainWrite() arm this callback needs. The SCPI_StartStreaming
-     * SD-arm twin, #942, still discards its return.
+     * MODE_NONE, under the claim, on the refused one. SD_ArmOrRefuse itself
+     * is not reused verbatim because it wraps sd_card_manager_UpdateSettings(),
+     * not the ...ForPlainWrite() arm this callback needs. The
+     * SCPI_StartStreaming SD-arm twin, #942, still discards its return.
      *
      * WHEN THE ARM SUCCEEDS, ownership has handed over from the claim flag
      * to `mode`, which is now MODE_WRITE and keeps IsBusy() true -- so there
-     * is no gap between releasing here and the manager being busy.
+     * is no gap between releasing (below, after this comment) and the
+     * manager being busy.
      *
-     * This release also runs on the REFUSED path: there, the callee's own
-     * #589 gate has already reset `mode` back to MODE_NONE before returning
-     * false (sd_UpdateSettingsImpl, sd_card_manager.c:3566). Releasing here
-     * is still correct on that path, but for the opposite reason -- nothing
-     * was armed and there is nothing to hold, not that ownership moved. The
-     * explicit clear just below is not redundant with that fact: every OTHER
-     * SD-arming command in this file (CRC/GET/LISt/DELete/FORmat/SPACe) also
-     * clears `mode` itself after a refused arm, because the contract
-     * SD_ArmOrRefuse's own comment states is that the CALLER clears it, not
-     * that some callee happens to. Depending on the callee's internal #589
-     * gate instead would make this the one site where that invariant is not
-     * locally provable, and silently break if a future second refusal path
-     * inside sd_UpdateSettingsImpl ever forgot the clear.
+     * ON THE REFUSED PATH nothing was armed, so `mode` must go back to
+     * MODE_NONE -- and #955 is that it must go back BEFORE the release, not
+     * after. The callee's own #589 gate already reset it before returning
+     * false (sd_UpdateSettingsImpl, sd_card_manager.c:3566), so the explicit
+     * clear in the `!benchArmed` arm below is a second write of the same
+     * value; it is kept anyway so the invariant is provable HERE rather than
+     * by reading the callee, and so a future second refusal path inside
+     * sd_UpdateSettingsImpl that forgot the clear cannot silently break this
+     * site. What is NOT optional is its position: a clear executed after the
+     * release is an unowned write that can erase a second transport's
+     * freshly armed operation (#955) -- the same defect this ticket fixed at
+     * every other SD-arming site in this file.
      *
-     * This release must stay ABOVE the refusal check below, not inside its
-     * failure branch: if a later edit moves it into the success arm only,
-     * the refusal path leaks the #829 claim and wedges the manager
-     * permanently -- IsBusy() stays true for every later SD command AND the
-     * #925 watchdog's own TryClaim then fails forever too.
+     * The release therefore happens in BOTH arms below, exactly as
+     * SD_ArmOrRefuse does it -- one release in the `!benchArmed` arm
+     * (immediately after the clear), one in the armed arm further down.
+     * Delete either one and the manager wedges permanently on that path --
+     * IsBusy() stays true for every later SD command AND the #925 watchdog's
+     * own TryClaim then fails forever too, which disarms the leak recovery.
+     * Hoisting the clear back above the release would reopen #955.
      *
      * Released rather than held for the whole benchmark on purpose: the write
      * loop below yields for seconds, and the flag is a reservation for ARMING,
@@ -1380,20 +1394,23 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * callback's own lifetime is unbounded (#943), so no version of that
      * claim is true. The watchdog's own recovery conditions are documented
      * at its site in app_freertos.c. */
-    sd_card_manager_ReleaseClaim();
-
     if (!benchArmed) {
+        /* #955: clear under the claim, THEN release -- see the comment
+         * block above this `if`. */
+        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+        sd_card_manager_ReleaseClaim();
+
         /* Report the refusal now instead of falling into the "wait for file
          * ready" loop below: nothing was armed, so that loop can only time
          * out at its full 5 s and then blame the wrong thing -- a
          * "SPI-mode incompatible" card diagnosis -- for what is actually the
          * SD task not running at all.
          *
-         * pSDCardRuntimeConfig->mode is ALREADY MODE_NONE here (the callee's
-         * #589 gate cleared it before returning false, see above); this
-         * write is the same belt-and-braces every sibling arm site in this
-         * file already does on its own refused path, not a correction of a
-         * stale value.
+         * `mode` was already put back to MODE_NONE a few lines above, under
+         * the claim (#955), and the callee's #589 gate had already done the
+         * same before returning false -- so that store is belt-and-braces,
+         * not a correction of a stale value. It is the ORDERING that
+         * matters: before the release, never after.
          *
          * logFileClobbered and ownsBenchFlag are already both true at this
          * point (set above, before the claim), so __exit_point still
@@ -1407,9 +1424,8 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
          * __exit_point with that flag cleared. Benign -- it is a transient
          * advisory the SD task re-raises on its next failing open, and its
          * only cross-module reader additionally gates on mode==WRITE, which
-         * this path just cleared -- but noted so a future audit does not
-         * have to re-derive it. */
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
+         * this path cleared before releasing the claim -- but noted so a
+         * future audit does not have to re-derive it. */
         const char *why = SD_SuspendReasonText();
         LOG_E("SD:BENCH - could not arm the operation: %s\r\n",
               why ? why : "the SD task is not accepting work");
@@ -1417,6 +1433,14 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
+    /* Armed: ownership has handed over from the claim flag to `mode`, which
+     * is MODE_WRITE and keeps IsBusy() true -- so there is no gap between
+     * releasing here and the manager being busy. Released rather than held
+     * for the whole benchmark on purpose: the write loop below yields for
+     * seconds, and the flag is a reservation for ARMING, not a session lock.
+     * #955: the twin release lives in the `!benchArmed` arm above; both must
+     * exist. */
+    sd_card_manager_ReleaseClaim();
 
     // Wait for file to be open and ready before writing
     {
@@ -1867,8 +1891,7 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     // Set mode to DELETE and trigger the operation
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_DELETE_FILE;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "DELete", pSDCardRuntimeConfig)) {
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
-        /* #829: SD_ArmOrRefuse already released the claim */  /* mode must still be cleared */
+        /* #955: `mode` is cleared inside SD_ArmOrRefuse, under the claim. */
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -1953,10 +1976,16 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
         /* SetFormatPending() above already published "in progress" so
          * FORmat? would answer immediately. Nothing is going to run it now,
          * so clear it -- otherwise FORmat? reports a format in flight
-         * forever and a client polling for completion never stops. */
+         * forever and a client polling for completion never stops.
+         *
+         * #955 residual, deliberately NOT fixed here: this call is itself an
+         * unowned write -- SD_ArmOrRefuse has already released the claim, and
+         * only the callee knows the arm failed, so the clear cannot be
+         * hoisted inside the claim without restructuring the helper. `mode`
+         * no longer has that problem; the format-pending flag still does.
+         * Recorded as a separate finding, not fixed by this change. */
         sd_card_manager_ClearFormatStatus();
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
-        /* #829: SD_ArmOrRefuse already released the claim */  /* mode must still be cleared */
+        /* #955: `mode` is cleared inside SD_ArmOrRefuse, under the claim. */
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -2269,8 +2298,7 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
     }
     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_GET_SPACE;  /* #829: LAST write */
     if (!SD_ArmOrRefuse(context, "SPACe", pSDCardRuntimeConfig)) {
-        pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
-        /* #829: SD_ArmOrRefuse already released the claim */  /* mode must still be cleared */
+        /* #955: `mode` is cleared inside SD_ArmOrRefuse, under the claim. */
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
