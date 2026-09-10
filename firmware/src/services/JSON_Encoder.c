@@ -19,10 +19,6 @@
 #include "services/daqifi_settings.h"
 #include "JSON_StringEscape.h"
 
-#ifndef min
-#define min(x,y) x <= y ? x : y
-#endif // min
-
 #ifndef max
 #define max(x,y) x >= y ? x : y
 #endif // min
@@ -295,7 +291,22 @@ size_t Json_Encode(tBoardData* state,
             case DaqifiOutMessage_ssid_tag:
             {
                 wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
-                tmpLen = min(strlen(wifiSettings->ssid), WDRV_WINC_MAX_SSID_LEN);
+                /* #164 (Qodo catch): strlen() must not run on ssid before it
+                 * is bounded -- ssid is a fixed-size field written by
+                 * SCPI_SafeParamString(), which is NUL-terminating in the
+                 * normal write path, but nothing here may assume that holds
+                 * for every possible source (a boot-time / NVM-loaded value
+                 * that never went through that setter). Calling strlen()
+                 * FIRST and clamping the result SECOND still reads past the
+                 * field if no NUL exists anywhere in it -- the exact
+                 * over-read this fix exists to close. Scan bounded by
+                 * WDRV_WINC_MAX_SSID_LEN from the start, matching the bound
+                 * escape_json_string() itself already enforces on inLen. */
+                tmpLen = 0;
+                while (tmpLen < (int)WDRV_WINC_MAX_SSID_LEN
+                        && wifiSettings->ssid[tmpLen] != '\0') {
+                    tmpLen++;
+                }
                 if (tmpLen > 0) {
                     /* #164: the SSID is free-form. SCPI_LANSsidSet() ->
                      * SCPI_SafeParamString() does a bare memcpy with NO
