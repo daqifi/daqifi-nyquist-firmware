@@ -145,6 +145,33 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
     if (poolMem == NULL || freeMem == NULL || maxSize == 0 || elementSize == 0) {
         LOG_E("Sample pool external init: NULL or zero (%p, %p, %u, %u)",
               poolMem, freeMem, (unsigned)maxSize, (unsigned)elementSize);
+        /* #950: by the time this path is reached, StreamingBufferPool_Partition
+         * has already re-carved gPoolStorage and reassigned this address range
+         * -- typically to the USB or WiFi circular buffer. Simply returning
+         * here used to leave the PREVIOUS samplePoolBase/poolCapacity/nextFree
+         * (and poolActive) untouched, so AllocateFromPool kept handing out
+         * slots computed from an offset that now belongs to a live transport
+         * ring -- the caller (PrepareStreamingBuffers, SCPIInterface.c) still
+         * reports success and arms streaming on top of that. Invalidate the
+         * pool instead of leaving it aliasing: same poolActive-first ordering
+         * AInSampleList_Destroy() uses (atomic write, no mutex needed) so a
+         * concurrently-running Allocate/FreeToPool cannot race the pointer
+         * clear below. This does not make PrepareStreamingBuffers refuse the
+         * command -- that still needs a change in SCPIInterface.c -- but it
+         * guarantees no sample is ever written into the repartitioned buffer:
+         * AllocateFromPool returns NULL until the next successful (re)init. */
+        poolActive = false;
+        if (poolMutex != NULL) {
+            xSemaphoreTake(poolMutex, portMAX_DELAY);
+        }
+        samplePoolBase = NULL;
+        nextFree = NULL;
+        poolCapacity = 0;
+        poolElementStride = 0;
+        freeHead = -1;
+        if (poolMutex != NULL) {
+            xSemaphoreGive(poolMutex);
+        }
         return;
     }
 
