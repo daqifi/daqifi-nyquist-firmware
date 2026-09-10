@@ -20,23 +20,39 @@ name: scpi-sd-arm-path
 # named for, and scoped to, the SYSTem:MEMory:* claim path; the SD arm is a
 # different claim, in a different file, with a different failure mode.
 #
-# The path list is deliberately ONE source file rather than the whole SCPI
-# directory: SD_ArmOrRefuseWithCleanup and its wrapper are `static`, so every
-# caller is necessarily in that translation unit, and moving the helper out of
-# it necessarily edits it too. There is no reachable caller this trigger can
-# miss.
+# #942 (PR #974) is the same shape at a SECOND site, in a second file:
+# SCPI_StartStreamingClaimed() in SCPIInterface.c armed the streaming log with
+# sd_card_manager_UpdateSettingsForStreamingLog() and DISCARDED the result, so
+# an arm that lost the race the #589 pre-check cannot cover armed nothing and
+# left the readiness poll below to spend its full 5 s and then blame the media.
+# Qodo raised the same regression objection there, so the checker covers both
+# sites: the arm's verdict must be consumed, and its refusal must clear `mode`
+# under the claim and RETURN before sd_card_manager_IsWriteReady() is polled.
+#
+# The path list is deliberately TWO source files rather than the whole SCPI
+# directory. SD_ArmOrRefuseWithCleanup and its wrapper are `static`, so every
+# caller is necessarily in SCPIStorageSD.c and moving the helper out of it
+# necessarily edits it too; SCPI_StartStreamingClaimed is `static` in
+# SCPIInterface.c for the same reason. There is no reachable caller either
+# trigger can miss.
 #
 # Deliberately NOT claimed: that the claim is a real exclusion, that
 # UpdateSettings actually arms, or that the branch a write sits in is
 # reachable. This is textual and positional, with no control flow -- the same
 # stated limits as scpi_claim_path.py, tracked as #896, which #971 does not
-# close.
+# close. What it DOES now establish beyond position is which branch a write
+# sits in: the success path has to be gated on the arm's verdict and has to
+# return, or (with a single release) the write has to be gated on failure
+# itself. Lexical containment between two calls was not "runs only on
+# refusal", and a write hoisted out of the failure guard passed the first
+# version of this gate clean (Qodo, PR #976).
 
 on:
   pull_request:
     branches: [main]
     paths:
       - 'firmware/src/services/SCPI/SCPIStorageSD.c'
+      - 'firmware/src/services/SCPI/SCPIInterface.c'
       - 'tools/lint/scpi_sd_arm_path.py'
       - 'tools/lint/scpi_wiki_sync.py'
       - '.github/workflows/scpi-sd-arm-path.yml'
@@ -44,6 +60,7 @@ on:
     branches: [main]
     paths:
       - 'firmware/src/services/SCPI/SCPIStorageSD.c'
+      - 'firmware/src/services/SCPI/SCPIInterface.c'
       - 'tools/lint/scpi_sd_arm_path.py'
       - 'tools/lint/scpi_wiki_sync.py'
       - '.github/workflows/scpi-sd-arm-path.yml'
@@ -53,7 +70,7 @@ permissions:
 
 jobs:
   sd-arm-path:
-    name: A refused SD arm retracts caller state under the claim
+    name: A refused SD arm retracts caller state under the claim, and returns
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -62,10 +79,13 @@ jobs:
       # Runs first and separately: the checker's own logic is what decides
       # whether the gate below means anything, and a checker that examines
       # nothing reports a pass. Its --self-test covers the vacuity cases
-      # explicitly -- an unreadable source, a helper it cannot find, and a
-      # retraction parameter it cannot identify must each FAIL.
+      # explicitly -- an unreadable source, a helper or a streaming-start
+      # function it cannot find, an arm renamed away, a missing readiness poll,
+      # and a retraction parameter it cannot identify must each FAIL.
       - name: Self-test the checker
         run: python3 tools/lint/scpi_sd_arm_path.py --self-test
 
+      # Reads BOTH files; neither is optional. An entry point that can be
+      # skipped is one that can report a pass having examined nothing.
       - name: Check the SD arm-refusal ordering
         run: python3 tools/lint/scpi_sd_arm_path.py
