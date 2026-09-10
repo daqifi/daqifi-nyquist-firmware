@@ -1655,6 +1655,29 @@ void sd_card_manager_ProcessState() {
                     SD_TakeMutexDebug(gSDCardData.wMutex, "unmount_strand");
                     size_t unmountStranded = CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf);
                     CircularBuf_Reset(&gSDCardData.wCirbuf);
+                    /* #915: THE PENDING CHUNK COUNTS TOO, and the count above
+                     * cannot see it -- CircularBuf_ProcessBytes already handed
+                     * that chunk out, so the ring no longer holds it. The two
+                     * inner-loop exits are not symmetric: the ERROR exit
+                     * reports it and clears the pending state, while the
+                     * CAPPED exit (innerIter exhausted without a terminal
+                     * outcome) only sets the flag. Without this, those bytes
+                     * are lost silently -- the exact shape this whole change
+                     * exists to close, surviving on one of its own new
+                     * branches -- and sdCardWritePending is left SET with a
+                     * stale length for whatever runs next.
+                     *
+                     * A no-op on the error path rather than a double count,
+                     * because that path zeroes both fields before breaking.
+                     * Inside the same critical section as the ring reset: the
+                     * loop above mutates these two fields only under wMutex,
+                     * and the strand total should describe one instant. */
+                    if (gSDCardData.sdCardWritePending == 1) {
+                        unmountStranded += gSDCardData.writeBufferLength;
+                        gSDCardData.sdCardWritePending = 0;
+                        gSDCardData.writeBufferLength = 0;
+                        gSDCardData.sdCardWriteBufferOffset = 0;
+                    }
                     xSemaphoreGive(gSDCardData.wMutex);
                     if (unmountStranded > 0u) {
                         Streaming_ReportSdDiscard(unmountStranded);
@@ -2617,12 +2640,30 @@ void sd_card_manager_ProcessState() {
                 }
             }
 
+            /* #915: SNAPSHOT THE LIMIT, because this is the READ half of a
+             * pair this change created. SCPI_StorageSDMaxSizeSet now writes
+             * maxFileSizeBytes inside a critical section, which stops the
+             * WRITE being torn -- but the field is uint64_t, so this read is
+             * two 32-bit loads on PIC32MZ (CLAUDE.md, "Atomicity & Concurrency
+             * Rules": 64-bit always needs a critical section). The SCPI task
+             * runs at priority 7 and this one at 5, so a setter landing
+             * between the two loads yields a limit that was never written --
+             * low half old, high half new. Protecting only the writer moves
+             * the tear, it does not remove it.
+             *
+             * Snapshotted once and used for both the test and the log, so the
+             * message cannot name a different limit from the one that fired. */
+            uint64_t splitLimit;
+            taskENTER_CRITICAL();
+            splitLimit = gpSDCardSettings->maxFileSizeBytes;
+            taskEXIT_CRITICAL();
+
             // Check if file size limit reached and rotation is needed
             if (gSDCardData.fileSplittingEnabled &&
-                gSDCardData.currentFileBytes >= gpSDCardSettings->maxFileSizeBytes) {
+                gSDCardData.currentFileBytes >= splitLimit) {
                 bool rotationDrainErrorLogged = false;
                 LOG_D("[SD] File size limit reached (%llu >= %llu), rotating to next file\r\n",
-                     gSDCardData.currentFileBytes, gpSDCardSettings->maxFileSizeBytes);
+                     gSDCardData.currentFileBytes, splitLimit);
 
                 // Complete any pending write from the chunk processing loop.
                 // The loop can exit with sdCardWritePending=1 (4th chunk read
