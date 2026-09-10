@@ -1051,6 +1051,17 @@ scpi_result_t SCPI_UartConfigGet(scpi_t * context) {
         SCPI_ExecutionError(context, "no UART config set");
         return SCPI_RES_ERR;
     }
+    /* #948 lock order -- the UserUart_GetConfig above MUST stay ahead of this
+     * take. It waits portMAX_DELAY on the UART mutex, and a concurrent
+     * UART:WRITE on the OTHER transport can hold that mutex for the whole of
+     * uart_WriteLocked's ~15 s low-baud timeout. Taking the 2048B shared
+     * response buffer first would pin it -- and with it every other SCPI
+     * command on both USB and WiFi -- for that same ~15 s: exactly the stall
+     * SCPI_UartWrite below is written to avoid, reached through a peer.
+     * Never wait on the UART mutex while holding the shared buffer.
+     * (UserUart_IsEnabled / UserUart_GetActualBaud in the snprintf are plain
+     * reads of gEnabled / gActualBaud and take no mutex, so they are safe to
+     * call from under the buffer.) */
     char *buf = (char *)SCPI_ResponseBuf_Take();
     if (buf == NULL) { return SCPI_RES_ERR; }
     int rx = (cfg.rxDio == USER_UART_PIN_NONE) ? -1 : (int)cfg.rxDio;
@@ -1110,6 +1121,10 @@ scpi_result_t SCPI_UartInvertGet(scpi_t * context) {
         SCPI_ExecutionError(context, "no UART config set");
         return SCPI_RES_ERR;
     }
+    /* #948 lock order -- UserUart_GetConfig above stays ahead of this take for
+     * the same reason as SCPI_UartConfigGet: never wait on the UART mutex
+     * (portMAX_DELAY, up to a concurrent UART:WRITE's ~15 s) while holding the
+     * shared response buffer. Do not reorder. */
     char *buf = (char *)SCPI_ResponseBuf_Take();
     if (buf == NULL) { return SCPI_RES_ERR; }
     snprintf(buf, SCPI_RESPONSE_BUF_SIZE, "{\"RxInv\":%d,\"TxInv\":%d}\n",
@@ -1162,12 +1177,35 @@ scpi_result_t SCPI_UartRead(scpi_t * context) {
         SCPI_ExecutionError(context, "UART not enabled");
         return SCPI_RES_ERR;
     }
+    /* #948: read into a stack local FIRST and take the shared response buffer
+     * only afterwards, for the hex expansion. UserUart_Read waits
+     * portMAX_DELAY on the UART mutex, and a concurrent UART:WRITE on the
+     * OTHER transport can hold that mutex for the whole of uart_WriteLocked's
+     * ~15 s low-baud timeout. Reading into the shared buffer (as this used to)
+     * meant holding the 2048B scratch across that wait, stalling every other
+     * SCPI command on both USB and WiFi -- the read-side twin of the hazard
+     * SCPI_UartWrite above avoids by parsing into its own 128 B local.
+     *
+     * Stack budget for the 256 B local. The #347 rule ("a SCPI callback
+     * needing >=256 B of scratch uses the shared buffer, not a stack local")
+     * sits exactly at this size, so the math is stated rather than assumed.
+     * The smaller of the two tasks that dispatch SCPI is app_WifiTask: 1500
+     * words = 6000 B, measured peak 780 words = 3120 B, so ~2880 B of
+     * headroom; 256 B + frame is ~9 % of that (new worst case ~850 of 1500
+     * words). app_USBDeviceTask (3072 words, peak 1290) is unaffected. For
+     * scale, SCPI_LANSettingsSave/Load in this same file already place an
+     * ~800 B DaqifiSettings local on those same stacks. What the #347 rule
+     * actually targets -- the response-sized allocation, here the
+     * 2*256+1 = 513 B hex expansion and the 2048B buffer behind it -- still
+     * lives in the shared buffer. Do not grow this local: the clamp below is
+     * tied to sizeof(rx), and uart_ReadLocked bounds its writes by the maxLen
+     * it is handed, so `got <= sizeof(rx)` holds by construction. */
+    uint8_t rx[256];
     if (maxN < 0) { maxN = 0; }
-    if (maxN > 256) { maxN = 256; }
-    uint8_t *rx  = SCPI_ResponseBuf_Take();     /* [0..255] read, [256..] hex out */
-    if (rx == NULL) { return SCPI_RES_ERR; }
-    char *out = (char *)(rx + 256);
+    if (maxN > (int32_t)sizeof(rx)) { maxN = (int32_t)sizeof(rx); }
     uint16_t got = UserUart_Read(rx, (uint16_t)maxN);
+    char *out = (char *)SCPI_ResponseBuf_Take();
+    if (out == NULL) { return SCPI_RES_ERR; }
     static const char hexd[] = "0123456789ABCDEF";
     for (uint16_t i = 0; i < got; ++i) {
         out[2 * i]     = hexd[(rx[i] >> 4) & 0x0Fu];
@@ -1180,10 +1218,23 @@ scpi_result_t SCPI_UartRead(scpi_t * context) {
 }
 
 scpi_result_t SCPI_UartCount(scpi_t * context) {
+    /* #948: sample both counters BEFORE taking the shared response buffer.
+     * UserUart_RxPending waits portMAX_DELAY on the UART mutex, and a
+     * concurrent UART:WRITE on the OTHER transport can hold that mutex for the
+     * whole of uart_WriteLocked's ~15 s low-baud timeout -- calling it from
+     * inside the snprintf below held the 2048B shared scratch across that
+     * wait, stalling every other SCPI command on both USB and WiFi. Never wait
+     * on the UART mutex while holding the shared buffer.
+     * (UserUart_RxOverflowCount is a plain 32-bit read and takes no mutex; it
+     * is hoisted alongside its pair only to keep the two samples adjacent --
+     * argument evaluation order inside the old snprintf was unspecified
+     * anyway, so nothing about the reported pair changes.) */
+    unsigned      pending  = (unsigned)UserUart_RxPending();
+    unsigned long overflow = (unsigned long)UserUart_RxOverflowCount();
     char *buf = (char *)SCPI_ResponseBuf_Take();
     if (buf == NULL) { return SCPI_RES_ERR; }
     snprintf(buf, SCPI_RESPONSE_BUF_SIZE, "{\"Pending\":%u,\"Overflow\":%lu}\n",
-             (unsigned)UserUart_RxPending(), (unsigned long)UserUart_RxOverflowCount());
+             pending, overflow);
     SCPI_ResultMnemonic(context, buf);
     SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
