@@ -129,7 +129,17 @@ tDAC7718Config* DAC7718_GetConfig(uint8_t id)
     // `config == NULL` tests at both call sites (DAC7718_Init,
     // DAC7718_ReadWriteReg) stayed permanently dead. Bound-check here once so
     // those existing checks become real instead of touching every call site.
-    if (id >= MAX_DAC7718_CONFIG) {
+    //
+    // Bound against the allocation COUNT, not MAX_DAC7718_CONFIG (Qodo
+    // /improve on #64): strictly stronger, since NewConfig above caps the
+    // counter at MAX, so id < m_DAC7718ConfigCount implies id < MAX and the
+    // index is in range. Identical for every reachable caller today -- the
+    // only id that reaches here is SCPIDAC.c's dacInstanceId, which is 0xFF
+    // until NewConfig succeeds and 0 only once the counter is already 1 --
+    // but this also rejects slot 0 before DAC7718_InitGlobal has run, and
+    // fails safe to NULL under concurrent USB/WiFi SCPI entry into
+    // DAC_EnsureHardwareInitialized rather than returning a mid-memcpy config.
+    if (id >= m_DAC7718ConfigCount) {
         return NULL;
     }
     return &m_DAC7718Config[id];
