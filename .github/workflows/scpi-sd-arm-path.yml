@@ -1,0 +1,71 @@
+name: scpi-sd-arm-path
+
+# #955 and #964 each moved a write on the SD arm's REFUSAL path to inside the
+# claim: the `mode` clear, and FORmat's format-pending retraction (passed in as
+# SD_ArmOrRefuseWithCleanup's onRefused callback). Both are ORDERING
+# properties -- the write must land between the claim being taken and released.
+# Past the release it is an unowned store, and the other SCPI transport (USB
+# pri 7 preempts WiFi pri 2, no shared dispatch mutex) can claim, publish and
+# arm in the gap, so the late store lands on THAT owner's state.
+#
+# The bench cannot catch either. The race needs a preemption window that cannot
+# be aimed at from a client -- single-threaded the entry guard always wins -- so
+# the companion tests (daqifi-python-test-suite#317) assert equivalence and the
+# new contract, not the ordering. A refactor can move either write back out and
+# every one of those tests still passes.
+#
+# So the property is checked here, at its source, for no bench time -- the same
+# answer scpi-claim-path.yml gives for the streaming config-change claim. This
+# is a SEPARATE workflow rather than an extra step there because that gate is
+# named for, and scoped to, the SYSTem:MEMory:* claim path; the SD arm is a
+# different claim, in a different file, with a different failure mode.
+#
+# The path list is deliberately ONE source file rather than the whole SCPI
+# directory: SD_ArmOrRefuseWithCleanup and its wrapper are `static`, so every
+# caller is necessarily in that translation unit, and moving the helper out of
+# it necessarily edits it too. There is no reachable caller this trigger can
+# miss.
+#
+# Deliberately NOT claimed: that the claim is a real exclusion, that
+# UpdateSettings actually arms, or that the branch a write sits in is
+# reachable. This is textual and positional, with no control flow -- the same
+# stated limits as scpi_claim_path.py, tracked as #896, which #971 does not
+# close.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'firmware/src/services/SCPI/SCPIStorageSD.c'
+      - 'tools/lint/scpi_sd_arm_path.py'
+      - 'tools/lint/scpi_wiki_sync.py'
+      - '.github/workflows/scpi-sd-arm-path.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'firmware/src/services/SCPI/SCPIStorageSD.c'
+      - 'tools/lint/scpi_sd_arm_path.py'
+      - 'tools/lint/scpi_wiki_sync.py'
+      - '.github/workflows/scpi-sd-arm-path.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  sd-arm-path:
+    name: A refused SD arm retracts caller state under the claim
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Runs first and separately: the checker's own logic is what decides
+      # whether the gate below means anything, and a checker that examines
+      # nothing reports a pass. Its --self-test covers the vacuity cases
+      # explicitly -- an unreadable source, a helper it cannot find, and a
+      # retraction parameter it cannot identify must each FAIL.
+      - name: Self-test the checker
+        run: python3 tools/lint/scpi_sd_arm_path.py --self-test
+
+      - name: Check the SD arm-refusal ordering
+        run: python3 tools/lint/scpi_sd_arm_path.py
