@@ -622,15 +622,21 @@ size_t Json_Encode(tBoardData* state,
 
             if (!timestampAdded) {
                 /* validMask selected no channel: the sample is real but
-                 * carries nothing to emit. Consume it and end the batch, which
-                 * is what the old `startIndex == initialOffsetIndex` test did
-                 * on the first iteration -- and which, on any later iteration,
-                 * it failed to do, falling into the close-out below and
-                 * emitting a second ']' against the previous sample's array. */
+                 * carries nothing to emit. Consume it and move on to the
+                 * NEXT queued sample rather than ending the batch here --
+                 * this branch writes nothing to charBuffer, so there is
+                 * nothing to close and no reason to stop draining the
+                 * queue. (Qodo catch: an earlier version of this fix used
+                 * `break`, which -- unlike the old `startIndex ==
+                 * initialOffsetIndex` first-iteration check it replaced --
+                 * could stall an entire encoder call on a single
+                 * all-invalid tick, one sample per call, while the queue
+                 * behind it kept growing.) */
                 if (AInSampleList_PopFront(&pPublicSampleList)) {
                     AInSampleList_FreeToPool(pPublicSampleList);
                 }
-                break;
+                qSize--;
+                continue;
             }
 
             // Remove trailing comma and close adc array
