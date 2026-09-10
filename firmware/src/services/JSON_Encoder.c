@@ -131,11 +131,6 @@ size_t Json_Encode(tBoardData* state,
     size_t i = 0;
     bool encodeDIO = false;
     bool encodeADC = false;
-    /* #164: scratch for escape_json_string(). A local, not a static: the BSS
-     * region is full (#925 -- a single new uint32_t no longer links), while
-     * this function runs only on streaming_Task (1392 words, 692 peak), so
-     * ~196 bytes of frame sits comfortably inside the ~2.7 KB of headroom. */
-    char escBuf[JSON_ESC_MAX_LEN];
 
     if (pBuffer == NULL) {
         return 0; // Return 0 if buffer is NULL
@@ -311,9 +306,24 @@ size_t Json_Encode(tBoardData* state,
                     /* #164: the SSID is free-form. SCPI_LANSsidSet() ->
                      * SCPI_SafeParamString() does a bare memcpy with NO
                      * character validation, so a '"' or '\' in the SSID landed
-                     * verbatim in the output and produced invalid JSON. */
+                     * verbatim in the output and produced invalid JSON.
+                     *
+                     * Escape into the existing `tmp` scratch buffer (already
+                     * used by the ip/mac cases above) rather than a new
+                     * stack-local: this file's `Json_Encode` runs only on
+                     * streaming_Task, whose measured peak (692 words) already
+                     * sits right at the documented 2x-of-1392 margin, so ANY
+                     * new stack frame narrows it (Qodo catch). TMP_MAX_LEN
+                     * (64) is smaller than the theoretical worst case
+                     * JSON_ESC_MAX_LEN (193, every one of 32 SSID bytes
+                     * needing a full \u00XX) -- that only matters if this
+                     * field is ever wired into the streaming path (it is not
+                     * today, see the module-level note above) AND carries a
+                     * pathological SSID; the fallback there is the same
+                     * "does not fit escaped -- omit" path every optional
+                     * field in this encoder already takes. */
                     size_t escLen = escape_json_string(wifiSettings->ssid,
-                            (size_t)tmpLen, escBuf, sizeof(escBuf));
+                            (size_t)tmpLen, tmp, TMP_MAX_LEN);
                     if (escLen == 0) {
                         // Does not fit escaped - omit the optional field
                         break;
@@ -321,7 +331,7 @@ size_t Json_Encode(tBoardData* state,
                     int written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "\"ssid\":\"%s\",\n",
-                            escBuf);
+                            tmp);
                     if (written < 0 || written >= (int)(buffSize - startIndex)) {
                         // Optional field - skip on buffer full, continue processing
                         break;
@@ -394,9 +404,13 @@ size_t Json_Encode(tBoardData* state,
                  * check fails -- so nothing reaching here needs escaping TODAY.
                  * The encoder must not depend on a validator in another module
                  * staying that strict, and routing both free-form fields
-                 * through one helper is what keeps them from diverging. */
+                 * through one helper is what keeps them from diverging.
+                 * `tmp` (64 bytes, shared with the ip/mac/ssid cases -- see
+                 * the ssid_tag comment above) is far more than the max
+                 * FRIENDLY_DEVICE_NAME_SIZE-1 (31) unescaped chars this field
+                 * can ever hold. */
                 size_t escLen = escape_json_string(friendlyName,
-                        strlen(friendlyName), escBuf, sizeof(escBuf));
+                        strlen(friendlyName), tmp, TMP_MAX_LEN);
                 if (escLen == 0) {
                     // Does not fit escaped - omit the optional field
                     break;
@@ -404,7 +418,7 @@ size_t Json_Encode(tBoardData* state,
                 int written = snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
                         "\"friendlyName\":\"%s\",\n",
-                        escBuf);
+                        tmp);
                 if (written < 0 || written >= (int)(buffSize - startIndex)) {
                     // Optional field - skip on buffer full, continue processing
                     break;
@@ -673,12 +687,19 @@ size_t Json_Encode(tBoardData* state,
                 startIndex = sampleStart;   // whole block rolls back
                 break;
             }
-            startIndex = closeIndex + closeWritten;
-
-            /* Committed: only now is it safe to consume the queue entry. */
+            /* Committed: only now is it safe to consume the queue entry. Do
+             * NOT advance startIndex past the write yet -- PopFront is
+             * documented fallible (queue teardown / a torn-down receive
+             * mid-encode), and if it returns false the entry we just wrote
+             * is STILL queued. Returning those bytes anyway would let the
+             * same sample be encoded and transmitted again on the next
+             * call (Qodo catch). Only commit startIndex, free the pool
+             * entry and decrement qSize once the pop actually succeeds. */
             if (!AInSampleList_PopFront(&pPublicSampleList)) {
+                startIndex = sampleStart;
                 break;
             }
+            startIndex = closeIndex + closeWritten;
             AInSampleList_FreeToPool(pPublicSampleList);
             qSize--;
         }
