@@ -120,7 +120,25 @@ typedef struct s_tcpClientContext
      *  increment -- the same unlocked cap that mis-pairs the ring (#956).  So a
      *  difference under that figure is CONSISTENT WITH zero loss, not proof of
      *  it; the reading the race cannot inflate is one taken after outstanding
-     *  completions have drained.  #935 measured 187 B and 190 B in two
+     *  completions have drained.
+     *
+     *  PRECONDITION, and it is not optional: NO RESET SINCE THE LAST DRAIN.
+     *  SYST:STR:START and SYST:STR:STATS:CLEar zero BytesSent and
+     *  BytesConfirmed WITHOUT draining outstanding sends (SCPIInterface.c) --
+     *  the same reset asymmetry #956 names for the ring, applied to these two
+     *  counters.  A completion that lands after the reset adds to Confirmed
+     *  while its Sent increment was erased, so CONFIRMED CAN EXCEED SENT: the
+     *  difference goes negative, and because both are uint64_t it WRAPS to a
+     *  colossal figure if taken unsigned.  Read the difference only on a
+     *  window with no START/CLEar in it.
+     *
+     *  SEPARATELY, and NOT fixed by #956: a genuine short send is never
+     *  retried.  TcpServerFlush zeroes writeBufferLength immediately after a
+     *  successful send(), and no resend path exists -- so bytes the WINC did
+     *  not accept are gone whatever the ring pairing does.  That is a second,
+     *  independent risk source; do not let the ring-pairing story absorb it.
+     *
+     *  #935 measured 187 B and 190 B in two
      *  independent bench runs (~0.016-0.017% of bytes sent), far inside that
      *  figure and far below this field's reading in the same run.  Until #956
      *  lands, do not cite a rise here as evidence of lost stream bytes. */
