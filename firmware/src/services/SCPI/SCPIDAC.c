@@ -23,11 +23,15 @@
 #include "HAL/Power/PowerApi.h"
 #include "../daqifi_settings.h"
 
-// Flag to track if DAC hardware has been initialized
-static bool dacHardwareInitialized = false;
+// Flag to track if DAC hardware has been initialized.
+// volatile: written on whichever SCPI task initialises first and read by the
+// other (CLAUDE.md "Atomicity & Concurrency Rules"). Both are plain aligned
+// scalars, so the accesses themselves are atomic on PIC32MZ; volatile is what
+// stops the compiler caching them or reordering the publish pair below.
+static volatile bool dacHardwareInitialized = false;
 
 // Static DAC instance ID (returned from DAC7718_NewConfig)
-static uint8_t dacInstanceId = 0xFF; // 0xFF = uninitialized
+static volatile uint8_t dacInstanceId = 0xFF; // 0xFF = uninitialized
 
 // Static DAC configuration to avoid stack usage
 static tDAC7718Config dacConfig;
@@ -67,16 +71,37 @@ static bool DAC_EnsureHardwareInitialized(void) {
     dacConfig.CS_Pin = GPIO_PIN_RK0;     // CS on RK0
     dacConfig.RST_Pin = GPIO_PIN_RJ13;   // CLR/RST on RJ13
 
-    // Create DAC configuration and get instance ID
-    dacInstanceId = DAC7718_NewConfig(&dacConfig);
-    if (dacInstanceId == 0xFF) {
+    // Create DAC configuration and get instance ID.
+    //
+    // Allocate into a LOCAL and publish only on success. This helper is
+    // reachable from both SCPI transports at once (see the note in
+    // DAC7718_NewConfig), and DAC7718_NewConfig now hands the single slot to
+    // exactly one racer and returns the 0xFF sentinel to the other. Assigning
+    // that sentinel straight into the shared dacInstanceId -- as this did --
+    // would overwrite the winner's valid id while the winner's
+    // dacHardwareInitialized = true still stands, leaving the DAC inert for
+    // the rest of the boot with every later command silently no-oping inside
+    // DAC7718_GetConfig. A local keeps the loser's failure local to the loser.
+    uint8_t newInstanceId = DAC7718_NewConfig(&dacConfig);
+    if (newInstanceId == 0xFF) {
+        // Refused because another task won the race, not because the table is
+        // genuinely full: the winner publishes its id before setting the flag,
+        // and only sets the flag after DAC7718_Init() has returned, so a flag
+        // observed true means a completed init this command can use.
+        if (dacHardwareInitialized) {
+            return true;
+        }
         LOG_E("DAC_EnsureHardwareInitialized: Failed to allocate DAC configuration");
         return false;
     }
 
     // Initialize DAC hardware with fixed 10V range (range parameter reserved for future use)
-    DAC7718_Init(dacInstanceId, 1);
+    DAC7718_Init(newInstanceId, 1);
 
+    // Publish the id BEFORE the flag: every consumer gates on the flag, so the
+    // id must already be valid when the flag is seen true. Both are volatile,
+    // so the compiler keeps these two stores in this order.
+    dacInstanceId = newInstanceId;
     dacHardwareInitialized = true;
     return true;
 }
