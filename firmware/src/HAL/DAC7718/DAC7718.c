@@ -98,10 +98,26 @@ void DAC7718_InitGlobal( void )
 
 uint8_t DAC7718_NewConfig(const tDAC7718Config *newDAC7718Config)
 {
+    // #64 audit, twin of DAC7718_GetConfig below: this used to take
+    // id = m_DAC7718ConfigCount and memcpy into m_DAC7718Config[id]
+    // unconditionally, so a second call wrote a whole tDAC7718Config past the
+    // end of the one-element array. The `dacInstanceId == 0xFF` test at the
+    // sole call site (SCPIDAC.c DAC_EnsureHardwareInitialized) was therefore
+    // permanently dead, because nothing here could produce 0xFF. Bound-check
+    // before the write, return that sentinel when the table is full, and only
+    // advance the counter once the entry is actually stored -- so a rejected
+    // call leaves no state behind and m_DAC7718ConfigCount keeps meaning
+    // "number of valid entries", which is the invariant this check reads.
+    if (m_DAC7718ConfigCount >= MAX_DAC7718_CONFIG) {
+        LOG_E("DAC7718_NewConfig: config table full (max %u)",
+              (unsigned)MAX_DAC7718_CONFIG);
+        return 0xFFU;   // sentinel: no id allocated
+    }
+
     uint8_t id = m_DAC7718ConfigCount;
-    ++m_DAC7718ConfigCount;
-    
+
     memcpy(&m_DAC7718Config[id], newDAC7718Config, sizeof(tDAC7718Config));
+    ++m_DAC7718ConfigCount;
 
     return id;
 }
