@@ -4978,8 +4978,61 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
              * not a flag set beforehand -- a flag was stealable by a concurrent
              * benchmark arm (see the header's comment). */
             pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
-            sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings);
-            sd_card_manager_ReleaseClaim();   /* #836: mode now holds it */
+            /* #942: the return is CHECKED, mirroring #936/#954's SD:BENCHmark
+             * twin and SD_ArmOrRefuse's contract. The #589 pre-check ~50 lines
+             * above closes the common case; this closes the LOST RACE -- a WiFi
+             * FW update, a WiFi-streaming start on the other transport, or a
+             * bus-jam quarantine landing between that check and this arm. On
+             * that path sd_UpdateSettingsImpl's #589 gate puts `mode` back to
+             * MODE_NONE and arms NOTHING, so IsWriteReady() (which requires
+             * mode == MODE_WRITE) can never become true: the poll below could
+             * only spend its full 5 s and then report "SD file not ready",
+             * blaming the media for the SD task simply not running.
+             *
+             * #955/#963: the release lives in BOTH arms, and on the refused arm
+             * it comes AFTER the mode clear. A clear executed after the release
+             * is an unowned write -- USB SCPI (pri 7) preempts WiFi SCPI (pri 2)
+             * with no shared dispatch mutex, so the other transport can TryClaim
+             * and arm in that gap and our store would silently kill its
+             * operation. The callee already cleared `mode`, so the store here is
+             * a second write of the same value, kept so the invariant is
+             * provable at THIS site rather than by reading the callee -- exactly
+             * as the `!benchArmed` arm in SCPIStorageSD.c states it.
+             *
+             * SCPI_ReleaseSdLoggingArm() is deliberately NOT used here, though
+             * the open-timeout branch below does use it. That helper calls
+             * sd_card_manager_UpdateSettings(), which is a TEARDOWN: mode NONE
+             * is exempt from the #589 gate, so it runs on to force
+             * currentProcessState = DEINIT and raise gSdTeardownRequested. That
+             * is right when the arm SUCCEEDED and we own mode == WRITE. Here we
+             * own nothing, and the SD task is suspended so it will not pump
+             * DEINIT back out; IsBusyLocked() reports every state but IDLE/INIT
+             * as busy, so the manager would read BUSY for the rest of the
+             * suspension -- taking out SYST:STOR:SD:ENAble, the one escape hatch
+             * that is deliberately not suspend-gated. That is the exact wedge
+             * #589 exists to remove (SD_SuspendReasonText's header comment). */
+            bool sdArmed = sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings);
+            if (!sdArmed) {
+                /* #955: clear under the claim, THEN release. */
+                pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                sd_card_manager_ReleaseClaim();
+                const char *why = SD_SuspendReasonText();
+                SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
+                SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
+                                     ifaceAtDetect, ifaceGenPinned,
+                                     ifaceSetsPinned);
+                LOG_E("Cannot start SD logging - could not arm the write "
+                      "(#942: raced the #589 suspend check): %s\r\n",
+                      why ? why : "the SD task is not accepting work");
+                SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+                return SCPI_RES_ERR;
+            }
+            /* #836: armed -- ownership has handed over from the claim flag to
+             * `mode`, which is MODE_WRITE and keeps IsBusy() true, so there is
+             * no gap between releasing here and the manager being busy. #955:
+             * the twin release lives in the refusal arm above; both must exist,
+             * or the manager wedges permanently on that path. */
+            sd_card_manager_ReleaseClaim();
             /* Wait for the file to be open before streaming starts, or early
              * samples are dropped while SD mounts/opens. The two startup flags
              * are polled so a rejection costs milliseconds instead of the full
