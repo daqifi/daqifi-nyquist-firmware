@@ -601,6 +601,56 @@ def _verdict_test(cond, verdict):
     return "false" if negated else "true"
 
 
+def _call_end(blanked, start):
+    """Index of the `)` closing the call whose name begins at `start`, or None.
+
+    Same balanced walk `call_arguments` does; lifted out because two callers
+    now need the call's EXTENT, not its arguments.
+    """
+    i = blanked.find("(", start)
+    if i < 0:
+        return None
+    depth = 0
+    for j in range(i, len(blanked)):
+        if blanked[j] == "(":
+            depth += 1
+        elif blanked[j] == ")":
+            depth -= 1
+            if depth == 0:
+                return j
+    return None
+
+
+def _statement_suffix(blanked, pos):
+    """The blanked text from `pos` to the end of its statement."""
+    ends = [k for k in (blanked.find(ch, pos) for ch in (";", "{", "}"))
+            if k != -1]
+    return blanked[pos:min(ends)] if ends else blanked[pos:]
+
+
+def _returns_at_top_level(block):
+    """True when `block` has a `return` at its OWN brace depth.
+
+    Existence anywhere is not enough. A `return` nested inside a further `if`
+    runs only on that condition, so the branch can still fall through -- audit
+    finding 3, where a ternary error-message rewritten as an `if/else` moved a
+    refusal branch's only `return` one level down. The checker stayed green
+    while execution fell into the readiness poll and released a second time.
+    This is not control flow: it is the difference between "the token is in
+    there somewhere" and "this branch ends".
+    """
+    depth = 0
+    for m in re.finditer(r"[{}]|\breturn\b", _blank(block)):
+        tok = m.group(0)
+        if tok == "{":
+            depth += 1
+        elif tok == "}":
+            depth -= 1
+        elif depth == 1:
+            return True
+    return False
+
+
 def _arm_verdict(body, arm, arm_call, ifs):
     """-> (kind, var, pattern) for how the arm's return is consumed.
 
@@ -610,16 +660,40 @@ def _arm_verdict(body, arm, arm_call, ifs):
     is a refusal, not a pass: with no identifiable verdict, "the success path"
     has no textual meaning and no branch can be placed on either side of it.
     """
-    prefix = _statement_prefix(_blank(body), arm)
+    blanked = _blank(body)
+    prefix = _statement_prefix(blanked, arm)
     m = _ASSIGN_TAIL.search(prefix)
     if m:
+        # THE WHOLE INITIALISER HAS TO BE THE CALL. Only the prefix was read,
+        # so `bool sdArmed = arm(cfg) == false;` was taken as "the verdict is
+        # in sdArmed" while the variable held its NEGATION -- every successful
+        # arm then entered the refusal branch and every refusal skipped it,
+        # with the checker green (audit finding 1). Refused rather than
+        # normalised: `== false` is readable, but the next transformation
+        # would not be, and guessing is how the first hole got in.
+        end = _call_end(blanked, arm)
+        tail = "" if end is None else _statement_suffix(blanked, end + 1)
+        if tail.strip():
+            return "captured_transformed", m.group(1), None
         return "captured", m.group(1), re.escape(m.group(1))
     if _VOID_TAIL.search(prefix):
         return "void", None, None
     if not prefix.strip():
         return "bare", None, None
     if any(cs <= arm < ce for cs, ce, _bs, _be in ifs):
-        return "inline", None, re.escape(arm_call) + r"\s*\(.*\)"
+        # MATCH THIS CALL AND NOTHING APPENDED TO IT. The pattern was
+        # `<name>\s*\(.*\)`, whose `.*` runs from the first `(` to the LAST
+        # `)` in the condition -- so `arm(cfg) && (onRefused == NULL)`
+        # fullmatched as if it were the bare verdict, and the compound guard
+        # this file documents as refused sailed through, retracting on a
+        # SUCCESSFUL arm (audit finding 0). Built from the call's own balanced
+        # text instead, with whitespace made flexible.
+        end = _call_end(blanked, arm)
+        if end is None:
+            return "other", None, None
+        call_src = body[arm:end + 1]
+        return "inline", None, r"\s*".join(
+            re.escape(t) for t in call_src.split())
     return "other", None, None
 
 
@@ -740,7 +814,11 @@ def _helper_problems(text, helper):
         problems.append(_NO_VERDICT % {
             "who": "%s()" % ARM_HELPER, "arm": ARM_CALL,
             "kind": {"bare": "the call stands alone as a statement",
-                     "void": "the return is cast to `(void)`"}.get(
+                     "void": "the return is cast to `(void)`",
+                     "captured_transformed":
+                         "the initialiser does not end at the call, so the "
+                         "variable holds a TRANSFORMATION of the verdict and "
+                         "not the verdict"}.get(
                          kind, "unrecognised consumer")})
         return problems
 
@@ -1146,6 +1224,16 @@ def _stream_arm_problems(text):
             "genuinely not worth acting on, that is an argument to make in a "
             "PR, not a cast." % (STREAM_FN, STREAM_ARM_CALL))
         return problems, 1
+    if kind == "captured_transformed":
+        problems.append(
+            "%s() assigns %s()'s return through a TRANSFORMATION -- the "
+            "initialiser does not end at the call. Whatever the variable then "
+            "holds, it is not the verdict, so every branch placed on it may "
+            "mean the opposite of what it reads (audit finding 1: `= arm(...) "
+            "== false` sent every SUCCESSFUL arm into the refusal branch). "
+            "Assign the call's result plainly and do the comparison in the "
+            "`if` (#942)." % (STREAM_FN, STREAM_ARM_CALL))
+        return problems, 1
     if pattern is None:
         problems.append(
             "%s() consumes %s()'s return in a form this checker cannot read: "
@@ -1191,9 +1279,16 @@ def _stream_arm_problems(text):
         return problems, 1
 
     block = body[block_start:block_end]
-    if not re.search(r"\breturn\b", _blank(block)):
+    if not _returns_at_top_level(block):
         problems.append(
-            "%s()'s refusal branch does not RETURN. Execution falls out of it "
+            "%s()'s refusal branch does not RETURN at its own level -- either "
+            "there is no `return` in it at all, or the only one is nested "
+            "inside a further `if`, so the branch can still fall through "
+            "(audit finding 3: a ternary error-message rewritten as an "
+            "`if/else` moved the return one level down, and this check, which "
+            "only asked whether the token appeared SOMEWHERE, stayed green "
+            "while execution fell into the poll and released a second time). "
+            "Execution falls out of it "
             "into the %s() poll, which on a refused arm can never become true "
             "-- so the 5 s wait and the misdirected 'SD file not ready' that "
             "#942 removed are both back, with the error already pushed (#942)."
@@ -1207,6 +1302,25 @@ def _stream_arm_problems(text):
             "restructure that polls in the success arm and refuses in an "
             "`else`, this checker cannot decide it: teach it the new shape.)"
             % (STREAM_FN, STREAM_POLL))
+
+    # A RELEASE BETWEEN THE ARM AND THE REFUSAL BRANCH DROPS THE CLAIM EARLY.
+    # This half only ever looked inside the refusal block, so moving the
+    # success path's release up to just after the arm passed clean while the
+    # refusal's own clear then ran unowned -- the #955 window, on the newer
+    # half of the file (audit finding 2). Property 1 has always scanned the
+    # whole function for releases; this one now does too.
+    early = [q for q in _call_positions(body, RELEASE_CLAIM)
+             if arm < q < block_start]
+    if early:
+        problems.append(
+            "%s() calls %s() %d time(s) between the arm and the refusal "
+            "branch. Whatever that release is for, the claim is gone before "
+            "the refusal's `%s` clear runs, so that store is unowned and can "
+            "land on the next owner's state -- which is the race #955 closed "
+            "by moving the clear inside the claim. If this is a deliberate "
+            "restructure, teach this file the new shape in the same commit "
+            "(#955/#942)."
+            % (STREAM_FN, RELEASE_CLAIM, len(early), MODE_FIELD))
 
     # ---- property 5, the claim half: clear, THEN release, in the branch -----
     clears = [(m.start(), m.group(1)) for m in re.finditer(
@@ -1933,6 +2047,57 @@ static scpi_result_t decoy(scpi_t * c) {
     assert noreturn != _GOOD_STREAM
     _ck("a refusal branch that falls through into the poll is caught",
         any("does not RETURN" in p for p in check_stream(noreturn)[0]), True)
+
+    # ---- the four shapes the pre-merge audit got past the FIRST version ----
+    # Each is a REALISTIC edit, not dead code: that is what made them findings
+    # rather than the documented textual-checker limit. Each is pinned here so
+    # the fix cannot be undone quietly -- re-running the old corpus green was
+    # exactly how the first hole survived.
+
+    # (0) A compound guard. The inline verdict pattern was `<call>\s*\(.*\)`,
+    # whose `.*` ran to the LAST `)` in the condition, so the extra term was
+    # swallowed and a SUCCESSFUL arm took the retraction path.
+    compound = _GOOD.replace(
+        "if (sd_card_manager_UpdateSettings(cfg)) {",
+        "if (sd_card_manager_UpdateSettings(cfg) && (onRefused == NULL)) {")
+    assert compound != _GOOD
+    _ck("a compound guard on the arm's verdict is refused, not swallowed",
+        any("SUCCESS path" in p for p in check(compound)[0]), True)
+
+    # (1) A transformed capture. Only the assignment PREFIX was read, so the
+    # variable held the NEGATION of the verdict and every branch on it meant
+    # the opposite of what it read.
+    inverted = _GOOD_STREAM.replace(
+        "bool sdArmed = sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings);",
+        "bool sdArmed = sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings) == false;")
+    assert inverted != _GOOD_STREAM
+    _ck("an initialiser that does not end at the arm call is refused",
+        any("TRANSFORMATION" in p for p in check_stream(inverted)[0]), True)
+
+    # (2) The success-path release hoisted above the refusal branch. Only the
+    # refusal BLOCK was scanned, so the claim was gone before its clear ran.
+    hoisted = _GOOD_STREAM.replace(
+        "bool sdArmed = sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings);\n",
+        "bool sdArmed = sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings);\n"
+        "    sd_card_manager_ReleaseClaim();\n")
+    assert hoisted != _GOOD_STREAM
+    _ck("a release between the arm and the refusal branch is caught",
+        any("between the arm and the refusal branch" in p
+            for p in check_stream(hoisted)[0]), True)
+
+    # (3) The refusal's only `return` nested one level down -- the shape an
+    # honest ternary-to-if/else rewrite produces. The old check asked only
+    # whether the token appeared somewhere in the block.
+    nested = _GOOD_STREAM.replace(
+        "        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);\n"
+        "        return SCPI_RES_ERR;\n",
+        "        if (why != NULL) {\n"
+        "            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);\n"
+        "            return SCPI_RES_ERR;\n"
+        "        }\n")
+    assert nested != _GOOD_STREAM
+    _ck("a refusal branch whose only return is nested is caught",
+        any("at its own level" in p for p in check_stream(nested)[0]), True)
 
     # A success-shaped test: the refusal is then in an `else` or a
     # fall-through, which this cannot place. Refused, and said to be refused.
