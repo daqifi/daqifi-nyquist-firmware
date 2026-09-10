@@ -409,13 +409,17 @@ size_t Json_Encode(tBoardData* state,
                  * helper is what keeps them from diverging.
                  *
                  * (b) bound the length SCAN itself, mirroring the ssid_tag
-                 * fix above (Qodo catch): gFriendlyDeviceName is a fixed
-                 * FRIENDLY_DEVICE_NAME_SIZE array whose only writer
-                 * (SetFriendlyName) NUL-terminates it, but per CLAUDE.md
-                 * #409 a static BSS initializer is not guaranteed to have
-                 * run on every reset path on this MCU -- an unwritten array
-                 * is not provably NUL-terminated, so strlen() must not run
-                 * on it un-bounded.
+                 * fix above (Qodo catch on an earlier version of this
+                 * comment: it cited "CLAUDE.md #409" for a BSS-init claim
+                 * that section does not make -- verified against the actual
+                 * file, not memory, before rewriting this). The scan is
+                 * bounded on its own merits, independent of any reset-path
+                 * claim: gFriendlyDeviceName is declared as a fixed
+                 * FRIENDLY_DEVICE_NAME_SIZE array, and a read of it must
+                 * respect that declared bound rather than trust every
+                 * possible producer of its contents to have NUL-terminated
+                 * it -- the same discipline escape_json_string() itself
+                 * already applies via its own inLen parameter.
                  *
                  * `tmp` (64 bytes, shared with the ip/mac/ssid cases -- see
                  * the ssid_tag comment above) is far more than the max
