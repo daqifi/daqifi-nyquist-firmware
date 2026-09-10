@@ -2064,17 +2064,42 @@ scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
     }
 
     // If user sets 0, use safe filesystem maximum (3.9GB for FAT32)
+    uint64_t storedMaxSizeBytes = (maxSizeBytes == 0)
+            ? SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE  // 3.9GB safe default
+            : (uint64_t)maxSizeBytes;
+
+    // 64-bit shared write needs a critical section per CLAUDE.md atomicity
+    // rules — PIC32MZ's 32-bit data bus tears 64-bit stores under task
+    // preemption. maxFileSizeBytes is read live by WRITE_TO_FILE from
+    // app_SDCardTask on every pass; without this, that reader could see a
+    // torn intermediate value.
+    taskENTER_CRITICAL();
+    pSDCardRuntimeConfig->maxFileSizeBytes = storedMaxSizeBytes;
+    taskEXIT_CRITICAL();
+
     if (maxSizeBytes == 0) {
-        pSDCardRuntimeConfig->maxFileSizeBytes = SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE;  // 3.9GB safe default
         LOG_D("SD:MAXSize - Using filesystem maximum: %llu bytes (3.9GB)\r\n",
-              pSDCardRuntimeConfig->maxFileSizeBytes);
+              storedMaxSizeBytes);
     } else {
-        pSDCardRuntimeConfig->maxFileSizeBytes = (uint64_t)maxSizeBytes;
         LOG_D("SD:MAXSize - Set max file size to %llu bytes\r\n",
-              pSDCardRuntimeConfig->maxFileSizeBytes);
+              storedMaxSizeBytes);
     }
 
-    sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+    /* #915: Config-only write — do NOT call sd_card_manager_UpdateSettings()
+     * here. UpdateSettings() unconditionally forces SD state to
+     * DEINIT -> UNMOUNT_DISK -> INIT -> OPEN_FILE, which closes any active
+     * WRITE file, resets fileCounter to 0, and on the next open truncates it
+     * with SYS_FS_FILE_OPEN_WRITE_PLUS -- destroying an in-progress log
+     * while this command still returns SCPI_RES_OK. Inside an open rotation
+     * window it is worse: OPEN_FILE additionally resets the circular buffer,
+     * discarding up to 32 KB uncounted.
+     *
+     * maxFileSizeBytes is consulted LIVE off this same aliased struct by
+     * WRITE_TO_FILE on every pass (gpSDCardSettings points at the identical
+     * object this function just wrote), so a config-only write already
+     * takes effect for the next size check -- bouncing the state machine
+     * buys nothing but data loss. Same reasoning SCPI_StorageSDMinFreeSet
+     * documents for the same struct. */
     result = SCPI_RES_OK;
 
 __exit_point:

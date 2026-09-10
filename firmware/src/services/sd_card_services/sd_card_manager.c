@@ -1519,9 +1519,14 @@ void sd_card_manager_ProcessState() {
             if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
                 // --- Drain all in-flight data before closing file ---
                 // 1. Flush pending writeBuffer (already extracted but not yet written)
+                bool unmountDrainErrorLogged = false;
+                /* #915: set whenever a loop exhausts its bounded retry count
+                 * without reaching a terminal (success or error) outcome --
+                 * the case neither the per-chunk error report below nor the
+                 * loop's own bookkeeping otherwise catches. */
+                bool unmountDrainCapped = false;
                 {
                     int drainIter = 0;
-                    bool unmountDrainErrorLogged = false;
                     while (gSDCardData.sdCardWritePending == 1 && drainIter < 100) {
                         int pendingLen = SDCardWrite();
                         if (pendingLen > 0 && (size_t)pendingLen >= gSDCardData.writeBufferLength) {
@@ -1542,12 +1547,25 @@ void sd_card_manager_ProcessState() {
                                 unmountDrainErrorLogged = true;
                                 LOG_E("[SD] Error flushing pending write before unmount");
                             }
+                            /* #915: this chunk was already extracted from
+                             * wCirbuf (WRITE_TO_FILE's own extract, still
+                             * pending at STOP time), so it is gone from the
+                             * ring whether or not the write below succeeded.
+                             * Count it before clearing -- mirrors #825/#838's
+                             * identical fix for the rotation-drain twin of
+                             * this exact loop. */
+                            Streaming_ReportSdDiscard(gSDCardData.writeBufferLength);
                             gSDCardData.sdCardWritePending = 0;
                             gSDCardData.writeBufferLength = 0;
                             gSDCardData.sdCardWriteBufferOffset = 0;
                             break;
                         }
                         drainIter++;
+                    }
+                    if (gSDCardData.sdCardWritePending == 1) {
+                        /* #915: drainIter exhausted its bound without the
+                         * flush reaching a terminal outcome. */
+                        unmountDrainCapped = true;
                     }
 
                     // 2. Drain circular buffer — extract remaining data (NOT sector-aligned)
@@ -1589,6 +1607,12 @@ void sd_card_manager_ProcessState() {
                                         unmountDrainErrorLogged = true;
                                         LOG_E("[SD] Error draining buffer before unmount");
                                     }
+                                    /* #915: same obligation as the pending-flush
+                                     * exit above -- this chunk already left
+                                     * wCirbuf via CircularBuf_ProcessBytes, so
+                                     * it is gone whether or not the write
+                                     * reached the card. Mirrors #825/#838. */
+                                    Streaming_ReportSdDiscard(gSDCardData.writeBufferLength);
                                     gSDCardData.sdCardWritePending = 0;
                                     gSDCardData.writeBufferLength = 0;
                                     gSDCardData.sdCardWriteBufferOffset = 0;
@@ -1596,11 +1620,46 @@ void sd_card_manager_ProcessState() {
                                 }
                                 innerIter++;
                             }
+                            if (gSDCardData.sdCardWritePending == 1) {
+                                /* #915: innerIter exhausted its bound without
+                                 * the write reaching a terminal outcome. */
+                                unmountDrainCapped = true;
+                            }
                         } else {
                             xSemaphoreGive(gSDCardData.wMutex);
                             break;
                         }
                         drainIter++;
+                    }
+                    if (CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf) > 0) {
+                        /* #915: either drainIter exhausted its bound while the
+                         * ring still had data, or the defensive
+                         * "already pending" branch above broke out early --
+                         * either way, what remains here was never extracted. */
+                        unmountDrainCapped = true;
+                    }
+                }
+
+                /* #915: account for anything the two drains above could not
+                 * fully write out. A clean drain leaves both the pending
+                 * chunk and the ring empty, so this is a no-op on every
+                 * normal stop -- the report/log below are gated on
+                 * `unmountStranded > 0u`, the same guard
+                 * sd_AbandonRotationWindow uses for the identical rotation-
+                 * time case. Only a loop that logged an error, or exhausted
+                 * its bounded retry count without reaching a terminal
+                 * outcome, can leave bytes behind here. This is the stop-
+                 * time twin of #825/#838, which fixed only the rotation
+                 * drain's version of this gap. */
+                if (unmountDrainErrorLogged || unmountDrainCapped) {
+                    SD_TakeMutexDebug(gSDCardData.wMutex, "unmount_strand");
+                    size_t unmountStranded = CircularBuf_NumBytesAvailable(&gSDCardData.wCirbuf);
+                    CircularBuf_Reset(&gSDCardData.wCirbuf);
+                    xSemaphoreGive(gSDCardData.wMutex);
+                    if (unmountStranded > 0u) {
+                        Streaming_ReportSdDiscard(unmountStranded);
+                        LOG_E("[SD] unmount drain incomplete: discarded %u buffered byte(s)",
+                              (unsigned)unmountStranded);
                     }
                 }
 
@@ -3570,9 +3629,21 @@ static bool sd_UpdateSettingsImpl(sd_card_manager_settings_t *pSettings,
     /* #824: decide the "is this WRITE session a streaming log?" latch.
      *
      * Only an ARM answers it, and it answers by which wrapper it called. A
-     * teardown (mode NONE) clears it. Everything else -- notably a config
-     * setter like SYST:STOR:SD:MAXSize, which reaches here with `mode`
-     * already WRITE and no intention of arming anything -- leaves it alone.
+     * teardown (mode NONE) clears it. Everything else -- a caller reaching
+     * this function via the generic sd_card_manager_UpdateSettings() wrapper
+     * with `mode` still non-NONE -- leaves it alone.
+     *
+     * #915 removed the one caller that used to land here in exactly that
+     * shape: SYST:STOR:SD:MAXSize called UpdateSettings() with `mode`
+     * already WRITE, to no purpose but bouncing the state machine and
+     * truncating the active log (UpdateSettings forces DEINIT ->
+     * UNMOUNT_DISK -> ... -> OPEN_FILE unconditionally, regardless of what
+     * it is "supposed" to leave alone). MAXSize is now a config-only write
+     * that never calls this function at all. Every remaining
+     * UpdateSettings() caller sets `mode = SD_CARD_MANAGER_MODE_NONE` before
+     * calling, so the branch below is presently a defensive no-op rather
+     * than a live path -- kept because `arm` is a per-call parameter this
+     * function cannot require a future caller to get right.
      *
      * THIS USED TO BE INFERRED FROM THE MANAGER'S STATE, and every version of
      * that inference was wrong in a different window. Recorded so nobody
