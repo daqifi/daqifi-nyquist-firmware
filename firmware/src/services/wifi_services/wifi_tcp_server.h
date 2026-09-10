@@ -122,15 +122,36 @@ typedef struct s_tcpClientContext
      *  it; the reading the race cannot inflate is one taken after outstanding
      *  completions have drained.
      *
-     *  PRECONDITION, and it is not optional: NO RESET SINCE THE LAST DRAIN.
+     *  PRECONDITION, and it is stronger than "no reset in the window".  THE
+     *  ABSOLUTE TOTALS ARE VALID ONLY SINCE A RESET TAKEN WITH NOTHING IN
+     *  FLIGHT (tcpInFlight == 0).
+     *
      *  SYST:STR:START and SYST:STR:STATS:CLEar zero BytesSent and
      *  BytesConfirmed WITHOUT draining outstanding sends (SCPIInterface.c) --
      *  the same reset asymmetry #956 names for the ring, applied to these two
-     *  counters.  A completion that lands after the reset adds to Confirmed
-     *  while its Sent increment was erased, so CONFIRMED CAN EXCEED SENT: the
-     *  difference goes negative, and because both are uint64_t it WRAPS to a
-     *  colossal figure if taken unsigned.  Read the difference only on a
-     *  window with no START/CLEar in it.
+     *  counters.  A completion landing after such a reset adds to Confirmed
+     *  while its Sent contribution was erased, and NOTHING EVER PUTS IT BACK:
+     *  BytesSent is written in exactly three places, the += at flush and the
+     *  two resets.  The offset is PERMANENT for the rest of the session, so a
+     *  later drain does not repair it and a later reset-free window inherits
+     *  it.
+     *
+     *  Both directions of that offset are bad, and the SILENT one is the
+     *  likelier hazard.  Confirmed > Sent makes the difference negative, and
+     *  since both are uint64_t an unsigned subtraction WRAPS to ~1.8e19,
+     *  which reads as catastrophic loss.  But the offset can equally CANCEL a
+     *  real loss: 100 B sent, CLEar before its completion, drain (Sent=0,
+     *  Confirmed=100), then a clean window of 1400 issued and 1300 confirmed
+     *  leaves Sent == Confirmed == 1400 with 100 bytes genuinely gone.  That
+     *  reads as zero loss and satisfies "no reset in this window".
+     *
+     *  It is invisible in the partial counters too: after a CLEar the popped
+     *  sendSize is 0, so the `sendSize > 0` guard below suppresses the
+     *  partial-send flag entirely -- only Confirmed moves.
+     *
+     *  WHAT IS SAFE: a DELTA between two drained snapshots inside one
+     *  uncontaminated epoch.  To re-establish one, reset with the ring
+     *  drained.
      *
      *  SEPARATELY, and NOT fixed by #956: a genuine short send is never
      *  retried.  TcpServerFlush zeroes writeBufferLength immediately after a
