@@ -38,7 +38,7 @@ void DAC7718_InitGlobal( void );
  * Creates a new configuration for the specified DAC7718 module and 
  * returns the id
  * @param newDAC7718Config Pointer to DAC7718 configuration structure
- * @return Configuration ID
+ * @return Configuration ID, or 0xFF if the configuration table is full
  */
 uint8_t DAC7718_NewConfig(const tDAC7718Config *newDAC7718Config);
     
