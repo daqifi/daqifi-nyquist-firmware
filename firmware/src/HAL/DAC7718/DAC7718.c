@@ -108,6 +108,14 @@ uint8_t DAC7718_NewConfig(const tDAC7718Config *newDAC7718Config)
 
 tDAC7718Config* DAC7718_GetConfig(uint8_t id)
 {
+    // #64 audit: this used to return &m_DAC7718Config[id] unconditionally,
+    // so an out-of-range id read/wrote past the one-element array while the
+    // `config == NULL` tests at both call sites (DAC7718_Init,
+    // DAC7718_ReadWriteReg) stayed permanently dead. Bound-check here once so
+    // those existing checks become real instead of touching every call site.
+    if (id >= MAX_DAC7718_CONFIG) {
+        return NULL;
+    }
     return &m_DAC7718Config[id];
 }
 
