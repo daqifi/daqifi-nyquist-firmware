@@ -1039,7 +1039,8 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context);
  * the guard was defensive there rather than load-bearing. #889 -- fixed by
  * #941 (merged e309cb945) -- closed that gap: AD7609_ConvertToVoltage now
  * applies runtimeConfig->CalM/CalB on every call, via AD7609_ScaleToVolts
- * (HAL/ADC/AD7609.c:547-548; arithmetic in AD7609Scale.h:81). The
+ * (HAL/ADC/AD7609.c:547-548; the arithmetic is AD7609Scale.h:86-87,
+ * `scaled * calM + calB`). The
  * parameter-discarding statement is gone -- HAL/ADC/AD7609.c:517 is a
  * comment line now -- so as of #941 the guard IS load-bearing for those
  * eight channels too, the same as it always was for the MC12b path.
@@ -1338,7 +1339,7 @@ scpi_result_t SCPI_ADCCalFSave(scpi_t * context) {
  * both paths, MC12b (MC12b_ConvertToVoltage, HAL/ADC/MC12bADC.c:255,258;
  * dispatch is per-channel Type, ADC_ConvertToVoltageByIndex, HAL/ADC.c:479)
  * and AD7609 (AD7609_ConvertToVoltage, HAL/ADC/AD7609.c:547-548, via
- * AD7609_ScaleToVolts, AD7609Scale.h:81). That is all 24 NQ1 entries and all
+ * AD7609_ScaleToVolts, AD7609Scale.h:86-87). That is all 24 NQ1 entries and all
  * 16 NQ3 entries -- 8 monitoring (NQ3BoardConfig.c:122 splices them in as
  * .Type = AIn_MC12bADC) plus the 8 AD7609 USER channels that used to be a
  * carve-out here: before #941 AD7609_ConvertToVoltage discarded
