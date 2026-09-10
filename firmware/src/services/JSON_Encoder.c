@@ -17,6 +17,7 @@
 #include "../HAL/TimerApi/TimerApi.h"
 #include "streaming.h"
 #include "services/daqifi_settings.h"
+#include "JSON_StringEscape.h"
 
 #ifndef min
 #define min(x,y) x <= y ? x : y
@@ -30,6 +31,18 @@
 #define TMP_MAX_LEN                                 64
 //! Temporal buffer used for JSON encoding purposes
 static char tmp[ TMP_MAX_LEN ];
+
+/* #164: every closer that MUST still fit after the bytes it closes have been
+ * written. Each reserve is derived from sizeof() the literal that is actually
+ * emitted, so a reservation and its literal can never drift apart. These
+ * replace the old ">= 65" magic pre-check, which reserved a byte count with no
+ * relationship to anything it was protecting. */
+#define JSON_OBJ_CLOSE      "\n}\n"
+#define JSON_OBJ_CLOSE_LEN  (sizeof(JSON_OBJ_CLOSE) - 1u)   /* 3 */
+#define JSON_DI_CLOSE       "],\n"
+#define JSON_DI_CLOSE_LEN   (sizeof(JSON_DI_CLOSE) - 1u)    /* 3 */
+#define JSON_AI_CLOSE       "\n],\n"
+#define JSON_AI_CLOSE_LEN   (sizeof(JSON_AI_CLOSE) - 1u)    /* 4 */
 
 // Track whether JSON header has been sent (reset when streaming stops)
 static bool jsonHeaderSent = false;
@@ -118,9 +131,15 @@ size_t Json_Encode(tBoardData* state,
     char* charBuffer = (char*) pBuffer;
     size_t startIndex = 0;
     size_t initialOffsetIndex = 0;
+    size_t objStart = 0;
     size_t i = 0;
     bool encodeDIO = false;
     bool encodeADC = false;
+    /* #164: scratch for escape_json_string(). A local, not a static: the BSS
+     * region is full (#925 -- a single new uint32_t no longer links), while
+     * this function runs only on streaming_Task (1392 words, 692 peak), so
+     * ~196 bytes of frame sits comfortably inside the ~2.7 KB of headroom. */
+    char escBuf[JSON_ESC_MAX_LEN];
 
     if (pBuffer == NULL) {
         return 0; // Return 0 if buffer is NULL
@@ -155,6 +174,10 @@ size_t Json_Encode(tBoardData* state,
     }
 
     // Start JSON sample object (write at current offset)
+    /* #164: rollback point for the object as a whole. Any failure that would
+     * leave this object open must restore startIndex to here -- never emit a
+     * bare "{\n" and call it a return value. */
+    objStart = startIndex;
     int objWritten = snprintf(charBuffer + startIndex, buffSize - startIndex, "{\n");
     if (objWritten < 0 || objWritten >= (int)(buffSize - startIndex)) {
         // Could not start a new JSON object; return what we have (e.g., header)
@@ -176,7 +199,11 @@ size_t Json_Encode(tBoardData* state,
                         "\"ts\":%u,\n",
                         state->StreamTrigStamp);
                 if (written < 0 || written >= (int)(buffSize - startIndex)) {
-                    // Null-terminate safely before early return
+                    /* #164: this used to `return startIndex`, which emitted a
+                     * bare "{\n" -- an object opened and never closed. Roll the
+                     * object back and return only bytes that are complete on
+                     * their own (the metadata header, or nothing at all). */
+                    startIndex = objStart;
                     if (buffSize > 0) {
                         size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
                         charBuffer[term] = '\0';
@@ -213,6 +240,8 @@ size_t Json_Encode(tBoardData* state,
                 inet_ntop(AF_INET, &wifiSettings->ipAddr.Val, tmp, TMP_MAX_LEN);
                 tmpLen = strlen(tmp);
                 if (tmpLen > 0) {
+                    /* Fixed-format dotted quad from inet_ntop() -- no character
+                     * outside [0-9.] can occur, so no escaping is needed. */
                     int written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "\"ip\":\"%s\",\n",
@@ -249,6 +278,8 @@ size_t Json_Encode(tBoardData* state,
                 wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 tmpLen = MacAddr_ToString(wifiSettings->macAddr.addr, tmp, TMP_MAX_LEN);
                 if (tmpLen > 0) {
+                    /* Fixed-format hex-and-colons from MacAddr_ToString() -- no
+                     * character needing an escape can occur. */
                     int written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "\"mac\":\"%s\",\n",
@@ -266,10 +297,20 @@ size_t Json_Encode(tBoardData* state,
                 wifi_manager_settings_t* wifiSettings = &state->wifiSettings;
                 tmpLen = min(strlen(wifiSettings->ssid), WDRV_WINC_MAX_SSID_LEN);
                 if (tmpLen > 0) {
+                    /* #164: the SSID is free-form. SCPI_LANSsidSet() ->
+                     * SCPI_SafeParamString() does a bare memcpy with NO
+                     * character validation, so a '"' or '\' in the SSID landed
+                     * verbatim in the output and produced invalid JSON. */
+                    size_t escLen = escape_json_string(wifiSettings->ssid,
+                            (size_t)tmpLen, escBuf, sizeof(escBuf));
+                    if (escLen == 0) {
+                        // Does not fit escaped - omit the optional field
+                        break;
+                    }
                     int written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "\"ssid\":\"%s\",\n",
-                            wifiSettings->ssid);
+                            escBuf);
                     if (written < 0 || written >= (int)(buffSize - startIndex)) {
                         // Optional field - skip on buffer full, continue processing
                         break;
@@ -336,10 +377,23 @@ size_t Json_Encode(tBoardData* state,
                 if (friendlyName[0] == '\0') {
                     break;  // unset — omit the field
                 }
+                /* #164: defence in depth. daqifi_settings_FriendlyNameIsValid()
+                 * (#625) already rejects '"', '\' and every byte outside
+                 * 0x20..0x7E, and SetFriendlyName() clears the cache when that
+                 * check fails -- so nothing reaching here needs escaping TODAY.
+                 * The encoder must not depend on a validator in another module
+                 * staying that strict, and routing both free-form fields
+                 * through one helper is what keeps them from diverging. */
+                size_t escLen = escape_json_string(friendlyName,
+                        strlen(friendlyName), escBuf, sizeof(escBuf));
+                if (escLen == 0) {
+                    // Does not fit escaped - omit the optional field
+                    break;
+                }
                 int written = snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
                         "\"friendlyName\":\"%s\",\n",
-                        friendlyName);
+                        escBuf);
                 if (written < 0 || written >= (int)(buffSize - startIndex)) {
                     // Optional field - skip on buffer full, continue processing
                     break;
@@ -361,7 +415,9 @@ size_t Json_Encode(tBoardData* state,
                 buffSize - startIndex,
                 "\"di\":[");
         if (written < 0 || written >= (int)(buffSize - startIndex)) {
-            // Null-terminate safely before early return
+            /* #164: was `return startIndex`, i.e. a bare "{\n". Roll the object
+             * back instead -- if six bytes will not fit, nothing else will. */
+            startIndex = objStart;
             if (buffSize > 0) {
                 size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
                 charBuffer[term] = '\0';
@@ -372,18 +428,30 @@ size_t Json_Encode(tBoardData* state,
 
         size_t diElementsStart = startIndex;
 
-        while (((buffSize - startIndex) >= 65) && (!DIOSampleList_IsEmpty(&state->DIOSamples))) {
+        /* #164: the ">= 65" pre-check is gone. A DIO element is popped as soon
+         * as it is written and cannot be put back, so instead of a magic
+         * margin each element reserves exactly the two closers that must still
+         * fit after it: this array's "],\n" and the enclosing object's "\n}\n".
+         * That is what makes the two failure branches below unreachable rather
+         * than merely unlikely. */
+        while (!DIOSampleList_IsEmpty(&state->DIOSamples)) {
             DIOSample data;
             // Peek first to avoid data loss if write fails
             if (!DIOSampleList_PeekFront(&state->DIOSamples, &data)) break;
 
+            size_t elemRoom = buffSize - startIndex;
+            if (elemRoom <= (JSON_DI_CLOSE_LEN + JSON_OBJ_CLOSE_LEN)) {
+                break;  // no room for an element plus the closers it owes
+            }
+            elemRoom -= (JSON_DI_CLOSE_LEN + JSON_OBJ_CLOSE_LEN);
+
             int elemWritten = snprintf(charBuffer + startIndex,
-                    buffSize - startIndex,
+                    elemRoom,
                     "{\"ts\":%u, \"mask\":%u, \"val\":%u},",
                     state->StreamTrigStamp - data.Timestamp,
                     data.Mask,
                     data.Values);
-            if (elemWritten < 0 || elemWritten >= (int)(buffSize - startIndex)) {
+            if (elemWritten < 0 || elemWritten >= (int)elemRoom) {
                 break;  // Keep sample for next attempt
             }
 
@@ -400,18 +468,25 @@ size_t Json_Encode(tBoardData* state,
             if (startIndex > 0 && charBuffer[startIndex - 1] == ',') {
                 startIndex -= 1;
             }
-            int closeWritten = snprintf(charBuffer + startIndex,
-                    buffSize - startIndex,
-                    "],\n");
-            if (closeWritten < 0 || closeWritten >= (int)(buffSize - startIndex)) {
-                // Null-terminate safely before early return
-                if (buffSize > 0) {
-                    size_t term = startIndex < buffSize ? startIndex : (buffSize - 1);
-                    charBuffer[term] = '\0';
+            /* Reserve the object closer here too: the elements above are
+             * already popped, so a `return 0` at the bottom of this function
+             * would destroy them. The element reservation guarantees this
+             * branch cannot be taken; it rolls back rather than emitting an
+             * unclosed array if that guarantee is ever broken. */
+            size_t closeRoom = buffSize - startIndex;
+            if (closeRoom <= JSON_OBJ_CLOSE_LEN) {
+                startIndex = diStart;
+            } else {
+                closeRoom -= JSON_OBJ_CLOSE_LEN;
+                int closeWritten = snprintf(charBuffer + startIndex,
+                        closeRoom,
+                        JSON_DI_CLOSE);
+                if (closeWritten < 0 || closeWritten >= (int)closeRoom) {
+                    startIndex = diStart;
+                } else {
+                    startIndex += closeWritten;
                 }
-                return startIndex;
             }
-            startIndex += closeWritten;
         }
 
         initialOffsetIndex = startIndex; // so that analog data can be appended
@@ -433,13 +508,28 @@ size_t Json_Encode(tBoardData* state,
                 BOARDRUNTIME_STREAMING_CONFIGURATION);
         uint8_t precision = (pStreamCfg != NULL) ? pStreamCfg->VoltagePrecision : 4;
         bool rawMode = (pStreamCfg != NULL) ? pStreamCfg->RawOutputMode : false;   /* #158/#270 */
-        while (((buffSize - startIndex) >= 65) && (qSize > 0)) {
-            if (!AInSampleList_PopFront(&pPublicSampleList)) {
+        /* #164: the ">= 65" pre-check is gone; the loop now ends when a sample
+         * does not fit, which the per-sample rollback below makes safe. */
+        while (qSize > 0) {
+            /* #164: PEEK -- never pop -- until this sample's whole block is on
+             * the wire, exactly as csv_encoder.c's tryWriteRow() has always
+             * done. The old code did PopFront() up front and FreeToPool() at
+             * the bottom, so a buffer-full part way through the channel loop
+             * destroyed a sample that had only been partly encoded. */
+            if (!AInSampleList_PeekFront(&pPublicSampleList)) {
                 break;
             }
             if (pPublicSampleList == NULL)
                 break;
-            qSize--;
+
+            /* Rollback point for this sample's atomic unit, which is the whole
+             * of  "ts":<t>,\n"ai":[\n <channels> \n],\n  -- not just one
+             * snprintf. The old code advanced startIndex past "ts":<t>,\n and
+             * only then tried "ai":[\n; on failure it left the timestamp
+             * committed, and the close-out below then stripped the ",\n" and
+             * appended "\n],\n", emitting a ']' that closes nothing. */
+            size_t sampleStart = startIndex;
+            bool sampleOk = true;
             bool timestampAdded = false;
             // Clamp to the sample's own channelCount in case the mapping and
             // the sample fall out of sync. Defensive — they should always match.
@@ -459,13 +549,19 @@ size_t Json_Encode(tBoardData* state,
                             buffSize - startIndex,
                             "\"ts\":%u,\n",
                             pPublicSampleList->Timestamp);
-                    if (written < 0 || written >= (int)(buffSize - startIndex)) break;
+                    if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                        sampleOk = false;
+                        break;
+                    }
                     startIndex += written;
 
                     written = snprintf(charBuffer + startIndex,
                             buffSize - startIndex,
                             "\"ai\":[\n");
-                    if (written < 0 || written >= (int)(buffSize - startIndex)) break;
+                    if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                        sampleOk = false;
+                        break;
+                    }
                     startIndex += written;
                     timestampAdded = true;
                 }
@@ -509,22 +605,65 @@ size_t Json_Encode(tBoardData* state,
                             channelId,
                             (int)precision, voltage);
                 }
-                if (written < 0 || written >= (int)(buffSize - startIndex)) break;
+                if (written < 0 || written >= (int)(buffSize - startIndex)) {
+                    sampleOk = false;
+                    break;
+                }
                 startIndex += written;
             }
 
-            AInSampleList_FreeToPool(pPublicSampleList);
-            if(startIndex == initialOffsetIndex) //no adc data added
+            if (!sampleOk) {
+                /* Buffer filled part way through this sample. Discard the
+                 * fragment and LEAVE the sample queued -- the next encoder
+                 * call re-encodes it whole. Nothing has been popped. */
+                startIndex = sampleStart;
                 break;
-            // Remove trailing comma and close adc array
-            if (startIndex >= 2 && charBuffer[startIndex - 2] == ',') {
-                startIndex -= 2; // Remove trailing comma
             }
-            int written = snprintf(charBuffer + startIndex,
-                    buffSize - startIndex,
-                    "\n],\n");
-            if (written < 0 || written >= (int)(buffSize - startIndex)) break;
-            startIndex += written;
+
+            if (!timestampAdded) {
+                /* validMask selected no channel: the sample is real but
+                 * carries nothing to emit. Consume it and end the batch, which
+                 * is what the old `startIndex == initialOffsetIndex` test did
+                 * on the first iteration -- and which, on any later iteration,
+                 * it failed to do, falling into the close-out below and
+                 * emitting a second ']' against the previous sample's array. */
+                if (AInSampleList_PopFront(&pPublicSampleList)) {
+                    AInSampleList_FreeToPool(pPublicSampleList);
+                }
+                break;
+            }
+
+            // Remove trailing comma and close adc array
+            size_t closeIndex = startIndex;
+            if (closeIndex >= 2 && charBuffer[closeIndex - 2] == ',') {
+                closeIndex -= 2; // Remove trailing comma
+            }
+            /* Reserve the object closer: a sample may only commit if the
+             * object can still be closed after it. Without this a committed
+             * sample could leave the final "\n}\n" unable to fit, and that
+             * path returns 0 -- discarding every sample already popped by this
+             * call, not just the one that did not fit. */
+            size_t closeRoom = buffSize - closeIndex;
+            if (closeRoom <= JSON_OBJ_CLOSE_LEN) {
+                startIndex = sampleStart;
+                break;
+            }
+            closeRoom -= JSON_OBJ_CLOSE_LEN;
+            int closeWritten = snprintf(charBuffer + closeIndex,
+                    closeRoom,
+                    JSON_AI_CLOSE);
+            if (closeWritten < 0 || closeWritten >= (int)closeRoom) {
+                startIndex = sampleStart;   // whole block rolls back
+                break;
+            }
+            startIndex = closeIndex + closeWritten;
+
+            /* Committed: only now is it safe to consume the queue entry. */
+            if (!AInSampleList_PopFront(&pPublicSampleList)) {
+                break;
+            }
+            AInSampleList_FreeToPool(pPublicSampleList);
+            qSize--;
         }
     }
 
@@ -534,7 +673,7 @@ size_t Json_Encode(tBoardData* state,
     }
     int written = snprintf(charBuffer + startIndex,
             buffSize - startIndex,
-            "\n}\n");
+            JSON_OBJ_CLOSE);
     if (written < 0 || written >= (int)(buffSize - startIndex)) {
         // Truncated or error; incomplete JSON is invalid, signal failure
         if (buffSize > 0) {
