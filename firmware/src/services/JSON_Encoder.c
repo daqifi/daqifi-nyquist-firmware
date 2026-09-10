@@ -398,19 +398,36 @@ size_t Json_Encode(tBoardData* state,
                 if (friendlyName[0] == '\0') {
                     break;  // unset — omit the field
                 }
-                /* #164: defence in depth. daqifi_settings_FriendlyNameIsValid()
-                 * (#625) already rejects '"', '\' and every byte outside
-                 * 0x20..0x7E, and SetFriendlyName() clears the cache when that
-                 * check fails -- so nothing reaching here needs escaping TODAY.
-                 * The encoder must not depend on a validator in another module
-                 * staying that strict, and routing both free-form fields
-                 * through one helper is what keeps them from diverging.
+                /* #164: defence in depth, in two parts.
+                 *
+                 * (a) daqifi_settings_FriendlyNameIsValid() (#625) already
+                 * rejects '"', '\' and every byte outside 0x20..0x7E, and
+                 * SetFriendlyName() clears the cache when that check fails --
+                 * so nothing reaching here needs ESCAPING today. The encoder
+                 * must not depend on a validator in another module staying
+                 * that strict, and routing both free-form fields through one
+                 * helper is what keeps them from diverging.
+                 *
+                 * (b) bound the length SCAN itself, mirroring the ssid_tag
+                 * fix above (Qodo catch): gFriendlyDeviceName is a fixed
+                 * FRIENDLY_DEVICE_NAME_SIZE array whose only writer
+                 * (SetFriendlyName) NUL-terminates it, but per CLAUDE.md
+                 * #409 a static BSS initializer is not guaranteed to have
+                 * run on every reset path on this MCU -- an unwritten array
+                 * is not provably NUL-terminated, so strlen() must not run
+                 * on it un-bounded.
+                 *
                  * `tmp` (64 bytes, shared with the ip/mac/ssid cases -- see
                  * the ssid_tag comment above) is far more than the max
                  * FRIENDLY_DEVICE_NAME_SIZE-1 (31) unescaped chars this field
                  * can ever hold. */
+                size_t friendlyNameLen = 0;
+                while (friendlyNameLen < (size_t)(FRIENDLY_DEVICE_NAME_SIZE - 1)
+                        && friendlyName[friendlyNameLen] != '\0') {
+                    friendlyNameLen++;
+                }
                 size_t escLen = escape_json_string(friendlyName,
-                        strlen(friendlyName), tmp, TMP_MAX_LEN);
+                        friendlyNameLen, tmp, TMP_MAX_LEN);
                 if (escLen == 0) {
                     // Does not fit escaped - omit the optional field
                     break;
