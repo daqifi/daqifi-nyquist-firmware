@@ -1970,7 +1970,19 @@ void sd_card_manager_ProcessState() {
             LOG_D("[SD] Opening file, mode=%d\r\n", gpSDCardSettings->mode);
             if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
                 // Initialize file splitting if enabled
-                gSDCardData.fileSplittingEnabled = (gpSDCardSettings->maxFileSizeBytes > 0);
+                /* #915: 64-bit read, same critical section as the write in
+                 * SCPI_StorageSDMaxSizeSet -- this runs on app_SDCardTask
+                 * (pri 5) and the USB SCPI task (pri 7) preempts it. The
+                 * `> 0` test happens to survive a tear for every value the
+                 * setter accepts (it rejects above 4 GB - 1, and the 0 case
+                 * stores the non-zero FAT32 safe max), but that is a
+                 * property of today's range checks, not of this line --
+                 * widen the setter and this becomes a live bug silently. */
+                uint64_t splitLimitAtOpen;
+                taskENTER_CRITICAL();
+                splitLimitAtOpen = gpSDCardSettings->maxFileSizeBytes;
+                taskEXIT_CRITICAL();
+                gSDCardData.fileSplittingEnabled = (splitLimitAtOpen > 0);
 
                 // Extract base filename and generate actual filename with counter
                 bool bucketOk = true;

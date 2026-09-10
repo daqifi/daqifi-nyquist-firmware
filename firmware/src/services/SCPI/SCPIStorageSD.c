@@ -2243,7 +2243,18 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
 scpi_result_t SCPI_StorageSDMaxSizeGet(scpi_t * context) {
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
-    SCPI_ResultUInt64(context, pSDCardRuntimeConfig->maxFileSizeBytes);
+    /* #915: 64-bit READ needs the same critical section as the write in
+     * SCPI_StorageSDMaxSizeSet -- two 32-bit loads on PIC32MZ. The two SCPI
+     * interfaces are separate tasks at different priorities (USB pri 7,
+     * WiFi pri 2), so a USB setter preempts a WiFi getter mid-read and this
+     * query can otherwise return a half-old/half-new value that was never
+     * stored. Snapshot, then format outside the section. */
+    uint64_t maxSizeSnapshot;
+    taskENTER_CRITICAL();
+    maxSizeSnapshot = pSDCardRuntimeConfig->maxFileSizeBytes;
+    taskEXIT_CRITICAL();
+
+    SCPI_ResultUInt64(context, maxSizeSnapshot);
     return SCPI_RES_OK;
 }
 
