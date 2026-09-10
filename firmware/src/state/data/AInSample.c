@@ -151,42 +151,43 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
          * here used to leave the PREVIOUS samplePoolBase/poolCapacity/nextFree
          * (and poolActive) untouched, so AllocateFromPool kept handing out
          * slots computed from an offset that now belongs to a live transport
-         * ring -- the caller (PrepareStreamingBuffers, SCPIInterface.c) still
-         * reports success and arms streaming on top of that. Invalidate the
+         * ring -- and the caller (PrepareStreamingBuffers, SCPIInterface.c)
+         * reported success and armed streaming on top of that. Invalidate the
          * pool instead of leaving it aliasing: same poolActive-first ordering
          * AInSampleList_Destroy() uses (atomic write, no mutex needed) so a
          * concurrently-running Allocate/FreeToPool cannot race the pointer
-         * clear below. This does not make PrepareStreamingBuffers refuse the
-         * command -- that still needs a change in SCPIInterface.c -- but it
-         * guarantees no sample is ever written into the repartitioned buffer:
-         * AllocateFromPool returns NULL until the next successful (re)init. */
+         * clear below, and AllocateFromPool then returns NULL until the next
+         * successful (re)init.
+         *
+         * PrepareStreamingBuffers ALSO refuses now (same ticket, same branch),
+         * so the caller does not arm at all. An earlier revision of this
+         * comment said the refusal "still needs a change in SCPIInterface.c",
+         * which was true when the branch was split and stopped being true when
+         * the two halves landed together. The invalidation is not made
+         * redundant by the refusal: it is what makes the refusal safe to
+         * return from, since the re-carve has already happened by the time
+         * either of them runs. */
         if (poolOwnsMemory) {
-            /* HEAP-OWNED POOL: hand it to Destroy rather than freeing here.
-             * That state is narrow but reachable -- BoardData.c falls back to
-             * AInSampleList_Initialize()'s malloc when the streaming pool is
-             * unavailable at boot, and a later stream-start re-partition can
-             * then land here, at which point dropping samplePoolBase without
-             * freeing strands ~60 KB of a 74 KB heap, since Destroy()'s free
-             * is guarded on that same pointer being non-NULL.
+            /* #950: NOTHING TO DO, and that is the whole of it.
              *
-             * An earlier revision of this branch freed samplePoolBase inline,
-             * and a review pass found two defects in those three lines that
-             * Destroy does not have: it never DRAINED analogInputsQueue, whose
-             * entries are pointers INTO the block being freed, so a consumer
-             * could pop and dereference freed memory; and it left `nextFree`,
-             * which the fallback initializer allocates separately, unreachable
-             * for the rest of the boot. Reusing the one correct teardown beats
-             * keeping a second, shorter one in step with it.
+             * The aliasing this function's bail-out exists to prevent is
+             * specific to an EXTERNAL pool: that one is a slice of
+             * StreamingBufferPool's static gPoolStorage, so the re-partition
+             * that brought us here has already handed its address range to a
+             * transport ring. A heap-owned pool is a separate pvPortMalloc'd
+             * block (see AInSampleList_Initialize above). A re-carve of
+             * gPoolStorage cannot reassign it, it aliases nothing, and no
+             * caller will use it either -- the caller refuses the start.
              *
-             * Destroy also deletes the sample queue, which is why this is the
-             * OWNED branch only: the external path below is the common one and
-             * has no reason to pay that. A later successful init re-creates the
-             * queue -- its `analogInputsQueue != NULL` test already handles
-             * being called with none. Task context either way (this runs under
-             * a SCPI callback), which is Destroy's stated precondition. */
-            AInSampleList_Destroy();
-            poolAllocCount = 0;      /* Destroy clears the pool, not the counters */
-            poolMaxAllocCount = 0;
+             * Three earlier revisions of this branch did something here and
+             * each was wrong in a new way: an inline free left the sample
+             * queue holding pointers into freed memory and stranded the
+             * separately-allocated free list; delegating to
+             * AInSampleList_Destroy fixed both and then deleted the queue,
+             * so the next valid init re-created it through the path that
+             * skips the freeHeap >= needed + 1024 reserve. The common factor
+             * was treating a pool that is not in danger as if it were.
+             * Leaving it alone removes the hazard by removing the code. */
             return;
         }
         poolActive = false;
