@@ -43,11 +43,25 @@ static char tmp[ TMP_MAX_LEN ];
 // Track whether JSON header has been sent (reset when streaming stops)
 static bool jsonHeaderSent = false;
 
+/* #164 (audit): one-call DIO deferral -- see the note beside `deferDio` in
+ * Json_Encode. Set when an ADC sample failed to fit a max-room call ONLY
+ * because a committed "di":[...] had already taken room ahead of it, which is
+ * the one shape that leaves the permanence test at the end of the ADC loop
+ * unable to fire. It makes the next max-room call skip the DIO block so that
+ * test gets the whole-buffer measurement it needs, and is spent by that call
+ * whether or not it changed the answer, so it can never latch DIO off.
+ * Written and read only on streaming_Task inside Json_Encode, and cleared
+ * below on the SCPI task at session start -- the same single-writer plus
+ * quiescent-reset discipline jsonHeaderSent already relies on there
+ * (streaming.c, beside csv_ResetEncoder()). */
+static bool jsonDioDeferred = false;
+
 /**
  * @brief Reset JSON encoder state (call when streaming stops)
  */
 void json_ResetEncoder(void) {
     jsonHeaderSent = false;
+    jsonDioDeferred = false;
 }
 
 /**
@@ -459,8 +473,55 @@ size_t Json_Encode(tBoardData* state,
         }
     }
 
+    /* #164 (audit): half the proof that a "did not fit" is PERMANENT and not
+     * merely "full right now". streaming.c hands us `bufferSize - packetSize`
+     * and resets packetSize to 0 before every packet-build loop, so its
+     * batchIdx == 0 call -- which runs on EVERY encoder wake while the AIN
+     * queue is non-empty -- passes the whole encoder buffer, and no call can
+     * ever pass more. Equality therefore means "this call already offered the
+     * most room that will ever exist"; anything less is a partially-filled
+     * buffer a later call will beat, and must keep today's retry-forever
+     * behaviour. Read through the accessor rather than assumed, so a
+     * non-streaming caller with a buffer of its own simply never satisfies it
+     * and stays on the old, non-consuming path. The other half is at the ADC
+     * loop's end; this is declared above the DIO block because the deferral
+     * immediately below needs it too. */
+    const bool fullCapacityCall =
+            (buffSize == (size_t) Streaming_GetEncoderBufferSize());
+
+    /* #164 (audit): the permanence test needs the largest room that will ever
+     * exist, which means BOTH a full-capacity call AND nothing committed
+     * ahead of the ADC block in this object. A committed "di":[...] breaks
+     * the second half, and DIO_StreamingTrigger() (DIO.c) pushes one DIO
+     * sample per streaming tick whenever DIOGlobalEnable is set, so in a
+     * DIO-co-streaming session that can hold on every wake -- leaving a
+     * sample that fits NO buffer stalled at the head of the AIN queue
+     * forever, which is exactly the defect the test exists to break.
+     *
+     * Nothing inside a single call can tell that apart from an honestly-full
+     * buffer, and no bound on the DI array's share exists to test against:
+     * its worst case is MAX_DIO_SAMPLE_COUNT (256, DIOConfig.h) elements of
+     * ~50 B, past even the 65536 B maximum encoder buffer, and 21 of them
+     * already exceed the 1024 B ENCODER_BUFFER_MIN.
+     *
+     * So rather than guess, ARRANGE for the measurement: skip the DIO block
+     * for exactly one max-room call. Nothing is lost -- DI elements are
+     * popped only inside that block, so a skipped call leaves all of them
+     * queued for the next one, and an object carrying "ai" but no "di" while
+     * digital_data was requested is the same shape this encoder already
+     * emits whenever the DI array rolls back (see that path below). The skip
+     * is gated on encodeADC so a DIO-only message can never be turned into a
+     * payload-free object, and on the same fullCapacityCall/objStart == 0
+     * pair the test itself requires, so the latch is spent only on a call
+     * that can actually settle the question. */
+    const bool deferDio = jsonDioDeferred && encodeADC && fullCapacityCall
+            && objStart == 0;
+    if (encodeADC && fullCapacityCall && objStart == 0) {
+        jsonDioDeferred = false;
+    }
+
     // Encode DIO if needed
-    if (encodeDIO) {
+    if (encodeDIO && !deferDio) {
         size_t diStart = startIndex;
 
         int written = snprintf(charBuffer + startIndex,
@@ -567,6 +628,10 @@ size_t Json_Encode(tBoardData* state,
         bool rawMode = (pStreamCfg != NULL) ? pStreamCfg->RawOutputMode : false;   /* #158/#270 */
         /* #164: the ">= 65" pre-check is gone; the loop now ends when a sample
          * does not fit, which the per-sample rollback below makes safe. */
+        /* #164 (audit): `fullCapacityCall`, declared above the DIO block, is
+         * half the proof that a "did not fit" is PERMANENT rather than merely
+         * "full right now". The other half is at this loop's end. */
+        bool sampleDidNotFit = false;
         while (qSize > 0) {
             /* #164: PEEK -- never pop -- until this sample's whole block is on
              * the wire, exactly as csv_encoder.c's tryWriteRow() has always
@@ -674,6 +739,7 @@ size_t Json_Encode(tBoardData* state,
                  * fragment and LEAVE the sample queued -- the next encoder
                  * call re-encodes it whole. Nothing has been popped. */
                 startIndex = sampleStart;
+                sampleDidNotFit = true;   /* #164 audit -- see loop end */
                 break;
             }
 
@@ -709,6 +775,7 @@ size_t Json_Encode(tBoardData* state,
             size_t closeRoom = buffSize - closeIndex;
             if (closeRoom <= JSON_OBJ_CLOSE_LEN) {
                 startIndex = sampleStart;
+                sampleDidNotFit = true;   /* #164 audit -- see loop end */
                 break;
             }
             closeRoom -= JSON_OBJ_CLOSE_LEN;
@@ -717,6 +784,7 @@ size_t Json_Encode(tBoardData* state,
                     JSON_AI_CLOSE);
             if (closeWritten < 0 || closeWritten >= (int)closeRoom) {
                 startIndex = sampleStart;   // whole block rolls back
+                sampleDidNotFit = true;     /* #164 audit -- see loop end */
                 break;
             }
             /* Committed: only now is it safe to consume the queue entry. Do
@@ -735,6 +803,119 @@ size_t Json_Encode(tBoardData* state,
             objHasPayload = true;
             AInSampleList_FreeToPool(pPublicSampleList);
             qSize--;
+        }
+
+        /* #164 (audit, CONFIRMED HIGH): break the head-of-line block that a
+         * sample which can NEVER fit would otherwise create.
+         *
+         * The rollback sites above leave the sample queued. That is right for
+         * "the buffer is full right now" and is an infinite stall for "this
+         * sample does not fit even an EMPTY buffer": the queue is FIFO and
+         * drained only from the front, so such a sample is re-peeked, fails
+         * and is rolled back on every call, forever, taking every sample
+         * behind it with it -- the stream simply stops carrying ADC data with
+         * no error raised. main's loop popped up front, so it LOST the sample
+         * but the queue advanced; this PR's peek-before-pop plus the object
+         * rollback removed the only thing that was advancing it. Reachable on
+         * legal SCPI: CONFigure:ADC:chanCALB accepts any finite double, so a
+         * value like 1e300 makes "%.*f" emit ~324 bytes for ONE channel and a
+         * few channels then exceed a 1024-byte encoder buffer (the accepted
+         * ENCODER_BUFFER_MIN, i.e. SYST:MEM:ENC:BUFfer 1024). It fails toward
+         * silence, the direction CLAUDE.md's SCPI visibility principle calls
+         * out as the worst one.
+         *
+         * Each condition is load-bearing:
+         *
+         *   sampleDidNotFit  -- set ONLY by the three room failures, never by
+         *      the PopFront arm (a queue teardown, where consuming the sample
+         *      is the double-transmit bug that arm exists to prevent).
+         *   fullCapacityCall -- no future call can offer more room; see its
+         *      definition above. Excludes streaming.c's batchIdx > 0 calls,
+         *      which ARE partially-filled buffers and must keep retrying.
+         *   objStart == 0    -- no metadata header sits ahead of this object.
+         *      True on every call but the session's first; excluding that one
+         *      costs a tick and keeps the header's bytes out of the bound
+         *      below (it also has no accounting: that call returns headerLen,
+         *      not 0, so streaming.c would book nothing).
+         *   !objHasPayload   -- nothing else in this object committed. This
+         *      SUBSUMES "this was the first sample the ADC section tried":
+         *      inside the loop startIndex advances only at the commit that
+         *      sets objHasPayload (the all-invalid-validMask path consumes
+         *      its sample without writing a byte), so !objHasPayload means
+         *      sampleStart was still initialOffsetIndex. It also means no
+         *      "di":[...] committed ahead of the ADC block and ate room --
+         *      without it a DIO-co-streaming session would drop samples a
+         *      DIO-free call could have carried, and DIO_StreamingTrigger()
+         *      pushes one sample per streaming tick, so that is the norm, not
+         *      a corner case.
+         *
+         * The bound this buys: the room the sample got was
+         * buffSize - initialOffsetIndex, and on this arm initialOffsetIndex is
+         * either 2 (no digital_data tag -- the ADC block rewinds over the
+         * message-level "ts" too; the deferral above forces this case for one
+         * call when a committed DI array was what stood in the way) or
+         * diStart, that is 2 + that "ts" field and so <= 19, when the tag was
+         * present but the DI array rolled back without committing. The ceiling
+         * any call can ever offer is buffSize - 2. So the test is EXACT
+         * whenever the DI array did not commit, and in the single remaining
+         * shape -- tag requested, array rolled back -- conservative by at most
+         * 17 bytes: only a sample needing within 17 bytes of the ENTIRE
+         * encoder buffer is affected, and the cost there is one dropped
+         * sample, not a stall. Closing even that means changing what
+         * initialOffsetIndex is when the DI array rolls back, which moves the
+         * emitted field order and belongs to #959, not here. The case that IS
+         * a stall -- a DI array that committed -- is NOT left as a residual:
+         * it routes to the deferral arm below, which re-runs this test one
+         * call later at buffSize - 2.
+         *
+         * Action: consume the sample so the queue head advances, and say so
+         * once per session. Nothing here books the loss, deliberately:
+         * objHasPayload is false, so the guard below rolls the object back to
+         * objStart and returns 0, and streaming.c's existing `encoded == 0`
+         * arm books exactly one encoder failure and one dropped sample. That
+         * count is now TRUE -- one sample really was lost -- where before this
+         * fix the same arm re-counted a still-queued sample on every retry. A
+         * dedicated Streaming_Report* entry point (the Streaming_ReportSdDiscard
+         * shape) was considered and rejected for exactly that reason: it would
+         * double-count against the `encoded == 0` arm this path unavoidably
+         * takes. PopFront's return is honoured rather than assumed -- it
+         * rewrites pPublicSampleList with the real head, so nothing stale is
+         * ever freed.
+         *
+         * LOG_E_SESSION, not LOG_E: one line per streaming session (the bit is
+         * cleared by Streaming_ClearStats() at start), on a path that runs at
+         * most once per encoder call, on streaming_Task (1392 words, 692 peak)
+         * -- the same task that already carries streaming.c's LOG_E_SESSION
+         * vsnprintf frames. */
+        if (sampleDidNotFit && fullCapacityCall && objStart == 0) {
+            if (!objHasPayload) {
+                if (AInSampleList_PopFront(&pPublicSampleList)) {
+                    AInSampleList_FreeToPool(pPublicSampleList);
+                }
+                LOG_E_SESSION(LOG_SESSION_JSON_SAMPLE_TOO_LARGE,
+                        "JSON: sample (%u ch) does not fit a %u B encoder "
+                        "buffer at precision %u - dropped",
+                        (unsigned) mapCount, (unsigned) buffSize,
+                        (unsigned) precision);
+            } else if (startIndex == initialOffsetIndex) {
+                /* #164 (audit): the DIO-blocked shape, and the reason the
+                 * `!objHasPayload` arm above stays exact instead of becoming
+                 * a residual. This call offered the most room that will ever
+                 * exist; the ADC block committed nothing into it (startIndex
+                 * never left initialOffsetIndex -- inside the loop it advances
+                 * only at the commit that also sets objHasPayload, and the
+                 * all-invalid-validMask path writes no bytes); yet
+                 * objHasPayload is set, so the payload can only be a
+                 * "di":[...] that took room ahead of us. Whether the sample is
+                 * oversized or the DI array merely happened to be large this
+                 * tick is not decidable here, so decide nothing: ask the next
+                 * max-room call to skip the DIO block and re-run the test
+                 * against the whole buffer. Bounded -- that call spends the
+                 * latch and either fits the sample or takes the drop arm
+                 * above -- so this cannot itself become a new unbounded
+                 * retry. */
+                jsonDioDeferred = true;
+            }
         }
     }
 
