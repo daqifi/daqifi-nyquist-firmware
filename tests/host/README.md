@@ -81,6 +81,24 @@ two greps. What it copies is the **order of the three arms**, so the Makefile
 guards that instead: it locates each arm's marker in `SCPIStorageSD.c` and
 **fails the build** unless they still appear as dir-full → suspend → card.
 
+`test_1004_help_write_abort.c` covers `SCPI_Help`'s (the `HELP` command)
+shared-response-buffer write-abort bound (issue #1004) — the third instance
+of the pattern #947/PR #992 fixed in `SCPI_SysInfoTextGet` and #995/PR #1008
+fixed in `SCPI_GetCommandHistory`. Same technique as `test_943`/`test_953`/
+`test_995`: `SCPIInterface.c` is not includable on the host, so the test
+re-implements the pre-fix and post-fix write **shapes** — the self-gating
+`ScpiHelpWrite` helper's two guards (cumulative deadline, checked before each
+transport call; short-write latch, checked after) — against an injected mock
+clock and mock transport, then compares their verdicts. Unlike `test_995`,
+`SCPI_Help`'s write count is not pinned to a single firmware constant (it
+depends on the registered command table's total text size), so the test uses
+a representative write count from the issue's own measurement plus a sweep
+over a range, rather than one pinned to a `#define`. The Makefile target
+greps the three firmware constants (`SCPI_WRITE_MAX_RETRIES`,
+`SCPI_WRITE_RETRY_DELAY_MS`, `SCPI_HELP_WRITE_BUDGET_MS`) plus the FreeRTOS
+tick-rate/width assumption out of the real source and **fails the build** if
+any has drifted.
+
 `test_json_string_escape.c` covers `firmware/src/services/JSON_StringEscape.h`
 (issue #164) — the JSON string-escaping helper split out of `JSON_Encoder.c`
 so it can be compiled and tested here with no board dependencies. Neither
