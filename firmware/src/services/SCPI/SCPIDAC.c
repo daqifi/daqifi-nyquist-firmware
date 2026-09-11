@@ -11,6 +11,9 @@
 // Harmony
 #include "configuration.h"
 #include "definitions.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
 
 // Project
 #include "Util/StringFormatters.h"
@@ -61,6 +64,24 @@ static volatile uint8_t dacInstanceId = 0xFF; // 0xFF = uninitialized
 // transient execution error) unchanged while making the retry-on-failure
 // path (item 1) safe against the same race.
 static volatile bool dacInitInProgress = false;
+
+// #990 Finding 0 (adversarial audit, PR #990 comment): serializes an entire
+// DAC command's write(s) + latch + BoardData-publish sequence against the
+// OTHER SCPI transport (USB app_USBDeviceTask pri 7, WiFi app_WifiTask pri 2
+// -- see SCPIInterface.c's transport comment). Distinct from dacInitInProgress
+// above (which claims only the one-time hardware-bring-up region and is
+// itself deferred to #989's recursive-mutex redesign) -- this is a NEW,
+// ordinary (non-recursive) mutex scoped to the command layer only, created
+// once in SCPIDAC_InitGlobal(), never touching DAC7718_Init() or
+// gDAC7718_Mutex. Deadlock analysis: DAC7718_ReadWriteReg()/
+// DAC7718_UpdateLatch() take-and-fully-release gDAC7718_Mutex within a single
+// call, never held across a return into this file, so gDacCommandMutex
+// (outer) and gDAC7718_Mutex (inner) nest in one fixed order (outer then
+// inner, same task, never inverted) -- no cycle is possible. Bounded timeout
+// (not portMAX_DELAY), matching DAC7718_Lock()'s own fail-closed idiom, so a
+// stuck holder cannot wedge an entire SCPI transport task.
+static SemaphoreHandle_t gDacCommandMutex = NULL;
+#define SCPIDAC_COMMAND_LOCK_TIMEOUT_MS 2000U
 
 // Static DAC configuration. #980 cleanup: both writers used to assign the
 // same two pin constants on every call into a shared, writable static --
@@ -259,6 +280,45 @@ static uint32_t DAC_VoltageToCounts(double voltage, const AOutModule* module) {
     return counts;
 }
 
+void SCPIDAC_InitGlobal(void) {
+    // Single-threaded, pre-scheduler (called from app_SystemInit() alongside
+    // DAC7718_InitGlobal() -- see app_freertos.c). Same reasoning as
+    // DAC7718_InitGlobal()'s own comment: creating this here, once, avoids a
+    // lazy "if (gDacCommandMutex == NULL) create" TOCTOU race between the two
+    // SCPI transports.
+    if (gDacCommandMutex == NULL) {
+        gDacCommandMutex = xSemaphoreCreateMutex();
+        if (gDacCommandMutex == NULL) {
+            LOG_E("SCPIDAC_InitGlobal: Failed to create command mutex");
+        }
+    }
+}
+
+// Acquire the whole-command serialization lock (see gDacCommandMutex above).
+// Fails closed -- same idiom as DAC7718_Lock() -- rather than let a command
+// proceed unserialized if the mutex was never created or a holder is stuck.
+static bool SCPIDAC_LockCommand(void) {
+    if (gDacCommandMutex == NULL) {
+        LOG_E("SCPIDAC_LockCommand: mutex not created");
+        return false;
+    }
+    if (xSemaphoreTake(gDacCommandMutex,
+            pdMS_TO_TICKS(SCPIDAC_COMMAND_LOCK_TIMEOUT_MS)) != pdTRUE) {
+        LOG_E("SCPIDAC_LockCommand: Failed to acquire command mutex");
+        return false;
+    }
+    return true;
+}
+
+// Mirrors DAC7718_Unlock()'s lockHeld discipline: only give back a lock this
+// call actually took, so a caller that never acquired it (SCPIDAC_LockCommand
+// returned false) cannot release a lock it doesn't hold.
+static void SCPIDAC_UnlockCommand(bool lockHeld) {
+    if (lockHeld && (gDacCommandMutex != NULL)) {
+        xSemaphoreGive(gDacCommandMutex);
+    }
+}
+
 scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
     int channel;
     double voltage;
@@ -294,6 +354,19 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
     if (voltOpt == SCPI_OPT_BAD) {
         return SCPI_RES_ERR;
     }
+
+    // #990 Finding 0 fix: serialize the whole write(s)+latch+publish sequence
+    // below against the other SCPI transport. Taken AFTER parameter parsing
+    // (parsing touches no shared DAC state) and AFTER
+    // DAC_EnsureHardwareInitialized() above -- deliberately not folded
+    // together with dacInitInProgress, which claims a different, one-time
+    // region (see gDacCommandMutex's declaration comment).
+    scpi_result_t result = SCPI_RES_OK;
+    if (!SCPIDAC_LockCommand()) {
+        SCPI_ExecutionError(context, "SOUR:VOLT:LEV: DAC command busy, try again");
+        return SCPI_RES_ERR;
+    }
+
     if (voltOpt == SCPI_OPT_PRESENT) {
         // Two parameters: first is channel (convert to int), second is voltage
         //
@@ -325,14 +398,16 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         if (!(voltage >= 0.0 && voltage <= 255.0)) {
             LOG_E("SOUR:VOLT:LEV: channel out of range (max 255)");
             SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
-            return SCPI_RES_ERR;
+            result = SCPI_RES_ERR;
+            goto cleanup;
         }
         channel = (int)voltage;
         voltage = voltage2;
 
         size_t index = DAC_FindChannelIndex((uint8_t)channel);
         if (index >= pBoardConfigAOutChannels->Size) {
-            return SCPI_RES_ERR;
+            result = SCPI_RES_ERR;
+            goto cleanup;
         }
 
         // Convert voltage to DAC counts using configuration
@@ -345,7 +420,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         uint8_t hwChannel = pBoardConfigAOutChannels->Data[index].Config.DAC7718.ChannelNumber;
         if (hwChannel >= DAC7718_NUM_CHANNELS) {
             LOG_E("SCPI_DACVoltageSet: Invalid DAC7718 channel %u (max %u)", hwChannel, DAC7718_NUM_CHANNELS - 1);
-            return SCPI_RES_ERR;
+            result = SCPI_RES_ERR;
+            goto cleanup;
         }
 
         uint8_t dacRegister = (uint8_t)(DAC7718_REGISTER_OFFSET + hwChannel);
@@ -358,7 +434,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // report the failure instead.
         if (DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts16) == UINT32_MAX) {
             SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to write DAC register");
-            return SCPI_RES_ERR;
+            result = SCPI_RES_ERR;
+            goto cleanup;
         }
 
         // #980 Qodo pre-merge review: DAC7718_UpdateLatch's return (added by
@@ -374,7 +451,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // is still what is physically on the pin.
         if (!DAC7718_UpdateLatch(dacInstanceId)) {
             SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to update DAC latch");
-            return SCPI_RES_ERR;
+            result = SCPI_RES_ERR;
+            goto cleanup;
         }
 
         // Store commanded voltage in BoardData for readback -- only reached
@@ -415,12 +493,19 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // whatever value is already on their outputs. That holds for the
         // pre-SPI failure modes in DAC7718_ReadWriteReg (its own input
         // validation, and a DAC7718_Lock() failure -- both before CS is ever
-        // asserted) and for a channel skipped without a write at all. The one
-        // residual is a write that times out MID-FRAME, where CS was already
-        // asserted and a truncated frame was clocked in: that channel's
-        // shadow is indeterminate either way, and this shape at least
-        // commits it NOW, with an error naming the channel, instead of
-        // leaving it for an unrelated later command's latch to surface.
+        // asserted) and for a channel skipped without a write at all.
+        //
+        // #990 audit Finding 1 (tracked as #1023, non-blocking, deferred):
+        // the one residual is a write that times out MID-FRAME, where CS was
+        // already asserted and a truncated frame was clocked in. That
+        // channel's shadow is INDETERMINATE, not merely "unchanged" -- and
+        // the unconditional latch below can commit that indeterminate value
+        // onto the physical output while BoardData keeps reporting the
+        // channel's OLD value, which then matches neither the indeterminate
+        // latched state nor the requested one. Naming the channel in the
+        // error below is diagnostic, not a fix: it does not resynchronize
+        // BoardData or the shadow register to a known-good state. See #1023
+        // for the shadow-resync / latch-inhibit mechanism this needs.
         //
         // So: try every channel, remember which ones actually took the
         // write, latch UNCONDITIONALLY (this is what drains any uncommitted
@@ -434,18 +519,39 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // condition as SCPI_RES_ERR.
         //
         // Known residual (not closed by this shape, and not fixable inside
-        // this loop): if DAC7718_UpdateLatch() itself fails, the staged
-        // shadows stay uncommitted and a LATER latch can still surface them
-        // -- restoring would mean writing over the same bus that just
-        // failed. This is the same class the single-channel branch and
-        // SCPI_DACUpdate already carry; closing it needs a shadow-resync /
-        // latch-inhibit mechanism, deferred alongside #989 (needs NQ3
-        // hardware to validate the reset arm). Also residual: no lock is
-        // held across this loop, so a concurrent command on the other SCPI
-        // transport can interleave a latch mid-loop -- the end state still
-        // converges (this call's own latch and publish run last for what it
-        // staged), but the transition is not atomic; folding that into #989
-        // rather than adding a second locking mechanism here.
+        // this loop, tracked as #1023 alongside the mid-frame case above):
+        // if DAC7718_UpdateLatch() itself fails, the staged shadows stay
+        // uncommitted and a LATER latch can still surface them -- restoring
+        // would mean writing over the same bus that just failed. This is
+        // the same class the single-channel branch and SCPI_DACUpdate
+        // already carry; closing it needs a shadow-resync / latch-inhibit
+        // mechanism (needs NQ3 hardware to validate the reset arm). Related
+        // to, but a DIFFERENT mechanism than, #989 (which is scoped to the
+        // one-time hardware-init race, not this command's write/latch
+        // sequence) -- see #1023 for why this is its own ticket.
+        //
+        // #990 Finding 0 (adversarial audit): an EARLIER revision of this
+        // comment claimed "no lock is held across this loop... the end
+        // state still converges (this call's own latch and publish run
+        // last for what it staged)". That was WRONG -- and demonstrably so:
+        // the merge-base this PR is built on published BoardData INLINE per
+        // channel, immediately after each write, which is what made the
+        // last WRITE also the last PUBLISH. This shape separates write-all
+        // from publish-all around one trailing latch, so a concurrent
+        // command's write+latch+publish for the SAME channel can land
+        // between this loop's write and this function's publish below --
+        // this call's own latch then commits the OTHER command's shadow
+        // value, while this call's publish below still writes ITS OWN
+        // voltage into BoardData. Readback disagrees with the physical pin
+        // INDEFINITELY, both commands returning OK. gDacCommandMutex (see
+        // its declaration comment above) now serializes this entire
+        // sequence against the other SCPI transport, closing that window
+        // completely -- not just restoring eventual convergence, removing
+        // the race outright, since only one command's sequence is ever in
+        // flight. It does NOT cover a concurrent DAC7718 re-init (a rail
+        // drop clearing dacHardwareInitialized while this loop runs) --
+        // that interaction is separately filed, plausible-only, not
+        // blocking.
         uint32_t counts = DAC_VoltageToCounts(voltage, pDACModule);
 
         // Bound by the AOutArray's own capacity, not just its live Size, so
@@ -494,7 +600,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         if (!DAC7718_UpdateLatch(dacInstanceId)) {
             // Nothing is known to be live; publish nothing.
             SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to update DAC latches");
-            return SCPI_RES_ERR;
+            result = SCPI_RES_ERR;
+            goto cleanup;
         }
 
         // Publish ONLY the channels whose register write actually succeeded
@@ -518,11 +625,17 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
             LOG_E("SOUR:VOLT:LEV: %u of %u channels not set (index mask 0x%02X); the rest are live at the new voltage",
                   (unsigned)failedCount, (unsigned)nChannels, (unsigned)failedMask);
             SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to write DAC register (some channels not set)");
-            return SCPI_RES_ERR;
+            result = SCPI_RES_ERR;
+            goto cleanup;
         }
     }
 
-    return SCPI_RES_OK;
+cleanup:
+    // gDacCommandMutex was definitely taken to reach here (the only earlier
+    // return is SCPIDAC_LockCommand()'s own failure, above, which returns
+    // directly without giving a lock it never took).
+    SCPIDAC_UnlockCommand(true);
+    return result;
 }
 
 scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
@@ -546,6 +659,24 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
     if (chanOpt == SCPI_OPT_BAD) {
         return SCPI_RES_ERR;
     }
+
+    // #990 Finding 0 fix: BOARDDATA_AOUT_LATEST's Get/Set (BoardData.c) do a
+    // plain unprotected memcpy -- no internal critical section, unlike
+    // BOARDDATA_AIN_LATEST's. AOutSample.Voltage is a 64-bit double, which
+    // this project's own atomicity rules require a critical section for on
+    // any cross-context read/write. Joining gDacCommandMutex here (zero
+    // deadlock risk -- this function never calls DAC7718_ReadWriteReg/
+    // UpdateLatch or DAC_EnsureHardwareInitialized, so it never nests with
+    // gDAC7718_Mutex or re-enters this same mutex) means a read here cannot
+    // observe a torn value mid-Set, and cannot observe a partially-published
+    // all-channel write (some channels updated, others not yet) from the
+    // SCPI_DACVoltageSet all-channel branch above.
+    scpi_result_t result = SCPI_RES_OK;
+    if (!SCPIDAC_LockCommand()) {
+        SCPI_ExecutionError(context, "SOUR:VOLT:LEV?: DAC command busy, try again");
+        return SCPI_RES_ERR;
+    }
+
     if (chanOpt == SCPI_OPT_PRESENT) {
         // Get single channel
         // #877: reject before the (uint8_t) narrowing -- 256 would alias onto
@@ -562,12 +693,14 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
         if (channel < 0 || channel > 255) {
             LOG_E("SOUR:VOLT:LEV?: channel out of range (max 255)");
             SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
-            return SCPI_RES_ERR;
+            result = SCPI_RES_ERR;
+            goto cleanup;
         }
         size_t index = DAC_FindChannelIndex((uint8_t)channel);
         if (index >= pBoardConfigAOutChannels->Size) {
             LOG_E("SCPI_DACVoltageGet: Invalid channel %d", channel);
-            return SCPI_RES_ERR;
+            result = SCPI_RES_ERR;
+            goto cleanup;
         }
 
         // Read last commanded voltage from BoardData
@@ -589,7 +722,12 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
         }
     }
 
-    return SCPI_RES_OK;
+cleanup:
+    // gDacCommandMutex was definitely taken to reach here (the only earlier
+    // return is SCPIDAC_LockCommand()'s own failure, above, which returns
+    // directly without giving a lock it never took).
+    SCPIDAC_UnlockCommand(true);
+    return result;
 }
 
 scpi_result_t SCPI_DACUseCalSet(scpi_t * context) {
@@ -617,12 +755,25 @@ scpi_result_t SCPI_DACUpdate(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // #990 Finding 0 fix: this command's latch reaches every channel's
+    // physical output at once (see SCPI_DACVoltageSet's block comment), so it
+    // must join the same serialization -- an unlocked CONF:DAC:UPDATE is
+    // exactly the "unrelated later command's latch" that the Known-residual
+    // comment there warns can surface another command's uncommitted shadow
+    // state mid-sequence.
+    scpi_result_t result = SCPI_RES_OK;
+    if (!SCPIDAC_LockCommand()) {
+        SCPI_ExecutionError(context, "CONF:DAC:UPDATE: DAC command busy, try again");
+        return SCPI_RES_ERR;
+    }
+
     // Update all DAC latches to reflect current values. This command's
     // entire purpose IS the latch update (same check as both SCPI_DACVoltageSet
     // branches above, added for the same reason -- see their comments).
     if (!DAC7718_UpdateLatch(dacInstanceId)) {
         SCPI_ExecutionError(context, "CONF:DAC:UPDATE: Failed to update DAC latches");
-        return SCPI_RES_ERR;
+        result = SCPI_RES_ERR;
     }
-    return SCPI_RES_OK;
+    SCPIDAC_UnlockCommand(true);
+    return result;
 }
