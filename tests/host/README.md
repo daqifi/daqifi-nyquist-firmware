@@ -97,6 +97,28 @@ high byte would make the whole JSON stream invalid UTF-8), the `inLen` bound
 wholesale rather than truncating mid-escape, the exact worst-case sizing
 `JSON_Encoder.c` allocates on its stack, and NULL/zero-size safety.
 
+`test_970_encoder_consume_accounting.c` covers issue #970 (the caller-side
+loss-accounting contract for `streaming.c`'s `encoded == 0` arm, and
+`JSON_Encoder.c`'s DIO element commit loop). Neither `streaming.c` nor
+`JSON_Encoder.c` is includable here (FreeRTOS/libscpi/the whole board
+graph), so — like `test_943_bench_stall_bound.c` — this file re-implements
+the relevant loop SHAPES (old vs new) against injected mocks and compares
+their verdicts. The Makefile target greps both real sources for the three
+guarantees the re-implementation depends on and fails the build if any has
+drifted; see the Makefile comment above `$(BIN970)` for exactly what. Covers
+two things: (1) the pre-fix booking arm fabricated an `EncoderDroppedSamples`
+increment on every zero-byte return regardless of whether anything was
+actually lost — a sustained buffer-full condition inflated it without bound
+while the post-fix arm books only the event, and a real loss (the JSON
+oversize-sample drop arm) is still counted, via the new
+`Streaming_ReportEncoderSampleLoss()` entry point; (2) the pre-fix DIO loop
+committed an element's bytes before checking whether the queue pop that was
+supposed to remove it actually succeeded — under an (currently latent) "pop
+failed but the element is still there" failure mode this let the loop
+re-commit the same undying element every remaining iteration of a call,
+bounded only by buffer space; the post-fix loop commits an element only
+after its pop actually succeeds.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a

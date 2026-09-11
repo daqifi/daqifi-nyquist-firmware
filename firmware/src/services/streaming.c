@@ -2312,6 +2312,41 @@ void Streaming_ReportSdDiscard(size_t bytes) {
 }
 
 /**
+ * @brief Book samples an encoder DESTROYED -- consumed from a sample queue and
+ *        then not emitted.
+ *
+ * #970. The encoders' caller cannot compute this. An encode call returns a BYTE
+ * count; zero is the only "nothing written" value it has and carries no
+ * cardinality, so the batch loop books only the EVENT (encoderFailures) and an
+ * encoder that knows it destroyed a sample books the sample here. See the
+ * encoded == 0 arm below for the per-encoder truth table.
+ *
+ * Deliberately narrow and purpose-named -- the Streaming_ReportSdDiscard shape.
+ * Only a site that has ALREADY consumed the queue entry and knows it will not
+ * be emitted may call it. A site that merely RETAINS a sample (buffer full this
+ * tick, re-encoded next call) must NOT: nothing was lost.
+ *
+ * Runs on streaming_Task (pri 6) from inside the encoder. O(1) inside one
+ * critical section so a concurrent SYST:STR:STATS? snapshot sees total and
+ * Steady coherently (Steady never > total). No QUES bit: QUES_BIT_ENCODER_FAIL
+ * belongs to the zero-return event, which the caller still raises.
+ */
+void Streaming_ReportEncoderSampleLoss(uint32_t samples) {
+    if (samples == 0u) {
+        return;
+    }
+    bool pastGrace = Streaming_PastStartupGrace();
+    taskENTER_CRITICAL();
+    gStreamStats.encoderDroppedSamples += samples;
+    if (pastGrace) {
+        gStreamStats.encoderDroppedSamplesSteady += samples;
+    }
+    taskEXIT_CRITICAL();
+    LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
+        "Streaming: encoder destroyed queued sample(s) - see EncoderDroppedSamples");
+}
+
+/**
  * #533: drain both per-session sample queues (AIN + DIO) so no sample
  * captured by one session can be encoded into the next.  Called from
  * Streaming_Stop (the session is over — discard) and Streaming_Start
@@ -2389,13 +2424,67 @@ static void Streaming_Stop(void) {
         // gLossGraceSec, default 3 s) don't produce misleading end-of-
         // session error logs.  Total counters are still available via
         // SYST:STR:STATS? for forensic diagnostic.
-        bool hadDrops = gStreamStats.queueDroppedSamplesSteady > 0 ||
-                        gStreamStats.usbDroppedBytesSteady > 0 ||
-                        gStreamStats.wifiDroppedBytesSteady > 0 ||
-                        gStreamStats.sdDroppedBytesSteady > 0 ||
-                        gStreamStats.encoderFailuresSteady > 0 ||
-                        gStreamStats.dioDroppedSamplesSteady > 0 ||
-                        gStreamStats.eosOverruns > 0;  // no Steady variant — hw staleness, not a grace-window false flag
+        /* #970: ONE coherent snapshot, not ~13 separate unsynchronised reads.
+         * Every field below is written from another context -- the pri-6
+         * encoder books encoderDroppedSamples via
+         * Streaming_ReportEncoderSampleLoss, the deferred task books the queue
+         * and scan counters -- and Streaming_Stop runs on the pri-7 SCPI task,
+         * ABOVE the encoder. So a writer could land between any two of these
+         * reads and the one line an operator actually reads could disagree with
+         * SYST:STReam:STATS? about the same session, or even with itself
+         * (hadDrops computed from one set of values, the totals from another).
+         *
+         * Streaming_GetStats() is the existing atomic-snapshot helper the SCPI
+         * path already uses -- one critical section, O(1) struct copy, and it
+         * folds in the volatile ISR counters (net of dry ticks, #707/#745) and
+         * gScanStaleDropped the same way. Reusing it DELETES the coordination
+         * problem rather than adding a second way to read these counters. */
+        StreamingStats snap;
+        Streaming_GetStats(&snap);
+
+        bool hadDrops = snap.queueDroppedSamplesSteady > 0 ||
+                        snap.usbDroppedBytesSteady > 0 ||
+                        snap.wifiDroppedBytesSteady > 0 ||
+                        snap.sdDroppedBytesSteady > 0 ||
+                        snap.encoderFailuresSteady > 0 ||
+                        snap.dioDroppedSamplesSteady > 0 ||
+                        /* #970: these two are summed by totalSampleLoss below, so
+                         * the GATE must cover them or the summary is skipped for a
+                         * session that DOES report loss through STATS?.
+                         *
+                         * encoderDroppedSamplesSteady used to be implied by
+                         * encoderFailuresSteady, because its only increment sat
+                         * beside encoderFailures++ in the encoded == 0 arm. THIS PR
+                         * deliberately unpaired them: NanoPB_Encoder.c books
+                         * destroyed samples and then returns a NON-ZERO
+                         * bufferOffset, so the encoded == 0 arm is never reached and
+                         * encoderFailures never moves. The omission became reachable
+                         * the moment that pairing went away.
+                         *
+                         * scanStaleDropped is DELIBERATELY NOT gated on, and the
+                         * asymmetry with totalSampleLoss is the point. It has no
+                         * Steady variant, and this gate exists precisely to keep
+                         * startup-window transients out of the summary (see the
+                         * comment above it). A scan that goes stale inside the grace
+                         * window is an expected startup transient -- the first scan
+                         * has not completed yet, which is the same condition #707 and
+                         * #745 introduced dry-tick netting for -- so gating on it
+                         * printed an "all post-grace" loss line for a session whose
+                         * every steady counter was zero. An earlier revision of THIS
+                         * comment added it to the gate and caused exactly that.
+                         *
+                         * eosOverruns is in the gate without a Steady variant because
+                         * it is hardware staleness rather than a grace-window false
+                         * flag; scanStaleDropped is the opposite case, which is why
+                         * the two are treated differently.
+                         *
+                         * Residual, tracked separately: a session whose ONLY loss is
+                         * post-grace frozen scans still prints nothing, because there
+                         * is no Steady variant to gate on. Fixing that needs a
+                         * grace-filtered scan-stale counter, which is a change to the
+                         * counter itself, not to this gate. */
+                        snap.encoderDroppedSamplesSteady > 0 ||
+                        snap.eosOverruns > 0;  // no Steady variant — hw staleness, not a grace-window false flag
         // Clear runtime overflow / data-loss condition bits — they refer to
         // the live session that just ended.  Preserve QUES_BIT_TRANSPORT_DOWN
         // (#397) because it captures the REASON streaming stopped; clearing
@@ -2411,8 +2500,8 @@ static void Streaming_Stop(void) {
         taskEXIT_CRITICAL();
 
         if (hadDrops) {
-            uint64_t totalAttempted = gStreamStats.totalSamplesStreamed +
-                                     gStreamStats.queueDroppedSamples;
+            uint64_t totalAttempted = snap.totalSamplesStreamed +
+                                     snap.queueDroppedSamples;
             // EOS coalescing is data staleness (ADC register overwrite),
             // not a dropped sample — exclude from loss total/percentage.
             // Steady counters for the loss math: startup-window transients
@@ -2420,10 +2509,10 @@ static void Streaming_Stop(void) {
             // #557: scan-stale ticks are genuine dropped samples (the prior
             // scan never completed — its data is stale), so include them in the
             // loss total, unlike eosOverruns (task-behind-but-fresh, excluded).
-            uint32_t totalSampleLoss = gStreamStats.queueDroppedSamplesSteady +
-                                      gStreamStats.encoderDroppedSamplesSteady +
-                                      gStreamStats.dioDroppedSamplesSteady +
-                                      gScanStaleDropped;
+            uint32_t totalSampleLoss = snap.queueDroppedSamplesSteady +
+                                      snap.encoderDroppedSamplesSteady +
+                                      snap.dioDroppedSamplesSteady +
+                                      snap.scanStaleDropped;
             uint32_t lossPercent = totalAttempted > 0
                 ? (uint32_t)((totalSampleLoss * 100ULL) / totalAttempted)
                 : 0;
@@ -2431,13 +2520,13 @@ static void Streaming_Stop(void) {
                   (unsigned)totalSampleLoss,
                   (unsigned long long)totalAttempted,
                   (unsigned)lossPercent,
-                  (unsigned)gStreamStats.usbDroppedBytesSteady,
-                  (unsigned)gStreamStats.wifiDroppedBytesSteady,
-                  (unsigned)gStreamStats.sdDroppedBytesSteady,
-                  (unsigned)gStreamStats.encoderFailuresSteady,
-                  (unsigned)gStreamStats.encoderDroppedSamplesSteady,
-                  (unsigned)gStreamStats.dioDroppedSamplesSteady,
-                  (unsigned)gStreamStats.eosOverruns);
+                  (unsigned)snap.usbDroppedBytesSteady,
+                  (unsigned)snap.wifiDroppedBytesSteady,
+                  (unsigned)snap.sdDroppedBytesSteady,
+                  (unsigned)snap.encoderFailuresSteady,
+                  (unsigned)snap.encoderDroppedSamplesSteady,
+                  (unsigned)snap.dioDroppedSamplesSteady,
+                  (unsigned)snap.eosOverruns);
         }
     }
 }
@@ -3351,26 +3440,54 @@ void streaming_Task(void) {
             DioProbe_PulseEnd(8);
 
             if (encoded == 0) {
-                // The queue was non-empty (checked above) with guaranteed room,
-                // yet the encoder produced nothing → a real encoder failure OR
-                // the #484 shutdown race (Streaming_Stop ran mid-iteration and
-                // the encoder saw partially torn-down state — verified empirically
-                // to fire at Stop, not mid-stream). Account exactly one lost
-                // sample (each encode pops exactly one, #297) and stop the batch.
-                // #483: bump the Steady subset when past the 3 s startup grace.
+                /* The queue was non-empty (checked above) with guaranteed room,
+                 * yet the encoder produced nothing -> a real encoder failure OR
+                 * the #484 shutdown race (Streaming_Stop ran mid-iteration and
+                 * the encoder saw partially torn-down state -- verified
+                 * empirically to fire at Stop, not mid-stream).
+                 *
+                 * #970: book the EVENT, never a sample count. This return is a
+                 * BYTE count (`packetSize += encoded` below), so zero is
+                 * structurally the only "nothing written" value it has and
+                 * cannot also carry cardinality. How many samples the call
+                 * consumed is 0..N and differs per encoder AND per branch:
+                 *   csv_Encode           -- 0 pops before EVERY one of its zero
+                 *                           returns; nothing is ever lost, the
+                 *                           row is simply retried next call.
+                 *   Json_Encode          -- 0 pops (buffer full, retried), N
+                 *                           (all-invalid validMask: consumed,
+                 *                           carried no channel data, not a
+                 *                           loss), or 1 (its oversize-sample
+                 *                           drop arm -- genuinely lost, and the
+                 *                           only case that is a loss).
+                 *   Nanopb_Encode...Fast -- 0..N AIN pops plus up to one DIO
+                 *                           pop, with losses that can also
+                 *                           accompany a NON-zero return.
+                 *
+                 * The comment here used to assert "each encode pops exactly
+                 * one, #297" and booked one encoderDroppedSamples on that
+                 * basis. It is false for two of the three encoders, and for the
+                 * common CSV/JSON buffer-full case it re-booked a STILL-QUEUED
+                 * sample as a fresh loss on every tick -- inflating both
+                 * EncoderDroppedSamples and the session-end loss percentage
+                 * without bound. The #745 note at the dry-tick gate above
+                 * already records one instance of that fabrication ("why every
+                 * clean session reported one phantom drop"); this removes the
+                 * class.
+                 *
+                 * An encoder that KNOWS it destroyed a sample now books it
+                 * itself via Streaming_ReportEncoderSampleLoss(). Nothing is
+                 * inferred from the zero here.
+                 * #483: bump the Steady subset when past the 3 s startup grace. */
                 if (pRunTimeStreamConf->IsEnabled) {
                     bool pastGrace = Streaming_PastStartupGrace();
                     taskENTER_CRITICAL();
                     gStreamStats.encoderFailures++;
-                    gStreamStats.encoderDroppedSamples++;
                     if (pastGrace) {
                         gStreamStats.encoderFailuresSteady++;
-                        gStreamStats.encoderDroppedSamplesSteady++;
                     }
                     gQuesBits |= QUES_BIT_ENCODER_FAIL;
                     taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
-                        "Streaming: encoder failure lost 1 sample");
                     LOG_E_SESSION(LOG_SESSION_ENCODER_FAIL, "Streaming: Encoder failure detected");
                 }
                 break;

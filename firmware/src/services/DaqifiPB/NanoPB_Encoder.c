@@ -1555,6 +1555,17 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
                     LOG_E("[PB] Encode failed: buf=%u off=%u max=%u ch=%u",
                           (unsigned)buffSize, (unsigned)bufferOffset,
                           (unsigned)STREAMING_MSG_MAX_SIZE, (unsigned)count);
+                    /* #970: this message's samples are ALREADY DESTROYED. The
+                     * AIN sample was popped at the top of this iteration and
+                     * freed to the pool above, before the serializer result was
+                     * known, so exactly one AIN sample dies here -- plus the DIO
+                     * sample when this is the message carrying it (dioS > 0).
+                     * Book them, because the caller cannot: this returns a
+                     * NON-ZERO bufferOffset whenever an earlier message
+                     * succeeded, so streaming.c's `encoded == 0` arm is not even
+                     * reached. That is why the removed generic increment was
+                     * never a substitute for reporting here. */
+                    Streaming_ReportEncoderSampleLoss((dioS > 0) ? 2u : 1u);
                     return bufferOffset > 0 ? bufferOffset : 0;
                 }
                 bufferOffset += written;
@@ -1576,6 +1587,13 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
 
         if (written > 0) {
             bufferOffset += written;
+        } else {
+            /* #970: the DIO sample was popped into dioValues at the top of this
+             * function and cannot be put back, so a zero return destroys it.
+             * This arm previously had no else at all: no counter, no log. */
+            Streaming_ReportEncoderSampleLoss(1u);
+            LOG_E_SESSION(LOG_SESSION_PB_DIO_DESTROYED,
+                "PB: standalone DIO encode produced 0 bytes - sample destroyed");
         }
     }
 
