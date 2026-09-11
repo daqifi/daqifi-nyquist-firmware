@@ -5442,8 +5442,14 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
          * on this path (SD not ready, #589 SPI gate, #847) that a distinct
          * code is worth having. The log line is what names WHICH guard fired.
          *
-         * Kept under LOG_MESSAGE_SIZE (128, so 127 usable): the logger stores
-         * a fixed-size message and TRUNCATES past it, silently. 117 chars. */
+         * Kept under Logger's usable ceiling of 125 -- LOG_MESSAGE_SIZE is
+         * 128 and Logger.c clamps at LOG_MESSAGE_SIZE - 3, so the old "127
+         * usable" here was wrong by two. The message is 117 chars, so it was
+         * never truncated; the CONSTANT was the defect, and a sibling sized
+         * against 127 would have reproduced #1000. The identical claim above
+         * the #861 refusal was corrected in this branch's previous commit and
+         * this twin was missed -- exactly the pattern that commit set out to
+         * end. The logger truncates past the ceiling silently. */
         LOG_E("STR:START refused (#846): the enabled-channel set changed during "
               "start; the mapping and sample pool are stale. Retry.");
         SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
