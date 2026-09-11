@@ -132,6 +132,17 @@ scpi_result_t SCPI_LANSsidSet(scpi_t * context);
 
 scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context);
 
+/**
+ * SCPI Callback: Get the granular WiFi link state (#951)
+ *
+ * Reports wifi_manager_GetLinkState() as an integer code, distinguishing
+ * states wifi_manager_GetWiFiStatus() collapses onto DISCONNECTED — notably
+ * a WINC driver stuck at INIT from a soft-AP that is beaconing with no
+ * client yet. See wifi_link_state_t (wifi_manager.h) for the value meanings.
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANConnectedGet(scpi_t * context);
+
 // CONFigured value queries (return user-set values, not DHCP-assigned)
 scpi_result_t SCPI_LANConfAddrGet(scpi_t * context);
 scpi_result_t SCPI_LANConfMaskGet(scpi_t * context);

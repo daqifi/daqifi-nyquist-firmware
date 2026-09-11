@@ -491,6 +491,27 @@ scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/**
+ * SCPI Callback: Get the granular WiFi link state (#951)
+ *
+ * Distinguishes states wifi_manager_GetWiFiStatus() (used by
+ * SCPI_LANRequireWiFiReady below, unchanged) collapses onto DISCONNECTED —
+ * a WINC driver stuck retrying WIFI_STATE_INIT forever from a soft-AP that
+ * is genuinely up and beaconing with no client yet. Refuses the same way
+ * every other LAN getter does when WiFi is fully DISABLED; every other
+ * value (including the INIT-stuck case, which is NOT DISABLED) is reported
+ * so it is visible rather than refused. See wifi_link_state_t
+ * (wifi_manager.h) for what each returned code means.
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANConnectedGet(scpi_t * context) {
+    if (!SCPI_LANRequireWiFiReady(context)) return SCPI_RES_ERR;
+
+    wifi_link_state_t linkState = wifi_manager_GetLinkState();
+    SCPI_ResultInt32(context, (int) linkState);
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_LANSecurityGet(scpi_t * context) {
     wifi_manager_settings_t * pWifiSettings = BoardRunTimeConfig_Get(
             BOARDRUNTIME_WIFI_SETTINGS);

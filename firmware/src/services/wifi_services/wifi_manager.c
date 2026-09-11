@@ -2425,6 +2425,63 @@ wifi_status_t wifi_manager_GetWiFiStatus(void) {
     }
 }
 
+// #951: granular companion to wifi_manager_GetWiFiStatus() above. Reads the
+// exact same fields (gStateMachineContext.pWifiSettings->isEnabled,
+// m2m_wifi_get_state(), the AP_STARTED/STA_CONNECTED event flags, the TCP
+// client socket) the same, unsynchronized way that function already does —
+// see the concurrency note on wifi_link_state_t in wifi_manager.h. The only
+// new read is WDRV_WINC_Status(sysObj.drvWifiWinc), which wifi_manager.c's
+// own state machine already calls unsynchronized from this same task
+// (WIFI_MANAGER_EVENT_INIT/_WIFI_FW_UPDATE_* handlers, e.g. lines ~1100,
+// 1118, 1169-1174, 1602, 2083 above) and which is itself a plain read of
+// WDRV_WINC_DCPT.sysStat with no read-modify-write (wdrv_winc.c
+// WDRV_WINC_Status()).
+wifi_link_state_t wifi_manager_GetLinkState(void) {
+    // Mirrors wifi_manager_GetWiFiStatus()'s enabled gate exactly.
+    if (gStateMachineContext.pWifiSettings == NULL ||
+        !gStateMachineContext.pWifiSettings->isEnabled) {
+        return WIFI_LINK_STATE_DISABLED;
+    }
+
+    uint8_t wifiState = m2m_wifi_get_state();
+
+    switch (wifiState) {
+        case WIFI_STATE_START:
+            // For STA mode: connected means connected to a router
+            if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                return WIFI_LINK_STATE_CONNECTED;
+            }
+
+            // For AP mode: distinguish "beaconing, no client yet" from "connected"
+            if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
+                if (gStateMachineContext.pTcpServerContext &&
+                    gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
+                    return WIFI_LINK_STATE_CONNECTED;  // Client connected to our AP
+                }
+                return WIFI_LINK_STATE_UP_NO_CLIENT;   // AP beaconing, no client yet (#951)
+            }
+
+            // WIFI_STATE_START reached but neither AP_STARTED nor
+            // STA_CONNECTED is set yet (covers STA_STARTED-but-not-connected
+            // too) — mode selection/association still in progress.
+            return WIFI_LINK_STATE_STARTING;
+
+        case WIFI_STATE_INIT:
+            // #951: distinguish a driver stuck retrying INIT forever
+            // (m2m_wifi_init_start failed, sysStat latched at
+            // SYS_STATUS_ERROR — see WIFI_MANAGER_EVENT_INIT above) from
+            // ordinary in-progress bring-up.
+            if (WDRV_WINC_Status(sysObj.drvWifiWinc) == SYS_STATUS_ERROR) {
+                return WIFI_LINK_STATE_INIT_ERROR;
+            }
+            return WIFI_LINK_STATE_INITIALIZING;
+
+        case WIFI_STATE_DEINIT:
+        default:
+            return WIFI_LINK_STATE_DISABLED;
+    }
+}
+
 bool wifi_manager_IsWiFiConnected(void) {
     return (wifi_manager_GetWiFiStatus() == WIFI_STATUS_CONNECTED);
 }

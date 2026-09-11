@@ -178,10 +178,46 @@ extern "C" {
 
     /**
      * @brief Check if WiFi is currently connected
-     * 
+     *
      * @return true if WiFi is in CONNECTED state, false otherwise
      */
     bool wifi_manager_IsWiFiConnected(void);
+
+    /**
+     * WiFi link-state enumeration (#951).
+     *
+     * A finer-grained view than wifi_status_t: wifi_manager_GetWiFiStatus()
+     * intentionally flattens several distinct live states onto
+     * WIFI_STATUS_DISCONNECTED (its existing callers depend on that 3-value
+     * contract and are NOT changed by this enum). In particular, a WINC
+     * driver stuck at WIFI_STATE_INIT (nm_drv_init_hold() succeeded — the
+     * chip answers SPI — but m2m_wifi_init_start failed, so the driver's own
+     * SYS_STATUS sits at SYS_STATUS_ERROR while wifi_manager.c's
+     * WIFI_MANAGER_EVENT_INIT handler re-queues INIT roughly every 10 ms
+     * forever) is indistinguishable, via wifi_status_t alone, from a
+     * soft-AP that is genuinely up and beaconing with no client yet. This
+     * enum exists so SCPI (SYSTem:COMMunicate:LAN:CONnected?) can tell them
+     * apart without touching wifi_manager_GetWiFiStatus()'s contract.
+     */
+    typedef enum {
+        WIFI_LINK_STATE_DISABLED = 0,     // WiFi disabled, or driver at WIFI_STATE_DEINIT (not initialized)
+        WIFI_LINK_STATE_INIT_ERROR,       // WIFI_STATE_INIT, WDRV_WINC_Status()==SYS_STATUS_ERROR: bring-up failing, retried indefinitely
+        WIFI_LINK_STATE_INITIALIZING,     // WIFI_STATE_INIT, bring-up still in progress (not yet errored)
+        WIFI_LINK_STATE_STARTING,         // WIFI_STATE_START reached, but neither AP nor STA link is up yet
+        WIFI_LINK_STATE_UP_NO_CLIENT,     // WIFI_STATE_START, AP_STARTED set (soft-AP beaconing) but no client connected
+        WIFI_LINK_STATE_CONNECTED         // STA associated to a router, or AP has an active TCP client
+    } wifi_link_state_t;
+
+    /**
+     * @brief Get the granular WiFi link state (#951)
+     *
+     * Companion to wifi_manager_GetWiFiStatus() that does not collapse the
+     * INIT-stuck-at-ERROR and START-but-not-yet-up states onto a single
+     * DISCONNECTED value. See wifi_link_state_t for what each value means.
+     *
+     * @return wifi_link_state_t indicating the current, more granular state
+     */
+    wifi_link_state_t wifi_manager_GetLinkState(void);
 
     /**
      * @brief Initializes the WiFi manager and its state machine.
