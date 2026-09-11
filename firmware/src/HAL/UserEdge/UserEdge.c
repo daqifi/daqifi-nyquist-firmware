@@ -260,18 +260,20 @@ static bool edge_Streaming(void) {
  *    deliberately never disables alone. This is the FreeRTOS-idiomatic path and
  *    the one taken at runtime (Qodo #705, second pass).
  *
- *  - scheduler NOT STARTED (UserEdge_Initialize, reached from app_SystemInit
- *    inside SYS_Initialize: main.c -> initialization.c APP_FREERTOS_Initialize
- *    -> app_SystemInit, i.e. BEFORE vTaskStartScheduler(), which lives in
- *    SYS_Tasks()) -> raw mask. FreeRTOS_tasks.c wraps the whole body of
- *    vTaskExitCritical(), portENABLE_INTERRUPTS() included, in
- *    `if (xSchedulerRunning != pdFALSE)`, so pre-scheduler the exit is a no-op
- *    and a critical section would leave interrupts masked for the rest of boot.
- *
- * (An earlier revision claimed app_SystemInit runs inside the pri-1
- * APP_FREERTOS_Tasks task. It does not — APP_FREERTOS_Initialize and
- * APP_FREERTOS_Tasks are different functions, and that confusion is what put a
- * plain critical section on a pre-scheduler path in the first place.) */
+ *  - scheduler NOT STARTED -> raw mask. FreeRTOS_tasks.c wraps the whole body
+ *    of vTaskExitCritical(), portENABLE_INTERRUPTS() included, in
+ *    `if (xSchedulerRunning != pdFALSE)`, so pre-scheduler the exit is a
+ *    no-op and a critical section would leave interrupts masked for the rest
+ *    of boot. No current caller reaches this branch: UserEdge_Initialize is
+ *    called from app_SystemInit (main.c -> initialization.c ->
+ *    APP_FREERTOS_Tasks -> app_SystemInit -> UserEdge_Initialize), and
+ *    app_SystemInit itself runs INSIDE the priority-1 APP_FREERTOS_Tasks
+ *    task -- i.e. AFTER vTaskStartScheduler(), not before it.
+ *    APP_FREERTOS_Initialize is a DIFFERENT function (empty body, does not
+ *    call app_SystemInit) that genuinely does run before the scheduler
+ *    starts, which is what invited the confusion; it has no call into this
+ *    module. The branch above is kept so this helper stays correct if a
+ *    genuinely pre-scheduler caller is ever added. */
 typedef struct { bool crit; uint32_t st; } EdgeIpcGuard_t;
 
 static EdgeIpcGuard_t edge_IpcGuardEnter(void) {

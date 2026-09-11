@@ -105,12 +105,13 @@
 // SCPI_IDN3 (serial number) is constructed dynamically from BoardConfig.boardSerialNumber (#436)
 #define SCPI_IDN4 "01-02"
 
-// File-scope IDN strings: built once by SCPI_InitIdentification() pre-scheduler
-// and then read-only.  libscpi stores these as raw pointers in every per-
-// transport SCPI context, so the storage must outlive every context.  Module-
-// scope avoids the data race that function-static buffers would have when
-// CreateSCPIContext() is called concurrently from USB and WiFi tasks (#441
-// Qodo finding) — the writes happen before any SCPI task spawns.
+// File-scope IDN strings: built once by SCPI_InitIdentification(), called
+// from app_SystemInit before app_TasksCreate() spawns any SCPI transport
+// task, and then read-only.  libscpi stores these as raw pointers in every
+// per-transport SCPI context, so the storage must outlive every context.
+// Module-scope avoids the data race that function-static buffers would have
+// when CreateSCPIContext() is called concurrently from USB and WiFi tasks
+// (#441 Qodo finding) — the writes happen before any SCPI task spawns.
 static char gIdnModel[8]   = "Nq?";  // Filled from BoardConfig.BoardVariant
 static char gIdnSerial[17] = "0";    // 16 hex digits of uint64 + null
 
@@ -602,10 +603,13 @@ void SCPI_ResponseBuf_Init(void) {
     // the second call is a no-op.
     //
     // The check-and-create pair is guarded by a critical section. The
-    // intended caller is single-threaded (app_SystemInit runs pre-scheduler,
-    // then CreateSCPIContext runs during serial boot-time transport init)
-    // and taskENTER_CRITICAL is a no-op before the scheduler starts, so this
-    // is cost-free in practice. The guard catches any future misuse where
+    // intended caller is single-threaded (app_SystemInit calls this, then
+    // each transport's CreateSCPIContext runs later during serial boot-time
+    // transport init), so no real race is possible on this path. The
+    // scheduler is already running by this point -- app_SystemInit runs
+    // INSIDE the priority-1 APP_FREERTOS_Tasks task -- so taskENTER_CRITICAL
+    // does real work here, not a no-op; it is cheap regardless (a few
+    // cycles). The guard catches any future misuse where
     // SCPI_ResponseBuf_Init is invoked concurrently.
     taskENTER_CRITICAL();
     if (gScpiRespMutex == NULL) {
@@ -8838,9 +8842,10 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
 
     // Create a context
     scpi_t daqifiScpiContext;
-    // Init context.  gIdnModel and gIdnSerial are populated once pre-scheduler
-    // by SCPI_InitIdentification() so concurrent CreateSCPIContext() calls
-    // from USB and WiFi tasks just read the same finished strings.
+    // Init context.  gIdnModel and gIdnSerial are populated once, by
+    // SCPI_InitIdentification() from app_SystemInit before app_TasksCreate()
+    // spawns the USB/WiFi tasks, so concurrent CreateSCPIContext() calls
+    // from those tasks just read the same finished strings.
     SCPI_Init(&daqifiScpiContext,
             scpi_commands,
             interface,

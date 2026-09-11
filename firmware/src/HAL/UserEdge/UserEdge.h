@@ -70,7 +70,9 @@ typedef enum {
 } UserEdgeMode_t;
 
 /** Boot-time init: parks INT1..4 and Timer8/9 (disabled, IRQ off, priority set),
- *  clears the event FIFO and all counters. Safe to call pre-scheduler. */
+ *  clears the event FIFO and all counters. Called from app_SystemInit,
+ *  before app_TasksCreate() spawns any other task -- the scheduler is
+ *  already running by this point, but no other task exists yet. */
 void UserEdge_Initialize(void);
 
 /**

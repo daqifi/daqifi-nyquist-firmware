@@ -2448,7 +2448,11 @@ void Streaming_Init(tStreamingConfig* pStreamingConfigInit,
      * each file-static lands in its own .bss.<name> section, often placed by
      * the best-fit allocator OUTSIDE [_bss_begin,_bss_end] — so the
      * compile-time `= 0` initializers are not honored across MCLR / IPE flash.
-     * No critical section needed: this runs pre-scheduler with interrupts off. */
+     * No critical section needed: Streaming_Init runs from app_SystemInit,
+     * before app_TasksCreate() spawns any other task -- single-threaded by
+     * ordering, not because the scheduler is stopped (it is already
+     * running; see the fuller explanation on the Frequency default further
+     * down in this function). */
     gTestPattern = 0;
     gTestPatternSampleCount = 0;
     gStreamTickIndex = 0;      // #717 deterministic-ts state (retained-RAM safety)

@@ -330,11 +330,14 @@ static void i2c_SegRelease(uint8_t idx) {
 /* Public API */
 
 void UserI2c_InitEnablesLow(void) {
-    /* Create the bus mutex here, at boot (DIO_InitHardware, single-threaded
-     * before the scheduler), so the lazy check-then-create in i2c_Mutex() can
-     * never race two SCPI interfaces (USB pri-7 vs WiFi pri-2) on a concurrent
-     * first Enable -- by the time either runs, gI2cMutex is already non-NULL.
-     * Created directly (no critical section) because boot is single-threaded. */
+    /* Create the bus mutex here, at boot (DIO_InitHardware, called from
+     * app_SystemInit before app_TasksCreate() spawns any SCPI task), so the
+     * lazy check-then-create in i2c_Mutex() can never race two SCPI
+     * interfaces (USB pri-7 vs WiFi pri-2) on a concurrent first Enable --
+     * by the time either runs, gI2cMutex is already non-NULL.
+     * Created directly (no critical section) because boot is single-threaded
+     * by ordering -- the scheduler is already running by this point, but no
+     * other task exists yet. */
     if (gI2cMutex == NULL) {
         gI2cMutex = xSemaphoreCreateMutexStatic(&gI2cMutexBuf);
     }

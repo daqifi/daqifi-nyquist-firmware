@@ -52,7 +52,8 @@ static uint8_t spi_rxData[3] __attribute__((coherent, aligned(4)));
 static SemaphoreHandle_t gDAC7718_Mutex = NULL;
 
 // Helper to acquire mutex. #980: the mutex is created once in
-// DAC7718_InitGlobal() (single-threaded, pre-scheduler) -- see the comment
+// DAC7718_InitGlobal() (single-threaded -- called from app_SystemInit,
+// before app_TasksCreate() spawns any other task) -- see the comment
 // there for why the lazy "create on first use" this replaced was itself a
 // second, unsynchronized TOCTOU race (two tasks could each see NULL and each
 // create their OWN mutex, so neither ever excluded the other from SPI2).

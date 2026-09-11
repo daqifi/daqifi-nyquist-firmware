@@ -130,8 +130,9 @@ bool UserI2c_Transfer(uint8_t addr7, const uint8_t* wdata, uint16_t wlen,
 /**
  * Phase-0 boot hygiene: drive both PCA9516A hub enables (RH14 = EN1,
  * RA14 = EN2) LOW as outputs so the segments are isolated from boot. Harmony's
- * GPIO_Initialize leaves both floating. Safe to call before the scheduler;
- * independent of the I2C master. Call once from board/system init.
+ * GPIO_Initialize leaves both floating. Called from app_SystemInit (via
+ * DIO_InitHardware), before app_TasksCreate() spawns any other task;
+ * independent of the I2C master.
  */
 void UserI2c_InitEnablesLow(void);
 

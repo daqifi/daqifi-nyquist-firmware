@@ -250,7 +250,8 @@ void UserIC_Initialize(void) {
     gM.active = false;
     /* Create the mutex unconditionally (not lazily): a non-zeroed-BSS reset (#409)
      * after an MCLR mid-measurement could otherwise leave gMutex pointing at a
-     * stale, taken semaphore. Static create is pre-scheduler safe. */
+     * stale, taken semaphore. Called from app_SystemInit before
+     * app_TasksCreate() spawns any other task, so this create cannot race. */
     gMutex = xSemaphoreCreateMutexStatic(&gMutexBuf);
 }
 

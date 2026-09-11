@@ -289,8 +289,9 @@ static uint32_t DAC_VoltageToCounts(double voltage, const AOutModule* module) {
 }
 
 void SCPIDAC_InitGlobal(void) {
-    // Single-threaded, pre-scheduler (called from app_SystemInit() alongside
-    // DAC7718_InitGlobal() -- see app_freertos.c). Same reasoning as
+    // Single-threaded (called from app_SystemInit(), before app_TasksCreate()
+    // spawns the USB/WiFi SCPI tasks, alongside DAC7718_InitGlobal() -- see
+    // app_freertos.c). Same reasoning as
     // DAC7718_InitGlobal()'s own comment: creating this here, once, avoids a
     // lazy "if (gDacCommandMutex == NULL) create" TOCTOU race between the two
     // SCPI transports.
