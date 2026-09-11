@@ -68,7 +68,34 @@ JSONESC_BIN := run_json_escape_tests
 # which BRANCH a write sits in with regexes. #998 exists because that removal
 # left the site with no coverage; re-adding that check is explicitly out of its
 # scope. A hash claims only "this text is unchanged", which is all a build
-# recipe can honestly know, and no refactor slips past it.
+# recipe can honestly know.
+#
+# WHAT THIS PIN DOES NOT COVER, stated because an earlier revision of this line
+# claimed "no refactor slips past it" and that is false. This is a pin on the
+# CONTENT OF AN INTERIOR SLICE. It is not a pin on the behaviour of the
+# function. The sed range begins AT the BEGIN anchor line, so anything inserted
+# ABOVE that line is outside the hash while still changing what the slice does.
+# Demonstrated: inserting
+#
+#     pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
+#
+# immediately above the anchor publishes the operand before TryClaim, so the
+# claim is refused, START returns an error, and because the refusal branch does
+# not restore `mode` the manager reads busy until reboot -- the exact
+# publish-then-check shape property C exists to pin. Both anchors stay unique
+# and ordered, the selected bytes are unchanged, and the gate stays green.
+#
+# That gap is INTRINSIC to pinning an interior region, not an anchor-placement
+# bug: every slice has a boundary, and code above any boundary you choose can
+# change what follows it. Moving the anchor moves the gap. Hashing the whole
+# ~1250-line function would close it and is rejected for the reason in the next
+# paragraph -- it would fire on nearly every unrelated edit, and a tripwire
+# people learn to ignore protects nothing.
+#
+# So read a green pin as "the slice's bytes are unchanged", which is what it
+# checks, and never as "the ordering this models is still correct", which it
+# cannot check. The model in test_998_start_streaming_claimed_order.c is what
+# describes the ordering; the pin only tells you when to go and re-read it.
 #
 # WHAT IS HASHED, and why it is a SLICE and not a function. Unlike #971's
 # ~8-line helper, SCPI_StartStreamingClaimed() is ~1250 lines with more than
