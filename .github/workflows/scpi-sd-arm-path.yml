@@ -61,6 +61,12 @@ on:
       - 'firmware/src/services/SCPI/SCPIInterface.c'
       - 'tools/lint/scpi_sd_arm_path.py'
       - 'tools/lint/scpi_wiki_sync.py'
+      # The checker IMPORTS this. Without it a change that gutted the
+      # shared definition rule -- `find_definitions()` returning [] --
+      # would pass this gate without the gate ever running (#976 audit,
+      # round 5). A guard that is not triggered by a change to what it
+      # guards is a guard that does not exist for that change.
+      - 'tools/lint/cdef.py'
       - '.github/workflows/scpi-sd-arm-path.yml'
   push:
     branches: [main]
@@ -69,6 +75,12 @@ on:
       - 'firmware/src/services/SCPI/SCPIInterface.c'
       - 'tools/lint/scpi_sd_arm_path.py'
       - 'tools/lint/scpi_wiki_sync.py'
+      # The checker IMPORTS this. Without it a change that gutted the
+      # shared definition rule -- `find_definitions()` returning [] --
+      # would pass this gate without the gate ever running (#976 audit,
+      # round 5). A guard that is not triggered by a change to what it
+      # guards is a guard that does not exist for that change.
+      - 'tools/lint/cdef.py'
       - '.github/workflows/scpi-sd-arm-path.yml'
 
 permissions:

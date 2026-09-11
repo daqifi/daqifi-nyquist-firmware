@@ -165,10 +165,24 @@ def mask_for_match(src):
     return "".join(out)
 
 
+# LEADING WHITESPACE IS ALLOWED. Anchoring the prefix at column zero made a
+# definition indented by a single space invisible to EVERY caller at once --
+# so an `#if 0`-disabled original plus an indented live replacement matched
+# only the disabled copy, nothing was ambiguous, and the pin digested dead
+# code. That is the same silent class rounds 1, 2 and 4 each fixed at a
+# different position, arriving through indentation instead (#976 audit,
+# round 5). C does not care about the column and neither can this.
+_INDENT = r"[ \t]*"
 _PREFIX = r"[A-Za-z_][\w \t\*]*"
-_ATTR = r"(?:__attribute__\s*\(\((?:[^()]|\([^()]*\))*\)\)[\w \t\*]*)?"
+# A line break is allowed on EITHER side of the attribute, not only after it.
+# With one break available only after `_ATTR`, an attribute on its own line
+# between the return type and the name did not merely fail to match -- the
+# pattern backtracked until NAME bound to the literal `attribute`, swallowing
+# the real definition and reporting it absent. Valid, unambiguous,
+# behaviour-neutral C that the checker refused (#976 audit, round 5).
+_ATTR = (r"(?:__attribute__\s*\(\((?:[^()]|\([^()]*\))*\)\)[\w \t\*]*)?")
 _BREAK = r"(?:[ \t]*\n[ \t]*)?"
-HEAD = r"(?m)^" + _PREFIX + _ATTR + _BREAK
+HEAD = r"(?m)^" + _INDENT + _PREFIX + _BREAK + _ATTR + _BREAK
 
 
 def def_pattern(name, capture_params=False):
@@ -217,6 +231,19 @@ _CASES = [
     ("a comment WITH NEWLINES inside the signature (#976 round 4): the "
      "compiler sees whitespace, so this matcher must too",
      "static bool /*\n * why\n */ F(void)\n{\n}\n", "one"),
+    ("an INDENTED definition is still a definition -- C does not care about "
+     "the column, and anchoring at zero hid a live replacement from every "
+     "caller at once (#976 round 5)",
+     "  static bool F(void)\n{\n}\n", "one"),
+    ("an __attribute__ on its OWN line, between the type and the name",
+     "static bool\n__attribute__((weak))\nF(void)\n{\n}\n", "one"),
+    ("an indented disabled original plus an indented live copy is still TWO",
+     "#if 0\n  static bool F(void)\n{\n}\n#endif\n"
+     "  static bool F(void)\n{\n}\n", "ambiguous"),
+    ("a COLUMN-ZERO original plus an INDENTED live copy is TWO -- the exact "
+     "round-5 bypass",
+     "#if 0\nstatic bool F(void)\n{\n}\n#endif\n"
+     " static bool F(void)\n{\n}\n", "ambiguous"),
     ("a prototype is not a definition", "static bool F(void);\n", "none"),
     ("a prototype followed by its definition is still ONE",
      "static bool F(void);\nstatic bool F(void)\n{\n}\n", "one"),

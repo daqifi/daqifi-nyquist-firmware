@@ -77,9 +77,18 @@ def strip_c_comments(text):
     future edit rather than a fix for a live miscount -- but a checker that
     silently loses commands the moment someone writes an ordinary comment is
     not worth having.
+
+    A comment becomes a SPACE, not nothing. Deleting it GLUED the tokens on
+    either side: `static bool/*x*/F(void)` came out as `static boolF(void)`,
+    which is not a definition of anything, so `scpi_sd_arm_path.py` -- which
+    strips before handing text to the shared matcher -- reported a function
+    MISSING that `hash_function.py` found fine. Two callers disagreeing about
+    what a definition looks like, arriving through a PREPROCESSING step rather
+    than through the matcher (#976 audit, round 5). A space is what the
+    compiler sees there, and it is what `cdef.mask()` already substitutes.
     """
     return _CODE_OR_COMMENT.sub(
-        lambda m: m.group(0) if m.group(0)[0] in "\"'" else "", text)
+        lambda m: m.group(0) if m.group(0)[0] in "\"'" else " ", text)
 
 
 # `.pattern = "A" "B", .callback = X` is legal C -- adjacent string literals
