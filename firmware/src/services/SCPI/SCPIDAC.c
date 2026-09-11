@@ -72,14 +72,22 @@ static volatile bool dacInitInProgress = false;
 // above (which claims only the one-time hardware-bring-up region and is
 // itself deferred to #989's recursive-mutex redesign) -- this is a NEW,
 // ordinary (non-recursive) mutex scoped to the command layer only, created
-// once in SCPIDAC_InitGlobal(), never touching DAC7718_Init() or
-// gDAC7718_Mutex. Deadlock analysis: DAC7718_ReadWriteReg()/
-// DAC7718_UpdateLatch() take-and-fully-release gDAC7718_Mutex within a single
-// call, never held across a return into this file, so gDacCommandMutex
-// (outer) and gDAC7718_Mutex (inner) nest in one fixed order (outer then
-// inner, same task, never inverted) -- no cycle is possible. Bounded timeout
-// (not portMAX_DELAY), matching DAC7718_Lock()'s own fail-closed idiom, so a
-// stuck holder cannot wedge an entire SCPI transport task.
+// once in SCPIDAC_InitGlobal(), which app_freertos.c calls ONLY under
+// BoardVariant == 3 -- so on NQ1/NQ2 this stays NULL by design, and any call
+// site must decide whether that means "no DAC here" (skip the lock -- see
+// SCPI_DACVoltageGet's dacWriterPossible check, added by the #990 BLOCK-audit
+// fix after locking unconditionally regressed every SOUR:VOLT:LEV? on
+// NQ1/NQ2) or "fail closed" (the setter and CONF:DAC:UPDATE, which only ever
+// reach this lock past DAC_EnsureHardwareInitialized()'s own BoardVariant
+// check, so NULL there can only mean a genuine boot-time allocation failure).
+// Never touching DAC7718_Init() or gDAC7718_Mutex. Deadlock analysis:
+// DAC7718_ReadWriteReg()/DAC7718_UpdateLatch() take-and-fully-release
+// gDAC7718_Mutex within a single call, never held across a return into this
+// file, so gDacCommandMutex (outer) and gDAC7718_Mutex (inner) nest in one
+// fixed order (outer then inner, same task, never inverted) -- no cycle is
+// possible. Bounded timeout (not portMAX_DELAY), matching DAC7718_Lock()'s
+// own fail-closed idiom, so a stuck holder cannot wedge an entire SCPI
+// transport task.
 static SemaphoreHandle_t gDacCommandMutex = NULL;
 #define SCPIDAC_COMMAND_LOCK_TIMEOUT_MS 2000U
 
@@ -671,10 +679,37 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
     // observe a torn value mid-Set, and cannot observe a partially-published
     // all-channel write (some channels updated, others not yet) from the
     // SCPI_DACVoltageSet all-channel branch above.
+    //
+    // ...but only where such a write can happen. app_freertos.c:1007 creates
+    // gDacCommandMutex ONLY under `BoardVariant == 3`, while this getter is
+    // registered for every variant (SCPIInterface.c) and, unlike the setter
+    // and CONF:DAC:UPDATE, never passes DAC_EnsureHardwareInitialized() on
+    // the way in. Locking unconditionally therefore failed EVERY
+    // SOUR:VOLT:LEV? on NQ1/NQ2 with a misleading "busy" -- a regression
+    // against the pre-lock getter, which answered normally (confirmed by
+    // PR #990's own pre-merge adversarial audit).
+    //
+    // The test below is `BoardVariant == 3` rather than "is the mutex NULL"
+    // because that is the same condition the mutex's creation is gated on,
+    // AND the same condition the only two writers of BOARDDATA_AOUT_LATEST
+    // are gated on (SCPI_DACVoltageSet's BoardData_Set calls below, both
+    // reached only past DAC_EnsureHardwareInitialized()'s
+    // BoardVariant != 3 rejection). So when it is false, no writer can
+    // exist and the unlocked read below has nothing to race; when it is
+    // true we still fail CLOSED, so an NQ3 whose boot-time
+    // xSemaphoreCreateMutex() failed reports an error instead of silently
+    // reading a half-published 64-bit double.
+    const tBoardConfig* pCfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
+    const bool dacWriterPossible = (pCfg != NULL) && (pCfg->BoardVariant == 3);
+
     scpi_result_t result = SCPI_RES_OK;
-    if (!SCPIDAC_LockCommand()) {
-        SCPI_ExecutionError(context, "SOUR:VOLT:LEV?: DAC command busy, try again");
-        return SCPI_RES_ERR;
+    bool lockHeld = false;
+    if (dacWriterPossible) {
+        if (!SCPIDAC_LockCommand()) {
+            SCPI_ExecutionError(context, "SOUR:VOLT:LEV?: DAC command busy, try again");
+            return SCPI_RES_ERR;
+        }
+        lockHeld = true;
     }
 
     if (chanOpt == SCPI_OPT_PRESENT) {
@@ -723,10 +758,13 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
     }
 
 cleanup:
-    // gDacCommandMutex was definitely taken to reach here (the only earlier
-    // return is SCPIDAC_LockCommand()'s own failure, above, which returns
-    // directly without giving a lock it never took).
-    SCPIDAC_UnlockCommand(true);
+    // NOT unconditionally taken: on a board where no DAC writer can exist
+    // (dacWriterPossible == false) the lock above is deliberately skipped, so
+    // pass lockHeld rather than `true` -- this is exactly the case
+    // SCPIDAC_UnlockCommand's lockHeld parameter was added for. (The only
+    // earlier return is SCPIDAC_LockCommand()'s own failure, which returns
+    // directly without giving a lock it never took.)
+    SCPIDAC_UnlockCommand(lockHeld);
     return result;
 }
 

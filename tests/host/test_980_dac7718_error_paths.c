@@ -101,6 +101,21 @@
  * 4. This is source-level validation only. #980's own Bench line is
  *    "NQ3 (absent from this bench)" -- see the PR body for the queued
  *    daqifi-python-test-suite companion test and the READY FOR BENCH note.
+ *
+ * PART D -- SCPI_DACVoltageGet's dacWriterPossible gate (PR #990's own
+ * pre-merge adversarial audit, BLOCK verdict). PR #990 added a command-
+ * serialization mutex (gDacCommandMutex) to both SCPI_DACVoltageSet and
+ * SCPI_DACVoltageGet, but that mutex is created ONLY under
+ * `BoardVariant == 3` (app_freertos.c). The getter as originally merged
+ * called SCPIDAC_LockCommand() UNCONDITIONALLY, so on NQ1/NQ2 -- where the
+ * mutex is never created -- the lock attempt always failed
+ * ("mutex not created"), and EVERY bare SOUR:VOLT:LEV? answered "DAC command
+ * busy, try again" where the pre-PR getter (no lock at all) always answered
+ * SCPI_RES_OK. Every board on this bench is an NQ1. The fix gates the lock
+ * attempt on `dacWriterPossible` (BoardVariant == 3 -- the same condition
+ * the mutex's own creation, and the only two writers of
+ * BOARDDATA_AOUT_LATEST, are gated on), and threads the resulting lockHeld
+ * through to SCPIDAC_UnlockCommand() so a skipped lock is never given back.
  * ========================================================================== */
 
 #include <stdint.h>
@@ -872,6 +887,126 @@ TEST(all_channel_latch_failure_publishes_nothing_even_if_all_writes_succeeded)
     }
 }
 
+/* ==========================================================================
+ * PART D -- SCPI_DACVoltageGet's dacWriterPossible gate
+ * ========================================================================== */
+
+typedef struct {
+    int  boardVariant;     /* mirrors pCfg->BoardVariant; 3 == NQ3 */
+    bool lockTakeSucceeds; /* xSemaphoreTake() outcome -- consulted only when
+                             * a lock attempt actually reaches the mock */
+    int  lockCalls;
+    int  unlockCalls;
+    bool lastUnlockHeld;
+} GetterMockEnv;
+
+static void getter_mock_init(GetterMockEnv *env, int boardVariant, bool lockTakeSucceeds)
+{
+    env->boardVariant = boardVariant;
+    env->lockTakeSucceeds = lockTakeSucceeds;
+    env->lockCalls = 0;
+    env->unlockCalls = 0;
+    env->lastUnlockHeld = false;
+}
+
+/* Mirrors SCPIDAC_LockCommand(): the real function fails when
+ * gDacCommandMutex == NULL, which is true exactly when BoardVariant != 3
+ * (SCPIDAC_InitGlobal() -- the mutex's only creator -- is called solely
+ * under that guard, app_freertos.c:1007). */
+static bool mock_lock_command(GetterMockEnv *env)
+{
+    env->lockCalls++;
+    if (env->boardVariant != 3) {
+        return false;
+    }
+    return env->lockTakeSucceeds;
+}
+
+static void mock_unlock_command(GetterMockEnv *env, bool lockHeld)
+{
+    env->unlockCalls++;
+    env->lastUnlockHeld = lockHeld;
+}
+
+/* Post-fix shape -- mirrors SCPI_DACVoltageGet as it stands after this
+ * fix: lock only when dacWriterPossible, thread lockHeld through to Unlock.
+ * Returns true for SCPI_RES_OK, false for SCPI_RES_ERR ("DAC command
+ * busy"). */
+static bool getter_gated_shape(GetterMockEnv *env)
+{
+    bool dacWriterPossible = (env->boardVariant == 3);
+    bool lockHeld = false;
+
+    if (dacWriterPossible) {
+        if (!mock_lock_command(env)) {
+            return false;
+        }
+        lockHeld = true;
+    }
+
+    mock_unlock_command(env, lockHeld);
+    return true;
+}
+
+/* Pre-fix shape -- PR #990 as originally merged: locks UNCONDITIONALLY,
+ * regardless of board variant. This is the confirmed regression: on
+ * NQ1/NQ2 the mutex is never created, so this ALWAYS fails, where the
+ * pre-PR getter (no lock at all) always succeeded. */
+static bool getter_unconditional_shape(GetterMockEnv *env)
+{
+    if (!mock_lock_command(env)) {
+        return false;
+    }
+    mock_unlock_command(env, true);
+    return true;
+}
+
+/* THE test that would have caught PR #990's BLOCK-audit regression. Every
+ * board on this bench is an NQ1 -- this is that exact scenario.
+ *
+ * Contrast within one test, same convention as Part C's
+ * all_channel_one_failure_does_not_abort_the_rest: the gated (fixed) shape
+ * must succeed and must never even attempt the lock, while the
+ * unconditional (as-merged, buggy) shape -- run against the identical mock
+ * inputs -- fails. Asserting both against the same inputs, rather than only
+ * the fixed shape, is what proves the gate is load-bearing instead of
+ * vacuously true. */
+TEST(getter_on_non_nq3_succeeds_gated_but_fails_unconditional)
+{
+    GetterMockEnv env;
+    getter_mock_init(&env, 1 /* NQ1 */, true /* lock WOULD succeed if attempted */);
+    ASSERT_TRUE(getter_gated_shape(&env));   /* SCPI_RES_OK -- the fix */
+    ASSERT_EQ(env.lockCalls, 0);             /* never even attempted */
+    ASSERT_EQ(env.unlockCalls, 1);
+    ASSERT_FALSE(env.lastUnlockHeld);        /* nothing to give back */
+
+    GetterMockEnv old;
+    getter_mock_init(&old, 1 /* NQ1, identical mock inputs */, true);
+    ASSERT_FALSE(getter_unconditional_shape(&old)); /* SCPI_RES_ERR -- #990's regression */
+    ASSERT_EQ(old.lockCalls, 1);
+    ASSERT_EQ(old.unlockCalls, 0);           /* early return -- never reaches Unlock */
+}
+
+/* NQ3 behavior must be unchanged by the fix: dacWriterPossible is true, so
+ * the getter still locks, still fails CLOSED on contention (never silently
+ * skips the lock just because it timed out), and still gives the lock back
+ * on success. */
+TEST(getter_on_nq3_still_locks_and_unlocks_unchanged)
+{
+    GetterMockEnv ok;
+    getter_mock_init(&ok, 3, true);
+    ASSERT_TRUE(getter_gated_shape(&ok));
+    ASSERT_EQ(ok.lockCalls, 1);
+    ASSERT_EQ(ok.unlockCalls, 1);
+    ASSERT_TRUE(ok.lastUnlockHeld);
+
+    GetterMockEnv busy;
+    getter_mock_init(&busy, 3, false /* xSemaphoreTake times out */);
+    ASSERT_FALSE(getter_gated_shape(&busy)); /* fails CLOSED, not open */
+    ASSERT_EQ(busy.lockCalls, 1);
+    ASSERT_EQ(busy.unlockCalls, 0);          /* never took it, never gives it */
+}
+
 int main(void)
 {
     printf("#980 -- DAC7718 error-path honesty (extracted control-flow shapes)\n");
@@ -898,6 +1033,10 @@ int main(void)
     RUN(all_channel_every_write_fails_latch_still_fires_nothing_published);
     RUN(all_channel_invalid_hw_channel_counts_as_failure_not_silent_skip);
     RUN(all_channel_latch_failure_publishes_nothing_even_if_all_writes_succeeded);
+
+    /* Part D */
+    RUN(getter_on_non_nq3_succeeds_gated_but_fails_unconditional);
+    RUN(getter_on_nq3_still_locks_and_unlocks_unchanged);
 
     return TEST_SUMMARY();
 }

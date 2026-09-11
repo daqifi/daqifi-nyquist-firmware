@@ -134,6 +134,15 @@ RECIPES := Makefile
 # one-slot allocator constant the mock's fidelity claim depends on; a rename,
 # removal, or a MAX_DAC7718_CONFIG bump above 1 invalidates the test's premise
 # and must fail loudly rather than silently pass a stale copy.
+#
+# Part D (added post-merge, PR #990's own pre-merge adversarial audit, BLOCK
+# verdict): SCPI_DACVoltageGet's dacWriterPossible gate, fixing the confirmed
+# regression where the getter's new command-serialization lock was taken
+# UNCONDITIONALLY even though the mutex it locks is created only under
+# BoardVariant == 3 -- failing every SOUR:VOLT:LEV? with "DAC command busy"
+# on NQ1/NQ2 (every board on this bench) where the pre-PR getter always
+# succeeded. Two more grep guards below pin the predicate and the
+# lockHeld-threaded Unlock call.
 DAC980_BIN := run_980_tests
 DAC7718_SRC := ../../firmware/src/HAL/DAC7718/DAC7718.c
 SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
@@ -209,6 +218,18 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	       echo "       both the hwChannel-validity check and the register write succeed, and that"; \
 	       echo "       BoardData is published only for staged channels post-latch. Re-derive Part C"; \
 	       echo "       if this shape moved."; \
+	       exit 1; }
+	@grep -qE 'const bool dacWriterPossible = \(pCfg != NULL\) && \(pCfg->BoardVariant == 3\);' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: SCPI_DACVoltageGet's dacWriterPossible gate is gone from $(SCPIDAC_SRC)."; \
+	       echo "       Part D's getter_gated_shape() models exactly this predicate -- the fix for"; \
+	       echo "       the PR #990 BLOCK-audit regression (unconditional lock failing every"; \
+	       echo "       SOUR:VOLT:LEV? on NQ1/NQ2). Re-derive Part D if this moved."; \
+	       exit 1; }
+	@test "$$(grep -c 'SCPIDAC_UnlockCommand(lockHeld);' $(SCPIDAC_SRC))" = "1" \
+	  || { echo "ERROR: 'SCPIDAC_UnlockCommand(lockHeld);' count in $(SCPIDAC_SRC) changed from 1."; \
+	       echo "       SCPI_DACVoltageGet must thread lockHeld (not an unconditional true) through"; \
+	       echo "       to Unlock, since dacWriterPossible == false deliberately skips the lock."; \
+	       echo "       Part D's getter_gated_shape() models this -- re-derive it if this moved."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
 
