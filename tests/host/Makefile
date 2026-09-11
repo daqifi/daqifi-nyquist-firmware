@@ -96,7 +96,11 @@ JSONESC_BIN := run_json_escape_tests
 #      A third regex would have been the third patch to one mechanism, so
 #      the mechanism was replaced instead. `cc` already has an exact
 #      comment parser; the pin uses it rather than approximating one.
-#      Mutation-proven in four directions -- see the table in the commit.
+#      It counts call sites per file rather than testing existence:
+#      NanoPB_Encoder.c has TWO paths that destroy a sample, and an
+#      existence check stayed green when either one was deleted because the
+#      other still matched. Mutation-proven in six directions -- see the
+#      table in the commit.
 BIN970 := run_970_tests
 STREAMING_SRC := ../../firmware/src/services/streaming.c
 STREAMING_HDR := ../../firmware/src/services/streaming.h
@@ -145,15 +149,26 @@ $(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SR
 	       echo "       ADC-loop treatment). Update the guard or re-derive the DIO half of"; \
 	       echo "       test_970_encoder_consume_accounting.c."; \
 	       exit 1; }
-	@for f in $(JSON_ENC_SRC) $(NANOPB_ENC_SRC); do \
-	   $(CC) -fpreprocessed -dD -E "$$f" 2>/dev/null | tr '\n' ' ' \
-	     | grep -qE 'Streaming_ReportEncoderSampleLoss[[:space:]]*\(' \
-	     || { echo "ERROR: $$f never CALLS Streaming_ReportEncoderSampleLoss."; \
+	@set -- "$(JSON_ENC_SRC)" 1 "$(NANOPB_ENC_SRC)" 2; \
+	 while [ $$# -gt 0 ]; do \
+	   f=$$1; want=$$2; shift 2; \
+	   got=`$(CC) -fpreprocessed -dD -E "$$f" 2>/dev/null | tr '\n' ' ' \
+	        | grep -oE 'Streaming_ReportEncoderSampleLoss[[:space:]]*\(' | wc -l`; \
+	   [ "$$got" -ge "$$want" ] \
+	     || { echo "ERROR: $$f has $$got call(s) to Streaming_ReportEncoderSampleLoss, expected >= $$want."; \
 	          echo "       #970 moved loss booking from the caller's zero-return guess"; \
-	          echo "       to the encoder that destroyed the sample. With no call here,"; \
-	          echo "       destroyed samples stop reaching EncoderDroppedSamples and"; \
-	          echo "       every host assertion still passes -- the test models the"; \
-	          echo "       reporter, it cannot observe the production call."; \
+	          echo "       to the encoder that destroyed the sample. Each count below is"; \
+	          echo "       the number of distinct paths in that file that DESTROY a"; \
+	          echo "       sample: JSON_Encoder.c 1 (the oversize-sample drop arm),"; \
+	          echo "       NanoPB_Encoder.c 2 (the AIN-message encode failure and the"; \
+	          echo "       standalone-DIO fallback). A per-file EXISTENCE check could not"; \
+	          echo "       see one of two sites vanish -- the surviving call kept it"; \
+	          echo "       green -- so either PB loss path could stop reaching the"; \
+	          echo "       counter silently. The host test models the reporter; it never"; \
+	          echo "       executes Nanopb_EncodeStreamingFast, so nothing else here"; \
+	          echo "       observes these call sites."; \
+	          echo "       ADDING a path is fine and raises the count; this only reds"; \
+	          echo "       when a site DISAPPEARS, which is the regression it is for."; \
 	          exit 1; }; \
 	 done
 	$(CC) $(CFLAGS) -o $(BIN970) test_970_encoder_consume_accounting.c
