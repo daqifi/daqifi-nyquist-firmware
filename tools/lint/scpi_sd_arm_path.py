@@ -300,9 +300,24 @@ def _blank(text):
 # -- a disabled original in one style plus a live replacement in the other
 # left the hasher with a single match and no ambiguity to report.
 _ATTR = r"(?:__attribute__\s*\(\((?:[^()]|\([^()]*\))*\)\)[\w \t\*]*)?"
-_DEF = re.compile(
-    r"(?m)^[A-Za-z_][\w \t\*]*" + _ATTR + r"(?:[ \t]*\n[ \t]*)?"
-    r"\b([A-Za-z_]\w*)\s*\([^;{]*\)\s*\{")
+_HEAD = r"(?m)^[A-Za-z_][\w \t\*]*" + _ATTR + r"(?:[ \t]*\n[ \t]*)?"
+
+
+def _def_pattern(name, capture_params=False):
+    """The definition pattern for ONE named function.
+
+    Composed rather than re-typed. Writing it out per call site is what put
+    FOUR matchers in this file, each answering "what is a definition"
+    slightly differently, and every difference between them was either a
+    silent bypass or -- for `signature_params`, which kept a same-line-only
+    form after the others learned the split-line one -- a CI failure on
+    formatting that changes no behaviour (#976 pre-merge audit, rounds 2/3).
+    """
+    inner = r"([^;{]*)" if capture_params else r"[^;{]*"
+    return _HEAD + r"\b" + re.escape(name) + r"\s*\(" + inner + r"\)\s*\{"
+
+
+_DEF = re.compile(_HEAD + r"\b([A-Za-z_]\w*)\s*\([^;{]*\)\s*\{")
 
 
 def _match_brace(masked, start):
@@ -329,9 +344,7 @@ def function_body(text, name):
     # without this `function_body` reported the function MISSING while the
     # census (which uses `_DEF`) could see it -- two matchers disagreeing
     # about the same file, with a confusing message as the visible symptom.
-    sig = re.search(r"(?m)^[A-Za-z_][\w \t\*]*" + _ATTR +
-                    r"(?:[ \t]*\n[ \t]*)?\b%s\s*\([^;{]*\)\s*\{"
-                    % re.escape(name), text)
+    sig = re.search(_def_pattern(name), text)
     if not sig:
         return None
     start = sig.end() - 1
@@ -431,8 +444,7 @@ def call_arguments(body, name):
 
 def signature_params(text, name):
     """[parameter declaration, ...] of C function `name`, or None."""
-    sig = re.search(r"(?m)^[A-Za-z_][\w \t\*]*\b%s\s*\(([^;{]*)\)\s*\{"
-                    % re.escape(name), text)
+    sig = re.search(_def_pattern(name, capture_params=True), text)
     if not sig:
         return None
     inner = sig.group(1).strip()
@@ -1163,6 +1175,21 @@ def self_test():
             "    return true;", 1)
         _ck("a self-call is reported, not excused as recursion",
             any("calls itself" in x for x in check(recur)[0]), True)
+
+        # 5. The HELPER split the same way. The round-2 rows covered only the
+        #    WRAPPER, and `signature_params` -- a FOURTH matcher in this file
+        #    -- still required the return type and the name to share a line,
+        #    so `callback_param` reported the helper missing and the lint
+        #    FAILED on formatting that changes no behaviour. A false alarm
+        #    rather than a silent pass, and still a broken gate.
+        helper_split = _GOOD.replace(
+            "static bool SD_ArmOrRefuseWithCleanup(",
+            "static bool\nSD_ArmOrRefuseWithCleanup(", 1)
+        _ck("the helper's parameters are found when its type is on its own line",
+            callback_param(strip_c_comments(helper_split), ARM_HELPER)[0],
+            ("onRefused", 3))
+        _ck("and a split helper definition is still read as compliant",
+            check(helper_split)[0], [])
 
         # The parsing this rests on, asserted directly rather than only
         # through a verdict: a definition is not a call site, and a call in a
