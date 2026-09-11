@@ -64,10 +64,19 @@ JSONESC_BIN := run_json_escape_tests
 #
 # That makes three firmware constants a COPY (the two SCPI_WriteWithRetry
 # retry constants, shared with every other SCPI write, plus the new
-# SCPI_SYSINFO_WRITE_BUDGET_MS this issue adds). The recipe greps all three
-# out of the real source first and refuses to build if any has changed.
+# SCPI_SYSINFO_WRITE_BUDGET_MS this issue adds), PLUS the same 1000 Hz /
+# 32-bit-TickType_t assumption #943 already makes (this test's MS_TO_TICKS is
+# the identity only because of that). The recipe greps all of them out of the
+# real source first and refuses to build if any has changed -- including the
+# two FreeRTOS tick-config values, which #943 documented as an assumption but
+# never pinned (found by Qodo /agentic_review on this PR: a change to either
+# would silently invalidate this test's, and #943's, millisecond arithmetic
+# without the build failing). Deliberately grepped here rather than adding a
+# 4th grep to $(BENCH_BIN) -- this is the newer, still-open PR; #943 is
+# shipped and untouched by this change.
 SYSINFO_BIN := run_947_tests
 SCPI_INTERFACE_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
+FREERTOS_CONFIG_SRC := ../../firmware/src/config/default/FreeRTOSConfig.h
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
@@ -93,7 +102,7 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC)
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 
-$(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE_SRC)
+$(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE_SRC) $(FREERTOS_CONFIG_SRC)
 	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_INTERFACE_SRC) \
 	  || { echo "ERROR: SCPI_WRITE_MAX_RETRIES is no longer '200' in $(SCPI_INTERFACE_SRC)."; \
 	       echo "       Update FW_WRITE_MAX_RETRIES in test_947_sysinfo_write_abort.c and re-derive its numbers."; \
@@ -105,6 +114,17 @@ $(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE
 	@grep -qE '^#define[[:space:]]+SCPI_SYSINFO_WRITE_BUDGET_MS[[:space:]]+2000U[[:space:]]*$$' $(SCPI_INTERFACE_SRC) \
 	  || { echo "ERROR: SCPI_SYSINFO_WRITE_BUDGET_MS is no longer '2000U' in $(SCPI_INTERFACE_SRC)."; \
 	       echo "       Update FW_SYSINFO_BUDGET_MS in test_947_sysinfo_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_RATE_HZ[[:space:]]+\( \( TickType_t \) 1000 \)[[:space:]]*$$' $(FREERTOS_CONFIG_SRC) \
+	  || { echo "ERROR: configTICK_RATE_HZ is no longer '1000' in $(FREERTOS_CONFIG_SRC)."; \
+	       echo "       This test's MS_TO_TICKS(ms) == ms identity (and #943's) assumes a 1000 Hz"; \
+	       echo "       tick. Re-derive the timing model in test_947_sysinfo_write_abort.c (and"; \
+	       echo "       test_943_bench_stall_bound.c) before trusting either against new firmware."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_TYPE_WIDTH_IN_BITS[[:space:]]+TICK_TYPE_WIDTH_32_BITS[[:space:]]*$$' $(FREERTOS_CONFIG_SRC) \
+	  || { echo "ERROR: configTICK_TYPE_WIDTH_IN_BITS is no longer TICK_TYPE_WIDTH_32_BITS in $(FREERTOS_CONFIG_SRC)."; \
+	       echo "       This test's uint32_t elapsed-tick arithmetic (and #943's) assumes a 32-bit"; \
+	       echo "       TickType_t. Re-derive the timing model before trusting either against new firmware."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(SYSINFO_BIN) test_947_sysinfo_write_abort.c
 

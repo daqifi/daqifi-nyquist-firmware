@@ -83,6 +83,13 @@
  * 5. configTICK_RATE_HZ is 1000 and TickType_t is 32-bit
  *    (firmware/src/config/default/FreeRTOSConfig.h:58,126), so one tick is
  *    one millisecond and pdMS_TO_TICKS is the identity here, same as #943.
+ *    UNLIKE #943, the Makefile target for THIS file also greps
+ *    FreeRTOSConfig.h for configTICK_RATE_HZ and
+ *    configTICK_TYPE_WIDTH_IN_BITS and refuses to build if either has
+ *    drifted from 1000 Hz / 32-bit -- #943 states this assumption in prose
+ *    only and does not pin it (found by Qodo /agentic_review on this PR;
+ *    not fixed retroactively in #943's own file to keep this PR's diff to
+ *    the files #947 actually touches).
  * 6. The three firmware constants this file depends on
  *    (SCPI_WRITE_MAX_RETRIES, SCPI_WRITE_RETRY_DELAY_MS,
  *    SCPI_SYSINFO_WRITE_BUDGET_MS) are DUPLICATED here as FW_* macros. The

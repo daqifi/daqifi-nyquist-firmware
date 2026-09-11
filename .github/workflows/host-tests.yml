@@ -65,7 +65,14 @@ name: host-tests
 #     constants (the two shared SCPI_WriteWithRetry retry constants plus the
 #     new per-callback SCPI_SYSINFO_WRITE_BUDGET_MS) and fails the build if
 #     any drifts. Already covered by the existing 'firmware/src/services/SCPI/**'
-#     entry above -- no new path needed.
+#     entry above. It ALSO greps firmware/src/config/default/FreeRTOSConfig.h
+#     for the 1000 Hz tick rate and 32-bit TickType_t width its millisecond
+#     arithmetic assumes (the same assumption test_943_bench_stall_bound.c
+#     already makes, undocumented in this file's trigger list until now) --
+#     that file is NOT matched by any entry above, so it gets its own line.
+#     Found by Qodo /agentic_review on the #947 PR: without this entry, a
+#     tick-config change could silently invalidate both host tests' timing
+#     model and CI would stay green.
 
 on:
   pull_request:
@@ -79,6 +86,7 @@ on:
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/config/default/FreeRTOSConfig.h'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -91,6 +99,7 @@ on:
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/config/default/FreeRTOSConfig.h'
       - '.github/workflows/host-tests.yml'
 
 permissions:
