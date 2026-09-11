@@ -471,7 +471,21 @@ scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context){
  * It ships in every build for the same reason SYST:STR:BENCHmark and
  * SYST:STR:TEST:PATtern do; the full argument is in gFailNextWrite's comment
  * block in sd_card_manager.c, alongside the rails (one-shot, reset-scrubbed,
- * loudly logged) that bound it. */
+ * single-writer, loudly logged, readable back) that bound it, the rejected
+ * alternative of gating it on benchmark mode, and the reason it is not
+ * restricted by transport.
+ *
+ * IT IS PUBLISHED, and that is accepted rather than overlooked. SCPI_Help
+ * enumerates every scpi_commands[] entry whose callback is not
+ * SCPI_NotImplemented, so HELP lists this; and tools/lint/scpi_wiki_sync.py
+ * FAILS CI for any registered command with no wiki row -- its only escape
+ * hatch is a "NOT IMPLEMENTED" row for an UNregistered command, which this is
+ * not. So it must get a wiki row, marked bench/test-only, exactly as
+ * SYST:STR:BENCHmark and SYST:STOR:SD:BENCHmark already are. Hiding a shipped
+ * command from its own reference would be worse than documenting it: the
+ * command would still be reachable, just undiscoverable by the support
+ * engineer trying to explain a customer's log. (The wiki is a separate repo,
+ * so that edit cannot ride in this PR and must be pushed before merge.) */
 scpi_result_t SCPI_StorageSDFailNextSet(scpi_t * context) {
     int32_t param1;
 
@@ -486,9 +500,17 @@ scpi_result_t SCPI_StorageSDFailNextSet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
     sd_card_manager_SetFailNextWrite(param1 != 0);
+    /* Log BOTH edges. Logging only the arm would leave an arm-then-disarm
+     * sequence reading, in SYST:LOG?, as a device that is still armed -- which
+     * is the scarier half of the truth and the half a support engineer would
+     * act on. LOG_E (not LOG_E_ONCE/LOG_E_SESSION) on purpose: this appearing
+     * in a field log at all is the signal, and must never be deduplicated. */
     if (param1 != 0) {
         LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext ARMED - the next SD write "
               "will be forced to fail once. Bench use only.");
+    } else {
+        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext DISARMED - no write "
+              "failure is pending.");
     }
     return SCPI_RES_OK;
 }

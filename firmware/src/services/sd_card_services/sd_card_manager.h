@@ -353,6 +353,17 @@ extern "C" {
      * tell them apart and does not try; a test should arm it with only the
      * write it means to break in flight.
      *
+     * AND WHICH ONE CATCHES IT CHANGES THE OUTCOME. Only the DRAIN call sites
+     * (rotation pending-flush, rotation buffer drain, both unmount drains)
+     * call Streaming_ReportSdDiscard. The ordinary WRITE_TO_FILE site does
+     * not: it goes to ERROR with the bytes still pending -- they are not lost
+     * yet -- and ERROR falls through to UNMOUNT_DISK, whose drain retries the
+     * write, which now succeeds because the one-shot is spent. So an arm
+     * caught by the ordinary path ends the SD logging session and leaves
+     * SdDroppedBytes UNCHANGED. Do not write a test that arms, streams, and
+     * asserts SdDroppedBytes moved; arrange for a drain write to consume it.
+     * See the block comment at the consume site in sd_card_manager.c.
+     *
      * SCPI: SYSTem:STORage:SD:FAILNext <0|1>
      *
      * @param arm true to arm the one-shot, false to disarm without consuming.
