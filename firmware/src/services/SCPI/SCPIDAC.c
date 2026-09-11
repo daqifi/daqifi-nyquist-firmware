@@ -360,24 +360,6 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
-scpi_result_t SCPI_DACUseCalSet(scpi_t * context) {
-    int useCal;
-
-    if (!SCPI_ParamInt32(context, &useCal, TRUE)) {
-        return SCPI_RES_ERR;
-    }
-
-    // TODO: Implement calibration preference setting
-
-    return SCPI_RES_OK;
-}
-
-scpi_result_t SCPI_DACUseCalGet(scpi_t * context) {
-    // TODO: Get calibration preference from NVM
-    SCPI_ResultInt32(context, 0); // Default to factory calibration
-    return SCPI_RES_OK;
-}
-
 scpi_result_t SCPI_DACUpdate(scpi_t * context) {
     // Ensure DAC hardware is initialized and instance ID is valid
     if (!DAC_EnsureHardwareInitialized() || dacInstanceId == 0xFF) {
