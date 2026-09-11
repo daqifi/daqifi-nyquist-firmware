@@ -451,6 +451,78 @@ scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context){
     return SCPI_RES_OK;
 }
 
+/* #981: SYSTem:STORage:SD:FAILNext <0|1> -- BENCH/TEST-ONLY fault injection.
+ *
+ * Arms a ONE-SHOT that makes the next real SD write fail, so an automated test
+ * can exercise the write-failure accounting (Streaming_ReportSdDiscard in the
+ * rotation and unmount drains) without running the bench card out of space --
+ * the only other way to make a write fail, and one to two hours per run at the
+ * card's ~300-500 KB/s write rate.
+ *
+ * Deliberately a NEW command rather than another value on an existing one, on
+ * CLAUDE.md's own rule-4 exemption ("genuinely orthogonal ... can't be
+ * expressed as a value/arg"). SYST:STOR:SD:BENCHmark PERFORMS a write now and
+ * takes <size_kb>,<pattern>; this ARMS a latch consumed later by somebody
+ * else's write, and folding it in would tangle it with that command's
+ * testInProgress claim. SYST:STR:BENCHmark is an ordered level enum about the
+ * streaming pipeline (cap bypass, ADC bypass) and -- decisively -- refuses to
+ * change while streaming, which is exactly when this must be armable.
+ *
+ * It ships in every build for the same reason SYST:STR:BENCHmark and
+ * SYST:STR:TEST:PATtern do; the full argument is in gFailNextWrite's comment
+ * block in sd_card_manager.c, alongside the rails (one-shot, reset-scrubbed,
+ * single-writer, loudly logged, readable back) that bound it, the rejected
+ * alternative of gating it on benchmark mode, and the reason it is not
+ * restricted by transport.
+ *
+ * IT IS PUBLISHED, and that is accepted rather than overlooked. SCPI_Help
+ * enumerates every scpi_commands[] entry whose callback is not
+ * SCPI_NotImplemented, so HELP lists this; and tools/lint/scpi_wiki_sync.py
+ * FAILS CI for any registered command with no wiki row -- its only escape
+ * hatch is a "NOT IMPLEMENTED" row for an UNregistered command, which this is
+ * not. So it must get a wiki row, marked bench/test-only, exactly as
+ * SYST:STR:BENCHmark and SYST:STOR:SD:BENCHmark already are. Hiding a shipped
+ * command from its own reference would be worse than documenting it: the
+ * command would still be reachable, just undiscoverable by the support
+ * engineer trying to explain a customer's log. (The wiki is a separate repo,
+ * so that edit cannot ride in this PR and must be pushed before merge.) */
+scpi_result_t SCPI_StorageSDFailNextSet(scpi_t * context) {
+    int32_t param1;
+
+    if (!SCPI_ParamInt32(context, &param1, TRUE)) {
+        return SCPI_RES_ERR;
+    }
+    /* Range-checked rather than the usual "non-zero means true", because a
+     * typo in a test script that silently armed a write failure is a worse
+     * outcome here than an error the script can see. */
+    if (param1 < 0 || param1 > 1) {
+        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+        return SCPI_RES_ERR;
+    }
+    sd_card_manager_SetFailNextWrite(param1 != 0);
+    /* Log BOTH edges. Logging only the arm would leave an arm-then-disarm
+     * sequence reading, in SYST:LOG?, as a device that is still armed -- which
+     * is the scarier half of the truth and the half a support engineer would
+     * act on. LOG_E (not LOG_E_ONCE/LOG_E_SESSION) on purpose: this appearing
+     * in a field log at all is the signal, and must never be deduplicated. */
+    if (param1 != 0) {
+        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext ARMED - the next SD write "
+              "will be forced to fail once. Bench use only.");
+    } else {
+        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext DISARMED - no write "
+              "failure is pending.");
+    }
+    return SCPI_RES_OK;
+}
+
+/* #981: 1 while the one-shot above is still outstanding, 0 once a write has
+ * consumed it (or it was never armed) -- so a test can confirm the injection
+ * fired instead of inferring it from downstream counters. */
+scpi_result_t SCPI_StorageSDFailNextGet(scpi_t * context) {
+    SCPI_ResultInt32(context, sd_card_manager_FailNextWriteArmed() ? 1 : 0);
+    return SCPI_RES_OK;
+}
+
 // Global variables for benchmark results.
 // Defined here rather than beside SCPI_StorageSDBenchmark because
 // SCPI_StorageSDLoggingSet below reads testInProgress to reject an SD:FILE

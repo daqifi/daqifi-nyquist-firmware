@@ -329,6 +329,53 @@ extern "C" {
     void sd_card_manager_ClearStartupDirFull(void);
 
     /**
+     * @brief #981: BENCH/TEST-ONLY fault injection -- force the NEXT real SD
+     *        write to fail, once.
+     *
+     * This is a diagnostic, in the same category as SYSTem:STReam:BENCHmark
+     * and SYSTem:STORage:SD:BENCHmark: it deliberately changes device
+     * behaviour, it ships in every build, and it is documented for bench use
+     * only. Production code must never call it. It exists because the SD
+     * failure-accounting paths (Streaming_ReportSdDiscard in the rotation and
+     * unmount drains) were otherwise unprovable on the bench without filling a
+     * ~2 GB card at ~300-500 KB/s -- one to two hours per regression run.
+     *
+     * Armed, the next SDCardWrite() that would have issued a real write
+     * instead consumes the arm, logs LOG_E naming this hook, and returns -1;
+     * the caller takes its ordinary write-failure path. It is a ONE-SHOT: the
+     * arm is gone whether or not the caller recovers, so a device cannot be
+     * left failing writes. It is also cleared by every reset (an explicit
+     * #409 scrub in sd_card_manager_Init), so SYST:REBoot or a power cycle
+     * always disarms it.
+     *
+     * Fires on whichever real write comes next, whoever owns it -- a streaming
+     * log, a SYST:STOR:SD:BENCHmark, an SD:FILE write. The hook has no way to
+     * tell them apart and does not try; a test should arm it with only the
+     * write it means to break in flight.
+     *
+     * AND WHICH ONE CATCHES IT CHANGES THE OUTCOME. Only the DRAIN call sites
+     * (rotation pending-flush, rotation buffer drain, both unmount drains)
+     * call Streaming_ReportSdDiscard. The ordinary WRITE_TO_FILE site does
+     * not: it goes to ERROR with the bytes still pending -- they are not lost
+     * yet -- and ERROR falls through to UNMOUNT_DISK, whose drain retries the
+     * write, which now succeeds because the one-shot is spent. So an arm
+     * caught by the ordinary path ends the SD logging session and leaves
+     * SdDroppedBytes UNCHANGED. Do not write a test that arms, streams, and
+     * asserts SdDroppedBytes moved; arrange for a drain write to consume it.
+     * See the block comment at the consume site in sd_card_manager.c.
+     *
+     * SCPI: SYSTem:STORage:SD:FAILNext <0|1>
+     *
+     * @param arm true to arm the one-shot, false to disarm without consuming.
+     */
+    void sd_card_manager_SetFailNextWrite(bool arm);
+
+    /** @brief #981: true while a SetFailNextWrite arm is still outstanding;
+     *         false once a write has consumed it (or it was never armed).
+     *         Bench/test diagnostic only -- see above. */
+    bool sd_card_manager_FailNextWriteArmed(void);
+
+    /**
      * @brief Checks if the SD card manager is busy with an active operation.
      *
      * This should be called before starting any new SD operation to prevent

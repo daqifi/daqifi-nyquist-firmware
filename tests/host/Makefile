@@ -61,6 +61,24 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # and should be looked at rather than skipped.
 SUSPEND_BIN := run_953_tests
 
+# #981: SYSTem:STORage:SD:FAILNext's one-shot arm/consume contract.
+# `sd_card_manager.c` is not includable on the host (FreeRTOS + Harmony's
+# SYS_FS + the whole SD state machine), so this re-implements only the
+# one-shot flag/consume shape against a mock, same technique as BENCH_BIN and
+# SUSPEND_BIN above. Four properties of the real source make the model valid;
+# the guard greps for all four and refuses to build if any has moved:
+#   1. the flag `gFailNextWrite` still exists;
+#   2. its consume site is a test-and-clear (`if (gFailNextWrite) { ...
+#      gFailNextWrite = false ...`) INSIDE one taskENTER_CRITICAL /
+#      taskEXIT_CRITICAL pair, not a bare clear outside one;
+#   3. `sd_card_manager_Init()` still scrubs it to false (the #409 rail: a
+#      reset must always clear an outstanding arm);
+#   4. `sd_card_manager_SetFailNextWrite()`'s body is still a PLAIN store
+#      with no critical section of its own (the atomicity argument for #981:
+#      a store that reads nothing first is not an RMW).
+FAILNEXT_BIN := run_981_tests
+SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
+
 # #164: JSON_StringEscape.h is header-only and dependency-free for the same
 # reason AD7609Scale.h is -- the pure byte-escaping logic was split out of
 # JSON_Encoder.c, which is unusable on a host (it pulls in
@@ -117,19 +135,59 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
-# Every suite, and every one of the six binaries. Merge conflict (fw#961
+$(FAILNEXT_BIN): test_981_sd_failnext_hook.c test_framework.h $(SD_MANAGER_SRC) $(RECIPES)
+	@grep -qF 'static volatile bool gFailNextWrite = false;' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: gFailNextWrite is no longer declared in $(SD_MANAGER_SRC)."; \
+	       echo "       test_981_sd_failnext_hook.c models its one-shot semantics; re-read both."; \
+	       exit 1; }
+	@sed -n '/bool injectWriteFailure = false;/,/if (injectWriteFailure) {/p' $(SD_MANAGER_SRC) > /tmp/.fw981_block.$$$$; \
+	 ok=1; \
+	 grep -qF 'taskENTER_CRITICAL();' /tmp/.fw981_block.$$$$ || ok=0; \
+	 grep -qF 'if (gFailNextWrite) {' /tmp/.fw981_block.$$$$ || ok=0; \
+	 grep -qF 'gFailNextWrite = false;' /tmp/.fw981_block.$$$$ || ok=0; \
+	 grep -qF 'taskEXIT_CRITICAL();' /tmp/.fw981_block.$$$$ || ok=0; \
+	 rm -f /tmp/.fw981_block.$$$$; \
+	 test "$$ok" = 1 \
+	  || { echo "ERROR: the FAILNext consume site in $(SD_MANAGER_SRC) is no"; \
+	       echo "       longer a taskENTER_CRITICAL / if(gFailNextWrite){clear} /"; \
+	       echo "       taskEXIT_CRITICAL test-and-clear, or its shape moved."; \
+	       echo "       test_981_sd_failnext_hook.c models exactly this; re-read both."; \
+	       exit 1; }
+	@a=`grep -nF 'gFailNextWrite = false;' $(SD_MANAGER_SRC) | tail -1 | cut -d: -f1`; \
+	 b=`grep -nF 'static bool isInitDone = false;' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 test -n "$$a" && test -n "$$b" && test "$$a" -lt "$$b" && test $$(($$b - $$a)) -lt 10 \
+	  || { echo "ERROR: the #409 reset-scrub of gFailNextWrite in"; \
+	       echo "       sd_card_manager_Init() is no longer immediately before the"; \
+	       echo "       isInitDone guard in $(SD_MANAGER_SRC) (a='$$a' b='$$b') --"; \
+	       echo "       a reboot may no longer clear an outstanding arm."; \
+	       exit 1; }
+	@sed -n '/void sd_card_manager_SetFailNextWrite(bool arm) {/,/bool sd_card_manager_FailNextWriteArmed(void) {/p' $(SD_MANAGER_SRC) > /tmp/.fw981_setter.$$$$; \
+	 ok=1; \
+	 grep -qF 'gFailNextWrite = arm;' /tmp/.fw981_setter.$$$$ || ok=0; \
+	 grep -qF 'taskENTER_CRITICAL();' /tmp/.fw981_setter.$$$$ && ok=0; \
+	 rm -f /tmp/.fw981_setter.$$$$; \
+	 test "$$ok" = 1 \
+	  || { echo "ERROR: sd_card_manager_SetFailNextWrite() in $(SD_MANAGER_SRC) is"; \
+	       echo "       no longer a plain store (either the store moved, or a critical"; \
+	       echo "       section was added) -- the #981 atomicity argument depends on"; \
+	       echo "       this being a plain store; re-verify it before changing either."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(FAILNEXT_BIN) test_981_sd_failnext_hook.c
+
+# Every suite, and every one of the seven binaries. Merge conflict (fw#961
 # JSONESC_BIN vs fw#983 SUSPEND_BIN, both merging around the same time)
 # resolved by keeping each side's target intact and merging only `run` and
 # `clean` -- a duplicated rule here would silently shadow one of them.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN)
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(FAILNEXT_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
 	./$(JSONESC_BIN)
 	./$(SUSPEND_BIN)
+	./$(FAILNEXT_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(FAILNEXT_BIN)
 
 .PHONY: run clean

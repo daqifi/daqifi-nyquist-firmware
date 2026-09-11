@@ -97,6 +97,28 @@ high byte would make the whole JSON stream invalid UTF-8), the `inLen` bound
 wholesale rather than truncating mid-escape, the exact worst-case sizing
 `JSON_Encoder.c` allocates on its stack, and NULL/zero-size safety.
 
+`test_981_sd_failnext_hook.c` covers the one-shot arm/consume contract behind
+`SYSTem:STORage:SD:FAILNext` (issue #981) — a bench/test-only hook that forces
+the next real SD write to fail once, so the write-failure accounting paths
+fixed by #825/#838/#915/#979 can be regression-tested without running the
+bench card out of space. `sd_card_manager.c` is not includable on the host
+(FreeRTOS + Harmony's `SYS_FS` + the whole SD state machine), so — same
+technique as `test_943`/`test_953` — this re-implements just the flag/consume
+shape against a mock and the Makefile greps the real source for four
+properties the model depends on: the flag's declaration, the
+critical-sectioned test-and-clear at the consume site, the `#409` reset-scrub
+landing immediately before the `isInitDone` guard, and the setter being a
+plain store with no critical section of its own (the atomicity argument the
+firmware PR's design review settled). Any of the four moving fails the
+**build**, not just the test. Covers: starts disarmed, arm-then-consume is
+one-shot, disarm-without-consuming leaves the next write clean, re-arming
+after a consume works again, and disarming an already-idle hook is a no-op.
+This does **not** exercise the real device or which of `SDCardWrite()`'s five
+call sites consumes a given arm in practice (only the DRAIN call sites report
+via `SdDroppedBytes`; the ordinary write path does not) — that needs real
+hardware and is `test_981_sd_failnext_hook.py` (daqifi-python-test-suite)'s
+job.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a
