@@ -186,6 +186,26 @@ SYSTem:STReam:STATS:CLEar  # Reset all counters
 - `QueueDroppedSamples > 0` → sample pool exhausted (encoder/output too slow for the rate the timer is firing)
 - `UsbDroppedBytes / SdDroppedBytes > 0` → encoder is fine but transport can't keep up
 
+**One byte-drop cause is NOT back-pressure (#1021).** A `*DroppedBytes` rise
+whose `SYST:LOG?` carries `packet exceeds the smallest active transport ring`
+means the encoded packet was **larger than the ring's total capacity**, not that
+the ring was momentarily full: the transport writes are all-or-nothing against
+`CircularBuf_NumBytesFree()`, whose maximum is the ring's `buf_size`, so such a
+write fails identically on an empty ring and there is no rate at which it starts
+succeeding. It is reachable because all three encoders fill whatever room they
+are handed and the first encode of a wake is handed the **whole** encoder buffer
+(that is deliberate — it is what lets `JSON_Encoder.c` recognise a sample that
+fits no buffer at all, #164/#961), while the smallest *legal* ring is smaller
+than the default encoder buffer: `STREAMING_WIFI_MIN` 1,400 and
+`STREAMING_SD_CIRCULAR_MIN` 4,096 against 8,192. So it needs a queue backlog
+plus a hand-set `SYSTem:MEMory:{WIFI,SD}:BUFfer` near its floor, not an exotic
+channel count. Before #1021 each such packet also cost the full
+`STREAM_WRITE_TIMEOUT_MS` (10 s) of retrying with the encoder task blocked, so
+the queue behind it overflowed and the visible loss was mostly
+`QueueDroppedSamples` from the stall rather than the packet itself; the packet
+is now dropped immediately and the counters reflect only it. **Remedy:** raise
+the named interface's buffer, or lower `SYSTem:MEMory:ENCoder:BUFfer` below it.
+
 **Thread safety:** `TotalSamplesStreamed`, `TotalBytesStreamed`, and `TimerISRCalls` are 64-bit counters (safe for million-year sessions). The first two are protected by `taskENTER_CRITICAL`/`taskEXIT_CRITICAL` on each increment and during snapshot reads. Drop counters remain 32-bit (atomic on PIC32MZ). `TimerISRCalls` lives in a separate `static volatile uint64_t gTimerISRCalls` global, incremented in true ISR context (TIMER_5 — the 32-bit TMR4/5 streaming-timer pair's vector, priority 3, ≤ max-syscall 4) by a single writer (no critical section needed because same-source can't preempt itself); the snapshot read uses `taskENTER_CRITICAL` which raises the syscall priority above the kernel-managed ISR threshold and blocks the timer, making the non-atomic 64-bit read coherent.
 
 **Session-end logging:** When streaming stops, if any data was lost during the session, a `LOG_E` summary is automatically written with sample counts, per-buffer byte drops, and loss percentage. Retrieve via `SYST:LOG?`.
