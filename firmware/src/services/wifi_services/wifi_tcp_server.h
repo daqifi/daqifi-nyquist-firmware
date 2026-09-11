@@ -93,7 +93,7 @@ typedef struct s_tcpClientContext
      *  when consecutive send lengths differ, which peaks mid-band and vanishes
      *  once sends saturate to a constant 1400 B above it.  Treat a rise as a
      *  diagnostic-counter artifact, not stream damage, until #956 lands.  See
-     *  CLAUDE.md, "WiFi characterization — lessons that survive". */
+     *  docs/STREAMING_AND_ADC.md, "WiFi characterization — lessons that survive". */
     uint32_t wifiTcpPartialSends;
     /** #367 diagnostics: cumulative byte shortfall (sendSize - sentBytes) across
      *  all partial sends, summed only where the difference is positive
