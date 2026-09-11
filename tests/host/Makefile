@@ -55,6 +55,19 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # whole board/driver graph). No UUT copy, no stubs, and NOT $(INCLUDES).
 JSONESC_BIN := run_json_escape_tests
 
+# #980: DAC7718 error-path honesty (lock ownership in DAC7718_ReadWriteReg,
+# init-failure propagation + slot retention in DAC_EnsureHardwareInitialized).
+# Like BENCH_BIN, neither DAC7718.c (Harmony GPIO/SPI/coretimer + FreeRTOS
+# semaphores) nor SCPIDAC.c (+ libscpi + BoardData/BoardConfig) is includable
+# on the host, so the test re-implements both control-flow SHAPES against
+# mocks. The grep guards pin the two shape-defining identifiers and the
+# one-slot allocator constant the mock's fidelity claim depends on; a rename,
+# removal, or a MAX_DAC7718_CONFIG bump above 1 invalidates the test's premise
+# and must fail loudly rather than silently pass a stale copy.
+DAC980_BIN := run_980_tests
+DAC7718_SRC := ../../firmware/src/HAL/DAC7718/DAC7718.c
+SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
+
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
 	$(CC) $(CFLAGS) $(INCLUDES) -o $(BIN) test_circularbuffer.c $(UUT)
@@ -79,17 +92,38 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC)
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 
-# Every suite, and every one of the five binaries. Merge conflict resolved by
+$(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(SCPIDAC_SRC)
+	@grep -qE '^[[:space:]]*bool lockHeld = false;' $(DAC7718_SRC) \
+	  || { echo "ERROR: DAC7718_ReadWriteReg's 'lockHeld' local is gone from $(DAC7718_SRC)."; \
+	       echo "       test_980_dac7718_error_paths.c Part A models exactly this variable -- re-derive it."; \
+	       exit 1; }
+	@grep -qE 'DAC7718_Unlock\(config, csAsserted, lockHeld\);' $(DAC7718_SRC) \
+	  || { echo "ERROR: DAC7718_Unlock's call site no longer passes (config, csAsserted, lockHeld) in $(DAC7718_SRC)."; \
+	       echo "       Part A's mock signature mirrors this exact call -- re-derive it."; \
+	       exit 1; }
+	@grep -qE '^#define MAX_DAC7718_CONFIG 1[[:space:]]*$$' $(DAC7718_SRC) \
+	  || { echo "ERROR: MAX_DAC7718_CONFIG is no longer '1' in $(DAC7718_SRC)."; \
+	       echo "       Part B's mock_new_config() models a ONE-slot allocator; a different capacity"; \
+	       echo "       changes what 'the slot is retained on retry' even means -- re-derive the test."; \
+	       exit 1; }
+	@grep -qE 'static volatile bool dacInitInProgress = false;' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: dacInitInProgress is gone from $(SCPIDAC_SRC)."; \
+	       echo "       test_980_dac7718_error_paths.c Part B models exactly this claim flag -- re-derive it."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
+
+# Every suite, and every one of the six binaries. Merge conflict resolved by
 # keeping each side's target intact and merging only `run` and `clean` -- a
 # duplicated rule here would silently shadow one of them.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN)
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(DAC980_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
 	./$(JSONESC_BIN)
+	./$(DAC980_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(DAC980_BIN)
 
 .PHONY: run clean

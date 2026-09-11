@@ -28,32 +28,77 @@
 // other (CLAUDE.md "Atomicity & Concurrency Rules"). Both are plain aligned
 // scalars, so the accesses themselves are atomic on PIC32MZ; volatile is what
 // stops the compiler caching them or reordering the publish pair below.
+// #980 item 3: this is now ALSO cleared whenever the 10V rail drops, so it
+// means "a completed init is currently in effect", not just "has ever
+// succeeded".
 static volatile bool dacHardwareInitialized = false;
 
-// Static DAC instance ID (returned from DAC7718_NewConfig)
+// Static DAC instance ID (returned from DAC7718_NewConfig).
+// #980 item 1: RETAINED across a failed init AND across a power loss. The
+// one-slot allocator (MAX_DAC7718_CONFIG == 1 in DAC7718.c) never frees a
+// slot -- m_DAC7718ConfigCount only increments -- so clearing this back to
+// 0xFF after we already own slot 0 would make every later DAC7718_NewConfig()
+// return the table-full sentinel forever, permanently bricking the DAC. A
+// failed DAC7718_Init() or a power cycle both leave this alone and only clear
+// dacHardwareInitialized, so the next call retries Init() on the SAME slot.
 static volatile uint8_t dacInstanceId = 0xFF; // 0xFF = uninitialized
 
-// Static DAC configuration to avoid stack usage
-static tDAC7718Config dacConfig;
+// #980 item 1/4: claims the allocate/init/publish region below so at most one
+// SCPI transport (USB or WiFi) runs it at a time. Without this, a naive
+// "reuse dacInstanceId on retry" would let a second transport call
+// DAC7718_Init() concurrently with the first -- and DAC7718_Init()'s GPIO
+// reset pulse is not synchronized against a second, independent call to
+// itself, only against DAC7718_ReadWriteReg(). A test-and-set, not a plain
+// set: reading the flag and setting it is a read-modify-write, which is NOT
+// atomic on PIC32MZ, hence the critical section around it below. If this ever
+// leaks true the DAC is unusable for the rest of the boot, so every exit from
+// the claimed region must clear it.
+//
+// This does NOT fully solve #980 item 4 (overlapping first-time init should
+// BLOCK the loser rather than fail it) -- see issue #980 item 4 and #989 for
+// why that larger, recursive-mutex change is deferred to a follow-up. What
+// this claim DOES do is preserve today's existing loser behaviour (a
+// transient execution error) unchanged while making the retry-on-failure
+// path (item 1) safe against the same race.
+static volatile bool dacInitInProgress = false;
+
+// Static DAC configuration. #980 cleanup: both writers used to assign the
+// same two pin constants on every call into a shared, writable static --
+// `const` removes that redundant/competing write for free (and moves it from
+// BSS to .rodata).
+static const tDAC7718Config dacConfig = {
+    .CS_Pin  = GPIO_PIN_RK0,    // CS on RK0
+    .RST_Pin = GPIO_PIN_RJ13,   // CLR/RST on RJ13
+};
 
 // Helper function to ensure DAC hardware is initialized when power is up
 static bool DAC_EnsureHardwareInitialized(void) {
-    if (dacHardwareInitialized) {
-        return true; // Already initialized
-    }
-    
-    // Check if power is up (10V rail needed for DAC7718)
+    // #980 item 3: the power precondition is now checked on EVERY call,
+    // ahead of the "already initialized" short-circuit below. The old order
+    // returned true on the flag first, so once the DAC had initialized
+    // successfully once, the device never re-enforced its own stated power
+    // precondition -- a command issued after the 10V rail dropped would
+    // still report success.
     const tPowerData* pPowerState = BoardData_Get(BOARDDATA_POWER_DATA, 0);
     if (pPowerState == NULL) {
         LOG_E("DAC_EnsureHardwareInitialized: Cannot get power state data");
         return false;
     }
-    
+
     // POWERED_UP (1) has 10V rail, POWERED_UP_EXT_DOWN (2) does not have 10V rail
     if (pPowerState->powerState != POWERED_UP) {
+        // Drop READY so the rail's return re-runs the full init sequence
+        // (including the register write DAC7718_Init performs) rather than
+        // trusting stale hardware state. dacInstanceId is deliberately left
+        // alone -- see its declaration; the one slot cannot be handed back.
+        dacHardwareInitialized = false;
         return false;
     }
-    
+
+    if (dacHardwareInitialized) {
+        return true; // Already initialized and the rail is still up
+    }
+
     // Get DAC configuration from board config and initialize hardware
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
     if (pBoardConfig == NULL || pBoardConfig->AOutModules.Size == 0) {
@@ -66,43 +111,68 @@ static bool DAC_EnsureHardwareInitialized(void) {
               pBoardConfig->BoardVariant);
         return false;
     }
-    
-    // Initialize DAC7718 hardware configuration
-    dacConfig.CS_Pin = GPIO_PIN_RK0;     // CS on RK0
-    dacConfig.RST_Pin = GPIO_PIN_RJ13;   // CLR/RST on RJ13
 
-    // Create DAC configuration and get instance ID.
-    //
-    // Allocate into a LOCAL and publish only on success. This helper is
-    // reachable from both SCPI transports at once (see the note in
-    // DAC7718_NewConfig), and DAC7718_NewConfig now hands the single slot to
-    // exactly one racer and returns the 0xFF sentinel to the other. Assigning
-    // that sentinel straight into the shared dacInstanceId -- as this did --
-    // would overwrite the winner's valid id while the winner's
-    // dacHardwareInitialized = true still stands, leaving the DAC inert for
-    // the rest of the boot with every later command silently no-oping inside
-    // DAC7718_GetConfig. A local keeps the loser's failure local to the loser.
-    uint8_t newInstanceId = DAC7718_NewConfig(&dacConfig);
-    if (newInstanceId == 0xFF) {
-        // Refused because another task won the race, not because the table is
-        // genuinely full: the winner publishes its id before setting the flag,
-        // and only sets the flag after DAC7718_Init() has returned, so a flag
-        // observed true means a completed init this command can use.
-        if (dacHardwareInitialized) {
-            return true;
-        }
-        LOG_E("DAC_EnsureHardwareInitialized: Failed to allocate DAC configuration");
+    // Claim the allocate/init/publish region (see dacInitInProgress above).
+    // Scalars only in the critical section -- no I/O, no logging, no blocking
+    // call -- so it is a handful of instructions, same idiom as
+    // DAC7718_NewConfig's counter guard.
+    bool claimed;
+    taskENTER_CRITICAL();
+    if (dacInitInProgress) {
+        claimed = false;
+    } else {
+        dacInitInProgress = true;
+        claimed = true;
+    }
+    taskEXIT_CRITICAL();
+
+    if (!claimed) {
+        // Another transport is mid-init right now. Same outcome as today's
+        // allocation-race loser (a transient execution error) -- making the
+        // loser WAIT instead is #980 item 4, deferred (see the comment on
+        // dacInitInProgress above).
+        LOG_E("DAC_EnsureHardwareInitialized: initialization already in progress");
         return false;
     }
 
-    // Initialize DAC hardware with fixed 10V range (range parameter reserved for future use)
-    DAC7718_Init(newInstanceId, 1);
+    // Re-check under the claim: the winner of a race may have finished
+    // between our flag read above and our claim just now. Without this, a
+    // redundant DAC7718_Init() would re-pulse RST and re-zero outputs a
+    // concurrent caller already commanded.
+    if (dacHardwareInitialized) {
+        dacInitInProgress = false;
+        return true;
+    }
 
-    // Publish the id BEFORE the flag: every consumer gates on the flag, so the
-    // id must already be valid when the flag is seen true. Both are volatile,
-    // so the compiler keeps these two stores in this order.
-    dacInstanceId = newInstanceId;
-    dacHardwareInitialized = true;
+    if (dacInstanceId == 0xFF) {
+        // No slot allocated yet -- allocate one. DAC7718_NewConfig hands the
+        // single slot to exactly one caller; under the claim above, this is
+        // the only caller that can reach it.
+        uint8_t newInstanceId = DAC7718_NewConfig(&dacConfig);
+        if (newInstanceId == 0xFF) {
+            LOG_E("DAC_EnsureHardwareInitialized: Failed to allocate DAC configuration");
+            dacInitInProgress = false;
+            return false;
+        }
+        dacInstanceId = newInstanceId;
+    }
+
+    // #980 item 1: propagate DAC7718_Init()'s actual outcome instead of
+    // assuming success. On failure, dacInstanceId is retained above (NOT
+    // reset to 0xFF) so the NEXT call retries DAC7718_Init() on this SAME
+    // slot instead of calling DAC7718_NewConfig() again -- which would hit
+    // the one-slot allocator's table-full sentinel and brick the DAC
+    // permanently. DAC7718_Init()'s sequence starts with the RST pulse, so
+    // re-running it on a previously-failed id is safe to repeat.
+    if (!DAC7718_Init(dacInstanceId, 1)) {
+        LOG_E("DAC_EnsureHardwareInitialized: DAC7718_Init failed (id=%u); "
+              "slot retained, retry permitted", (unsigned)dacInstanceId);
+        dacInitInProgress = false;
+        return false;
+    }
+
+    dacHardwareInitialized = true;   // publish READY ...
+    dacInitInProgress = false;       // ... then release the claim
     return true;
 }
 
@@ -258,7 +328,11 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
 
         uint8_t dacRegister = (uint8_t)(DAC7718_REGISTER_OFFSET + hwChannel);
         DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts16);
-        DAC7718_UpdateLatch(dacInstanceId);
+        // #980 gave DAC7718_UpdateLatch a real return value (init-honesty
+        // scope); reporting a per-channel write failure back through this
+        // SCPI command is unchanged, out-of-scope behavior -- see #919
+        // (calibration-surface honesty).
+        (void)DAC7718_UpdateLatch(dacInstanceId);
 
         // Store commanded voltage in BoardData for readback
         AOutSample sample = {.Channel = (uint8_t)channel, .Voltage = voltage};
@@ -286,8 +360,9 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
             BoardData_Set(BOARDDATA_AOUT_LATEST, i, &sample);
         }
 
-        // Update all DAC latches
-        DAC7718_UpdateLatch(dacInstanceId);
+        // Update all DAC latches (see the single-channel branch above for
+        // why this return is deliberately unchecked here -- #919)
+        (void)DAC7718_UpdateLatch(dacInstanceId);
     }
 
     return SCPI_RES_OK;
@@ -457,7 +532,14 @@ scpi_result_t SCPI_DACUpdate(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    // Update all DAC latches to reflect current values
-    DAC7718_UpdateLatch(dacInstanceId);
+    // Update all DAC latches to reflect current values. Unlike the two
+    // voltage-set call sites (whose own contract is already satisfied by the
+    // time they reach this point -- see the #919 note there), this command's
+    // entire purpose IS the latch update, so its failure is this command's
+    // failure to report.
+    if (!DAC7718_UpdateLatch(dacInstanceId)) {
+        SCPI_ExecutionError(context, "CONF:DAC:UPDATE: Failed to update DAC latches");
+        return SCPI_RES_ERR;
+    }
     return SCPI_RES_OK;
 }
