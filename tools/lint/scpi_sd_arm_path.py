@@ -109,6 +109,17 @@ stays checked here (property 1, below), unlike the rest of what #942 fixed.
    `SCPI_StorageSDFormat` publishes format-pending before arming, passes a
    non-NULL retraction in the callback slot, and does NOT also call that
    function at its own call site -- the shape #964 removed.
+
+   Like property 4, this is the ARGUMENT SLOT's spelling, not its value. The
+   check is "the callback argument is not the literal `NULL`"; it does not
+   establish that the identifier denotes a callable, so a local variable
+   holding null passes it (Qodo, #976). That is the same class as property 4's
+   comma-operator discard and gets the same answer: adding a case for one
+   spelling invites the next, and what actually closes it is the host-test
+   model's NULL-retraction case in
+   `tests/host/test_971_sd_arm_refusal_order.c`, which exercises the helper
+   with a null callback and asserts it still clears and releases. Read a green
+   run as "the slot is not literally NULL", never as "a retraction runs".
 3. **The five commands with nothing published before the arm go through the
    `SD_ArmOrRefuse` wrapper**, which passes NULL. Exactly one call site uses
    the `WithCleanup` form, and it is FORmat's, so a future caller that
