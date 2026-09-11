@@ -31,21 +31,33 @@
  * bare loop counter: the wait now yields, so the bound has to be expressed in
  * the same units the deadline is compared in.
  *
- * Sizing: SPI is master-clocked. Once SPI1BUF is written the module generates
- * all 8 SCK edges itself and no slave can stretch them (unlike I2C), so a
- * byte's wire time is fixed by BRG alone. The worst legitimate byte is 8 bits
- * at the lowest achievable SCK -- USER_SPI_MIN_BAUD_HZ (6000), which
- * spi_ComputeBrg meets exactly on the 84 MHz build (BRG 6999, actual 6000 Hz)
- * -- i.e. 8/6000 = 1.33 ms. 20 ms is ~15x that. Expiry therefore means the
- * module is not completing transfers at all (SPI1 off, PMD-gated, or a stuck
- * receive path) -- a hardware/config fault, NOT a slow or absent slave.
+ * Sizing: SPI is master-clocked, and in THIS configuration -- spi_Spi1Init
+ * builds SPI1CON from 0 with only MSTEN[/CKP/CKE] set, so MODE16=MODE32=
+ * ENHBUF=FRMEN=MSSEN=0 and SPI1CON2 is likewise forced to 0 (AUDEN=0, see
+ * spi_Spi1Init) -- there is no mode in which SCK is gated by anything the
+ * slave drives, so once SPI1BUF is written the module generates all 8 SCK
+ * edges itself and nothing external can stretch them (unlike I2C's SCL
+ * stretching). A byte's wire time is therefore fixed by BRG alone. The worst
+ * legitimate byte is 8 bits at the lowest achievable SCK -- USER_SPI_MIN_BAUD_HZ
+ * (6000), which spi_ComputeBrg meets exactly on the 84 MHz build (BRG 6999,
+ * actual 6000 Hz) -- i.e. 8/6000 = 1.33 ms. (The 100 MHz legacy build's own
+ * BRG-saturation floor is 6103 Hz / 1.31 ms, so the 84 MHz figure is the
+ * binding worst case across both builds, not an underestimate for either.)
+ * 20 ms is ~15x that. Expiry therefore means the module is not completing
+ * transfers at all (SPI1 off, PMD-gated, or a stuck receive path) -- a
+ * hardware/config fault, NOT a slow or absent slave.
  *
- * INVARIANT: keep this well above 8000 / USER_SPI_MIN_BAUD_HZ (ms). Lowering
- * the minimum baud, or moving to a slower PBCLK, requires raising this.
+ * INVARIANT: keep this well above 8000 / USER_SPI_MIN_BAUD_HZ (ms). The only
+ * in-tree change that can invalidate it is LOWERING USER_SPI_MIN_BAUD_HZ --
+ * moving to a slower PBCLK does not: a slower PBCLK only lowers the
+ * BRG-saturation floor, widening the accepted band down toward MIN_BAUD, so
+ * the worst byte stays ~= 8000 / USER_SPI_MIN_BAUD_HZ ms regardless.
  *
  * Scope is per BYTE and deliberately NOT shared across the frame the way
  * uart_WriteLocked shares one 15 s budget -- see spi_XferByte for why the two
- * drivers differ. */
+ * drivers differ. Because spi_TransferLocked breaks at the first failed byte,
+ * at most ONE budget is ever spent per frame -- a 237-byte frame cannot sum
+ * to 237x20ms; the ceiling is per-fault, not per-byte-cost. */
 #define USER_SPI_BYTE_TIMEOUT_MS   20u
 
 /* HAL scratch capacity per UserSpi_Transfer() frame. NOTE (#695): a single
@@ -250,6 +262,16 @@ static void spi_Spi1Init(void) {
     bool cke = (mode & 0x1u) == 0u;
 
     SPI1CON = 0;                                   /* stop, reset, ON=0 */
+    SPI1CON2 = 0;                                  /* AUDEN=0: 8-bit frames. Nothing
+                                                     * in this tree ever writes
+                                                     * SPI1CON2, so without this it
+                                                     * holds whatever the module
+                                                     * powered up / was last left at
+                                                     * -- an absence, not a guarantee.
+                                                     * The per-byte #913 timeout's
+                                                     * premise (one spi_XferByte ==
+                                                     * 8 bits of wire time) depends
+                                                     * on AUDEN staying 0. */
     (void)SPI1BUF;                                 /* drain RX */
     SPI1STATCLR = _SPI1STAT_SPIROV_MASK;
     SPI1BRG = spi_ComputeBrg(gCfg.baudHz, &gActualBaud);
@@ -270,13 +292,30 @@ static void spi_Spi1Init(void) {
  * pool and nothing drained it. A brief tight spin covers the fast path (a byte
  * at the 100 kHz default SCK completes in ~80 us -- no context switch); if
  * still not ready, vTaskDelay(1) lets everything below the SCPI task run while
- * the SPI module finishes clocking the byte on its own.
+ * the SPI module finishes clocking the byte on its own. The 8000-iteration
+ * bound puts the spin/yield cutover at roughly 20 kHz SCK (estimate, not
+ * bench-measured): configs at or above the documented 100 kHz default never
+ * take a yield at all; only the low-baud tail (6-20 kHz) pays a tick sleep
+ * per byte, which is the tail #913 is actually about. Matches i2c_WaitMif's
+ * 8000 (also a command/response terminal default of ~100 kHz), not
+ * uart_WaitSta's 4000 -- halving it would move the cutover to ~40 kHz and
+ * start charging every byte in the common 20-40 kHz SPI range a full tick
+ * sleep for no benefit.
  *
- * Note the ordering: the bit is tested TWICE before the deadline is consulted,
- * so a byte that completed while this task was preempted is reported as success
- * however late it is observed. Only a bit still not set when the budget expires
- * can return false. That makes the budget immune to scheduling latency and lets
- * it be sized against wire time alone. Mirrors uart_WaitSta / i2c_WaitMif. */
+ * Note the ordering: the bit is tested before the deadline is consulted on
+ * every pass, so a byte that completed while this task was preempted is
+ * reported as success however late it is observed -- EXCEPT right at the
+ * boundary, which is why the deadline branch re-checks rather than trusting
+ * the pre-check above (opus review, #913): this task can be preempted in the
+ * gap between that pre-check and the deadline test, and on the WiFi SCPI path
+ * (app_WifiTask, priority 2 -- below the encoder/SD/USB tasks and both pri-9
+ * deferred tasks) a >20 ms gap there is reachable under streaming load, not
+ * merely theoretical. Deciding on a fresh read at expiry closes that window:
+ * only a bit STILL not set at the moment the budget is spent can return
+ * false, which is what makes the budget genuinely immune to scheduling
+ * latency and sizeable against wire time alone. (uart_WaitSta / i2c_WaitMif
+ * share this same narrow window pre-#913; not fixed here -- see
+ * .claude/FINDINGS.md.) */
 static bool spi_WaitStat(uint32_t mask, bool want,
                          TickType_t start, TickType_t timeoutTicks) {
     for (;;) {
@@ -286,7 +325,12 @@ static bool spi_WaitStat(uint32_t mask, bool want,
         if (((SPI1STAT & mask) != 0u) == want) { return true; }
         /* Rollover-safe: unsigned (now - start) is the true elapsed count even
          * across a tick-counter wrap, unlike an absolute-deadline compare. */
-        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) { return false; }
+        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) {
+            /* Fresh read, not a reuse of the pre-check above: this task can be
+             * preempted between that check and this one, and a bit that set
+             * during the preemption must still count as success. */
+            return (((SPI1STAT & mask) != 0u) == want);
+        }
         vTaskDelay(1);
     }
 }
