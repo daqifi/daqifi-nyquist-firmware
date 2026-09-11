@@ -261,6 +261,51 @@ static volatile bool gSdRotating = false;
  * plain aligned bool -- atomic on PIC32MZ. volatile because the arming task
  * and the SD task are different contexts. */
 static volatile bool gWriteSessionIsStreamingLog = false; /* latched at arm */
+/* #981: TEST/BENCH HOOK -- force the NEXT real SD write to fail, once.
+ *
+ * WHY THIS EXISTS. Every accounting path in this file that runs when a write
+ * fails (#825/#838/#915's Streaming_ReportSdDiscard() calls in the rotation
+ * drain and the unmount drain, and #979's teardown fixes) can be reviewed from
+ * source but could not be PROVEN by a bench regression test, because nothing
+ * could make a real write fail on demand. The only other way is to run the card
+ * out of space, which at the measured ~300-500 KB/s SD write rate costs one to
+ * two hours per run on the bench card -- disproportionate for a test meant to
+ * re-run on every future PR touching this path. Arming this instead lets a test
+ * stream briefly and observe the drain's failure accounting without touching
+ * real card capacity.
+ *
+ * WHY IT SHIPS IN EVERY BUILD rather than behind a compile-time gate. It is
+ * reachable only from SYSTem:STORage:SD:FAILNext, and that command is exactly
+ * the shape of three switches this firmware already ships in the release
+ * binary: SYSTem:STReam:BENCHmark (bypasses the streaming frequency safety cap
+ * outright, up to 100 kHz), SYSTem:STReam:TEST:PATtern (replaces real ADC data
+ * with synthetic values), and SYSTem:STORage:SD:BENCHmark (writes throwaway
+ * files to the real card). None of those is compile-excluded, and there is no
+ * test-only build configuration in this tree to hook into. Shipping it is also
+ * what makes it useful: the regression test then runs against the same image
+ * that ships, so a release candidate can be validated rather than a special
+ * debug build nobody flashes. The blast radius is bounded by construction --
+ * the injected failure is exactly the transient write error the SD state
+ * machine must already handle correctly, which is the property under test.
+ *
+ * SAFETY RAILS, all of which are load-bearing:
+ *   - ONE-SHOT. The consume in SDCardWrite() clears the flag, so there is no
+ *     way to leave a device failing writes for whoever uses it next.
+ *   - CLEARED BY ANY RESET, via the explicit #409 scrub in
+ *     sd_card_manager_Init() -- see there for why the `= false` initializer
+ *     alone is not enough, and why a power-cycle therefore always clears this.
+ *   - LOGGED LOUDLY, every time it fires, naming itself as the cause, so a
+ *     SYST:LOG? can never be read as a genuine card fault. Deliberately LOG_E
+ *     and NOT LOG_E_ONCE/LOG_E_SESSION: this firing at all in the field is a
+ *     red flag and must never be suppressed as a duplicate.
+ *
+ * CONCURRENCY. Armed by an SCPI callback (USB SCPI task pri 7, or WiFi SCPI on
+ * app_WifiTask pri 2), consumed by app_SDCardTask (pri 5) inside SDCardWrite().
+ * The arm is a plain aligned store (atomic on PIC32MZ); the consume is a
+ * test-and-clear, i.e. a read-modify-write across two tasks, so it takes a
+ * critical section -- same reasoning as the gWriteSessionIsStreamingLog latch
+ * above. volatile because the writing and reading contexts differ. */
+static volatile bool gFailNextWrite = false;
 
 /* #824: what a sd_UpdateSettingsImpl() caller is doing. See the three public
  * wrappers in sd_card_manager.h for why this is a parameter and not something
@@ -416,6 +461,36 @@ void __attribute__((weak)) sd_card_manager_DataReadyCB(sd_card_manager_mode_t mo
 static int SDCardWrite() {
     int writeLen = -1;
     if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
+        goto __exit;
+    }
+
+    /* #981: test/bench hook -- see gFailNextWrite above. Consume the arm and
+     * fail, WITHOUT issuing the real write: the point is to exercise the
+     * callers' failure accounting, not to put the card in a novel state.
+     *
+     * Placed AFTER the handle check on purpose. A call with no open file
+     * already returns -1 without touching the card, so consuming the arm there
+     * would burn it on a write that never was, and a test arming while the log
+     * is between files would silently get no injected failure at all. Here the
+     * arm can only be consumed by a call that was about to write real bytes.
+     *
+     * Test-and-clear under a critical section (read-modify-write across the
+     * arming SCPI task and this one); the LOG_E is outside it, because logging
+     * with interrupts masked is exactly what #525 cost us. -1 is the value
+     * SYS_FS_FileWrite itself reports a failure with, so every caller's
+     * existing error arm is reached unchanged. */
+    bool injectWriteFailure = false;
+    taskENTER_CRITICAL();
+    if (gFailNextWrite) {
+        gFailNextWrite = false;
+        injectWriteFailure = true;
+    }
+    taskEXIT_CRITICAL();
+    if (injectWriteFailure) {
+        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext consumed - forcing this "
+              "write of %u bytes to FAIL. This is NOT a card fault.",
+              (unsigned)gSDCardData.writeBufferLength);
+        writeLen = -1;
         goto __exit;
     }
 
@@ -964,12 +1039,13 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
      * places OUTSIDE [_bss_begin,_bss_end] -- so the compile-time `= false`
      * initializers below are NOT honoured across MCLR or an IPE flash.
      *
-     * These two are the ones that decide a FILE'S CONTENT since #824, which
-     * is why they are scrubbed and the file's other statics (pre-existing, and
-     * only affecting behaviour after they are written) are left alone: a
-     * stale gSdRotating plus a stale gWriteSessionIsStreamingLog would put a
-     * header at the front of the first file of the first session after a
-     * flash, which no rotation had asked for.
+     * The first two are the ones that decide a FILE'S CONTENT since #824,
+     * which is why they are scrubbed and the file's other statics
+     * (pre-existing, and only affecting behaviour after they are written) are
+     * left alone: a stale gSdRotating plus a stale gWriteSessionIsStreamingLog
+     * would put a header at the front of the first file of the first session
+     * after a flash, which no rotation had asked for. The third (#981) decides
+     * whether a write FAILS, which is a stronger reason again -- see below.
      *
      * OUTSIDE the isInitDone guard deliberately -- that flag is a retained
      * static too, so a scrub placed under it is skipped in exactly the case
@@ -977,6 +1053,13 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
      * section needed. */
     gWriteSessionIsStreamingLog = false;
     gSdRotating = false;
+    /* #981: and the fault-injection arm, for the same reason plus a stronger
+     * one -- this is the line that makes "a reboot always clears it" TRUE.
+     * SYST:REBoot is RCON_SoftwareReset(), the same reset class #409 is about,
+     * so relying on the `= false` initializer would leave the one rail a user
+     * can always reach depending on where the linker happened to place the
+     * flag. Scrubbed here, a reset of any kind disarms it. */
+    gFailNextWrite = false;
 
     static bool isInitDone = false;
     if (!isInitDone) {
@@ -4026,6 +4109,35 @@ void sd_card_manager_ClearStartupDirFull(void) {
      * (pairs with ClearStartupDiskFull), so the STR:START poll observes only the
      * current request's outcome and a stale `true` can't reject a later start. */
     gSDCardData.startupDirFull = false;
+}
+
+void sd_card_manager_SetFailNextWrite(bool arm) {
+    /* #981: bench/test-only -- see gFailNextWrite's block comment near the top
+     * of this file for what this is for, why it ships in every build, and the
+     * four rails that bound it. Reached only from SYST:STOR:SD:FAILNext.
+     *
+     * Deliberately NOT refused while streaming, unlike SYST:STR:BENCHmark's
+     * guard: the accounting paths this exists to exercise (the rotation drain
+     * and the unmount drain) only run DURING and at the END of a live session,
+     * so a test has to be able to arm mid-stream. Nothing here feeds a
+     * frequency cap or a buffer partition, so there is no admitted-rate
+     * invariant for a mid-session change to break -- which is the whole reason
+     * those other guards exist.
+     *
+     * A plain store: a single aligned bool write is one instruction on
+     * PIC32MZ, so it cannot tear against the SD task's test-and-clear (which
+     * runs with interrupts masked and so cannot be interleaved by this task
+     * at all). Same rationale as sd_card_manager_ClearStartupDiskFull above;
+     * per CLAUDE.md's atomicity rules a critical section here would buy
+     * nothing and cost interrupt latency. */
+    gFailNextWrite = arm;
+}
+
+bool sd_card_manager_FailNextWriteArmed(void) {
+    /* #981: true only while an arm is outstanding. It self-clears the moment
+     * the next real write consumes it, so a test can read this back to confirm
+     * the injection actually fired rather than inferring it. */
+    return gFailNextWrite;
 }
 
 void sd_card_manager_InvalidateCrcResult(void) {

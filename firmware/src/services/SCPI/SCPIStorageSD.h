@@ -37,6 +37,17 @@ scpi_result_t SCPI_StorageSDCrcGet(scpi_t * context);     /* #306 */
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context);
 scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context);
 
+/* #981: SYSTem:STORage:SD:FAILNext <0|1> / ? -- BENCH/TEST-ONLY.
+ *
+ * Arms a one-shot that forces the next real SD write to fail, so the SD
+ * write-failure accounting paths can be regression-tested without filling the
+ * card. Same "ships in the release binary, documented bench-use-only" category
+ * as SYSTem:STReam:BENCHmark and SYSTem:STORage:SD:BENCHmark. No production
+ * client should ever send this. See sd_card_manager.h's
+ * sd_card_manager_SetFailNextWrite for the rails and the full rationale. */
+scpi_result_t SCPI_StorageSDFailNextSet(scpi_t * context);
+scpi_result_t SCPI_StorageSDFailNextGet(scpi_t * context);
+
 // SD Card Benchmarking Commands
 scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context);
 scpi_result_t SCPI_StorageSDBenchmarkQuery(scpi_t * context);
