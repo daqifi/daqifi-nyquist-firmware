@@ -243,11 +243,49 @@ $(SCPI999_BIN): test_999_scpi_context_storage_isolation.c test_framework.h \
 	  || { echo "ERROR: $(WIFI_TCP_SRC) no longer declares its own ScpiContextStorage --"; \
 	       echo "       has #999's per-transport storage been reverted to sharing?"; \
 	       exit 1; }
-	@grep -qE '&gUsbScpiStorage' $(USBCDC_SRC) \
-	  || { echo "ERROR: $(USBCDC_SRC) no longer passes its own storage to CreateSCPIContext()."; \
+	@# The two checks below scope to the CreateSCPIContext() CALL SITE's own
+	@# argument text, not "does &gUsbScpiStorage/&gTcpScpiStorage appear
+	@# anywhere in the file" (that was this guard's shape until an opus
+	@# adversarial pass on #1016 found the whole-file version defeatable: a
+	@# new shared ScpiContextStorage instance both USB and TCP callers point
+	@# their real CreateSCPIContext() call at, while the original
+	@# gUsbScpiStorage/gTcpScpiStorage declaration is left dead in the file
+	@# with a one-line `(void)&gUsbScpiStorage;` keep-alive -- that keep-alive
+	@# satisfies a whole-file grep for the literal substring while the actual
+	@# call wires up the shared instance instead, reintroducing #999 exactly.
+	@# Requiring exactly one CreateSCPIContext() call per caller (same
+	@# technique check_999_createscpicontext_wiring.sh's check (c) uses for
+	@# SCPI_Init()) and then checking only that call's own extracted argument
+	@# text closes it.
+	@usb_flat=`tr -d '\r' < $(USBCDC_SRC) | tr '\n' ' '`; \
+	 usb_call_count=`printf '%s' "$$usb_flat" | grep -oE 'CreateSCPIContext[[:space:]]*\(' | wc -l`; \
+	 test "$$usb_call_count" -eq 1 \
+	  || { echo "ERROR: $(USBCDC_SRC) calls CreateSCPIContext() $$usb_call_count times"; \
+	       echo "       (expected exactly 1). Re-check #999's fix shape before relaxing"; \
+	       echo "       this guard."; \
+	       exit 1; }; \
+	 usb_call=`printf '%s' "$$usb_flat" | grep -oP 'CreateSCPIContext\(.*?\);' | head -1`; \
+	 printf '%s' "$$usb_call" | grep -q '&gUsbScpiStorage' \
+	  || { echo "ERROR: $(USBCDC_SRC)'s own CreateSCPIContext() call no longer passes"; \
+	       echo "       &gUsbScpiStorage as its storage argument. A reference to"; \
+	       echo "       &gUsbScpiStorage surviving elsewhere in the file (e.g. a dead"; \
+	       echo "       keep-alive) does not satisfy this -- the call's OWN argument"; \
+	       echo "       text must name it."; \
 	       exit 1; }
-	@grep -qE '&gTcpScpiStorage' $(WIFI_TCP_SRC) \
-	  || { echo "ERROR: $(WIFI_TCP_SRC) no longer passes its own storage to CreateSCPIContext()."; \
+	@tcp_flat=`tr -d '\r' < $(WIFI_TCP_SRC) | tr '\n' ' '`; \
+	 tcp_call_count=`printf '%s' "$$tcp_flat" | grep -oE 'CreateSCPIContext[[:space:]]*\(' | wc -l`; \
+	 test "$$tcp_call_count" -eq 1 \
+	  || { echo "ERROR: $(WIFI_TCP_SRC) calls CreateSCPIContext() $$tcp_call_count times"; \
+	       echo "       (expected exactly 1). Re-check #999's fix shape before relaxing"; \
+	       echo "       this guard."; \
+	       exit 1; }; \
+	 tcp_call=`printf '%s' "$$tcp_flat" | grep -oP 'CreateSCPIContext\(.*?\);' | head -1`; \
+	 printf '%s' "$$tcp_call" | grep -q '&gTcpScpiStorage' \
+	  || { echo "ERROR: $(WIFI_TCP_SRC)'s own CreateSCPIContext() call no longer passes"; \
+	       echo "       &gTcpScpiStorage as its storage argument. A reference to"; \
+	       echo "       &gTcpScpiStorage surviving elsewhere in the file (e.g. a dead"; \
+	       echo "       keep-alive) does not satisfy this -- the call's OWN argument"; \
+	       echo "       text must name it."; \
 	       exit 1; }
 	@bash check_999_createscpicontext_wiring.sh $(SCPI_INTERFACE_C)
 	$(CC) $(CFLAGS) -DUSE_DEVICE_DEPENDENT_ERROR_INFORMATION=0 -I$(LIBSCPI_DIR)/inc \
