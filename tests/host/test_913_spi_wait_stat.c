@@ -45,28 +45,25 @@
  *
  * The property this file cares most about is the CHECK-BEFORE-DEADLINE
  * ordering: the condition is tested (inner spin + one more check) BEFORE the
- * deadline is ever consulted, in every outer-loop pass. That makes the wait
- * immune to scheduling latency -- a byte that completed while this task was
- * preempted is reported as success no matter how late it is observed, and
- * only a condition still unmet at the moment the deadline is checked can
- * produce a timeout. `bit_ready_exactly_at_deadline_still_succeeds` is the
- * test that would fail if that ordering were ever reversed (deadline checked
- * before the post-spin re-check).
- *
- * UPDATE (opus review of the rescued #913 design, applied before this PR):
- * that "immune to scheduling latency" claim was true for every gap EXCEPT
- * one -- between the post-spin check and the deadline test themselves. A
- * task preempted in that narrow window (reachable mainly via the WiFi SCPI
- * path, app_WifiTask priority 2, under streaming load) could have the
- * hardware condition go true without this wait ever observing it, and the
- * original rescued code returned a bare `false` there regardless. Fixed by
- * making the deadline branch take a FRESH read instead of returning
- * unconditionally. `mock_condition_met_at_deadline()` /
- * `trueAtDeadlineCheck` model that gap (a synchronous mock has no way to
- * represent real preemption otherwise), and
- * `condition_true_only_in_the_preemption_gap_is_still_caught` is the test
- * that would FAIL against the original rescued spi_WaitStat and passes
- * against the fixed one.
+ * deadline is ever consulted, in every outer-loop pass, AND ONE MORE TIME,
+ * FRESH, at the moment the deadline actually fires -- so a byte that
+ * completed while this task was preempted is reported as success no matter
+ * how late it is observed, including in the narrow gap between the
+ * post-spin check and the deadline test itself. Only a condition still
+ * unmet at that final fresh read can produce a timeout. That last part is
+ * the one piece the rescued #913 design (before an opus review caught it,
+ * see the PR description) got wrong: its deadline branch returned a bare
+ * `false` unconditionally, trusting the pre-check above it rather than
+ * re-reading -- a task preempted in that specific gap (reachable mainly via
+ * the WiFi SCPI path, app_WifiTask priority 2, under streaming load) could
+ * report a completed byte as a timeout. `mock_condition_met_at_deadline()` /
+ * `trueAtDeadlineCheck` model that gap (a synchronous mock has no wall clock
+ * independent of explicit check/delay calls, so it needs its own trigger --
+ * see `trueAtDeadlineCheck`'s comment). `bit_ready_exactly_at_deadline_still_succeeds`
+ * is the test that would fail if the check-before-deadline ordering were
+ * ever reversed; `condition_true_only_in_the_preemption_gap_is_still_caught`
+ * is the test that isolates the fresh-read fix specifically -- it is the one
+ * that would have FAILED against the original rescued spi_WaitStat.
  *
  * FIDELITY -- what this does NOT cover
  *
