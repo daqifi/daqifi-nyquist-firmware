@@ -120,7 +120,12 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC)
 # and its CODE CHANGED (the model may have gone stale). Collapsing them would
 # report "hash mismatch" for a rename, sending the reader to diff a function
 # that is no longer in the file.
-$(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) hash_function.py
+# Makefile is a prerequisite because SD_ARM_HELPER and SD_ARM_HELPER_SHA live
+# in it and CONTROL this target's guard: without it, editing either pin left an
+# already-built binary up to date and make ran the stale one without the revised
+# validation (#976 audit). main carries the same idea as a shared RECIPES
+# variable from #983; this line merges into that.
+$(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) hash_function.py Makefile
 	@grep -q '^static bool $(SD_ARM_HELPER)(' $(SD_BENCH_SRC) \
 	  || { echo "ERROR: no '^static bool $(SD_ARM_HELPER)(' line in $(SD_BENCH_SRC)."; \
 	       echo "       test_971_sd_arm_refusal_order.c models that function, and the"; \
@@ -133,6 +138,11 @@ $(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) has
 	       echo "       code for test_971_sd_arm_refusal_order.c. Install GNU coreutils."; \
 	       echo "       (Reported separately so it is not read as a drift failure.)"; \
 	       exit 1; }
+	@python3 hash_function.py --self-test >/dev/null \
+	  || { echo "ERROR: hash_function.py's own self-test fails, so the drift pin"; \
+	       echo "       below cannot be trusted to see an edit. Fix the hasher"; \
+	       echo "       before reading its verdict."; \
+	       python3 hash_function.py --self-test; exit 1; }
 	@got=$$(python3 hash_function.py $(SD_BENCH_SRC) 'static bool $(SD_ARM_HELPER)(') || exit 1; \
 	 [ "$$got" = "$(SD_ARM_HELPER_SHA)" ] \
 	  || { echo "ERROR: the CODE of $(SD_ARM_HELPER)() in $(SD_BENCH_SRC) has changed."; \
