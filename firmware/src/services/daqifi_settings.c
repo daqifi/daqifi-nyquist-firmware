@@ -6,6 +6,9 @@
 #include "state/board/NQ3BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/CRC32.h"   /* #306: settings integrity checksum (severs wolfSSL) */
+/* #904: taskENTER_CRITICAL around the 64-bit cal stores below. */
+#include "FreeRTOS.h"
+#include "task.h"
 
 uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16)));
 
@@ -330,10 +333,32 @@ bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
     
     if(!status) return status;    
     
+    /* #904: CalM and CalB are doubles, so each assignment is two 32-bit
+     * stores on PIC32MZ and a writer preempted between them leaves a torn
+     * coefficient that a concurrent reader reads back faithfully -- the
+     * reader's own critical section cannot undo it. This is the LOADcal /
+     * LOADFcal / USECal half of that fix; the SCPI chanCALM / chanCALB
+     * setters carry the same section (SCPIADC.c), and the getters' sections
+     * close the opposite direction.
+     *
+     * Per channel rather than around the whole loop: one channel's pair is
+     * the unit every reader consumes (the getters read one index, and
+     * MC12b_ConvertToVoltage reads one channel's CalM and CalB per
+     * conversion), so it is what has to be atomic. A section spanning all 48
+     * channels would additionally make the load atomic as a SET, which
+     * nothing here needs, at the cost of a much longer interrupt-off window.
+     *
+     * Task context only: the SCPI callbacks, and the boot-time call from
+     * app_SystemInit, which runs inside the priority-1 APP_FREERTOS_Tasks
+     * task (tasks.c creates it with xTaskCreate) rather than before the
+     * scheduler starts -- taskEXIT_CRITICAL would not re-enable interrupts
+     * if it ran pre-scheduler. */
     for(x=0;x<channelRuntimeConfig->Size;x++)
     {
+        taskENTER_CRITICAL();
         channelRuntimeConfig->Data[x].CalM = calArray->Data[x].CalM;
         channelRuntimeConfig->Data[x].CalB = calArray->Data[x].CalB;
+        taskEXIT_CRITICAL();
     }
     
     return status;
