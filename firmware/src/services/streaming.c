@@ -1761,6 +1761,19 @@ static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
      * that distinguishes the two causes is logged by the caller, which knows
      * which transport this is. */
     if (ringCapacity != 0u && len > ringCapacity) {
+        /* #486 precedence, preserved rather than newly asserted. On the
+         * unmodified path an undeliverable write reached the stop check only
+         * after its ten phase-1 attempts had all failed -- which they always
+         * do, for the reason above -- and was then reported as STOPPED, with
+         * no counters and no log. Returning TIMEOUT unconditionally here would
+         * book a drop and set a QUES bit for a packet the caller abandoned
+         * because streaming had already stopped: the #484 miscount this loop
+         * guards against everywhere else. Same `cfg &&` form as the phases
+         * below, deliberately -- a NULL cfg means "cannot tell", which keeps
+         * the existing fall-through rather than inventing a stop. */
+        if (cfg && !cfg->IsEnabled) {
+            return STREAM_WRITE_RETURN_STOPPED;
+        }
         return STREAM_WRITE_RETURN_TIMEOUT;
     }
 
