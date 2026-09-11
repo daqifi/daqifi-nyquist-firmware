@@ -40,7 +40,8 @@ three tests here, not just the one #946 added.
 - NULL-argument safety on every entry point
 
 `test_943_bench_stall_bound.c` covers the per-chunk write loop inside
-`SYST:STOR:SD:BENCHmark` (issue #943). Unlike the other two it does **not**
+`SYST:STOR:SD:BENCHmark` (issue #943). Unlike the CircularBuffer /
+FixedPointFmt / AD7609Scale tests it does **not**
 include any firmware source: `SCPIStorageSD.c` drags in libscpi, FreeRTOS and
 the SD manager, so the test re-implements the pre-fix and post-fix loop
 **shapes** against an injected mock clock and mock `WriteToBuffer`, then
@@ -55,6 +56,49 @@ wrap.
 Because the test re-implements rather than includes, the two firmware timeout
 constants are a copy. The Makefile target greps them out of `SCPIStorageSD.c`
 and **fails the build** if either drifts, so a stale copy cannot pass silently.
+
+`test_953_bench_suspend_diagnosis.c` covers the branch a little further down
+the same function (issue #953): the one that has to say *why* the benchmark's
+file never opened. Same technique as `test_943` and for the same reason — the
+decision cascade is re-implemented against injected values rather than
+included. Until #953 it had two arms, so a benchmark whose arm succeeded and
+whose SD task was then suspended mid-wait (WiFi streaming taking SPI4, a WiFi
+FW update, the #925 jam quarantine) hit the fallback and blamed the *card* —
+"likely SPI-mode incompatible" — for a task that had simply stopped running.
+The fix adds a third arm reporting `SD_SuspendReasonText()`.
+
+The test asserts all four quadrants of (suspended × dir-full) against **both**
+the pre-fix and post-fix shapes, and its headline property is that **exactly
+one** quadrant moves. That is what pins the ordering decision: the recorded
+`#689`/`#690` dir-full verdict is tested **before** the live suspend reason,
+because it can only have been set by the SD task actually running and refusing
+this request's open — so with both true the refusal is the real cause and the
+suspend is incidental. Testing the suspend first (as #953's ticket proposed)
+would have moved that quadrant too, silently narrowing #690.
+
+No constants are copied here, so this target has no equivalent of `test_943`'s
+two greps. What it copies is the **order of the three arms**, so the Makefile
+guards that instead: it locates each arm's marker in `SCPIStorageSD.c` and
+**fails the build** unless they still appear as dir-full → suspend → card.
+
+`test_1004_help_write_abort.c` covers `SCPI_Help`'s (the `HELP` command)
+shared-response-buffer write-abort bound (issue #1004) — the third site of a
+pattern whose other two fixes are still IN FLIGHT: #947/PR #992 for
+`SCPI_SysInfoTextGet` and #995/PR #1008 for `SCPI_GetCommandHistory` are both
+still open, so neither sibling fix — nor `test_995` — is in this tree. Same
+technique as `test_943`/`test_953`: `SCPIInterface.c` is not includable on the host, so the test
+re-implements the pre-fix and post-fix write **shapes** — the self-gating
+`ScpiHelpWrite` helper's two guards (cumulative deadline, checked before each
+transport call; short-write latch, checked after) — against an injected mock
+clock and mock transport, then compares their verdicts. Unlike #995's planned test,
+`SCPI_Help`'s write count is not pinned to a single firmware constant (it
+depends on the registered command table's total text size), so the test uses
+a representative write count from the issue's own measurement plus a sweep
+over a range, rather than one pinned to a `#define`. The Makefile target
+greps the three firmware constants (`SCPI_WRITE_MAX_RETRIES`,
+`SCPI_WRITE_RETRY_DELAY_MS`, `SCPI_HELP_WRITE_BUDGET_MS`) plus the FreeRTOS
+tick-rate/width assumption out of the real source and **fails the build** if
+any has drifted.
 
 `test_json_string_escape.c` covers `firmware/src/services/JSON_StringEscape.h`
 (issue #164) — the JSON string-escaping helper split out of `JSON_Encoder.c`
