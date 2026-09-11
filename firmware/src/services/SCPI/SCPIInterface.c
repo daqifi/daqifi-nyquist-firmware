@@ -4460,11 +4460,17 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                  * achievable max is in the LOG_E (SYST:LOG?); clients should
                  * pre-validate against current_max_rate_hz (CONF:CAP:JSON?).
                  * Benchmark mode (SYST:STR:BENCHmark) bypasses the cap entirely. */
-                LOG_E("Streaming rejected: %d Hz exceeds max %u Hz for this config "
-                      "(%u ch, %u type1) - request <= %u Hz or use SYST:STR:BENCHmark",
+                /* #1000 class: this rendered 130 bytes against Logger's
+                  * 125-byte ceiling, so the tail was cut to "SYST:STR:BENC" --
+                  * which is neither the registered SYST:STR:BENCHmark nor its
+                  * only legal abbreviation SYST:STR:BENCH, so an operator who
+                  * followed the printed remedy got -113. The max was also
+                  * interpolated twice; once is enough. */
+                LOG_E("STR:START refused (#524): %d Hz > max %u Hz "
+                      "(%u ch, %u T1) - use <= that or SYST:STR:BENCHmark",
                       (int)freq, (unsigned)maxFreq,
                       (unsigned)totalEnabledPublicChannels,
-                      (unsigned)activeType1ChannelCount, (unsigned)maxFreq);
+                      (unsigned)activeType1ChannelCount);
                 SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
                 return SCPI_RES_ERR;
             }
@@ -4807,14 +4813,15 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
          * to print ifaceForStart under the word "was", which is the interface
          * the start WANTED, not one it ever held (Qodo). */
         if (ifaceRacedBySet) {
-            LOG_E("STR:START refused (#848): SYST:STR:INT selected interface "
-                  "%d during start setup, but this start was set up for %d. "
-                  "Retry.",
+            /* #1000 class: kept under Logger's 125-byte ceiling. */
+            LOG_E("STR:START refused (#848): SYST:STR:INT moved to %d "
+                  "mid-start; set up for %d. Retry.",
                   (int)gStreamIfaceLastSet, (int)ifaceForStart);
         } else {
-            LOG_E("STR:START refused (#848): stream interface moved during "
-                  "start setup - set up for %d, pinned %d at detect, found %d "
-                  "at publish. Retry.",
+            /* #1000 class: the fixed text alone was 127 bytes, so this line
+              * was truncated on every firing regardless of the values. */
+            LOG_E("STR:START refused (#848): iface moved mid-start - setup %d, "
+                  "detect %d, publish %d. Retry.",
                   (int)ifaceForStart, (int)ifaceAtDetect, (int)ifaceAtPublish);
         }
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -5355,8 +5362,10 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         /* Which of the two terms fired, because the operator's next move
          * differs: an in-flight stop clears by itself in at most the SD
          * finalise wait, while a completed one means the session this start
-         * was setting up was deliberately ended. Kept under LOG_MESSAGE_SIZE
-         * (128, so 127 usable) with the longer arm -- 108 chars. */
+         * was setting up was deliberately ended. Fits with the longer arm at
+         * 108 chars. NB the usable ceiling is 125, not the 127 this comment
+         * used to claim: Logger.c clamps at LOG_MESSAGE_SIZE - 3, not - 1.
+         * This message was never over it; the stated constant was. */
         LOG_E("STR:START refused (#861): %s; the device stays stopped. Retry.",
               stopInFlight ? "a stop is still in flight on the other transport"
                            : "a stop was issued during start setup");
@@ -5375,9 +5384,12 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
-        LOG_E("STR:START refused (#847): a streaming config change is in "
-              "flight on the other SCPI transport - its store would land on "
-              "this session. Retry.");
+        /* #1000 class: this was a fixed 139-byte literal with no
+          * substitutions, so it was cut identically on every firing. The
+          * dropped half explained WHY: the other transport's store would
+          * otherwise land on this session. */
+        LOG_E("STR:START refused (#847): a config change is in flight on the "
+              "other SCPI transport. Retry.");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
@@ -5404,8 +5416,9 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         if (sdLoggingRequested) {
             SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
-        LOG_E("STR:START refused (#844): stream interface changed during start "
-              "(%d -> %d); the SD/buffer setup no longer matches. Retry.",
+        /* #1000 class: kept under Logger's 125-byte ceiling. */
+        LOG_E("STR:START refused (#844): iface changed mid-start (%d -> %d); "
+              "setup stale. Retry.",
               (int)ifaceForStart, (int)ifaceObserved);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
@@ -5447,8 +5460,10 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
-        LOG_E("STR:START refused (#844): config changed during start - %d Hz now "
-              "exceeds max %u Hz. Re-read CONF:CAP:JSON? and retry",
+        /* #1000 class: this rendered to exactly 125 at ordinary values, i.e.
+          * zero margin, and over it for wider ones. */
+        LOG_E("STR:START refused (#844): config changed mid-start - %d Hz > "
+              "max %u Hz. Re-read CONF:CAP:JSON?",
               (int)freq, (unsigned)revalidatedMax);
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
@@ -7159,10 +7174,15 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSz);
     AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount, sElemSz);
     if (sPoolMem == NULL || sFreeMem == NULL || sCount == 0 || sElemSz == 0) {
-        LOG_E("PrepareStreamingBuffers: refused - partition left no sample "
-              "slots (pool=%p free=%p count=%u elem=%u); reduce "
-              "SYST:MEM:USB/WIFI/SD/ENCoder:BUFfer or SYST:MEM:AUTO",
-              sPoolMem, (void*)sFreeMem, (unsigned)sCount, (unsigned)sElemSz);
+        /* #1000 class: 153 bytes of fixed text plus four substitutions, so
+          * the whole remedy was cut -- an operator saw the refusal and never
+          * saw SYST:MEM:AUTO. The two %p were dropped rather than the remedy:
+          * a NULL pool or free-list is a partition bug rather than an operator
+          * misconfiguration, and SYST:MEM:FREE? reports the partition. The
+          * counts stay because they name which of the four conditions fired. */
+        LOG_E("Buffer prep refused: no sample slots (count=%u elem=%u); "
+              "try SYST:MEM:AUTO",
+              (unsigned)sCount, (unsigned)sElemSz);
         return false;
     }
     return true;
