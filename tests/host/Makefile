@@ -65,13 +65,24 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # asking for a review, not a verdict on whether the code is right.
 #
 # Hashed: the function from its `static bool <name>(` line to its closing
-# brace, with WHOLE-LINE comments dropped and whitespace collapsed. So
-# rewording the (long, load-bearing) comment block above it does not fire,
-# and any change to the code does. A trailing comment on a line of code is
-# hashed with it -- conservative in the safe direction.
+# brace, with comments removed BY TOKEN and whitespace collapsed. So rewording
+# a comment does not fire, and any change to the code does.
+#
+# BY TOKEN, not by line shape, and that distinction is the whole point (#976
+# pre-merge audit). The first version deleted any line STARTING with `/*`, `*`
+# or `//`. `*(&cfg->mode) = SD_CARD_MANAGER_MODE_NONE;` is an ordinary C
+# pointer-deref assignment that starts with `*`, so it was silently deleted
+# before hashing -- adding one left the pin byte-identical. Measured, not
+# argued: a probe function containing that line hashed the same with and
+# without it. A guard whose whole claim is "any edit to this code forces a
+# review" must not have a spelling of edit that it cannot see.
+#
+# The strip is regex-based and NOT string-aware, so the recipe refuses outright
+# if the function ever contains a string literal rather than hashing text it
+# might have mangled. It contains none today (pure control flow).
 ARM_BIN := run_971_tests
 SD_ARM_HELPER := SD_ArmOrRefuseWithCleanup
-SD_ARM_HELPER_SHA := 5fc520aee8b158e4742efde6e8b7632b4d300dc48799a90e21b964f27456d5e0
+SD_ARM_HELPER_SHA := 48fc182fdf552b9a5cb860d7dc16821212874f734d9504d68fd110c75c97ee9f
 
 # #164: JSON_StringEscape.h is header-only and dependency-free for the same
 # reason AD7609Scale.h is -- the pure byte-escaping logic was split out of
@@ -109,7 +120,7 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC)
 # and its CODE CHANGED (the model may have gone stale). Collapsing them would
 # report "hash mismatch" for a rename, sending the reader to diff a function
 # that is no longer in the file.
-$(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC)
+$(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) hash_function.py
 	@grep -q '^static bool $(SD_ARM_HELPER)(' $(SD_BENCH_SRC) \
 	  || { echo "ERROR: no '^static bool $(SD_ARM_HELPER)(' line in $(SD_BENCH_SRC)."; \
 	       echo "       test_971_sd_arm_refusal_order.c models that function, and the"; \
@@ -122,9 +133,7 @@ $(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC)
 	       echo "       code for test_971_sd_arm_refusal_order.c. Install GNU coreutils."; \
 	       echo "       (Reported separately so it is not read as a drift failure.)"; \
 	       exit 1; }
-	@got=$$(sed -n '/^static bool $(SD_ARM_HELPER)(/,/^}/p' $(SD_BENCH_SRC) \
-	        | sed -e '/^[[:space:]]*\/\*/d' -e '/^[[:space:]]*\*/d' -e '/^[[:space:]]*\/\//d' \
-	        | tr -s '[:space:]' ' ' | sha256sum | cut -d' ' -f1); \
+	@got=$$(python3 hash_function.py $(SD_BENCH_SRC) 'static bool $(SD_ARM_HELPER)(') || exit 1; \
 	 [ "$$got" = "$(SD_ARM_HELPER_SHA)" ] \
 	  || { echo "ERROR: the CODE of $(SD_ARM_HELPER)() in $(SD_BENCH_SRC) has changed."; \
 	       echo "         expected sha256 $(SD_ARM_HELPER_SHA)"; \

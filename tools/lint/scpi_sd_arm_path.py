@@ -105,10 +105,14 @@ stays checked here (property 1, below), unlike the rest of what #942 fixed.
    surviving half of what #971 originally called "the claim precedes the
    arm"; the helper-internal half (which write falls on which branch) is the
    property that moved above.
-2. **FORmat reaches its retraction THROUGH the callback parameter.**
-   `SCPI_StorageSDFormat` publishes format-pending before arming, passes a
-   non-NULL retraction in the callback slot, and does NOT also call that
-   function at its own call site -- the shape #964 removed.
+2. **FORmat reaches its retraction THROUGH the callback parameter, and
+   publishes between the claim and the arm.** `SCPI_StorageSDFormat` takes the
+   claim, THEN publishes format-pending, THEN arms; passes a non-NULL
+   retraction in the callback slot; and does NOT also call that function at its
+   own call site -- the shape #964 removed. All three legs of #829's ordering
+   are compared, `claim < publish < arm`; until the #976 pre-merge audit the
+   first leg was asserted in this file's MESSAGE and nowhere in its code, so
+   hoisting the publish above the claim passed cleanly.
 
    Like property 4, this is the ARGUMENT SLOT's spelling, not its value. The
    check is "the callback argument is not the literal `NULL`"; it does not
@@ -628,6 +632,24 @@ def _format_problems(text):
             "%s() publishes format-pending AFTER arming. #829 requires the "
             "claim, then the publish, then the arm, so that only the owner "
             "ever advertises a format." % FORMAT_FN)
+    else:
+        # ...and the FIRST leg of that same sentence, which this checker
+        # asserted in its MESSAGE and nowhere in its code until the #976
+        # pre-merge audit said so. `publish < arm` and `claim < arm` were both
+        # checked; `claim < publish` was not, so hoisting the publish above
+        # SD_ClaimOrRefuse passed cleanly -- a format advertised by a caller
+        # that does not own the manager yet, which is the whole of what #829
+        # forbids (SCPIStorageSD.c documents it at the call site). A plain
+        # linear ordering over the whole function, so it is the same category
+        # as property 1 rather than the branch-gated reasoning this PR removed.
+        takers = _call_positions(body, CLAIM_TAKER)
+        if len(takers) == 1 and pubs[0] < takers[0]:
+            problems.append(
+                "%s() publishes format-pending BEFORE it calls %s(). #829 "
+                "requires the claim, then the publish, then the arm: a publish "
+                "made before the claim advertises a format on behalf of an "
+                "owner this function is not yet, and the other SCPI transport "
+                "can be that owner in the gap." % (FORMAT_FN, CLAIM_TAKER))
     return problems, retraction
 
 
@@ -1145,6 +1167,21 @@ static scpi_result_t decoy(scpi_t * c) {
         probs, _ = check(nopub)
         _ck("FORmat with no publish at all is refused, not passed",
             any("expected exactly one publish" in p for p in probs), True)
+
+        # The FIRST leg of the same ordering, which this file asserted only
+        # in prose until #976's audit hoisted the publish above the claim and
+        # watched it pass.
+        earlypub = _GOOD.replace(
+            "    if (!SD_ClaimOrRefuse(context, \"FORmat\")) {\n"
+            "        return SCPI_RES_ERR;\n    }\n"
+            "    sd_card_manager_SetFormatPending();",
+            "    sd_card_manager_SetFormatPending();\n"
+            "    if (!SD_ClaimOrRefuse(context, \"FORmat\")) {\n"
+            "        return SCPI_RES_ERR;\n    }")
+        assert earlypub != _GOOD
+        probs, _ = check(earlypub)
+        _ck("publishing BEFORE the claim is caught",
+            any("BEFORE it calls SD_ClaimOrRefuse" in p for p in probs), True)
 
         latepub = _GOOD.replace(
             "    sd_card_manager_SetFormatPending();\n"
