@@ -82,11 +82,14 @@ loop **shapes** against an injected mock clock and mock transport, and
 compares their verdicts on identical inputs. Covers: a healthy host sees
 byte-for-byte identical behavior; a fully-stalled host is bounded to one
 retry budget instead of up to eleven (~1 s vs ~11 s); a transport that
-drains at exactly the trickle rate needed to dodge the short-write check on
+drains at exactly the trickle rate needed to dodge the short-write guard on
 every write (proving the cumulative deadline guard is load-bearing on its
-own, not redundant with the short-write check); the tick-counter wrap in
-both the short-write-only and cumulative-deadline paths; and the
-zero-history early return spending no budget at all. Three firmware
+own); the complementary mutation -- deadline guard present, short-write
+guard removed -- against a fully-stalled host (proving the short-write
+guard is *also* not redundant with the deadline guard, since the deadline
+alone would let two full ~1 s writes through before refusing a third);
+the tick-counter wrap in both guard paths; and the zero-history early
+return spending no budget at all. Three firmware
 constants are a copy here too, grepped out of `SCPIInterface.c` by the
 Makefile target (plus the same `configTICK_RATE_HZ` /
 `configTICK_TYPE_WIDTH_IN_BITS` assumption checked against
