@@ -322,8 +322,13 @@ per-interface switch, at `:560`, identically for both variants).
 The two tables share nine of their sixteen cells (WiFi CSV both columns, SD
 CSV both columns, USB+SD PB both columns, USB+SD CSV both columns, WiFi PB
 curve) — `Streaming_TransportMaxFreq` does not branch on `isNQ1` for those
-coefficients; the other seven cells are the divergence this issue exists to
-fix.
+coefficients.
+
+The other seven diverge because the 252 MHz refits were NQ1-only. **#595/#600**
+raised USB PB and SD PB; **#595** raised the WiFi PB **single** term alone
+(5175 → 8000) and left its multi-channel curve unchanged, which is why that
+curve is one of the nine shared cells; **#712** (issue #562) raised USB CSV.
+
 The USB+SD CSV single is **6500** for every variant, and is deliberately BELOW
 the 2-channel point of its own curve: 8000 was a 200 MHz-era coefficient that
 leaked SD data at cap in 5 of 5 soak rounds, because the #712 refit covered USB
