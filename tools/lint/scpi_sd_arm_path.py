@@ -418,12 +418,39 @@ def call_arguments(body, name):
     return out
 
 
+def _balanced_params(captured):
+    """`captured` truncated at the `)` that actually closes the parameter list.
+
+    The definition pattern captures greedily between the first `(` and the
+    LAST `)` before the body brace, which is what makes a function-pointer
+    parameter -- `bool (*onRefused)(scpi_t *)` -- come out whole. The same
+    greed swallows a POSTFIX `__attribute__((...))`: for
+    `static bool F(int x) __attribute__((unused)) {` the capture came out as
+    `int x) __attribute__((unused)`, so `callback_param` was reading a
+    parameter list that is not one, and silently indexing into garbage rather
+    than failing (#976 audit, round 6 -- reported as "the definition is
+    omitted", which is not what happens; it is found, with the wrong params).
+
+    So walk the capture and stop where depth would go negative. That point IS
+    the real closing paren, whatever follows it.
+    """
+    depth = 0
+    for i, ch in enumerate(captured):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            if depth == 0:
+                return captured[:i]
+            depth -= 1
+    return captured
+
+
 def signature_params(text, name):
     """[parameter declaration, ...] of C function `name`, or None."""
     sig = one_definition(text, name, capture_params=True)
     if not sig:
         return None
-    inner = sig.group(1).strip()
+    inner = _balanced_params(sig.group(1)).strip()
     return _split_top_level(inner) if inner else []
 
 
@@ -1183,6 +1210,36 @@ def self_test():
                       "const char *cmd, void *cfg)\n{\n    return true;\n}\n")
         _ck("two definitions are refused, not silently resolved",
             any("refusing to choose" in x for x in check(dead_pair)[0]), True)
+
+        # Round 6. A POSTFIX `__attribute__((...))` used to be swallowed by
+        # the greedy parameter capture, so `callback_param` indexed into a
+        # "parameter list" that was not one. The definition was never lost --
+        # the finding described it as omitted; it was found, with garbage
+        # params, which is worse because nothing failed.
+        _ck("a postfix __attribute__ does not become a parameter",
+            signature_params(
+                "static bool F(int x) __attribute__((unused))\n{\n}\n", "F"),
+            ["int x"])
+        _ck("...and a function-POINTER parameter still comes out whole",
+            signature_params(
+                "static bool G(scpi_t *c, bool (*cb)(scpi_t *), int n)\n{\n}\n",
+                "G"),
+            ["scpi_t *c", "bool (*cb)(scpi_t *)", "int n"])
+
+        # Round 6 also reported that a column-zero `if (F(x)) {` is read as a
+        # definition of F. It is NOT, and these rows pin why rather than
+        # leaving it true by luck: a control statement wraps its call in its
+        # OWN parentheses, so the `)` the pattern needs before the brace is
+        # the control's, not the call's, and the match fails. Asserted for
+        # five shapes because "it happens not to match" is not a property.
+        for _shape in ("if (F(x)) {\n}\n",
+                       "if (F(x))\n{\n}\n",
+                       "while (F(x)) {\n}\n",
+                       "for (i = 0; F(i); i++) {\n}\n",
+                       "switch (F(x)) {\ndefault: break;\n}\n"):
+            _ck("control flow calling F() is not a definition of F: %r"
+                % _shape.split("\n")[0],
+                [m.group(1) for m in _DEF.finditer(_shape)], [])
 
         _ck("the helper's parameters are found when its type is on its own line",
             callback_param(strip_c_comments(helper_split), ARM_HELPER)[0],
