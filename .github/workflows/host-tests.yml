@@ -66,12 +66,19 @@ name: host-tests
 #     the "unrelated services/ files" the paragraph above named as correctly
 #     excluded -- until now. This test greps it for four properties of the
 #     FAILNext one-shot arm/consume shape (the flag's declaration, the
-#     critical-sectioned test-and-clear, the #409 reset-scrub ordering, and
-#     the setter's plain-store shape) and fails the BUILD, not just the test,
-#     if any has moved. Scoped to that one file by name, same reasoning as
-#     JSON_StringEscape.h's entry directly above -- not the whole
+#     POSITION -- not just presence -- of the critical-sectioned
+#     test-and-clear and its UNMOUNT_DISK safety gate, the #409 reset-scrub
+#     ordering, and the setter's plain-store shape) and fails the BUILD, not
+#     just the test, if any has moved. Scoped to that one file by name, same
+#     reasoning as JSON_StringEscape.h's entry directly above -- not the whole
 #     services/sd_card_services/ directory, which this file is the only
 #     member of a host test reads.
+#     test_981_sd_failnext_real_consume.{head,tail}.c (same issue, added on a
+#     PR #1013 audit finding that the grep-only checks above could not fail on
+#     two real mutations of sd_card_manager.c): extracts the real consume
+#     snippet from sd_card_manager.c verbatim and compiles + RUNS it, so the
+#     behaviour is checked, not just the shape. Both files live directly under
+#     tests/host/, already covered by the 'tests/host/**' entry below.
 
 on:
   pull_request:

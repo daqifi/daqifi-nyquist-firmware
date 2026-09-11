@@ -453,11 +453,31 @@ scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context){
 
 /* #981: SYSTem:STORage:SD:FAILNext <0|1> -- BENCH/TEST-ONLY fault injection.
  *
- * Arms a ONE-SHOT that makes the next real SD write fail, so an automated test
- * can exercise the write-failure accounting (Streaming_ReportSdDiscard in the
- * rotation and unmount drains) without running the bench card out of space --
- * the only other way to make a write fail, and one to two hours per run at the
- * card's ~300-500 KB/s write rate.
+ * Arms a ONE-SHOT that makes ONE SD write fail, so an automated test can
+ * exercise the write-failure accounting (Streaming_ReportSdDiscard) without
+ * running the bench card out of space -- the only other way to make a write
+ * fail, and one to two hours per run at the card's ~300-500 KB/s write rate.
+ *
+ * IT IS NOT "THE NEXT WRITE", AND THE DIFFERENCE IS A SAFETY PROPERTY, not a
+ * detail. sd_card_manager.c consumes the arm ONLY on a write issued while the
+ * manager is already in UNMOUNT_DISK -- i.e. by one of the two drains that run
+ * inside a teardown that is already happening. The other three SDCardWrite()
+ * call sites (the ordinary WRITE_TO_FILE write and BOTH rotation drains)
+ * answer a failed write by setting currentProcessState = ERROR, and the
+ * pre-existing ERROR -> UNMOUNT_DISK -> INIT -> OPEN_FILE(WRITE_PLUS) path
+ * then re-opens the SAME base filename with fileCounter reset to 0, which
+ * TRUNCATES it -- destroying already-recorded data, not merely ending the
+ * session. Letting an SCPI-armable, network-reachable command trigger that on
+ * a shipped device is the thing the gate exists to prevent. The full argument,
+ * the per-call-site table and the coverage this gate gives up (the rotation
+ * drains' #825/#838 twins, which stay source-review-only) are in
+ * gFailNextWrite's block comment and at the consume site in sd_card_manager.c.
+ *
+ * PRACTICAL CONSEQUENCE FOR A TEST: arm whenever you like, including
+ * mid-stream -- ordinary writes will not take it -- then STOP the session. An
+ * unmount drain consumes it, reports the abandoned chunk, and SdDroppedBytes
+ * moves. Arming and merely streaming injects nothing; SYST:STOR:SD:FAILNext?
+ * still reading 1 means the arm is intact, not that it fired silently.
  *
  * Deliberately a NEW command rather than another value on an existing one, on
  * CLAUDE.md's own rule-4 exemption ("genuinely orthogonal ... can't be
@@ -506,8 +526,9 @@ scpi_result_t SCPI_StorageSDFailNextSet(scpi_t * context) {
      * act on. LOG_E (not LOG_E_ONCE/LOG_E_SESSION) on purpose: this appearing
      * in a field log at all is the signal, and must never be deduplicated. */
     if (param1 != 0) {
-        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext ARMED - the next SD write "
-              "will be forced to fail once. Bench use only.");
+        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext ARMED - one SD write "
+              "issued during the next teardown drain will be forced to fail. "
+              "Bench use only.");
     } else {
         LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext DISARMED - no write "
               "failure is pending.");

@@ -329,40 +329,53 @@ extern "C" {
     void sd_card_manager_ClearStartupDirFull(void);
 
     /**
-     * @brief #981: BENCH/TEST-ONLY fault injection -- force the NEXT real SD
-     *        write to fail, once.
+     * @brief #981: BENCH/TEST-ONLY fault injection -- force ONE SD write,
+     *        issued during the NEXT teardown drain, to fail.
      *
      * This is a diagnostic, in the same category as SYSTem:STReam:BENCHmark
      * and SYSTem:STORage:SD:BENCHmark: it deliberately changes device
      * behaviour, it ships in every build, and it is documented for bench use
      * only. Production code must never call it. It exists because the SD
-     * failure-accounting paths (Streaming_ReportSdDiscard in the rotation and
-     * unmount drains) were otherwise unprovable on the bench without filling a
-     * ~2 GB card at ~300-500 KB/s -- one to two hours per regression run.
+     * failure-accounting paths (Streaming_ReportSdDiscard in the unmount
+     * drain, #915/#979) were otherwise unprovable on the bench without
+     * filling a ~2 GB card at ~300-500 KB/s -- one to two hours per
+     * regression run.
      *
-     * Armed, the next SDCardWrite() that would have issued a real write
-     * instead consumes the arm, logs LOG_E naming this hook, and returns -1;
-     * the caller takes its ordinary write-failure path. It is a ONE-SHOT: the
-     * arm is gone whether or not the caller recovers, so a device cannot be
-     * left failing writes. It is also cleared by every reset (an explicit
-     * #409 scrub in sd_card_manager_Init), so SYST:REBoot or a power cycle
-     * always disarms it.
+     * NOT "whichever write comes next" -- an earlier revision of this comment
+     * said that, and it was wrong in the unsafe direction. SDCardWrite() has
+     * five call sites, and three of them (the ordinary WRITE_TO_FILE write
+     * and both rotation-splitting drains) answer a failed write by setting
+     * currentProcessState = ERROR, and the pre-existing (not introduced by
+     * this hook) ERROR -> UNMOUNT_DISK -> INIT -> OPEN_FILE(WRITE_PLUS) path
+     * then re-opens the SAME base filename with fileCounter reset to 0, which
+     * TRUNCATES it -- destroying already-recorded data, not merely ending the
+     * session. Letting an SCPI-armable, network-reachable command reach that
+     * on a shipped device is exactly what this API must not do, so the
+     * consume site in SDCardWrite() gates on currentProcessState ==
+     * UNMOUNT_DISK: the arm can be taken ONLY by one of the two drains that
+     * run inside a teardown that is already happening (a session STOP, or a
+     * teardown already in flight for some other reason), never by the
+     * ordinary write or a rotation drain. Neither of those two safe sites
+     * sets ERROR or starts a remount, so no arm taken through this API can
+     * cause the truncation above. The full call-site table, the axis this
+     * corrects (accounting vs session-integrity are independent properties --
+     * an earlier revision conflated them), and the coverage given up (the
+     * rotation drains' #825/#838 twins stay source-review-only) are in
+     * gFailNextWrite's block comment and at the consume site, both in
+     * sd_card_manager.c.
      *
-     * Fires on whichever real write comes next, whoever owns it -- a streaming
-     * log, a SYST:STOR:SD:BENCHmark, an SD:FILE write. The hook has no way to
-     * tell them apart and does not try; a test should arm it with only the
-     * write it means to break in flight.
-     *
-     * AND WHICH ONE CATCHES IT CHANGES THE OUTCOME. Only the DRAIN call sites
-     * (rotation pending-flush, rotation buffer drain, both unmount drains)
-     * call Streaming_ReportSdDiscard. The ordinary WRITE_TO_FILE site does
-     * not: it goes to ERROR with the bytes still pending -- they are not lost
-     * yet -- and ERROR falls through to UNMOUNT_DISK, whose drain retries the
-     * write, which now succeeds because the one-shot is spent. So an arm
-     * caught by the ordinary path ends the SD logging session and leaves
-     * SdDroppedBytes UNCHANGED. Do not write a test that arms, streams, and
-     * asserts SdDroppedBytes moved; arrange for a drain write to consume it.
-     * See the block comment at the consume site in sd_card_manager.c.
+     * PRACTICAL CONSEQUENCE: arm whenever you like, including mid-stream --
+     * ordinary writes will not take it, so streaming continues unaffected --
+     * then STOP the session (or otherwise let a teardown happen). An unmount
+     * drain consumes it, logs LOG_E naming this hook, reports the abandoned
+     * chunk via Streaming_ReportSdDiscard, and returns -1 so its caller takes
+     * its ordinary write-failure path. It is a ONE-SHOT: the arm is gone the
+     * instant a qualifying write consumes it, whether or not the caller
+     * recovers. It is also cleared by every reset (an explicit #409 scrub in
+     * sd_card_manager_Init), so SYST:REBoot or a power cycle always disarms
+     * it. If SYST:STOR:SD:FAILNext? still reads 1 after a stop, no teardown
+     * write had data to issue this time -- the arm is intact; retry rather
+     * than treat it as failed.
      *
      * SCPI: SYSTem:STORage:SD:FAILNext <0|1>
      *

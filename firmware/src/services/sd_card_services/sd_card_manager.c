@@ -303,12 +303,40 @@ static volatile bool gWriteSessionIsStreamingLog = false; /* latched at arm */
  * excursion OUTSIDE the envelope the firmware claims to handle; this is a
  * single stimulus INSIDE it.
  *
- * That said, state the real blast radius honestly rather than the flattering
- * version: on the ordinary WRITE_TO_FILE path a failed write sets
- * currentProcessState = ERROR, and ERROR falls through to UNMOUNT_DISK, so one
- * arm can END THE CURRENT SD LOGGING SESSION, not merely lose one write. That
- * is bounded, one-shot and recoverable (SYST:STOR:SD:ENAble re-arms logging),
- * but it is more than "one write failed" and a reader should not be told less.
+ * THE REAL BLAST RADIUS, stated plainly because the consume GATE below exists
+ * only because of it -- and stated in full, because two earlier revisions of
+ * this paragraph each understated it in the unsafe direction ("one write
+ * fails", then "the session ends"). A -1 is handled by five call sites, and
+ * THREE of them -- the ordinary WRITE_TO_FILE write AND BOTH rotation drains
+ * -- respond by setting currentProcessState = ERROR. That does not merely end
+ * the session. ERROR falls through to UNMOUNT_DISK; UNMOUNT_DISK's cleanup
+ * resets fileCounter to 0, zeroes baseFilename and clears fileSplittingEnabled
+ * before going to INIT; nothing on that path clears `enable` or `mode`, so INIT
+ * re-mounts and OPEN_FILE -- at fileCounter 0 again -- re-opens the SAME base
+ * filename with SYS_FS_FILE_OPEN_WRITE_PLUS, which TRUNCATES it. Everything
+ * already recorded in that file is destroyed, and since the restarted session
+ * re-rotates from counter 0 it goes on to overwrite "<base>-1", "<base>-2" ...
+ * in turn as it grows. Consumed at a ROTATION drain the loss is largest of all,
+ * because the base file is by definition at MAXSize and earlier parts already
+ * exist. "Recoverable" is true only of the SESSION (SYST:STOR:SD:ENAble re-arms
+ * logging); the bytes are gone.
+ *
+ * That truncate-on-remount is PRE-EXISTING behaviour -- reachable today by a
+ * real transient SYS_FS_FileWrite failure with no hook in the tree, and worth
+ * its own ticket rather than a drive-by change here. What an ungated hook adds
+ * is a deliberate, SCPI-armable, network-reachable TRIGGER for it. Worse, the
+ * destructive outcome was also the LIKELY one, and the one that proves nothing:
+ * ordinary writes run continuously throughout a stream while a rotation drain
+ * needs a MAXSize crossing in the same state-machine pass, so an arm placed
+ * "mid-stream" is overwhelmingly caught by the ordinary site -- which truncates
+ * the file and leaves SdDroppedBytes UNCHANGED.
+ *
+ * SO THE CONSUME IS GATED on currentProcessState == UNMOUNT_DISK: the arm can
+ * be taken only by one of the two drains that run inside a teardown ALREADY in
+ * progress. Neither of those sets ERROR and neither starts a remount, so no arm
+ * can cause the truncation above. The price is real and is named at the consume
+ * site: the rotation drains' accounting (#825/#838) is no longer exercisable by
+ * this hook.
  *
  * REJECTED ALTERNATIVE, recorded so it is not re-proposed: gating the arm on
  * SYST:STR:BENCHmark already being non-zero. It fails on three counts. (1) It
@@ -344,6 +372,16 @@ static volatile bool gWriteSessionIsStreamingLog = false; /* latched at arm */
  *     in the field is a red flag and must never be suppressed as a duplicate.
  *   - READABLE BACK. SYST:STOR:SD:FAILNext? reports whether an arm is still
  *     outstanding, so "is this device armed?" is answerable without guessing.
+ *   - CONSUMED ONLY INSIDE A TEARDOWN, per the gate above -- the rail that puts
+ *     the truncation out of reach. SDCardWrite() carries the call-site analysis
+ *     showing that currentProcessState == UNMOUNT_DISK selects exactly the two
+ *     non-destructive sites. Note the one trade the gate makes WORSE: an arm
+ *     placed at any other moment is neither consumed nor logged (a skip-log
+ *     would fire on every ordinary write, hundreds per second at 1 kHz), so it
+ *     stays outstanding until a teardown drain issues a write. That is a longer
+ *     "armed and forgotten" window than an ungated hook has, accepted because
+ *     what it is waiting to do is now harmless, and it stays visible through
+ *     SYST:STOR:SD:FAILNext? and cleared by any reset.
  *
  * NOT restricted by transport, deliberately: it is reachable over both USB and
  * WiFi SCPI. There is no per-command transport gate anywhere in this firmware
@@ -534,41 +572,87 @@ static int SDCardWrite() {
      * SYS_FS_FileWrite itself reports a failure with, so every caller's
      * existing error arm is reached unchanged.
      *
-     * WHICH CALLER CONSUMES THE ARM DECIDES WHAT THE TEST PROVES -- read this
-     * before asserting on SdDroppedBytes. SDCardWrite() has five call sites and
-     * they do NOT all account alike:
+     * WHICH CALLER MAY CONSUME THE ARM, AND WHY IT IS NOT ALL FIVE. An earlier
+     * revision of this comment sorted the five call sites on ONE axis --
+     * "the drain sites report, the ordinary site does not" -- and drew the
+     * safety conclusion from that sort. It is the wrong axis to draw it from:
+     * two of the four "drain" sites are exactly as destructive as the ordinary
+     * one. The sites differ on two INDEPENDENT axes:
      *
-     *   - The DRAIN sites DO report. The rotation pending-flush and its
-     *     zero-byte twin, the rotation buffer drain, and both unmount drains
-     *     each call Streaming_ReportSdDiscard(writeBufferLength) before
-     *     clearing it, because the chunk has already left wCirbuf and nothing
-     *     else can see it. These are the #825/#838/#915/#979 paths this hook
-     *     exists to exercise.
-     *   - The ordinary WRITE_TO_FILE site does NOT report. On writeLen < 0 it
-     *     sets currentProcessState = ERROR and breaks with sdCardWritePending
-     *     still 1 and the bytes still in writeBufferLength -- correctly, since
-     *     they are NOT lost at that point. ERROR then falls through to
-     *     UNMOUNT_DISK, whose drain retries SDCardWrite(); the one-shot is
-     *     already spent, so that retry SUCCEEDS and the bytes reach the card.
+     *   axis 1, ACCOUNTING -- does the failure arm call
+     *     Streaming_ReportSdDiscard() for the chunk it abandons?
+     *   axis 2, SESSION INTEGRITY -- does the failure arm set
+     *     currentProcessState = ERROR, i.e. does it ITSELF start the
+     *     ERROR -> UNMOUNT_DISK -> INIT -> OPEN_FILE(WRITE_PLUS) remount that
+     *     TRUNCATES the log file? (Full chain in gFailNextWrite's block
+     *     comment; it destroys already-recorded data, it is not "the session
+     *     ends".)
      *
-     * Net: an arm consumed by the ordinary write path yields one injected
-     * failure, a torn-down session, and SdDroppedBytes UNCHANGED. A test whose
-     * acceptance is "SdDroppedBytes reflects it" must arrange for a drain write
-     * to be the one that consumes the arm -- it is not enough to arm and stream.
-     * That is a property of the callers' (correct) accounting, not a defect
-     * here, and deliberately not papered over by reporting from inside this
-     * function: the callers' accounting IS the thing under test, so this hook
-     * must stay a pure stimulus and account for nothing itself. */
+     *   call site                      reports?  starts a truncating teardown?
+     *   ---------------------------------------------------------------------
+     *   ordinary WRITE_TO_FILE write      no       YES
+     *   rotation pending-flush            yes      YES
+     *   rotation buffer drain             yes      YES
+     *   UNMOUNT_DISK pending-flush        yes      no -- already tearing down
+     *   UNMOUNT_DISK buffer drain         yes      no -- already tearing down
+     *
+     * Only the last two are safe, and currentProcessState == UNMOUNT_DISK
+     * separates them EXACTLY: both run at the top of that case before anything
+     * reassigns the field, while the other three run under WRITE_TO_FILE. So
+     * the test-and-clear below is gated on it -- no new parameter threaded
+     * through five callers, and no way for a future sixth caller to opt itself
+     * in by accident. A concurrent SCPI teardown (pri 7, preempting this pri-5
+     * task) can only force the field to DEINIT, never to UNMOUNT_DISK, so that
+     * race can only make the gate REFUSE -- never admit at an unsafe site.
+     *
+     * WHAT A TEST PROVES WITH THIS. Arm at any time, including mid-stream (the
+     * arm is simply not taken while ordinary writes run), then stop the
+     * session. An unmount drain consumes it, reports the abandoned chunk via
+     * Streaming_ReportSdDiscard(), and SdDroppedBytes moves -- deterministic,
+     * with no race to win. Those are the #915/#979 paths. If
+     * SYST:STOR:SD:FAILNext? still reads 1 afterwards, no teardown write had
+     * data to issue; the arm is intact, so just retry.
+     *
+     * Be precise about what the gate guarantees, since overclaiming here is
+     * what this comment is a correction of: it guarantees the hook cannot
+     * CAUSE a truncating teardown, not that no truncation can accompany one.
+     * An UNMOUNT_DISK reached from a REAL error while `mode` is still WRITE
+     * remounts and truncates on the pre-existing path regardless -- that was
+     * already in motion before the arm was taken, and the arm neither started
+     * it nor changed its outcome. On the ordinary stop this test uses, SCPI
+     * has cleared `mode`, so INIT does not remount and nothing is truncated.
+     * What the arm DOES cost, every time, is the in-flight chunk it abandons
+     * (up to one writeBufferSize of the session's tail) -- reported, never
+     * silent, and the same cost a genuine transient failure there would have.
+     *
+     * WHAT IT CANNOT PROVE, recorded so the gap is never mistaken for
+     * coverage: the ROTATION drains' textually identical #825/#838 reporting,
+     * and the ordinary site's deliberate NON-reporting. Both stay
+     * source-review-only. That is a "fixed one site, left the twin" shape and
+     * it is accepted knowingly, because the only way to reach those sites is
+     * to let an arm start a teardown that truncates the operator's log -- and
+     * the coverage was never reliable even then: ordinary writes run
+     * continuously while a rotation flush needs a MAXSize crossing in the same
+     * pass, so which site caught the arm was a coin flip whose losing side
+     * destroyed data. Closing that gap needs a mechanism that cannot be armed
+     * on a shipped device; it is not a reason to widen this gate.
+     *
+     * The hook stays a PURE STIMULUS either way: it returns -1, the value
+     * SYS_FS_FileWrite itself reports a real failure with, and accounts for
+     * nothing on its own -- the callers' accounting IS the thing under test. */
     bool injectWriteFailure = false;
     taskENTER_CRITICAL();
-    if (gFailNextWrite) {
+    if (gFailNextWrite &&
+            gSDCardData.currentProcessState ==
+                    SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK) {
         gFailNextWrite = false;
         injectWriteFailure = true;
     }
     taskEXIT_CRITICAL();
     if (injectWriteFailure) {
         LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext consumed - forcing this "
-              "write of %u bytes to FAIL. This is NOT a card fault.",
+              "teardown-drain write of %u bytes to FAIL. This is NOT a card "
+              "fault; the session was already tearing down.",
               (unsigned)gSDCardData.writeBufferLength);
         writeLen = -1;
         goto __exit;
@@ -4197,10 +4281,11 @@ void sd_card_manager_SetFailNextWrite(bool arm) {
      * rails that bound it. Reached only from SYST:STOR:SD:FAILNext.
      *
      * Deliberately NOT refused while streaming, unlike SYST:STR:BENCHmark's
-     * guard: the accounting paths this exists to exercise (the rotation drain
-     * and the unmount drain) only run DURING and at the END of a live session,
-     * so a test has to be able to arm mid-stream. Nothing here feeds a
-     * frequency cap or a buffer partition, so there is no admitted-rate
+     * guard: the accounting path this exercises (the unmount drain) runs at
+     * the END of a live session, so a test has to be able to arm mid-stream
+     * and then stop. Arming mid-stream is also harmless now -- ordinary writes
+     * cannot take the arm; see the gate at the consume site. Nothing here
+     * feeds a frequency cap or a buffer partition, so there is no admitted-rate
      * invariant for a mid-session change to break -- which is the whole reason
      * those other guards exist.
      *
@@ -4220,9 +4305,11 @@ void sd_card_manager_SetFailNextWrite(bool arm) {
 }
 
 bool sd_card_manager_FailNextWriteArmed(void) {
-    /* #981: true only while an arm is outstanding. It self-clears the moment
-     * the next real write consumes it, so a test can read this back to confirm
-     * the injection actually fired rather than inferring it. */
+    /* #981: true only while an arm is outstanding. It self-clears the moment a
+     * teardown-drain write consumes it (the only writes that may -- see the
+     * gate in SDCardWrite), so a test can read this back to confirm the
+     * injection actually fired rather than inferring it. A 1 after a stop means
+     * no such write had data to issue, not that it fired silently. */
     return gFailNextWrite;
 }
 

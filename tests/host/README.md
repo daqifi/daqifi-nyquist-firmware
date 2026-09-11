@@ -99,25 +99,48 @@ wholesale rather than truncating mid-escape, the exact worst-case sizing
 
 `test_981_sd_failnext_hook.c` covers the one-shot arm/consume contract behind
 `SYSTem:STORage:SD:FAILNext` (issue #981) — a bench/test-only hook that forces
-the next real SD write to fail once, so the write-failure accounting paths
-fixed by #825/#838/#915/#979 can be regression-tested without running the
-bench card out of space. `sd_card_manager.c` is not includable on the host
-(FreeRTOS + Harmony's `SYS_FS` + the whole SD state machine), so — same
-technique as `test_943`/`test_953` — this re-implements just the flag/consume
-shape against a mock and the Makefile greps the real source for four
-properties the model depends on: the flag's declaration, the
-critical-sectioned test-and-clear at the consume site, the `#409` reset-scrub
-landing immediately before the `isInitDone` guard, and the setter being a
-plain store with no critical section of its own (the atomicity argument the
-firmware PR's design review settled). Any of the four moving fails the
-**build**, not just the test. Covers: starts disarmed, arm-then-consume is
-one-shot, disarm-without-consuming leaves the next write clean, re-arming
-after a consume works again, and disarming an already-idle hook is a no-op.
-This does **not** exercise the real device or which of `SDCardWrite()`'s five
-call sites consumes a given arm in practice (only the DRAIN call sites report
-via `SdDroppedBytes`; the ordinary write path does not) — that needs real
-hardware and is `test_981_sd_failnext_hook.py` (daqifi-python-test-suite)'s
-job.
+ONE real SD write, issued during the next teardown drain, to fail once, so the
+write-failure accounting paths fixed by #825/#838/#915/#979 can be
+regression-tested without running the bench card out of space.
+`sd_card_manager.c` is not includable on the host (FreeRTOS + Harmony's
+`SYS_FS` + the whole SD state machine), so — same technique as
+`test_943`/`test_953` — this re-implements just the flag/consume shape against
+a mock and the Makefile greps the real source for four properties the model
+depends on: the flag's declaration, the POSITION (not just presence) of the
+critical-sectioned test-and-clear and its `currentProcessState ==
+UNMOUNT_DISK` safety gate at the consume site, the `#409` reset-scrub landing
+immediately before the `isInitDone` guard, and the setter being a plain store
+with no critical section of its own (the atomicity argument the firmware PR's
+design review settled). Any of the four moving fails the **build**, not just
+the test. Covers: starts disarmed, arm-then-consume is one-shot,
+disarm-without-consuming leaves the next write clean, re-arming after a
+consume works again, and disarming an already-idle hook is a no-op.
+
+The consume-site guard checks POSITION rather than four independent
+presence-only greps because an adversarial audit on PR #1013 found the
+presence-only version could not fail on two real mutations of the source:
+moving `taskEXIT_CRITICAL()` to before the armed test (every token still
+present, atomicity destroyed), and flipping the real
+`injectWriteFailure = true;` to `= false;` (a token the old guard never even
+looked for). `test_981_sd_failnext_real_consume.head.c` / `.tail.c` close the
+remaining gap a textual check — however positional — cannot: they splice the
+real, verbatim consume snippet into a tiny compiled-and-RUN harness (no-op
+critical-section stand-ins, a minimal `gSDCardData.currentProcessState` mock)
+and assert on its actual behaviour, catching the `injectWriteFailure` mutation
+BEHAVIOURALLY, plus asserting the `UNMOUNT_DISK` gate itself: armed-but-
+elsewhere must not fire, and a refused arm must survive to fire at its next
+opportunity rather than being silently consumed or lost. It does not attempt
+the ordering mutation — a single-threaded host run cannot observe a
+concurrency property — which stays the positional grep's job.
+
+None of this exercises the real device or hardware timing. Only two of
+`SDCardWrite()`'s five call sites may consume a given arm in practice — the
+two that run inside a teardown already in progress — by design (the other
+three can trigger the pre-existing `ERROR → UNMOUNT_DISK → INIT →
+OPEN_FILE(WRITE_PLUS)` remount, which truncates the log file; see
+`gFailNextWrite`'s block comment in `sd_card_manager.c`). Real-hardware
+validation of the SCPI-to-drain path is `test_981_sd_failnext_hook.py`
+(daqifi-python-test-suite)'s job.
 
 ## Framework
 
