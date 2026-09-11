@@ -171,17 +171,28 @@ def check_text(key, text):
 
 
 def self_test():
-    """Every check must FAIL on the shape it exists to refuse, AND FOR THE RIGHT
-    REASON.
+    """Every check must FAIL on the shape it exists to refuse, for the right
+    REASON, and for EVERY per-item check that reason covers.
 
-    Each case names the problem text it expects. That is not decoration: review
-    of PR #1009 found that the two anchoring fixtures added the round before
-    were rejected by the UNIQUENESS check, not the window check, because they
-    appended a second copy of each statement to an intact base. Deleting the
-    window check outright would have left both of them still reporting a
-    problem, so --self-test would still have passed while the anchor it was
-    added to cover went untested. Asserting only "some problem was reported" is
-    how a self-test stops testing what it claims to.
+    This scoring has been tightened twice, and the shape of both misses is the
+    same one, which is why it is recorded rather than quietly corrected:
+
+      * The first version asked only "did any problem come back?". Two fixtures
+        were then found to be rejected by the UNIQUENESS check rather than the
+        window check they were written for, so deleting the window check
+        outright left --self-test green.
+      * The second version asked for a matching problem SUBSTRING. But
+        check_text() runs its uniqueness and window checks INDEPENDENTLY PER
+        STATEMENT, so one shared substring is produced by any of three or four
+        separate checks. Deleting one of them still satisfied the assertion.
+        Found by review of PR #1009, twice in a row.
+
+    So each case now declares the EXACT SET of problems it expects: the count,
+    and one distinct substring per problem, matched one-to-one in both
+    directions. That TERMINATES the tightening rather than continuing it --
+    nothing about the reported list is left unchecked, so there is no looser
+    form to slip through. A per-item check that is deleted changes the count; a
+    check that fires when it should not shows up as an unclaimed problem.
     """
     sig = ("static bool spi_WaitStat(uint32_t mask, bool want,\n"
            "                         TickType_t start, TickType_t timeoutTicks) {\n")
@@ -215,46 +226,74 @@ def self_test():
            + deadline + fresh + "        }\n" + yield_
            + "    return false;\n}\n")
 
+    # Each case declares the EXACT set of problems expected: one substring per
+    # problem, matched one-to-one. check_text() reports uniqueness and window
+    # violations PER STATEMENT, so a fixture that trips several of them must
+    # name several -- that is what makes deleting one of them visible.
     cases = [
-        ("clean source passes", base, None),
+        ("clean source passes", base, []),
         ("the pre-#913 hardcoded false at expiry",
          base.replace(fresh, "            return false;\n"),
-         "fresh read at expiry, found 0"),
+         ["fresh read at expiry, found 0"]),
         ("the yield removed (back to a pure busy-spin)",
-         base.replace(yield_, ""), "the yield, found 0"),
+         base.replace(yield_, ""), ["the yield, found 0"]),
         ("the deadline test removed (never times out)",
          base.replace(deadline, "        if (0) {\n"),
-         "deadline test, found 0"),
+         ["deadline test, found 0"]),
         ("yield moved BEFORE the deadline test",
          sig + "    for (;;) {\n" + yield_ + deadline + fresh + "        }\n"
-         + "    }\n}\n", "out of order"),
-        ("a second copy of the whole loop", base + base, "found 2"),
+         + "    }\n}\n", ["out of order"]),
+        # Four problems, not one: every statement AND the signature is now
+        # duplicated, and each is reported by its own uniqueness check.
+        ("a second copy of the whole loop", base + base,
+         ["deadline test, found 2",
+          "fresh read at expiry, found 2",
+          "the yield, found 2",
+          "signature, found 2"]),
+        # Three problems: the window is checked per statement.
         ("the three statements moved OUT of the wait function, one copy each",
-         stripped + far, "outside the 40 lines"),
+         stripped + far,
+         ["the deadline test is at line 73, outside the 40 lines",
+          "the fresh read at expiry is at line 74, outside the 40 lines",
+          "the yield is at line 76, outside the 40 lines"]),
         ("the wait function renamed away (signature gone)",
          base.replace("static bool spi_WaitStat(", "static bool spi_WaitStatus("),
-         "signature, found 0"),
+         ["signature, found 0"]),
         ("the expiry read left only in a comment",
          base.replace(fresh,
                       "            /* return (((SPI1STAT & mask) != 0u) == want); */\n"
                       "            return false;\n"),
-         "fresh read at expiry, found 0"),
+         ["fresh read at expiry, found 0"]),
     ]
 
     failures = 0
     for name, text, expect in cases:
         got = check_text("spi", text)
-        blob = " | ".join(got)
-        if expect is None:
-            ok = not got
-            why = "expected no problem, got %r" % (got,)
-        else:
-            ok = expect in blob
-            why = "expected a problem containing %r, got %r" % (expect, got)
-        print("  [%s] %s" % ("ok" if ok else "FAIL", name))
-        if not ok:
+        problems = []
+
+        if len(got) != len(expect):
+            problems.append("expected exactly %d problem(s), got %d"
+                            % (len(expect), len(got)))
+
+        # One-to-one in BOTH directions. Left to right catches a per-item check
+        # that was deleted; right to left catches one that fires when it should
+        # not, which a substring search would have ignored.
+        unclaimed = list(got)
+        for want in expect:
+            hits = [g for g in unclaimed if want in g]
+            if len(hits) != 1:
+                problems.append("expected exactly 1 problem containing %r, "
+                                "found %d" % (want, len(hits)))
+            if hits:
+                unclaimed.remove(hits[0])
+        for leftover in unclaimed:
+            problems.append("unexpected problem: %r" % (leftover,))
+
+        print("  [%s] %s" % ("ok" if not problems else "FAIL", name))
+        if problems:
             failures += 1
-            print("        " + why)
+            for pr in problems:
+                print("        " + pr)
     print("self-test: %d/%d checks passed" % (len(cases) - failures, len(cases)))
     return 1 if failures else 0
 
