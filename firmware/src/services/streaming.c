@@ -2312,6 +2312,41 @@ void Streaming_ReportSdDiscard(size_t bytes) {
 }
 
 /**
+ * @brief Book samples an encoder DESTROYED -- consumed from a sample queue and
+ *        then not emitted.
+ *
+ * #970. The encoders' caller cannot compute this. An encode call returns a BYTE
+ * count; zero is the only "nothing written" value it has and carries no
+ * cardinality, so the batch loop books only the EVENT (encoderFailures) and an
+ * encoder that knows it destroyed a sample books the sample here. See the
+ * encoded == 0 arm below for the per-encoder truth table.
+ *
+ * Deliberately narrow and purpose-named -- the Streaming_ReportSdDiscard shape.
+ * Only a site that has ALREADY consumed the queue entry and knows it will not
+ * be emitted may call it. A site that merely RETAINS a sample (buffer full this
+ * tick, re-encoded next call) must NOT: nothing was lost.
+ *
+ * Runs on streaming_Task (pri 6) from inside the encoder. O(1) inside one
+ * critical section so a concurrent SYST:STR:STATS? snapshot sees total and
+ * Steady coherently (Steady never > total). No QUES bit: QUES_BIT_ENCODER_FAIL
+ * belongs to the zero-return event, which the caller still raises.
+ */
+void Streaming_ReportEncoderSampleLoss(uint32_t samples) {
+    if (samples == 0u) {
+        return;
+    }
+    bool pastGrace = Streaming_PastStartupGrace();
+    taskENTER_CRITICAL();
+    gStreamStats.encoderDroppedSamples += samples;
+    if (pastGrace) {
+        gStreamStats.encoderDroppedSamplesSteady += samples;
+    }
+    taskEXIT_CRITICAL();
+    LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
+        "Streaming: encoder destroyed queued sample(s) - see EncoderDroppedSamples");
+}
+
+/**
  * #533: drain both per-session sample queues (AIN + DIO) so no sample
  * captured by one session can be encoded into the next.  Called from
  * Streaming_Stop (the session is over — discard) and Streaming_Start
@@ -3351,26 +3386,54 @@ void streaming_Task(void) {
             DioProbe_PulseEnd(8);
 
             if (encoded == 0) {
-                // The queue was non-empty (checked above) with guaranteed room,
-                // yet the encoder produced nothing → a real encoder failure OR
-                // the #484 shutdown race (Streaming_Stop ran mid-iteration and
-                // the encoder saw partially torn-down state — verified empirically
-                // to fire at Stop, not mid-stream). Account exactly one lost
-                // sample (each encode pops exactly one, #297) and stop the batch.
-                // #483: bump the Steady subset when past the 3 s startup grace.
+                /* The queue was non-empty (checked above) with guaranteed room,
+                 * yet the encoder produced nothing -> a real encoder failure OR
+                 * the #484 shutdown race (Streaming_Stop ran mid-iteration and
+                 * the encoder saw partially torn-down state -- verified
+                 * empirically to fire at Stop, not mid-stream).
+                 *
+                 * #970: book the EVENT, never a sample count. This return is a
+                 * BYTE count (`packetSize += encoded` below), so zero is
+                 * structurally the only "nothing written" value it has and
+                 * cannot also carry cardinality. How many samples the call
+                 * consumed is 0..N and differs per encoder AND per branch:
+                 *   csv_Encode           -- 0 pops before EVERY one of its zero
+                 *                           returns; nothing is ever lost, the
+                 *                           row is simply retried next call.
+                 *   Json_Encode          -- 0 pops (buffer full, retried), N
+                 *                           (all-invalid validMask: consumed,
+                 *                           carried no channel data, not a
+                 *                           loss), or 1 (its oversize-sample
+                 *                           drop arm -- genuinely lost, and the
+                 *                           only case that is a loss).
+                 *   Nanopb_Encode...Fast -- 0..N AIN pops plus up to one DIO
+                 *                           pop, with losses that can also
+                 *                           accompany a NON-zero return.
+                 *
+                 * The comment here used to assert "each encode pops exactly
+                 * one, #297" and booked one encoderDroppedSamples on that
+                 * basis. It is false for two of the three encoders, and for the
+                 * common CSV/JSON buffer-full case it re-booked a STILL-QUEUED
+                 * sample as a fresh loss on every tick -- inflating both
+                 * EncoderDroppedSamples and the session-end loss percentage
+                 * without bound. The #745 note at the dry-tick gate above
+                 * already records one instance of that fabrication ("why every
+                 * clean session reported one phantom drop"); this removes the
+                 * class.
+                 *
+                 * An encoder that KNOWS it destroyed a sample now books it
+                 * itself via Streaming_ReportEncoderSampleLoss(). Nothing is
+                 * inferred from the zero here.
+                 * #483: bump the Steady subset when past the 3 s startup grace. */
                 if (pRunTimeStreamConf->IsEnabled) {
                     bool pastGrace = Streaming_PastStartupGrace();
                     taskENTER_CRITICAL();
                     gStreamStats.encoderFailures++;
-                    gStreamStats.encoderDroppedSamples++;
                     if (pastGrace) {
                         gStreamStats.encoderFailuresSteady++;
-                        gStreamStats.encoderDroppedSamplesSteady++;
                     }
                     gQuesBits |= QUES_BIT_ENCODER_FAIL;
                     taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_ENCODER_SAMPLE_LOSS,
-                        "Streaming: encoder failure lost 1 sample");
                     LOG_E_SESSION(LOG_SESSION_ENCODER_FAIL, "Streaming: Encoder failure detected");
                 }
                 break;

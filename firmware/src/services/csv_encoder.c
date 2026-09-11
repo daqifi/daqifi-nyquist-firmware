@@ -637,15 +637,30 @@ size_t csv_Encode(
             break;  // no data left or row won?t fit
         }
 
-        // now that it?s safely written, consume the queues:
+        // now that it's safely written, consume the queues:
         if (hadAIN) {
             AInPublicSampleList_t *tmp = NULL;
-            AInSampleList_PopFront(&tmp);
+            /* #970: fallible -- see JSON_Encoder.c's DIO loop for the reachable
+             * path (a cross-task session drain on the pri-7 SCPI task). Nothing
+             * has been committed yet at this point, so break: the row's bytes
+             * stay unreferenced past `p`, `total` does not advance, and the row
+             * is re-encoded next call. */
+            if (!AInSampleList_PopFront(&tmp)) {
+                break;
+            }
             AInSampleList_FreeToPool(tmp);  // Use object pool instead of vPortFree
         }
         if (hadDIO) {
             DIOSample tmpD;
-            DIOSampleList_PopFront(&state->DIOSamples, &tmpD);
+            /* #970: deliberately NOT a rollback, and the asymmetry with the AIN
+             * pop above is the reason. By here the AIN sample has already been
+             * consumed and cannot be put back, so discarding the row would
+             * destroy it -- a worse outcome than the one this guards. A false
+             * return from the 0-tick receive means the DIO element is already
+             * gone from the queue, so committing the row ships it once and
+             * loses nothing. Cast to (void) so this reads as the decision it is
+             * rather than the oversight it used to be. */
+            (void)DIOSampleList_PopFront(&state->DIOSamples, &tmpD);
         }
 
     

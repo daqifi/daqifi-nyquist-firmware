@@ -228,7 +228,7 @@ extern "C" {
         LOG_SESSION_NANOPB_FAIL,           /**< NanoPB_Encoder.c: streaming encode failure */
         LOG_SESSION_DIO_DROP,              /**< DIO.c: DIO queue full (#296) */
         LOG_SESSION_EOS_OVERRUN,           /**< ADC.c: EOS result register overrun (#295) */
-        LOG_SESSION_ENCODER_SAMPLE_LOSS,   /**< streaming.c: samples consumed by failed encode (#297) */
+        LOG_SESSION_ENCODER_SAMPLE_LOSS,   /**< streaming.c: samples an encoder consumed and destroyed (#970, was #297) */
         LOG_SESSION_VALUES_AT_ENCODE,      /**< NanoPB_Encoder.c: Values[0] at encoder read */
         LOG_SESSION_PACKETSIZE,            /**< streaming.c: encoder packetSize before WriteBuffer */
         LOG_SESSION_BUFFER_TAIL,           /**< streaming.c: bytes left in WiFi circular buffer at Stop */

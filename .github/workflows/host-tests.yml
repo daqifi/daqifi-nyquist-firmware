@@ -61,6 +61,15 @@ name: host-tests
 #     "refactor escapes the trigger" gap without dragging in every unrelated
 #     services/ file (streaming.c, wifi_manager.c, sd_card_manager.c, the
 #     whole SCPI/ subdirectory, ...).
+#
+#   - test_970_encoder_consume_accounting.c (#970): re-implements two loop
+#     shapes (streaming.c's `encoded == 0` booking arm, and JSON_Encoder.c's
+#     DIO element commit loop) against mocks, and its Makefile target greps
+#     both real sources for the guarantees that re-implementation depends on
+#     (see tests/host/Makefile). Scoped to the two individual files by name,
+#     same reasoning as the JSON_StringEscape.h entry above -- not the whole
+#     services/ directory. JSON_Encoder.c is already listed; this adds
+#     streaming.c and streaming.h, which were not previously triggers here.
 
 on:
   pull_request:
@@ -74,6 +83,8 @@ on:
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/services/streaming.c'
+      - 'firmware/src/services/streaming.h'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -86,6 +97,8 @@ on:
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/services/streaming.c'
+      - 'firmware/src/services/streaming.h'
       - '.github/workflows/host-tests.yml'
 
 permissions:

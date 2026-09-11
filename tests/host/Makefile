@@ -55,6 +55,28 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # whole board/driver graph). No UUT copy, no stubs, and NOT $(INCLUDES).
 JSONESC_BIN := run_json_escape_tests
 
+# #970: encoder consume-accounting. Like BENCH_BIN, streaming.c and
+# JSON_Encoder.c are not host-test candidates (FreeRTOS/libscpi/the whole
+# board graph), so this test re-implements the two relevant loop SHAPES
+# (streaming.c's `encoded == 0` booking arm, and JSON_Encoder.c's DIO
+# element commit loop) against injected mocks. The greps below pin the
+# three guarantees that re-implementation depends on, and fail the build
+# (not just the test) if any has drifted:
+#   1. streaming.c's arm no longer increments encoderDroppedSamples --
+#      that increment was the #970 defect (a zero-byte return does not
+#      imply exactly one lost sample for every encoder). If this grep
+#      fails, the arm has regressed back to the pre-fix shape.
+#   2. streaming.h declares Streaming_ReportEncoderSampleLoss -- the entry
+#      point an encoder uses to book a loss IT knows about, instead of the
+#      caller guessing.
+#   3. JSON_Encoder.c's DIO loop pops before committing (the exact guard
+#      text), i.e. the twin of the #164 ADC-loop fix this PR gives the DIO
+#      loop.
+BIN970 := run_970_tests
+STREAMING_SRC := ../../firmware/src/services/streaming.c
+STREAMING_HDR := ../../firmware/src/services/streaming.h
+JSON_ENC_SRC  := ../../firmware/src/services/JSON_Encoder.c
+
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
 	$(CC) $(CFLAGS) $(INCLUDES) -o $(BIN) test_circularbuffer.c $(UUT)
@@ -79,17 +101,38 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC)
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 
-# Every suite, and every one of the five binaries. Merge conflict resolved by
+$(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SRC) $(STREAMING_HDR) $(JSON_ENC_SRC)
+	@grep -qF 'gStreamStats.encoderDroppedSamples++' $(STREAMING_SRC) \
+	  && { echo "ERROR: $(STREAMING_SRC) still increments encoderDroppedSamples directly --"; \
+	       echo "       the #970 fix removed this from the encoded==0 arm. If this is"; \
+	       echo "       intentional, re-derive test_970_encoder_consume_accounting.c's"; \
+	       echo "       old-vs-new comparison against the new shape."; \
+	       exit 1; } || true
+	@grep -qE 'void[[:space:]]+Streaming_ReportEncoderSampleLoss\(uint32_t samples\);' $(STREAMING_HDR) \
+	  || { echo "ERROR: Streaming_ReportEncoderSampleLoss is no longer declared in $(STREAMING_HDR)."; \
+	       echo "       This is the #970 entry point encoders use to book a loss they"; \
+	       echo "       caused -- test_970_encoder_consume_accounting.c models it directly."; \
+	       exit 1; }
+	@grep -qF 'if (!DIOSampleList_PopFront(&state->DIOSamples, &data)) {' $(JSON_ENC_SRC) \
+	  || { echo "ERROR: $(JSON_ENC_SRC)'s DIO loop no longer gates the commit on"; \
+	       echo "       DIOSampleList_PopFront's return (the #970 fix, mirroring #164's"; \
+	       echo "       ADC-loop treatment). Update the guard or re-derive the DIO half of"; \
+	       echo "       test_970_encoder_consume_accounting.c."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(BIN970) test_970_encoder_consume_accounting.c
+
+# Every suite, and every one of the six binaries. Merge conflict resolved by
 # keeping each side's target intact and merging only `run` and `clean` -- a
 # duplicated rule here would silently shadow one of them.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN)
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(BIN970)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
 	./$(JSONESC_BIN)
+	./$(BIN970)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(BIN970)
 
 .PHONY: run clean

@@ -917,6 +917,14 @@ size_t Streaming_GetSdFileHeader(const uint8_t** ppHeader);
  * flight. Counts into SdDroppedBytes so the loss is visible instead of silent. */
 void Streaming_ReportSdDiscard(size_t bytes);
 
+/* #970: report samples an encoder CONSUMED and then destroyed. Only a site that
+ * has already popped the queue entry and knows it will not be emitted may call
+ * this; a merely RETAINED sample (buffer full this tick) is not a loss. Counts
+ * into EncoderDroppedSamples, which the caller's zero-return arm deliberately
+ * no longer guesses at -- a zero return is a byte count and carries no sample
+ * cardinality. */
+void Streaming_ReportEncoderSampleLoss(uint32_t samples);
+
 // #388 — Compile-time profiling counters for the PB streaming hot path.
 // When enabled, instruments encoder + USB write paths with _CP0_GET_COUNT()
 // cycle measurements.  Off by default in production: enable here for a
@@ -958,9 +966,23 @@ typedef struct {
     uint32_t usbDroppedBytesSteady;
     uint32_t wifiDroppedBytesSteady;
     uint32_t sdDroppedBytesSteady;
-    uint32_t encoderFailures;       // Encoder returned 0 with data available
+    /* #970: encode calls that returned 0 bytes with data available. The EVENT
+     * only. It says nothing about how many samples that call consumed or
+     * destroyed -- see the encoded == 0 arm in streaming.c for why the return
+     * cannot carry that. */
+    uint32_t encoderFailures;
     uint32_t encoderFailuresSteady;
-    uint32_t encoderDroppedSamples; // AIn samples consumed by failed encode calls (#297)
+    /* #970 (supersedes #297): samples an encoder CONSUMED from a queue and then
+     * did not emit -- a real, irrecoverable loss, booked by the encoder that
+     * knows it happened via Streaming_ReportEncoderSampleLoss(). NOT derived
+     * from a zero return: the same zero is produced after 0 pops (buffer merely
+     * full, retried) and after N (all-invalid validMask, consumed but carrying
+     * no channel data), so deriving it re-counted still-queued samples every
+     * tick. Only Json_Encode reports today (its oversize-sample drop arm);
+     * csv_Encode destroys nothing on any zero-return path, and
+     * Nanopb_EncodeStreamingFast's pop-then-encode-failure losses are not yet
+     * reported -- a separate, known gap (see #970's PR description). */
+    uint32_t encoderDroppedSamples;
     uint32_t encoderDroppedSamplesSteady;
     uint32_t dioDroppedSamples;     // DIO queue full — PushBack returned false (#296)
     uint32_t dioDroppedSamplesSteady;
