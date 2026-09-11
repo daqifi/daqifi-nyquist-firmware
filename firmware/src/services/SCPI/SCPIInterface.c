@@ -4460,11 +4460,17 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                  * achievable max is in the LOG_E (SYST:LOG?); clients should
                  * pre-validate against current_max_rate_hz (CONF:CAP:JSON?).
                  * Benchmark mode (SYST:STR:BENCHmark) bypasses the cap entirely. */
-                LOG_E("Streaming rejected: %d Hz exceeds max %u Hz for this config "
-                      "(%u ch, %u type1) - request <= %u Hz or use SYST:STR:BENCHmark",
+                /* #1000 class: this rendered 130 bytes against Logger's
+                  * 125-byte ceiling, so the tail was cut to "SYST:STR:BENC" --
+                  * which is neither the registered SYST:STR:BENCHmark nor its
+                  * only legal abbreviation SYST:STR:BENCH, so an operator who
+                  * followed the printed remedy got -113. The max was also
+                  * interpolated twice; once is enough. */
+                LOG_E("STR:START refused (#524): %d Hz > max %u Hz "
+                      "(%u ch, %u T1) - use <= that or SYST:STR:BENCHmark",
                       (int)freq, (unsigned)maxFreq,
                       (unsigned)totalEnabledPublicChannels,
-                      (unsigned)activeType1ChannelCount, (unsigned)maxFreq);
+                      (unsigned)activeType1ChannelCount);
                 SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
                 return SCPI_RES_ERR;
             }
@@ -4807,14 +4813,15 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
          * to print ifaceForStart under the word "was", which is the interface
          * the start WANTED, not one it ever held (Qodo). */
         if (ifaceRacedBySet) {
-            LOG_E("STR:START refused (#848): SYST:STR:INT selected interface "
-                  "%d during start setup, but this start was set up for %d. "
-                  "Retry.",
+            /* #1000 class: kept under Logger's 125-byte ceiling. */
+            LOG_E("STR:START refused (#848): SYST:STR:INT moved to %d "
+                  "mid-start; set up for %d. Retry.",
                   (int)gStreamIfaceLastSet, (int)ifaceForStart);
         } else {
-            LOG_E("STR:START refused (#848): stream interface moved during "
-                  "start setup - set up for %d, pinned %d at detect, found %d "
-                  "at publish. Retry.",
+            /* #1000 class: the fixed text alone was 127 bytes, so this line
+              * was truncated on every firing regardless of the values. */
+            LOG_E("STR:START refused (#848): iface moved mid-start - setup %d, "
+                  "detect %d, publish %d. Retry.",
                   (int)ifaceForStart, (int)ifaceAtDetect, (int)ifaceAtPublish);
         }
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -5021,8 +5028,21 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                 SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
-                LOG_E("Cannot start SD logging - could not arm the write "
-                      "(#942: raced the #589 suspend check): %s\r\n",
+                /* #1000: the old prefix here was 88 characters against a
+                 * 125-byte effective ceiling (LOG_MESSAGE_SIZE - 3, Logger.c),
+                 * leaving 35 for the reason after the CRLF -- short of every
+                 * SD_SuspendReasonText() return (46/58/76), all three cut.
+                 * The NULL fallback ("the SD task is not accepting work", 33
+                 * chars) fit the old prefix (88+33+2=123<=125) and was never
+                 * the problem; it is the one case a bench repro would not
+                 * have caught. This prefix is 27 characters, leaving 96: the
+                 * longest reachable case (the 76-character quarantine
+                 * reason) totals 105, well inside the ceiling. The #942/#589
+                 * narrative moved to this comment -- it is still greppable
+                 * via the LOG_E line's #1000 tag and this issue number, just
+                 * not inside the 128-byte message the device actually
+                 * emits. */
+                LOG_E("SD log arm refused (#942): %s\r\n",
                       why ? why : "the SD task is not accepting work");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
                 return SCPI_RES_ERR;
@@ -5052,7 +5072,18 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                      * full directory AND a bucket that could not be created or read.
                      * Naming only fullness misdirects the operator when the real
                      * fault is the media; the SD-side LOG_E names which it was. */
-                    LOG_E("[SD] STR:START refused (#689): %s",
+                    /* #1000 twin: this prefix was "[SD] STR:START refused
+                     * (#689): " (31 chars). sd_card_manager_WriteRefuseText()
+                     * returns up to 98 bytes (the bucket-name-collision arm),
+                     * so 31+98 = 129 against Logger's 125-byte effective
+                     * ceiling -- two of its five arms were cut, including the
+                     * one naming the remedy. At 25 chars the worst case is 123.
+                     * The margin is only 2 bytes because those reason strings
+                     * are themselves near the ceiling; a concatenation-aware
+                     * guard that would catch a future reason growing past it is
+                     * #1001, not this site. The sibling in SCPIStorageSD.c's
+                     * SD:BENCH arm already fits at exactly 125. */
+                    LOG_E("SD start refused (#689): %s",
                           sd_card_manager_WriteRefuseText());
                 } else if (sd_card_manager_StartupDiskFull()) {
                     /* #851: the numbers, not just the verdict. This detail used
@@ -5331,8 +5362,10 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         /* Which of the two terms fired, because the operator's next move
          * differs: an in-flight stop clears by itself in at most the SD
          * finalise wait, while a completed one means the session this start
-         * was setting up was deliberately ended. Kept under LOG_MESSAGE_SIZE
-         * (128, so 127 usable) with the longer arm -- 108 chars. */
+         * was setting up was deliberately ended. Fits with the longer arm at
+         * 108 chars. NB the usable ceiling is 125, not the 127 this comment
+         * used to claim: Logger.c clamps at LOG_MESSAGE_SIZE - 3, not - 1.
+         * This message was never over it; the stated constant was. */
         LOG_E("STR:START refused (#861): %s; the device stays stopped. Retry.",
               stopInFlight ? "a stop is still in flight on the other transport"
                            : "a stop was issued during start setup");
@@ -5351,9 +5384,12 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
-        LOG_E("STR:START refused (#847): a streaming config change is in "
-              "flight on the other SCPI transport - its store would land on "
-              "this session. Retry.");
+        /* #1000 class: this was a fixed 139-byte literal with no
+          * substitutions, so it was cut identically on every firing. The
+          * dropped half explained WHY: the other transport's store would
+          * otherwise land on this session. */
+        LOG_E("STR:START refused (#847): a config change is in flight on the "
+              "other SCPI transport. Retry.");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
@@ -5380,8 +5416,9 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         if (sdLoggingRequested) {
             SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
-        LOG_E("STR:START refused (#844): stream interface changed during start "
-              "(%d -> %d); the SD/buffer setup no longer matches. Retry.",
+        /* #1000 class: kept under Logger's 125-byte ceiling. */
+        LOG_E("STR:START refused (#844): iface changed mid-start (%d -> %d); "
+              "setup stale. Retry.",
               (int)ifaceForStart, (int)ifaceObserved);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
@@ -5405,8 +5442,14 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
          * on this path (SD not ready, #589 SPI gate, #847) that a distinct
          * code is worth having. The log line is what names WHICH guard fired.
          *
-         * Kept under LOG_MESSAGE_SIZE (128, so 127 usable): the logger stores
-         * a fixed-size message and TRUNCATES past it, silently. 117 chars. */
+         * Kept under Logger's usable ceiling of 125 -- LOG_MESSAGE_SIZE is
+         * 128 and Logger.c clamps at LOG_MESSAGE_SIZE - 3, so the old "127
+         * usable" here was wrong by two. The message is 117 chars, so it was
+         * never truncated; the CONSTANT was the defect, and a sibling sized
+         * against 127 would have reproduced #1000. The identical claim above
+         * the #861 refusal was corrected in this branch's previous commit and
+         * this twin was missed -- exactly the pattern that commit set out to
+         * end. The logger truncates past the ceiling silently. */
         LOG_E("STR:START refused (#846): the enabled-channel set changed during "
               "start; the mapping and sample pool are stale. Retry.");
         SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
@@ -5423,8 +5466,10 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
-        LOG_E("STR:START refused (#844): config changed during start - %d Hz now "
-              "exceeds max %u Hz. Re-read CONF:CAP:JSON? and retry",
+        /* #1000 class: this rendered to exactly 125 at ordinary values, i.e.
+          * zero margin, and over it for wider ones. */
+        LOG_E("STR:START refused (#844): config changed mid-start - %d Hz > "
+              "max %u Hz. Re-read CONF:CAP:JSON?",
               (int)freq, (unsigned)revalidatedMax);
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
@@ -7220,10 +7265,15 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSz);
     AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount, sElemSz);
     if (sPoolMem == NULL || sFreeMem == NULL || sCount == 0 || sElemSz == 0) {
-        LOG_E("PrepareStreamingBuffers: refused - partition left no sample "
-              "slots (pool=%p free=%p count=%u elem=%u); reduce "
-              "SYST:MEM:USB/WIFI/SD/ENCoder:BUFfer or SYST:MEM:AUTO",
-              sPoolMem, (void*)sFreeMem, (unsigned)sCount, (unsigned)sElemSz);
+        /* #1000 class: 153 bytes of fixed text plus four substitutions, so
+          * the whole remedy was cut -- an operator saw the refusal and never
+          * saw SYST:MEM:AUTO. The two %p were dropped rather than the remedy:
+          * a NULL pool or free-list is a partition bug rather than an operator
+          * misconfiguration, and SYST:MEM:FREE? reports the partition. The
+          * counts stay because they name which of the four conditions fired. */
+        LOG_E("Buffer prep refused: no sample slots (count=%u elem=%u); "
+              "try SYST:MEM:AUTO",
+              (unsigned)sCount, (unsigned)sElemSz);
         return false;
     }
     return true;
@@ -8568,8 +8618,14 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:DAC:SAVEFcal", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:LOADcal", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:LOADFcal", .callback = SCPI_NotImplemented,},
-    {.pattern = "CONFigure:DAC:USECal", .callback = SCPI_DACUseCalSet,},
-    {.pattern = "CONFigure:DAC:USECal?", .callback = SCPI_DACUseCalGet,},
+    // #1002: same defect, two sites #919 didn't name. USECal/USECal? parsed
+    // and discarded their argument / fabricated a constant 0 rather than
+    // reading or storing anything -- #919's own "Out of scope" section names
+    // only the eight commands above, not these two. Same NOT IMPLEMENTED
+    // disposition and the same reason: DAC7718 is NQ3-only hardware not
+    // available on this bench to validate a real implementation.
+    {.pattern = "CONFigure:DAC:USECal", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:USECal?", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:UPDATE", .callback = SCPI_DACUpdate,},
     //
     //    // SPI
