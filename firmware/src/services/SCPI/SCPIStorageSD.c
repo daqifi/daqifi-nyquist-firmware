@@ -1473,9 +1473,32 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     // Wait for file to be open and ready before writing
     {
         int readyWait = 0;
+        /* #953 (review round 1): a suspension that starts AND ENDS inside this
+         * wait is invisible to a single sample taken at the timeout, and it is
+         * not harmless. app_SDCard_GracefulShutdown() stores MODE_NONE over this
+         * benchmark's MODE_WRITE arm on its way into APP_SD_STATE_SUSPENDED
+         * (app_freertos.c), and nothing restores it when the suspension lifts --
+         * sd_card_manager_IsWriteReady() requires MODE_WRITE, so from that
+         * moment the wait can only end at its full 5 s. By then
+         * SD_SuspendReasonText() reads NULL, because it answers only while
+         * app_SDCard_SpiOwnedByWifi() or SpiBusHealth_IsSdSuspended() holds, and
+         * the cascade below would fall through to the card advisory -- the exact
+         * mis-diagnosis this issue is about, in the one quadrant a sample taken
+         * only at the timeout cannot see.
+         *
+         * So latch the FIRST reason observed and keep it. Sampled every
+         * iteration until it latches, i.e. at 100 Hz. What that can still miss
+         * is a suspension whose whole lifetime falls between two samples, and
+         * none of the three causes can be that short: each is bounded below by a
+         * WiFi streaming session, a WiFi firmware update, or a quarantine that
+         * does not self-clear at all. */
+        const char *whySeen = NULL;
         while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
             if (sd_card_manager_StartupDirFull()) {   /* #690: early-exit */
                 break;
+            }
+            if (whySeen == NULL) {
+                whySeen = SD_SuspendReasonText();
             }
             vTaskDelay(pdMS_TO_TICKS(10));
             readyWait++;
@@ -1529,6 +1552,14 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
              * different owner (or none) and print a reason other than the one
              * that steered the branch. */
             const char *why = SD_SuspendReasonText();
+            if (why == NULL) {
+                /* Still arm 2, not a fourth arm: a suspension that has since
+                 * lifted destroyed this arm just as surely as one still in
+                 * force. Live is preferred when there is one, because a reason
+                 * in force NOW is what the operator has to clear before a retry
+                 * can work; the latched one speaks only when nothing is. */
+                why = whySeen;
+            }
             if (sd_card_manager_StartupDirFull()) {
                 /* #690: name the real cause instead of the card advisory.
                  * #689: the flag covers every "no writable location" cause, not
