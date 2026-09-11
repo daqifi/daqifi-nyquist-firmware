@@ -125,6 +125,21 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	       echo "       immediately before publishing dacHardwareInitialized=true. If this count is"; \
 	       echo "       no longer 2, the pre-publish re-check may have been removed -- re-derive."; \
 	       exit 1; }
+	@test "$$(grep -c 'failedMask |= (1UL << i)' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: failedMask |= (1UL << i) count in $(SCPIDAC_SRC) changed from 2."; \
+	       echo "       Part C's all_channel_set_new_shape() models SCPI_DACVoltageSet's all-channel"; \
+	       echo "       branch: EVERY per-channel failure (invalid hwChannel, failed register write)"; \
+	       echo "       must record into failedMask and fall through to the NEXT channel, never abort"; \
+	       echo "       the loop early. If this count changed, a failure path may now return before"; \
+	       echo "       the unconditional latch call -- re-derive Part C against the new shape."; \
+	       exit 1; }
+	@test "$$(grep -c 'staged\[i\] = true;' $(SCPIDAC_SRC))" = "1" \
+	  || { echo "ERROR: 'staged[i] = true;' count in $(SCPIDAC_SRC) changed from 1."; \
+	       echo "       Part C's fidelity claim is that a channel is only ever marked staged AFTER"; \
+	       echo "       both the hwChannel-validity check and the register write succeed, and that"; \
+	       echo "       BoardData is published only for staged channels post-latch. Re-derive Part C"; \
+	       echo "       if this shape moved."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
 
 # Every suite, and every one of the six binaries. Merge conflict resolved by
