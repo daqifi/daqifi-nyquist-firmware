@@ -55,6 +55,19 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # whole board/driver graph). No UUT copy, no stubs, and NOT $(INCLUDES).
 JSONESC_BIN := run_json_escape_tests
 
+# #913: UserSpi.c's spi_XferByte busy-spin -> spin-then-vTaskDelay yield.
+# Like BENCH_BIN this needs no UUT copy and no stubs -- UserSpi.c is NOT
+# includable on the host (FreeRTOS, Harmony's definitions.h/configuration.h,
+# the DIO ownership registry), so the test re-implements spi_WaitStat's loop
+# SHAPE against a mock tick clock and mock hardware-condition flag.
+#
+# That makes the fast-spin count and the timeout budget a COPY, which can
+# drift. The recipe greps both out of the real source first and refuses to
+# build if either has changed, so a stale copy can't pass silently -- same
+# convention as BENCH_BIN above.
+SPI913_BIN := run_913_tests
+USER_SPI_SRC := ../../firmware/src/HAL/UserSpi/UserSpi.c
+
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
 	$(CC) $(CFLAGS) $(INCLUDES) -o $(BIN) test_circularbuffer.c $(UUT)
@@ -79,17 +92,29 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC)
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 
-# Every suite, and every one of the five binaries. Merge conflict resolved by
+$(SPI913_BIN): test_913_spi_wait_stat.c test_framework.h $(USER_SPI_SRC)
+	@grep -qE '^#define[[:space:]]+USER_SPI_BYTE_TIMEOUT_MS[[:space:]]+20u[[:space:]]*$$' $(USER_SPI_SRC) \
+	  || { echo "ERROR: USER_SPI_BYTE_TIMEOUT_MS is no longer '20u' in $(USER_SPI_SRC)."; \
+	       echo "       Update FW_BYTE_TIMEOUT_MS in test_913_spi_wait_stat.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE 'for \(uint32_t s = 0; s < 8000u; \+\+s\)' $(USER_SPI_SRC) \
+	  || { echo "ERROR: spi_WaitStat's fast-spin bound is no longer 's < 8000u' in $(USER_SPI_SRC)."; \
+	       echo "       Update FW_SPIN_COUNT in test_913_spi_wait_stat.c and re-derive its numbers."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(SPI913_BIN) test_913_spi_wait_stat.c
+
+# Every suite, and every one of the six binaries. Merge conflict resolved by
 # keeping each side's target intact and merging only `run` and `clean` -- a
 # duplicated rule here would silently shadow one of them.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN)
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SPI913_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
 	./$(JSONESC_BIN)
+	./$(SPI913_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SPI913_BIN)
 
 .PHONY: run clean
