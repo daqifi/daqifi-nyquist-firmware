@@ -84,6 +84,7 @@ on:
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
       - 'firmware/src/services/streaming.c'
+      - 'firmware/src/services/DaqifiPB/NanoPB_Encoder.c'
       - 'firmware/src/services/streaming.h'
       - '.github/workflows/host-tests.yml'
   push:
@@ -98,6 +99,7 @@ on:
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
       - 'firmware/src/services/streaming.c'
+      - 'firmware/src/services/DaqifiPB/NanoPB_Encoder.c'
       - 'firmware/src/services/streaming.h'
       - '.github/workflows/host-tests.yml'
 

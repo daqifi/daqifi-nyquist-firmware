@@ -1592,7 +1592,7 @@ size_t Nanopb_EncodeStreamingFast(tBoardData* state,
              * function and cannot be put back, so a zero return destroys it.
              * This arm previously had no else at all: no counter, no log. */
             Streaming_ReportEncoderSampleLoss(1u);
-            LOG_E_SESSION(LOG_SESSION_NANOPB_FAIL,
+            LOG_E_SESSION(LOG_SESSION_PB_DIO_DESTROYED,
                 "PB: standalone DIO encode produced 0 bytes - sample destroyed");
         }
     }
