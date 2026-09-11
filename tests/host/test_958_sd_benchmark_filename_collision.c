@@ -38,8 +38,8 @@
  * >= 10 ticks apart, whichever transport calls it. A run refused before the
  * arm creates no file and therefore cannot collide with anything. TickType_t
  * is 32-bit here (configTICK_TYPE_WIDTH_IN_BITS is TICK_TYPE_WIDTH_32_BITS,
- * FreeRTOSConfig.h:125), so the value itself only
- * repeats after 49.7 days of uptime.
+ * FreeRTOSConfig.h:125), so the value itself only repeats after 49.7 days of
+ * uptime.
  *
  * That premise is load-bearing, so CASE 5 below asserts its consequence
  * (equal ticks give equal names) rather than leaving it implicit -- a reader
