@@ -16,6 +16,7 @@
 #include "definitions.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
+#include "task.h"
 #include "clock_config.h"
 #include "HAL/DIO.h"
 #include "Util/Logger.h"
@@ -26,11 +27,26 @@
  * SPI_CLK = PBCLK2 / (2*(BRG+1)). */
 #define USER_SPI_PBCLK_HZ   DAQIFI_PBCLK_HZ
 
-/* Per-byte polled-transfer spin bound. Sized to cover the slowest byte
- * (8 bits at USER_SPI_MIN_BAUD_HZ ~= 1.3 ms) with wide margin at the
- * 252 MHz core; a real transfer at the 100 kHz default completes in ~80 us.
- * A timeout here means SCK is not toggling (hardware/config fault). */
-#define USER_SPI_XFER_TIMEOUT   2000000UL
+/* Per-BYTE transfer budget, in milliseconds of wall clock (#913). Replaces a
+ * bare loop counter: the wait now yields, so the bound has to be expressed in
+ * the same units the deadline is compared in.
+ *
+ * Sizing: SPI is master-clocked. Once SPI1BUF is written the module generates
+ * all 8 SCK edges itself and no slave can stretch them (unlike I2C), so a
+ * byte's wire time is fixed by BRG alone. The worst legitimate byte is 8 bits
+ * at the lowest achievable SCK -- USER_SPI_MIN_BAUD_HZ (6000), which
+ * spi_ComputeBrg meets exactly on the 84 MHz build (BRG 6999, actual 6000 Hz)
+ * -- i.e. 8/6000 = 1.33 ms. 20 ms is ~15x that. Expiry therefore means the
+ * module is not completing transfers at all (SPI1 off, PMD-gated, or a stuck
+ * receive path) -- a hardware/config fault, NOT a slow or absent slave.
+ *
+ * INVARIANT: keep this well above 8000 / USER_SPI_MIN_BAUD_HZ (ms). Lowering
+ * the minimum baud, or moving to a slower PBCLK, requires raising this.
+ *
+ * Scope is per BYTE and deliberately NOT shared across the frame the way
+ * uart_WriteLocked shares one 15 s budget -- see spi_XferByte for why the two
+ * drivers differ. */
+#define USER_SPI_BYTE_TIMEOUT_MS   20u
 
 /* HAL scratch capacity per UserSpi_Transfer() frame. NOTE (#695): a single
  * SYST:COMM:SPI:TRANsfer? command cannot deliver a full 256 B frame -- the hex
@@ -245,13 +261,52 @@ static void spi_Spi1Init(void) {
     SPI1CONSET = _SPI1CON_ON_MASK;
 }
 
+/* Wait for a SPI1STAT bit to reach @p want (true = wait for set, false =
+ * clear), YIELDING so a low-baud frame doesn't busy-spin at the dispatching
+ * SCPI task's priority and starve the pipeline (#913). A SCPI command over USB
+ * runs on app_USBDeviceTask at priority 7 -- above the streaming encoder (6),
+ * the USB device stack (6) and SD (5) -- so a 237 B frame at 6 kHz used to hold
+ * the CPU for ~316 ms while the pri-9 deferred task kept filling the sample
+ * pool and nothing drained it. A brief tight spin covers the fast path (a byte
+ * at the 100 kHz default SCK completes in ~80 us -- no context switch); if
+ * still not ready, vTaskDelay(1) lets everything below the SCPI task run while
+ * the SPI module finishes clocking the byte on its own.
+ *
+ * Note the ordering: the bit is tested TWICE before the deadline is consulted,
+ * so a byte that completed while this task was preempted is reported as success
+ * however late it is observed. Only a bit still not set when the budget expires
+ * can return false. That makes the budget immune to scheduling latency and lets
+ * it be sized against wire time alone. Mirrors uart_WaitSta / i2c_WaitMif. */
+static bool spi_WaitStat(uint32_t mask, bool want,
+                         TickType_t start, TickType_t timeoutTicks) {
+    for (;;) {
+        for (uint32_t s = 0; s < 8000u; ++s) {
+            if (((SPI1STAT & mask) != 0u) == want) { return true; }
+        }
+        if (((SPI1STAT & mask) != 0u) == want) { return true; }
+        /* Rollover-safe: unsigned (now - start) is the true elapsed count even
+         * across a tick-counter wrap, unlike an absolute-deadline compare. */
+        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) { return false; }
+        vTaskDelay(1);
+    }
+}
+
 static bool spi_XferByte(uint8_t txByte, uint8_t* rxByte) {
     SPI1BUF = txByte;
-    uint32_t guard = USER_SPI_XFER_TIMEOUT;
-    while ((SPI1STAT & _SPI1STAT_SPIRBF_MASK) == 0U) {
-        if (--guard == 0U) {
-            return false;
-        }
+    /* FRESH deadline per byte, not one budget shared across the frame.
+     * uart_WriteLocked shares a single 15 s budget across its whole write for
+     * two reasons that both invert here: a UART byte at its ~320 Hz floor is
+     * ~31 ms, the same order as any per-byte budget, so per-byte scoping would
+     * buy it nothing; and its TX is FIFO-buffered, so "a byte" is not a unit of
+     * wire progress there. SPI is the opposite on both counts -- ENHBUF=0 means
+     * exactly one byte is in flight, and the worst byte is 1.33 ms, 23x shorter
+     * -- so a per-byte budget is both far more generous relative to the
+     * legitimate case AND far tighter in absolute terms: spi_TransferLocked
+     * breaks at the FIRST byte that fails, so a stuck bus is reported after one
+     * budget (~20 ms) rather than a frame-sized one. */
+    if (!spi_WaitStat(_SPI1STAT_SPIRBF_MASK, true, xTaskGetTickCount(),
+                      pdMS_TO_TICKS(USER_SPI_BYTE_TIMEOUT_MS))) {
+        return false;
     }
     *rxByte = (uint8_t)SPI1BUF;
     return true;
@@ -440,6 +495,17 @@ static bool spi_TransferLocked(const uint8_t* tx, uint8_t* rx, uint16_t len) {
     bool haveCs   = (gCfg.csDio  != USER_SPI_PIN_NONE);
     bool haveMiso = (gCfg.misoDio != USER_SPI_PIN_NONE);
     if (haveCs) {
+        /* CS is asserted for the WHOLE frame and STAYS asserted across the
+         * vTaskDelay inside spi_XferByte (#913). That is intentional, not an
+         * oversight: SPI has no bus-idle timeout, the master owns SCK, and
+         * deasserting CS between bytes would abort the command in essentially
+         * every SPI slave. A yield only widens an inter-byte gap that already
+         * exists -- this transfer is preemptible by the pri-9 deferred tasks
+         * between any two bytes today -- so it introduces no new class of gap,
+         * only a longer one at low baud. The single device class that could
+         * care is a slave with its own SPI frame/CS watchdog; that is a
+         * documented property of this polled HAL (see the SPI:TRANsfer? wiki
+         * row), not something to "fix" here by dropping CS mid-frame. */
         DIO_DriveChannel(gCfg.csDio, false);   /* assert (active low) */
     }
 
@@ -474,6 +540,15 @@ static bool spi_TransferLocked(const uint8_t* tx, uint8_t* rx, uint16_t len) {
         SPI1CONCLR = _SPI1CON_ON_MASK;
         SPI1CONSET = _SPI1CON_ON_MASK;
         SPI1STATCLR = _SPI1STAT_SPIROV_MASK;
+        /* This drain deliberately does NOT use spi_WaitStat. It is not waiting
+         * for a future SCK edge: each iteration only consumes a byte SPIRBF
+         * says is ALREADY in the receive buffer, and reading SPI1BUF is itself
+         * what clears SPIRBF. The loop therefore terminates on its own in a
+         * handful of back-to-back register reads; drainGuard exists only so a
+         * hardware fault that pins SPIRBF set cannot hang the caller. Yielding
+         * here would add up to 32 tick-sleeps to an error path for nothing,
+         * while CS is still asserted and the module is half-reset. Bounded,
+         * non-waiting spins stay spins. */
         uint32_t drainGuard = 32u;
         while (((SPI1STAT & _SPI1STAT_SPIRBF_MASK) != 0U) && (drainGuard-- > 0U)) {
             (void)SPI1BUF;
