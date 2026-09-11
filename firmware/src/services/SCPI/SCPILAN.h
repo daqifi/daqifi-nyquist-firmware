@@ -139,6 +139,11 @@ scpi_result_t SCPI_LANSsidStrengthGet(scpi_t * context);
  * states wifi_manager_GetWiFiStatus() collapses onto DISCONNECTED — notably
  * a WINC driver stuck at INIT from a soft-AP that is beaconing with no
  * client yet. See wifi_link_state_t (wifi_manager.h) for the value meanings.
+ *
+ * REPLIES 1..5 ONLY. Value 0 (WIFI_LINK_STATE_DISABLED) is unreachable here:
+ * SCPI_LANRequireWiFiReady refuses with an execution error for exactly the
+ * conditions that would produce it, so a client sees -200 rather than 0 when
+ * WiFi is disabled or the driver is deinitialised.
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
 scpi_result_t SCPI_LANConnectedGet(scpi_t * context);

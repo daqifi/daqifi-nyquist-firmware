@@ -200,6 +200,16 @@ extern "C" {
      * apart without touching wifi_manager_GetWiFiStatus()'s contract.
      */
     typedef enum {
+        // NOT OBSERVABLE THROUGH SYSTem:COMMunicate:LAN:CONnected?, and a
+        // client must not write a handler expecting it. The only caller of
+        // wifi_manager_GetLinkState() is SCPI_LANConnectedGet, whose first
+        // statement is SCPI_LANRequireWiFiReady -- and that refuses with an
+        // execution error for exactly the conditions that produce this value
+        // (settings NULL or !isEnabled, and WIFI_STATE_DEINIT/default, all of
+        // which wifi_manager_GetWiFiStatus() reports as WIFI_STATUS_DISABLED).
+        // So over SCPI a deinitialised driver answers -200, never 0. The value
+        // exists to keep the enum total for any future in-firmware caller that
+        // does not sit behind that gate.
         WIFI_LINK_STATE_DISABLED = 0,     // WiFi disabled, or driver at WIFI_STATE_DEINIT (not initialized)
         WIFI_LINK_STATE_INIT_ERROR,       // WIFI_STATE_INIT, WDRV_WINC_Status()==SYS_STATUS_ERROR: bring-up failing, retried indefinitely
         WIFI_LINK_STATE_INITIALIZING,     // WIFI_STATE_INIT, bring-up still in progress (not yet errored)
