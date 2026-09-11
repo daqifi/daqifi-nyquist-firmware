@@ -2424,13 +2424,31 @@ static void Streaming_Stop(void) {
         // gLossGraceSec, default 3 s) don't produce misleading end-of-
         // session error logs.  Total counters are still available via
         // SYST:STR:STATS? for forensic diagnostic.
-        bool hadDrops = gStreamStats.queueDroppedSamplesSteady > 0 ||
-                        gStreamStats.usbDroppedBytesSteady > 0 ||
-                        gStreamStats.wifiDroppedBytesSteady > 0 ||
-                        gStreamStats.sdDroppedBytesSteady > 0 ||
-                        gStreamStats.encoderFailuresSteady > 0 ||
-                        gStreamStats.dioDroppedSamplesSteady > 0 ||
-                        gStreamStats.eosOverruns > 0;  // no Steady variant — hw staleness, not a grace-window false flag
+        /* #970: ONE coherent snapshot, not ~13 separate unsynchronised reads.
+         * Every field below is written from another context -- the pri-6
+         * encoder books encoderDroppedSamples via
+         * Streaming_ReportEncoderSampleLoss, the deferred task books the queue
+         * and scan counters -- and Streaming_Stop runs on the pri-7 SCPI task,
+         * ABOVE the encoder. So a writer could land between any two of these
+         * reads and the one line an operator actually reads could disagree with
+         * SYST:STReam:STATS? about the same session, or even with itself
+         * (hadDrops computed from one set of values, the totals from another).
+         *
+         * Streaming_GetStats() is the existing atomic-snapshot helper the SCPI
+         * path already uses -- one critical section, O(1) struct copy, and it
+         * folds in the volatile ISR counters (net of dry ticks, #707/#745) and
+         * gScanStaleDropped the same way. Reusing it DELETES the coordination
+         * problem rather than adding a second way to read these counters. */
+        StreamingStats snap;
+        Streaming_GetStats(&snap);
+
+        bool hadDrops = snap.queueDroppedSamplesSteady > 0 ||
+                        snap.usbDroppedBytesSteady > 0 ||
+                        snap.wifiDroppedBytesSteady > 0 ||
+                        snap.sdDroppedBytesSteady > 0 ||
+                        snap.encoderFailuresSteady > 0 ||
+                        snap.dioDroppedSamplesSteady > 0 ||
+                        snap.eosOverruns > 0;  // no Steady variant — hw staleness, not a grace-window false flag
         // Clear runtime overflow / data-loss condition bits — they refer to
         // the live session that just ended.  Preserve QUES_BIT_TRANSPORT_DOWN
         // (#397) because it captures the REASON streaming stopped; clearing
@@ -2446,8 +2464,8 @@ static void Streaming_Stop(void) {
         taskEXIT_CRITICAL();
 
         if (hadDrops) {
-            uint64_t totalAttempted = gStreamStats.totalSamplesStreamed +
-                                     gStreamStats.queueDroppedSamples;
+            uint64_t totalAttempted = snap.totalSamplesStreamed +
+                                     snap.queueDroppedSamples;
             // EOS coalescing is data staleness (ADC register overwrite),
             // not a dropped sample — exclude from loss total/percentage.
             // Steady counters for the loss math: startup-window transients
@@ -2455,10 +2473,10 @@ static void Streaming_Stop(void) {
             // #557: scan-stale ticks are genuine dropped samples (the prior
             // scan never completed — its data is stale), so include them in the
             // loss total, unlike eosOverruns (task-behind-but-fresh, excluded).
-            uint32_t totalSampleLoss = gStreamStats.queueDroppedSamplesSteady +
-                                      gStreamStats.encoderDroppedSamplesSteady +
-                                      gStreamStats.dioDroppedSamplesSteady +
-                                      gScanStaleDropped;
+            uint32_t totalSampleLoss = snap.queueDroppedSamplesSteady +
+                                      snap.encoderDroppedSamplesSteady +
+                                      snap.dioDroppedSamplesSteady +
+                                      snap.scanStaleDropped;
             uint32_t lossPercent = totalAttempted > 0
                 ? (uint32_t)((totalSampleLoss * 100ULL) / totalAttempted)
                 : 0;
@@ -2466,13 +2484,13 @@ static void Streaming_Stop(void) {
                   (unsigned)totalSampleLoss,
                   (unsigned long long)totalAttempted,
                   (unsigned)lossPercent,
-                  (unsigned)gStreamStats.usbDroppedBytesSteady,
-                  (unsigned)gStreamStats.wifiDroppedBytesSteady,
-                  (unsigned)gStreamStats.sdDroppedBytesSteady,
-                  (unsigned)gStreamStats.encoderFailuresSteady,
-                  (unsigned)gStreamStats.encoderDroppedSamplesSteady,
-                  (unsigned)gStreamStats.dioDroppedSamplesSteady,
-                  (unsigned)gStreamStats.eosOverruns);
+                  (unsigned)snap.usbDroppedBytesSteady,
+                  (unsigned)snap.wifiDroppedBytesSteady,
+                  (unsigned)snap.sdDroppedBytesSteady,
+                  (unsigned)snap.encoderFailuresSteady,
+                  (unsigned)snap.encoderDroppedSamplesSteady,
+                  (unsigned)snap.dioDroppedSamplesSteady,
+                  (unsigned)snap.eosOverruns);
         }
     }
 }
