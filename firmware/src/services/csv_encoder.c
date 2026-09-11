@@ -679,9 +679,33 @@ size_t csv_Encode(
              * Evict AIN, or DIO if AIN is absent, but never both: a DIO row
              * is at most ~22 bytes (two uint32_t fields) so it is never the
              * reachable cause (an oversized CONFigure:ADC:chanCALB value is,
-             * via tryWriteRow's %.*f fallback), and streaming.c's
-             * `encoded == 0` arm below books exactly ONE dropped sample --
-             * evicting both would silently under-count against that. */
+             * via tryWriteRow's %.*f fallback), and streaming.c books one
+             * dropped sample per zero-return CALL (streaming.c:3353) --
+             * evicting two samples in one call would silently under-count
+             * against that.
+             *
+             * KNOWN LIMIT, and it is per-CALL accounting, not per-SAMPLE:
+             * streaming.c's `encoded == 0` arm increments unconditionally,
+             * on the premise stated in its own comment that "each encode
+             * pops exactly one". A deferred unfittable row breaks that
+             * premise by popping ZERO, so a non-evicting zero-return can
+             * precede the evicting one and the same discarded sample is
+             * counted twice. The reachable case is the session's first
+             * call, where generateHeader() has already consumed room, so
+             * `rem != maxRoom` defers the eviction by one wake; it also
+             * recurs whenever a fitting row precedes an oversized one
+             * inside a batch. The error is ALWAYS an over-count of the
+             * diagnostic EncoderDroppedSamples/EncoderFailures counters --
+             * never an under-count, never an extra destroyed sample, and
+             * the FIFO head still advances -- so it cannot mask loss.
+             * It is NOT fixable here: the accounting lives in streaming.c
+             * and is exactly what #970 / PR #991 is replacing with an
+             * explicit Streaming_ReportEncoderSampleLoss(). When that
+             * lands, this site must call it and the premise above should
+             * be re-read. Do NOT "fix" it by evicting on fullCapacityCall
+             * alone: on the header call a row that WOULD fit an empty
+             * buffer can fail against the post-header remainder, so that
+             * trades a counter over-count for real data loss. */
             if ((hadAIN || hadDIO) && fullCapacityCall && rem == maxRoom) {
                 if (hadAIN) {
                     AInPublicSampleList_t *evicted = NULL;
