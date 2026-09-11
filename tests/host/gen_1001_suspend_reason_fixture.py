@@ -111,6 +111,18 @@ EXPECTED_REASON_COUNT = 3
 EXPECTED_NULL_RETURNS = 1
 EXPECTED_SITE_COUNT = 4
 
+# The site scan below finds reason-interpolating LOG_E calls by looking for the
+# local named REASON_PTR. That is a NAME, not a semantic marker, so a newly
+# added LOG_E that plumbs the reason under a different name is invisible to the
+# scan -- and therefore also invisible to EXPECTED_SITE_COUNT, which only counts
+# what the scan found. The two tripwires were not independent.
+#
+# This one is: it counts REASON_FUNC's own occurrences in the MASKED source, so
+# it moves when a caller is added or removed regardless of what the caller names
+# its local. Masked, so a mention in a comment cannot red a correct tree.
+# Audit finding on PR #1017, confirmed by execution.
+EXPECTED_REASON_REFS = 5
+
 
 class Drift(Exception):
     """A parse assumption failed. Carries the operator-facing message."""
@@ -618,7 +630,35 @@ def cmd_sets(src, masked, lits, funcs):
         args = split_args(masked, a0, a1)
         if len(args) < 2:
             continue
-        if sole_identifier(masked, *args[0]) != "context":
+        # A function DEFINITION's header matches the same `SD_name(` pattern,
+        # and its first "argument" is a parameter declaration (`scpi_t
+        # *context`), not an expression. Tell them apart structurally rather
+        # than by guessing at the text: a definition's ')' is followed by '{'.
+        # Found because the first version of the refusal below RED the current
+        # tree on exactly this -- a guard that reds correct C is the failure
+        # this repo punishes hardest, so it was caught by running it.
+        after = masked[a1 + 1:]
+        if after.lstrip()[:1] == "{":
+            continue
+        arg0 = sole_identifier(masked, *args[0])
+        if arg0 is None:
+            # Cannot tell WHAT the first argument is, so cannot rule out that
+            # this is a context-taking refusal helper. Refusing follows this
+            # function's own stated discipline (see the docstring): an argument
+            # whose value this script cannot read is refused, because silently
+            # ignoring it LOOSENS the budget rather than tightening it. It used
+            # to `continue`, so a parenthesised `(context)` dropped the call
+            # site out of the worst-case set entirely. Audit finding, executed.
+            raise Drift(
+                f"{SD_SRC.name}:{line_of(src, a0)}: {name}()'s first argument "
+                "is not a bare identifier, so this\n"
+                "       script cannot tell whether it is the SCPI context and "
+                "therefore whether\n"
+                "       this call belongs in the mnemonic set. Refusing rather "
+                "than skipping it,\n"
+                "       because skipping loosens the derived ceiling:\n"
+                f"           {masked[args[0][0]:args[0][1]].strip()!r}")
+        if arg0 != "context":
             continue
         where = f"{SD_SRC.name}:{line_of(src, a0)}"
         s, e = args[1]
@@ -752,6 +792,19 @@ def log_sites(src, masked, lits, funcs, cmds):
             "prefix_len": prefix_len,
         })
 
+    refs = len(re.findall(r"\b%s\s*\(" % REASON_FUNC, masked))
+    if refs != EXPECTED_REASON_REFS:
+        raise Drift(
+            f"{SD_SRC.name} mentions {REASON_FUNC}() {refs} time(s); this "
+            f"generator was written against {EXPECTED_REASON_REFS}.\n"
+            f"       The site scan below keys on the local named "
+            f"`{REASON_PTR}`, so a NEW caller that names its local anything "
+            f"else\n"
+            "       would be invisible to it AND to EXPECTED_SITE_COUNT. This "
+            "count is the independent\n"
+            "       tripwire for that. Re-derive both, then update the two "
+            "constants together.")
+
     if len(sites) != EXPECTED_SITE_COUNT:
         raise Drift(
             f"found {len(sites)} LOG_E() call site(s) interpolating "
@@ -786,7 +839,15 @@ def logger_limit():
     a change to either one is followed rather than assumed away.
     """
     h = LOGGER_H.read_text(encoding="utf-8", errors="surrogateescape")
-    m = re.search(r"^[ \t]*#[ \t]*define[ \t]+LOG_MESSAGE_SIZE[ \t]+(\d+)",
+    # The trailing anchor is load-bearing. Without it this matched the leading
+    # digits and DISCARDED the rest of the line, so `#define LOG_MESSAGE_SIZE
+    # 128 - 16` yielded 128 -- a ceiling 16 characters too generous -- and the
+    # suite stayed GREEN while a real reason truncated. Audit finding, executed.
+    # Deliberately NOT evaluating arbitrary C constant expressions: refuse
+    # anything that is not a bare integer, per this file's own discipline that
+    # an unreadable value is refused rather than guessed at.
+    m = re.search(r"^[ \t]*#[ \t]*define[ \t]+LOG_MESSAGE_SIZE[ \t]+(\d+)"
+                  r"[ \t]*(?:/[/*].*)?$",
                   h, re.M)
     if not m:
         raise Drift(
@@ -797,7 +858,11 @@ def logger_limit():
             "       carrying a copy, and refuses to invent one.")
     size = int(m.group(1))
 
-    c = LOGGER_C.read_text(encoding="utf-8", errors="surrogateescape")
+    # MASKED, like the SCPI scan. Read raw, a COMMENTED-OUT reservation matched
+    # before the real active one and the looser budget won silently -- the same
+    # truncation class this guard exists to catch. Audit finding, executed.
+    c_raw = LOGGER_C.read_text(encoding="utf-8", errors="surrogateescape")
+    c, _c_lits = mask_code(c_raw)
     m = re.search(r"vsnprintf\s*\(\s*buffer\s*,\s*LOG_MESSAGE_SIZE\s*-\s*(\d+)"
                   r"\s*,\s*format\s*,\s*args\s*\)", c)
     if not m:
