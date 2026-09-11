@@ -29,7 +29,7 @@ The firmware supports building for different board variants using MPLAB X config
 > **`default` IS the NQ1 configuration.** There is no separate `Nq1` conf — it was
 > deleted because it had silently diverged: it built at **-O1** and lacked the
 > per-file overrides for `FreeRTOS_tasks.c` and `tfm.c`, while `default` builds at
-> **-O3** (see "Compiler Optimization Level"). Every NQ1 image ever flashed, every
+> **-O3** (see "Compiler Optimization Level" in `docs/BUILD_AND_TOOLCHAIN.md`). Every NQ1 image ever flashed, every
 > characterization number in this file, and every release cut came from `default`;
 > `Nq1` was never validated on hardware. All release tooling — `cut_release.sh`,
 > `check_build_config.py`, the CI guard — scopes to `<conf name="default">`.

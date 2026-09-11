@@ -185,7 +185,7 @@ For every site PR #443 proposed to qualify (and for the existing
 
 ## CLAUDE.md update
 
-The "Atomicity & Concurrency Rules" section gets a new bullet
+The "Atomicity & Concurrency Rules" section (`docs/MCU_REFERENCE.md`) gets a new bullet
 capturing this finding so future audits don't re-litigate the
 question:
 

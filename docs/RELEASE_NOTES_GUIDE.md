@@ -320,7 +320,7 @@ to need user input.
 
 ### 7. After merge: tag and zip
 
-Per CLAUDE.md's "Packaging Release Artifacts" recipe:
+Per the "Packaging Release Artifacts" recipe in `docs/RELEASE_PROCESS.md`:
 
 ```bash
 zip -j "daqifi-nyquist-firmware-<version>.zip" \

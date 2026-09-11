@@ -403,7 +403,7 @@ runtime** (verified: no ADCCSS writes outside `plib_adchs.c`). Consequences:
    ceiling" lever until that characterization exists. (With dynamic CSS,
    most configs get their headroom from N_active anyway.)
 5. **Comment hygiene** (Phase 3): fix the 50 MHz/20 ns TAD claims listed
-   above; update CLAUDE.md's "ADC Architecture & ISR Design" section
+   above; update the "ADC Architecture & ISR Design" section in `docs/STREAMING_AND_ADC.md`
    (still documents the pre-#292 topology).
 
 ### Phase-3 addendum 2 (E, 2026-06-12) — aggregate ADC-event-rate ceiling (D-C v4)

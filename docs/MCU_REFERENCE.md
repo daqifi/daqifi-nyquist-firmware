@@ -56,7 +56,7 @@ The PBxDIV /3 writes live in `SystemInit`/`initialization.c` (Harmony's `CLK_Ini
 > **⚠️ CAP WORK MUST PIN `CONFigure:VOLTage:PRECision` (#832 / test-suite #233).**
 > `csv_encoder` takes an integer fast path (`int_to_str`) at precision **0** —
 > the value a fresh NQ1 actually persists (see the ⚠️ under "Voltage Output
-> Precision" above — #910) — and formats a float per channel per sample at
+> Precision" in `docs/STREAMING_AND_ADC.md` — #910) — and formats a float per channel per sample at
 > precision **4**, the value `NQ1BoardConfig.c` *declares* as the board default
 > but that a fresh device never reaches. That is a first-order cost, not a
 > rounding detail: an A/B at one rate measured
