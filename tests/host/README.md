@@ -184,8 +184,34 @@ always tracks the real source — edit `CircularBuffer.c` and re-run `make run`.
 
 ## Adding another module
 
-1. Drop `test_<module>.c` here with its own `main()` (or extend the Makefile to
-   build multiple binaries).
+**Do not edit `Makefile`'s `run:`/`clean:` lines.** Every host-test PR used to
+touch those two shared lines, so two independent test additions collided on
+them even though the changes were logically unrelated (issue #1026, measured
+2026-09-11: 4 of 4 open PRs that touched `tests/host/Makefile` were
+CONFLICTING). Each test now lives in its own fragment, so adding one only
+adds a new file:
+
+1. Drop `test_<module>.c` here with its own `main()`.
 2. Add thin stubs under `stubs/` for any firmware headers the module pulls in.
 3. If the module uses quoted firmware includes, follow the build-time-copy
    pattern above so the stubs win.
+4. Create `tests/<issue#>-<slug>.mk` (e.g. `tests/943-bench-stall-bound.mk`) —
+   copy an existing fragment as a template. It must:
+   - declare its own binary variable, e.g. `TEST_943_BIN := run_943_tests`
+     (prefix with the issue number so it can't collide with another
+     fragment's variable);
+   - build that binary with a recipe depending on its sources, `$(RECIPES)`,
+     and **`$(lastword $(MAKEFILE_LIST))`** — this makes the fragment depend
+     on itself, so editing a guard inside it invalidates the binary the same
+     way editing `Makefile` always has (see `Makefile`'s `RECIPES` comment);
+   - append itself to the shared accumulators: `TESTS += $(TEST_943_BIN)`,
+     and `CLEAN_EXTRA += <path>` for any file the recipe generates beyond the
+     binary itself (a UUT copy, a generated header — see
+     `124-circularbuffer.mk` and `1000-sd-log-arm-budget.mk`).
+
+`Makefile` `include`s every `tests/*.mk` it finds (`$(sort $(wildcard
+tests/*.mk))`, so inclusion order — and therefore `make run`'s test order —
+is lexicographic by filename), then builds `run:`/`clean:` from whatever the
+fragments accumulated. Nothing outside your new fragment file needs to
+change, so two branches each adding a different fragment merge into each
+other with no conflict — the whole point.
