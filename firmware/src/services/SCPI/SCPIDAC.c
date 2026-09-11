@@ -171,6 +171,28 @@ static bool DAC_EnsureHardwareInitialized(void) {
         return false;
     }
 
+    // #980 Qodo /agentic_review pass 3 (bug: "Power cycles leave the DAC
+    // marked ready"): DAC7718_Init() above can take tens of ms (several SPI
+    // polling loops, each with its own timeout), so the power reading taken
+    // at the TOP of this function is stale by now. If the rail dropped
+    // mid-init, a CONCURRENT caller on the other transport could already
+    // have observed that and correctly cleared dacHardwareInitialized via
+    // its own top-of-function check -- and this call publishing `true`
+    // right after would CLOBBER that correct clear with a stale READY,
+    // wrong until some later command happens to catch it. In the meantime a
+    // real DAC write could reach DAC7718_ReadWriteReg while the analog rail
+    // is actually down: the digital SPI bus and the 10V analog output can be
+    // on separate supplies, so a digital transaction can still nominally
+    // succeed while the requested voltage is not physically deliverable.
+    // Re-validate with a FRESH read immediately before publishing, closing
+    // the window this claim's own duration opened.
+    pPowerState = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if ((pPowerState == NULL) || (pPowerState->powerState != POWERED_UP)) {
+        dacHardwareInitialized = false;
+        dacInitInProgress = false;
+        return false;
+    }
+
     dacHardwareInitialized = true;   // publish READY ...
     dacInitInProgress = false;       // ... then release the claim
     return true;

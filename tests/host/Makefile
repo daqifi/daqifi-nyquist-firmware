@@ -117,6 +117,14 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	  || { echo "ERROR: dacInitInProgress is gone from $(SCPIDAC_SRC)."; \
 	       echo "       test_980_dac7718_error_paths.c Part B models exactly this claim flag -- re-derive it."; \
 	       exit 1; }
+	@test "$$(grep -c 'BoardData_Get(BOARDDATA_POWER_DATA, 0)' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: BoardData_Get(BOARDDATA_POWER_DATA, 0) call count in $(SCPIDAC_SRC) changed from 2."; \
+	       echo "       Part B's ensure_hardware_initialized_ex(..., powerStillUpAtPublish) models the"; \
+	       echo "       #980-pass-3 fix for the Qodo 'Power cycles leave the DAC marked ready' bug,"; \
+	       echo "       which needs BOTH the top-of-function power check AND a second, FRESH read"; \
+	       echo "       immediately before publishing dacHardwareInitialized=true. If this count is"; \
+	       echo "       no longer 2, the pre-publish re-check may have been removed -- re-derive."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
 
 # Every suite, and every one of the six binaries. Merge conflict resolved by

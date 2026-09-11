@@ -308,9 +308,21 @@ static bool mock_init(DacState *s, bool succeeds)
  * publish, with the id retained across an init failure so a retry reuses the
  * same slot instead of calling NewConfig again. BoardData_Get/BoardConfig_Get
  * are collapsed into the boolean inputs; DAC7718_NewConfig/DAC7718_Init are
- * the mocks above. */
-static bool ensure_hardware_initialized(DacState *s, bool powered, bool boardOk,
-                                        bool variantOk, bool initSucceeds)
+ * the mocks above.
+ *
+ * `powerStillUpAtPublish` models the #980-pass-3 fix for Qodo /agentic_review
+ * bug "Power cycles leave the DAC marked ready": DAC7718_Init() can take
+ * tens of ms, so the `powered` reading taken above is stale by the time
+ * Init returns. A second, FRESH power read immediately before publishing
+ * `hardwareInitialized = true` closes that window -- without it, a rail
+ * drop occurring entirely inside the Init() call would still get published
+ * as READY. `ensure_hardware_initialized()` below is the pre-existing 4-arg
+ * call shape every other test in this file uses, forwarding
+ * powerStillUpAtPublish=true so none of that coverage changes; only the
+ * dedicated race test below exercises the false case. */
+static bool ensure_hardware_initialized_ex(DacState *s, bool powered, bool boardOk,
+                                           bool variantOk, bool initSucceeds,
+                                           bool powerStillUpAtPublish)
 {
     if (!powered) {
         s->hardwareInitialized = false;   /* #980 item 3 */
@@ -365,9 +377,24 @@ static bool ensure_hardware_initialized(DacState *s, bool powered, bool boardOk,
         return false;
     }
 
+    /* #980 pass 3: re-validate with a FRESH read immediately before
+     * publishing -- closes the window Init()'s own duration opened. */
+    if (!powerStillUpAtPublish) {
+        s->hardwareInitialized = false;
+        s->initInProgress = false;
+        return false;
+    }
+
     s->hardwareInitialized = true;
     s->initInProgress = false;
     return true;
+}
+
+static bool ensure_hardware_initialized(DacState *s, bool powered, bool boardOk,
+                                        bool variantOk, bool initSucceeds)
+{
+    return ensure_hardware_initialized_ex(s, powered, boardOk, variantOk,
+                                          initSucceeds, true);
 }
 
 /* Pre-#980 shape: DAC7718_Init()'s outcome is never consulted (it returned
@@ -498,6 +525,38 @@ TEST(power_loss_clears_ready_but_retains_the_slot)
     ASSERT_TRUE(old.hardwareInitialized);
 }
 
+/* #980 pass 3 (Qodo /agentic_review bug: "Power cycles leave the DAC marked
+ * ready"): a rail drop occurring ENTIRELY INSIDE DAC7718_Init() -- after the
+ * top-of-function power check passed, before publish -- must not be
+ * published as READY. Without the pre-publish re-check this models, a
+ * concurrent caller on the other transport could have already observed the
+ * drop and correctly cleared hardwareInitialized, only for THIS call to
+ * clobber that correct clear with a stale "true" once its own (now-stale)
+ * Init() finishes. */
+TEST(power_loss_during_init_is_not_published_as_ready)
+{
+    DacState s;
+    dac_state_init(&s);
+
+    /* powered=true at entry, Init succeeds, but the rail is down by the time
+     * we would publish. */
+    ASSERT_FALSE(ensure_hardware_initialized_ex(&s, true, true, true, true, false));
+    ASSERT_FALSE(s.hardwareInitialized);
+    ASSERT_EQ(s.instanceId, 0);        /* slot retained -- same item-1 property */
+    ASSERT_FALSE(s.initInProgress);    /* claim released, not leaked */
+    ASSERT_EQ(s.newConfigCalls, 1);
+    ASSERT_EQ(s.initCalls, 1);         /* DAC7718_Init DID run -- only the
+                                        * PUBLISH is refused, not the attempt */
+
+    /* A later call, with the rail genuinely back up for the whole attempt,
+     * re-initializes correctly on the retained slot -- the rejected publish
+     * above did not brick anything. */
+    ASSERT_TRUE(ensure_hardware_initialized_ex(&s, true, true, true, true, true));
+    ASSERT_TRUE(s.hardwareInitialized);
+    ASSERT_EQ(s.newConfigCalls, 1);    /* still the one allocation */
+    ASSERT_EQ(s.initCalls, 2);         /* re-ran Init, not skipped */
+}
+
 /* Item 1/4 residual: a concurrent holder of the claim must cause THIS call to
  * fail cleanly without disturbing the holder's claim, without attempting an
  * allocation, and without calling Init -- and once the holder releases, a
@@ -576,6 +635,7 @@ int main(void)
     RUN(failed_init_is_reported_and_retry_reuses_the_retained_slot);
     RUN(resetting_the_slot_on_failure_bricks_the_allocator_permanently);
     RUN(power_loss_clears_ready_but_retains_the_slot);
+    RUN(power_loss_during_init_is_not_published_as_ready);
     RUN(a_concurrent_claim_holder_is_refused_without_disturbing_the_holder);
     RUN(a_genuinely_full_allocator_failure_still_releases_the_claim);
     RUN(board_and_variant_refusals_never_touch_the_claim_or_allocator);
