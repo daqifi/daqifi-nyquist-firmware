@@ -61,6 +61,28 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # and should be looked at rather than skipped.
 SUSPEND_BIN := run_953_tests
 
+# #985: SD_SuspendReasonText() itself -- the function the cascade above calls.
+# Third target on SCPIStorageSD.c and, for the same reason as the two above,
+# the same technique: no UUT copy, no stubs, both decision SHAPES (pre-fix and
+# post-fix) re-implemented against an injected environment and compared.
+#
+# It copies no constants either, but it does copy the SHAPE, and here the
+# shape IS the whole fix: the four flags read ONCE each, ahead of every
+# branch, with no call to the composed gate app_SDCard_SpiOwnedByWifi()
+# (calling that AND separately re-reading its parts is the #985 defect). A
+# drift back to two samples would leave this test passing green against a
+# model the firmware no longer has -- which is exactly the failure a guard is
+# for. So the guard reads the real function and requires exactly one call to
+# each of the four flag accessors, zero to the composite, and the four arms
+# still in the precedence order the test asserts.
+#
+# Comment lines are stripped before counting, because the function's own
+# comments name both the accessors and the composite on purpose. A comment
+# restyled so its lines do not begin with `*` or `/` therefore fails this
+# guard -- loudly, which is the right outcome for a guard whose job is to
+# notice edits to this function.
+SUSPENDREASON_BIN := run_985_tests
+
 # #164: JSON_StringEscape.h is header-only and dependency-free for the same
 # reason AD7609Scale.h is -- the pure byte-escaping logic was split out of
 # JSON_Encoder.c, which is unusable on a host (it pulls in
@@ -348,7 +370,50 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 # Makefile's shared run/clean lines are a known collision point) resolved by
 # keeping each side's target intact and merging only `run` and `clean` -- a
 # duplicated rule here would silently shadow one of them.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(SDLOG_BIN)
+$(SUSPENDREASON_BIN): test_985_suspend_reason_consistency.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
+	@body=`sed -n '/^const char \*SD_SuspendReasonText(void)[[:space:]]*$$/,/^}/p' $(SD_BENCH_SRC) | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: SD_SuspendReasonText(void) was not found in $(SD_BENCH_SRC),"; \
+	        echo "       or no longer opens at column 0 -- the guard below can see"; \
+	        echo "       nothing, and a guard that examines nothing must fail."; \
+	        exit 1; }; \
+	 nq=`printf '%s\n' "$$body" | grep -o 'SpiBusHealth_IsSdQuarantined()' | wc -l | tr -d ' '`; \
+	 nf=`printf '%s\n' "$$body" | grep -o 'wifi_manager_IsWifiFirmwareUpdateActive()' | wc -l | tr -d ' '`; \
+	 nw=`printf '%s\n' "$$body" | grep -o 'app_SDCard_WifiStreamActive()' | wc -l | tr -d ' '`; \
+	 ns=`printf '%s\n' "$$body" | grep -o 'SpiBusHealth_IsSdSuspended()' | wc -l | tr -d ' '`; \
+	 nc=`printf '%s\n' "$$body" | grep -o 'app_SDCard_SpiOwnedByWifi()' | wc -l | tr -d ' '`; \
+	 test "$$nq" -eq 1 && test "$$nf" -eq 1 && test "$$nw" -eq 1 \
+	   && test "$$ns" -eq 1 && test "$$nc" -eq 0 \
+	   || { echo "ERROR: SD_SuspendReasonText() in $(SD_BENCH_SRC) no longer reads"; \
+	        echo "       each flag exactly once with no composed-gate call"; \
+	        echo "       (quarantine=$$nq fwUpdate=$$nf wifiStream=$$nw"; \
+	        echo "        suspended=$$ns SpiOwnedByWifi=$$nc; want 1 1 1 1 0)."; \
+	        echo "       A second read of any of them, or a call to the composite"; \
+	        echo "       that already ORs three of them, reintroduces #985 -- and"; \
+	        echo "       test_985_suspend_reason_consistency.c models the"; \
+	        echo "       single-snapshot shape, so it would pass regardless."; \
+	        exit 1; }; \
+	 q=`printf '%s\n' "$$body" | grep -n 'if (quarantined)' | cut -d: -f1`; \
+	 f=`printf '%s\n' "$$body" | grep -n 'if (fwUpdate)' | cut -d: -f1`; \
+	 w=`printf '%s\n' "$$body" | grep -n 'if (wifiStream)' | cut -d: -f1`; \
+	 s=`printf '%s\n' "$$body" | grep -n 'if (suspended)' | cut -d: -f1`; \
+	 test -n "$$q" && test -n "$$f" && test -n "$$w" && test -n "$$s" \
+	   && test "$$q" -lt "$$f" && test "$$f" -lt "$$w" && test "$$w" -lt "$$s" \
+	   || { echo "ERROR: the four arms of SD_SuspendReasonText() in $(SD_BENCH_SRC)"; \
+	        echo "       are no longer quarantine -> fwUpdate -> wifiStream ->"; \
+	        echo "       suspended, or an arm was renamed, moved or duplicated"; \
+	        echo "       (markers at q='$$q' f='$$f' w='$$w' s='$$s')."; \
+	        echo "       That order is the precedence test_985 asserts, and the"; \
+	        echo "       quarantine-first part of it is load-bearing: it is the"; \
+	        echo "       one cause that does not clear on its own."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(SUSPENDREASON_BIN) test_985_suspend_reason_consistency.c
+
+# Every suite, and every one of the seven binaries. Merge conflict (fw#961
+# JSONESC_BIN vs fw#983 SUSPEND_BIN, both merging around the same time)
+# resolved by keeping each side's target intact and merging only `run` and
+# `clean` -- a duplicated rule here would silently shadow one of them.
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(SDLOG_BIN) $(SUSPENDREASON_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -358,8 +423,9 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) 
 	./$(DAC980_BIN)
 	./$(HELP_BIN)
 	./$(SDLOG_BIN)
+	./$(SUSPENDREASON_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(SDLOG_BIN) $(GEN_1000)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(SDLOG_BIN) $(SUSPENDREASON_BIN) $(GEN_1000)
 
 .PHONY: run clean

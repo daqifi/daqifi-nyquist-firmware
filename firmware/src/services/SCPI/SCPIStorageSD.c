@@ -133,11 +133,47 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
  */
 const char *SD_SuspendReasonText(void)
 {
-    if (!app_SDCard_SpiOwnedByWifi() && !SpiBusHealth_IsSdSuspended()) {
-        return NULL;
-    }
+    /* #985: ONE flat snapshot of all four flags, taken here, ahead of every
+     * branch -- and the branches below read NOTHING but these locals.
+     *
+     * It used to decide WHETHER it was suspended from one pair of reads
+     * (app_SDCard_SpiOwnedByWifi(), which internally ORs WiFi-streaming, the
+     * FW update and the quarantine, then SpiBusHealth_IsSdSuspended()) and
+     * then WHICH cause to name from a second, later pair -- the quarantine
+     * and the FW update, read again. The four are independent and
+     * asynchronous, so a cause that ENDED between the two pairs was reported
+     * as a different one: a FW update that opened the gate and completed
+     * before its own re-read fell through to the WiFi-streaming string,
+     * telling the operator to stop a stream that was not running. No single
+     * read was wrong; the verdict was assembled out of reads taken at
+     * different instants.
+     *
+     * A snapshot can still be STALE -- any of these can change the instant
+     * after it is read -- and that is fine and unchanged: these flags are for
+     * REPORTING, not synchronisation (SD_RefuseIfSuspended below says the
+     * same). What a snapshot cannot be is self-contradictory. Whatever this
+     * names, it observed.
+     *
+     * No critical section, deliberately. Each read is a plain aligned load,
+     * already atomic on PIC32MZ, and a lock would not make the four MUTUALLY
+     * consistent anyway -- their writers are three unsynchronised tasks, so
+     * the set is never guaranteed to describe one instant. What is achievable
+     * is that the verdict is built from exactly one read of each, which is
+     * this.
+     *
+     * app_SDCard_SpiOwnedByWifi() is deliberately NOT called here: it
+     * composes three of these four internally, so calling it and also reading
+     * the parts is two samples of the same state, which is the defect itself.
+     * Its WiFi-streaming term is exposed separately as
+     * app_SDCard_WifiStreamActive() (app_freertos.c) so this can read it once
+     * without duplicating the IsEnabled/ActiveInterface derivation. */
+    const bool quarantined = SpiBusHealth_IsSdQuarantined();
+    const bool fwUpdate    = wifi_manager_IsWifiFirmwareUpdateActive();
+    const bool wifiStream  = app_SDCard_WifiStreamActive();
+    const bool suspended   = SpiBusHealth_IsSdSuspended();
+
     /* Quarantine first: it is the one that does NOT clear on its own. */
-    if (SpiBusHealth_IsSdQuarantined()) {
+    if (quarantined) {
         /* 76 characters, against a ceiling of 84 for THIS FILE'S callers --
          * and that scope is the whole of what has been audited, so read it
          * narrowly. Logger formats with vsnprintf(buf, LOG_MESSAGE_SIZE - 2,
@@ -171,10 +207,31 @@ const char *SD_SuspendReasonText(void)
         return "SD quarantined after a bus jam - reseat the card, "
                "then SYST:STOR:SD:ENAble 1";
     }
-    if (wifi_manager_IsWifiFirmwareUpdateActive()) {
+    if (fwUpdate) {
         return "a WiFi firmware update owns SPI4 - retry when it completes";
     }
-    return "WiFi streaming owns SPI4 - SYST:STR:STOP first";
+    if (wifiStream) {
+        return "WiFi streaming owns SPI4 - SYST:STR:STOP first";
+    }
+    if (suspended) {
+        /* #985: suspended, with not one of the three owners set in THIS
+         * snapshot. Reachable, and until now it was the silent default.
+         * app_SDCardTask publishes the flag as `state == SUSPENDED ||
+         * app_SDCard_SpiOwnedByWifi()` once per loop iteration
+         * (app_freertos.c), so when the owner clears, the flag stays true
+         * until that task next runs, sees the bus released and leaves
+         * SUSPENDED -- a window in which the pump really is parked and there
+         * really is no owner to name. The old shape returned the
+         * WiFi-streaming string here, asserting the one thing this snapshot
+         * flatly does not show, and sending the operator to stop a stream
+         * that is not running.
+         *
+         * Says only what was observed: the task has not resumed. 46
+         * characters, the same as the WiFi-streaming string above and well
+         * inside the 84 the note above derives for this file's callers. */
+        return "the SD task has not resumed yet - retry shortly";
+    }
+    return NULL;
 }
 
 
