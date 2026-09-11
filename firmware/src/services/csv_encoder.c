@@ -692,9 +692,15 @@ size_t csv_Encode(
                     /* Unreachable at ENCODER_BUFFER_MIN in practice (a
                      * DIO-only row is a few tens of bytes), kept so "the
                      * head always advances" holds by construction rather
-                     * than by that arithmetic. */
+                     * than by that arithmetic. Return value deliberately
+                     * discarded, not overlooked: a failed pop here (queue
+                     * torn down concurrently) means nothing was actually
+                     * evicted, which is benign -- the row was never
+                     * written either, so the sample simply stays queued
+                     * for a normal retry rather than being mis-reported
+                     * as gone. */
                     DIOSample evictedDio;
-                    DIOSampleList_PopFront(&state->DIOSamples, &evictedDio);
+                    (void) DIOSampleList_PopFront(&state->DIOSamples, &evictedDio);
                 }
                 LOG_E_SESSION(LOG_SESSION_CSV_SAMPLE_TOO_LARGE,
                         "CSV: row (%u ch) does not fit a %u B encoder "
