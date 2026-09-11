@@ -8483,8 +8483,14 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:DAC:SAVEFcal", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:LOADcal", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:LOADFcal", .callback = SCPI_NotImplemented,},
-    {.pattern = "CONFigure:DAC:USECal", .callback = SCPI_DACUseCalSet,},
-    {.pattern = "CONFigure:DAC:USECal?", .callback = SCPI_DACUseCalGet,},
+    // #1002: same defect, two sites #919 didn't name. USECal/USECal? parsed
+    // and discarded their argument / fabricated a constant 0 rather than
+    // reading or storing anything -- #919's own "Out of scope" section names
+    // only the eight commands above, not these two. Same NOT IMPLEMENTED
+    // disposition and the same reason: DAC7718 is NQ3-only hardware not
+    // available on this bench to validate a real implementation.
+    {.pattern = "CONFigure:DAC:USECal", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:USECal?", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:UPDATE", .callback = SCPI_DACUpdate,},
     //
     //    // SPI
