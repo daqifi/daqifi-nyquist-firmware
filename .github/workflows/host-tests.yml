@@ -70,6 +70,11 @@ on:
       - 'firmware/src/Util/CircularBuffer.c'
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
+      # #953: test_953 takes LOG_MESSAGE_SIZE from this header (the Makefile
+      # greps it and passes -DFW_LOG_MESSAGE_SIZE) and asserts the SD suspend
+      # reasons fit the line it sizes. Without this entry a PR that ONLY
+      # narrows that buffer skips the suite and bypasses the check.
+      - 'firmware/src/Util/Logger.h'
       - 'firmware/src/services/SCPI/**'
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/services/JSON_StringEscape.h'
@@ -82,6 +87,11 @@ on:
       - 'firmware/src/Util/CircularBuffer.c'
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
+      # #953: test_953 takes LOG_MESSAGE_SIZE from this header (the Makefile
+      # greps it and passes -DFW_LOG_MESSAGE_SIZE) and asserts the SD suspend
+      # reasons fit the line it sizes. Without this entry a PR that ONLY
+      # narrows that buffer skips the suite and bypasses the check.
+      - 'firmware/src/Util/Logger.h'
       - 'firmware/src/services/SCPI/**'
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/services/JSON_StringEscape.h'

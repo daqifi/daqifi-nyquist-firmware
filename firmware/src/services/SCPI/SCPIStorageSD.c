@@ -138,14 +138,25 @@ const char *SD_SuspendReasonText(void)
     }
     /* Quarantine first: it is the one that does NOT clear on its own. */
     if (SpiBusHealth_IsSdQuarantined()) {
-        /* 76 characters, and the ceiling is 84: every caller interpolates this
-         * into a log line, Logger formats with
-         * vsnprintf(buf, LOG_MESSAGE_SIZE - 2, ...), and the longest prefix in
-         * this file is 39 characters plus a CRLF. At 94 -- its length until
-         * #986 -- the line was cut at "then SYST:STOR:SD:ENAb", losing the
-         * command that clears a quarantine from the one message whose entire
-         * job is to name it. tests/host/test_953_bench_suspend_diagnosis.c
-         * measures all three reasons against that ceiling. */
+        /* 76 characters, against a ceiling of 84 for THIS FILE'S callers --
+         * and that scope is the whole of what has been audited, so read it
+         * narrowly. Logger formats with vsnprintf(buf, LOG_MESSAGE_SIZE - 2,
+         * ...), 125 bytes survive, and the longest prefix interpolating a
+         * reason in SCPIStorageSD.c is 39 characters plus a CRLF. At 94 -- its
+         * length until #986 -- the line was cut at "then SYST:STOR:SD:ENAb",
+         * losing the command that clears a quarantine from the message whose
+         * entire job is to name it.
+         *
+         * NOT SAFE EVERYWHERE, and an earlier revision of this comment implied
+         * it was. This function is declared in the shared header and
+         * SCPI_StartStreamingClaimed (SCPIInterface.c) interpolates it into an
+         * 88-character prefix, which leaves 35 -- so ALL THREE reasons are cut
+         * there, the shortest included, and shortening reasons cannot fix it.
+         * That call site needs its own prefix shortened; measured and filed as
+         * #1000, not addressed here.
+         *
+         * tests/host/test_953_bench_suspend_diagnosis.c measures all three
+         * reasons against this file's ceiling. */
         return "SD quarantined after a bus jam - reseat the card, "
                "then SYST:STOR:SD:ENAble 1";
     }

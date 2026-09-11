@@ -514,7 +514,14 @@ TEST(exactly_one_quadrant_moves_and_why_is_sampled_once)
  * "then SYST:STOR:SD:ENAb", losing the command that clears a quarantine from
  * the one message whose whole job is to name it -- through this arm and
  * through the arm-refusal twin shipped since #936. #986. It is 76 now, and
- * this test is what keeps it there. */
+ * this test is what keeps it there.
+ *
+ * SCOPE: this file's callers only. SD_SuspendReasonText() is shared, and
+ * SCPI_StartStreamingClaimed (SCPIInterface.c) interpolates it into an
+ * 88-character prefix that leaves 35 -- where ALL THREE reasons are cut, the
+ * shortest included. No reason string can be short enough for that site; its
+ * own prefix has to give. Measured and filed as #1000. Asserting it here would
+ * red CI for a defect this PR did not cause and cannot fix from this file. */
 TEST(every_reason_this_arm_can_print_survives_the_logger)
 {
     static const char *const reasons[] = {
