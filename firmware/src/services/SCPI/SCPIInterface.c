@@ -5516,20 +5516,41 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * the arm is reached, is covered by gStreamStopsActive rather than by the
      * pin's position.
      *
-     * A bare 32-bit load, not a critical section: unlike the interface pins
-     * inside the body it has no partner field it must describe one instant
-     * with, and CLAUDE.md's atomicity rule is explicit that wrapping a plain
-     * aligned 32-bit load only costs interrupt latency.
+     * BOTH READS UNDER ONE CRITICAL SECTION, mirroring the WRITER rather than
+     * the other reader -- and mirroring the identical fix already applied to
+     * the WIFI:FINd? finder's own pin (#938, PR #965). Each load is
+     * individually atomic (aligned 32-bit on PIC32MZ), so the section is not
+     * there to make a load atomic -- it is there to make the PAIR describe
+     * one instant.
+     *
+     * As two separate loads several lines apart they did NOT, and that is a
+     * WIDER window than the one #965 closed at the finder site (#969). A stop
+     * bumps gen and active together at its START, under one critical section
+     * (below), and finishes by decrementing active LAST. Let that stop's bump
+     * land BEFORE the first load and its completion land BETWEEN the two
+     * loads: stopGenPinned then already holds the bumped generation, so the
+     * later re-read sees no delta, and stopActivePinned reads the
+     * post-decrement zero, so the later re-read sees nothing active. Both
+     * signals miss a stop that was RUNNING when this start began, and the arm
+     * publishes IsEnabled over it -- silently, which is the exact shape #861
+     * exists to eliminate.
+     *
+     * The tempting refutation (made and overturned on PR #965's own audit,
+     * for its twin at the finder site) is that "generation new, active zero"
+     * means the stop finished before this start began. It does not: the
+     * start's zero point is the FIRST load, and in this interleaving the stop
+     * was still active then. The release-last invariant proves only that the
+     * stop had finished by the SECOND load, which is a weaker and different
+     * claim.
      *
      * Unused on the SYSTem:STReam:START 0 disable path, which returns before
      * the claim -- that path is a stop, and a stop never observes this. */
-    const uint32_t stopGenPinned = gStreamStopGen;
-    /* Was a stop ALREADY in flight when this command arrived? Pinned here
-     * rather than only sampled at the arm, because a stop that finishes in
-     * between is invisible to both of the other terms -- see the arm-time
-     * comment for the three-way split. A plain 32-bit load, like the
-     * generation beside it. */
-    const bool stopActivePinned = (gStreamStopsActive != 0u);
+    uint32_t stopGenPinned;
+    bool stopActivePinned;
+    taskENTER_CRITICAL();
+    stopGenPinned = gStreamStopGen;
+    stopActivePinned = (gStreamStopsActive != 0u);
+    taskEXIT_CRITICAL();
     int32_t freq = 0;
     scpi_parameter_t freqParam;
     bool freqProvided = SCPI_Parameter(context, &freqParam, FALSE);
