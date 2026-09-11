@@ -676,13 +676,13 @@ size_t csv_Encode(
              * fails this test can never become encodable later in the same
              * streaming session.
              *
-             * Evict AIN, or DIO if AIN is absent, but never both: a DIO row
-             * is at most ~22 bytes (two uint32_t fields) so it is never the
-             * reachable cause (an oversized CONFigure:ADC:chanCALB value is,
-             * via tryWriteRow's %.*f fallback), and streaming.c books one
-             * dropped sample per zero-return CALL (streaming.c:3353) --
-             * evicting two samples in one call would silently under-count
-             * against that.
+             * Evict every queue head the discarded row was built from --
+             * AIN, DIO, or both -- exactly as the success path consumes
+             * them. A DIO row is at most ~22 bytes (two uint32_t fields) so
+             * DIO is never the reachable CAUSE of an oversized row (an
+             * oversized CONFigure:ADC:chanCALB value is, via tryWriteRow's
+             * %.*f fallback), but it can still be a COMPONENT of one, and
+             * leaving it queued re-pairs it with the next analog sample.
              *
              * KNOWN LIMIT, and it is per-CALL accounting, not per-SAMPLE:
              * streaming.c's `encoded == 0` arm increments unconditionally,
@@ -707,22 +707,37 @@ size_t csv_Encode(
              * buffer can fail against the post-header remainder, so that
              * trades a counter over-count for real data loss. */
             if ((hadAIN || hadDIO) && fullCapacityCall && rem == maxRoom) {
+                /* Consume EXACTLY what the success path consumes, with the
+                 * same two independent `if`s (see "consume the queues"
+                 * below). tryWriteRow() peeks both queues independently and
+                 * writes both heads into ONE row, so both are components of
+                 * the row being discarded and both must go.
+                 *
+                 * An earlier revision of this fix used `if (hadAIN) ... else
+                 * ...`, which evicted only the analog head when a row
+                 * carried both. The digital head then survived and was
+                 * paired with the NEXT analog sample, shifting queue pairing
+                 * for every subsequent row of the session -- silent output
+                 * corruption. It was written that way to keep one row from
+                 * booking two drops against streaming.c's counter; that is
+                 * the wrong trade (a diagnostic over-count is recoverable,
+                 * mispaired exported data is not) and the premise was wrong
+                 * anyway, since that counter is per-CALL, as the comment
+                 * above now records. One discarded row books one drop here
+                 * regardless of how many queue heads composed it.
+                 *
+                 * Both pops discard their return deliberately, matching the
+                 * success path: a failed pop (queue torn down concurrently)
+                 * means nothing was evicted, which is benign -- the row was
+                 * never written either, so the sample stays queued for a
+                 * normal retry rather than being mis-reported as gone. */
                 if (hadAIN) {
                     AInPublicSampleList_t *evicted = NULL;
                     if (AInSampleList_PopFront(&evicted)) {
                         AInSampleList_FreeToPool(evicted);
                     }
-                } else {
-                    /* Unreachable at ENCODER_BUFFER_MIN in practice (a
-                     * DIO-only row is a few tens of bytes), kept so "the
-                     * head always advances" holds by construction rather
-                     * than by that arithmetic. Return value deliberately
-                     * discarded, not overlooked: a failed pop here (queue
-                     * torn down concurrently) means nothing was actually
-                     * evicted, which is benign -- the row was never
-                     * written either, so the sample simply stays queued
-                     * for a normal retry rather than being mis-reported
-                     * as gone. */
+                }
+                if (hadDIO) {
                     DIOSample evictedDio;
                     (void) DIOSampleList_PopFront(&state->DIOSamples, &evictedDio);
                 }
