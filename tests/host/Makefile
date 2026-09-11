@@ -67,7 +67,7 @@ SUSPEND_BIN := run_953_tests
 # values rather than included.
 #
 # It copies BOTH a format string and a length constant, and it also depends on
-# two DEFECTS being absent, so the recipe carries seven guards. Three are about
+# two DEFECTS being absent, so the recipe carries eight guards. Three are about
 # the text being right: the post-fix format expression must be present (checked
 # with newlines squashed, because it wraps), the field length must still be 40,
 # and the masked 16-bit form -- the original #958 defect -- must NOT be back.
@@ -78,9 +78,13 @@ SUSPEND_BIN := run_953_tests
 # requires that the counter is ADVANCED once per run, that the advance happens
 # BEFORE the format (the pre-merge audit reproduced a swap of those two steps
 # passing every other guard and the whole host suite, while every name carried
-# the counter's initial value), that it is NEVER assigned anywhere but its
-# definition (a reset reopens the collision), and that the tick-only form has
-# not come back. Each fails loudly and names what to re-read.
+# the counter's initial value), that the LOCAL copy is assigned exactly once
+# outside its declaration (position alone is not enough -- a second
+# assignment after the advance restores the initial value with the order pin
+# still satisfied, which the pre-merge audit reproduced), that the global is
+# NEVER assigned anywhere but its definition (a reset reopens the collision),
+# and that the tick-only form has not come back. Each fails loudly and names
+# what to re-read.
 NAME_BIN := run_958_tests
 SD_MGR_HDR := ../../firmware/src/services/sd_card_services/sd_card_manager.h
 
@@ -198,6 +202,18 @@ $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BE
 	        echo "       the field is present and does nothing. A format pin cannot"; \
 	        echo "       see this; the pre-merge audit reproduced it passing all six"; \
 	        echo "       of the other guards and the whole host suite."; \
+	        exit 1; }
+	@n=`grep -vE '^[[:space:]]*uint32_t[[:space:]]+benchNameSeq' $(SD_BENCH_SRC) \
+	      | grep -cE 'benchNameSeq[[:space:]]*=[^=]'`; \
+	 [ "$$n" -eq 1 ] \
+	   || { echo "ERROR: benchNameSeq is assigned $$n times in $(SD_BENCH_SRC)"; \
+	        echo "       outside its declaration; exactly 1 is required."; \
+	        echo "       The order pin above compares the POSITIONS of the advance"; \
+	        echo "       and the format, which a SECOND assignment defeats: put"; \
+	        echo "       'benchNameSeq = 0;' after the advance and every name"; \
+	        echo "       carries 0 again, with the order pin still satisfied. The"; \
+	        echo "       pre-merge audit reproduced exactly that, passing all seven"; \
+	        echo "       other guards and the whole host suite."; \
 	        exit 1; }
 	@if grep -qF '"benchmark_%lu.dat"' $(SD_BENCH_SRC); then \
 	       echo "ERROR: the tick-ONLY benchmark filename is back in $(SD_BENCH_SRC)."; \

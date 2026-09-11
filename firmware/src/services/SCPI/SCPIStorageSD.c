@@ -1287,12 +1287,26 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * INIT only (sd_card_manager.c:3801), so the first test is false and the
      * body runs -- one vTaskDelay(10) is ten ticks. The re-entrancy interlock
      * (`testInProgress`, claimed above) means the next run's name is not built
-     * until this one has returned, so consecutive names are >= 10 ticks apart.
-     * The same holds whichever transport calls it -- USB SCPI at priority 7 or
-     * WiFi SCPI at 2 -- because the guarantee comes from the wait, not from
-     * who preempts whom. A run refused before the arm creates no file and so
-     * cannot collide with anything. None of that says anything about two runs
-     * a wrap apart, which is the gap Qodo found on this PR's first review.
+     * until this one has returned, so two names built on the SUCCESS PATH are
+     * >= 10 ticks apart, whichever transport calls it -- USB SCPI at priority 7
+     * or WiFi SCPI at 2 -- because it comes from the wait, not from who
+     * preempts whom.
+     *
+     * SUCCESS PATH is the operative qualifier, and an earlier revision of this
+     * comment left it out. The name is published a few lines below, and six
+     * `goto __exit_point` paths between there and the drain wait return without
+     * ever reaching it -- the claim failure, the #854 arm-time re-check, the
+     * SD_ArmOrRefuse failure, a suspend during the arm, and both
+     * response-buffer failures. Each of those has already published a name and
+     * pays none of the ten ticks, so two runs a few ticks apart is reachable.
+     * The pre-merge audit on #1027 found this stated as a flat guarantee.
+     *
+     * It no longer matters for uniqueness -- that is the sequence's job, and the
+     * sequence advances on every one of those paths too, because it advances
+     * before the name is built. It is corrected because a comment that
+     * overstates a guarantee is what the next reader relies on instead of the
+     * code. None of it says anything about two runs a WRAP apart, which is the
+     * gap Qodo found on this PR's first review.
      *
      * The tick stays as the LEADING field because it is the half a human and
      * the companion test can read: test_958_benchmark_scratch_name_unique.py

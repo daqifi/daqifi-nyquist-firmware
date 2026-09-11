@@ -54,8 +54,23 @@
  * on ONE branch base at ONE moment; the merge target is main plus whatever
  * else lands first, and the paragraph above records a head where a single
  * uint32_t did not fit at all. A static that is funded cannot be the one
- * that breaks someone else's link, and the cost of being wrong in this
- * direction is ~7 slots of capacity nobody can use. */
+ * that breaks someone else's link.
+ *
+ * AND THE COST IS NOT NIL IN EVERY CONFIGURATION, which the two paragraphs
+ * above say and the pre-merge audit on #1027 showed to be false. The "~7
+ * slots nobody can use" argument holds only where the PARTITIONED capacity
+ * exceeds the FreeRTOS sample queue's depth, because the usable depth is the
+ * lesser of the two (#828). At 16 channels that is USB-only (1579), WiFi-only
+ * (1127) and SD-only (1939), all above the 1100-slot default queue.
+ *
+ * USB+SD is the exception: 1081, BELOW 1100, so there the pool is the binding
+ * constraint and every one of these three payments cost 7 USABLE slots, ~21
+ * between them. The earlier two paragraphs claimed nil cost for #824 and #925
+ * as well, and were wrong in that column for the same reason. It is still the
+ * right trade -- 21 slots of burst absorption against a link that fails to
+ * build -- but it is a trade, not a free lunch, and the number belongs here
+ * rather than being discovered by whoever next wonders why USB+SD reports a
+ * lower SamplePoolCount than the other three. */
 #define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U - 512U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 

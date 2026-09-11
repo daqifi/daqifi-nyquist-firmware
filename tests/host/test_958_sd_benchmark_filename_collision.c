@@ -49,10 +49,17 @@
  * sd_card_manager_UpdateSettings() just above it forces the manager to DEINIT,
  * while IsIdle() is IDLE-or-INIT only -- so one vTaskDelay(10), i.e. ten
  * ticks, always happens. The `testInProgress` interlock means the next run's
- * name is not built until this one has returned, so consecutive names are
- * >= 10 ticks apart, whichever transport calls it. A run refused before the
- * arm creates no file and therefore cannot collide with anything. None of
- * that reaches two runs a WRAP apart, which is why it is not the guarantee.
+ * name is not built until this one has returned, so two names built on the
+ * SUCCESS PATH are >= 10 ticks apart, whichever transport calls it.
+ *
+ * Only the success path, and an earlier revision of this header said so
+ * without the qualifier: six `goto __exit_point` paths in the callback publish
+ * a name and return BEFORE the drain wait, so they pay none of the ten ticks.
+ * It no longer matters for uniqueness, because the sequence advances before
+ * the name is built and therefore on those paths too -- but a stated guarantee
+ * that is not true is what the next reader relies on instead of the code.
+ * Found by the #1027 pre-merge audit. None of it reaches two runs a WRAP
+ * apart, which is why the tick is not the guarantee.
  *
  * The tick stays as the LEADING field because it is the half a human and the
  * companion test can read: test_958_benchmark_scratch_name_unique.py asserts
