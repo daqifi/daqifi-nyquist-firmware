@@ -8470,16 +8470,27 @@ static const scpi_command_t scpi_commands[] = {
     // DAC
     {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_DACVoltageSet,},
     {.pattern = "SOURce:VOLTage:LEVel?", .callback = SCPI_DACVoltageGet,},
-    {.pattern = "CONFigure:DAC:chanCALM", .callback = SCPI_DACChanCalmSet,},
-    {.pattern = "CONFigure:DAC:chanCALB", .callback = SCPI_DACChanCalbSet,},
-    {.pattern = "CONFigure:DAC:chanCALM?", .callback = SCPI_DACChanCalmGet,},
-    {.pattern = "CONFigure:DAC:chanCALB?", .callback = SCPI_DACChanCalbGet,},
-    {.pattern = "CONFigure:DAC:SAVEcal", .callback = SCPI_DACCalSave,},
-    {.pattern = "CONFigure:DAC:SAVEFcal", .callback = SCPI_DACCalFSave,},
-    {.pattern = "CONFigure:DAC:LOADcal", .callback = SCPI_DACCalLoad,},
-    {.pattern = "CONFigure:DAC:LOADFcal", .callback = SCPI_DACCalFLoad,},
-    {.pattern = "CONFigure:DAC:USECal", .callback = SCPI_DACUseCalSet,},
-    {.pattern = "CONFigure:DAC:USECal?", .callback = SCPI_DACUseCalGet,},
+    // #919: DAC calibration family was never implemented (getters fabricated
+    // 1.0/0.0, setters/NVM ops silently no-opped). NOT IMPLEMENTED decision:
+    // DAC7718 is NQ3-only hardware, not available to validate an implementation.
+    // Patterns stay registered (SCPI_Help still lists them) but route to the
+    // shared not-implemented stub instead of lying about success.
+    {.pattern = "CONFigure:DAC:chanCALM", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:chanCALB", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:chanCALM?", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:chanCALB?", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:SAVEcal", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:SAVEFcal", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:LOADcal", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:LOADFcal", .callback = SCPI_NotImplemented,},
+    // #1002: same defect, two sites #919 didn't name. USECal/USECal? parsed
+    // and discarded their argument / fabricated a constant 0 rather than
+    // reading or storing anything -- #919's own "Out of scope" section names
+    // only the eight commands above, not these two. Same NOT IMPLEMENTED
+    // disposition and the same reason: DAC7718 is NQ3-only hardware not
+    // available on this bench to validate a real implementation.
+    {.pattern = "CONFigure:DAC:USECal", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:USECal?", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:UPDATE", .callback = SCPI_DACUpdate,},
     //
     //    // SPI
@@ -8590,16 +8601,100 @@ static const scpi_command_t scpi_commands[] = {
 char scpi_input_buffer[SCPI_INPUT_BUFFER_LENGTH];
 scpi_error_t scpi_error_queue_data[SCPI_ERROR_QUEUE_SIZE];
 
+/* #1004: total time SCPI_Help may spend writing while it holds the shared
+ * SCPI response buffer (gScpiRespMutex, #347). Same budget and same
+ * reasoning as the SCPI_CMDHISTORY_WRITE_BUDGET_MS #995 proposes on the
+ * still-open PR #1008 -- that constant is NOT in this tree: generous against a
+ * normally-reading host (HELP's whole reply is a few KB against a 16 KB
+ * USB / 14 KB WiFi circular buffer), tight enough to bound a stalled one. */
+#define SCPI_HELP_WRITE_BUDGET_MS  2000U
+
+/* #1004: self-gating transport write for SCPI_Help.
+ *
+ * SCPI_Help emits its reply as up to 1 + (2 x number of 2048-byte-buffer
+ * fills) separate context->interface->write() calls while holding
+ * gScpiRespMutex: it formats the command table into the shared response
+ * buffer and cannot let go of the buffer between formatting a chunk and
+ * writing it (a peer callback granted the mutex in that window would
+ * snprintf over the bytes this function is about to hand to the transport).
+ *
+ * Both transports route write() through SCPI_WriteWithRetry, bounded per
+ * call at SCPI_WRITE_MAX_RETRIES(200) x SCPI_WRITE_RETRY_DELAY_MS(5) ~ 1 s.
+ * With every return value discarded (the pre-#1004 shape), a host that
+ * stopped reading made EVERY one of those ~5-7 calls burn its own full ~1 s
+ * budget -- ~5-7 s of held mutex, blocking every other SCPI callback on BOTH
+ * transports for the same span. Two sibling callbacks carry the same defect:
+ * SCPI_SysInfoTextGet (#947, PR #992) and SCPI_GetCommandHistory (#995,
+ * PR #1008). BOTH OF THOSE PRs ARE STILL OPEN as of this commit, so both of
+ * those holds are LIVE in this tree -- do not read this comment as saying
+ * the class is closed. #1004 records why each site carries its own small
+ * helper instead of one shared generic one.
+ *
+ * TWO guards, because neither alone bounds the hold (the same two-guard
+ * algebra #995 proposes for CmdHistoryWrite on PR #1008; that helper does
+ * not exist in this tree yet):
+ *   (1) short write -> latch. SCPI_WriteWithRetry has no resend path, so a
+ *       short write has already DROPPED those bytes; the reply is truncated
+ *       at that chunk and the remaining budget buys nothing.
+ *   (2) cumulative deadline. Guard (1) never fires for a transport draining
+ *       at exactly the trickle rate that lets each write finish just inside
+ *       its own ~1 s budget. Sampling one startTick and checking it before
+ *       each write bounds the hold at BUDGET + one write budget (~3 s)
+ *       regardless of drain pattern.
+ *
+ * Gating lives INSIDE the helper rather than at the call sites so the change
+ * is a mechanical substitution: no early returns, no gotos, and no way to
+ * skip the single SCPI_ResponseBuf_Give() on the way out.
+ *
+ * Deliberately does NOT push a SCPI error itself: SCPI_ErrorPush would add
+ * another retry-bounded write to the very hold this exists to shrink. The
+ * caller returns SCPI_RES_ERR
+ * instead and libscpi's processCommand pushes SCPI_ERROR_EXECUTION_ERROR
+ * after the callback -- and therefore after the Give.
+ *
+ * @param context   libscpi context (supplies the transport write fn)
+ * @param ok        in/out latch; false on entry short-circuits the write,
+ *                  and is cleared here on the first incomplete or
+ *                  over-budget write
+ * @param startTick tick sampled once by the caller right after the take
+ * @param data      bytes to write
+ * @param len       number of bytes
+ */
+static void ScpiHelpWrite(scpi_t * context, bool * ok, TickType_t startTick,
+                          const char * data, size_t len) {
+    if (!*ok) {
+        return;
+    }
+    /* Unsigned tick subtraction: correct across the 32-bit xTaskGetTickCount
+     * wrap (~49.7 days at configTICK_RATE_HZ 1000). */
+    if ((TickType_t)(xTaskGetTickCount() - startTick) >=
+            pdMS_TO_TICKS(SCPI_HELP_WRITE_BUDGET_MS)) {
+        *ok = false;
+        LOG_E("HELP: transport write budget (%u ms) exhausted "
+              "(host not reading) - reply truncated",
+              (unsigned)SCPI_HELP_WRITE_BUDGET_MS);
+        return;
+    }
+    size_t written = context->interface->write(context, data, len);
+    if (written != len) {
+        *ok = false;
+        LOG_E("HELP: transport write dropped %u of %u bytes "
+              "(host not reading) - reply truncated",
+              (unsigned)(len - written), (unsigned)len);
+    }
+}
+
 // Append formatted text to `buffer` at offset `count`, flushing via
-// `context->interface->write` when the next chunk would overflow. Returns
-// the updated count. snprintf negative returns (encoding errors) are
+// ScpiHelpWrite (bounded, self-gating) when the next chunk would overflow.
+// Returns the updated count. snprintf negative returns (encoding errors) are
 // treated as empty append — safer than storing -1 into size_t.
 static size_t scpi_help_append(scpi_t* context, char* buffer, size_t count,
-                               const char* pattern) {
+                               const char* pattern, bool* ok,
+                               TickType_t startTick) {
     size_t cmdSize = strlen(pattern) + 5;  // "  " + pattern + "\r\n"
     if (count + cmdSize >= SCPI_RESPONSE_BUF_SIZE) {
         buffer[count] = '\0';
-        context->interface->write(context, buffer, count);
+        ScpiHelpWrite(context, ok, startTick, buffer, count);
         count = 0;
     }
     int n = snprintf(buffer + count, SCPI_RESPONSE_BUF_SIZE - count,
@@ -8622,6 +8717,14 @@ scpi_result_t SCPI_Help(scpi_t* context) {
     size_t numCommands = sizeof (scpi_commands) / sizeof (scpi_command_t);
     size_t i = 0;
 
+    // #1004: every write below goes through ScpiHelpWrite, which latches
+    // this false on the first incomplete or over-budget write and turns the
+    // rest into no-ops. startTick is sampled HERE, after the take, so the
+    // budget covers only the writes -- time spent blocked on the mutex is
+    // not this call's to spend.
+    bool writeOk = true;
+    TickType_t startTick = xTaskGetTickCount();
+
     int hdr = snprintf(buffer, SCPI_RESPONSE_BUF_SIZE,
                        "%s", "\r\nImplemented:\r\n");
     size_t count = (hdr > 0) ? (size_t)hdr : 0;
@@ -8629,12 +8732,13 @@ scpi_result_t SCPI_Help(scpi_t* context) {
         if (scpi_commands[i].callback != SCPI_NotImplemented &&
                 scpi_commands[i].pattern != NULL) {
             count = scpi_help_append(context, buffer, count,
-                                     scpi_commands[i].pattern);
+                                     scpi_commands[i].pattern,
+                                     &writeOk, startTick);
         }
     }
 
     if (count > 0) {
-        context->interface->write(context, buffer, count);
+        ScpiHelpWrite(context, &writeOk, startTick, buffer, count);
     }
 
     hdr = snprintf(buffer, SCPI_RESPONSE_BUF_SIZE,
@@ -8644,16 +8748,17 @@ scpi_result_t SCPI_Help(scpi_t* context) {
         if (scpi_commands[i].callback == SCPI_NotImplemented &&
                 scpi_commands[i].pattern != NULL) {
             count = scpi_help_append(context, buffer, count,
-                                     scpi_commands[i].pattern);
+                                     scpi_commands[i].pattern,
+                                     &writeOk, startTick);
         }
     }
 
     if (count > 0) {
-        context->interface->write(context, buffer, count);
+        ScpiHelpWrite(context, &writeOk, startTick, buffer, count);
     }
 
     SCPI_ResponseBuf_Give();
-    return SCPI_RES_OK;
+    return writeOk ? SCPI_RES_OK : SCPI_RES_ERR;
 }
 
 #define SCPI_WRITE_MAX_RETRIES      200
