@@ -65,6 +65,16 @@ RECIPES := Makefile
 TESTS       :=
 CLEAN_EXTRA :=
 
+# GNU Make's default goal (what a bare `make` with no target builds) is the
+# first real target it reads, and the fragment `include` below happens
+# BEFORE `run:` is textually defined — so without this, a bare `make` would
+# silently build just one fragment's binary (whichever tests/*.mk sorts
+# first) and run nothing, exit 0. Verified 2026-09-11: pre-fix, bare `make`
+# built only run_1000_tests and executed no tests. Pinning the default goal
+# here, before the include, makes a bare `make` == `make run` regardless of
+# fragment sort order. Qodo, PR #1040.
+.DEFAULT_GOAL := run
+
 include $(sort $(wildcard tests/*.mk))
 
 # Every suite, in whatever order $(sort $(wildcard tests/*.mk)) included the
