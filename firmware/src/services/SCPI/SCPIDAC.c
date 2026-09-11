@@ -201,11 +201,11 @@ static bool DAC_EnsureHardwareInitialized(void) {
 // Helper function to find DAC channel index
 static size_t DAC_FindChannelIndex(uint8_t channelId) {
     AOutArray* pBoardConfigAOutChannels = BoardConfig_Get(BOARDCONFIG_AOUT_CHANNELS, 0);
-
+    
     if (pBoardConfigAOutChannels == NULL) {
         return SIZE_MAX; // Invalid index
     }
-
+    
     for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
         if (pBoardConfigAOutChannels->Data[i].DaqifiDacChannelId == channelId) {
             return i;
@@ -620,27 +620,27 @@ scpi_result_t SCPI_DACChanCalbSet(scpi_t * context) {
 
 scpi_result_t SCPI_DACChanCalmGet(scpi_t * context) {
     int channel;
-
+    
     if (!SCPI_ParamInt32(context, &channel, TRUE)) {
         return SCPI_RES_ERR;
     }
-
+    
     // TODO: Get calibration M from runtime config
     SCPI_ResultDouble(context, 1.0); // Default calibration
-
+    
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_DACChanCalbGet(scpi_t * context) {
     int channel;
-
+    
     if (!SCPI_ParamInt32(context, &channel, TRUE)) {
         return SCPI_RES_ERR;
     }
-
+    
     // TODO: Get calibration B from runtime config
     SCPI_ResultDouble(context, 0.0); // Default calibration
-
+    
     return SCPI_RES_OK;
 }
 
