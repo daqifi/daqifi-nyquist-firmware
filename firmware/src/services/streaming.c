@@ -3314,10 +3314,9 @@ void streaming_Task(void) {
         // ACTIVE transport ring's free space (#686 review): the transport writes
         // below are all-or-nothing, and a single write larger than a ring's
         // capacity can NEVER succeed (even on an empty ring), so an over-large
-        // batch would retry to the 10 s timeout and drop the whole batch — total
-        // loss on a small ring (e.g. WiFi min 1400). Free size is a safe bound:
-        // nothing writes these rings until after this loop, so the snapshot only
-        // grows.
+        // batch is total loss on a small ring (e.g. WiFi min 1400). Free size is
+        // a safe bound: nothing writes these rings until after this loop, so the
+        // snapshot only grows.
         //
         // #1021 corrects what this comment used to claim about the first
         // message: that the FIRST message is always safe to encode because
@@ -3403,17 +3402,19 @@ void streaming_Task(void) {
             }
             uint8_t *encPtr = (uint8_t *) buffer + packetSize;
             size_t encRoom = bufferSize - packetSize;
-            // First message always encoded (drain the queue); additional
-            // messages must keep MIN_ROOM within the encoder buffer AND the
-            // smallest active transport ring, so the single all-or-nothing write
-            // below always fits its ring. Addition (not subtraction) avoids
-            // size_t underflow when a transport ring is momentarily full (free=0).
-            /* #1021: MIN_ROOM is a floor on the room offered, not a ceiling on
-             * what comes back -- the encoders fill whatever room they are given,
-             * so an ADDITIONAL message can still push the accumulated packet
-             * past the smallest ring and make the whole batch, earlier messages
-             * included, undeliverable. Cap the room instead, which bounds the
-             * result rather than the opening position.
+            // First message always encoded (drain the queue); an additional
+            // message is attempted only while MIN_ROOM still fits inside both
+            // the encoder buffer and the smallest active transport ring's free
+            // space. Addition (not subtraction) avoids size_t underflow when a
+            // transport ring is momentarily full (free=0).
+            /* #1021: those two tests are a floor on the room OFFERED, not a
+             * ceiling on what comes back -- the encoders fill whatever room they
+             * are given, so passing them was never enough to keep the batch
+             * inside the ring: an ADDITIONAL message could still push the
+             * accumulated packet past it and make the whole batch, earlier
+             * messages included, undeliverable. Capping the room is what bounds
+             * the result rather than the opening position, and is what makes the
+             * single all-or-nothing write below actually fit.
              *
              * Only for batchIdx > 0, and that restriction is load-bearing:
              * `encRoom` is already `bufferSize - packetSize` here with
@@ -3535,8 +3536,14 @@ void streaming_Task(void) {
          * "smallest": a packet above the min but below a larger ring's capacity
          * is still delivered to that larger ring (USB keeps its data while a
          * smaller co-active SD ring drops it), and the per-transport blocks
-         * below decide that individually. */
-        if (packetSize > batchXportCap) {
+         * below decide that individually.
+         *
+         * The `!= 0` term mirrors Streaming_WriteWithRetry's, on purpose. A
+         * zero capacity means the partition bookkeeping AND the live free-space
+         * reading were both zero, which is the degenerate "Pool too small"
+         * bail-out rather than a real ring size; the helper declines to condemn
+         * a packet on that, so this must not announce that it did. */
+        if (batchXportCap != 0u && packetSize > batchXportCap) {
             /* Kept under LOG_MESSAGE_SIZE (128, Logger.h -- vsnprintf is given
              * 126) so neither size is truncated away; the remedy is spelled out
              * in docs/STREAMING_AND_ADC.md rather than here. */
