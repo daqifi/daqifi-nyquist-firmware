@@ -100,6 +100,48 @@ greps the three firmware constants (`SCPI_WRITE_MAX_RETRIES`,
 tick-rate/width assumption out of the real source and **fails the build** if
 any has drifted.
 
+`test_1000_sd_log_arm_budget.c` covers the LOG_E line emitted by
+`SCPI_StartStreamingClaimed`'s `#942` refusal arm (issue #1000) — the one that
+names *why* an SD-logging start could not arm the write. Its cause text is
+`SD_SuspendReasonText()`'s return, or the call site's own fallback when that is
+NULL, and Logger cuts the formatted line at `LOG_MESSAGE_SIZE - 3` = 125 bytes
+and staples a CRLF onto the stump, so a cut message still looks well-formed.
+The prefix used to be 88 characters, leaving 35 — less than the shortest of the
+three reasons (46), so all three were cut and the 76-character quarantine
+reason lost `SYST:STOR:SD:ENAble 1`, the command that clears a quarantine. The
+fix shortens the prefix to 27.
+
+Unlike `test_943` / `test_953` / `test_1004` this one models no *shape* — the
+subject is a length — so instead of re-implementing a loop it reproduces
+Logger's truncation for real (same `vsnprintf`, same bound, same clamp, same
+CRLF fixup) and runs the actual strings through it, asserting the emitted bytes
+equal the intended bytes. The headline is that the quarantine remedy survives
+now and provably did not before.
+
+Almost nothing here is a copy. The Makefile target **extracts**
+`LOG_MESSAGE_SIZE` from `Logger.h`, *both* of `Logger.c`'s reservations (the
+`vsnprintf` bound and the clamp — the arithmetic is split across the two
+files), and the prefix plus the NULL fallback from `SCPIInterface.c`, into a
+generated `gen_1000_log_budget.h`. So lowering the ceiling or growing the
+prefix makes the test fail on the real values rather than ask to be updated.
+Extraction has a failure mode a grep guard does not — finding *nothing*, which
+would satisfy every length assertion while checking none — so each extraction
+is checked non-empty and the prefix is round-tripped back into the source text
+before the build proceeds.
+
+The three `SD_SuspendReasonText()` strings are the one copy. They belong to
+that function rather than to this call site, and #1001 is building the general
+mechanism that measures them against every caller; until then the Makefile
+greps each full `return` statement and fails the build on drift. The old
+88-character prefix is kept in the test as a frozen historical control, so the
+suite carries its own evidence that these assertions bite.
+
+One thing this test pins that is easy to get wrong: the **NULL fallback fit**
+under the old prefix (88 + 33 + 2 = 123). Only `SD_SuspendReasonText()`'s three
+returns were cut. That matters because the NULL case is the one a casual bench
+reproduction reaches first, so a complete-looking line there is not evidence
+the bug was absent.
+
 `test_json_string_escape.c` covers `firmware/src/services/JSON_StringEscape.h`
 (issue #164) — the JSON string-escaping helper split out of `JSON_Encoder.c`
 so it can be compiled and tested here with no board dependencies. Neither
