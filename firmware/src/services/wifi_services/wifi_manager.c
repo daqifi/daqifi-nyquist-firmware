@@ -798,7 +798,19 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
         }
         case SOCKET_MSG_SEND:
         {
-            if (gStateMachineContext.pTcpServerContext != NULL && pMessage != NULL) {
+            // #956 hardening (defense in depth — NOT a proven live bug): only
+            // the streaming client's own socket may move the in-flight ring or
+            // the send counters.  Today nothing else can reach here — iperf2 and
+            // the mDNS responder claim their sockets at the top of this callback
+            // and UDP discovery arrives as SOCKET_MSG_SENDTO, a different message
+            // type — so this has never been observed to fire.  But nothing
+            // structurally prevents a future socket from aliasing the handler,
+            // and if one did it would pop a ring slot it never pushed, which is
+            // precisely the mis-pairing #956 exists to eliminate.  Note this also
+            // skips for clientSocket == -1 (no client), where a completion cannot
+            // belong to us by definition.
+            if (gStateMachineContext.pTcpServerContext != NULL && pMessage != NULL &&
+                socket == gStateMachineContext.pTcpServerContext->client.clientSocket) {
                 int16_t sentBytes = *(int16_t*)pMessage;
                 wifi_tcp_server_clientContext_t* client = &gStateMachineContext.pTcpServerContext->client;
 
@@ -839,6 +851,27 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                         client->wifiPartialBytesMissing +=
                             (uint32_t)(sendSize - (uint16_t)sentBytes);
                         isPartial = true;
+                    } else if ((uint16_t)sentBytes > sendSize) {
+                        // #956: the arithmetically-impossible direction.  A
+                        // completion cannot confirm more bytes than its own send
+                        // offered, so any accrual here means this completion was
+                        // paired with the wrong ring slot (or, at sendSize == 0,
+                        // with no slot at all — either the ring was reset out from
+                        // under an outstanding send, or tcpInFlight was 0 so
+                        // nothing was popped).
+                        //
+                        // Deliberately NOT guarded on sendSize > 0, unlike the
+                        // partial arm above.  That guard is a no-op there anyway
+                        // (an unsigned `sentBytes < 0` can never hold), while here
+                        // it would discard exactly the not-in-flight case — and
+                        // discarding it would break the identity this counter
+                        // exists to restore:
+                        //     BytesSent - BytesConfirmed
+                        //         == PartialBytesMissing - OverBytesExtra
+                        // which needs every confirmed byte to be matched against
+                        // whatever sendSize was popped, zero included.
+                        client->wifiTcpOverBytesExtra +=
+                            (uint32_t)((uint16_t)sentBytes - sendSize);
                     }
                 } else {
                     client->wifiTcpSendErrors++;

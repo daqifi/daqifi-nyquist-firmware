@@ -114,6 +114,61 @@ static bool TcpServerFlush() {
         return true;
     }
 
+    // #956: THE authoritative WIFI_TCP_MAX_IN_FLIGHT check.  It used to live
+    // only in our two callers (wifi_tcp_server_WriteBuffer and
+    // wifi_tcp_server_TransmitBufferedData), as plain unlocked reads taken
+    // before either of them acquired wMutex — so two producers could both
+    // observe tcpInFlight == 3, both proceed, and both push, lapping
+    // inflightHead past inflightTail and mis-pairing every later completion.
+    // Those pre-checks remain, but purely as a fast path; correctness is
+    // decided here and nowhere else.
+    //
+    // Ordering — variant (a) of the two candidates: check BEFORE send(), not in
+    // the critical section that already wraps the post-send push.  Re-validating
+    // after send() would be unsound, because a send() already on the wire cannot
+    // be undone: discovering the cap was blown at that point leaves no correct
+    // action (dropping the push under-counts tcpInFlight and loses the size
+    // forever; pushing anyway is the very overflow being guarded).  Refusing
+    // before the send costs nothing — the bytes are still in wCirbuf and the
+    // next drain retries them, exactly as SOCK_ERR_BUFFER_FULL already does.
+    //
+    // Why a snapshot taken here and used by the push a few lines below is not
+    // itself a TOCTOU:
+    //   * Producers are already mutually exclusive.  TcpServerFlush has exactly
+    //     one live caller — CircularBufferToTcpWrite, the wCirbuf process
+    //     callback — and that only runs from inside
+    //     wifi_tcp_server_TransmitBufferedData's wMutex region.  So no second
+    //     task can push between this check and the push.
+    //   * The only other writer of tcpInFlight is the SOCKET_MSG_SEND consumer,
+    //     which exclusively DECREMENTS.  It can therefore only free capacity we
+    //     already decided we had — never consume it.  A refusal that races a
+    //     completion is merely conservative and is retried.
+    // Task context only (streaming_Task pri 6, app_WifiTask pri 2,
+    // lWDRV_WINC_Tasks pri 1 — no ISR reaches here), so taskENTER_CRITICAL and
+    // not the _FROM_ISR variant is correct.
+    {
+        bool ringFull;
+        taskENTER_CRITICAL();
+        ringFull = (gpServerData->client.tcpInFlight >= WIFI_TCP_MAX_IN_FLIGHT);
+        if (ringFull) {
+            gpServerData->client.wifiTcpInflightOverflow++;
+        }
+        taskEXIT_CRITICAL();
+        if (ringFull) {
+            // Back-pressure, not an error: leave writeBufferLength intact so the
+            // retry re-sends the same bytes, and report failure so
+            // CircularBuf_ProcessBytes consumes nothing.
+            //
+            // NOTE this is a real behaviour change, not only an accounting one.
+            // Pre-fix, the racing 5th send still WENT OUT — only the ring slot
+            // it overwrote was corrupted — so the old cap leaked transient
+            // bursts above WIFI_TCP_MAX_IN_FLIGHT.  It is now actually enforced.
+            // The WiFi transport ceilings were fitted against the leaky cap, so
+            // re-validate them at-cap on hardware before trusting them.
+            return false;
+        }
+    }
+
     // Non-blocking send: try once, return immediately if WINC buffer is full
     // This prevents the streaming task from blocking for multiple milliseconds
     // during high-rate streaming when WiFi bandwidth is saturated
@@ -347,6 +402,8 @@ void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData) {
         gpServerData->client.tcpInFlight = 0;
         gpServerData->client.pendingBufferReset = false;
         gpServerData->client.wifiPartialBytesMissing = 0;
+        gpServerData->client.wifiTcpOverBytesExtra = 0;      // #956
+        gpServerData->client.wifiTcpInflightOverflow = 0;    // #956
         gpServerData->client.wifiWriteBufferRejectedCalls = 0;
         gpServerData->client.wifiWriteBufferRejectedBytes = 0;
         gpServerData->client.inflightHead = 0;
@@ -446,6 +503,7 @@ static inline void ResetInflightRing(void) {
         gpServerData->client.inflightSizes[i] = 0;
     }
 }
+
 
 void wifi_tcp_server_CloseSocket() {
     // The WINC driver's shutdown() automatically closes the socket
@@ -585,6 +643,10 @@ size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len) {
     // when zero in-flight. Lets streaming task queue a 2nd send while the
     // first is still being radio-TXed by WINC, instead of waiting for
     // SOCKET_MSG_SEND callback delivery latency between every packet.
+    // #956: unlocked read, kept only as a fast path — it avoids taking wMutex
+    // when the ring is obviously full.  It is NOT load-bearing for correctness
+    // any more; TcpServerFlush re-checks the cap under taskENTER_CRITICAL and
+    // refuses for real.  A stale `true` here costs one wasted mutex round-trip.
     if (shouldFlush && gpServerData->client.tcpInFlight < WIFI_TCP_MAX_IN_FLIGHT) {
         wifi_tcp_server_TransmitBufferedData();
     }
@@ -609,6 +671,8 @@ bool wifi_tcp_server_TransmitBufferedData() {
     // (from streaming_Task WriteBuffer trigger or WDRV_WINC_Tasks
     // SOCKET_MSG_SEND chain) drains one packet per call and increments
     // tcpInFlight in TcpServerFlush — the callback is what decrements it.
+    // #956: as in wifi_tcp_server_WriteBuffer, this unlocked read is a fast path
+    // only.  TcpServerFlush owns the authoritative check.
     if (gpServerData->client.tcpInFlight >= WIFI_TCP_MAX_IN_FLIGHT) {
         return false;
     }

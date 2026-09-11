@@ -3441,13 +3441,35 @@ static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
         pTcp->client.wifiTcpSendErrors = 0;
         pTcp->client.wifiTcpPartialSends = 0;
         pTcp->client.wifiPartialBytesMissing = 0;
+        pTcp->client.wifiTcpOverBytesExtra = 0;     // #956: same epoch as the line above
+        pTcp->client.wifiTcpInflightOverflow = 0;   // #956
         pTcp->client.wifiWriteBufferRejectedCalls = 0;
         pTcp->client.wifiWriteBufferRejectedBytes = 0;
-        for (uint8_t i = 0; i < WIFI_TCP_MAX_IN_FLIGHT; i++) {
-            pTcp->client.inflightSizes[i] = 0;
-        }
-        pTcp->client.inflightHead = 0;
-        pTcp->client.inflightTail = 0;
+        // #956: this site DELIBERATELY DOES NOT TOUCH THE IN-FLIGHT RING.
+        //
+        // It used to hand-roll a ring-ONLY reset (zeroing inflightHead/Tail and
+        // inflightSizes while leaving tcpInFlight at its outstanding-send
+        // count) -- the half-reset that ResetInflightRing()'s contract comment
+        // warns desyncs head/tail for the session.  The first fix for that
+        // zeroed BOTH halves.  That is worse, and a pre-merge review caught it:
+        // the ring is LIVE TRANSPORT STATE owned by the send/completion pair,
+        // not a statistic.  Zeroing tcpInFlight while the WINC still owes
+        // completions admits sends past the physical cap, and a later old
+        // completion pops a NEW send's slot or accrues false over-byte stats
+        // against a zero size -- a fresh instance of the very mis-pairing #956
+        // exists to remove.
+        //
+        // Resetting NEITHER half is correct and removes the original defect by
+        // construction: there is no partial reset if there is no reset.  The
+        // ring is reset only where a reset is safe -- the three socket-teardown
+        // sites, after which no completion can arrive for a stale slot.
+        //
+        // Residual, pre-existing and NOT fixed by this change: clearing
+        // wifiTcpBytesSent while a send is outstanding still lets that send's
+        // completion add to Confirmed with its Sent contribution erased, a
+        // permanent per-session offset docs/STREAMING_AND_ADC.md already
+        // documents.  Draining
+        // before clearing is the only real answer and is out of scope here.
         // #560/#475 Opt 0 — listener-health counters. Reset only on this
         // operator-initiated clear (NOT at stream start) so the slow PATH-1
         // listen-slot leak stays visible across streaming sessions.
@@ -3745,6 +3767,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     {
         uint64_t bytesSent = 0, bytesConfirmed = 0;
         uint32_t sendErrors = 0, partialSends = 0, partialMissing = 0;
+        uint32_t overBytesExtra = 0, inflightOverflow = 0;  // #956
         uint32_t rejectedCalls = 0, rejectedBytes = 0;
         uint32_t cirbufProduced = 0, cirbufConsumed = 0, cirbufBufSize = 0;
         // #560/#475 Opt 0 — listener-health observability
@@ -3760,6 +3783,8 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
             sendErrors = pTcp->client.wifiTcpSendErrors;
             partialSends = pTcp->client.wifiTcpPartialSends;
             partialMissing = pTcp->client.wifiPartialBytesMissing;
+            overBytesExtra = pTcp->client.wifiTcpOverBytesExtra;      // #956
+            inflightOverflow = pTcp->client.wifiTcpInflightOverflow;  // #956
             rejectedCalls = pTcp->client.wifiWriteBufferRejectedCalls;
             rejectedBytes = pTcp->client.wifiWriteBufferRejectedBytes;
             cirbufProduced = pTcp->client.wCirbuf.producedBytes;
@@ -3785,6 +3810,20 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "WifiTcpPartialSends=%u\r\n", (unsigned)partialSends);
         // #367 diag: cumulative byte shortfall across all partial sends
         scpi_printf(context, "WifiPartialBytesMissing=%u\r\n", (unsigned)partialMissing);
+        // #956 diag: the opposite direction of the line above (completion
+        // confirmed MORE than the popped slot claimed).  Non-zero = ring
+        // mis-pairing, not stream damage.  With both directions counted,
+        // WifiTcpBytesSent - WifiTcpBytesConfirmed ==
+        // WifiPartialBytesMissing - WifiTcpOverBytesExtra, bounded in-flight
+        // residual aside.
+        scpi_printf(context, "WifiTcpOverBytesExtra=%u\r\n", (unsigned)overBytesExtra);
+        // #956 diag: flush attempts refused by TcpServerFlush's authoritative
+        // in-flight cap check — a count of ring overruns PREVENTED, each one an
+        // attempt the pre-fix unlocked cap check would have let through.  The
+        // bytes are retried, so this is not loss.  Non-zero under WiFi streaming
+        // load is expected (producer contention at the cap); 0 on an idle or
+        // control-only channel.
+        scpi_printf(context, "WifiTcpInflightOverflow=%u\r\n", (unsigned)inflightOverflow);
         // #371 diag: WriteBuffer-side rejection counters (should match wifiDroppedBytes)
         scpi_printf(context, "WifiWriteBufferRejectedCalls=%u\r\n", (unsigned)rejectedCalls);
         scpi_printf(context, "WifiWriteBufferRejectedBytes=%u\r\n", (unsigned)rejectedBytes);
@@ -4649,11 +4688,13 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
             pTcp->client.wifiTcpSendErrors = 0;
             pTcp->client.wifiTcpPartialSends = 0;
             pTcp->client.wifiPartialBytesMissing = 0;
-            for (uint8_t i = 0; i < WIFI_TCP_MAX_IN_FLIGHT; i++) {
-                pTcp->client.inflightSizes[i] = 0;
-            }
-            pTcp->client.inflightHead = 0;
-            pTcp->client.inflightTail = 0;
+            pTcp->client.wifiTcpOverBytesExtra = 0;     // #956: same epoch as the line above
+            pTcp->client.wifiTcpInflightOverflow = 0;   // #956
+            // #956: like SCPI_ClearStreamStats, this site DELIBERATELY leaves
+            // the in-flight ring alone.  The identical hand-rolled ring-only
+            // reset lived here too; see that function for why resetting BOTH
+            // halves is worse than resetting neither, and why only the
+            // socket-teardown sites may reset a live ring.
             taskEXIT_CRITICAL();
         }
     }

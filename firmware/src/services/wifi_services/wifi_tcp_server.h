@@ -93,7 +93,18 @@ typedef struct s_tcpClientContext
      *  when consecutive send lengths differ, which peaks mid-band and vanishes
      *  once sends saturate to a constant 1400 B above it.  Treat a rise as a
      *  diagnostic-counter artifact, not stream damage, until #956 lands.  See
-     *  docs/STREAMING_AND_ADC.md, "WiFi characterization — lessons that survive". */
+     *  docs/STREAMING_AND_ADC.md, "WiFi characterization — lessons that survive".
+     *
+     *  #956 STATUS: the two producer-side pairing defects it named are now
+     *  closed in source (the unlocked cap check moved into TcpServerFlush; the
+     *  two SCPI sites no longer reset the live ring AT ALL -- see
+     *  SCPI_ClearStreamStats for why resetting both halves is worse than
+     *  resetting neither, and why only socket teardown may reset a live ring).  The caution above is deliberately LEFT
+     *  STANDING rather than replaced: the band has not been re-measured on
+     *  fixed firmware, and two things #956 did NOT fix still detach this
+     *  counter from real loss — the Sent/Confirmed reset asymmetry documented
+     *  on wifiPartialBytesMissing below, and the never-retried short send.
+     *  Re-measure before promoting a rise here to evidence of loss. */
     uint32_t wifiTcpPartialSends;
     /** #367 diagnostics: cumulative byte shortfall (sendSize - sentBytes) across
      *  all partial sends, summed only where the difference is positive
@@ -145,9 +156,28 @@ typedef struct s_tcpClientContext
      *  leaves Sent == Confirmed == 1400 with 100 bytes genuinely gone.  That
      *  reads as zero loss and satisfies "no reset in this window".
      *
-     *  It is invisible in the partial counters too: after a CLEar the popped
-     *  sendSize is 0, so the `sendSize > 0` guard below suppresses the
-     *  partial-send flag entirely -- only Confirmed moves.
+     *  BEFORE #956 it was invisible in the partial counters too, and that half
+     *  NO LONGER HOLDS.  The old claim, stated so it is withdrawn rather than
+     *  quietly swapped: CLEar zeroed the ring, so the popped sendSize was 0,
+     *  the `sendSize > 0` guard below suppressed the partial-send flag, and
+     *  only Confirmed moved.
+     *
+     *  #956 stopped CLEar touching the ring at all, so a completion landing
+     *  after a mid-flight CLEar pops its ORIGINAL sendSize and a genuine short
+     *  send increments wifiTcpPartialSends and this field normally.  Concretely:
+     *  issue 1400 B, CLEar while it is outstanding, then a 1300 B completion
+     *  now yields PartialSends 1 and PartialBytesMissing 100, where it
+     *  previously yielded 0 and 0.
+     *
+     *  The old sentence was also wrong in a second way once wifiTcpOverBytesExtra
+     *  existed: its arm below is deliberately UNGUARDED on sendSize, so even a
+     *  sendSize == 0 pop moved that counter.  "Only Confirmed moves" failed
+     *  either way.
+     *
+     *  The Sent/Confirmed offset described above is a DIFFERENT pair of counters
+     *  with its own reset sites, is untouched by #956, and remains exactly as
+     *  silent as described.  Do not read the partial counters as blind after a
+     *  clear on post-#956 firmware.
      *
      *  WHAT IS SAFE: a DELTA between two drained snapshots inside one
      *  uncontaminated epoch.  To re-establish one, reset with the ring
@@ -162,8 +192,39 @@ typedef struct s_tcpClientContext
      *  #935 measured 187 B and 190 B in two
      *  independent bench runs (~0.016-0.017% of bytes sent), far inside that
      *  figure and far below this field's reading in the same run.  Until #956
-     *  lands, do not cite a rise here as evidence of lost stream bytes. */
+     *  lands, do not cite a rise here as evidence of lost stream bytes.
+     *
+     *  #956 STATUS: its two producer-side defects are fixed (see
+     *  wifiTcpPartialSends above), and the new wifiTcpOverBytesExtra below now
+     *  counts the negative half this field discards, so
+     *  BytesSent - BytesConfirmed == PartialBytesMissing - OverBytesExtra is
+     *  checkable rather than merely hoped for.  This status paragraph supersedes
+     *  EXACTLY ONE claim above -- the partial-counter blindness after a CLEar,
+     *  corrected in place two paragraphs up -- and nothing else.  An earlier
+     *  revision of this line reaffirmed everything above unchanged, which was
+     *  false once the ring stopped being reset.  Still standing and NOT
+     *  superseded: the epoch precondition, the permanent Sent/Confirmed offset a
+     *  reset taken with sends outstanding leaves behind, the two directions that
+     *  offset can take, and the independent never-retried short send (now filed
+     *  as #1041).  Nothing here has been re-measured on fixed firmware. */
     uint32_t wifiPartialBytesMissing;
+    /** #956: the OPPOSITE direction of wifiPartialBytesMissing — cumulative
+     *  (sentBytes - sendSize) where the completion confirms MORE bytes than the
+     *  popped ring slot claims were sent.  Arithmetically impossible when the
+     *  pairing is correct, so any non-zero reading is direct evidence that a
+     *  completion was matched to the wrong slot (or to no slot at all, which is
+     *  the sendSize == 0 case left deliberately UNGUARDED below).
+     *
+     *  Counting both directions is what restores the accounting identity the
+     *  one-sided `<` test broke: for a bijection between pushes and pops,
+     *  sum(sendSize) over pops equals sum(sendSize) over pushes REGARDLESS of the
+     *  order they are paired in, so
+     *      wifiTcpBytesSent - wifiTcpBytesConfirmed
+     *          == wifiPartialBytesMissing - wifiTcpOverBytesExtra
+     *  holds even under a permuted ring — it is only the discarded negative half
+     *  that made a mis-pair look like loss.  Reset alongside
+     *  wifiPartialBytesMissing (same epoch, or the identity is meaningless). */
+    uint32_t wifiTcpOverBytesExtra;
     /** #371 diagnostics: count of wifi_tcp_server_WriteBuffer calls that returned 0
      *  because the circular buffer didn't have enough free space.  Streaming task
      *  charges the same packet to wifiDroppedBytes; if these don't match the
@@ -177,6 +238,25 @@ typedef struct s_tcpClientContext
     volatile uint16_t inflightSizes[WIFI_TCP_MAX_IN_FLIGHT];
     volatile uint8_t inflightHead;
     volatile uint8_t inflightTail;
+
+    /** #956: flush attempts refused by TcpServerFlush's own authoritative
+     *  WIFI_TCP_MAX_IN_FLIGHT check, taken under taskENTER_CRITICAL.
+     *
+     *  READ IT AS A COUNT OF PREVENTED RING OVERRUNS, NOT OF RESIDUAL ONES.
+     *  Each increment is one attempt that the OLD code would have let through —
+     *  the callers' cap checks were unlocked reads taken before wMutex, so a
+     *  producer could pass at 3, queue on wMutex behind another producer that
+     *  pushed to 4, and then push a 5th onto a 4-slot ring.  That attempt is now
+     *  refused instead: the bytes stay in wCirbuf and the next drain retries
+     *  them, exactly as SOCK_ERR_BUFFER_FULL already behaves.
+     *
+     *  So NON-ZERO UNDER WIFI STREAMING LOAD IS EXPECTED and is not a fault —
+     *  it measures producer contention at the cap.  It should read 0 on an idle
+     *  or control-only channel, where the ring never fills.  What WOULD be a
+     *  finding is this counter rising while the ring is provably not full, or a
+     *  ratio to WifiTcpBytesSent large enough to mean sends are being deferred
+     *  often enough to cost throughput. */
+    uint32_t wifiTcpInflightOverflow;
 
     /** #599: monotonically-increasing accepted-connection counter.  Bumped
      *  once per SOCKET_MSG_ACCEPT that installs a client (single writer:
@@ -280,6 +360,7 @@ void wifi_tcp_server_SetWriteBuffer(uint8_t* buf, uint32_t size);
  * plane is in use.
  */
 bool wifi_tcp_server_HasActiveClient(void);
+
 
 /**
  * Returns the current count of bytes sitting in the WiFi TCP write
