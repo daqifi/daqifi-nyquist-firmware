@@ -242,8 +242,18 @@ static BenchVerdict new_bench_not_ready_diagnosis(BenchEnv *env)
  * ========================================================================== */
 
 /* The prefix the mid-wait arm interpolates a reason into (SCPIStorageSD.c).
- * The Makefile fails the build if this literal is no longer in the source, so
- * the length measured below is the length of the line the DEVICE formats. */
+ * The Makefile fails the build unless the whole `LOG_E("<this>%s` call is
+ * still in the source -- matched as the CALL, not the bare text, so a comment
+ * quoting the prefix cannot satisfy it.
+ *
+ * The three REASON copies below are pinned differently, and the difference is
+ * the point (#983 review): a grep for a reason's own words is not a drift
+ * guard, because the words that matter are a substring of the longer string
+ * they replaced AND of the comment explaining the replacement -- it passed for
+ * exactly the state it was meant to catch. They are pinned by a content hash
+ * of SD_SuspendReasonText() instead, which claims only "this text is
+ * unchanged" and cannot be talked around. When it fires, re-read the function
+ * against these copies and update both together. */
 static const char *const kMidWaitLogPrefix =
     "SD:BENCH - could not complete the arm: ";
 

@@ -54,6 +54,21 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # compares against the pre-truncation constant can see it.
 LOGGER_HDR := ../../firmware/src/Util/Logger.h
 
+# #983 review: a grep for the quarantine reason's own text was NOT a drift
+# guard. 'then SYST:STOR:SD:ENAble 1' is a substring of the 94-character
+# string #986 replaced, and of the comment explaining the replacement, so the
+# check passed for exactly the state it was meant to catch. A CONTENT HASH of
+# the whole function claims only "this text is unchanged", which is all a
+# build recipe can honestly know, and no wording can slip past it.
+#
+# Hashed: the function from its `const char *<name>(` line to its closing
+# brace, with WHOLE-LINE comments dropped and whitespace collapsed -- so
+# rewording the comment block above it does not fire, and any change to a
+# returned string does. Same mechanism, same reasoning, as the
+# SD_ArmOrRefuseWithCleanup pin in #971.
+SUSPEND_REASON_FN := SD_SuspendReasonText
+SUSPEND_REASON_SHA := 799914e5de6c69bd491438343a5b02a3aeac105713c29b332c97f670d0192409
+
 # #953: SD:BENCHmark's "file never opened" diagnosis. Same file as BENCH_BIN
 # and, for the same reason, the same technique -- no UUT copy, no stubs, the
 # decision cascade re-implemented against injected values.
@@ -118,17 +133,35 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	       echo "       message survives Logger's vsnprintf intact, and it takes the"; \
 	       echo "       limit from here rather than copying it. Re-point LOGGER_HDR."; \
 	       exit 1; }
-	@grep -qF 'then SYST:STOR:SD:ENAble 1' $(SD_BENCH_SRC) \
-	  || { echo "ERROR: the quarantine suspend reason in $(SD_BENCH_SRC) no"; \
-	       echo "       longer carries 'then SYST:STOR:SD:ENAble 1'."; \
-	       echo "       test_953_bench_suspend_diagnosis.c carries a copy of that"; \
-	       echo "       string and measures it against Logger's limit (#986). A"; \
-	       echo "       copy that has drifted measures the wrong string."; \
+	@command -v sha256sum >/dev/null 2>&1 \
+	  || { echo "ERROR: sha256sum not found -- it is what pins"; \
+	       echo "       $(SUSPEND_REASON_FN)()'s text for the length assertions in"; \
+	       echo "       test_953_bench_suspend_diagnosis.c. Install GNU coreutils."; \
+	       echo "       (Reported separately so it is not read as a drift failure.)"; \
 	       exit 1; }
-	@grep -qF 'SD:BENCH - could not complete the arm: %s' $(SD_BENCH_SRC) \
-	  || { echo "ERROR: the mid-wait arm's log PREFIX changed in $(SD_BENCH_SRC)."; \
-	       echo "       test_953_bench_suspend_diagnosis.c measures the formatted line"; \
-	       echo "       against Logger's limit and carries a copy of that prefix."; \
+	@grep -q '^const char \*$(SUSPEND_REASON_FN)(' $(SD_BENCH_SRC) \
+	  || { echo "ERROR: no '^const char *$(SUSPEND_REASON_FN)(' line in"; \
+	       echo "       $(SD_BENCH_SRC) -- renamed or moved, and the hash below"; \
+	       echo "       extracts it from that line to its closing brace."; \
+	       exit 1; }
+	@got=$$(sed -n '/^const char \*$(SUSPEND_REASON_FN)(/,/^}/p' $(SD_BENCH_SRC) \
+	        | sed -e '/^[[:space:]]*\/\*/d' -e '/^[[:space:]]*\*/d' -e '/^[[:space:]]*\/\//d' \
+	        | tr -s '[:space:]' ' ' | sha256sum | cut -d' ' -f1); \
+	 [ "$$got" = "$(SUSPEND_REASON_SHA)" ] \
+	  || { echo "ERROR: the CODE of $(SUSPEND_REASON_FN)() has changed."; \
+	       echo "         expected sha256 $(SUSPEND_REASON_SHA)"; \
+	       echo "         got      sha256 $$got"; \
+	       echo "       test_953_bench_suspend_diagnosis.c carries COPIES of the three"; \
+	       echo "       reason strings and measures them against Logger's limit (#986)."; \
+	       echo "       A tripwire, not a verdict: re-read the function against those"; \
+	       echo "       copies, then update them and this hash together."; \
+	       exit 1; }
+	@grep -qF 'LOG_E("SD:BENCH - could not complete the arm: %s' $(SD_BENCH_SRC) \
+	  || { echo "ERROR: the mid-wait arm's LOG_E call changed in $(SD_BENCH_SRC)."; \
+	       echo "       test_953_bench_suspend_diagnosis.c carries a copy of that"; \
+	       echo "       prefix and measures the formatted line against Logger's limit."; \
+	       echo "       Matched as the whole LOG_E( call, not the bare text, so a"; \
+	       echo "       comment quoting the prefix cannot satisfy this check."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) \
 	  -DFW_LOG_MESSAGE_SIZE=`grep -E '^#define[[:space:]]+LOG_MESSAGE_SIZE' $(LOGGER_HDR) | awk '{print $$3}'` \
