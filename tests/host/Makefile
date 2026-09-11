@@ -210,10 +210,12 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
 SCPI999_WIRING_GUARD := check_999_createscpicontext_wiring.sh
+SCPI999_ARG_EXTRACTOR := extract_call_args.pl
 
 $(SCPI999_BIN): test_999_scpi_context_storage_isolation.c test_framework.h \
                 $(LIBSCPI_SRCS) $(LIBSCPI_HDRS) $(SCPI_INTERFACE_H) $(SCPI_INTERFACE_C) \
-                $(USBCDC_SRC) $(WIFI_TCP_SRC) $(SCPI999_WIRING_GUARD) $(RECIPES)
+                $(USBCDC_SRC) $(WIFI_TCP_SRC) $(SCPI999_WIRING_GUARD) \
+                $(SCPI999_ARG_EXTRACTOR) $(RECIPES)
 	@grep -qE 'typedef struct \{' $(SCPI_INTERFACE_H) \
 	  && grep -qE 'char inputBuffer\[SCPI_INPUT_BUFFER_LENGTH\];' $(SCPI_INTERFACE_H) \
 	  && grep -qE 'scpi_error_t errorQueue\[SCPI_ERROR_QUEUE_SIZE\];' $(SCPI_INTERFACE_H) \
@@ -257,35 +259,95 @@ $(SCPI999_BIN): test_999_scpi_context_storage_isolation.c test_framework.h \
 	@# technique check_999_createscpicontext_wiring.sh's check (c) uses for
 	@# SCPI_Init()) and then checking only that call's own extracted argument
 	@# text closes it.
-	@usb_flat=`tr -d '\r' < $(USBCDC_SRC) | tr '\n' ' '`; \
+	@#
+	@# Round 5 (this state) hardens that call-site scoping twice more, after
+	@# a THIRD adversarial audit of #1016 found the round-4 version above
+	@# still bypassable two ways:
+	@#   F0: `usb_flat`/`tcp_flat` never stripped comments -- just \r removal
+	@#       and newline flattening -- so
+	@#       `CreateSCPIContext(&iface, ctx, /* &gUsbScpiStorage */ &gSharedScpiStorage);`
+	@#       has the real (wrong) storage argument `&gSharedScpiStorage`, but
+	@#       the surviving comment text made `grep -q '&gUsbScpiStorage'`
+	@#       against the WHOLE call pass anyway. Comments are now stripped
+	@#       (both `//` and `/* */`, the same technique
+	@#       check_999_createscpicontext_wiring.sh already used for the
+	@#       function BODY) before anything is extracted -- and a comma
+	@#       inside an unstripped comment would also have corrupted argument
+	@#       counting below, so this is load-bearing for extraction
+	@#       correctness, not just this one example.
+	@#   F1: `grep -q '&gUsbScpiStorage'` against the whole call's text is a
+	@#       CONTAINMENT test, not an equality test -- a ternary argument
+	@#       (`cond ? &gSharedScpiStorage : &gUsbScpiStorage`) contains the
+	@#       literal substring while a true `cond` hands out shared storage
+	@#       at runtime. `extract_call_args.pl` now extracts each argument's
+	@#       own text by real paren-depth counting, and the checks below
+	@#       require EQUALITY of one whole argument to the expected token
+	@#       (a ternary's own concatenated text can never equal either of
+	@#       its own branches) plus an explicit reject if any argument
+	@#       contains `?` at all -- production has no legitimate use for a
+	@#       conditional in this call's argument list.
+	@# See extract_call_args.pl's own header for the full mechanism.
+	@usb_lf=`tr -d '\r' < $(USBCDC_SRC)`; \
+	 usb_nolinecomment=`printf '%s\n' "$$usb_lf" | sed -E 's@//.*$$@@'`; \
+	 usb_nocomment=`printf '%s' "$$usb_nolinecomment" | perl -0pe 's{/\*.*?\*/}{}gs'`; \
+	 usb_flat=`printf '%s' "$$usb_nocomment" | tr '\n' ' '`; \
 	 usb_call_count=`printf '%s' "$$usb_flat" | grep -oE 'CreateSCPIContext[[:space:]]*\(' | wc -l`; \
 	 test "$$usb_call_count" -eq 1 \
 	  || { echo "ERROR: $(USBCDC_SRC) calls CreateSCPIContext() $$usb_call_count times"; \
 	       echo "       (expected exactly 1). Re-check #999's fix shape before relaxing"; \
 	       echo "       this guard."; \
 	       exit 1; }; \
-	 usb_call=`printf '%s' "$$usb_flat" | grep -oP 'CreateSCPIContext\(.*?\);' | head -1`; \
-	 printf '%s' "$$usb_call" | grep -q '&gUsbScpiStorage' \
+	 usb_args=`printf '%s' "$$usb_flat" | perl extract_call_args.pl CreateSCPIContext`; \
+	 test -n "$$usb_args" \
+	  || { echo "ERROR: $(USBCDC_SRC)'s CreateSCPIContext() call's arguments could not"; \
+	       echo "       be extracted (unbalanced parens/brackets?). Re-check before"; \
+	       echo "       relaxing this guard."; \
+	       exit 1; }; \
+	 printf '%s\n' "$$usb_args" | grep -qF '?' \
+	  && { echo "ERROR: $(USBCDC_SRC)'s CreateSCPIContext() call has a"; \
+	       echo "       conditional/ternary expression in one of its arguments. A"; \
+	       echo "       ternary can make the storage argument resolve to different"; \
+	       echo "       (e.g. shared) storage at runtime while still containing the"; \
+	       echo "       expected text in an untaken branch -- forbidden outright."; \
+	       exit 1; } || true; \
+	 printf '%s\n' "$$usb_args" | grep -qxF '&gUsbScpiStorage' \
 	  || { echo "ERROR: $(USBCDC_SRC)'s own CreateSCPIContext() call no longer passes"; \
-	       echo "       &gUsbScpiStorage as its storage argument. A reference to"; \
-	       echo "       &gUsbScpiStorage surviving elsewhere in the file (e.g. a dead"; \
-	       echo "       keep-alive) does not satisfy this -- the call's OWN argument"; \
-	       echo "       text must name it."; \
+	       echo "       &gUsbScpiStorage as one of its OWN arguments, exactly. A"; \
+	       echo "       reference surviving elsewhere in the file (e.g. a dead"; \
+	       echo "       keep-alive or a stale comment), or the text merely appearing"; \
+	       echo "       inside a larger expression such as a ternary, does not"; \
+	       echo "       satisfy this -- one whole argument must equal it."; \
 	       exit 1; }
-	@tcp_flat=`tr -d '\r' < $(WIFI_TCP_SRC) | tr '\n' ' '`; \
+	@tcp_lf=`tr -d '\r' < $(WIFI_TCP_SRC)`; \
+	 tcp_nolinecomment=`printf '%s\n' "$$tcp_lf" | sed -E 's@//.*$$@@'`; \
+	 tcp_nocomment=`printf '%s' "$$tcp_nolinecomment" | perl -0pe 's{/\*.*?\*/}{}gs'`; \
+	 tcp_flat=`printf '%s' "$$tcp_nocomment" | tr '\n' ' '`; \
 	 tcp_call_count=`printf '%s' "$$tcp_flat" | grep -oE 'CreateSCPIContext[[:space:]]*\(' | wc -l`; \
 	 test "$$tcp_call_count" -eq 1 \
 	  || { echo "ERROR: $(WIFI_TCP_SRC) calls CreateSCPIContext() $$tcp_call_count times"; \
 	       echo "       (expected exactly 1). Re-check #999's fix shape before relaxing"; \
 	       echo "       this guard."; \
 	       exit 1; }; \
-	 tcp_call=`printf '%s' "$$tcp_flat" | grep -oP 'CreateSCPIContext\(.*?\);' | head -1`; \
-	 printf '%s' "$$tcp_call" | grep -q '&gTcpScpiStorage' \
+	 tcp_args=`printf '%s' "$$tcp_flat" | perl extract_call_args.pl CreateSCPIContext`; \
+	 test -n "$$tcp_args" \
+	  || { echo "ERROR: $(WIFI_TCP_SRC)'s CreateSCPIContext() call's arguments could not"; \
+	       echo "       be extracted (unbalanced parens/brackets?). Re-check before"; \
+	       echo "       relaxing this guard."; \
+	       exit 1; }; \
+	 printf '%s\n' "$$tcp_args" | grep -qF '?' \
+	  && { echo "ERROR: $(WIFI_TCP_SRC)'s CreateSCPIContext() call has a"; \
+	       echo "       conditional/ternary expression in one of its arguments. A"; \
+	       echo "       ternary can make the storage argument resolve to different"; \
+	       echo "       (e.g. shared) storage at runtime while still containing the"; \
+	       echo "       expected text in an untaken branch -- forbidden outright."; \
+	       exit 1; } || true; \
+	 printf '%s\n' "$$tcp_args" | grep -qxF '&gTcpScpiStorage' \
 	  || { echo "ERROR: $(WIFI_TCP_SRC)'s own CreateSCPIContext() call no longer passes"; \
-	       echo "       &gTcpScpiStorage as its storage argument. A reference to"; \
-	       echo "       &gTcpScpiStorage surviving elsewhere in the file (e.g. a dead"; \
-	       echo "       keep-alive) does not satisfy this -- the call's OWN argument"; \
-	       echo "       text must name it."; \
+	       echo "       &gTcpScpiStorage as one of its OWN arguments, exactly. A"; \
+	       echo "       reference surviving elsewhere in the file (e.g. a dead"; \
+	       echo "       keep-alive or a stale comment), or the text merely appearing"; \
+	       echo "       inside a larger expression such as a ternary, does not"; \
+	       echo "       satisfy this -- one whole argument must equal it."; \
 	       exit 1; }
 	@bash check_999_createscpicontext_wiring.sh $(SCPI_INTERFACE_C)
 	$(CC) $(CFLAGS) -DUSE_DEVICE_DEPENDENT_ERROR_INFORMATION=0 -I$(LIBSCPI_DIR)/inc \
