@@ -97,6 +97,22 @@ file, and re-implementing their shapes would assert only that the copies in
 the test behave as written. The header names the smallest seam that would make
 it testable.
 
+`test_json_string_escape.c` covers `firmware/src/services/JSON_StringEscape.h`
+(issue #164) — the JSON string-escaping helper split out of `JSON_Encoder.c`
+so it can be compiled and tested here with no board dependencies. Neither
+field it protects (the WiFi SSID, and defensively the friendly device name)
+is reachable via a real streaming session: `Json_Encode`'s one caller
+(`streaming.c`) never includes `ssid_tag` or `friendly_device_name_tag` in
+its field list, so there is no bench recipe that streams an SSID through the
+encoder. This suite is the only place the escaping logic is exercised at
+all. Covers: printable ASCII passthrough, the two JSON-structural characters
+(`"` and `\`), the named single-character escapes (`\b\f\n\r\t`), `\u00XX`
+escaping of every other non-printable byte (including 0x80-0xFF, since a raw
+high byte would make the whole JSON stream invalid UTF-8), the `inLen` bound
+(no over-read past a non-NUL-terminated source), buffer-too-small refusing
+wholesale rather than truncating mid-escape, the exact worst-case sizing
+`JSON_Encoder.c` allocates on its stack, and NULL/zero-size safety.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a
