@@ -1152,6 +1152,16 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context) {
      * -- SCPI_ADCChanCalmGet below, MC12b_ConvertToVoltage's per-conversion
      * read, and the protobuf system message.
      *
+     * Of those three, only the getter is closed. An atomic store stops a
+     * reader seeing a HALF-WRITTEN coefficient; it does not stop a reader
+     * that straddles a COMPLETED one, loading the old low half and then the
+     * new high half, so each reader needs its own section too. The getters
+     * have one. The per-conversion reader and the metadata encoders do not,
+     * and still assemble torn values -- tracked as #1054, deliberately not
+     * fixed here: that reader runs per channel per sample, so a critical
+     * section in it is a hot-path change needing the enforced cap
+     * re-validated on hardware rather than reasoned about.
+     *
      * Task context only, which every caller satisfies: the SCPI callbacks,
      * and LOADcal's boot-time twin in daqifi_settings_LoadADCCalSettings,
      * which runs inside the priority-1 APP_FREERTOS_Tasks task. */
