@@ -2188,10 +2188,12 @@ void sd_card_manager_ProcessState() {
                      *
                      * The one case bucketPath carries nothing is after the
                      * FORMAT reset further down, which clears it deliberately.
-                     * There the old message would still have named
-                     * `directory`; this one names an empty string. A real, if
-                     * narrow, loss -- accepted because the alternative is a
-                     * message that loses its remedy on every firing.
+                     * Fall back to `directory` there (Qodo /improve on this
+                     * PR, importance 8) rather than naming an empty string --
+                     * it does not cost budget: `directory` is bounded to
+                     * SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX (40), strictly
+                     * shorter than bucketPath's own 45-byte worst case, which
+                     * the budget below already accounts for.
                      *
                      * The three numeric
                      * fields are compile-time constants (SD_CARD_MANAGER_
@@ -2204,7 +2206,9 @@ void sd_card_manager_ProcessState() {
                      * 45-byte worst case = 118, margin 7. */
                     LOG_E("[SD] #689 bucket '%s' unusable - grow SD:MAXSize, "
                           "change dir, or clear card",
-                          gSDCardData.bucketPath);
+                          gSDCardData.bucketPath[0] != '\0'
+                              ? gSDCardData.bucketPath
+                              : gpSDCardSettings->directory);
                     gSDCardData.startupDirFull = true;
                     gSDCardData.lastOperationSuccess = false;
                     if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
