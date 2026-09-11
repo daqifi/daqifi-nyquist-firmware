@@ -123,15 +123,43 @@ moving `taskEXIT_CRITICAL()` to before the armed test (every token still
 present, atomicity destroyed), and flipping the real
 `injectWriteFailure = true;` to `= false;` (a token the old guard never even
 looked for). `test_981_sd_failnext_real_consume.head.c` / `.tail.c` close the
-remaining gap a textual check — however positional — cannot: they splice the
-real, verbatim consume snippet into a tiny compiled-and-RUN harness (no-op
-critical-section stand-ins, a minimal `gSDCardData.currentProcessState` mock)
-and assert on its actual behaviour, catching the `injectWriteFailure` mutation
-BEHAVIOURALLY, plus asserting the `UNMOUNT_DISK` gate itself: armed-but-
-elsewhere must not fire, and a refused arm must survive to fire at its next
-opportunity rather than being silently consumed or lost. It does not attempt
-the ordering mutation — a single-threaded host run cannot observe a
-concurrency property — which stays the positional grep's job.
+remaining gap a textual check — however positional — cannot: the Makefile
+splices **all of `SDCardWrite()`**, signature through closing brace, verbatim
+out of the real source and into a tiny compiled-and-RUN harness (no-op
+critical-section and `LOG_E` stand-ins, the five `gSDCardData` fields the
+function touches, and a **mock `SYS_FS_FileWrite` that counts its calls** and
+returns a byte count that is never `-1`). Nothing about the function is
+hand-typed there.
+
+It asserts the EFFECT, on two observables: **fired** → the function's real
+`int` return is `-1` **and zero calls reached the filesystem**; **not fired**
+→ the return is the mock's byte count **and exactly one call** did. Its first
+case is a control that asserts the write *is* reachable, so the "zero writes"
+assertions cannot pass vacuously. Covers: the `injectWriteFailure` mutation
+above, the `UNMOUNT_DISK` gate itself (armed-but-elsewhere must not fire, and
+the write must go through untouched), one-shot consumption, and an arm that
+survives a refused attempt firing at its next opportunity.
+
+That whole-function splice is round **three** of the same defect. Round two
+extracted only as far as `taskEXIT_CRITICAL();` and let the tail close the
+fragment with a hand-written `return injectWriteFailure;` — so the payload
+(`if (injectWriteFailure) { LOG_E(…); writeLen = -1; goto __exit; }`, the real
+write it must skip, and `__exit: return writeLen;`) was never compiled or run,
+and the assertion was on a **local bool**: the same proxy-not-effect shape the
+first two rounds were spent on. Deleting **only** the `goto __exit;` from the
+real source left all eight binaries green while, on hardware, the hook cleared
+its arm, logged "consumed", set `writeLen = -1`, then fell through into the
+real write, which succeeded and overwrote it — fault injection entirely dead,
+a "failed" write silently succeeding, nothing red anywhere. That mutation now
+fails this binary with the return value and the write count in the message.
+Its build-time sanity check on the extraction is deliberately a loose bound
+(a plausible line count, last line `}`) rather than an exact one, because an
+exact count would fail the *build* on the very mutations this binary exists to
+catch by *running* the code — turning a precise behavioural verdict back into
+a text-shape one.
+
+It still does not attempt the ordering mutation — a single-threaded host run
+cannot observe a concurrency property — which stays the positional grep's job.
 
 None of this exercises the real device or hardware timing. Only two of
 `SDCardWrite()`'s five call sites may consume a given arm in practice — the

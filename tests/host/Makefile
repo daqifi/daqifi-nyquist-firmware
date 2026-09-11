@@ -87,30 +87,50 @@ SUSPEND_BIN := run_953_tests
 # That fixes the STRUCTURAL/textual side, but a textual check -- however
 # positional -- is still a PROXY: it proves the shape of the source, not that
 # running it does the right thing. $(FAILNEXT_REAL_BIN) below is the other
-# half: it compiles and RUNS the real, verbatim consume snippet (no
-# hand-typed model) and asserts on its actual behaviour, which is what
-# catches the `injectWriteFailure = true/false` mutation BEHAVIOURALLY rather
-# than by noticing a token went missing.
+# half: it compiles and RUNS the whole real SDCardWrite(), verbatim (no
+# hand-typed model), and asserts on its actual return value and on whether
+# the filesystem write was reached -- which is what catches the
+# `injectWriteFailure = true/false` mutation, and the deletion of the payload
+# block's `goto __exit;`, BEHAVIOURALLY rather than by noticing a token went
+# missing.
 FAILNEXT_BIN := run_981_tests
 SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
 
-# #981 (post-audit): compiles and RUNS the real SDCardWrite() consume
-# snippet -- extracted verbatim from $(SD_MANAGER_SRC) at build time, never
-# hand-typed -- against two minimal host stand-ins
-# (test_981_sd_failnext_real_consume.head.c: no-op critical-section macros,
-# `gFailNextWrite`, and a `gSDCardData.currentProcessState` stand-in with the
-# one enumerator the snippet references). This is a BEHAVIOURAL check, not a
-# textual one: $(FAILNEXT_BIN) above proves the source has the right SHAPE,
-# this proves that shape, when actually executed, computes the right thing.
-# It is the piece that catches "flip `injectWriteFailure = true;` to
-# `= false;`" by observing the wrong return value, not by a token grep --
-# and test_981_sd_failnext_real_consume.tail.c additionally asserts the
-# UNMOUNT_DISK gate itself: armed-but-elsewhere must NOT fire, and the arm
-# must survive to fire at its next (UNMOUNT_DISK) opportunity rather than
-# being silently consumed or lost. See the head file for what is and is not
-# assumed dependency-free, and its comment for why the ORDERING mutation
-# above is deliberately NOT this file's job (a single-threaded host run
-# cannot observe a concurrency property; that stays $(FAILNEXT_BIN)'s).
+# #981 (post-audit): compiles and RUNS the ENTIRE real SDCardWrite() --
+# signature through closing brace, extracted verbatim from $(SD_MANAGER_SRC)
+# at build time, never hand-typed -- against host stand-ins in
+# test_981_sd_failnext_real_consume.head.c (no-op critical-section macros and
+# LOG_E, `gFailNextWrite`, the five `gSDCardData` fields the function touches,
+# and a MOCK SYS_FS_FileWrite that counts its calls and returns a byte count
+# that is never -1). This is a BEHAVIOURAL check, not a textual one:
+# $(FAILNEXT_BIN) above proves the source has the right SHAPE, this proves
+# that shape, when actually executed, produces the right EFFECT.
+#
+# It extracts the whole function because extracting less did not work. The
+# first revision of this target stopped the extraction at
+# `taskEXIT_CRITICAL();` and let the tail file close the spliced fragment with
+# a hand-written `return injectWriteFailure;` -- so the payload
+# (`if (injectWriteFailure) { LOG_E(...); writeLen = -1; goto __exit; }`, the
+# real SYS_FS_FileWrite() it must skip, and the `__exit: return writeLen;`)
+# was never compiled or run, and the assertion was on a LOCAL BOOL. Deleting
+# ONLY the `goto __exit;` from the real source left all eight binaries green
+# while, on hardware, the hook consumed the arm, logged, set writeLen = -1 and
+# then fell through into the real write, which succeeded and overwrote it --
+# fault injection dead, nothing red. Nothing short of compiling the function's
+# actual return path can see that, so now nothing short of it is compiled.
+#
+# The two observables the tail asserts are the function's real int return and
+# the mock's call counter: fired => -1 with ZERO filesystem writes; not fired
+# => the mock's byte count with exactly one. Its first case is a CONTROL that
+# asserts the write IS reachable, so "zero writes" cannot pass vacuously.
+#
+# The stand-ins no longer need per-symbol grep guards the way the old bounded
+# snippet did: with the whole function spliced in, any symbol it gains that is
+# not stubbed is a compile error in the generated file. See the head file for
+# the stubs' fidelity notes (one is load-bearing: the mock must never return
+# -1), and for why the ORDERING mutation is deliberately NOT this file's job
+# (a single-threaded host run cannot observe a concurrency property; that
+# stays $(FAILNEXT_BIN)'s).
 FAILNEXT_REAL_BIN := run_981_real_consume
 
 # #164: JSON_StringEscape.h is header-only and dependency-free for the same
@@ -236,26 +256,29 @@ $(FAILNEXT_BIN): test_981_sd_failnext_hook.c test_framework.h $(SD_MANAGER_SRC) 
 	$(CC) $(CFLAGS) -o $(FAILNEXT_BIN) test_981_sd_failnext_hook.c
 
 # #981 (post-audit): the BEHAVIOURAL half -- see FAILNEXT_REAL_BIN's comment
-# above. Extracts the real consume snippet verbatim, splices it between the
-# checked-in head/tail scaffolding, compiles the result, and RUNS it; a
+# above. Extracts the whole real SDCardWrite() verbatim, splices it between
+# the checked-in head/tail scaffolding, compiles the result, and RUNS it; a
 # non-zero exit fails the build exactly like any other test binary here.
 # `$(SD_MANAGER_SRC)` is a prerequisite so an edit to the real snippet
 # re-triggers this; the head/tail files are prerequisites so an edit to the
 # assertions does too.
 $(FAILNEXT_REAL_BIN): test_981_sd_failnext_real_consume.head.c test_981_sd_failnext_real_consume.tail.c $(SD_MANAGER_SRC) $(RECIPES)
-	@sed -n '/bool injectWriteFailure = false;/,/taskEXIT_CRITICAL();/p' $(SD_MANAGER_SRC) > /tmp/.fw981_real_body.$$$$; \
+	@sed -n '/static int SDCardWrite() {/,/^}/p' $(SD_MANAGER_SRC) > /tmp/.fw981_real_body.$$$$; \
 	 lines=`wc -l < /tmp/.fw981_real_body.$$$$ | tr -d ' '`; \
-	 test "$$lines" = "9" \
-	  || { echo "ERROR: the FAILNext consume snippet in $(SD_MANAGER_SRC) is no"; \
-	       echo "       longer exactly 9 lines (bool decl, ENTER, the 3-line if"; \
-	       echo "       (gFailNextWrite && ...UNMOUNT_DISK) test, clear, inject,"; \
-	       echo "       closing brace, EXIT) -- it has grown, shrunk, or the"; \
-	       echo "       taskEXIT_CRITICAL() this range ends on moved earlier"; \
-	       echo "       than it should (which is itself a symptom of the"; \
-	       echo "       ordering mutation $(FAILNEXT_BIN) also checks)."; \
-	       echo "       test_981_sd_failnext_real_consume.head.c/.tail.c splice"; \
-	       echo "       this exact snippet in as REAL, running code; re-verify"; \
-	       echo "       the shape (got $$lines lines) before adjusting either."; \
+	 last=`tail -1 /tmp/.fw981_real_body.$$$$ | tr -d '[:space:]'`; \
+	 test "$$lines" -ge 20 && test "$$lines" -le 300 && test "$$last" = "}" \
+	  || { echo "ERROR: could not extract SDCardWrite() from $(SD_MANAGER_SRC)."; \
+	       echo "       The range is 'static int SDCardWrite() {' through the"; \
+	       echo "       next line starting in column 0 with '}', i.e. the WHOLE"; \
+	       echo "       function; got $$lines lines ending in '$$last'. Either"; \
+	       echo "       the signature was reworded (0 lines), or the closing"; \
+	       echo "       brace is no longer in column 0 so the range ran to EOF."; \
+	       echo "       DELIBERATELY a loose sanity bound, not an exact count:"; \
+	       echo "       a tight count would fail the BUILD on the very source"; \
+	       echo "       mutations this binary is supposed to catch by RUNNING"; \
+	       echo "       the code, turning a precise behavioural verdict back"; \
+	       echo "       into a text-shape one. See the head file's round-2/3"; \
+	       echo "       history for why that distinction cost two rounds."; \
 	       rm -f /tmp/.fw981_real_body.$$$$; \
 	       exit 1; }; \
 	 cat test_981_sd_failnext_real_consume.head.c /tmp/.fw981_real_body.$$$$ test_981_sd_failnext_real_consume.tail.c > /tmp/.fw981_real_gen.$$$$.c; \
