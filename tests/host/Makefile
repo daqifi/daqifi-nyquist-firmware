@@ -79,27 +79,38 @@ JSONESC_BIN := run_json_escape_tests
 # the success release, and the head of the readiness poll. That is exactly the
 # text the three modelled orderings live in, and nothing else.
 #
-# NOTHING IS STRIPPED. The hash covers the slice's bytes with whitespace runs
-# collapsed, comments included. Reindenting does not fire; rewording a comment
-# inside the slice DOES.
+# THE HASH COVERS THE SLICE'S RAW BYTES. Nothing is stripped, nothing is
+# normalised. Any byte that changes between the anchors changes the hash --
+# including a reworded comment and including reindentation.
 #
-# That is deliberate, and it is the third rule this pin has had. The first two
-# both tried to remove comments before hashing so that comment edits would not
-# fire, and both were defeated -- by a statement written as a leading
-# dereference, by `/* note */ stmt();`, by a backslash-newline continuation that
-# splices a release into a `//` comment at the C level, and by comment markers
-# inside string literals. Each fix closed one class and exposed the next; the
-# remaining ones (character literals, escaped quotes, trigraphs) are the same
-# shape. Recognising comments correctly means lexing C, and a C lexer written in
-# a build recipe will keep having this bug.
+# That is the fourth rule this pin has had, and the previous three all failed
+# the same way: each tried to make some class of "harmless" edit not fire, and
+# each turned out to erase a harmful edit too.
 #
-# So the rule now has no notion of a comment at all. There is nothing left to
-# bypass: any edit to the slice's bytes changes the hash. The cost is that
-# rewording the (long, load-bearing) comments in this slice fires the tripwire.
-# That cost is paid in the RIGHT direction -- a false fire costs one re-read and
-# a re-derived SHA, while a false pass costs an undetected change to the code
-# this model exists to track. All four bypasses above are regression-tested by
-# the mutation cases recorded in the PR.
+#   1. line-anchored comment strip  -- erased a leading-dereference statement,
+#                                      and the code half of /* note */ stmt();
+#   2. awk comment-state machine    -- erased a statement spliced into a //
+#                                      comment by a backslash-newline, and one
+#                                      hidden by comment markers inside string
+#                                      literals
+#   3. whitespace-run collapse      -- erased whitespace edits INSIDE string
+#                                      literals, which change what the firmware
+#                                      logs: padding a message past Logger's
+#                                      128-byte line truncates away its reason
+#
+# Rules 1 and 2 were about comments and rule 3 was not, which is the point --
+# the defect was never "our comment parser is wrong", it was "we are deciding
+# which edits do not matter, and we keep being wrong about that". A tripwire
+# does not get to make that judgement. So it no longer makes any.
+#
+# COST, and it is real: reindenting the slice fires, and rewording a comment in
+# it fires. 59 of the slice's 89 lines are comment, so this will fire on edits
+# that turn out to be harmless. Each such fire costs one re-read and a
+# re-derived SHA. The alternative, three times running, was a silent pass over
+# an edit that mattered. Re-derive with:
+#
+#   sed -n '/^[[:space:]]*<BEGIN anchor>/,/^[[:space:]]*<END anchor>/p' \
+#       firmware/src/services/SCPI/SCPIInterface.c | sha256sum
 #
 # The END anchor carries the poll's `readyWait < 500` bound, which the model
 # copies as MODEL_POLL_MAX. A change to that number fails the anchor check by
@@ -108,7 +119,7 @@ START_BIN := run_998_tests
 START_CLAIMED_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
 START_CLAIMED_BEGIN := if (!sd_card_manager_TryClaim()) {
 START_CLAIMED_END := while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
-START_CLAIMED_SHA := 007859dfb585748c35374a3b0c3ad2a08648cda646c5f46bbe0e400f434b6559
+START_CLAIMED_SHA := 188a8d9e5cc6a03e1998cefb9e506dac97a2b0f73f3c035138095187dc682942
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
@@ -184,7 +195,7 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 	       echo "       (Reported separately so it is not read as a drift failure.)"; \
 	       exit 1; }
 	@got=$$(sed -n '/^[[:space:]]*$(START_CLAIMED_BEGIN)/,/^[[:space:]]*$(START_CLAIMED_END)/p' $(START_CLAIMED_SRC) \
-	        | tr -s '[:space:]' ' ' | sha256sum | cut -d' ' -f1); \
+	        | sha256sum | cut -d' ' -f1); \
 	 [ "$$got" = "$(START_CLAIMED_SHA)" ] \
 	  || { echo "ERROR: the CODE of SCPI_StartStreamingClaimed()'s SD arm has changed"; \
 	       echo "       in $(START_CLAIMED_SRC)."; \

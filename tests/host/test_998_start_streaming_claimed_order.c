@@ -11,7 +11,8 @@
  * (one `static scpi_result_t` body with more than twenty return sites), so
  * what is modelled, and what the Makefile pins by content hash, is the slice
  * from its `if (!sd_card_manager_TryClaim()) {` line to the head of its
- * readiness poll. Comments stripped and whitespace normalised, that slice is:
+ * readiness poll. With comments elided for readability here (the pin itself
+ * hashes them), that slice is:
  *
  *   if (!sd_card_manager_TryClaim()) {
  *       <clear OPER bits, unpublish the interface, LOG_E, SCPI_ErrorPush>
@@ -168,10 +169,14 @@
  *   changes, forcing the review to happen again instead of letting the model
  *   rot silently. It is a tripwire, not a checker.
  *
- * * **The pin is whitespace- and comment-insensitive by construction** (same
- *   pipeline as #971's): whole-line comments are dropped and whitespace runs
- *   are collapsed before hashing, so reindenting the slice or rewording its
- *   comments deliberately does NOT fire. Any change to the code's tokens does.
+ * * **The pin hashes the slice's RAW BYTES.** It is deliberately NOT
+ *   whitespace- or comment-insensitive, and an earlier revision of this note
+ *   said it was. Three successive attempts to exempt "harmless" edits each
+ *   also exempted a harmful one -- see the Makefile for the three and what
+ *   each erased. So reindenting the slice fires, and rewording a comment in it
+ *   fires. If you get a drift failure for an edit that turns out not to matter,
+ *   that is the intended cost: re-read the slice against this model and
+ *   re-derive START_CLAIMED_SHA.
  *
  * * **It does not reproduce concurrency.** There is no scheduler, no
  *   preemption, no interrupts, no critical sections and no cache. The

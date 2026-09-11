@@ -95,8 +95,9 @@ What it explicitly does **not** establish: it is not the real function, it is
 not concurrency (no scheduler, no preemption -- a model of a race can show an
 ordering is unsound, never that one is safe on PIC32MZ), and it does not
 establish the census of arm sites. Because it models rather than includes, the
-Makefile pins the real slice with a **sha256 of its text** (whole-line comments
-dropped, whitespace collapsed) between two named anchor lines, and fails the
+Makefile pins the real slice with a **sha256 of its raw bytes** between two
+named anchor lines -- nothing stripped, nothing normalised, so a reworded
+comment or a reindent fires it too -- and fails the
 build with four distinct messages -- anchor missing/duplicated, anchors out of
 order, `sha256sum` absent, or the code changed. The hash is a tripwire asking
 for a review, not a verdict that the code is right; a textual check of the
