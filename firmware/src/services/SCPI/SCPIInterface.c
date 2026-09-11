@@ -8560,6 +8560,12 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:DIAGnostic:ADC?", .callback = SCPI_DiagADCGet,},
     {.pattern = "SYSTem:STORage:SD:ENAble", .callback = SCPI_StorageSDEnableSet},
     {.pattern = "SYSTem:STORage:SD:ENAble?", .callback = SCPI_StorageSDEnableGet},
+    /* #981: BENCH/TEST-ONLY fault injection -- arms a one-shot that forces the
+     * next real SD write to fail, so the write-failure accounting paths can be
+     * regression-tested without running the card out of space. Ships in every
+     * build, same as SYST:STR:BENCHmark above; see SCPIStorageSD.c. */
+    {.pattern = "SYSTem:STORage:SD:FAILNext", .callback = SCPI_StorageSDFailNextSet},
+    {.pattern = "SYSTem:STORage:SD:FAILNext?", .callback = SCPI_StorageSDFailNextGet},
     {.pattern = "SYSTem:STORage:SD:DELete", .callback = SCPI_StorageSDDelete},
     {.pattern = "SYSTem:STORage:SD:FORmat", .callback = SCPI_StorageSDFormat},
     {.pattern = "SYSTem:STORage:SD:FORmat?", .callback = SCPI_StorageSDFormatQuery},
