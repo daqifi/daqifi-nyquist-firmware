@@ -723,6 +723,93 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
 }
 
 
+/* #947: total budget SCPI_SysInfoTextGet may spend INSIDE its hold of the
+ * shared SCPI response buffer. See SysInfoText_Write below for the derivation
+ * and for why a budget exists at all on top of the short-write check. */
+#define SCPI_SYSINFO_WRITE_BUDGET_MS    2000U
+
+/* #947: one guarded transport write for SCPI_SysInfoTextGet.
+ *
+ * THE BUG. SCPI_SysInfoTextGet holds gScpiRespMutex (the single shared 2048 B
+ * SCPI response scratch, #347) from one take at entry to one give at exit, and
+ * emits its reply as ~90 separate interface->write calls in between (37 written
+ * out in the source, plus one or two per enabled ADC channel and one per DIO
+ * bit). On BOTH transports interface->write is SCPI_WriteWithRetry
+ * (SCPI_USB_Write / SCPI_TCP_Write), which against a host that has stopped
+ * reading spins SCPI_WRITE_MAX_RETRIES(200) x SCPI_WRITE_RETRY_DELAY_MS(5)
+ * ~= 1 s before giving up and returning short. That bound is PER CALL, and
+ * every return value here was discarded -- so a stalled host bought ~90
+ * consecutive 1 s waits, ~90 s of held mutex, and every other SCPI callback on
+ * EITHER transport (the 16 OTHER SCPI_ResponseBuf_Take/TakeTimeout sites
+ * across SCPIInterface.c, SCPILAN.c and SCPIStorageSD.c) queued behind it for
+ * the same ~90 s.
+ *
+ * THE FIX, in two parts, both enforced here so no call site can forget one:
+ *   1. Short write => abort. SCPI_WriteWithRetry leaves its loop only on
+ *      completion or on exhausting the retry count, so a short return means the
+ *      full ~1 s budget was already spent and the transport is not draining.
+ *      Continuing to the next section would buy another ~1 s for bytes that are
+ *      equally undeliverable. Abort instead: worst case becomes ONE retry
+ *      budget, not ninety.
+ *   2. Cumulative deadline. (1) alone does not actually bound the hold: a write
+ *      that COMPLETES on its last allowed retry returns full length and never
+ *      trips it, so a transport draining at exactly the trickle rate that lets
+ *      each write finish just inside its ~1 s budget still reaches ~90 s with
+ *      (1) in place. A host that drains normally spends microseconds per write
+ *      here (the write
+ *      is a memcpy into the transport's multi-kilobyte circular buffer), so
+ *      SCPI_SYSINFO_WRITE_BUDGET_MS is three orders of magnitude above the
+ *      healthy cost and cannot fire on a healthy host. The check is BEFORE the
+ *      write, so the true worst-case hold is budget + one retry budget ~= 3 s.
+ *
+ * startTick is sampled AFTER the take, so this budget bounds the HOLD only and
+ * the (unbounded, portMAX_DELAY) wait for the buffer spends none of it. That is
+ * deliberately the opposite of #943's SD:BENCHmark deadline, which is sampled
+ * before its take because there the wait and the write are two stages of one
+ * per-chunk progress deadline. Here the wait is somebody else's hold, and
+ * charging it to this callback's budget would make SYSTem:INFo? abort for a
+ * reason that has nothing to do with its own transport.
+ *
+ * REJECTED: the shape #947 also offered, "take, snprintf into the shared
+ * buffer, GIVE, then write". It is unsafe as stated. SCPI_WriteWithRetry
+ * re-reads `data` on every retry -- writeFn(data + written, len - written) --
+ * across vTaskDelay sleeps. With the mutex already given back, a peer SCPI
+ * callback on the other transport takes gScpiRespBuf and snprintf's over it
+ * while this write is still mid-retry, so the tail of our reply goes out as
+ * somebody else's bytes: real torn output, on the wire, replacing a latency
+ * problem with a correctness one. Making it safe needs a private per-chunk copy
+ * of every section, which is exactly the response-sized stack allocation the
+ * shared buffer exists to prevent (#347 -- app_WifiTask has ~2.9 KB of
+ * headroom). Keeping the single take/give pair and shrinking what happens
+ * between them costs nothing and moves no lock.
+ *
+ * Byte-for-byte unchanged against a healthy host: every write completes first
+ * try, neither guard fires, and the same bytes go out in the same order.
+ *
+ * @return true if the whole of [data, data+len) reached the transport.
+ */
+static bool SysInfoText_Write(scpi_t * context, TickType_t startTick,
+                              const char * data, size_t len) {
+    /* Unsigned tick subtraction, so this is correct across the 32-bit
+     * xTaskGetTickCount wrap (same idiom as the stale-rail age below). */
+    if ((xTaskGetTickCount() - startTick) >=
+            pdMS_TO_TICKS(SCPI_SYSINFO_WRITE_BUDGET_MS)) {
+        return false;
+    }
+    return (context->interface->write(context, data, len) == len);
+}
+
+/* Capture-by-name on `context` and `startTick`, which every call site has in
+ * scope, so each of the ~37 source-level writes stays a single legible line
+ * instead of a three-line if/goto. #undef'd immediately after the function so
+ * it cannot leak into an unrelated callback that has no such deadline. */
+#define SYSINFO_WRITE_OR_ABORT(d, l)                                          \
+    do {                                                                      \
+        if (!SysInfoText_Write(context, startTick, (d), (l))) {               \
+            goto __stalled_exit;                                              \
+        }                                                                     \
+    } while (0)
+
 /**
  * SCPI Callback: Returns system information in human-readable text format
  * @return SCPI_RES_OK on success
@@ -749,14 +836,21 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #947: start the held-mutex budget HERE, after the take — see
+     * SysInfoText_Write. Every write below goes through SYSINFO_WRITE_OR_ABORT,
+     * which jumps to __stalled_exit on the first write the transport cannot
+     * take; nothing in this function may call context->interface->write
+     * directly once the buffer is held. */
+    TickType_t startTick = xTaskGetTickCount();
+
     // Header with device identification
     snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "=== DAQiFi Nyquist%d | HW:%s FW:%s ===\r\n",
         pBoardConfig->BoardVariant, pBoardConfig->boardHardwareRev, pBoardConfig->boardFirmwareRev);
-    context->interface->write(context, buffer, strlen(buffer));
+    SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Network Section
     const char* netHeader = "[Network]\r\n";
-    context->interface->write(context, netHeader, strlen(netHeader));
+    SYSINFO_WRITE_OR_ABORT(netHeader, strlen(netHeader));
     
     // WiFi status - check actual driver state
     wifi_status_t wifiStatus = wifi_manager_GetWiFiStatus();
@@ -773,20 +867,20 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  2.4GHz: On | Mode: %s | SSID: %s\r\n", 
             pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP ? "AP" : "STA",
             pWifiSettings->ssid);
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
         
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  IP: %s | Port: %d | Security: %s\r\n", 
             ipStr, pWifiSettings->tcpPort,
             pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN ? "Open" : "WPA");
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     } else {
         const char* wifiOff = "  2.4GHz: Off\r\n";
-        context->interface->write(context, wifiOff, strlen(wifiOff));
+        SYSINFO_WRITE_OR_ABORT(wifiOff, strlen(wifiOff));
     }
     
     // Connectivity Section
     const char* connHeader = "[Connectivity]\r\n";
-    context->interface->write(context, connHeader, strlen(connHeader));
+    SYSINFO_WRITE_OR_ABORT(connHeader, strlen(connHeader));
     bool hasUSBPower = (pBoardData->PowerData.externalPowerSource == USB_100MA_EXT_POWER ||
                         pBoardData->PowerData.externalPowerSource == USB_500MA_EXT_POWER);
     bool vbusDetected = UsbCdc_IsVbusDetected();
@@ -807,11 +901,11 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         pBoardData->PowerData.externalPowerSource != NO_EXT_POWER ? "Present" : "None",
         vbusDetected ? "Yes" : "No",
         vbusLevelStr);
-    context->interface->write(context, buffer, strlen(buffer));
+    SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Power Section
     const char* powHeader = "[Power]\r\n";
-    context->interface->write(context, powHeader, strlen(powHeader));
+    SYSINFO_WRITE_OR_ABORT(powHeader, strlen(powHeader));
     const char* powerState = "Unknown";
     switch(pBoardData->PowerData.powerState) {
         case POWERED_UP: powerState = "Run"; break;
@@ -831,7 +925,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         pBoardData->PowerData.powerState,
         pBoardData->PowerData.USBSleep ? "Sleep" : "Active",
         shutdownStatus);
-    context->interface->write(context, buffer, strlen(buffer));
+    SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Display battery info appropriately based on monitoring state
     if (pBoardData->PowerData.powerState == STANDBY) {
@@ -871,11 +965,11 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             pBoardData->PowerData.battLow ? "[Low]" : "[Ok]",
             chargeStatus);
     }
-    context->interface->write(context, buffer, strlen(buffer));
+    SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Status Section
     const char* statHeader = "[Status]\r\n";
-    context->interface->write(context, statHeader, strlen(statHeader));
+    SYSINFO_WRITE_OR_ABORT(statHeader, strlen(statHeader));
     
     // Channel status - separate user and internal ADCs by channel ID
     // User channels have IDs 0-15, internal monitoring channels have IDs >= 248
@@ -920,23 +1014,27 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         userAdcEnabled, userAdcTotal,
         internalAdcEnabled, internalAdcTotal,
         dioInputs, pDIOConfig ? pDIOConfig->Size : 0);
-    context->interface->write(context, buffer, strlen(buffer));
+    SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Show which specific user ADC channels are enabled
     if (userAdcEnabled > 0 && pAInConfig && pBoardConfigAInChannels) {
-        context->interface->write(context, "  Enabled user ch: ", 19);
+        SYSINFO_WRITE_OR_ABORT("  Enabled user ch: ", 19);
         bool first = true;
         for (int i = 0; i < pAInConfig->Size; i++) {
             uint8_t channelId = pBoardConfigAInChannels->Data[i].DaqifiAdcChannelId;
             // Only show user channels (ID < 248, not internal monitoring)
             if (channelId < ADC_CHANNEL_3_3V && pAInConfig->Data[i].IsEnabled) {
-                if (!first) context->interface->write(context, ",", 1);
+                /* Braced deliberately: SYSINFO_WRITE_OR_ABORT can transfer
+                 * control, which must not hide inside a braceless if. */
+                if (!first) {
+                    SYSINFO_WRITE_OR_ABORT(",", 1);
+                }
                 snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "%d", channelId);
-                context->interface->write(context, buffer, strlen(buffer));
+                SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
                 first = false;
             }
         }
-        context->interface->write(context, "\r\n", 2);
+        SYSINFO_WRITE_OR_ABORT("\r\n", 2);
     }
     
     // DIO pin states
@@ -948,17 +1046,17 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         if (DIO_ReadSampleByMask(&sample, channelMask)) {
             // Debug: show raw value
             snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  DIO raw: %u (0x%04X)\r\n", sample.Values, sample.Values);
-            context->interface->write(context, buffer, strlen(buffer));
+            SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
             
-            context->interface->write(context, "  DIO state: ", 13);
+            SYSINFO_WRITE_OR_ABORT("  DIO state: ", 13);
             // Display the state of each pin
             for (int i = 0; i < pDIOConfig->Size && i < 16; i++) {
                 if (i == 8) {
-                    context->interface->write(context, " ", 1); // Space between bytes
+                    SYSINFO_WRITE_OR_ABORT(" ", 1); // Space between bytes
                 }
-                context->interface->write(context, (sample.Values & (1 << i)) ? "1" : "0", 1);
+                SYSINFO_WRITE_OR_ABORT((sample.Values & (1 << i)) ? "1" : "0", 1);
             }
-            context->interface->write(context, "\r\n", 2);
+            SYSINFO_WRITE_OR_ABORT("\r\n", 2);
         }
     }
     
@@ -971,22 +1069,22 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  Streaming: %s\r\n",
         (canStream && pRunTimeStreamConfig && pRunTimeStreamConfig->IsEnabled) ? "Active" : 
         (!canStream ? "Disabled" : "Idle"));
-    context->interface->write(context, buffer, strlen(buffer));
+    SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Battery Diagnostics Section
     const char* battDiagHeader = "\r\n[Battery Diagnostics]\r\n";
-    context->interface->write(context, battDiagHeader, strlen(battDiagHeader));
+    SYSINFO_WRITE_OR_ABORT(battDiagHeader, strlen(battDiagHeader));
     
     // Battery voltage and charge from ADC
     if (pBoardData->PowerData.powerState == STANDBY) {
         // Battery monitoring inactive in STANDBY
         const char* adcInactive = "  ADC: -- | --\r\n";
-        context->interface->write(context, adcInactive, strlen(adcInactive));
+        SYSINFO_WRITE_OR_ABORT(adcInactive, strlen(adcInactive));
     } else {
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  ADC: %d%% | %.2fV\r\n",
             pBoardData->PowerData.chargePct,
             pBoardData->PowerData.battVoltage);
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     }
     
     // BQ24297 status - get fresh data
@@ -1001,7 +1099,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  BQ24297: Battery %s | Charging: %s\r\n",
             pBQ24297Data->status.batPresent ? "Present" : "Not Present",
             (pBQ24297Data->status.chgStat < 4) ? chgStatStr[pBQ24297Data->status.chgStat] : "Unknown");
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
         
         // Power conditions with clear explanations
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  vsysStat: %d (Battery >3.0V: %s) | pgStat: %d (Ext power: %s)\r\n",
@@ -1009,7 +1107,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             pBQ24297Data->status.vsysStat ? "No" : "Yes",
             pBQ24297Data->status.pgStat,
             pBQ24297Data->status.pgStat ? "Yes" : "No");
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
         
         // NTC and current limit
         const char* ntcStr[] = {"Ok", "Hot", "Cold (Battery disconnected?)", "Hot/Cold"};
@@ -1023,7 +1121,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             (pBQ24297Data->status.inLim < 8) ? iLimStr[pBQ24297Data->status.inLim] : "Unknown",
             pBQ24297Data->status.otg ? "On" : "Off",
             otgGpioState ? "High" : "Low");
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
         
         // Read REG01 and REG07 for detailed status
         uint8_t reg01 = 0, reg07 = 0;
@@ -1047,22 +1145,22 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
                 reg01Ok ? "OK" : "ERR",
                 reg07Ok ? "OK" : "ERR");
         }
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
         
         // Power-up readiness - the key diagnostic info
         bool canPowerUp = (!pBQ24297Data->status.vsysStat || pBQ24297Data->status.pgStat);
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  >>> Power-up ready: %s %s\r\n",
             canPowerUp ? "Yes" : "No",
             canPowerUp ? "" : "(Battery <3.0V and no external power)");
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     } else {
-        context->interface->write(context, "  BQ24297: Not initialized\r\n", 28);
+        SYSINFO_WRITE_OR_ABORT("  BQ24297: Not initialized\r\n", 28);
     }
 
     // Voltage Rail Monitoring Section - only when powered up
     if (pBoardData->PowerData.powerState != STANDBY) {
         const char* voltHeader = "\r\n[Voltage Rails]\r\n";
-        context->interface->write(context, voltHeader, strlen(voltHeader));
+        SYSINFO_WRITE_OR_ABORT(voltHeader, strlen(voltHeader));
 
         // Read latest ADC samples for internal monitoring channels
         // Use ADC_ConvertToVoltage for proper conversion based on channel type and config
@@ -1177,16 +1275,16 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             // Display power rails
             snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  +3.3V: %s | +5V: %s | +10V: %s\r\n",
                 str3_3, str5, str10);
-            context->interface->write(context, buffer, strlen(buffer));
+            SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
 
             snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  VSYS: %s | VBATT: %s\r\n",
                 strSys, strBatt);
-            context->interface->write(context, buffer, strlen(buffer));
+            SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
 
             // Display reference voltages
             snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  2.5V Ref: %s | 5V Ref: %s\r\n",
                 str2_5Ref, str5Ref);
-            context->interface->write(context, buffer, strlen(buffer));
+            SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
 
             // Stale data indicator: all monitoring channels are scanned
             // together by MODULE7, so a single age applies to all rails.
@@ -1203,17 +1301,41 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
                              "  * Stale: last update %lus ago%s\r\n",
                              (unsigned long)ageSec,
                              diagOff ? " (diag scanning disabled)" : "");
-                    context->interface->write(context, buffer, strlen(buffer));
+                    SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
                 }
             }
         } else {
-            context->interface->write(context, "  Voltage monitoring unavailable\r\n", 34);
+            SYSINFO_WRITE_OR_ABORT("  Voltage monitoring unavailable\r\n", 34);
         }
     }
 
     SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
+
+    /* #947: the transport would not take a section of the reply. Whatever was
+     * already handed to it stays on the wire, so the client sees a reply
+     * truncated at a section boundary (or mid-line, inside the channel/DIO
+     * loops) followed by the transport's own "**ERROR: -200" line. That is
+     * accepted: the bytes we are abandoning are undeliverable by definition --
+     * the transport just refused them for a full ~1 s retry budget -- and this
+     * is a human-readable diagnostic query, not a parsed data path. The
+     * alternative, spending ~1 s per remaining section on bytes nobody can
+     * read, is what #947 is.
+     *
+     * Give BEFORE SCPI_ExecutionError, not after. ErrorPush -> SCPI_ErrorEmit
+     * -> context->interface->error emits the error line through the SAME
+     * retry-bounded transport write (error.c:193, wifi_tcp_server.c
+     * SCPI_TCP_Error), so calling it while still holding gScpiRespMutex would
+     * add another ~1 s to the hold this whole change exists to shrink. Outside
+     * the hold it costs only this task's own time. */
+__stalled_exit:
+    SCPI_ResponseBuf_Give();
+    SCPI_ExecutionError(context,
+            "SYSTem:INFo?: transport write stalled, reply truncated");
+    return SCPI_RES_ERR;
 }
+
+#undef SYSINFO_WRITE_OR_ABORT
 
 /**
  * Gets the system log

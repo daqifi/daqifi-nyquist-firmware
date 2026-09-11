@@ -72,6 +72,24 @@ high byte would make the whole JSON stream invalid UTF-8), the `inLen` bound
 wholesale rather than truncating mid-escape, the exact worst-case sizing
 `JSON_Encoder.c` allocates on its stack, and NULL/zero-size safety.
 
+`test_947_sysinfo_write_abort.c` covers the shared-response-buffer hold inside
+`SYSTem:INFo?` (`SCPI_SysInfoTextGet`, issue #947). Same situation as #943:
+`SCPIInterface.c` is not includable on the host, so the test re-implements
+`SCPI_WriteWithRetry`'s loop and the fix's two guards (short-write abort,
+cumulative deadline) against a mock clock and mock transport, and compares
+pre-#947 / post-#947 / a "guard 1 only" mutation on identical inputs. The
+central claim it proves: the short-write check alone does **not** bound the
+hold — a transport that always eventually accepts every write, but only after
+consuming most of its own retry budget each time, never trips it, and reaches
+the same ~90 s-class hazard the old code had. Only the cumulative deadline
+(`SCPI_SYSINFO_WRITE_BUDGET_MS`) catches that shape. Also covered: a healthy
+host sends every write with zero delay in both the old and new shapes (no
+reply-content change), and the deadline's tick-counter-wrap safety.
+
+Three firmware constants are a copy here (the two shared `SCPI_WriteWithRetry`
+retry constants, plus the new per-callback budget). The Makefile target greps
+all three out of `SCPIInterface.c` and **fails the build** if any drifts.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a

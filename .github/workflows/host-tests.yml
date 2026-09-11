@@ -61,6 +61,11 @@ name: host-tests
 #     "refactor escapes the trigger" gap without dragging in every unrelated
 #     services/ file (streaming.c, wifi_manager.c, sd_card_manager.c, the
 #     whole SCPI/ subdirectory, ...).
+#   - test_947_sysinfo_write_abort.c: greps SCPIInterface.c for three
+#     constants (the two shared SCPI_WriteWithRetry retry constants plus the
+#     new per-callback SCPI_SYSINFO_WRITE_BUDGET_MS) and fails the build if
+#     any drifts. Already covered by the existing 'firmware/src/services/SCPI/**'
+#     entry above -- no new path needed.
 
 on:
   pull_request:
