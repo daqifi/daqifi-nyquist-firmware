@@ -80,13 +80,34 @@ def extract(text, signature):
     cannot open or close the body, and the ORIGINAL text is what gets returned
     and hashed.
     """
-    start = text.find(signature)
-    if start == -1:
-        return None
     masked = mask(text)
-    open_at = masked.find("{", start)
-    if open_at == -1:
-        return None
+    at = 0
+    while True:
+        start = text.find(signature, at)
+        if start == -1:
+            return None       # no DEFINITION anywhere: fail closed
+        # A match inside a comment or a string literal is not a declaration of
+        # anything. `mask()` blanks both, length-preservingly, so a blanked
+        # slice is exactly that case -- and binding it to the next `{` would
+        # hash whichever function happens to follow the mention.
+        if not masked[start:start + len(signature)].strip():
+            at = start + 1
+            continue
+        open_at = masked.find("{", start)
+        if open_at == -1:
+            return None
+        # A FORWARD DECLARATION, not a definition: the signature is terminated
+        # by `;` before any body opens. Taking the next `{` anyway binds the
+        # pin to an UNRELATED function, and the damage is silent and permanent
+        # -- once the pin is updated to that stranger's digest, every later
+        # edit to the real helper is invisible to the guard whose entire job is
+        # to see edits (#976 review). A parameter list cannot contain `;` in C,
+        # so the first one after the signature settles which this is.
+        semi = masked.find(";", start)
+        if semi != -1 and semi < open_at:
+            at = start + len(signature)
+            continue
+        break
     depth, i, n = 0, open_at, len(text)
     while i < n:
         ch = masked[i]
@@ -151,6 +172,20 @@ _SELF_TEST_CASES = (
     ("a comment containing a quote does not swallow the rest",
      'static bool F(void)\n{\n    /* don\'t */\n    int keep = 1;\n    return keep;\n}\n',
      "static bool F(", "keep", None),
+    # A prototype ahead of the definition is ORDINARY C, not an exotic shape:
+    # the pin binds by a signature PREFIX, so without the semicolon test it
+    # would hash `Intervening` and then never see a change to the real helper
+    # again (#976 review).
+    ("a forward declaration does not bind the pin to the next function",
+     'static bool F(void);\n'
+     'static bool Intervening(void)\n{\n    int decoy = 1;\n    return decoy;\n}\n'
+     'static bool F(void)\n{\n    int keep = 1;\n    return keep;\n}\n',
+     "static bool F(", "keep", "decoy"),
+    ("the signature mentioned in a COMMENT does not bind either",
+     '/* see static bool F( below */\n'
+     'static bool Intervening(void)\n{\n    int decoy = 1;\n    return decoy;\n}\n'
+     'static bool F(void)\n{\n    int keep = 1;\n    return keep;\n}\n',
+     "static bool F(", "keep", "decoy"),
     ("comments are removed from what is hashed",
      'static bool F(void)\n{\n    /* SECRET */\n    return 1;\n}\n',
      "static bool F(", "return", "SECRET"),
@@ -181,6 +216,12 @@ def self_test():
         bad.append("a signature that is not present must extract nothing")
     if extract("static bool F(void)\n{\n    return 1;\n", "static bool F(") is not None:
         bad.append("an unbalanced body must refuse rather than hash a prefix")
+    # A DECLARATION with no definition anywhere must fail CLOSED. Returning
+    # the next function's body would be worse than returning nothing: nothing
+    # stops the build, a stranger's digest passes it.
+    if extract("static bool F(void);\nstatic bool G(void)\n{\n    return 1;\n}\n",
+               "static bool F(") is not None:
+        bad.append("a prototype with no definition must extract nothing")
 
     for b in bad:
         print("  - %s" % b)
