@@ -207,7 +207,17 @@ adds a new file:
    - append itself to the shared accumulators: `TESTS += $(TEST_943_BIN)`,
      and `CLEAN_EXTRA += <path>` for any file the recipe generates beyond the
      binary itself (a UUT copy, a generated header — see
-     `124-circularbuffer.mk` and `1000-sd-log-arm-budget.mk`).
+     `124-circularbuffer.mk` and `1000-sd-log-arm-budget.mk`);
+   - **claim the source it compiles**: `TEST_SOURCES_CLAIMED +=
+     test_943_bench_stall_bound.c`. This is not optional and the build refuses
+     without it, naming your file as UNCLAIMED. `Makefile` compares the set of
+     claimed sources against the `test_*.c` files on disk, which is how a
+     fragment that is deleted, duplicated or pointed at the wrong source gets
+     caught instead of silently dropping a suite — a count comparison let
+     exactly that through, and the comment beside the guard records it. Claim
+     the source your recipe compiles; do not derive it from your filename,
+     because that mapping is not uniform (`124-circularbuffer.mk` builds
+     `test_circularbuffer.c`).
 
 `Makefile` `include`s every `tests/*.mk` it finds (`$(sort $(wildcard
 tests/*.mk))`, so inclusion order — and therefore `make run`'s test order —

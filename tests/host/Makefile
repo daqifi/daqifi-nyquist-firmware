@@ -79,6 +79,25 @@ TEST_SOURCES_CLAIMED :=
 FRAGMENTS := $(sort $(wildcard tests/*.mk))
 include $(FRAGMENTS)
 
+# `make clean` MUST WORK IN AN INCONSISTENT TREE, and the guards below are
+# parse-time $(error)s, which abort every goal including clean.
+#
+# That matters here specifically, because the scenario this PR exists to survive
+# IS the inconsistent tree: a fragment dropped or renamed by a merge. Before
+# this, `make clean` in that state failed with the same error as `make run`, so
+# the orphaned binary could only be removed by hand -- a recovery path broken in
+# exactly the case the recoverability is for. The monolithic Makefile had no
+# $(error) at all, so this was a regression against it. Found by the #1040
+# pre-merge audit, which was asked to look at it.
+#
+# CLEAN_ONLY is set only when the goals are EXACTLY clean (one or more times).
+# A bare `make` has no goals and must NOT bypass anything -- .DEFAULT_GOAL is
+# run. `make clean run` must not bypass either, which is why this filters the
+# whole goal list rather than testing for clean's presence.
+CLEAN_ONLY := $(if $(MAKECMDGOALS),$(if $(filter-out clean,$(MAKECMDGOALS)),,yes),)
+
+ifeq ($(CLEAN_ONLY),)
+
 # REFUSE A SUITE THAT CANNOT FAIL.
 #
 # `run:` takes its prerequisites from $(TESTS), which the fragments append to.
@@ -167,6 +186,8 @@ $(error $$(TESTS) registers a binary more than once, so `make run` would run it 
 twice and mask a missing suite. Registered: $(TESTS))
 endif
 
+endif   # CLEAN_ONLY
+
 # Every suite, in whatever order $(sort $(wildcard tests/*.mk)) included the
 # fragments (lexicographic by filename — see this directory's README.md).
 # `make run` builds every binary in $(TESTS) as a prerequisite (a failed
@@ -179,7 +200,19 @@ run: $(TESTS)
 	    echo "       success for a run that executed nothing."; exit 1; }
 	@for t in $(TESTS); do echo "./$$t"; ./$$t || exit 1; done
 
+# The second rm sweeps any binary no fragment claims any more. $(TESTS) is built
+# from the fragments, so a dropped fragment's binary is invisible to the first
+# one -- and that is the state this target has to be able to clean. `run_*` is
+# exactly the suite binaries by convention and is what .gitignore lists; nothing
+# else in this directory matches it.
+#
+# These lines are make comments, not recipe lines. A `#` INSIDE a recipe is
+# handed to the shell, so make expands it first and echoes it: the first draft
+# put this text in the recipe and `make clean` printed the whole comment with
+# $(TESTS) expanded into the middle of a sentence. Caught by reading the output
+# of the mutation proof rather than the diff.
 clean:
 	rm -f $(TESTS) $(CLEAN_EXTRA)
+	rm -f run_*
 
 .PHONY: run clean
