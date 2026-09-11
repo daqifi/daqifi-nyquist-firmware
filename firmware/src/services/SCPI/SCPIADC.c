@@ -1210,7 +1210,21 @@ scpi_result_t SCPI_ADCChanCalmGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    SCPI_ResultDouble(context, pRuntimeAInChannels->Data[index].CalM);
+    // #904: CalM is a 64-bit double, so a bare read is two 32-bit loads on
+    // PIC32MZ (CLAUDE.md atomicity rules) and a concurrent setter on the
+    // OTHER SCPI transport (chanCALM/LOADcal/LOADFcal/USECal, all claim-
+    // guarded against each other but not against this reader) can land
+    // between them and hand back a value that existed in neither the old
+    // nor the new coefficient. Copy under a critical section, then format
+    // the local outside it -- do NOT take the streaming config-change claim
+    // here, which would gratuitously refuse this query mid-stream for no
+    // corruption risk (queries read and cannot corrupt a partition; see the
+    // comment on CalSaveCommon below for why the SAVE/LOAD commands that
+    // mutate this array do take the claim while this pure reader does not).
+    taskENTER_CRITICAL();
+    double calM = pRuntimeAInChannels->Data[index].CalM;
+    taskEXIT_CRITICAL();
+    SCPI_ResultDouble(context, calM);
     return SCPI_RES_OK;
 }
 
@@ -1235,7 +1249,13 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    SCPI_ResultDouble(context, pRuntimeAInChannels->Data[index].CalB);
+    // #904: same torn-read hazard as SCPI_ADCChanCalmGet above, same fix --
+    // see that function's comment for the full reasoning (64-bit read on
+    // PIC32MZ, exempt from the streaming claim as a pure query).
+    taskENTER_CRITICAL();
+    double calB = pRuntimeAInChannels->Data[index].CalB;
+    taskEXIT_CRITICAL();
+    SCPI_ResultDouble(context, calB);
     return SCPI_RES_OK;
 }
 
