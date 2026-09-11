@@ -8597,7 +8597,8 @@ scpi_error_t scpi_error_queue_data[SCPI_ERROR_QUEUE_SIZE];
 
 /* #1004: total time SCPI_Help may spend writing while it holds the shared
  * SCPI response buffer (gScpiRespMutex, #347). Same budget and same
- * reasoning as #995's SCPI_CMDHISTORY_WRITE_BUDGET_MS: generous against a
+ * reasoning as the SCPI_CMDHISTORY_WRITE_BUDGET_MS #995 proposes on the
+ * still-open PR #1008 -- that constant is NOT in this tree: generous against a
  * normally-reading host (HELP's whole reply is a few KB against a 16 KB
  * USB / 14 KB WiFi circular buffer), tight enough to bound a stalled one. */
 #define SCPI_HELP_WRITE_BUDGET_MS  2000U
@@ -8616,12 +8617,16 @@ scpi_error_t scpi_error_queue_data[SCPI_ERROR_QUEUE_SIZE];
  * With every return value discarded (the pre-#1004 shape), a host that
  * stopped reading made EVERY one of those ~5-7 calls burn its own full ~1 s
  * budget -- ~5-7 s of held mutex, blocking every other SCPI callback on BOTH
- * transports for the same span. This is the same defect #947 (PR #992) and
- * #995 (PR #1008) fixed at their own sites; see #1004's "population is
- * closed at three" comment for why a fourth generic helper was not built.
+ * transports for the same span. Two sibling callbacks carry the same defect:
+ * SCPI_SysInfoTextGet (#947, PR #992) and SCPI_GetCommandHistory (#995,
+ * PR #1008). BOTH OF THOSE PRs ARE STILL OPEN as of this commit, so both of
+ * those holds are LIVE in this tree -- do not read this comment as saying
+ * the class is closed. #1004 records why each site carries its own small
+ * helper instead of one shared generic one.
  *
- * TWO guards, because neither alone bounds the hold (identical reasoning to
- * CmdHistoryWrite, #995):
+ * TWO guards, because neither alone bounds the hold (the same two-guard
+ * algebra #995 proposes for CmdHistoryWrite on PR #1008; that helper does
+ * not exist in this tree yet):
  *   (1) short write -> latch. SCPI_WriteWithRetry has no resend path, so a
  *       short write has already DROPPED those bytes; the reply is truncated
  *       at that chunk and the remaining budget buys nothing.
@@ -8635,9 +8640,9 @@ scpi_error_t scpi_error_queue_data[SCPI_ERROR_QUEUE_SIZE];
  * is a mechanical substitution: no early returns, no gotos, and no way to
  * skip the single SCPI_ResponseBuf_Give() on the way out.
  *
- * Deliberately does NOT push a SCPI error itself -- see CmdHistoryWrite's
- * doc comment for why (SCPI_ErrorPush would add another retry-bounded write
- * to the hold this exists to shrink). The caller returns SCPI_RES_ERR
+ * Deliberately does NOT push a SCPI error itself: SCPI_ErrorPush would add
+ * another retry-bounded write to the very hold this exists to shrink. The
+ * caller returns SCPI_RES_ERR
  * instead and libscpi's processCommand pushes SCPI_ERROR_EXECUTION_ERROR
  * after the callback -- and therefore after the Give.
  *
@@ -8655,8 +8660,7 @@ static void ScpiHelpWrite(scpi_t * context, bool * ok, TickType_t startTick,
         return;
     }
     /* Unsigned tick subtraction: correct across the 32-bit xTaskGetTickCount
-     * wrap (~49.7 days at configTICK_RATE_HZ 1000). Same idiom as
-     * CmdHistoryWrite above. */
+     * wrap (~49.7 days at configTICK_RATE_HZ 1000). */
     if ((TickType_t)(xTaskGetTickCount() - startTick) >=
             pdMS_TO_TICKS(SCPI_HELP_WRITE_BUDGET_MS)) {
         *ok = false;

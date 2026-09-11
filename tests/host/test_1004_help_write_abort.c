@@ -36,7 +36,8 @@
  * either transport that needed the shared buffer queued behind it for the
  * same span.
  *
- * THE FIX (ScpiHelpWrite, SCPIInterface.c) is #995's CmdHistoryWrite shape
+ * THE FIX (ScpiHelpWrite, SCPIInterface.c) is the CmdHistoryWrite shape #995
+ * proposes on the still-open PR #1008 (not in this tree),
  * applied to HELP's write sites -- a self-gating helper every write call
  * site now goes through unconditionally, no early return, no goto, a single
  * SCPI_ResponseBuf_Give() on the function's one exit path. `writeOk` is a
@@ -63,14 +64,15 @@
  * HOW IT IS TESTED
  *
  * SCPIInterface.c is not a host-test candidate (libscpi + FreeRTOS + the
- * whole board/driver graph), so -- same approach as
- * test_995_cmdhistory_write_abort.c -- this file re-implements the SHAPE of
+ * whole board/driver graph), so -- same approach #995's planned
+ * test_995_cmdhistory_write_abort.c takes, which is not in this tree either --
+ * this file re-implements the SHAPE of
  * SCPI_WriteWithRetry and of ScpiHelpWrite/SCPI_Help's write sequence
  * (pre- and post-#1004) against an injected mock clock and mock transport,
  * and compares their verdicts on identical inputs. What is proven is the
  * ALGEBRA of the two shapes, which is exactly what #1004 is about.
  *
- * ONE DIFFERENCE FROM #995's TEST: SCPI_GetCommandHistory's write count is
+ * ONE DIFFERENCE FROM #995's PLANNED TEST: SCPI_GetCommandHistory's write count is
  * pinned to a real firmware constant (SCPI_CMD_HISTORY_SIZE + 1). HELP's
  * write count depends on the registered command table's total text size
  * divided by the 2048-byte shared buffer, which is not a single #define --
