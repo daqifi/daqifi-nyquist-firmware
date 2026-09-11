@@ -507,7 +507,7 @@ TEST(shipped_messages_fit_at_the_worst_case_substitution)
     /* site 2 -- remedy: grow the split size, change directory, clear card */
     render_fixed_unusable(&r, path);
     assert_survives(&r);
-    assert_has(&r, "SD:MAXSize");
+    assert_has(&r, "SYST:STOR:SD:MAXS");
     assert_has(&r, "clear card");
     printf("    site 2 (sd_card_manager.c:%d): %3d/%d bytes, margin %d\n",
            FW_MSG_BUCKET_UNUSABLE_LINE, r.emit.intended, FW_LOG_CONTENT_MAX,
@@ -518,7 +518,7 @@ TEST(shipped_messages_fit_at_the_worst_case_substitution)
      * domain: what is measured here is what every firing emits. */
     render_fixed_writes_hang(&r);
     assert_survives(&r);
-    assert_has(&r, "SD:MAXSize");
+    assert_has(&r, "SYST:STOR:SD:MAXS");
     assert_has(&r, "SD-Card-Compatibility");
     /* It already ends \r\n, so Logger must not append a second one. */
     ASSERT_EQ(r.emit.branch, CRLF_ALREADY_PRESENT);
@@ -561,7 +561,7 @@ TEST(shipped_messages_fit_at_every_reachable_substitution)
 
             render_fixed_unusable(&r, path);
             assert_survives(&r);
-            assert_has(&r, "SD:MAXSize");
+            assert_has(&r, "SYST:STOR:SD:MAXS");
             assert_has(&r, "clear card");
         }
     }

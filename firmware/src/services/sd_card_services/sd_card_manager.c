@@ -2202,10 +2202,15 @@ void sd_card_manager_ProcessState() {
                      * a runtime SYST:DIAG query is the natural place for them
                      * if ever needed (#1000's own follow-up, #1001, is the
                      * nearest precedent for a dedicated diagnostic path).
-                     * Shortened text below: 73 fixed bytes + bucketPath's
-                     * 45-byte worst case = 118, margin 7. */
-                    LOG_E("[SD] #689 bucket '%s' unusable - grow SD:MAXSize, "
-                          "change dir, or clear card",
+                     * Shortened text below: 77 fixed bytes + bucketPath's
+                     * 45-byte worst case = 122, margin 3. The remedy names the
+                     * REGISTERED path in its legal short form
+                     * (SYSTem:STORage:SD:MAXSize -> SYST:STOR:SD:MAXS): the
+                     * bare "SD:MAXSize" printed before is not a registered
+                     * command and answers -113, so the remedy was unusable.
+                     * "new dir" pays the 7 bytes the real path costs. */
+                    LOG_E("[SD] #689 bucket '%s' unusable - grow "
+                          "SYST:STOR:SD:MAXS, new dir, or clear card",
                           gSDCardData.bucketPath[0] != '\0'
                               ? gSDCardData.bucketPath
                               : gpSDCardSettings->directory);
@@ -3980,8 +3985,8 @@ bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs) {
         // for #589) were cut. Shortened to 123 bytes total (margin 2), keeping
         // both remedies; the narrative that used to live in the message text now
         // lives only in the two comment lines above, which never reach the wire.
-        LOG_E("[SD] writes hang, reads OK - dir too large (#689: bigger "
-              "SD:MAXSize/clear card) or bad card (wiki: SD-Card-Compatibility)"
+        LOG_E("[SD] writes hang, reads OK - dir full (#689: grow "
+              "SYST:STOR:SD:MAXS/clear card) or bad card (wiki: SD-Card-Compatibility)"
               "\r\n");
         return false;  // Timeout
     }
