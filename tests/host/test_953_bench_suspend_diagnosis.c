@@ -81,46 +81,41 @@
  * and the ticket's proposed ordering would not have: under "suspend first",
  * row 2 would also move, taking #690's recorded refusal with it.
  *
- * THE TRANSIENT QUADRANT (review round 1)
+ * THE TRANSIENT QUADRANT, AND WHY IT IS STILL OPEN
  *
- * The table above reads `suspended` as one value, which silently assumes the
- * condition is whatever it is at the timeout. It is not: the wait is five
- * seconds long and a suspension can start AND END inside it. That case is not
- * benign. app_SDCard_GracefulShutdown() stores MODE_NONE over the benchmark's
- * MODE_WRITE arm on the way into APP_SD_STATE_SUSPENDED (app_freertos.c), and
- * nothing restores it when the suspension lifts, while
+ * The table above reads `suspended` as one value, which assumes the condition
+ * is whatever it is at the timeout. It is not: the wait is five seconds long
+ * and a suspension can start AND END inside it. That case is not benign.
+ * app_SDCard_GracefulShutdown() stores MODE_NONE over the benchmark's
+ * MODE_WRITE arm on the way into APP_SD_STATE_SUSPENDED (app_freertos.c),
+ * nothing restores it when the suspension lifts, and
  * sd_card_manager_IsWriteReady() requires MODE_WRITE -- so the arm is dead for
- * the rest of the wait and the wait can only end at its full 5 s. By then
- * SD_SuspendReasonText() answers NULL (it speaks only while
- * app_SDCard_SpiOwnedByWifi() or SpiBusHealth_IsSdSuspended() holds), so a
- * cascade that samples only at the timeout lands in the card arm -- the same
- * mis-diagnosis #953 is about, in the quadrant a single late sample cannot
- * see.
+ * the rest of the wait and the cascade lands in the card arm with
+ * SD_SuspendReasonText() already back to NULL.
  *
- * So the wait latches the first reason it observes and the cascade falls back
- * to it when nothing is in force at the timeout. Three shapes are modelled
- * below, not two, and the middle one is what this round changed:
+ * This PR tried three times to close that by latching what the poll observed,
+ * and each round found the same defect from a new angle: an ambient condition
+ * is not evidence about THIS request. A live WiFi owner can be sampled and then
+ * vanish without the SD task ever suspending -- the streaming task's
+ * dead-transport auto-stop runs at priority 6 and beats the SD task at 5 to its
+ * own ownership check -- and a latch set from that blames a suspension for a
+ * genuine card fault. That is worse than the advisory it replaces, because it
+ * is confidently wrong.
  *
- *   suspension live only DURING the wait | OLD    ROUND-0          ROUND-1
- *   -------------------------------------------------------------------------
- *   reason at poll k, gone by timeout    | card   card  <- the gap  reason
- *
- * Live still beats latched when both exist: a reason in force NOW is what the
- * operator has to clear before a retry can work.
+ * So the latch is NOT in this PR. The quadrant stays open, with the right fix
+ * described in #988: latch that this arm's MODE_WRITE was torn down, which is
+ * true of every teardown cause including the power-state path that bypasses
+ * APP_SD_STATE_SUSPENDED entirely. Half-done was the worse option.
  *
  * FIDELITY -- what the extracted functions are NOT
  *
- * 1. The DECISION CASCADE is modelled, and so is ONE property of the
- *    `readyWait < 500` polling loop ahead of it: which suspend reason the
- *    loop latches. This item used to say the loop was entirely out of scope
- *    because #953 changed none of it. Review round 1 changed it -- see THE
- *    TRANSIENT QUADRANT above -- so the sentence is no longer true and is
- *    replaced rather than left standing. What remains out of scope is
- *    everything the loop does that #953 still does not touch: the vTaskDelay
- *    cadence, the 5 s bound, the `readyWait` count itself, and
- *    IsWriteReady()'s own transitions. The loop model below has one job, to
- *    produce the latched reason a real 500-iteration poll would have
- *    produced, and it is not a timing model.
+ * 1. Only the DECISION CASCADE after the wait loop is modelled. The
+ *    `readyWait < 500` polling loop before it, its #690 early-exit `break`,
+ *    the vTaskDelay cadence and the 5 s bound are all out of scope -- #953
+ *    changes none of them, and the ticket puts them out of scope explicitly.
+ *    (An intermediate revision of this file modelled the loop's latch as
+ *    well. That mechanism was removed; see THE TRANSIENT QUADRANT above. If
+ *    #988 reinstates a latch, this item moves again.)
  * 2. IsWriteReady() is not a parameter: the branch under test is the body of
  *    `if (!sd_card_manager_IsWriteReady())`, so within it that predicate is
  *    false by construction. Modelling it would only add a quadrant in which
@@ -243,71 +238,12 @@ static BenchVerdict new_bench_not_ready_diagnosis(BenchEnv *env)
 }
 
 /* ==========================================================================
- * ROUND-1: the wait loop's latch, and the cascade that falls back to it.
- *
- * Extracted from the same call site. The real loop is
- *
- *     const char *whySeen = NULL;
- *     while (!IsWriteReady() && readyWait < 500) {
- *         if (StartupDirFull()) break;                  // #690 early-exit
- *         if (whySeen == NULL) whySeen = SuspendReasonText();
- *         vTaskDelay(10 ms); readyWait++;
- *     }
- *
- * and the model keeps exactly three things from it: the #690 break comes
- * FIRST, the sample is taken only while nothing is latched, and the latch is
- * never overwritten. Ticks stand in for iterations; how long a tick is does
- * not enter any assertion (FIDELITY 1).
+ * What the arm actually prints, and how much of it survives.
  * ========================================================================== */
-#define BENCH_WAIT_MAX_POLLS 8
 
-typedef struct {
-    /* What SD_SuspendReasonText() would answer at each poll; NULL = nothing
-     * owns the bus at that instant. The loop only ever compares this against
-     * NULL -- see model_wait_latch() -- so WHICH reason appears here changes
-     * nothing, which is the point of the bool. */
-    const char *sample[BENCH_WAIT_MAX_POLLS];
-    /* What sd_card_manager_StartupDirFull() would answer at each poll. The
-     * loop breaks on the first true, which is why a reason later in the
-     * timeline can go unlatched -- that is the real behaviour, not a
-     * shortcut. */
-    bool        dirFullAt[BENCH_WAIT_MAX_POLLS];
-    size_t      polls;
-    /* How many times the LOOP consulted SD_SuspendReasonText(). Bounded by
-     * the latch: once it holds a reason the loop stops asking. */
-    unsigned    calls;
-} BenchWait;
-
-static bool model_wait_latch(BenchWait *w)
-{
-    bool saw = false;
-    size_t i;
-
-    for (i = 0; i < w->polls; i++) {
-        if (w->dirFullAt[i]) {
-            break;
-        }
-        if (!saw) {
-            w->calls++;
-            saw = (w->sample[i] != NULL);
-        }
-    }
-    return saw;
-}
-
-/* What the fallback says. It names no owner, and that is the second half of
- * the round-1 change: SD_SuspendReasonText() admits on aggregate ownership and
- * then re-reads the specific causes to choose which to name, so a cause that
- * ends between those reads is reported as a different one. Retaining a STRING
- * would make one such misread stick for the rest of the wait. Retaining the
- * fact cannot be misattributed -- and once the suspension has lifted, "retry"
- * is the whole of the action left anyway. */
-static const char *const kReasonTornDownDuringWait =
-    "the SD task suspended during the wait and took this write with it - retry";
-
-/* The prefix the arm interpolates it into (SCPIStorageSD.c). The Makefile
- * fails the build if this literal is no longer in the source, so the length
- * measured below is the length of the line the DEVICE actually formats. */
+/* The prefix the mid-wait arm interpolates a reason into (SCPIStorageSD.c).
+ * The Makefile fails the build if this literal is no longer in the source, so
+ * the length measured below is the length of the line the DEVICE formats. */
 static const char *const kMidWaitLogPrefix =
     "SD:BENCH - could not complete the arm: ";
 
@@ -316,48 +252,16 @@ static const char *const kMidWaitLogPrefix =
  *     vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, format, args);
  *
  * and vsnprintf writes at most n-1 characters plus a NUL, so a formatted line
- * longer than LOG_MESSAGE_SIZE - 3 is cut. FW_LOG_MESSAGE_SIZE is grepped out
- * of Logger.h by the Makefile rather than copied here, so a change to the
- * buffer re-derives this instead of silently invalidating it. */
+ * longer than LOG_MESSAGE_SIZE - 3 is cut -- silently, and on the device only,
+ * where no assertion that compares a constant against itself can see it.
+ * FW_LOG_MESSAGE_SIZE is grepped out of Logger.h by the Makefile rather than
+ * copied here, so a change to the buffer re-derives this instead of quietly
+ * invalidating it. */
 #ifndef FW_LOG_MESSAGE_SIZE
 #error "FW_LOG_MESSAGE_SIZE must come from the Makefile (grepped from Logger.h)"
 #endif
 #define LOG_LINE_MAX  (FW_LOG_MESSAGE_SIZE - 3)
 
-/* POST-#953 with the round-1 fallback. Identical to
- * new_bench_not_ready_diagnosis() except that a NULL live reason defers to the
- * latched FACT -- the arms, and their order, are untouched. */
-static BenchVerdict latched_bench_not_ready_diagnosis(BenchEnv *env,
-                                                      bool sawSuspension)
-{
-    BenchVerdict v;
-    const char *why = mock_suspend_reason_text(env);
-    if (why == NULL && sawSuspension) {
-        why = kReasonTornDownDuringWait;
-    }
-    if (mock_startup_dir_full(env)) {
-        v.diag = DIAG_STARTUP_DIR_FULL;
-        v.text = mock_write_refuse_text(env);
-    } else if (why != NULL) {
-        v.diag = DIAG_SUSPEND_REASON;
-        v.text = why;
-    } else {
-        v.diag = DIAG_GENERIC_TIMEOUT;
-        v.text = NULL;
-    }
-    return v;
-}
-
-static void wait_init(BenchWait *w, size_t polls)
-{
-    size_t i;
-    for (i = 0; i < BENCH_WAIT_MAX_POLLS; i++) {
-        w->sample[i]    = NULL;
-        w->dirFullAt[i] = false;
-    }
-    w->polls = polls;
-    w->calls = 0;
-}
 
 /* ==========================================================================
  * Fixtures
@@ -597,239 +501,32 @@ TEST(exactly_one_quadrant_moves_and_why_is_sampled_once)
     ASSERT_EQ(moved, 1);
 }
 
-/* ROUND 1 -- THE TRANSIENT QUADRANT. A suspension that is present at poll 2
- * and gone by the timeout. The arm it destroyed does not come back, so the
- * wait still runs its full length; the only question is what gets blamed.
- *
- * Three shapes, and the middle one is the point: ROUND-0 -- the shape this PR
- * shipped before review -- reaches the SAME card advisory as the pre-#953 code
- * it replaced. Sampling once at the end cannot see a condition that has
- * lifted. So this test is not "the fix still works"; it is the assertion that
- * would have caught the gap.
- *
- * Swept over all three causes for the same reason quadrant (a) is: a fallback
- * wired to one of them would pass a single-case version. */
-TEST(a_suspension_that_lifts_before_the_timeout_is_still_named)
-{
-    static const char *const reasons[] = {
-        kReasonWifiStream, kReasonFwUpdate, kReasonQuarantine
-    };
-    size_t i;
-
-    for (i = 0; i < sizeof(reasons) / sizeof(reasons[0]); i++) {
-        BenchEnv oldEnv, round0Env, round1Env;
-        BenchVerdict oldV, round0V, round1V;
-        BenchWait wait;
-        bool latched;
-
-        wait_init(&wait, 6);
-        wait.sample[2] = reasons[i];   /* present mid-wait ... */
-        wait.sample[3] = reasons[i];
-        /* ... and NULL at 4, 5 and at the timeout: it lifted. */
-        latched = model_wait_latch(&wait);
-
-        /* The live reading every shape makes at the timeout is NULL. */
-        env_init(&oldEnv, false, NULL);
-        env_init(&round0Env, false, NULL);
-        env_init(&round1Env, false, NULL);
-
-        oldV    = old_bench_not_ready_diagnosis(&oldEnv);
-        round0V = new_bench_not_ready_diagnosis(&round0Env);
-        round1V = latched_bench_not_ready_diagnosis(&round1Env, latched);
-
-        /* The loop saw it. */
-        ASSERT_TRUE(latched);
-
-        /* Pre-#953 blames the card -- expected, it has no suspend arm. */
-        ASSERT_EQ(oldV.diag, DIAG_GENERIC_TIMEOUT);
-        /* ROUND-0 blames the card TOO. That is the reviewed gap, and this
-         * line is what fails if the fallback is removed. */
-        ASSERT_EQ(round0V.diag, DIAG_GENERIC_TIMEOUT);
-        ASSERT_EQ(round0V.diag, oldV.diag);
-
-        /* ROUND-1 reports the suspension instead of the card. */
-        ASSERT_EQ(round1V.diag, DIAG_SUSPEND_REASON);
-        ASSERT_TRUE(round1V.diag != round0V.diag);
-
-        /* And it does NOT name an owner. That is not a shortcut: by the
-         * timeout there is no owner left, and the label that WOULD be
-         * retained is the one SD_SuspendReasonText() can misattribute when a
-         * cause ends between its aggregate admission and its specific
-         * re-reads. The sweep is what pins it -- the verdict is the same
-         * string for all three causes, so nothing about it can be wrong about
-         * WHICH one it was. */
-        ASSERT_TRUE(round1V.text == kReasonTornDownDuringWait);
-        ASSERT_TRUE(round1V.text != reasons[i]);
-        if (round1V.text != NULL) {
-            ASSERT_TRUE(strcmp(round1V.text, kReasonTornDownDuringWait) == 0);
-            ASSERT_EQ(strlen(round1V.text), strlen(kReasonTornDownDuringWait));
-        }
-    }
-}
-
-/* The latch is a FALLBACK, not an override. When something owns the bus at the
- * timeout, that is what the operator must clear before a retry can work, so it
- * wins over whatever was in force earlier in the wait.
- *
- * Delete the `if (why == NULL)` guard -- make the latch unconditional -- and
- * this is the test that fails. */
-TEST(a_live_reason_outranks_the_latched_one)
-{
-    BenchEnv env;
-    BenchVerdict v;
-    BenchWait wait;
-    bool latched;
-
-    wait_init(&wait, 4);
-    wait.sample[0] = kReasonWifiStream;      /* earlier owner */
-    latched = model_wait_latch(&wait);
-    ASSERT_TRUE(latched);
-
-    env_init(&env, false, kReasonQuarantine); /* different owner, live now */
-    v = latched_bench_not_ready_diagnosis(&env, latched);
-
-    ASSERT_EQ(v.diag, DIAG_SUSPEND_REASON);
-    ASSERT_TRUE(v.text == kReasonQuarantine);
-    ASSERT_TRUE(v.text != kReasonTornDownDuringWait);
-    /* Still exactly one live sample in the cascade -- the round-0 property
-     * this round must not have broken. */
-    ASSERT_EQ(env.suspendReasonCalls, 1);
-}
-
-/* The latch records a FACT, not a label, and then stops asking.
- *
- * The timeline hands it three DIFFERENT causes in sequence -- the shape that
- * would expose a retained string as the wrong one -- and the verdict is the
- * same owner-free message it would be for any of them.
- *
- * Measured, not asserted: a mutant that latches
- * `whySeen = SD_SuspendReasonText()` and reports it fails exactly TWO tests,
- * this one and the transient sweep above, and passes the other eight. An
- * earlier draft of this comment claimed it failed only this one; it does not,
- * because the sweep pins the reported text as well as the arm.
- *
- * The call count is the second half: a loop that kept polling after latching
- * would pay up to 500 calls for an answer it already had. */
-TEST(the_latch_records_a_fact_not_a_label_and_then_stops_asking)
-{
-    BenchEnv env;
-    BenchVerdict v;
-    BenchWait wait;
-    bool latched;
-
-    wait_init(&wait, 6);
-    wait.sample[1] = kReasonFwUpdate;     /* first ... */
-    wait.sample[2] = kReasonWifiStream;   /* ... then a different owner ... */
-    wait.sample[3] = kReasonQuarantine;   /* ... then a third. */
-    latched = model_wait_latch(&wait);
-
-    ASSERT_TRUE(latched);
-    /* Polls 0 and 1 asked; from 2 on the latch held, so nothing else did. */
-    ASSERT_EQ(wait.calls, 2);
-
-    env_init(&env, false, NULL);
-    v = latched_bench_not_ready_diagnosis(&env, latched);
-    ASSERT_EQ(v.diag, DIAG_SUSPEND_REASON);
-    ASSERT_TRUE(v.text == kReasonTornDownDuringWait);
-    /* None of the three causes is named, so none can be named wrongly. */
-    ASSERT_TRUE(v.text != kReasonFwUpdate);
-    ASSERT_TRUE(v.text != kReasonWifiStream);
-    ASSERT_TRUE(v.text != kReasonQuarantine);
-}
-
-/* The ordering survives the fallback. A recorded #689/#690 refusal still
- * outranks a latched reason exactly as it outranks a live one -- otherwise
- * this round would have done by the back door what the ticket's proposed
- * ordering was rejected for doing at the front.
- *
- * Second half: the #690 early-exit `break` comes BEFORE the sample, so a
- * refusal recorded at poll 1 leaves nothing latched even though the timeline
- * carries a reason later on. That is the real loop's behaviour and it is
- * asserted, not assumed. */
-TEST(a_recorded_refusal_still_outranks_the_latched_reason)
-{
-    BenchEnv env;
-    BenchVerdict v;
-    BenchWait wait;
-    bool latched;
-
-    /* (i) suspension seen in the wait, dirFull true at the timeout. */
-    wait_init(&wait, 5);
-    wait.sample[0] = kReasonWifiStream;
-    latched = model_wait_latch(&wait);
-    ASSERT_TRUE(latched);
-
-    env_init(&env, true, NULL);
-    v = latched_bench_not_ready_diagnosis(&env, latched);
-    ASSERT_EQ(v.diag, DIAG_STARTUP_DIR_FULL);
-    ASSERT_TRUE(v.text == kRefuseBucketsExhausted);
-    ASSERT_TRUE(v.text != kReasonTornDownDuringWait);
-
-    /* (ii) the refusal lands first, so the loop breaks and latches nothing. */
-    wait_init(&wait, 6);
-    wait.dirFullAt[1] = true;
-    wait.sample[3]    = kReasonWifiStream;
-    latched = model_wait_latch(&wait);
-    ASSERT_TRUE(!latched);
-    ASSERT_EQ(wait.calls, 1);   /* poll 0 only; poll 1 broke out */
-
-    env_init(&env, true, NULL);
-    v = latched_bench_not_ready_diagnosis(&env, latched);
-    ASSERT_EQ(v.diag, DIAG_STARTUP_DIR_FULL);
-}
-
-/* The card diagnosis has to survive the fallback too. Nothing owned the bus at
- * any point in the wait and nothing was recorded: the SD task was running, the
- * open still never completed, and that IS the "reads/LIST work but writes
- * hang" signature the wiki page is about.
- *
- * This is the guard against the lazy version of this round -- latching
- * something, anything, so the transient test passes. */
-TEST(a_wait_with_no_suspension_at_all_still_reports_the_card)
-{
-    BenchEnv env;
-    BenchVerdict v;
-    BenchWait wait;
-    bool latched;
-
-    wait_init(&wait, BENCH_WAIT_MAX_POLLS);
-    latched = model_wait_latch(&wait);
-
-    ASSERT_TRUE(!latched);
-    ASSERT_EQ(wait.calls, BENCH_WAIT_MAX_POLLS);  /* never latched, so it kept asking */
-
-    env_init(&env, false, NULL);
-    v = latched_bench_not_ready_diagnosis(&env, latched);
-    ASSERT_EQ(v.diag, DIAG_GENERIC_TIMEOUT);
-    ASSERT_TRUE(v.text == NULL);
-}
-
 /* THE MESSAGE HAS TO SURVIVE THE LOGGER, and this is the only place that can
- * say so. Every other test in this file compares the constant against itself,
+ * say so. Every other test in this file compares a constant against itself,
  * which is true of the string and says nothing about the line the operator
- * reads: Logger truncates at LOG_MESSAGE_SIZE - 3 and does it on the device
- * only, so a host model that stops at the constant cannot see it.
+ * reads: Logger cuts at LOG_MESSAGE_SIZE - 3, silently, and on the device only.
  *
- * The first draft of the fallback was 98 characters. With the 39-character
- * prefix and the CRLF that is 139 against a 125-byte limit, so the device
- * would have printed
+ * This arm interpolates whatever SD_SuspendReasonText() returns, so the three
+ * reason strings are what must fit. Two do. The QUARANTINE one does not -- 136
+ * bytes here, and 137 through the arm-refusal twin that has shipped since #936,
+ * losing "... then SYST:STOR:SD:ENAble 1 to retry", which is the command that
+ * clears a quarantine and the most actionable string in the #589 family.
  *
- *   SD:BENCH - could not complete the arm: the SD task was suspended during
- *   the wait and this benchmark's write was torn down wit
+ * That is pre-existing and out of this PR's reach: four test-suite scripts
+ * match on that string, so shortening it is a cross-repo change. It is filed
+ * as #986 and asserted here as STILL OVER -- deliberately, so that the fix for
+ * #986 fails this build and whoever writes it promotes the string into the
+ * fitting set above rather than leaving a stale carve-out behind. An assertion
+ * that a defect still exists is only honest while its ticket is open, and this
+ * is how it gets closed.
  *
- * losing the "- retry" that is the entire actionable half, and the CRLF with
- * it, so the next log line would have run on. Found by this PR's pre-merge
- * audit.
- *
- * The three live reason strings are measured too, because the same arm
- * interpolates them: two fit, and the quarantine one does NOT -- it is 136
- * bytes here and 137 through the arm-refusal twin that has shipped since #936.
- * That is a pre-existing defect in the longest and most actionable string in
- * the #589 family ("... then SYST:STOR:SD:ENAble 1 to retry" is what is lost),
- * so it is FILED rather than asserted here: failing this build on it would red
- * CI for something this PR did not cause and cannot fix without changing a
- * string four other tests match on. See the ticket named in the PR. */
-TEST(the_fallback_message_survives_the_logger_intact)
+ * The case that put this test here was a 98-character fallback message this PR
+ * carried for one round: with the prefix and the CRLF that was 139 bytes
+ * against 125, cut mid-word so it lost the "- retry" that was its entire point.
+ * The audit caught it; the mechanism that message belonged to was then removed
+ * (see the file header), but the measurement is what should have existed all
+ * along and it stays. */
+TEST(every_reason_this_arm_can_print_survives_the_logger)
 {
     static const char *const liveReasons[] = {
         kReasonWifiStream, kReasonFwUpdate
@@ -838,21 +535,12 @@ TEST(the_fallback_message_survives_the_logger_intact)
     size_t prefix = strlen(kMidWaitLogPrefix);
 
     /* +2 for the CRLF the format string carries. */
-    ASSERT_TRUE(prefix + strlen(kReasonTornDownDuringWait) + 2 <= LOG_LINE_MAX);
-
-    /* And it must still say the actionable half AFTER the cut that is not
-     * happening -- i.e. the string ends in the instruction, so any future
-     * growth that reintroduces truncation loses something visible. */
-    ASSERT_TRUE(strstr(kReasonTornDownDuringWait, "retry") != NULL);
-
     for (i = 0; i < sizeof(liveReasons) / sizeof(liveReasons[0]); i++) {
         ASSERT_TRUE(prefix + strlen(liveReasons[i]) + 2 <= LOG_LINE_MAX);
     }
 
-    /* The quarantine string is the known exception, measured rather than
-     * ignored: this asserts it is STILL over, so that when the filed ticket
-     * shortens it, this line fails and someone promotes it into the loop
-     * above instead of leaving a stale carve-out behind. */
+    /* #986, asserted as still open. See the comment above before "fixing"
+     * this line by deleting it. */
     ASSERT_TRUE(prefix + strlen(kReasonQuarantine) + 2 > LOG_LINE_MAX);
 }
 
@@ -865,11 +553,6 @@ int main(void)
     RUN(dir_full_without_suspend_is_unchanged_by_953);
     RUN(no_suspend_no_dir_full_still_reports_the_card);
     RUN(exactly_one_quadrant_moves_and_why_is_sampled_once);
-    RUN(a_suspension_that_lifts_before_the_timeout_is_still_named);
-    RUN(a_live_reason_outranks_the_latched_one);
-    RUN(the_latch_records_a_fact_not_a_label_and_then_stops_asking);
-    RUN(a_recorded_refusal_still_outranks_the_latched_reason);
-    RUN(a_wait_with_no_suspension_at_all_still_reports_the_card);
-    RUN(the_fallback_message_survives_the_logger_intact);
+    RUN(every_reason_this_arm_can_print_survives_the_logger);
     return TEST_SUMMARY();
 }

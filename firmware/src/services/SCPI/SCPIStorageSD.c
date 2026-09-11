@@ -1473,49 +1473,29 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     // Wait for file to be open and ready before writing
     {
         int readyWait = 0;
-        /* #953 (review round 1): a suspension that starts AND ENDS inside this
-         * wait is invisible to a single sample taken at the timeout, and it is
-         * not harmless. app_SDCard_GracefulShutdown() stores MODE_NONE over this
-         * benchmark's MODE_WRITE arm on its way into APP_SD_STATE_SUSPENDED
-         * (app_freertos.c), and nothing restores it when the suspension lifts --
-         * sd_card_manager_IsWriteReady() requires MODE_WRITE, so from that
-         * moment the wait can only end at its full 5 s. By then
-         * SD_SuspendReasonText() reads NULL, because it answers only while
-         * app_SDCard_SpiOwnedByWifi() or SpiBusHealth_IsSdSuspended() holds, and
-         * the cascade below would fall through to the card advisory -- the exact
-         * mis-diagnosis this issue is about, in the one quadrant a sample taken
-         * only at the timeout cannot see.
+        /* A suspension that starts AND ENDS inside this wait is NOT covered
+         * here, and the gap is deliberate rather than unnoticed.
+         * app_SDCard_GracefulShutdown() stores MODE_NONE over this benchmark's
+         * MODE_WRITE arm on its way into APP_SD_STATE_SUSPENDED
+         * (app_freertos.c), nothing restores it, and
+         * sd_card_manager_IsWriteReady() requires MODE_WRITE -- so the arm is
+         * dead for the rest of the wait and the cascade below reaches the card
+         * advisory with SD_SuspendReasonText() already back to NULL.
          *
-         * So latch that a suspension WAS observed. Sampled every iteration
-         * until it latches, i.e. at 100 Hz. What that can still miss is a
-         * suspension whose whole lifetime falls between two samples, and none
-         * of the three causes can be that short: each is bounded below by a
-         * WiFi streaming session, a WiFi firmware update, or a quarantine that
-         * does not self-clear at all.
-         *
-         * A BOOL, deliberately, and not the reason string (review round 1
-         * again). SD_SuspendReasonText() admits on either
-         * app_SDCard_SpiOwnedByWifi() or SpiBusHealth_IsSdSuspended() and then
-         * re-reads quarantine and FW-update separately to choose WHICH cause to
-         * name, falling through to the streaming message -- so a cause that
-         * ends between those reads is reported as a different one. Keeping the
-         * string would make one such misread STICK for the rest of the wait and
-         * tell the operator to stop a stream that was never the problem.
-         * (The misread itself is older than this change and reachable from
-         * every #589 refusal; it is filed separately, not fixed here.)
-         *
-         * What is retained is the part that cannot be misattributed -- that the
-         * SD task stopped during this wait -- which is also the whole of what
-         * the operator can act on once it has stopped again: retry. When a
-         * suspension is still in force at the timeout the live read names its
-         * owner, exactly as before. */
-        bool sawSuspension = false;
+         * Three rounds of this PR tried to close it by latching what was
+         * observed during the poll, and every round found the same thing from a
+         * new angle: an ambient condition is not evidence about THIS request.
+         * A live WiFi owner can be sampled and then vanish without the SD task
+         * ever suspending (the streaming auto-stop beats it to the check), and
+         * the latch then blames a suspension for a genuine card fault -- worse
+         * than the advisory it replaced, because it is confidently wrong. The
+         * fix is to latch that this arm's MODE_WRITE was torn down, which is
+         * true of every teardown cause including the power-state path, and
+         * that is a design change with its own ticket: #988. Left undone here
+         * rather than half-done. */
         while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
             if (sd_card_manager_StartupDirFull()) {   /* #690: early-exit */
                 break;
-            }
-            if (!sawSuspension && SD_SuspendReasonText() != NULL) {
-                sawSuspension = true;
             }
             vTaskDelay(pdMS_TO_TICKS(10));
             readyWait++;
@@ -1569,23 +1549,6 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
              * different owner (or none) and print a reason other than the one
              * that steered the branch. */
             const char *why = SD_SuspendReasonText();
-            if (why == NULL && sawSuspension) {
-                /* Still arm 2, not a fourth arm: a suspension that has since
-                 * lifted destroyed this arm just as surely as one still in
-                 * force. It names no owner because there is none left to name
-                 * and none that could be named without risking the wrong one --
-                 * and because "retry" is the whole of what is left to do.
-                 *
-                 * KEPT SHORT ON PURPOSE, and the host test measures it: Logger
-                 * formats with vsnprintf(buf, LOG_MESSAGE_SIZE - 2, ...), so
-                 * the whole line -- this string, the 39-character prefix below
-                 * and the CRLF -- must fit in 125 bytes or it is cut mid-word,
-                 * on the device only. The first draft of this message was 98
-                 * characters and lost exactly the "- retry" that makes it
-                 * actionable (#983 pre-merge audit). */
-                why = "the SD task suspended during the wait and took this "
-                      "write with it - retry";
-            }
             if (sd_card_manager_StartupDirFull()) {
                 /* #690: name the real cause instead of the card advisory.
                  * #689: the flag covers every "no writable location" cause, not
