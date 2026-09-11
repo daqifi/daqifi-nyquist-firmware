@@ -155,8 +155,12 @@ const char *SD_SuspendReasonText(void)
          * That call site needs its own prefix shortened; measured and filed as
          * #1000, not addressed here.
          *
-         * tests/host/test_953_bench_suspend_diagnosis.c measures all three
-         * reasons against this file's ceiling. */
+         * NOT guarded by a test. Three attempts at one were each defeated in
+         * review -- a grep for the reason's own words matched the string it
+         * replaced, a hash of the function collapsed whitespace inside the
+         * literals, and a copy in the test can drift from this line. The guard
+         * has to measure the REAL string, which is a design rather than a
+         * patch: #1001. Until then this length is held by review. */
         return "SD quarantined after a bus jam - reseat the card, "
                "then SYST:STOR:SD:ENAble 1";
     }

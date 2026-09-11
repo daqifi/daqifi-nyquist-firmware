@@ -81,6 +81,30 @@
  * and the ticket's proposed ordering would not have: under "suspend first",
  * row 2 would also move, taking #690's recorded refusal with it.
  *
+ * WHAT THIS FILE DELIBERATELY DOES NOT MEASURE
+ *
+ * The lengths of the strings the cascade prints. #986 shortened the quarantine
+ * reason because Logger cuts a formatted line at LOG_MESSAGE_SIZE - 3 and it
+ * did not fit; a regression guard for that belongs here, and THREE attempts at
+ * one were each defeated in review before the mechanism was withdrawn:
+ *
+ *   a grep for the reason's own words   -- the words that matter are a
+ *                                          substring of the longer string they
+ *                                          replaced AND of the comment
+ *                                          explaining the replacement, so it
+ *                                          passed for exactly the state it was
+ *                                          meant to catch
+ *   a sha256 of the function's text     -- the pipeline collapsed whitespace,
+ *                                          so a reason respaced inside its own
+ *                                          literal left the hash unchanged
+ *   copies measured against a -D limit  -- the copies can drift from the
+ *                                          firmware, which is what the two
+ *                                          above existed to prevent
+ *
+ * Each fix drew the next finding, which is the signal to stop adding
+ * machinery. The guard needs to measure the REAL strings -- extracted from the
+ * source, not copied -- and that is a design, not a patch. #1001.
+ *
  * THE TRANSIENT QUADRANT, AND WHY IT IS STILL OPEN
  *
  * The table above reads `suspended` as one value, which assumes the condition
@@ -236,42 +260,6 @@ static BenchVerdict new_bench_not_ready_diagnosis(BenchEnv *env)
     }
     return v;
 }
-
-/* ==========================================================================
- * What the arm actually prints, and how much of it survives.
- * ========================================================================== */
-
-/* The prefix the mid-wait arm interpolates a reason into (SCPIStorageSD.c).
- * The Makefile fails the build unless the whole `LOG_E("<this>%s` call is
- * still in the source -- matched as the CALL, not the bare text, so a comment
- * quoting the prefix cannot satisfy it.
- *
- * The three REASON copies below are pinned differently, and the difference is
- * the point (#983 review): a grep for a reason's own words is not a drift
- * guard, because the words that matter are a substring of the longer string
- * they replaced AND of the comment explaining the replacement -- it passed for
- * exactly the state it was meant to catch. They are pinned by a content hash
- * of SD_SuspendReasonText() instead, which claims only "this text is
- * unchanged" and cannot be talked around. When it fires, re-read the function
- * against these copies and update both together. */
-static const char *const kMidWaitLogPrefix =
-    "SD:BENCH - could not complete the arm: ";
-
-/* What Logger will actually keep. Logger.c formats with
- *
- *     vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, format, args);
- *
- * and vsnprintf writes at most n-1 characters plus a NUL, so a formatted line
- * longer than LOG_MESSAGE_SIZE - 3 is cut -- silently, and on the device only,
- * where no assertion that compares a constant against itself can see it.
- * FW_LOG_MESSAGE_SIZE is grepped out of Logger.h by the Makefile rather than
- * copied here, so a change to the buffer re-derives this instead of quietly
- * invalidating it. */
-#ifndef FW_LOG_MESSAGE_SIZE
-#error "FW_LOG_MESSAGE_SIZE must come from the Makefile (grepped from Logger.h)"
-#endif
-#define LOG_LINE_MAX  (FW_LOG_MESSAGE_SIZE - 3)
-
 
 /* ==========================================================================
  * Fixtures
@@ -511,45 +499,6 @@ TEST(exactly_one_quadrant_moves_and_why_is_sampled_once)
     ASSERT_EQ(moved, 1);
 }
 
-/* THE MESSAGE HAS TO SURVIVE THE LOGGER, and this is the only place that can
- * say so. Every other test in this file compares a constant against itself,
- * which is true of the string and says nothing about the line the operator
- * reads: Logger cuts at LOG_MESSAGE_SIZE - 3, silently, and on the device only.
- *
- * This arm interpolates whatever SD_SuspendReasonText() returns, so all three
- * reasons are measured -- against the LONGEST prefix that interpolates them,
- * which is what any of them has to survive.
- *
- * The quarantine reason used to be 94 characters and was cut at
- * "then SYST:STOR:SD:ENAb", losing the command that clears a quarantine from
- * the one message whose whole job is to name it -- through this arm and
- * through the arm-refusal twin shipped since #936. #986. It is 76 now, and
- * this test is what keeps it there.
- *
- * SCOPE: this file's callers only. SD_SuspendReasonText() is shared, and
- * SCPI_StartStreamingClaimed (SCPIInterface.c) interpolates it into an
- * 88-character prefix that leaves 35 -- where ALL THREE reasons are cut, the
- * shortest included. No reason string can be short enough for that site; its
- * own prefix has to give. Measured and filed as #1000. Asserting it here would
- * red CI for a defect this PR did not cause and cannot fix from this file. */
-TEST(every_reason_this_arm_can_print_survives_the_logger)
-{
-    static const char *const reasons[] = {
-        kReasonWifiStream, kReasonFwUpdate, kReasonQuarantine
-    };
-    size_t i;
-    size_t prefix = strlen(kMidWaitLogPrefix);
-
-    /* +2 for the CRLF the format string carries. */
-    for (i = 0; i < sizeof(reasons) / sizeof(reasons[0]); i++) {
-        ASSERT_TRUE(prefix + strlen(reasons[i]) + 2 <= LOG_LINE_MAX);
-    }
-
-    /* And the quarantine one must still carry the command, not just fit:
-     * shortening it by deleting the instruction would pass the loop above
-     * and destroy the message. */
-    ASSERT_TRUE(strstr(kReasonQuarantine, "SYST:STOR:SD:ENAble 1") != NULL);
-}
 
 int main(void)
 {
@@ -560,6 +509,5 @@ int main(void)
     RUN(dir_full_without_suspend_is_unchanged_by_953);
     RUN(no_suspend_no_dir_full_still_reports_the_card);
     RUN(exactly_one_quadrant_moves_and_why_is_sampled_once);
-    RUN(every_reason_this_arm_can_print_survives_the_logger);
     return TEST_SUMMARY();
 }
