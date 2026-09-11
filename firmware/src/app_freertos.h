@@ -276,6 +276,30 @@ void APP_FREERTOS_Initialize ( void );
  */
 bool app_SDCard_SpiOwnedByWifi(void);
 
+/**
+ * #925: does the SD-card client currently hold the shared SPI4 bus's DRV_SPI
+ * exclusive lock?
+ *
+ * Read-only, task context only. This is the direct observation of the wedge
+ * #925 describes; the SYSTem:DIAGnostic:SPIBus:STATs? reject counters are NOT
+ * a substitute, because they move only when some OTHER client happens to
+ * attempt a transfer while the lock is held — zero on a leaked lock nobody has
+ * bumped into yet, and non-zero during healthy contention.
+ *
+ * A `true` reading is not by itself a fault: the driver legitimately holds the
+ * lock across task iterations for a command sequence, a detect poll, or media
+ * initialisation. It is a fault only if it PERSISTS with no SD operation
+ * armed, which is what the leak watchdog in app_SDCardTask tests.
+ */
+bool app_SDCard_HoldsSpiBus(void);
+
+/**
+ * #925: number of times that leak watchdog has force-unwound the lock since
+ * boot. 0 on a healthy device — a non-zero value means the bus was found stuck
+ * and recovered, and is the signal to look for a leaking acquire.
+ */
+uint32_t app_SDCard_BusRecoveryCount(void);
+
 void APP_FREERTOS_Tasks ( void );
 void APP_FREERTOS_Initialize ( void );
 

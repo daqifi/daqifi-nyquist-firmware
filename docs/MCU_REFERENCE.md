@@ -1,7 +1,7 @@
 # PIC32MZ2048EFM144 reference
 
 > Split out of `CLAUDE.md` on 2026-09-10. That file is loaded into **every turn of
-> every agent**, and at 38k tokens it was ~13% of all token spend; this material is
+> every agent**, and at ~38k tokens it was ~13% of all token spend; this material is
 > reference — needed when you work in this area, not on every task. **It is
 > unchanged, not summarised.** Read it in full before changing anything it
 > describes, and update it here rather than re-adding it to `CLAUDE.md`.
@@ -54,9 +54,12 @@ The PBxDIV /3 writes live in `SystemInit`/`initialization.c` (Harmony's `CLK_Ini
 > **⚠️ The descriptive throughput TABLES below (Session-24 soaks, fit basis) pre-date #487 — measured at 200 MHz/100 MHz.** They are historical characterization, not the enforced caps. **The ENFORCED caps HAVE been re-fit for 252 MHz** (contrary to older revisions of this note): PB transport + additive were raised (**#595/#600** — USB PB single 15000→22000 curve 120000/(1+n), SD PB single 9000→13000 curve 99000/(4+n), ISR_MAX 16000→22000); USB CSV transport was raised (**#712**); and the pure-T1 PB additive was **lowered** (**#715/#714** — the 252 MHz PB refit had over-capped pure-T1 PB, silently dropping data at cap: USB PB 1×T1 19340→15799, SD PB 1×T1 9852→7900). **Still on the 200 MHz-era fit (real remaining headroom):** the CSV *additive* grid for **nT1 >= 2** (its **single-channel** case was re-fitted by **#832**, 10589 -> 15263), JSON (`CSV×0.5` placeholder except USB/NQ1, **#529**), the WiFi PB curve, and all NQ2/NQ3 caps (legacy 200 MHz envelope by design). The authoritative, current cap dataset is `daqifi-python-test-suite/benchmarks/` (e.g. `atcap_20260723_*.csv`), not the tables in this file; the enforced values live in `firmware/src/services/streaming.h` (`Streaming_AdcAdditiveCap_NQ1` / `Streaming_SdAdditiveCap_NQ1` / `Streaming_TransportMaxFreq`). Cross-check those + the `#595/#600/#712/#715` PRs before running any 252 MHz cap work.
 >
 > **⚠️ CAP WORK MUST PIN `CONFigure:VOLTage:PRECision` (#832 / test-suite #233).**
-> `csv_encoder` takes an integer fast path (`int_to_str`) at precision **0** and
-> formats a float per channel per sample at **4**, which is what NQ1 **ships**.
-> That is a first-order cost, not a rounding detail: an A/B at one rate measured
+> `csv_encoder` takes an integer fast path (`int_to_str`) at precision **0** —
+> the value a fresh NQ1 actually persists (see the ⚠️ under "Voltage Output
+> Precision" above — #910) — and formats a float per channel per sample at
+> precision **4**, the value `NQ1BoardConfig.c` *declares* as the board default
+> but that a fresh device never reaches. That is a first-order cost, not a
+> rounding detail: an A/B at one rate measured
 > precision 0 clean against precision **4 losing 10.8 %**, at byte rates within
 > 1 % of each other — encoder CPU, not bandwidth. Precision is NVM-backed, so a
 > board that some earlier test pinned and never restored silently changes what
@@ -110,7 +113,9 @@ Stack sizes profiled under stress: 16ch@5kHz PB/CSV/JSON + SD file ops + WiFi TC
 
 **Note**: SD directory listing uses iterative traversal with a bounded BSS-backed stack (`SD_CARD_MANAGER_MAX_LIST_DEPTH = 16`, ~4.3 KB total). Task stack usage is O(1) regardless of FAT32 tree depth. Trees deeper than 16 levels emit a diagnostic and skip the subtree.
 
-**SCPI shared response buffer**: Any SCPI callback needing ≥256 B of scratch MUST use `SCPI_ResponseBuf_Take()` / `SCPI_ResponseBuf_Give()` rather than a stack local. The shared buffer is a single 2048-byte static in BSS guarded by a statically-allocated mutex (`configSUPPORT_STATIC_ALLOCATION=1`). Rationale: the TCP → microrl → libscpi path consumes ~800 words of WifiTask stack before the callback runs, so a large stack-local buffer inside a SCPI callback can overflow — issue #347 hit exactly this when WifiTask was 1024 words (it's 1500 now, peak 780; the headroom assumes callbacks stay off large stack locals). Current users: `SCPI_SysInfoGet`, `SCPI_SysInfoTextGet`, `SCPI_GetCommandHistory`, `SCPI_Help`, `SCPI_StorageSDBenchmark`.
+**SCPI shared response buffer**: the constraint is not a flat byte count — it is that a *response-sized* buffer (the formatted reply text a callback is about to send back) does not belong on the stack; that is precisely what the shared buffer exists for. Any callback assembling such a reply MUST use `SCPI_ResponseBuf_Take()` / `SCPI_ResponseBuf_Give()` instead of a stack local. The shared buffer is a single 2048-byte static in BSS guarded by a statically-allocated mutex (`configSUPPORT_STATIC_ALLOCATION=1`). Rationale: the TCP → microrl → libscpi path already consumes ~800 words of `app_WifiTask` stack before the callback runs (`app_WifiTask` is 1500 words / 6000 B; measured peak was 780 words as of 2026-04 — re-verify via `SYST:MEM:STACk?` before relying on the exact figure, since nothing here depends on it staying at 780) — issue #347 hit exactly this when `app_WifiTask` was 1024 words.
+
+An *ordinary* (non-reply) stack local is judged against that measured headroom, not against a fixed byte threshold — a prior revision of this rule stated a flat 256 B ceiling, which eight shipping call sites already exceed 3×. Concrete precedent, so a reviewer does not have to re-derive it: `DaqifiSettings` is used as a stack local — not through the shared buffer — at eight registered SCPI callback sites (`SCPILAN.c:671`, `:1424`, `:1443`, `:1479`; `SCPIADC.c:1402`, `:1477`; `SCPIInterface.c:6168`, `:6183`). It is **~796 B**: `AInCalArray` alone is `MAX_AIN_RUNTIME_CHANNEL`(48) × `sizeof(AInCalParam)`(16 B, `{double CalM; double CalB;}`) = 768 B, plus the union's type tag and an MD5-sized checksum field (`services/daqifi_settings.h`). That is accepted and correct, because it is a *config value* being read/written, not the reply text the shared buffer is for — treat a new stack local of similar shape and size the same way; a magic-number check against it is not the test. Current `SCPI_ResponseBuf` users (formatted replies, not working values): `SCPI_SysInfoGet`, `SCPI_SysInfoTextGet`, `SCPI_GetCommandHistory`, `SCPI_Help`, `SCPI_StorageSDBenchmark`.
 
 **Scheduling implications**: Capture tasks at priority 9 preempt everything to guarantee deterministic sample timing. The encoder at priority 6 preempts WiFi/WINC/background (priority 2) and SD (priority 5), but stays below USB (7) so SCPI commands remain responsive during streaming. SD task at priority 5 sits above background transports but below encoder — prevents encoder from starving SD writes when USB+SD both active. Encoder's `Streaming_WriteWithRetry` uses `vTaskDelay(1)` (not `taskYIELD()`) in its retry loop so lower-priority SD actually gets CPU to drain circular buffer (#312). See `docs/PIPELINE_TIMING.md` for measurements (PR #308, Sessions 7-17).
 

@@ -82,9 +82,87 @@ typedef struct s_tcpClientContext
     uint64_t wifiTcpBytesConfirmed;
     /** Radio send errors (negative sentBytes in callback — real failures) */
     uint32_t wifiTcpSendErrors;
-    /** Partial sends (callback confirmed fewer bytes than requested — normal TCP segmentation) */
+    /** Partial sends (callback confirmed fewer bytes than requested).  #500: an
+     *  elevated band around 23-26 KB/s of WIRE BYTE RATE is EXPECTED — it keys
+     *  on byte rate rather than sample rate (1xT1 @ 2250 Hz and 5xT1 @ 1250 Hz
+     *  peak together), is near-zero below ~22 KB/s and low again by ~33 KB/s,
+     *  and is not circular-buffer-size dependent.  **#935/#956: this counter is
+     *  NOT a loss indicator — it is inflated by a send-completion ring-pairing
+     *  defect** (see wifiPartialBytesMissing below and #956 for the mechanism),
+     *  which is also why the band is byte-rate-keyed: the pairing only shows up
+     *  when consecutive send lengths differ, which peaks mid-band and vanishes
+     *  once sends saturate to a constant 1400 B above it.  Treat a rise as a
+     *  diagnostic-counter artifact, not stream damage, until #956 lands.  See
+     *  CLAUDE.md, "WiFi characterization — lessons that survive". */
     uint32_t wifiTcpPartialSends;
-    /** #367 diagnostics: cumulative byte shortfall (sendSize - sentBytes) across all partial sends */
+    /** #367 diagnostics: cumulative byte shortfall (sendSize - sentBytes) across
+     *  all partial sends, summed only where the difference is positive
+     *  (wifi_manager.c's `<` test at the increment site silently discards the
+     *  negative direction).  **#935/#956: this is NOT a permanent-loss counter.**
+     *  It assumes `inflightSizes[inflightTail]` (popped in SOCKET_MSG_SEND)
+     *  always belongs to the completion currently firing; #956 documents two
+     *  independently-verified ways that pairing breaks (an unlocked
+     *  WIFI_TCP_MAX_IN_FLIGHT check racing the ring push in TcpServerFlush, and
+     *  SYST:STR:START / SYST:STR:STATS:CLEar zeroing the ring without
+     *  tcpInFlight — the missed twin of #519's ResetInflightRing fix). When
+     *  mis-paired, this field sums the positive half of a length difference
+     *  between two UNRELATED sends and the matching negative half is discarded,
+     *  so it grows with no byte actually lost.  The counter that DOES bound
+     *  real un-confirmed payload is wifiTcpBytesSent - wifiTcpBytesConfirmed.
+     *  That difference ALREADY INCLUDES payload still in flight -- BytesSent is
+     *  incremented when the send is issued and BytesConfirmed only when the
+     *  completion fires -- so do not add the in-flight amount to it again.
+     *  Outstanding payload is NOMINALLY bounded by WIFI_TCP_MAX_IN_FLIGHT *
+     *  WIFI_WBUFFER_SIZE = 5600 B, but that is design intent, NOT a guaranteed
+     *  ceiling: TransmitBufferedData() tests tcpInFlight BEFORE taking the
+     *  mutex while TcpServerFlush() increments it inside a later critical
+     *  section, so two producers can pass the same check at 3 and both
+     *  increment -- the same unlocked cap that mis-pairs the ring (#956).  So a
+     *  difference under that figure is CONSISTENT WITH zero loss, not proof of
+     *  it; the reading the race cannot inflate is one taken after outstanding
+     *  completions have drained.
+     *
+     *  PRECONDITION, and it is stronger than "no reset in the window".  THE
+     *  ABSOLUTE TOTALS ARE VALID ONLY SINCE A RESET TAKEN WITH NOTHING IN
+     *  FLIGHT (tcpInFlight == 0).
+     *
+     *  SYST:STR:START and SYST:STR:STATS:CLEar zero BytesSent and
+     *  BytesConfirmed WITHOUT draining outstanding sends (SCPIInterface.c) --
+     *  the same reset asymmetry #956 names for the ring, applied to these two
+     *  counters.  A completion landing after such a reset adds to Confirmed
+     *  while its Sent contribution was erased, and NOTHING EVER PUTS IT BACK:
+     *  BytesSent is written in exactly three places, the += at flush and the
+     *  two resets.  The offset is PERMANENT for the rest of the session, so a
+     *  later drain does not repair it and a later reset-free window inherits
+     *  it.
+     *
+     *  Both directions of that offset are bad, and the SILENT one is the
+     *  likelier hazard.  Confirmed > Sent makes the difference negative, and
+     *  since both are uint64_t an unsigned subtraction WRAPS to ~1.8e19,
+     *  which reads as catastrophic loss.  But the offset can equally CANCEL a
+     *  real loss: 100 B sent, CLEar before its completion, drain (Sent=0,
+     *  Confirmed=100), then a clean window of 1400 issued and 1300 confirmed
+     *  leaves Sent == Confirmed == 1400 with 100 bytes genuinely gone.  That
+     *  reads as zero loss and satisfies "no reset in this window".
+     *
+     *  It is invisible in the partial counters too: after a CLEar the popped
+     *  sendSize is 0, so the `sendSize > 0` guard below suppresses the
+     *  partial-send flag entirely -- only Confirmed moves.
+     *
+     *  WHAT IS SAFE: a DELTA between two drained snapshots inside one
+     *  uncontaminated epoch.  To re-establish one, reset with the ring
+     *  drained.
+     *
+     *  SEPARATELY, and NOT fixed by #956: a genuine short send is never
+     *  retried.  TcpServerFlush zeroes writeBufferLength immediately after a
+     *  successful send(), and no resend path exists -- so bytes the WINC did
+     *  not accept are gone whatever the ring pairing does.  That is a second,
+     *  independent risk source; do not let the ring-pairing story absorb it.
+     *
+     *  #935 measured 187 B and 190 B in two
+     *  independent bench runs (~0.016-0.017% of bytes sent), far inside that
+     *  figure and far below this field's reading in the same run.  Until #956
+     *  lands, do not cite a rise here as evidence of lost stream bytes. */
     uint32_t wifiPartialBytesMissing;
     /** #371 diagnostics: count of wifi_tcp_server_WriteBuffer calls that returned 0
      *  because the circular buffer didn't have enough free space.  Streaming task

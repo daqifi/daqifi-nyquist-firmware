@@ -1,7 +1,7 @@
 # SD card subsystem
 
 > Split out of `CLAUDE.md` on 2026-09-10. That file is loaded into **every turn of
-> every agent**, and at 38k tokens it was ~13% of all token spend; this material is
+> every agent**, and at ~38k tokens it was ~13% of all token spend; this material is
 > reference — needed when you work in this area, not on every task. **It is
 > unchanged, not summarised.** Read it in full before changing anything it
 > describes, and update it here rather than re-adding it to `CLAUDE.md`.

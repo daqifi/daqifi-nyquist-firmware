@@ -35,7 +35,6 @@ test policy, the debugging-evidence rules, and the standing rules.
 **If you change behaviour these files describe, update them there.** Re-adding
 that material here re-imposes the cost on every agent on every turn, which is the
 whole reason it moved.
-
 ## Build Instructions
 
 Toolchain on this station: **MPLAB X v6.30** (`C:\Program Files\Microchip\MPLABX\v6.30`), **XC32 v4.60** (also at `/opt/microchip/xc32/v4.60` Linux-side). Older v6.25 paths in scripts/history are stale — v6.25 is uninstalled.
@@ -105,29 +104,39 @@ Preferred wrapper on this dev station: `bash ~/.claude/skills/flash/flash.sh [--
   -F"C:\\Users\\User\\Documents\\GitHub\\daqifi-nyquist-firmware\\firmware\\daqifi.X\\dist\\default\\production\\daqifi.X.production.hex" -OL
 ```
 (Station path shown — works pasted into Windows PowerShell/CMD too. From WSL on another checkout, derive it: `-F"$(wslpath -w firmware/daqifi.X/dist/default/production/daqifi.X.production.hex)"`.)
-Watch for "Program Succeeded". Flags: `-M` = program mode, `-OL` = use loaded memories only. Gotchas: `-P` takes the device **without** the `PIC` prefix (with it: exit 36 / "Unable to locate DFP"); `-F` needs a Windows-style path (`/mnt/c/...` fails silently); `-TS<serial>` selects a specific PICkit when several are attached; **every flash wipes NVM** (WiFi/calibration settings — restore via the scpi skill's `batch.sh` + the station-local `sta_setup.batch` recipe); after flashing, reattach to WSL (`usbipd attach --wsl --busid 2-4`); libscpi context is stale after flash — new SCPI patterns return `-113` until `SYST:REBoot`.
+Watch for "Program Succeeded". Flags: `-M` = program mode, `-OL` = use loaded memories only. Gotchas: `-P` takes the device **without** the `PIC` prefix (with it: exit 36 / "Unable to locate DFP"); `-F` needs a Windows-style path (`/mnt/c/...` fails silently); `-TS<serial>` selects a specific programmer when several are attached; **`-TP` selects the programmer FAMILY and does not fall back** — `-TPPK4` for a PICkit 4 (USB `PID_9012`), `-TPPK5` for a PICkit 5 (`PID_9036`); point it at the wrong family and ipecmd simply fails to find the tool, so `flash.sh` derives it from the programmer's PID and callers pass only `--ts`; **every flash wipes NVM** (WiFi/calibration settings — restore via the scpi skill's `batch.sh` + the station-local `sta_setup.batch` recipe); after flashing, reattach to WSL (`usbipd attach --wsl --busid 2-4`); libscpi context is stale after flash — new SCPI patterns return `-113` until `SYST:REBoot`.
 
 ### Bench tool inventory (this dev station)
 | Item | Identifier | Notes |
 |------|-----------|-------|
-| Primary PICkit 4 (this board) | `BUR184882598` | Pass `-TSBUR184882598` to ipecmd when multiple PICkits are attached |
-| Secondary PICkit 4 | `BUR202272588` | On other board(s) — ignore unless re-targeting |
+| Lane registry (authoritative) | `~/.claude/bench/devices.conf` | Box-local; one row per lane (COM, firmware serial, PICkit), enforced by the bench device-guard; lane identity = worktree name. Snapshot of 2026-09-08 below. |
+| Primary PICkit 4 | `BUR184882598` | Lane **nq-a**; pairing PROVEN 2026-09-08 (`flash/pairing-proof.sh nq-a`), re-run after re-cabling. Pass `-TS<serial>` with more than one PICkit attached, or ipecmd silently programs nothing. |
+| Secondary PICkit 4 | `BUR202272588` | Not attached since 2026-09-08. |
+| Lane nq-b (added 2026-09-08) | Nyquist **COM8** serial `7E2873046200E891` + **PICkit 5** `020026703RYN079002` | Pairing PROVEN 2026-09-08; now on v3.8.0, crc32 `9CF57ADD`. **Its `*IDN?` serial read `0` until it was reflashed** — the serial is `DEVSN1:DEVSN0` silicon (`BoardConfig.c:37`), not NVM, so a `0` means *this firmware does not read DEVSN*, never that the board lacks identity. Reflash before concluding anything from a `0`. **Factory cal is identity, i.e. this board is UNCALIBRATED** — do not use it for accuracy work. |
 | MCU device target | `PIC32MZ2048EFM144` | Pass to ipecmd as `-P32MZ2048EFM144` (no `PIC` prefix — see ipecmd gotchas above) |
-| Serial port (USB CDC) | Windows: `COM3` / `COM9` (stable per board) ; WSL: `/dev/ttyACMn` (**attach-order dependent — NOT stable**) | usbipd busid `2-4` (primary) / `2-3` (secondary); reattach via `powershell.exe -Command "usbipd attach --wsl --busid <BUSID>"` after each reboot/flash. **DO NOT assume `/dev/ttyACM0` maps to any particular board — verify by serial number (see below).** Stable identifiers across reboots are the Windows COM number and the per-unit serial; `/dev/ttyACMn` is assigned by Linux in the order usbipd attaches devices. |
-| Bench primary device serial | `7E2898F46200E8A7` | Programmed by PICkit `BUR184882598`. Windows: **COM3**, busid **2-4**. Verify by `*IDN?` before issuing SCPI — never hardcode `/dev/ttyACM0`. |
-| Bench secondary device serial | `7E28A4206200EAD1` | Programmed by PICkit `BUR202272588`. Windows: **COM9**, busid **2-3**. Verify by `*IDN?` before issuing SCPI — never hardcode `/dev/ttyACM1`. **⚠️ Shared with other agents — may not always be available; if `usbipd list` shows it as "Not shared" or it's attached elsewhere, do not commandeer it.  Fall back to the primary alone.** |
+| Serial port (USB CDC) | Windows **COM7** = primary (was COM3). No usbipd here, so no `/dev/ttyACMn`: use Windows `python.exe` or `bench serial` (asserts DTR). | The board has no USB iSerial: **verify by the `*IDN?` serial**, never by port number. |
+| Bench primary device serial | `7E2898F46200E8A7` | Lane nq-a, COM7, PICkit `BUR184882598`; demo unit, its lane may flash it. |
+| Bench secondary device serial | `7E28A4206200EAD1` | Not attached since 2026-09-08 (nor `7E28517F62010292`, `7E2837886201026A`); re-add as `nq-c` onward after a pairing proof (`nq-b` is taken, see the row above). |
 | Bench WiFi AP | SSID `Tesla` | Credentials in `~/.daqifi.env` (chmod 600) — never commit |
 | Bench PC iperf2 | `C:\Users\User\Downloads\iperf-2.2.1-win64.exe` | Run `-s -p 5002 -i 1`; redirect stdout to `C:\temp\iperf2.log` for log-side correlation |
 
 #### ⚠️ Device verification protocol — ALWAYS run before SCPI tests
 
-**`/dev/ttyACMn` assignment is volatile** — Linux numbers devices in usbipd attach order, not hardware identity, so the same board can move between `ACM0`/`ACM1` across reattaches. The **stable** identifiers are the Windows COM number and the firmware serial (third field of `*IDN?`, format `DAQiFi,Nq1,<serial>,01-02`). Never trust `/dev/ttyACMn` alone (this caused a 30-minute false bisect on 2026-05-06 — every firmware "looked the same" because the script was reading an unflashed second board).
+**Never identify a board by port number alone.** The stable identifier is the firmware serial (third field of `*IDN?`, `DAQiFi,Nq1,<serial>,01-02`); a port number is an enumeration artefact. Getting this wrong caused a 30-minute false bisect on 2026-05-06 — every firmware "looked the same" because the script was reading an unflashed second board.
 
-Before any SCPI work:
+**Which steps apply depends on whether your box has usbipd — check the inventory table above, it is per-box.**
 
-1. Map busid → COM on the Windows side, and list WSL ports:
+**Boxes WITHOUT usbipd** (this station as of 2026-09-08: no bridge, no `/dev/ttyACMn`, boards on COM ports):
+
+1. List ports and identify each natively — `bench ports`, then `bench serial COMn '*IDN?'` per port (it asserts DTR; the CDC does not answer without it).
+2. Match each serial against the lane registry `~/.claude/bench/devices.conf`, and drive only the board your lane owns. `bench whoami` prints what you own.
+3. A serial of `0` means *this firmware does not read DEVSN*, not that the board has no identity — reflash before concluding anything (see the nq-b row above).
+
+**Boxes WITH usbipd** (`/dev/ttyACMn` exists; numbering follows attach order, so the same board moves between `ACM0`/`ACM1`):
+
+1. Map busid → COM and list WSL ports:
    ```bash
-   powershell.exe -Command "usbipd list" | grep "04d8:f794"   # 2-4=COM3 primary, 2-3=COM9 secondary
+   powershell.exe -Command "usbipd list" | grep "04d8:f794"
    ls -la /dev/ttyACM* 2>/dev/null || echo "no ttyACM nodes — attach may still be in progress"
    ```
 2. Query each port's serial and match it to the inventory table above:
@@ -140,7 +149,8 @@ Before any SCPI work:
    done
    ```
 3. Store the result in a variable (`DEV_PRIMARY=/dev/ttyACMn`) for the session instead of hardcoding. Later examples in this file use the literal `/dev/ttyACM0` as a stand-in for "the primary device".
-4. Wrong board selected? Re-target — don't detach boards that aren't yours (other workflows may be using them).
+
+**Either way:** wrong board selected? Re-target — never detach or drive a board that is not yours; another lane may be using it, and the bench device-guard will refuse you.
 
 ### Bootloader Entry
 - Hold the user button for ~20 seconds until board resets
@@ -441,12 +451,12 @@ For ad-hoc multi-command bench scripts, write to **`/tmp/temp.sh`** (the filenam
 - **Host must read fast.** ≥1 ms read cadence = zero loss; a 500 ms poller dropped 1 MB in the same 16ch@3kHz A/B that a 1 ms reader survived clean. The firmware pipeline is leak-free — host-side reading is almost always the culprit in "USB drop" reports. Use `FastReader` (background drain) for anything streaming.
 - **Delivery is bursty by design** (ZLP boundaries + one DMA transfer in flight + circular→DMA copy): `in_waiting` can read 0 while data sits in the usbipd pipeline; don't tight-poll it; allow 3+ s settle between sessions in naive scripts. Any SCPI command mid-stream "flushes" a short packet.
 - **Rate measurements:** ONLY via `StreamingMeasurement` (`test_harness.py`) — PC-controlled window opened at first data byte, closed before STOP; wall-clock around SCPI start/stop adds ~10 % error, and the older first-byte-time SPS calculation caused ~10–15 % run-to-run variance (fixed by blocking FastReader + sleep-duration denominator — variance now near zero). `is_csv=True` counts rows; WiFi/SD pass `wait_for_serial=False`. Reference points: USB CSV 16ch@3kHz = 795 KB/s, 0 drops.
-- **A CDC "wedge" from rapid serial open/close is almost always a HOST/method artifact, not firmware — verify before chasing it.** Realistic churn (DTR asserted, as pyserial / any real client does) runs clean (bench-verified 2026-07-19: 15 cycles, 0 errors, device healthy before+after). The apparent "wedge" (Write → *"semaphore timeout"*) shows up when opening *without* asserting DTR (`.NET SerialPort` defaults `DtrEnable=false`) or through the WSL/usbipd reconnect handshake — a fresh reflash + one careful DTR-asserted probe recovers it, no firmware change. The one genuine firmware heap-leak wedge (**#684**: WINC HIF semaphore leaked ~88 B per `SYST:COMM:LAN:POWer` toggle → `vApplicationMallocFailedHook` at `freertos_hooks.c:137`, ~round 87) is **fixed in #685** — hardware-verified 2026-07-19: `HeapFree` dead-flat across 24 `LAN:POWer` toggles (a leak would decline ~88 B/toggle). **Before investigating any CDC-wedge report, `gh pr list --state all --search` the symptom first** — this exact wedge was re-derived from scratch for hours in one session because that check was skipped. mdb can read the crash state on a *DEBUG_RUN* build on the primary (COM3, `-p 0`), but the debug image no longer fits RAM without a ~4 KB `STATIC_POOL_SIZE` trim.
+- **A CDC "wedge" from rapid serial open/close is almost always a HOST/method artifact, not firmware — verify before chasing it.** Realistic churn (DTR asserted, as pyserial / any real client does) runs clean (bench-verified 2026-07-19: 15 cycles, 0 errors, device healthy before+after). The apparent "wedge" (Write → *"semaphore timeout"*) shows up when opening *without* asserting DTR (`.NET SerialPort` defaults `DtrEnable=false`) or through the WSL/usbipd reconnect handshake — a fresh reflash + one careful DTR-asserted probe recovers it, no firmware change. The one genuine firmware heap-leak wedge (**#684**: WINC HIF semaphore leaked ~88 B per `SYST:COMM:LAN:POWer` toggle → `vApplicationMallocFailedHook` at `freertos_hooks.c:137`, ~round 87) is **fixed in #685** — hardware-verified 2026-07-19: `HeapFree` dead-flat across 24 `LAN:POWer` toggles (a leak would decline ~88 B/toggle). **Before investigating any CDC-wedge report, `gh pr list --state all --search` the symptom first** — this exact wedge was re-derived from scratch for hours in one session because that check was skipped. mdb can read the crash state on a *DEBUG_RUN* build on your lane's board (`-p 0`; take the port from the inventory table above or `bench whoami`, never a remembered number), but the debug image no longer fits RAM without a ~4 KB `STATIC_POOL_SIZE` trim.
 
 ### Long-running bench runs
 
 - **Always `python3 -u`** (or `PYTHONUNBUFFERED=1`) for background runs — block-buffered stdout looks empty and is lost on kill. Never wrap a real run in a tight `timeout` — per-trial SCPI overhead alone is ~15–20 s, so runs outlast naive estimates; reserve `timeout` for genuinely-bounded one-shot probes and size it generously. Watch the PID or the per-row-fsynced CSV instead (the CSV is the reliable progress signal).
-- **Sustained high-rate USB → run Windows-native** (`python.exe` against COM3, repo cloned under `C:\`): the cumulative ISR=-1/unreadable-STATS wedge under back-to-back high-rate trials is a WSL/usbipd artifact. WSL `/dev/ttyACMn` is fine for low-rate/control-plane SCPI. (Separately: WSL-launched python silently drops inbound UDP — use PowerShell-native tooling for UDP tests.)
+- **Sustained high-rate USB → run Windows-native** (`python.exe` against your lane's COM port — take it from the inventory table above or `bench whoami`, never a remembered number — with the repo cloned under `C:\`): the cumulative ISR=-1/unreadable-STATS wedge under back-to-back high-rate trials is a WSL/usbipd artifact. On a box that HAS usbipd, WSL `/dev/ttyACMn` is fine for low-rate/control-plane SCPI; on a box without it there is no such node and the native path is the only path. (Separately: WSL-launched python silently drops inbound UDP — use PowerShell-native tooling for UDP tests.)
 - Don't echo test results to the console for their own sake — observe, then report a summary.
 
 ### Git Configuration

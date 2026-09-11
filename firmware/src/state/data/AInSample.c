@@ -145,11 +145,100 @@ void AInSampleList_InitializeExternal(void* poolMem, int16_t* freeMem,
     if (poolMem == NULL || freeMem == NULL || maxSize == 0 || elementSize == 0) {
         LOG_E("Sample pool external init: NULL or zero (%p, %p, %u, %u)",
               poolMem, freeMem, (unsigned)maxSize, (unsigned)elementSize);
+        /* #950: by the time this path is reached, StreamingBufferPool_Partition
+         * has already re-carved gPoolStorage and reassigned this address range
+         * -- typically to the USB or WiFi circular buffer. Simply returning
+         * here used to leave the PREVIOUS samplePoolBase/poolCapacity/nextFree
+         * (and poolActive) untouched, so AllocateFromPool kept handing out
+         * slots computed from an offset that now belongs to a live transport
+         * ring -- and the caller (PrepareStreamingBuffers, SCPIInterface.c)
+         * reported success and armed streaming on top of that. Invalidate the
+         * pool instead of leaving it aliasing: same poolActive-first ordering
+         * AInSampleList_Destroy() uses (atomic write, no mutex needed) so a
+         * concurrently-running Allocate/FreeToPool cannot race the pointer
+         * clear below, and AllocateFromPool then returns NULL until the next
+         * successful (re)init.
+         *
+         * PrepareStreamingBuffers ALSO refuses now (same ticket, same branch),
+         * so the caller does not arm at all. An earlier revision of this
+         * comment said the refusal "still needs a change in SCPIInterface.c",
+         * which was true when the branch was split and stopped being true when
+         * the two halves landed together. The invalidation is not made
+         * redundant by the refusal: it is what makes the refusal safe to
+         * return from, since the re-carve has already happened by the time
+         * either of them runs. */
+        if (poolOwnsMemory) {
+            /* #950: NOTHING TO DO, and that is the whole of it.
+             *
+             * The aliasing this function's bail-out exists to prevent is
+             * specific to an EXTERNAL pool: that one is a slice of
+             * StreamingBufferPool's static gPoolStorage, so the re-partition
+             * that brought us here has already handed its address range to a
+             * transport ring. A heap-owned pool is a separate pvPortMalloc'd
+             * block (see AInSampleList_Initialize above). A re-carve of
+             * gPoolStorage cannot reassign it, it aliases nothing, and no
+             * caller will use it either -- the caller refuses the start.
+             *
+             * Three earlier revisions of this branch did something here and
+             * each was wrong in a new way: an inline free left the sample
+             * queue holding pointers into freed memory and stranded the
+             * separately-allocated free list; delegating to
+             * AInSampleList_Destroy fixed both and then deleted the queue,
+             * so the next valid init re-created it through the path that
+             * skips the freeHeap >= needed + 1024 reserve. The common factor
+             * was treating a pool that is not in danger as if it were.
+             * Leaving it alone removes the hazard by removing the code. */
+            return;
+        }
+        poolActive = false;
+        if (poolMutex != NULL) {
+            xSemaphoreTake(poolMutex, portMAX_DELAY);
+        }
+        samplePoolBase = NULL;
+        nextFree = NULL;
+        poolCapacity = 0;
+        poolElementStride = 0;
+        freeHead = -1;
+        /* #950, second half: the two USE counters are pool state too, and
+         * leaving them is the same defect one field over. A pool with no
+         * slots has nothing allocated and has never had anything allocated,
+         * so `SYST:MEM:FREE?` must not answer SamplePoolCount=0 beside
+         * SamplePoolMaxUsed=1 -- an incoherent pair a reader can only resolve
+         * by guessing which field lied. The successful path below already
+         * zeroes both for exactly this reason; the bail-out returned before
+         * reaching it. Found on hardware: the companion test's phase-2 check
+         * read a high-water mark carried over from its own phase 1 and could
+         * not tell that from a sample allocated out of the invalidated pool. */
+        poolAllocCount = 0;
+        poolMaxAllocCount = 0;
+        if (poolMutex != NULL) {
+            xSemaphoreGive(poolMutex);
+        }
         return;
     }
 
-    if (maxSize < MIN_AIN_SAMPLE_COUNT) maxSize = MIN_AIN_SAMPLE_COUNT;
     if (maxSize > MAX_AIN_SAMPLE_COUNT) maxSize = MAX_AIN_SAMPLE_COUNT;
+    /* #931: maxSize here is the capacity StreamingBufferPool_Partition
+     * ACTUALLY carved for poolMem/freeMem (via
+     * StreamingBufferPool_GetSamplePool) -- it is never a "give me at least
+     * this many" request, unlike the heap-fallback path above. Clamping it
+     * UP, as this line used to (to MIN_AIN_SAMPLE_COUNT), builds the free-list
+     * chain past the end of freeMem and, once allocation reaches those slots,
+     * writes sample data past the end of poolMem -- both run off the end of
+     * the static gPoolStorage[] array into whatever the linker placed next in
+     * BSS. Partition legitimately returns fewer than MIN when manual
+     * SYST:MEM:*:BUFfer sizes consume most of the pool; a smaller pool still
+     * works correctly, it just has less burst-absorption headroom. Clamping
+     * DOWN (above) stays safe -- it only uses less than the caller was given.
+     * AInSampleList_Initialize()'s heap path (above) keeps its own up-clamp
+     * because it allocates memory sized to maxSize AFTER the clamp; here the
+     * memory is fixed-size and caller-owned, so inflating the count is a
+     * straightforward overrun rather than a request for more. Inform, don't
+     * hide (SCPI data-visibility rule) instead of silently under-provisioning. */
+    if (maxSize < MIN_AIN_SAMPLE_COUNT) {
+        LOG_E("Sample pool: %u slots, below min %u - less burst headroom",
+              (unsigned)maxSize, (unsigned)MIN_AIN_SAMPLE_COUNT);
+    }
 
     // Create mutex if first call (boot-time malloc)
     if (poolMutex == NULL) {

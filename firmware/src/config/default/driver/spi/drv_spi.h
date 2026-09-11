@@ -1260,6 +1260,24 @@ bool DRV_SPI_WriteReadTransfer(
 */
 bool DRV_SPI_Lock( const DRV_HANDLE handle, bool lock );
 
+/* DAQiFi additions (#589 P2, #925) — shared-bus observability.
+ *
+ * The shared SPI4 bus (SD card + WINC1500) is DRV_SPI instance 0. A stuck
+ * exclusive lock on it is a hard wedge, and until #925 the only evidence was
+ * the reject counters — which move only when ANOTHER client happens to attempt
+ * a transfer, so they read zero on a leaked lock that nobody has bumped into
+ * yet, and non-zero during healthy contention. These report the lock state
+ * directly.
+ *
+ * Both are read-only, task-context only (they take a short critical section),
+ * and safe to call at any time. Pass NULL for any output not wanted. */
+void DRV_SPI_GetRejectCounters(uint32_t *stale, uint32_t *exclusive,
+                               uint32_t *lockFail, uint32_t *queueFull);
+void DRV_SPI_GetExclusiveState(const SYS_MODULE_INDEX drvIndex,
+                               bool *inExclusive, uint32_t *holderHandle,
+                               uint32_t *depth);
+bool DRV_SPI_IsExclusiveHolder( const DRV_HANDLE handle );
+
 /* MISRAC 2012 deviation block end */
 //DOM-IGNORE-BEGIN
 #ifdef __cplusplus

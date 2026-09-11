@@ -13,6 +13,13 @@ make run
 `make run` builds and runs the suite; the process exit code is non-zero if any
 test fails, so it drops straight into CI. `make clean` removes build artifacts.
 
+**Wired into CI as of #946**: `.github/workflows/host-tests.yml` runs `make
+run` in this directory on every PR/push touching `tests/host/**` or the
+firmware sources these tests compile or grep (see that workflow's `paths:`
+list). Before #946 this sentence described the exit-code *contract* only —
+no workflow anywhere in the repo actually invoked `make run`, for any of the
+three tests here, not just the one #946 added.
+
 ## What's covered
 
 `test_circularbuffer.c` exercises `firmware/src/Util/CircularBuffer.c`:
@@ -31,6 +38,39 @@ test fails, so it drops straight into CI. `make clean` removes build artifacts.
   `produced - consumed` math and a round-trip through the real
   `AddBytes` / `ProcessBytes` API across the 2^32 boundary
 - NULL-argument safety on every entry point
+
+`test_943_bench_stall_bound.c` covers the per-chunk write loop inside
+`SYST:STOR:SD:BENCHmark` (issue #943). Unlike the other two it does **not**
+include any firmware source: `SCPIStorageSD.c` drags in libscpi, FreeRTOS and
+the SD manager, so the test re-implements the pre-fix and post-fix loop
+**shapes** against an injected mock clock and mock `WriteToBuffer`, then
+compares their verdicts on identical inputs. What it proves is that the old
+shape's exit condition counted *iterations* (invariant under preemption, so its
+"10 s" bound really took 10 s × the preemption stretch) while the new one
+counts *elapsed ticks* and holds to `[10 s, 10 s + one poll)` at every stretch.
+Also covered: the happy path takes no sleep at all, progress resets the
+deadline (so a slow-but-draining card is not killed), and the tick-counter
+wrap.
+
+Because the test re-implements rather than includes, the two firmware timeout
+constants are a copy. The Makefile target greps them out of `SCPIStorageSD.c`
+and **fails the build** if either drifts, so a stale copy cannot pass silently.
+
+`test_json_string_escape.c` covers `firmware/src/services/JSON_StringEscape.h`
+(issue #164) — the JSON string-escaping helper split out of `JSON_Encoder.c`
+so it can be compiled and tested here with no board dependencies. Neither
+field it protects (the WiFi SSID, and defensively the friendly device name)
+is reachable via a real streaming session: `Json_Encode`'s one caller
+(`streaming.c`) never includes `ssid_tag` or `friendly_device_name_tag` in
+its field list, so there is no bench recipe that streams an SSID through the
+encoder. This suite is the only place the escaping logic is exercised at
+all. Covers: printable ASCII passthrough, the two JSON-structural characters
+(`"` and `\`), the named single-character escapes (`\b\f\n\r\t`), `\u00XX`
+escaping of every other non-printable byte (including 0x80-0xFF, since a raw
+high byte would make the whole JSON stream invalid UTF-8), the `inLen` bound
+(no over-read past a non-NUL-terminated source), buffer-too-small refusing
+wholesale rather than truncating mid-escape, the exact worst-case sizing
+`JSON_Encoder.c` allocates on its stack, and NULL/zero-size safety.
 
 ## Framework
 

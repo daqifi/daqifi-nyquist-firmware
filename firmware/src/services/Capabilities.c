@@ -111,9 +111,6 @@ void Capabilities_GetStreamingSummary(CapabilitiesStreamingSummary* out) {
     if (out == NULL) return;
     memset(out, 0, sizeof(*out));
 
-    uint16_t type1 = 0;
-    uint16_t total = 0;
-    Streaming_CountActiveChannels(&type1, &total, NULL);
     /* 0 public channels → no valid streaming rate. Reporting the
      * ISR ceiling in that state would advertise rates that
      * StartStreamData would reject. */
@@ -122,7 +119,33 @@ void Capabilities_GetStreamingSummary(CapabilitiesStreamingSummary* out) {
      * per-format TRANSPORT cap, not just the channel-count/ADC terms. Without
      * this the capability query would advertise a higher rate than the device
      * delivers (clients pre-validate against current_max_rate_hz). */
-    out->maxFreqHz = (total > 0) ? Streaming_ComputeMaxFreqForConfig() : 0;
+    /* #921: take the terms from the SAME call that yields maxFreqHz. A second
+     * call would re-read Encoding, which is the desync the single read inside
+     * Streaming_ComputeMaxFreqTermsForConfigIface exists to prevent.
+     *
+     * Gate on the count that computation USED (terms.totalChannels), not on a
+     * separate Streaming_CountActiveChannels here. This function previously
+     * took its own count and passed the compute call through a `(total > 0)`
+     * ternary -- but the callee counts again, so the two could disagree when
+     * the other SCPI transport disabled the last channel between them, and the
+     * callee's zero-channel branch deliberately returns ISR_MAX rather than 0.
+     * The published document would then advertise a healthy rate, and non-zero
+     * cap terms, for a device with no inputs at all. One count now decides both
+     * WHETHER to publish and WHAT to publish, so the two cannot disagree.
+     *
+     * memset above already left maxFreqHz and every term 0, which is exactly
+     * the report the no-channel case needs -- no valid rate, so no binding
+     * term. */
+    StreamingCapTerms terms;
+    memset(&terms, 0, sizeof(terms));
+    uint32_t maxFreqHz = Streaming_ComputeMaxFreqTermsForConfig(&terms);
+    if (terms.totalChannels > 0) {
+        out->maxFreqHz        = maxFreqHz;
+        out->capAdcAdditiveHz = terms.adcAdditiveHz;
+        out->capTransportHz   = terms.transportHz;
+        out->capScanBoundHz   = terms.scanBoundHz;
+        out->capSdAdditiveHz  = terms.sdAdditiveHz;
+    }
     /* Qodo #595: advertise the variant-appropriate ISR ceiling. NQ1's basis
      * supports 22 kHz (2026-07-05 refit); NQ2/NQ3 remain characterized only
      * to the legacy 16 kHz and their legacy formula still enforces it -

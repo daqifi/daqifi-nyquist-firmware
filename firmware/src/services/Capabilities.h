@@ -95,6 +95,19 @@ typedef struct {
     uint32_t type1AggMaxHz;
     uint32_t tickBudget;
     uint32_t tickOverhead;
+    /* #921: the individual terms maxFreqHz is the min() of, so a host can see
+     * WHICH one binds instead of re-deriving them from streaming.h. Filled from
+     * the same single call that produced maxFreqHz, so they cannot describe a
+     * different computation than it does. 0 means "does not apply to this
+     * configuration", never a 0 Hz cap -- no producer of these values can
+     * return 0 (see StreamingCapTerms in streaming.h). All 0 when maxFreqHz is
+     * 0, i.e. when no channels are enabled.
+     * Mirrors StreamingCapTerms field-for-field, kept as flat uint32_t so this
+     * header stays free of a streaming.h dependency. */
+    uint32_t capAdcAdditiveHz;
+    uint32_t capTransportHz;
+    uint32_t capScanBoundHz;       /* 0 when no MODULE7 scan is armed */
+    uint32_t capSdAdditiveHz;      /* 0 unless NQ1 with the SD interface */
 } CapabilitiesStreamingSummary;
 
 /* Storage capability. Covers board-level storage support only

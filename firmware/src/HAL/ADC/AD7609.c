@@ -514,8 +514,6 @@ double AD7609_ConvertToVoltage(
                         const AInRuntimeConfig* runtimeConfig,
                         uint32_t rawValue)
 {
-    UNUSED(runtimeConfig);
-
     // Get runtime range from module configuration using BoardRunTimeConfig_Get
     AInModRuntimeArray* pRuntimeModules = BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_MODULES);
     double fullScaleVoltage = 10.0; // Default ±10V range
@@ -534,21 +532,18 @@ double AD7609_ConvertToVoltage(
     // between fullScaleVoltage and the AD7609's actual configured range).
     // Consult the AD7609 datasheet Table 7 (output coding) and verify with
     // a precision voltage source before shipping this change on NQ3.
-    const int32_t maxCode = AD7609_MAX_VALUE;  // 131071 = 2^17 - 1
+    const int32_t signedValue = AD7609_DecodeSignedCode(rawValue);
 
-    // Mask to 18-bit width before sign extension. Defensive: upstream should
-    // only pass 18-bit values, but if upper bits are set (e.g., from a wider
-    // register read or buffered value), they would corrupt the sign logic.
-    // 0x3FFFF = bits [17:0] = AD7609_MAX_VALUE | AD7609_SIGN_BIT
-    int32_t signedValue = (int32_t)(rawValue & (AD7609_MAX_VALUE | AD7609_SIGN_BIT));
-
-    // Handle 18-bit 2's complement conversion by checking sign bit
-    // If bit 17 is set, the value is negative and needs sign extension
-    if (signedValue & AD7609_SIGN_BIT) {
-        signedValue |= AD7609_SIGN_EXTEND;  // Sign extend from 18 bits to 32 bits
-    }
-
-    // Convert to voltage: raw / maxCode * fullScale
-    double voltage = ((double)signedValue / (double)maxCode) * fullScaleVoltage;
-    return voltage;
+    // #889: apply the channel's user calibration. Before this the whole
+    // AD7609 calibration surface (CONF:ADC:chanCALM / chanCALB / SAVEcal /
+    // LOADcal / USECal) stored, persisted and read back correctly and was
+    // then discarded here, so a completed calibration moved no reported
+    // voltage on NQ2/NQ3. Shape mirrors MC12b_ConvertToVoltage: gain
+    // multiplies the scaled value, offset is added last. No NULL guard on
+    // runtimeConfig — the MC12b sibling has none and every caller
+    // (ADC_ConvertToVoltageByIndex) passes a live channel config.
+    // With the shipped defaults (CalM = 1, CalB = 0) this is bit-identical
+    // to the uncalibrated expression it replaces.
+    return AD7609_ScaleToVolts(signedValue, fullScaleVoltage,
+                               runtimeConfig->CalM, runtimeConfig->CalB);
 }
