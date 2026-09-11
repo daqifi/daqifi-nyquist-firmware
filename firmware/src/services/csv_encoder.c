@@ -611,8 +611,23 @@ size_t csv_Encode(
     bool compact = (pStreamCfg != NULL) && (pStreamCfg->Encoding == Streaming_CsvCompact);
 
     char   *p     = (char*)pBuffer;
-    size_t  rem   = buffSize - 1;  // reserve 1 byte up front for '\0'
+    const size_t maxRoom = buffSize - 1;  // reserve 1 byte up front for '\0'
+    size_t  rem   = maxRoom;
     size_t  total = 0;
+
+    /* #978 (csv_encoder twin of #164/#961's JSON fix): a call is handed the
+     * FULL configured encoder buffer only when streaming.c's batch-build loop
+     * is on batchIdx==0 -- packetSize resets to 0 immediately before that
+     * loop, and every batchIdx>0 call passes bufferSize-packetSize with
+     * packetSize already > 0 (streaming.c ~3288-3345, a zero-byte encode
+     * breaks the batch). Equality with the accessor therefore means THIS
+     * call already offered the most room any call will EVER offer; a
+     * non-streaming caller with its own arbitrary buffer simply never
+     * satisfies this and keeps today's retry-forever behaviour. Mirrors
+     * JSON_Encoder.c's `fullCapacityCall` exactly -- read through the
+     * accessor rather than assumed, same reasoning as there. */
+    const bool fullCapacityCall =
+            (buffSize == (size_t) Streaming_GetEncoderBufferSize());
 
     // Generate header on first call
     if (!csvHeaderSent) {
@@ -629,12 +644,65 @@ size_t csv_Encode(
     }
 
     while (1) {
-        bool hadAIN, hadDIO;
+        bool hadAIN = false, hadDIO = false;
         // attempt to write the next row in-place
         bool rawMode = (pStreamCfg != NULL) ? pStreamCfg->RawOutputMode : false;
         size_t rowLen = tryWriteRow(p, rem, state, channelConfig, dioEnabled, &hadAIN, &hadDIO, voltagePrecision, rawMode, compact);
         if (rowLen == 0 || rowLen > rem) {
-            break;  // no data left or row won?t fit
+            /* #978: distinguish "doesn't fit the room LEFT in this call"
+             * (keep retrying, unchanged -- a later call gets a fresh, full
+             * buffer) from "doesn't fit ANY buffer, ever, at these settings"
+             * (evict it so the FIFO queue head advances instead of stalling
+             * the whole CSV stream forever with no error raised).
+             *
+             * `rem == maxRoom` is the literal claim: this attempt already
+             * had the largest room -- buffSize-1, reserving the trailing
+             * '\0' -- that any call will EVER hand tryWriteRow(). Testing
+             * `rem` itself (not a proxy like "nothing written yet this
+             * call") leaves nothing here that could drift out of sync with
+             * rem's own bookkeeping a few lines below -- the #961 round-2
+             * lesson (a SEPARATE predicted threshold silently disagreed
+             * with the real code by 2 bytes) does not apply to a test
+             * phrased against the same variable the room actually is.
+             * Unlike JSON, a CSV row has no wrapping wrapper/closer to
+             * predict the cost of -- tryWriteRow() either writes the whole
+             * self-contained row (including its trailing '\n') or commits
+             * nothing at all, so this is the only test needed.
+             *
+             * Every input that changes a row's encoded size -- voltage
+             * precision, USECal/raw mode, CSV encoding/compact, and
+             * chanCALM/chanCALB themselves (#885) -- is rejected mid-session
+             * (SCPIInterface.c / SCPIADC.c claim-path guards), so a row that
+             * fails this test can never become encodable later in the same
+             * streaming session.
+             *
+             * Evict AIN, or DIO if AIN is absent, but never both: a DIO row
+             * is at most ~22 bytes (two uint32_t fields) so it is never the
+             * reachable cause (an oversized CONFigure:ADC:chanCALB value is,
+             * via tryWriteRow's %.*f fallback), and streaming.c's
+             * `encoded == 0` arm below books exactly ONE dropped sample --
+             * evicting both would silently under-count against that. */
+            if ((hadAIN || hadDIO) && fullCapacityCall && rem == maxRoom) {
+                if (hadAIN) {
+                    AInPublicSampleList_t *evicted = NULL;
+                    if (AInSampleList_PopFront(&evicted)) {
+                        AInSampleList_FreeToPool(evicted);
+                    }
+                } else {
+                    /* Unreachable at ENCODER_BUFFER_MIN in practice (a
+                     * DIO-only row is a few tens of bytes), kept so "the
+                     * head always advances" holds by construction rather
+                     * than by that arithmetic. */
+                    DIOSample evictedDio;
+                    DIOSampleList_PopFront(&state->DIOSamples, &evictedDio);
+                }
+                LOG_E_SESSION(LOG_SESSION_CSV_SAMPLE_TOO_LARGE,
+                        "CSV: row (%u ch) does not fit a %u B encoder "
+                        "buffer at precision %u - dropped",
+                        (unsigned) Streaming_GetChannelMapping()->count,
+                        (unsigned) buffSize, (unsigned) voltagePrecision);
+            }
+            break;  // no data left, row won't fit, or was just evicted
         }
 
         // now that it?s safely written, consume the queues:

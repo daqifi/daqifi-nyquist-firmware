@@ -234,6 +234,7 @@ extern "C" {
         LOG_SESSION_BUFFER_TAIL,           /**< streaming.c: bytes left in WiFi circular buffer at Stop */
         LOG_SESSION_T1_ARDY_MISS,          /**< streaming.c: T1 result not ready at direct read (#541) */
         LOG_SESSION_JSON_SAMPLE_TOO_LARGE, /**< JSON_Encoder.c: sample cannot fit the encoder buffer (#164) */
+        LOG_SESSION_CSV_SAMPLE_TOO_LARGE,  /**< csv_encoder.c: row cannot fit the encoder buffer (#978) */
         /* Add new entries above this line */
         LOG_SESSION_COUNT                  /**< Must be <= 32 */
     } LogSessionBit_t;
