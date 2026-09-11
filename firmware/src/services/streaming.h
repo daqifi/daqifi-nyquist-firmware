@@ -980,8 +980,12 @@ typedef struct {
      * no channel data), so deriving it re-counted still-queued samples every
      * tick. Only Json_Encode reports today (its oversize-sample drop arm);
      * csv_Encode destroys nothing on any zero-return path, and
-     * Nanopb_EncodeStreamingFast's pop-then-encode-failure losses are not yet
-     * reported -- a separate, known gap (see #970's PR description). */
+     * Nanopb_EncodeStreamingFast reports too, at both paths that destroy an
+     * already-popped sample: the AIN-message encode failure and the
+     * standalone-DIO fallback. Note that the first of those returns a NON-ZERO
+     * bufferOffset when an earlier message succeeded, so it books loss WITHOUT
+     * bumping encoderFailures -- which is why Streaming_Stop's hadDrops gate
+     * has to test this counter directly rather than infer it. */
     uint32_t encoderDroppedSamples;
     uint32_t encoderDroppedSamplesSteady;
     uint32_t dioDroppedSamples;     // DIO queue full — PushBack returned false (#296)

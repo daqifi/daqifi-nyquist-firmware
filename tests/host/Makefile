@@ -154,12 +154,18 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 
 $(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SRC) $(STREAMING_HDR) $(JSON_ENC_SRC) $(NANOPB_ENC_SRC) $(RECIPES)
-	@grep -qF 'gStreamStats.encoderDroppedSamples++' $(STREAMING_SRC) \
-	  && { echo "ERROR: $(STREAMING_SRC) still increments encoderDroppedSamples directly --"; \
-	       echo "       the #970 fix removed this from the encoded==0 arm. If this is"; \
-	       echo "       intentional, re-derive test_970_encoder_consume_accounting.c's"; \
-	       echo "       old-vs-new comparison against the new shape."; \
-	       exit 1; } || true
+	@for fld in encoderDroppedSamples encoderDroppedSamplesSteady; do \
+	   n=`grep -cE "gStreamStats\.$$fld[[:space:]]*(\+\+|\+=|-=|=)" $(STREAMING_SRC)`; \
+	   [ "$$n" -eq 1 ] \
+	     || { echo "ERROR: $(STREAMING_SRC) has $$n write sites on gStreamStats.$$fld, expected exactly 1."; \
+	          echo "       The #970 fix left ONE writer -- Streaming_ReportEncoderSampleLoss --"; \
+	          echo "       and removed the increment the encoded==0 arm used to do on a"; \
+	          echo "       zero-BYTE return. A second writer means that inference is back."; \
+	          echo "       This counts ANY write operator, not the literal '++' it used to"; \
+	          echo "       grep: a regression reintroduced as '+= 1' matched nothing and the"; \
+	          echo "       pin stayed green (audit finding, executed both directions)."; \
+	          exit 1; }; \
+	 done
 	@grep -qE 'void[[:space:]]+Streaming_ReportEncoderSampleLoss\(uint32_t samples\);' $(STREAMING_HDR) \
 	  || { echo "ERROR: Streaming_ReportEncoderSampleLoss is no longer declared in $(STREAMING_HDR)."; \
 	       echo "       This is the #970 entry point encoders use to book a loss they"; \
@@ -174,6 +180,14 @@ $(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SR
 	@set -- "$(JSON_ENC_SRC)" 1 "$(NANOPB_ENC_SRC)" 2; \
 	 while [ $$# -gt 0 ]; do \
 	   f=$$1; want=$$2; shift 2; \
+	   grep -qE '^[[:space:]]*#[[:space:]]*if[[:space:]]+0([[:space:]]|$$)' "$$f" \
+	     && { echo "ERROR: $$f contains a '#if 0' region, and this pin cannot see it."; \
+	          echo "       The count below comes from \$$(CC) -fpreprocessed, which strips"; \
+	          echo "       COMMENTS but does NOT evaluate preprocessor conditionals -- a call"; \
+	          echo "       inside '#if 0' is still counted (verified: it counts as 1). So the"; \
+	          echo "       pin would vouch for a reporter call that never compiles."; \
+	          echo "       Resolve by hand: delete the dead region, or re-derive this pin."; \
+	          exit 1; } || true; \
 	   got=`$(CC) -fpreprocessed -dD -E "$$f" 2>/dev/null | tr '\n' ' ' \
 	        | grep -oE 'Streaming_ReportEncoderSampleLoss[[:space:]]*\(' | wc -l`; \
 	   [ "$$got" -ge "$$want" ] \
