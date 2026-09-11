@@ -148,12 +148,19 @@ const char *SD_SuspendReasonText(void)
          * entire job is to name it.
          *
          * NOT SAFE EVERYWHERE, and an earlier revision of this comment implied
-         * it was. This function is declared in the shared header and
-         * SCPI_StartStreamingClaimed (SCPIInterface.c) interpolates it into an
-         * 88-character prefix, which leaves 35 -- so ALL THREE reasons are cut
-         * there, the shortest included, and shortening reasons cannot fix it.
-         * That call site needs its own prefix shortened; measured and filed as
-         * #1000, not addressed here.
+         * it was. This function is declared in the shared header, and one of
+         * its callers -- SCPI_StartStreamingClaimed's #942 refusal
+         * (SCPIInterface.c) -- used to interpolate it into an 88-character
+         * prefix, which left 35: short of even the shortest reachable reason
+         * (46), so all three were cut, the shortest included. #1000 fixed
+         * that call site by shortening ITS prefix (27 characters, not the
+         * reason strings here) rather than this function's return values --
+         * shortening the reasons was never the available lever, since the
+         * ceiling is shared across callers with different prefix costs. This
+         * function's two other SCPIInterface.c callers (the "SD suspended: %s"
+         * prefix, 40 characters) were already within budget for all four
+         * reachable strings here (measured, not just assumed: 118 worst case
+         * against the same 125-byte ceiling) and needed no change.
          *
          * NOT guarded by a test. Three attempts at one were each defeated in
          * review -- a grep for the reason's own words matched the string it
@@ -465,7 +472,7 @@ typedef struct {
 
 /* volatile: written by the SCPI task running a benchmark and read by the
  * OTHER transport's SCPI task (SCPI_StorageSDLoggingSet's guard below, and
- * the benchmark's own re-entrancy claim). Per CLAUDE.md a value written by
+ * the benchmark's own re-entrancy claim). Per docs/MCU_REFERENCE.md a value written by
  * one task and read by another needs volatile so the compiler cannot cache
  * it in a register. volatile does NOT make the read-modify-write atomic —
  * the claim still takes a critical section (#736). */
@@ -2173,7 +2180,7 @@ scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
             ? SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE  // 3.9GB safe default
             : (uint64_t)maxSizeBytes;
 
-    // 64-bit shared write needs a critical section per CLAUDE.md atomicity
+    // 64-bit shared write needs a critical section per docs/MCU_REFERENCE.md atomicity
     // rules — PIC32MZ's 32-bit data bus tears 64-bit stores under task
     // preemption. maxFileSizeBytes is read live by WRITE_TO_FILE from
     // app_SDCardTask on every pass; without this, that reader could see a
@@ -2387,7 +2394,7 @@ scpi_result_t SCPI_StorageSDMinFreeSet(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
-    // 64-bit shared write needs critical section per CLAUDE.md
+    // 64-bit shared write needs critical section per docs/MCU_REFERENCE.md
     // atomicity rules — PIC32MZ's 32-bit data bus tears 64-bit
     // stores under task preemption.  The runtime config is read
     // by SCPI_StartStreaming from a different task and by the

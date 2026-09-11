@@ -190,7 +190,7 @@ static bool wifiPowerSaveEnabled(void) {
 
 // Deadline (in ticks) at which wifi_manager_ProcessState should queue
 // the deferred WIFI_MANAGER_EVENT_INIT after a HardReset.  0 = none
-// pending.  32-bit reads/writes are atomic on PIC32MZ (see CLAUDE.md
+// pending.  32-bit reads/writes are atomic on PIC32MZ (see docs/MCU_REFERENCE.md
 // concurrency rules).  Marked volatile because it's set from any task
 // calling HardReset/Deinit and read every tick from app_WifiTask.
 static volatile TickType_t gWifiReinitDeadlineTick = 0;
@@ -1970,7 +1970,7 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         // pInstance->eventFlags in this codebase is on
                         // WifiTask (StaEventCallback / SocketEventCallback
                         // only call SendEvent — no flag mutations) so the
-                        // RMW is single-threaded.  Per CLAUDE.md
+                        // RMW is single-threaded.  Per docs/MCU_REFERENCE.md
                         // ("do not add unnecessary critical sections"), the
                         // earlier speculative wrap was inappropriate.  Also
                         // clear UDP_SOCKET_CONNECTED so it doesn't outlast
@@ -2750,7 +2750,7 @@ static void MaybeReconcileStaConnected(void) {
     // is the active flag.
     //
     // The SetEventFlag call itself is wrapped in a critical section to
-    // satisfy the PIC32MZ atomicity rule (CLAUDE.md: "RMW |= needs
+    // satisfy the PIC32MZ atomicity rule (docs/MCU_REFERENCE.md: "RMW |= needs
     // critical section") — the value |= flag inside SetEventFlag is
     // a non-atomic RMW shared with other task-context writers in this
     // file.  Qodo #451 pass 3 findings.

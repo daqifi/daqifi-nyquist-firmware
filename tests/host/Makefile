@@ -80,6 +80,42 @@ HELP_BIN := run_1004_tests
 SCPI_IFACE_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
 FW_RTOS_CFG := ../../firmware/src/config/default/FreeRTOSConfig.h
 
+# #1000: the #942 SD-log-arm refusal's LOG_E line, measured against the ceiling
+# Logger actually cuts at. Same host-testability constraint as HELP_BIN above
+# -- SCPIInterface.c is not includable here -- but the subject is a LENGTH, not
+# a control-flow shape, so there is nothing to re-implement. The test
+# reproduces Logger's truncation for real and runs the actual strings through
+# it.
+#
+# That only means anything if the strings and the ceiling are the REAL ones, so
+# this recipe EXTRACTS them into $(GEN_1000) rather than letting the test carry
+# copies: LOG_MESSAGE_SIZE from Logger.h, BOTH of Logger.c's reservations (the
+# vsnprintf bound and the clamp -- the arithmetic is split across the two
+# files, which is why both are prerequisites), and the LOG_E prefix plus the
+# call site's NULL fallback from SCPIInterface.c. A firmware change to any of
+# them re-derives the budget and fails if a line no longer fits, rather than
+# asking to be updated.
+#
+# Extraction has a failure mode a grep guard does not: finding NOTHING. An
+# empty prefix satisfies every budget assertion in the test while establishing
+# nothing at all -- the vacuous pass. So each extraction is checked non-empty
+# here, and the prefix is then ROUND-TRIPPED: reassembled into the full LOG_E
+# call text and required to appear verbatim in the source, which a silently
+# truncated extraction cannot satisfy. The build fails, by name, on any of it.
+#
+# The three SD_SuspendReasonText() strings are the one thing NOT extracted.
+# They belong to that function rather than to this call site, and #1001 is
+# building the mechanism that measures them against all of their callers; until
+# then they are copied into the test and each full return statement is grepped
+# here -- the whole statement including its closing quote and semicolon, not
+# the reason's own words, which is how the guard tried in #983 was defeated (it
+# matched the longer string it was meant to replace). A drifted copy fails the
+# build instead of quietly measuring a string the firmware no longer emits.
+SDLOG_BIN := run_1000_tests
+GEN_1000  := gen_1000_log_budget.h
+FW_LOG_H  := $(FW_UTIL)/Logger.h
+FW_LOG_C  := $(FW_UTIL)/Logger.c
+
 # Every binary depends on this file as well as on its sources. Two of the
 # targets below carry GUARDS in their recipes -- greps that fail the build when
 # the firmware text they model has moved -- and a guard that is only re-run when
@@ -88,6 +124,28 @@ FW_RTOS_CFG := ../../firmware/src/config/default/FreeRTOSConfig.h
 # nothing); this is for the local incremental build, where the binary outliving
 # an edited recipe is exactly how a guard goes quiet. Qodo, PR #983.
 RECIPES := Makefile
+
+# #980: DAC7718 error-path honesty (lock ownership in DAC7718_ReadWriteReg,
+# init-failure propagation + slot retention in DAC_EnsureHardwareInitialized).
+# Like BENCH_BIN, neither DAC7718.c (Harmony GPIO/SPI/coretimer + FreeRTOS
+# semaphores) nor SCPIDAC.c (+ libscpi + BoardData/BoardConfig) is includable
+# on the host, so the test re-implements both control-flow SHAPES against
+# mocks. The grep guards pin the two shape-defining identifiers and the
+# one-slot allocator constant the mock's fidelity claim depends on; a rename,
+# removal, or a MAX_DAC7718_CONFIG bump above 1 invalidates the test's premise
+# and must fail loudly rather than silently pass a stale copy.
+#
+# Part D (added post-merge, PR #990's own pre-merge adversarial audit, BLOCK
+# verdict): SCPI_DACVoltageGet's dacWriterPossible gate, fixing the confirmed
+# regression where the getter's new command-serialization lock was taken
+# UNCONDITIONALLY even though the mutex it locks is created only under
+# BoardVariant == 3 -- failing every SOUR:VOLT:LEV? with "DAC command busy"
+# on NQ1/NQ2 (every board on this bench) where the pre-PR getter always
+# succeeded. Two more grep guards below pin the predicate and the
+# lockHeld-threaded Unlock call.
+DAC980_BIN := run_980_tests
+DAC7718_SRC := ../../firmware/src/HAL/DAC7718/DAC7718.c
+SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
@@ -112,6 +170,68 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	       echo "       Update FW_STALL_POLL_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
+
+$(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(SCPIDAC_SRC) $(RECIPES)
+	@grep -qE '^[[:space:]]*bool lockHeld = false;' $(DAC7718_SRC) \
+	  || { echo "ERROR: DAC7718_ReadWriteReg's 'lockHeld' local is gone from $(DAC7718_SRC)."; \
+	       echo "       test_980_dac7718_error_paths.c Part A models exactly this variable -- re-derive it."; \
+	       exit 1; }
+	@grep -qE 'DAC7718_Unlock\(config, csAsserted, lockHeld\);' $(DAC7718_SRC) \
+	  || { echo "ERROR: DAC7718_Unlock's call site no longer passes (config, csAsserted, lockHeld) in $(DAC7718_SRC)."; \
+	       echo "       Part A's mock signature mirrors this exact call -- re-derive it."; \
+	       exit 1; }
+	@test "$$(grep -c 'goto cleanup;' $(DAC7718_SRC))" = "10" \
+	  || { echo "ERROR: DAC7718.c's 'goto cleanup;' count in DAC7718_ReadWriteReg changed from 10."; \
+	       echo "       Part A's read_write_reg_shape() models exactly 3 PRE-lock validations"; \
+	       echo "       (RW, Reg, config) plus 7 post-lock SPI-timeout branches, all reaching the"; \
+	       echo "       same cleanup label -- a branch added or removed changes what the mock's"; \
+	       echo "       shape claims to cover. Re-derive the test against the new branch count."; \
+	       exit 1; }
+	@grep -qE '^#define MAX_DAC7718_CONFIG 1[[:space:]]*$$' $(DAC7718_SRC) \
+	  || { echo "ERROR: MAX_DAC7718_CONFIG is no longer '1' in $(DAC7718_SRC)."; \
+	       echo "       Part B's mock_new_config() models a ONE-slot allocator; a different capacity"; \
+	       echo "       changes what 'the slot is retained on retry' even means -- re-derive the test."; \
+	       exit 1; }
+	@grep -qE 'static volatile bool dacInitInProgress = false;' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: dacInitInProgress is gone from $(SCPIDAC_SRC)."; \
+	       echo "       test_980_dac7718_error_paths.c Part B models exactly this claim flag -- re-derive it."; \
+	       exit 1; }
+	@test "$$(grep -c 'BoardData_Get(BOARDDATA_POWER_DATA, 0)' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: BoardData_Get(BOARDDATA_POWER_DATA, 0) call count in $(SCPIDAC_SRC) changed from 2."; \
+	       echo "       Part B's ensure_hardware_initialized_ex(..., powerStillUpAtPublish) models the"; \
+	       echo "       #980-pass-3 fix for the Qodo 'Power cycles leave the DAC marked ready' bug,"; \
+	       echo "       which needs BOTH the top-of-function power check AND a second, FRESH read"; \
+	       echo "       immediately before publishing dacHardwareInitialized=true. If this count is"; \
+	       echo "       no longer 2, the pre-publish re-check may have been removed -- re-derive."; \
+	       exit 1; }
+	@test "$$(grep -c 'failedMask |= (1UL << i)' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: failedMask |= (1UL << i) count in $(SCPIDAC_SRC) changed from 2."; \
+	       echo "       Part C's all_channel_set_new_shape() models SCPI_DACVoltageSet's all-channel"; \
+	       echo "       branch: EVERY per-channel failure (invalid hwChannel, failed register write)"; \
+	       echo "       must record into failedMask and fall through to the NEXT channel, never abort"; \
+	       echo "       the loop early. If this count changed, a failure path may now return before"; \
+	       echo "       the unconditional latch call -- re-derive Part C against the new shape."; \
+	       exit 1; }
+	@test "$$(grep -c 'staged\[i\] = true;' $(SCPIDAC_SRC))" = "1" \
+	  || { echo "ERROR: 'staged[i] = true;' count in $(SCPIDAC_SRC) changed from 1."; \
+	       echo "       Part C's fidelity claim is that a channel is only ever marked staged AFTER"; \
+	       echo "       both the hwChannel-validity check and the register write succeed, and that"; \
+	       echo "       BoardData is published only for staged channels post-latch. Re-derive Part C"; \
+	       echo "       if this shape moved."; \
+	       exit 1; }
+	@grep -qE 'const bool dacWriterPossible = \(pCfg != NULL\) && \(pCfg->BoardVariant == 3\);' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: SCPI_DACVoltageGet's dacWriterPossible gate is gone from $(SCPIDAC_SRC)."; \
+	       echo "       Part D's getter_gated_shape() models exactly this predicate -- the fix for"; \
+	       echo "       the PR #990 BLOCK-audit regression (unconditional lock failing every"; \
+	       echo "       SOUR:VOLT:LEV? on NQ1/NQ2). Re-derive Part D if this moved."; \
+	       exit 1; }
+	@test "$$(grep -c 'SCPIDAC_UnlockCommand(lockHeld);' $(SCPIDAC_SRC))" = "1" \
+	  || { echo "ERROR: 'SCPIDAC_UnlockCommand(lockHeld);' count in $(SCPIDAC_SRC) changed from 1."; \
+	       echo "       SCPI_DACVoltageGet must thread lockHeld (not an unconditional true) through"; \
+	       echo "       to Unlock, since dacWriterPossible == false deliberately skips the lock."; \
+	       echo "       Part D's getter_gated_shape() models this -- re-derive it if this moved."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
 
 $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
 	@a=`grep -nF 'SD:BENCH refused' $(SD_BENCH_SRC) | cut -d: -f1`; \
@@ -150,20 +270,96 @@ $(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(F
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(HELP_BIN) test_1004_help_write_abort.c
 
-# Every suite, and every one of the seven binaries. Merge conflict (fw#961
-# JSONESC_BIN vs fw#983 SUSPEND_BIN, both merging around the same time)
-# resolved by keeping each side's target intact and merging only `run` and
-# `clean` -- a duplicated rule here would silently shadow one of them.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(HELP_BIN)
+$(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $(SD_BENCH_SRC) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
+	@grep -qF 'return "SD quarantined after a bus jam - reseat the card, "' $(SD_BENCH_SRC) \
+	  && grep -qF '"then SYST:STOR:SD:ENAble 1";' $(SD_BENCH_SRC) \
+	  && grep -qF 'return "a WiFi firmware update owns SPI4 - retry when it completes";' $(SD_BENCH_SRC) \
+	  && grep -qF 'return "WiFi streaming owns SPI4 - SYST:STR:STOP first";' $(SD_BENCH_SRC) \
+	  || { echo "ERROR: an SD_SuspendReasonText() return statement in $(SD_BENCH_SRC)"; \
+	       echo "       no longer matches the copy in test_1000_sd_log_arm_budget.c."; \
+	       echo "       That test measures those strings against the #942 refusal's"; \
+	       echo "       LOG_E prefix, so a drifted copy measures a string the device"; \
+	       echo "       does not emit. Update the REASON_ macros there, re-derive the"; \
+	       echo "       budget, and check the new length still fits."; \
+	       exit 1; }
+	@set -e; \
+	 msgsz=$$(sed -n 's/^#define[[:space:]]\{1,\}LOG_MESSAGE_SIZE[[:space:]]\{1,\}\([0-9]\{1,\}\)[[:space:]]*$$/\1/p' $(FW_LOG_H)); \
+	 vsnres=$$(sed -n 's/^[[:space:]]*size = vsnprintf(buffer, LOG_MESSAGE_SIZE - \([0-9]\{1,\}\), format, args);[[:space:]]*$$/\1/p' $(FW_LOG_C)); \
+	 clampres=$$(sed -n 's/^[[:space:]]*size = min((LOG_MESSAGE_SIZE - \([0-9]\{1,\}\)), size);[[:space:]]*$$/\1/p' $(FW_LOG_C)); \
+	 if [ -z "$$msgsz" ] || [ -z "$$vsnres" ] || [ -z "$$clampres" ]; then \
+	   echo "ERROR: could not read Logger's message ceiling out of $(FW_LOG_H) / $(FW_LOG_C)"; \
+	   echo "       (LOG_MESSAGE_SIZE='$$msgsz' vsnprintf reserve='$$vsnres' clamp reserve='$$clampres')."; \
+	   echo "       test_1000_sd_log_arm_budget.c derives its entire budget from those"; \
+	   echo "       three, and mirrors LogMessageFormatImpl's truncation. If that"; \
+	   echo "       function was reshaped, re-derive the mirror before re-enabling."; \
+	   exit 1; \
+	 fi; \
+	 nfb=$$(grep -cF '"the SD task is not accepting work");' $(SCPI_IFACE_SRC) || true); \
+	 if [ "$$nfb" != "1" ]; then \
+	   echo "ERROR: the #942 SD-log-arm refusal's NULL fallback string is not uniquely"; \
+	   echo "       present in $(SCPI_IFACE_SRC) (found $$nfb occurrences)."; \
+	   echo "       test_1000_sd_log_arm_budget.c anchors its prefix extraction on that"; \
+	   echo "       line -- re-read both before changing either."; \
+	   exit 1; \
+	 fi; \
+	 prefix=$$(grep -B1 -F '"the SD task is not accepting work");' $(SCPI_IFACE_SRC) \
+	          | sed -n 's/^[[:space:]]*LOG_E("\(.*\)%s\\r\\n",[[:space:]]*$$/\1/p'); \
+	 fallback=$$(grep -F '"the SD task is not accepting work");' $(SCPI_IFACE_SRC) \
+	          | sed -n 's/^[[:space:]]*why ? why : "\(.*\)");[[:space:]]*$$/\1/p'); \
+	 if [ -z "$$prefix" ] || [ -z "$$fallback" ]; then \
+	   echo "ERROR: could not extract the #942 refusal's LOG_E prefix or its NULL"; \
+	   echo "       fallback from $(SCPI_IFACE_SRC)."; \
+	   echo "       prefix=[$$prefix] fallback=[$$fallback]"; \
+	   echo "       The LOG_E format string must sit on ONE line, immediately above"; \
+	   echo "       the fallback, ending in the %s and CRLF escapes. An empty"; \
+	   echo "       extraction would pass every length assertion in"; \
+	   echo "       test_1000_sd_log_arm_budget.c while checking nothing, so this"; \
+	   echo "       refuses to build instead."; \
+	   exit 1; \
+	 fi; \
+	 if printf '%s%s' "$$prefix" "$$fallback" | grep -q '["\]'; then \
+	   echo "ERROR: the extracted prefix or fallback contains a quote or a backslash,"; \
+	   echo "       which this recipe cannot faithfully re-emit as a C string literal"; \
+	   echo "       in $(GEN_1000). Re-derive the extraction in tests/host/Makefile."; \
+	   exit 1; \
+	 fi; \
+	 want="LOG_E(\"$$prefix%s\\r\\n\","; \
+	 if ! grep -qF "$$want" $(SCPI_IFACE_SRC); then \
+	   echo "ERROR: the extracted prefix does not round-trip into $(SCPI_IFACE_SRC)."; \
+	   echo "       Reassembled as: $$want"; \
+	   echo "       A partial extraction understates the prefix length, which would"; \
+	   echo "       let test_1000_sd_log_arm_budget.c pass on a line the device cuts."; \
+	   exit 1; \
+	 fi; \
+	 printf '/* GENERATED at build time by tests/host/Makefile ($(SDLOG_BIN)).\n' > $(GEN_1000); \
+	 printf ' * Do not edit, do not commit -- see tests/host/.gitignore. */\n' >> $(GEN_1000); \
+	 printf '#ifndef GEN_1000_LOG_BUDGET_H\n#define GEN_1000_LOG_BUDGET_H\n' >> $(GEN_1000); \
+	 printf '#define FW_LOG_MESSAGE_SIZE      %s\n' "$$msgsz"    >> $(GEN_1000); \
+	 printf '#define FW_LOG_VSNPRINTF_RESERVE %s\n' "$$vsnres"   >> $(GEN_1000); \
+	 printf '#define FW_LOG_CLAMP_RESERVE     %s\n' "$$clampres" >> $(GEN_1000); \
+	 printf '#define FW_1000_PREFIX           "%s"\n' "$$prefix" >> $(GEN_1000); \
+	 printf '#define FW_1000_NULL_FALLBACK    "%s"\n' "$$fallback" >> $(GEN_1000); \
+	 printf '#endif\n' >> $(GEN_1000)
+	$(CC) $(CFLAGS) -o $(SDLOG_BIN) test_1000_sd_log_arm_budget.c
+
+# Every suite, and every one of the nine binaries. Five-way history (fw#961
+# JSONESC_BIN, fw#983 SUSPEND_BIN, fw#980 DAC980_BIN, fw#1004 HELP_BIN,
+# fw#1000 SDLOG_BIN all landing around the same time -- see #1026, this
+# Makefile's shared run/clean lines are a known collision point) resolved by
+# keeping each side's target intact and merging only `run` and `clean` -- a
+# duplicated rule here would silently shadow one of them.
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(SDLOG_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
 	./$(JSONESC_BIN)
 	./$(SUSPEND_BIN)
+	./$(DAC980_BIN)
 	./$(HELP_BIN)
+	./$(SDLOG_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(HELP_BIN)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(SDLOG_BIN) $(GEN_1000)
 
 .PHONY: run clean
