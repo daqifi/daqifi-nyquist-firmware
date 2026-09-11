@@ -6447,10 +6447,33 @@ static scpi_result_t SCPI_GetStreamInterface(scpi_t * context) {
 /* #1007: the stored streaming rate has a setter (SYSTem:STReam:START <freq>)
  * and no getter, so a client that changes it for one test cannot read the
  * prior value back to restore it. This is the first query exposed for it.
- * Returns the last value START published -- never revoked by STOP
- * (deliberately out of scope, #1007) -- so before any START has ever run
- * this reads the boot default, 1 Hz (COMMON_STREAMING_RUNTIME_DEFAULTS,
- * CommonRuntimeDefaults.h: "the only rate legal in EVERY config").
+ * Returns the CURRENT stored rate. That is normally the last value START
+ * published -- never revoked by STOP (deliberately out of scope, #1007) --
+ * so before any START has ever run this reads the boot default, 1 Hz
+ * (COMMON_STREAMING_RUNTIME_DEFAULTS, CommonRuntimeDefaults.h: "the only
+ * rate legal in EVERY config").
+ *
+ * "CURRENT", not "last STARTed", because TWO callers borrow this field and
+ * put it back, and a read landing inside either window sees the borrowed
+ * value (pre-merge audit, #1014):
+ *   - SYSTem:STReam:THRoughput pokes it at :2481 and restores at :2518 /
+ *     :2560, with a vTaskDelay of up to 60 s (its duration argument) in
+ *     between.
+ *   - the WiFi finder pokes it at :2794 and restores at :3159.
+ * Neither is reachable from the same transport that is blocked running it,
+ * but SCPI over TCP is dispatched on app_WifiTask while USB SCPI runs on
+ * its own task, so a cross-transport query DOES land in the window.
+ * StreamFreq_Get's critical section gives atomicity, not ownership: it
+ * cannot tell a borrowed value from the stored one.
+ *
+ * Consequence for the snapshot/restore use #1007 exists for: a client that
+ * snapshots DURING a benchmark captures the benchmark's rate and, on
+ * restore, writes it back as the device's setting -- silently, since
+ * nothing here can detect it. Snapshot before starting a benchmark, not
+ * during one. Making the getter refuse or flag benchmark-owned state would
+ * mean giving this field real ownership semantics, which is #977's
+ * territory (the session-start and config-change claims do not interlock)
+ * and is deliberately not attempted in a getter this small.
  *
  * Reuses StreamFreq_Get() (above, ~line 2253) rather than re-deriving its
  * critical section: that helper already exists for exactly this field, and
