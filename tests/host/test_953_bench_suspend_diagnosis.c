@@ -303,8 +303,26 @@ static bool model_wait_latch(BenchWait *w)
  * fact cannot be misattributed -- and once the suspension has lifted, "retry"
  * is the whole of the action left anyway. */
 static const char *const kReasonTornDownDuringWait =
-    "the SD task was suspended during the wait and this benchmark's write "
-    "was torn down with it - retry";
+    "the SD task suspended during the wait and took this write with it - retry";
+
+/* The prefix the arm interpolates it into (SCPIStorageSD.c). The Makefile
+ * fails the build if this literal is no longer in the source, so the length
+ * measured below is the length of the line the DEVICE actually formats. */
+static const char *const kMidWaitLogPrefix =
+    "SD:BENCH - could not complete the arm: ";
+
+/* What Logger will actually keep. Logger.c formats with
+ *
+ *     vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, format, args);
+ *
+ * and vsnprintf writes at most n-1 characters plus a NUL, so a formatted line
+ * longer than LOG_MESSAGE_SIZE - 3 is cut. FW_LOG_MESSAGE_SIZE is grepped out
+ * of Logger.h by the Makefile rather than copied here, so a change to the
+ * buffer re-derives this instead of silently invalidating it. */
+#ifndef FW_LOG_MESSAGE_SIZE
+#error "FW_LOG_MESSAGE_SIZE must come from the Makefile (grepped from Logger.h)"
+#endif
+#define LOG_LINE_MAX  (FW_LOG_MESSAGE_SIZE - 3)
 
 /* POST-#953 with the round-1 fallback. Identical to
  * new_bench_not_ready_diagnosis() except that a NULL live reason defers to the
@@ -786,6 +804,58 @@ TEST(a_wait_with_no_suspension_at_all_still_reports_the_card)
     ASSERT_TRUE(v.text == NULL);
 }
 
+/* THE MESSAGE HAS TO SURVIVE THE LOGGER, and this is the only place that can
+ * say so. Every other test in this file compares the constant against itself,
+ * which is true of the string and says nothing about the line the operator
+ * reads: Logger truncates at LOG_MESSAGE_SIZE - 3 and does it on the device
+ * only, so a host model that stops at the constant cannot see it.
+ *
+ * The first draft of the fallback was 98 characters. With the 39-character
+ * prefix and the CRLF that is 139 against a 125-byte limit, so the device
+ * would have printed
+ *
+ *   SD:BENCH - could not complete the arm: the SD task was suspended during
+ *   the wait and this benchmark's write was torn down wit
+ *
+ * losing the "- retry" that is the entire actionable half, and the CRLF with
+ * it, so the next log line would have run on. Found by this PR's pre-merge
+ * audit.
+ *
+ * The three live reason strings are measured too, because the same arm
+ * interpolates them: two fit, and the quarantine one does NOT -- it is 136
+ * bytes here and 137 through the arm-refusal twin that has shipped since #936.
+ * That is a pre-existing defect in the longest and most actionable string in
+ * the #589 family ("... then SYST:STOR:SD:ENAble 1 to retry" is what is lost),
+ * so it is FILED rather than asserted here: failing this build on it would red
+ * CI for something this PR did not cause and cannot fix without changing a
+ * string four other tests match on. See the ticket named in the PR. */
+TEST(the_fallback_message_survives_the_logger_intact)
+{
+    static const char *const liveReasons[] = {
+        kReasonWifiStream, kReasonFwUpdate
+    };
+    size_t i;
+    size_t prefix = strlen(kMidWaitLogPrefix);
+
+    /* +2 for the CRLF the format string carries. */
+    ASSERT_TRUE(prefix + strlen(kReasonTornDownDuringWait) + 2 <= LOG_LINE_MAX);
+
+    /* And it must still say the actionable half AFTER the cut that is not
+     * happening -- i.e. the string ends in the instruction, so any future
+     * growth that reintroduces truncation loses something visible. */
+    ASSERT_TRUE(strstr(kReasonTornDownDuringWait, "retry") != NULL);
+
+    for (i = 0; i < sizeof(liveReasons) / sizeof(liveReasons[0]); i++) {
+        ASSERT_TRUE(prefix + strlen(liveReasons[i]) + 2 <= LOG_LINE_MAX);
+    }
+
+    /* The quarantine string is the known exception, measured rather than
+     * ignored: this asserts it is STILL over, so that when the filed ticket
+     * shortens it, this line fails and someone promotes it into the loop
+     * above instead of leaving a stale carve-out behind. */
+    ASSERT_TRUE(prefix + strlen(kReasonQuarantine) + 2 > LOG_LINE_MAX);
+}
+
 int main(void)
 {
     printf("#953 -- SD:BENCHmark file-not-ready diagnosis (extracted cascade)\n");
@@ -800,5 +870,6 @@ int main(void)
     RUN(the_latch_records_a_fact_not_a_label_and_then_stops_asking);
     RUN(a_recorded_refusal_still_outranks_the_latched_reason);
     RUN(a_wait_with_no_suspension_at_all_still_reports_the_card);
+    RUN(the_fallback_message_survives_the_logger_intact);
     return TEST_SUMMARY();
 }

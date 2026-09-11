@@ -47,6 +47,12 @@ AD7609_BIN := run_ad7609_tests
 # invalidates the test's premise and should be looked at rather than skipped.
 BENCH_BIN := run_943_tests
 SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
+# #953 review: the on-device message has a HARD length limit, and the test
+# has to know the real one rather than a copy of it. Logger.c formats with
+# vsnprintf(buf, LOG_MESSAGE_SIZE - 2, ...), so a line longer than that is cut
+# mid-word -- silently, and on the device only, where no host test that
+# compares against the pre-truncation constant can see it.
+LOGGER_HDR := ../../firmware/src/Util/Logger.h
 
 # #953: SD:BENCHmark's "file never opened" diagnosis. Same file as BENCH_BIN
 # and, for the same reason, the same technique -- no UUT copy, no stubs, the
@@ -106,7 +112,20 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        echo "       its whole point is that the order is the fix -- re-read both"; \
 	        echo "       before changing either."; \
 	        exit 1; }
-	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
+	@grep -qE '^#define[[:space:]]+LOG_MESSAGE_SIZE[[:space:]]+[0-9]+' $(LOGGER_HDR) \
+	  || { echo "ERROR: no '#define LOG_MESSAGE_SIZE <n>' in $(LOGGER_HDR)."; \
+	       echo "       test_953_bench_suspend_diagnosis.c checks that the arm's"; \
+	       echo "       message survives Logger's vsnprintf intact, and it takes the"; \
+	       echo "       limit from here rather than copying it. Re-point LOGGER_HDR."; \
+	       exit 1; }
+	@grep -qF 'SD:BENCH - could not complete the arm: %s' $(SD_BENCH_SRC) \
+	  || { echo "ERROR: the mid-wait arm's log PREFIX changed in $(SD_BENCH_SRC)."; \
+	       echo "       test_953_bench_suspend_diagnosis.c measures the formatted line"; \
+	       echo "       against Logger's limit and carries a copy of that prefix."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) \
+	  -DFW_LOG_MESSAGE_SIZE=`grep -E '^#define[[:space:]]+LOG_MESSAGE_SIZE' $(LOGGER_HDR) | awk '{print $$3}'` \
+	  -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
 # Every suite, and every one of the six binaries. Merge conflict (fw#961
 # JSONESC_BIN vs fw#983 SUSPEND_BIN, both merging around the same time)

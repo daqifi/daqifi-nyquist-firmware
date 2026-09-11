@@ -1574,9 +1574,17 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
                  * lifted destroyed this arm just as surely as one still in
                  * force. It names no owner because there is none left to name
                  * and none that could be named without risking the wrong one --
-                 * and because "retry" is the whole of what is left to do. */
-                why = "the SD task was suspended during the wait and this "
-                      "benchmark's write was torn down with it - retry";
+                 * and because "retry" is the whole of what is left to do.
+                 *
+                 * KEPT SHORT ON PURPOSE, and the host test measures it: Logger
+                 * formats with vsnprintf(buf, LOG_MESSAGE_SIZE - 2, ...), so
+                 * the whole line -- this string, the 39-character prefix below
+                 * and the CRLF -- must fit in 125 bytes or it is cut mid-word,
+                 * on the device only. The first draft of this message was 98
+                 * characters and lost exactly the "- retry" that makes it
+                 * actionable (#983 pre-merge audit). */
+                why = "the SD task suspended during the wait and took this "
+                      "write with it - retry";
             }
             if (sd_card_manager_StartupDirFull()) {
                 /* #690: name the real cause instead of the card advisory.
