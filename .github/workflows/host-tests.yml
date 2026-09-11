@@ -61,6 +61,15 @@ name: host-tests
 #     "refactor escapes the trigger" gap without dragging in every unrelated
 #     services/ file (streaming.c, wifi_manager.c, sd_card_manager.c, the
 #     whole SCPI/ subdirectory, ...).
+#   - test_980_dac7718_error_paths.c (#980): the Makefile target lists
+#     firmware/src/HAL/DAC7718/DAC7718.c as a build dependency (its grep
+#     guards pin identifiers/branch-counts in that file, and SCPIDAC.c) --
+#     but until this entry, only firmware/src/services/SCPI/** (SCPIDAC.c)
+#     was covered here, not the DAC7718/ directory itself. A PR touching
+#     ONLY DAC7718.c (no SCPIDAC.c change) matched no path and would not
+#     have run this suite, silently skipping the error-path checks on
+#     exactly the file whose control-flow shape they exist to mirror.
+#     Found by Qodo's #990 pre-merge review.
 #   - test_1000_sd_log_arm_budget.c (#1000): measures the #942 SD-log-arm
 #     refusal's LOG_E line against the ceiling Logger actually cuts at. Its
 #     fixture is GENERATED at build time from SCPIInterface.c and
@@ -113,6 +122,7 @@ on:
       - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
       - 'firmware/src/HAL/ADC/**'
+      - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
@@ -131,6 +141,7 @@ on:
       - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
       - 'firmware/src/HAL/ADC/**'
+      - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
