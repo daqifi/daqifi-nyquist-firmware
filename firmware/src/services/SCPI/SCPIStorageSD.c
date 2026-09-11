@@ -1295,10 +1295,19 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * sequence makes the name unique; the tick makes it legible.
      *
      * WHAT THIS DOES NOT FIX, and it is the other half of #958: a reboot
-     * restarts BOTH fields at their initial values -- the tick at 0 and the
-     * sequence at 0 -- so a run after a reboot can still land on the name of
-     * a file left on the card before it, and still truncates it silently. No
-     * counter kept in RAM can fix that half; only asking the card can. The
+     * restarts the sequence at 1 (it is pre-incremented, so 0 is never
+     * produced) and the tick at 0, so NEITHER field distinguishes one boot
+     * from another, and a run after a reboot can land on the name of a file
+     * left on the card before it and truncate it silently.
+     *
+     * Precisely when, because the first revision of this paragraph was not
+     * precise: it is NOT that every boot's first run shares one name. The
+     * tick above is sampled HERE, at naming time, not at boot -- so two
+     * first-runs collide only when they arrive at the same post-boot offset,
+     * and benchmark_5000_1.dat and benchmark_10000_1.dat are different names.
+     * A coincidence nothing prevents rather than a certainty, which is all the
+     * defect needs. No counter kept in RAM can fix that half; only asking the
+     * card can. The
      * issue's preferred shape -- stat the candidate, advance a discriminator
      * when it exists, refuse after a bounded number of attempts -- is the fix
      * for that and it CANNOT be implemented at this site: the FAT volume is

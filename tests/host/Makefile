@@ -67,7 +67,7 @@ SUSPEND_BIN := run_953_tests
 # values rather than included.
 #
 # It copies BOTH a format string and a length constant, and it also depends on
-# two DEFECTS being absent, so the recipe carries six guards. Three are about
+# two DEFECTS being absent, so the recipe carries seven guards. Three are about
 # the text being right: the post-fix format expression must be present (checked
 # with newlines squashed, because it wraps), the field length must still be 40,
 # and the masked 16-bit form -- the original #958 defect -- must NOT be back.
@@ -75,9 +75,12 @@ SUSPEND_BIN := run_953_tests
 # The other three are about the SEQUENCE field, added after Qodo found that the
 # whole 32-bit tick still repeats after 49.7 days of uptime. A format pin alone
 # would prove the field is in the name and nothing more, so the recipe also
-# requires that the counter is ADVANCED once per run, that it is NEVER assigned
-# anywhere but its definition (a reset reopens the collision), and that the
-# tick-only form has not come back. Each fails loudly and names what to re-read.
+# requires that the counter is ADVANCED once per run, that the advance happens
+# BEFORE the format (the pre-merge audit reproduced a swap of those two steps
+# passing every other guard and the whole host suite, while every name carried
+# the counter's initial value), that it is NEVER assigned anywhere but its
+# definition (a reset reopens the collision), and that the tick-only form has
+# not come back. Each fails loudly and names what to re-read.
 NAME_BIN := run_958_tests
 SD_MGR_HDR := ../../firmware/src/services/sd_card_services/sd_card_manager.h
 
@@ -177,6 +180,25 @@ $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BE
 	       echo "       anywhere, reopens the collision it closes."; \
 	       exit 1; \
 	 fi
+	@inc=`grep -n 'benchNameSeq = ++gBenchNameSeq;' $(SD_BENCH_SRC) | wc -l`; \
+	 fmt=`grep -n '"benchmark_%lu_%lu.dat"' $(SD_BENCH_SRC) | wc -l`; \
+	 [ "$$inc" -eq 1 ] && [ "$$fmt" -eq 1 ] \
+	   || { echo "ERROR: cannot locate the #958 naming steps uniquely in"; \
+	        echo "       $(SD_BENCH_SRC) (advance=$$inc, format=$$fmt; want 1 each)."; \
+	        echo "       The order pin below compares their positions and needs"; \
+	        echo "       exactly one of each to mean anything."; \
+	        exit 1; }; \
+	 i=`grep -n 'benchNameSeq = ++gBenchNameSeq;' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 f=`grep -n '"benchmark_%lu_%lu.dat"' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 [ "$$i" -lt "$$f" ] \
+	   || { echo "ERROR: $(SD_BENCH_SRC) formats the scratch name at line $$f BEFORE"; \
+	        echo "       advancing gBenchNameSeq at line $$i."; \
+	        echo "       Every name then carries the counter's INITIAL value, so two"; \
+	        echo "       runs at one tick collide exactly as they did before #958 --"; \
+	        echo "       the field is present and does nothing. A format pin cannot"; \
+	        echo "       see this; the pre-merge audit reproduced it passing all six"; \
+	        echo "       of the other guards and the whole host suite."; \
+	        exit 1; }
 	@if grep -qF '"benchmark_%lu.dat"' $(SD_BENCH_SRC); then \
 	       echo "ERROR: the tick-ONLY benchmark filename is back in $(SD_BENCH_SRC)."; \
 	       echo "       TickType_t is 32-bit here, so that name repeats after 49.7"; \

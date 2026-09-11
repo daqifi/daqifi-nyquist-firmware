@@ -150,28 +150,48 @@ name could collide again — the worst case is now 35 characters of 40). Then th
 49.7-day wrap itself: same tick, different sequence, distinct names. That case
 is the mirror of the headline one — there the sequence is held fixed so only
 the tick can separate two names, here the tick is held fixed so only the
-sequence can, and neither case can pass by measuring the wrong field.
+sequence can, and neither case can pass by measuring the wrong field. Last, the
+ordering: a counter advanced *then* formatted, driven through a wrapper rather
+than by injecting a sequence, because an injected value cannot be stale.
 
-Not covered, deliberately: the reboot half of #958. A reboot restarts both
-fields — the tick at 0 and the sequence at 1 — so the first run of every boot
-builds one and the same name, and a post-reboot run can land on a pre-reboot
-file's. No counter held in RAM can close that; only asking the card can. It is
-pinned as its own case, so that when the follow-up lands the case fails and the
-prose here has to be rewritten alongside it. Closing that
+Not covered, deliberately: the reboot half of #958. A reboot restarts the
+sequence at 1 and the tick at 0, so neither field distinguishes one boot from
+another and a post-reboot run can land on a pre-reboot file's name. Being
+precise, because an earlier revision of this paragraph was not: it is **not**
+that every boot's first run shares one name. The tick is sampled at *naming*
+time, not at boot, so two first-runs collide only when they arrive at the same
+post-boot offset — `benchmark_5000_1.dat` and `benchmark_10000_1.dat` are
+different names. A coincidence nothing prevents, which is all the defect needs.
+No counter held in RAM can close it; only asking the card can.
+
+It is **not** pinned as a test case. A review round added one that compared two
+calls to the same pure helper with identical arguments and claimed it would
+fail once the follow-up lands; the pre-merge audit threw it out, correctly. It
+could not fail for any implementation, and the follow-up resolves the candidate
+path inside the SD task without ever reaching that helper. A green case a
+maintainer reads as "the boundary is still guarded" is worse than no case.
+Closing that
 needs the candidate stat-ed before it is armed, which cannot be done in
 `SCPI_StorageSDBenchmark` — the FAT volume is mounted only inside an SD-task
 session and unmounted at the end of one, so a stat from that callback fails
 with an unmounted-volume error rather than "absent". See the file header for
 the exact error/line citations; the follow-up on #958 tracks it.
 
-Six greps guard this target. Three are about the text being right: the post-fix
-format expression must be present (matched with newlines squashed, since it
-wraps across two lines), the field-length constant must still be 40, and the
-masked pre-fix form must **not** be back (a suite whose premise is "the mask is
-gone" has to fail if it returns). Three are about the sequence field, which a
-format pin alone would only prove is *present*: the counter must be advanced
-once per run, it must never be assigned anywhere but its definition (a reset
-reopens the collision), and the tick-only form must not return either.
+Seven greps guard this target. Three are about the text being right: the
+post-fix format expression must be present (matched with newlines squashed,
+since it wraps across two lines), the field-length constant must still be 40,
+and the masked pre-fix form must **not** be back (a suite whose premise is "the
+mask is gone" has to fail if it returns). Four are about the sequence field,
+which a format pin alone would only prove is *present*: the counter must be
+advanced once per run, the advance must happen **before** the format, it must
+never be assigned anywhere but its definition (a reset reopens the collision),
+and the tick-only form must not return either.
+
+The order pin exists because the pre-merge audit reproduced a swap of those two
+steps passing every other guard and the whole host suite, while every name
+carried the counter's initial value — the field present and doing nothing.
+CASE 6 drives the same property through a wrapper that advances a counter and
+then formats, so the requirement is expressed in the test as well as in a grep.
 
 ## Framework
 

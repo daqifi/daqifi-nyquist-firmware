@@ -79,11 +79,19 @@
  *
  * WHAT THIS FILE DELIBERATELY DOES NOT COVER
  *
- * The other half of #958: the reboot case. A reboot restarts BOTH fields at
- * their initial values -- the tick at 0 and the sequence at 0 -- so a run
- * after a reboot can still land on the name of a file left on the card
- * before it, and still truncates it silently. No counter held in RAM can
- * close that half; only asking the card can. Closing it needs the
+ * The other half of #958: the reboot case. A reboot restarts the sequence at
+ * 1 and the tick at 0, so NEITHER field distinguishes one boot from another,
+ * and a run after a reboot can land on the name of a file left on the card
+ * before it and truncate it silently.
+ *
+ * Being precise about when, because an earlier revision of this header was
+ * not: it is NOT that every boot's first run shares one name. The tick is
+ * sampled at NAMING time, not at boot, so two first-runs collide only when
+ * they arrive at the same post-boot offset -- `benchmark_5000_1.dat` and
+ * `benchmark_10000_1.dat` are different names. That is a coincidence nothing
+ * prevents rather than a certainty, which is all the defect needs: the name
+ * carries no boot identity, so the card is the only place the question can
+ * be asked. No counter held in RAM can close that half. Closing it needs the
  * candidate name STAT-ed before it is armed, and that cannot be done in
  * SCPI_StorageSDBenchmark: the FAT volume is not mounted there. The SD task
  * mounts it only inside a session (sd_card_manager.c:1457, reached only when
@@ -106,6 +114,16 @@
  * There is likewise no assertion that the reboot collision STILL happens.
  * Pinning a defect in place makes the eventual fix fail this suite; the
  * boundary belongs in prose, here.
+ *
+ * A round of review added such a case anyway -- it asserted that two calls
+ * with identical arguments produce identical names -- and the pre-merge audit
+ * threw it out, correctly. new_bench_name() is a pure function of its two
+ * arguments, so that comparison is true for EVERY possible implementation:
+ * it could not fail, while its comment claimed it would fail once the SD-task
+ * follow-up lands. It could not have: that follow-up resolves the candidate
+ * path inside the SD task and never reaches this helper. A green case that a
+ * maintainer reads as 'the boundary is still guarded' is worse than no case,
+ * which is what the paragraph above already said.
  * ========================================================================== */
 
 #include <stdbool.h>
@@ -165,6 +183,36 @@ static BenchName new_bench_name(uint32_t tick, uint32_t seq)
     b.name[FW_FILE_NAME_LEN_MAX] = '\0';
     b.truncated = (n < 0) || (n >= (int)FW_FILE_NAME_LEN_MAX);
     return b;
+}
+
+/* The firmware does not format an arbitrary sequence value -- it ADVANCES the
+ * counter and formats the result, in that order:
+ *
+ *     taskENTER_CRITICAL();
+ *     benchNameSeq = ++gBenchNameSeq;
+ *     taskEXIT_CRITICAL();
+ *     snprintf(..., "benchmark_%lu_%lu.dat", tick, benchNameSeq);
+ *
+ * Every case that calls new_bench_name() with a seq of its own choosing is
+ * blind to that ordering, because an INJECTED value cannot be stale. The
+ * pre-merge audit on this PR reproduced the consequence: swap those two steps
+ * in the firmware and every name carries the counter's initial value, which
+ * reopens the exact collision this change closes -- and it passed every
+ * Makefile guard and every case in this file.
+ *
+ * The Makefile's order pin is what catches that in the FIRMWARE; a host model
+ * cannot. This wrapper is here so the ordering is expressed in the test too,
+ * rather than living only in a grep: CASE 6 drives it, and a future edit that
+ * moves the increment after the format breaks that case.
+ */
+typedef struct {
+    uint32_t seq;          /* gBenchNameSeq: starts at 0, never reset */
+} BenchSeqCounter;
+
+static BenchName next_bench_name(BenchSeqCounter *c, uint32_t tick)
+{
+    uint32_t seq = ++c->seq;      /* PRE-increment, as the firmware does */
+    return new_bench_name(tick, seq);
 }
 
 /* ==========================================================================
@@ -435,24 +483,46 @@ TEST(same_tick_one_wrap_apart_still_gives_distinct_names)
     }
 }
 
-/* CASE 6 -- the boundary that is STILL OPEN, asserted rather than left in
- * prose so the header cannot drift away from the code.
+/* CASE 6 -- the firmware ADVANCES the counter before formatting, and the
+ * order matters as much as the field's presence.
  *
- * A reboot restarts the tick at 0 and the sequence at 1 (gBenchNameSeq is
- * pre-incremented, so 0 is never produced), which means the first run of
- * every boot produces one and the same name. That is the reboot half of
- * #958. No counter kept in RAM can close it -- only asking the card can, and
- * that has to happen where the volume is mounted (see the header).
+ * Driven through next_bench_name() rather than by injecting a sequence,
+ * because an injected value cannot be stale. Format the name first and
+ * advance the counter afterwards -- the mutation the pre-merge audit
+ * reproduced -- and every run of a boot emits the counter's INITIAL value,
+ * so two runs at one tick collide exactly as they did before this fix.
  *
- * When the follow-up lands this case FAILS, and that failure is the signal to
- * rewrite the header's boundary section in the same commit. It is pinned here
- * for that reason, not to protect the defect. */
-TEST(first_run_of_every_boot_shares_one_name_which_is_the_open_half)
+ * Two properties, and both are needed. The first run must not carry 0 (the
+ * pre-increment is what makes the initial value unreachable), and successive
+ * runs at the SAME tick must differ (the advance is what makes each name
+ * new). A post-increment satisfies neither. */
+TEST(the_counter_is_advanced_before_the_name_is_formatted)
 {
-    BenchName firstEverRun = new_bench_name(0UL, 1UL);
-    BenchName firstRunAfterAReboot = new_bench_name(0UL, 1UL);
+    BenchSeqCounter c = { 0u };
+    size_t i;
 
-    ASSERT_TRUE(strcmp(firstEverRun.name, firstRunAfterAReboot.name) == 0);
+    /* The first name of a boot carries 1, not the counter's initial 0. */
+    {
+        BenchName first = next_bench_name(&c, 4242UL);
+        ASSERT_TRUE(strcmp(first.name, "benchmark_4242_1.dat") == 0);
+    }
+
+    /* And every later run at the SAME tick differs from every earlier one.
+     * Held at one tick deliberately: with the tick varying, the names would
+     * differ whatever the counter did, and this case would pass against a
+     * counter that never moved. */
+    {
+        BenchName seen[6];
+        size_t j;
+
+        seen[0] = next_bench_name(&c, 777UL);
+        for (i = 1; i < 6; i++) {
+            seen[i] = next_bench_name(&c, 777UL);
+            for (j = 0; j < i; j++) {
+                ASSERT_TRUE(strcmp(seen[i].name, seen[j].name) != 0);
+            }
+        }
+    }
 }
 
 int main(void)
@@ -464,6 +534,6 @@ int main(void)
     RUN(names_keep_the_benchmark_prefix_and_dat_suffix);
     RUN(longest_name_fits_the_field_without_truncation);
     RUN(same_tick_one_wrap_apart_still_gives_distinct_names);
-    RUN(first_run_of_every_boot_shares_one_name_which_is_the_open_half);
+    RUN(the_counter_is_advanced_before_the_name_is_formatted);
     return TEST_SUMMARY();
 }
