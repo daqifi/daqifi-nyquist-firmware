@@ -3537,10 +3537,12 @@ void streaming_Task(void) {
          * smaller co-active SD ring drops it), and the per-transport blocks
          * below decide that individually. */
         if (packetSize > batchXportCap) {
+            /* Kept under LOG_MESSAGE_SIZE (128, Logger.h -- vsnprintf is given
+             * 126) so neither size is truncated away; the remedy is spelled out
+             * in docs/STREAMING_AND_ADC.md rather than here. */
             LOG_E_SESSION(LOG_SESSION_XPORT_UNDELIVERABLE,
-                "Streaming: %u-byte packet exceeds the smallest active transport "
-                "ring (%u bytes) - dropped without retry; no drain can fit it. "
-                "Raise SYST:MEM:<iface>:BUFfer or lower SYST:MEM:ENC:BUFfer",
+                "Streaming: packet %u B exceeds smallest active ring %u B - "
+                "dropped, no drain fits it (#1021)",
                 (unsigned)packetSize, (unsigned)batchXportCap);
         }
         DIO_TIMING_TEST_WRITE_STATE(1);

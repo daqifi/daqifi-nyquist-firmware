@@ -187,7 +187,7 @@ SYSTem:STReam:STATS:CLEar  # Reset all counters
 - `UsbDroppedBytes / SdDroppedBytes > 0` → encoder is fine but transport can't keep up
 
 **One byte-drop cause is NOT back-pressure (#1021).** A `*DroppedBytes` rise
-whose `SYST:LOG?` carries `packet exceeds the smallest active transport ring`
+whose `SYST:LOG?` carries `packet <n> B exceeds smallest active ring <m> B`
 means the encoded packet was **larger than the ring's total capacity**, not that
 the ring was momentarily full: the transport writes are all-or-nothing against
 `CircularBuf_NumBytesFree()`, whose maximum is the ring's `buf_size`, so such a
