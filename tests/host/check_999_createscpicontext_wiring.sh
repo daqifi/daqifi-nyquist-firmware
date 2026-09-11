@@ -109,6 +109,26 @@
 #     instance of it, so this closes N1 by construction rather than by
 #     pattern-matching the second call's specific shape (closes N1).
 #
+# Round 5 (this state): a THIRD independent adversarial audit found check
+# (c)'s wiring test was still a CONTAINMENT test, not an equality test --
+# `grep -q 'storage->inputBuffer'` against the SCPI_Init() call's whole
+# extracted text passes as long as that substring appears ANYWHERE in the
+# call, including inside the untaken branch of a ternary:
+#   SCPI_Init(..., cond ? gSharedStorage.inputBuffer : storage->inputBuffer,
+#             ..., cond ? gSharedStorage.errorQueue : storage->errorQueue, ...);
+# contains both literal substrings while a true `cond` hands the context
+# SHARED storage at runtime -- reintroducing #999 exactly, guard green. This
+# is the same containment-vs-equality gap round 4 already fixed at the
+# CALLER level (tests/host/Makefile's CreateSCPIContext() checks) for a
+# dead-keep-alive bypass; it was never applied to this script's OWN
+# SCPI_Init()-call check. Fixed by extracting the call's arguments by real
+# paren-depth counting (extract_call_args.pl, shared with the Makefile's
+# caller checks so both call sites use one audited parser instead of two
+# independently-maintained ones) and requiring one WHOLE argument to equal
+# `storage->inputBuffer` / `storage->errorQueue` exactly, plus an explicit
+# reject of any argument containing `?` at all -- CreateSCPIContext() has no
+# legitimate reason to pass SCPI_Init() a conditional argument.
+#
 # What this script does NOT establish -- read this before trusting a green
 # run more than it proves (see CLAUDE.md's scpi_claim_path.py section for
 # why naming the residue matters more than another round of patches): it is
@@ -139,6 +159,8 @@
 set -u
 
 SRC="${1:?usage: $0 <path-to-SCPIInterface.c>}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+ARG_EXTRACTOR="$SCRIPT_DIR/extract_call_args.pl"
 
 fail() {
     local msg="$1"
@@ -270,22 +292,46 @@ elif [ "$CALL_COUNT" -gt 1 ]; then
          "checks below exist for, reached through a second SCPI_Init() call" \
          "instead of touching the internals directly."
 fi
-INIT_CALL=$(printf '%s' "$FLAT" | grep -oP 'SCPI_Init\(.*?\);' || true)
-if [ -z "$INIT_CALL" ]; then
-    fail "CreateSCPIContext() in $SRC's SCPI_Init() call could not be" \
-         "extracted for inspection -- re-check before relaxing this guard."
+# Extract SCPI_Init()'s own arguments by real paren-depth counting (not
+# "grep the call's text and hope no other SCPI_Init(...)-shaped text is
+# nearby") -- round 5, closing the containment-vs-equality gap described in
+# this script's header. FLAT is already comment-stripped (step 2 above), and
+# CALL_COUNT above already proved there is exactly one SCPI_Init() call in
+# it, so extracting "the first" is extracting "the only" one.
+if [ ! -f "$ARG_EXTRACTOR" ]; then
+    fail "cannot find $ARG_EXTRACTOR (extract_call_args.pl must live next to" \
+         "check_999_createscpicontext_wiring.sh)."
 fi
-if ! printf '%s' "$INIT_CALL" | grep -q 'storage->inputBuffer'; then
-    fail "CreateSCPIContext()'s SCPI_Init() call in $SRC no longer passes" \
-         "storage->inputBuffer as the input-buffer argument (an aliased" \
-         "pointer, or the literal text surviving only in a comment" \
-         "elsewhere, doesn't count -- it must be the call's own argument)."
+INIT_ARGS=$(printf '%s' "$FLAT" | perl "$ARG_EXTRACTOR" SCPI_Init)
+if [ -z "$INIT_ARGS" ]; then
+    fail "CreateSCPIContext() in $SRC's SCPI_Init() call's arguments could" \
+         "not be extracted (unbalanced parens/brackets?). Re-check before" \
+         "relaxing this guard."
 fi
-if ! printf '%s' "$INIT_CALL" | grep -q 'storage->errorQueue'; then
+if printf '%s\n' "$INIT_ARGS" | grep -qF '?'; then
+    fail "CreateSCPIContext()'s SCPI_Init() call in $SRC has a" \
+         "conditional/ternary expression in one of its arguments. #999's" \
+         "fix requires the input-buffer and error-queue arguments to be" \
+         "the caller's own storage->inputBuffer/storage->errorQueue" \
+         "unconditionally -- a ternary can make either argument resolve to" \
+         "different (e.g. shared) storage at runtime while its OTHER" \
+         "branch still contains the expected text, which is exactly how a" \
+         "containment check (rather than an equality check) can be" \
+         "defeated. Remove the conditional."
+fi
+if ! printf '%s\n' "$INIT_ARGS" | grep -qxF 'storage->inputBuffer'; then
     fail "CreateSCPIContext()'s SCPI_Init() call in $SRC no longer passes" \
-         "storage->errorQueue as the error-queue argument (an aliased" \
-         "pointer, or the literal text surviving only in a comment" \
-         "elsewhere, doesn't count -- it must be the call's own argument)."
+         "storage->inputBuffer as one of its OWN arguments, exactly (an" \
+         "aliased pointer, a ternary merely containing the text, or the" \
+         "literal text surviving only in a comment elsewhere, doesn't" \
+         "count -- one whole argument must equal it)."
+fi
+if ! printf '%s\n' "$INIT_ARGS" | grep -qxF 'storage->errorQueue'; then
+    fail "CreateSCPIContext()'s SCPI_Init() call in $SRC no longer passes" \
+         "storage->errorQueue as one of its OWN arguments, exactly (an" \
+         "aliased pointer, a ternary merely containing the text, or the" \
+         "literal text surviving only in a comment elsewhere, doesn't" \
+         "count -- one whole argument must equal it)."
 fi
 
 # ---- check (d): nothing may re-seat the context internals directly ------
