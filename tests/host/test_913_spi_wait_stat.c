@@ -53,6 +53,21 @@
  * test that would fail if that ordering were ever reversed (deadline checked
  * before the post-spin re-check).
  *
+ * UPDATE (opus review of the rescued #913 design, applied before this PR):
+ * that "immune to scheduling latency" claim was true for every gap EXCEPT
+ * one -- between the post-spin check and the deadline test themselves. A
+ * task preempted in that narrow window (reachable mainly via the WiFi SCPI
+ * path, app_WifiTask priority 2, under streaming load) could have the
+ * hardware condition go true without this wait ever observing it, and the
+ * original rescued code returned a bare `false` there regardless. Fixed by
+ * making the deadline branch take a FRESH read instead of returning
+ * unconditionally. `mock_condition_met_at_deadline()` /
+ * `trueAtDeadlineCheck` model that gap (a synchronous mock has no way to
+ * represent real preemption otherwise), and
+ * `condition_true_only_in_the_preemption_gap_is_still_caught` is the test
+ * that would FAIL against the original rescued spi_WaitStat and passes
+ * against the fixed one.
+ *
  * FIDELITY -- what this does NOT cover
  *
  * 1. The real SPI1STAT/SPI1BUF register semantics, the module reset-on-error
@@ -100,16 +115,27 @@ typedef struct {
      * (0 = that trigger is disabled). At most one is used per test. */
     uint32_t setTrueAfterChecks;
     uint32_t setTrueAfterDelays;
+    /* Models the preemption gap an opus review of #913 identified between the
+     * last ordinary check and the deadline test: this task can be preempted
+     * for the whole remaining budget in that gap, so the hardware condition
+     * can go true without any mock_condition_met() call ever observing it.
+     * A synchronous mock has no wall clock independent of explicit
+     * check/delay calls, so this flag stands in for "true by the time the
+     * deadline branch takes its fresh read" -- consulted ONLY by
+     * mock_condition_met_at_deadline(), never by the ordinary spin/post-spin
+     * checks, so it cannot be caught any other way. */
+    bool     trueAtDeadlineCheck;
 } MockEnv;
 
 static void mock_init(MockEnv *env, bool startTrue)
 {
-    env->now                 = 0;
-    env->delayCalls          = 0;
-    env->conditionChecks     = 0;
-    env->conditionMet        = startTrue;
-    env->setTrueAfterChecks  = 0;
-    env->setTrueAfterDelays  = 0;
+    env->now                  = 0;
+    env->delayCalls           = 0;
+    env->conditionChecks      = 0;
+    env->conditionMet         = startTrue;
+    env->setTrueAfterChecks   = 0;
+    env->setTrueAfterDelays   = 0;
+    env->trueAtDeadlineCheck  = false;
 }
 
 /* Stands in for `((SPI1STAT & mask) != 0u) == want`. */
@@ -121,6 +147,16 @@ static bool mock_condition_met(MockEnv *env)
         env->conditionMet = true;
     }
     return env->conditionMet;
+}
+
+/* Stands in for the FRESH read spi_WaitStat now takes at deadline expiry
+ * (opus review of #913, UserSpi.c) instead of trusting the pre-check above
+ * it. See trueAtDeadlineCheck's comment for why this needs its own trigger
+ * rather than reusing mock_condition_met(). */
+static bool mock_condition_met_at_deadline(MockEnv *env)
+{
+    env->conditionChecks++;
+    return env->conditionMet || env->trueAtDeadlineCheck;
 }
 
 /* Stands in for xTaskGetTickCount(). */
@@ -149,8 +185,10 @@ static void mock_delay_1_tick(MockEnv *env)
  * The loop shape, extracted line-for-line from spi_WaitStat (UserSpi.c) with
  * the SPI1STAT read / xTaskGetTickCount / vTaskDelay(1) replaced by their
  * mock counterparts. Same structure: inner bounded spin, one more check,
- * THEN the deadline test, THEN the yield.
- * ========================================================================== */
+ * THEN the deadline test -- which, per the opus review fix, takes a FRESH
+ * read rather than trusting the post-spin check above it, so a condition
+ * that goes true only in the gap between them is still caught -- THEN the
+ * yield. */
 static bool spi_wait_stat_shape(MockEnv *env, uint32_t start, uint32_t timeoutTicks)
 {
     for (;;) {
@@ -158,7 +196,9 @@ static bool spi_wait_stat_shape(MockEnv *env, uint32_t start, uint32_t timeoutTi
             if (mock_condition_met(env)) { return true; }
         }
         if (mock_condition_met(env)) { return true; }
-        if ((uint32_t)(mock_tick_count(env) - start) >= timeoutTicks) { return false; }
+        if ((uint32_t)(mock_tick_count(env) - start) >= timeoutTicks) {
+            return mock_condition_met_at_deadline(env);
+        }
         mock_delay_1_tick(env);
     }
 }
@@ -305,6 +345,48 @@ TEST(bit_ready_one_tick_after_deadline_times_out)
     ASSERT_EQ(env.now, FW_BYTE_TIMEOUT_MS);
 }
 
+/* THE fix this file was updated for (opus review of #913): a condition that
+ * goes true in the narrow gap between the post-spin check and the deadline
+ * test -- unreachable by any mock_condition_met() call, see
+ * trueAtDeadlineCheck's comment -- must still be caught, because the
+ * deadline branch now takes a FRESH read instead of returning false
+ * unconditionally. Before the fix this scenario returned false: nothing in
+ * the pre-#913-review shape ever consulted trueAtDeadlineCheck, so a byte
+ * that completed during exactly that gap was reported as a timeout. This is
+ * the test that would have FAILED against the original rescued
+ * spi_WaitStat (pre-opus-fix) and passes now. */
+TEST(condition_true_only_in_the_preemption_gap_is_still_caught)
+{
+    MockEnv env;
+    mock_init(&env, false);
+    env.trueAtDeadlineCheck = true;   /* never seen by an ordinary check */
+
+    ASSERT_TRUE(spi_wait_stat_shape(&env, mock_tick_count(&env),
+                                    MS_TO_TICKS(FW_BYTE_TIMEOUT_MS)));
+    /* Spends the full budget in yields -- the condition is never visible to
+     * an ordinary check, only to the deadline branch's fresh read -- then
+     * succeeds on that fresh read rather than timing out. */
+    ASSERT_EQ(env.delayCalls, FW_BYTE_TIMEOUT_MS);
+    ASSERT_EQ(env.now, FW_BYTE_TIMEOUT_MS);
+}
+
+/* Companion negative: with trueAtDeadlineCheck left false (mock_init's
+ * default), the fresh read at expiry must still return false when the
+ * condition genuinely never became true -- the fix closes a false-timeout
+ * window, it must not open a false-success one. Same scenario as
+ * condition_never_met_times_out_at_exactly_the_budget, restated here to sit
+ * next to its positive counterpart. */
+TEST(condition_still_false_at_deadline_check_truly_times_out)
+{
+    MockEnv env;
+    mock_init(&env, false);
+
+    ASSERT_FALSE(spi_wait_stat_shape(&env, mock_tick_count(&env),
+                                     MS_TO_TICKS(FW_BYTE_TIMEOUT_MS)));
+    ASSERT_EQ(env.delayCalls, FW_BYTE_TIMEOUT_MS);
+    ASSERT_EQ(env.now, FW_BYTE_TIMEOUT_MS);
+}
+
 /* Rollover safety: the unsigned (now - start) subtraction must still read as
  * the true elapsed count across a TickType_t wrap. Starting 16 ticks below
  * UINT32_MAX puts the wrap inside the timeout window. Mirrors
@@ -334,6 +416,8 @@ int main(void)
     RUN(condition_never_met_times_out_at_exactly_the_budget);
     RUN(bit_ready_exactly_at_deadline_still_succeeds);
     RUN(bit_ready_one_tick_after_deadline_times_out);
+    RUN(condition_true_only_in_the_preemption_gap_is_still_caught);
+    RUN(condition_still_false_at_deadline_check_truly_times_out);
     RUN(deadline_survives_tick_counter_wrap);
     return TEST_SUMMARY();
 }
