@@ -23,8 +23,17 @@ progress; it is not where finished value lives. Value lives on the
 remote, one push at a time. Treat "it's on disk" as equivalent to "it
 doesn't exist yet."
 
+## Why the HANDOFF block matters
+
+A worker that resumes this file after a fire died has to answer three
+questions before it can be useful: what just happened, what comes next,
+and which commit is actually safe to build on (as opposed to the last
+commit attempted, which might be half-written or unpushed). The HANDOFF
+block at the end of this file answers all three in three lines, so the
+next worker does not have to re-read the whole diff history or guess.
+
 ## HANDOFF
 
-WAS DOING: wrote step 1/5 (why commit incrementally) and pushed it
-NEXT STEP: write step 3/5 (worktree is a safety net) and commit+push it
-SAFE TO RESUME FROM: ce8e7b7cd
+WAS DOING: wrote step 3/5 (why the HANDOFF block matters)
+NEXT STEP: write step 4/5 (a practical checklist) and commit+push it
+SAFE TO RESUME FROM: a79009341 (the previous push — this step is not yet pushed as this line is written)
