@@ -47,6 +47,31 @@ AD7609_BIN := run_ad7609_tests
 BENCH_BIN := run_943_tests
 SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 
+# #971: the under-claim settle order of a REFUSED SD arm. Same file, same
+# reason as #943 -- SCPIStorageSD.c is not host-includable -- so this is also
+# a model rather than the real code, and it also needs a way to fail loudly
+# when what it models moves underneath it.
+#
+# The guard here is a CONTENT HASH of the modelled function, not a grep for
+# the property. That is deliberate. PR #976 spent three review rounds finding
+# fifteen ways an honest refactor slips past a textual assertion about this
+# exact function, and `tools/lint/scpi_sd_arm_path.py` is being narrowed for
+# over-claiming on the strength of it; a second, cruder copy of that
+# assertion here would give false comfort. A hash claims only "this text is
+# unchanged", which is all a build recipe can honestly know, and no refactor
+# can slip past it. When it fires, re-read ~8 lines of C against the model in
+# test_971_sd_arm_refusal_order.c and update the hash -- it is a tripwire
+# asking for a review, not a verdict on whether the code is right.
+#
+# Hashed: the function from its `static bool <name>(` line to its closing
+# brace, with WHOLE-LINE comments dropped and whitespace collapsed. So
+# rewording the (long, load-bearing) comment block above it does not fire,
+# and any change to the code does. A trailing comment on a line of code is
+# hashed with it -- conservative in the safe direction.
+ARM_BIN := run_971_tests
+SD_ARM_HELPER := SD_ArmOrRefuseWithCleanup
+SD_ARM_HELPER_SHA := 5fc520aee8b158e4742efde6e8b7632b4d300dc48799a90e21b964f27456d5e0
+
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
 	$(CC) $(CFLAGS) $(INCLUDES) -o $(BIN) test_circularbuffer.c $(UUT)
@@ -68,16 +93,49 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC)
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 
-# BOTH suites, and every one of the four binaries. Merge conflict resolved by
+# Two separate failures with two separate messages: the function is GONE
+# (renamed/moved -- the model has lost its subject) vs the function is there
+# and its CODE CHANGED (the model may have gone stale). Collapsing them would
+# report "hash mismatch" for a rename, sending the reader to diff a function
+# that is no longer in the file.
+$(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC)
+	@grep -q '^static bool $(SD_ARM_HELPER)(' $(SD_BENCH_SRC) \
+	  || { echo "ERROR: no '^static bool $(SD_ARM_HELPER)(' line in $(SD_BENCH_SRC)."; \
+	       echo "       test_971_sd_arm_refusal_order.c models that function, and the"; \
+	       echo "       hash below extracts it from that line to its closing brace. If"; \
+	       echo "       it was renamed, moved, or its signature reformatted, re-read it"; \
+	       echo "       against the model and update SD_ARM_HELPER / SD_ARM_HELPER_SHA."; \
+	       exit 1; }
+	@command -v sha256sum >/dev/null 2>&1 \
+	  || { echo "ERROR: sha256sum not found -- it is what pins $(SD_ARM_HELPER)()'s"; \
+	       echo "       code for test_971_sd_arm_refusal_order.c. Install GNU coreutils."; \
+	       echo "       (Reported separately so it is not read as a drift failure.)"; \
+	       exit 1; }
+	@got=$$(sed -n '/^static bool $(SD_ARM_HELPER)(/,/^}/p' $(SD_BENCH_SRC) \
+	        | sed -e '/^[[:space:]]*\/\*/d' -e '/^[[:space:]]*\*/d' -e '/^[[:space:]]*\/\//d' \
+	        | tr -s '[:space:]' ' ' | sha256sum | cut -d' ' -f1); \
+	 [ "$$got" = "$(SD_ARM_HELPER_SHA)" ] \
+	  || { echo "ERROR: the CODE of $(SD_ARM_HELPER)() in $(SD_BENCH_SRC) has changed."; \
+	       echo "         expected sha256 $(SD_ARM_HELPER_SHA)"; \
+	       echo "         got      sha256 $$got"; \
+	       echo "       This is a tripwire, not a verdict: the change may be perfectly"; \
+	       echo "       correct. Re-read that function against the model in"; \
+	       echo "       test_971_sd_arm_refusal_order.c -- if the model still describes"; \
+	       echo "       it, update SD_ARM_HELPER_SHA; if it does not, fix the model."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(ARM_BIN) test_971_sd_arm_refusal_order.c
+
+# BOTH suites, and every one of the five binaries. Merge conflict resolved by
 # keeping each side's target intact and merging only `run` and `clean` -- a
 # duplicated rule here would silently shadow one of them.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN)
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
+	./$(ARM_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN)
 
 .PHONY: run clean

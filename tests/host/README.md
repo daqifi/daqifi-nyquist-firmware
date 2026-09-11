@@ -56,6 +56,47 @@ Because the test re-implements rather than includes, the two firmware timeout
 constants are a copy. The Makefile target greps them out of `SCPIStorageSD.c`
 and **fails the build** if either drifts, so a stale copy cannot pass silently.
 
+`test_971_sd_arm_refusal_order.c` covers the under-claim settle order of a
+**refused** SD arm — `SD_ArmOrRefuseWithCleanup()` in the same
+`SCPIStorageSD.c` (issue #971). Six SCPI commands arm through it; on refusal
+it must put `mode` back to `MODE_NONE`, run the caller's retraction (FORmat's
+only), and **then** release the claim, because the release is what lets the
+competing SCPI transport in. Getting that order wrong is a bug lineage, not a
+hypothetical: #955 (the clear ran past the release), #964 (the retraction
+did), #942/#974 (the verdict was ignored).
+
+Like `test_943` it does **not** include any firmware source — same file, same
+reason — so it is a **model** of that ~8-line function, exercised through
+stubbed primitives that record an event trace. Covered: the refusal trace is
+exactly clear → retract → release; a snapshot taken *inside* the release stub
+shows both cleanups already done at the instant ownership is handed over; the
+five-caller shape (`onRefused == NULL`) still clears and releases and invokes
+nothing; and the success path releases while touching neither `mode` nor the
+retraction. It then runs a cooperative two-owner simulation that offers the
+competing transport the CPU at every step boundary, and requires the
+production order to survive all of them **and both historical defect orders
+to fail at one** — a model no wrong ordering can fail would establish nothing.
+
+Two limits are stated at length in the file's own header and are worth
+repeating here. It does not reproduce concurrency: the interleavings are
+hand-enumerated step boundaries in a single-threaded program, so it can show
+an ordering is unsound but not that one is safe under FreeRTOS on PIC32MZ.
+And its link to the firmware is a **content hash**, not a property check: the
+Makefile hashes that function's code (whole-line comments stripped,
+whitespace collapsed) and fails the build when it changes, with a separate
+message for "the function is gone". That pin claims only "this text is
+unchanged" — deliberately, because PR #976 catalogued fifteen ways an honest
+refactor slips past a *textual* assertion about this exact function, and a
+crude second copy of that assertion here would give false comfort. When it
+fires, re-read the C against the model and update the hash.
+
+Not covered, and explained in the file rather than faked: that each of the six
+arm sites *ends* on refusal instead of falling through to its readiness poll.
+Its callers are 60-150 line libscpi callbacks in the same non-host-includable
+file, and re-implementing their shapes would assert only that the copies in
+the test behave as written. The header names the smallest seam that would make
+it testable.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a

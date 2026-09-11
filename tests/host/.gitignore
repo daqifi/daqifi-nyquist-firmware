@@ -2,5 +2,6 @@ run_tests
 run_fmt_tests
 run_ad7609_tests
 run_943_tests
+run_971_tests
 CircularBuffer_uut.c
 *.o
