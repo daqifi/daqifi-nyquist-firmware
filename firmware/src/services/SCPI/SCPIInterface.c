@@ -5065,7 +5065,18 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                      * full directory AND a bucket that could not be created or read.
                      * Naming only fullness misdirects the operator when the real
                      * fault is the media; the SD-side LOG_E names which it was. */
-                    LOG_E("[SD] STR:START refused (#689): %s",
+                    /* #1000 twin: this prefix was "[SD] STR:START refused
+                     * (#689): " (31 chars). sd_card_manager_WriteRefuseText()
+                     * returns up to 98 bytes (the bucket-name-collision arm),
+                     * so 31+98 = 129 against Logger's 125-byte effective
+                     * ceiling -- two of its five arms were cut, including the
+                     * one naming the remedy. At 25 chars the worst case is 123.
+                     * The margin is only 2 bytes because those reason strings
+                     * are themselves near the ceiling; a concatenation-aware
+                     * guard that would catch a future reason growing past it is
+                     * #1001, not this site. The sibling in SCPIStorageSD.c's
+                     * SD:BENCH arm already fits at exactly 125. */
+                    LOG_E("SD start refused (#689): %s",
                           sd_card_manager_WriteRefuseText());
                 } else if (sd_card_manager_StartupDiskFull()) {
                     /* #851: the numbers, not just the verdict. This detail used
