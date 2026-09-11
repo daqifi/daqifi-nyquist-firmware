@@ -89,8 +89,13 @@ stays checked here (property 1, below), unlike the rest of what #942 fixed.
 
 ## The properties this file still asserts
 
-1. **At every arm site, in EITHER file, the enclosing function takes the
-   manager's claim exactly once, before the arm.** In `SCPIStorageSD.c` this
+1. **At every arm site, in EITHER file, the enclosing function arms exactly
+   once and takes the manager's claim exactly once, before that arm.** The arm
+   COUNT is half of it and was missing here until Qodo raised it on #976: both
+   helpers release the claim on both of their paths (#955), so a second arm in
+   one function runs unowned however the first turned out, and "every arm is
+   after the one claim" passes it. `_stream_arm_problems` had enforced the
+   count at the seventh site all along; this is its twin arriving late. In `SCPIStorageSD.c` this
    is `SD_ClaimOrRefuse()`; `SCPI_StartStreamingClaimed()`
    (`SCPIInterface.c`) has no such wrapper and takes
    `sd_card_manager_TryClaim()` directly, so the two are checked separately
@@ -691,7 +696,23 @@ def _census_problems(text, spans):
         base = next(s for n, s, _e in spans if n == fn)
         takers = _call_positions(body, CLAIM_TAKER)
         arms = [pos - base for f, pos, _ in sites if f == fn]
-        if len(takers) != 1:
+        if len(arms) != 1:
+            # ONE arm per function, counted -- not a claim about which branch
+            # either arm is in. Both helpers RELEASE the claim on both of
+            # their paths (#955), so a second arm in the same function runs
+            # unowned however the first one turned out: a retry, or two
+            # sequential arms, and the checker would have passed it because
+            # every arm was merely AFTER the single claim. Qodo raised this on
+            # PR #976 against the narrowed file; `_stream_arm_problems` has
+            # enforced the same count at the seventh site all along, so this
+            # is its twin arriving late rather than a new kind of check.
+            problems.append(
+                "%s() arms %d times; expected exactly one. %s() and %s() both "
+                "release the claim on BOTH of their paths, so a second arm in "
+                "one function runs with no claim held -- whatever the first "
+                "one returned. Take the claim again, or split the function."
+                % (fn, len(arms), ARM_WRAPPER, ARM_HELPER))
+        elif len(takers) != 1:
             problems.append(
                 "%s() calls %s() %d times before arming; expected exactly one. "
                 "The arm is where ownership hands over from the claim to "
@@ -1063,6 +1084,22 @@ static scpi_result_t decoy(scpi_t * c) {
         probs, _ = check(noclaim)
         _ck("an arm with no claim taken in its own function is caught",
             any("calls SD_ClaimOrRefuse() 0 times" in p for p in probs), True)
+
+        # A SECOND arm in the same function. Both helpers release the claim
+        # on both paths, so the retry runs unowned -- and before this row the
+        # checker passed it, because every arm was merely AFTER the one claim.
+        twice = _GOOD.replace(
+            "    if (!SD_ArmOrRefuse(context, \"SPACe\", pCfg)) {\n"
+            "        return SCPI_RES_ERR;\n    }",
+            "    if (!SD_ArmOrRefuse(context, \"SPACe\", pCfg)) {\n"
+            "        return SCPI_RES_ERR;\n    }\n"
+            "    if (!SD_ArmOrRefuse(context, \"SPACe\", pCfg)) {\n"
+            "        return SCPI_RES_ERR;\n    }")
+        assert twice != _GOOD
+        probs, _ = check(twice)
+        _ck("a second arm in one function is caught, not grouped under the "
+            "one claim",
+            any("arms 2 times" in p for p in probs), True)
 
         late = _GOOD.replace(
             "    if (!SD_ClaimOrRefuse(context, \"SPACe\")) {\n"
