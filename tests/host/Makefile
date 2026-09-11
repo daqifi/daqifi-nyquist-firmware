@@ -79,6 +79,12 @@ JSONESC_BIN := run_json_escape_tests
 #      assertion and all of pins 1-3 green while real destroyed samples
 #      stopped being counted, so the test's whole subject would be
 #      unguarded. Pin the CALL, per-file, for both encoders that book.
+#      The pin matches a CALL STATEMENT (through the closing `);`) and drops
+#      comment-continuation lines, because the plain symbol grep this
+#      started as was itself a proxy: the symbol also appears twice in
+#      JSON_Encoder.c's own prose, so deleting the real call and leaving
+#      the comments kept the guard green. Verified by mutation, not
+#      assumed -- that mutation is the one this shape exists to kill.
 BIN970 := run_970_tests
 STREAMING_SRC := ../../firmware/src/services/streaming.c
 STREAMING_HDR := ../../firmware/src/services/streaming.h
@@ -128,7 +134,8 @@ $(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SR
 	       echo "       test_970_encoder_consume_accounting.c."; \
 	       exit 1; }
 	@for f in $(JSON_ENC_SRC) $(NANOPB_ENC_SRC); do \
-	   grep -qE 'Streaming_ReportEncoderSampleLoss\(' "$$f" \
+	   grep -nE 'Streaming_ReportEncoderSampleLoss\([^;]*\);' "$$f" \
+	     | grep -vE '^[0-9]+:[[:space:]]*(\*|//|/\*)' | grep -q . \
 	     || { echo "ERROR: $$f never CALLS Streaming_ReportEncoderSampleLoss."; \
 	          echo "       #970 moved loss booking from the caller's zero-return guess"; \
 	          echo "       to the encoder that destroyed the sample. With no call here,"; \
