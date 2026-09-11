@@ -2461,15 +2461,29 @@ static void Streaming_Stop(void) {
                          * encoderFailures never moves. The omission became reachable
                          * the moment that pairing went away.
                          *
-                         * scanStaleDropped is the pre-existing twin: a frozen-scan
-                         * tick still streams its sample, so no queue drop accompanies
-                         * it, and it has no Steady variant at all. A session whose
-                         * only loss is frozen scans likewise printed nothing.
+                         * scanStaleDropped is DELIBERATELY NOT gated on, and the
+                         * asymmetry with totalSampleLoss is the point. It has no
+                         * Steady variant, and this gate exists precisely to keep
+                         * startup-window transients out of the summary (see the
+                         * comment above it). A scan that goes stale inside the grace
+                         * window is an expected startup transient -- the first scan
+                         * has not completed yet, which is the same condition #707 and
+                         * #745 introduced dry-tick netting for -- so gating on it
+                         * printed an "all post-grace" loss line for a session whose
+                         * every steady counter was zero. An earlier revision of THIS
+                         * comment added it to the gate and caused exactly that.
                          *
-                         * Both fail toward SILENCE, which is the wrong direction for
-                         * the one line an operator actually reads. */
+                         * eosOverruns is in the gate without a Steady variant because
+                         * it is hardware staleness rather than a grace-window false
+                         * flag; scanStaleDropped is the opposite case, which is why
+                         * the two are treated differently.
+                         *
+                         * Residual, tracked separately: a session whose ONLY loss is
+                         * post-grace frozen scans still prints nothing, because there
+                         * is no Steady variant to gate on. Fixing that needs a
+                         * grace-filtered scan-stale counter, which is a change to the
+                         * counter itself, not to this gate. */
                         snap.encoderDroppedSamplesSteady > 0 ||
-                        snap.scanStaleDropped > 0 ||
                         snap.eosOverruns > 0;  // no Steady variant — hw staleness, not a grace-window false flag
         // Clear runtime overflow / data-loss condition bits — they refer to
         // the live session that just ended.  Preserve QUES_BIT_TRANSPORT_DOWN

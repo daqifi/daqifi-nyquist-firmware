@@ -155,7 +155,7 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 
 $(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SRC) $(STREAMING_HDR) $(JSON_ENC_SRC) $(NANOPB_ENC_SRC) $(RECIPES)
 	@for fld in encoderDroppedSamples encoderDroppedSamplesSteady; do \
-	   n=`grep -cE "gStreamStats\.$$fld[[:space:]]*(\+\+|\+=|-=|=)" $(STREAMING_SRC)`; \
+	   n=`grep -oE "gStreamStats\.$$fld[[:space:]]*(\+\+|\+=|-=|=[^=])" $(STREAMING_SRC) | wc -l`; \
 	   [ "$$n" -eq 1 ] \
 	     || { echo "ERROR: $(STREAMING_SRC) has $$n write sites on gStreamStats.$$fld, expected exactly 1."; \
 	          echo "       The #970 fix left ONE writer -- Streaming_ReportEncoderSampleLoss --"; \
