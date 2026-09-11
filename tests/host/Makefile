@@ -101,13 +101,24 @@ CLEAN_ONLY := $(if $(MAKECMDGOALS),$(if $(filter-out clean,$(MAKECMDGOALS)),,yes
 # first version of this defined it beside `clean:` two hundred lines below,
 # where every guard saw it empty.
 #
-# `tr -d '\r'` is load-bearing: this repo's text files are CRLF, so a plain sed
-# anchored on `$` matches nothing and the variable comes back EMPTY. That failed
-# loudly here only because the completeness guard below compares against it; on
-# its own an empty list would have made `clean` silently stop sweeping orphans
-# while looking perfectly healthy.
+# THIS PARSER MUST AGREE WITH GIT, and the first version did not. git strips
+# trailing whitespace from a .gitignore pattern, so `run_943_tests ` (one
+# trailing space) is a perfectly effective ignore rule -- while a sed anchored
+# straight on `$` does not match it. The two then disagree, and the completeness
+# guard below refuses a tree that is entirely correct: reproduced at this head,
+# `git check-ignore` said yes and `make run` exited 2 naming that binary as "not
+# listed in .gitignore". A guard that reds correct input is the failure this
+# repo parked a whole mechanism over (#1032), so the trim is not cosmetic.
+#
+# `tr -d '\r'` is equally load-bearing and for the same family of reason: this
+# repo's text files are CRLF, so without it the pattern matches NOTHING and the
+# variable comes back EMPTY. That one failed loudly only because the
+# completeness guard compares against it; alone it would have made `clean`
+# silently stop sweeping orphans while looking healthy. Hence the explicit
+# emptiness check below rather than relying on another guard to notice.
 DECLARED_BINS := $(shell tr -d '\r' < .gitignore 2>/dev/null | \
-                   sed -n 's/^\(run_[A-Za-z0-9_]*\)$$/\1/p')
+                   sed -e 's/[[:space:]]*$$//' \
+                       -n -e 's/^\(run_[A-Za-z0-9_]*\)$$/\1/p')
 ifeq ($(strip $(DECLARED_BINS)),)
 $(error read no run_* entries from tests/host/.gitignore -- `clean` uses that \
 list to remove a binary whose fragment was dropped, and an empty list would \
