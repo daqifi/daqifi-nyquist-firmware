@@ -75,7 +75,71 @@ CLEAN_EXTRA :=
 # fragment sort order. Qodo, PR #1040.
 .DEFAULT_GOAL := run
 
-include $(sort $(wildcard tests/*.mk))
+FRAGMENTS := $(sort $(wildcard tests/*.mk))
+include $(FRAGMENTS)
+
+# REFUSE A SUITE THAT CANNOT FAIL.
+#
+# `run:` takes its prerequisites from $(TESTS), which the fragments append to.
+# If the wildcard above matches nothing -- a renamed or absent tests/ directory,
+# a bad checkout, a .gitignore that swallows *.mk -- then nothing is included,
+# $(TESTS) is empty, and `make run` exits 0 having built nothing and executed
+# nothing. Verified by execution on this branch before this guard existed:
+# `mv tests tests-hidden && make run` printed nothing, built 0 binaries and
+# exited 0, against 8 suites on the same tree with the directory in place.
+#
+# The monolithic Makefile this PR replaces could not do that: `run:` named all
+# eight binaries literally, so a missing test source failed the build loudly.
+# Moving to a wildcard is what introduces the failure mode, so the guard ships
+# with it.
+#
+# FOUR conditions. The first two catch losing ALL the fragments; the third and
+# fourth catch losing or breaking ONE, which is likelier and just as silent:
+#   * at least one fragment must have been included at all;
+#   * $(TESTS) must be non-empty after the include;
+#   * every included fragment must have contributed a binary, so a fragment
+#     that forgets or misspells its `TESTS +=` is caught;
+#   * there must be one fragment per test SOURCE, so a fragment file that is
+#     simply deleted or renamed is caught by the test_*.c it orphans.
+#
+# The fourth is the one that needed a second attempt. The first version of this
+# guard compared $(TESTS) against $(FRAGMENTS) only, and a mutation removing one
+# fragment FILE passed it: seven fragments registering seven binaries is
+# self-consistent. Comparing against the test sources instead is what makes an
+# absent fragment visible, because adding a suite adds both files and removing
+# one leaves the other behind.
+#
+# Deliberately NOT a hard expected-count constant. That number drifts with
+# every added suite, and in this same file it drifted twice before this PR --
+# "Two of the targets carry GUARDS" while four did, and "Seven greps" while
+# there were eight. Deriving the bound from $(FRAGMENTS) keeps it correct
+# without anyone remembering to bump it.
+ifeq ($(strip $(FRAGMENTS)),)
+$(error no test fragments found: tests/*.mk matched nothing, so `make run` \
+would build nothing and pass. Run this from tests/host/, and check the \
+tests/ directory exists and its *.mk files are not ignored)
+endif
+ifeq ($(strip $(TESTS)),)
+$(error $(words $(FRAGMENTS)) fragment(s) were included but $$(TESTS) is \
+empty, so `make run` would build nothing and pass. Every fragment must end \
+with `TESTS += $$(ITS_BIN)`)
+endif
+ifneq ($(words $(TESTS)),$(words $(FRAGMENTS)))
+$(error $(words $(FRAGMENTS)) fragment(s) included but $(words $(TESTS)) \
+binar(ies) registered -- one fragment is not contributing its binary to \
+$$(TESTS). Fragments: $(FRAGMENTS). Registered: $(TESTS))
+endif
+
+# One fragment per test source. Both sets are derived, so neither drifts: a new
+# suite adds a test_*.c AND its fragment, and deleting only the fragment leaves
+# its source orphaned here instead of silently dropping the suite.
+TEST_SOURCES := $(sort $(wildcard test_*.c))
+ifneq ($(words $(FRAGMENTS)),$(words $(TEST_SOURCES)))
+$(error $(words $(TEST_SOURCES)) test source(s) but $(words $(FRAGMENTS)) \
+fragment(s) -- a fragment is missing, or a test source has no fragment, and \
+either way a suite is silently not running. Sources: $(TEST_SOURCES). \
+Fragments: $(FRAGMENTS))
+endif
 
 # Every suite, in whatever order $(sort $(wildcard tests/*.mk)) included the
 # fragments (lexicographic by filename — see this directory's README.md).
@@ -84,6 +148,9 @@ include $(sort $(wildcard tests/*.mk))
 # executes each in turn, stopping at the first failure the same way a
 # literal per-binary recipe line would.
 run: $(TESTS)
+	@test -n "$(strip $(TESTS))" || { \
+	    echo "ERROR: \$$(TESTS) is empty at recipe time -- refusing to report"; \
+	    echo "       success for a run that executed nothing."; exit 1; }
 	@for t in $(TESTS); do echo "./$$t"; ./$$t || exit 1; done
 
 clean:
