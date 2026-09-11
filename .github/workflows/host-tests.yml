@@ -70,6 +70,31 @@ name: host-tests
 #     have run this suite, silently skipping the error-path checks on
 #     exactly the file whose control-flow shape they exist to mirror.
 #     Found by Qodo's #990 pre-merge review.
+#   - test_1000_sd_log_arm_budget.c (#1000): measures the #942 SD-log-arm
+#     refusal's LOG_E line against the ceiling Logger actually cuts at. Its
+#     fixture is GENERATED at build time from SCPIInterface.c and
+#     SCPIStorageSD.c -- both already covered by the SCPI/ entry -- AND from
+#     firmware/src/Util/Logger.h and firmware/src/Util/Logger.c, which is why
+#     both are listed below. The ceiling is split across those two files:
+#     LOG_MESSAGE_SIZE is the constant in the header, but what survives is set
+#     by the two reservations in the .c -- vsnprintf(buffer,
+#     LOG_MESSAGE_SIZE - 2, ...) and the min((LOG_MESSAGE_SIZE - 3), size)
+#     clamp. A PR that lowered either and touched nothing else would change
+#     what "fits" means while queueing no job that re-measures it, leaving the
+#     extraction to run for the first time on some later, unrelated PR.
+#
+#     Listed by name rather than as Util/, matching the CircularBuffer and
+#     FixedPointFmt entries above: this directory holds many files no host
+#     test reads, so a glob would queue the job on most edits to it for
+#     nothing. The "refactor escapes the trigger" worry that made HAL/ADC/ a
+#     directory does not bite the same way here -- the extraction fails the
+#     BUILD, loudly and by name, if either constant stops parsing where it
+#     looks for it, so a move cannot pass silently.
+#
+#     NOTE: PR #1017 (#1001) adds these same two entries for the same reason,
+#     in its own hunk further down each list. Whichever merges second should
+#     keep ONE copy of each path -- a duplicate is harmless to Actions but is
+#     noise, and the two comments explaining it are then redundant too.
 
 on:
   pull_request:
@@ -79,6 +104,11 @@ on:
       - 'firmware/src/Util/CircularBuffer.c'
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
+      # #1000: the generated log-budget fixture reads the ceiling out of both
+      # of these -- the constant from the .h, the two reservations that make
+      # it effective from the .c.
+      - 'firmware/src/Util/Logger.h'
+      - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/HAL/DAC7718/**'
@@ -92,6 +122,11 @@ on:
       - 'firmware/src/Util/CircularBuffer.c'
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
+      # #1000: the generated log-budget fixture reads the ceiling out of both
+      # of these -- the constant from the .h, the two reservations that make
+      # it effective from the .c.
+      - 'firmware/src/Util/Logger.h'
+      - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/HAL/DAC7718/**'
