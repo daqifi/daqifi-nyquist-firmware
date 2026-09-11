@@ -151,4 +151,4 @@ photo** with no extractable spec text — regenerate it as a real text/spec shee
 - `daqifi-python-test-suite/benchmarks/541_adc_read_path/atcap_20260612_085210.csv` (USB, v3.6.0)
 - `daqifi-python-test-suite/benchmarks/541_adc_read_path/SILICON_ANCHORS.md`
 - `daqifi-python-test-suite/benchmarks/524_streaming_characterization/SPEC_TABLES.md`
-- `CLAUDE.md` → "Streaming Frequency Capping" (fit basis) + "ADC Architecture › Characterization results" (Session‑24 soaks)
+- `docs/STREAMING_AND_ADC.md` → "Streaming Frequency Capping" (fit basis) + "ADC Architecture › Characterization results" (Session‑24 soaks)
