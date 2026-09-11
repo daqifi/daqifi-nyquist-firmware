@@ -61,6 +61,17 @@ name: host-tests
 #     "refactor escapes the trigger" gap without dragging in every unrelated
 #     services/ file (streaming.c, wifi_manager.c, sd_card_manager.c, the
 #     whole SCPI/ subdirectory, ...).
+#
+#   - test_981_sd_failnext_hook.c (#981): sd_card_manager.c is now ALSO one of
+#     the "unrelated services/ files" the paragraph above named as correctly
+#     excluded -- until now. This test greps it for four properties of the
+#     FAILNext one-shot arm/consume shape (the flag's declaration, the
+#     critical-sectioned test-and-clear, the #409 reset-scrub ordering, and
+#     the setter's plain-store shape) and fails the BUILD, not just the test,
+#     if any has moved. Scoped to that one file by name, same reasoning as
+#     JSON_StringEscape.h's entry directly above -- not the whole
+#     services/sd_card_services/ directory, which this file is the only
+#     member of a host test reads.
 
 on:
   pull_request:
@@ -74,6 +85,7 @@ on:
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/services/sd_card_services/sd_card_manager.c'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -86,6 +98,7 @@ on:
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/services/sd_card_services/sd_card_manager.c'
       - '.github/workflows/host-tests.yml'
 
 permissions:
