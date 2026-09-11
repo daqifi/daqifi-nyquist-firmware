@@ -66,6 +66,21 @@ def mask(src):
     return "".join(out)
 
 
+class AmbiguousDefinition(Exception):
+    """Two or more definitions answer to the same signature.
+
+    Refusing is the only safe answer. Taking the FIRST one lets an ordinary
+    arrangement -- the live definition placed after an `#if 0`-disabled
+    original, or the `#if defined(NQ3)` board-variant pair this codebase
+    already uses elsewhere -- pin the digest to text the compiler never
+    builds, after which every edit to the ACTIVE helper is invisible to the
+    guard whose whole job is to see edits (#976 pre-merge audit, reproduced
+    against the real source: the digest stayed unchanged while the live code
+    was replaced wholesale). Taking the LAST is no better; which one is live
+    depends on preprocessor state this hasher does not evaluate.
+    """
+
+
 def extract(text, signature):
     """The function's full body, by BALANCED BRACES over masked text.
 
@@ -81,11 +96,19 @@ def extract(text, signature):
     and hashed.
     """
     masked = mask(text)
+    definitions = []
     at = 0
     while True:
         start = text.find(signature, at)
         if start == -1:
-            return None       # no DEFINITION anywhere: fail closed
+            if not definitions:
+                return None   # no DEFINITION anywhere: fail closed
+            if len(definitions) > 1:
+                raise AmbiguousDefinition(
+                    "%d definitions answer to %r; refusing to choose"
+                    % (len(definitions), signature))
+            start, open_at = definitions[0]
+            break
         # A match inside a comment or a string literal is not a declaration of
         # anything. `mask()` blanks both, length-preservingly, so a blanked
         # slice is exactly that case -- and binding it to the next `{` would
@@ -107,7 +130,10 @@ def extract(text, signature):
         if semi != -1 and semi < open_at:
             at = start + len(signature)
             continue
-        break
+        # A DEFINITION. Do NOT stop here: another may follow, and choosing
+        # between two is exactly what this hasher must not do silently.
+        definitions.append((start, open_at))
+        at = open_at + 1
     depth, i, n = 0, open_at, len(text)
     while i < n:
         ch = masked[i]
@@ -222,6 +248,26 @@ def self_test():
     if extract("static bool F(void);\nstatic bool G(void)\n{\n    return 1;\n}\n",
                "static bool F(") is not None:
         bad.append("a prototype with no definition must extract nothing")
+    # TWO definitions must REFUSE, not pick one. The shape below is ordinary:
+    # the live definition placed after an `#if 0`-disabled original. Taking
+    # the first pins the digest to text the compiler never builds, and every
+    # later edit to the live helper is then invisible (#976 pre-merge audit).
+    two = ('#if 0\n'
+           'static bool F(void)\n{\n    int old = 1;\n    return old;\n}\n'
+           '#endif\n'
+           'static bool F(void)\n{\n    int live = 1;\n    return live;\n}\n')
+    try:
+        extract(two, "static bool F(")
+        bad.append("two definitions must be REFUSED, not silently resolved")
+    except AmbiguousDefinition:
+        pass
+    # ...and one definition preceded by a PROTOTYPE is still unambiguous, so
+    # the refusal above must not have been bought by refusing everything.
+    one = ('static bool F(void);\n'
+           'static bool F(void)\n{\n    int live = 1;\n    return live;\n}\n')
+    body = extract(one, "static bool F(")
+    if body is None or "live" not in body:
+        bad.append("a prototype plus ONE definition must still extract it")
 
     for b in bad:
         print("  - %s" % b)
@@ -242,7 +288,17 @@ def main(argv):
             text = fh.read()
     except OSError as exc:
         sys.exit("error: cannot read %s (%s)" % (path, exc))
-    body = extract(text, signature)
+    try:
+        body = extract(text, signature)
+    except AmbiguousDefinition as exc:
+        # Reported separately from a drift MISMATCH so the reader is not sent
+        # to diff a function that did not change. Two definitions is a
+        # question about which one is live, and only a human with the
+        # preprocessor state can answer it.
+        sys.exit("error: %s in %s -- refusing to hash either. If this is a "
+                 "board-variant or #if 0 pair, pin the LIVE one by making its "
+                 "signature distinct, or teach this hasher which to take."
+                 % (exc, path))
     if body is None:
         sys.exit("error: no line starting with %r in %s" % (signature, path))
     code = re.sub(r"\s+", " ", strip_comments(body)).strip()

@@ -278,7 +278,16 @@ def _blank(text):
 # absorb `a)` and take the outer `)` before the brace -- so an unanchored scan
 # reads a call as a definition and hands back the wrong body. A prototype is
 # excluded by `[^;{]*`, which cannot cross the `;`.
-_DEF = re.compile(r"(?m)^[A-Za-z_][\w \t\*]*\b([A-Za-z_]\w*)\s*\([^;{]*\)\s*\{")
+# `(?:\n[ \t]*)?` allows the GNU style that puts the return type on its own
+# line -- `static bool\nName(void)\n{`. Without it the pattern was anchored
+# within ONE line, so a definition written that way was invisible to the
+# definition scanner: its body became no span, every call inside it was
+# attributed to nothing, and the site dropped silently out of the census while
+# the floor count still passed (#976 pre-merge audit). Ordinary formatting, not
+# an adversarial construct. ONE break only, so the prefix cannot run away
+# across unrelated lines.
+_DEF = re.compile(
+    r"(?m)^[A-Za-z_][\w \t\*]*(?:\n[ \t]*)?\b([A-Za-z_]\w*)\s*\([^;{]*\)\s*\{")
 
 
 def _match_brace(masked, start):
@@ -300,7 +309,12 @@ def function_body(text, name):
     `text` must already have comments stripped. Literals are blanked before
     brace counting so a brace inside a format string cannot unbalance the scan.
     """
-    sig = re.search(r"(?m)^[A-Za-z_][\w \t\*]*\b%s\s*\([^;{]*\)\s*\{"
+    # Same one-line-break tolerance as `_DEF`, and for the same reason: a
+    # definition that puts its return type on its own line is ordinary C, and
+    # without this `function_body` reported the function MISSING while the
+    # census (which uses `_DEF`) could see it -- two matchers disagreeing
+    # about the same file, with a confusing message as the visible symptom.
+    sig = re.search(r"(?m)^[A-Za-z_][\w \t\*]*(?:\n[ \t]*)?\b%s\s*\([^;{]*\)\s*\{"
                     % re.escape(name), text)
     if not sig:
         return None
@@ -662,6 +676,7 @@ def _census_problems(text, spans):
     """
     problems = []
     sites = []
+    wrapper_helper_calls = []
     for name, positions in ((ARM_WRAPPER, _call_positions(text, ARM_WRAPPER)),
                             (ARM_HELPER, _call_positions(text, ARM_HELPER))):
         for pos in positions:
@@ -669,7 +684,16 @@ def _census_problems(text, spans):
             if fn is None or fn == name:
                 continue                 # the definition itself, or recursion
             if name == ARM_HELPER and fn == ARM_WRAPPER:
-                continue                 # the wrapper's own NULL-passing call
+                # The wrapper's own NULL-passing call is expected, and exactly
+                # ONE of it is. Excluding EVERY such call -- which is what this
+                # did -- meant a second one was invisible to the census below,
+                # so an ordinary retry-on-refusal inside the wrapper armed
+                # twice and the "arms exactly once" guard never saw it. The
+                # second call runs with the mode already cleared and no claim
+                # held, which is the #589 suspension refusal bypassed (#976
+                # pre-merge audit).
+                wrapper_helper_calls.append(pos)
+                continue
             sites.append((fn, pos, name))
     sites.sort(key=lambda s: s[1])
 
@@ -702,6 +726,15 @@ def _census_problems(text, spans):
                ", ".join("%s()" % f for f, _, _ in cleanup) or "nowhere",
                FORMAT_FN, ARM_WRAPPER))
 
+    if len(wrapper_helper_calls) > 1:
+        problems.append(
+            "%s() calls %s() %d times; expected exactly once. A second arm "
+            "inside the wrapper runs with the mode already cleared and no "
+            "claim held, so it does not meet the suspension refusal the first "
+            "one does -- and the arm census cannot see it, because the "
+            "wrapper's own call is the one site it is meant to excuse (#971)."
+            % (ARM_WRAPPER, ARM_HELPER, len(wrapper_helper_calls)))
+
     # The wrapper must pass NULL, or the five inherit something else.
     wrapper = function_body(text, ARM_WRAPPER)
     found, why = callback_param(text, ARM_HELPER)
@@ -711,8 +744,23 @@ def _census_problems(text, spans):
             "retraction slot is UNVERIFIED." % ARM_WRAPPER)
     elif found is not None:
         _cb, index = found
-        args = (call_arguments(wrapper, ARM_HELPER) or [None])[0]
         params = signature_params(text, ARM_HELPER)
+        # EVERY call, not just the first. Reading `[0]` alone left a second
+        # call's retraction argument unexamined, which is the same blind spot
+        # the count check above closes, one level down.
+        all_args = call_arguments(wrapper, ARM_HELPER) or []
+        args = all_args[0] if all_args else None
+        for n_call, one in enumerate(all_args[1:], start=2):
+            if one is None or len(one) != len(params):
+                problems.append(
+                    "%s()'s call #%d to %s() does not pass its full argument "
+                    "list, so its retraction slot could not be read."
+                    % (ARM_WRAPPER, n_call, ARM_HELPER))
+            elif one[index] != "NULL":
+                problems.append(
+                    "%s()'s call #%d to %s() passes `%s` rather than NULL in "
+                    "the retraction slot."
+                    % (ARM_WRAPPER, n_call, ARM_HELPER, one[index]))
         if args is None or len(args) != len(params):
             problems.append(
                 "%s() does not call %s() with its full argument list, so what "
@@ -1025,6 +1073,33 @@ def self_test():
         probs, n = check(_GOOD)
         _ck("a compliant file is clean", probs, [])
         _ck("both arm sites are examined", n, 2)
+
+        # #976 pre-merge audit: two ORDINARY C shapes that the checker used to
+        # pass silently, which is the bar this file sets for itself -- a
+        # property it CLAIMS to assert, satisfiable by everyday code that
+        # violates it.
+        #
+        # 1. A retry-on-refusal inside the wrapper armed TWICE. Every helper
+        #    call inside the wrapper was excused, not just the expected one,
+        #    so the "arms exactly once" census never saw the second.
+        retry = _GOOD.replace(
+            "    return SD_ArmOrRefuseWithCleanup(context, cmd, cfg, NULL);",
+            "    if (!SD_ArmOrRefuseWithCleanup(context, cmd, cfg, NULL)) {\n"
+            "        return SD_ArmOrRefuseWithCleanup(context, cmd, cfg, NULL);\n"
+            "    }\n"
+            "    return true;", 1)
+        _ck("a second arm inside the wrapper is refused",
+            any("expected exactly once" in x for x in check(retry)[0]), True)
+
+        # 2. A definition with its return type on its own line was invisible
+        #    to the definition scanner, so its body was no span, every call
+        #    inside it was attributed to nothing, and the site dropped out of
+        #    the census while the floor count still passed.
+        gnu = _GOOD.replace("static bool SD_ArmOrRefuse(",
+                            "static bool\nSD_ArmOrRefuse(", 1)
+        _ck("a split-line definition is still a definition",
+            check(gnu)[1], n)
+        _ck("and it is still read as compliant", check(gnu)[0], [])
 
         # The parsing this rests on, asserted directly rather than only
         # through a verdict: a definition is not a call site, and a call in a
