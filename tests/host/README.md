@@ -72,6 +72,26 @@ high byte would make the whole JSON stream invalid UTF-8), the `inLen` bound
 wholesale rather than truncating mid-escape, the exact worst-case sizing
 `JSON_Encoder.c` allocates on its stack, and NULL/zero-size safety.
 
+`test_995_cmdhistory_write_abort.c` covers `SCPI_GetCommandHistory`
+(`SYSTem:LOG:CMDHistory?`, issue #995) — the second instance of the
+`SCPI_SysInfoTextGet`/#947 shared-response-buffer write-abort defect class.
+Like `test_943_bench_stall_bound.c` it does **not** include any firmware
+source (`SCPIInterface.c` drags in libscpi, FreeRTOS and the whole
+board/driver graph): the test re-implements the pre-fix and post-fix write
+loop **shapes** against an injected mock clock and mock transport, and
+compares their verdicts on identical inputs. Covers: a healthy host sees
+byte-for-byte identical behavior; a fully-stalled host is bounded to one
+retry budget instead of up to eleven (~1 s vs ~11 s); a transport that
+drains at exactly the trickle rate needed to dodge the short-write check on
+every write (proving the cumulative deadline guard is load-bearing on its
+own, not redundant with the short-write check); the tick-counter wrap in
+both the short-write-only and cumulative-deadline paths; and the
+zero-history early return spending no budget at all. Three firmware
+constants are a copy here too, grepped out of `SCPIInterface.c` by the
+Makefile target (plus the same `configTICK_RATE_HZ` /
+`configTICK_TYPE_WIDTH_IN_BITS` assumption checked against
+`FreeRTOSConfig.h`) so a stale copy cannot pass silently.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a

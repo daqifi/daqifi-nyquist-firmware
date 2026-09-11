@@ -6599,6 +6599,83 @@ scpi_result_t SCPI_Force5v5PowerStateSet(scpi_t * context) {
 //    return SCPI_RES_OK;
 //}
 
+/* #995: total time SCPI_GetCommandHistory may spend writing while it holds the
+ * shared SCPI response buffer (gScpiRespMutex, #347). Generous on purpose: the
+ * whole reply is at most 19 + SCPI_CMD_HISTORY_SIZE(10) x
+ * (SCPI_CMD_MAX_LENGTH(128) + 6) ~= 1.4 KB against a 16 KB USB / 14 KB WiFi
+ * circular buffer, so on any host that is reading at all this never fires.
+ * It is a backstop for the one case the short-write latch below cannot see. */
+#define SCPI_CMDHISTORY_WRITE_BUDGET_MS  2000U
+
+/* #995: self-gating transport write for SCPI_GetCommandHistory.
+ *
+ * SCPI_GetCommandHistory emits its reply as up to 1 + cmdHistoryCount (<= 11)
+ * separate context->interface->write() calls while holding gScpiRespMutex: it
+ * formats each line into the shared response buffer, so it cannot let go of
+ * the buffer between formatting a line and writing it (a peer callback granted
+ * the mutex in that window would snprintf over the bytes this function is
+ * about to hand to the transport).
+ *
+ * Both transports route write() through SCPI_WriteWithRetry, bounded per call
+ * at SCPI_WRITE_MAX_RETRIES(200) x SCPI_WRITE_RETRY_DELAY_MS(5) ~ 1 s. With
+ * every return value discarded, a host that stopped reading made EVERY one of
+ * those 11 calls burn its own full ~1 s budget -- ~11 s of held mutex, blocking
+ * every other SCPI callback on BOTH transports for the same ~11 s.
+ *
+ * TWO guards, because neither alone bounds the hold:
+ *   (1) short write -> latch. SCPI_WriteWithRetry has no resend path, so a
+ *       short write has already DROPPED those bytes; the reply is truncated at
+ *       that line and the remaining ~10 s buy nothing. Once the transport
+ *       buffer is full it stays full while the host is stalled.
+ *   (2) cumulative deadline. Guard (1) never fires for a transport draining at
+ *       exactly the trickle rate that lets each write finish just inside its
+ *       own ~1 s budget -- all 11 would still run, at ~1 s apiece. Sampling
+ *       one startTick and checking it before each write bounds the hold at
+ *       BUDGET + one write budget (~3 s) regardless of drain pattern.
+ *
+ * Gating lives INSIDE the helper rather than at the call sites so the change is
+ * a mechanical substitution: no early returns, no gotos, and no way to skip the
+ * single SCPI_ResponseBuf_Give() on the way out.
+ *
+ * Deliberately does NOT push a SCPI error itself. SCPI_ErrorPush routes through
+ * SCPI_ErrorEmit -> interface->error -> ANOTHER retry-bounded interface->write
+ * (SCPI_USB_Error / SCPI_TCP_Error), so pushing from here would add ~1 s to the
+ * hold this exists to shrink. The caller returns SCPI_RES_ERR instead and
+ * libscpi's processCommand (parser.c) pushes SCPI_ERROR_EXECUTION_ERROR after
+ * the callback -- and therefore after the Give.
+ *
+ * @param context   libscpi context (supplies the transport write fn)
+ * @param ok        in/out latch; false on entry short-circuits the write, and
+ *                  is cleared here on the first incomplete or over-budget write
+ * @param startTick tick sampled once by the caller right after the take
+ * @param data      bytes to write
+ * @param len       number of bytes
+ */
+static void CmdHistoryWrite(scpi_t * context, bool * ok, TickType_t startTick,
+                            const char * data, size_t len) {
+    if (!*ok) {
+        return;
+    }
+    /* Unsigned tick subtraction: correct across the 32-bit xTaskGetTickCount
+     * wrap (~49.7 days at configTICK_RATE_HZ 1000). Same idiom as SCPI_Reset
+     * and SCPI_SetPowerState above (both use this exact subtraction form). */
+    if ((TickType_t)(xTaskGetTickCount() - startTick) >=
+            pdMS_TO_TICKS(SCPI_CMDHISTORY_WRITE_BUDGET_MS)) {
+        *ok = false;
+        LOG_E("SYST:LOG:CMDH?: transport write budget (%u ms) exhausted "
+              "(host not reading) - reply truncated",
+              (unsigned)SCPI_CMDHISTORY_WRITE_BUDGET_MS);
+        return;
+    }
+    size_t written = context->interface->write(context, data, len);
+    if (written != len) {
+        *ok = false;
+        LOG_E("SYST:LOG:CMDH?: transport write dropped %u of %u bytes "
+              "(host not reading) - reply truncated",
+              (unsigned)(len - written), (unsigned)len);
+    }
+}
+
 static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
     UsbCdcData_t* usbSettings = UsbCdc_GetSettings();
 
@@ -6613,6 +6690,14 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // #995: every write below goes through CmdHistoryWrite, which latches this
+    // false on the first incomplete or over-budget write and turns the rest
+    // into no-ops. startTick is sampled HERE, after the take, so the budget
+    // covers only the writes -- time spent blocked on the mutex is not this
+    // call's to spend.
+    bool writeOk = true;
+    TickType_t startTick = xTaskGetTickCount();
+
     // Calculate starting position in circular buffer
     int startIdx = (usbSettings->cmdHistoryHead - usbSettings->cmdHistoryCount + SCPI_CMD_HISTORY_SIZE) % SCPI_CMD_HISTORY_SIZE;
 
@@ -6622,7 +6707,7 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
     if (len > 0) {
         size_t wlen = ((size_t)len < SCPI_RESPONSE_BUF_SIZE)
                       ? (size_t)len : (SCPI_RESPONSE_BUF_SIZE - 1);
-        context->interface->write(context, buffer, wlen);
+        CmdHistoryWrite(context, &writeOk, startTick, buffer, wlen);
     }
 
     // Send command history
@@ -6634,12 +6719,12 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
         if (len > 0) {
             size_t wlen = ((size_t)len < SCPI_RESPONSE_BUF_SIZE)
                           ? (size_t)len : (SCPI_RESPONSE_BUF_SIZE - 1);
-            context->interface->write(context, buffer, wlen);
+            CmdHistoryWrite(context, &writeOk, startTick, buffer, wlen);
         }
     }
 
     SCPI_ResponseBuf_Give();
-    return SCPI_RES_OK;
+    return writeOk ? SCPI_RES_OK : SCPI_RES_ERR;
 }
 
 // =============================================================================
