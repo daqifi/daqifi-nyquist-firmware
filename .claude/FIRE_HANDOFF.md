@@ -1,3 +1,3 @@
-WAS DOING:           Guarded SCPI_GPIOEnableSet (DIO:PORt:ENAble) with the Streaming_BeginConfigChange claim, per #1005; opus review PASSED all 6 correctness points.
-NEXT STEP:           Write companion test in daqifi-python-test-suite worktree, run cppcheck + build gates, then open PR referencing #1005 and note the stale-comment finding.
+WAS DOING:           Opened firmware PR #1011 and test-suite PR #337 for #1005; build (default+Nq3), cppcheck, scpi_claim_path all green.
+NEXT STEP:           Run the qodo-cycle skill on PR #1011, then monitor for review comments.
 SAFE TO RESUME FROM: (see commit footer of the most recent commit on this branch)
