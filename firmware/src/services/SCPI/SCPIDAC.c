@@ -327,7 +327,17 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         }
 
         uint8_t dacRegister = (uint8_t)(DAC7718_REGISTER_OFFSET + hwChannel);
-        DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts16);
+        // #980 Qodo /improve pass 2: DAC7718_ReadWriteReg's own return
+        // (already honest -- UINT32_MAX on failure, unchanged by this PR)
+        // was never checked at this call site either. A failed register
+        // write means the shadow register was never loaded with the new
+        // code, so calling UpdateLatch anyway would commit whatever was
+        // ALREADY staged (stale data, not the requested voltage) --
+        // report the failure instead.
+        if (DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts16) == UINT32_MAX) {
+            SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to write DAC register");
+            return SCPI_RES_ERR;
+        }
 
         // #980 Qodo pre-merge review: DAC7718_UpdateLatch's return (added by
         // this PR) must be CHECKED here, not just given a type. The register
@@ -376,7 +386,17 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
             }
 
             uint8_t dacRegister = DAC7718_REGISTER_OFFSET + hwChannel;
-            DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts);
+            // #980 Qodo /improve pass 2: same check as the single-channel
+            // branch above. Aborting HERE (before any UpdateLatch) is safe
+            // for channels already looped over -- their shadow registers may
+            // hold the new value, but nothing physical changes until the
+            // latch call below, which this abort prevents from ever running.
+            // So a mid-loop failure leaves EVERY channel's physical output
+            // exactly where it was, never a partial update.
+            if (DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts) == UINT32_MAX) {
+                SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to write DAC register");
+                return SCPI_RES_ERR;
+            }
         }
 
         // Commit all staged registers to the physical outputs. Report a
