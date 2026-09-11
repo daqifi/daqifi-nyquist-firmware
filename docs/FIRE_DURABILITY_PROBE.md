@@ -44,8 +44,16 @@ next worker does not have to re-read the whole diff history or guess.
 4. If you die here, the next worker reads three lines and keeps going.
    They do not read your reasoning, your false starts, or your diff.
 
+## Closing note
+
+This document was itself written and pushed in five separate commits,
+one per section, specifically to prove the pattern rather than just
+describe it: at every commit boundary above, the branch on the remote
+held a complete, readable, buildable-on state. None of the five pushes
+depended on the ones after it succeeding.
+
 ## HANDOFF
 
-WAS DOING: wrote step 4/5 (practical checklist)
-NEXT STEP: write step 5/5 (closing note) and commit+push it — the last step
-SAFE TO RESUME FROM: 5e89de93e (the previous push — this step is not yet pushed as this line is written)
+WAS DOING: wrote step 5/5 (closing note) — document complete
+NEXT STEP: none — this file is finished; a future edit is a new task
+SAFE TO RESUME FROM: 46c675994 (the previous push — this step is not yet pushed as this line is written)
