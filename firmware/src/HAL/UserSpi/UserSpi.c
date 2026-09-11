@@ -262,16 +262,42 @@ static void spi_Spi1Init(void) {
     bool cke = (mode & 0x1u) == 0u;
 
     SPI1CON = 0;                                   /* stop, reset, ON=0 */
-    SPI1CON2 = 0;                                  /* AUDEN=0: 8-bit frames. Nothing
-                                                     * in this tree ever writes
-                                                     * SPI1CON2, so without this it
-                                                     * holds whatever the module
-                                                     * powered up / was last left at
-                                                     * -- an absence, not a guarantee.
-                                                     * The per-byte #913 timeout's
-                                                     * premise (one spi_XferByte ==
-                                                     * 8 bits of wire time) depends
-                                                     * on AUDEN staying 0. */
+    /* AUDEN=0: ordinary SPI framing, so one spi_XferByte is 8 bits of wire
+     * time -- which is the premise the per-byte #913 timeout is sized against.
+     *
+     * V, PIC32 Family Reference Manual Section 23 "Serial Peripheral
+     * Interface (SPI)", DS61106G, Register 23-2 (SPIxCON2) bit 7:
+     *   AUDEN: Enable Audio CODEC Support bit
+     *     1 = Audio protocol enabled
+     *     0 = Audio protocol disabled
+     * Cross-checked against the device pack, which fixes the bit POSITION but
+     * not its meaning (this is the case CLAUDE.md warns about): p32mz2048efm144.h
+     * has _SPI1CON2_AUDEN_MASK = 0x00000080, i.e. bit 7, and SPI1CON2 at
+     * 0xBF821040.
+     *
+     * AUDEN matters here because when it is 1 the module OVERRIDES SPIxCON
+     * settings this function sets -- DS61106G Register 23-2 note 3 lists
+     * FRMEN=1, FRMCNT=1, SMP=0 being forced internally, and the frame then
+     * carries a 16/24/32-bit audio word rather than the 8-bit transfer
+     * MODE32=MODE16=0 selects. A 32-bit frame is four times the wire time this
+     * timeout assumes.
+     *
+     * WHY WRITE THE WHOLE REGISTER rather than clearing AUDEN alone: nothing
+     * else in this tree writes SPI1CON2 at all (verified by grep -- the only
+     * other occurrences are this comment), so its contents here are whatever
+     * the module powered up with or was last left holding. That is an absence
+     * of a writer, not a guarantee of zero.
+     *
+     * WHAT ELSE THE WRITE CLEARS, and why it is inert on this peripheral: the
+     * register's only non-audio bits are SPISGNEXT (15), FRMERREN (12),
+     * SPIROVEN (11) and SPITUREN (10). The last three "Enable Interrupt Events
+     * via" the FRMERR / SPIROV / SPITUR flags (DS61106G Register 23-2), and
+     * SPI1's three interrupt vectors are only DECLARED by the generated EVIC
+     * header -- nothing in this firmware enables or handles them -- so gating
+     * an interrupt that is never taken changes nothing observable. SPISGNEXT
+     * sign-extends RX FIFO reads, and ENHBUF is 0 here so there is no FIFO;
+     * spi_XferByte reads SPI1BUF a byte at a time. */
+    SPI1CON2 = 0;
     (void)SPI1BUF;                                 /* drain RX */
     SPI1STATCLR = _SPI1STAT_SPIROV_MASK;
     SPI1BRG = spi_ComputeBrg(gCfg.baudHz, &gActualBaud);

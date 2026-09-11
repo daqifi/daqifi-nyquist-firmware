@@ -80,6 +80,9 @@ JSONESC_BIN := run_json_escape_tests
 # convention as BENCH_BIN above.
 SPI913_BIN := run_913_tests
 USER_SPI_SRC := ../../firmware/src/HAL/UserSpi/UserSpi.c
+USER_UART_SRC := ../../firmware/src/HAL/UserUart/UserUart.c
+USER_I2C_SRC := ../../firmware/src/HAL/UserI2c/UserI2c.c
+WAIT_SHAPE_LINT := ../../tools/lint/wait_loop_shape.py
 
 # #1004: SCPI_Help's shared-buffer write-abort bound. Same shape as
 # SUSPEND_BIN's sibling SD_BENCH_SRC-style guard and #995's own host test --
@@ -126,7 +129,18 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 
-$(SPI913_BIN): test_913_spi_wait_stat.c test_framework.h $(USER_SPI_SRC) $(RECIPES)
+# The two greps below pin CONSTANTS. They do not pin the loop's SHAPE, and
+# Qodo's review of #1009 was right that a guard over constants alone cannot
+# fail for the defect this suite exists to catch: delete the fresh SPI1STAT
+# read at expiry, move the deadline test after the yield, or drop the
+# vTaskDelay(1), and both greps still pass while every modeled test stays
+# green. wait_loop_shape.py closes that, for all THREE files carrying the
+# shape -- uart and i2c were ported in this same PR and had no guard at all.
+$(SPI913_BIN): test_913_spi_wait_stat.c test_framework.h $(USER_SPI_SRC) \
+               $(USER_UART_SRC) $(USER_I2C_SRC) $(WAIT_SHAPE_LINT) $(RECIPES)
+	@python3 $(WAIT_SHAPE_LINT) \
+	    --spi $(USER_SPI_SRC) --uart $(USER_UART_SRC) --i2c $(USER_I2C_SRC) \
+	  || exit 1
 	@grep -qE '^#define[[:space:]]+USER_SPI_BYTE_TIMEOUT_MS[[:space:]]+20u[[:space:]]*$$' $(USER_SPI_SRC) \
 	  || { echo "ERROR: USER_SPI_BYTE_TIMEOUT_MS is no longer '20u' in $(USER_SPI_SRC)."; \
 	       echo "       Update FW_BYTE_TIMEOUT_MS in test_913_spi_wait_stat.c and re-derive its numbers."; \
