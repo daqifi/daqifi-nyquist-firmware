@@ -61,6 +61,19 @@ HOUSE STYLE (#907) -- WHY TWO PROPERTIES, NOT THE THREE THE TICKET NAMED
     the #324 legacy camelCase aliases, and it stays a short, named,
     understood set rather than growing invisibly.
 
+    S3 (EXACT-DUPLICATE PATTERN STRINGS) -- ADDED after PR #1036's own
+    adversarial audit found S1/S2 blind to it. `registered_patterns()`
+    collapses all registrations into the `live` SET, so two rows whose
+    `.pattern` string is byte-identical but whose callbacks differ become
+    ONE set element -- S2's `spelling_owners` then sees a single owner for
+    every spelling that pattern produces, and reports nothing, even though
+    `findCommandHeader` (libscpi/src/parser.c:177) returns on the FIRST
+    table match and the second row's callback is silently unreachable no
+    matter what it does. S3 is checked on the RAW registration list, before
+    that dedup, and needs no allowlist and no callback comparison -- the
+    second row is dead regardless of what it would have done. See
+    `duplicate_pattern_violations`.
+
 EXIT
     0 = in sync. 1 = drift, with each offending command named.
 """
@@ -148,7 +161,15 @@ def _joined(literal_group):
 
 
 def registered_patterns(scpi_c):
-    """(live, commented_out) sets of .pattern strings in the command table.
+    """(live, commented_out, live_list) for the .pattern strings in the table.
+
+    `live` and `commented_out` are sets, as before. `live_list` is the RAW,
+    non-deduplicated list of every live (non-commented) `.pattern` string, in
+    table order, with repeats intact -- `live = set(live_list)` collapses two
+    registrations sharing one pattern string into a single element, which is
+    exactly the blind spot `duplicate_pattern_violations` exists to see
+    through: S1/S2 (`style_violations`) only ever receive `live`, so they can
+    never observe a duplicate that `live_list` still carries.
 
     Raises SystemExit if any `.pattern =` field fails to parse. That guard is
     the point: the failure mode of a regex-based extractor is not a wrong
@@ -168,11 +189,12 @@ def registered_patterns(scpi_c):
         raw = fh.read()
     live_src = strip_c_comments(raw)
     every = {_joined(g) for g, _ in _REGISTRATION.findall(raw)}
-    live = {_joined(g) for g, _ in _REGISTRATION.findall(live_src)}
+    live_list = [_joined(g) for g, _ in _REGISTRATION.findall(live_src)]
+    live = set(live_list)
 
     declared = (len(_PATTERN_FIELD.findall(live_src))
                 - len(_NULL_SENTINEL.findall(live_src)))
-    parsed = len(_REGISTRATION.findall(live_src))
+    parsed = len(live_list)
     if declared != parsed:
         sys.exit(f"error: {scpi_c!r} has {declared} live '.pattern =' command "
                  f"fields but only {parsed} parsed as registrations. An entry "
@@ -180,7 +202,7 @@ def registered_patterns(scpi_c):
                  f"silently omitted from the check -- so a command missing "
                  f"from the wiki could never be reported. Extend "
                  f"_REGISTRATION in tools/lint/scpi_wiki_sync.py.")
-    return live, every - live
+    return live, every - live, live_list
 
 
 def _short_form(node):
@@ -265,6 +287,28 @@ def apply_style_allowlist(short_violations, ambiguous, allowlist):
     kept_ambig = [(pair, spellings) for pair, spellings in ambiguous
                   if not all(p in allowlist for p in pair)]
     return kept_short, kept_ambig
+
+
+def duplicate_pattern_violations(live_list):
+    """Sorted list of `.pattern` strings registered more than once (S3).
+
+    Takes the RAW, non-deduplicated registration list (`registered_patterns`'s
+    `live_list`) rather than the `live` set S1/S2 use -- `live = set(live_list)`
+    is exactly where a duplicate disappears, so a checker fed `live` can never
+    see one no matter how it compares spellings.
+
+    Deliberately no allowlist and no callback comparison. Two registrations
+    sharing one exact pattern string are indistinguishable to `matchPattern`
+    regardless of what their callbacks do: `findCommandHeader`
+    (libscpi/src/parser.c:177) returns on the FIRST table match, so every
+    later row with the identical string is silently unreachable, full stop --
+    there is no "acceptable" duplicate to allowlist, unlike S1/S2 where a
+    pre-existing alias can be a known, named, deliberate exception.
+    """
+    counts = {}
+    for pat in live_list:
+        counts[pat] = counts.get(pat, 0) + 1
+    return sorted(pat for pat, n in counts.items() if n > 1)
 
 
 def is_form_of(written, pattern):
@@ -510,7 +554,7 @@ def _self_test_style():
     scpi_c = "firmware/src/services/SCPI/SCPIInterface.c"
     if os.path.exists(scpi_c):
         cases += 1
-        live, _commented = registered_patterns(scpi_c)
+        live, _commented, _live_list = registered_patterns(scpi_c)
         short_v, ambig = style_violations(live)
         short_pats = {p for p, _n in short_v}
         if short_pats != STYLE_ALLOWLIST:
@@ -529,6 +573,118 @@ def _self_test_style():
             print(f"  FAIL style vacuity guard: unfiltered S2 ambiguous "
                   f"pairs on the real table are {sorted(ambig_pairs_only)}, "
                   f"expected exactly {{{expected_pair}}}.")
+    return cases, failures
+
+
+def _self_test_duplicate_patterns():
+    """Pin the S3 finding from PR #1036's own adversarial audit.
+
+    `registered_patterns()` used to hand S1/S2 only the deduplicated `live`
+    SET, so two registrations sharing one exact `.pattern` string -- with
+    DIFFERENT callbacks -- collapsed into a single element before either
+    check ever saw the table. `spelling_owners` (`style_violations`) then
+    counted one owner for every spelling that pattern produces, and S2
+    reported nothing, even though `findCommandHeader` (parser.c:177) returns
+    on the FIRST table match and the second row is silently dead regardless
+    of what its callback does.
+
+    Case 1 drives the real pipeline -- `registered_patterns()` ->
+    `duplicate_pattern_violations()` -- over a synthetic table where the same
+    pattern string is registered under two DIFFERENT callbacks, proving the
+    detector needs (and uses) no callback comparison to catch it: this is
+    the exact shape the audit's finding described, run end to end rather than
+    against a hand-built list.
+
+    Case 2 mirrors `_self_test_style`'s real-table vacuity guard: on the live
+    SCPIInterface.c table the detector must run to completion and report
+    ZERO duplicates (294 registrations, `sort | uniq -d` over `.pattern`
+    fields is empty, verified 2026-09-11). Unlike S1/S2's vacuity guard --
+    which pins four KNOWN pre-existing violations, so a detector gone silent
+    changes the count -- there is no live duplicate to demand here, so this
+    case alone cannot prove the detector still fires; that proof is case 1.
+    What this case pins is that the real `registered_patterns()` ->
+    `duplicate_pattern_violations()` path executes against the real table
+    without raising and agrees with the known-clean state, so a future
+    regression that leaves duplicates in the real table does not go
+    unnoticed either. Skipped (not failed) when no real command table is
+    available, matching `_self_test_style`'s own vacuity guard.
+
+    Case 3 pins that the S3 verdict actually SURVIVES to `main()`'s exit
+    code -- not just that `duplicate_pattern_violations()` computes the
+    right list (case 1 already proves that). An opus review of this fix
+    found that cases 1/2 alone leave a hole exactly one frame out: nothing
+    stopped `print_style_violations`'s `return bool(short_v or ambig or dup)`
+    from being written as `return bool(short_v or ambig)` (silently
+    dropping `dup`), or `load_and_check_style`'s `style_dup` from being
+    computed and never returned -- either mutation leaves case 1 and case 2
+    both green while `--style-only` prints the S3 error block and still
+    exits 0. That is the exact "called but the result is discarded" class
+    `_self_test_style_only_entry` already exists to catch for `self_test()`
+    itself, one channel over. This drives `main()` itself with
+    `--style-only` on the duplicate-pattern table from case 1 and asserts a
+    non-zero exit, using the same module-level `self_test` spy
+    `_self_test_style_only_entry` uses -- required so `main()`'s own
+    unconditional `self_test()` call does not recurse back into this
+    function.
+    """
+    import contextlib
+    import io
+    import tempfile
+    cases, failures = 2, 0  # case 1 (detector) + case 3 (verdict wiring)
+
+    src = ('const scpi_command_t scpi_commands[] = {\n'
+           '    {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_A,},\n'
+           '    {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_B,},\n'
+           '    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n};\n')
+    with tempfile.TemporaryDirectory() as d:
+        c = os.path.join(d, "scpi.c")
+        with open(c, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        _live, _commented, live_list = registered_patterns(c)
+        dup = duplicate_pattern_violations(live_list)
+        if dup != ["SYSTem:DEVice:NAME"]:
+            failures += 1
+            print(f"  FAIL S3 duplicate-pattern: a pattern registered twice "
+                  f"under two DIFFERENT callbacks reported {dup!r}, expected "
+                  f"['SYSTem:DEVice:NAME'] -- the second registration is "
+                  f"unreachable (findCommandHeader takes the first table "
+                  f"match) regardless of what its callback does")
+
+        # Case 3: the verdict must reach main()'s exit code, not just the
+        # printed diagnostic.
+        global self_test
+        real_self_test = self_test
+        argv_saved = sys.argv
+
+        def _spy_pass():
+            return 0
+
+        try:
+            self_test = _spy_pass
+            sys.argv = ["scpi_wiki_sync.py", "--style-only", "--scpi", c]
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = main()
+        finally:
+            self_test = real_self_test
+            sys.argv = argv_saved
+        if rc == 0:
+            failures += 1
+            print("  FAIL S3 verdict wiring: main() --style-only returned 0 "
+                  "on a table with a duplicate pattern -- the S3 finding was "
+                  "computed but discarded somewhere between "
+                  "duplicate_pattern_violations() and the exit code")
+
+    scpi_c = "firmware/src/services/SCPI/SCPIInterface.c"
+    if os.path.exists(scpi_c):
+        cases += 1
+        _live, _commented, live_list = registered_patterns(scpi_c)
+        dup = duplicate_pattern_violations(live_list)
+        if dup:
+            failures += 1
+            print(f"  FAIL S3 vacuity guard: the real command table has "
+                  f"duplicate pattern string(s) {dup!r} -- "
+                  f"findCommandHeader silently drops every registration "
+                  f"after the first one.")
     return cases, failures
 
 
@@ -640,6 +796,8 @@ def self_test():
     failures += e2e_failures
     style_cases, style_failures = _self_test_style()
     failures += style_failures
+    dup_cases, dup_failures = _self_test_duplicate_patterns()
+    failures += dup_failures
     entry_cases, entry_failures = _self_test_style_only_entry()
     failures += entry_failures
     if failures:
@@ -648,6 +806,7 @@ def self_test():
     print(f"self-test: {len(SELF_TEST_CASES)}/{len(SELF_TEST_CASES)} matcher "
           f"cases + {e2e_cases}/{e2e_cases} end-to-end cases + "
           f"{style_cases}/{style_cases} house-style cases + "
+          f"{dup_cases}/{dup_cases} duplicate-pattern cases + "
           f"{entry_cases}/{entry_cases} style-only entry cases pass")
     return 0
 
@@ -673,7 +832,7 @@ def _self_test_end_to_end():
 
         # (1) Adjacent string literals concatenate in C. Missing this dropped
         # the command from `live`, where it could never be reported at all.
-        live, _ = registered_patterns(c)
+        live, _, _live_list = registered_patterns(c)
         if "SYSTem:WIFI:DEBUG?" not in live:
             print("  FAIL end-to-end: a concatenated .pattern was not extracted"
                   " -- it would be invisible to the whole check")
@@ -722,24 +881,27 @@ def _self_test_end_to_end():
 
 
 def load_and_check_style(scpi_c):
-    """(live, commented, style_short, style_ambig) for --scpi's table.
+    """(live, commented, style_short, style_ambig, style_dup) for --scpi's table.
 
     `style_short`/`style_ambig` already have `STYLE_ALLOWLIST` applied.
-    Shared by `--style-only` and the normal wiki-comparison flow so the two
-    do not diverge on how the table is loaded or the allowlist is applied.
+    `style_dup` does NOT -- see `duplicate_pattern_violations` for why an
+    exact-duplicate pattern string has no allowlistable case. Shared by
+    `--style-only` and the normal wiki-comparison flow so the two do not
+    diverge on how the table is loaded or the allowlist is applied.
     """
-    live, commented = registered_patterns(scpi_c)
+    live, commented, live_list = registered_patterns(scpi_c)
     if not live:
         sys.exit(f"error: no .pattern entries found in {scpi_c!r} -- "
                  f"has the command table moved?")
     style_short, style_ambig = style_violations(live)
     style_short, style_ambig = apply_style_allowlist(
         style_short, style_ambig, STYLE_ALLOWLIST)
-    return live, commented, style_short, style_ambig
+    style_dup = duplicate_pattern_violations(live_list)
+    return live, commented, style_short, style_ambig, style_dup
 
 
-def print_style_violations(short_v, ambig):
-    """Print #907 house-style findings; return True if any remain."""
+def print_style_violations(short_v, ambig, dup):
+    """Print #907 house-style findings (S1, S2, S3); return True if any remain."""
     if short_v:
         print(f"\n::error::{len(short_v)} SCPI node(s) have a short form "
               f"under 2 characters:")
@@ -759,7 +921,17 @@ def print_style_violations(short_v, ambig):
         print("  pattern but the winner is silently unreachable by that")
         print("  spelling -- no error, just the wrong command. Respell one")
         print("  side so their short forms diverge.")
-    return bool(short_v or ambig)
+    if dup:
+        print(f"\n::error::{len(dup)} pattern string(s) are registered more "
+              f"than once:")
+        for pat in dup:
+            print(f"    {pat}")
+        print("\n  findCommandHeader takes the FIRST table match, so every")
+        print("  registration after the first with this EXACT pattern string")
+        print("  is silently unreachable no matter what its callback does --")
+        print("  no error, just dead code. Give it a distinct pattern string,")
+        print("  or remove the duplicate registration.")
+    return bool(short_v or ambig or dup)
 
 
 def main():
@@ -768,7 +940,7 @@ def main():
     ap.add_argument("--self-test", action="store_true",
                     help="check the abbreviation matcher and exit")
     ap.add_argument("--style-only", action="store_true",
-                    help="check the #907 house-style gate (S1/S2) over "
+                    help="check the #907 house-style gate (S1/S2/S3) over "
                          "--scpi and exit -- no --wiki clone needed")
     ap.add_argument("--wiki",
                     help="path to a clone of the daqifi-nyquist-firmware.wiki repo")
@@ -785,11 +957,11 @@ def main():
     if args.style_only:
         if self_test() != 0:  # a broken matcher/detector makes this verdict junk --
             return 1           # same guard the --wiki path takes below, not skipped here
-        live, commented, style_short, style_ambig = load_and_check_style(args.scpi)
+        live, commented, style_short, style_ambig, style_dup = load_and_check_style(args.scpi)
         print(f"registered SCPI commands : {len(live)}")
         print(f"commented-out patterns   : {len(commented)} (not shipped, ignored)")
         print(f"house-style allowlist    : {len(STYLE_ALLOWLIST)} pattern(s)")
-        has_violations = print_style_violations(style_short, style_ambig)
+        has_violations = print_style_violations(style_short, style_ambig, style_dup)
         if not has_violations:
             print("\nOK: no house-style violations (#907).")
             return 0
@@ -805,10 +977,10 @@ def main():
     # the module docstring's HOUSE STYLE section for why there is no
     # diff-aware mechanism), and FATAL unconditionally -- unlike `ghosts`
     # below, there is no scheduled-run ordering trap to excuse it.
-    live, commented, style_short, style_ambig = load_and_check_style(args.scpi)
+    live, commented, style_short, style_ambig, style_dup = load_and_check_style(args.scpi)
     rows = wiki_rows(args.wiki)
     allow = load_allowlist(args.allow)
-    style_violated = print_style_violations(style_short, style_ambig)
+    style_violated = print_style_violations(style_short, style_ambig, style_dup)
 
     written = [cmd for cmd, _ in rows]
     # Documented means a COMMAND-TABLE ROW names it. Nothing else counts.
