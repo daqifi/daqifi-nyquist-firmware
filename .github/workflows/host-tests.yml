@@ -95,6 +95,17 @@ name: host-tests
 #     in its own hunk further down each list. Whichever merges second should
 #     keep ONE copy of each path -- a duplicate is harmless to Actions but is
 #     noise, and the two comments explaining it are then redundant too.
+#   - test_995_cmdhistory_write_abort.c: greps SCPIInterface.c for three
+#     constants (the two shared SCPI_WriteWithRetry retry constants plus the
+#     new per-callback SCPI_CMDHISTORY_WRITE_BUDGET_MS) -- already covered by
+#     the existing 'firmware/src/services/SCPI/**' entry above. It ALSO greps
+#     firmware/src/config/default/FreeRTOSConfig.h for the 1000 Hz tick rate
+#     and 32-bit TickType_t width its millisecond arithmetic assumes (the
+#     same assumption test_943_bench_stall_bound.c makes in prose only,
+#     undocumented in this file's trigger list until now) -- that file is
+#     NOT matched by any entry above, so it gets its own line. Without it a
+#     tick-config change could silently invalidate this host test's timing
+#     model while CI stayed green.
 
 on:
   pull_request:
@@ -114,6 +125,7 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/config/default/FreeRTOSConfig.h'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -132,6 +144,7 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/config/default/FreeRTOSConfig.h'
       - '.github/workflows/host-tests.yml'
 
 permissions:
