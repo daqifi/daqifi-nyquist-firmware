@@ -5021,8 +5021,21 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                 SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
-                LOG_E("Cannot start SD logging - could not arm the write "
-                      "(#942: raced the #589 suspend check): %s\r\n",
+                /* #1000: the old prefix here was 88 characters against a
+                 * 125-byte effective ceiling (LOG_MESSAGE_SIZE - 3, Logger.c),
+                 * leaving 35 for the reason after the CRLF -- short of every
+                 * SD_SuspendReasonText() return (46/58/76), all three cut.
+                 * The NULL fallback ("the SD task is not accepting work", 33
+                 * chars) fit the old prefix (88+33+2=123<=125) and was never
+                 * the problem; it is the one case a bench repro would not
+                 * have caught. This prefix is 27 characters, leaving 96: the
+                 * longest reachable case (the 76-character quarantine
+                 * reason) totals 105, well inside the ceiling. The #942/#589
+                 * narrative moved to this comment -- it is still greppable
+                 * via the LOG_E line's #1000 tag and this issue number, just
+                 * not inside the 128-byte message the device actually
+                 * emits. */
+                LOG_E("SD log arm refused (#942): %s\r\n",
                       why ? why : "the SD task is not accepting work");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
                 return SCPI_RES_ERR;
