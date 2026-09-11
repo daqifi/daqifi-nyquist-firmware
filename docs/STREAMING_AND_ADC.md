@@ -324,10 +324,16 @@ CSV both columns, USB+SD PB both columns, USB+SD CSV both columns, WiFi PB
 curve) — `Streaming_TransportMaxFreq` does not branch on `isNQ1` for those
 coefficients.
 
-The other seven diverge because the 252 MHz refits were NQ1-only. **#595/#600**
-raised USB PB and SD PB; **#595** raised the WiFi PB **single** term alone
-(5175 → 8000) and left its multi-channel curve unchanged, which is why that
-curve is one of the nine shared cells; **#712** (issue #562) raised USB CSV.
+The other seven diverge because the 252 MHz refits were NQ1-only. **#595**
+raised USB PB, SD PB and the WiFi PB **single** term (5175 → 8000) — but not
+the WiFi PB multi-channel curve, which is why that curve is one of the nine
+shared cells. **#712** (issue #562) raised USB CSV.
+
+`#600` is deliberately absent here: it re-fitted the NQ1 *additive* PB cap
+(`Streaming_AdcAdditiveCap_NQ1`) and never touched `Streaming_TransportMaxFreq`,
+so it has no transport coefficient to its name. The caveat further up this file
+groups it with #595 because that sentence covers transport **and** additive
+together, which is correct at its scope and wrong at this one.
 
 The USB+SD CSV single is **6500** for every variant, and is deliberately BELOW
 the 2-channel point of its own curve: 8000 was a 200 MHz-era coefficient that
