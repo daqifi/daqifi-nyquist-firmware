@@ -644,6 +644,76 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/**
+ * SYSTem:COMMunicate:LAN:CONnected? (#951).
+ *
+ * VALUE CONTRACT -- a bare SCPI mnemonic (IEEE 488.2 character-data response,
+ * unquoted, like ADDRess?). Compare it WHOLE; do not prefix-match, because
+ * INIT and INITFAULT share a prefix and mean opposite things.
+ *
+ *   INIT       WIFI_STATE_INIT and the WINC driver status is not an error --
+ *              bring-up in progress (normal for a couple of seconds after
+ *              power-up / APPLY). Expect it to clear; poll again.
+ *   INITFAULT  WIFI_STATE_INIT and WDRV_WINC_Status() reports an error. The
+ *              chip answers SPI but m2m_wifi_init_start never completed, and
+ *              wifi_manager re-queues its INIT event roughly every 10 ms for
+ *              as long as the board is powered. This does NOT self-clear --
+ *              treat it as "the module is down" and reset/reflash.
+ *   NOLINK     Radio up, but no link: a STA that has not associated yet, or an
+ *              AP whose WDRV_WINC_APStart has not (or will never) completed.
+ *   APIDLE     The soft-AP is up and BEACONING, with no client connected. This
+ *              is the value that says "the module is live" without requiring a
+ *              peer -- the distinction #951 exists to make.
+ *   CONNECTED  STA associated with an AP, or our soft-AP has a connected TCP
+ *              client. Exactly the condition wifi_manager_GetWiFiStatus()
+ *              reports as WIFI_STATUS_CONNECTED.
+ *
+ * WiFi disabled / deinitialised is NOT a reply value: the shared
+ * SCPI_LANRequireWiFiReady gate refuses it with -200 first, the same as every
+ * other LAN getter (ADDRess?, MASK?, MAC?, BSSID? ...). Keeping DISABLED out
+ * of the reply keeps this command consistent with its neighbours instead of
+ * inventing a second convention for the same condition.
+ *
+ * Strictly non-blocking (no WINC round-trip), so it is safe on app_WifiTask
+ * via TCP SCPI as well as on the USB SCPI task.
+ */
+scpi_result_t SCPI_LANConnectedGet(scpi_t * context) {
+    // Gate on WiFi-ready FIRST, same as ADDRess?/SSIDStr?/BSSID?.
+    if (!SCPI_LANRequireWiFiReady(context)) return SCPI_RES_ERR;
+
+    const char *reply;
+    switch (wifi_manager_GetLinkState()) {
+        case WIFI_LINK_STATE_CONNECTED:
+            reply = "CONNECTED";
+            break;
+        case WIFI_LINK_STATE_AP_IDLE:
+            reply = "APIDLE";
+            break;
+        case WIFI_LINK_STATE_NO_LINK:
+            reply = "NOLINK";
+            break;
+        case WIFI_LINK_STATE_INIT_FAULT:
+            reply = "INITFAULT";
+            break;
+        case WIFI_LINK_STATE_INIT:
+            reply = "INIT";
+            break;
+        case WIFI_LINK_STATE_DISABLED:
+        default:
+            // Normally unreachable: the ready gate above refuses DISABLED with
+            // -200. Reachable only if the link is torn down between the gate
+            // and this read (POW:STAT 0 / ENA 0 + APPLY on the other SCPI
+            // transport), so report it honestly rather than emitting a link
+            // state that is no longer true. A `default:` arm is kept as well
+            // because a future wifi_link_state_t value must not fall through
+            // into an uninitialised `reply`.
+            reply = "DISABLED";
+            break;
+    }
+    SCPI_ResultMnemonic(context, reply);
+    return SCPI_RES_OK;
+}
+
 scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     bool saveSettings = false;
     int param1;

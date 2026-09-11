@@ -2382,47 +2382,111 @@ bool wifi_manager_GetChipInfo(wifi_manager_chipInfo_t *pChipInfo) {
     return true;
 }
 
-wifi_status_t wifi_manager_GetWiFiStatus(void) {
+wifi_link_state_t wifi_manager_GetLinkState(void) {
+    // #951. Single decision point for "what is the WiFi link actually doing".
+    // wifi_manager_GetWiFiStatus() below is a pure projection of this result,
+    // so the 3-value and 6-value surfaces cannot disagree.
+
     // First check if WiFi is enabled in settings
-    if (gStateMachineContext.pWifiSettings == NULL || 
-        !gStateMachineContext.pWifiSettings->isEnabled) {
-        return WIFI_STATUS_DISABLED;
+    if (gStateMachineContext.pWifiSettings == NULL ||
+            !gStateMachineContext.pWifiSettings->isEnabled) {
+        return WIFI_LINK_STATE_DISABLED;
     }
-    
+
     // Check the actual WiFi driver state
     uint8_t wifiState = m2m_wifi_get_state();
-    
-    switch(wifiState) {
+
+    // Take a SINGLE coherent snapshot of the state-flag bitmask, then decide
+    // against the snapshot. This can run on the USB SCPI task (priority 7)
+    // while the WifiTask mutates the flags, so reading them separately per
+    // check could straddle a concurrent flip and observe an inconsistent
+    // AP/STA combination. The uint16_t .value field is the atomic unit (a
+    // single aligned 16-bit load is atomic on PIC32MZ); copying the whole
+    // wifi_manager_stateFlag_t struct would be a multi-word, non-atomic copy.
+    // Same reasoning as InvalidateStaLinkState() above.
+    const uint16_t flags = gStateMachineContext.eventFlags.value;
+
+    switch (wifiState) {
         case WIFI_STATE_START:
             // WiFi is active, check connection status
-            
+
             // For STA mode: connected means connected to a router
-            if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
-                return WIFI_STATUS_CONNECTED;
+            if (0u != (flags & WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
+                return WIFI_LINK_STATE_CONNECTED;
             }
-            
-            // For AP mode: check if any clients are connected
-            if (GetEventFlagStatus(gStateMachineContext.eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
+
+            // For AP mode: AP_STARTED means the soft-AP is up and beaconing
+            if (0u != (flags & WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
                 // Check if we have an active TCP client connection
-                if (gStateMachineContext.pTcpServerContext && 
-                    gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
-                    return WIFI_STATUS_CONNECTED;  // Client connected to our AP
+                if (gStateMachineContext.pTcpServerContext &&
+                        gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
+                    return WIFI_LINK_STATE_CONNECTED;  // Client connected to our AP
                 }
                 // AP is running but no clients connected
-                return WIFI_STATUS_DISCONNECTED;
+                return WIFI_LINK_STATE_AP_IDLE;
             }
-            
-            return WIFI_STATUS_DISCONNECTED;
-            
+
+            // Radio is up but there is no link at all: a STA that has not
+            // associated yet, or an AP whose WDRV_WINC_APStart did not complete.
+            return WIFI_LINK_STATE_NO_LINK;
+
         case WIFI_STATE_INIT:
-            // WiFi is initializing
-            return WIFI_STATUS_DISCONNECTED;
-            
+            // #951: the condition the 3-value surface could not express. Split
+            // a transient bring-up from a hard fault using the WINC DRIVER's
+            // own status, the same value the INIT retry handler reads.
+            //
+            // Every SYS_STATUS error code is negative (SYS_STATUS_ERROR = -1,
+            // SYS_STATUS_ERROR_EXTENDED = -10; system_module.h), while
+            // UNINITIALIZED / BUSY / READY are >= 0 and mean the retry is still
+            // expected to make progress. Testing "!= SYS_STATUS_READY" instead
+            // would report the normal couple-of-seconds post-power-up window as
+            // a fault, which is a false alarm, not observability.
+            //
+            // WDRV_WINC_Status() itself returns SYS_STATUS_ERROR for an invalid
+            // module object, so no separate SYS_MODULE_OBJ_INVALID guard is
+            // needed here -- "no driver instance while m2m reports INIT" is
+            // honestly a fault.
+            if (WDRV_WINC_Status(sysObj.drvWifiWinc) < SYS_STATUS_UNINITIALIZED) {
+                return WIFI_LINK_STATE_INIT_FAULT;
+            }
+            return WIFI_LINK_STATE_INIT;
+
         case WIFI_STATE_DEINIT:
         default:
             // WiFi is not initialized
-            return WIFI_STATUS_DISABLED;
+            return WIFI_LINK_STATE_DISABLED;
     }
+}
+
+wifi_status_t wifi_manager_GetWiFiStatus(void) {
+    // The 3-value contract is UNCHANGED (#951). Callers depend on the exact
+    // 3-way split (SCPI_LANRequireWiFiReady, wifi_manager_IsWiFiConnected and
+    // through it streaming.c's transport-health check, BSSID?'s gating,
+    // iperf2), so this is a pure projection of wifi_manager_GetLinkState():
+    //
+    //     DISABLED                                  -> WIFI_STATUS_DISABLED
+    //     CONNECTED                                 -> WIFI_STATUS_CONNECTED
+    //     INIT / INIT_FAULT / NO_LINK / AP_IDLE     -> WIFI_STATUS_DISCONNECTED
+    //
+    // Deriving it rather than duplicating the decision tree is what keeps the
+    // two surfaces from drifting apart: exactly one place decides.
+    //
+    // There is deliberately no `default:` arm. Every enumerator is listed, so
+    // -Wswitch (an error here, the build runs -Wall -Werror) forces whoever
+    // adds a wifi_link_state_t value to classify it rather than have it fall
+    // silently into DISCONNECTED.
+    switch (wifi_manager_GetLinkState()) {
+        case WIFI_LINK_STATE_DISABLED:
+            return WIFI_STATUS_DISABLED;
+        case WIFI_LINK_STATE_CONNECTED:
+            return WIFI_STATUS_CONNECTED;
+        case WIFI_LINK_STATE_INIT:
+        case WIFI_LINK_STATE_INIT_FAULT:
+        case WIFI_LINK_STATE_NO_LINK:
+        case WIFI_LINK_STATE_AP_IDLE:
+            break;
+    }
+    return WIFI_STATUS_DISCONNECTED;
 }
 
 bool wifi_manager_IsWiFiConnected(void) {
