@@ -1230,9 +1230,61 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * accepted. The exit compare would then match and silently revert the
      * user's accepted target. Seeding from our own string instead makes the
      * sentinel un-poisonable, and makes this the fourth symmetric `file` site
-     * (#736 audit round 6). */
+     * (#736 audit round 6).
+     *
+     * #958: the tick is used WHOLE. It used to be masked to 16 bits, so the
+     * name repeated every 65536 ticks -- 65.5 s at the 1 kHz tick -- and the
+     * open this name is about to be armed against TRUNCATES
+     * (SYS_FS_FILE_OPEN_WRITE_PLUS, sd_card_manager.c OPEN_FILE). Two
+     * benchmarks 65.5 s apart on one board therefore targeted the same file
+     * and the second destroyed the first's, with no error, no log line and
+     * nothing a client could have done about it. The three python tests that
+     * snapshot `benchmark_*.dat` before a run and delete only the set
+     * difference (test_728 / test_851 / test_943) cannot defend against that:
+     * their protection is about which files they REMOVE, and this loss happens
+     * inside the open.
+     *
+     * Unmasked, two runs that each CREATE a file cannot share a tick value, so
+     * within one boot the name cannot repeat at all. The argument is not "1 ms
+     * is short" -- it is that this callback cannot run to completion in under
+     * a tick. Its LAST step is the drain-and-close wait below
+     * (`while (!sd_card_manager_IsIdle() && idleWait < 500) vTaskDelay(10)`),
+     * and the close it waits for happens in the SD task. The loop cannot exit
+     * without entering: the `mode = MODE_NONE` +
+     * sd_card_manager_UpdateSettings() immediately above it forces
+     * currentProcessState = DEINIT, and sd_card_manager_IsIdle() is IDLE-or-
+     * INIT only (sd_card_manager.c:3801), so the first test is false and the
+     * body runs -- one vTaskDelay(10) is ten ticks. The re-entrancy interlock
+     * (`testInProgress`, claimed above) means the next run's name is not built
+     * until this one has returned, so consecutive names are >= 10 ticks apart.
+     * The same holds whichever transport calls it -- USB SCPI at priority 7 or
+     * WiFi SCPI at 2 -- because the guarantee comes from the wait, not from
+     * who preempts whom. A run refused before the arm creates no file and so
+     * cannot collide with anything. TickType_t is 32-bit here
+     * (configUSE_16_BIT_TICKS is 0), so the value itself only repeats after
+     * 49.7 days of uptime.
+     *
+     * WHAT THIS DOES NOT FIX, and it is the other half of #958: a reboot
+     * restarts the tick, so a run after a reboot can still land on the name of
+     * a file left on the card before it, and still truncates it silently. The
+     * issue's preferred shape -- stat the candidate, advance a discriminator
+     * when it exists, refuse after a bounded number of attempts -- is the fix
+     * for that and it CANNOT be implemented at this site: the FAT volume is
+     * not mounted here. The SD task mounts it only inside a session
+     * (sd_card_manager.c:1457, reached only when `mode != MODE_NONE`, :1398)
+     * and unmounts it at the end of one (:1715); SYS_FS_AUTOMOUNT_ENABLE is
+     * false (configuration.h:98). A SYS_FS_FileStat() from this callback --
+     * which runs with the manager IDLE, i.e. unmounted -- therefore fails with
+     * SYS_FS_ERROR_INVALID_NAME (sys_fs.c:191, the volume is not `inUse`),
+     * which is not the "genuinely absent" NO_PATH / NO_FILE that
+     * sd_BucketDirExists() treats as free. Failing safe on it (the required
+     * convention) would refuse EVERY benchmark; reading it as "name is free"
+     * would be a probe that answers nothing. The existence question can only
+     * be asked where the volume is mounted, which is the SD task -- see the
+     * follow-up on #958 for the shape that does it there, at the point the
+     * final path is resolved, without touching the shared truncating open. */
     snprintf(benchLogFile, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX,
-             "benchmark_%d.dat", (int)(xTaskGetTickCount() & 0xFFFF));
+             "benchmark_%lu.dat", (unsigned long)xTaskGetTickCount());
     benchLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
     taskENTER_CRITICAL();
     memcpy(pSDCardRuntimeConfig->file, benchLogFile, sizeof(benchLogFile));

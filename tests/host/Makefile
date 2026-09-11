@@ -61,6 +61,21 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # and should be looked at rather than skipped.
 SUSPEND_BIN := run_953_tests
 
+# #958: SD:BENCHmark's scratch FILENAME. Third target on the same
+# non-host-compilable file as BENCH_BIN and SUSPEND_BIN, same technique for the
+# same reason: the name generation is re-implemented against injected tick
+# values rather than included.
+#
+# It copies BOTH a format string and a length constant, and it also depends on
+# the DEFECT being absent -- the masked 16-bit form is what made the name
+# repeat every 65.5 s, and a suite whose premise is "the mask is gone" must
+# fail if the mask comes back rather than quietly testing a model of code that
+# no longer exists. So the recipe has three guards: the post-fix format string
+# must be present, the pre-fix one must NOT be, and the field length must still
+# be 40. Each fails loudly and names what to re-read.
+NAME_BIN := run_958_tests
+SD_MGR_HDR := ../../firmware/src/services/sd_card_services/sd_card_manager.h
+
 # #164: JSON_StringEscape.h is header-only and dependency-free for the same
 # reason AD7609Scale.h is -- the pure byte-escaping logic was split out of
 # JSON_Encoder.c, which is unusable on a host (it pulls in
@@ -117,19 +132,43 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
-# Every suite, and every one of the six binaries. Merge conflict (fw#961
+$(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BENCH_SRC) $(SD_MGR_HDR) $(RECIPES)
+	@grep -qF '"benchmark_%lu.dat", (unsigned long)xTaskGetTickCount()' $(SD_BENCH_SRC) \
+	  || { echo "ERROR: the SD:BENCHmark scratch name in $(SD_BENCH_SRC) is no"; \
+	       echo "       longer built as '\"benchmark_%lu.dat\", (unsigned long)xTaskGetTickCount()'."; \
+	       echo "       test_958_sd_benchmark_filename_collision.c re-implements THAT"; \
+	       echo "       format and asserts the names it produces -- update new_bench_name()"; \
+	       echo "       and re-read the header's uniqueness argument before changing either."; \
+	       exit 1; }
+	@if grep -qE 'benchmark_%d\.dat|xTaskGetTickCount\(\)[[:space:]]*&[[:space:]]*0xFFFF' $(SD_BENCH_SRC); then \
+	       echo "ERROR: the 16-bit MASKED benchmark filename is back in $(SD_BENCH_SRC)."; \
+	       echo "       That is the #958 defect itself: the name then repeats every"; \
+	       echo "       65536 ticks (65.5 s) and the truncating open destroys the"; \
+	       echo "       earlier run's file silently. test_958's whole premise is that"; \
+	       echo "       the mask is gone -- fix the firmware, do not relax this guard."; \
+	       exit 1; \
+	 fi
+	@grep -qE '^#define[[:space:]]+SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX[[:space:]]+40[[:space:]]*$$' $(SD_MGR_HDR) \
+	  || { echo "ERROR: SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX is no longer '40' in"; \
+	       echo "       $(SD_MGR_HDR). test_958 copies it as FW_FILE_NAME_LEN_MAX and its"; \
+	       echo "       no-truncation case is arithmetic on that number -- update both."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(NAME_BIN) test_958_sd_benchmark_filename_collision.c
+
+# Every suite, and every one of the seven binaries. Merge conflict (fw#961
 # JSONESC_BIN vs fw#983 SUSPEND_BIN, both merging around the same time)
 # resolved by keeping each side's target intact and merging only `run` and
 # `clean` -- a duplicated rule here would silently shadow one of them.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN)
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(NAME_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
 	./$(JSONESC_BIN)
 	./$(SUSPEND_BIN)
+	./$(NAME_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(NAME_BIN)
 
 .PHONY: run clean

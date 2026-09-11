@@ -97,6 +97,39 @@ high byte would make the whole JSON stream invalid UTF-8), the `inLen` bound
 wholesale rather than truncating mid-escape, the exact worst-case sizing
 `JSON_Encoder.c` allocates on its stack, and NULL/zero-size safety.
 
+`test_958_sd_benchmark_filename_collision.c` covers the *filename* the same
+command builds (issue #958) — third suite on `SCPIStorageSD.c` and, for the
+same reason, the same technique: the name generation is re-implemented against
+injected tick values rather than included. Until #958 the scratch name came
+from a **16-bit** slice of the tick (`benchmark_%d.dat`, `tick & 0xFFFF`), so
+it repeated every 65536 ticks — 65.5 s at the 1 kHz tick — and the open it is
+armed against truncates, so two benchmarks that far apart destroyed the
+earlier one's file with no error and no log line. The fix uses the tick whole
+(`benchmark_%lu.dat`); two runs that each *create* a file cannot share a tick,
+because the callback cannot produce one without yielding for at least a whole
+tick to let the pri-5 SD task mount and open.
+
+Covered: the headline wrap collision (pre-fix names equal, post-fix distinct,
+swept over several bases and several whole multiples of the wrap), injectivity
+over a boundary-value tick table, the `benchmark_*.dat` prefix/suffix contract
+the python suite's snapshot-and-diff depends on, and that the widened field
+still fits `SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX` without truncation (a cut
+name could collide again). The last case asserts the *premise* — equal ticks
+give equal names — because that is what the fix rests on and what a reviewer
+has to check against the firmware.
+
+Not covered, deliberately: the reboot half of #958. The tick restarts at 0, so
+a post-reboot run can still land on a pre-reboot file's name. Closing that
+needs the candidate stat-ed before it is armed, which cannot be done in
+`SCPI_StorageSDBenchmark` — the FAT volume is mounted only inside an SD-task
+session and unmounted at the end of one, so a stat from that callback fails
+with `SYS_FS_ERROR_INVALID_NAME` rather than "absent". See the file header for
+the citations; the follow-up on #958 tracks it.
+
+Three greps guard this target: the post-fix format string must be present, the
+masked pre-fix one must **not** be (a suite whose premise is "the mask is gone"
+has to fail if it returns), and the field-length constant must still be 40.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a
