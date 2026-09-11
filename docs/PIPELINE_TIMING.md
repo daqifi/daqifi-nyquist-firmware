@@ -121,7 +121,7 @@ WiFi driver, power/UI task, etc.).
 1. **Encode is the dominant per-stage cost** even at 1 channel PB (26 µs,
    2.6% of tick). Scales near-linearly with channel count — it's the
    primary bottleneck at the high-rate / high-channel-count ceilings
-   shown in CLAUDE.md's characterization table.
+   shown in docs/STREAMING_AND_ADC.md's characterization table.
 2. **P4 is mostly DIO, not ADC.** `MC12b_TriggerConversion` is close to
    a no-op when hardware triggering is active (#282). The 23 µs is
    dominated by `DIO_StreamingTrigger` scanning 16 DIO channels each tick.
@@ -355,7 +355,7 @@ encoder, inside the deferred task (priority 8).
   integer arithmetic — zero FPU ops in the sample-generation path.
   Only pattern 6 (sine) and pattern 0 when `VoltagePrecision > 0` via
   a float-capable encoder (CSV/JSON, not PB) exercise the FPU.
-- **All production ceiling benchmarks (CLAUDE.md characterization
+- **All production ceiling benchmarks (docs/STREAMING_AND_ADC.md characterization
   table) use pattern 3 (fullscale).** Rationale: pattern 3 yields the
   largest PB varint encoding (worst case for encoder throughput) and
   is integer — no FPU. Therefore the ~2.87 µs/tick P3 inflation seen
@@ -1037,7 +1037,7 @@ Per-channel CSV is **~7× PB**; fixed overhead **~3.4× PB**.
    Bypasses `ADC_ConvertToVoltage`, uses `int_to_str` fast path.
    Expected to drop CSV P8 closer to PB levels.
 
-4. **Confirms why all CLAUDE.md high-rate benchmarks use PB.**
+4. **Confirms why all docs/STREAMING_AND_ADC.md high-rate benchmarks use PB.**
    CSV/JSON are fundamentally FPU-bound per channel per sample.
 
 #### Implication for jitter
@@ -1101,7 +1101,7 @@ closest thing — stresses the SPI bus + SD manager task.
    priority-6 encoder backpressure.
 
 4. **13 kHz exceeds the SD ceiling.** 47% byte loss at 13 kHz / 1
-   channel PB confirms SD can't sustain this rate. (CLAUDE.md table
+   channel PB confirms SD can't sustain this rate. (docs/STREAMING_AND_ADC.md table
    lists SD PB 1 ch at 13 kHz / 148 KB/s — that's the peak observed,
    but not drop-free.) For drop-free SD logging on PB 1 ch, target
    rate should be much lower (likely 2-4 kHz).
@@ -1214,11 +1214,11 @@ Phase 2: 120-second endurance at each ceiling. Total runtime: 7h 45min.
 
 - **Firmware**: PR #308 branch tip (capture pri 9, encoder pri 6, SD pri 5,
   LUT sine, deferred no-FPU, Interface_All=USB+SD, DIOProbe:MODE)
-- **Pattern**: 3 (fullscale — canonical benchmark per CLAUDE.md convention)
+- **Pattern**: 3 (fullscale — canonical benchmark per docs/STREAMING_AND_ADC.md convention)
 - **Result file**: `benchmarks/overnight_20260418_0729.csv` in test suite repo
 - **Configs**: 60 ceilings + 60 endurance runs
 
-#### Zero-loss ceilings (post-intervention) vs CLAUDE.md (pre-intervention)
+#### Zero-loss ceilings (post-intervention) vs docs/STREAMING_AND_ADC.md (pre-intervention)
 
 USB PB:
 

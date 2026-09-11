@@ -1273,7 +1273,8 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
  *     other transport can land
  *     mid-copy, so the image persisted to NVM is a MIX of pre- and post-write
  *     channels; and because CalM/CalB are 64-bit, a single channel's value can
- *     itself be torn (CLAUDE.md: 64-bit ops always need a critical section).
+ *     itself be torn (docs/MCU_REFERENCE.md: 64-bit ops always need a
+ *     critical section).
  *     Taking the claim makes the concurrent writer lose the race visibly, with
  *     -200 and STREAM_CFG_CLAIM_BUSY, instead of silently interleaving.
  *  2. It closes the same START race as the rest of the family (#844/#857): the
