@@ -74,6 +74,7 @@ on:
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/HAL/UserSpi/UserSpi.c'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -86,6 +87,7 @@ on:
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/HAL/UserSpi/UserSpi.c'
       - '.github/workflows/host-tests.yml'
 
 permissions:

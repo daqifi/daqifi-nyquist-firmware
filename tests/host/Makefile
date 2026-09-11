@@ -119,7 +119,7 @@ $(SPI913_BIN): test_913_spi_wait_stat.c test_framework.h $(USER_SPI_SRC) $(RECIP
 	  || { echo "ERROR: USER_SPI_BYTE_TIMEOUT_MS is no longer '20u' in $(USER_SPI_SRC)."; \
 	       echo "       Update FW_BYTE_TIMEOUT_MS in test_913_spi_wait_stat.c and re-derive its numbers."; \
 	       exit 1; }
-	@grep -qE 'for \(uint32_t s = 0; s < 8000u; \+\+s\)' $(USER_SPI_SRC) \
+	@grep -qE '^[[:space:]]*for \(uint32_t s = 0; s < 8000u; \+\+s\)' $(USER_SPI_SRC) \
 	  || { echo "ERROR: spi_WaitStat's fast-spin bound is no longer 's < 8000u' in $(USER_SPI_SRC)."; \
 	       echo "       Update FW_SPIN_COUNT in test_913_spi_wait_stat.c and re-derive its numbers."; \
 	       exit 1; }
