@@ -374,28 +374,25 @@ $(CMDHIST_BIN): test_995_cmdhistory_write_abort.c test_framework.h $(SCPI_IFACE_
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(CMDHIST_BIN) test_995_cmdhistory_write_abort.c
 
-# The $(CMDHIST_BIN) rule, then ONE `run` target listing every suite binary.
+# ONE `run` target listing every suite binary. Keep it that way.
 #
-# Previous merges here each appended a `run:` entry rather than merging into
-# the existing one, so the branch carried two: a recipe-less one and the real
-# one. That was LEGAL and did work -- make accumulates prerequisites across
-# entries and only one may carry a recipe, which is why it never warned and
-# every binary still built and ran. But it read exactly like the shadowed
-# rule the comment above it warned against, and the next person to merge
-# would have had to re-derive that. Collapsed to one target, so what runs is
-# what the target says.
-
-# ONE `run` target listing every suite binary. This Makefile's shared
-# run/clean lines are a known collision point (#1026): six suites landed
-# around the same time, and each merge that APPENDS a `run:` entry instead
-# of merging into the existing one leaves another duplicate behind.
+# These shared run/clean lines are a known collision point (#1026): six
+# suites landed around the same time, and every merge that APPENDS a `run:`
+# entry instead of merging into the existing one leaves another duplicate
+# behind.
 #
 # A duplicate here is legal and does work -- make accumulates prerequisites
-# across entries and only one may carry a recipe, which is why it never
-# warns and every binary still builds and runs. But it reads exactly like
-# the shadowed rule the comment used to warn about, so the next person
-# merging has to re-derive that semantics. Kept collapsed to ONE target
-# instead, so what runs is what the target says.
+# across entries and only one may carry a recipe, which is why it never warns
+# and every binary still builds and runs. That is exactly why it survives
+# merge after merge: nothing complains. But it reads like a shadowed rule,
+# so the next person merging has to re-derive the semantics before they can
+# trust it. Merge INTO this target; do not add a second one.
+#
+# This comment was itself duplicated for one round -- two adjacent blocks
+# saying the same thing with different suite counts, left by two successive
+# merges. Reviewers caught it. Prose about not leaving duplicates behind is
+# not exempt from the rule it states, so if you find yourself adding a
+# second explanation here, merge it into this one instead.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(SDLOG_BIN) $(CMDHIST_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
