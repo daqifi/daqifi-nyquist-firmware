@@ -197,7 +197,9 @@ extern "C" {
      * (see the mapping in wifi_manager.c), so the two surfaces cannot drift.
      *
      * Published on the wire, as a bare mnemonic, by
-     * SYSTem:COMMunicate:LAN:CONnected? (SCPILAN.c SCPI_LANConnectedGet).
+     * SYSTem:COMMunicate:LAN:CONnected? (SCPILAN.c SCPI_LANConnectedGet) --
+     * except WIFI_LINK_STATE_DISABLED, which that query refuses with -200
+     * rather than reporting, the same as every other LAN getter.
      */
     typedef enum {
         /** WiFi off in settings, or the driver is deinitialised
@@ -206,7 +208,8 @@ extern "C" {
         /** WIFI_STATE_INIT and the WINC driver's own status is not an error:
          *  bring-up is in progress and still expected to make progress. */
         WIFI_LINK_STATE_INIT,
-        /** WIFI_STATE_INIT and WDRV_WINC_Status() reports an error. The chip
+        /** WIFI_STATE_INIT and WDRV_WINC_Status() reports an error (any
+         *  negative status, not just SYS_STATUS_ERROR). The chip
          *  answers SPI (nm_drv_init_hold succeeded) but m2m_wifi_init_start
          *  never completed, so the manager's INIT handler re-queues
          *  WIFI_MANAGER_EVENT_INIT roughly every 10 ms for as long as the board

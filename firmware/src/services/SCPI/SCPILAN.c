@@ -654,7 +654,8 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
  *   INIT       WIFI_STATE_INIT and the WINC driver status is not an error --
  *              bring-up in progress (normal for a couple of seconds after
  *              power-up / APPLY). Expect it to clear; poll again.
- *   INITFAULT  WIFI_STATE_INIT and WDRV_WINC_Status() reports an error. The
+ *   INITFAULT  WIFI_STATE_INIT and WDRV_WINC_Status() reports an error (any
+ *              negative status, not just SYS_STATUS_ERROR). The
  *              chip answers SPI but m2m_wifi_init_start never completed, and
  *              wifi_manager re-queues its INIT event roughly every 10 ms for
  *              as long as the board is powered. This does NOT self-clear --
@@ -668,50 +669,58 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
  *              client. Exactly the condition wifi_manager_GetWiFiStatus()
  *              reports as WIFI_STATUS_CONNECTED.
  *
- * WiFi disabled / deinitialised is NOT a reply value: the shared
- * SCPI_LANRequireWiFiReady gate refuses it with -200 first, the same as every
- * other LAN getter (ADDRess?, MASK?, MAC?, BSSID? ...). Keeping DISABLED out
- * of the reply keeps this command consistent with its neighbours instead of
- * inventing a second convention for the same condition.
+ * WiFi disabled / deinitialised is NOT a reply value -- it is refused with
+ * -200, the same as every other LAN getter (ADDRess?, MASK?, MAC?, BSSID? ...)
+ * and with the same message SCPI_LANRequireWiFiReady() uses. This command
+ * enforces that from its OWN single read rather than from the shared gate: a
+ * separate gate call plus a separate dispatch read are two independent reads
+ * of manager state, and the other SCPI transport (USB CDC at priority 7
+ * preempts TCP SCPI on app_WifiTask at priority 2) can commit ENAbled 0 +
+ * APPLY between them -- which would land the dispatch on DISABLED and emit a
+ * sixth reply value this contract says cannot occur. One read cannot
+ * disagree with itself.
  *
  * Strictly non-blocking (no WINC round-trip), so it is safe on app_WifiTask
  * via TCP SCPI as well as on the USB SCPI task.
  */
 scpi_result_t SCPI_LANConnectedGet(scpi_t * context) {
-    // Gate on WiFi-ready FIRST, same as ADDRess?/SSIDStr?/BSSID?.
-    if (!SCPI_LANRequireWiFiReady(context)) return SCPI_RES_ERR;
-
-    const char *reply;
+    // ONE read of the single decision point, then dispatch on it -- not
+    // SCPI_LANRequireWiFiReady() followed by a second, independent read (see
+    // the race explained in the contract above). wifi_manager_GetWiFiStatus()
+    // is itself a pure projection of this same enum (wifi_manager.c), so
+    // WIFI_LINK_STATE_DISABLED is exactly the condition the shared gate
+    // refuses -- the settled-state behavior (and error text) is unchanged.
+    //
+    // No `default:` arm, deliberately, matching wifi_manager_GetWiFiStatus():
+    // -Wswitch (an error under this build's -Wall -Werror) forces whoever
+    // adds a wifi_link_state_t value to classify it here. Every live-value
+    // arm returns immediately, so there is no local left uninitialized, and
+    // an out-of-range/DISABLED value falls through to the refusal below.
     switch (wifi_manager_GetLinkState()) {
         case WIFI_LINK_STATE_CONNECTED:
-            reply = "CONNECTED";
-            break;
+            SCPI_ResultMnemonic(context, "CONNECTED");
+            return SCPI_RES_OK;
         case WIFI_LINK_STATE_AP_IDLE:
-            reply = "APIDLE";
-            break;
+            SCPI_ResultMnemonic(context, "APIDLE");
+            return SCPI_RES_OK;
         case WIFI_LINK_STATE_NO_LINK:
-            reply = "NOLINK";
-            break;
+            SCPI_ResultMnemonic(context, "NOLINK");
+            return SCPI_RES_OK;
         case WIFI_LINK_STATE_INIT_FAULT:
-            reply = "INITFAULT";
-            break;
+            SCPI_ResultMnemonic(context, "INITFAULT");
+            return SCPI_RES_OK;
         case WIFI_LINK_STATE_INIT:
-            reply = "INIT";
-            break;
+            SCPI_ResultMnemonic(context, "INIT");
+            return SCPI_RES_OK;
         case WIFI_LINK_STATE_DISABLED:
-        default:
-            // Normally unreachable: the ready gate above refuses DISABLED with
-            // -200. Reachable only if the link is torn down between the gate
-            // and this read (POW:STAT 0 / ENA 0 + APPLY on the other SCPI
-            // transport), so report it honestly rather than emitting a link
-            // state that is no longer true. A `default:` arm is kept as well
-            // because a future wifi_link_state_t value must not fall through
-            // into an uninitialised `reply`.
-            reply = "DISABLED";
-            break;
+            break;  // fall out to the shared refusal below
     }
-    SCPI_ResultMnemonic(context, reply);
-    return SCPI_RES_OK;
+
+    // DISABLED, or a future value nobody classified above: refuse with the
+    // same -200 and the same text every other LAN getter uses, instead of
+    // reporting a link state that is no longer (or not yet) true.
+    SCPI_ExecutionError(context, "SYST:COMM:LAN: WiFi not ready (device powered up?)");
+    return SCPI_RES_ERR;
 }
 
 scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
