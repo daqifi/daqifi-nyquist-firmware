@@ -39,17 +39,65 @@ WHY A GHOST NEEDS THE WORDS, NOT AN ALLOWLIST
     it automatically -- instead of hiding it in a separate file nobody reads
     next to the table they do.
 
+HOUSE STYLE (#907) -- WHY TWO PROPERTIES, NOT THE THREE THE TICKET NAMED
+    Every registered node must accept a short form of at least TWO
+    characters (S1), and no two registered patterns may accept the same
+    spelling (S2). Both are checked over the WHOLE live table, every run --
+    see `style_violations` for the reasoning, including why a per-node
+    "caps prefix is a genuine prefix" check is vacuous (it can never fail,
+    `_short_form` is a prefix by construction) and why an upper bound on
+    short-form length is deliberately not enforced (ten pre-existing,
+    defect-free mnemonics -- BENCHmark, LOADFcal, TRANSparent, etc. -- would
+    need allowlisting for no behavioural gain).
+
+    NO DIFF-AWARE "new/changed rows only" MECHANISM. The scheduled weekly
+    run against `main` (`.github/workflows/scpi-wiki-sync.yml`) has no PR
+    diff to compare against, so a diff-aware gate would silently check
+    nothing there -- the exact "gate that ran and established nothing"
+    failure this repo has already hit twice (#863/#864, #899). Checking the
+    whole table, like every other check in this file, has nothing to
+    grandfather once the eight #907 patterns are fixed: `STYLE_ALLOWLIST`
+    below is the complete list of pre-existing violators, all four of them
+    the #324 legacy camelCase aliases, and it stays a short, named,
+    understood set rather than growing invisibly.
+
 EXIT
     0 = in sync. 1 = drift, with each offending command named.
 """
 
 import argparse
 import glob
+import itertools
 import os
 import re
 import sys
 
 NOT_IMPLEMENTED_MARK = "not implemented"
+
+# The #324 legacy camelCase aliases (CLAUDE.md "Stream-control namespace
+# migration"). Each has a ONE-character short form ("S" -- `_short_form`
+# truncates at the first lowercase letter, and only the leading capital
+# survives), so all four fail S1. `StartStreamData` and `StopStreamData`
+# additionally COLLIDE on the shared short form "SYST:S" (S2): both are
+# registered (SCPIInterface.c, in that order), `findCommandHeader`
+# (libscpi/src/parser.c:177) takes the FIRST match in table order, so
+# "SYST:S" silently STARTS a stream rather than stopping one -- no -113, no
+# error, just the wrong command. Hardware-reproduced 2026-09-11 (NQ1
+# 7E2898F46200E8A7): SYST:S 1 with a channel enabled returned 0,"No error"
+# and set STATus:OPERation:CONDition? bit 4 (Measuring). This is
+# pre-existing, not introduced by #907, and is tracked as its own defect
+# rather than fixed here -- #1035 (respelling any of the four changes which
+# abbreviations existing client libraries can rely on, which needs a
+# deprecation cycle -- see CLAUDE.md's "SCPI Abbreviation Rule" house-style
+# note). Their canonical replacements
+# (`SYST:STR:START`/`STOP`/`DATA?`, `SYST:USB:TRANS:MODE`) are unambiguous
+# and are what new code should use.
+STYLE_ALLOWLIST = frozenset({
+    "SYSTem:StartStreamData",
+    "SYSTem:StopStreamData",
+    "SYSTem:StreamData?",
+    "SYSTem:USB:SetTransparentMode",
+})
 
 
 # String literals are matched FIRST so a comment marker inside one is not
@@ -141,6 +189,82 @@ def _short_form(node):
         if c.islower():
             return node[:i]
     return node
+
+
+def style_violations(live):
+    """(short_violations, ambiguous_pairs) -- the #907 house-style gate.
+
+    short_violations: sorted [(pattern, node)] where `node`'s short form is
+    under 2 characters -- 0 (the node starts lowercase, e.g. the pre-#907
+    `chanCALM`: `matchPattern`'s short arm can never match, only the full
+    spelling is ever legal, silently) or 1 (typeable but identifies
+    nothing, and see below -- on this table it already collides). An empty
+    node (an `A::B` typo) is reported with node='' rather than crashing.
+
+    ambiguous_pairs: sorted [((pattern, pattern, ...), [spelling, ...])] --
+    every set of >=2 registered patterns that accept at least one identical
+    spelling, with every such shared spelling listed. A pattern's accepted
+    spellings are the cartesian product, across its `:`-separated nodes, of
+    {node.upper(), short_form(node).upper() if non-empty}, `?` kept
+    significant, matching `compareStr`'s case-insensitive, equal-length
+    comparison (libscpi/src/utils.c:347). Two patterns sharing a spelling is
+    a SILENT collision: `findCommandHeader` (libscpi/src/parser.c:177)
+    returns the FIRST match in table order, so every pattern but the winner
+    is simply unreachable by that spelling -- no -113, no error, just the
+    wrong command running. A node already reported by short_violations
+    contributes no spelling (an empty short form is untypeable), so its
+    pattern is skipped for S2 rather than false-flagged again there.
+
+    Deliberately NOT checked: an upper bound on short-form length. See the
+    module docstring's HOUSE STYLE section.
+    """
+    short_violations = []
+    spelling_owners = {}  # spelling -> set of patterns claiming it
+    for pat in sorted(live):
+        base = pat.rstrip("?")
+        is_query = pat.endswith("?")
+        node_forms = []
+        unmatchable = False
+        for node in base.split(":"):
+            if not node:
+                short_violations.append((pat, node))
+                unmatchable = True
+                continue
+            sf = _short_form(node)
+            if len(sf) < 2:
+                short_violations.append((pat, node))
+            forms = {node.upper()}
+            if sf:
+                forms.add(sf.upper())
+            node_forms.append(sorted(forms))
+        if unmatchable:
+            continue
+        for combo in itertools.product(*node_forms):
+            spelling = ":".join(combo) + ("?" if is_query else "")
+            spelling_owners.setdefault(spelling, set()).add(pat)
+
+    by_pair = {}
+    for spelling, owners in spelling_owners.items():
+        if len(owners) > 1:
+            by_pair.setdefault(tuple(sorted(owners)), set()).add(spelling)
+    ambiguous = sorted((pair, sorted(spellings))
+                        for pair, spellings in by_pair.items())
+    return sorted(set(short_violations)), ambiguous
+
+
+def apply_style_allowlist(short_violations, ambiguous, allowlist):
+    """Drop entries fully explained by `allowlist` (see STYLE_ALLOWLIST).
+
+    A short_violations entry is dropped when its OWN pattern is allowlisted.
+    An ambiguous_pairs entry is dropped only when EVERY pattern in the
+    colliding set is allowlisted -- a collision between one allowlisted
+    legacy alias and one ordinary command would still be a live, unexplained
+    defect and must not be silenced by the alias's presence alone.
+    """
+    kept_short = [(p, n) for p, n in short_violations if p not in allowlist]
+    kept_ambig = [(pair, spellings) for pair, spellings in ambiguous
+                  if not all(p in allowlist for p in pair)]
+    return kept_short, kept_ambig
 
 
 def is_form_of(written, pattern):
@@ -305,11 +429,114 @@ SELF_TEST_CASES = [
 ]
 
 
+# (pattern, expect_short_violation, why). Each `pattern` is fed to
+# `style_violations` as a singleton set, exactly as a real live-pattern set
+# would be -- a colon-free entry exercises S1 on one bare node, a colon-full
+# one exercises it inside a real multi-node shape.
+STYLE_S1_CASES = [
+    ("CONFigure", False, "short CONF, the ordinary mixed-case shape"),
+    ("ADC", False, "all-caps, short form is the node itself -- must not "
+     "fire just because there is no lowercase tail"),
+    ("BQ", False, "shortest legal all-caps node on the real table; pins "
+     "that a 2-character short form is INCLUSIVE, not a strict '>'"),
+    ("*IDN", False, "IEEE common command -- the leading '*' needs no "
+     "special-case handling, `_short_form` already treats it as any other "
+     "non-lowercase character"),
+    ("chanCALM", True, "the #907 defect itself: starts lowercase, short "
+     "form is empty, only the 8-character full spelling is ever legal"),
+    ("CHANCALM", False, "the #907 fix: all-caps, one legal spelling, "
+     "honestly declared as such"),
+    ("Foobar", True, "1-character short form 'F' -- typeable but "
+     "identifies nothing; the ticket's own red-case example"),
+    ("A::B", True, "an `A::B` typo yields an empty middle node; must be "
+     "reported, not crash and not silently pass"),
+    ("SYSTem:StartStreamData", True, "the #324 legacy alias -- its "
+     "1-character short form 'S' is a real violation that S1 must see "
+     "BEFORE the allowlist is applied by the caller"),
+]
+
+# (pattern_a, pattern_b, expect_ambiguous, why). Each pair is fed to
+# `style_violations` as a two-element set.
+STYLE_S2_CASES = [
+    ("SYSTem:StartStreamData", "SYSTem:StopStreamData", True,
+     "both accept the shared short form SYST:S; findCommandHeader "
+     "(parser.c:177) takes the first table match, so SYST:S silently "
+     "STARTS a stream rather than stopping one -- pre-existing, #324, "
+     "tracked as #1035"),
+    ("SYSTem:STReam:START", "SYSTem:STReam:STOP", False,
+     "the canonical replacement pair -- START/STOP are both all-caps with "
+     "distinct spellings, must NOT be flagged"),
+    ("CONFigure:ADC:CHANnel", "CONFigure:ADC:CHANcalm", True,
+     "pins that S2 would have caught the #907 ticket's OWN proposed "
+     "respelling (CHANcalm collides with CHANnel's short form CHAN) -- the "
+     "reason that shape was rejected in favour of all-caps CHANCALM"),
+    ("SYSTem:DEVice:NAME", "SYSTem:DEVice:NAME?", False,
+     "a setter and its query must never be treated as sharing a spelling"),
+]
+
+
+def _self_test_style():
+    """Check S1/S2 against their known cases, then a vacuity guard.
+
+    The vacuity guard is required, not optional: without it, a typo that
+    silently widens `STYLE_ALLOWLIST`, or an S1/S2 that never fires at all,
+    would leave `--style-only` green on the real table while establishing
+    nothing -- the same failure class `scpi_claim_path.py --self-test`
+    guards against for its own gate.
+    """
+    failures = 0
+    for pattern, expected, why in STYLE_S1_CASES:
+        short_v, _ = style_violations({pattern})
+        got = any(p == pattern for p, _n in short_v)
+        if got != expected:
+            failures += 1
+            print(f"  FAIL style S1({pattern!r}) violation={got}, "
+                  f"expected {expected} -- {why}")
+    for a, b, expected, why in STYLE_S2_CASES:
+        _, ambig = style_violations({a, b})
+        got = any(a in pair and b in pair for pair, _sp in ambig)
+        if got != expected:
+            failures += 1
+            print(f"  FAIL style S2({a!r}, {b!r}) ambiguous={got}, "
+                  f"expected {expected} -- {why}")
+
+    cases = len(STYLE_S1_CASES) + len(STYLE_S2_CASES)
+
+    # Vacuity guard: over the REAL current table, with the allowlist
+    # EMPTIED, S1/S2 must report EXACTLY the four known #324 aliases and
+    # the one known ambiguous pair between them -- no more, no less. This
+    # is skipped (not failed) when no real command table is available,
+    # e.g. --self-test invoked with a --scpi path that does not exist.
+    scpi_c = "firmware/src/services/SCPI/SCPIInterface.c"
+    if os.path.exists(scpi_c):
+        cases += 1
+        live, _commented = registered_patterns(scpi_c)
+        short_v, ambig = style_violations(live)
+        short_pats = {p for p, _n in short_v}
+        if short_pats != STYLE_ALLOWLIST:
+            failures += 1
+            extra = short_pats - STYLE_ALLOWLIST
+            missing = STYLE_ALLOWLIST - short_pats
+            print(f"  FAIL style vacuity guard: unfiltered S1 violations on "
+                  f"the real table are {sorted(short_pats)}, expected "
+                  f"exactly the 4 allowlisted aliases. Unexpected: "
+                  f"{sorted(extra)}. Missing: {sorted(missing)}.")
+        ambig_pairs_only = {pair for pair, _sp in ambig}
+        expected_pair = tuple(sorted({"SYSTem:StartStreamData",
+                                       "SYSTem:StopStreamData"}))
+        if ambig_pairs_only != {expected_pair}:
+            failures += 1
+            print(f"  FAIL style vacuity guard: unfiltered S2 ambiguous "
+                  f"pairs on the real table are {sorted(ambig_pairs_only)}, "
+                  f"expected exactly {{{expected_pair}}}.")
+    return cases, failures
+
+
 def self_test():
-    """Check the abbreviation rule against its known cases.
+    """Check the abbreviation rule and the #907 house-style gate.
 
     Kept in the tool rather than a side file so it cannot drift away from the
-    function it covers, and so CI runs it for free.
+    functions it covers, and so CI runs it for free.
     """
     failures = 0
     for written, pattern, expected, why in SELF_TEST_CASES:
@@ -320,11 +547,14 @@ def self_test():
                   f"expected {expected} -- {why}")
     e2e_cases, e2e_failures = _self_test_end_to_end()
     failures += e2e_failures
+    style_cases, style_failures = _self_test_style()
+    failures += style_failures
     if failures:
         print(f"\n::error::{failures} self-test(s) failed")
         return 1
     print(f"self-test: {len(SELF_TEST_CASES)}/{len(SELF_TEST_CASES)} matcher "
-          f"cases + {e2e_cases}/{e2e_cases} end-to-end cases pass")
+          f"cases + {e2e_cases}/{e2e_cases} end-to-end cases + "
+          f"{style_cases}/{style_cases} house-style cases pass")
     return 0
 
 
@@ -397,11 +627,55 @@ def _self_test_end_to_end():
     return cases, failures
 
 
+def load_and_check_style(scpi_c):
+    """(live, commented, style_short, style_ambig) for --scpi's table.
+
+    `style_short`/`style_ambig` already have `STYLE_ALLOWLIST` applied.
+    Shared by `--style-only` and the normal wiki-comparison flow so the two
+    do not diverge on how the table is loaded or the allowlist is applied.
+    """
+    live, commented = registered_patterns(scpi_c)
+    if not live:
+        sys.exit(f"error: no .pattern entries found in {scpi_c!r} -- "
+                 f"has the command table moved?")
+    style_short, style_ambig = style_violations(live)
+    style_short, style_ambig = apply_style_allowlist(
+        style_short, style_ambig, STYLE_ALLOWLIST)
+    return live, commented, style_short, style_ambig
+
+
+def print_style_violations(short_v, ambig):
+    """Print #907 house-style findings; return True if any remain."""
+    if short_v:
+        print(f"\n::error::{len(short_v)} SCPI node(s) have a short form "
+              f"under 2 characters:")
+        for pat, node in short_v:
+            print(f"    {pat}  (node {node!r})")
+        print("\n  A node starting lowercase has an EMPTY short form -- only")
+        print("  the full spelling is ever legal, silently. Respell the node")
+        print("  so its caps-prefix run is at least 2 characters (an")
+        print("  all-caps node, one legal spelling, is always fine). See")
+        print("  CLAUDE.md's SCPI Abbreviation Rule house-style note.")
+    if ambig:
+        print(f"\n::error::{len(ambig)} pair(s) of registered patterns "
+              f"accept the SAME spelling:")
+        for pair, spellings in ambig:
+            print(f"    {' <-> '.join(pair)}  via {', '.join(spellings)}")
+        print("\n  findCommandHeader takes the FIRST table match, so every")
+        print("  pattern but the winner is silently unreachable by that")
+        print("  spelling -- no error, just the wrong command. Respell one")
+        print("  side so their short forms diverge.")
+    return bool(short_v or ambig)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--scpi", default="firmware/src/services/SCPI/SCPIInterface.c")
     ap.add_argument("--self-test", action="store_true",
                     help="check the abbreviation matcher and exit")
+    ap.add_argument("--style-only", action="store_true",
+                    help="check the #907 house-style gate (S1/S2) over "
+                         "--scpi and exit -- no --wiki clone needed")
     ap.add_argument("--wiki",
                     help="path to a clone of the daqifi-nyquist-firmware.wiki repo")
     ap.add_argument("--allow", default="tools/lint/scpi-wiki-allow.txt",
@@ -413,18 +687,32 @@ def main():
 
     if args.self_test:
         return self_test()
+
+    if args.style_only:
+        live, commented, style_short, style_ambig = load_and_check_style(args.scpi)
+        print(f"registered SCPI commands : {len(live)}")
+        print(f"commented-out patterns   : {len(commented)} (not shipped, ignored)")
+        print(f"house-style allowlist    : {len(STYLE_ALLOWLIST)} pattern(s)")
+        has_violations = print_style_violations(style_short, style_ambig)
+        if not has_violations:
+            print("\nOK: no house-style violations (#907).")
+            return 0
+        return 1
+
     if not args.wiki:
-        ap.error("--wiki is required (or use --self-test)")
+        ap.error("--wiki is required (or use --self-test / --style-only)")
 
     if self_test() != 0:      # a broken matcher makes every verdict below junk
         return 1
 
-    live, commented = registered_patterns(args.scpi)
-    if not live:
-        sys.exit(f"error: no .pattern entries found in {args.scpi!r} -- "
-                 f"has the command table moved?")
+    # #907 house style. Checked over the WHOLE live table on every run (see
+    # the module docstring's HOUSE STYLE section for why there is no
+    # diff-aware mechanism), and FATAL unconditionally -- unlike `ghosts`
+    # below, there is no scheduled-run ordering trap to excuse it.
+    live, commented, style_short, style_ambig = load_and_check_style(args.scpi)
     rows = wiki_rows(args.wiki)
     allow = load_allowlist(args.allow)
+    style_violated = print_style_violations(style_short, style_ambig)
 
     written = [cmd for cmd, _ in rows]
     # Documented means a COMMAND-TABLE ROW names it. Nothing else counts.
@@ -456,10 +744,12 @@ def main():
     print(f"registered SCPI commands : {len(live)}")
     print(f"commented-out patterns   : {len(commented)} (not shipped, ignored)")
     print(f"wiki command rows        : {len(rows)}")
+    print(f"house-style allowlist    : {len(STYLE_ALLOWLIST)} pattern(s)")
 
     fatal_ghosts = ghosts and not args.ghosts_warn_only
-    if not undocumented and not ghosts:
-        print("\nOK: the wiki and the command table agree.")
+    if not undocumented and not ghosts and not style_violated:
+        print("\nOK: the wiki and the command table agree, and the #907 "
+              "house-style gate is clean.")
         return 0
 
     if undocumented:
@@ -489,7 +779,7 @@ def main():
         print("  with the reason. If the command was RENAMED, update the row to")
         print("  the new name instead of leaving the old one behind.")
 
-    return 1 if (undocumented or fatal_ghosts) else 0
+    return 1 if (undocumented or fatal_ghosts or style_violated) else 0
 
 
 if __name__ == "__main__":

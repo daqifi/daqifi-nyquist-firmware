@@ -8437,10 +8437,20 @@ static const scpi_command_t scpi_commands[] = {
      * Capabilities.h for the schema and evolution rules. */
     {.pattern = "CONFigure:CAPabilities:APIVersion?", .callback = SCPI_CapabilitiesApiVersionGet,},
     {.pattern = "CONFigure:CAPabilities:JSON?", .callback = SCPI_CapabilitiesJsonGet,},
-    {.pattern = "CONFigure:ADC:chanCALM", .callback = SCPI_ADCChanCalmSet,},
-    {.pattern = "CONFigure:ADC:chanCALB", .callback = SCPI_ADCChanCalbSet,},
-    {.pattern = "CONFigure:ADC:chanCALM?", .callback = SCPI_ADCChanCalmGet,},
-    {.pattern = "CONFigure:ADC:chanCALB?", .callback = SCPI_ADCChanCalbGet,},
+    // #907: respelled all-caps -- the node started lowercase, so it had an
+    // EMPTY short form (matchPattern's short arm could never match, only
+    // the 8-character full spelling was ever legal, silently). All-caps
+    // honestly declares "exactly one legal spelling" per the SCPI
+    // Abbreviation Rule, and `compareStr` is case-insensitive, so the old
+    // spelling `CONFigure:ADC:chanCALM` (same letters) still works
+    // unchanged -- zero behaviour change, see #907 for the proof that no
+    // letter-preserving respelling can give this pair a distinct working
+    // short form (they differ only in their last character, and a short
+    // form is always a prefix).
+    {.pattern = "CONFigure:ADC:CHANCALM", .callback = SCPI_ADCChanCalmSet,},
+    {.pattern = "CONFigure:ADC:CHANCALB", .callback = SCPI_ADCChanCalbSet,},
+    {.pattern = "CONFigure:ADC:CHANCALM?", .callback = SCPI_ADCChanCalmGet,},
+    {.pattern = "CONFigure:ADC:CHANCALB?", .callback = SCPI_ADCChanCalbGet,},
     {.pattern = "CONFigure:ADC:SAVEcal", .callback = SCPI_ADCCalSave,},
     {.pattern = "CONFigure:ADC:SAVEFcal", .callback = SCPI_ADCCalFSave,},
     {.pattern = "CONFigure:ADC:LOADcal", .callback = SCPI_ADCCalLoad,},
@@ -8475,10 +8485,14 @@ static const scpi_command_t scpi_commands[] = {
     // DAC7718 is NQ3-only hardware, not available to validate an implementation.
     // Patterns stay registered (SCPI_Help still lists them) but route to the
     // shared not-implemented stub instead of lying about success.
-    {.pattern = "CONFigure:DAC:chanCALM", .callback = SCPI_NotImplemented,},
-    {.pattern = "CONFigure:DAC:chanCALB", .callback = SCPI_NotImplemented,},
-    {.pattern = "CONFigure:DAC:chanCALM?", .callback = SCPI_NotImplemented,},
-    {.pattern = "CONFigure:DAC:chanCALB?", .callback = SCPI_NotImplemented,},
+    // #907: respelled all-caps, same reason as the ADC pair above -- the
+    // old spelling `CONFigure:DAC:chanCALM` still resolves here (case-
+    // insensitive match), so it still answers -200 (not implemented)
+    // rather than regressing to -113 (undefined header).
+    {.pattern = "CONFigure:DAC:CHANCALM", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:CHANCALB", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:CHANCALM?", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:CHANCALB?", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:SAVEcal", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:SAVEFcal", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:LOADcal", .callback = SCPI_NotImplemented,},
