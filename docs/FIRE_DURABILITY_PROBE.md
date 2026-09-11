@@ -32,8 +32,20 @@ commit attempted, which might be half-written or unpushed). The HANDOFF
 block at the end of this file answers all three in three lines, so the
 next worker does not have to re-read the whole diff history or guess.
 
+## Practical checklist for a fire
+
+1. Break the task into steps small enough that losing one hurts a little,
+   not a lot.
+2. After each step: `git add -A && git commit` with a message describing
+   that step, then `git push`.
+3. Update the HANDOFF block at the end of this file (or your own file)
+   so it names the step just done, the next step, and the SHA that is
+   confirmed safe on the remote — not the one still sitting locally.
+4. If you die here, the next worker reads three lines and keeps going.
+   They do not read your reasoning, your false starts, or your diff.
+
 ## HANDOFF
 
-WAS DOING: wrote step 3/5 (why the HANDOFF block matters)
-NEXT STEP: write step 4/5 (a practical checklist) and commit+push it
-SAFE TO RESUME FROM: a79009341 (the previous push — this step is not yet pushed as this line is written)
+WAS DOING: wrote step 4/5 (practical checklist)
+NEXT STEP: write step 5/5 (closing note) and commit+push it — the last step
+SAFE TO RESUME FROM: 5e89de93e (the previous push — this step is not yet pushed as this line is written)
