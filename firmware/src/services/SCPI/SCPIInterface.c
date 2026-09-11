@@ -6446,28 +6446,31 @@ static scpi_result_t SCPI_GetStreamInterface(scpi_t * context) {
 
 /* #1007: the stored streaming rate has a setter (SYSTem:STReam:START <freq>)
  * and no getter, so a client that changes it for one test cannot read the
- * prior value back to restore it. The firmware's own internal save/restore
- * sites (SCPI_StartStreaming's no-arg-START path above, WIFI:FINd? and
- * SYST:STR:THRoughput) all read Frequency the same way this does; this
- * getter is the first one exposed as a query. Returns the last value START
- * published -- never revoked by STOP (deliberately out of scope, #1007) --
- * so it reads the boot default (0) before any START has ever run.
+ * prior value back to restore it. This is the first query exposed for it.
+ * Returns the last value START published -- never revoked by STOP
+ * (deliberately out of scope, #1007) -- so before any START has ever run
+ * this reads the boot default, 1 Hz (COMMON_STREAMING_RUNTIME_DEFAULTS,
+ * CommonRuntimeDefaults.h: "the only rate legal in EVERY config").
  *
- * Frequency is uint64_t; the same critical section + INT32_MAX clamp used by
- * SCPI_StartStreaming's no-arg-START resolution is required here for the
- * same reason (CLAUDE.md: 64-bit reads on PIC32MZ are not atomic and need a
- * critical section to avoid a torn read against a concurrent SCPI-task
- * writer). */
+ * Reuses StreamFreq_Get() (above, ~line 2253) rather than re-deriving its
+ * critical section: that helper already exists for exactly this field, and
+ * SCPI_StartStreaming's no-arg-START path / WIFI:FINd? / SYST:STR:THRoughput
+ * all go through it for their own save/restore. Frequency is uint64_t; the
+ * critical section inside StreamFreq_Get is required per CLAUDE.md (64-bit
+ * reads on PIC32MZ are not atomic and need one against a concurrent
+ * SCPI-task writer).
+ *
+ * SCPI_ResultUInt64, not Int32 + a clamp: this getter's whole purpose is a
+ * faithful read-back for snapshot/restore, and a clamp that silently
+ * reported INT32_MAX in place of an out-of-range stored value would defeat
+ * that (opus pre-merge review, #1007) -- unlike the no-arg-START internal
+ * read, which clamps because it is about to retry the value as a bounded
+ * int32 frequency argument, not report it verbatim. */
 static scpi_result_t SCPI_GetStreamRate(scpi_t * context) {
     StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
             BOARDRUNTIME_STREAMING_CONFIGURATION);
 
-    taskENTER_CRITICAL();
-    uint64_t stored = pRunTimeStreamConfig->Frequency;
-    taskEXIT_CRITICAL();
-    if (stored > (uint64_t)INT32_MAX) stored = (uint64_t)INT32_MAX;  // clamp before narrowing
-
-    SCPI_ResultInt32(context, (int32_t) stored);
+    SCPI_ResultUInt64(context, StreamFreq_Get(pRunTimeStreamConfig));
     return SCPI_RES_OK;
 }
 
