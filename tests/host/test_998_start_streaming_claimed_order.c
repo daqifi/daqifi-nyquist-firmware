@@ -102,14 +102,26 @@
  *
  * 2. THE POST-POLL CLEANUP IS UNOWNED. Below the pinned slice, the poll's
  *    failure branch calls SCPI_ReleaseSdLoggingArm(pSDCardSettings)
- *    (SCPIInterface.c:5075), which is `sd->mode = SD_CARD_MANAGER_MODE_NONE;`
+ *    (SCPIInterface.c:5089), which is `sd->mode = SD_CARD_MANAGER_MODE_NONE;`
  *    followed by an UpdateSettings teardown (SCPIInterface.c:4155-4161) --
- *    with no claim held. On a SUCCESSFUL arm that store is fine: ownership
- *    passed from the claim flag to `mode == MODE_WRITE`, which keeps IsBusy()
- *    true, so nobody else can be holding the manager. On a REFUSED arm that
+ *    with no claim held. On a SUCCESSFUL arm the model treats that store as
+ *    safe, on the reasoning that ownership passed from the claim flag to
+ *    `mode == MODE_WRITE`, which keeps IsBusy() true.
+ *
+ *    THAT REASONING IS NOT COMPLETE, and the model does not establish it.
+ *    sd_card_manager.c's OPEN_FILE clean-stop path clears `mode`/state before
+ *    SCPI_ReleaseSdLoggingArm runs, and that teardown carries no discriminator
+ *    identifying whose operand it is clearing -- so after a clean stop the
+ *    "nobody else can be holding the manager" step does not hold, and this
+ *    model has no representation of that transition. Read fact 2 as a
+ *    statement about the interleavings the model DOES sweep (a competing
+ *    transport preempting A's own sequence), not as a proof that the post-poll
+ *    store is safe in all of the firmware's states. Covering the clean-stop
+ *    transition would need the model extended, which is deliberately left to
+ *    its own change rather than widened into this one. On a REFUSED arm that
  *    reached the poll (the pre-#942 shape) it is the #955 unowned store again,
  *    with the window widened from a few instructions to the poll's full bound
- *    -- 500 iterations of vTaskDelay(pdMS_TO_TICKS(10)) (SCPIInterface.c:5047),
+ *    -- 500 iterations of vTaskDelay(pdMS_TO_TICKS(10)) (SCPIInterface.c:5046),
  *    i.e. ~5 s. The model carries this, which is why defect A loses a race
  *    below and not merely five seconds.
  *
@@ -777,8 +789,15 @@ TEST(claim_after_the_arm_loses_the_836_race)
 
     /* NEGATIVE CONTROL for property C, variant 2: the claim IS taken, just
      * not before the operand is published. A claim that starts after the
-     * damage protects nothing -- and in the model it is REFUSED anyway,
-     * because A's own `mode = MODE_WRITE` has made the manager read busy. */
+     * damage protects nothing, which is what this asserts.
+     *
+     * An earlier version of this comment also explained WHY the late claim is
+     * refused, blaming A's own `mode = MODE_WRITE`. That was wrong -- tracing
+     * the call site shows `mode` is already NONE at that point for almost
+     * every iteration, and the refusals that do occur come from owner B's
+     * MODE_READ instead. The explanation is dropped rather than replaced,
+     * because the assertion below does not depend on it and a second guess
+     * would be no better checked than the first. */
     for (i = 0; i < START_HOOKS; i++) {
         model_reset(i, true);
         (void)model_start_streaming_claimed(START_WRONG_CLAIM_AFTER_ARM, false);

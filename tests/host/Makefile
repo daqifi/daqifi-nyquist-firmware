@@ -79,11 +79,18 @@ JSONESC_BIN := run_json_escape_tests
 # the success release, and the head of the readiness poll. That is exactly the
 # text the three modelled orderings live in, and nothing else.
 #
-# Whole-line comments are dropped and whitespace runs collapsed before hashing,
-# so rewording the (long, load-bearing) comments inside the slice does not fire
-# and neither does reindenting it; any change to the code's tokens does. A
-# trailing comment on a line of code is hashed with it -- conservative in the
-# safe direction.
+# Comments are stripped by strip_c_comments.awk and whitespace runs collapsed
+# before hashing, so rewording the (long, load-bearing) comments inside the
+# slice does not fire and neither does reindenting it; any change to the code's
+# tokens does.
+#
+# The stripper tracks block-comment STATE rather than matching how a line
+# begins. The line-anchored sed rule it replaces deleted any line starting with
+# "/*", "*" or "//", which silently erased a real statement written as a
+# leading dereference -- reproduced against this recipe, which returned 0 for a
+# firmware edit it exists to catch. On the slice as it stands today the two
+# rules produce the SAME hash, so this fix changes no pinned value; what it
+# changes is that such an edit can no longer pass unseen in future.
 #
 # The END anchor carries the poll's `readyWait < 500` bound, which the model
 # copies as MODEL_POLL_MAX. A change to that number fails the anchor check by
@@ -126,7 +133,7 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC)
 # drift); or the slice is there and its CODE CHANGED (the model may have gone
 # stale). Collapsing any of them into "hash mismatch" would send the reader to
 # diff a region that is not there, or not the one they think.
-$(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_CLAIMED_SRC)
+$(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_CLAIMED_SRC) Makefile strip_c_comments.awk
 	@n=$$(grep -cF '$(START_CLAIMED_BEGIN)' $(START_CLAIMED_SRC) || true); \
 	 [ "$$n" = "1" ] \
 	  || { echo "ERROR: the slice's OPENING anchor occurs $$n times (want exactly 1)"; \
@@ -168,7 +175,7 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 	       echo "       (Reported separately so it is not read as a drift failure.)"; \
 	       exit 1; }
 	@got=$$(sed -n '/^[[:space:]]*$(START_CLAIMED_BEGIN)/,/^[[:space:]]*$(START_CLAIMED_END)/p' $(START_CLAIMED_SRC) \
-	        | sed -e '/^[[:space:]]*\/\*/d' -e '/^[[:space:]]*\*/d' -e '/^[[:space:]]*\/\//d' \
+	        | awk -f strip_c_comments.awk \
 	        | tr -s '[:space:]' ' ' | sha256sum | cut -d' ' -f1); \
 	 [ "$$got" = "$(START_CLAIMED_SHA)" ] \
 	  || { echo "ERROR: the CODE of SCPI_StartStreamingClaimed()'s SD arm has changed"; \
