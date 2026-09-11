@@ -35,11 +35,19 @@ replaces it, and this is that pattern.
 
 WHAT IT DOES NOT ESTABLISH
 --------------------------
-Textual presence and order, nothing more. It cannot see control flow, so it
-does not prove the expiry branch is REACHED, nor that the fresh read's value
-is what the caller receives. Those are the host test's job, and the host test
-is only meaningful while this checker says its model still matches the source.
-The two halves are useless apart.
+Textual presence, order, and PROXIMITY to the named wait function -- nothing
+more. It cannot see control flow, so it does not prove the expiry branch is
+REACHED, nor that the fresh read's value is what the caller receives, nor that
+the statements are in the loop rather than merely inside the function's first
+40 lines. Those are the host test's job, and the host test is only meaningful
+while this checker says its model still matches the source. The two halves are
+useless apart.
+
+The proximity window is why the checks are not file-scoped, which is how the
+first version of this checker could be defeated: the statements could be moved
+into unrelated code and left out of the real wait loop entirely. A window is a
+weaker claim than "inside this loop" and it is stated as the weaker claim, but
+it is the strongest one available without a parser.
 """
 
 import argparse
@@ -58,6 +66,26 @@ REPO_DEFAULTS = {
 # mention inside a `/* ... */` comment (which always starts with ` *` here)
 # cannot satisfy it -- three of these strings DO appear in comments in these
 # files, and an unanchored grep would count those.
+# The wait function each shape must live INSIDE, matched on its own signature
+# line. Without this the checks were file-scoped: Qodo's review of PR #1009
+# pointed out that moving the three statements into unrelated code, while
+# deleting them from the real wait loop, left the checker green. Anchoring to
+# the function name and requiring the statements within MAX_SPAN lines of it
+# closes that -- still positionally, still without parsing C.
+#
+# MAX_SPAN is 40. Measured distances from the signature line at the head this
+# was written against: spi +9..+15, uart +9..+18, i2c +9..+22. The loosest is
+# i2c, whose loop carries the longest comments. 40 leaves room for comments to
+# grow without letting a statement wander into a different function -- these
+# files are 480 to 750 lines, so file-scope was two orders of magnitude looser.
+MAX_SPAN = 40
+
+SIGNATURES = {
+    "spi": r'^static bool spi_WaitStat\(uint32_t mask, bool want,[ \t]*$',
+    "uart": r'^static bool uart_WaitSta\(const UartDesc_t\* u, uint32_t mask, bool want,[ \t]*$',
+    "i2c": r'^static bool i2c_WaitMif\(void\) \{[ \t]*$',
+}
+
 SHAPES = {
     "spi": [
         ("deadline test",
@@ -111,6 +139,14 @@ def check_text(key, text):
         else:
             found[label] = hits[0]
 
+    sig_hits = [i + 1 for i, ln in enumerate(lines)
+                if re.match(SIGNATURES[key], ln)]
+    if len(sig_hits) != 1:
+        problems.append(
+            "%s: expected exactly 1 line matching the wait function's "
+            "signature, found %d -- the window check below anchors on it and "
+            "means nothing without it" % (key, len(sig_hits)))
+
     if len(found) == len(SHAPES[key]):
         order = [found[label] for label, _ in SHAPES[key]]
         if order != sorted(order):
@@ -120,6 +156,17 @@ def check_text(key, text):
                 "%s: the three statements are out of order (%s). The deadline "
                 "test must come before the fresh read, and both before the "
                 "yield." % (key, names))
+
+        if len(sig_hits) == 1:
+            sig = sig_hits[0]
+            for label, _ in SHAPES[key]:
+                line = found[label]
+                if not (sig < line <= sig + MAX_SPAN):
+                    problems.append(
+                        "%s: the %s is at line %d, outside the %d lines after "
+                        "the wait function's signature at %d -- it is not in "
+                        "that function's loop any more, wherever else it is"
+                        % (key, label, line, MAX_SPAN, sig))
     return problems
 
 
@@ -162,6 +209,26 @@ def self_test():
          "}\n", 1),
         ("a second copy of the loop (ambiguous which one is pinned)",
          base + base, 1),
+        ("the three statements moved OUT of the wait function",
+         base + ("\n" * 60) + "static void spi_SomethingElse(void)\n{\n"
+         "        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) {\n"
+         "            return (((SPI1STAT & mask) != 0u) == want);\n"
+         "        }\n"
+         "        vTaskDelay(1);\n}\n",
+         1),
+        ("only the far copy survives, the real loop gutted",
+         base.replace("            return (((SPI1STAT & mask) != 0u) == want);",
+                      "            return false;")
+             .replace("        vTaskDelay(1);\n", "")
+         + ("\n" * 60) + "static void spi_SomethingElse(void)\n{\n"
+         "        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) {\n"
+         "            return (((SPI1STAT & mask) != 0u) == want);\n"
+         "        }\n"
+         "        vTaskDelay(1);\n}\n",
+         1),
+        ("the wait function renamed away (signature gone)",
+         base.replace("static bool spi_WaitStat(uint32_t mask, bool want,",
+                      "static bool spi_WaitStatus(uint32_t mask, bool want,"), 1),
         ("the expiry read mentioned only in a comment",
          base.replace("            return (((SPI1STAT & mask) != 0u) == want);",
                       "            /* return (((SPI1STAT & mask) != 0u) == want); */\n"

@@ -136,8 +136,24 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 # vTaskDelay(1), and both greps still pass while every modeled test stays
 # green. wait_loop_shape.py closes that, for all THREE files carrying the
 # shape -- uart and i2c were ported in this same PR and had no guard at all.
+#
+# Its --self-test runs FIRST, and that is not belt-and-braces. Review of
+# #1009 pointed out that the self-test was gated behind a flag nothing in CI
+# passed, so a checker edit that stopped rejecting its modeled regressions
+# while still accepting the real sources would have left the suite green and
+# said nothing. A guard whose own guard does not run is the same defect one
+# level down from the path-filter gaps this PR also fixes.
 $(SPI913_BIN): test_913_spi_wait_stat.c test_framework.h $(USER_SPI_SRC) \
                $(USER_UART_SRC) $(USER_I2C_SRC) $(WAIT_SHAPE_LINT) $(RECIPES)
+	@python3 $(WAIT_SHAPE_LINT) --self-test > /dev/null \
+	  || { echo "ERROR: $(WAIT_SHAPE_LINT) FAILS ITS OWN SELF-TEST."; \
+	       echo "       Run it directly for the per-case output. The checker is"; \
+	       echo "       the only thing standing between a silently-regressed wait"; \
+	       echo "       loop and a green suite, so a checker that no longer"; \
+	       echo "       rejects its own modeled regressions is worse than none --"; \
+	       echo "       it still passes the real sources and says nothing."; \
+	       python3 $(WAIT_SHAPE_LINT) --self-test; \
+	       exit 1; }
 	@python3 $(WAIT_SHAPE_LINT) \
 	    --spi $(USER_SPI_SRC) --uart $(USER_UART_SRC) --i2c $(USER_I2C_SRC) \
 	  || exit 1
