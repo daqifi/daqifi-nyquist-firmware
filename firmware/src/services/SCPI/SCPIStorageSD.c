@@ -1261,8 +1261,9 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * WiFi SCPI at 2 -- because the guarantee comes from the wait, not from
      * who preempts whom. A run refused before the arm creates no file and so
      * cannot collide with anything. TickType_t is 32-bit here
-     * (configUSE_16_BIT_TICKS is 0), so the value itself only repeats after
-     * 49.7 days of uptime.
+     * (configTICK_TYPE_WIDTH_IN_BITS is TICK_TYPE_WIDTH_32_BITS,
+     * FreeRTOSConfig.h:125), so the value itself only repeats after 49.7 days
+     * of uptime.
      *
      * WHAT THIS DOES NOT FIX, and it is the other half of #958: a reboot
      * restarts the tick, so a run after a reboot can still land on the name of
@@ -1274,9 +1275,16 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * (sd_card_manager.c:1457, reached only when `mode != MODE_NONE`, :1398)
      * and unmounts it at the end of one (:1715); SYS_FS_AUTOMOUNT_ENABLE is
      * false (configuration.h:98). A SYS_FS_FileStat() from this callback --
-     * which runs with the manager IDLE, i.e. unmounted -- therefore fails with
-     * SYS_FS_ERROR_INVALID_NAME (sys_fs.c:191, the volume is not `inUse`),
-     * which is not the "genuinely absent" NO_PATH / NO_FILE that
+     * which runs with the manager IDLE, i.e. unmounted -- therefore fails.
+     * `directory` (default "DAQiFi", CommonRuntimeDefaults.h:160) carries no
+     * "/mnt/" prefix, so SYS_FS_GetDisk() takes its "assume the default
+     * volume" branch (sys_fs.c:196-206) rather than its named-mount-point
+     * branch, and finds `gSYSFSCurrentMountPoint.inUse == false` --
+     * SYS_FS_ERROR_NO_FILESYSTEM (sys_fs.c:205), not NO_PATH / NO_FILE. That
+     * error is also what a `directory` written WITH a "/mnt/" prefix would
+     * get here, by the sibling branch (sys_fs.c:191, SYS_FS_ERROR_INVALID_NAME
+     * for a `/mnt/` path matching no in-use volume) -- same conclusion either
+     * way: neither is the "genuinely absent" NO_PATH / NO_FILE that
      * sd_BucketDirExists() treats as free. Failing safe on it (the required
      * convention) would refuse EVERY benchmark; reading it as "name is free"
      * would be a probe that answers nothing. The existence question can only

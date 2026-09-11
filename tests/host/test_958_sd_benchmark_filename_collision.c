@@ -37,7 +37,8 @@
  * name is not built until this one has returned, so consecutive names are
  * >= 10 ticks apart, whichever transport calls it. A run refused before the
  * arm creates no file and therefore cannot collide with anything. TickType_t
- * is 32-bit here (configUSE_16_BIT_TICKS is 0), so the value itself only
+ * is 32-bit here (configTICK_TYPE_WIDTH_IN_BITS is TICK_TYPE_WIDTH_32_BITS,
+ * FreeRTOSConfig.h:125), so the value itself only
  * repeats after 49.7 days of uptime.
  *
  * That premise is load-bearing, so CASE 5 below asserts its consequence
@@ -70,11 +71,16 @@
  * mounts it only inside a session (sd_card_manager.c:1457, reached only when
  * `mode != MODE_NONE`) and unmounts it at the end of one (:1715);
  * SYS_FS_AUTOMOUNT_ENABLE is false (configuration.h:98). A SYS_FS_FileStat()
- * issued with the manager IDLE fails with SYS_FS_ERROR_INVALID_NAME
- * (sys_fs.c:191 -- the volume is not `inUse`), which is NOT the "genuinely
- * absent" NO_PATH / NO_FILE that sd_BucketDirExists() treats as free: failing
- * safe on it refuses every benchmark, and reading it as "free" is a probe that
- * establishes nothing. The existence question can only be asked where the
+ * issued with the manager IDLE fails: `directory` (default "DAQiFi") carries
+ * no "/mnt/" prefix, so SYS_FS_GetDisk() takes its "assume the default
+ * volume" branch (sys_fs.c:196-206) and finds `gSYSFSCurrentMountPoint.inUse
+ * == false` -- SYS_FS_ERROR_NO_FILESYSTEM (sys_fs.c:205), not NO_PATH /
+ * NO_FILE (a "/mnt/"-prefixed path would fail the same way, by the sibling
+ * branch's SYS_FS_ERROR_INVALID_NAME at sys_fs.c:191 -- same conclusion
+ * either way), and neither is the "genuinely absent" NO_PATH / NO_FILE that
+ * sd_BucketDirExists() treats as free: failing safe on it refuses every
+ * benchmark, and reading it as "free" is a probe that establishes nothing.
+ * The existence question can only be asked where the
  * volume is mounted. That is the follow-up on #958, and it is deliberately
  * NOT modelled here -- a test for a mechanism that does not exist is the
  * vacuous-gate failure mode, not coverage.

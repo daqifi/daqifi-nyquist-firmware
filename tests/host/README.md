@@ -145,8 +145,8 @@ a post-reboot run can still land on a pre-reboot file's name. Closing that
 needs the candidate stat-ed before it is armed, which cannot be done in
 `SCPI_StorageSDBenchmark` — the FAT volume is mounted only inside an SD-task
 session and unmounted at the end of one, so a stat from that callback fails
-with `SYS_FS_ERROR_INVALID_NAME` rather than "absent". See the file header for
-the citations; the follow-up on #958 tracks it.
+with an unmounted-volume error rather than "absent". See the file header for
+the exact error/line citations; the follow-up on #958 tracks it.
 
 Three greps guard this target: the post-fix format string must be present, the
 masked pre-fix one must **not** be (a suite whose premise is "the mask is gone"
