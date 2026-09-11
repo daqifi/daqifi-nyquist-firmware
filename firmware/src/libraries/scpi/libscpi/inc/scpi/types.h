@@ -429,6 +429,19 @@ extern "C" {
         int_fast16_t output_count;
         int_fast16_t input_count;
         scpi_bool_t first_output;
+        /* DAQiFi #1003/#1010: deferred inter-command ';' -- set when a ';' is
+         * OWED (see processCommand, parser.c) and flushed only if the
+         * callback actually produces output (see writeDelimiter, parser.c),
+         * so a failing callback cannot strand a bare ';' in front of the
+         * error text that follows it. */
+        scpi_bool_t output_pending_separator;
+        /* DAQiFi #1003/#1010: TRUE while unterminated result bytes are on
+         * the wire. Set by writeData (parser.c) on every byte written,
+         * cleared by whichever code actually emits a line ending. This is
+         * NOT derivable from first_output, which only means "no query has
+         * yet COMPLETED successfully" and is left stale across message
+         * boundaries (never reset except at SCPI_Parse entry). */
+        scpi_bool_t output_line_open;
         scpi_bool_t cmd_error;
         scpi_fifo_t error_queue;
 #if USE_DEVICE_DEPENDENT_ERROR_INFORMATION && !USE_MEMORY_ALLOCATION_FREE

@@ -37,6 +37,7 @@
 #include <stdint.h>
 
 #include "scpi/parser.h"
+#include "parser_private.h" /* DAQiFi #1003/#1010: scpiParser_terminateOpenLine */
 #include "scpi/ieee488.h"
 #include "scpi/error.h"
 #include "fifo_private.h"
@@ -71,12 +72,56 @@ static void SCPI_ErrorEmitEmpty(scpi_t * context) {
 }
 
 /**
+ * DAQiFi #1003/#1010: terminate any unterminated query result before error
+ * text is written to the transport.
+ *
+ * SCPI_Parse defers the newline that closes a program message's combined
+ * reply until the WHOLE message finishes (writeNewLine, parser.c) -- that is
+ * what lets several queries in one compound message share a single
+ * ';'-joined reply line. An error can be pushed at any point INSIDE that
+ * still-open window, and interface->error() writes its text synchronously
+ * through the SAME interface->write() the query result used -- so without
+ * this call, the error text lands mid-line: glued directly onto the
+ * previous result with no separator at all (the undefined-header path in
+ * SCPI_Parse never reaches processCommand's separator logic), or just after
+ * a now-stray ';' (a registered command's callback errors after a prior
+ * successful query already owed one).
+ *
+ * Hooked into SCPI_ErrorEmit ONLY, never SCPI_ErrorEmitEmpty: the latter is
+ * reached from SCPI_ErrorPop, which SCPI_SystemErrorNextQ (minimal.c) calls
+ * BEFORE SCPI_ResultError -- terminating there would split the documented-
+ * correct "*IDN?;SYST:ERR?" reply across two lines.
+ *
+ * @param context scpi context
+ */
+static void SCPI_TerminatePendingResult(scpi_t * context) {
+    if (context->output_line_open) {
+        scpiParser_terminateOpenLine(context);
+        /* The line is now closed on the wire, so SCPI_Parse's own
+         * end-of-message writeNewLine() must not emit a second, orphaned
+         * terminator once this message finishes. Gated on having actually
+         * closed something: a callback that writes straight to
+         * interface->write (bypassing writeData) leaves output_line_open
+         * FALSE here and still needs its own end-of-message newline. */
+        context->first_output = TRUE;
+    }
+    /* A ';' deferred (processCommand, parser.c) for the command that just
+     * failed, or is about to be reported as having failed, belonged only to
+     * the line just closed above (if any) -- it must never survive onto
+     * whatever comes next. Unconditional: a harmless no-op when nothing was
+     * pending. */
+    context->output_pending_separator = FALSE;
+}
+
+/**
  * Emit error
  * @param context scpi context
  * @param err Error to emit
  */
 static void SCPI_ErrorEmit(scpi_t * context, int16_t err) {
     SCPI_RegSetBits(context, SCPI_REG_STB, STB_QMA);
+
+    SCPI_TerminatePendingResult(context); /* DAQiFi #1003/#1010 */
 
     if (context->interface && context->interface->error) {
         context->interface->error(context, err);

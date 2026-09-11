@@ -55,6 +55,11 @@
  */
 static size_t writeData(scpi_t * context, const char * data, size_t len) {
     if ((len > 0) && (data != NULL)) {
+        /* DAQiFi #1003/#1010: every result byte the library emits passes
+         * through here, so this is where "an unterminated line exists on
+         * the wire" becomes true. Cleared by whoever emits a line ending
+         * (writeNewLine / scpiParser_terminateOpenLine, below). */
+        context->output_line_open = TRUE;
         return context->interface->write(context, data, len);
     } else {
         return 0;
@@ -80,11 +85,51 @@ static int flushData(scpi_t * context) {
  * @return number of bytes written
  */
 static size_t writeDelimiter(scpi_t * context) {
+    size_t result = 0;
+    /* DAQiFi #1003/#1010: flush the inter-command ';' deferred by
+     * processCommand. Every SCPI_Result* function calls writeDelimiter
+     * before writing any actual bytes, so this is the exact moment the
+     * previous command's separator becomes justified by real output -- and
+     * it never runs at all if the callback errors before producing any. */
+    if (context->output_pending_separator) {
+        context->output_pending_separator = FALSE;
+        result += writeData(context, ";", 1);
+    }
     if (context->output_count > 0) {
-        return writeData(context, ",", 1);
-    } else {
+        result += writeData(context, ",", 1);
+    }
+    return result;
+}
+
+/**
+ * DAQiFi #1003/#1010: close an open result line, unconditionally as to
+ * first_output. Used by SCPI_ErrorEmit (error.c) to terminate a partially
+ * written query result before the transport writes its error text into the
+ * same stream.
+ *
+ * This is deliberately NOT the same predicate as writeNewLine below.
+ * writeNewLine fires on !first_output, which stays TRUE for a message that
+ * never had a successful query and FALSE (stale) for the rest of that
+ * context's life once one has -- neither is "is a line currently open".
+ * Some firmware callbacks (SCPIStorageSD.c, SCPIInterface.c) also write
+ * straight to context->interface->write, bypassing writeData entirely; those
+ * leave output_line_open FALSE while still needing their end-of-message
+ * newline, which is why writeNewLine must keep its own, separate gate.
+ * @param context
+ * @return number of characters written
+ */
+size_t scpiParser_terminateOpenLine(scpi_t * context) {
+    size_t len;
+#ifndef SCPI_LINE_ENDING
+#error no termination character defined
+#endif
+    if (!context->output_line_open) {
         return 0;
     }
+    len = writeData(context, SCPI_LINE_ENDING, strlen(SCPI_LINE_ENDING));
+    context->output_line_open = FALSE;
+    flushData(context);
+    return len;
 }
 
 /**
@@ -95,10 +140,8 @@ static size_t writeDelimiter(scpi_t * context) {
 static size_t writeNewLine(scpi_t * context) {
     if (!context->first_output) {
         size_t len;
-#ifndef SCPI_LINE_ENDING
-#error no termination character defined
-#endif
         len = writeData(context, SCPI_LINE_ENDING, strlen(SCPI_LINE_ENDING));
+        context->output_line_open = FALSE;
         flushData(context);
         return len;
     } else {
@@ -130,8 +173,14 @@ static scpi_bool_t processCommand(scpi_t * context) {
     scpi_bool_t is_query = context->param_list.cmd_raw.data[context->param_list.cmd_raw.length - 1] == '?';
 
     /* conditionally write ; */
+    /* DAQiFi #1003/#1010: DEFER it instead of writing it here. Writing the
+     * separator before the callback ran let a failing callback strand a
+     * bare ';' immediately in front of the error text that followed
+     * (SCPI_ErrorEmit, error.c, writes synchronously). writeDelimiter now
+     * emits it at the first byte of actual output, which never happens if
+     * the callback errors before writing anything. */
     if(!context->first_output && is_query) {
-        writeData(context, ";", 1);
+        context->output_pending_separator = TRUE;
     }
 
     context->cmd_error = FALSE;
@@ -205,6 +254,13 @@ scpi_bool_t SCPI_Parse(scpi_t * context, char * data, int len) {
     state = &context->parser_state;
     context->output_count = 0;
     context->first_output = TRUE;
+    /* DAQiFi #1003/#1010: output_line_open is deliberately NOT reset here --
+     * it is a property of the wire (is there an unterminated line open right
+     * now), not of this message, and SCPI_Input can push an error (buffer
+     * overrun, parser.c) OUTSIDE of SCPI_Parse entirely. Resetting it here
+     * would re-introduce exactly the cross-message blindness this fix is
+     * for. SCPI_Init's memset gives it a correct FALSE at boot. */
+    context->output_pending_separator = FALSE;
 
     while (1) {
         r = scpiParser_detectProgramMessageUnit(state, data, len);

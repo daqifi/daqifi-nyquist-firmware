@@ -47,6 +47,9 @@ extern "C" {
     int scpiParser_parseProgramData(lex_state_t * state, scpi_token_t * token) LOCAL;
     int scpiParser_parseAllProgramData(lex_state_t * state, scpi_token_t * token, int * numberOfParameters) LOCAL;
     int scpiParser_detectProgramMessageUnit(scpi_parser_state_t * state, char * buffer, int len) LOCAL;
+    /* DAQiFi #1003/#1010: shared with error.c -- terminates an open result
+     * line before error text is written into the same output stream. */
+    size_t scpiParser_terminateOpenLine(scpi_t * context) LOCAL;
 
 #ifdef	__cplusplus
 }
