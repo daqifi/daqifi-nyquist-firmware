@@ -171,78 +171,90 @@ def check_text(key, text):
 
 
 def self_test():
-    """Every check must FAIL on the shape it exists to refuse."""
-    base = """static bool spi_WaitStat(uint32_t mask, bool want,
-                         TickType_t start, TickType_t timeoutTicks) {
-    for (;;) {
-        for (uint32_t s = 0; s < 8000u; ++s) {
-            if (((SPI1STAT & mask) != 0u) == want) { return true; }
-        }
-        if (((SPI1STAT & mask) != 0u) == want) { return true; }
-        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) {
-            return (((SPI1STAT & mask) != 0u) == want);
-        }
-        vTaskDelay(1);
-    }
-}
-"""
+    """Every check must FAIL on the shape it exists to refuse, AND FOR THE RIGHT
+    REASON.
+
+    Each case names the problem text it expects. That is not decoration: review
+    of PR #1009 found that the two anchoring fixtures added the round before
+    were rejected by the UNIQUENESS check, not the window check, because they
+    appended a second copy of each statement to an intact base. Deleting the
+    window check outright would have left both of them still reporting a
+    problem, so --self-test would still have passed while the anchor it was
+    added to cover went untested. Asserting only "some problem was reported" is
+    how a self-test stops testing what it claims to.
+    """
+    sig = ("static bool spi_WaitStat(uint32_t mask, bool want,\n"
+           "                         TickType_t start, TickType_t timeoutTicks) {\n")
+    deadline = "        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) {\n"
+    fresh = "            return (((SPI1STAT & mask) != 0u) == want);\n"
+    yield_ = "        vTaskDelay(1);\n"
+
+    base = (sig
+            + "    for (;;) {\n"
+            + "        for (uint32_t s = 0; s < 8000u; ++s) {\n"
+            + "            if (((SPI1STAT & mask) != 0u) == want) { return true; }\n"
+            + "        }\n"
+            + "        if (((SPI1STAT & mask) != 0u) == want) { return true; }\n"
+            + deadline + fresh + "        }\n" + yield_
+            + "    }\n}\n")
+
+    # The same function with all THREE statements gone, so a fixture can place
+    # exactly one of each somewhere else and leave the window as the only check
+    # that can object.
+    stripped = (sig
+                + "    for (;;) {\n"
+                + "        for (uint32_t s = 0; s < 8000u; ++s) {\n"
+                + "            if (((SPI1STAT & mask) != 0u) == want) { return true; }\n"
+                + "        }\n"
+                + "        if (((SPI1STAT & mask) != 0u) == want) { return true; }\n"
+                + "        return false;\n"
+                + "    }\n}\n")
+    far = ("\n" * 60
+           + "static bool spi_SomethingElse(uint32_t mask, bool want,\n"
+             "                              TickType_t start, TickType_t timeoutTicks) {\n"
+           + deadline + fresh + "        }\n" + yield_
+           + "    return false;\n}\n")
+
     cases = [
-        ("clean source passes", base, 0),
+        ("clean source passes", base, None),
         ("the pre-#913 hardcoded false at expiry",
-         base.replace("            return (((SPI1STAT & mask) != 0u) == want);",
-                      "            return false;"), 1),
+         base.replace(fresh, "            return false;\n"),
+         "fresh read at expiry, found 0"),
         ("the yield removed (back to a pure busy-spin)",
-         base.replace("        vTaskDelay(1);\n", ""), 1),
+         base.replace(yield_, ""), "the yield, found 0"),
         ("the deadline test removed (never times out)",
-         base.replace(
-             "        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) {\n",
-             "        if (0) {\n"), 1),
+         base.replace(deadline, "        if (0) {\n"),
+         "deadline test, found 0"),
         ("yield moved BEFORE the deadline test",
-         "static bool spi_WaitStat(uint32_t mask, bool want,\n"
-         "                         TickType_t start, TickType_t timeoutTicks) {\n"
-         "    for (;;) {\n"
-         "        vTaskDelay(1);\n"
-         "        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) {\n"
-         "            return (((SPI1STAT & mask) != 0u) == want);\n"
-         "        }\n"
-         "    }\n"
-         "}\n", 1),
-        ("a second copy of the loop (ambiguous which one is pinned)",
-         base + base, 1),
-        ("the three statements moved OUT of the wait function",
-         base + ("\n" * 60) + "static void spi_SomethingElse(void)\n{\n"
-         "        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) {\n"
-         "            return (((SPI1STAT & mask) != 0u) == want);\n"
-         "        }\n"
-         "        vTaskDelay(1);\n}\n",
-         1),
-        ("only the far copy survives, the real loop gutted",
-         base.replace("            return (((SPI1STAT & mask) != 0u) == want);",
-                      "            return false;")
-             .replace("        vTaskDelay(1);\n", "")
-         + ("\n" * 60) + "static void spi_SomethingElse(void)\n{\n"
-         "        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) {\n"
-         "            return (((SPI1STAT & mask) != 0u) == want);\n"
-         "        }\n"
-         "        vTaskDelay(1);\n}\n",
-         1),
+         sig + "    for (;;) {\n" + yield_ + deadline + fresh + "        }\n"
+         + "    }\n}\n", "out of order"),
+        ("a second copy of the whole loop", base + base, "found 2"),
+        ("the three statements moved OUT of the wait function, one copy each",
+         stripped + far, "outside the 40 lines"),
         ("the wait function renamed away (signature gone)",
-         base.replace("static bool spi_WaitStat(uint32_t mask, bool want,",
-                      "static bool spi_WaitStatus(uint32_t mask, bool want,"), 1),
-        ("the expiry read mentioned only in a comment",
-         base.replace("            return (((SPI1STAT & mask) != 0u) == want);",
+         base.replace("static bool spi_WaitStat(", "static bool spi_WaitStatus("),
+         "signature, found 0"),
+        ("the expiry read left only in a comment",
+         base.replace(fresh,
                       "            /* return (((SPI1STAT & mask) != 0u) == want); */\n"
-                      "            return false;"), 1),
+                      "            return false;\n"),
+         "fresh read at expiry, found 0"),
     ]
+
     failures = 0
-    for name, text, want_problems in cases:
+    for name, text, expect in cases:
         got = check_text("spi", text)
-        ok = (len(got) > 0) == (want_problems > 0)
+        blob = " | ".join(got)
+        if expect is None:
+            ok = not got
+            why = "expected no problem, got %r" % (got,)
+        else:
+            ok = expect in blob
+            why = "expected a problem containing %r, got %r" % (expect, got)
         print("  [%s] %s" % ("ok" if ok else "FAIL", name))
         if not ok:
             failures += 1
-            print("        expected %s, got %r"
-                  % ("a problem" if want_problems else "no problem", got))
+            print("        " + why)
     print("self-test: %d/%d checks passed" % (len(cases) - failures, len(cases)))
     return 1 if failures else 0
 
