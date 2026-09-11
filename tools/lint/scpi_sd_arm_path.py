@@ -286,8 +286,23 @@ def _blank(text):
 # the floor count still passed (#976 pre-merge audit). Ordinary formatting, not
 # an adversarial construct. ONE break only, so the prefix cannot run away
 # across unrelated lines.
+# The prefix must ABSORB `__attribute__((...))`. Without it this pattern
+# captured the attribute as the function's NAME: `SCPIStorageSD.c` carries
+# `bool __attribute__((weak)) DRV_SDSPI_GetCID(...)` today, and
+# `function_spans()` was recording a function literally called
+# `__attribute__` on shipped source -- harmless only because no arm site
+# happens to sit in that body, and a spurious CI failure the moment an
+# ordinary annotation is added to a function this checker reasons about
+# (#976 pre-merge audit, round 2, confirmed live in the tree).
+#
+# This is the SAME rule `tests/host/hash_function.py` uses, deliberately: the
+# two files answering "what is a definition" DIFFERENTLY was itself a bypass
+# -- a disabled original in one style plus a live replacement in the other
+# left the hasher with a single match and no ambiguity to report.
+_ATTR = r"(?:__attribute__\s*\(\((?:[^()]|\([^()]*\))*\)\)[\w \t\*]*)?"
 _DEF = re.compile(
-    r"(?m)^[A-Za-z_][\w \t\*]*(?:\n[ \t]*)?\b([A-Za-z_]\w*)\s*\([^;{]*\)\s*\{")
+    r"(?m)^[A-Za-z_][\w \t\*]*" + _ATTR + r"(?:[ \t]*\n[ \t]*)?"
+    r"\b([A-Za-z_]\w*)\s*\([^;{]*\)\s*\{")
 
 
 def _match_brace(masked, start):
@@ -314,7 +329,8 @@ def function_body(text, name):
     # without this `function_body` reported the function MISSING while the
     # census (which uses `_DEF`) could see it -- two matchers disagreeing
     # about the same file, with a confusing message as the visible symptom.
-    sig = re.search(r"(?m)^[A-Za-z_][\w \t\*]*(?:\n[ \t]*)?\b%s\s*\([^;{]*\)\s*\{"
+    sig = re.search(r"(?m)^[A-Za-z_][\w \t\*]*" + _ATTR +
+                    r"(?:[ \t]*\n[ \t]*)?\b%s\s*\([^;{]*\)\s*\{"
                     % re.escape(name), text)
     if not sig:
         return None
@@ -677,12 +693,23 @@ def _census_problems(text, spans):
     problems = []
     sites = []
     wrapper_helper_calls = []
+    recursive = []
     for name, positions in ((ARM_WRAPPER, _call_positions(text, ARM_WRAPPER)),
                             (ARM_HELPER, _call_positions(text, ARM_HELPER))):
         for pos in positions:
             fn = enclosing_function(spans, pos)
-            if fn is None or fn == name:
-                continue                 # the definition itself, or recursion
+            if fn is None:
+                continue                 # the definition's own name
+            if fn == name:
+                # RECURSION, and excusing it silently is how the "arms exactly
+                # once" property below was defeated: a wrapper that calls
+                # ITSELF reaches the helper twice at run time while showing
+                # only one helper call to a textual scan (#976 pre-merge
+                # audit, round 2). Neither of these functions is recursive
+                # today, and neither has any reason to be, so a self-call is
+                # reported rather than waved through.
+                recursive.append((fn, pos))
+                continue
             if name == ARM_HELPER and fn == ARM_WRAPPER:
                 # The wrapper's own NULL-passing call is expected, and exactly
                 # ONE of it is. Excluding EVERY such call -- which is what this
@@ -725,6 +752,15 @@ def _census_problems(text, spans):
             % (ARM_HELPER,
                ", ".join("%s()" % f for f, _, _ in cleanup) or "nowhere",
                FORMAT_FN, ARM_WRAPPER))
+
+    if recursive:
+        problems.append(
+            "%s calls itself. Neither arm function is recursive, and a "
+            "self-call is how the arm count below is defeated: the helper is "
+            "reached twice at run time while a textual scan sees one call "
+            "site. If recursion is genuinely wanted here, this checker has to "
+            "be taught to count reachable arms rather than written ones."
+            % ", ".join(sorted({"%s()" % f for f, _ in recursive})))
 
     if len(wrapper_helper_calls) > 1:
         problems.append(
@@ -1100,6 +1136,33 @@ def self_test():
         _ck("a split-line definition is still a definition",
             check(gnu)[1], n)
         _ck("and it is still read as compliant", check(gnu)[0], [])
+
+        # Round 2 of the audit, three more shapes -- each one defeating a
+        # guard the round-1 fixes had just added, which is why the matchers
+        # are now ONE rule rather than three that agree by discipline.
+        #
+        # 3. `__attribute__((...))` between the return type and the name was
+        #    captured AS the name. Confirmed live: SCPIStorageSD.c already
+        #    carries `bool __attribute__((weak)) DRV_SDSPI_GetCID(...)`.
+        attr = _GOOD.replace("static bool SD_ArmOrRefuse(",
+                             "static bool __attribute__((weak)) "
+                             "SD_ArmOrRefuse(", 1)
+        _ck("an __attribute__ does not become the function name",
+            [nm for nm, _, _ in function_spans(strip_c_comments(attr))
+             if nm.startswith("__")], [])
+        _ck("and the annotated file still reads as compliant",
+            check(attr)[0], [])
+
+        # 4. A wrapper that calls ITSELF reaches the helper twice at run time
+        #    while showing one call site to a textual scan.
+        recur = _GOOD.replace(
+            "    return SD_ArmOrRefuseWithCleanup(context, cmd, cfg, NULL);",
+            "    if (!SD_ArmOrRefuseWithCleanup(context, cmd, cfg, NULL)) {\n"
+            "        return SD_ArmOrRefuse(context, cmd, cfg);\n"
+            "    }\n"
+            "    return true;", 1)
+        _ck("a self-call is reported, not excused as recursion",
+            any("calls itself" in x for x in check(recur)[0]), True)
 
         # The parsing this rests on, asserted directly rather than only
         # through a verdict: a definition is not a call site, and a call in a

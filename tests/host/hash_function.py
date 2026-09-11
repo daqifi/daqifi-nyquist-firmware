@@ -81,6 +81,38 @@ class AmbiguousDefinition(Exception):
     """
 
 
+# ONE rule for "what does a definition of this function look like", shared by
+# every matcher that has to answer it. Three of them answered DIFFERENTLY
+# before, and each disagreement was a silent bypass: this hasher matched a
+# literal one-line prefix while the lint's `_DEF` had been taught to accept a
+# return type on its own line, so an `#if 0`-disabled original in the one-line
+# form plus a live replacement in the split-line form left exactly ONE literal
+# match -- the ambiguity guard never fired and the pin digested the DEAD copy
+# (#976 pre-merge audit, round 2, reproduced against real source). And the
+# prefix has to absorb `__attribute__((...))`: `SCPIStorageSD.c` already
+# carries `bool __attribute__((weak)) DRV_SDSPI_GetCID(...)` today, which the
+# lint was recording as a function literally NAMED `__attribute__`.
+#
+#   prefix       identifier chars, spaces, tabs and `*`
+#   attribute    an optional `__attribute__((...))`, one level of nesting
+#   break        at most ONE newline, so the prefix cannot run away
+_PREFIX = r"[A-Za-z_][\w \t\*]*"
+_ATTR = r"(?:__attribute__\s*\(\((?:[^()]|\([^()]*\))*\)\)[\w \t\*]*)?"
+_BREAK = r"(?:[ \t]*\n[ \t]*)?"
+
+
+def definition_re(name):
+    """A compiled pattern matching a DEFINITION of `name`, up to its `{`."""
+    return re.compile(r"(?m)^" + _PREFIX + _ATTR + _BREAK +
+                      r"\b" + re.escape(name) + r"\s*\([^;{]*\)\s*\{")
+
+
+def signature_name(signature):
+    """The function NAME inside a signature PREFIX like `static bool Foo(`."""
+    head = signature.strip().rstrip("(").strip()
+    return head.split()[-1] if head.split() else ""
+
+
 def extract(text, signature):
     """The function's full body, by BALANCED BRACES over masked text.
 
@@ -88,52 +120,33 @@ def extract(text, signature):
     the #976 audit pointed out that a nested block, a comment or a literal
     carrying such a line truncates the digest to a PREFIX -- after which every
     later edit to the function is invisible to the guard that exists to see
-    edits. The function pinned today does not contain one, so the old form was
-    right by luck about this input and wrong about its own claim.
+    edits.
+
+    Definitions are located through `definition_re()`, the ONE shared rule, so
+    this hasher and the lint's `_DEF` cannot disagree about what a definition
+    looks like. They did, and the disagreement was a bypass: a literal one-line
+    match here against a split-line-tolerant match there meant a disabled
+    original plus a live replacement in the other style produced exactly one
+    match, no ambiguity, and a digest of the DEAD copy.
 
     Braces are counted on `mask()`ed text so a brace inside a comment or string
     cannot open or close the body, and the ORIGINAL text is what gets returned
-    and hashed.
+    and hashed. Matching also runs on masked text, so a definition-shaped line
+    inside a comment or a literal is not a definition.
     """
+    name = signature_name(signature)
+    if not name:
+        return None
     masked = mask(text)
-    definitions = []
-    at = 0
-    while True:
-        start = text.find(signature, at)
-        if start == -1:
-            if not definitions:
-                return None   # no DEFINITION anywhere: fail closed
-            if len(definitions) > 1:
-                raise AmbiguousDefinition(
-                    "%d definitions answer to %r; refusing to choose"
-                    % (len(definitions), signature))
-            start, open_at = definitions[0]
-            break
-        # A match inside a comment or a string literal is not a declaration of
-        # anything. `mask()` blanks both, length-preservingly, so a blanked
-        # slice is exactly that case -- and binding it to the next `{` would
-        # hash whichever function happens to follow the mention.
-        if not masked[start:start + len(signature)].strip():
-            at = start + 1
-            continue
-        open_at = masked.find("{", start)
-        if open_at == -1:
-            return None
-        # A FORWARD DECLARATION, not a definition: the signature is terminated
-        # by `;` before any body opens. Taking the next `{` anyway binds the
-        # pin to an UNRELATED function, and the damage is silent and permanent
-        # -- once the pin is updated to that stranger's digest, every later
-        # edit to the real helper is invisible to the guard whose entire job is
-        # to see edits (#976 review). A parameter list cannot contain `;` in C,
-        # so the first one after the signature settles which this is.
-        semi = masked.find(";", start)
-        if semi != -1 and semi < open_at:
-            at = start + len(signature)
-            continue
-        # A DEFINITION. Do NOT stop here: another may follow, and choosing
-        # between two is exactly what this hasher must not do silently.
-        definitions.append((start, open_at))
-        at = open_at + 1
+    matches = list(definition_re(name).finditer(masked))
+    if not matches:
+        return None               # no DEFINITION anywhere: fail closed
+    if len(matches) > 1:
+        raise AmbiguousDefinition(
+            "%d definitions answer to %r; refusing to choose"
+            % (len(matches), name))
+    start = matches[0].start()
+    open_at = matches[0].end() - 1
     depth, i, n = 0, open_at, len(text)
     while i < n:
         ch = masked[i]
@@ -261,6 +274,28 @@ def self_test():
         bad.append("two definitions must be REFUSED, not silently resolved")
     except AmbiguousDefinition:
         pass
+    # The SAME evasion in the OTHER formatting. Round 1 of the audit closed
+    # the one-line pair; round 2 showed the pair could simply be written in
+    # two different styles, because the hasher matched a literal prefix while
+    # the lint had been taught to accept a split line. One shared rule now
+    # answers for both, and this row is what pins that.
+    mixed = ('#if 0\n'
+             'static bool F(void)\n{\n    int dead = 1;\n    return dead;\n}\n'
+             '#endif\n'
+             'static bool\nF(void)\n{\n    int live = 1;\n    return live;\n}\n')
+    try:
+        extract(mixed, "static bool F(")
+        bad.append("a one-line and a split-line definition are still TWO")
+    except AmbiguousDefinition:
+        pass
+    # An `__attribute__((...))` between the return type and the name is
+    # ordinary and already present in the firmware this pins
+    # (`bool __attribute__((weak)) DRV_SDSPI_GetCID(...)`). Absorbing it is
+    # what stops the matcher reading `__attribute__` as the function's name.
+    attr = 'bool __attribute__((weak)) F(int a)\n{\n    int keep = a;\n    return keep;\n}\n'
+    body = extract(attr, "bool F(")
+    if body is None or "keep" not in body:
+        bad.append("an __attribute__ between type and name must not hide it")
     # ...and one definition preceded by a PROTOTYPE is still unambiguous, so
     # the refusal above must not have been bought by refusing everything.
     one = ('static bool F(void);\n'
