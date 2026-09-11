@@ -53,7 +53,7 @@ log — a story. Pick the 3-5 biggest customer-visible arcs and tell them.
 ## Added
 ### <Feature title> (PR #N)
 - User-visible SCPI commands or behavior
-- Measured impact, citing CLAUDE.md tables or PR bodies — never invented
+- Measured impact, citing the characterization tables in `docs/STREAMING_AND_ADC.md` or PR bodies — never invented
 
 ## Changed
 ### <Behavioral change> (PR #N)
@@ -69,7 +69,7 @@ PRs #N #N #N — build/CI/refactor/docs/observability/test. One line each,
 grouped by theme. Do NOT give each chore PR its own sub-section.
 
 ## Test coverage
-- Bench characterization sessions (see CLAUDE.md)
+- Bench characterization sessions (see `docs/STREAMING_AND_ADC.md`)
 - Overnight ceiling + endurance sweeps
 - Manual functional tests (per release-tracker MED-tier checklist)
 - cppcheck baseline status
@@ -124,7 +124,7 @@ command for self-contained throughput benchmarks."
 
 Sub-section per feature. Inline the PR number in parentheses in the
 heading. List the SCPI surface area and the measured impact if there is
-one (cite CLAUDE.md or the PR body — don't invent numbers).
+one (cite `docs/STREAMING_AND_ADC.md` or the PR body — don't invent numbers).
 
 ### Changed — behavior changes that aren't bug fixes
 
@@ -263,7 +263,7 @@ Filter `mergedAt` by the previous release date.
 
 ### 3. Source measured-impact numbers
 
-Bench characterization numbers come from **CLAUDE.md** — search for
+Bench characterization numbers come from **`docs/STREAMING_AND_ADC.md`** — search for
 `Session 22`, `Session 23`, `Session 24` tables and quote conservatively.
 Never invent numbers. If the PR body has a measurement, cite it (e.g.
 "PR #335: USB CSV 16ch CV at 10 kHz: 9.44% → 0.5%, p-p 326 µs → 8.8
