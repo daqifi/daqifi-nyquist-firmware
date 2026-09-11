@@ -97,6 +97,58 @@ high byte would make the whole JSON stream invalid UTF-8), the `inLen` bound
 wholesale rather than truncating mid-escape, the exact worst-case sizing
 `JSON_Encoder.c` allocates on its stack, and NULL/zero-size safety.
 
+`test_999_scpi_context_storage_isolation.c` covers `CreateSCPIContext()`
+(`firmware/src/services/SCPI/SCPIInterface.c`, issue #999): USB and TCP used
+to be handed the SAME file-scope input-buffer and error-queue arrays, so
+their independent parse/error-FIFO cursors clobbered each other's in-flight
+commands and queued errors. `SCPIInterface.c` itself is not includable on the
+host (same reason as `SCPIStorageSD.c` above, worse: 42 direct includes
+spanning Harmony PLIB, the USB HS and WINC WiFi drivers, and FreeRTOS's
+MIPS-specific port layer — confirmed by trying), but the vendored libscpi
+sources that implement the actual clobber mechanism (`parser.c`/`fifo.c`/
+`error.c` + their internal dependents) are portable C with zero FreeRTOS/
+Harmony dependency, and this target links the REAL production libscpi
+against a minimal harness. Part A reproduces the bug against real fifo/
+error/parser code with storage deliberately shared the old way; Part B/D
+prove the fix's shape (separate storage, no cross-talk) — but neither part
+ever calls the real `CreateSCPIContext()`, since it isn't linked in. Part C's
+Makefile guards therefore grep the real sources to pin that the fix's shape
+(`ScpiContextStorage`, per-transport instances in `UsbCdc.c`/
+`wifi_tcp_server.c`) still exists.
+
+That gap — asserting shape via declarations while never executing
+`CreateSCPIContext()`'s body — was exploited by round 2 of an adversarial
+audit: reassigning the `storage` parameter to a function-local instance
+inside the body reintroduces #999's exact bug without touching any
+declaration, signature or caller, so it passed every original guard. A
+round-2 fix added three inline Makefile greps against the body text (forbid
+reassigning `storage`, forbid a local `ScpiContextStorage` instance, require
+`storage->inputBuffer`/`storage->errorQueue` literally present) — but an
+independent round-3 counter-audit defeated all three (an aliased pointer
+with the real `storage->` text surviving only in a nearby comment; a
+correct `SCPI_Init()` call followed by code that re-seats `buffer.data` and
+calls `SCPI_ErrorInit()` again onto shared storage; splitting the
+reassignment across two physical lines to dodge a single-line grep) and
+found three false positives against legitimate code (a defensive NULL
+check; a comment mentioning "ScpiContextStorage instance"; writing *through*
+the pointer via `*storage = ...` rather than reassigning it).
+
+`check_999_createscpicontext_wiring.sh` (round 3, current) replaces those
+inline greps with a dedicated script: it bounds the extracted body to
+`CreateSCPIContext()`'s own closing brace (not "signature to EOF"), strips
+comments and flattens the body before any keyword search, scopes the wiring
+check to the actual `SCPI_Init()` call's own argument text rather than
+"anywhere in the body", and adds two checks forbidding the body from
+touching `.buffer.data` / `error_queue` or calling `SCPI_ErrorInit()`
+directly at all — closing the "correct call, then re-seat afterward" bypass
+that the round-2 checks had no way to see. Mutation-proven against all of
+the above (11 cases: the original reassignment, all three round-3 bypasses,
+two more probes, and the three false-positive cases, all verified to fail
+or pass as intended). See the Makefile's `SCPI999_BIN` comment and the
+script's own header comment for the full account, including why linking
+`SCPIInterface.c` itself was tried first and ruled out, and what a textual
+guard still does not establish.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a

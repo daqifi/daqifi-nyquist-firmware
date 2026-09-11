@@ -92,6 +92,58 @@ JSONESC_BIN := run_json_escape_tests
 # SUSPEND_BIN use for their own non-includable UUTs. A guard failure means
 # the fix's shape moved and this test's premise needs re-checking, not that
 # the guard should be relaxed.
+#
+# An adversarial audit of an earlier version of this target (round 2) proved
+# those declaration-only guards insufficient: CreateSCPIContext()'s BODY is
+# never actually compiled or linked here (the harness reimplements its SHAPE
+# with file-local statics, it never calls the real function), and the
+# original guards only grepped for declarations and signatures -- so a
+# mutation inside CreateSCPIContext()'s body ("static ScpiContextStorage
+# shared; storage = &shared;", reintroducing #999's own aliasing bug)
+# changed no declaration, no signature and no caller, and passed every guard
+# and the whole suite.
+#
+# Round 3 (this state) replaced that body-text guard after an INDEPENDENT
+# adversarial counter-audit defeated round 2's own three line-based greps
+# three separate ways (an aliased pointer whose literal `storage->` text
+# survived only in a nearby comment; re-seating `.buffer.data` and calling
+# `SCPI_ErrorInit()` a second time AFTER an otherwise-correct SCPI_Init()
+# call; splitting the reassignment across two physical lines to dodge a
+# single-line regex) and found three false positives against legitimate
+# code (a defensive NULL check; a prose comment naming
+# "ScpiContextStorage instance"; writing THROUGH the pointer via `*storage =
+# ...` rather than reassigning it). See
+# check_999_createscpicontext_wiring.sh's own header comment for the full
+# account of each and how this version closes them: the function body is
+# now bounded to its own closing brace (not "signature to EOF"), comments
+# are stripped and the body flattened before any keyword search, the
+# wiring check is scoped to the SCPI_Init() call's own argument text rather
+# than "anywhere in the body", and two new checks forbid the body from
+# touching `.buffer.data` / `error_queue` / calling `SCPI_ErrorInit()`
+# directly at all (#999's fix relies solely on SCPI_Init() to own that
+# wiring). Mutation-proven (2026-09-11) against all of the above plus two
+# more probes (a zero-whitespace reassignment, a direct `error_queue` poke)
+# -- 11 cases total, each verified to fail or pass as intended; see the PR
+# description for the full matrix. What this script does NOT establish is
+# stated in its own header (a `union`- or pointer-arithmetic-based aliasing
+# scheme is out of scope for a textual guard) -- read that before trusting
+# a green run more than it proves.
+#
+# Actually linking SCPIInterface.c itself (the real fix) was tried first and
+# rejected as impractical, not skipped by default: it has 42 direct
+# #includes spanning Harmony PLIB (peripheral/gpio, the USB HS driver, the
+# WINC WiFi driver), FreeRTOS (whose portmacro.h is PIC32MZ/MIPS assembly,
+# not host-portable), nanopb-generated protobuf headers, and most of
+# firmware/src/{HAL,state,services} -- confirmed empirically: a bare `gcc -c`
+# of the file fails immediately on a missing FreeRTOS.h, and FreeRTOS.h's own
+# portable/MPLAB/PIC32MZ/portmacro.h is not something a host stub can
+# meaningfully fake. Stubbing that whole graph would be a second HAL, not a
+# test. The textual guard is the documented second-best (per the #1016
+# review brief) until a seam makes a real link tractable -- this repo has
+# done exactly that seam twice before for a similarly non-includable UUT
+# (AD7609Scale.h split out of AD7609.h for #889, JSON_StringEscape.h split
+# out of JSON_Encoder.c for #164), which is the natural next step if this
+# textual approach needs replacing rather than patching again.
 SCPI999_BIN := run_999_tests
 LIBSCPI_DIR := ../../firmware/src/libraries/scpi/libscpi
 LIBSCPI_SRCS := $(addprefix $(LIBSCPI_DIR)/src/, \
@@ -157,9 +209,11 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
+SCPI999_WIRING_GUARD := check_999_createscpicontext_wiring.sh
+
 $(SCPI999_BIN): test_999_scpi_context_storage_isolation.c test_framework.h \
                 $(LIBSCPI_SRCS) $(LIBSCPI_HDRS) $(SCPI_INTERFACE_H) $(SCPI_INTERFACE_C) \
-                $(USBCDC_SRC) $(WIFI_TCP_SRC) $(RECIPES)
+                $(USBCDC_SRC) $(WIFI_TCP_SRC) $(SCPI999_WIRING_GUARD) $(RECIPES)
 	@grep -qE 'typedef struct \{' $(SCPI_INTERFACE_H) \
 	  && grep -qE 'char inputBuffer\[SCPI_INPUT_BUFFER_LENGTH\];' $(SCPI_INTERFACE_H) \
 	  && grep -qE 'scpi_error_t errorQueue\[SCPI_ERROR_QUEUE_SIZE\];' $(SCPI_INTERFACE_H) \
@@ -195,6 +249,7 @@ $(SCPI999_BIN): test_999_scpi_context_storage_isolation.c test_framework.h \
 	@grep -qE '&gTcpScpiStorage' $(WIFI_TCP_SRC) \
 	  || { echo "ERROR: $(WIFI_TCP_SRC) no longer passes its own storage to CreateSCPIContext()."; \
 	       exit 1; }
+	@bash check_999_createscpicontext_wiring.sh $(SCPI_INTERFACE_C)
 	$(CC) $(CFLAGS) -DUSE_DEVICE_DEPENDENT_ERROR_INFORMATION=0 -I$(LIBSCPI_DIR)/inc \
 	    -o $(SCPI999_BIN) test_999_scpi_context_storage_isolation.c $(LIBSCPI_SRCS) -lm
 
