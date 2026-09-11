@@ -67,7 +67,7 @@ extern "C" {
          * clears) and read by ADC.c:129 (EOS deferred task, pri 9),
          * SCPIInterface/SCPIADC (USB pri 7 / WiFi pri 2).  Marked
          * volatile so -O3 cannot cache reads across loop iterations
-         * or function-call boundaries — per CLAUDE.md PIC32MZ
+         * or function-call boundaries — per docs/MCU_REFERENCE.md PIC32MZ
          * cross-context atomicity rules (32-bit RW atomic but
          * volatile needed for visibility).  Type widened to uint32_t per
          * the bus-native-width convention used by the other cross-context

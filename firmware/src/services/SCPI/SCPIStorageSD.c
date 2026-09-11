@@ -472,7 +472,7 @@ typedef struct {
 
 /* volatile: written by the SCPI task running a benchmark and read by the
  * OTHER transport's SCPI task (SCPI_StorageSDLoggingSet's guard below, and
- * the benchmark's own re-entrancy claim). Per CLAUDE.md a value written by
+ * the benchmark's own re-entrancy claim). Per docs/MCU_REFERENCE.md a value written by
  * one task and read by another needs volatile so the compiler cannot cache
  * it in a register. volatile does NOT make the read-modify-write atomic —
  * the claim still takes a critical section (#736). */
@@ -2180,7 +2180,7 @@ scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
             ? SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE  // 3.9GB safe default
             : (uint64_t)maxSizeBytes;
 
-    // 64-bit shared write needs a critical section per CLAUDE.md atomicity
+    // 64-bit shared write needs a critical section per docs/MCU_REFERENCE.md atomicity
     // rules — PIC32MZ's 32-bit data bus tears 64-bit stores under task
     // preemption. maxFileSizeBytes is read live by WRITE_TO_FILE from
     // app_SDCardTask on every pass; without this, that reader could see a
@@ -2394,7 +2394,7 @@ scpi_result_t SCPI_StorageSDMinFreeSet(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
-    // 64-bit shared write needs critical section per CLAUDE.md
+    // 64-bit shared write needs critical section per docs/MCU_REFERENCE.md
     // atomicity rules — PIC32MZ's 32-bit data bus tears 64-bit
     // stores under task preemption.  The runtime config is read
     // by SCPI_StartStreaming from a different task and by the

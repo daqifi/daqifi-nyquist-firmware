@@ -2248,7 +2248,7 @@ static void RestoreSdMode(sd_card_manager_mode_t savedMode) {
 
 // StreamingRuntimeConfig.Frequency is uint64_t — non-atomic on PIC32MZ, so the
 // benchmark/finder paths read/write it through a critical section per the
-// project atomicity rule (CLAUDE.md / Compliance ID 8).  These run in SCPI task
+// project atomicity rule (docs/MCU_REFERENCE.md / Compliance ID 8).  These run in SCPI task
 // context (one-shot commands, not a hot ISR path) so the latency cost is nil.
 static inline uint64_t StreamFreq_Get(const StreamingRuntimeConfig* c) {
     taskENTER_CRITICAL();
@@ -3633,7 +3633,7 @@ static void SCPI_SyncOperSdBitLocked(void) {
      * case returns the address of a member of a static struct, and
      * BOARDRUNTIME_SD_CARD_SETTINGS is a compile-time constant naming a real
      * case. Every other callback in this file relies on the same reasoning
-     * (CLAUDE.md standing rule), so guarding only here would be inconsistent. */
+     * (docs/MCU_REFERENCE.md standing rule), so guarding only here would be inconsistent. */
     const bool logging = Streaming_IsActiveOnNonWifiInterface() &&
                          sd->enable &&
                          (sd->mode == SD_CARD_MANAGER_MODE_WRITE) &&
@@ -4320,7 +4320,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     //
     // Floor is 2500 B (lowered from 10 KB 2026-05-31 — see
     // MIN_HEAP_FREE_FOR_STREAM_START_BYTES in SCPIInterface.h for the
-    // rationale + tradeoff).  Boot-idle HeapFree is ~13 KB per CLAUDE.md,
+    // rationale + tradeoff).  Boot-idle HeapFree is ~13 KB per docs/MEMORY_ARCHITECTURE.md,
     // so the guard now only bites under severe accumulated pressure (the
     // #490 per-session leak), not on ordinary post-boot starts.
     //
@@ -4408,7 +4408,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     if (!freqProvided) {
         // 64-bit read needs a critical section on the 32-bit PIC32MZ bus to avoid
         // a torn read if another SCPI task writes Frequency concurrently
-        // (CLAUDE.md atomicity rules; Qodo /agentic_review pass-6).
+        // (docs/MCU_REFERENCE.md atomicity rules; Qodo /agentic_review pass-6).
         taskENTER_CRITICAL();
         uint64_t stored = pRunTimeStreamConfig->Frequency;
         taskEXIT_CRITICAL();
@@ -5093,7 +5093,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                     uint64_t freeBytes = 0, totalBytes = 0;
                     bool haveSpace = sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes);
                     /* Snapshot the 64-bit floor under critical section per
-                     * CLAUDE.md atomicity rules — pairs with the setter's
+                     * docs/MCU_REFERENCE.md atomicity rules — pairs with the setter's
                      * critical-section write in SCPI_StorageSDMinFreeSet. */
                     uint64_t floor;
                     taskENTER_CRITICAL();
@@ -5563,7 +5563,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      *
      * A bare 32-bit load, not a critical section: unlike the interface pins
      * inside the body it has no partner field it must describe one instant
-     * with, and CLAUDE.md's atomicity rule is explicit that wrapping a plain
+     * with, and docs/MCU_REFERENCE.md's atomicity rule is explicit that wrapping a plain
      * aligned 32-bit load only costs interrupt latency.
      *
      * Unused on the SYSTem:STReam:START 0 disable path, which returns before
@@ -7979,7 +7979,7 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
        MIN/MAX_AIN_SAMPLE_COUNT) so the advertised min/max can't drift from
        the enforced min/max. (The encoder + sample-pool setters additionally
        accept 0 as an auto sentinel — outside the emitted min/max by design,
-       documented as a convention in the wiki schema + CLAUDE.md.) wifi/sd
+       documented as a convention in the wiki schema + docs/MEMORY_ARCHITECTURE.md.) wifi/sd
        mins and the 65536 caps are literals in their setters too — keep them
        literal here to match. */
     scpi_printf(context,
