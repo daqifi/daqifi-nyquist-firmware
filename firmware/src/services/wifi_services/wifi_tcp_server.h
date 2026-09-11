@@ -339,26 +339,6 @@ void wifi_tcp_server_SetWriteBuffer(uint8_t* buf, uint32_t size);
  */
 bool wifi_tcp_server_HasActiveClient(void);
 
-/**
- * #956: atomically reset the in-flight send-size ring AND tcpInFlight together.
- *
- * Zeroes tcpInFlight, inflightHead, inflightTail and every inflightSizes[] slot
- * inside one taskENTER_CRITICAL region, so the ring invariant
- * "tcpInFlight == 0 => head == tail" is never observable as broken.  Exists
- * because SYST:STR:START and SYST:STR:STATS:CLEar used to hand-roll the ring
- * half of this and leave tcpInFlight at its outstanding-send count — the missed
- * twin of the #519 teardown fix, and a permanent head/tail desync for the rest
- * of the session.
- *
- * Safe to call with sends outstanding, but note what it can and cannot do: it
- * makes the reset SELF-CONSISTENT, it does not make it lossless.  Completions
- * belonging to the pre-reset epoch are simply not accounted (they find
- * tcpInFlight == 0 and pop nothing).  For counter totals that mean anything in
- * absolute terms, reset with the ring already drained — see the epoch
- * precondition on wifiPartialBytesMissing above.
- *
- * No-op if the server context has not been initialized.
- */
 
 /**
  * Returns the current count of bytes sitting in the WiFi TCP write
