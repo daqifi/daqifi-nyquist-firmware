@@ -8590,11 +8590,6 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = NULL, .callback = SCPI_NotImplemented,},
 };
 
-#define SCPI_INPUT_BUFFER_LENGTH 512  // Match USB CDC max packet size to prevent silent truncation
-#define SCPI_ERROR_QUEUE_SIZE 17
-char scpi_input_buffer[SCPI_INPUT_BUFFER_LENGTH];
-scpi_error_t scpi_error_queue_data[SCPI_ERROR_QUEUE_SIZE];
-
 // Append formatted text to `buffer` at offset `count`, flushing via
 // `context->interface->write` when the next chunk would overflow. Returns
 // the updated count. snprintf negative returns (encoding errors) are
@@ -8678,7 +8673,8 @@ size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
     return written;
 }
 
-scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
+scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context,
+                         ScpiContextStorage* storage) {
     // Defense in depth: SCPI_ResponseBuf_Init() is supposed to have been
     // called during app boot before any transport creates its SCPI context.
     // Call it again here — it's idempotent — so the shared response-buffer
@@ -8691,13 +8687,23 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
     // Init context.  gIdnModel and gIdnSerial are populated once pre-scheduler
     // by SCPI_InitIdentification() so concurrent CreateSCPIContext() calls
     // from USB and WiFi tasks just read the same finished strings.
+    //
+    // #999: the input buffer and error queue come from the CALLER's own
+    // storage, not a file-scope global. They used to be two singleton
+    // arrays (scpi_input_buffer[512], scpi_error_queue_data[17]) handed to
+    // EVERY context, so USB and WiFi shared one parse buffer and one error
+    // FIFO while each kept its own independent read/write cursor into that
+    // shared memory -- a command being parsed on one transport could be
+    // overwritten mid-dispatch by the other, and a pushed error could be
+    // silently swapped for (or overwritten by) the other transport's error.
+    // See ScpiContextStorage in SCPIInterface.h.
     SCPI_Init(&daqifiScpiContext,
             scpi_commands,
             interface,
             scpi_units_def,
             SCPI_IDN1, gIdnModel, gIdnSerial, SCPI_IDN4,
-            scpi_input_buffer, SCPI_INPUT_BUFFER_LENGTH,
-            scpi_error_queue_data, SCPI_ERROR_QUEUE_SIZE);
+            storage->inputBuffer, SCPI_INPUT_BUFFER_LENGTH,
+            storage->errorQueue, SCPI_ERROR_QUEUE_SIZE);
 
     // #598: SCPI_Init doesn't take user_context, and this function accepted
     // the parameter without ever storing it - both transports were passing
