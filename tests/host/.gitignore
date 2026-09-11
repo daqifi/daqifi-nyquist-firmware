@@ -2,6 +2,7 @@ run_tests
 run_fmt_tests
 run_ad7609_tests
 run_943_tests
+run_953_tests
 run_json_escape_tests
 run_913_tests
 CircularBuffer_uut.c

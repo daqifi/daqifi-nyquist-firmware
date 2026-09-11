@@ -8470,14 +8470,19 @@ static const scpi_command_t scpi_commands[] = {
     // DAC
     {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_DACVoltageSet,},
     {.pattern = "SOURce:VOLTage:LEVel?", .callback = SCPI_DACVoltageGet,},
-    {.pattern = "CONFigure:DAC:chanCALM", .callback = SCPI_DACChanCalmSet,},
-    {.pattern = "CONFigure:DAC:chanCALB", .callback = SCPI_DACChanCalbSet,},
-    {.pattern = "CONFigure:DAC:chanCALM?", .callback = SCPI_DACChanCalmGet,},
-    {.pattern = "CONFigure:DAC:chanCALB?", .callback = SCPI_DACChanCalbGet,},
-    {.pattern = "CONFigure:DAC:SAVEcal", .callback = SCPI_DACCalSave,},
-    {.pattern = "CONFigure:DAC:SAVEFcal", .callback = SCPI_DACCalFSave,},
-    {.pattern = "CONFigure:DAC:LOADcal", .callback = SCPI_DACCalLoad,},
-    {.pattern = "CONFigure:DAC:LOADFcal", .callback = SCPI_DACCalFLoad,},
+    // #919: DAC calibration family was never implemented (getters fabricated
+    // 1.0/0.0, setters/NVM ops silently no-opped). NOT IMPLEMENTED decision:
+    // DAC7718 is NQ3-only hardware, not available to validate an implementation.
+    // Patterns stay registered (SCPI_Help still lists them) but route to the
+    // shared not-implemented stub instead of lying about success.
+    {.pattern = "CONFigure:DAC:chanCALM", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:chanCALB", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:chanCALM?", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:chanCALB?", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:SAVEcal", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:SAVEFcal", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:LOADcal", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:LOADFcal", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:USECal", .callback = SCPI_DACUseCalSet,},
     {.pattern = "CONFigure:DAC:USECal?", .callback = SCPI_DACUseCalGet,},
     {.pattern = "CONFigure:DAC:UPDATE", .callback = SCPI_DACUpdate,},
