@@ -6,3 +6,4 @@ run_953_tests
 run_json_escape_tests
 CircularBuffer_uut.c
 *.o
+gen_1001_suspend_reasons.h

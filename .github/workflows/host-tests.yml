@@ -61,6 +61,42 @@ name: host-tests
 #     "refactor escapes the trigger" gap without dragging in every unrelated
 #     services/ file (streaming.c, wifi_manager.c, sd_card_manager.c, the
 #     whole SCPI/ subdirectory, ...).
+#   - test_953_bench_suspend_diagnosis.c's #1001 length guard: its fixture is
+#     GENERATED at build time (tests/host/gen_1001_suspend_reason_fixture.py)
+#     from SCPIStorageSD.c -- already covered by the SCPI/ entry -- AND from
+#     firmware/src/Util/Logger.h and firmware/src/Util/Logger.c, which is why
+#     both are listed below. The guard asserts that every string
+#     SD_SuspendReasonText() returns still fits the LOG_E line that prints it,
+#     and the ceiling it measures against is read out of those two files:
+#     LOG_MESSAGE_SIZE from the header, and the two reservations that set the
+#     effective limit -- vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, ...) and the
+#     min((LOG_MESSAGE_SIZE - 3), size) clamp -- from the .c. A PR that
+#     lowered either one and nothing else would change what "fits" means while
+#     queueing no job that re-measures it; the generator would then be run for
+#     the first time on some later, unrelated PR. Listing BOTH files (not just
+#     the header holding the constant) is the point -- the arithmetic is split
+#     across them.
+#
+#     Scoped to the two files by name rather than to Util/, which already has
+#     CircularBuffer.c/.h and FixedPointFmt.h listed file-by-file; this
+#     directory holds many files no host test reads, so a glob here would
+#     queue the job on most edits to it for nothing. The "refactor escapes the
+#     trigger" worry that made HAL/ADC/ a directory does not apply the same
+#     way: the generator fails the BUILD, loudly and by name, if either
+#     Logger constant stops parsing where it looks for it -- so a move cannot
+#     pass silently, it just fails on the next PR that queues this job.
+#
+#     The same generator IMPORTS tools/lint/check_log_ascii.py -- it reuses
+#     that file's string-literal scanner rather than writing a fourth one --
+#     and cross-checks its own comment-aware mask against it, failing the
+#     build when the two disagree about what SCPIStorageSD.c contains. Read
+#     that as "the mirror still tracks the scanner for this file", not as a
+#     conformance test of the scanner: it is a same-input comparison, and a
+#     scanner change this file cannot express passes it. So that file is a
+#     source a host test reads, exactly like Logger.h, and is listed below
+#     for the same reason. It is the only tools/ entry here; the path is
+#     deliberately the one file and not tools/lint/**, none of whose other
+#     checkers any host test reads.
 
 on:
   pull_request:
@@ -74,6 +110,13 @@ on:
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      # #1001: the generated length-guard fixture reads the log-line ceiling
+      # out of both of these -- the constant from the .h, the two reservations
+      # that make it effective from the .c.
+      - 'firmware/src/Util/Logger.h'
+      - 'firmware/src/Util/Logger.c'
+      # ...and imports this scanner, cross-checking its own mask against it.
+      - 'tools/lint/check_log_ascii.py'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -86,6 +129,13 @@ on:
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      # #1001: the generated length-guard fixture reads the log-line ceiling
+      # out of both of these -- the constant from the .h, the two reservations
+      # that make it effective from the .c.
+      - 'firmware/src/Util/Logger.h'
+      - 'firmware/src/Util/Logger.c'
+      # ...and imports this scanner, cross-checking its own mask against it.
+      - 'tools/lint/check_log_ascii.py'
       - '.github/workflows/host-tests.yml'
 
 permissions:

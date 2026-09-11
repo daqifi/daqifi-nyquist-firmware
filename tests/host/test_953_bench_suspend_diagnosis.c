@@ -81,12 +81,14 @@
  * and the ticket's proposed ordering would not have: under "suspend first",
  * row 2 would also move, taking #690's recorded refusal with it.
  *
- * WHAT THIS FILE DELIBERATELY DOES NOT MEASURE
+ * THE LENGTH GUARD (#1001) -- WHAT IT MEASURES, AND WHY BY GENERATION
  *
- * The lengths of the strings the cascade prints. #986 shortened the quarantine
- * reason because Logger cuts a formatted line at LOG_MESSAGE_SIZE - 3 and it
- * did not fit; a regression guard for that belongs here, and THREE attempts at
- * one were each defeated in review before the mechanism was withdrawn:
+ * #986 shortened the quarantine reason because Logger cuts a formatted line
+ * and it did not fit: the line arrived cut at "then SYST:STOR:SD:ENAb", losing
+ * the command that clears a quarantine from the message whose entire job is to
+ * name it. Nothing then stopped that recurring, and THREE attempts at a guard
+ * were each defeated in review of PR #983 before the mechanism was withdrawn
+ * and the design filed as #1001:
  *
  *   a grep for the reason's own words   -- the words that matter are a
  *                                          substring of the longer string they
@@ -101,9 +103,72 @@
  *                                          firmware, which is what the two
  *                                          above existed to prevent
  *
- * Each fix drew the next finding, which is the signal to stop adding
- * machinery. The guard needs to measure the REAL strings -- extracted from the
- * source, not copied -- and that is a design, not a patch. #1001.
+ * Each fix drew the next finding because all three pinned something ABOUT the
+ * strings instead of measuring the strings. So the guard measures the real
+ * ones. gen_1001_suspend_reason_fixture.py brace-matches
+ * SD_SuspendReasonText()'s body in SCPIStorageSD.c and decodes every literal
+ * it returns (adjacent-literal concatenation included -- the quarantine reason
+ * is spelled across two source lines and the compiler joins them with no extra
+ * characters), together with the four LOG_E format strings that interpolate
+ * those returns, the longest command mnemonic that can reach each one, and the
+ * character ceiling parsed out of Logger.h and Logger.c. It writes
+ * gen_1001_suspend_reasons.h, which this file includes and does arithmetic on.
+ *
+ * Nothing below is a copy, which retires all three defeat classes at once:
+ * there are no words to grep for, no hash for a respacing to slip past, and
+ * the three reason fixtures the older cases in this file used to declare for
+ * themselves ARE the generated strings now (see Fixtures), so they cannot
+ * drift from the firmware either. Respacing a reason inside its own literal is
+ * measured, not special-cased: the generator decodes the literal and this file
+ * takes strlen() of the result, so a changed byte count changes the
+ * measurement and an unchanged one provably cannot matter.
+ *
+ * THE ARITHMETIC, re-derived from Logger.c (LogMessageFormatImpl)
+ *
+ *     char buffer[LOG_MESSAGE_SIZE];                                 // 128
+ *     size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, format, args);
+ *     size = min((LOG_MESSAGE_SIZE - 3), size);
+ *
+ * vsnprintf writes at most (LOG_MESSAGE_SIZE - 2) - 1 = 125 characters before
+ * its NUL and RETURNS the length it would have written; the clamp then caps
+ * what is kept at LOG_MESSAGE_SIZE - 3 = 125. The two agree today, and the
+ * generator emits the min of them so a change to either is followed rather
+ * than assumed away. A formatted line of L characters therefore survives
+ * intact iff L <= 125, and the assertion each (reason x call site) pair has to
+ * satisfy is
+ *
+ *     prefixLen + strlen(reason) <= GEN_1001_LOG_SURVIVING_CHARS
+ *
+ * where prefixLen is the format's own characters -- its trailing CRLF included
+ * -- with the mnemonic substituted and the reason removed.
+ *
+ * That is the STRICT bound and it is chosen over a two-character-looser one
+ * deliberately. At L = 126 or 127 the message TEXT still survives: what gets
+ * cut is the format's own CRLF, the newline fixup under the clamp then does
+ * not find a "\r\n" at the end and appends one, and the line arrives complete
+ * but carrying a stray CR (nothing overflows either -- 127 < LOG_MESSAGE_SIZE,
+ * so LogMessageAdd still accepts it). The strict bound is asserted because it
+ * is the only one under which the emitted line is exactly the line the format
+ * describes, and the two characters of slack buy nothing anyone wants.
+ *
+ * WHICH CALLERS ARE COVERED -- and the one that cannot be
+ *
+ * All four LOG_E sites in SCPIStorageSD.c, which is every caller in this file.
+ * SD_ArmOrRefuseWithCleanup is the BINDING one: six mnemonics reach it through
+ * the SD_ArmOrRefuse wrapper and the longest ("DELete"/"FORmat") leave 82
+ * characters, less than SD_RefuseIfSuspended's 86 with "BENCHmark" and less
+ * than either fixed-"BENCH" site in SCPI_StorageSDBenchmark (83 and 84).
+ *
+ * SCPIInterface.c interpolates these same returns at three more sites and is
+ * NOT read by this guard (#1001 excludes it; it is also under concurrent edit).
+ * Two of those three are looser than the binding site measured here -- 83
+ * characters each -- so this file's budget already covers them. The third
+ * cannot be covered by any reason string: SCPI_StartStreamingClaimed's
+ * arm-raced refusal has an 88-character prefix plus CRLF, leaving 35, so all
+ * three reasons are cut there, the shortest included. Shortening reasons
+ * cannot fix it; that prefix has to shorten. It is #1000, and it is left out
+ * rather than folded in so that a budget nothing can satisfy does not sit in
+ * this table looking actionable.
  *
  * THE TRANSIENT QUADRANT, AND WHY IT IS STILL OPEN
  *
@@ -166,6 +231,14 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include "test_framework.h"
+
+/* #1001. GENERATED from SCPIStorageSD.c + Logger.h/Logger.c by
+ * gen_1001_suspend_reason_fixture.py, which the Makefile runs as a
+ * prerequisite of this binary -- so an edit to any of those three sources
+ * regenerates it rather than leaving this file measuring a stale fixture. The
+ * include is unconditional on purpose: if the header is missing and cannot be
+ * produced, this test fails to COMPILE. It has no way to quietly skip. */
+#include "gen_1001_suspend_reasons.h"
 
 /* ==========================================================================
  * The three diagnoses the branch can reach.
@@ -264,18 +337,27 @@ static BenchVerdict new_bench_not_ready_diagnosis(BenchEnv *env)
 /* ==========================================================================
  * Fixtures
  *
- * The suspend strings are SD_SuspendReasonText()'s real returns
- * (SCPIStorageSD.c). They are inputs only -- this file does not test which of
- * the three that function picks (FIDELITY 5) -- but using the real text means
- * a pass-through that truncated or rewrote the reason would be visible.
+ * The suspend strings ARE SD_SuspendReasonText()'s real returns, extracted
+ * from SCPIStorageSD.c into kGen1001Reasons[] rather than declared here. They
+ * are inputs only -- this file does not test which of the three that function
+ * picks (FIDELITY 5) -- but using the real text means a pass-through that
+ * truncated or rewrote the reason would be visible.
+ *
+ * #1001 changed these three from copies to views. As copies they were the
+ * third defeated guard in miniature: correct on the day they were written and
+ * silently free to drift from the firmware afterwards. Indices bind meaning to
+ * source order, and generated_reasons_are_in_the_expected_order() below fails
+ * loudly if that order changes -- an ordering assertion, deliberately separate
+ * from the length measurement, so a reordering cannot quietly move which
+ * string a case thinks it is exercising.
  * ========================================================================== */
-static const char *const kReasonWifiStream =
-    "WiFi streaming owns SPI4 - SYST:STR:STOP first";
-static const char *const kReasonFwUpdate =
-    "a WiFi firmware update owns SPI4 - retry when it completes";
-static const char *const kReasonQuarantine =
-    "SD quarantined after a bus jam - reseat the card, "
-    "then SYST:STOR:SD:ENAble 1";
+#define GEN_1001_IDX_QUARANTINE   0
+#define GEN_1001_IDX_FW_UPDATE    1
+#define GEN_1001_IDX_WIFI_STREAM  2
+
+#define kReasonWifiStream  (kGen1001Reasons[GEN_1001_IDX_WIFI_STREAM])
+#define kReasonFwUpdate    (kGen1001Reasons[GEN_1001_IDX_FW_UPDATE])
+#define kReasonQuarantine  (kGen1001Reasons[GEN_1001_IDX_QUARANTINE])
 
 /* sd_card_manager_WriteRefuseText()'s SD_REFUSE_BUCKETS_EXHAUSTED arm. */
 static const char *const kRefuseBucketsExhausted =
@@ -310,7 +392,9 @@ static void env_init(BenchEnv *env, bool dirFull, const char *suspendReason)
  * version of this. */
 TEST(suspend_during_wait_is_diagnosed_not_blamed_on_the_card)
 {
-    static const char *const reasons[] = {
+    /* Not `static`: the initialisers are now reads of the generated array
+     * (#1001), which is not a constant expression. */
+    const char *const reasons[] = {
         kReasonWifiStream, kReasonFwUpdate, kReasonQuarantine
     };
     size_t i;
@@ -369,7 +453,9 @@ TEST(suspend_during_wait_is_diagnosed_not_blamed_on_the_card)
  * NEW agree here, so #953 leaves this quadrant exactly as #690 left it. */
 TEST(recorded_dir_full_refusal_outranks_a_later_suspend)
 {
-    static const char *const reasons[] = {
+    /* Not `static`: the initialisers are now reads of the generated array
+     * (#1001), which is not a constant expression. */
+    const char *const reasons[] = {
         kReasonWifiStream, kReasonFwUpdate, kReasonQuarantine
     };
     size_t i;
@@ -451,7 +537,8 @@ TEST(no_suspend_no_dir_full_still_reports_the_card)
  * suspend arm's message a second, independently-raced observation. */
 TEST(exactly_one_quadrant_moves_and_why_is_sampled_once)
 {
-    static const struct {
+    /* Not `static`: see the note in the sweeps above (#1001). */
+    const struct {
         bool        dirFull;
         const char *suspend;
         BenchDiag   expectOld;
@@ -500,14 +587,258 @@ TEST(exactly_one_quadrant_moves_and_why_is_sampled_once)
 }
 
 
+
+/* ==========================================================================
+ * #1001 -- the length guard
+ *
+ * Everything these four cases read comes out of gen_1001_suspend_reasons.h,
+ * which is regenerated from the firmware on every build. They assert, in
+ * order: that the generated fixture still describes the function it was
+ * written for; that its per-site prefix arithmetic recomputes; that every
+ * reason fits every site that prints it; and that source order still means
+ * what the fixture indices above say it means.
+ * ========================================================================== */
+
+/* `%s` conversions in a format string. Counted here, in C, rather than taken
+ * from the generator, so prefixLen below is recomputed from the format text
+ * instead of trusted. */
+static int count_string_conversions(const char *fmt)
+{
+    int n = 0;
+    const char *p;
+
+    for (p = fmt; *p != '\0'; p++) {
+        if (p[0] == '%' && p[1] == 's') {
+            n++;
+            p++;
+        }
+    }
+    return n;
+}
+
+/* Render a format string with its CRLF visible, so a failure report keeps the
+ * format on one line instead of breaking mid-message where the real "\r\n"
+ * sits. Truncates rather than grows: these formats are well under the buffer,
+ * and a diagnostic must not be the thing that overruns. */
+static const char *printable_format(const char *fmt, char *buf, size_t cap)
+{
+    size_t o = 0;
+    size_t i;
+
+    for (i = 0; fmt[i] != '\0' && o + 3 < cap; i++) {
+        if (fmt[i] == '\r' || fmt[i] == '\n') {
+            buf[o++] = '\\';
+            buf[o++] = (fmt[i] == '\r') ? 'r' : 'n';
+        } else {
+            buf[o++] = fmt[i];
+        }
+    }
+    buf[o] = '\0';
+    return buf;
+}
+
+/* The fixture describes the function this file was written against.
+ *
+ * The generator already refuses to emit a fixture whose counts differ -- it
+ * exits non-zero and writes nothing, so a changed function fails the BUILD
+ * rather than this assertion. These are restated here because the budget
+ * reasoning in the header comment (four sites, one of them binding; three
+ * reasons) is stated in terms of them, so a fixture that somehow arrived with
+ * different counts must not be measured as though the reasoning still held. */
+TEST(generated_fixture_still_describes_the_function_it_was_written_for)
+{
+    /* SD_SuspendReasonText() returns three strings and one NULL. */
+    ASSERT_EQ(GEN_1001_REASON_COUNT, 3);
+    /* Four LOG_E sites in SCPIStorageSD.c interpolate them. */
+    ASSERT_EQ(GEN_1001_SITE_COUNT, 4);
+
+    /* Zero extracted literals must never read as "nothing to check" -- the
+     * vacuous pass is the failure mode every earlier attempt at this guard
+     * had. The generator fails first; this is the backstop. */
+    ASSERT_TRUE(GEN_1001_REASON_COUNT > 0);
+    ASSERT_TRUE(GEN_1001_SITE_COUNT > 0);
+
+    /* The ceiling is the tighter of Logger.c's two truncations, re-derived
+     * here from the three constants the generator read out of the source. */
+    ASSERT_EQ(GEN_1001_LOG_SURVIVING_CHARS,
+              (GEN_1001_LOG_MESSAGE_SIZE - GEN_1001_LOG_VSNPRINTF_RESERVE - 1
+               < GEN_1001_LOG_MESSAGE_SIZE - GEN_1001_LOG_CLAMP_RESERVE)
+              ? GEN_1001_LOG_MESSAGE_SIZE - GEN_1001_LOG_VSNPRINTF_RESERVE - 1
+              : GEN_1001_LOG_MESSAGE_SIZE - GEN_1001_LOG_CLAMP_RESERVE);
+
+    /* And every reason is non-empty printable text, so strlen() below is
+     * measuring a string and not an accident of extraction. */
+    {
+        int i;
+        for (i = 0; i < GEN_1001_REASON_COUNT; i++) {
+            ASSERT_TRUE(kGen1001Reasons[i] != NULL);
+            ASSERT_TRUE(strlen(kGen1001Reasons[i]) > 0);
+        }
+    }
+}
+
+/* Each site's prefix cost recomputes from its own format text.
+ *
+ * prefixLen is the one number in the fixture that is arithmetic rather than
+ * extraction, so it is the one number worth checking independently: the
+ * formatted line is the format's characters, less two for each `%s` that gets
+ * substituted, plus the mnemonic substituted into the first of them. If the
+ * generator's arithmetic and this recomputation disagree, one of them is
+ * wrong and the budget is not trustworthy either way. */
+TEST(generated_prefix_lengths_recompute_from_the_real_formats)
+{
+    int i;
+
+    for (i = 0; i < GEN_1001_SITE_COUNT; i++) {
+        const Gen1001Site *s = &kGen1001Sites[i];
+        int convs = count_string_conversions(s->format);
+        int expect;
+
+        /* One `%s` for the reason, optionally one before it for the command
+         * mnemonic -- and a mnemonic exactly when there are two. */
+        ASSERT_TRUE(convs == 1 || convs == 2);
+        ASSERT_EQ(strlen(s->worstCmd) > 0, convs == 2);
+
+        expect = (int)strlen(s->format) - 2 * convs + (int)strlen(s->worstCmd);
+        if (expect != s->prefixLen) {
+            char shown[256];
+
+            printf("    #1001 prefix arithmetic disagrees for %s "
+                   "(SCPIStorageSD.c:%d)\n"
+                   "          format   = \"%s\" (%d chars, %d x %%s)\n"
+                   "          mnemonic = \"%s\" (%d chars)\n"
+                   "          expected = %d, fixture says %d\n",
+                   s->func, s->line,
+                   printable_format(s->format, shown, sizeof shown),
+                   (int)strlen(s->format), convs,
+                   s->worstCmd, (int)strlen(s->worstCmd), expect,
+                   s->prefixLen);
+        }
+        ASSERT_EQ(s->prefixLen, expect);
+
+        /* A prefix that already fills the line leaves no room for any reason,
+         * which is #1000's shape -- and this file must not be the place that
+         * discovers it silently. */
+        ASSERT_TRUE(s->prefixLen < GEN_1001_LOG_SURVIVING_CHARS);
+    }
+}
+
+/* THE GUARD. Every reason, against every call site that prints it.
+ *
+ * This is the assertion #986 needed and did not have. It is a full cross
+ * product rather than a check against one precomputed worst case, so the
+ * failure report names the site that actually binds -- and so that a NEW site
+ * with a tighter prefix is caught by the site it tightens, not by arithmetic
+ * done somewhere else. */
+TEST(every_reason_fits_every_call_site_that_prints_it)
+{
+    int i, j;
+    int worstHeadroom = GEN_1001_LOG_SURVIVING_CHARS;
+
+    for (i = 0; i < GEN_1001_SITE_COUNT; i++) {
+        const Gen1001Site *s = &kGen1001Sites[i];
+
+        for (j = 0; j < GEN_1001_REASON_COUNT; j++) {
+            const char *reason = kGen1001Reasons[j];
+            int reasonLen = (int)strlen(reason);
+            int total = s->prefixLen + reasonLen;
+            int headroom = GEN_1001_LOG_SURVIVING_CHARS - total;
+
+            if (headroom < worstHeadroom) {
+                worstHeadroom = headroom;
+            }
+            if (total > GEN_1001_LOG_SURVIVING_CHARS) {
+                char shown[256];
+
+                printf("    #1001 TRUNCATION: a suspend reason does not fit "
+                       "the line that prints it.\n"
+                       "          call site : %s (SCPIStorageSD.c:%d)\n"
+                       "          format    : \"%s\"\n"
+                       "          mnemonic  : \"%s\" (longest that reaches "
+                       "this site)\n"
+                       "          prefix    : %d chars (format text + CRLF, "
+                       "mnemonic substituted)\n"
+                       "          reason    : %d chars -- \"%s\"\n"
+                       "          formatted : %d chars, but Logger keeps only "
+                       "%d\n"
+                       "          OVER BY   : %d chars, which are cut from the "
+                       "END of the reason.\n"
+                       "          Shorten the reason in "
+                       "SD_SuspendReasonText() (SCPIStorageSD.c),\n"
+                       "          or shorten this call site's format string. "
+                       "See #1001 / #986.\n",
+                       s->func, s->line,
+                       printable_format(s->format, shown, sizeof shown),
+                       s->worstCmd,
+                       s->prefixLen, reasonLen, reason, total,
+                       GEN_1001_LOG_SURVIVING_CHARS,
+                       total - GEN_1001_LOG_SURVIVING_CHARS);
+            }
+            ASSERT_TRUE(total <= GEN_1001_LOG_SURVIVING_CHARS);
+        }
+    }
+
+    /* The cross product must have had something to check. 3 x 4 = 12 pairs;
+     * an empty fixture would leave worstHeadroom at the ceiling and every
+     * assertion above unexecuted, which is exactly how a guard goes quiet. */
+    ASSERT_EQ(GEN_1001_SITE_COUNT * GEN_1001_REASON_COUNT, 12);
+    ASSERT_TRUE(worstHeadroom < GEN_1001_LOG_SURVIVING_CHARS);
+
+    /* Not asserted as an equality: headroom is expected to move whenever a
+     * reason or a format is legitimately reworded, and pinning the number
+     * would make every such edit a test failure with nothing wrong. It is
+     * printed instead, so a shrinking margin is visible in `make run`'s
+     * output before it becomes a truncation. */
+    printf("    #1001: %d reason(s) x %d call site(s), tightest margin %d "
+           "character(s) (budget %d)\n",
+           GEN_1001_REASON_COUNT, GEN_1001_SITE_COUNT, worstHeadroom,
+           GEN_1001_REASON_BUDGET);
+}
+
+/* Source order still means what the fixture indices claim.
+ *
+ * The three cases above this section pass kGen1001Reasons[] entries by index
+ * (kReasonQuarantine and friends), so a reordering of the function's arms
+ * would silently change which string each of them exercises. Keywords are
+ * enough to tell the three apart and cannot hide a length change, because
+ * length is measured separately and from the decoded bytes -- this is an
+ * identity check, deliberately not a content check. */
+TEST(generated_reasons_are_in_the_expected_order)
+{
+    ASSERT_TRUE(strstr(kReasonQuarantine, "quarantined") != NULL);
+    ASSERT_TRUE(strstr(kReasonFwUpdate, "firmware update") != NULL);
+    ASSERT_TRUE(strstr(kReasonWifiStream, "streaming") != NULL);
+
+    /* Distinct strings, so the three cases above are not all one case. */
+    ASSERT_TRUE(strcmp(kReasonQuarantine, kReasonFwUpdate) != 0);
+    ASSERT_TRUE(strcmp(kReasonFwUpdate, kReasonWifiStream) != 0);
+    ASSERT_TRUE(strcmp(kReasonQuarantine, kReasonWifiStream) != 0);
+
+    /* The quarantine reason is the long one -- it is the string #986 had to
+     * shorten, and the one with the least headroom today. If it stops being
+     * the longest, the headroom print above is reporting a different string
+     * than the prose in this file describes. */
+    ASSERT_TRUE(strlen(kReasonQuarantine) > strlen(kReasonFwUpdate));
+    ASSERT_TRUE(strlen(kReasonQuarantine) > strlen(kReasonWifiStream));
+}
+
+
 int main(void)
 {
     printf("#953 -- SD:BENCHmark file-not-ready diagnosis (extracted cascade)\n");
+    printf("#1001 - SD_SuspendReasonText() lengths vs their real callers "
+           "(generated fixture)\n");
     printf("---------------------------------------------\n");
     RUN(suspend_during_wait_is_diagnosed_not_blamed_on_the_card);
     RUN(recorded_dir_full_refusal_outranks_a_later_suspend);
     RUN(dir_full_without_suspend_is_unchanged_by_953);
     RUN(no_suspend_no_dir_full_still_reports_the_card);
     RUN(exactly_one_quadrant_moves_and_why_is_sampled_once);
+
+    /* #1001 -- the reason strings measured against their real callers. */
+    RUN(generated_fixture_still_describes_the_function_it_was_written_for);
+    RUN(generated_prefix_lengths_recompute_from_the_real_formats);
+    RUN(every_reason_fits_every_call_site_that_prints_it);
+    RUN(generated_reasons_are_in_the_expected_order);
     return TEST_SUMMARY();
 }

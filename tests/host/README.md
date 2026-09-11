@@ -81,6 +81,68 @@ two greps. What it copies is the **order of the three arms**, so the Makefile
 guards that instead: it locates each arm's marker in `SCPIStorageSD.c` and
 **fails the build** unless they still appear as dir-full → suspend → card.
 
+### The reason-string length guard (#1001)
+
+The same file also measures how long `SD_SuspendReasonText()`'s returns are
+allowed to be. `Logger` truncates a formatted line, and #986 was a reason that
+did not fit: it arrived cut at `then SYST:STOR:SD:ENAb`, losing the command
+that clears a quarantine from the message whose only job was to name it.
+
+**Why this needed a generator rather than a copy.** Three guards were tried in
+PR #983 and each was defeated in review before the mechanism was withdrawn and
+the design filed as #1001:
+
+| attempt | how it was defeated |
+|---|---|
+| `grep -qF 'then SYST:STOR:SD:ENAble 1'` on the source | the matched words are a substring of the 95-character string they replaced **and** of the comment explaining the replacement, so the grep passed for exactly the state it existed to catch |
+| sha256 of the function's text | the pipeline ran `tr -s '[:space:]' ' '`, collapsing whitespace **inside** the literals, so a reason respaced in its own text left the hash unchanged |
+| the test measuring its own copies against a `-D` limit | copies drift from the firmware, which is what the first two existed to prevent |
+
+All three pinned something *about* the strings. A fourth of that kind would
+have drawn a fourth finding, so the guard measures the strings themselves:
+
+- `gen_1001_suspend_reason_fixture.py` brace-matches `SD_SuspendReasonText()`
+  in `SCPIStorageSD.c` (string-, char- and comment-aware, so a brace in prose
+  cannot close the body) and decodes **every literal it returns**, joining
+  adjacent literals the way the compiler does — the quarantine reason is
+  spelled across two source lines.
+- It also extracts the **four** `LOG_E` format strings in that file which
+  interpolate the reason, the longest command mnemonic that can reach each one
+  (following `SD_ArmOrRefuse`'s forwarding into
+  `SD_ArmOrRefuseWithCleanup`, without which the binding site would be
+  measured against one mnemonic instead of six), and the character ceiling —
+  `LOG_MESSAGE_SIZE` from `Logger.h` plus **both** reservations in
+  `Logger.c`, of which the tighter wins.
+- The output, `gen_1001_suspend_reasons.h`, is a build artifact (gitignored)
+  and a Makefile **prerequisite** of the test binary, so editing any of those
+  three firmware files regenerates it. The test `#include`s it
+  unconditionally: if the header is missing and cannot be produced, the test
+  fails to *compile*. There is no route by which it quietly skips.
+- The test then asserts `prefixLen + strlen(reason) <=
+  GEN_1001_LOG_SURVIVING_CHARS` for **every** (reason x call site) pair — 3 x
+  4 = 12 — and recomputes each `prefixLen` from the format text in C rather
+  than trusting the generator's arithmetic. On failure it names the site, the
+  format, the mnemonic, both lengths and the overshoot.
+
+The generator **refuses to guess**: it exits non-zero and writes nothing if the
+function cannot be found, if a `return` in it is neither `NULL` nor string
+literals, if the literal or call-site counts change in *either* direction, if a
+format carries a conversion whose length it cannot bound, if a mnemonic cannot
+be traced, or if either `Logger` constant will not parse — each with a message
+naming what a human has to re-derive. That is why this target, uniquely, has no
+grep guard in the Makefile: there is no copy to check.
+
+**Coverage, stated narrowly.** The four sites in `SCPIStorageSD.c` are every
+caller in that file; `SD_ArmOrRefuseWithCleanup` binds, leaving 82 characters.
+`SCPIInterface.c` interpolates the same returns at three further sites and is
+deliberately not read (out of scope per #1001). Two of those are looser than
+the binding site measured here, so this budget already covers them; the third,
+`SCPI_StartStreamingClaimed`'s arm-raced refusal, leaves only 35 characters, so
+**all three** reasons are cut there and no reason string can be made short
+enough. That prefix has to shorten instead — it is **#1000**, and it is left
+out rather than folded in so a budget nothing can satisfy does not sit in the
+table looking actionable.
+
 `test_json_string_escape.c` covers `firmware/src/services/JSON_StringEscape.h`
 (issue #164) — the JSON string-escaping helper split out of `JSON_Encoder.c`
 so it can be compiled and tested here with no board dependencies. Neither
