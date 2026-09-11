@@ -1486,19 +1486,36 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
          * mis-diagnosis this issue is about, in the one quadrant a sample taken
          * only at the timeout cannot see.
          *
-         * So latch the FIRST reason observed and keep it. Sampled every
-         * iteration until it latches, i.e. at 100 Hz. What that can still miss
-         * is a suspension whose whole lifetime falls between two samples, and
-         * none of the three causes can be that short: each is bounded below by a
+         * So latch that a suspension WAS observed. Sampled every iteration
+         * until it latches, i.e. at 100 Hz. What that can still miss is a
+         * suspension whose whole lifetime falls between two samples, and none
+         * of the three causes can be that short: each is bounded below by a
          * WiFi streaming session, a WiFi firmware update, or a quarantine that
-         * does not self-clear at all. */
-        const char *whySeen = NULL;
+         * does not self-clear at all.
+         *
+         * A BOOL, deliberately, and not the reason string (review round 1
+         * again). SD_SuspendReasonText() admits on either
+         * app_SDCard_SpiOwnedByWifi() or SpiBusHealth_IsSdSuspended() and then
+         * re-reads quarantine and FW-update separately to choose WHICH cause to
+         * name, falling through to the streaming message -- so a cause that
+         * ends between those reads is reported as a different one. Keeping the
+         * string would make one such misread STICK for the rest of the wait and
+         * tell the operator to stop a stream that was never the problem.
+         * (The misread itself is older than this change and reachable from
+         * every #589 refusal; it is filed separately, not fixed here.)
+         *
+         * What is retained is the part that cannot be misattributed -- that the
+         * SD task stopped during this wait -- which is also the whole of what
+         * the operator can act on once it has stopped again: retry. When a
+         * suspension is still in force at the timeout the live read names its
+         * owner, exactly as before. */
+        bool sawSuspension = false;
         while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
             if (sd_card_manager_StartupDirFull()) {   /* #690: early-exit */
                 break;
             }
-            if (whySeen == NULL) {
-                whySeen = SD_SuspendReasonText();
+            if (!sawSuspension && SD_SuspendReasonText() != NULL) {
+                sawSuspension = true;
             }
             vTaskDelay(pdMS_TO_TICKS(10));
             readyWait++;
@@ -1552,13 +1569,14 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
              * different owner (or none) and print a reason other than the one
              * that steered the branch. */
             const char *why = SD_SuspendReasonText();
-            if (why == NULL) {
+            if (why == NULL && sawSuspension) {
                 /* Still arm 2, not a fourth arm: a suspension that has since
                  * lifted destroyed this arm just as surely as one still in
-                 * force. Live is preferred when there is one, because a reason
-                 * in force NOW is what the operator has to clear before a retry
-                 * can work; the latched one speaks only when nothing is. */
-                why = whySeen;
+                 * force. It names no owner because there is none left to name
+                 * and none that could be named without risking the wrong one --
+                 * and because "retry" is the whole of what is left to do. */
+                why = "the SD task was suspended during the wait and this "
+                      "benchmark's write was torn down with it - retry";
             }
             if (sd_card_manager_StartupDirFull()) {
                 /* #690: name the real cause instead of the card advisory.

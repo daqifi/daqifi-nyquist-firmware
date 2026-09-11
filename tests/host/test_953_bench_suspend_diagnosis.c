@@ -263,7 +263,9 @@ static BenchVerdict new_bench_not_ready_diagnosis(BenchEnv *env)
 
 typedef struct {
     /* What SD_SuspendReasonText() would answer at each poll; NULL = nothing
-     * owns the bus at that instant. */
+     * owns the bus at that instant. The loop only ever compares this against
+     * NULL -- see model_wait_latch() -- so WHICH reason appears here changes
+     * nothing, which is the point of the bool. */
     const char *sample[BENCH_WAIT_MAX_POLLS];
     /* What sd_card_manager_StartupDirFull() would answer at each poll. The
      * loop breaks on the first true, which is why a reason later in the
@@ -276,33 +278,44 @@ typedef struct {
     unsigned    calls;
 } BenchWait;
 
-static const char *model_wait_latch(BenchWait *w)
+static bool model_wait_latch(BenchWait *w)
 {
-    const char *whySeen = NULL;
+    bool saw = false;
     size_t i;
 
     for (i = 0; i < w->polls; i++) {
         if (w->dirFullAt[i]) {
             break;
         }
-        if (whySeen == NULL) {
+        if (!saw) {
             w->calls++;
-            whySeen = w->sample[i];
+            saw = (w->sample[i] != NULL);
         }
     }
-    return whySeen;
+    return saw;
 }
+
+/* What the fallback says. It names no owner, and that is the second half of
+ * the round-1 change: SD_SuspendReasonText() admits on aggregate ownership and
+ * then re-reads the specific causes to choose which to name, so a cause that
+ * ends between those reads is reported as a different one. Retaining a STRING
+ * would make one such misread stick for the rest of the wait. Retaining the
+ * fact cannot be misattributed -- and once the suspension has lifted, "retry"
+ * is the whole of the action left anyway. */
+static const char *const kReasonTornDownDuringWait =
+    "the SD task was suspended during the wait and this benchmark's write "
+    "was torn down with it - retry";
 
 /* POST-#953 with the round-1 fallback. Identical to
  * new_bench_not_ready_diagnosis() except that a NULL live reason defers to the
- * latched one -- the arms, and their order, are untouched. */
+ * latched FACT -- the arms, and their order, are untouched. */
 static BenchVerdict latched_bench_not_ready_diagnosis(BenchEnv *env,
-                                                      const char *whySeen)
+                                                      bool sawSuspension)
 {
     BenchVerdict v;
     const char *why = mock_suspend_reason_text(env);
-    if (why == NULL) {
-        why = whySeen;
+    if (why == NULL && sawSuspension) {
+        why = kReasonTornDownDuringWait;
     }
     if (mock_startup_dir_full(env)) {
         v.diag = DIAG_STARTUP_DIR_FULL;
@@ -589,7 +602,7 @@ TEST(a_suspension_that_lifts_before_the_timeout_is_still_named)
         BenchEnv oldEnv, round0Env, round1Env;
         BenchVerdict oldV, round0V, round1V;
         BenchWait wait;
-        const char *latched;
+        bool latched;
 
         wait_init(&wait, 6);
         wait.sample[2] = reasons[i];   /* present mid-wait ... */
@@ -607,7 +620,7 @@ TEST(a_suspension_that_lifts_before_the_timeout_is_still_named)
         round1V = latched_bench_not_ready_diagnosis(&round1Env, latched);
 
         /* The loop saw it. */
-        ASSERT_TRUE(latched == reasons[i]);
+        ASSERT_TRUE(latched);
 
         /* Pre-#953 blames the card -- expected, it has no suspend arm. */
         ASSERT_EQ(oldV.diag, DIAG_GENERIC_TIMEOUT);
@@ -616,13 +629,22 @@ TEST(a_suspension_that_lifts_before_the_timeout_is_still_named)
         ASSERT_EQ(round0V.diag, DIAG_GENERIC_TIMEOUT);
         ASSERT_EQ(round0V.diag, oldV.diag);
 
-        /* ROUND-1 names the owner instead. */
+        /* ROUND-1 reports the suspension instead of the card. */
         ASSERT_EQ(round1V.diag, DIAG_SUSPEND_REASON);
         ASSERT_TRUE(round1V.diag != round0V.diag);
-        ASSERT_TRUE(round1V.text == reasons[i]);
+
+        /* And it does NOT name an owner. That is not a shortcut: by the
+         * timeout there is no owner left, and the label that WOULD be
+         * retained is the one SD_SuspendReasonText() can misattribute when a
+         * cause ends between its aggregate admission and its specific
+         * re-reads. The sweep is what pins it -- the verdict is the same
+         * string for all three causes, so nothing about it can be wrong about
+         * WHICH one it was. */
+        ASSERT_TRUE(round1V.text == kReasonTornDownDuringWait);
+        ASSERT_TRUE(round1V.text != reasons[i]);
         if (round1V.text != NULL) {
-            ASSERT_TRUE(strcmp(round1V.text, reasons[i]) == 0);
-            ASSERT_EQ(strlen(round1V.text), strlen(reasons[i]));
+            ASSERT_TRUE(strcmp(round1V.text, kReasonTornDownDuringWait) == 0);
+            ASSERT_EQ(strlen(round1V.text), strlen(kReasonTornDownDuringWait));
         }
     }
 }
@@ -638,49 +660,63 @@ TEST(a_live_reason_outranks_the_latched_one)
     BenchEnv env;
     BenchVerdict v;
     BenchWait wait;
-    const char *latched;
+    bool latched;
 
     wait_init(&wait, 4);
     wait.sample[0] = kReasonWifiStream;      /* earlier owner */
     latched = model_wait_latch(&wait);
-    ASSERT_TRUE(latched == kReasonWifiStream);
+    ASSERT_TRUE(latched);
 
     env_init(&env, false, kReasonQuarantine); /* different owner, live now */
     v = latched_bench_not_ready_diagnosis(&env, latched);
 
     ASSERT_EQ(v.diag, DIAG_SUSPEND_REASON);
     ASSERT_TRUE(v.text == kReasonQuarantine);
-    ASSERT_TRUE(v.text != kReasonWifiStream);
+    ASSERT_TRUE(v.text != kReasonTornDownDuringWait);
     /* Still exactly one live sample in the cascade -- the round-0 property
      * this round must not have broken. */
     ASSERT_EQ(env.suspendReasonCalls, 1);
 }
 
-/* The latch keeps the FIRST reason and stops asking. Both halves matter: a
- * loop that overwrote would report whichever owner happened to be last, and a
- * loop that kept polling after latching would pay 500 calls for an answer it
- * already had. */
-TEST(the_latch_keeps_the_first_reason_and_then_stops_asking)
+/* The latch records a FACT, not a label, and then stops asking.
+ *
+ * The timeline hands it three DIFFERENT causes in sequence -- the shape that
+ * would expose a retained string as the wrong one -- and the verdict is the
+ * same owner-free message it would be for any of them.
+ *
+ * Measured, not asserted: a mutant that latches
+ * `whySeen = SD_SuspendReasonText()` and reports it fails exactly TWO tests,
+ * this one and the transient sweep above, and passes the other eight. An
+ * earlier draft of this comment claimed it failed only this one; it does not,
+ * because the sweep pins the reported text as well as the arm.
+ *
+ * The call count is the second half: a loop that kept polling after latching
+ * would pay up to 500 calls for an answer it already had. */
+TEST(the_latch_records_a_fact_not_a_label_and_then_stops_asking)
 {
     BenchEnv env;
     BenchVerdict v;
     BenchWait wait;
-    const char *latched;
+    bool latched;
 
     wait_init(&wait, 6);
-    wait.sample[1] = kReasonFwUpdate;     /* first */
-    wait.sample[2] = kReasonWifiStream;   /* later, must not replace it */
-    wait.sample[3] = kReasonQuarantine;
+    wait.sample[1] = kReasonFwUpdate;     /* first ... */
+    wait.sample[2] = kReasonWifiStream;   /* ... then a different owner ... */
+    wait.sample[3] = kReasonQuarantine;   /* ... then a third. */
     latched = model_wait_latch(&wait);
 
-    ASSERT_TRUE(latched == kReasonFwUpdate);
+    ASSERT_TRUE(latched);
     /* Polls 0 and 1 asked; from 2 on the latch held, so nothing else did. */
     ASSERT_EQ(wait.calls, 2);
 
     env_init(&env, false, NULL);
     v = latched_bench_not_ready_diagnosis(&env, latched);
     ASSERT_EQ(v.diag, DIAG_SUSPEND_REASON);
-    ASSERT_TRUE(v.text == kReasonFwUpdate);
+    ASSERT_TRUE(v.text == kReasonTornDownDuringWait);
+    /* None of the three causes is named, so none can be named wrongly. */
+    ASSERT_TRUE(v.text != kReasonFwUpdate);
+    ASSERT_TRUE(v.text != kReasonWifiStream);
+    ASSERT_TRUE(v.text != kReasonQuarantine);
 }
 
 /* The ordering survives the fallback. A recorded #689/#690 refusal still
@@ -697,26 +733,26 @@ TEST(a_recorded_refusal_still_outranks_the_latched_reason)
     BenchEnv env;
     BenchVerdict v;
     BenchWait wait;
-    const char *latched;
+    bool latched;
 
-    /* (i) latched reason, dirFull true at the timeout. */
+    /* (i) suspension seen in the wait, dirFull true at the timeout. */
     wait_init(&wait, 5);
     wait.sample[0] = kReasonWifiStream;
     latched = model_wait_latch(&wait);
-    ASSERT_TRUE(latched == kReasonWifiStream);
+    ASSERT_TRUE(latched);
 
     env_init(&env, true, NULL);
     v = latched_bench_not_ready_diagnosis(&env, latched);
     ASSERT_EQ(v.diag, DIAG_STARTUP_DIR_FULL);
     ASSERT_TRUE(v.text == kRefuseBucketsExhausted);
-    ASSERT_TRUE(v.text != kReasonWifiStream);
+    ASSERT_TRUE(v.text != kReasonTornDownDuringWait);
 
     /* (ii) the refusal lands first, so the loop breaks and latches nothing. */
     wait_init(&wait, 6);
     wait.dirFullAt[1] = true;
     wait.sample[3]    = kReasonWifiStream;
     latched = model_wait_latch(&wait);
-    ASSERT_TRUE(latched == NULL);
+    ASSERT_TRUE(!latched);
     ASSERT_EQ(wait.calls, 1);   /* poll 0 only; poll 1 broke out */
 
     env_init(&env, true, NULL);
@@ -736,12 +772,12 @@ TEST(a_wait_with_no_suspension_at_all_still_reports_the_card)
     BenchEnv env;
     BenchVerdict v;
     BenchWait wait;
-    const char *latched;
+    bool latched;
 
     wait_init(&wait, BENCH_WAIT_MAX_POLLS);
     latched = model_wait_latch(&wait);
 
-    ASSERT_TRUE(latched == NULL);
+    ASSERT_TRUE(!latched);
     ASSERT_EQ(wait.calls, BENCH_WAIT_MAX_POLLS);  /* never latched, so it kept asking */
 
     env_init(&env, false, NULL);
@@ -761,7 +797,7 @@ int main(void)
     RUN(exactly_one_quadrant_moves_and_why_is_sampled_once);
     RUN(a_suspension_that_lifts_before_the_timeout_is_still_named);
     RUN(a_live_reason_outranks_the_latched_one);
-    RUN(the_latch_keeps_the_first_reason_and_then_stops_asking);
+    RUN(the_latch_records_a_fact_not_a_label_and_then_stops_asking);
     RUN(a_recorded_refusal_still_outranks_the_latched_reason);
     RUN(a_wait_with_no_suspension_at_all_still_reports_the_card);
     return TEST_SUMMARY();
