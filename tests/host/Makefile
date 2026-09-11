@@ -61,6 +61,25 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # and should be looked at rather than skipped.
 SUSPEND_BIN := run_953_tests
 
+# #164: JSON_StringEscape.h is header-only and dependency-free for the same
+# reason AD7609Scale.h is -- the pure byte-escaping logic was split out of
+# JSON_Encoder.c, which is unusable on a host (it pulls in
+# state/board/BoardConfig.h -> Harmony's configuration.h/definitions.h and the
+# whole board/driver graph). No UUT copy, no stubs, and NOT $(INCLUDES).
+JSONESC_BIN := run_json_escape_tests
+
+# #1004: SCPI_Help's shared-buffer write-abort bound. Same shape as
+# SUSPEND_BIN's sibling SD_BENCH_SRC-style guard and #995's own host test --
+# SCPIInterface.c is not includable on the host (libscpi + FreeRTOS + the
+# whole board/driver graph), so this re-implements the pre-fix and post-fix
+# write shapes against a mock clock and compares their verdicts. The three
+# firmware constants it depends on are a COPY; the recipe greps them (plus
+# the tick-rate/width assumption, same as #943/#995's grep) and refuses to
+# build on drift.
+HELP_BIN := run_1004_tests
+SCPI_IFACE_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
+FW_RTOS_CFG := ../../firmware/src/config/default/FreeRTOSConfig.h
+
 # #958: SD:BENCHmark's scratch FILENAME. Third target on the same
 # non-host-compilable file as BENCH_BIN and SUSPEND_BIN, same technique for the
 # same reason: the name generation is re-implemented against injected tick
@@ -88,32 +107,56 @@ SUSPEND_BIN := run_953_tests
 NAME_BIN := run_958_tests
 SD_MGR_HDR := ../../firmware/src/services/sd_card_services/sd_card_manager.h
 
-# #164: JSON_StringEscape.h is header-only and dependency-free for the same
-# reason AD7609Scale.h is -- the pure byte-escaping logic was split out of
-# JSON_Encoder.c, which is unusable on a host (it pulls in
-# state/board/BoardConfig.h -> Harmony's configuration.h/definitions.h and the
-# whole board/driver graph). No UUT copy, no stubs, and NOT $(INCLUDES).
-JSONESC_BIN := run_json_escape_tests
+# #1000: the #942 SD-log-arm refusal's LOG_E line, measured against the ceiling
+# Logger actually cuts at. Same host-testability constraint as HELP_BIN above
+# -- SCPIInterface.c is not includable here -- but the subject is a LENGTH, not
+# a control-flow shape, so there is nothing to re-implement. The test
+# reproduces Logger's truncation for real and runs the actual strings through
+# it.
+#
+# That only means anything if the strings and the ceiling are the REAL ones, so
+# this recipe EXTRACTS them into $(GEN_1000) rather than letting the test carry
+# copies: LOG_MESSAGE_SIZE from Logger.h, BOTH of Logger.c's reservations (the
+# vsnprintf bound and the clamp -- the arithmetic is split across the two
+# files, which is why both are prerequisites), and the LOG_E prefix plus the
+# call site's NULL fallback from SCPIInterface.c. A firmware change to any of
+# them re-derives the budget and fails if a line no longer fits, rather than
+# asking to be updated.
+#
+# Extraction has a failure mode a grep guard does not: finding NOTHING. An
+# empty prefix satisfies every budget assertion in the test while establishing
+# nothing at all -- the vacuous pass. So each extraction is checked non-empty
+# here, and the prefix is then ROUND-TRIPPED: reassembled into the full LOG_E
+# call text and required to appear verbatim in the source, which a silently
+# truncated extraction cannot satisfy. The build fails, by name, on any of it.
+#
+# The three SD_SuspendReasonText() strings are the one thing NOT extracted.
+# They belong to that function rather than to this call site, and #1001 is
+# building the mechanism that measures them against all of their callers; until
+# then they are copied into the test and each full return statement is grepped
+# here -- the whole statement including its closing quote and semicolon, not
+# the reason's own words, which is how the guard tried in #983 was defeated (it
+# matched the longer string it was meant to replace). A drifted copy fails the
+# build instead of quietly measuring a string the firmware no longer emits.
+SDLOG_BIN := run_1000_tests
+GEN_1000  := gen_1000_log_budget.h
+FW_LOG_H  := $(FW_UTIL)/Logger.h
+FW_LOG_C  := $(FW_UTIL)/Logger.c
 
-# #1004: SCPI_Help's shared-buffer write-abort bound. Same shape as
-# SUSPEND_BIN's sibling SD_BENCH_SRC-style guard and #995's own host test --
-# SCPIInterface.c is not includable on the host (libscpi + FreeRTOS + the
-# whole board/driver graph), so this re-implements the pre-fix and post-fix
-# write shapes against a mock clock and compares their verdicts. The three
-# firmware constants it depends on are a COPY; the recipe greps them (plus
-# the tick-rate/width assumption, same as #943/#995's grep) and refuses to
-# build on drift.
-HELP_BIN := run_1004_tests
-SCPI_IFACE_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
-FW_RTOS_CFG := ../../firmware/src/config/default/FreeRTOSConfig.h
-
-# Every binary depends on this file as well as on its sources. Four of the
-# targets below carry GUARDS in their recipes -- greps that fail the build when
+# Every binary depends on this file as well as on its sources. FIVE of the
+# nine targets below carry GUARDS in their recipes -- greps that fail the build when
 # the firmware text they model has moved -- and a guard that is only re-run when
 # a source changes is not re-run when the GUARD itself changes. CI is unaffected
 # either way (Actions checks out clean, so `make run` always builds from
 # nothing); this is for the local incremental build, where the binary outliving
 # an edited recipe is exactly how a guard goes quiet. Qodo, PR #983.
+#
+# The count moves every time a guarded suite is added and it has been wrong
+# more than once -- it read "Two" while four targets were guarded, then
+# "Four" on one branch and "Two" on another, which is how this merge found
+# it. Guarded now: BENCH_BIN, SUSPEND_BIN, HELP_BIN, NAME_BIN, SDLOG_BIN.
+# Naming them rather than only counting them makes the next drift visible
+# instead of arithmetic.
 RECIPES := Makefile
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
@@ -155,6 +198,27 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        echo "       before changing either."; \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
+
+$(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(FW_RTOS_CFG) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_WRITE_MAX_RETRIES is no longer '200' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_WRITE_MAX_RETRIES in test_1004_help_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+SCPI_WRITE_RETRY_DELAY_MS[[:space:]]+5[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_WRITE_RETRY_DELAY_MS is no longer '5' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_WRITE_RETRY_DELAY_MS in test_1004_help_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+SCPI_HELP_WRITE_BUDGET_MS[[:space:]]+2000U[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_HELP_WRITE_BUDGET_MS is no longer '2000U' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_HELP_BUDGET_MS in test_1004_help_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_RATE_HZ[[:space:]]+\( \( TickType_t \) 1000 \)[[:space:]]*$$' $(FW_RTOS_CFG) \
+	  || { echo "ERROR: configTICK_RATE_HZ is no longer 1000 Hz in $(FW_RTOS_CFG) -- re-derive test_1004's ms<->tick assumption."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_TYPE_WIDTH_IN_BITS[[:space:]]+TICK_TYPE_WIDTH_32_BITS[[:space:]]*$$' $(FW_RTOS_CFG) \
+	  || { echo "ERROR: configTICK_TYPE_WIDTH_IN_BITS is no longer 32-bit in $(FW_RTOS_CFG) -- re-derive test_1004's wrap tests."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(HELP_BIN) test_1004_help_write_abort.c
 
 $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BENCH_SRC) $(SD_MGR_HDR) $(RECIPES)
 	@tr -d '\r' < $(SD_BENCH_SRC) | tr '\n' ' ' \
@@ -238,34 +302,95 @@ $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BE
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(NAME_BIN) test_958_sd_benchmark_filename_collision.c
 
-$(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(FW_RTOS_CFG) $(RECIPES)
-	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_IFACE_SRC) \
-	  || { echo "ERROR: SCPI_WRITE_MAX_RETRIES is no longer '200' in $(SCPI_IFACE_SRC)."; \
-	       echo "       Update FW_WRITE_MAX_RETRIES in test_1004_help_write_abort.c and re-derive its numbers."; \
+$(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $(SD_BENCH_SRC) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
+	@grep -qF 'return "SD quarantined after a bus jam - reseat the card, "' $(SD_BENCH_SRC) \
+	  && grep -qF '"then SYST:STOR:SD:ENAble 1";' $(SD_BENCH_SRC) \
+	  && grep -qF 'return "a WiFi firmware update owns SPI4 - retry when it completes";' $(SD_BENCH_SRC) \
+	  && grep -qF 'return "WiFi streaming owns SPI4 - SYST:STR:STOP first";' $(SD_BENCH_SRC) \
+	  || { echo "ERROR: an SD_SuspendReasonText() return statement in $(SD_BENCH_SRC)"; \
+	       echo "       no longer matches the copy in test_1000_sd_log_arm_budget.c."; \
+	       echo "       That test measures those strings against the #942 refusal's"; \
+	       echo "       LOG_E prefix, so a drifted copy measures a string the device"; \
+	       echo "       does not emit. Update the REASON_ macros there, re-derive the"; \
+	       echo "       budget, and check the new length still fits."; \
 	       exit 1; }
-	@grep -qE '^#define[[:space:]]+SCPI_WRITE_RETRY_DELAY_MS[[:space:]]+5[[:space:]]*$$' $(SCPI_IFACE_SRC) \
-	  || { echo "ERROR: SCPI_WRITE_RETRY_DELAY_MS is no longer '5' in $(SCPI_IFACE_SRC)."; \
-	       echo "       Update FW_WRITE_RETRY_DELAY_MS in test_1004_help_write_abort.c and re-derive its numbers."; \
-	       exit 1; }
-	@grep -qE '^#define[[:space:]]+SCPI_HELP_WRITE_BUDGET_MS[[:space:]]+2000U[[:space:]]*$$' $(SCPI_IFACE_SRC) \
-	  || { echo "ERROR: SCPI_HELP_WRITE_BUDGET_MS is no longer '2000U' in $(SCPI_IFACE_SRC)."; \
-	       echo "       Update FW_HELP_BUDGET_MS in test_1004_help_write_abort.c and re-derive its numbers."; \
-	       exit 1; }
-	@grep -qE '^#define[[:space:]]+configTICK_RATE_HZ[[:space:]]+\( \( TickType_t \) 1000 \)[[:space:]]*$$' $(FW_RTOS_CFG) \
-	  || { echo "ERROR: configTICK_RATE_HZ is no longer 1000 Hz in $(FW_RTOS_CFG) -- re-derive test_1004's ms<->tick assumption."; \
-	       exit 1; }
-	@grep -qE '^#define[[:space:]]+configTICK_TYPE_WIDTH_IN_BITS[[:space:]]+TICK_TYPE_WIDTH_32_BITS[[:space:]]*$$' $(FW_RTOS_CFG) \
-	  || { echo "ERROR: configTICK_TYPE_WIDTH_IN_BITS is no longer 32-bit in $(FW_RTOS_CFG) -- re-derive test_1004's wrap tests."; \
-	       exit 1; }
-	$(CC) $(CFLAGS) -o $(HELP_BIN) test_1004_help_write_abort.c
+	@set -e; \
+	 msgsz=$$(sed -n 's/^#define[[:space:]]\{1,\}LOG_MESSAGE_SIZE[[:space:]]\{1,\}\([0-9]\{1,\}\)[[:space:]]*$$/\1/p' $(FW_LOG_H)); \
+	 vsnres=$$(sed -n 's/^[[:space:]]*size = vsnprintf(buffer, LOG_MESSAGE_SIZE - \([0-9]\{1,\}\), format, args);[[:space:]]*$$/\1/p' $(FW_LOG_C)); \
+	 clampres=$$(sed -n 's/^[[:space:]]*size = min((LOG_MESSAGE_SIZE - \([0-9]\{1,\}\)), size);[[:space:]]*$$/\1/p' $(FW_LOG_C)); \
+	 if [ -z "$$msgsz" ] || [ -z "$$vsnres" ] || [ -z "$$clampres" ]; then \
+	   echo "ERROR: could not read Logger's message ceiling out of $(FW_LOG_H) / $(FW_LOG_C)"; \
+	   echo "       (LOG_MESSAGE_SIZE='$$msgsz' vsnprintf reserve='$$vsnres' clamp reserve='$$clampres')."; \
+	   echo "       test_1000_sd_log_arm_budget.c derives its entire budget from those"; \
+	   echo "       three, and mirrors LogMessageFormatImpl's truncation. If that"; \
+	   echo "       function was reshaped, re-derive the mirror before re-enabling."; \
+	   exit 1; \
+	 fi; \
+	 nfb=$$(grep -cF '"the SD task is not accepting work");' $(SCPI_IFACE_SRC) || true); \
+	 if [ "$$nfb" != "1" ]; then \
+	   echo "ERROR: the #942 SD-log-arm refusal's NULL fallback string is not uniquely"; \
+	   echo "       present in $(SCPI_IFACE_SRC) (found $$nfb occurrences)."; \
+	   echo "       test_1000_sd_log_arm_budget.c anchors its prefix extraction on that"; \
+	   echo "       line -- re-read both before changing either."; \
+	   exit 1; \
+	 fi; \
+	 prefix=$$(grep -B1 -F '"the SD task is not accepting work");' $(SCPI_IFACE_SRC) \
+	          | sed -n 's/^[[:space:]]*LOG_E("\(.*\)%s\\r\\n",[[:space:]]*$$/\1/p'); \
+	 fallback=$$(grep -F '"the SD task is not accepting work");' $(SCPI_IFACE_SRC) \
+	          | sed -n 's/^[[:space:]]*why ? why : "\(.*\)");[[:space:]]*$$/\1/p'); \
+	 if [ -z "$$prefix" ] || [ -z "$$fallback" ]; then \
+	   echo "ERROR: could not extract the #942 refusal's LOG_E prefix or its NULL"; \
+	   echo "       fallback from $(SCPI_IFACE_SRC)."; \
+	   echo "       prefix=[$$prefix] fallback=[$$fallback]"; \
+	   echo "       The LOG_E format string must sit on ONE line, immediately above"; \
+	   echo "       the fallback, ending in the %s and CRLF escapes. An empty"; \
+	   echo "       extraction would pass every length assertion in"; \
+	   echo "       test_1000_sd_log_arm_budget.c while checking nothing, so this"; \
+	   echo "       refuses to build instead."; \
+	   exit 1; \
+	 fi; \
+	 if printf '%s%s' "$$prefix" "$$fallback" | grep -q '["\]'; then \
+	   echo "ERROR: the extracted prefix or fallback contains a quote or a backslash,"; \
+	   echo "       which this recipe cannot faithfully re-emit as a C string literal"; \
+	   echo "       in $(GEN_1000). Re-derive the extraction in tests/host/Makefile."; \
+	   exit 1; \
+	 fi; \
+	 want="LOG_E(\"$$prefix%s\\r\\n\","; \
+	 if ! grep -qF "$$want" $(SCPI_IFACE_SRC); then \
+	   echo "ERROR: the extracted prefix does not round-trip into $(SCPI_IFACE_SRC)."; \
+	   echo "       Reassembled as: $$want"; \
+	   echo "       A partial extraction understates the prefix length, which would"; \
+	   echo "       let test_1000_sd_log_arm_budget.c pass on a line the device cuts."; \
+	   exit 1; \
+	 fi; \
+	 printf '/* GENERATED at build time by tests/host/Makefile ($(SDLOG_BIN)).\n' > $(GEN_1000); \
+	 printf ' * Do not edit, do not commit -- see tests/host/.gitignore. */\n' >> $(GEN_1000); \
+	 printf '#ifndef GEN_1000_LOG_BUDGET_H\n#define GEN_1000_LOG_BUDGET_H\n' >> $(GEN_1000); \
+	 printf '#define FW_LOG_MESSAGE_SIZE      %s\n' "$$msgsz"    >> $(GEN_1000); \
+	 printf '#define FW_LOG_VSNPRINTF_RESERVE %s\n' "$$vsnres"   >> $(GEN_1000); \
+	 printf '#define FW_LOG_CLAMP_RESERVE     %s\n' "$$clampres" >> $(GEN_1000); \
+	 printf '#define FW_1000_PREFIX           "%s"\n' "$$prefix" >> $(GEN_1000); \
+	 printf '#define FW_1000_NULL_FALLBACK    "%s"\n' "$$fallback" >> $(GEN_1000); \
+	 printf '#endif\n' >> $(GEN_1000)
+	$(CC) $(CFLAGS) -o $(SDLOG_BIN) test_1000_sd_log_arm_budget.c
 
-# Every suite, and every one of the eight binaries. This spot has now collided
-# twice for the same reason -- fw#961 JSONESC_BIN vs fw#983 SUSPEND_BIN, then
-# fw#1012 HELP_BIN vs fw#958 NAME_BIN -- because two branches that each add a
-# target both add a line here. Resolved the same way both times: keep each
-# side's target rule intact and merge ONLY `run` and `clean`. Dropping a rule
-# loses a suite silently, and duplicating one silently shadows the other.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(HELP_BIN) $(NAME_BIN)
+# Every suite, and every one of the eight binaries. Merge conflict (fw#961
+# JSONESC_BIN vs fw#983 SUSPEND_BIN, both merging around the same time)
+# resolved by keeping each side's target intact and merging only `run` and
+# `clean` -- a duplicated rule here would silently shadow one of them.
+# Every suite, and every binary. SIXTH additive collision in this block:
+# fw#961 vs fw#983, fw#1012 vs fw#958, fw#913 vs fw#1004, and now fw#958 vs
+# fw#1000 -- every one two branches appending a line to these same two lists.
+# Resolved the same way every time: keep each side's target rule INTACT and
+# union only `run` and `clean`. Dropping a rule loses a suite silently;
+# duplicating one silently shadows the other.
+#
+# #1026 is the ticket to stop this and PR #1040 implements it, moving each
+# target into tests/host/tests/<issue>-<slug>.mk so a new suite appends to an
+# accumulator instead of editing a shared line. Whichever lands first, the
+# rest re-express their target as a fragment.
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(HELP_BIN) \
+     $(NAME_BIN) $(SDLOG_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -274,8 +399,10 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) 
 	./$(SUSPEND_BIN)
 	./$(HELP_BIN)
 	./$(NAME_BIN)
+	./$(SDLOG_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(HELP_BIN) $(NAME_BIN)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(HELP_BIN) \
+	      $(NAME_BIN) $(SDLOG_BIN) $(GEN_1000)
 
 .PHONY: run clean

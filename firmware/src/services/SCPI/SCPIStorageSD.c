@@ -148,12 +148,19 @@ const char *SD_SuspendReasonText(void)
          * entire job is to name it.
          *
          * NOT SAFE EVERYWHERE, and an earlier revision of this comment implied
-         * it was. This function is declared in the shared header and
-         * SCPI_StartStreamingClaimed (SCPIInterface.c) interpolates it into an
-         * 88-character prefix, which leaves 35 -- so ALL THREE reasons are cut
-         * there, the shortest included, and shortening reasons cannot fix it.
-         * That call site needs its own prefix shortened; measured and filed as
-         * #1000, not addressed here.
+         * it was. This function is declared in the shared header, and one of
+         * its callers -- SCPI_StartStreamingClaimed's #942 refusal
+         * (SCPIInterface.c) -- used to interpolate it into an 88-character
+         * prefix, which left 35: short of even the shortest reachable reason
+         * (46), so all three were cut, the shortest included. #1000 fixed
+         * that call site by shortening ITS prefix (27 characters, not the
+         * reason strings here) rather than this function's return values --
+         * shortening the reasons was never the available lever, since the
+         * ceiling is shared across callers with different prefix costs. This
+         * function's two other SCPIInterface.c callers (the "SD suspended: %s"
+         * prefix, 40 characters) were already within budget for all four
+         * reachable strings here (measured, not just assumed: 118 worst case
+         * against the same 125-byte ceiling) and needed no change.
          *
          * NOT guarded by a test. Three attempts at one were each defeated in
          * review -- a grep for the reason's own words matched the string it
