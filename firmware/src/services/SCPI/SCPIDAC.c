@@ -28,7 +28,7 @@
 
 // Flag to track if DAC hardware has been initialized.
 // volatile: written on whichever SCPI task initialises first and read by the
-// other (CLAUDE.md "Atomicity & Concurrency Rules"). Both are plain aligned
+// other (docs/MCU_REFERENCE.md "Atomicity & Concurrency Rules"). Both are plain aligned
 // scalars, so the accesses themselves are atomic on PIC32MZ; volatile is what
 // stops the compiler caching them or reordering the publish pair below.
 // #980 item 3: this is now ALSO cleared whenever the 10V rail drops, so it
