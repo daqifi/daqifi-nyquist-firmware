@@ -298,7 +298,19 @@ An unrecognised format value is **rejected** with `-224` since #801/#802; before
 | USB    | 15000 / 15000 | 180000/(10+n) | 34000/(1+n) |
 | WiFi   | 5175 / 4675   | 139000/(30+n) | min(20000/(2+n), 3050) |
 | SD     | 9000 / 7500   | 150000/(15+n) | 36000/(12+n) |
-| USB+SD | 8000 / 8000   | 66000/(6+n)   | 15000/(0+n) |
+| USB+SD | 8000 / 6500   | 66000/(6+n)   | 15000/(0+n) |
+
+> **⚠️ These are the NQ2/NQ3 coefficients.** `Streaming_TransportMaxFreq`
+> splits on `isNQ1`, and SEVEN of the cells above are the `else` branch, so NQ1
+> enforces different values: USB PB `22000` and `120000/(1+n)`, USB CSV `20000`
+> and `90000/(1+n)`, WiFi PB single `8000`, SD PB `13000` and `99000/(4+n)`
+> (#595/#600/#712). The remaining cells are shared by every variant.
+> The USB+SD CSV single is **6500** for every variant, and is deliberately
+> BELOW the 2-channel point of its own curve: 8000 was a 200 MHz-era
+> coefficient that leaked SD data at cap in 5 of 5 soak rounds, because the
+> #712 refit covered USB only — #719 lowered it, and this table went on
+> carrying the value that fix removed. `streaming.h` is authoritative; this
+> table is a reading aid, and splitting it per variant is **#1049**.
 
 **Fit basis (normative — the zero-loss sweep subset the F3 coefficients derive from, Hz):**
 
