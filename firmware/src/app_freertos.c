@@ -17,6 +17,7 @@
 #include "HAL/DioProbe.h"
 #include "HAL/UserEdge/UserEdge.h"
 #include "HAL/DAC7718/DAC7718.h"
+#include "services/SCPI/SCPIDAC.h"
 #include "Util/Logger.h"
 #include "Util/CoherentPool.h"
 #include "Util/StreamingBufferPool.h"
@@ -1005,6 +1006,7 @@ void app_SystemInit() {
     // Initialize DAC7718 global structures (NQ3 only)
     if (gpBoardConfig->BoardVariant == 3) {
         DAC7718_InitGlobal();
+        SCPIDAC_InitGlobal(); // #990 Finding 0: command-serialization mutex
         LOG_D("DAC7718 global structures initialized - hardware init deferred until power up");
         LOG_D("Board config AOut modules: Size=%d", gpBoardConfig->AOutModules.Size);
     }
