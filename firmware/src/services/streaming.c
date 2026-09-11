@@ -3348,7 +3348,17 @@ void streaming_Task(void) {
         // instead of stalling the encoder for 10 s first, and ADDITIONAL
         // messages are bounded so they can never build one.
         size_t batchXportFree = bufferSize;
-        /* #1021: the same min taken over ring CAPACITY, which is what decides
+        /* #1021: each active ring's capacity, computed once. Read here rather
+         * than at the four places that want one, because the write sites below
+         * need the SAME figure the batch was bounded against -- recomputing it
+         * per site invites the two drifting apart on a later edit. */
+        size_t usbCap = Streaming_RingCapacity(
+                StreamingBufferPool_UsbSize(), usbSize);
+        size_t wifiCap = Streaming_RingCapacity(
+                StreamingBufferPool_WifiSize(), wifiSize);
+        size_t sdCap = Streaming_RingCapacity(
+                StreamingBufferPool_SdCircularSize(), sdSize);
+        /* The same min taken over ring CAPACITY, which is what decides
          * "can never be written" as opposed to "cannot be written just yet".
          * Free space is the wrong test for that, and dangerously so: a
          * momentarily-full-but-draining ring reads free == 0, and condemning a
@@ -3359,36 +3369,26 @@ void streaming_Task(void) {
         switch (pRunTimeStreamConf->ActiveInterface) {
             case StreamingInterface_USB:
                 batchXportFree = usbSize;
-                batchXportCap = Streaming_RingCapacity(
-                        StreamingBufferPool_UsbSize(), usbSize);
+                batchXportCap = usbCap;
                 break;
             case StreamingInterface_WiFi:
                 batchXportFree = wifiSize;
-                batchXportCap = Streaming_RingCapacity(
-                        StreamingBufferPool_WifiSize(), wifiSize);
+                batchXportCap = wifiCap;
                 break;
             case StreamingInterface_SD:
                 batchXportFree = sdSize;
-                batchXportCap = Streaming_RingCapacity(
-                        StreamingBufferPool_SdCircularSize(), sdSize);
+                batchXportCap = sdCap;
                 break;
-            case StreamingInterface_UsbAndSd: {
+            case StreamingInterface_UsbAndSd:
                 batchXportFree = (usbSize < sdSize) ? usbSize : sdSize;
-                size_t usbCap = Streaming_RingCapacity(
-                        StreamingBufferPool_UsbSize(), usbSize);
-                size_t sdCap = Streaming_RingCapacity(
-                        StreamingBufferPool_SdCircularSize(), sdSize);
                 batchXportCap = (usbCap < sdCap) ? usbCap : sdCap;
                 break;
-            }
             default: break;
         }
         if (hasSD) {                         // SD-logging override also writes SD
             if (sdSize < batchXportFree) {
                 batchXportFree = sdSize;
             }
-            size_t sdCap = Streaming_RingCapacity(
-                    StreamingBufferPool_SdCircularSize(), sdSize);
             if (sdCap < batchXportCap) {
                 batchXportCap = sdCap;
             }
@@ -3580,8 +3580,7 @@ void streaming_Task(void) {
                 // (below) — multi-output backpressure pacing is a separate
                 // ticket (SD would pace USB).
                 size_t usbWr = Streaming_WriteWithRetry(
-                    Streaming_UsbWrite, buffer, packetSize,
-                    Streaming_RingCapacity(StreamingBufferPool_UsbSize(), usbSize));
+                    Streaming_UsbWrite, buffer, packetSize, usbCap);
                 if (usbWr == STREAM_WRITE_RETURN_TIMEOUT) {
                     bool pastGrace = Streaming_PastStartupGrace();
                     taskENTER_CRITICAL();
@@ -3647,8 +3646,7 @@ void streaming_Task(void) {
                 // streaming was stopped mid-retry, so STR:START quiescence isn't
                 // blocked.
                 size_t wifiWr = Streaming_WriteWithRetry(
-                    wifi_manager_WriteToBuffer, buffer, packetSize,
-                    Streaming_RingCapacity(StreamingBufferPool_WifiSize(), wifiSize));
+                    wifi_manager_WriteToBuffer, buffer, packetSize, wifiCap);
                 if (wifiWr == STREAM_WRITE_RETURN_TIMEOUT) {
                     bool pastGrace = Streaming_PastStartupGrace();
                     taskENTER_CRITICAL();
@@ -3700,8 +3698,7 @@ void streaming_Task(void) {
                 } else {
                     size_t wr = Streaming_WriteWithRetry(
                         sd_card_manager_WriteToBuffer, buffer, packetSize,
-                        Streaming_RingCapacity(
-                            StreamingBufferPool_SdCircularSize(), sdSize));
+                        sdCap);
                     if (wr == STREAM_WRITE_RETURN_TIMEOUT) {
                         /* True 10 s interface-dead timeout (pass-5 Qodo
                          * refinement): bump drop counters + QUES bit + log. */
