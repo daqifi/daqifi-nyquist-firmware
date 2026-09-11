@@ -483,7 +483,13 @@ static volatile SDBenchmarkResults_t gSDBenchmarkResults = {0};
  * rule prescribes one for those. The alternative is a reachability argument
  * -- 'only the claim holder can reach this line' -- and reachability
  * arguments have a poor record in this repo (see #896). One critical
- * section per benchmark command is not a cost worth reasoning about. */
+ * section per benchmark command is not a cost worth reasoning about.
+ *
+ * PAID FOR: StreamingBufferPool.c's STATIC_POOL_SIZE was trimmed 512 B for
+ * these four bytes, the third payment in that comment's list after #824
+ * and #925. Note the link SUCCEEDED without it -- 504 bytes of stack slack
+ * on this branch base -- and the payment was made anyway, for the reason
+ * stated there. */
 static uint32_t gBenchNameSeq = 0;
 
 scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {

@@ -37,8 +37,26 @@
  * zero and was never measured. The operative fact needs no such number:
  * ONE uint32_t did not fit, so any future static must come with its own
  * payment. Cost as above: ~7 more slots off a
- * partitioned capacity that is not the binding constraint. */
-#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U)
+ * partitioned capacity that is not the binding constraint.
+ *
+ * Trimmed a further 512 B (#958) to pay for SCPIStorageSD.c's
+ * gBenchNameSeq, the per-boot discriminator in SYST:STOR:SD:BENCHmark's
+ * scratch filename. Third payment, same mechanism, same nil cost.
+ *
+ * WHAT WAS OBSERVED THIS TIME, because it differs from the two above and
+ * the difference is the reason this comment insists on the rule anyway:
+ * the link SUCCEEDED without the payment. On the #958 branch head the map
+ * reported `stack 0x8007dde8 0x21f8 8696  Reserved for stack` against a
+ * _min_stack_size of 8192, i.e. 504 bytes of slack, so the 4-byte static
+ * fitted with room to spare.
+ *
+ * The payment is made regardless, and not as ceremony. 504 bytes is slack
+ * on ONE branch base at ONE moment; the merge target is main plus whatever
+ * else lands first, and the paragraph above records a head where a single
+ * uint32_t did not fit at all. A static that is funded cannot be the one
+ * that breaks someone else's link, and the cost of being wrong in this
+ * direction is ~7 slots of capacity nobody can use. */
+#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U - 512U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
 /* The overcommit fallback below carves these four minimums and expects the
