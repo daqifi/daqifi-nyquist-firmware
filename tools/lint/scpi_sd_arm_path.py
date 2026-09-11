@@ -212,6 +212,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # reuses it: a checker that counts calls inside comments reports on code that
 # is not shipped, and this file is heavily commented.
 from scpi_wiki_sync import strip_c_comments    # noqa: E402
+# THE definition rule, in one place. This file used to carry three matchers of
+# its own (`_DEF`, `function_body`, `signature_params`) and `hash_function.py`
+# carried a fourth, with a fifth grep in `tests/host/Makefile`. Six audit
+# findings across three rounds were all the same thing: two of those five
+# disagreeing about what a definition looks like. `cdef` is that rule and its
+# own self-test; see its module docstring for the six.
+from cdef import (AmbiguousDefinition, ANY_DEF, one_definition)  # noqa: E402
 
 # The helper that owns the refusal path, its NULL-passing wrapper, and the
 # claim taker each arm site must go through first. The manager primitives
@@ -286,38 +293,7 @@ def _blank(text):
 # the floor count still passed (#976 pre-merge audit). Ordinary formatting, not
 # an adversarial construct. ONE break only, so the prefix cannot run away
 # across unrelated lines.
-# The prefix must ABSORB `__attribute__((...))`. Without it this pattern
-# captured the attribute as the function's NAME: `SCPIStorageSD.c` carries
-# `bool __attribute__((weak)) DRV_SDSPI_GetCID(...)` today, and
-# `function_spans()` was recording a function literally called
-# `__attribute__` on shipped source -- harmless only because no arm site
-# happens to sit in that body, and a spurious CI failure the moment an
-# ordinary annotation is added to a function this checker reasons about
-# (#976 pre-merge audit, round 2, confirmed live in the tree).
-#
-# This is the SAME rule `tests/host/hash_function.py` uses, deliberately: the
-# two files answering "what is a definition" DIFFERENTLY was itself a bypass
-# -- a disabled original in one style plus a live replacement in the other
-# left the hasher with a single match and no ambiguity to report.
-_ATTR = r"(?:__attribute__\s*\(\((?:[^()]|\([^()]*\))*\)\)[\w \t\*]*)?"
-_HEAD = r"(?m)^[A-Za-z_][\w \t\*]*" + _ATTR + r"(?:[ \t]*\n[ \t]*)?"
-
-
-def _def_pattern(name, capture_params=False):
-    """The definition pattern for ONE named function.
-
-    Composed rather than re-typed. Writing it out per call site is what put
-    FOUR matchers in this file, each answering "what is a definition"
-    slightly differently, and every difference between them was either a
-    silent bypass or -- for `signature_params`, which kept a same-line-only
-    form after the others learned the split-line one -- a CI failure on
-    formatting that changes no behaviour (#976 pre-merge audit, rounds 2/3).
-    """
-    inner = r"([^;{]*)" if capture_params else r"[^;{]*"
-    return _HEAD + r"\b" + re.escape(name) + r"\s*\(" + inner + r"\)\s*\{"
-
-
-_DEF = re.compile(_HEAD + r"\b([A-Za-z_]\w*)\s*\([^;{]*\)\s*\{")
+_DEF = ANY_DEF
 
 
 def _match_brace(masked, start):
@@ -339,12 +315,12 @@ def function_body(text, name):
     `text` must already have comments stripped. Literals are blanked before
     brace counting so a brace inside a format string cannot unbalance the scan.
     """
-    # Same one-line-break tolerance as `_DEF`, and for the same reason: a
-    # definition that puts its return type on its own line is ordinary C, and
-    # without this `function_body` reported the function MISSING while the
-    # census (which uses `_DEF`) could see it -- two matchers disagreeing
-    # about the same file, with a confusing message as the visible symptom.
-    sig = re.search(_def_pattern(name), text)
+    # `one_definition` REFUSES two definitions rather than taking the first.
+    # Taking the first is how an `#if 0`-disabled original plus a live
+    # replacement -- calling the manager directly, with no claim and no arm --
+    # passed this lint clean (#976 pre-merge audit, round 4). The refusal
+    # propagates to `check()`, which turns it into a problem.
+    sig = one_definition(text, name)
     if not sig:
         return None
     start = sig.end() - 1
@@ -444,7 +420,7 @@ def call_arguments(body, name):
 
 def signature_params(text, name):
     """[parameter declaration, ...] of C function `name`, or None."""
-    sig = re.search(_def_pattern(name, capture_params=True), text)
+    sig = one_definition(text, name, capture_params=True)
     if not sig:
         return None
     inner = sig.group(1).strip()
@@ -976,18 +952,28 @@ def check(source_text):
     separate vacuity gate is needed here for that case."""
     text = strip_c_comments(source_text)
     problems = []
-    spans = function_spans(text)
-
-    fmt_problems, _retraction = _format_problems(text)
-    problems.extend(fmt_problems)
-    census, sites = _census_problems(text, spans)
-    problems.extend(census)
+    try:
+        spans = function_spans(text)
+        fmt_problems, _retraction = _format_problems(text)
+        problems.extend(fmt_problems)
+        census, sites = _census_problems(text, spans)
+        problems.extend(census)
+    except AmbiguousDefinition as exc:
+        # Reported, never resolved. Which definition the compiler builds is
+        # preprocessor state this checker does not evaluate, so a pass here
+        # would be a pass on code that may never be built.
+        return ["%s -- refusing to check either. If this is a board-variant "
+                "or #if 0 pair, the checker has to be taught which is live."
+                % exc], 0
     return problems, len(sites)
 
 
 def check_stream(source_text):
     """-> (problems, examined) for `SCPIInterface.c`. Pure, like check()."""
-    return _stream_arm_problems(strip_c_comments(source_text))
+    try:
+        return _stream_arm_problems(strip_c_comments(source_text))
+    except AmbiguousDefinition as exc:
+        return ["%s -- refusing to check either." % exc], 0
 
 
 # --------------------------------------------------------------------------
@@ -1185,6 +1171,19 @@ def self_test():
         helper_split = _GOOD.replace(
             "static bool SD_ArmOrRefuseWithCleanup(",
             "static bool\nSD_ArmOrRefuseWithCleanup(", 1)
+        # 6. Round 4: `function_body`/`signature_params` took the FIRST match
+        #    with no ambiguity check, so an `#if 0`-disabled original plus a
+        #    live replacement that called the manager DIRECTLY -- no claim, no
+        #    arm, no retraction -- passed this lint clean. `cdef` refuses, and
+        #    `check()` turns the refusal into a problem rather than a crash.
+        dead_pair = _GOOD.replace(
+            "static bool SD_ArmOrRefuse(",
+            "#if 0\nstatic bool SD_ArmOrRefuse(", 1)
+        dead_pair += ("#endif\nstatic bool SD_ArmOrRefuse(scpi_t * context, "
+                      "const char *cmd, void *cfg)\n{\n    return true;\n}\n")
+        _ck("two definitions are refused, not silently resolved",
+            any("refusing to choose" in x for x in check(dead_pair)[0]), True)
+
         _ck("the helper's parameters are found when its type is on its own line",
             callback_param(strip_c_comments(helper_split), ARM_HELPER)[0],
             ("onRefused", 3))

@@ -160,9 +160,15 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 # without the revised validation (#976 audit). Uses the shared RECIPES
 # variable (#983) rather than a literal "Makefile", same as every other
 # target below.
-$(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) hash_function.py $(RECIPES)
-	@grep -q '^static bool $(SD_ARM_HELPER)(' $(SD_BENCH_SRC) \
-	  || { echo "ERROR: no '^static bool $(SD_ARM_HELPER)(' line in $(SD_BENCH_SRC)."; \
+# `$(CDEF)` is a prerequisite because the definition RULE lives there now,
+# not in hash_function.py: without it an edit to the rule would leave this
+# binary up to date and the guard would run the previous rule, which is the
+# same defect `$(RECIPES)` was added for one level down (#976).
+CDEF := ../../tools/lint/cdef.py
+$(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) hash_function.py $(CDEF) $(RECIPES)
+	@python3 hash_function.py --find $(SD_BENCH_SRC) $(SD_ARM_HELPER) >/dev/null 2>&1 \
+	  || { python3 hash_function.py --find $(SD_BENCH_SRC) $(SD_ARM_HELPER); \
+	       echo "ERROR: $(SD_ARM_HELPER)() is not a single definition in $(SD_BENCH_SRC)."; \
 	       echo "       test_971_sd_arm_refusal_order.c models that function, and the"; \
 	       echo "       hash below extracts it from that line to its closing brace. If"; \
 	       echo "       it was renamed, moved, or its signature reformatted, re-read it"; \

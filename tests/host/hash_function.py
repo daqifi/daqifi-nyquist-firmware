@@ -18,93 +18,21 @@ today contains `LOG_E("SD:%s - could not arm ... %s\\r\\n", ...)`, and a naive
 comment strip would corrupt any literal that happened to contain `/*` or `//`.
 """
 import hashlib
+import os
 import re
 import sys
 
 
-def mask(src):
-    """`src` with every comment and literal blanked, LENGTH PRESERVED.
-
-    Length preservation is the point: offsets into the mask are offsets into
-    the original, so braces can be counted on text where no brace inside a
-    comment or a string can be mistaken for code.
-    """
-    out = list(src)
-    i, n = 0, len(src)
-    while i < n:
-        c = src[i]
-        if c in ('"', "'"):
-            quote = c
-            out[i] = " "
-            i += 1
-            while i < n:
-                ch = src[i]
-                if ch == "\\" and i + 1 < n:
-                    out[i] = out[i + 1] = " "
-                    i += 2
-                    continue
-                out[i] = " " if ch != "\n" else "\n"
-                i += 1
-                if ch == quote:
-                    break
-            continue
-        if c == "/" and i + 1 < n and src[i + 1] == "*":
-            end = src.find("*/", i + 2)
-            end = n if end < 0 else end + 2
-            for j in range(i, end):
-                out[j] = "\n" if src[j] == "\n" else " "
-            i = end
-            continue
-        if c == "/" and i + 1 < n and src[i + 1] == "/":
-            end = src.find("\n", i)
-            end = n if end < 0 else end
-            for j in range(i, end):
-                out[j] = " "
-            i = end
-            continue
-        i += 1
-    return "".join(out)
-
-
-class AmbiguousDefinition(Exception):
-    """Two or more definitions answer to the same signature.
-
-    Refusing is the only safe answer. Taking the FIRST one lets an ordinary
-    arrangement -- the live definition placed after an `#if 0`-disabled
-    original, or the `#if defined(NQ3)` board-variant pair this codebase
-    already uses elsewhere -- pin the digest to text the compiler never
-    builds, after which every edit to the ACTIVE helper is invisible to the
-    guard whose whole job is to see edits (#976 pre-merge audit, reproduced
-    against the real source: the digest stayed unchanged while the live code
-    was replaced wholesale). Taking the LAST is no better; which one is live
-    depends on preprocessor state this hasher does not evaluate.
-    """
-
-
-# ONE rule for "what does a definition of this function look like", shared by
-# every matcher that has to answer it. Three of them answered DIFFERENTLY
-# before, and each disagreement was a silent bypass: this hasher matched a
-# literal one-line prefix while the lint's `_DEF` had been taught to accept a
-# return type on its own line, so an `#if 0`-disabled original in the one-line
-# form plus a live replacement in the split-line form left exactly ONE literal
-# match -- the ambiguity guard never fired and the pin digested the DEAD copy
-# (#976 pre-merge audit, round 2, reproduced against real source). And the
-# prefix has to absorb `__attribute__((...))`: `SCPIStorageSD.c` already
-# carries `bool __attribute__((weak)) DRV_SDSPI_GetCID(...)` today, which the
-# lint was recording as a function literally NAMED `__attribute__`.
-#
-#   prefix       identifier chars, spaces, tabs and `*`
-#   attribute    an optional `__attribute__((...))`, one level of nesting
-#   break        at most ONE newline, so the prefix cannot run away
-_PREFIX = r"[A-Za-z_][\w \t\*]*"
-_ATTR = r"(?:__attribute__\s*\(\((?:[^()]|\([^()]*\))*\)\)[\w \t\*]*)?"
-_BREAK = r"(?:[ \t]*\n[ \t]*)?"
-
-
-def definition_re(name):
-    """A compiled pattern matching a DEFINITION of `name`, up to its `{`."""
-    return re.compile(r"(?m)^" + _PREFIX + _ATTR + _BREAK +
-                      r"\b" + re.escape(name) + r"\s*\([^;{]*\)\s*\{")
+# The definition rule lives in ONE place. Five matchers used to answer "what
+# is a definition" separately -- this file's, three in
+# `tools/lint/scpi_sd_arm_path.py`, and a grep in this directory's Makefile --
+# and every audit finding on #976 was a DISAGREEMENT between two of them, never
+# a disagreement about C. `tools/lint/cdef.py` carries the rule and its own
+# self-test; see its module docstring for the six defects that produced it.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                os.pardir, os.pardir, "tools", "lint"))
+import cdef                                              # noqa: E402
+from cdef import AmbiguousDefinition, mask                # noqa: E402,F401
 
 
 def signature_name(signature):
@@ -122,31 +50,24 @@ def extract(text, signature):
     later edit to the function is invisible to the guard that exists to see
     edits.
 
-    Definitions are located through `definition_re()`, the ONE shared rule, so
-    this hasher and the lint's `_DEF` cannot disagree about what a definition
-    looks like. They did, and the disagreement was a bypass: a literal one-line
-    match here against a split-line-tolerant match there meant a disabled
-    original plus a live replacement in the other style produced exactly one
-    match, no ambiguity, and a digest of the DEAD copy.
+    Locating the definition is `cdef`'s job, so this hasher cannot drift from
+    the lint that reads the same file. Two definitions raise rather than
+    resolve: which one the compiler builds is preprocessor state neither tool
+    evaluates, and taking the first is how the pin came to digest dead code.
 
-    Braces are counted on `mask()`ed text so a brace inside a comment or string
-    cannot open or close the body, and the ORIGINAL text is what gets returned
-    and hashed. Matching also runs on masked text, so a definition-shaped line
-    inside a comment or a literal is not a definition.
+    Braces are counted on `cdef.mask()`ed text -- the newline-PRESERVING mask,
+    because offsets and line structure both matter here -- so a brace inside a
+    comment or a string cannot open or close the body. The ORIGINAL text is
+    what gets returned and hashed.
     """
     name = signature_name(signature)
     if not name:
         return None
+    match = cdef.one_definition(text, name)
+    if match is None:
+        return None
     masked = mask(text)
-    matches = list(definition_re(name).finditer(masked))
-    if not matches:
-        return None               # no DEFINITION anywhere: fail closed
-    if len(matches) > 1:
-        raise AmbiguousDefinition(
-            "%d definitions answer to %r; refusing to choose"
-            % (len(matches), name))
-    start = matches[0].start()
-    open_at = matches[0].end() - 1
+    start, open_at = match.start(), match.end() - 1
     depth, i, n = 0, open_at, len(text)
     while i < n:
         ch = masked[i]
@@ -314,8 +235,30 @@ def self_test():
 def main(argv):
     if len(argv) == 2 and argv[1] == "--self-test":
         return self_test()
+    if len(argv) == 4 and argv[1] == "--find":
+        # PRESENCE only, no digest. Exists so `tests/host/Makefile` can ask
+        # "is this function there, exactly once" through the SAME rule that
+        # hashes it, instead of carrying a `grep` of its own -- that grep was
+        # the FIFTH matcher, and it answered the question differently from the
+        # other four (it required the return type and the name to share a
+        # line, so a behaviour-neutral reformat failed the build). One rule,
+        # five callers.
+        path, name = argv[2], argv[3]
+        try:
+            with open(path, "r", encoding="utf-8", errors="strict") as fh:
+                text = fh.read()
+        except OSError as exc:
+            sys.exit("error: cannot read %s (%s)" % (path, exc))
+        try:
+            found = cdef.one_definition(text, name)
+        except AmbiguousDefinition as exc:
+            sys.exit("error: %s in %s" % (exc, path))
+        if found is None:
+            sys.exit("error: no definition of %r in %s" % (name, path))
+        return 0
     if len(argv) != 3:
         sys.exit("usage: hash_function.py <source> <signature-prefix>\n"
+                 "       hash_function.py --find <source> <function-name>\n"
                  "       hash_function.py --self-test")
     path, signature = argv[1], argv[2]
     try:
