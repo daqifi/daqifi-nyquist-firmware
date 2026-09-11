@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""A refused SD arm must undo what the caller published, UNDER the claim.
+"""SD arm-refusal call-site shape: census, and simple linear ordering only.
 
-## What this protects
+## The hazard these checks came from
 
 Every SD entry point in `SCPIStorageSD.c` follows one shape (#829): take the
 manager's claim (`SD_ClaimOrRefuse` -> `sd_card_manager_TryClaim`), write the
@@ -19,49 +19,87 @@ writes INTO that helper, and both are ordering properties:
 Past the release, either write is unowned: the other SCPI transport (USB pri 7
 preempts WiFi pri 2, no shared dispatch mutex) can claim, publish and arm its
 own operation in the gap, and the late store then lands on THAT owner's state.
+The race needs a preemption window that cannot be aimed at from a client:
+single-threaded, the entry guard always wins, so the companion tests
+(daqifi-python-test-suite#317) assert equivalence and the new contract, not the
+ordering. #971 is that gap, and it is closed by
+`tests/host/test_971_sd_arm_refusal_order.c`, NOT by this file -- see "What
+moved to a host test" immediately below for why, and "The properties this
+file still asserts" for what this file keeps instead.
 
-A future refactor can move either write back outside the claim and every test
-that shipped with those PRs still passes. The race needs a preemption window
-that cannot be aimed at from a client: single-threaded, the entry guard always
-wins, so the companion tests (daqifi-python-test-suite#317) assert equivalence
-and the new contract, not the ordering. #971 is that gap, and this is the same
-answer `tools/lint/scpi_claim_path.py` gives for the streaming claim path --
-check the property where it lives, in the source, for no bench time.
+## What moved to a host test, and why (#976)
 
-## The same shape at a second site, in a second file
+This file used to ALSO assert that both writes fall INSIDE
+`SD_ArmOrRefuseWithCleanup()`'s claim AND run only on the refusal path -- a
+claim about which BRANCH a write sits in, not just which call it sits between.
+Three review rounds on #976 catalogued FIFTEEN separate ways an honest
+refactor of that one helper defeats a textual check of that shape; four
+representative ones: a write hoisted out of the failure guard so it runs on
+every path; a release moved so the region it "protects" stops meaning
+anything; a ternary rewritten to an if/else that moves the branch's only
+`return` one level down; a compound guard whose second term a regex swallows.
+Each round bought back correctness against the ONE mutation it was written
+for and left the next equivalent rewrite free to defeat it again.
 
-#942 (PR #974) found it in `SCPI_StartStreamingClaimed` (`SCPIInterface.c`):
-the streaming-log arm, `sd_card_manager_UpdateSettingsForStreamingLog`, with
-its return DISCARDED. The #589 suspend pre-check ~50 lines above closes the
-common case; what it cannot close is the LOST RACE -- a WiFi FW update, a
-WiFi-streaming start on the other transport, or a bus-jam quarantine landing
-between that check and the arm. On that path the callee's #589 gate puts `mode`
-back to `MODE_NONE` and arms nothing, so `sd_card_manager_IsWriteReady()`
-(which requires `mode == MODE_WRITE`) can never become true: the poll below
-could only spend its full 5 s and then report "SD file not ready", blaming the
-media for the SD task simply not running. The fix captures the verdict and
-returns -- clearing `mode` under the claim, releasing, logging, pushing the
-error -- before the poll is ever reached.
+That ordering is now covered by `tests/host/test_971_sd_arm_refusal_order.c`
+instead: a deterministic model of `SD_ArmOrRefuseWithCleanup()`'s body, plus a
+sha256 drift pin on the real function's (comment-stripped, whitespace
+normalised) text. An edit to the real ordering either fails the model or is
+caught retyping the pin -- either way a human has to look, which a regex that
+can always be phrased around cannot force. #896 already tracks that this
+family of checker is a guard against honest regression, never against a
+determined refactor; #976 is the case where that limit was actually reached on
+this file, not just theorised about, so the ordering moved to a tool that does
+not share it.
 
-Qodo raised on that PR the objection #971 raises here: nothing automated stops
-a future refactor from dropping the check, and the bench cannot see it, for the
-same reason -- a losing arbitration cannot be aimed at from a client. So it is
-checked here rather than in a file of its own. It is the SAME property (a
-refused SD arm undoing what the caller published, under the claim) at a second
-site, and one checker over two sites stays honest more easily than two
-checkers over one site each.
+**What this file no longer establishes about the helper:** that the `mode`
+clear or the `onRefused()` call happen inside the claim, that either runs only
+on the refusal path, or that the claim is held across the arm at all. That is
+`test_971_sd_arm_refusal_order.c`'s job now. What is left here is census,
+statement shape (property 4, below), and simple LINEAR ordering -- "does X
+call Y", "does X call Y before Z" -- over the whole function, none of which
+needs to know which branch a line is in, and none of which was one of the
+fifteen shapes catalogued above.
 
-## The five properties
+## The same shape at a second site, in a second file -- same limit, same gap
 
-1. **The helper holds the claim across the arm, and both refusal-path writes
-   fall inside it AND run only on refusal.** In `SD_ArmOrRefuseWithCleanup`:
-   the arm (`sd_card_manager_UpdateSettings`) precedes every
-   `sd_card_manager_ReleaseClaim`; its verdict is consumed (captured into a
-   variable or tested inline); the success path is an `if` gated on that
-   verdict which RETURNS; and the `mode` clear and the `onRefused` invocation
-   both fall after that block and before the refusal-path release. Caller-side:
-   every function that arms calls `SD_ClaimOrRefuse` exactly once, before its
-   arm.
+#942 (PR #974) found the identical defect in `SCPI_StartStreamingClaimed`
+(`SCPIInterface.c`): the streaming-log arm,
+`sd_card_manager_UpdateSettingsForStreamingLog`, with its return DISCARDED.
+The #589 suspend pre-check ~50 lines above closes the common case; what it
+cannot close is the LOST RACE -- a WiFi FW update, a WiFi-streaming start on
+the other transport, or a bus-jam quarantine landing between that check and
+the arm. Fixing it added an analogous positional check here: verdict consumed,
+refusal branch positioned before the readiness poll, `mode` cleared then
+released inside that branch, claim taken once before the arm -- the same
+branch-gated reasoning as the helper's, at a second site, because Qodo raised
+the same objection #971 raises above and the race is equally unreachable from
+a client.
+
+That positional half is now DELETED by this same change, for the same reason
+as the helper's: it is branch-gated reasoning about ONE function's control
+flow, the exact shape three rounds spent failing to defend. Unlike the helper,
+**no host-test model exists yet for `SCPI_StartStreamingClaimed`** -- filed as
+**#998** rather than left silently uncovered. Until that lands, the refusal-
+vs-poll ordering #942 fixed (refusal beats the poll, `mode` cleared before
+release) has NO automated check anywhere in this tree. The claim-before-arm
+half of that same fix is NOT branch-gated -- it is a plain "A before B" over
+the whole function, one of the fifteen shapes above never touched it -- so it
+stays checked here (property 1, below), unlike the rest of what #942 fixed.
+
+## The properties this file still asserts
+
+1. **At every arm site, in EITHER file, the enclosing function takes the
+   manager's claim exactly once, before the arm.** In `SCPIStorageSD.c` this
+   is `SD_ClaimOrRefuse()`; `SCPI_StartStreamingClaimed()`
+   (`SCPIInterface.c`) has no such wrapper and takes
+   `sd_card_manager_TryClaim()` directly, so the two are checked separately
+   but assert the same thing. A plain "A before B" over the WHOLE function --
+   not a claim about which branch either call sits in, so it does not share
+   the fate of the helper-internal reasoning removed above. This is the
+   surviving half of what #971 originally called "the claim precedes the
+   arm"; the helper-internal half (which write falls on which branch) is the
+   property that moved above.
 2. **FORmat reaches its retraction THROUGH the callback parameter.**
    `SCPI_StorageSDFormat` publishes format-pending before arming, passes a
    non-NULL retraction in the callback slot, and does NOT also call that
@@ -75,156 +113,52 @@ checkers over one site each.
    `SCPI_StartStreamingClaimed` (`SCPIInterface.c`): the one call to
    `sd_card_manager_UpdateSettingsForStreamingLog` is captured into a variable
    or tested inline in an `if` condition -- not left as a bare expression
-   statement, and not cast to `(void)`.
-5. **Its refusal exits before the readiness poll, under the claim.** The branch
-   that verdict gates contains a `return`, and the whole branch is positioned
-   before the first `sd_card_manager_IsWriteReady()` call. Inside it the `mode`
-   clear precedes the `sd_card_manager_ReleaseClaim()` and puts back the object
-   that was armed; and the function takes the claim (`sd_card_manager_TryClaim`)
-   exactly once, before the arm.
+   statement, and not cast to `(void)`. This establishes only that the verdict
+   is CONSUMED, never that it is later BRANCHED ON: a captured verdict nobody
+   ever tests again is no longer flagged here (see the self-test for the
+   mutation this now accepts, and "The same shape at a second site" above for
+   what covers -- and does not yet cover -- the rest of that shape).
 
-## Property 1 does not read the way #971 wrote it, and here is why
-
-#971 asks for "exactly one `sd_card_manager_TryClaim`-side entry and one
-`sd_card_manager_ReleaseClaim`" inside `SD_ArmOrRefuseWithCleanup`. Neither
-count matches the C, and taking the sentence literally would have produced a
-checker that fails on the correct tree:
-
-* The helper **never calls `sd_card_manager_TryClaim`**. The claim is the
-  CALLER's -- taken by `SD_ClaimOrRefuse` before the operands are written,
-  because #829's whole point is that the claim precedes every shared write.
-  The helper's opener is therefore its own entry, under a precondition it
-  cannot see. So the checkable analogue is split in two: inside the helper,
-  the absence of a `TryClaim` is asserted (its presence would mean the
-  ownership model this reasons about had changed, so it is refused rather than
-  interpreted); and at each ARM SITE, the enclosing function is required to
-  call `SD_ClaimOrRefuse` exactly once, before the arm.
-* The helper releases **twice**, once per path -- inside the success `if`, and
-  again after the refusal-path writes. That is not two regions in the
-  `scpi_claim_path.py` sense (two claims taken and dropped); it is one claim
-  with two exits. One release is accepted too, for a single-exit restructure.
-  Three or more is refused with the counts, because deciding which exit each
-  belongs to needs control flow this does not have.
-
-With two releases the refusal region is `(END of the success block, last
-release)`, and with one release it is `(arm, release)`. Requiring every release
-to follow the arm is what stops a release hoisted above the arm from
-re-admitting both writes into a region that no longer holds anything.
-
-## A region is not a path (Qodo, PR #976)
-
-The first version of this file used `(FIRST release, last release)` as the
-two-release region and asked nothing else. Lexical containment between two
-calls is not "runs only on refusal", and two shapes slipped straight through
-it -- both re-admitting exactly the bug #955/#964 fixed:
-
-* **A write hoisted OUT of the failure guard**, so it runs unconditionally
-  between the arm and the release. On a SUCCESSFUL arm it then clears the
-  `mode` that arm just set, and retracts the caller's published state under an
-  operation that is now running. Reproduced on a one-release miniature: zero
-  problems reported.
-* **A write inside the SUCCESS block, after that block's own release.** It is
-  positionally "between the first and the last release" and is on the success
-  path by construction.
-
-Two things close them, and neither needs control flow:
-
-* The arm's verdict has to be IDENTIFIABLE -- captured into a variable, or the
-  arm call itself standing as an `if` condition. Without it there is nothing to
-  say a branch tests, and the checker refuses rather than reporting on a shape
-  where "success path" has no textual meaning.
-* Then, per shape: with TWO releases, the block holding the first release must
-  be gated on the verdict being TRUE and must contain a `return`, and the
-  region starts at that block's END -- so everything in it is on the
-  fall-through, which is the failure path only because the success path left.
-  With ONE release there is no such exit, so each write must instead sit inside
-  a block gated on the verdict being FALSE (`if (!armed)`, `armed == false`,
-  `armed != true`, or the `else` of a true-gated `if`). Nesting counts: the
-  `onRefused()` call inside its own `!= NULL` guard is confined by the
-  failure-gated block that guard sits in, so the walk goes OUTWARD to function
-  scope.
-
-A condition that tests the verdict AND something else (`!armed && x`) is
-deliberately UNRECOGNISED, not accepted: `&&` narrows the branch and `||`
-widens it, the second is unsound, and telling them apart is the control flow
-this file does not have. Refusing both reds loudly instead of passing quietly.
-
-## Properties 4 and 5 do not read the way #942's follow-up wrote them
+## An inline test is accepted (#942's follow-up did not spell this out)
 
 The directive was "the return must be CAPTURED into a variable, not left as a
-bare expression statement", and "wherever that variable is checked in a
-conditional leading to an early return, that return must precede the poll".
-Two refinements, for the same reason property 1 has one:
-
-* **An inline test is accepted.**
-  `if (!sd_card_manager_UpdateSettingsForStreamingLog(cfg)) { ... }` captures
-  nothing and consumes the verdict just as completely -- it is the spelling
-  `SD_ArmOrRefuse`'s five callers use in the other file, and the spelling
-  `SD_ArmOrRefuseWithCleanup` itself uses. Demanding the variable would red a
-  correct restructure, which is the failure taking #971 literally would have
-  produced here. What is refused is the verdict going NOWHERE: a bare
-  statement, an explicit `(void)` cast (its own message -- a deliberate discard
-  is still a discard, and naming it says which one happened), or a consumer
-  this checker cannot recognise at all.
-* **Property 5 also carries the clear-before-release pair and the claim.** The
-  directive named neither. They are not additions: they are property 1 at the
-  second site, and this file's subject is the word UNDER in its own title.
-  Without them a branch that releases and THEN clears passes green while
-  storing on the next owner's state, and a branch that never releases passes
-  green while wedging the manager for the rest of the session -- both the class
-  the gate exists for. `TryClaim`-before-arm is what makes "under the claim"
-  mean anything here at all; it is the caller-side half property 1 already
-  asserts for the five plain arm sites.
+bare expression statement". `if (!sd_card_manager_UpdateSettingsForStreamingLog(cfg)) { ... }`
+captures nothing and consumes the verdict just as completely -- it is the
+spelling `SD_ArmOrRefuse`'s five callers use in the other file, and the
+spelling `SD_ArmOrRefuseWithCleanup` itself uses. Demanding the variable would
+red a correct restructure. What is refused is the verdict going NOWHERE: a
+bare statement, an explicit `(void)` cast (its own message -- a deliberate
+discard is still a discard, and naming it says which one happened), or a
+consumer this checker cannot recognise at all.
 
 ## Two files, two entry points
 
-`check()` reads `SCPIStorageSD.c` (properties 1-3) and `check_stream()` reads
-`SCPIInterface.c` (properties 4-5); `main()` requires BOTH and defaults the
-second to `--interface`. Separate entry points rather than one call taking two
-texts, because an optional second text is a vacuity hazard -- a run that
-silently examines one site and reports a pass is the failure half this file's
-self-test exists to refuse. Each fails if it cannot find its own function.
+`check()` reads `SCPIStorageSD.c` (property 1 at its six sites there, plus 2
+and 3) and `check_stream()` reads `SCPIInterface.c` (property 1 at its
+seventh site, plus 4); `main()` requires BOTH and defaults the second to
+`--interface`. Separate entry points rather than one call taking two texts,
+because an optional second text is a vacuity hazard -- a run that silently
+examines one site and reports a pass is the failure half this file's self-test
+exists to refuse. Each fails if it cannot find its own function.
 
 ## What a green run does NOT mean
 
-Textual, positional, no control flow and no reachability -- the same stated
-limits as `scpi_claim_path.py`, tracked as #896, which this ticket does not
-close.
+Textual, no control flow, no reachability, and -- since #976 -- no reasoning
+about which branch of a function a line sits in. The same stated limits as
+`scpi_claim_path.py`, tracked as #896, which this file does not close.
 
-* A dead branch satisfies these as readily as a live one. An `onRefused` call
-  inside `if (0)`, or a `mode` clear in a branch that cannot be reached, is in
-  the region as far as this is concerned.
-* Property 1's "the callback parameter is read before it is called"
-  establishes that the pointer is inspected somewhere ahead of the call, NOT
-  that the inspection guards it. Any mention counts.
 * Property 2 establishes that FORmat does not call the retraction it passes
   in. It does not establish that no OTHER function retracts FORmat's state
   after a release -- only FORmat's own body is read.
 * Nothing here says the claim is a real exclusion, or that `UpdateSettings`
   actually arms. That is the manager's business and this file never opens it.
-* The gating above is a TEXTUAL match on a condition. It establishes that a
-  branch is spelled as a test of the verdict, not that the variable it names
-  still holds the arm's result -- an assignment between the arm and the branch
-  is invisible here. And a `return` is established to EXIST inside the success
-  block, not to be unconditional: `if (armed) { release; if (x) return true; }`
-  satisfies it and can still fall through on success.
-* Property 5's branch analysis reads ONE shape: a braced block gated by the
-  verdict, with the poll after it. A restructure that puts the poll in the
-  success arm and the refusal in an `else` is REFUSED -- the poll then sits
-  textually first. That is a refusal of a shape this cannot decide, not a claim
-  that the shape is wrong; the message says to teach this file the new shape.
-* Whether the RELEASE itself runs on every path is not examined at either site.
-  A release moved inside a conditional would leak the claim, and only the
-  writes' position relative to it is checked here.
-
-Non-goal at the second site: `SCPI_ClearStreamingOperBits` and
-`SCPI_UnpublishStartInterface`, which the refusal branch also calls, are NOT
-asserted. They undo streaming-side publication that has nothing to do with the
-SD claim and no ordering hazard against the release; a checker demanding them
-would be freezing the branch's whole body rather than its property. Nor is the
-open-timeout branch further down, which calls `SCPI_ReleaseSdLoggingArm()`:
-that is the teardown of an arm that SUCCEEDED, a different contract, and its
-own comment says why it must not be used on the refusal path.
+* Property 4 establishes the streaming-log arm's verdict is consumed. It does
+  NOT establish it is ever tested again, that a refusal exits before the
+  readiness poll, or that `mode` is cleared under the claim -- see "The same
+  shape at a second site" above; none of that is checked by anything today.
+* Whether the claim's RELEASE runs on every path, on either file, is not
+  examined by anything here -- it never was, and even less is asked of this
+  file after #976 than before it.
 
 Non-goal: `SCPI_StorageSDBenchmark` open-codes the same shape
 (`sd_card_manager_TryClaim` ... `sd_card_manager_ReleaseClaim`) because it
@@ -250,15 +184,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from scpi_wiki_sync import strip_c_comments    # noqa: E402
 
 # The helper that owns the refusal path, its NULL-passing wrapper, and the
-# claim taker each arm site must go through first.
+# claim taker each arm site must go through first. The manager primitives
+# this file used to reason about POSITIONALLY inside the helper's own body
+# (TryClaim/ReleaseClaim/UpdateSettings) are gone along with that reasoning --
+# see "What moved to a host test" in the module docstring.
 ARM_HELPER = "SD_ArmOrRefuseWithCleanup"
 ARM_WRAPPER = "SD_ArmOrRefuse"
 CLAIM_TAKER = "SD_ClaimOrRefuse"
-# The manager primitives. TRY_CLAIM is asserted ABSENT from the helper (see the
-# docstring); ARM and RELEASE are the positional anchors.
-TRY_CLAIM = "sd_card_manager_TryClaim"
-RELEASE_CLAIM = "sd_card_manager_ReleaseClaim"
-ARM_CALL = "sd_card_manager_UpdateSettings"
 # FORmat: the one caller that publishes state before arming, and the call that
 # publishes it. Both names are spelled out rather than discovered -- unlike the
 # retraction, which IS discovered (from the argument FORmat passes), because
@@ -267,7 +199,9 @@ ARM_CALL = "sd_card_manager_UpdateSettings"
 # safe direction: it costs one line here and cannot be mistaken for a pass.
 FORMAT_FN = "SCPI_StorageSDFormat"
 FORMAT_PUBLISH = "sd_card_manager_SetFormatPending"
-# The refusal-path clear, as it is actually written: `<cfg>->mode = <sentinel>`.
+# The refusal-path clear, named here only for the messages the caller-side
+# census and the streaming-site discard message print -- this file no longer
+# checks WHERE either helper clears it (see the module docstring).
 MODE_FIELD = "mode"
 MODE_NONE = "SD_CARD_MANAGER_MODE_NONE"
 
@@ -277,12 +211,15 @@ MODE_NONE = "SD_CARD_MANAGER_MODE_NONE"
 # rename reds this gate loudly, which is the safe direction.
 STREAM_FN = "SCPI_StartStreamingClaimed"
 STREAM_ARM_CALL = "sd_card_manager_UpdateSettingsForStreamingLog"
-# The poll the refusal has to beat. It requires `mode == MODE_WRITE`, so on a
-# refused arm it can never become true -- the 5 s wait and the "SD file not
-# ready" that follows are what #942 removed.
+# The poll the refusal has to beat, named here only for the discard/void
+# messages' own explanation of the consequence of NOT consuming the verdict --
+# this file no longer checks the poll's POSITION relative to the refusal (see
+# the module docstring).
 STREAM_POLL = "sd_card_manager_IsWriteReady"
 # This site takes the manager's claim directly; there is no SD_ClaimOrRefuse
-# in SCPIInterface.c.
+# in SCPIInterface.c. Property 1's caller-side shape (exactly one claim,
+# taken before the arm) is a plain linear ordering, not branch-gated, so it
+# survives here the same way it does at the six SCPIStorageSD.c sites.
 STREAM_CLAIM_TAKER = "sd_card_manager_TryClaim"
 
 # The five plain arm sites (CRC, GET, LISt, DELete, SPACe) at the time this was
@@ -467,14 +404,15 @@ _ID = re.compile(r"[A-Za-z_]\w*$")
 
 
 # --------------------------------------------------------------------------
-# Control-SHAPE primitives
+# Verdict-consumption primitives
 #
-# Positional containment says a write sits between two calls. It does not say
-# the write runs only on refusal, and that is the half a restructure erases
-# most quietly -- hoist the `mode` clear and the `onRefused()` call out of the
-# failure guard and a region test alone still reports a pass, while a
-# SUCCESSFUL arm now clears the mode it just set (Qodo, PR #976). These read
-# the branch a position sits in, still textually and with no control flow.
+# What is left after #976: how an arm's return is CONSUMED at its own call
+# site -- captured into a variable, tested inline as an `if` condition,
+# discarded as a bare statement, or cast to `(void)` -- not which branch a
+# write sits in afterward. `_if_statements` is needed only to tell an inline
+# test (the arm call itself standing as the condition) from a call that
+# merely appears near one; nothing here walks outward through enclosing
+# blocks or reasons about which side of a branch is "success".
 # --------------------------------------------------------------------------
 
 
@@ -488,16 +426,19 @@ def _statement_prefix(blanked, pos):
 # match: each needs a non-identifier character exactly where the `=` has to be.
 _ASSIGN_TAIL = re.compile(r"([A-Za-z_]\w*)\s*=\s*$")
 _VOID_TAIL = re.compile(r"\(\s*void\s*\)\s*$")
-_ELSE_TAIL = re.compile(r"\belse$")
-_BOOL_CMP = re.compile(r"^(.*?)\s*(==|!=)\s*(true|false|TRUE|FALSE)$", re.S)
 
 
 def _if_statements(body):
-    """[(cond_start, cond_end, block_start, block_end)] for every `if` in body.
+    """[(cond_start, cond_end)] for every `if (...)` condition in body.
 
-    `block_start`/`block_end` are None for a brace-less `if`. Those are KEPT in
-    the list rather than dropped, so a verdict tested in one is reported as a
-    shape this cannot read rather than as a verdict never tested at all.
+    Only the condition's extent is needed: the sole surviving consumer,
+    `_arm_verdict`'s "inline" case, asks whether the arm call's own position
+    falls inside one of these spans to tell an inline test
+    (`if (!arm(cfg)) { ... }`) from a call that merely appears nearby. Used to
+    also return the gated block's own extent for branch-gated reasoning about
+    which side of an `if` a write falls on; that reasoning left with #976 (see
+    the module docstring), so the block extent is gone too rather than kept
+    unread.
     """
     b = _blank(body)
     out = []
@@ -514,91 +455,8 @@ def _if_statements(body):
                     break
         if close is None:
             continue
-        k = close + 1
-        while k < len(b) and b[k].isspace():
-            k += 1
-        end = _match_brace(b, k) if k < len(b) and b[k] == "{" else None
-        out.append((i + 1, close, k, end) if end is not None
-                   else (i + 1, close, None, None))
+        out.append((i + 1, close))
     return out
-
-
-def _enclosing_blocks(blanked, pos):
-    """[(start, end)] of every `{...}` containing `pos`, INNERMOST first.
-
-    The walk goes outward because nesting inside a failure-gated block still
-    runs only on failure -- `onRefused()` inside its own `!= NULL` guard is
-    confined by the branch that guard sits in, not by the guard.
-    """
-    out, i = [], pos
-    while True:
-        depth, found = 0, None
-        for j in range(i - 1, -1, -1):
-            c = blanked[j]
-            if c == "}":
-                depth += 1
-            elif c == "{":
-                if depth == 0:
-                    found = j
-                    break
-                depth -= 1
-        if found is None:
-            return out
-        end = _match_brace(blanked, found)
-        if end is None:
-            return out
-        out.append((found, end))
-        if found == 0:
-            return out                   # the function body itself
-        i = found
-
-
-def _strip_parens(text):
-    """`text` with fully-enclosing parentheses removed, repeatedly."""
-    c = text.strip()
-    while c.startswith("(") and c.endswith(")"):
-        depth, close = 0, None
-        for i, ch in enumerate(c):
-            if ch == "(":
-                depth += 1
-            elif ch == ")":
-                depth -= 1
-                if depth == 0:
-                    close = i
-                    break
-        if close != len(c) - 1:
-            return c                     # `(a) && (b)` -- not enclosing
-        c = c[1:-1].strip()
-    return c
-
-
-def _verdict_test(cond, verdict):
-    """'true' | 'false' | None -- what `cond` tests about the arm's verdict.
-
-    Recognised, and ONLY these: the verdict bare, negated with `!`, or compared
-    to `true`/`false` with `==`/`!=`, in any combination. A condition saying
-    anything ELSE as well (`!armed && x`) is deliberately unrecognised -- `&&`
-    narrows the branch and `||` widens it, the second is unsound, and telling
-    them apart is control flow this file does not have. Refusing both reds
-    loudly rather than passing quietly.
-    """
-    c = _strip_parens(cond)
-    negated = False
-    while True:
-        c = _strip_parens(c)
-        if c.startswith("!") and not c.startswith("!="):
-            negated, c = not negated, c[1:]
-            continue
-        m = _BOOL_CMP.match(c)
-        if m:
-            if (m.group(2) == "==") != (m.group(3).lower() == "true"):
-                negated = not negated
-            c = m.group(1)
-            continue
-        break
-    if not re.fullmatch(verdict, c, re.S):
-        return None
-    return "false" if negated else "true"
 
 
 def _call_end(blanked, start):
@@ -628,37 +486,14 @@ def _statement_suffix(blanked, pos):
     return blanked[pos:min(ends)] if ends else blanked[pos:]
 
 
-def _returns_at_top_level(block):
-    """True when `block` has a `return` at its OWN brace depth.
-
-    Existence anywhere is not enough. A `return` nested inside a further `if`
-    runs only on that condition, so the branch can still fall through -- audit
-    finding 3, where a ternary error-message rewritten as an `if/else` moved a
-    refusal branch's only `return` one level down. The checker stayed green
-    while execution fell into the readiness poll and released a second time.
-    This is not control flow: it is the difference between "the token is in
-    there somewhere" and "this branch ends".
-    """
-    depth = 0
-    for m in re.finditer(r"[{}]|\breturn\b", _blank(block)):
-        tok = m.group(0)
-        if tok == "{":
-            depth += 1
-        elif tok == "}":
-            depth -= 1
-        elif depth == 1:
-            return True
-    return False
-
-
 def _arm_verdict(body, arm, arm_call, ifs):
     """-> (kind, var, pattern) for how the arm's return is consumed.
 
-    kind: "captured" | "inline" | "bare" | "void" | "other". `pattern` is a
-    regex matching the expression that carries the verdict (the variable, or
-    the arm call itself), and is None when there is nothing to match -- which
-    is a refusal, not a pass: with no identifiable verdict, "the success path"
-    has no textual meaning and no branch can be placed on either side of it.
+    kind: "captured" | "captured_transformed" | "inline" | "bare" | "void" |
+    "other". `pattern` is a regex matching the expression that carries the
+    verdict (the variable, or the arm call itself), and is None when there is
+    nothing to match -- which is a refusal, not a pass: a consumption form
+    this checker cannot recognise is not a form it can report on.
     """
     blanked = _blank(body)
     prefix = _statement_prefix(blanked, arm)
@@ -680,7 +515,7 @@ def _arm_verdict(body, arm, arm_call, ifs):
         return "void", None, None
     if not prefix.strip():
         return "bare", None, None
-    if any(cs <= arm < ce for cs, ce, _bs, _be in ifs):
+    if any(cs <= arm < ce for cs, ce in ifs):
         # MATCH THIS CALL AND NOTHING APPENDED TO IT. The pattern was
         # `<name>\s*\(.*\)`, whose `.*` runs from the first `(` to the LAST
         # `)` in the condition -- so `arm(cfg) && (onRefused == NULL)`
@@ -695,280 +530,6 @@ def _arm_verdict(body, arm, arm_call, ifs):
         return "inline", None, r"\s*".join(
             re.escape(t) for t in call_src.split())
     return "other", None, None
-
-
-def _gate_of(body, ifs, block_start):
-    """-> (condition text, inverted) gating the block at `block_start`.
-
-    `inverted` is True for the `else` side of an `if`, whose condition is the
-    paired `if`'s. (None, False) when the block is not an if/else body at all.
-    """
-    b = _blank(body)
-    for cs, ce, bs, _be in ifs:
-        if bs == block_start:
-            return b[cs:ce], False
-    pre = b[:block_start].rstrip()
-    if not _ELSE_TAIL.search(pre):
-        return None, False
-    pre = pre[:-4].rstrip()
-    if not pre.endswith("}"):
-        return None, False               # `else` of a brace-less `if`
-    for cs, ce, _bs, be in ifs:
-        if be == len(pre):
-            return b[cs:ce], True
-    return None, False
-
-
-def _path_of(body, ifs, pos, pattern):
-    """'true' | 'false' | None -- the verdict path `pos` is confined to."""
-    for start, _end in _enclosing_blocks(_blank(body), pos):
-        cond, inverted = _gate_of(body, ifs, start)
-        if cond is None:
-            continue
-        verdict = _verdict_test(cond, pattern)
-        if verdict is None:
-            continue
-        if inverted:
-            verdict = "true" if verdict == "false" else "false"
-        return verdict
-    return None
-
-
-_NO_VERDICT = (
-    "%(who)s does not consume %(arm)s()'s return in a form this checker can "
-    "read (%(kind)s). It needs the verdict either CAPTURED into a variable or "
-    "standing as an `if` condition, because without it there is no text that "
-    "says which branch is the success path -- and 'the write is between the "
-    "arm and the release' is then not 'the write runs only on refusal', which "
-    "is the hole this closes. Refusing rather than reporting a pass it did not "
-    "establish (#955/#964; Qodo, PR #976).")
-
-
-# Positional reasoning is only sound over a region with one identifiable start
-# and one identifiable end. The shape here is one claim with TWO exits, not two
-# claims, so two releases are sound and are what the tree has; one release is a
-# single-exit restructure and is equally sound. Beyond that, deciding which
-# exit a given release belongs to needs control flow, and "between the first
-# and the last" would then be satisfied by a write sitting in neither path.
-_TOO_MANY_EXITS = (
-    "%(who)s calls %(release)s() %(n)d times. This checker can reason about "
-    "ONE claim with one or two exits (the success return and the refusal "
-    "return); with more, deciding which exit each release belongs to needs "
-    "control flow it does not have, and 'between the first and the last' is "
-    "not 'on the refusal path'. It refuses rather than reporting a pass it "
-    "did not establish. If the helper was deliberately restructured, teach "
-    "this file the new shape in the same commit and say why (#971; limits "
-    "tracked in #896).")
-
-
-def _helper_problems(text, helper):
-    """Property 1, helper side: the claim is held across the arm, and both
-    refusal-path writes fall inside it AND run only on refusal."""
-    problems = []
-
-    # The claim is the CALLER's. A TryClaim appearing here would mean the
-    # ownership model the region reasoning rests on had changed, so it is
-    # refused rather than reinterpreted (see the docstring on #971's wording).
-    if _calls(helper, TRY_CLAIM):
-        problems.append(
-            "%s() calls %s(): the claim is supposed to be the CALLER's, taken "
-            "by %s() before the operands are written (#829). With the claim "
-            "taken here instead, this checker's premise -- that the helper is "
-            "entered holding it -- no longer holds, so it refuses rather than "
-            "reporting on a shape it was not written for."
-            % (ARM_HELPER, TRY_CLAIM, CLAIM_TAKER))
-
-    arms = _call_positions(helper, ARM_CALL)
-    releases = _call_positions(helper, RELEASE_CLAIM)
-    if len(arms) != 1:
-        problems.append(
-            "%s() calls %s() %d times; this checker needs exactly one arm to "
-            "place the claim around. Refusing rather than reporting a pass it "
-            "did not establish." % (ARM_HELPER, ARM_CALL, len(arms)))
-    if not releases:
-        problems.append(
-            "%s() never calls %s(), so a claim once taken is never released "
-            "and every later SD command is refused for the rest of the "
-            "session (#829)." % (ARM_HELPER, RELEASE_CLAIM))
-    elif len(releases) > 2:
-        problems.append(_TOO_MANY_EXITS % {
-            "who": "%s()" % ARM_HELPER, "release": RELEASE_CLAIM,
-            "n": len(releases)})
-    if len(arms) != 1 or not releases or len(releases) > 2:
-        return problems                  # no sound region to reason about
-
-    arm = arms[0]
-    if any(r < arm for r in releases):
-        problems.append(
-            "%s() calls %s() before %s(): the claim is dropped before the arm, "
-            "so the arm itself -- and everything this checker would then place "
-            "'inside' the claim -- runs unowned (#829)."
-            % (ARM_HELPER, RELEASE_CLAIM, ARM_CALL))
-        return problems
-
-    # Which branch is which has to be readable before any of it means
-    # anything -- see "A region is not a path" in the docstring.
-    ifs = _if_statements(helper)
-    kind, _var, pattern = _arm_verdict(helper, arm, ARM_CALL, ifs)
-    if pattern is None:
-        problems.append(_NO_VERDICT % {
-            "who": "%s()" % ARM_HELPER, "arm": ARM_CALL,
-            "kind": {"bare": "the call stands alone as a statement",
-                     "void": "the return is cast to `(void)`",
-                     "captured_transformed":
-                         "the initialiser does not end at the call, so the "
-                         "variable holds a TRANSFORMATION of the verdict and "
-                         "not the verdict"}.get(
-                         kind, "unrecognised consumer")})
-        return problems
-
-    # The refusal region, and what confines a write to the refusal PATH.
-    # Two releases: the success branch takes the first one and LEAVES, so the
-    # fall-through past its closing brace is the refusal path. One release:
-    # there is no such exit, so each write must be gated on failure itself.
-    if len(releases) == 2:
-        blocks = _enclosing_blocks(_blank(helper), releases[0])
-        success = blocks[0] if blocks else None
-        if success is None or success[0] == 0:
-            problems.append(
-                "%s() releases twice, but the FIRST %s() is not inside a "
-                "conditional block -- it runs on every path, so the `%s` clear "
-                "and the caller's retraction after it are unowned writes no "
-                "matter which branch took them. The shape this reasons about "
-                "is `if (<the arm's verdict>) { release; return; }` and then "
-                "the refusal path (#955/#964)."
-                % (ARM_HELPER, RELEASE_CLAIM, MODE_FIELD))
-            return problems
-        cond, inverted = _gate_of(helper, ifs, success[0])
-        verdict = None if cond is None else _verdict_test(cond, pattern)
-        if verdict is not None and inverted:
-            verdict = "true" if verdict == "false" else "false"
-        if verdict != "true":
-            problems.append(
-                "%s()'s first %s() sits in a block this checker cannot read as "
-                "the SUCCESS path (its condition is `%s`). Everything after "
-                "that block is then called the refusal path on no evidence -- "
-                "the hole Qodo found in PR #976. Recognised: the arm's verdict "
-                "bare, `!`-negated, or compared with `== true` / `== false`, "
-                "and the `else` of those. Anything else is refused rather than "
-                "guessed."
-                % (ARM_HELPER, RELEASE_CLAIM,
-                   "not an if/else body" if cond is None
-                   else " ".join(cond.split())))
-            return problems
-        if not re.search(r"\breturn\b",
-                         _blank(helper[success[0]:success[1]])):
-            problems.append(
-                "%s()'s success block takes the first %s() but never RETURNS, "
-                "so execution falls out of it into what this checker would "
-                "otherwise call the refusal path. On a successful arm the `%s` "
-                "clear and the caller's retraction would then run anyway -- "
-                "clearing the mode that arm just set, which is #955 exactly "
-                "(Qodo, PR #976)." % (ARM_HELPER, RELEASE_CLAIM, MODE_FIELD))
-            return problems
-        lo, hi = success[1], releases[1]
-        where = ("after the success block has returned and before the "
-                 "refusal-path %s()" % RELEASE_CLAIM)
-        gated = False
-    else:
-        lo, hi = arm, releases[0]
-        where = "between %s() and the release" % ARM_CALL
-        gated = True                     # no success exit to sit behind
-
-    # (1e) #955: the `mode` clear
-    clears = [(m.start(), m.group(1)) for m in re.finditer(
-        r"\b([A-Za-z_]\w*)\s*->\s*%s\s*=\s*%s\s*;"
-        % (re.escape(MODE_FIELD), re.escape(MODE_NONE)), _blank(helper))]
-    if len(clears) != 1:
-        problems.append(
-            "%s() contains %d `<cfg>->%s = %s;` statement(s); expected exactly "
-            "one, the refused arm's clear. Anything else -- none, or several "
-            "whose paths cannot be told apart -- leaves this checker unable to "
-            "say the clear happens under the claim, so it refuses (#955)."
-            % (ARM_HELPER, len(clears), MODE_FIELD, MODE_NONE))
-    else:
-        pos, target = clears[0]
-        args = call_arguments(helper, ARM_CALL)[0]
-        if args is None or len(args) != 1 or not _ID.fullmatch(args[0]):
-            problems.append(
-                "%s()'s call to %s() does not take a single bare identifier, "
-                "so the object the clear puts back could not be compared "
-                "against the object that was armed. That comparison is "
-                "UNVERIFIED and this refuses rather than assuming they match."
-                % (ARM_HELPER, ARM_CALL))
-        elif target != args[0]:
-            problems.append(
-                "%s() arms `%s` but clears `%s->%s`: the refused arm puts back "
-                "the mode of a different object than the one it tried to arm "
-                "(#955)." % (ARM_HELPER, args[0], target, MODE_FIELD))
-        if not lo < pos < hi:
-            problems.append(
-                "%s() does not clear `%s->%s` %s: past the release the store "
-                "is unowned and can land on the NEXT owner's state, which is "
-                "the race #955 closed by moving it here."
-                % (ARM_HELPER, target, MODE_FIELD, where))
-        elif gated and _path_of(helper, ifs, pos, pattern) != "false":
-            problems.append(
-                "%s() clears `%s->%s` inside the claim but NOT on a branch "
-                "gated by the refused arm, so it runs on every path -- a "
-                "successful arm clears the `%s` it just set. With a single "
-                "release there is no success-path exit for it to sit behind, "
-                "so the clear must be inside `if (!<verdict>)`, `== false`, or "
-                "the `else` of the true-gated form (#955; Qodo, PR #976)."
-                % (ARM_HELPER, target, MODE_FIELD, MODE_FIELD))
-
-    # (1f) #964: the caller-published retraction, through the callback param
-    return problems + _callback_problems(text, helper, lo, hi, where,
-                                         gated, ifs, pattern)
-
-
-def _callback_problems(text, helper, lo, hi, where, gated, ifs, pattern):
-    """Property 1, the `onRefused` half: called exactly once, inside the
-    region, on the refusal path, and inspected before it is called."""
-    problems = []
-    found, why = callback_param(text, ARM_HELPER)
-    if found is None:
-        problems.append(
-            "%s -- so where the refusal path invokes the caller's retraction "
-            "could not be located, and its position relative to the release "
-            "is UNVERIFIED (#964)." % why)
-        return problems
-    cb, _index = found
-    calls = _call_positions(helper, cb)
-    if len(calls) != 1:
-        problems.append(
-            "%s() calls its %s() parameter %d times; expected exactly one, on "
-            "the refusal path. None means the retraction a caller passed is "
-            "never run (its state stays published over a refused arm); more "
-            "than one means this checker cannot say which call it is placing "
-            "(#964)." % (ARM_HELPER, cb, len(calls)))
-        return problems
-    pos = calls[0]
-    if not lo < pos < hi:
-        problems.append(
-            "%s() does not invoke %s() %s: past the release it is an unowned "
-            "write, exactly like the `%s` clear #955 moved, and can retract "
-            "state belonging to the NEXT owner (#964)."
-            % (ARM_HELPER, cb, where, MODE_FIELD))
-    elif gated and _path_of(helper, ifs, pos, pattern) != "false":
-        problems.append(
-            "%s() invokes %s() inside the claim but NOT on a branch gated by "
-            "the refused arm, so it runs on every path -- a SUCCESSFUL arm "
-            "would retract the state its own caller published for it. The "
-            "`%s != NULL` guard is not that gate; nesting inside a "
-            "failure-gated block is what counts, and there is none here "
-            "(#964; Qodo, PR #976)." % (ARM_HELPER, cb, cb))
-    reads = [m.start() for m in
-             re.finditer(r"\b%s\b" % re.escape(cb), _blank(helper))
-             if m.start() not in calls]
-    if not any(r < pos for r in reads):
-        problems.append(
-            "%s() calls %s() without inspecting it first -- the commands that "
-            "pass NULL through %s() would dereference it. This "
-            "establishes that the pointer is READ ahead of the call, not that "
-            "the read guards it; regex cannot show that (#896)."
-            % (ARM_HELPER, cb, ARM_WRAPPER))
-    return problems
 
 
 def _format_problems(text):
@@ -1045,7 +606,9 @@ def _format_problems(text):
 
 
 def _census_problems(text, spans):
-    """Property 3, plus property 1's caller-side half.
+    """Property 3, plus property 1 (the claim precedes the arm) for the
+    six `SCPIStorageSD.c` sites -- `_stream_arm_problems` asserts property 1
+    again for the seventh, in `SCPIInterface.c`, via a different claim taker.
 
     -> (problems, [(function, arm offset, helper_form)]).
     """
@@ -1116,8 +679,8 @@ def _census_problems(text, spans):
                 "commands never published (#964)."
                 % (ARM_WRAPPER, args[index], ARM_HELPER))
 
-    # Property 1, caller side: the claim precedes the arm, in the arm's own
-    # function. This is the checkable half of #971's "TryClaim-side entry".
+    # Property 1: the claim precedes the arm, in the arm's own function. This
+    # is the checkable half of #971's "TryClaim-side entry".
     for fn in sorted({f for f, _, _ in sites}):
         body = function_body(text, fn)
         if body is None:
@@ -1144,55 +707,48 @@ def _census_problems(text, spans):
 
 
 def _stream_arm_problems(text):
-    """Properties 4 and 5, in `SCPIInterface.c`: the streaming-log arm's
-    verdict is consumed, and its refusal returns -- under the claim -- before
-    the readiness poll. -> (problems, sites examined)."""
+    """Properties 1 and 4, in `SCPIInterface.c`: the claim precedes the arm,
+    and the streaming-log arm's verdict is consumed. -> (problems, sites
+    examined).
+
+    This used to also place the refusal branch against the readiness poll and
+    clear `mode` under the claim (the old property 5) -- the same branch-gated
+    positional reasoning that #976 spent three review rounds failing to defend
+    for the helper in `SCPIStorageSD.c`, at a SECOND site. That half is gone;
+    see "What moved to a host test" in this module's docstring for why, and
+    for the fact that (unlike the helper) no replacement host-test model
+    exists yet for this site. Property 1's claim-before-arm half stays: it is
+    a plain "A before B" over the whole function, not one of the shapes three
+    rounds catalogued, so it does not share their fate."""
     problems = []
     body = function_body(text, STREAM_FN)
     if body is None:
         problems.append(
             "%s() not found, so the streaming-log arm this checker exists to "
-            "order was NOT examined. Refusing rather than reporting a pass on "
-            "a function it could not read (#942)." % STREAM_FN)
+            "examine was NOT read at all. Refusing rather than reporting a "
+            "pass on a function it could not read (#942)." % STREAM_FN)
         return problems, 0
 
     arms = _call_positions(body, STREAM_ARM_CALL)
     if len(arms) != 1:
         problems.append(
             "%s() calls %s() %d times; this checker needs exactly one arm to "
-            "order the refusal against. None means the arm moved or was "
-            "renamed and nothing here is being checked at all; several means "
-            "it cannot say which verdict a refusal branch belongs to (#942)."
+            "know whose verdict it is reading. None means the arm moved or "
+            "was renamed and nothing here is being checked at all; several "
+            "means it cannot say which call's verdict a consumer downstream "
+            "belongs to (#942)."
             % (STREAM_FN, STREAM_ARM_CALL, len(arms)))
         return problems, 0
     arm = arms[0]
 
-    polls = _call_positions(body, STREAM_POLL)
-    if not polls:
-        problems.append(
-            "%s() never calls %s(): that poll is what property 5 orders the "
-            "refusal against, so with it gone the ordering is UNVERIFIED and "
-            "this refuses rather than passing on it (#942)."
-            % (STREAM_FN, STREAM_POLL))
-        return problems, 1
-    poll = polls[0]
-    if poll < arm:
-        problems.append(
-            "%s() calls %s() before it arms. The poll waits on the file THIS "
-            "arm opens, so ahead of the arm it reads the previous session's "
-            "state and the ordering property 5 states no longer means "
-            "anything (#942)." % (STREAM_FN, STREAM_POLL))
-        return problems, 1
-
-    # The claim first: without it, "under the claim" below says nothing.
+    # ---- property 1: the claim precedes the arm ------------------------------
     takers = _call_positions(body, STREAM_CLAIM_TAKER)
     if len(takers) != 1:
         problems.append(
-            "%s() calls %s() %d times; expected exactly one, before the arm. "
+            "%s() calls %s() %d times before arming; expected exactly one. "
             "The arm is where ownership hands over from the claim to `%s`, so "
-            "an arm with no claim taken -- or with a claim this checker cannot "
-            "place -- has nothing to hand over, and the refusal branch's clear "
-            "is an unowned write however it is ordered (#829/#836)."
+            "an arm with no claim taken -- or with a claim this checker "
+            "cannot place -- has nothing to hand over (#829/#836)."
             % (STREAM_FN, STREAM_CLAIM_TAKER, len(takers), MODE_FIELD))
     elif takers[0] > arm:
         problems.append(
@@ -1202,7 +758,7 @@ def _stream_arm_problems(text):
 
     # ---- property 4: the verdict is consumed --------------------------------
     ifs = _if_statements(body)
-    kind, var, pattern = _arm_verdict(body, arm, STREAM_ARM_CALL, ifs)
+    kind, _var, pattern = _arm_verdict(body, arm, STREAM_ARM_CALL, ifs)
     if kind == "bare":
         problems.append(
             "%s() DISCARDS %s()'s return -- the call stands alone as a "
@@ -1242,149 +798,26 @@ def _stream_arm_problems(text):
             "understand (#942)." % (STREAM_FN, STREAM_ARM_CALL))
         return problems, 1
 
-    # ---- property 5: the refusal branch, and where it sits ------------------
-    b = _blank(body)
-    if kind == "inline":
-        gating = [it for it in ifs if it[0] <= arm < it[1]]
-    else:
-        gating = [it for it in ifs if it[1] > arm
-                  and re.search(r"\b%s\b" % re.escape(var), b[it[0]:it[1]])]
-    if not gating:
-        problems.append(
-            "%s() captures %s()'s return as `%s`, but no `if` after the arm "
-            "tests it. A verdict read into a variable and never branched on is "
-            "the discard of #942 with an extra line (#942)."
-            % (STREAM_FN, STREAM_ARM_CALL, var))
-        return problems, 1
-    cond_start, cond_end, block_start, block_end = gating[0]
-    cond = " ".join(b[cond_start:cond_end].split())
-    verdict = _verdict_test(b[cond_start:cond_end], pattern)
-    if verdict != "false":
-        problems.append(
-            "%s()'s first test of the arm's verdict, `%s`, is not one this "
-            "checker can read as the REFUSAL branch. It needs the failure "
-            "form -- the verdict `!`-negated, `== false`, or `!= true` -- "
-            "because that is the branch property 5 places before %s(). A "
-            "restructure that tests success and puts the refusal in an `else` "
-            "(or falls through to it) is REFUSED, not judged wrong: teach this "
-            "file the new shape in the same commit and say why (#942)."
-            % (STREAM_FN, cond, STREAM_POLL))
-        return problems, 1
-    if block_start is None:
-        problems.append(
-            "%s()'s refusal test `%s` has no braced block, so what it does -- "
-            "the `%s` clear, the release, the return -- could not be read. "
-            "Refusing rather than reporting a pass on a branch it never saw "
-            "(#942)." % (STREAM_FN, cond, MODE_FIELD))
-        return problems, 1
-
-    block = body[block_start:block_end]
-    if not _returns_at_top_level(block):
-        problems.append(
-            "%s()'s refusal branch does not RETURN at its own level -- either "
-            "there is no `return` in it at all, or the only one is nested "
-            "inside a further `if`, so the branch can still fall through "
-            "(audit finding 3: a ternary error-message rewritten as an "
-            "`if/else` moved the return one level down, and this check, which "
-            "only asked whether the token appeared SOMEWHERE, stayed green "
-            "while execution fell into the poll and released a second time). "
-            "Execution falls out of it "
-            "into the %s() poll, which on a refused arm can never become true "
-            "-- so the 5 s wait and the misdirected 'SD file not ready' that "
-            "#942 removed are both back, with the error already pushed (#942)."
-            % (STREAM_FN, STREAM_POLL))
-    if block_end > poll:
-        problems.append(
-            "%s()'s refusal branch is positioned AFTER the first %s() call. "
-            "The poll runs first and, on a refused arm, can only time out "
-            "before the refusal is ever reached -- the whole point of #942 is "
-            "that the refusal beats the poll. (If this is a deliberate "
-            "restructure that polls in the success arm and refuses in an "
-            "`else`, this checker cannot decide it: teach it the new shape.)"
-            % (STREAM_FN, STREAM_POLL))
-
-    # A RELEASE BETWEEN THE ARM AND THE REFUSAL BRANCH DROPS THE CLAIM EARLY.
-    # This half only ever looked inside the refusal block, so moving the
-    # success path's release up to just after the arm passed clean while the
-    # refusal's own clear then ran unowned -- the #955 window, on the newer
-    # half of the file (audit finding 2). Property 1 has always scanned the
-    # whole function for releases; this one now does too.
-    early = [q for q in _call_positions(body, RELEASE_CLAIM)
-             if arm < q < block_start]
-    if early:
-        problems.append(
-            "%s() calls %s() %d time(s) between the arm and the refusal "
-            "branch. Whatever that release is for, the claim is gone before "
-            "the refusal's `%s` clear runs, so that store is unowned and can "
-            "land on the next owner's state -- which is the race #955 closed "
-            "by moving the clear inside the claim. If this is a deliberate "
-            "restructure, teach this file the new shape in the same commit "
-            "(#955/#942)."
-            % (STREAM_FN, RELEASE_CLAIM, len(early), MODE_FIELD))
-
-    # ---- property 5, the claim half: clear, THEN release, in the branch -----
-    clears = [(m.start(), m.group(1)) for m in re.finditer(
-        r"\b([A-Za-z_]\w*)\s*->\s*%s\s*=\s*%s\s*;"
-        % (re.escape(MODE_FIELD), re.escape(MODE_NONE)), _blank(block))]
-    releases = _call_positions(block, RELEASE_CLAIM)
-    if len(clears) != 1:
-        problems.append(
-            "%s()'s refusal branch contains %d `<cfg>->%s = %s;` statement(s); "
-            "expected exactly one. None means a refused arm leaves `%s` "
-            "advertising a WRITE nobody armed; several leave this checker "
-            "unable to say which one it is placing against the release "
-            "(#955/#942)."
-            % (STREAM_FN, len(clears), MODE_FIELD, MODE_NONE, MODE_FIELD))
-    if len(releases) != 1:
-        problems.append(
-            "%s()'s refusal branch calls %s() %d times; expected exactly one. "
-            "None leaks the claim: nothing else releases on this path, so "
-            "every later SD command -- including SYST:STOR:SD:ENAble, the one "
-            "escape hatch -- is refused for the rest of the session. Several "
-            "cannot be placed against the clear (#836/#955)."
-            % (STREAM_FN, RELEASE_CLAIM, len(releases)))
-    if len(clears) == 1 and len(releases) == 1:
-        pos, target = clears[0]
-        if pos > releases[0]:
-            problems.append(
-                "%s()'s refusal branch clears `%s->%s` AFTER %s(): past the "
-                "release the store is unowned, and the other SCPI transport "
-                "(USB pri 7 preempts WiFi pri 2, no shared dispatch mutex) can "
-                "claim and arm in the gap -- so the clear lands on THAT "
-                "owner's state. Clear under the claim, then release (#955)."
-                % (STREAM_FN, target, MODE_FIELD, RELEASE_CLAIM))
-        args = call_arguments(body, STREAM_ARM_CALL)[0]
-        if args is None or len(args) != 1 or not _ID.fullmatch(args[0]):
-            problems.append(
-                "%s()'s call to %s() does not take a single bare identifier, "
-                "so the object its refusal puts back could not be compared "
-                "against the object that was armed. That comparison is "
-                "UNVERIFIED and this refuses rather than assuming they match."
-                % (STREAM_FN, STREAM_ARM_CALL))
-        elif target != args[0]:
-            problems.append(
-                "%s() arms `%s` but its refusal clears `%s->%s`: the refused "
-                "arm puts back the mode of a different object than the one it "
-                "tried to arm (#955)."
-                % (STREAM_FN, args[0], target, MODE_FIELD))
+    # Consumed (captured or tested inline) and nothing more is asked: this
+    # file no longer checks whether a captured verdict is ever branched on,
+    # whether the refusal beats the readiness poll, or whether `mode` is
+    # cleared under the claim -- see the module docstring.
     return problems, 1
 
 
 def check(source_text):
-    """-> (problems, examined). Pure, so --self-test can drive it."""
+    """-> (problems, examined). Pure, so --self-test can drive it.
+
+    No longer reads `SD_ArmOrRefuseWithCleanup()`'s own body at all: the
+    ordering that used to require it (property 1's helper-internal half) is
+    gone from this file -- see "What moved to a host test" in the module
+    docstring. `_format_problems` and `_census_problems` each independently
+    refuse rather than pass if the helper cannot be found or called, so no
+    separate vacuity gate is needed here for that case."""
     text = strip_c_comments(source_text)
     problems = []
     spans = function_spans(text)
 
-    helper = function_body(text, ARM_HELPER)
-    if helper is None:
-        problems.append(
-            "%s() not found -- the refusal path this checker exists to place "
-            "could not be read at all. Refusing rather than reporting a pass "
-            "(#971)." % ARM_HELPER)
-        return problems, 0
-
-    problems.extend(_helper_problems(text, helper))
     fmt_problems, _retraction = _format_problems(text)
     problems.extend(fmt_problems)
     census, sites = _census_problems(text, spans)
@@ -1466,11 +899,13 @@ scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
 '''
 
 # A miniature of the SECOND site. The real SCPI_StartStreamingClaimed is ~1200
-# lines and the arm is a ~130-line slice of it; everything around the ordering
-# -- the frequency parse, the interface publication, the #589 pre-check, the
-# five-second poll's own error reporting -- is left out. The refusal branch and
-# the poll are separate constants so a mutation can move one past the other,
-# which is property 5 stated as an edit.
+# lines and the arm is a ~130-line slice of it; everything around it -- the
+# frequency parse, the interface publication, the #589 pre-check, the
+# five-second poll's own error reporting -- is left out. `_STREAM_REFUSAL` is
+# its own constant so mutations can delete or reshape it (see `discarded`,
+# `voided`, `untested` below); `_STREAM_POLL_LOOP` is kept verbatim only so
+# the fixture still resembles the real function -- no surviving test moves it,
+# since the refusal-vs-poll ordering it used to anchor left with property 5.
 _STREAM_REFUSAL = '''    if (!sdArmed) {
         pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
         sd_card_manager_ReleaseClaim();
@@ -1545,23 +980,15 @@ static scpi_result_t decoy(scpi_t * c) {
             "SCPI_ErrorPush" in function_body(strip_c_comments(_GOOD),
                                               ARM_HELPER), True)
 
-        # ---- #971 acceptance 1: the retraction moved past the release ------
-        # The mutation the ticket names. Every other property still holds: the
-        # callback is still passed in, still called exactly once, still on the
-        # refusal path -- only no longer under the claim.
-        after = _GOOD.replace(
-            "    if (onRefused != NULL) {\n        onRefused();\n    }\n"
-            "    sd_card_manager_ReleaseClaim();",
-            "    sd_card_manager_ReleaseClaim();\n"
-            "    if (onRefused != NULL) {\n        onRefused();\n    }")
-        assert after != _GOOD
-        probs, _ = check(after)
-        _ck("an onRefused() call AFTER the release is caught",
-            any("does not invoke onRefused()" in p for p in probs), True)
+        # #971 acceptance 1 used to live here: the retraction moved past the
+        # release. That is now `test_971_sd_arm_refusal_order.c`'s job (the
+        # ordering INSIDE SD_ArmOrRefuseWithCleanup() is no longer this
+        # file's business at all) -- see "What moved to a host test" in the
+        # module docstring.
 
-        # ---- #971 acceptance 2: the pre-#964 FORmat shape ------------------
-        # Retract at the call site, after the helper has released. The helper
-        # itself is untouched and still passes property 1.
+        # ---- the pre-#964 FORmat shape --------------------------------------
+        # Retract at the call site, after the helper has released, rather
+        # than through the callback parameter.
         pre964 = _GOOD.replace(
             "    if (!SD_ArmOrRefuseWithCleanup(context, \"FORmat\", pCfg,\n"
             "                                   sd_card_manager_ClearFormatStatus)) {\n"
@@ -1598,272 +1025,16 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("passing NULL where FORmat must retract is caught",
             any("passes `NULL`" in p for p in probs), True)
 
-        # ---- property 1: the #955 `mode` clear ------------------------------
-        modeafter = _GOOD.replace(
-            "    cfg->mode = SD_CARD_MANAGER_MODE_NONE;\n"
-            "    if (onRefused != NULL) {\n        onRefused();\n    }\n"
-            "    sd_card_manager_ReleaseClaim();",
-            "    if (onRefused != NULL) {\n        onRefused();\n    }\n"
-            "    sd_card_manager_ReleaseClaim();\n"
-            "    cfg->mode = SD_CARD_MANAGER_MODE_NONE;")
-        assert modeafter != _GOOD
-        probs, _ = check(modeafter)
-        _ck("a `mode` clear AFTER the release is caught",
-            any("does not clear `cfg->mode`" in p for p in probs), True)
-
-        # Hoisted above the success return: still textually before the last
-        # release, and still not on the refusal path. This is why the region
-        # starts at the FIRST release rather than at the function's entry.
-        hoisted = _GOOD.replace(
-            "    if (sd_card_manager_UpdateSettings(cfg)) {",
-            "    cfg->mode = SD_CARD_MANAGER_MODE_NONE;\n"
-            "    if (sd_card_manager_UpdateSettings(cfg)) {").replace(
-            "    cfg->mode = SD_CARD_MANAGER_MODE_NONE;\n"
-            "    if (onRefused != NULL) {", "    if (onRefused != NULL) {")
-        assert hoisted != _GOOD
-        probs, _ = check(hoisted)
-        _ck("a clear hoisted above the success exit is caught",
-            any("does not clear `cfg->mode`" in p for p in probs), True)
-
-        # A clear that puts back a DIFFERENT object than the one armed.
-        other = _GOOD.replace("    cfg->mode = SD_CARD_MANAGER_MODE_NONE;",
-                              "    gLastCfg->mode = SD_CARD_MANAGER_MODE_NONE;")
-        assert other != _GOOD
-        probs, _ = check(other)
-        _ck("clearing a different object than the one armed is caught",
-            any("arms `cfg` but clears `gLastCfg->mode`" in p for p in probs),
-            True)
-
-        # No clear at all, and two clears whose paths cannot be told apart:
-        # both leave the property unestablished and both must fail.
-        noclear = _GOOD.replace(
-            "    cfg->mode = SD_CARD_MANAGER_MODE_NONE;\n", "")
-        assert noclear != _GOOD
-        _ck("no `mode` clear at all is caught",
-            any("statement(s); expected exactly one" in p
-                for p in check(noclear)[0]), True)
-        twoclear = _GOOD.replace(
-            "    cfg->mode = SD_CARD_MANAGER_MODE_NONE;",
-            "    cfg->mode = SD_CARD_MANAGER_MODE_NONE;\n"
-            "    cfg->mode = SD_CARD_MANAGER_MODE_NONE;")
-        _ck("two indistinguishable clears are refused",
-            any("statement(s); expected exactly one" in p
-                for p in check(twoclear)[0]), True)
-
-        # ---- property 1: the claim must be held ACROSS the arm --------------
-        # Hoisting the success-path release above the arm keeps the count at
-        # two, so the region (first release, last release) would re-admit both
-        # writes -- while the arm itself now runs unowned. This is the arm the
-        # "every release follows the arm" test exists for.
-        early = _GOOD.replace(
-            "    if (sd_card_manager_UpdateSettings(cfg)) {\n"
-            "        sd_card_manager_ReleaseClaim();\n"
-            "        return true;\n    }",
-            "    sd_card_manager_ReleaseClaim();\n"
-            "    if (sd_card_manager_UpdateSettings(cfg)) {\n"
-            "        return true;\n    }")
-        assert early != _GOOD
-        probs, _ = check(early)
-        _ck("a release hoisted above the arm is caught",
-            any("before sd_card_manager_UpdateSettings()" in p
-                for p in probs), True)
-
-        norelease = _GOOD.replace(
-            "    sd_card_manager_ReleaseClaim();\n"
-            "    LOG_E(", "    LOG_E(").replace(
-            "        sd_card_manager_ReleaseClaim();\n        return true;",
-            "        return true;")
-        assert "sd_card_manager_ReleaseClaim" not in norelease
-        _ck("a helper that never releases is caught",
-            any("never calls sd_card_manager_ReleaseClaim()" in p
-                for p in check(norelease)[0]), True)
-
-        threeexits = _GOOD.replace(
-            "    sd_card_manager_ReleaseClaim();\n    LOG_E(",
-            "    sd_card_manager_ReleaseClaim();\n"
-            "    sd_card_manager_ReleaseClaim();\n    LOG_E(")
-        assert threeexits != _GOOD
-        probs, _ = check(threeexits)
-        _ck("three releases are refused, not reasoned about",
-            any("ONE claim with one or two exits" in p for p in probs), True)
-
-        # A single-exit restructure is sound and must stay CLEAN: the region
-        # is then (arm, release) and both writes are still inside it.
-        single = _GOOD.replace(
-            "    if (sd_card_manager_UpdateSettings(cfg)) {\n"
-            "        sd_card_manager_ReleaseClaim();\n"
-            "        return true;\n    }\n"
-            "    cfg->mode = SD_CARD_MANAGER_MODE_NONE;\n"
-            "    if (onRefused != NULL) {\n        onRefused();\n    }\n"
-            "    sd_card_manager_ReleaseClaim();",
-            "    bool armed = sd_card_manager_UpdateSettings(cfg);\n"
-            "    if (!armed) {\n"
-            "        cfg->mode = SD_CARD_MANAGER_MODE_NONE;\n"
-            "        if (onRefused != NULL) {\n            onRefused();\n        }\n"
-            "    }\n"
-            "    sd_card_manager_ReleaseClaim();\n"
-            "    if (armed) { return true; }")
-        assert single != _GOOD
-        _ck("a single-exit restructure is accepted, not red", check(single)[0], [])
-
-        # ---- a region is not a path (Qodo, PR #976) -------------------------
-        # THE hole: both writes hoisted out of the failure guard so they run
-        # unconditionally between the arm and the release. Every positional
-        # test still passes -- and a SUCCESSFUL arm now clears the mode it just
-        # set and retracts the state its caller published for it.
-        hoistedout = _GOOD.replace(
-            "    if (sd_card_manager_UpdateSettings(cfg)) {\n"
-            "        sd_card_manager_ReleaseClaim();\n"
-            "        return true;\n    }\n"
-            "    cfg->mode = SD_CARD_MANAGER_MODE_NONE;\n"
-            "    if (onRefused != NULL) {\n        onRefused();\n    }\n"
-            "    sd_card_manager_ReleaseClaim();",
-            "    bool armed = sd_card_manager_UpdateSettings(cfg);\n"
-            "    cfg->mode = SD_CARD_MANAGER_MODE_NONE;\n"
-            "    if (onRefused != NULL) {\n        onRefused();\n    }\n"
-            "    sd_card_manager_ReleaseClaim();\n"
-            "    if (armed) { return true; }")
-        assert hoistedout != _GOOD
-        probs = check(hoistedout)[0]
-        _ck("an unconditional `mode` clear is caught, not just a misplaced one",
-            any("clears `cfg->mode` inside the claim but NOT on a branch" in p
-                for p in probs), True)
-        _ck("an unconditional onRefused() is caught the same way",
-            any("invokes onRefused() inside the claim but NOT on a branch" in p
-                for p in probs), True)
-
-        # The two-release twin: the success branch takes its release but does
-        # not LEAVE, so a successful arm falls through into the refusal writes.
-        fallthrough = _GOOD.replace(
-            "    if (sd_card_manager_UpdateSettings(cfg)) {\n"
-            "        sd_card_manager_ReleaseClaim();\n"
-            "        return true;\n    }",
-            "    bool armed = sd_card_manager_UpdateSettings(cfg);\n"
-            "    if (armed) {\n        sd_card_manager_ReleaseClaim();\n    }")
-        assert fallthrough != _GOOD
-        _ck("a success block that releases but never returns is caught",
-            any("never RETURNS" in p for p in check(fallthrough)[0]), True)
-
-        # A write INSIDE the success block, after that block's own release: it
-        # is between the two releases and squarely on the success path. This is
-        # why the region starts at the block's END, not at the first release.
-        insidesuccess = _GOOD.replace(
-            "        sd_card_manager_ReleaseClaim();\n        return true;\n    }\n"
-            "    cfg->mode = SD_CARD_MANAGER_MODE_NONE;\n",
-            "        sd_card_manager_ReleaseClaim();\n"
-            "        cfg->mode = SD_CARD_MANAGER_MODE_NONE;\n"
-            "        return true;\n    }\n")
-        assert insidesuccess != _GOOD
-        _ck("a clear inside the SUCCESS block is caught",
-            any("does not clear `cfg->mode`" in p
-                for p in check(insidesuccess)[0]), True)
-
-        # The first release at function scope: it then runs on every path, so
-        # nothing after it is owned whichever branch took it.
-        flatrelease = _GOOD.replace(
-            "    if (sd_card_manager_UpdateSettings(cfg)) {\n"
-            "        sd_card_manager_ReleaseClaim();\n"
-            "        return true;\n    }",
-            "    bool armed = sd_card_manager_UpdateSettings(cfg);\n"
-            "    sd_card_manager_ReleaseClaim();\n"
-            "    if (armed) { return true; }")
-        assert flatrelease != _GOOD
-        _ck("an unconditional first release is refused",
-            any("not inside a conditional block" in p
-                for p in check(flatrelease)[0]), True)
-
-        # A success block gated on something that is not the arm's verdict:
-        # everything after it would be called the refusal path on no evidence.
-        wronggate = _GOOD.replace(
-            "    if (sd_card_manager_UpdateSettings(cfg)) {",
-            "    bool armed = sd_card_manager_UpdateSettings(cfg);\n"
-            "    if (gSomethingElse) {")
-        assert wronggate != _GOOD
-        _ck("a success block gated on an unrelated condition is refused",
-            any("cannot read as the SUCCESS path" in p
-                for p in check(wronggate)[0]), True)
-
-        # No identifiable verdict at all: with nothing naming the arm's result,
-        # "the success path" has no textual meaning.
-        noverdict = _GOOD.replace(
-            "    if (sd_card_manager_UpdateSettings(cfg)) {\n"
-            "        sd_card_manager_ReleaseClaim();\n"
-            "        return true;\n    }",
-            "    sd_card_manager_UpdateSettings(cfg);\n"
-            "    if (gArmed) {\n        sd_card_manager_ReleaseClaim();\n"
-            "        return true;\n    }")
-        assert noverdict != _GOOD
-        _ck("an arm whose verdict is discarded is refused, not placed",
-            any("does not consume sd_card_manager_UpdateSettings()'s return"
-                in p for p in check(noverdict)[0]), True)
-
-        # The sound restructures this must NOT red: the `else` side of a
-        # true-gated `if`, and the `== false` spelling of the guard.
-        elseform = _GOOD.replace(
-            "    if (sd_card_manager_UpdateSettings(cfg)) {\n"
-            "        sd_card_manager_ReleaseClaim();\n"
-            "        return true;\n    }\n"
-            "    cfg->mode = SD_CARD_MANAGER_MODE_NONE;\n"
-            "    if (onRefused != NULL) {\n        onRefused();\n    }\n"
-            "    sd_card_manager_ReleaseClaim();",
-            "    bool armed = sd_card_manager_UpdateSettings(cfg);\n"
-            "    if (armed) {\n"
-            "        (void)armed;\n"
-            "    } else {\n"
-            "        cfg->mode = SD_CARD_MANAGER_MODE_NONE;\n"
-            "        if (onRefused != NULL) {\n            onRefused();\n        }\n"
-            "    }\n"
-            "    sd_card_manager_ReleaseClaim();\n"
-            "    if (armed) { return true; }")
-        assert elseform != _GOOD
-        _ck("the `else` of a true-gated `if` is a failure branch, not red",
-            check(elseform)[0], [])
-        cmpform = single.replace("    if (!armed) {", "    if (armed == false) {")
-        assert cmpform != single
-        _ck("`armed == false` reads as the failure branch too",
-            check(cmpform)[0], [])
-
-        # ...and the one it must red rather than interpret: a guard that says
-        # something ELSE as well. `&&` narrows and `||` widens; only the second
-        # is unsound, and nothing here can tell them apart.
-        compound = single.replace("    if (!armed) {",
-                                  "    if (!armed && gRetryOnce) {")
-        assert compound != single
-        _ck("a compound guard is refused rather than interpreted",
-            any("NOT on a branch gated by the refused arm" in p
-                for p in check(compound)[0]), True)
-
-        # ---- property 1: the callback itself --------------------------------
-        never = _GOOD.replace(
-            "    if (onRefused != NULL) {\n        onRefused();\n    }\n", "")
-        assert never != _GOOD
-        _ck("a retraction that is passed but never invoked is caught",
-            any("parameter 0 times" in p for p in check(never)[0]), True)
-
-        unguarded = _GOOD.replace(
-            "    if (onRefused != NULL) {\n        onRefused();\n    }",
-            "    onRefused();")
-        assert unguarded != _GOOD
-        _ck("an unguarded call through the parameter is caught",
-            any("without inspecting it first" in p
-                for p in check(unguarded)[0]), True)
-
-        # A rename must be FOLLOWED, not reported.
-        renamed = _GOOD.replace("onRefused", "retract")
-        assert renamed != _GOOD
-        _ck("renaming the callback parameter is followed, not flagged",
-            check(renamed)[0], [])
-
-        # The claim taken INSIDE the helper changes the model this reasons
-        # about, so it is refused rather than reinterpreted.
-        inside = _GOOD.replace(
-            "    if (sd_card_manager_UpdateSettings(cfg)) {",
-            "    if (!sd_card_manager_TryClaim()) { return false; }\n"
-            "    if (sd_card_manager_UpdateSettings(cfg)) {")
-        assert inside != _GOOD
-        _ck("a claim taken inside the helper is refused",
-            any("supposed to be the CALLER's" in p
-                for p in check(inside)[0]), True)
+        # The #955 `mode`-clear ordering, the claim-held-across-the-arm
+        # reasoning, the "region is not a path" fixes (Qodo, PR #976), and
+        # the callback's own on-refusal-path placement ALL used to be tested
+        # here. All of that was branch-gated positional reasoning about
+        # `SD_ArmOrRefuseWithCleanup()`'s own body -- the shape three review
+        # rounds on #976 kept finding new ways to defeat. It is gone from
+        # this file; `tests/host/test_971_sd_arm_refusal_order.c` (a
+        # deterministic model plus a sha256 drift pin on that function's
+        # text) covers it now. See "What moved to a host test" in the module
+        # docstring.
 
         # ---- property 3: the census ----------------------------------------
         second = _GOOD.replace(
@@ -1884,7 +1055,7 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("the wrapper passing something other than NULL is caught",
             any("rather than NULL" in p for p in probs), True)
 
-        # Property 1, caller side: the arm without the claim ahead of it.
+        # Property 1: the arm without the claim ahead of it.
         noclaim = _GOOD.replace(
             "    if (!SD_ClaimOrRefuse(context, \"SPACe\")) {\n"
             "        return SCPI_RES_ERR;\n    }\n", "")
@@ -1934,23 +1105,19 @@ static scpi_result_t decoy(scpi_t * c) {
             any("publishes format-pending AFTER arming" in p
                 for p in probs), True)
 
-        # ---- comments are not code -----------------------------------------
-        commented = _GOOD.replace(
-            "    if (onRefused != NULL) {\n        onRefused();\n    }",
-            "    /* if (onRefused != NULL) { onRefused(); } */")
-        assert commented != _GOOD
-        _ck("a commented-out retraction does not count as one",
-            any("parameter 0 times" in p for p in check(commented)[0]), True)
-        mention = _GOOD.replace(
-            "    if (onRefused != NULL) {\n        onRefused();\n    }",
-            '    const char *m = "onRefused();"; (void)m;')
-        assert mention != _GOOD
-        _ck("a string mention is not accepted as a call",
-            any("parameter 0 times" in p for p in check(mention)[0]), True)
+        # The "comments are not code" pair that used to live here (a
+        # commented-out or string-mentioned onRefused() call) tested the
+        # callback's on-refusal-path PLACEMENT, which moved to the host test
+        # along with the rest of the helper-internal reasoning above.
 
         # ---- vacuity: a file this cannot read must FAIL ---------------------
+        # check() no longer has a helper-not-found gate of its own (that was
+        # `_helper_problems`'s job); this input still fails, via
+        # `_format_problems` (FORmat not found) and `_census_problems` (no
+        # arm sites at all) independently, each of which is a separate
+        # refusal-not-a-pass gate in its own right.
         probs, n2 = check("int main(void) { return 0; }")
-        _ck("a source with no arm helper fails rather than passing",
+        _ck("a source this checker cannot read at all fails, not passes",
             any("not found" in p for p in probs), True)
         _ck("...and reports nothing examined", n2, 0)
 
@@ -1963,7 +1130,7 @@ static scpi_result_t decoy(scpi_t * c) {
         assert gutted != _GOOD
         probs, _ = check(gutted)
         _ck("an unidentifiable retraction parameter is refused, not skipped",
-            any("UNVERIFIED" in p for p in probs), True)
+            any("could not be located" in p for p in probs), True)
 
         noformat = _GOOD.replace("SCPI_StorageSDFormat", "SCPI_StorageSDFmt")
         assert noformat != _GOOD
@@ -1981,11 +1148,34 @@ static scpi_result_t decoy(scpi_t * c) {
         KNOWN_PLAIN_ARM_SITES = saved
 
     # ======================================================================
-    # properties 4 and 5: the streaming-log arm in SCPIInterface.c (#942)
+    # properties 1 and 4, in SCPIInterface.c: claim precedes arm, and the
+    # streaming-log arm's verdict is consumed (#942)
     # ======================================================================
     probs, n = check_stream(_GOOD_STREAM)
     _ck("a compliant streaming-log arm is clean", probs, [])
     _ck("...and reports the one site examined", n, 1)
+
+    # ---- property 1: the claim precedes the arm, at this site too ----------
+    # A plain "A before B" over the whole function -- not one of the fifteen
+    # branch-gated shapes above, so it was not deleted with property 5.
+    noclaim = _GOOD_STREAM.replace(
+        "    if (!sd_card_manager_TryClaim()) {\n"
+        "        LOG_E(\"Cannot start SD logging - SD card busy\\r\\n\");\n"
+        "        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);\n"
+        "        return SCPI_RES_ERR;\n    }\n", "")
+    assert noclaim != _GOOD_STREAM
+    _ck("arming with no claim taken is caught",
+        any("calls sd_card_manager_TryClaim() 0 times" in p
+            for p in check_stream(noclaim)[0]), True)
+    lateclaim = noclaim.replace(
+        "    sd_card_manager_ReleaseClaim();\n",
+        "    if (!sd_card_manager_TryClaim()) {\n"
+        "        return SCPI_RES_ERR;\n    }\n"
+        "    sd_card_manager_ReleaseClaim();\n", 1)
+    assert lateclaim != noclaim
+    _ck("a claim taken AFTER the arm is caught",
+        any("arms before it calls sd_card_manager_TryClaim()" in p
+            for p in check_stream(lateclaim)[0]), True)
 
     # ---- property 4: the verdict must go somewhere -------------------------
     # The #942 shape itself, verbatim: the call as a bare statement and no
@@ -2007,11 +1197,16 @@ static scpi_result_t decoy(scpi_t * c) {
         any("casts" in p and "`(void)`" in p
             for p in check_stream(voided)[0]), True)
 
+    # THE narrowing: a verdict captured into a variable and never branched on
+    # again used to be caught here (audit against the OLD property 5, "a
+    # verdict read into a variable and never branched on is the discard of
+    # #942 with an extra line"). Property 4 only ever claimed CONSUMED, never
+    # BRANCHED ON, and the code now matches that claim exactly -- this input
+    # is clean.
     untested = _GOOD_STREAM.replace(_STREAM_REFUSAL, "")
     assert untested != _GOOD_STREAM
-    _ck("a verdict captured and never branched on is caught",
-        any("no `if` after the arm tests it" in p
-            for p in check_stream(untested)[0]), True)
+    _ck("a verdict captured but never branched on is no longer flagged here",
+        check_stream(untested)[0], [])
 
     # An inline test captures nothing and consumes the verdict completely --
     # the spelling the other file's helper uses. It must NOT be red.
@@ -2027,46 +1222,10 @@ static scpi_result_t decoy(scpi_t * c) {
     _ck("renaming the captured verdict is followed, not flagged",
         check_stream(renamed)[0], [])
 
-    # ---- property 5: the refusal beats the poll ----------------------------
-    # THE acceptance mutation: the branch still exists, still returns, still
-    # clears under the claim -- it is simply reached after the poll has already
-    # spent its five seconds.
-    moved = _GOOD_STREAM.replace(_STREAM_REFUSAL, "").replace(
-        "    return SCPI_RES_OK;", _STREAM_REFUSAL + "    return SCPI_RES_OK;")
-    assert moved != _GOOD_STREAM
-    _ck("a refusal branch positioned after the poll is caught",
-        any("positioned AFTER the first" in p
-            for p in check_stream(moved)[0]), True)
-
-    noreturn = _GOOD_STREAM.replace(
-        "        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);\n"
-        "        return SCPI_RES_ERR;\n    }\n"
-        "    sd_card_manager_ReleaseClaim();",
-        "        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);\n    }\n"
-        "    sd_card_manager_ReleaseClaim();")
-    assert noreturn != _GOOD_STREAM
-    _ck("a refusal branch that falls through into the poll is caught",
-        any("does not RETURN" in p for p in check_stream(noreturn)[0]), True)
-
-    # ---- the four shapes the pre-merge audit got past the FIRST version ----
-    # Each is a REALISTIC edit, not dead code: that is what made them findings
-    # rather than the documented textual-checker limit. Each is pinned here so
-    # the fix cannot be undone quietly -- re-running the old corpus green was
-    # exactly how the first hole survived.
-
-    # (0) A compound guard. The inline verdict pattern was `<call>\s*\(.*\)`,
-    # whose `.*` ran to the LAST `)` in the condition, so the extra term was
-    # swallowed and a SUCCESSFUL arm took the retraction path.
-    compound = _GOOD.replace(
-        "if (sd_card_manager_UpdateSettings(cfg)) {",
-        "if (sd_card_manager_UpdateSettings(cfg) && (onRefused == NULL)) {")
-    assert compound != _GOOD
-    _ck("a compound guard on the arm's verdict is refused, not swallowed",
-        any("SUCCESS path" in p for p in check(compound)[0]), True)
-
-    # (1) A transformed capture. Only the assignment PREFIX was read, so the
+    # A transformed capture. Only the assignment PREFIX was read, so the
     # variable held the NEGATION of the verdict and every branch on it meant
-    # the opposite of what it read.
+    # the opposite of what it read (audit finding 1). This is still property
+    # 4's business: a transformed capture is not a recognisable verdict.
     inverted = _GOOD_STREAM.replace(
         "bool sdArmed = sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings);",
         "bool sdArmed = sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings) == false;")
@@ -2074,115 +1233,15 @@ static scpi_result_t decoy(scpi_t * c) {
     _ck("an initialiser that does not end at the arm call is refused",
         any("TRANSFORMATION" in p for p in check_stream(inverted)[0]), True)
 
-    # (2) The success-path release hoisted above the refusal branch. Only the
-    # refusal BLOCK was scanned, so the claim was gone before its clear ran.
-    hoisted = _GOOD_STREAM.replace(
-        "bool sdArmed = sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings);\n",
-        "bool sdArmed = sd_card_manager_UpdateSettingsForStreamingLog(pSDCardSettings);\n"
-        "    sd_card_manager_ReleaseClaim();\n")
-    assert hoisted != _GOOD_STREAM
-    _ck("a release between the arm and the refusal branch is caught",
-        any("between the arm and the refusal branch" in p
-            for p in check_stream(hoisted)[0]), True)
-
-    # (3) The refusal's only `return` nested one level down -- the shape an
-    # honest ternary-to-if/else rewrite produces. The old check asked only
-    # whether the token appeared somewhere in the block.
-    nested = _GOOD_STREAM.replace(
-        "        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);\n"
-        "        return SCPI_RES_ERR;\n",
-        "        if (why != NULL) {\n"
-        "            SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);\n"
-        "            return SCPI_RES_ERR;\n"
-        "        }\n")
-    assert nested != _GOOD_STREAM
-    _ck("a refusal branch whose only return is nested is caught",
-        any("at its own level" in p for p in check_stream(nested)[0]), True)
-
-    # A success-shaped test: the refusal is then in an `else` or a
-    # fall-through, which this cannot place. Refused, and said to be refused.
-    successtest = _GOOD_STREAM.replace("    if (!sdArmed) {",
-                                       "    if (sdArmed) {")
-    assert successtest != _GOOD_STREAM
-    _ck("a success-shaped test is refused rather than guessed at",
-        any("read as the REFUSAL branch" in p
-            for p in check_stream(successtest)[0]), True)
-
-    braceless = _GOOD_STREAM.replace(
-        _STREAM_REFUSAL, "    if (!sdArmed) return SCPI_RES_ERR;\n")
-    assert braceless != _GOOD_STREAM
-    _ck("a brace-less refusal is refused: its body cannot be read",
-        any("no braced block" in p for p in check_stream(braceless)[0]), True)
-
-    # ---- property 5, the claim half ----------------------------------------
-    leaked = _GOOD_STREAM.replace(
-        "        pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;\n"
-        "        sd_card_manager_ReleaseClaim();\n",
-        "        pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;\n")
-    assert leaked != _GOOD_STREAM
-    _ck("a refusal that never releases the claim is caught",
-        any("calls sd_card_manager_ReleaseClaim() 0 times" in p
-            for p in check_stream(leaked)[0]), True)
-
-    lateclear = _GOOD_STREAM.replace(
-        "        pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;\n"
-        "        sd_card_manager_ReleaseClaim();\n",
-        "        sd_card_manager_ReleaseClaim();\n"
-        "        pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;\n")
-    assert lateclear != _GOOD_STREAM
-    _ck("clearing `mode` after the release is caught (#955 at the new site)",
-        any("AFTER sd_card_manager_ReleaseClaim()" in p
-            for p in check_stream(lateclear)[0]), True)
-
-    noclear = _GOOD_STREAM.replace(
-        "        pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;\n", "")
-    assert noclear != _GOOD_STREAM
-    _ck("a refusal that leaves `mode` advertising a WRITE is caught",
-        any("expected exactly one" in p and "MODE_NONE" in p
-            for p in check_stream(noclear)[0]), True)
-
-    otherobj = _GOOD_STREAM.replace(
-        "        pSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;",
-        "        gLastSdSettings->mode = SD_CARD_MANAGER_MODE_NONE;")
-    assert otherobj != _GOOD_STREAM
-    _ck("clearing a different object than the one armed is caught",
-        any("arms `pSDCardSettings` but its refusal clears" in p
-            for p in check_stream(otherobj)[0]), True)
-
-    noclaim = _GOOD_STREAM.replace(
-        "    if (!sd_card_manager_TryClaim()) {\n"
-        "        LOG_E(\"Cannot start SD logging - SD card busy\\r\\n\");\n"
-        "        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);\n"
-        "        return SCPI_RES_ERR;\n    }\n", "")
-    assert noclaim != _GOOD_STREAM
-    _ck("arming with no claim taken is caught",
-        any("calls sd_card_manager_TryClaim() 0 times" in p
-            for p in check_stream(noclaim)[0]), True)
-    lateclaim = noclaim.replace(
-        "    sd_card_manager_ReleaseClaim();\n",
-        "    if (!sd_card_manager_TryClaim()) {\n"
-        "        return SCPI_RES_ERR;\n    }\n"
-        "    sd_card_manager_ReleaseClaim();\n", 1)
-    assert lateclaim != noclaim
-    _ck("a claim taken AFTER the arm is caught",
-        any("arms before it calls sd_card_manager_TryClaim()" in p
-            for p in check_stream(lateclaim)[0]), True)
-
-    # ---- comments and literals are not code --------------------------------
-    commented = _GOOD_STREAM.replace(
-        _STREAM_REFUSAL, "/*\n" + _STREAM_REFUSAL + "*/\n")
-    assert commented != _GOOD_STREAM
-    _ck("a commented-out refusal branch does not count as one",
-        any("no `if` after the arm tests it" in p
-            for p in check_stream(commented)[0]), True)
-    mention = _GOOD_STREAM.replace(
-        _STREAM_REFUSAL,
-        '    const char *m = "if (!sdArmed) { return SCPI_RES_ERR; }";\n'
-        "    (void)m;\n")
-    assert mention != _GOOD_STREAM
-    _ck("a refusal branch spelled in a string literal is not one",
-        any("no `if` after the arm tests it" in p
-            for p in check_stream(mention)[0]), True)
+    # Everything that used to follow here -- the refusal branch's position
+    # against the readiness poll, the release-before-clear ordering under the
+    # claim, the compound-guard/nested-return/brace-less/comment-mention
+    # mutations that defeated the old positional version of THIS site's check
+    # -- was the same branch-gated reasoning #976 removed from the helper in
+    # `SCPIStorageSD.c`, at a second site. It is gone from here too, with NO
+    # replacement host-test model yet (unlike the helper's
+    # `test_971_sd_arm_refusal_order.c`) -- see "The same shape at a second
+    # site" in the module docstring.
 
     # ---- vacuity: what this cannot read must FAIL ---------------------------
     probs, n2 = check_stream("int main(void) { return 0; }")
@@ -2206,12 +1265,6 @@ static scpi_result_t decoy(scpi_t * c) {
     _ck("the arm renamed away is refused, not silently unchecked",
         any("0 times" in p for p in check_stream(noarm)[0]), True)
 
-    nopoll = _GOOD_STREAM.replace(_STREAM_POLL_LOOP, "")
-    assert nopoll != _GOOD_STREAM
-    _ck("with the poll gone the ordering is UNVERIFIED, not passed",
-        any("never calls sd_card_manager_IsWriteReady()" in p
-            for p in check_stream(nopoll)[0]), True)
-
     bad = _CHECKS.count(False)
     print("self-test: %d/%d checks passed" % (_CHECKS.count(True), len(_CHECKS)))
     return 1 if bad else 0
@@ -2229,10 +1282,12 @@ def _read(path, flag):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--sd", default="firmware/src/services/SCPI/SCPIStorageSD.c",
-                    help="path to SCPIStorageSD.c (properties 1-3)")
+                    help="path to SCPIStorageSD.c (property 1's six sites, "
+                         "plus 2 and 3)")
     ap.add_argument("--interface",
                     default="firmware/src/services/SCPI/SCPIInterface.c",
-                    help="path to SCPIInterface.c (properties 4-5)")
+                    help="path to SCPIInterface.c (property 1's seventh "
+                         "site, plus 4)")
     ap.add_argument("--self-test", action="store_true",
                     help="run the built-in checks and exit (no source needed)")
     args = ap.parse_args()
@@ -2247,22 +1302,27 @@ def main():
     stream, stream_examined = check_stream(_read(args.interface, "--interface"))
 
     if problems or stream:
-        print("FAIL: SD arm-refusal ordering check (%d arm site(s) in %s, %d "
-              "in %s)" % (examined, os.path.basename(args.sd), stream_examined,
-                          os.path.basename(args.interface)))
+        print("FAIL: SD arm-refusal call-site check (%d arm site(s) in %s, "
+              "%d in %s)" % (examined, os.path.basename(args.sd),
+                             stream_examined, os.path.basename(args.interface)))
         for path, found in ((args.sd, problems), (args.interface, stream)):
             for p in found:
                 print("  - %s: %s" % (os.path.basename(path), p))
         return 1
-    print("OK: %d arm site(s) claim before arming; %s() holds the claim across "
-          "%s() and clears `%s` and invokes the caller's retraction on the "
-          "refusal side of it, behind a success path that returns; %s() "
-          "reaches its retraction through that parameter and not at its own "
-          "call site; the other sites go through %s(), which passes NULL. In "
-          "%s(), %s()'s verdict is checked and its refusal clears `%s` under "
-          "the claim and returns before %s()"
-          % (examined, ARM_HELPER, ARM_CALL, MODE_FIELD, FORMAT_FN,
-             ARM_WRAPPER, STREAM_FN, STREAM_ARM_CALL, MODE_FIELD, STREAM_POLL))
+    print("OK: %d arm site(s) in %s take the claim (%s()) before arming; "
+          "%s() reaches its retraction through %s()'s callback parameter and "
+          "not at its own call site, and publishes before it arms; the other "
+          "sites go through %s(), which passes NULL. In %s(), the claim "
+          "(%s()) precedes the arm and %s()'s verdict is consumed (captured "
+          "into a variable or tested inline, not discarded or cast to "
+          "`(void)`). %s()'s own internal ordering is checked by "
+          "tests/host/test_971_sd_arm_refusal_order.c instead; the position "
+          "of %s()'s refusal against the readiness poll, and its `mode` "
+          "clear under the claim, are not checked by anything right now -- "
+          "see the module docstring."
+          % (examined, os.path.basename(args.sd), CLAIM_TAKER, FORMAT_FN,
+             ARM_HELPER, ARM_WRAPPER, STREAM_FN, STREAM_CLAIM_TAKER,
+             STREAM_ARM_CALL, ARM_HELPER, STREAM_FN))
     return 0
 
 

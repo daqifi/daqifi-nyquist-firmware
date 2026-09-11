@@ -11,23 +11,28 @@ name: scpi-sd-arm-path
 # The bench cannot catch either. The race needs a preemption window that cannot
 # be aimed at from a client -- single-threaded the entry guard always wins -- so
 # the companion tests (daqifi-python-test-suite#317) assert equivalence and the
-# new contract, not the ordering. A refactor can move either write back out and
-# every one of those tests still passes.
+# new contract, not the ordering.
 #
-# So the property is checked here, at its source, for no bench time -- the same
-# answer scpi-claim-path.yml gives for the streaming config-change claim. This
-# is a SEPARATE workflow rather than an extra step there because that gate is
-# named for, and scoped to, the SYSTem:MEMory:* claim path; the SD arm is a
-# different claim, in a different file, with a different failure mode.
+# #976: three review rounds found fifteen ways an honest refactor of
+# SD_ArmOrRefuseWithCleanup() defeats a TEXTUAL check of "which branch does
+# this write sit in" -- the same mechanism scpi_claim_path.py (#896) is
+# already known to be limited to. That reasoning is GONE from this checker.
+# It moved to tests/host/test_971_sd_arm_refusal_order.c (a deterministic
+# model plus a sha256 drift pin on the helper's real text), because forcing
+# an arm to return false is a stub, not a scheduling window, and a host test
+# can decide the property outright instead of being phrased around.
 #
-# #942 (PR #974) is the same shape at a SECOND site, in a second file:
-# SCPI_StartStreamingClaimed() in SCPIInterface.c armed the streaming log with
-# sd_card_manager_UpdateSettingsForStreamingLog() and DISCARDED the result, so
-# an arm that lost the race the #589 pre-check cannot cover armed nothing and
-# left the readiness poll below to spend its full 5 s and then blame the media.
-# Qodo raised the same regression objection there, so the checker covers both
-# sites: the arm's verdict must be consumed, and its refusal must clear `mode`
-# under the claim and RETURN before sd_card_manager_IsWriteReady() is polled.
+# #942 (PR #974) added the identical shape at a SECOND site, in a second
+# file: SCPI_StartStreamingClaimed() in SCPIInterface.c armed the streaming
+# log with sd_card_manager_UpdateSettingsForStreamingLog() and DISCARDED the
+# result, so an arm that lost the race the #589 pre-check cannot cover armed
+# nothing and left the readiness poll below to spend its full 5 s and then
+# blame the media. That site's branch-gated half -- refusal beats the poll,
+# `mode` clears before the release -- is ALSO gone now, for the same #976
+# reason, and unlike the helper it has NO host-test replacement yet (tracked
+# as #998). Its claim-before-arm half is NOT branch-gated -- a plain "A
+# before B" over the whole function, none of the fifteen shapes above ever
+# touched it -- so it stays checked, alongside the verdict-consumed check.
 #
 # The path list is deliberately TWO source files rather than the whole SCPI
 # directory. SD_ArmOrRefuseWithCleanup and its wrapper are `static`, so every
@@ -37,15 +42,16 @@ name: scpi-sd-arm-path
 # trigger can miss.
 #
 # Deliberately NOT claimed: that the claim is a real exclusion, that
-# UpdateSettings actually arms, or that the branch a write sits in is
-# reachable. This is textual and positional, with no control flow -- the same
-# stated limits as scpi_claim_path.py, tracked as #896, which #971 does not
-# close. What it DOES now establish beyond position is which branch a write
-# sits in: the success path has to be gated on the arm's verdict and has to
-# return, or (with a single release) the write has to be gated on failure
-# itself. Lexical containment between two calls was not "runs only on
-# refusal", and a write hoisted out of the failure guard passed the first
-# version of this gate clean (Qodo, PR #976).
+# UpdateSettings actually arms, that a write's branch is reachable, or --
+# since #976 -- which branch of either function a write sits in at all. This
+# is textual, with no control flow, the same stated limits as
+# scpi_claim_path.py, tracked as #896, which #971 does not close. What IS
+# still checked: at every arm site, in either file, the claim precedes the
+# arm; FORmat's retraction goes through its callback parameter and not its
+# own call site, and the format-pending state it undoes is published before
+# the arm; the five other SCPIStorageSD.c sites pass NULL through the
+# wrapper; and the streaming-log arm's verdict is consumed rather than
+# discarded or cast to `(void)`.
 
 on:
   pull_request:
@@ -70,7 +76,7 @@ permissions:
 
 jobs:
   sd-arm-path:
-    name: A refused SD arm retracts caller state under the claim, and returns
+    name: SD arm-refusal call sites take the claim, retract through the right channel, and consume their verdict
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -79,13 +85,13 @@ jobs:
       # Runs first and separately: the checker's own logic is what decides
       # whether the gate below means anything, and a checker that examines
       # nothing reports a pass. Its --self-test covers the vacuity cases
-      # explicitly -- an unreadable source, a helper or a streaming-start
-      # function it cannot find, an arm renamed away, a missing readiness poll,
-      # and a retraction parameter it cannot identify must each FAIL.
+      # explicitly -- an unreadable source, a streaming-start function it
+      # cannot find, an arm renamed away, and a retraction parameter it
+      # cannot identify must each FAIL.
       - name: Self-test the checker
         run: python3 tools/lint/scpi_sd_arm_path.py --self-test
 
       # Reads BOTH files; neither is optional. An entry point that can be
       # skipped is one that can report a pass having examined nothing.
-      - name: Check the SD arm-refusal ordering
+      - name: Check the SD arm-refusal call-site shape
         run: python3 tools/lint/scpi_sd_arm_path.py
