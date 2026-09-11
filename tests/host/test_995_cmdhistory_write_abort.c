@@ -369,11 +369,23 @@ TEST(stalled_host_headline_old_vs_new)
  * this is #995's central claim about WHY two guards, made executable. A
  * transport that always eventually accepts every write, but only after
  * consuming most of a retry budget each time (here: 180 of 200 retries,
- * 900 ms), never trips the short-write guard (every write reports full
- * completion) and OLD/guard-1-only(deadline-only, no short-write latch)
- * both still run every write to completion, at ~900 ms each -- essentially
- * the same ~10 s hazard the headline test shows, just reached by a
- * different route. NEW (both guards) is stopped by the deadline alone. */
+ * 900 ms) never trips the short-write guard, because every write reports
+ * full completion. OLD therefore runs all 11 writes to completion at ~900 ms
+ * each -- 9,900 ms, the same hazard the headline test shows, reached by a
+ * different route. NEW is stopped by the deadline alone, after 3 writes at
+ * 2,700 ms.
+ *
+ * NOTE ON THE GUARD-1-ONLY MUTATION, corrected after an audit: on THIS input
+ * it behaves like NEW, not like OLD. An earlier revision of this comment
+ * lumped it in with OLD as "still runs every write to completion", which is
+ * false and which this test never measured -- the deadline is the guard doing
+ * the work here, so removing the short-write latch changes nothing: 900 + 900
+ * + 900 exceeds the 2,000 ms budget and it refuses at the same point NEW
+ * does. guard-1-only is actually exercised in short_write_guard_is_load_bearing
+ * below, against a fully STALLED transport rather than a trickling one, which
+ * is the input that does separate it from NEW.
+ *
+ * This test runs OLD and NEW only. */
 TEST(trickle_transport_deadline_guard_alone_stops_it)
 {
     const uint32_t attemptsNeeded = 180U;                 /* < FW_WRITE_MAX_RETRIES */
@@ -488,13 +500,22 @@ TEST(deadline_guard_crossing_wrap_still_trips_at_budget)
 }
 
 /* Empty-history early return (usbSettings->cmdHistoryCount == 0) happens
- * BEFORE the take, per the real source -- so it does no writes and holds no
- * budget. Nothing in the mock loop shapes models this path since it never
- * reaches CmdHistoryWrite at all; this test records the invariant in the
- * algebra that matters here (n_calls == 0 spends nothing and sends
- * nothing), so a future refactor that moved the early return to AFTER the
- * take would show up as this test starting to assert something false about
- * a nonexistent write. */
+ * BEFORE the take, per the real source -- so it HOLDS NO BUDGET and never
+ * reaches CmdHistoryWrite.
+ *
+ * It does NOT do "no writes", which an earlier revision of this comment
+ * claimed: SCPI_GetCommandHistory answers the empty case with
+ * SCPI_ResultCharacters(context, "No command history", 18), which is a write.
+ * What is true, and what this file cares about, is that the write happens
+ * outside the mutex and outside the budget window.
+ *
+ * WHAT THIS TEST DOES NOT CATCH, corrected in the same pass: the earlier
+ * comment claimed a refactor moving the early return to AFTER the take would
+ * "show up as this test starting to assert something false". It would not.
+ * This test drives the mock loop shapes with n_calls == 0 and never touches
+ * the real callback, so no rearrangement of the real early return can change
+ * its result. It records an algebraic invariant -- zero calls spend zero --
+ * and that is all it records. */
 TEST(zero_writes_spends_nothing)
 {
     MockEnv oldEnv, newEnv;
