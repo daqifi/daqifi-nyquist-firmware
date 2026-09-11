@@ -6444,6 +6444,33 @@ static scpi_result_t SCPI_GetStreamInterface(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #1007: the stored streaming rate has a setter (SYSTem:STReam:START <freq>)
+ * and no getter, so a client that changes it for one test cannot read the
+ * prior value back to restore it. The firmware's own internal save/restore
+ * sites (SCPI_StartStreaming's no-arg-START path above, WIFI:FINd? and
+ * SYST:STR:THRoughput) all read Frequency the same way this does; this
+ * getter is the first one exposed as a query. Returns the last value START
+ * published -- never revoked by STOP (deliberately out of scope, #1007) --
+ * so it reads the boot default (0) before any START has ever run.
+ *
+ * Frequency is uint64_t; the same critical section + INT32_MAX clamp used by
+ * SCPI_StartStreaming's no-arg-START resolution is required here for the
+ * same reason (CLAUDE.md: 64-bit reads on PIC32MZ are not atomic and need a
+ * critical section to avoid a torn read against a concurrent SCPI-task
+ * writer). */
+static scpi_result_t SCPI_GetStreamRate(scpi_t * context) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    taskENTER_CRITICAL();
+    uint64_t stored = pRunTimeStreamConfig->Frequency;
+    taskEXIT_CRITICAL();
+    if (stored > (uint64_t)INT32_MAX) stored = (uint64_t)INT32_MAX;  // clamp before narrowing
+
+    SCPI_ResultInt32(context, (int32_t) stored);
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_GetEcho(scpi_t * context) {
     microrl_t* console;
     console = SCPI_GetMicroRLClient(context);
@@ -8494,6 +8521,7 @@ static const scpi_command_t scpi_commands[] = {
     // SYSTem:Start/Stop/StreamData aliases kept for back-compat with existing
     // client libraries and user scripts (#311 round 3).
     {.pattern = "SYSTem:STReam:START", .callback = SCPI_StartStreaming,},
+    {.pattern = "SYSTem:STReam:START?", .callback = SCPI_GetStreamRate,}, // #1007: readback for the stored rate; STOP does not revert it (deliberately, see the callback)
     {.pattern = "SYSTem:STReam:STOP", .callback = SCPI_StopStreaming,},
     {.pattern = "SYSTem:STReam:DATA?", .callback = SCPI_IsStreaming,},
     {.pattern = "SYSTem:StartStreamData", .callback = SCPI_StartStreaming,},
