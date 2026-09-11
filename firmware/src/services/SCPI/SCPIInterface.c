@@ -5517,8 +5517,14 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * pin's position.
      *
      * BOTH READS UNDER ONE CRITICAL SECTION, mirroring the WRITER rather than
-     * the other reader -- and mirroring the identical fix already applied to
-     * the WIFI:FINd? finder's own pin (#938, PR #965). Each load is
+     * the other reader. The WIFI:FINd? finder's own pin has the same defect
+     * and the same fix is PROPOSED for it -- see #938 and PR #965, which was
+     * open and unmerged when this was written, with main's finder carrying no
+     * stop pin at all. Do not read this line as the finder being fixed; check
+     * that site before relying on it. (Stated in a form that stays true
+     * whichever of the two merges first: an earlier draft said the finder fix
+     * was "already applied", which was false and would have become a comment
+     * on main asserting a race was closed where it was open.) Each load is
      * individually atomic (aligned 32-bit on PIC32MZ), so the section is not
      * there to make a load atomic -- it is there to make the PAIR describe
      * one instant.
