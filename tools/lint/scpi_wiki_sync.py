@@ -532,6 +532,97 @@ def _self_test_style():
     return cases, failures
 
 
+def _self_test_style_only_entry():
+    """Pin that `main()`'s `--style-only` branch runs `self_test()` first.
+
+    Qodo review on #907 (PR #1036) found `main()` returned through the
+    `args.style_only` branch straight into `load_and_check_style()` --
+    never reaching `self_test()`, so the vacuity guard above (and every
+    other self-test case) was silently skipped in this mode even though the
+    `--wiki` path's `if self_test() != 0: return 1` runs it unconditionally.
+    A regression that made S1/S2 stop reporting anything would leave
+    `--style-only` green -- exactly the "check that cannot fail" class this
+    guard is supposed to prevent, just one call frame further out.
+
+    This does not read the source for the fix (that is what let the bug
+    ship in the first place); it drives `main()` itself with `--style-only`
+    on `sys.argv`, with the module-level `self_test` name swapped for a spy,
+    and checks two things a bare "was it called" assertion would not:
+
+    1. `self_test()` (the spy) is actually invoked from the `--style-only`
+       branch, not only from the `--wiki` branch.
+    2. A non-zero `self_test()` result actually stops `main()` from
+       returning 0 -- so a future regression that calls `self_test()` but
+       discards its return value (as easy a mistake as never calling it)
+       still fails this case instead of reading as fixed.
+    """
+    import contextlib
+    import io
+    import tempfile
+    global self_test
+    real_self_test = self_test
+    argv_saved = sys.argv
+    failures = 0
+    cases = 2
+
+    # A minimal but valid table -- real enough that main()'s style scan
+    # (which runs after the spy, on a genuine self_test() pass) has
+    # something to load without touching the real firmware source or cwd.
+    src = ('const scpi_command_t scpi_commands[] = {\n'
+           '    {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_A,},\n'
+           '    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n};\n')
+    with tempfile.TemporaryDirectory() as d:
+        c = os.path.join(d, "scpi.c")
+        with open(c, "w", encoding="utf-8") as fh:
+            fh.write(src)
+
+        # (1) self_test() must be CALLED from the --style-only branch.
+        calls = []
+
+        def _spy_pass():
+            calls.append(True)
+            return 0
+
+        try:
+            self_test = _spy_pass
+            sys.argv = ["scpi_wiki_sync.py", "--style-only", "--scpi", c]
+            with contextlib.redirect_stdout(io.StringIO()):
+                main()
+        finally:
+            self_test = real_self_test
+            sys.argv = argv_saved
+        if not calls:
+            failures += 1
+            print("  FAIL style-only entry: main() did not call self_test() "
+                  "from the --style-only branch -- the --wiki path's "
+                  "`if self_test() != 0: return 1` guard is skipped here, "
+                  "so a broken S1/S2 detector would leave --style-only "
+                  "green")
+
+        # (2) a non-zero self_test() result must stop main() from
+        # returning 0 -- catches "called but ignored", not just "never
+        # called".
+        def _spy_fail():
+            return 1
+
+        try:
+            self_test = _spy_fail
+            sys.argv = ["scpi_wiki_sync.py", "--style-only", "--scpi", c]
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = main()
+        finally:
+            self_test = real_self_test
+            sys.argv = argv_saved
+        if rc == 0:
+            failures += 1
+            print("  FAIL style-only entry: main() returned 0 from "
+                  "--style-only even though self_test() reported failure -- "
+                  "the return value must gate execution, not just be "
+                  "called")
+
+    return cases, failures
+
+
 def self_test():
     """Check the abbreviation rule and the #907 house-style gate.
 
@@ -549,12 +640,15 @@ def self_test():
     failures += e2e_failures
     style_cases, style_failures = _self_test_style()
     failures += style_failures
+    entry_cases, entry_failures = _self_test_style_only_entry()
+    failures += entry_failures
     if failures:
         print(f"\n::error::{failures} self-test(s) failed")
         return 1
     print(f"self-test: {len(SELF_TEST_CASES)}/{len(SELF_TEST_CASES)} matcher "
           f"cases + {e2e_cases}/{e2e_cases} end-to-end cases + "
-          f"{style_cases}/{style_cases} house-style cases pass")
+          f"{style_cases}/{style_cases} house-style cases + "
+          f"{entry_cases}/{entry_cases} style-only entry cases pass")
     return 0
 
 
@@ -689,6 +783,8 @@ def main():
         return self_test()
 
     if args.style_only:
+        if self_test() != 0:  # a broken matcher/detector makes this verdict junk --
+            return 1           # same guard the --wiki path takes below, not skipped here
         live, commented, style_short, style_ambig = load_and_check_style(args.scpi)
         print(f"registered SCPI commands : {len(live)}")
         print(f"commented-out patterns   : {len(commented)} (not shipped, ignored)")
