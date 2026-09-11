@@ -504,30 +504,6 @@ static inline void ResetInflightRing(void) {
     }
 }
 
-// #956: public counterpart of the three teardown sites' "tcpInFlight = 0 +
-// ResetInflightRing()" pair, for callers outside this file.  SYST:STR:START and
-// SYST:STR:STATS:CLEar (SCPIInterface.c) predate ResetInflightRing() and
-// hand-rolled only the ring half, leaving tcpInFlight at its outstanding-send
-// count — the exact invariant break the helper's contract comment above warns
-// produces a permanent head/tail desync.
-//
-// Serialized with taskENTER_CRITICAL rather than wMutex, which the static
-// helper's comment asks of its in-file callers.  That is a strengthening, not a
-// relaxation: a critical section excludes every task and every kernel-managed
-// ISR, so no producer (TcpServerFlush's push) or consumer (SOCKET_MSG_SEND's
-// pop) can observe a half-reset ring.  wMutex is deliberately NOT taken — these
-// callers run in SCPI dispatch context, where blocking on a mutex a saturated
-// streaming producer holds would stall the command for milliseconds, and the
-// critical section already gives the stronger guarantee.
-void wifi_tcp_server_ResetInflightRing(void) {
-    if (gpServerData == NULL) {
-        return;
-    }
-    taskENTER_CRITICAL();
-    gpServerData->client.tcpInFlight = 0;
-    ResetInflightRing();
-    taskEXIT_CRITICAL();
-}
 
 void wifi_tcp_server_CloseSocket() {
     // The WINC driver's shutdown() automatically closes the socket

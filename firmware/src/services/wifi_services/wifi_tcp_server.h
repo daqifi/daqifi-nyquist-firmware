@@ -97,8 +97,9 @@ typedef struct s_tcpClientContext
      *
      *  #956 STATUS: the two producer-side pairing defects it named are now
      *  closed in source (the unlocked cap check moved into TcpServerFlush; the
-     *  two SCPI ring resets now go through wifi_tcp_server_ResetInflightRing and
-     *  zero tcpInFlight with it).  The caution above is deliberately LEFT
+     *  two SCPI sites no longer reset the live ring AT ALL -- see
+     *  SCPI_ClearStreamStats for why resetting both halves is worse than
+     *  resetting neither, and why only socket teardown may reset a live ring).  The caution above is deliberately LEFT
      *  STANDING rather than replaced: the band has not been re-measured on
      *  fixed firmware, and two things #956 did NOT fix still detach this
      *  counter from real loss — the Sent/Confirmed reset asymmetry documented
@@ -358,7 +359,6 @@ bool wifi_tcp_server_HasActiveClient(void);
  *
  * No-op if the server context has not been initialized.
  */
-void wifi_tcp_server_ResetInflightRing(void);
 
 /**
  * Returns the current count of bytes sitting in the WiFi TCP write

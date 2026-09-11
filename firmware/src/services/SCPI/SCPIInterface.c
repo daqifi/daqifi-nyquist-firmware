@@ -3445,14 +3445,30 @@ static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
         pTcp->client.wifiTcpInflightOverflow = 0;   // #956
         pTcp->client.wifiWriteBufferRejectedCalls = 0;
         pTcp->client.wifiWriteBufferRejectedBytes = 0;
-        // #956: this site used to hand-roll the ring half of the reset and leave
-        // tcpInFlight at its outstanding-send count -- the invariant break
-        // ResetInflightRing()'s own contract comment warns desyncs head/tail for
-        // the rest of the session.  The helper does both, atomically.  Its inner
-        // taskENTER_CRITICAL nests inside ours (FreeRTOS counts nesting in the
-        // TCB -- portCRITICAL_NESTING_IN_TCB=1; interrupts re-enable only when
-        // the count returns to zero), so the whole reset stays one atomic unit.
-        wifi_tcp_server_ResetInflightRing();
+        // #956: this site DELIBERATELY DOES NOT TOUCH THE IN-FLIGHT RING.
+        //
+        // It used to hand-roll a ring-ONLY reset (zeroing inflightHead/Tail and
+        // inflightSizes while leaving tcpInFlight at its outstanding-send
+        // count) -- the half-reset that ResetInflightRing()'s contract comment
+        // warns desyncs head/tail for the session.  The first fix for that
+        // zeroed BOTH halves.  That is worse, and a pre-merge review caught it:
+        // the ring is LIVE TRANSPORT STATE owned by the send/completion pair,
+        // not a statistic.  Zeroing tcpInFlight while the WINC still owes
+        // completions admits sends past the physical cap, and a later old
+        // completion pops a NEW send's slot or accrues false over-byte stats
+        // against a zero size -- a fresh instance of the very mis-pairing #956
+        // exists to remove.
+        //
+        // Resetting NEITHER half is correct and removes the original defect by
+        // construction: there is no partial reset if there is no reset.  The
+        // ring is reset only where a reset is safe -- the three socket-teardown
+        // sites, after which no completion can arrive for a stale slot.
+        //
+        // Residual, pre-existing and NOT fixed by this change: clearing
+        // wifiTcpBytesSent while a send is outstanding still lets that send's
+        // completion add to Confirmed with its Sent contribution erased, a
+        // permanent per-session offset CLAUDE.md already documents.  Draining
+        // before clearing is the only real answer and is out of scope here.
         // #560/#475 Opt 0 — listener-health counters. Reset only on this
         // operator-initiated clear (NOT at stream start) so the slow PATH-1
         // listen-slot leak stays visible across streaming sessions.
@@ -4667,9 +4683,11 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
             pTcp->client.wifiPartialBytesMissing = 0;
             pTcp->client.wifiTcpOverBytesExtra = 0;     // #956: same epoch as the line above
             pTcp->client.wifiTcpInflightOverflow = 0;   // #956
-            // #956: see SCPI_ClearStreamStats -- the identical hand-rolled
-            // ring-only reset lived here too, leaving tcpInFlight stale.
-            wifi_tcp_server_ResetInflightRing();
+            // #956: like SCPI_ClearStreamStats, this site DELIBERATELY leaves
+            // the in-flight ring alone.  The identical hand-rolled ring-only
+            // reset lived here too; see that function for why resetting BOTH
+            // halves is worse than resetting neither, and why only the
+            // socket-teardown sites may reset a live ring.
             taskEXIT_CRITICAL();
         }
     }
