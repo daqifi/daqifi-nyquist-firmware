@@ -201,11 +201,11 @@ static bool DAC_EnsureHardwareInitialized(void) {
 // Helper function to find DAC channel index
 static size_t DAC_FindChannelIndex(uint8_t channelId) {
     AOutArray* pBoardConfigAOutChannels = BoardConfig_Get(BOARDCONFIG_AOUT_CHANNELS, 0);
-    
+
     if (pBoardConfigAOutChannels == NULL) {
         return SIZE_MAX; // Invalid index
     }
-    
+
     for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
         if (pBoardConfigAOutChannels->Data[i].DaqifiDacChannelId == channelId) {
             return i;
@@ -385,60 +385,140 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
     } else {
         // One parameter: voltage for all channels.
         //
-        // #980 Qodo pre-merge review: two passes over the channel list, not
-        // one, for the same reason as the single-channel branch above -- the
-        // per-channel register writes only stage each DAC's shadow register;
-        // ONE shared UpdateLatch() call then commits ALL of them to the
-        // physical outputs at once. Publishing BoardData per-channel inside
-        // the write loop (the old shape) would mark every channel "live" at
-        // the new voltage even if that single shared latch update then
-        // failed and none of them actually moved. So: write all the shadow
-        // registers first, gate on the ONE latch call, and only then walk
-        // the channel list again to publish -- same invalid-channel skip in
-        // both passes so the two stay index-consistent.
+        // #980 Qodo /agentic_review pass 4: the DAC7718's load latch is
+        // GLOBAL -- one LD-bit write commits EVERY channel's shadow register
+        // at once (DAC7718_UpdateLatch -> ReadWriteReg(id, 0, 0,
+        // 0b110000011000), DAC7718.c). So "abort the loop before the latch"
+        // -- this branch's pass-2 shape, and the claim in its comment that
+        // this "leaves every channel's physical output exactly where it
+        // was" -- was WRONG: it left the channels already written holding an
+        // UNCOMMITTED new value in their shadow registers, which the next
+        // UpdateLatch from any UNRELATED command (a single-channel
+        // SOUR:VOLT:LEV, CONF:DAC:UPDATE) then drove onto their physical
+        // outputs -- while BoardData, never published by the aborted call,
+        // still reported the old voltage. A client polling SOUR:VOLT:LEV?
+        // read the old value off a pin that had silently moved minutes
+        // later, as a side effect of a command that never named it.
+        //
+        // The invariant this branch owes the device, per channel, is:
+        //     shadow register == physical output == BoardData
+        // (true from boot: DAC7718_Init ends in a latch). Two ways to
+        // restore it after a mid-loop write failure: pull the shadows back
+        // down (re-write every already-staged channel with its prior
+        // voltage) or push the outputs up (fire the one latch). The latch is
+        // chosen -- ONE SPI frame instead of up to seven MORE, over a bus
+        // that just failed, each of which could fail too and leave a more
+        // mixed shadow state with no recourse short of a full DAC reset.
+        //
+        // Firing the latch is a no-op BY CONSTRUCTION for every channel this
+        // loop did NOT successfully write: their shadow registers still hold
+        // whatever value is already on their outputs. That holds for the
+        // pre-SPI failure modes in DAC7718_ReadWriteReg (its own input
+        // validation, and a DAC7718_Lock() failure -- both before CS is ever
+        // asserted) and for a channel skipped without a write at all. The one
+        // residual is a write that times out MID-FRAME, where CS was already
+        // asserted and a truncated frame was clocked in: that channel's
+        // shadow is indeterminate either way, and this shape at least
+        // commits it NOW, with an error naming the channel, instead of
+        // leaving it for an unrelated later command's latch to surface.
+        //
+        // So: try every channel, remember which ones actually took the
+        // write, latch UNCONDITIONALLY (this is what drains any uncommitted
+        // shadow state, so it must fire even when every write failed), and
+        // publish BoardData ONLY for the channels that were actually staged.
+        // Nothing false is ever published, and this command never leaves
+        // uncommitted shadow state behind it for a later command to trip
+        // over. An out-of-range hwChannel now counts as a per-channel
+        // failure rather than a silent skip-and-report-OK, matching the
+        // single-channel branch above, which already treats the identical
+        // condition as SCPI_RES_ERR.
+        //
+        // Known residual (not closed by this shape, and not fixable inside
+        // this loop): if DAC7718_UpdateLatch() itself fails, the staged
+        // shadows stay uncommitted and a LATER latch can still surface them
+        // -- restoring would mean writing over the same bus that just
+        // failed. This is the same class the single-channel branch and
+        // SCPI_DACUpdate already carry; closing it needs a shadow-resync /
+        // latch-inhibit mechanism, deferred alongside #989 (needs NQ3
+        // hardware to validate the reset arm). Also residual: no lock is
+        // held across this loop, so a concurrent command on the other SCPI
+        // transport can interleave a latch mid-loop -- the end state still
+        // converges (this call's own latch and publish run last for what it
+        // staged), but the transition is not atomic; folding that into #989
+        // rather than adding a second locking mechanism here.
         uint32_t counts = DAC_VoltageToCounts(voltage, pDACModule);
 
-        for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
+        // Bound by the AOutArray's own capacity, not just its live Size, so
+        // `staged[]` is provably in range regardless.
+        size_t nChannels = pBoardConfigAOutChannels->Size;
+        if (nChannels > MAX_AOUT_CHANNEL) {
+            nChannels = MAX_AOUT_CHANNEL;
+        }
+
+        bool staged[MAX_AOUT_CHANNEL];
+        uint32_t failedMask = 0;
+        size_t failedCount = 0;
+
+        for (size_t i = 0; i < nChannels; i++) {
+            staged[i] = false;
+
             uint8_t hwChannel = pBoardConfigAOutChannels->Data[i].Config.DAC7718.ChannelNumber;
 
-            // Validate hardware channel
+            // Validate hardware channel -- a FAILURE, not a silent skip (see
+            // the block comment above). Nothing is written, so its shadow is
+            // untouched.
             if (hwChannel >= DAC7718_NUM_CHANNELS) {
                 LOG_E("SCPI_DACVoltageSet: Invalid DAC7718 channel %u (max %u)", hwChannel, DAC7718_NUM_CHANNELS - 1);
-                continue;  // Skip invalid channel, continue with others
+                failedMask |= (1UL << i);
+                failedCount++;
+                continue;
             }
 
             uint8_t dacRegister = DAC7718_REGISTER_OFFSET + hwChannel;
-            // #980 Qodo /improve pass 2: same check as the single-channel
-            // branch above. Aborting HERE (before any UpdateLatch) is safe
-            // for channels already looped over -- their shadow registers may
-            // hold the new value, but nothing physical changes until the
-            // latch call below, which this abort prevents from ever running.
-            // So a mid-loop failure leaves EVERY channel's physical output
-            // exactly where it was, never a partial update.
+            // A failed write means this channel's shadow was not loaded with
+            // the new code. Keep going rather than abort: an SPI failure is
+            // bus-level, not channel-specific, so stopping here would deny
+            // the remaining channels for a reason unrelated to them. The
+            // failure is reported once, after the unconditional latch below.
             if (DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts) == UINT32_MAX) {
-                SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to write DAC register");
-                return SCPI_RES_ERR;
+                failedMask |= (1UL << i);
+                failedCount++;
+                continue;
             }
+
+            staged[i] = true;
         }
 
-        // Commit all staged registers to the physical outputs. Report a
-        // failure instead of silently keeping the pre-existing state.
+        // UNCONDITIONAL -- see the block comment above for why this must
+        // fire even when every write failed.
         if (!DAC7718_UpdateLatch(dacInstanceId)) {
+            // Nothing is known to be live; publish nothing.
             SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to update DAC latches");
             return SCPI_RES_ERR;
         }
 
-        // Only now publish BoardData -- the latch call above confirms every
-        // channel written in the loop is actually live at the new voltage.
-        for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
-            uint8_t hwChannel = pBoardConfigAOutChannels->Data[i].Config.DAC7718.ChannelNumber;
-            if (hwChannel >= DAC7718_NUM_CHANNELS) {
-                continue;  // Same invalid-channel skip as the write loop above
+        // Publish ONLY the channels whose register write actually succeeded
+        // -- the latch above confirms those, and only those, are physically
+        // at the new voltage. A channel that failed keeps its prior
+        // BoardData value, which is still what its output is at.
+        for (size_t i = 0; i < nChannels; i++) {
+            if (!staged[i]) {
+                continue;
             }
-
             uint8_t channelId = pBoardConfigAOutChannels->Data[i].DaqifiDacChannelId;
             AOutSample sample = {.Channel = channelId, .Voltage = voltage};
             BoardData_Set(BOARDDATA_AOUT_LATEST, i, &sample);
+        }
+
+        if (failedCount > 0) {
+            // Detail goes to the log -- SCPI_ExecutionError takes no
+            // varargs, and per project policy the error queue carries the
+            // code while SYST:LOG? carries the detail. Mask is by
+            // BoardData/channel-list index, matching SOUR:VOLT:LEV? ordering.
+            LOG_E("SOUR:VOLT:LEV: %u of %u channels not set (index mask 0x%02X); the rest are live at the new voltage",
+                  (unsigned)failedCount, (unsigned)nChannels, (unsigned)failedMask);
+            SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to write DAC register (some channels not set)");
+            return SCPI_RES_ERR;
         }
     }
 
@@ -540,27 +620,27 @@ scpi_result_t SCPI_DACChanCalbSet(scpi_t * context) {
 
 scpi_result_t SCPI_DACChanCalmGet(scpi_t * context) {
     int channel;
-    
+
     if (!SCPI_ParamInt32(context, &channel, TRUE)) {
         return SCPI_RES_ERR;
     }
-    
+
     // TODO: Get calibration M from runtime config
     SCPI_ResultDouble(context, 1.0); // Default calibration
-    
+
     return SCPI_RES_OK;
 }
 
 scpi_result_t SCPI_DACChanCalbGet(scpi_t * context) {
     int channel;
-    
+
     if (!SCPI_ParamInt32(context, &channel, TRUE)) {
         return SCPI_RES_ERR;
     }
-    
+
     // TODO: Get calibration B from runtime config
     SCPI_ResultDouble(context, 0.0); // Default calibration
-    
+
     return SCPI_RES_OK;
 }
 
