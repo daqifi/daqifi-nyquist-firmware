@@ -156,9 +156,28 @@ typedef struct s_tcpClientContext
      *  leaves Sent == Confirmed == 1400 with 100 bytes genuinely gone.  That
      *  reads as zero loss and satisfies "no reset in this window".
      *
-     *  It is invisible in the partial counters too: after a CLEar the popped
-     *  sendSize is 0, so the `sendSize > 0` guard below suppresses the
-     *  partial-send flag entirely -- only Confirmed moves.
+     *  BEFORE #956 it was invisible in the partial counters too, and that half
+     *  NO LONGER HOLDS.  The old claim, stated so it is withdrawn rather than
+     *  quietly swapped: CLEar zeroed the ring, so the popped sendSize was 0,
+     *  the `sendSize > 0` guard below suppressed the partial-send flag, and
+     *  only Confirmed moved.
+     *
+     *  #956 stopped CLEar touching the ring at all, so a completion landing
+     *  after a mid-flight CLEar pops its ORIGINAL sendSize and a genuine short
+     *  send increments wifiTcpPartialSends and this field normally.  Concretely:
+     *  issue 1400 B, CLEar while it is outstanding, then a 1300 B completion
+     *  now yields PartialSends 1 and PartialBytesMissing 100, where it
+     *  previously yielded 0 and 0.
+     *
+     *  The old sentence was also wrong in a second way once wifiTcpOverBytesExtra
+     *  existed: its arm below is deliberately UNGUARDED on sendSize, so even a
+     *  sendSize == 0 pop moved that counter.  "Only Confirmed moves" failed
+     *  either way.
+     *
+     *  The Sent/Confirmed offset described above is a DIFFERENT pair of counters
+     *  with its own reset sites, is untouched by #956, and remains exactly as
+     *  silent as described.  Do not read the partial counters as blind after a
+     *  clear on post-#956 firmware.
      *
      *  WHAT IS SAFE: a DELTA between two drained snapshots inside one
      *  uncontaminated epoch.  To re-establish one, reset with the ring
@@ -179,12 +198,15 @@ typedef struct s_tcpClientContext
      *  wifiTcpPartialSends above), and the new wifiTcpOverBytesExtra below now
      *  counts the negative half this field discards, so
      *  BytesSent - BytesConfirmed == PartialBytesMissing - OverBytesExtra is
-     *  checkable rather than merely hoped for.  Everything else stated above
-     *  still holds unchanged and none of it is superseded: the epoch
-     *  precondition, the permanent Sent/Confirmed offset a reset taken with
-     *  sends outstanding leaves behind, the two directions that offset can take,
-     *  and the independent never-retried short send.  Nothing here has been
-     *  re-measured on fixed firmware. */
+     *  checkable rather than merely hoped for.  This status paragraph supersedes
+     *  EXACTLY ONE claim above -- the partial-counter blindness after a CLEar,
+     *  corrected in place two paragraphs up -- and nothing else.  An earlier
+     *  revision of this line reaffirmed everything above unchanged, which was
+     *  false once the ring stopped being reset.  Still standing and NOT
+     *  superseded: the epoch precondition, the permanent Sent/Confirmed offset a
+     *  reset taken with sends outstanding leaves behind, the two directions that
+     *  offset can take, and the independent never-retried short send (now filed
+     *  as #1041).  Nothing here has been re-measured on fixed firmware. */
     uint32_t wifiPartialBytesMissing;
     /** #956: the OPPOSITE direction of wifiPartialBytesMissing — cumulative
      *  (sentBytes - sendSize) where the completion confirms MORE bytes than the

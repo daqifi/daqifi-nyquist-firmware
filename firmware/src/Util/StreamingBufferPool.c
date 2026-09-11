@@ -38,14 +38,19 @@
  * ONE uint32_t did not fit, so any future static must come with its own
  * payment.
  *
- * The fourth -512U is #956's payment: wifiTcpOverBytesExtra and
- * wifiTcpInflightOverflow add two uint32_t to the client struct inside the
- * static gTcpServerContext. Eight bytes before alignment, paid at the same
- * 512 B granularity as #824's and #925's single scalars -- consistency with
- * those beats exactness, and the cost is the ~7 partitioned slots described
- * above, off a capacity that is not the binding constraint (the FreeRTOS
- * sample-queue clamp is). Cost as above: ~7 more slots off a
- * partitioned capacity that is not the binding constraint. */
+ * The THIRD -512U is #956's payment -- the fourth trim overall, after the
+ * -1024U and the two -512U above, which is what an earlier revision of this
+ * line miscounted as "the fourth -512U". The macro contains three -512U
+ * tokens, not four; the ordinal is corrected here because this whole comment
+ * block exists to be exact about the accounting after two earlier rounds
+ * corrected imprecise claims in it.
+ *
+ * It pays for wifiTcpOverBytesExtra and wifiTcpInflightOverflow, two uint32_t
+ * added to the client struct inside the static gTcpServerContext -- eight
+ * bytes before alignment, paid at the same 512 B granularity as #824's and
+ * #925's single scalars. Consistency with those beats exactness, and the cost
+ * is the ~7 partitioned slots described above, off a capacity that is not the
+ * binding constraint (the FreeRTOS sample-queue clamp is). */
 #define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U - 512U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
