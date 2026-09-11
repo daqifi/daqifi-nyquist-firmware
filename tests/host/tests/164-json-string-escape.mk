@@ -10,3 +10,8 @@ $(TEST_164_BIN): test_json_string_escape.c test_framework.h $(FW_SVC)/JSON_Strin
 	$(CC) $(CFLAGS) -I$(FW_SVC) -o $(TEST_164_BIN) test_json_string_escape.c
 
 TESTS += $(TEST_164_BIN)
+# Identity, not just a count: the guard in ../Makefile compares the SET of
+# claimed sources against the set on disk, so a fragment that is deleted,
+# duplicated, or pointed at the wrong source is caught instead of balancing
+# out. Keep this naming the source THIS fragment compiles.
+TEST_SOURCES_CLAIMED += test_json_string_escape.c

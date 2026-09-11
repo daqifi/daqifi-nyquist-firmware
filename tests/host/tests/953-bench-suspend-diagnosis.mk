@@ -30,3 +30,8 @@ $(TEST_953_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_
 	$(CC) $(CFLAGS) -o $(TEST_953_BIN) test_953_bench_suspend_diagnosis.c
 
 TESTS += $(TEST_953_BIN)
+# Identity, not just a count: the guard in ../Makefile compares the SET of
+# claimed sources against the set on disk, so a fragment that is deleted,
+# duplicated, or pointed at the wrong source is caught instead of balancing
+# out. Keep this naming the source THIS fragment compiles.
+TEST_SOURCES_CLAIMED += test_953_bench_suspend_diagnosis.c

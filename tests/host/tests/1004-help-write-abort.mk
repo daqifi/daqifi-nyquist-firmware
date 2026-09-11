@@ -30,3 +30,8 @@ $(TEST_1004_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC
 	$(CC) $(CFLAGS) -o $(TEST_1004_BIN) test_1004_help_write_abort.c
 
 TESTS += $(TEST_1004_BIN)
+# Identity, not just a count: the guard in ../Makefile compares the SET of
+# claimed sources against the set on disk, so a fragment that is deleted,
+# duplicated, or pointed at the wrong source is caught instead of balancing
+# out. Keep this naming the source THIS fragment compiles.
+TEST_SOURCES_CLAIMED += test_1004_help_write_abort.c

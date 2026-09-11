@@ -64,6 +64,7 @@ RECIPES := Makefile
 # include order.
 TESTS       :=
 CLEAN_EXTRA :=
+TEST_SOURCES_CLAIMED :=
 
 # GNU Make's default goal (what a bare `make` with no target builds) is the
 # first real target it reads, and the fragment `include` below happens
@@ -130,15 +131,40 @@ binar(ies) registered -- one fragment is not contributing its binary to \
 $$(TESTS). Fragments: $(FRAGMENTS). Registered: $(TESTS))
 endif
 
-# One fragment per test source. Both sets are derived, so neither drifts: a new
-# suite adds a test_*.c AND its fragment, and deleting only the fragment leaves
-# its source orphaned here instead of silently dropping the suite.
+# One fragment per test source, BY IDENTITY rather than by count.
+#
+# A count comparison was the first version of this guard and Qodo's review of
+# PR #1040 broke it: delete tests/943-bench-stall-bound.mk and copy
+# tests/953-bench-suspend-diagnosis.mk into its place, and there are still 8
+# fragments, 8 sources and 8 registered binaries -- every count balances --
+# while `make run` runs run_953_tests TWICE and never runs run_943_tests.
+# Reproduced before changing this: exit 0, eight lines of output,
+# run_943_tests never executed, no guard fired. `clean` stops removing the
+# orphan too, because it only removes $(TESTS).
+#
+# So each fragment CLAIMS the source it compiles, beside its TESTS += line, and
+# the two SETS are compared. Claiming is explicit rather than derived from the
+# fragment filename because that mapping is not uniform -- 124-circularbuffer.mk
+# builds test_circularbuffer.c, with no 124 in it -- and deriving it would be
+# the pattern-matching this repo has already had to retract elsewhere (#1032).
+#
+# $(sort) deduplicates, which is what makes the duplicate case fall out: two
+# fragments claiming one source collapse to a single entry, leaving the orphaned
+# source unmatched and named in the error.
 TEST_SOURCES := $(sort $(wildcard test_*.c))
-ifneq ($(words $(FRAGMENTS)),$(words $(TEST_SOURCES)))
-$(error $(words $(TEST_SOURCES)) test source(s) but $(words $(FRAGMENTS)) \
-fragment(s) -- a fragment is missing, or a test source has no fragment, and \
-either way a suite is silently not running. Sources: $(TEST_SOURCES). \
-Fragments: $(FRAGMENTS))
+TEST_CLAIMED := $(sort $(TEST_SOURCES_CLAIMED))
+ifneq ($(TEST_CLAIMED),$(TEST_SOURCES))
+$(error test sources and fragment claims disagree, so a suite is silently not \
+running. On disk: $(TEST_SOURCES). Claimed: $(TEST_CLAIMED). UNCLAIMED: \
+$(filter-out $(TEST_CLAIMED),$(TEST_SOURCES)). Claimed but absent: \
+$(filter-out $(TEST_SOURCES),$(TEST_CLAIMED)))
+endif
+
+# And no binary may be registered twice: `run` would execute it twice and show a
+# suite count that looks right while another suite is missing.
+ifneq ($(words $(TESTS)),$(words $(sort $(TESTS))))
+$(error $$(TESTS) registers a binary more than once, so `make run` would run it \
+twice and mask a missing suite. Registered: $(TESTS))
 endif
 
 # Every suite, in whatever order $(sort $(wildcard tests/*.mk)) included the
