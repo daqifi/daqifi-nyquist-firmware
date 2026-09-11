@@ -101,6 +101,13 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	  || { echo "ERROR: DAC7718_Unlock's call site no longer passes (config, csAsserted, lockHeld) in $(DAC7718_SRC)."; \
 	       echo "       Part A's mock signature mirrors this exact call -- re-derive it."; \
 	       exit 1; }
+	@test "$$(grep -c 'goto cleanup;' $(DAC7718_SRC))" = "10" \
+	  || { echo "ERROR: DAC7718.c's 'goto cleanup;' count in DAC7718_ReadWriteReg changed from 10."; \
+	       echo "       Part A's read_write_reg_shape() models exactly 3 PRE-lock validations"; \
+	       echo "       (RW, Reg, config) plus 7 post-lock SPI-timeout branches, all reaching the"; \
+	       echo "       same cleanup label -- a branch added or removed changes what the mock's"; \
+	       echo "       shape claims to cover. Re-derive the test against the new branch count."; \
+	       exit 1; }
 	@grep -qE '^#define MAX_DAC7718_CONFIG 1[[:space:]]*$$' $(DAC7718_SRC) \
 	  || { echo "ERROR: MAX_DAC7718_CONFIG is no longer '1' in $(DAC7718_SRC)."; \
 	       echo "       Part B's mock_new_config() models a ONE-slot allocator; a different capacity"; \

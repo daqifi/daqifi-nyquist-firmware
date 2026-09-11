@@ -328,18 +328,42 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
 
         uint8_t dacRegister = (uint8_t)(DAC7718_REGISTER_OFFSET + hwChannel);
         DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts16);
-        // #980 gave DAC7718_UpdateLatch a real return value (init-honesty
-        // scope); reporting a per-channel write failure back through this
-        // SCPI command is unchanged, out-of-scope behavior -- see #919
-        // (calibration-surface honesty).
-        (void)DAC7718_UpdateLatch(dacInstanceId);
 
-        // Store commanded voltage in BoardData for readback
+        // #980 Qodo pre-merge review: DAC7718_UpdateLatch's return (added by
+        // this PR) must be CHECKED here, not just given a type. The register
+        // write above only loads the DAC's input shadow register -- nothing
+        // reaches the physical output pin until the latch update fires. If
+        // that fails, publishing the new voltage into BoardData and
+        // returning SCPI_RES_OK would tell a reader of SOUR:VOLT:LEV?/
+        // MEAS:VOLT:DC? that the requested value is live when the DAC output
+        // is still whatever it was before -- the exact "assumed success"
+        // shape #980 exists to close, one call site later. So: report the
+        // failure, and do NOT touch BoardData -- the old commanded value
+        // is still what is physically on the pin.
+        if (!DAC7718_UpdateLatch(dacInstanceId)) {
+            SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to update DAC latch");
+            return SCPI_RES_ERR;
+        }
+
+        // Store commanded voltage in BoardData for readback -- only reached
+        // once the latch update above confirms the value is actually live.
         AOutSample sample = {.Channel = (uint8_t)channel, .Voltage = voltage};
         BoardData_Set(BOARDDATA_AOUT_LATEST, index, &sample);
 
     } else {
-        // One parameter: voltage for all channels
+        // One parameter: voltage for all channels.
+        //
+        // #980 Qodo pre-merge review: two passes over the channel list, not
+        // one, for the same reason as the single-channel branch above -- the
+        // per-channel register writes only stage each DAC's shadow register;
+        // ONE shared UpdateLatch() call then commits ALL of them to the
+        // physical outputs at once. Publishing BoardData per-channel inside
+        // the write loop (the old shape) would mark every channel "live" at
+        // the new voltage even if that single shared latch update then
+        // failed and none of them actually moved. So: write all the shadow
+        // registers first, gate on the ONE latch call, and only then walk
+        // the channel list again to publish -- same invalid-channel skip in
+        // both passes so the two stay index-consistent.
         uint32_t counts = DAC_VoltageToCounts(voltage, pDACModule);
 
         for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
@@ -353,16 +377,27 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
 
             uint8_t dacRegister = DAC7718_REGISTER_OFFSET + hwChannel;
             DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts);
+        }
 
-            // Store commanded voltage in BoardData for readback
+        // Commit all staged registers to the physical outputs. Report a
+        // failure instead of silently keeping the pre-existing state.
+        if (!DAC7718_UpdateLatch(dacInstanceId)) {
+            SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to update DAC latches");
+            return SCPI_RES_ERR;
+        }
+
+        // Only now publish BoardData -- the latch call above confirms every
+        // channel written in the loop is actually live at the new voltage.
+        for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
+            uint8_t hwChannel = pBoardConfigAOutChannels->Data[i].Config.DAC7718.ChannelNumber;
+            if (hwChannel >= DAC7718_NUM_CHANNELS) {
+                continue;  // Same invalid-channel skip as the write loop above
+            }
+
             uint8_t channelId = pBoardConfigAOutChannels->Data[i].DaqifiDacChannelId;
             AOutSample sample = {.Channel = channelId, .Voltage = voltage};
             BoardData_Set(BOARDDATA_AOUT_LATEST, i, &sample);
         }
-
-        // Update all DAC latches (see the single-channel branch above for
-        // why this return is deliberately unchecked here -- #919)
-        (void)DAC7718_UpdateLatch(dacInstanceId);
     }
 
     return SCPI_RES_OK;
@@ -532,11 +567,9 @@ scpi_result_t SCPI_DACUpdate(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    // Update all DAC latches to reflect current values. Unlike the two
-    // voltage-set call sites (whose own contract is already satisfied by the
-    // time they reach this point -- see the #919 note there), this command's
-    // entire purpose IS the latch update, so its failure is this command's
-    // failure to report.
+    // Update all DAC latches to reflect current values. This command's
+    // entire purpose IS the latch update (same check as both SCPI_DACVoltageSet
+    // branches above, added for the same reason -- see their comments).
     if (!DAC7718_UpdateLatch(dacInstanceId)) {
         SCPI_ExecutionError(context, "CONF:DAC:UPDATE: Failed to update DAC latches");
         return SCPI_RES_ERR;
