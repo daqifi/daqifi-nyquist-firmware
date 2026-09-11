@@ -46,6 +46,29 @@
  *           storage shape Part B assumes -- so Part B can't quietly drift
  *           into testing a shape production code no longer has.
  *
+ * ⚠️ Part A/B/C never call the real CreateSCPIContext() -- SCPIInterface.c
+ * is not includable on the host (see the Makefile's SCPI999_BIN comment for
+ * why linking it was tried and rejected), so InitTestContext() below
+ * reimplements CreateSCPIContext's SCPI_Init() call shape with file-local
+ * statics instead. Round 2 of this PR's adversarial audit exploited exactly
+ * that gap: CreateSCPIContext()'s own BODY was never exercised, and Part C's
+ * greps (declarations/signatures only) don't inspect it either, so a
+ * mutation entirely inside the body ("static ScpiContextStorage shared;
+ * storage = &shared;", reintroducing #999's own bug) passed this whole
+ * file's assertions and every Part-C grep. A round-2 body-text guard (three
+ * inline Makefile greps) closed that specific mutation but was itself
+ * defeated three different ways by an independent round-3 counter-audit
+ * (an aliased pointer with the literal storage-> text surviving only in a
+ * comment; re-seating buffer.data/calling SCPI_ErrorInit() again AFTER an
+ * otherwise-correct SCPI_Init() call; splitting the reassignment across two
+ * lines) while also false-positiving on legitimate code. The Makefile now
+ * shells out to tests/host/check_999_createscpicontext_wiring.sh, a
+ * dedicated script with a properly bounded body extraction, comment
+ * stripping, and checks scoped to the real SCPI_Init() call plus two checks
+ * forbidding the body from touching buffer.data/error_queue/SCPI_ErrorInit()
+ * at all -- see that script's own header for the full mutation-proof
+ * (11 cases) and what it still does NOT establish.
+ *
  * Build note: USE_DEVICE_DEPENDENT_ERROR_INFORMATION is forced to 0 on the
  * command line (see Makefile) to match the firmware target exactly -- on a
  * bare host build libscpi's own config.h would otherwise auto-detect
