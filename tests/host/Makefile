@@ -116,6 +116,37 @@ GEN_1000  := gen_1000_log_budget.h
 FW_LOG_H  := $(FW_UTIL)/Logger.h
 FW_LOG_C  := $(FW_UTIL)/Logger.c
 
+# #1029: the three sd_card_manager.c LOG_E messages whose tails -- and so
+# whose operator-facing remedies -- were cut by the SAME Util/Logger.c 128-byte
+# message frame #1000 (above) measures against. Same "not includable on the
+# host" situation (sd_card_manager.c pulls in Harmony's file system, FreeRTOS
+# and the board graph; Logger.c pulls in FreeRTOS), so this test also mirrors
+# LogMessageFormatImpl and measures the REAL message texts through it --
+# independently of $(SDLOG_BIN)/$(GEN_1000) above, which is #1000's own site.
+# Named SDLOG1029_BIN/SDLOG1029_GEN (not SDLOG_BIN/SDLOG_GEN) specifically to
+# avoid colliding with #1000's identically-shaped names when both PRs'
+# Makefile hunks landed in the same window (#1025 merged first).
+#
+# Everything it measures -- LOG_MESSAGE_SIZE, both of Logger.c's reservations,
+# the SD directory/bucket constants, sd_BuildBucketPath's format string and the
+# three live LOG_E format strings -- is EXTRACTED at build time by
+# gen_1029_log_budget.py rather than grepped-and-then-hand-copied. The greps
+# above pin a value the test duplicates; a concatenated multi-line C string
+# literal cannot be pinned that way (and a "does it still say X" grep on a
+# message is the wrong guard anyway -- rewording a message must re-measure it,
+# not fail the build). So the generator IS the guard: it anchors each LOG_E on
+# the statement that follows it, requires that anchor exactly once, decodes the
+# literal group, and round-trips it back into the source bytes -- exiting
+# non-zero with a named diagnostic on anything it cannot find, finds twice, or
+# cannot reproduce. Nothing is hand-copied except the three PRE-FIX message
+# texts, which are frozen in the test (the fix deleted them from the source, so
+# they cannot be extracted) and exist to prove the test can fail.
+SDLOG1029_BIN := run_1029_tests
+SDLOG1029_GEN := gen_1029_log_budget.h
+SD_MGR_SRC    := ../../firmware/src/services/sd_card_services/sd_card_manager.c
+SD_MGR_HDR    := ../../firmware/src/services/sd_card_services/sd_card_manager.h
+PYTHON        ?= python3
+
 # Every binary depends on this file as well as on its sources. Two of the
 # targets below carry GUARDS in their recipes -- greps that fail the build when
 # the firmware text they model has moved -- and a guard that is only re-run when
@@ -258,11 +289,20 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 	 printf '#endif\n' >> $(GEN_1000)
 	$(CC) $(CFLAGS) -o $(SDLOG_BIN) test_1000_sd_log_arm_budget.c
 
-# Every suite, and every one of the eight binaries. Merge conflict (fw#961
-# JSONESC_BIN vs fw#983 SUSPEND_BIN, both merging around the same time)
-# resolved by keeping each side's target intact and merging only `run` and
-# `clean` -- a duplicated rule here would silently shadow one of them.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(HELP_BIN) $(SDLOG_BIN)
+$(SDLOG1029_GEN): gen_1029_log_budget.py $(SD_MGR_SRC) $(SD_MGR_HDR) $(FW_UTIL)/Logger.c $(FW_UTIL)/Logger.h $(RECIPES)
+	$(PYTHON) gen_1029_log_budget.py --out $(SDLOG1029_GEN)
+
+$(SDLOG1029_BIN): test_1029_sd_card_manager_log_budget.c test_framework.h $(SDLOG1029_GEN) $(RECIPES)
+	$(CC) $(CFLAGS) -o $(SDLOG1029_BIN) test_1029_sd_card_manager_log_budget.c
+
+# Every suite, and every one of the nine binaries. Merge conflict (fw#961
+# JSONESC_BIN vs fw#983 SUSPEND_BIN, both merging around the same time; then
+# #1000's PR #1025 vs #1029's PR, both landing SDLOG*-named blocks in the same
+# window) resolved by keeping each side's target intact (renaming #1029's to
+# SDLOG1029_BIN to avoid the name collision, see that block's own comment) and
+# merging only `run` and `clean` -- a duplicated rule here would silently
+# shadow one of them.
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(HELP_BIN) $(SDLOG_BIN) $(SDLOG1029_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -271,8 +311,9 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) 
 	./$(SUSPEND_BIN)
 	./$(HELP_BIN)
 	./$(SDLOG_BIN)
+	./$(SDLOG1029_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(HELP_BIN) $(SDLOG_BIN) $(GEN_1000)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(HELP_BIN) $(SDLOG_BIN) $(GEN_1000) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp
 
 .PHONY: run clean

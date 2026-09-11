@@ -59,8 +59,10 @@ name: host-tests
 #     multi-file HAL/ADC/ family, this header has exactly one file it could
 #     be folded back into, so listing that file by name closes the same
 #     "refactor escapes the trigger" gap without dragging in every unrelated
-#     services/ file (streaming.c, wifi_manager.c, sd_card_manager.c, the
-#     whole SCPI/ subdirectory, ...).
+#     services/ file (streaming.c, wifi_manager.c, the whole SCPI/
+#     subdirectory, ...). That list used to name sd_card_manager.c too; the
+#     #1029 entry below now lists that file by name, for its own test, so it
+#     is no longer an example of something this workflow leaves out.
 #   - test_1000_sd_log_arm_budget.c (#1000): measures the #942 SD-log-arm
 #     refusal's LOG_E line against the ceiling Logger actually cuts at. Its
 #     fixture is GENERATED at build time from SCPIInterface.c and
@@ -86,6 +88,21 @@ name: host-tests
 #     in its own hunk further down each list. Whichever merges second should
 #     keep ONE copy of each path -- a duplicate is harmless to Actions but is
 #     noise, and the two comments explaining it are then redundant too.
+#   - test_1029_sd_card_manager_log_budget.c (#1029): measures three
+#     sd_card_manager.c LOG_E messages against the SAME Logger.c ceiling
+#     #1000 (above) measures against, so it shares that entry's Logger.h/
+#     Logger.c paths rather than duplicating them -- and adds
+#     sd_card_manager.{c,h} by name. gen_1029_log_budget.py EXTRACTS both ends
+#     of that -- the message texts and the SD directory/bucket constants from
+#     sd_card_manager.{c,h}, LOG_MESSAGE_SIZE and both reservations from
+#     Logger.{c,h} -- at build time. All four files are listed BY NAME rather
+#     than by directory: unlike AD7609Scale.h these are not extracted helpers
+#     that a refactor could relocate into a sibling, they are the shipping
+#     modules themselves, and the generator fails the build loudly if any of
+#     what it reads has moved (so a relocation surfaces as a red build here,
+#     not as a silently skipped job). Util/ is not globbed for the same reason
+#     the two CircularBuffer entries are not: it holds many files no host test
+#     reads.
 
 on:
   pull_request:
@@ -104,6 +121,8 @@ on:
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/services/sd_card_services/sd_card_manager.c'
+      - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -121,6 +140,8 @@ on:
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/services/sd_card_services/sd_card_manager.c'
+      - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - '.github/workflows/host-tests.yml'
 
 permissions:

@@ -158,6 +158,39 @@ high byte would make the whole JSON stream invalid UTF-8), the `inLen` bound
 wholesale rather than truncating mid-escape, the exact worst-case sizing
 `JSON_Encoder.c` allocates on its stack, and NULL/zero-size safety.
 
+`test_1029_sd_card_manager_log_budget.c` covers three `sd_card_manager.c`
+`LOG_E` messages whose tails — and so whose operator-facing remedies — were
+being cut by `Util/Logger.c`'s 128-byte message frame (issue #1029, the twin of
+#1000). `LogMessageFormatImpl` bounds `vsnprintf` at `LOG_MESSAGE_SIZE - 2` and
+then clamps the reported length to `LOG_MESSAGE_SIZE - 3`, so anything longer
+than 125 formatted bytes loses its END, silently. The test mirrors that function
+— real `vsnprintf`, same bound, same clamp, same three-branch CRLF fixup — and
+runs the real message texts through it at the worst-case substitution (the
+longest `bucketPath` `sd_BuildBucketPath` can build from a maximum-length SD
+directory), asserting the emitted bytes equal the intended bytes and that each
+message's remedy survives.
+
+It also carries the three **pre-fix** texts as frozen literals and asserts they
+do NOT survive the same mirror — 149, 298 and 192 bytes against the 125-byte
+ceiling. That half is what gives the test the ability to fail: without it every
+assertion would pass just as happily on a tree where #1029 was never fixed. The
+per-site detail matters and is asserted individually — only site 2 lost every
+word of its remedy; site 1 kept the first of its two clauses and site 3 kept the
+first of its two *causes*, emitting what reads like a complete, confident
+diagnosis of the wrong problem.
+
+Unlike `test_943`/`test_953`/`test_1004`, this one does not grep-and-copy its
+firmware constants: a multi-line concatenated C string literal cannot be pinned
+by a `grep -qE '#define ...'`, and a "does it still say X" grep on a *message*
+would be the wrong guard anyway — rewording a message should re-measure it, not
+fail the build. So `gen_1029_log_budget.py` **extracts** everything at build
+time instead (`LOG_MESSAGE_SIZE`, both of `Logger.c`'s reservations, the SD
+directory/bucket constants, `sd_BuildBucketPath`'s format string, and the three
+live `LOG_E` format strings), anchoring each message on the statement that
+FOLLOWS it and round-tripping every literal back into the source bytes. It
+**fails the build**, with a named diagnostic, on anything it cannot find, finds
+twice, or cannot reproduce byte-for-byte.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a
