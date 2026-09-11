@@ -1037,8 +1037,12 @@ Per-channel CSV is **~7× PB**; fixed overhead **~3.4× PB**.
    Bypasses `ADC_ConvertToVoltage`, uses `int_to_str` fast path.
    Expected to drop CSV P8 closer to PB levels.
 
-4. **Confirms why all docs/STREAMING_AND_ADC.md high-rate benchmarks use PB.**
-   CSV/JSON are fundamentally FPU-bound per channel per sample.
+4. **Explains the PB/CSV gap that widens with channel count in
+   docs/STREAMING_AND_ADC.md.** That document does benchmark CSV at high
+   rates — USB CSV reaches 17,000 Hz at one channel, above PB's
+   16,500 — but CSV's ceiling falls below PB's as channels are added
+   (16 ch OBDiag=OFF: PB 11,000 vs CSV 7,000), because CSV/JSON are
+   FPU-bound per channel per sample.
 
 #### Implication for jitter
 
@@ -1101,9 +1105,12 @@ closest thing — stresses the SPI bus + SD manager task.
    priority-6 encoder backpressure.
 
 4. **13 kHz exceeds the SD ceiling.** 47% byte loss at 13 kHz / 1
-   channel PB confirms SD can't sustain this rate. (docs/STREAMING_AND_ADC.md table
-   lists SD PB 1 ch at 13 kHz / 148 KB/s — that's the peak observed,
-   but not drop-free.) For drop-free SD logging on PB 1 ch, target
+   channel PB confirms SD can't sustain this rate. (The 13 kHz / 148 KB/s
+   figure is THIS session's own peak observation, and it was not
+   drop-free. Do not attribute it to docs/STREAMING_AND_ADC.md: its SD
+   table lists SD PB 1 ch at 10,000 Hz and carries no throughput column
+   at all — a different, 400 s soak-with-haircut methodology.) For
+   drop-free SD logging on PB 1 ch, target
    rate should be much lower (likely 2-4 kHz).
 
 5. **Encoder failures: 1 (out of 3.75M samples).** Rare event, not a
