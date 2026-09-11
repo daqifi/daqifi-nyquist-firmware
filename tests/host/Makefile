@@ -68,6 +68,39 @@ SUSPEND_BIN := run_953_tests
 # whole board/driver graph). No UUT copy, no stubs, and NOT $(INCLUDES).
 JSONESC_BIN := run_json_escape_tests
 
+# #999: CreateSCPIContext() used to hand both the USB and TCP SCPI transport
+# the SAME file-scope input-buffer and error-queue arrays. SCPIInterface.c
+# itself is NOT includable on the host (same reason as SCPIStorageSD.c
+# above), but the vendored libscpi sources that implement the actual
+# clobber mechanism (parser.c/fifo.c/error.c + their internal dependents)
+# are plain portable C with zero FreeRTOS/Harmony dependency and build
+# standalone -- confirmed by libscpi's OWN Makefile, which lists exactly
+# these 9 files as its whole static-library SRCS. This target links the
+# real production libscpi against a minimal harness mirroring
+# CreateSCPIContext's own SCPI_Init() call.
+#
+# USE_DEVICE_DEPENDENT_ERROR_INFORMATION is forced to 0 to match the
+# firmware target (bare-metal SYSTEM_TYPE) rather than the host's
+# auto-detected SYSTEM_FULL_BLOWN, which would otherwise change
+# sizeof(scpi_error_t) and pull in a malloc/free path the firmware never
+# takes.
+#
+# The test's Part B/D assume CreateSCPIContext's fixed shape (a
+# ScpiContextStorage struct, one instance per transport) without being able
+# to include the real declaration -- so the grep guards below pin that the
+# real sources still have that shape, the same technique BENCH_BIN and
+# SUSPEND_BIN use for their own non-includable UUTs. A guard failure means
+# the fix's shape moved and this test's premise needs re-checking, not that
+# the guard should be relaxed.
+SCPI999_BIN := run_999_tests
+LIBSCPI_DIR := ../../firmware/src/libraries/scpi/libscpi
+LIBSCPI_SRCS := $(addprefix $(LIBSCPI_DIR)/src/, \
+	error.c fifo.c ieee488.c minimal.c parser.c units.c utils.c lexer.c expression.c)
+SCPI_INTERFACE_H := ../../firmware/src/services/SCPI/SCPIInterface.h
+SCPI_INTERFACE_C := ../../firmware/src/services/SCPI/SCPIInterface.c
+USBCDC_SRC := ../../firmware/src/services/UsbCdc/UsbCdc.c
+WIFI_TCP_SRC := ../../firmware/src/services/wifi_services/wifi_tcp_server.c
+
 # Every binary depends on this file as well as on its sources. Two of the
 # targets below carry GUARDS in their recipes -- greps that fail the build when
 # the firmware text they model has moved -- and a guard that is only re-run when
@@ -117,19 +150,61 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
+$(SCPI999_BIN): test_999_scpi_context_storage_isolation.c test_framework.h \
+                $(LIBSCPI_SRCS) $(SCPI_INTERFACE_H) $(SCPI_INTERFACE_C) \
+                $(USBCDC_SRC) $(WIFI_TCP_SRC) $(RECIPES)
+	@grep -qE 'typedef struct \{' $(SCPI_INTERFACE_H) \
+	  && grep -qE 'char inputBuffer\[SCPI_INPUT_BUFFER_LENGTH\];' $(SCPI_INTERFACE_H) \
+	  && grep -qE 'scpi_error_t errorQueue\[SCPI_ERROR_QUEUE_SIZE\];' $(SCPI_INTERFACE_H) \
+	  && grep -qE '\} ScpiContextStorage;' $(SCPI_INTERFACE_H) \
+	  || { echo "ERROR: ScpiContextStorage no longer has the {inputBuffer, errorQueue}"; \
+	       echo "       shape this test assumes in $(SCPI_INTERFACE_H)."; \
+	       echo "       Re-check #999's fix shape before updating this guard."; \
+	       exit 1; }
+	@grep -qE 'scpi_t CreateSCPIContext\(scpi_interface_t\* interface, void\* user_context,' $(SCPI_INTERFACE_H) \
+	  || { echo "ERROR: CreateSCPIContext() in $(SCPI_INTERFACE_H) no longer takes a"; \
+	       echo "       storage parameter -- #999's per-transport isolation may have"; \
+	       echo "       been reverted."; \
+	       exit 1; }
+	@grep -qE '^\s*char scpi_input_buffer\[' $(SCPI_INTERFACE_C) \
+	  && { echo "ERROR: $(SCPI_INTERFACE_C) still declares the OLD file-scope"; \
+	       echo "       scpi_input_buffer[] singleton -- #999's fix removes this."; \
+	       exit 1; } || true
+	@grep -qE '^\s*scpi_error_t scpi_error_queue_data\[' $(SCPI_INTERFACE_C) \
+	  && { echo "ERROR: $(SCPI_INTERFACE_C) still declares the OLD file-scope"; \
+	       echo "       scpi_error_queue_data[] singleton -- #999's fix removes this."; \
+	       exit 1; } || true
+	@grep -qE 'static ScpiContextStorage gUsbScpiStorage;' $(USBCDC_SRC) \
+	  || { echo "ERROR: $(USBCDC_SRC) no longer declares its own ScpiContextStorage --"; \
+	       echo "       has #999's per-transport storage been reverted to sharing?"; \
+	       exit 1; }
+	@grep -qE 'static ScpiContextStorage gTcpScpiStorage;' $(WIFI_TCP_SRC) \
+	  || { echo "ERROR: $(WIFI_TCP_SRC) no longer declares its own ScpiContextStorage --"; \
+	       echo "       has #999's per-transport storage been reverted to sharing?"; \
+	       exit 1; }
+	@grep -qE '&gUsbScpiStorage' $(USBCDC_SRC) \
+	  || { echo "ERROR: $(USBCDC_SRC) no longer passes its own storage to CreateSCPIContext()."; \
+	       exit 1; }
+	@grep -qE '&gTcpScpiStorage' $(WIFI_TCP_SRC) \
+	  || { echo "ERROR: $(WIFI_TCP_SRC) no longer passes its own storage to CreateSCPIContext()."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -DUSE_DEVICE_DEPENDENT_ERROR_INFORMATION=0 -I$(LIBSCPI_DIR)/inc \
+	    -o $(SCPI999_BIN) test_999_scpi_context_storage_isolation.c $(LIBSCPI_SRCS) -lm
+
 # Every suite, and every one of the six binaries. Merge conflict (fw#961
 # JSONESC_BIN vs fw#983 SUSPEND_BIN, both merging around the same time)
 # resolved by keeping each side's target intact and merging only `run` and
 # `clean` -- a duplicated rule here would silently shadow one of them.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN)
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(SCPI999_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
 	./$(JSONESC_BIN)
 	./$(SUSPEND_BIN)
+	./$(SCPI999_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(SCPI999_BIN) *.o
 
 .PHONY: run clean
