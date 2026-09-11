@@ -276,8 +276,8 @@ static const char *const kReasonWifiStream =
 static const char *const kReasonFwUpdate =
     "a WiFi firmware update owns SPI4 - retry when it completes";
 static const char *const kReasonQuarantine =
-    "SD quarantined after a bus jam - reseat or remove the card, "
-    "then SYST:STOR:SD:ENAble 1 to retry";
+    "SD quarantined after a bus jam - reseat the card, "
+    "then SYST:STOR:SD:ENAble 1";
 
 /* sd_card_manager_WriteRefuseText()'s SD_REFUSE_BUCKETS_EXHAUSTED arm. */
 static const char *const kRefuseBucketsExhausted =
@@ -506,42 +506,32 @@ TEST(exactly_one_quadrant_moves_and_why_is_sampled_once)
  * which is true of the string and says nothing about the line the operator
  * reads: Logger cuts at LOG_MESSAGE_SIZE - 3, silently, and on the device only.
  *
- * This arm interpolates whatever SD_SuspendReasonText() returns, so the three
- * reason strings are what must fit. Two do. The QUARANTINE one does not -- 136
- * bytes here, and 137 through the arm-refusal twin that has shipped since #936,
- * losing "... then SYST:STOR:SD:ENAble 1 to retry", which is the command that
- * clears a quarantine and the most actionable string in the #589 family.
+ * This arm interpolates whatever SD_SuspendReasonText() returns, so all three
+ * reasons are measured -- against the LONGEST prefix that interpolates them,
+ * which is what any of them has to survive.
  *
- * That is pre-existing and out of this PR's reach: four test-suite scripts
- * match on that string, so shortening it is a cross-repo change. It is filed
- * as #986 and asserted here as STILL OVER -- deliberately, so that the fix for
- * #986 fails this build and whoever writes it promotes the string into the
- * fitting set above rather than leaving a stale carve-out behind. An assertion
- * that a defect still exists is only honest while its ticket is open, and this
- * is how it gets closed.
- *
- * The case that put this test here was a 98-character fallback message this PR
- * carried for one round: with the prefix and the CRLF that was 139 bytes
- * against 125, cut mid-word so it lost the "- retry" that was its entire point.
- * The audit caught it; the mechanism that message belonged to was then removed
- * (see the file header), but the measurement is what should have existed all
- * along and it stays. */
+ * The quarantine reason used to be 94 characters and was cut at
+ * "then SYST:STOR:SD:ENAb", losing the command that clears a quarantine from
+ * the one message whose whole job is to name it -- through this arm and
+ * through the arm-refusal twin shipped since #936. #986. It is 76 now, and
+ * this test is what keeps it there. */
 TEST(every_reason_this_arm_can_print_survives_the_logger)
 {
-    static const char *const liveReasons[] = {
-        kReasonWifiStream, kReasonFwUpdate
+    static const char *const reasons[] = {
+        kReasonWifiStream, kReasonFwUpdate, kReasonQuarantine
     };
     size_t i;
     size_t prefix = strlen(kMidWaitLogPrefix);
 
     /* +2 for the CRLF the format string carries. */
-    for (i = 0; i < sizeof(liveReasons) / sizeof(liveReasons[0]); i++) {
-        ASSERT_TRUE(prefix + strlen(liveReasons[i]) + 2 <= LOG_LINE_MAX);
+    for (i = 0; i < sizeof(reasons) / sizeof(reasons[0]); i++) {
+        ASSERT_TRUE(prefix + strlen(reasons[i]) + 2 <= LOG_LINE_MAX);
     }
 
-    /* #986, asserted as still open. See the comment above before "fixing"
-     * this line by deleting it. */
-    ASSERT_TRUE(prefix + strlen(kReasonQuarantine) + 2 > LOG_LINE_MAX);
+    /* And the quarantine one must still carry the command, not just fit:
+     * shortening it by deleting the instruction would pass the loop above
+     * and destroy the message. */
+    ASSERT_TRUE(strstr(kReasonQuarantine, "SYST:STOR:SD:ENAble 1") != NULL);
 }
 
 int main(void)

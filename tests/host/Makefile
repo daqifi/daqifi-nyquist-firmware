@@ -118,6 +118,13 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	       echo "       message survives Logger's vsnprintf intact, and it takes the"; \
 	       echo "       limit from here rather than copying it. Re-point LOGGER_HDR."; \
 	       exit 1; }
+	@grep -qF 'then SYST:STOR:SD:ENAble 1' $(SD_BENCH_SRC) \
+	  || { echo "ERROR: the quarantine suspend reason in $(SD_BENCH_SRC) no"; \
+	       echo "       longer carries 'then SYST:STOR:SD:ENAble 1'."; \
+	       echo "       test_953_bench_suspend_diagnosis.c carries a copy of that"; \
+	       echo "       string and measures it against Logger's limit (#986). A"; \
+	       echo "       copy that has drifted measures the wrong string."; \
+	       exit 1; }
 	@grep -qF 'SD:BENCH - could not complete the arm: %s' $(SD_BENCH_SRC) \
 	  || { echo "ERROR: the mid-wait arm's log PREFIX changed in $(SD_BENCH_SRC)."; \
 	       echo "       test_953_bench_suspend_diagnosis.c measures the formatted line"; \

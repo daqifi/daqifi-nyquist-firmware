@@ -138,8 +138,16 @@ const char *SD_SuspendReasonText(void)
     }
     /* Quarantine first: it is the one that does NOT clear on its own. */
     if (SpiBusHealth_IsSdQuarantined()) {
-        return "SD quarantined after a bus jam - reseat or remove the card, "
-               "then SYST:STOR:SD:ENAble 1 to retry";
+        /* 76 characters, and the ceiling is 84: every caller interpolates this
+         * into a log line, Logger formats with
+         * vsnprintf(buf, LOG_MESSAGE_SIZE - 2, ...), and the longest prefix in
+         * this file is 39 characters plus a CRLF. At 94 -- its length until
+         * #986 -- the line was cut at "then SYST:STOR:SD:ENAb", losing the
+         * command that clears a quarantine from the one message whose entire
+         * job is to name it. tests/host/test_953_bench_suspend_diagnosis.c
+         * measures all three reasons against that ceiling. */
+        return "SD quarantined after a bus jam - reseat the card, "
+               "then SYST:STOR:SD:ENAble 1";
     }
     if (wifi_manager_IsWifiFirmwareUpdateActive()) {
         return "a WiFi firmware update owns SPI4 - retry when it completes";
