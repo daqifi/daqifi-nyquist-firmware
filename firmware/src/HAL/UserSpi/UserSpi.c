@@ -340,8 +340,8 @@ static void spi_Spi1Init(void) {
  * only a bit STILL not set at the moment the budget is spent can return
  * false, which is what makes the budget genuinely immune to scheduling
  * latency and sizeable against wire time alone. (uart_WaitSta / i2c_WaitMif
- * share this same narrow window pre-#913; not fixed here -- see
- * .claude/FINDINGS.md.) */
+ * carried this identical narrow window pre-#913; ported here to both in the
+ * same PR -- see UserUart.c / UserI2c.c.) */
 static bool spi_WaitStat(uint32_t mask, bool want,
                          TickType_t start, TickType_t timeoutTicks) {
     for (;;) {
