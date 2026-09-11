@@ -83,7 +83,19 @@ SD_MGR_HDR := ../../firmware/src/services/sd_card_services/sd_card_manager.h
 # whole board/driver graph). No UUT copy, no stubs, and NOT $(INCLUDES).
 JSONESC_BIN := run_json_escape_tests
 
-# Every binary depends on this file as well as on its sources. Two of the
+# #1004: SCPI_Help's shared-buffer write-abort bound. Same shape as
+# SUSPEND_BIN's sibling SD_BENCH_SRC-style guard and #995's own host test --
+# SCPIInterface.c is not includable on the host (libscpi + FreeRTOS + the
+# whole board/driver graph), so this re-implements the pre-fix and post-fix
+# write shapes against a mock clock and compares their verdicts. The three
+# firmware constants it depends on are a COPY; the recipe greps them (plus
+# the tick-rate/width assumption, same as #943/#995's grep) and refuses to
+# build on drift.
+HELP_BIN := run_1004_tests
+SCPI_IFACE_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
+FW_RTOS_CFG := ../../firmware/src/config/default/FreeRTOSConfig.h
+
+# Every binary depends on this file as well as on its sources. Four of the
 # targets below carry GUARDS in their recipes -- greps that fail the build when
 # the firmware text they model has moved -- and a guard that is only re-run when
 # a source changes is not re-run when the GUARD itself changes. CI is unaffected
@@ -155,20 +167,44 @@ $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BE
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(NAME_BIN) test_958_sd_benchmark_filename_collision.c
 
-# Every suite, and every one of the seven binaries. Merge conflict (fw#961
-# JSONESC_BIN vs fw#983 SUSPEND_BIN, both merging around the same time)
-# resolved by keeping each side's target intact and merging only `run` and
-# `clean` -- a duplicated rule here would silently shadow one of them.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(NAME_BIN)
+$(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(FW_RTOS_CFG) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_WRITE_MAX_RETRIES is no longer '200' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_WRITE_MAX_RETRIES in test_1004_help_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+SCPI_WRITE_RETRY_DELAY_MS[[:space:]]+5[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_WRITE_RETRY_DELAY_MS is no longer '5' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_WRITE_RETRY_DELAY_MS in test_1004_help_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+SCPI_HELP_WRITE_BUDGET_MS[[:space:]]+2000U[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_HELP_WRITE_BUDGET_MS is no longer '2000U' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_HELP_BUDGET_MS in test_1004_help_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_RATE_HZ[[:space:]]+\( \( TickType_t \) 1000 \)[[:space:]]*$$' $(FW_RTOS_CFG) \
+	  || { echo "ERROR: configTICK_RATE_HZ is no longer 1000 Hz in $(FW_RTOS_CFG) -- re-derive test_1004's ms<->tick assumption."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_TYPE_WIDTH_IN_BITS[[:space:]]+TICK_TYPE_WIDTH_32_BITS[[:space:]]*$$' $(FW_RTOS_CFG) \
+	  || { echo "ERROR: configTICK_TYPE_WIDTH_IN_BITS is no longer 32-bit in $(FW_RTOS_CFG) -- re-derive test_1004's wrap tests."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(HELP_BIN) test_1004_help_write_abort.c
+
+# Every suite, and every one of the eight binaries. This spot has now collided
+# twice for the same reason -- fw#961 JSONESC_BIN vs fw#983 SUSPEND_BIN, then
+# fw#1012 HELP_BIN vs fw#958 NAME_BIN -- because two branches that each add a
+# target both add a line here. Resolved the same way both times: keep each
+# side's target rule intact and merge ONLY `run` and `clean`. Dropping a rule
+# loses a suite silently, and duplicating one silently shadows the other.
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(HELP_BIN) $(NAME_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
 	./$(JSONESC_BIN)
 	./$(SUSPEND_BIN)
+	./$(HELP_BIN)
 	./$(NAME_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(NAME_BIN)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(HELP_BIN) $(NAME_BIN)
 
 .PHONY: run clean

@@ -4,6 +4,7 @@ run_ad7609_tests
 run_943_tests
 run_953_tests
 run_json_escape_tests
+run_1004_tests
 run_958_tests
 CircularBuffer_uut.c
 *.o

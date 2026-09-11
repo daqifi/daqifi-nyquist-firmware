@@ -81,6 +81,25 @@ two greps. What it copies is the **order of the three arms**, so the Makefile
 guards that instead: it locates each arm's marker in `SCPIStorageSD.c` and
 **fails the build** unless they still appear as dir-full → suspend → card.
 
+`test_1004_help_write_abort.c` covers `SCPI_Help`'s (the `HELP` command)
+shared-response-buffer write-abort bound (issue #1004) — the third site of a
+pattern whose other two fixes are still IN FLIGHT: #947/PR #992 for
+`SCPI_SysInfoTextGet` and #995/PR #1008 for `SCPI_GetCommandHistory` are both
+still open, so neither sibling fix — nor `test_995` — is in this tree. Same
+technique as `test_943`/`test_953`: `SCPIInterface.c` is not includable on the host, so the test
+re-implements the pre-fix and post-fix write **shapes** — the self-gating
+`ScpiHelpWrite` helper's two guards (cumulative deadline, checked before each
+transport call; short-write latch, checked after) — against an injected mock
+clock and mock transport, then compares their verdicts. Unlike #995's planned test,
+`SCPI_Help`'s write count is not pinned to a single firmware constant (it
+depends on the registered command table's total text size), so the test uses
+a representative write count from the issue's own measurement plus a sweep
+over a range, rather than one pinned to a `#define`. The Makefile target
+greps the three firmware constants (`SCPI_WRITE_MAX_RETRIES`,
+`SCPI_WRITE_RETRY_DELAY_MS`, `SCPI_HELP_WRITE_BUDGET_MS`) plus the FreeRTOS
+tick-rate/width assumption out of the real source and **fails the build** if
+any has drifted.
+
 `test_json_string_escape.c` covers `firmware/src/services/JSON_StringEscape.h`
 (issue #164) — the JSON string-escaping helper split out of `JSON_Encoder.c`
 so it can be compiled and tested here with no board dependencies. Neither
@@ -105,9 +124,12 @@ from a **16-bit** slice of the tick (`benchmark_%d.dat`, `tick & 0xFFFF`), so
 it repeated every 65536 ticks — 65.5 s at the 1 kHz tick — and the open it is
 armed against truncates, so two benchmarks that far apart destroyed the
 earlier one's file with no error and no log line. The fix uses the tick whole
-(`benchmark_%lu.dat`); two runs that each *create* a file cannot share a tick,
-because the callback cannot produce one without yielding for at least a whole
-tick to let the pri-5 SD task mount and open.
+(`benchmark_%lu.dat`); two runs cannot then share a tick, because the
+callback's last step is a drain-and-close wait whose loop cannot exit without
+entering (the `mode = MODE_NONE` + `UpdateSettings()` above it forces the
+manager to DEINIT, and `IsIdle()` is IDLE-or-INIT only), so every run costs at
+least one `vTaskDelay(10)` — and the `testInProgress` interlock stops the next
+run from naming its file before this one returns.
 
 Covered: the headline wrap collision (pre-fix names equal, post-fix distinct,
 swept over several bases and several whole multiples of the wrap), injectivity
