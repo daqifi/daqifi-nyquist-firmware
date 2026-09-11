@@ -6599,6 +6599,41 @@ scpi_result_t SCPI_Force5v5PowerStateSet(scpi_t * context) {
 //    return SCPI_RES_OK;
 //}
 
+/* #995: total budget SCPI_GetCommandHistory may spend INSIDE its hold of the
+ * shared SCPI response buffer (gScpiRespMutex, #347). Same two-guard shape as
+ * #947's SysInfoText_Write above (short-write => abort, plus a cumulative
+ * deadline checked before each write) -- see that comment for the full
+ * derivation of why guard 1 (short-write abort) alone does not bound the
+ * hold: a transport that drains at exactly the trickle rate letting every
+ * write finish just inside its own ~1 s SCPI_WriteWithRetry budget never
+ * trips guard 1, so all cmdHistoryCount+1 writes (up to 11) would still run
+ * to completion at ~1 s apiece.
+ *
+ * This is a POINT FIX, not a shared helper. #947 (the SCPI_SysInfoTextGet
+ * instance of this exact defect class) has two competing open PRs (#992,
+ * #994) and neither has merged yet, so there is no landed generic helper to
+ * reuse. #1004 (SCPI_Help, the third instance of this shape) is open too --
+ * whoever lands #947 for real should consider consolidating all three
+ * call sites into one generic helper instead of three near-identical
+ * point fixes, per that ticket's own recommendation.
+ */
+#define SCPI_CMDHISTORY_WRITE_BUDGET_MS    2000U
+
+/* One guarded transport write for SCPI_GetCommandHistory. Returns true if
+ * the whole of [data, data+len) reached the transport before the cumulative
+ * budget (measured from startTick, sampled once right after the take)
+ * elapsed. */
+static bool CommandHistory_Write(scpi_t * context, TickType_t startTick,
+                                  const char * data, size_t len) {
+    /* Unsigned tick subtraction, so this is correct across the 32-bit
+     * xTaskGetTickCount wrap (same idiom as SysInfoText_Write above). */
+    if ((xTaskGetTickCount() - startTick) >=
+            pdMS_TO_TICKS(SCPI_CMDHISTORY_WRITE_BUDGET_MS)) {
+        return false;
+    }
+    return (context->interface->write(context, data, len) == len);
+}
+
 static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
     UsbCdcData_t* usbSettings = UsbCdc_GetSettings();
 
@@ -6613,6 +6648,12 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #995: start the held-mutex budget HERE, after the take -- see
+     * CommandHistory_Write above. Every write below goes through it; a
+     * stalled transport aborts to __cmdhistory_stalled_exit instead of
+     * burning up to eleven separate ~1 s retry budgets. */
+    TickType_t startTick = xTaskGetTickCount();
+
     // Calculate starting position in circular buffer
     int startIdx = (usbSettings->cmdHistoryHead - usbSettings->cmdHistoryCount + SCPI_CMD_HISTORY_SIZE) % SCPI_CMD_HISTORY_SIZE;
 
@@ -6622,7 +6663,9 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
     if (len > 0) {
         size_t wlen = ((size_t)len < SCPI_RESPONSE_BUF_SIZE)
                       ? (size_t)len : (SCPI_RESPONSE_BUF_SIZE - 1);
-        context->interface->write(context, buffer, wlen);
+        if (!CommandHistory_Write(context, startTick, buffer, wlen)) {
+            goto __cmdhistory_stalled_exit;
+        }
     }
 
     // Send command history
@@ -6634,13 +6677,35 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
         if (len > 0) {
             size_t wlen = ((size_t)len < SCPI_RESPONSE_BUF_SIZE)
                           ? (size_t)len : (SCPI_RESPONSE_BUF_SIZE - 1);
-            context->interface->write(context, buffer, wlen);
+            if (!CommandHistory_Write(context, startTick, buffer, wlen)) {
+                goto __cmdhistory_stalled_exit;
+            }
         }
     }
 
     SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
+
+    /* #995: the transport would not take a section of the reply within
+     * budget. Whatever was already handed to it stays on the wire, so the
+     * client sees a reply truncated at a line boundary followed by this
+     * command's own "**ERROR: -200" line -- accepted, same reasoning as
+     * SysInfoText_Write's __stalled_exit: the abandoned bytes are
+     * undeliverable by definition (the transport just refused a full ~1 s
+     * retry budget for them).
+     *
+     * Give BEFORE SCPI_ExecutionError, not after -- ErrorPush routes through
+     * the same retry-bounded transport write, so calling it while still
+     * holding gScpiRespMutex would add another ~1 s to the hold this change
+     * exists to shrink. */
+__cmdhistory_stalled_exit:
+    SCPI_ResponseBuf_Give();
+    SCPI_ExecutionError(context,
+            "SYSTem:LOG:CMDHistory?: transport write stalled, reply truncated");
+    return SCPI_RES_ERR;
 }
+
+#undef SCPI_CMDHISTORY_WRITE_BUDGET_MS
 
 // =============================================================================
 // Dynamic Memory Configuration SCPI Callbacks
