@@ -42,11 +42,18 @@ ENAble:SOURce:DC? 0               # Get channel 0 enable status
 CONFigure:DAC:RANGe 0,1           # Set channel 0 range
 CONFigure:DAC:UPDATE              # Update all DAC outputs
 
-# Calibration commands
-CONFigure:DAC:chanCALM 0,1.0      # Set channel 0 calibration slope
-CONFigure:DAC:chanCALB 0,0.0      # Set channel 0 calibration offset
-CONFigure:DAC:SAVEcal             # Save user calibration values
-CONFigure:DAC:LOADcal             # Load user calibration values
+# Calibration commands — NOT IMPLEMENTED (#919, decided 2026-09):
+# chanCALM/chanCALB/SAVEcal/SAVEFcal/LOADcal/LOADFcal all route to
+# SCPI_NotImplemented. They stay registered, so the HELP command still
+# lists them under its "Not Implemented:" heading and a caller can tell
+# planned-but-absent from an unknown header. Every call now answers an
+# error instead of silently no-opping or fabricating a value. DAC7718 is
+# NQ3-only hardware; implementing needs a board this project does not
+# currently have on any bench.
+# CONFigure:DAC:chanCALM 0,1.0    # NOT IMPLEMENTED — answers an error
+# CONFigure:DAC:chanCALB 0,0.0    # NOT IMPLEMENTED — answers an error
+# CONFigure:DAC:SAVEcal           # NOT IMPLEMENTED — answers an error
+# CONFigure:DAC:LOADcal           # NOT IMPLEMENTED — answers an error
 ```
 
 ### Integration Points

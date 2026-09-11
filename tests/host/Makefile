@@ -48,12 +48,34 @@ AD7609_BIN := run_ad7609_tests
 BENCH_BIN := run_943_tests
 SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 
+# #953: SD:BENCHmark's "file never opened" diagnosis. Same file as BENCH_BIN
+# and, for the same reason, the same technique -- no UUT copy, no stubs, the
+# decision cascade re-implemented against injected values.
+#
+# It copies no CONSTANTS, so it needs no equivalent of the two greps above.
+# What it copies is the ORDER of the three arms, which is the entire substance
+# of #953: recorded dir-full verdict, then live suspend reason, then the card
+# diagnosis. So the guard checks THAT -- the three arms' markers must still
+# appear in that order in the real source. It fails (loudly) if they are
+# reordered, reworded or moved, each of which invalidates the test's premise
+# and should be looked at rather than skipped.
+SUSPEND_BIN := run_953_tests
+
 # #164: JSON_StringEscape.h is header-only and dependency-free for the same
 # reason AD7609Scale.h is -- the pure byte-escaping logic was split out of
 # JSON_Encoder.c, which is unusable on a host (it pulls in
 # state/board/BoardConfig.h -> Harmony's configuration.h/definitions.h and the
 # whole board/driver graph). No UUT copy, no stubs, and NOT $(INCLUDES).
 JSONESC_BIN := run_json_escape_tests
+
+# Every binary depends on this file as well as on its sources. Two of the
+# targets below carry GUARDS in their recipes -- greps that fail the build when
+# the firmware text they model has moved -- and a guard that is only re-run when
+# a source changes is not re-run when the GUARD itself changes. CI is unaffected
+# either way (Actions checks out clean, so `make run` always builds from
+# nothing); this is for the local incremental build, where the binary outliving
+# an edited recipe is exactly how a guard goes quiet. Qodo, PR #983.
+RECIPES := Makefile
 
 # #970: encoder consume-accounting. Like BENCH_BIN, streaming.c and
 # JSON_Encoder.c are not host-test candidates (FreeRTOS/libscpi/the whole
@@ -107,20 +129,20 @@ STREAMING_HDR := ../../firmware/src/services/streaming.h
 JSON_ENC_SRC  := ../../firmware/src/services/JSON_Encoder.c
 NANOPB_ENC_SRC := ../../firmware/src/services/DaqifiPB/NanoPB_Encoder.c
 
-$(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h
+$(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
 	$(CC) $(CFLAGS) $(INCLUDES) -o $(BIN) test_circularbuffer.c $(UUT)
 
-$(FMT_BIN): test_fixedpointfmt.c $(FW_UTIL)/FixedPointFmt.h
+$(FMT_BIN): test_fixedpointfmt.c $(FW_UTIL)/FixedPointFmt.h $(RECIPES)
 	$(CC) $(CFLAGS) $(INCLUDES) -o $(FMT_BIN) test_fixedpointfmt.c -lm
 
-$(AD7609_BIN): test_ad7609_scale.c test_framework.h $(FW_ADC)/AD7609Scale.h
+$(AD7609_BIN): test_ad7609_scale.c test_framework.h $(FW_ADC)/AD7609Scale.h $(RECIPES)
 	$(CC) $(CFLAGS) -I$(FW_ADC) -o $(AD7609_BIN) test_ad7609_scale.c
 
-$(JSONESC_BIN): test_json_string_escape.c test_framework.h $(FW_SVC)/JSON_StringEscape.h
+$(JSONESC_BIN): test_json_string_escape.c test_framework.h $(FW_SVC)/JSON_StringEscape.h $(RECIPES)
 	$(CC) $(CFLAGS) -I$(FW_SVC) -o $(JSONESC_BIN) test_json_string_escape.c
 
-$(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC)
+$(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
 	@grep -qE '^#define[[:space:]]+SCPI_SD_BENCH_STALL_TIMEOUT_MS[[:space:]]+10000U[[:space:]]*$$' $(SD_BENCH_SRC) \
 	  || { echo "ERROR: SCPI_SD_BENCH_STALL_TIMEOUT_MS is no longer '10000U' in $(SD_BENCH_SRC)."; \
 	       echo "       Update FW_STALL_TIMEOUT_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
@@ -131,7 +153,7 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC)
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 
-$(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SRC) $(STREAMING_HDR) $(JSON_ENC_SRC) $(NANOPB_ENC_SRC)
+$(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SRC) $(STREAMING_HDR) $(JSON_ENC_SRC) $(NANOPB_ENC_SRC) $(RECIPES)
 	@grep -qF 'gStreamStats.encoderDroppedSamples++' $(STREAMING_SRC) \
 	  && { echo "ERROR: $(STREAMING_SRC) still increments encoderDroppedSamples directly --"; \
 	       echo "       the #970 fix removed this from the encoded==0 arm. If this is"; \
@@ -173,18 +195,37 @@ $(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SR
 	 done
 	$(CC) $(CFLAGS) -o $(BIN970) test_970_encoder_consume_accounting.c
 
-# Every suite, and every one of the six binaries. Merge conflict resolved by
-# keeping each side's target intact and merging only `run` and `clean` -- a
-# duplicated rule here would silently shadow one of them.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(BIN970)
+$(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
+	@a=`grep -nF 'SD:BENCH refused' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 b=`grep -nF '} else if (why != NULL) {' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 c=`grep -nF 'SD:BENCH - File not ready after timeout' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 test -n "$$a" && test -n "$$b" && test -n "$$c" \
+	   && test "$$a" -lt "$$b" && test "$$b" -lt "$$c" \
+	   || { echo "ERROR: the SD:BENCHmark file-not-ready cascade in $(SD_BENCH_SRC)"; \
+	        echo "       is no longer dirFull -> suspend -> card, or an arm was"; \
+	        echo "       reworded, moved or duplicated (markers found at a='$$a'"; \
+	        echo "       b='$$b' c='$$c')."; \
+	        echo "       test_953_bench_suspend_diagnosis.c models THAT ordering and"; \
+	        echo "       its whole point is that the order is the fix -- re-read both"; \
+	        echo "       before changing either."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
+
+# Every suite, and every one of the (now seven) binaries. Three-way merge
+# conflict (fw#961 JSONESC_BIN, fw#983 SUSPEND_BIN, fw#970/#991 BIN970, all
+# converging around the same time) resolved by keeping every side's target
+# intact and merging only `run` and `clean` -- a duplicated rule here would
+# silently shadow one of them.
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(BIN970)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
 	./$(JSONESC_BIN)
+	./$(SUSPEND_BIN)
 	./$(BIN970)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(BIN970)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(BIN970)
 
 .PHONY: run clean
