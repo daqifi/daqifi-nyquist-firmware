@@ -72,10 +72,18 @@ JSONESC_BIN := run_json_escape_tests
 #   3. JSON_Encoder.c's DIO loop pops before committing (the exact guard
 #      text), i.e. the twin of the #164 ADC-loop fix this PR gives the DIO
 #      loop.
+#   4. JSON_Encoder.c and NanoPB_Encoder.c actually CALL that entry point.
+#      Pins 1-3 establish that the caller stopped guessing and that the
+#      entry point EXISTS -- none of them establishes that any producer
+#      reaches it. Deleting the production call would leave every host
+#      assertion and all of pins 1-3 green while real destroyed samples
+#      stopped being counted, so the test's whole subject would be
+#      unguarded. Pin the CALL, per-file, for both encoders that book.
 BIN970 := run_970_tests
 STREAMING_SRC := ../../firmware/src/services/streaming.c
 STREAMING_HDR := ../../firmware/src/services/streaming.h
 JSON_ENC_SRC  := ../../firmware/src/services/JSON_Encoder.c
+NANOPB_ENC_SRC := ../../firmware/src/services/DaqifiPB/NanoPB_Encoder.c
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
@@ -101,7 +109,7 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC)
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 
-$(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SRC) $(STREAMING_HDR) $(JSON_ENC_SRC)
+$(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SRC) $(STREAMING_HDR) $(JSON_ENC_SRC) $(NANOPB_ENC_SRC)
 	@grep -qF 'gStreamStats.encoderDroppedSamples++' $(STREAMING_SRC) \
 	  && { echo "ERROR: $(STREAMING_SRC) still increments encoderDroppedSamples directly --"; \
 	       echo "       the #970 fix removed this from the encoded==0 arm. If this is"; \
@@ -119,6 +127,16 @@ $(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SR
 	       echo "       ADC-loop treatment). Update the guard or re-derive the DIO half of"; \
 	       echo "       test_970_encoder_consume_accounting.c."; \
 	       exit 1; }
+	@for f in $(JSON_ENC_SRC) $(NANOPB_ENC_SRC); do \
+	   grep -qE 'Streaming_ReportEncoderSampleLoss\(' "$$f" \
+	     || { echo "ERROR: $$f never CALLS Streaming_ReportEncoderSampleLoss."; \
+	          echo "       #970 moved loss booking from the caller's zero-return guess"; \
+	          echo "       to the encoder that destroyed the sample. With no call here,"; \
+	          echo "       destroyed samples stop reaching EncoderDroppedSamples and"; \
+	          echo "       every host assertion still passes -- the test models the"; \
+	          echo "       reporter, it cannot observe the production call."; \
+	          exit 1; }; \
+	 done
 	$(CC) $(CFLAGS) -o $(BIN970) test_970_encoder_consume_accounting.c
 
 # Every suite, and every one of the six binaries. Merge conflict resolved by
