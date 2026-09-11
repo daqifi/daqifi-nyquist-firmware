@@ -1137,7 +1137,27 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #904: the reader's critical section cannot make this store safe on its
+     * own. A 64-bit store is two 32-bit stores on PIC32MZ (CLAUDE.md
+     * atomicity rules), so a writer preempted between them leaves a torn
+     * value sitting in memory, and a reader -- critical section or not --
+     * then reads that torn value back faithfully. Closing the hazard the
+     * getter documents therefore needs BOTH halves: the getter's section
+     * stops a reader being preempted mid-read, this one stops a writer being
+     * preempted mid-write.
+     *
+     * The claim the caller holds does not substitute for it. That claim
+     * serialises this setter against the other cal writers; it does not make
+     * the store atomic against the readers that deliberately take no claim
+     * -- SCPI_ADCChanCalmGet below, MC12b_ConvertToVoltage's per-conversion
+     * read, and the protobuf system message.
+     *
+     * Task context only, which every caller satisfies: the SCPI callbacks,
+     * and LOADcal's boot-time twin in daqifi_settings_LoadADCCalSettings,
+     * which runs inside the priority-1 APP_FREERTOS_Tasks task. */
+    taskENTER_CRITICAL();
     pRunTimeAInChannels->Data[index].CalM = param2;
+    taskEXIT_CRITICAL();
     return SCPI_RES_OK;
 }
 
@@ -1185,7 +1205,12 @@ static scpi_result_t ADCChanCalbSetClaimed(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #904: same torn-WRITE hazard as ADCChanCalmSetClaimed above, same fix
+     * -- see that function's comment for why the reader-side section and the
+     * streaming claim both fail to cover this store. */
+    taskENTER_CRITICAL();
     pRuntimeAInChannels->Data[index].CalB = param2;
+    taskEXIT_CRITICAL();
     return SCPI_RES_OK;
 }
 
@@ -1216,7 +1241,11 @@ scpi_result_t SCPI_ADCChanCalmGet(scpi_t * context) {
     // guarded against each other but not against this reader) can land
     // between them and hand back a value that existed in neither the old
     // nor the new coefficient. Copy under a critical section, then format
-    // the local outside it -- do NOT take the streaming config-change claim
+    // the local outside it. That section closes only the direction where
+    // THIS READER is preempted mid-read; the direction where the WRITER is
+    // preempted mid-store is closed by the matching sections on the setters
+    // above and in daqifi_settings_LoadADCCalSettings, and neither half is
+    // sufficient alone. Do NOT take the streaming config-change claim
     // here, which would gratuitously refuse this query mid-stream for no
     // corruption risk (queries read and cannot corrupt a partition; see the
     // comment on CalSaveCommon below for why the SAVE/LOAD commands that
