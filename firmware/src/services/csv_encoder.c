@@ -669,12 +669,29 @@ size_t csv_Encode(
              * self-contained row (including its trailing '\n') or commits
              * nothing at all, so this is the only test needed.
              *
-             * Every input that changes a row's encoded size -- voltage
+             * The ANALOG inputs that change a row's encoded size -- voltage
              * precision, USECal/raw mode, CSV encoding/compact, and
-             * chanCALM/chanCALB themselves (#885) -- is rejected mid-session
-             * (SCPIInterface.c / SCPIADC.c claim-path guards), so a row that
-             * fails this test can never become encodable later in the same
-             * streaming session.
+             * chanCALM/chanCALB themselves (#885) -- are rejected
+             * mid-session (SCPIInterface.c / SCPIADC.c claim-path guards),
+             * so an analog row that fails this test cannot become encodable
+             * later in the same session.
+             *
+             * ONE input is NOT guarded, and this comment used to claim
+             * otherwise: SCPI_GPIOEnableSet() (SCPIDIO.c:301-313) writes
+             * BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE with a bare memcpy, takes
+             * no claim and does not test whether a stream is running, and
+             * csv_Encode() re-reads that flag live on every call (the
+             * dioEnabled local below). So a row CAN cross the capacity
+             * boundary on DIO's ~22 bytes and a later DIO disable could have
+             * made that same analog sample encodable. Evicting is still the
+             * right call at the moment it is made -- the row does not fit
+             * the configuration in force, and waiting for an operator who
+             * may never disable DIO is precisely the #978 stall -- but the
+             * window is real and is NOT immutability. That unguarded setter
+             * is a pre-existing defect with a wider blast radius than this
+             * (toggling it mid-stream changes the CSV column count against a
+             * header written once at stream start); filed separately rather
+             * than fixed here.
              *
              * Evict every queue head the discarded row was built from --
              * AIN, DIO, or both -- exactly as the success path consumes
@@ -684,7 +701,9 @@ size_t csv_Encode(
              * %.*f fallback), but it can still be a COMPONENT of one, and
              * leaving it queued re-pairs it with the next analog sample.
              *
-             * KNOWN LIMIT, and it is per-CALL accounting, not per-SAMPLE:
+             * KNOWN LIMIT (authority: streaming.c:3353 itself, read at
+             * head 495836d57; tracked by #970 / PR #991, which replaces
+             * this accounting). It is per-CALL, not per-SAMPLE:
              * streaming.c's `encoded == 0` arm increments unconditionally,
              * on the premise stated in its own comment that "each encode
              * pops exactly one". A deferred unfittable row breaks that
