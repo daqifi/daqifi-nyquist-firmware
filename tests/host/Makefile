@@ -96,6 +96,25 @@ include $(FRAGMENTS)
 # whole goal list rather than testing for clean's presence.
 CLEAN_ONLY := $(if $(MAKECMDGOALS),$(if $(filter-out clean,$(MAKECMDGOALS)),,yes),)
 
+# The suite binaries this directory's .gitignore DECLARES. Defined here, before
+# the guards that read it -- make expands conditionals in file order, and the
+# first version of this defined it beside `clean:` two hundred lines below,
+# where every guard saw it empty.
+#
+# `tr -d '\r'` is load-bearing: this repo's text files are CRLF, so a plain sed
+# anchored on `$` matches nothing and the variable comes back EMPTY. That failed
+# loudly here only because the completeness guard below compares against it; on
+# its own an empty list would have made `clean` silently stop sweeping orphans
+# while looking perfectly healthy.
+DECLARED_BINS := $(shell tr -d '\r' < .gitignore 2>/dev/null | \
+                   sed -n 's/^\(run_[A-Za-z0-9_]*\)$$/\1/p')
+ifeq ($(strip $(DECLARED_BINS)),)
+$(error read no run_* entries from tests/host/.gitignore -- `clean` uses that \
+list to remove a binary whose fragment was dropped, and an empty list would \
+make it silently stop doing so. Check the file exists and still lists the \
+suite binaries one per line)
+endif
+
 ifeq ($(CLEAN_ONLY),)
 
 # REFUSE A SUITE THAT CANNOT FAIL.
@@ -186,6 +205,19 @@ $(error $$(TESTS) registers a binary more than once, so `make run` would run it 
 twice and mask a missing suite. Registered: $(TESTS))
 endif
 
+# Every registered binary must be declared in .gitignore. Two reasons, and the
+# second is why this is a guard rather than a convention: an undeclared binary
+# shows up in `git status` and invites being committed, AND `clean`'s orphan
+# sweep reads that same list, so a missing entry silently shrinks what clean can
+# recover. Keeping the list complete is what lets the sweep be narrow.
+UNDECLARED := $(filter-out $(DECLARED_BINS),$(TESTS))
+ifneq ($(UNDECLARED),)
+$(error $(UNDECLARED) is registered in $$(TESTS) but not listed in \
+tests/host/.gitignore. Add it there: git status would otherwise show it as \
+untracked, and `clean` reads that file to remove a binary whose fragment has \
+been dropped)
+endif
+
 endif   # CLEAN_ONLY
 
 # Every suite, in whatever order $(sort $(wildcard tests/*.mk)) included the
@@ -200,19 +232,29 @@ run: $(TESTS)
 	    echo "       success for a run that executed nothing."; exit 1; }
 	@for t in $(TESTS); do echo "./$$t"; ./$$t || exit 1; done
 
-# The second rm sweeps any binary no fragment claims any more. $(TESTS) is built
-# from the fragments, so a dropped fragment's binary is invisible to the first
-# one -- and that is the state this target has to be able to clean. `run_*` is
-# exactly the suite binaries by convention and is what .gitignore lists; nothing
-# else in this directory matches it.
+# DECLARED_BINS is the suite binaries this directory's .gitignore declares, and
+# it exists so `clean` can remove a binary whose fragment has been DROPPED.
+# $(TESTS) is built from the fragments on disk, so an orphan is invisible to it
+# -- and an inconsistent tree is exactly the state this target has to be able to
+# clean, since that is the merge accident the whole PR is about.
 #
-# These lines are make comments, not recipe lines. A `#` INSIDE a recipe is
-# handed to the shell, so make expands it first and echoes it: the first draft
-# put this text in the recipe and `make clean` printed the whole comment with
-# $(TESTS) expanded into the middle of a sentence. Caught by reading the output
-# of the mutation proof rather than the diff.
+# IT IS NOT `rm -f run_*`, which is what the first version did. That deletes any
+# file in this directory matching the glob, including a developer's own
+# `run_notes` or `run_something.sh`, which is not recoverable because it is not
+# in git. The comment defending it claimed "nothing else in this directory
+# matches it" -- true of the directory that day, guaranteed by nothing, and the
+# #1040 review was right to call it. Reading .gitignore instead sweeps exactly
+# the artifacts the repo DECLARES and nothing it does not.
+#
+# The guard below keeps that list complete, so the sweep cannot quietly stop
+# covering a newly added suite.
+#
+# These are make comments, not recipe lines. A `#` INSIDE a recipe goes to the
+# shell, so make expands it first and echoes it: an earlier draft put this text
+# in the recipe and `make clean` printed the paragraph with $(TESTS) expanded
+# into the middle of a sentence. Caught by reading the mutation proof's output
+# rather than the diff.
 clean:
-	rm -f $(TESTS) $(CLEAN_EXTRA)
-	rm -f run_*
+	rm -f $(TESTS) $(CLEAN_EXTRA) $(DECLARED_BINS)
 
 .PHONY: run clean
