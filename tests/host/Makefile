@@ -96,36 +96,6 @@ include $(FRAGMENTS)
 # whole goal list rather than testing for clean's presence.
 CLEAN_ONLY := $(if $(MAKECMDGOALS),$(if $(filter-out clean,$(MAKECMDGOALS)),,yes),)
 
-# The suite binaries this directory's .gitignore DECLARES. Defined here, before
-# the guards that read it -- make expands conditionals in file order, and the
-# first version of this defined it beside `clean:` two hundred lines below,
-# where every guard saw it empty.
-#
-# THIS PARSER MUST AGREE WITH GIT, and the first version did not. git strips
-# trailing whitespace from a .gitignore pattern, so `run_943_tests ` (one
-# trailing space) is a perfectly effective ignore rule -- while a sed anchored
-# straight on `$` does not match it. The two then disagree, and the completeness
-# guard below refuses a tree that is entirely correct: reproduced at this head,
-# `git check-ignore` said yes and `make run` exited 2 naming that binary as "not
-# listed in .gitignore". A guard that reds correct input is the failure this
-# repo parked a whole mechanism over (#1032), so the trim is not cosmetic.
-#
-# `tr -d '\r'` is equally load-bearing and for the same family of reason: this
-# repo's text files are CRLF, so without it the pattern matches NOTHING and the
-# variable comes back EMPTY. That one failed loudly only because the
-# completeness guard compares against it; alone it would have made `clean`
-# silently stop sweeping orphans while looking healthy. Hence the explicit
-# emptiness check below rather than relying on another guard to notice.
-DECLARED_BINS := $(shell tr -d '\r' < .gitignore 2>/dev/null | \
-                   sed -e 's/[[:space:]]*$$//' \
-                       -n -e 's/^\(run_[A-Za-z0-9_]*\)$$/\1/p')
-ifeq ($(strip $(DECLARED_BINS)),)
-$(error read no run_* entries from tests/host/.gitignore -- `clean` uses that \
-list to remove a binary whose fragment was dropped, and an empty list would \
-make it silently stop doing so. Check the file exists and still lists the \
-suite binaries one per line)
-endif
-
 ifeq ($(CLEAN_ONLY),)
 
 # REFUSE A SUITE THAT CANNOT FAIL.
@@ -216,19 +186,6 @@ $(error $$(TESTS) registers a binary more than once, so `make run` would run it 
 twice and mask a missing suite. Registered: $(TESTS))
 endif
 
-# Every registered binary must be declared in .gitignore. Two reasons, and the
-# second is why this is a guard rather than a convention: an undeclared binary
-# shows up in `git status` and invites being committed, AND `clean`'s orphan
-# sweep reads that same list, so a missing entry silently shrinks what clean can
-# recover. Keeping the list complete is what lets the sweep be narrow.
-UNDECLARED := $(filter-out $(DECLARED_BINS),$(TESTS))
-ifneq ($(UNDECLARED),)
-$(error $(UNDECLARED) is registered in $$(TESTS) but not listed in \
-tests/host/.gitignore. Add it there: git status would otherwise show it as \
-untracked, and `clean` reads that file to remove a binary whose fragment has \
-been dropped)
-endif
-
 endif   # CLEAN_ONLY
 
 # Every suite, in whatever order $(sort $(wildcard tests/*.mk)) included the
@@ -243,29 +200,43 @@ run: $(TESTS)
 	    echo "       success for a run that executed nothing."; exit 1; }
 	@for t in $(TESTS); do echo "./$$t"; ./$$t || exit 1; done
 
-# DECLARED_BINS is the suite binaries this directory's .gitignore declares, and
-# it exists so `clean` can remove a binary whose fragment has been DROPPED.
-# $(TESTS) is built from the fragments on disk, so an orphan is invisible to it
-# -- and an inconsistent tree is exactly the state this target has to be able to
-# clean, since that is the merge accident the whole PR is about.
+# `clean` removes exactly what THIS tree's fragments registered: $(TESTS)
+# (the binaries) and $(CLEAN_EXTRA) (generated files a recipe produces
+# beside its binary, e.g. CircularBuffer_uut.c, gen_1000_log_budget.h).
 #
-# IT IS NOT `rm -f run_*`, which is what the first version did. That deletes any
-# file in this directory matching the glob, including a developer's own
-# `run_notes` or `run_something.sh`, which is not recoverable because it is not
-# in git. The comment defending it claimed "nothing else in this directory
-# matches it" -- true of the directory that day, guaranteed by nothing, and the
-# #1040 review was right to call it. Reading .gitignore instead sweeps exactly
-# the artifacts the repo DECLARES and nothing it does not.
+# IT DOES NOT recover a binary whose fragment was itself dropped or renamed
+# by a merge -- that binary's name never reaches $(TESTS) in a tree that no
+# longer includes the fragment that named it, so this target has no way to
+# know it should be removed. If that has happened to you, from THIS
+# directory (tests/host, where you are if you are running `make` at all):
+# `git clean -xdf .` (removes everything untracked/ignored under this
+# directory -- note the `.`; `git clean -xdf tests/host` from here means
+# tests/host/tests/host and silently matches nothing) or `rm -f
+# <the-stale-binary>` by hand. Both already work with no Makefile help.
 #
-# The guard below keeps that list complete, so the sweep cannot quietly stop
-# covering a newly added suite.
+# A sweep for exactly that orphan case was attempted three times and is
+# deliberately NOT here a fourth:
+#   1. `rm -f run_*` -- deleted a developer's own unrelated run_* file,
+#      unrecoverably (it was never in git).
+#   2. A DECLARED_BINS list parsed from .gitignore, plus an UNDECLARED
+#      completeness guard -- the parser's idea of a valid .gitignore line
+#      (exact match, trailing whitespace trimmed one specific way)
+#      disagreed with git's, and reddened a tree that was entirely correct.
+#   3. The whitespace trim landed and the review finding was still live,
+#      now citing "another nonmatching form" it could raise next. That
+#      phrasing is the tell: .gitignore is a pattern language (globs,
+#      negations, comments, directory syntax), the parser understood one
+#      literal subset of it, and no further patch closes that gap -- it is
+#      structural, not a bug to fix.
+# The convenience this bought (skip a `git clean`/`rm -f` in a tree that is
+# already broken) does not clear that bar. Do not rebuild it.
 #
-# These are make comments, not recipe lines. A `#` INSIDE a recipe goes to the
-# shell, so make expands it first and echoes it: an earlier draft put this text
-# in the recipe and `make clean` printed the paragraph with $(TESTS) expanded
-# into the middle of a sentence. Caught by reading the mutation proof's output
-# rather than the diff.
+# These are make comments, not recipe lines. A `#` INSIDE a recipe goes to
+# the shell, so make expands it first and echoes it: an earlier draft put
+# this text in the recipe and `make clean` printed the paragraph with
+# $(TESTS) expanded into the middle of a sentence. Caught by reading the
+# mutation proof's output rather than the diff.
 clean:
-	rm -f $(TESTS) $(CLEAN_EXTRA) $(DECLARED_BINS)
+	rm -f $(TESTS) $(CLEAN_EXTRA)
 
 .PHONY: run clean

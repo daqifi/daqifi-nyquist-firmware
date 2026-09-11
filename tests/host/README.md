@@ -217,7 +217,14 @@ adds a new file:
      exactly that through, and the comment beside the guard records it. Claim
      the source your recipe compiles; do not derive it from your filename,
      because that mapping is not uniform (`124-circularbuffer.mk` builds
-     `test_circularbuffer.c`).
+     `test_circularbuffer.c`);
+   - **add your binary's name to `tests/host/.gitignore`** (one line, e.g.
+     `run_943_tests`). Nothing in the Makefile enforces this any more — an
+     earlier `UNDECLARED` guard did, and was deleted along with the rest of
+     the `.gitignore`-driven orphan-binary sweep it existed to support (see
+     `Makefile`'s `clean:` comment). Skip this and your binary shows up as
+     untracked in `git status` instead of being ignored like every other
+     suite's.
 
 `Makefile` `include`s every `tests/*.mk` it finds (`$(sort $(wildcard
 tests/*.mk))`, so inclusion order — and therefore `make run`'s test order —
