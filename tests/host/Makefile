@@ -67,12 +67,17 @@ SUSPEND_BIN := run_953_tests
 # values rather than included.
 #
 # It copies BOTH a format string and a length constant, and it also depends on
-# the DEFECT being absent -- the masked 16-bit form is what made the name
-# repeat every 65.5 s, and a suite whose premise is "the mask is gone" must
-# fail if the mask comes back rather than quietly testing a model of code that
-# no longer exists. So the recipe has three guards: the post-fix format string
-# must be present, the pre-fix one must NOT be, and the field length must still
-# be 40. Each fails loudly and names what to re-read.
+# two DEFECTS being absent, so the recipe carries six guards. Three are about
+# the text being right: the post-fix format expression must be present (checked
+# with newlines squashed, because it wraps), the field length must still be 40,
+# and the masked 16-bit form -- the original #958 defect -- must NOT be back.
+#
+# The other three are about the SEQUENCE field, added after Qodo found that the
+# whole 32-bit tick still repeats after 49.7 days of uptime. A format pin alone
+# would prove the field is in the name and nothing more, so the recipe also
+# requires that the counter is ADVANCED once per run, that it is NEVER assigned
+# anywhere but its definition (a reset reopens the collision), and that the
+# tick-only form has not come back. Each fails loudly and names what to re-read.
 NAME_BIN := run_958_tests
 SD_MGR_HDR := ../../firmware/src/services/sd_card_services/sd_card_manager.h
 
@@ -145,13 +150,41 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
 $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BENCH_SRC) $(SD_MGR_HDR) $(RECIPES)
-	@grep -qF '"benchmark_%lu.dat", (unsigned long)xTaskGetTickCount()' $(SD_BENCH_SRC) \
+	@tr -d '\r' < $(SD_BENCH_SRC) | tr '\n' ' ' \
+	  | grep -qE '"benchmark_%lu_%lu\.dat",[[:space:]]*\(unsigned long\)xTaskGetTickCount\(\),[[:space:]]*\(unsigned long\)benchNameSeq' \
 	  || { echo "ERROR: the SD:BENCHmark scratch name in $(SD_BENCH_SRC) is no"; \
-	       echo "       longer built as '\"benchmark_%lu.dat\", (unsigned long)xTaskGetTickCount()'."; \
+	       echo "       longer built from the tick AND the per-boot sequence as"; \
+	       echo "       '\"benchmark_%lu_%lu.dat\", tick, benchNameSeq'."; \
 	       echo "       test_958_sd_benchmark_filename_collision.c re-implements THAT"; \
-	       echo "       format and asserts the names it produces -- update new_bench_name()"; \
-	       echo "       and re-read the header's uniqueness argument before changing either."; \
+	       echo "       format and asserts the names it produces -- update"; \
+	       echo "       new_bench_name() and re-read the header's uniqueness argument"; \
+	       echo "       before changing either. Newlines are squashed first, so the"; \
+	       echo "       expression may wrap however it likes -- only the text matters."; \
 	       exit 1; }
+	@grep -qE 'benchNameSeq[[:space:]]*=[[:space:]]*\+\+gBenchNameSeq[[:space:]]*;' $(SD_BENCH_SRC) \
+	  || { echo "ERROR: $(SD_BENCH_SRC) no longer advances gBenchNameSeq per run."; \
+	       echo "       The format pin above only proves the FIELD is in the name;"; \
+	       echo "       this proves the field changes. A sequence left at its initial"; \
+	       echo "       value prints the same digits every run, which is the 65.5 s"; \
+	       echo "       collision again with a longer name."; \
+	       exit 1; }
+	@if grep -vE '^static uint32_t gBenchNameSeq' $(SD_BENCH_SRC) \
+	     | grep -qE 'gBenchNameSeq[[:space:]]*=[^=]'; then \
+	       echo "ERROR: gBenchNameSeq is assigned somewhere other than its"; \
+	       echo "       definition in $(SD_BENCH_SRC). Its whole contract is that it"; \
+	       echo "       is NEVER reset while the board is up -- that is what makes the"; \
+	       echo "       scratch name unique within a boot (test_958 CASE 5). A reset,"; \
+	       echo "       anywhere, reopens the collision it closes."; \
+	       exit 1; \
+	 fi
+	@if grep -qF '"benchmark_%lu.dat"' $(SD_BENCH_SRC); then \
+	       echo "ERROR: the tick-ONLY benchmark filename is back in $(SD_BENCH_SRC)."; \
+	       echo "       TickType_t is 32-bit here, so that name repeats after 49.7"; \
+	       echo "       days of uptime and the truncating open destroys the earlier"; \
+	       echo "       run's file -- the 16-bit defect again, on a longer period."; \
+	       echo "       test_958 CASE 5 is that scenario. Keep the sequence field."; \
+	       exit 1; \
+	 fi
 	@if grep -qE 'benchmark_%d\.dat|xTaskGetTickCount\(\)[[:space:]]*&[[:space:]]*0xFFFF' $(SD_BENCH_SRC); then \
 	       echo "ERROR: the 16-bit MASKED benchmark filename is back in $(SD_BENCH_SRC)."; \
 	       echo "       That is the #958 defect itself: the name then repeats every"; \

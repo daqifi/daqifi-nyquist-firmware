@@ -21,14 +21,29 @@
  * protection governs which files they REMOVE, and this loss happens inside the
  * open.
  *
- * The fix uses the tick WHOLE:
+ * The fix uses the WHOLE tick, and pairs it with a per-boot sequence:
  *
+ *     taskENTER_CRITICAL();
+ *     benchNameSeq = ++gBenchNameSeq;
+ *     taskEXIT_CRITICAL();
  *     snprintf(benchLogFile, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX,
- *              "benchmark_%lu.dat", (unsigned long)xTaskGetTickCount());
+ *              "benchmark_%lu_%lu.dat", (unsigned long)xTaskGetTickCount(),
+ *              (unsigned long)benchNameSeq);
  *
- * WHY THE WHOLE TICK IS SUFFICIENT WITHIN ONE BOOT, and it is not "1 ms is
- * short". It is that the callback cannot run to completion in under a tick.
- * Its last step is the drain-and-close wait
+ * WHERE THE WITHIN-BOOT UNIQUENESS COMES FROM: the SEQUENCE, not the tick.
+ * gBenchNameSeq is incremented once per named run and is never reset while
+ * the board is up, so no two runs of one boot can produce the same name.
+ *
+ * The tick alone does NOT give that, and this file's first revision said it
+ * did. TickType_t is 32-bit here (configTICK_TYPE_WIDTH_IN_BITS is
+ * TICK_TYPE_WIDTH_32_BITS, FreeRTOSConfig.h:125), so it wraps after 49.7
+ * days of uptime and two runs exactly one wrap apart would share a value.
+ * CASE 5 below is that scenario, and it is the reason the sequence exists.
+ *
+ * What the first revision's argument DOES establish, and it is still true,
+ * is the narrower claim that CONSECUTIVE runs cannot share a tick: the
+ * callback cannot run to completion in under a tick. Its last step is the
+ * drain-and-close wait
  * (`while (!sd_card_manager_IsIdle() && idleWait < 500) vTaskDelay(10)`), and
  * the loop cannot exit without entering: the `mode = MODE_NONE` +
  * sd_card_manager_UpdateSettings() just above it forces the manager to DEINIT,
@@ -36,14 +51,15 @@
  * ticks, always happens. The `testInProgress` interlock means the next run's
  * name is not built until this one has returned, so consecutive names are
  * >= 10 ticks apart, whichever transport calls it. A run refused before the
- * arm creates no file and therefore cannot collide with anything. TickType_t
- * is 32-bit here (configTICK_TYPE_WIDTH_IN_BITS is TICK_TYPE_WIDTH_32_BITS,
- * FreeRTOSConfig.h:125), so the value itself only repeats after 49.7 days of
- * uptime.
+ * arm creates no file and therefore cannot collide with anything. None of
+ * that reaches two runs a WRAP apart, which is why it is not the guarantee.
  *
- * That premise is load-bearing, so CASE 5 below asserts its consequence
- * (equal ticks give equal names) rather than leaving it implicit -- a reader
- * of this suite should see exactly what the fix rests on.
+ * The tick stays as the LEADING field because it is the half a human and the
+ * companion test can read: test_958_benchmark_scratch_name_unique.py asserts
+ * it advances by roughly the elapsed wall clock, and that arm is what
+ * discriminates pre-#958 firmware from post. The sequence makes the name
+ * unique; the tick makes it legible. CASE 1 pins that the tick is still
+ * carried in full, so the sequence cannot quietly become the only field.
  *
  * HOW IT IS TESTED
  *
@@ -63,9 +79,11 @@
  *
  * WHAT THIS FILE DELIBERATELY DOES NOT COVER
  *
- * The other half of #958: the reboot case. The tick restarts at 0 on reboot,
- * so a run after a reboot can still land on the name of a file left on the
- * card before it, and still truncates it silently. Closing that needs the
+ * The other half of #958: the reboot case. A reboot restarts BOTH fields at
+ * their initial values -- the tick at 0 and the sequence at 0 -- so a run
+ * after a reboot can still land on the name of a file left on the card
+ * before it, and still truncates it silently. No counter held in RAM can
+ * close that half; only asking the card can. Closing it needs the
  * candidate name STAT-ed before it is armed, and that cannot be done in
  * SCPI_StorageSDBenchmark: the FAT volume is not mounted there. The SD task
  * mounts it only inside a session (sd_card_manager.c:1457, reached only when
@@ -134,15 +152,16 @@ static BenchName old_bench_name(uint32_t tick)
     return b;
 }
 
-/* POST-#958: the whole tick. */
-static BenchName new_bench_name(uint32_t tick)
+/* POST-#958: the whole tick, then the per-boot sequence. */
+static BenchName new_bench_name(uint32_t tick, uint32_t seq)
 {
     BenchName b;
     int n;
 
     memset(&b, 0, sizeof(b));
     n = snprintf(b.name, FW_FILE_NAME_LEN_MAX,
-                 "benchmark_%lu.dat", (unsigned long)tick);
+                 "benchmark_%lu_%lu.dat", (unsigned long)tick,
+                 (unsigned long)seq);
     b.name[FW_FILE_NAME_LEN_MAX] = '\0';
     b.truncated = (n < 0) || (n >= (int)FW_FILE_NAME_LEN_MAX);
     return b;
@@ -170,6 +189,19 @@ static const uint32_t kTicks[] = {
     4294967295UL            /* UINT32_MAX: the longest name, 49.7 days */
 };
 #define N_TICKS (sizeof(kTicks) / sizeof(kTicks[0]))
+
+/* Sequence values. gBenchNameSeq is PRE-incremented, so the first named run
+ * of a boot is 1 and 0 is never produced -- which is why 1, not 0, is what
+ * the reboot arm of CASE 5 uses on both sides. UINT32_MAX is the longest
+ * field the counter can print and is what CASE 4 sizes against. */
+static const uint32_t kSeqs[] = {
+    1UL,                    /* the first named run of a boot */
+    2UL,
+    99UL,
+    65536UL,
+    4294967295UL            /* UINT32_MAX */
+};
+#define N_SEQS (sizeof(kSeqs) / sizeof(kSeqs[0]))
 
 /* The python suite's cleanup in test_728 / test_851 / test_943 matches
  * `benchmark_` + non-space + `.dat`. Both halves are a contract with those
@@ -213,11 +245,19 @@ static bool has_suffix(const char *s, const char *p)
  * Swept over several bases and several whole multiples of the wrap, because a
  * shape that only fixed "exactly one wrap from tick 0" would pass a
  * single-case version of this. This is the assertion that screams if the mask
- * is reinstated. */
+ * is reinstated.
+ *
+ * THE SEQUENCE IS HELD FIXED here, deliberately. With two different sequence
+ * values the names would differ whatever the tick did, and this case would
+ * pass with the tick masked again -- it would be measuring the wrong field.
+ * Pinning seq makes the tick the only thing that can separate the two names,
+ * so the mask cannot come back unnoticed. CASE 5 is the mirror image: the
+ * tick held fixed so only the sequence can separate them. */
 TEST(one_tick_wrap_apart_collides_pre_fix_and_not_post_fix)
 {
     static const uint32_t bases[] = { 0UL, 1UL, 1000UL, 40000UL, 3600000UL };
     static const uint32_t multiples[] = { 1UL, 2UL, 17UL, 1000UL };
+    static const uint32_t kFixedSeq = 7UL;   /* see the note above */
     size_t b, m;
     unsigned oldCollisions = 0;
 
@@ -227,8 +267,8 @@ TEST(one_tick_wrap_apart_collides_pre_fix_and_not_post_fix)
             uint32_t t2 = (uint32_t)(bases[b] + multiples[m] * TICK_WRAP);
             BenchName o1 = old_bench_name(t1);
             BenchName o2 = old_bench_name(t2);
-            BenchName n1 = new_bench_name(t1);
-            BenchName n2 = new_bench_name(t2);
+            BenchName n1 = new_bench_name(t1, kFixedSeq);
+            BenchName n2 = new_bench_name(t2, kFixedSeq);
 
             /* The defect: one name for two runs. */
             ASSERT_TRUE(strcmp(o1.name, o2.name) == 0);
@@ -266,8 +306,9 @@ TEST(distinct_ticks_give_distinct_names)
 
     for (i = 0; i < N_TICKS; i++) {
         for (j = i + 1; j < N_TICKS; j++) {
-            BenchName ni = new_bench_name(kTicks[i]);
-            BenchName nj = new_bench_name(kTicks[j]);
+            /* Same sequence on both sides, for CASE 1's reason. */
+            BenchName ni = new_bench_name(kTicks[i], 5UL);
+            BenchName nj = new_bench_name(kTicks[j], 5UL);
             BenchName oi = old_bench_name(kTicks[i]);
             BenchName oj = old_bench_name(kTicks[j]);
 
@@ -292,7 +333,9 @@ TEST(names_keep_the_benchmark_prefix_and_dat_suffix)
     size_t i;
 
     for (i = 0; i < N_TICKS; i++) {
-        BenchName n = new_bench_name(kTicks[i]);
+        /* Rotate the sequence too, so the contract is checked against both
+         * fields varying rather than against one fixed suffix. */
+        BenchName n = new_bench_name(kTicks[i], kSeqs[i % N_SEQS]);
 
         ASSERT_TRUE(has_prefix(n.name, kPrefix));
         ASSERT_TRUE(has_suffix(n.name, kSuffix));
@@ -313,60 +356,103 @@ TEST(names_keep_the_benchmark_prefix_and_dat_suffix)
  * [LEN_MAX + 1] buffer through an snprintf bounded to LEN_MAX, so a name that
  * did not fit would be silently CUT -- and two cut names can be equal again,
  * which would reintroduce the very collision this fix removes. The worst case
- * is UINT32_MAX: "benchmark_" (10) + 10 digits + ".dat" (4) = 24. */
+ * is both fields at UINT32_MAX: "benchmark_" (10) + 10 digits + "_" (1) +
+ * 10 digits + ".dat" (4) = 35, against a 40-character field. */
 TEST(longest_name_fits_the_field_without_truncation)
 {
     size_t i;
-    BenchName worst = new_bench_name(4294967295UL);
+    BenchName worst = new_bench_name(4294967295UL, 4294967295UL);
 
-    ASSERT_EQ(strlen(worst.name), 24u);
+    ASSERT_EQ(strlen(worst.name), 35u);
     ASSERT_FALSE(worst.truncated);
-    ASSERT_TRUE(strcmp(worst.name, "benchmark_4294967295.dat") == 0);
+    ASSERT_TRUE(strcmp(worst.name,
+                       "benchmark_4294967295_4294967295.dat") == 0);
 
     /* Headroom, stated as a number so a future widening that eats it fails
      * here rather than in the field. */
     ASSERT_TRUE(strlen(worst.name) < FW_FILE_NAME_LEN_MAX);
-    ASSERT_EQ(FW_FILE_NAME_LEN_MAX - strlen(worst.name), 16u);
+    ASSERT_EQ(FW_FILE_NAME_LEN_MAX - strlen(worst.name), 5u);
 
     for (i = 0; i < N_TICKS; i++) {
-        BenchName n = new_bench_name(kTicks[i]);
-        ASSERT_FALSE(n.truncated);
-        ASSERT_TRUE(strlen(n.name) <= 24u);
+        size_t k;
+        for (k = 0; k < N_SEQS; k++) {
+            BenchName n = new_bench_name(kTicks[i], kSeqs[k]);
+            ASSERT_FALSE(n.truncated);
+            ASSERT_TRUE(strlen(n.name) <= 35u);
+        }
     }
 }
 
-/* CASE 5 -- the premise, made visible. The fix does NOT make the name unique
- * by adding state; it relies on two runs that each create a file never sharing
- * a tick value (see WHY THE WHOLE TICK IS SUFFICIENT in the header). So equal
- * ticks give equal names, by construction, and that is the one thing standing
- * between this fix and a same-tick collision.
+/* CASE 5 -- THE 49.7-DAY WRAP, which is the whole reason the sequence field
+ * exists.
  *
- * Asserted rather than left in prose because it is the assumption a reviewer
- * has to check against the firmware, and because a later change that DOES add
- * a discriminator (a sequence counter, a sub-tick read) will fail here -- at
- * which point the header's argument is no longer what holds, and both should
- * be updated together. */
-TEST(equal_ticks_give_equal_names_which_is_what_the_fix_relies_on)
+ * The mirror of CASE 1. There the sequence was held fixed so that only the
+ * tick could separate two names; here the TICK is held fixed so that only the
+ * sequence can. Two runs exactly one 32-bit tick wrap apart read the SAME
+ * value from xTaskGetTickCount(), so a name built from the tick alone repeats
+ * -- the same silent truncation as the 16-bit mask, 49.7 days apart instead
+ * of 65.5 seconds. Qodo raised it on this PR's first review; TickType_t is
+ * 32 bits here (FreeRTOSConfig.h:125), so it is reachable and not academic.
+ *
+ * This is the case that fails if the sequence field is ever dropped, which is
+ * the regression the Makefile's format pin cannot catch on its own: a pin
+ * proves the text is there, and this proves the text does something. */
+TEST(same_tick_one_wrap_apart_still_gives_distinct_names)
 {
     size_t i;
 
     for (i = 0; i < N_TICKS; i++) {
-        BenchName a = new_bench_name(kTicks[i]);
-        BenchName b = new_bench_name(kTicks[i]);
+        /* Two runs at the same tick value, consecutive sequence numbers --
+         * i.e. one wrap of uptime apart, with no other run in between. */
+        BenchName first = new_bench_name(kTicks[i], 41UL);
+        BenchName second = new_bench_name(kTicks[i], 42UL);
 
-        ASSERT_TRUE(strcmp(a.name, b.name) == 0);
+        ASSERT_TRUE(strcmp(first.name, second.name) != 0);
+
+        /* Not merely two different strings: each carries its OWN sequence, so
+         * the field doing the separating is the one this case is about. */
+        ASSERT_TRUE(strstr(first.name, decimal(41UL)) != NULL);
+        ASSERT_TRUE(strstr(second.name, decimal(42UL)) != NULL);
+
+        /* And the tick survives in full -- the sequence was ADDED to the name,
+         * it did not replace the field the companion test reads. */
+        ASSERT_TRUE(strstr(first.name, decimal(kTicks[i])) != NULL);
     }
 
-    /* Stated the other way as well: the name is a pure function of the tick,
-     * so it carries no boot identity -- which is exactly why the reboot half
-     * of #958 is still open (header, WHAT THIS FILE DELIBERATELY DOES NOT
-     * COVER). */
+    /* Non-adjacent sequence values as well. A shape that only distinguished
+     * n from n+1 -- a parity bit, say -- would pass the loop above. */
     {
-        BenchName firstEverRun = new_bench_name(0UL);
-        BenchName firstRunAfterAReboot = new_bench_name(0UL);
-        ASSERT_TRUE(strcmp(firstEverRun.name,
-                           firstRunAfterAReboot.name) == 0);
+        size_t a, b;
+        for (a = 0; a < N_SEQS; a++) {
+            for (b = a + 1; b < N_SEQS; b++) {
+                BenchName x = new_bench_name(1000UL, kSeqs[a]);
+                BenchName y = new_bench_name(1000UL, kSeqs[b]);
+
+                ASSERT_TRUE(kSeqs[a] != kSeqs[b]);
+                ASSERT_TRUE(strcmp(x.name, y.name) != 0);
+            }
+        }
     }
+}
+
+/* CASE 6 -- the boundary that is STILL OPEN, asserted rather than left in
+ * prose so the header cannot drift away from the code.
+ *
+ * A reboot restarts the tick at 0 and the sequence at 1 (gBenchNameSeq is
+ * pre-incremented, so 0 is never produced), which means the first run of
+ * every boot produces one and the same name. That is the reboot half of
+ * #958. No counter kept in RAM can close it -- only asking the card can, and
+ * that has to happen where the volume is mounted (see the header).
+ *
+ * When the follow-up lands this case FAILS, and that failure is the signal to
+ * rewrite the header's boundary section in the same commit. It is pinned here
+ * for that reason, not to protect the defect. */
+TEST(first_run_of_every_boot_shares_one_name_which_is_the_open_half)
+{
+    BenchName firstEverRun = new_bench_name(0UL, 1UL);
+    BenchName firstRunAfterAReboot = new_bench_name(0UL, 1UL);
+
+    ASSERT_TRUE(strcmp(firstEverRun.name, firstRunAfterAReboot.name) == 0);
 }
 
 int main(void)
@@ -377,6 +463,7 @@ int main(void)
     RUN(distinct_ticks_give_distinct_names);
     RUN(names_keep_the_benchmark_prefix_and_dat_suffix);
     RUN(longest_name_fits_the_field_without_truncation);
-    RUN(equal_ticks_give_equal_names_which_is_what_the_fix_relies_on);
+    RUN(same_tick_one_wrap_apart_still_gives_distinct_names);
+    RUN(first_run_of_every_boot_shares_one_name_which_is_the_open_half);
     return TEST_SUMMARY();
 }
