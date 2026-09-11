@@ -5,6 +5,21 @@
 # what is added is the two accumulator lines this directory's convention needs.
 # That is the whole migration for an incoming target, and it is the argument for
 # the split: had #990 landed as a fragment there would have been no conflict.
+#
+# $(lastword $(MAKEFILE_LIST)) IS PART OF THE MIGRATION, NOT DECORATION, and it
+# was missing from the first version of this file. In main's monolithic Makefile
+# these guards lived IN Makefile, so $(RECIPES) made editing one invalidate the
+# binary. Moving them into an included fragment breaks that link unless the
+# fragment names itself, and without it all ten guards below could be sabotaged
+# with the stale binary still passing -- `make run` exit 0, nine suites, the
+# binary's mtime unchanged, no guard executed. Reproduced before fixing, with
+# the 943 fragment as a control: the same style of edit there fails immediately
+# because it does carry this prerequisite.
+#
+# The migration's own mutation proof missed it because it changed the FIRMWARE
+# (MAX_DAC7718_CONFIG, a prerequisite), which rebuilds. The axis that matters
+# here is changing the GUARD, which is not a prerequisite unless this line
+# exists. Found by the #1040 pre-merge audit.
 
 # #980: DAC7718 error-path honesty (lock ownership in DAC7718_ReadWriteReg,
 # init-failure propagation + slot retention in DAC_EnsureHardwareInitialized).
@@ -28,7 +43,8 @@ DAC980_BIN := run_980_tests
 DAC7718_SRC := ../../firmware/src/HAL/DAC7718/DAC7718.c
 SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
 
-$(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(SCPIDAC_SRC) $(RECIPES)
+$(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) \
+               $(SCPIDAC_SRC) $(RECIPES) $(lastword $(MAKEFILE_LIST))
 	@grep -qE '^[[:space:]]*bool lockHeld = false;' $(DAC7718_SRC) \
 	  || { echo "ERROR: DAC7718_ReadWriteReg's 'lockHeld' local is gone from $(DAC7718_SRC)."; \
 	       echo "       test_980_dac7718_error_paths.c Part A models exactly this variable -- re-derive it."; \
