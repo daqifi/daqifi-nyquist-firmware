@@ -2695,7 +2695,26 @@ typedef struct {
     const tBoardConfig*    pBoardConfig;
     const AInRuntimeArray* pRuntimeChannels;
     uint64_t               mappingSelAtBuild;
+    /* #938: the sweep's stop-request pin -- generation and "a stop is running
+     * right now", read together in one critical section at basis build. It
+     * lives in the basis, not in FindMeasureStep, because a per-step re-pin
+     * cannot see a stop that began and ended between two steps; see that
+     * function's header. */
+    uint32_t               stopGenAtBuild;
+    bool                   stopActiveAtBuild;
 } FindStepBasis;
+
+/* #938: tentative (no-initializer) forward declarations. The full definitions,
+ * with the mechanism's rationale, live later in this file next to
+ * SCPI_StartStreaming's own #861 guard -- read them there. This is legal C: a
+ * file-scope static may have any number of declarations without an
+ * initializer, and they all name the same object as the one initialized
+ * definition. Needed only because FindMeasureStep (below) is defined earlier
+ * in the file than SCPI_StartStreaming and must observe the same
+ * stop-requested generation it does -- the same "forward-declared here
+ * because" shape already used for SCPI_PerformStreamingStop further down. */
+static volatile uint32_t gStreamStopGen;
+static volatile uint32_t gStreamStopsActive;
 
 // One measurement cycle for SCPI_WifiFindRate: start streaming at `freq`, dwell,
 // observe the sample-pool high-water mark (the last-to-fill buffer — see header),
@@ -2713,7 +2732,63 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
                             const FindStepBasis* basis, uint32_t clkFreq,
                             uint32_t wRingCap, uint32_t freq, uint32_t obsMs,
                             uint32_t* outKBps, bool* outStartFailed) {
-    if (freq == 0u) { *outStartFailed = true; *outKBps = 0; return false; }  // guard div-by-zero (Qodo)
+    /* #938: THE STOP PIN IS THE SWEEP'S, NOT THIS STEP'S. It is taken once,
+     * under one critical section, where the caller builds `basis` -- the same
+     * place, and for the same reason, as the #868 channel-mapping provenance
+     * that sits beside it in that struct -- and every step compares against
+     * that one instant.
+     *
+     * An earlier revision pinned it HERE instead, once per call, arguing that
+     * "each call to this function IS one arm attempt, so before this attempt
+     * does anything is this line". That is true of the ARM and false of the
+     * STOP, and the difference is what an unsteered adversarial leg found: a
+     * stop that begins AND ENDS inside an inter-step gap bumps the generation
+     * and returns the active count to zero, so a per-step re-pin adopts the
+     * already-bumped generation as its own baseline and the next step arms
+     * over an operator stop that has already completed. A pin can only see a
+     * stop it overlaps; calling each iteration a new arm attempt does not
+     * make it a new operator request.
+     *
+     * The sweep pin SUBSUMES the per-step one rather than joining it, which is
+     * why the per-step pin is gone rather than kept alongside: every bump a
+     * per-step pin could catch is also a bump since the sweep's. It closes the
+     * torn-read window a previous round fixed here too, and closes it by
+     * construction rather than by pairing -- the pair is still read under one
+     * critical section, but at an instant that precedes every stop this sweep
+     * can race, so no step can pin a value a racing stop has already moved.
+     *
+     * The precedent is immediately next door. #868 refuses a step whose
+     * enabled-channel set moved since the mapping was built, and its own
+     * comment names the case explicitly: a change that "has already completed,
+     * typically during a previous inter-step gap". A stop completed in that
+     * same gap is the identical shape, and until this change it was the one
+     * such event the sweep looked straight past.
+     *
+     * A refusal aborts the sweep -- the caller breaks on *outStartFailed --
+     * which is the honest outcome for an explicit operator stop: the points
+     * already measured were taken before it, and climbing on afterwards would
+     * answer a question the operator has withdrawn.
+     *
+     * NOTE THE ASYMMETRY WITH SCPI_StartStreaming, which takes the same two
+     * pins as separate loads several lines apart and therefore still carries
+     * the torn-read window. That is pre-existing (#861) and sits on the
+     * primary START path, so it is filed as #969 rather than changed here;
+     * this site is deliberately STRICTER than the one whose placement it
+     * mirrors. */
+    if (freq == 0u) {
+        /* #938: logs, like every other *outStartFailed producer in this
+         * function -- see the reason chain below. Unreachable from the three
+         * call sites as they stand (the climb clamps freq >= 1, the refine's
+         * midpoint is >= lastGoodHz >= 1, the soak's candidate is >=
+         * FIND_SOAK_MIN_HZ), so this stays the div-by-zero guard it was. It is
+         * given a line anyway so "every path that reports a start failure names
+         * its cause in SYSTem:LOG?" is a property of the SOURCE rather than of
+         * an argument about reachability -- and the argument is exactly what a
+         * future fourth call site would invalidate without touching this
+         * function. */
+        LOG_E("WIFI:FIND: step called with freq 0 - nothing to measure (#938)");
+        *outStartFailed = true; *outKBps = 0; return false;   // guard div-by-zero (Qodo)
+    }
     // 64-bit intermediate so clkFreq + freq - 1 can't wrap uint32_t (Qodo pass-8
     // hardening; the real values — ~100 MHz clk + <=100 kHz freq — never overflow).
     uint32_t periodCycles = (uint32_t)(((uint64_t)clkFreq + freq - 1u) / freq);
@@ -2737,7 +2812,19 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
     bool cfgBusy;
     bool mappingMoved = false;
     bool inputsGone = false;
+    bool stopInFlight = false;
+    bool stopRequested = false;
     taskENTER_CRITICAL();
+    /* #938: same three-way split SCPI_StartStreamingClaimed uses -- see
+     * gStreamStopsActive's declaration below for why all three terms are
+     * each needed. The two PINNED terms are the SWEEP's, not this step's:
+     * see this function's header for why a per-step re-pin loses a stop that
+     * began and ended in an inter-step gap. Computed first, ahead of cfgBusy,
+     * matching that function's ordering, so a stop that landed anywhere in
+     * this sweep is reported as itself and not folded into whichever
+     * consistency check also happens to be true. */
+    stopInFlight = basis->stopActiveAtBuild || (gStreamStopsActive != 0u);
+    stopRequested = stopInFlight || (gStreamStopGen != basis->stopGenAtBuild);
     cfgBusy = Streaming_ConfigChangeInProgress();
     if (!cfgBusy) {
         /* #868: the enabled-channel set moved since the sweep built its
@@ -2789,15 +2876,15 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
          * the more actionable of the two statements. */
         inputsGone = (selNow == 0u);
     }
-    if (!cfgBusy && !mappingMoved && !inputsGone) {
+    if (!cfgBusy && !mappingMoved && !inputsGone && !stopRequested) {
         cfg->ClockPeriod = periodCycles - 1;
         cfg->Frequency = (uint64_t)freq;
         cfg->IsEnabled = true;
     }
     taskEXIT_CRITICAL();
-    /* #868/#891: this step armed nothing on any of the three refusals, so
+    /* #868/#891/#938: this step armed nothing on any of the four refusals, so
      * every "did WE arm it?" test below is this rather than cfgBusy alone. */
-    const bool armRefused = cfgBusy || mappingMoved || inputsGone;
+    const bool armRefused = cfgBusy || mappingMoved || inputsGone || stopRequested;
     /* Only pump the state machine if we actually armed -- on the refused path
      * Streaming_UpdateState() would Streaming_Stop() a concurrent session. */
     if (!armRefused) {
@@ -2808,20 +2895,56 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
      * adopt it as its own and measure/stop it (Qodo). */
     if (armRefused || !cfg->Running) {
         if (armRefused) {
-            /* #868/#891/#895: the sweep reports one of TWO tokens for a
+            /* #868/#891/#895/#938: the sweep reports one of TWO tokens for a
              * refusal -- START_REFUSED when this was the first step and
              * nothing had been measured yet, START_FAIL otherwise -- and
-             * neither of them says which of the three causes fired.  That
+             * neither of them says which of the four causes fired.  That
              * split is about WHERE in the sweep it happened, not WHY, so the
              * cause still goes in the log, which is where this project puts
              * error detail (SYSTem:LOG?).  Same order as the tests above, so
              * the message always names the reason that actually withheld the
-             * arm. */
+             * arm -- stopRequested first, matching SCPI_StartStreamingClaimed's
+             * precedence: it is the only one of the four that is an explicit
+             * operator instruction rather than a consistency failure. */
             LOG_E("WIFI:FIND %u Hz: arm refused - %s", (unsigned)freq,
-                  cfgBusy ? "a streaming config change is in flight (#847)"
-                          : inputsGone
-                          ? "no ADC channels are enabled (#891)"
-                          : "the enabled-channel set moved after the mapping was built (#868)");
+                  stopRequested
+                      ? (stopInFlight ? "a stop is still in flight on the other transport (#938/#861)"
+                                      : "a stop was issued and completed after this sweep began (#938/#861)")
+                      : cfgBusy ? "a streaming config change is in flight (#847)"
+                      : inputsGone
+                      ? "no ADC channels are enabled (#891)"
+                      : "the enabled-channel set moved after the mapping was built (#868)");
+        } else {
+            /* #938: the OTHER *outStartFailed producer, and until this line it
+             * was the one case this function reported without naming a cause
+             * -- the asymmetry #895's reason chain recorded and this issue is
+             * about. The arm went through (this step published IsEnabled with
+             * no stop pending, no config claim held, and both the mapping and
+             * the input set still matching), and Streaming_UpdateState()
+             * nevertheless left Running false.
+             *
+             * Streaming_Start() sets Running only under `if (IsEnabled)`, and
+             * Streaming_Stop() ahead of it always leaves Running false, so
+             * that arm is always evaluated -- meaning with a successful
+             * publish behind us there is exactly one way to be here:
+             * something cleared IsEnabled after taskEXIT_CRITICAL above and
+             * before the `!cfg->Running` test just made. (Two sub-windows,
+             * one statement: before Streaming_Start's IsEnabled test, or
+             * after it, in which case the clearing stop's own
+             * Streaming_UpdateState put Running back to false. Both are the
+             * same sentence, which is why the message states it once.)
+             * The message says THAT, the observable, and not "a stop raced
+             * us", because this function cannot tell which writer it was. A
+             * stop on the other transport is the reachable one -- the
+             * post-publish window SCPI_StartStreamingClaimed's own #861
+             * comment records as irreducible, since the publish and the state
+             * pump cannot be made one atomic step (the pump starts a timer and
+             * a task) -- but naming it here would print a guess as a fact. The
+             * pinned guard above catches the half of that race which IS
+             * attributable; this line stops the other half from being
+             * silent. */
+            LOG_E("WIFI:FIND %u Hz: armed but never ran - IsEnabled was "
+                  "cleared after the arm (#938)", (unsigned)freq);
         }
         // Clean teardown so the start-fail path leaves IsEnabled=false like the
         // normal path (the finder's exit assumes streaming is stopped) (Qodo #521).
@@ -2985,7 +3108,21 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
         .pBoardConfig     = pBoardConfig,
         .pRuntimeChannels = (const AInRuntimeArray*)pRtAin,
         .mappingSelAtBuild = 0,
+        .stopGenAtBuild    = 0,
+        .stopActiveAtBuild = false,
     };
+    /* #938: the sweep's stop pin, taken HERE and once, in one critical
+     * section, beside the #868 mapping provenance it sits next to in the
+     * struct -- both are "the instant this sweep committed to what it is
+     * measuring", and both are compared against by every step. Taken before
+     * the mapping build and the pool partition below, because a stop issued
+     * while the sweep is still setting up is as much an operator stop as one
+     * issued mid-climb. Two loads in one section for the reason the writer
+     * uses one: the pair has to describe a single instant, not two. */
+    taskENTER_CRITICAL();
+    basis.stopGenAtBuild    = gStreamStopGen;
+    basis.stopActiveAtBuild = (gStreamStopsActive != 0u);
+    taskEXIT_CRITICAL();
     {
         Streaming_BuildChannelMapping(pBoardConfig, (const AInRuntimeArray*)pRtAin);
         /* #868: read the provenance back FROM the mapping rather than
@@ -3195,11 +3332,19 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
      * of the failure and reading it here is reading it then.
      *
      * The token says WHETHER the sweep produced data, never WHY it stopped:
-     * all three arm-refusal causes (#847 cfgBusy, #868 mappingMoved, #891
-     * inputsGone) reach here through one bool, and so does the fourth
-     * *outStartFailed producer -- a stream that armed but never went Running,
-     * which is the one case FindMeasureStep does NOT log a cause for. Callers
-     * wanting the cause read SYSTem:LOG?; that is unchanged. */
+     * all FOUR arm-refusal causes (#847 cfgBusy, #868 mappingMoved, #891
+     * inputsGone, #938 stopRequested) reach here through one bool, and so do
+     * the other two *outStartFailed producers -- a stream that armed but
+     * never went Running, and the freq == 0 guard. Callers wanting the cause
+     * read SYSTem:LOG?.
+     *
+     * #938: and that instruction is now true WITHOUT QUALIFICATION. This
+     * comment used to end by naming the armed-but-never-Running producer as
+     * "the one case FindMeasureStep does NOT log a cause for", which left the
+     * remedy documented for START_REFUSED -- read the log -- a promise the
+     * code did not keep on one of its own paths. Every producer logs now; grep
+     * `outStartFailed` in FindMeasureStep to check that rather than trusting
+     * this sentence. */
     if (startFailed && !anyStepMeasured)
                                 reason = "START_REFUSED"; // refused at the first arm — nothing was measured
     else if (startFailed)       reason = "START_FAIL";    // refused mid-sweep — the fields are a partial sweep
@@ -4028,15 +4173,33 @@ static volatile StreamingInterface gStreamIfaceLastSet = StreamingInterface_USB;
  * Streaming_UpdateState() directly rather than calling the shared stop body --
  * because a START that bumped this would refuse itself, every time.
  *
- * The other two arm sites do NOT pin or observe it: SYSTem:STReam:THRoughput
- * (SCPI_RunThroughputBenchClaimed) and the WiFi rate finder (FindMeasureStep)
- * poke IsEnabled themselves, so a stop racing THEIR pre-arm windows is still
- * lost. Both are bench/diagnostic paths, and the finder arms once per rate in
- * a sweep -- so a stop there is an abort-the-sweep decision, not a refusal,
- * and it lands on a WINC-delicate path that wants its own bench run. They are
- * already tracked for this same class of arm-time re-validation in #868;
- * enumerated here so the gap is a recorded scope line rather than something
- * to rediscover. */
+ * #938: the WiFi rate finder (FindMeasureStep, defined earlier in this file --
+ * see its own pin and the tentative forward declarations at its definition,
+ * needed because it is textually ahead of this initializer) now pins and
+ * observes this the same way SCPI_StartStreamingClaimed does, once per step.
+ * A stop landing in a step's PRE-ARM window is refused as itself, with a
+ * cause, instead of being lost the way it was here before -- lost silently,
+ * note, not as a `!Running`: pre-arm the publish happens AFTER the stop, so
+ * the step went on to stream and the operator's stop simply did not happen.
+ * Because the finder calls this once per rate, the refusal aborts only that
+ * sweep's remaining steps -- not a global stop -- so retrying the whole sweep
+ * is the expected recovery, same as retrying a refused START.
+ *
+ * The POST-publish window is a different thing and this pin does not close
+ * it, for the reason SCPI_StartStreamingClaimed's own arm-time comment gives:
+ * the publish and Streaming_UpdateState() cannot be made one atomic step. In
+ * the finder that window is what produced the misleading
+ * START_REFUSED/START_FAIL with an empty SYSTem:LOG? -- the step's
+ * `!cfg->Running` branch, which used to report a start failure and name no
+ * cause. It still reports one; it now says so in the log. Both halves are
+ * #938, and only one of them is a guard.
+ *
+ * SYSTem:STReam:THRoughput (SCPI_RunThroughputBenchClaimed) still does NOT
+ * pin or observe it, so a stop racing ITS pre-arm window is still lost. It is
+ * a bench/diagnostic path and lands on the same WINC-delicate territory that
+ * wants its own bench run; tracked as its own gap rather than folded in here
+ * (#938's scope is the finder only) so it is a recorded line rather than
+ * something to rediscover. */
 static volatile uint32_t gStreamStopGen = 0;
 
 /* #861 (Qodo, importance 9): stops CURRENTLY IN FLIGHT, not stops completed.
