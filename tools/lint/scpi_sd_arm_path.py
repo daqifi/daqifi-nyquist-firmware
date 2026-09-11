@@ -124,6 +124,16 @@ stays checked here (property 1, below), unlike the rest of what #942 fixed.
    mutation this now accepts, and "The same shape at a second site" above for
    what covers -- and does not yet cover -- the rest of that shape).
 
+   And "consumed" is a SHAPE, not dataflow. This matches the spelling of the
+   call against the spellings that discard it; it does not trace where the
+   value goes. `if ((arm(cfg), false))` puts the call inside an `if` condition
+   and throws the verdict away, and this reads it as consumed. That is not a
+   hole to be patched -- it is the same class as the fifteen rewrites that
+   removed this file's branch-gated half, and patching it invites the next
+   spelling. What closes it is a tool with control flow: the host-test model
+   for the helper (#971), and #998 for this second site. Read a green run as
+   "the obvious discards are absent", never as "the verdict is used".
+
 ## An inline test is accepted (#942's follow-up did not spell this out)
 
 The directive was "the return must be CAPTURED into a variable, not left as a
