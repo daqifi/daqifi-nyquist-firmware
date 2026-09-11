@@ -72,6 +72,39 @@ high byte would make the whole JSON stream invalid UTF-8), the `inLen` bound
 wholesale rather than truncating mid-escape, the exact worst-case sizing
 `JSON_Encoder.c` allocates on its stack, and NULL/zero-size safety.
 
+`test_998_start_streaming_claimed_order.c` covers the claim/arm/refusal/poll
+order of `SCPI_StartStreamingClaimed()`'s SD-logging arm in
+`firmware/src/services/SCPI/SCPIInterface.c` (issue #998). Like `test_943`
+and unlike the header-only suites it includes no firmware source --
+`SCPIInterface.c` is 8,705 lines and pulls in FreeRTOS, Harmony PLIBs, the
+WINC driver, nanopb and libscpi, so it is not host-includable -- and the
+function itself is ~1250 lines with more than twenty return sites. What runs
+is a MODEL of the ~30-line slice from `sd_card_manager_TryClaim()` to the head
+of the readiness poll, exercising three orderings that were each a real bug:
+a refused arm returns *before* the poll (#942/#974, or the poll burns its full
+500 iterations blaming the media); the refusal branch clears `mode` *before*
+releasing the claim (#955/#963, or the clear is an unowned write that lands on
+whichever transport claimed in the gap); and the claim is taken exactly once,
+*before* `mode = MODE_WRITE` and the arm (#836, or a concurrent `SD:GET`'s
+`MODE_READ` is silently overwritten). Each is asserted against a recorded
+event trace, and each has a committed WRONG-order variant that is *required*
+to fail the corresponding assertion -- plus a cooperative two-owner race sweep
+that offers a competing SCPI transport the CPU at every step boundary.
+
+What it explicitly does **not** establish: it is not the real function, it is
+not concurrency (no scheduler, no preemption -- a model of a race can show an
+ordering is unsound, never that one is safe on PIC32MZ), and it does not
+establish the census of arm sites. Because it models rather than includes, the
+Makefile pins the real slice with a **sha256 of its text** (whole-line comments
+dropped, whitespace collapsed) between two named anchor lines, and fails the
+build with four distinct messages -- anchor missing/duplicated, anchors out of
+order, `sha256sum` absent, or the code changed. The hash is a tripwire asking
+for a review, not a verdict that the code is right; a textual check of the
+ordering itself was deliberately *not* added:
+`tools/lint/scpi_sd_arm_path.py` had exactly that for exactly this site, and
+#976 removed it after three review rounds showed how an honest refactor
+defeats it.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a

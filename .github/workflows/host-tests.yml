@@ -61,6 +61,17 @@ name: host-tests
 #     "refactor escapes the trigger" gap without dragging in every unrelated
 #     services/ file (streaming.c, wifi_manager.c, sd_card_manager.c, the
 #     whole SCPI/ subdirectory, ...).
+#
+#   - test_998_start_streaming_claimed_order.c (#998): models the SD-arm
+#     ordering inside SCPI_StartStreamingClaimed() and pins the real slice
+#     with a sha256 taken from firmware/src/services/SCPI/SCPIInterface.c,
+#     failing the BUILD (not just the test) on drift. NO NEW PATH ENTRY IS
+#     NEEDED: the firmware/src/services/SCPI/** glob added for #943 already
+#     matches SCPIInterface.c, and it is scoped to the directory for the same
+#     reason -- a future move of the arm to a sibling SCPI file still trips
+#     it. Listed here so the enumeration stays complete; an entry absent from
+#     this comment is how #941's audit found test_ad7609_scale.c was
+#     unreachable by CI.
 
 on:
   pull_request:
