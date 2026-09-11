@@ -6489,6 +6489,59 @@ static scpi_result_t SCPI_GetStreamInterface(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #1007: the stored streaming rate has a setter (SYSTem:STReam:START <freq>)
+ * and no getter, so a client that changes it for one test cannot read the
+ * prior value back to restore it. This is the first query exposed for it.
+ * Returns the CURRENT stored rate. That is normally the last value START
+ * published -- never revoked by STOP (deliberately out of scope, #1007) --
+ * so before any START has ever run this reads the boot default, 1 Hz
+ * (COMMON_STREAMING_RUNTIME_DEFAULTS, CommonRuntimeDefaults.h: "the only
+ * rate legal in EVERY config").
+ *
+ * "CURRENT", not "last STARTed", because TWO callers borrow this field and
+ * put it back, and a read landing inside either window sees the borrowed
+ * value (pre-merge audit, #1014):
+ *   - SYSTem:STReam:THRoughput pokes it at :2481 and restores at :2518 /
+ *     :2560, with a vTaskDelay of up to 60 s (its duration argument) in
+ *     between.
+ *   - the WiFi finder pokes it at :2794 and restores at :3159.
+ * Neither is reachable from the same transport that is blocked running it,
+ * but SCPI over TCP is dispatched on app_WifiTask while USB SCPI runs on
+ * its own task, so a cross-transport query DOES land in the window.
+ * StreamFreq_Get's critical section gives atomicity, not ownership: it
+ * cannot tell a borrowed value from the stored one.
+ *
+ * Consequence for the snapshot/restore use #1007 exists for: a client that
+ * snapshots DURING a benchmark captures the benchmark's rate and, on
+ * restore, writes it back as the device's setting -- silently, since
+ * nothing here can detect it. Snapshot before starting a benchmark, not
+ * during one. Making the getter refuse or flag benchmark-owned state would
+ * mean giving this field real ownership semantics, which is #977's
+ * territory (the session-start and config-change claims do not interlock)
+ * and is deliberately not attempted in a getter this small.
+ *
+ * Reuses StreamFreq_Get() (above, ~line 2253) rather than re-deriving its
+ * critical section: that helper already exists for exactly this field, and
+ * SCPI_StartStreaming's no-arg-START path / WIFI:FINd? / SYST:STR:THRoughput
+ * all go through it for their own save/restore. Frequency is uint64_t; the
+ * critical section inside StreamFreq_Get is required per CLAUDE.md (64-bit
+ * reads on PIC32MZ are not atomic and need one against a concurrent
+ * SCPI-task writer).
+ *
+ * SCPI_ResultUInt64, not Int32 + a clamp: this getter's whole purpose is a
+ * faithful read-back for snapshot/restore, and a clamp that silently
+ * reported INT32_MAX in place of an out-of-range stored value would defeat
+ * that (opus pre-merge review, #1007) -- unlike the no-arg-START internal
+ * read, which clamps because it is about to retry the value as a bounded
+ * int32 frequency argument, not report it verbatim. */
+static scpi_result_t SCPI_GetStreamRate(scpi_t * context) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    SCPI_ResultUInt64(context, StreamFreq_Get(pRunTimeStreamConfig));
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_GetEcho(scpi_t * context) {
     microrl_t* console;
     console = SCPI_GetMicroRLClient(context);
@@ -8550,6 +8603,7 @@ static const scpi_command_t scpi_commands[] = {
     // SYSTem:Start/Stop/StreamData aliases kept for back-compat with existing
     // client libraries and user scripts (#311 round 3).
     {.pattern = "SYSTem:STReam:START", .callback = SCPI_StartStreaming,},
+    {.pattern = "SYSTem:STReam:START?", .callback = SCPI_GetStreamRate,}, // #1007: readback for the stored rate; STOP does not revert it (deliberately, see the callback)
     {.pattern = "SYSTem:STReam:STOP", .callback = SCPI_StopStreaming,},
     {.pattern = "SYSTem:STReam:DATA?", .callback = SCPI_IsStreaming,},
     {.pattern = "SYSTem:StartStreamData", .callback = SCPI_StartStreaming,},
