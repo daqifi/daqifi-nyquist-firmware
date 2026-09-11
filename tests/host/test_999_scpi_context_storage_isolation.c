@@ -250,7 +250,9 @@ TEST(separate_storage_input_buffer_not_aliased) {
      * identified -- a callback's parameter pointers staying live into the
      * shared buffer during a long dispatch -- needs the full parser +
      * blocking-retry machinery to reproduce end-to-end; that is exercised
-     * on real hardware, see the companion daqifi-python-test-suite test.
+     * on real hardware by the companion daqifi-python-test-suite test
+     * `test_999_scpi_cross_transport_isolation.py` (daqifi-python-test-suite
+     * PR #339, https://github.com/daqifi/daqifi-python-test-suite/pull/339).
      * This check instead pins the structural precondition for that
      * corruption -- aliased buffer.data pointers -- by proving it is FALSE
      * for the fixed shape.) */

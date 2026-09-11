@@ -96,6 +96,13 @@ SCPI999_BIN := run_999_tests
 LIBSCPI_DIR := ../../firmware/src/libraries/scpi/libscpi
 LIBSCPI_SRCS := $(addprefix $(LIBSCPI_DIR)/src/, \
 	error.c fifo.c ieee488.c minimal.c parser.c units.c utils.c lexer.c expression.c)
+# Wildcarded, not enumerated: the sources above #include both the public
+# headers under inc/scpi and the private ones beside them in src, and a
+# header-only edit to either set must invalidate this binary for `make`'s
+# incremental build to be trustworthy (Qodo /agentic_review, citing #983's
+# same-shaped gap). A wildcard means a header ADDED to either directory is
+# automatically a prerequisite too, with no separate list to keep in sync.
+LIBSCPI_HDRS := $(wildcard $(LIBSCPI_DIR)/inc/scpi/*.h) $(wildcard $(LIBSCPI_DIR)/src/*.h)
 SCPI_INTERFACE_H := ../../firmware/src/services/SCPI/SCPIInterface.h
 SCPI_INTERFACE_C := ../../firmware/src/services/SCPI/SCPIInterface.c
 USBCDC_SRC := ../../firmware/src/services/UsbCdc/UsbCdc.c
@@ -151,7 +158,7 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
 $(SCPI999_BIN): test_999_scpi_context_storage_isolation.c test_framework.h \
-                $(LIBSCPI_SRCS) $(SCPI_INTERFACE_H) $(SCPI_INTERFACE_C) \
+                $(LIBSCPI_SRCS) $(LIBSCPI_HDRS) $(SCPI_INTERFACE_H) $(SCPI_INTERFACE_C) \
                 $(USBCDC_SRC) $(WIFI_TCP_SRC) $(RECIPES)
 	@grep -qE 'typedef struct \{' $(SCPI_INTERFACE_H) \
 	  && grep -qE 'char inputBuffer\[SCPI_INPUT_BUFFER_LENGTH\];' $(SCPI_INTERFACE_H) \
