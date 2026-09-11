@@ -1381,10 +1381,12 @@ CONFigure:DAC:UPDATE              # Update all DAC outputs
 
 # Calibration commands — NOT IMPLEMENTED (#919, decided 2026-09):
 # chanCALM/chanCALB/SAVEcal/SAVEFcal/LOADcal/LOADFcal all route to
-# SCPI_NotImplemented (registered so SCPI_HELP? still lists them, but
-# every call now answers an error instead of silently no-opping /
-# fabricating a value). DAC7718 is NQ3-only hardware; implementing
-# needs a board this project doesn't currently have on any bench.
+# SCPI_NotImplemented. They stay registered, so the HELP command still
+# lists them under its "Not Implemented:" heading and a caller can tell
+# planned-but-absent from an unknown header. Every call now answers an
+# error instead of silently no-opping or fabricating a value. DAC7718 is
+# NQ3-only hardware; implementing needs a board this project does not
+# currently have on any bench.
 # CONFigure:DAC:chanCALM 0,1.0    # NOT IMPLEMENTED — answers an error
 # CONFigure:DAC:chanCALB 0,0.0    # NOT IMPLEMENTED — answers an error
 # CONFigure:DAC:SAVEcal           # NOT IMPLEMENTED — answers an error
