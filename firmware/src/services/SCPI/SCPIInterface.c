@@ -3848,6 +3848,10 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     // still streamed, just with frozen data; same exclusion as EosOverruns).
     // ~0 with the scan cap in place; non-zero flags over-rate / NOCAP scan-busy.
     scpi_printf(context, "ScanStaleDropped=%u\r\n", (unsigned)s.scanStaleDropped);
+    // #1018: post-grace subset -- the term the session-end LOG_E summary
+    // actually uses for its "(all post-grace)" total. Raw ScanStaleDropped
+    // above is unchanged (still the lifetime counter).
+    scpi_printf(context, "ScanStaleDroppedSteady=%u\r\n", (unsigned)s.scanStaleDroppedSteady);
     /* #814: NOT loss -- a clipped sample is delivered, it is just untrustworthy
      * as a measurement, so it is absent from every loss percentage below. The
      * mask is over sample-list SLOTS (bit j = the j-th enabled channel in this
@@ -6035,6 +6039,21 @@ static void SCPI_PerformStreamingStop(void) {
             }
         }
     }
+
+    /* #982: emit the deferred session-end loss summary HERE -- after the
+     * SD-idle wait above, so it covers whatever the stop-time SD teardown
+     * (UNMOUNT_DISK) reported via Streaming_ReportSdDiscard() while this
+     * function was waiting. Streaming_UpdateState() above only FLAGGED that
+     * a summary is owed (Streaming_Stop() sets gSessionSummaryPending); this
+     * is what actually computes and, if warranted, prints it. On a
+     * non-SD session the block above is skipped entirely and this is
+     * reached immediately -- same effective behaviour as before this fix,
+     * one call later. If the wait just timed out (sdStillBusy), this may
+     * still undercount a drain that finishes after it prints -- the
+     * "[SD] Streaming stop: SD still finalising" LOG_E and OPER bit 11 set
+     * just above are the record that it might, so this is a best-effort
+     * improvement over "always before", not a guarantee. */
+    Streaming_EmitSessionSummary();
 
     /* #870: the encoder resets that used to be here have MOVED to
      * Streaming_Start()'s enabled-session block, next to the test-pattern

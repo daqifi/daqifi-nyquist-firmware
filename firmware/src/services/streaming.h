@@ -917,6 +917,14 @@ size_t Streaming_GetSdFileHeader(const uint8_t** ppHeader);
  * flight. Counts into SdDroppedBytes so the loss is visible instead of silent. */
 void Streaming_ReportSdDiscard(size_t bytes);
 
+/* #982: compute and, if warranted, print the deferred session-end loss
+ * summary. Exactly-once per session (test-and-clear on an internal pending
+ * flag set by Streaming_Stop()) -- see the function's own doc comment in
+ * streaming.c for why this is split out of Streaming_Stop() and the full
+ * list of call sites. Callers outside this file: SCPI_PerformStreamingStop()
+ * in SCPIInterface.c, after its bounded SD-idle wait. */
+void Streaming_EmitSessionSummary(void);
+
 // #388 — Compile-time profiling counters for the PB streaming hot path.
 // When enabled, instruments encoder + USB write paths with _CP0_GET_COUNT()
 // cycle measurements.  Off by default in production: enable here for a
@@ -1018,6 +1026,12 @@ typedef struct {
     uint32_t clippedChannelMask;
     uint32_t scanStaleDropped; // #557: scan armed but EOS not fired by next trigger
                                // (scan-busy/stale) — counted as a dropped sample
+    uint32_t scanStaleDroppedSteady; // #1018: post-grace subset of the above --
+                               // the term the session-end summary's "(all
+                               // post-grace)" total actually uses. Raw
+                               // scanStaleDropped above is unchanged and is
+                               // what SYST:STReam:STATS? reports as the
+                               // lifetime counter.
     // #541 D-A diagnostic: ticks where a T1 (dedicated-module) channel's
     // ARDY flag was not set when the deferred task went to read its result
     // register.  Expected ~0 (T1 conversion completes ~1.3 us after trigger;
