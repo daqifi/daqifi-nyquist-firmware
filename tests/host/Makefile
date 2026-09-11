@@ -82,7 +82,6 @@ SPI913_BIN := run_913_tests
 USER_SPI_SRC := ../../firmware/src/HAL/UserSpi/UserSpi.c
 USER_UART_SRC := ../../firmware/src/HAL/UserUart/UserUart.c
 USER_I2C_SRC := ../../firmware/src/HAL/UserI2c/UserI2c.c
-WAIT_SHAPE_LINT := ../../tools/lint/wait_loop_shape.py
 
 # #1004: SCPI_Help's shared-buffer write-abort bound. Same shape as
 # SUSPEND_BIN's sibling SD_BENCH_SRC-style guard and #995's own host test --
@@ -187,34 +186,37 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 
-# The two greps below pin CONSTANTS. They do not pin the loop's SHAPE, and
-# Qodo's review of #1009 was right that a guard over constants alone cannot
-# fail for the defect this suite exists to catch: delete the fresh SPI1STAT
-# read at expiry, move the deadline test after the yield, or drop the
-# vTaskDelay(1), and both greps still pass while every modeled test stays
-# green. wait_loop_shape.py closes that, for all THREE files carrying the
-# shape -- uart and i2c were ported in this same PR and had no guard at all.
+# THE GREPS BELOW PIN CONSTANTS, AND THAT IS ALL THEY CLAIM. They do not pin
+# the loop's SHAPE. Review of #1009 was right that constants alone cannot catch
+# the defect this suite exists for -- delete the fresh register read at expiry,
+# move the deadline test after the yield, or drop the vTaskDelay(1), and every
+# grep here still passes while the modelled test stays green.
 #
-# Its --self-test runs FIRST, and that is not belt-and-braces. Review of
-# #1009 pointed out that the self-test was gated behind a flag nothing in CI
-# passed, so a checker edit that stopped rejecting its modeled regressions
-# while still accepting the real sources would have left the suite green and
-# said nothing. A guard whose own guard does not run is the same defect one
-# level down from the path-filter gaps this PR also fixes.
+# A SHAPE CHECKER WAS BUILT FOR EXACTLY THAT AND HAS BEEN DELETED. It went
+# through five generations, each defeated by the next review round:
+# constants-only, then file-scoped presence, then presence anchored to a
+# signature within a 40-line window, then a self-test that asked only whether
+# ANY problem came back, then one that named the expected problem text. The
+# fifth round found the two holes that ended it. The window anchors on a
+# signature and has no notion of where the function ENDS, so gutting the real
+# wait function and leaving its loop in a same-shaped sibling ten lines below
+# reported zero problems. And the self-test only ever exercised the spi shape,
+# so the uart and i2c checks could both be deleted while it printed 9/9 passed.
+#
+# The first of those cannot be closed without finding function boundaries, i.e.
+# PARSING C -- which is the mechanism #1032 exists to get this repo OUT of. So
+# the checker was deleted rather than given a sixth generation, and the durable
+# fix is tracked as #1056: make the wait loop host-compilable so the test
+# exercises the REAL code instead of a copy, the way #889 split AD7609Scale.h
+# out so test_ad7609_scale.c could include the shipped header directly.
+#
+# What is left is honest about its reach. Same convention as every other suite
+# here, with the constants pinned PER FILE because the modelled shape is shared
+# by all three wait loops and uart and i2c had no pin of their own at all. The
+# host test still proves the shape's BEHAVIOUR; nothing here claims any more to
+# prove the firmware still has that shape.
 $(SPI913_BIN): test_913_spi_wait_stat.c test_framework.h $(USER_SPI_SRC) \
-               $(USER_UART_SRC) $(USER_I2C_SRC) $(WAIT_SHAPE_LINT) $(RECIPES)
-	@python3 $(WAIT_SHAPE_LINT) --self-test > /dev/null \
-	  || { echo "ERROR: $(WAIT_SHAPE_LINT) FAILS ITS OWN SELF-TEST."; \
-	       echo "       Run it directly for the per-case output. The checker is"; \
-	       echo "       the only thing standing between a silently-regressed wait"; \
-	       echo "       loop and a green suite, so a checker that no longer"; \
-	       echo "       rejects its own modeled regressions is worse than none --"; \
-	       echo "       it still passes the real sources and says nothing."; \
-	       python3 $(WAIT_SHAPE_LINT) --self-test; \
-	       exit 1; }
-	@python3 $(WAIT_SHAPE_LINT) \
-	    --spi $(USER_SPI_SRC) --uart $(USER_UART_SRC) --i2c $(USER_I2C_SRC) \
-	  || exit 1
+               $(USER_UART_SRC) $(USER_I2C_SRC) $(RECIPES)
 	@grep -qE '^#define[[:space:]]+USER_SPI_BYTE_TIMEOUT_MS[[:space:]]+20u[[:space:]]*$$' $(USER_SPI_SRC) \
 	  || { echo "ERROR: USER_SPI_BYTE_TIMEOUT_MS is no longer '20u' in $(USER_SPI_SRC)."; \
 	       echo "       Update FW_BYTE_TIMEOUT_MS in test_913_spi_wait_stat.c and re-derive its numbers."; \
@@ -222,6 +224,21 @@ $(SPI913_BIN): test_913_spi_wait_stat.c test_framework.h $(USER_SPI_SRC) \
 	@grep -qE '^[[:space:]]*for \(uint32_t s = 0; s < 8000u; \+\+s\)' $(USER_SPI_SRC) \
 	  || { echo "ERROR: spi_WaitStat's fast-spin bound is no longer 's < 8000u' in $(USER_SPI_SRC)."; \
 	       echo "       Update FW_SPIN_COUNT in test_913_spi_wait_stat.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*for \(uint32_t s = 0; s < 4000u; \+\+s\)' $(USER_UART_SRC) \
+	  || { echo "ERROR: uart_WaitSta's fast-spin bound is no longer 's < 4000u' in $(USER_UART_SRC)."; \
+	       echo "       The modelled shape is SHARED by all three wait loops, so each"; \
+	       echo "       file's bound is pinned separately -- re-derive against the new one."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*for \(uint32_t s = 0; s < 8000u; \+\+s\)' $(USER_I2C_SRC) \
+	  || { echo "ERROR: i2c_WaitMif's fast-spin bound is no longer 's < 8000u' in $(USER_I2C_SRC)."; \
+	       echo "       Same shared shape, pinned per file -- re-derive."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+I2C_OP_TIMEOUT_CP0[[:space:]]+700000u' $(USER_I2C_SRC) \
+	  || { echo "ERROR: I2C_OP_TIMEOUT_CP0 is no longer '700000u' in $(USER_I2C_SRC)."; \
+	       echo "       i2c is the most reachable of the three -- a false timeout there"; \
+	       echo "       fires i2c_BusRecover() on a healthy bus -- and the test's budget"; \
+	       echo "       arithmetic is derived from this number. Re-derive it."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(SPI913_BIN) test_913_spi_wait_stat.c
 

@@ -51,14 +51,14 @@ name: host-tests
 # which the glob added in the same commit plainly matches. Caught by #941's
 # round-2 pre-merge audit.
 #
-#   - test_913_spi_wait_stat.c: models the #913 spin-then-yield wait loop, and
-#     tools/lint/wait_loop_shape.py (run from its Makefile recipe) pins that
-#     loop's shape in all THREE files carrying it -- UserSpi.c, UserUart.c and
-#     UserI2c.c. Only UserSpi.c was listed here at first, so a PR touching only
-#     the uart or i2c twin matched no path and the pin did not run for the file
-#     it guards. The checker itself is listed for the reason the block below
-#     gives for $(RECIPES): a guard that is only re-run when a SOURCE changes
-#     is not re-run when the GUARD changes.
+#   - test_913_spi_wait_stat.c: models the #913 spin-then-yield wait loop,
+#     whose shape is shared by all THREE files carrying it -- UserSpi.c,
+#     UserUart.c and UserI2c.c. Only UserSpi.c was listed here at first, so a
+#     PR touching only the uart or i2c twin matched no path and the suite's
+#     constant pins did not run for the file they guard. A shape checker,
+#     tools/lint/wait_loop_shape.py, was listed here too and has been deleted;
+#     the block above $(SPI913_BIN) in tests/host/Makefile records why, and
+#     what this suite does and does not claim without it.
 #   - test_json_string_escape.c (#164): compiles
 #     firmware/src/services/JSON_StringEscape.h directly. Scoped to that one
 #     file PLUS firmware/src/services/JSON_Encoder.c (its sole consumer, and
@@ -125,7 +125,6 @@ on:
       - 'firmware/src/HAL/UserSpi/UserSpi.c'
       - 'firmware/src/HAL/UserUart/UserUart.c'
       - 'firmware/src/HAL/UserI2c/UserI2c.c'
-      - 'tools/lint/wait_loop_shape.py'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -147,7 +146,6 @@ on:
       - 'firmware/src/HAL/UserSpi/UserSpi.c'
       - 'firmware/src/HAL/UserUart/UserUart.c'
       - 'firmware/src/HAL/UserI2c/UserI2c.c'
-      - 'tools/lint/wait_loop_shape.py'
       - '.github/workflows/host-tests.yml'
 
 permissions:
