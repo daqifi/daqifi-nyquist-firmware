@@ -3441,13 +3441,18 @@ static scpi_result_t SCPI_ClearStreamStats(scpi_t * context) {
         pTcp->client.wifiTcpSendErrors = 0;
         pTcp->client.wifiTcpPartialSends = 0;
         pTcp->client.wifiPartialBytesMissing = 0;
+        pTcp->client.wifiTcpOverBytesExtra = 0;     // #956: same epoch as the line above
+        pTcp->client.wifiTcpInflightOverflow = 0;   // #956
         pTcp->client.wifiWriteBufferRejectedCalls = 0;
         pTcp->client.wifiWriteBufferRejectedBytes = 0;
-        for (uint8_t i = 0; i < WIFI_TCP_MAX_IN_FLIGHT; i++) {
-            pTcp->client.inflightSizes[i] = 0;
-        }
-        pTcp->client.inflightHead = 0;
-        pTcp->client.inflightTail = 0;
+        // #956: this site used to hand-roll the ring half of the reset and leave
+        // tcpInFlight at its outstanding-send count -- the invariant break
+        // ResetInflightRing()'s own contract comment warns desyncs head/tail for
+        // the rest of the session.  The helper does both, atomically.  Its inner
+        // taskENTER_CRITICAL nests inside ours (FreeRTOS counts nesting in the
+        // TCB -- portCRITICAL_NESTING_IN_TCB=1; interrupts re-enable only when
+        // the count returns to zero), so the whole reset stays one atomic unit.
+        wifi_tcp_server_ResetInflightRing();
         // #560/#475 Opt 0 — listener-health counters. Reset only on this
         // operator-initiated clear (NOT at stream start) so the slow PATH-1
         // listen-slot leak stays visible across streaming sessions.
@@ -3745,6 +3750,7 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     {
         uint64_t bytesSent = 0, bytesConfirmed = 0;
         uint32_t sendErrors = 0, partialSends = 0, partialMissing = 0;
+        uint32_t overBytesExtra = 0, inflightOverflow = 0;  // #956
         uint32_t rejectedCalls = 0, rejectedBytes = 0;
         uint32_t cirbufProduced = 0, cirbufConsumed = 0, cirbufBufSize = 0;
         // #560/#475 Opt 0 — listener-health observability
@@ -3760,6 +3766,8 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
             sendErrors = pTcp->client.wifiTcpSendErrors;
             partialSends = pTcp->client.wifiTcpPartialSends;
             partialMissing = pTcp->client.wifiPartialBytesMissing;
+            overBytesExtra = pTcp->client.wifiTcpOverBytesExtra;      // #956
+            inflightOverflow = pTcp->client.wifiTcpInflightOverflow;  // #956
             rejectedCalls = pTcp->client.wifiWriteBufferRejectedCalls;
             rejectedBytes = pTcp->client.wifiWriteBufferRejectedBytes;
             cirbufProduced = pTcp->client.wCirbuf.producedBytes;
@@ -3785,6 +3793,20 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         scpi_printf(context, "WifiTcpPartialSends=%u\r\n", (unsigned)partialSends);
         // #367 diag: cumulative byte shortfall across all partial sends
         scpi_printf(context, "WifiPartialBytesMissing=%u\r\n", (unsigned)partialMissing);
+        // #956 diag: the opposite direction of the line above (completion
+        // confirmed MORE than the popped slot claimed).  Non-zero = ring
+        // mis-pairing, not stream damage.  With both directions counted,
+        // WifiTcpBytesSent - WifiTcpBytesConfirmed ==
+        // WifiPartialBytesMissing - WifiTcpOverBytesExtra, bounded in-flight
+        // residual aside.
+        scpi_printf(context, "WifiTcpOverBytesExtra=%u\r\n", (unsigned)overBytesExtra);
+        // #956 diag: flush attempts refused by TcpServerFlush's authoritative
+        // in-flight cap check — a count of ring overruns PREVENTED, each one an
+        // attempt the pre-fix unlocked cap check would have let through.  The
+        // bytes are retried, so this is not loss.  Non-zero under WiFi streaming
+        // load is expected (producer contention at the cap); 0 on an idle or
+        // control-only channel.
+        scpi_printf(context, "WifiTcpInflightOverflow=%u\r\n", (unsigned)inflightOverflow);
         // #371 diag: WriteBuffer-side rejection counters (should match wifiDroppedBytes)
         scpi_printf(context, "WifiWriteBufferRejectedCalls=%u\r\n", (unsigned)rejectedCalls);
         scpi_printf(context, "WifiWriteBufferRejectedBytes=%u\r\n", (unsigned)rejectedBytes);
@@ -4643,11 +4665,11 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
             pTcp->client.wifiTcpSendErrors = 0;
             pTcp->client.wifiTcpPartialSends = 0;
             pTcp->client.wifiPartialBytesMissing = 0;
-            for (uint8_t i = 0; i < WIFI_TCP_MAX_IN_FLIGHT; i++) {
-                pTcp->client.inflightSizes[i] = 0;
-            }
-            pTcp->client.inflightHead = 0;
-            pTcp->client.inflightTail = 0;
+            pTcp->client.wifiTcpOverBytesExtra = 0;     // #956: same epoch as the line above
+            pTcp->client.wifiTcpInflightOverflow = 0;   // #956
+            // #956: see SCPI_ClearStreamStats -- the identical hand-rolled
+            // ring-only reset lived here too, leaving tcpInFlight stale.
+            wifi_tcp_server_ResetInflightRing();
             taskEXIT_CRITICAL();
         }
     }
