@@ -2494,7 +2494,34 @@ wifi_link_state_t wifi_manager_GetLinkState(void) {
             // and the driver is why". The 3-value projection is unchanged either
             // way -- INIT_FAULT and NO_LINK both map to WIFI_STATUS_DISCONNECTED
             // -- so no existing consumer can observe this.
-            if (WDRV_WINC_Status(sysObj.drvWifiWinc) < SYS_STATUS_UNINITIALIZED) {
+            // The module object must be VALID for a negative status to mean a
+            // fault HERE. WDRV_WINC_Status() returns SYS_STATUS_ERROR for an
+            // invalid object, and REINIT deliberately parks one: its
+            // not-currently-connected path assigns SYS_MODULE_OBJ_INVALID to
+            // force a clean re-init, then only QUEUES the INIT event -- so the
+            // object stays invalid across at least one app_WifiTask iteration
+            // while m2m still reports START. Without this guard an ordinary
+            // ENAbled 1 + APPLY made CONnected? answer INITFAULT for a few
+            // milliseconds on a perfectly healthy board, contradicting the
+            // contract's own promise that INITFAULT does not self-clear. Found
+            // by the adversarial audit of PR #1044, in the fix for the round
+            // before it.
+            //
+            // Note this arm therefore differs from the WIFI_STATE_INIT arm
+            // below, which deliberately does NOT guard on validity -- do not
+            // harmonise them. The REINIT park leaves gu8WifiState alone, so the
+            // transient lands with m2m reading START and reaches THIS arm only.
+            // Nothing parks an invalid object while m2m reports INIT: there, an
+            // invalid object means WDRV_WINC_Initialize never produced one,
+            // which is honestly a fault.
+            //
+            // A re-initialising driver with a VALID object cannot trip this
+            // either: WDRV_WINC_Initialize sets sysStat to SYS_STATUS_BUSY
+            // (+1). Only a latched error is negative, and the driver's ERROR
+            // case is terminal, so a negative status with a valid object is
+            // exactly the wedge this test exists to name.
+            if ((SYS_MODULE_OBJ_INVALID != sysObj.drvWifiWinc) &&
+                (WDRV_WINC_Status(sysObj.drvWifiWinc) < SYS_STATUS_UNINITIALIZED)) {
                 return WIFI_LINK_STATE_INIT_FAULT;
             }
 
