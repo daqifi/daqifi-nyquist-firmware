@@ -1679,10 +1679,13 @@ uint32_t Streaming_GetEncoderBufferSize(void) {
  * 0 (buffer full). This prevents the "convoy effect" where tiny partial
  * writes burn CPU on mutex lock/unlock without letting the output task drain.
  *
- * @param writeFn   All-or-nothing write function
- * @param buf       Encoded packet to write
- * @param len       Packet size in bytes
- * @return          len on success, 0 on 10s timeout (interface dead)
+ * @param writeFn      All-or-nothing write function
+ * @param buf          Encoded packet to write
+ * @param len          Packet size in bytes
+ * @param ringCapacity TOTAL capacity of the ring writeFn feeds, in bytes
+ *                     (NOT its free space).  0 = unknown, skip the check.
+ * @return             len on success, 0 on give-up (interface dead, or a
+ *                     packet the ring can never accept — see below)
  */
 typedef size_t (*StreamWriteFn)(const char* buf, size_t len);
 
@@ -1699,7 +1702,11 @@ static size_t Streaming_UsbWrite(const char* buf, size_t len) {
  * branch on the return alone without racing IsEnabled.
  *
  *   TIMEOUT = 0      (matches "wrote 0 bytes" — also a real backpressure
- *                     failure that bumps drop counters)
+ *                     failure that bumps drop counters.  #1021 widened the
+ *                     causes it covers from "the interface did not drain in
+ *                     10 s" to that OR "the packet is larger than the ring,
+ *                     so no drain could ever help"; both mean "give up and
+ *                     count the drop", which is all any caller does with it.)
  *   STOPPED = SIZE_MAX  (impossible-to-write count — explicit
  *                     stop-abort, no counter bumps, no log)
  *
@@ -1711,11 +1718,64 @@ static size_t Streaming_UsbWrite(const char* buf, size_t len) {
 #define STREAM_WRITE_RETURN_TIMEOUT   ((size_t)0)
 #define STREAM_WRITE_RETURN_STOPPED   (SIZE_MAX)
 
+/* #1021: the largest write a ring can EVER accept, given only a partition
+ * bookkeeping figure and a free-space reading taken from the ring itself.
+ *
+ * `poolSize` is authoritative in principle -- every one of the three rings is
+ * bound to its StreamingBufferPool partition and nothing else (UsbCdc.c
+ * `UsbCdc_SetWriteBuffer`, wifi_tcp_server.c `wifi_tcp_server_SetWriteBuffer`,
+ * sd_card_manager.c `sd_card_manager_SetCircularBuffer`, all driven from the
+ * one partition site in SCPIInterface.c).  But a "never fits" verdict DELETES
+ * data, so it must not rest on that correspondence alone: `observedFree` is a
+ * reading of the live ring, and free can never exceed capacity, so taking the
+ * larger of the two makes a stale or wrong partition figure unable to condemn a
+ * packet the ring demonstrably has room for right now.  It only ever widens the
+ * bound, never narrows it. */
+static size_t Streaming_RingCapacity(uint32_t poolSize, size_t observedFree) {
+    return (observedFree > (size_t)poolSize) ? observedFree : (size_t)poolSize;
+}
+
 static size_t Streaming_WriteWithRetry(StreamWriteFn writeFn,
-                                        const uint8_t* buf, size_t len) {
+                                        const uint8_t* buf, size_t len,
+                                        size_t ringCapacity) {
     /* Cache the runtime config pointer locally so all phases use a
      * consistent NULL-checked view (Qodo pass-3 /improve). */
     StreamingRuntimeConfig *cfg = gpRuntimeConfigStream;
+
+    /* #1021: a packet larger than the ring's TOTAL capacity can never be
+     * accepted, however long the consumer drains.  All three writeFn are
+     * all-or-nothing against CircularBuf_NumBytesFree(), whose maximum is
+     * buf_size (CircularBuffer.c: free = buf_size - available), so
+     * `len > buf_size` fails identically on an empty ring and a full one.
+     * Retrying one costs the FULL 10 s budget below, and the cost is not the
+     * packet: the encoder task is blocked for that whole window, so the sample
+     * queue and pool behind it overflow and the loss cascades far past the one
+     * batch that could not be written.  Give up at once instead; the caller's
+     * existing drop bookkeeping is unchanged, it just runs ~10 s sooner.
+     *
+     * Returning the existing TIMEOUT sentinel rather than a new one is
+     * deliberate.  It is (size_t)0 -- byte-identical to "writeFn wrote nothing"
+     * -- so every present and future caller that branches on it already treats
+     * this correctly, whereas a fourth sentinel would be silently mistaken for
+     * a byte count by any site that did not learn about it.  The diagnostic
+     * that distinguishes the two causes is logged by the caller, which knows
+     * which transport this is. */
+    if (ringCapacity != 0u && len > ringCapacity) {
+        /* #486 precedence, preserved rather than newly asserted. On the
+         * unmodified path an undeliverable write reached the stop check only
+         * after its ten phase-1 attempts had all failed -- which they always
+         * do, for the reason above -- and was then reported as STOPPED, with
+         * no counters and no log. Returning TIMEOUT unconditionally here would
+         * book a drop and set a QUES bit for a packet the caller abandoned
+         * because streaming had already stopped: the #484 miscount this loop
+         * guards against everywhere else. Same `cfg &&` form as the phases
+         * below, deliberately -- a NULL cfg means "cannot tell", which keeps
+         * the existing fall-through rather than inventing a stop. */
+        if (cfg && !cfg->IsEnabled) {
+            return STREAM_WRITE_RETURN_STOPPED;
+        }
+        return STREAM_WRITE_RETURN_TIMEOUT;
+    }
 
     // Phase 1: quick spin — catch in-progress DMA completions
     for (int i = 0; i < 10; i++) {
@@ -3267,23 +3327,84 @@ void streaming_Task(void) {
         // ACTIVE transport ring's free space (#686 review): the transport writes
         // below are all-or-nothing, and a single write larger than a ring's
         // capacity can NEVER succeed (even on an empty ring), so an over-large
-        // batch would retry to the 10 s timeout and drop the whole batch — total
-        // loss on a small ring (e.g. WiFi min 1400). Free size is a safe bound:
-        // nothing writes these rings until after this loop, so the snapshot only
-        // grows. The FIRST message is always encoded (drain the queue; one framed
-        // message fits any legal ring, exactly as pre-#662); ADDITIONAL messages
-        // are added only while packetSize keeps MIN_ROOM within every active ring.
+        // batch is total loss on a small ring (e.g. WiFi min 1400). Free size is
+        // a safe bound: nothing writes these rings until after this loop, so the
+        // snapshot only grows.
+        //
+        // #1021 corrects what this comment used to claim about the first
+        // message: that the FIRST message is always safe to encode because
+        // "one framed message fits any legal ring". It does not, for two
+        // reasons, and the audit of PR #991 reproduced the consequence -- a
+        // 1,563 B raw-JSON message offered to a 1,400 B WiFi ring, unwritable
+        // at any point in the future, retried for the full 10 s timeout and
+        // then discarded, with the encoder stalled for that whole window.
+        //   1. "One message" is not one sample. All three encoders loop
+        //      INTERNALLY until the room they were handed runs out
+        //      (csv_encoder.c `while (1)`, NanoPB_Encoder.c
+        //      `while (queueSize > 0)`, JSON_Encoder.c's AIN loop), and at
+        //      batchIdx == 0 the room handed over is the WHOLE encoder buffer.
+        //      So any queue backlog makes a single encode return thousands of
+        //      bytes -- a property of the backlog, not of the channel count.
+        //   2. The smallest LEGAL ring is smaller than the encoder buffer:
+        //      STREAMING_WIFI_MIN is 1,400 and STREAMING_SD_CIRCULAR_MIN 4,096
+        //      (StreamingBufferPool.h) against an 8,192 B default encoder
+        //      buffer, and SYSTem:MEMory:{WIFI,SD,ENCoder}:BUFfer let an
+        //      operator select exactly that pairing.
+        // The first message is still always encoded -- that is what keeps the
+        // queue draining -- and its room cannot be bounded away: capping it
+        // would defeat JSON_Encoder.c's `fullCapacityCall` test (#164/#961),
+        // which recognises a sample that fits NO buffer ONLY when it was
+        // offered the real full buffer, and without that recognition such a
+        // sample is retained forever at the queue head. That is the deadlock
+        // this bypass exists to prevent. What #1021 changes is the FAILURE:
+        // an undeliverable first message is dropped at once with a diagnostic
+        // instead of stalling the encoder for 10 s first, and ADDITIONAL
+        // messages are bounded so they can never build one.
         size_t batchXportFree = bufferSize;
+        /* #1021: each active ring's capacity, computed once. Read here rather
+         * than at the four places that want one, because the write sites below
+         * need the SAME figure the batch was bounded against -- recomputing it
+         * per site invites the two drifting apart on a later edit. */
+        size_t usbCap = Streaming_RingCapacity(
+                StreamingBufferPool_UsbSize(), usbSize);
+        size_t wifiCap = Streaming_RingCapacity(
+                StreamingBufferPool_WifiSize(), wifiSize);
+        size_t sdCap = Streaming_RingCapacity(
+                StreamingBufferPool_SdCircularSize(), sdSize);
+        /* The same min taken over ring CAPACITY, which is what decides
+         * "can never be written" as opposed to "cannot be written just yet".
+         * Free space is the wrong test for that, and dangerously so: a
+         * momentarily-full-but-draining ring reads free == 0, and condemning a
+         * packet on that would discard exactly the data the #520 backpressure
+         * path exists to hold. Capacity changes only when the pool is
+         * re-partitioned, which SYSTem:MEMory:* refuses while streaming. */
+        size_t batchXportCap = bufferSize;
         switch (pRunTimeStreamConf->ActiveInterface) {
-            case StreamingInterface_USB:      batchXportFree = usbSize; break;
-            case StreamingInterface_WiFi:     batchXportFree = wifiSize; break;
-            case StreamingInterface_SD:       batchXportFree = sdSize; break;
+            case StreamingInterface_USB:
+                batchXportFree = usbSize;
+                batchXportCap = usbCap;
+                break;
+            case StreamingInterface_WiFi:
+                batchXportFree = wifiSize;
+                batchXportCap = wifiCap;
+                break;
+            case StreamingInterface_SD:
+                batchXportFree = sdSize;
+                batchXportCap = sdCap;
+                break;
             case StreamingInterface_UsbAndSd:
-                batchXportFree = (usbSize < sdSize) ? usbSize : sdSize; break;
+                batchXportFree = (usbSize < sdSize) ? usbSize : sdSize;
+                batchXportCap = (usbCap < sdCap) ? usbCap : sdCap;
+                break;
             default: break;
         }
-        if (hasSD && sdSize < batchXportFree) {
-            batchXportFree = sdSize;         // SD-logging override also writes SD
+        if (hasSD) {                         // SD-logging override also writes SD
+            if (sdSize < batchXportFree) {
+                batchXportFree = sdSize;
+            }
+            if (sdCap < batchXportCap) {
+                batchXportCap = sdCap;
+            }
         }
         packetSize = 0;
         for (uint32_t batchIdx = 0; batchIdx < STREAMING_BATCH_MAX; batchIdx++) {
@@ -3292,17 +3413,48 @@ void streaming_Task(void) {
             if (!ainNow && !dioNow) {
                 break;                       // queue drained — normal batch end
             }
-            // First message always encoded (drain the queue); additional
-            // messages must keep MIN_ROOM within the encoder buffer AND the
-            // smallest active transport ring, so the single all-or-nothing write
-            // below always fits its ring. Addition (not subtraction) avoids
-            // size_t underflow when a transport ring is momentarily full (free=0).
+            uint8_t *encPtr = (uint8_t *) buffer + packetSize;
+            size_t encRoom = bufferSize - packetSize;
+            // First message always encoded (drain the queue); an additional
+            // message is attempted only while MIN_ROOM still fits inside both
+            // the encoder buffer and the smallest active transport ring's free
+            // space. Addition (not subtraction) avoids size_t underflow when a
+            // transport ring is momentarily full (free=0).
+            /* #1021: those two tests are a floor on the room OFFERED, not a
+             * ceiling on what comes back -- the encoders fill whatever room they
+             * are given, so passing them was never enough to keep the batch
+             * inside the ring: an ADDITIONAL message could still push the
+             * accumulated packet past it and make the whole batch, earlier
+             * messages included, undeliverable. Capping the room is what bounds
+             * the result rather than the opening position, and is what makes the
+             * single all-or-nothing write below actually fit.
+             *
+             * Only for batchIdx > 0, and that restriction is load-bearing:
+             * `encRoom` is already `bufferSize - packetSize` here with
+             * packetSize > 0, so JSON_Encoder.c's `fullCapacityCall` test is
+             * ALREADY false on this path and narrowing the room further cannot
+             * change its verdict. At batchIdx == 0 it would, which is why the
+             * first message keeps the whole buffer (see above).
+             *
+             * The floor is preserved: the two break tests that open the block
+             * below guarantee packetSize + MIN_ROOM <= batchXportFree, and
+             * batchXportFree <= batchXportCap by construction (each is a min
+             * over the same active rings, and a ring's free space never exceeds
+             * its capacity -- min is monotone, so the relation survives the
+             * min). The capped room is therefore never below
+             * STREAMING_BATCH_MIN_ROOM: the same 1,024 B floor an encode on
+             * this path is given today. */
             if (batchIdx > 0) {
-                if ((bufferSize - packetSize) < STREAMING_BATCH_MIN_ROOM) {
+                if (encRoom < STREAMING_BATCH_MIN_ROOM) {
                     break;                   // no encoder-buffer room
                 }
                 if ((packetSize + STREAMING_BATCH_MIN_ROOM) > batchXportFree) {
                     break;                   // would overflow the smallest active ring
+                }
+                size_t ringRoom = (batchXportCap > packetSize)
+                                ? (batchXportCap - packetSize) : 0;
+                if (ringRoom < encRoom) {
+                    encRoom = ringRoom;
                 }
             }
 
@@ -3316,8 +3468,6 @@ void streaming_Task(void) {
                 nanopbFlag.Data[nanopbFlag.Size++] = DaqifiOutMessage_digital_port_dir_tag;
             }
 
-            uint8_t *encPtr = (uint8_t *) buffer + packetSize;
-            size_t encRoom = bufferSize - packetSize;
             size_t encoded = 0;
             DioProbe_PulseStart(8);  /* probe 8: encode duration */
             if (Streaming_EncodingIsCsv(pRunTimeStreamConf->Encoding)) {
@@ -3382,6 +3532,39 @@ void streaming_Task(void) {
             gStreamStats.totalBytesStreamed += packetSize;
             taskEXIT_CRITICAL();
         }
+        /* #1021: name the cause while the sizes are still in hand.
+         *
+         * The byte loss itself is already counted by the per-transport blocks
+         * below -- Usb/Wifi/SdDroppedBytes plus the matching QUES bit, exactly
+         * as before this change; what those counters could never say is WHY,
+         * and "buffer overflow" is actively misleading here because the ring is
+         * not overflowing, it is too small to ever hold this packet. Emitted
+         * from the loop rather than from Streaming_WriteWithRetry so it also
+         * covers the no-retry write sites (UsbAndSd, and the multi-output SD
+         * write), which never call that helper and so would otherwise report
+         * this as an ordinary overflow with no hint that draining cannot fix
+         * it. One-shot per session, like every other per-sample error here.
+         *
+         * batchXportCap is the min over the ACTIVE rings, so the wording says
+         * "smallest": a packet above the min but below a larger ring's capacity
+         * is still delivered to that larger ring (USB keeps its data while a
+         * smaller co-active SD ring drops it), and the per-transport blocks
+         * below decide that individually.
+         *
+         * The `!= 0` term mirrors Streaming_WriteWithRetry's, on purpose. A
+         * zero capacity means the partition bookkeeping AND the live free-space
+         * reading were both zero, which is the degenerate "Pool too small"
+         * bail-out rather than a real ring size; the helper declines to condemn
+         * a packet on that, so this must not announce that it did. */
+        if (batchXportCap != 0u && packetSize > batchXportCap) {
+            /* Kept under LOG_MESSAGE_SIZE (128, Logger.h -- vsnprintf is given
+             * 126) so neither size is truncated away; the remedy is spelled out
+             * in docs/STREAMING_AND_ADC.md rather than here. */
+            LOG_E_SESSION(LOG_SESSION_XPORT_UNDELIVERABLE,
+                "Streaming: packet %u B exceeds smallest active ring %u B - "
+                "dropped, no drain fits it (#1021)",
+                (unsigned)packetSize, (unsigned)batchXportCap);
+        }
         DIO_TIMING_TEST_WRITE_STATE(1);
         if (packetSize > 0) {
             DioProbe_PulseStart(9);  /* probe 9: output write duration */
@@ -3410,7 +3593,7 @@ void streaming_Task(void) {
                 // (below) — multi-output backpressure pacing is a separate
                 // ticket (SD would pace USB).
                 size_t usbWr = Streaming_WriteWithRetry(
-                    Streaming_UsbWrite, buffer, packetSize);
+                    Streaming_UsbWrite, buffer, packetSize, usbCap);
                 if (usbWr == STREAM_WRITE_RETURN_TIMEOUT) {
                     bool pastGrace = Streaming_PastStartupGrace();
                     taskENTER_CRITICAL();
@@ -3420,7 +3603,8 @@ void streaming_Task(void) {
                     }
                     gQuesBits |= QUES_BIT_USB_OVERFLOW;
                     taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_USB_DROP, "Streaming: USB interface dead (10s timeout)");
+                    LOG_E_SESSION(LOG_SESSION_USB_DROP,
+                        "Streaming: USB write gave up - interface dead (10 s) or packet larger than the USB ring (#1021)");
                 }
                 // else: usbWr == packetSize (success) or STOPPED (stop-abort).
             } else if (pRunTimeStreamConf->ActiveInterface == StreamingInterface_UsbAndSd) {
@@ -3475,7 +3659,7 @@ void streaming_Task(void) {
                 // streaming was stopped mid-retry, so STR:START quiescence isn't
                 // blocked.
                 size_t wifiWr = Streaming_WriteWithRetry(
-                    wifi_manager_WriteToBuffer, buffer, packetSize);
+                    wifi_manager_WriteToBuffer, buffer, packetSize, wifiCap);
                 if (wifiWr == STREAM_WRITE_RETURN_TIMEOUT) {
                     bool pastGrace = Streaming_PastStartupGrace();
                     taskENTER_CRITICAL();
@@ -3485,7 +3669,8 @@ void streaming_Task(void) {
                     }
                     gQuesBits |= QUES_BIT_WIFI_OVERFLOW;
                     taskEXIT_CRITICAL();
-                    LOG_E_SESSION(LOG_SESSION_WIFI_DROP, "Streaming: WiFi interface dead (10s timeout)");
+                    LOG_E_SESSION(LOG_SESSION_WIFI_DROP,
+                        "Streaming: WiFi write gave up - interface dead (10 s) or packet larger than the WiFi ring (#1021)");
                 }
                 // else: wifiWr == packetSize (success) or
                 //       STREAM_WRITE_RETURN_STOPPED (stop-abort, no bookkeeping).
@@ -3525,12 +3710,14 @@ void streaming_Task(void) {
                     }
                 } else {
                     size_t wr = Streaming_WriteWithRetry(
-                        sd_card_manager_WriteToBuffer, buffer, packetSize);
+                        sd_card_manager_WriteToBuffer, buffer, packetSize,
+                        sdCap);
                     if (wr == STREAM_WRITE_RETURN_TIMEOUT) {
                         /* True 10 s interface-dead timeout (pass-5 Qodo
                          * refinement): bump drop counters + QUES bit + log. */
                         Streaming_CountSdDrop(packetSize);
-                        LOG_E_SESSION(LOG_SESSION_SD_DROP, "Streaming: SD interface dead (10s timeout)");
+                        LOG_E_SESSION(LOG_SESSION_SD_DROP,
+                            "Streaming: SD write gave up - interface dead (10 s) or packet larger than the SD ring (#1021)");
                     }
                     /* else: wr == packetSize (success) or
                      *       wr == STREAM_WRITE_RETURN_STOPPED (stop-abort,
