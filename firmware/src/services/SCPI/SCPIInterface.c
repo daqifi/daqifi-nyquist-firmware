@@ -723,9 +723,67 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
 }
 
 
+/* #947: self-gating write helper for SCPI_SysInfoTextGet.
+ *
+ * SCPI_SysInfoTextGet emits its report as ~37 separate
+ * context->interface->write() calls while holding gScpiRespMutex (it
+ * formats each line into the shared response buffer, so it cannot let go
+ * of the buffer between formatting a line and writing it -- a peer caller
+ * granted the mutex in that window would snprintf over the very bytes this
+ * function is about to hand to the transport).
+ *
+ * Both transports route write() through SCPI_WriteWithRetry, which is
+ * bounded per call at SCPI_WRITE_MAX_RETRIES(200) x
+ * SCPI_WRITE_RETRY_DELAY_MS(5) ~ 1 s. Against a host that has stopped
+ * reading, EVERY one of those ~37 calls burned its own full ~1 s budget
+ * (the ADC-channel and DIO-bit loops push the call count to ~90), so
+ * SYST:INFo? could hold the shared buffer for ~90 s and block every other
+ * SCPI callback on either transport for the same ~90 s.
+ *
+ * The fix is to stop after the FIRST write that does not complete. That
+ * costs nothing in fidelity: a short write has already DROPPED those bytes
+ * (SCPI_WriteWithRetry gives up and returns < len; there is no resend
+ * path), so the response is already truncated at that line -- continuing
+ * only spends ~89 more seconds producing a report the host will never see
+ * intact. Once the transport buffer is full it stays full while the host
+ * is stalled, so every later write would fail the same way.
+ *
+ * Gating lives INSIDE the helper rather than at the ~37 call sites so the
+ * change is a mechanical substitution: no early returns, no gotos, and no
+ * way to skip the single SCPI_ResponseBuf_Give() on the way out. It also
+ * leaves the function's non-write side effects (BQ24297_UpdateBatteryStatus,
+ * the REG01/REG07 I2C reads) happening exactly as before on both paths.
+ * The skipped writes are the only thing that changes, and only after a
+ * failure that cannot happen while the host is reading normally.
+ *
+ * Returns void deliberately: the latch IS the result, every call site wants
+ * the same "skip me too" behaviour, and a return value none of the 37 call
+ * sites reads would be dead API.
+ *
+ * @param context libscpi context (supplies the transport write fn)
+ * @param ok      in/out latch; false on entry short-circuits the write,
+ *                and is cleared here on the first incomplete write
+ * @param data    bytes to write
+ * @param len     number of bytes
+ */
+static void SysInfoWrite(scpi_t * context, bool * ok,
+                         const char * data, size_t len) {
+    if (!*ok) {
+        return;
+    }
+    size_t written = context->interface->write(context, data, len);
+    if (written != len) {
+        *ok = false;
+        LOG_E("SYST:INFo?: transport write dropped %u of %u bytes "
+              "(host not reading) - report truncated",
+              (unsigned)(len - written), (unsigned)len);
+    }
+}
+
 /**
  * SCPI Callback: Returns system information in human-readable text format
- * @return SCPI_RES_OK on success
+ * @return SCPI_RES_OK on success, SCPI_RES_ERR if the report could not be
+ *         written in full (#947)
  */
 static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     const tBoardConfig* pBoardConfig = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
@@ -749,14 +807,20 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // #947: every write below goes through SysInfoWrite, which latches this
+    // false on the first incomplete write and turns the rest into no-ops.
+    // Bounds the time gScpiRespMutex is held against a stalled host at one
+    // SCPI_WriteWithRetry budget (~1 s) instead of ~90 of them.
+    bool writeOk = true;
+
     // Header with device identification
     snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "=== DAQiFi Nyquist%d | HW:%s FW:%s ===\r\n",
         pBoardConfig->BoardVariant, pBoardConfig->boardHardwareRev, pBoardConfig->boardFirmwareRev);
-    context->interface->write(context, buffer, strlen(buffer));
+    SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
     
     // Network Section
     const char* netHeader = "[Network]\r\n";
-    context->interface->write(context, netHeader, strlen(netHeader));
+    SysInfoWrite(context, &writeOk, netHeader, strlen(netHeader));
     
     // WiFi status - check actual driver state
     wifi_status_t wifiStatus = wifi_manager_GetWiFiStatus();
@@ -773,20 +837,20 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  2.4GHz: On | Mode: %s | SSID: %s\r\n", 
             pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP ? "AP" : "STA",
             pWifiSettings->ssid);
-        context->interface->write(context, buffer, strlen(buffer));
+        SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
         
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  IP: %s | Port: %d | Security: %s\r\n", 
             ipStr, pWifiSettings->tcpPort,
             pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN ? "Open" : "WPA");
-        context->interface->write(context, buffer, strlen(buffer));
+        SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
     } else {
         const char* wifiOff = "  2.4GHz: Off\r\n";
-        context->interface->write(context, wifiOff, strlen(wifiOff));
+        SysInfoWrite(context, &writeOk, wifiOff, strlen(wifiOff));
     }
     
     // Connectivity Section
     const char* connHeader = "[Connectivity]\r\n";
-    context->interface->write(context, connHeader, strlen(connHeader));
+    SysInfoWrite(context, &writeOk, connHeader, strlen(connHeader));
     bool hasUSBPower = (pBoardData->PowerData.externalPowerSource == USB_100MA_EXT_POWER ||
                         pBoardData->PowerData.externalPowerSource == USB_500MA_EXT_POWER);
     bool vbusDetected = UsbCdc_IsVbusDetected();
@@ -807,11 +871,11 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         pBoardData->PowerData.externalPowerSource != NO_EXT_POWER ? "Present" : "None",
         vbusDetected ? "Yes" : "No",
         vbusLevelStr);
-    context->interface->write(context, buffer, strlen(buffer));
+    SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
     
     // Power Section
     const char* powHeader = "[Power]\r\n";
-    context->interface->write(context, powHeader, strlen(powHeader));
+    SysInfoWrite(context, &writeOk, powHeader, strlen(powHeader));
     const char* powerState = "Unknown";
     switch(pBoardData->PowerData.powerState) {
         case POWERED_UP: powerState = "Run"; break;
@@ -831,7 +895,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         pBoardData->PowerData.powerState,
         pBoardData->PowerData.USBSleep ? "Sleep" : "Active",
         shutdownStatus);
-    context->interface->write(context, buffer, strlen(buffer));
+    SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
     
     // Display battery info appropriately based on monitoring state
     if (pBoardData->PowerData.powerState == STANDBY) {
@@ -871,11 +935,11 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             pBoardData->PowerData.battLow ? "[Low]" : "[Ok]",
             chargeStatus);
     }
-    context->interface->write(context, buffer, strlen(buffer));
+    SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
     
     // Status Section
     const char* statHeader = "[Status]\r\n";
-    context->interface->write(context, statHeader, strlen(statHeader));
+    SysInfoWrite(context, &writeOk, statHeader, strlen(statHeader));
     
     // Channel status - separate user and internal ADCs by channel ID
     // User channels have IDs 0-15, internal monitoring channels have IDs >= 248
@@ -920,23 +984,23 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         userAdcEnabled, userAdcTotal,
         internalAdcEnabled, internalAdcTotal,
         dioInputs, pDIOConfig ? pDIOConfig->Size : 0);
-    context->interface->write(context, buffer, strlen(buffer));
+    SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
     
     // Show which specific user ADC channels are enabled
     if (userAdcEnabled > 0 && pAInConfig && pBoardConfigAInChannels) {
-        context->interface->write(context, "  Enabled user ch: ", 19);
+        SysInfoWrite(context, &writeOk, "  Enabled user ch: ", 19);
         bool first = true;
         for (int i = 0; i < pAInConfig->Size; i++) {
             uint8_t channelId = pBoardConfigAInChannels->Data[i].DaqifiAdcChannelId;
             // Only show user channels (ID < 248, not internal monitoring)
             if (channelId < ADC_CHANNEL_3_3V && pAInConfig->Data[i].IsEnabled) {
-                if (!first) context->interface->write(context, ",", 1);
+                if (!first) SysInfoWrite(context, &writeOk, ",", 1);
                 snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "%d", channelId);
-                context->interface->write(context, buffer, strlen(buffer));
+                SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
                 first = false;
             }
         }
-        context->interface->write(context, "\r\n", 2);
+        SysInfoWrite(context, &writeOk, "\r\n", 2);
     }
     
     // DIO pin states
@@ -948,17 +1012,17 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         if (DIO_ReadSampleByMask(&sample, channelMask)) {
             // Debug: show raw value
             snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  DIO raw: %u (0x%04X)\r\n", sample.Values, sample.Values);
-            context->interface->write(context, buffer, strlen(buffer));
+            SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
             
-            context->interface->write(context, "  DIO state: ", 13);
+            SysInfoWrite(context, &writeOk, "  DIO state: ", 13);
             // Display the state of each pin
             for (int i = 0; i < pDIOConfig->Size && i < 16; i++) {
                 if (i == 8) {
-                    context->interface->write(context, " ", 1); // Space between bytes
+                    SysInfoWrite(context, &writeOk, " ", 1); // Space between bytes
                 }
-                context->interface->write(context, (sample.Values & (1 << i)) ? "1" : "0", 1);
+                SysInfoWrite(context, &writeOk, (sample.Values & (1 << i)) ? "1" : "0", 1);
             }
-            context->interface->write(context, "\r\n", 2);
+            SysInfoWrite(context, &writeOk, "\r\n", 2);
         }
     }
     
@@ -971,22 +1035,22 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  Streaming: %s\r\n",
         (canStream && pRunTimeStreamConfig && pRunTimeStreamConfig->IsEnabled) ? "Active" : 
         (!canStream ? "Disabled" : "Idle"));
-    context->interface->write(context, buffer, strlen(buffer));
+    SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
     
     // Battery Diagnostics Section
     const char* battDiagHeader = "\r\n[Battery Diagnostics]\r\n";
-    context->interface->write(context, battDiagHeader, strlen(battDiagHeader));
+    SysInfoWrite(context, &writeOk, battDiagHeader, strlen(battDiagHeader));
     
     // Battery voltage and charge from ADC
     if (pBoardData->PowerData.powerState == STANDBY) {
         // Battery monitoring inactive in STANDBY
         const char* adcInactive = "  ADC: -- | --\r\n";
-        context->interface->write(context, adcInactive, strlen(adcInactive));
+        SysInfoWrite(context, &writeOk, adcInactive, strlen(adcInactive));
     } else {
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  ADC: %d%% | %.2fV\r\n",
             pBoardData->PowerData.chargePct,
             pBoardData->PowerData.battVoltage);
-        context->interface->write(context, buffer, strlen(buffer));
+        SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
     }
     
     // BQ24297 status - get fresh data
@@ -1001,7 +1065,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  BQ24297: Battery %s | Charging: %s\r\n",
             pBQ24297Data->status.batPresent ? "Present" : "Not Present",
             (pBQ24297Data->status.chgStat < 4) ? chgStatStr[pBQ24297Data->status.chgStat] : "Unknown");
-        context->interface->write(context, buffer, strlen(buffer));
+        SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
         
         // Power conditions with clear explanations
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  vsysStat: %d (Battery >3.0V: %s) | pgStat: %d (Ext power: %s)\r\n",
@@ -1009,7 +1073,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             pBQ24297Data->status.vsysStat ? "No" : "Yes",
             pBQ24297Data->status.pgStat,
             pBQ24297Data->status.pgStat ? "Yes" : "No");
-        context->interface->write(context, buffer, strlen(buffer));
+        SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
         
         // NTC and current limit
         const char* ntcStr[] = {"Ok", "Hot", "Cold (Battery disconnected?)", "Hot/Cold"};
@@ -1023,7 +1087,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             (pBQ24297Data->status.inLim < 8) ? iLimStr[pBQ24297Data->status.inLim] : "Unknown",
             pBQ24297Data->status.otg ? "On" : "Off",
             otgGpioState ? "High" : "Low");
-        context->interface->write(context, buffer, strlen(buffer));
+        SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
         
         // Read REG01 and REG07 for detailed status
         uint8_t reg01 = 0, reg07 = 0;
@@ -1047,22 +1111,22 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
                 reg01Ok ? "OK" : "ERR",
                 reg07Ok ? "OK" : "ERR");
         }
-        context->interface->write(context, buffer, strlen(buffer));
+        SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
         
         // Power-up readiness - the key diagnostic info
         bool canPowerUp = (!pBQ24297Data->status.vsysStat || pBQ24297Data->status.pgStat);
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  >>> Power-up ready: %s %s\r\n",
             canPowerUp ? "Yes" : "No",
             canPowerUp ? "" : "(Battery <3.0V and no external power)");
-        context->interface->write(context, buffer, strlen(buffer));
+        SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
     } else {
-        context->interface->write(context, "  BQ24297: Not initialized\r\n", 28);
+        SysInfoWrite(context, &writeOk, "  BQ24297: Not initialized\r\n", 28);
     }
 
     // Voltage Rail Monitoring Section - only when powered up
     if (pBoardData->PowerData.powerState != STANDBY) {
         const char* voltHeader = "\r\n[Voltage Rails]\r\n";
-        context->interface->write(context, voltHeader, strlen(voltHeader));
+        SysInfoWrite(context, &writeOk, voltHeader, strlen(voltHeader));
 
         // Read latest ADC samples for internal monitoring channels
         // Use ADC_ConvertToVoltage for proper conversion based on channel type and config
@@ -1177,16 +1241,16 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             // Display power rails
             snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  +3.3V: %s | +5V: %s | +10V: %s\r\n",
                 str3_3, str5, str10);
-            context->interface->write(context, buffer, strlen(buffer));
+            SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
 
             snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  VSYS: %s | VBATT: %s\r\n",
                 strSys, strBatt);
-            context->interface->write(context, buffer, strlen(buffer));
+            SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
 
             // Display reference voltages
             snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  2.5V Ref: %s | 5V Ref: %s\r\n",
                 str2_5Ref, str5Ref);
-            context->interface->write(context, buffer, strlen(buffer));
+            SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
 
             // Stale data indicator: all monitoring channels are scanned
             // together by MODULE7, so a single age applies to all rails.
@@ -1203,16 +1267,16 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
                              "  * Stale: last update %lus ago%s\r\n",
                              (unsigned long)ageSec,
                              diagOff ? " (diag scanning disabled)" : "");
-                    context->interface->write(context, buffer, strlen(buffer));
+                    SysInfoWrite(context, &writeOk, buffer, strlen(buffer));
                 }
             }
         } else {
-            context->interface->write(context, "  Voltage monitoring unavailable\r\n", 34);
+            SysInfoWrite(context, &writeOk, "  Voltage monitoring unavailable\r\n", 34);
         }
     }
 
     SCPI_ResponseBuf_Give();
-    return SCPI_RES_OK;
+    return writeOk ? SCPI_RES_OK : SCPI_RES_ERR;
 }
 
 /**
