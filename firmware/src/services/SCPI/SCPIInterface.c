@@ -8438,15 +8438,23 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "CONFigure:CAPabilities:APIVersion?", .callback = SCPI_CapabilitiesApiVersionGet,},
     {.pattern = "CONFigure:CAPabilities:JSON?", .callback = SCPI_CapabilitiesJsonGet,},
     // #907: respelled all-caps -- the node started lowercase, so it had an
-    // EMPTY short form (matchPattern's short arm could never match, only
-    // the 8-character full spelling was ever legal, silently). All-caps
-    // honestly declares "exactly one legal spelling" per the SCPI
-    // Abbreviation Rule, and `compareStr` is case-insensitive, so the old
-    // spelling `CONFigure:ADC:chanCALM` (same letters) still works
-    // unchanged -- zero behaviour change, see #907 for the proof that no
-    // letter-preserving respelling can give this pair a distinct working
-    // short form (they differ only in their last character, and a short
-    // form is always a prefix).
+    // EMPTY short form. An empty short form does NOT mean "only the full
+    // spelling is ever legal": it means the node ALSO matches the EMPTY
+    // string, because `compareStr` (utils.c:347) compares equal lengths and
+    // 0 == 0. So before this respelling the DEGENERATE header `CONF:ADC:`
+    // -- a trailing colon with nothing after it -- matched this node's
+    // empty short arm and dispatched HERE, silently writing a channel's
+    // calibration slope. All-caps honestly declares "exactly one legal
+    // spelling" per the SCPI Abbreviation Rule. The old FULL spelling
+    // `CONFigure:ADC:chanCALM` still works unchanged, same letters and
+    // `compareStr` is case-insensitive; what stops working is that
+    // degenerate empty-node header, which now answers -113. That is a
+    // deliberate, wire-visible narrowing closing a latent hazard -- NOT the
+    // "zero behaviour change" an earlier revision of this comment claimed,
+    // and daqifi-python-test-suite's test_907 check J puts it on the wire.
+    // See #907 for the proof that no letter-preserving respelling can give
+    // this pair a distinct working short form (they differ only in their
+    // last character, and a short form is always a prefix).
     {.pattern = "CONFigure:ADC:CHANCALM", .callback = SCPI_ADCChanCalmSet,},
     {.pattern = "CONFigure:ADC:CHANCALB", .callback = SCPI_ADCChanCalbSet,},
     {.pattern = "CONFigure:ADC:CHANCALM?", .callback = SCPI_ADCChanCalmGet,},
@@ -8486,9 +8494,13 @@ static const scpi_command_t scpi_commands[] = {
     // Patterns stay registered (SCPI_Help still lists them) but route to the
     // shared not-implemented stub instead of lying about success.
     // #907: respelled all-caps, same reason as the ADC pair above -- the
-    // old spelling `CONFigure:DAC:chanCALM` still resolves here (case-
+    // old FULL spelling `CONFigure:DAC:chanCALM` still resolves here (case-
     // insensitive match), so it still answers -200 (not implemented)
-    // rather than regressing to -113 (undefined header).
+    // rather than regressing to -113 (undefined header). The degenerate
+    // header `CONF:DAC:` is the half that DOES change: it used to reach
+    // this stub through the empty short arm and answered -200; it now
+    // answers -113. Same deliberate narrowing described above, and the
+    // reason that description is written out there rather than here.
     {.pattern = "CONFigure:DAC:CHANCALM", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:CHANCALB", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:CHANCALM?", .callback = SCPI_NotImplemented,},
