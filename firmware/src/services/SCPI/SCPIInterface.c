@@ -8487,10 +8487,28 @@ static const scpi_command_t scpi_commands[] = {
      * Capabilities.h for the schema and evolution rules. */
     {.pattern = "CONFigure:CAPabilities:APIVersion?", .callback = SCPI_CapabilitiesApiVersionGet,},
     {.pattern = "CONFigure:CAPabilities:JSON?", .callback = SCPI_CapabilitiesJsonGet,},
-    {.pattern = "CONFigure:ADC:chanCALM", .callback = SCPI_ADCChanCalmSet,},
-    {.pattern = "CONFigure:ADC:chanCALB", .callback = SCPI_ADCChanCalbSet,},
-    {.pattern = "CONFigure:ADC:chanCALM?", .callback = SCPI_ADCChanCalmGet,},
-    {.pattern = "CONFigure:ADC:chanCALB?", .callback = SCPI_ADCChanCalbGet,},
+    // #907: respelled all-caps -- the node started lowercase, so it had an
+    // EMPTY short form. An empty short form does NOT mean "only the full
+    // spelling is ever legal": it means the node ALSO matches the EMPTY
+    // string, because `compareStr` (utils.c:347) compares equal lengths and
+    // 0 == 0. So before this respelling the DEGENERATE header `CONF:ADC:`
+    // -- a trailing colon with nothing after it -- matched this node's
+    // empty short arm and dispatched HERE, silently writing a channel's
+    // calibration slope. All-caps honestly declares "exactly one legal
+    // spelling" per the SCPI Abbreviation Rule. The old FULL spelling
+    // `CONFigure:ADC:chanCALM` still works unchanged, same letters and
+    // `compareStr` is case-insensitive; what stops working is that
+    // degenerate empty-node header, which now answers -113. That is a
+    // deliberate, wire-visible narrowing closing a latent hazard -- NOT the
+    // "zero behaviour change" an earlier revision of this comment claimed,
+    // and daqifi-python-test-suite's test_907 check J puts it on the wire.
+    // See #907 for the proof that no letter-preserving respelling can give
+    // this pair a distinct working short form (they differ only in their
+    // last character, and a short form is always a prefix).
+    {.pattern = "CONFigure:ADC:CHANCALM", .callback = SCPI_ADCChanCalmSet,},
+    {.pattern = "CONFigure:ADC:CHANCALB", .callback = SCPI_ADCChanCalbSet,},
+    {.pattern = "CONFigure:ADC:CHANCALM?", .callback = SCPI_ADCChanCalmGet,},
+    {.pattern = "CONFigure:ADC:CHANCALB?", .callback = SCPI_ADCChanCalbGet,},
     {.pattern = "CONFigure:ADC:SAVEcal", .callback = SCPI_ADCCalSave,},
     {.pattern = "CONFigure:ADC:SAVEFcal", .callback = SCPI_ADCCalFSave,},
     {.pattern = "CONFigure:ADC:LOADcal", .callback = SCPI_ADCCalLoad,},
@@ -8525,10 +8543,18 @@ static const scpi_command_t scpi_commands[] = {
     // DAC7718 is NQ3-only hardware, not available to validate an implementation.
     // Patterns stay registered (SCPI_Help still lists them) but route to the
     // shared not-implemented stub instead of lying about success.
-    {.pattern = "CONFigure:DAC:chanCALM", .callback = SCPI_NotImplemented,},
-    {.pattern = "CONFigure:DAC:chanCALB", .callback = SCPI_NotImplemented,},
-    {.pattern = "CONFigure:DAC:chanCALM?", .callback = SCPI_NotImplemented,},
-    {.pattern = "CONFigure:DAC:chanCALB?", .callback = SCPI_NotImplemented,},
+    // #907: respelled all-caps, same reason as the ADC pair above -- the
+    // old FULL spelling `CONFigure:DAC:chanCALM` still resolves here (case-
+    // insensitive match), so it still answers -200 (not implemented)
+    // rather than regressing to -113 (undefined header). The degenerate
+    // header `CONF:DAC:` is the half that DOES change: it used to reach
+    // this stub through the empty short arm and answered -200; it now
+    // answers -113. Same deliberate narrowing described above, and the
+    // reason that description is written out there rather than here.
+    {.pattern = "CONFigure:DAC:CHANCALM", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:CHANCALB", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:CHANCALM?", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:CHANCALB?", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:SAVEcal", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:SAVEFcal", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:LOADcal", .callback = SCPI_NotImplemented,},
