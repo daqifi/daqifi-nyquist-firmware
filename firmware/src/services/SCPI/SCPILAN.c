@@ -654,12 +654,25 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
  *   INIT       WIFI_STATE_INIT and the WINC driver status is not an error --
  *              bring-up in progress (normal for a couple of seconds after
  *              power-up / APPLY). Expect it to clear; poll again.
- *   INITFAULT  WIFI_STATE_INIT and WDRV_WINC_Status() reports an error (any
- *              negative status, not just SYS_STATUS_ERROR). The
- *              chip answers SPI but m2m_wifi_init_start never completed, and
- *              wifi_manager re-queues its INIT event roughly every 10 ms for
- *              as long as the board is powered. This does NOT self-clear --
- *              treat it as "the module is down" and reset/reflash.
+ *   INITFAULT  The WINC driver has a VALID module object whose
+ *              WDRV_WINC_Status() is negative (any negative status, not just
+ *              SYS_STATUS_ERROR). Raised from TWO m2m states, not one:
+ *                - WIFI_STATE_INIT, the ordinary "bring-up failed" case; and
+ *                - WIFI_STATE_START with neither connection flag set, which
+ *                  is where a LATE m2m_wifi_init_start() failure lands --
+ *                  the state is assigned before the firmware-version read, so
+ *                  a blank or mismatched WINC leaves START behind while the
+ *                  driver latches the error.
+ *              Either way the chip answers SPI, m2m_wifi_init_start never
+ *              completed, and wifi_manager re-queues its INIT event roughly
+ *              every 10 ms for as long as the board is powered without ever
+ *              starting AP or STA. This does NOT self-clear -- treat it as
+ *              "the module is down" and reset/reflash.
+ *              The module-object validity requirement is not a detail: the
+ *              status call reports an error for an INVALID object too, and
+ *              REINIT and the FW-update teardown both park one briefly on a
+ *              healthy board. Without it an ordinary APPLY reported a
+ *              permanent fault.
  *   NOLINK     Radio up, but no link: a STA that has not associated yet, or an
  *              AP whose WDRV_WINC_APStart has not (or will never) completed.
  *   APIDLE     The soft-AP is up and BEACONING with NOBODY ON IT -- neither a

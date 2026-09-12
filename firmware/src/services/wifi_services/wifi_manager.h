@@ -208,12 +208,20 @@ extern "C" {
         /** WIFI_STATE_INIT and the WINC driver's own status is not an error:
          *  bring-up is in progress and still expected to make progress. */
         WIFI_LINK_STATE_INIT,
-        /** WIFI_STATE_INIT and WDRV_WINC_Status() reports an error (any
-         *  negative status, not just SYS_STATUS_ERROR). The chip
-         *  answers SPI (nm_drv_init_hold succeeded) but m2m_wifi_init_start
-         *  never completed, so the manager's INIT handler re-queues
+        /** A VALID module object whose WDRV_WINC_Status() is negative (any
+         *  negative status, not just SYS_STATUS_ERROR). Raised from TWO m2m
+         *  states: WIFI_STATE_INIT, and WIFI_STATE_START with neither
+         *  connection flag set -- the latter is where a LATE
+         *  m2m_wifi_init_start() failure lands, because that function assigns
+         *  START before the firmware-version read. Either way the chip answers
+         *  SPI (nm_drv_init_hold succeeded) but m2m_wifi_init_start never
+         *  completed, so the manager's INIT handler re-queues
          *  WIFI_MANAGER_EVENT_INIT roughly every 10 ms for as long as the board
-         *  is powered. This does NOT self-clear. */
+         *  is powered, never starting AP or STA. This does NOT self-clear.
+         *
+         *  Validity is load-bearing: the status call also reports an error for
+         *  an INVALID object, and both REINIT and the FW-update teardown park
+         *  one briefly on a healthy board. */
         WIFI_LINK_STATE_INIT_FAULT,
         /** WIFI_STATE_START with neither an AP started nor a STA association:
          *  a STA that has not associated yet, or an AP whose WDRV_WINC_APStart
