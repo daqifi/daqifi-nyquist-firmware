@@ -118,6 +118,12 @@ on:
     branches: [main]
     paths:
       - 'tests/host/**'
+      # `tests/host/hash_function.py` imports this, so the drift pin
+      # reaches OUTSIDE `tests/host/**` and a change to the rule would
+      # otherwise never re-run the suite that depends on it (#976
+      # audit, round 5) -- the same gap this file's own header says it
+      # was built to close for AD7609Scale.h.
+      - 'tools/lint/cdef.py'
       - 'firmware/src/Util/CircularBuffer.c'
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
@@ -143,6 +149,12 @@ on:
     branches: [main]
     paths:
       - 'tests/host/**'
+      # `tests/host/hash_function.py` imports this, so the drift pin
+      # reaches OUTSIDE `tests/host/**` and a change to the rule would
+      # otherwise never re-run the suite that depends on it (#976
+      # audit, round 5) -- the same gap this file's own header says it
+      # was built to close for AD7609Scale.h.
+      - 'tools/lint/cdef.py'
       - 'firmware/src/Util/CircularBuffer.c'
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'

@@ -55,11 +55,23 @@ NOT_IMPLEMENTED_MARK = "not implemented"
 # String literals are matched FIRST so a comment marker inside one is not
 # mistaken for a comment, and a quote inside a comment cannot open a string.
 # Both comment forms are then consumed whole, in one pass.
+#
+# The line-comment alternative additionally swallows any `\<newline>`
+# sequence rather than stopping at it: C's translation phase 2 deletes a
+# backslash immediately followed by a newline BEFORE phase 3 even recognises
+# a comment, so a `//` comment ending in one continues onto the next
+# physical line -- and can silently drop whatever code sits there (#976
+# audit round 6, same defect this file's own docstring already names for
+# `hash_function.py`, reached here through this file's SEPARATE comment
+# stripper instead). Without this, an edit that deletes a claim-before-arm
+# check via `// ... \` immediately above it passes `scpi_sd_arm_path.py`'s
+# ordering lint clean, because that lint's preprocessing (this function)
+# still hands the swallowed line to the census as live code.
 _CODE_OR_COMMENT = re.compile(
     r'"(?:\\.|[^"\\])*"'      # string literal  -- kept
     r"|'(?:\\.|[^'\\])*'"     # char literal    -- kept
     r"|/\*.*?\*/"              # block comment   -- dropped
-    r"|//[^\n]*",              # line comment    -- dropped
+    r"|//(?:\\\n|[^\n])*",     # line comment (incl. spliced continuations) -- dropped
     re.S)
 
 
@@ -77,9 +89,31 @@ def strip_c_comments(text):
     future edit rather than a fix for a live miscount -- but a checker that
     silently loses commands the moment someone writes an ordinary comment is
     not worth having.
+
+    A comment becomes a SPACE, not nothing. Deleting it GLUED the tokens on
+    either side: `static bool/*x*/F(void)` came out as `static boolF(void)`,
+    which is not a definition of anything, so `scpi_sd_arm_path.py` -- which
+    strips before handing text to the shared matcher -- reported a function
+    MISSING that `hash_function.py` found fine. Two callers disagreeing about
+    what a definition looks like, arriving through a PREPROCESSING step rather
+    than through the matcher (#976 audit, round 5). A space is what the
+    compiler sees there, and it is what `cdef.mask()` already substitutes.
+
+    A `//` comment does not necessarily end at the next newline. C's
+    translation phase 2 deletes a backslash immediately followed by a
+    newline BEFORE phase 3 recognises comments, so an ordinary line comment
+    with a trailing backslash splices onto the next physical line and the
+    comment -- and whatever it swallows -- continues there too.
+    `scpi_sd_arm_path.py`'s own arm-refusal-ordering census runs on THIS
+    function's output, so a claim check deleted this way (a comment placed
+    just above it, ending in a backslash) previously passed that lint
+    clean: the swallowed line was still handed to the census as live code
+    (#976 audit round 6 -- the same defect this docstring already names
+    for `hash_function.py`'s separate stripper, reached here through this
+    file's own, independent one).
     """
     return _CODE_OR_COMMENT.sub(
-        lambda m: m.group(0) if m.group(0)[0] in "\"'" else "", text)
+        lambda m: m.group(0) if m.group(0)[0] in "\"'" else " ", text)
 
 
 # `.pattern = "A" "B", .callback = X` is legal C -- adjacent string literals
@@ -329,15 +363,15 @@ def self_test():
 
 
 def _self_test_end_to_end():
-    """Pin the two false-pass holes an adversarial audit found and proved.
+    """Pin the false-pass holes an adversarial audit found and proved.
 
-    Both failed toward SILENCE -- the checker exited 0 while a shipped command
-    had no wiki row -- which is the one failure direction that makes a gate
-    worse than useless, so both are pinned here rather than trusted to stay
-    fixed.
+    All fail toward SILENCE -- the checker exited 0 while a shipped command
+    had no wiki row, or a live line was treated as dead -- which is the one
+    failure direction that makes a gate worse than useless, so each is
+    pinned here rather than trusted to stay fixed.
     """
     import tempfile
-    cases, failures = 3, 0
+    cases, failures = 4, 0
     src = ('const scpi_command_t scpi_commands[] = {\n'
            '    {.pattern = "SYSTem:WIFI:" "DEBUG?", .callback = SCPI_A,},\n'
            '    {.pattern = "SYSTem:POWer:OTG", .callback = SCPI_B,},\n'
@@ -393,6 +427,31 @@ def _self_test_end_to_end():
         if any(is_form_of(w, "DIO:COUNter?") for w in written2):
             print("  FAIL end-to-end: a cell in an unrelated table vouched for "
                   "a command with no row of its own")
+            failures += 1
+
+        # (4) A `//` comment ending in a backslash-newline splices onto the
+        # next physical line (C phase 2, before phase 3 even recognises the
+        # comment), so it can swallow a WHOLE registration line that then
+        # never compiles in -- but `strip_c_comments` must still treat it as
+        # dead, not live, or a deleted command is reported as if it shipped
+        # (#976 audit round 6). Checking `in commented` as well as
+        # `not in live2` (not just the latter alone) keeps this case
+        # non-vacuous on its own: a stripper that broke extraction entirely,
+        # rather than correctly classifying the splice, would also satisfy
+        # a bare `not in live2`.
+        spliced_src = (
+            'const scpi_command_t scpi_commands[] = {\n'
+            '    // disabled for now \\\n'
+            '    {.pattern = "SYSTem:SPLICE:TEST", .callback = SCPI_C,},\n'
+            '    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n};\n')
+        c2 = os.path.join(d, "spliced.c")
+        with open(c2, "w", encoding="utf-8") as fh:
+            fh.write(spliced_src)
+        live2, commented2 = registered_patterns(c2)
+        if "SYSTem:SPLICE:TEST" in live2 or "SYSTem:SPLICE:TEST" not in commented2:
+            print("  FAIL end-to-end: a registration line spliced into a "
+                  "`//` comment by a trailing backslash was not correctly "
+                  "classified as dead -- the compiler never builds it")
             failures += 1
     return cases, failures
 
