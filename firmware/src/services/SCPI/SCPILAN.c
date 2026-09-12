@@ -644,6 +644,132 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/**
+ * SYSTem:COMMunicate:LAN:CONnected? (#951).
+ *
+ * VALUE CONTRACT -- a bare SCPI mnemonic (IEEE 488.2 character-data response,
+ * unquoted, like ADDRess?). Compare it WHOLE; do not prefix-match, because
+ * INIT and INITFAULT share a prefix and mean opposite things.
+ *
+ *   INIT       WIFI_STATE_INIT and the WINC driver status is not an error --
+ *              bring-up in progress (normal for a couple of seconds after
+ *              power-up / APPLY). Expect it to clear; poll again.
+ *   INITFAULT  The WINC driver has a VALID module object whose
+ *              WDRV_WINC_Status() is negative (any negative status, not just
+ *              SYS_STATUS_ERROR). Raised from TWO m2m states, not one:
+ *                - WIFI_STATE_INIT, the ordinary "bring-up failed" case; and
+ *                - WIFI_STATE_START with neither connection flag set, which
+ *                  is where a LATE m2m_wifi_init_start() failure lands --
+ *                  the state is assigned before the firmware-version read, so
+ *                  a blank or mismatched WINC leaves START behind while the
+ *                  driver latches the error.
+ *              Either way the chip answers SPI, m2m_wifi_init_start never
+ *              completed, and wifi_manager re-queues its INIT event roughly
+ *              every 10 ms for as long as the board is powered without ever
+ *              starting AP or STA. This does NOT self-clear -- treat it as
+ *              "the module is down" and reset/reflash.
+ *              The module-object validity requirement is not a detail: the
+ *              status call reports an error for an INVALID object too, and
+ *              REINIT and the FW-update teardown both park one briefly on a
+ *              healthy board. Without it an ordinary APPLY reported a
+ *              permanent fault.
+ *   NOLINK     Radio up, but no link: a STA that has not associated yet, or an
+ *              AP whose WDRV_WINC_APStart has not (or will never) completed.
+ *   APIDLE     The soft-AP is up and BEACONING with NOBODY ON IT -- neither a
+ *              recorded station association nor a connected TCP client. This
+ *              is the value that says "the module is live" without requiring a
+ *              peer, which is the distinction #951 exists to make.
+ *   CONNECTED  A peer is attached: a STA association to an AP, or a station
+ *              associated to our soft-AP. An active TCP client on our soft-AP
+ *              also reaches this. Exactly the condition
+ *              wifi_manager_GetWiFiStatus() reports as WIFI_STATUS_CONNECTED.
+ *
+ *
+ *              CAVEAT, #1060: CONNECTED can be briefly WRONG across an
+ *              AP->STA APPLY. That branch clears AP_STARTED but not
+ *              STA_CONNECTED (its mirror-image STA->AP branch does clear it),
+ *              so after switching away from an AP that had an associated
+ *              station this answers CONNECTED with no peer attached at all --
+ *              through the 500 ms delay and on until a failed-connect callback
+ *              fires. Do not poll this query as a readiness signal across a
+ *              mode switch; it can say yes before the new link exists.
+ *
+ *              The flag behaviour is PRE-EXISTING and unchanged here -- the
+ *              legacy 3-value status answered CONNECTED in that window too,
+ *              verified against main at d71147e31 -- but this command is what
+ *              newly PUBLISHES "a peer is attached", so the caveat belongs
+ *              with the promise. #1060 carries the fix and the second-device
+ *              bench test it needs.
+ *              APIDLE and CONNECTED are deliberately NOT split on "has a TCP
+ *              client". An adversarial audit of PR #1044 showed that they
+ *              cannot be: a station that merely associates to our soft-AP
+ *              raises the same state flag a STA association does, and
+ *              GetLinkState tests it first -- so APIDLE is unreachable while
+ *              any station is associated, TCP session or not. Splitting them
+ *              on TCP would mean reordering that test, which would flip
+ *              wifi_manager_GetWiFiStatus() to DISCONNECTED for the same case
+ *              and reach consumers well outside this query: iperf2 refuses a
+ *              client start unless the status is exactly CONNECTED, and
+ *              Streaming_AllConfiguredTransportsDead would start the #397
+ *              transport-down timer and auto-stop an AP-mode WiFi session
+ *              after the grace window. The contract is written to what the
+ *              state flags can actually support; the flag behaviour itself is
+ *              older than this command and is left alone here.
+ *
+ * WiFi disabled / deinitialised is NOT a reply value -- it is refused with
+ * -200, the same as every other LAN getter (ADDRess?, MASK?, MAC?, BSSID? ...)
+ * and with the same message SCPI_LANRequireWiFiReady() uses. This command
+ * enforces that from its OWN single read rather than from the shared gate: a
+ * separate gate call plus a separate dispatch read are two independent reads
+ * of manager state, and the other SCPI transport (USB CDC at priority 7
+ * preempts TCP SCPI on app_WifiTask at priority 2) can commit ENAbled 0 +
+ * APPLY between them -- which would land the dispatch on DISABLED and emit a
+ * sixth reply value this contract says cannot occur. One read cannot
+ * disagree with itself.
+ *
+ * Strictly non-blocking (no WINC round-trip), so it is safe on app_WifiTask
+ * via TCP SCPI as well as on the USB SCPI task.
+ */
+scpi_result_t SCPI_LANConnectedGet(scpi_t * context) {
+    // ONE read of the single decision point, then dispatch on it -- not
+    // SCPI_LANRequireWiFiReady() followed by a second, independent read (see
+    // the race explained in the contract above). wifi_manager_GetWiFiStatus()
+    // is itself a pure projection of this same enum (wifi_manager.c), so
+    // WIFI_LINK_STATE_DISABLED is exactly the condition the shared gate
+    // refuses -- the settled-state behavior (and error text) is unchanged.
+    //
+    // No `default:` arm, deliberately, matching wifi_manager_GetWiFiStatus():
+    // -Wswitch (an error under this build's -Wall -Werror) forces whoever
+    // adds a wifi_link_state_t value to classify it here. Every live-value
+    // arm returns immediately, so there is no local left uninitialized, and
+    // an out-of-range/DISABLED value falls through to the refusal below.
+    switch (wifi_manager_GetLinkState()) {
+        case WIFI_LINK_STATE_CONNECTED:
+            SCPI_ResultMnemonic(context, "CONNECTED");
+            return SCPI_RES_OK;
+        case WIFI_LINK_STATE_AP_IDLE:
+            SCPI_ResultMnemonic(context, "APIDLE");
+            return SCPI_RES_OK;
+        case WIFI_LINK_STATE_NO_LINK:
+            SCPI_ResultMnemonic(context, "NOLINK");
+            return SCPI_RES_OK;
+        case WIFI_LINK_STATE_INIT_FAULT:
+            SCPI_ResultMnemonic(context, "INITFAULT");
+            return SCPI_RES_OK;
+        case WIFI_LINK_STATE_INIT:
+            SCPI_ResultMnemonic(context, "INIT");
+            return SCPI_RES_OK;
+        case WIFI_LINK_STATE_DISABLED:
+            break;  // fall out to the shared refusal below
+    }
+
+    // DISABLED, or a future value nobody classified above: refuse with the
+    // same -200 and the same text every other LAN getter uses, instead of
+    // reporting a link state that is no longer (or not yet) true.
+    SCPI_ExecutionError(context, "SYST:COMM:LAN: WiFi not ready (device powered up?)");
+    return SCPI_RES_ERR;
+}
+
 scpi_result_t SCPI_LANSettingsApply(scpi_t * context) {
     bool saveSettings = false;
     int param1;

@@ -184,6 +184,94 @@ extern "C" {
     bool wifi_manager_IsWiFiConnected(void);
 
     /**
+     * Fine-grained WiFi link state (#951).
+     *
+     * A strict REFINEMENT of wifi_status_t, not a replacement. DISABLED and
+     * CONNECTED mean exactly what wifi_manager_GetWiFiStatus() means by
+     * WIFI_STATUS_DISABLED / WIFI_STATUS_CONNECTED; the four remaining values
+     * subdivide the single WIFI_STATUS_DISCONNECTED bucket, which used to
+     * collapse "the WINC never finished bring-up" onto "the soft-AP is up and
+     * beaconing, just idle" -- indistinguishable on the SCPI surface until now.
+     *
+     * wifi_manager_GetWiFiStatus() is implemented as a projection OF this enum
+     * (see the mapping in wifi_manager.c), so the two surfaces cannot drift.
+     *
+     * Published on the wire, as a bare mnemonic, by
+     * SYSTem:COMMunicate:LAN:CONnected? (SCPILAN.c SCPI_LANConnectedGet) --
+     * except WIFI_LINK_STATE_DISABLED, which that query refuses with -200
+     * rather than reporting, the same as every other LAN getter.
+     */
+    typedef enum {
+        /** WiFi off in settings, or the driver is deinitialised
+         *  (WIFI_STATE_DEINIT / unknown m2m state). */
+        WIFI_LINK_STATE_DISABLED = 0,
+        /** WIFI_STATE_INIT and the WINC driver's own status is not an error:
+         *  bring-up is in progress and still expected to make progress. */
+        WIFI_LINK_STATE_INIT,
+        /** A VALID module object whose WDRV_WINC_Status() is negative (any
+         *  negative status, not just SYS_STATUS_ERROR). Raised from TWO m2m
+         *  states: WIFI_STATE_INIT, and WIFI_STATE_START with neither
+         *  connection flag set -- the latter is where a LATE
+         *  m2m_wifi_init_start() failure lands, because that function assigns
+         *  START before the firmware-version read. Either way the chip answers
+         *  SPI (nm_drv_init_hold succeeded) but m2m_wifi_init_start never
+         *  completed, so the manager's INIT handler re-queues
+         *  WIFI_MANAGER_EVENT_INIT roughly every 10 ms for as long as the board
+         *  is powered, never starting AP or STA. This does NOT self-clear.
+         *
+         *  Validity is load-bearing: the status call also reports an error for
+         *  an INVALID object, and both REINIT and the FW-update teardown park
+         *  one briefly on a healthy board. */
+        WIFI_LINK_STATE_INIT_FAULT,
+        /** WIFI_STATE_START with neither an AP started nor a STA association:
+         *  a STA that has not associated yet, or an AP whose WDRV_WINC_APStart
+         *  has not (or will never) complete. */
+        WIFI_LINK_STATE_NO_LINK,
+        /** WIFI_STATE_START, AP_STARTED set, and NEITHER a recorded station
+         *  association NOR a connected TCP client: the soft-AP is up and
+         *  beaconing, with nobody on it.
+         *
+         *  An earlier revision of this comment said only "no TCP client".
+         *  That was wrong and an adversarial audit of PR #1044 caught it: a
+         *  station that merely ASSOCIATES to our soft-AP raises
+         *  WIFI_MANAGER_STATE_FLAG_STA_CONNECTED (ApEventCallback runs only
+         *  in AP mode and its handler sets that flag with no AP/STA
+         *  discrimination), which GetLinkState tests first -- so an
+         *  associated station reads CONNECTED, not AP_IDLE, with no TCP
+         *  session anywhere. The flag behaviour predates #951; the promise
+         *  did not, which is why the promise is what changed. */
+        WIFI_LINK_STATE_AP_IDLE,
+        /** A peer is attached: a STA association to an AP, or a station
+         *  associated to our soft-AP. An active TCP client on our soft-AP
+         *  also reaches this through the AP branch's own fallback, which is
+         *  reachable when the association flag is clear (the association
+         *  event is queued and its enqueue result is not checked, while the
+         *  accepted socket is published independently).
+         *
+         *  Deliberately NOT "an AP client has opened TCP": see AP_IDLE above.
+         *  Identical condition to WIFI_STATUS_CONNECTED.
+         *
+         *  CAVEAT, #1060: transiently WRONG across an AP->STA APPLY. That
+         *  branch clears AP_STARTED but not STA_CONNECTED, so this reads
+         *  CONNECTED with no peer attached until a failed-connect callback
+         *  fires. Pre-existing (the legacy status did the same, verified
+         *  against main at d71147e31); documented here because this enum is
+         *  what newly promises "a peer is attached". */
+        WIFI_LINK_STATE_CONNECTED
+    } wifi_link_state_t;
+
+    /**
+     * @brief Get the fine-grained WiFi link state (#951).
+     *
+     * Read-only and strictly non-blocking (no WINC round-trip, no wait): safe
+     * from the USB SCPI task (priority 7) and from app_WifiTask itself (TCP
+     * SCPI) -- the same contexts wifi_manager_GetWiFiStatus() already serves.
+     *
+     * @return wifi_link_state_t describing the current state
+     */
+    wifi_link_state_t wifi_manager_GetLinkState(void);
+
+    /**
      * @brief Initializes the WiFi manager and its state machine.
      * 
      * Sets up the event queue, initializes WiFi settings, and prepares the system to handle WiFi events.

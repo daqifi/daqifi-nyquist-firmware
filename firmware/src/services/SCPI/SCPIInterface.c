@@ -8429,7 +8429,23 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:COMMunicate:LAN:DNS2", .callback = SCPI_NotImplemented,},
     {.pattern = "SYSTem:COMMunicate:LAN:MAC?", .callback = SCPI_LANMacGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:MAC", .callback = SCPI_NotImplemented,},
-    {.pattern = "SYSTem:COMMunicate:LAN:CONnected?", .callback = SCPI_NotImplemented,},
+    /* #951: implemented on the slot that was already registered (and already
+     * documented) against SCPI_NotImplemented, so this costs no new command
+     * table entry. Reply is a bare mnemonic -- match it WHOLE, not by prefix:
+     *   INIT       WINC bring-up in progress; transient, poll again
+     *   INITFAULT  WINC answers SPI but m2m_wifi_init_start never completed;
+     *              wifi_manager re-queues INIT forever. Does NOT self-clear.
+     *   NOLINK     radio up; STA not associated, or the soft-AP never started
+     *   APIDLE     soft-AP up and BEACONING with nobody on it -- no station
+     *              associated and no TCP client
+     *   CONNECTED  a peer is attached: STA associated to an AP, or a station
+     *              associated to our soft-AP (a TCP client also reaches this).
+     *              NOT split on 'has a TCP client' -- see SCPILAN.c for why
+     *              the state flags cannot support that split
+     * WiFi disabled/deinitialised is refused with -200 by the shared LAN-getter
+     * ready gate rather than reported, as with every other LAN getter. Full
+     * contract: SCPI_LANConnectedGet in SCPILAN.c, and the wiki. */
+    {.pattern = "SYSTem:COMMunicate:LAN:CONnected?", .callback = SCPI_LANConnectedGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:HOST?", .callback = SCPI_LANHostnameGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:HOST", .callback = SCPI_NotImplemented,},
     {.pattern = "SYSTem:COMMunicate:LAN:FWUpdate", .callback = SCPI_LANFwUpdate,},
