@@ -59,6 +59,8 @@ Current table = **Session 24 (2026-05-28 overnight + 2× targeted retry, 400 s e
 
 > **This is descriptive endurance characterization, not the firmware cap.** These soak ceilings are an empirical record of what the device sustains across many configs (incl. OBDiag variants, OBDiag here = on-board diagnostics monitoring); the rate the firmware actually *enforces* is fitted separately — see **"Streaming Frequency Capping"** below, whose **"Fit basis (normative — the zero-loss sweep subset…)"** table is the canonical 1/5/10/16-ch subset the `Streaming_TransportMaxFreq` coefficients derive from. The two use different methods (soak-with-haircut vs zero-loss sweep escalator) and so report different numbers by design. Authoritative dataset for both: `daqifi-python-test-suite/benchmarks/`.
 
+> **⚠️ The descriptive Session-24 USB and SD throughput tables that follow pre-date #487 — measured at 200 MHz/100 MHz — and so does the separate "Fit basis" table under "Streaming Frequency Capping" further down this file.** They are historical characterization, not the enforced caps. **The ENFORCED caps HAVE been re-fit for 252 MHz** (contrary to older revisions of this note): PB transport + additive were raised (**#595/#600** — USB PB single 15000→22000 curve 120000/(1+n), SD PB single 9000→13000 curve 99000/(4+n), ISR_MAX 16000→22000); USB CSV transport was raised (**#712**); and the pure-T1 PB additive was **lowered** (**#715/#714** — the 252 MHz PB refit had over-capped pure-T1 PB, silently dropping data at cap: USB PB 1×T1 19340→15799, SD PB 1×T1 9852→7900). **Still on the 200 MHz-era fit (real remaining headroom):** the CSV *additive* grid for **nT1 >= 2** (its **single-channel** case was re-fitted by **#832**, 10589 -> 15263), JSON (`CSV×0.5` placeholder except USB/NQ1, **#529**), the WiFi PB curve, and all NQ2/NQ3 caps (legacy 200 MHz envelope by design). The authoritative, current cap dataset is `daqifi-python-test-suite/benchmarks/` (e.g. `atcap_20260723_*.csv`), not any of the in-repo tables this note covers; the enforced values live in `firmware/src/services/streaming.h` (`Streaming_AdcAdditiveCap_NQ1` / `Streaming_SdAdditiveCap_NQ1` / `Streaming_TransportMaxFreq`). Cross-check those + the `#595/#600/#712/#715` PRs before running any 252 MHz cap work.
+
 **USB** (400 s endurance soak, KB/s from `pc_kbps`):
 
 | Config | PB Hz | PB KB/s | CSV Hz | CSV KB/s |
@@ -291,12 +293,53 @@ JSON's ratio is **not** a flat "2–3×" — it is ~3.1× at one channel and ~1.
 
 An unrecognised format value is **rejected** with `-224` since #801/#802; before that it silently selected JSON.
 
+`Streaming_TransportMaxFreq` (`firmware/src/services/streaming.h`) branches on
+`isNQ1` for four of its eight interface/PB-or-CSV coefficient sets — the tables
+below are split per variant rather than annotated, so each cell can be read
+directly. Values below are transcribed from `streaming.h` at `d56642a38`
+(USB PB `:405-406`, USB CSV `:462-463`, WiFi `:499-500`, SD `:512-513,522`,
+USB+SD `:525,543`; the WiFi CSV `min(…, 3050)` clamp is applied after the
+per-interface switch, at `:560`, identically for both variants).
+
+**NQ1:**
+
+| interface | single (n=1) PB / CSV | A/(B+n) PB | A/(B+n) CSV |
+|-----------|----:|----:|----:|
+| USB    | 22000 / 20000 | 120000/(1+n) | 90000/(1+n) |
+| WiFi   | 8000 / 4675   | 139000/(30+n) | min(20000/(2+n), 3050) |
+| SD     | 13000 / 7500  | 99000/(4+n) | 36000/(12+n) |
+| USB+SD | 8000 / 6500   | 66000/(6+n)   | 15000/(0+n) |
+
+**NQ2/NQ3:**
+
 | interface | single (n=1) PB / CSV | A/(B+n) PB | A/(B+n) CSV |
 |-----------|----:|----:|----:|
 | USB    | 15000 / 15000 | 180000/(10+n) | 34000/(1+n) |
 | WiFi   | 5175 / 4675   | 139000/(30+n) | min(20000/(2+n), 3050) |
 | SD     | 9000 / 7500   | 150000/(15+n) | 36000/(12+n) |
-| USB+SD | 8000 / 8000   | 66000/(6+n)   | 15000/(0+n) |
+| USB+SD | 8000 / 6500   | 66000/(6+n)   | 15000/(0+n) |
+
+The two tables share nine of their sixteen cells (WiFi CSV both columns, SD
+CSV both columns, USB+SD PB both columns, USB+SD CSV both columns, WiFi PB
+curve) — `Streaming_TransportMaxFreq` does not branch on `isNQ1` for those
+coefficients.
+
+The other seven diverge because the 252 MHz refits were NQ1-only. **#595**
+raised USB PB, SD PB and the WiFi PB **single** term (5175 → 8000) — but not
+the WiFi PB multi-channel curve, which is why that curve is one of the nine
+shared cells. **#712** (issue #562) raised USB CSV.
+
+`#600` is deliberately absent here: it re-fitted the NQ1 *additive* PB cap
+(`Streaming_AdcAdditiveCap_NQ1`) and never touched `Streaming_TransportMaxFreq`,
+so it has no transport coefficient to its name. The caveat further up this file
+groups it with #595 because that sentence covers transport **and** additive
+together, which is correct at its scope and wrong at this one.
+
+The USB+SD CSV single is **6500** for every variant, and is deliberately BELOW
+the 2-channel point of its own curve: 8000 was a 200 MHz-era coefficient that
+leaked SD data at cap in 5 of 5 soak rounds, because the #712 refit covered USB
+only — #719 lowered it. `streaming.h` is authoritative; these tables are a
+reading aid.
 
 **Fit basis (normative — the zero-loss sweep subset the F3 coefficients derive from, Hz):**
 
