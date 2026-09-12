@@ -184,6 +184,18 @@ DAC980_BIN := run_980_tests
 DAC7718_SRC := ../../firmware/src/HAL/DAC7718/DAC7718.c
 SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
 
+# #1057 (#913's twin): DAC7718_ReadWriteReg's six SPI2 busy-spins ->
+# dac7718_WaitStat, the same bounded-spin-then-vTaskDelay(1) shape #913 gave
+# UserSpi.c's spi_XferByte. Same host-testability constraint as DAC980_BIN
+# above -- DAC7718.c is not includable on the host -- so this re-implements
+# the loop SHAPE against a mock tick clock and mock hardware-condition flag,
+# identically to test_913_spi_wait_stat.c (DAC7718 has only the one wait
+# shape, shared by all three of its call sites, unlike UserSpi/UserUart/
+# UserI2c's three separate shapes). The two firmware constants this depends
+# on are a COPY; the recipe greps them and refuses to build on drift, same
+# convention as SPI913_BIN.
+DAC1057_BIN := run_1057_tests
+
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
 	$(CC) $(CFLAGS) $(INCLUDES) -o $(BIN) test_circularbuffer.c $(UUT)
@@ -485,6 +497,38 @@ $(SUSPENDREASON_BIN): test_985_suspend_reason_consistency.c test_framework.h $(S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPENDREASON_BIN) test_985_suspend_reason_consistency.c
 
+$(DAC1057_BIN): test_1057_dac7718_wait_stat.c test_framework.h $(DAC7718_SRC) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+DAC7718_SPI_FAST_SPIN_COUNT[[:space:]]+8000u[[:space:]]*$$' $(DAC7718_SRC) \
+	  || { echo "ERROR: DAC7718_SPI_FAST_SPIN_COUNT is no longer '8000u' in $(DAC7718_SRC)."; \
+	       echo "       Update FW_SPIN_COUNT in test_1057_dac7718_wait_stat.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+DAC7718_SPI_BYTE_TIMEOUT_MS[[:space:]]+20u[[:space:]]*$$' $(DAC7718_SRC) \
+	  || { echo "ERROR: DAC7718_SPI_BYTE_TIMEOUT_MS is no longer '20u' in $(DAC7718_SRC)."; \
+	       echo "       Update FW_BYTE_TIMEOUT_MS in test_1057_dac7718_wait_stat.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*for \(uint32_t s = 0; s < DAC7718_SPI_FAST_SPIN_COUNT; \+\+s\)' $(DAC7718_SRC) \
+	  || { echo "ERROR: dac7718_WaitStat's fast-spin loop is gone or reshaped in $(DAC7718_SRC)."; \
+	       echo "       The two constant greps above cannot see this -- they pin VALUES, not the"; \
+	       echo "       shape that consumes them. test_1057_dac7718_wait_stat.c models this loop;"; \
+	       echo "       re-read both before changing either."; \
+	       exit 1; }
+	@grep -qF 'return (((SPI2STAT & mask) != 0u) == want);' $(DAC7718_SRC) \
+	  || { echo "ERROR: dac7718_WaitStat's deadline branch no longer takes a FRESH SPI2STAT"; \
+	       echo "       read at expiry in $(DAC7718_SRC) -- that fresh-read is the exact #913"; \
+	       echo "       opus-review defect (a bare 'return false;' trusting the pre-check above"; \
+	       echo "       it) this suite exists to keep out. Neither constant grep above, nor the"; \
+	       echo "       modelled host test, can see this on its own -- see the file header of"; \
+	       echo "       test_1057_dac7718_wait_stat.c."; \
+	       exit 1; }
+	@test "$$(grep -cF 'dac7718_WaitStat(' $(DAC7718_SRC))" = "7" \
+	  || { echo "ERROR: expected exactly 7 occurrences of 'dac7718_WaitStat(' in $(DAC7718_SRC)"; \
+	       echo "       (1 definition + 6 call sites -- 3 in the write frame, 3 in the RW=1 NOP"; \
+	       echo "       readback), found $$(grep -cF 'dac7718_WaitStat(' $(DAC7718_SRC)). A call"; \
+	       echo "       site reverting to a bare register-poll spin would not otherwise be caught"; \
+	       echo "       by any guard here."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(DAC1057_BIN) test_1057_dac7718_wait_stat.c
+
 # Every suite, and every one of the eleven binaries. SEVENTH additive
 # collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
 # fw#1000, fw#913 vs fw#980, and now fw#913 vs fw#985 -- every one of them
@@ -499,7 +543,7 @@ $(SUSPENDREASON_BIN): test_985_suspend_reason_consistency.c test_framework.h $(S
 # re-express their target as a fragment -- a mechanical move of one recipe,
 # which is strictly cheaper than this resolution has been seven times running.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(SPI913_BIN) $(SDLOG_BIN) $(SUSPENDREASON_BIN)
+     $(SPI913_BIN) $(SDLOG_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -511,9 +555,10 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) 
 	./$(SPI913_BIN)
 	./$(SDLOG_BIN)
 	./$(SUSPENDREASON_BIN)
+	./$(DAC1057_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(SPI913_BIN) $(SDLOG_BIN) $(SUSPENDREASON_BIN) $(GEN_1000)
+	      $(SPI913_BIN) $(SDLOG_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN) $(GEN_1000)
 
 .PHONY: run clean
