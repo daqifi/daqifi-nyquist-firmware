@@ -145,6 +145,31 @@
 #   - This script's checks operate on the SOURCE TEXT of ONE function; they
 #     say nothing about what a DIFFERENT function (or a build-system /
 #     linker trick) could do to the same effect.
+#
+# FOUR SPECIFIC BYPASSES ARE PROVEN OPEN. An adversarial audit of PR #1016
+# demonstrated each with a valid-C edit that reintroduces #999 while every
+# check here still reports green. They are recorded rather than patched,
+# because five rounds of patching this script produced five rounds of new
+# bypasses and the honest fix is the seam below, not a sixth regex:
+#   1. A STRING LITERAL forges whole arguments. extract_call_args.pl is not
+#      literal-aware, so commas inside "..." split into extra arguments. A
+#      literal crafted to emit `storage->inputBuffer` and `storage->errorQueue`
+#      as separate arguments satisfies both equality checks while the real
+#      backing-storage arguments point at a shared pool. Note this is
+#      fail-OPEN, which contradicts that file's own fail-CLOSED reasoning --
+#      that reasoning covers literal PARENS, which truncate, not COMMAS.
+#   2. A `// }` comment line truncates body extraction. The brace-depth walk
+#      runs BEFORE comment stripping, so anything after such a line is
+#      invisible to every check below.
+#   3. The Makefile caller checks test PRESENCE, not POSITION. The expected
+#      token anywhere in the argument list passes, including in the wrong
+#      parameter slot with the right label elsewhere as a void*.
+#   4. `(storage) = &shared;` evades the reassignment ban, which requires the
+#      `=` to follow the bare identifier. A parenthesised lvalue is ordinary C.
+#
+# So: treat a green run as evidence against HONEST REGRESSION only. It is not
+# evidence against a determined or half-finished refactor, and it never was --
+# what changed is that the four routes above are now named instead of implied.
 # Closing these needs the real link this repo has twice done for similarly
 # non-includable UUTs (AD7609Scale.h split out of AD7609.h for #889,
 # JSON_StringEscape.h split out of JSON_Encoder.c for #164): split the pure

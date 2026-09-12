@@ -64,6 +64,17 @@
 # build loudly rather than blinding the guard, which is the safe direction
 # but is still a limitation and not a property to rely on. Making the scan
 # literal-aware is the fix if a literal argument ever becomes legitimate.
+#
+# CORRECTION, and it is the important half: the fail-CLOSED claim above holds
+# for a literal PAREN, which truncates the list. It is FALSE for a literal
+# COMMA, which ADDS forged arguments and therefore fails OPEN. An adversarial
+# audit of PR #1016 built the case: a literal crafted to emit
+# `storage->inputBuffer` and `storage->errorQueue` as separate arguments
+# satisfies both whole-argument equality checks while the real backing-storage
+# arguments point at a shared pool. The LIMITATION cases pinned in
+# test_extract_call_args.sh show exactly this -- F(a, "x,y", c) yields FOUR
+# arguments from three -- and the earlier wording drew the opposite conclusion
+# from that same output. Do not rely on the failure direction here.
 # test_extract_call_args.sh pins this behaviour in two cases marked
 # LIMITATION so it cannot change silently.
 # ==========================================================================
