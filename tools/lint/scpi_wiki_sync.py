@@ -74,6 +74,34 @@ HOUSE STYLE (#907) -- WHY TWO PROPERTIES, NOT THE THREE THE TICKET NAMED
     second row is dead regardless of what it would have done. See
     `duplicate_pattern_violations`.
 
+    DOMAIN GUARD -- WHAT S1/S2/S3 DO NOT MODEL, REFUSED RATHER THAN
+    SILENTLY MIS-READ. S1/S2/S3 above tokenize a pattern by splitting on
+    ':' and treating every other character as an ordinary letter. libscpi
+    does not: `matchPattern` (libraries/scpi/libscpi/src/utils.c:478)
+    strips a trailing '#' repeat-count suffix and defers to
+    `compareStrAndNum`, which ALSO accepts the spelling with that suffix
+    omitted, and `matchCommand` expands a '[...]' optional node into
+    multiple accepted spellings. A pattern using either construct --
+    `SYSTem:DEVice:NAME#` or `SYSTem:DEVice[:NAME]` -- could collide with
+    another registration at the PARSER, winning or losing in
+    `findCommandHeader` by table order, while S1/S2/S3 print clean, because
+    they would treat '#'/'['/']' as ordinary characters rather than the
+    special syntax libscpi gives them. Found by PR #1036's own second
+    adversarial audit round.
+
+    Expanding '[...]' combinatorially, or modelling '#' plus
+    `compareStrAndNum`, is a materially larger change than this fix, so
+    `domain_violations` does neither: it REFUSES any live pattern outside
+    the domain S1/S2/S3 actually reason about -- letters and digits, ':'
+    separators, '?' only as the FINAL character, '*' only as the FIRST
+    character -- failing the run loudly, with the offending pattern and
+    construct named, rather than silently treating '#'/'['/']' as ordinary
+    text. No allowlist, for the same reason S3 has none: there is no
+    acceptable instance of a construct the checker cannot parse. Measured
+    against the live table (294 registrations, 2026-09): the guard is a
+    no-op there -- every registered pattern already stays inside the
+    modelled domain.
+
 EXIT
     0 = in sync. 1 = drift, with each offending command named.
 """
@@ -309,6 +337,69 @@ def duplicate_pattern_violations(live_list):
     for pat in live_list:
         counts[pat] = counts.get(pat, 0) + 1
     return sorted(pat for pat, n in counts.items() if n > 1)
+
+
+# A node in the checker's modelled domain is one or more letters/digits --
+# nothing else. '#' and '[...]' are never legal here; '?' and '*' are valid
+# ONLY at the whole-pattern boundary (trailing / leading respectively) and
+# are stripped from the pattern before nodes are checked against this.
+_DOMAIN_NODE = re.compile(r'^[A-Za-z0-9]+$')
+
+
+def domain_violations(live):
+    """Sorted [(pattern, construct)] for live patterns using SCPI syntax
+    S1/S2/S3 above do not model -- see the module docstring's DOMAIN GUARD
+    section for the full rationale.
+
+    S1/S2/S3 (`style_violations`, `duplicate_pattern_violations`) split a
+    pattern on ':' and treat every other character as an ordinary letter.
+    libscpi's own parser does not: `matchPattern` (utils.c:478) strips a
+    trailing '#' repeat-count suffix and accepts the spelling without it too,
+    and `matchCommand` expands a '[...]' optional node into multiple
+    accepted spellings. Neither is a character the tokenizer above
+    understands, so a live pattern using either could collide with another
+    registration at the parser while every check above reports clean.
+
+    Rather than extend the tokenizer to model '#'/'[...]' (combinatorial for
+    '[...]', a second matcher for '#'), this refuses any pattern outside the
+    domain the existing checks actually reason about: letters and digits,
+    ':' node separators, a trailing '?' (and ONLY trailing), a leading '*'
+    (and ONLY leading, restricted to the IEEE common commands on the real
+    table). The leading '*' and trailing '?' are stripped from the pattern
+    before the remaining nodes are checked against `_DOMAIN_NODE`, so a '*'
+    or '?' anywhere else in the pattern also fails here (caught by the node
+    scan below, since neither survives inside a node once the boundary
+    characters are gone).
+
+    No allowlist, matching S3's own reasoning: there is no acceptable
+    instance of a construct this checker cannot parse -- the fix for a real
+    '#' or '[...]' pattern is to extend the checker, not to except it.
+    """
+    violations = []
+    for pat in sorted(live):
+        core = pat[1:] if pat.startswith("*") else pat
+        core = core[:-1] if core.endswith("?") else core
+        construct = None
+        if "#" in core:
+            construct = "'#' repeat-count suffix (matchPattern strips it " \
+                        "and also accepts the spelling without it)"
+        elif "[" in core or "]" in core:
+            construct = "'[...]' optional node (matchCommand expands it " \
+                        "into multiple accepted spellings)"
+        else:
+            for node in core.split(":"):
+                if _DOMAIN_NODE.match(node):
+                    continue
+                if "?" in node:
+                    construct = "'?' outside the final position"
+                elif "*" in node:
+                    construct = "'*' outside the first position"
+                else:
+                    construct = f"non-alphanumeric node {node!r}"
+                break
+        if construct:
+            violations.append((pat, construct))
+    return violations
 
 
 def is_form_of(written, pattern):
@@ -688,6 +779,131 @@ def _self_test_duplicate_patterns():
     return cases, failures
 
 
+# (pattern, expect_violation, why). Each `pattern` is fed to
+# `domain_violations` as a singleton set, exactly as a real live-pattern set
+# would be.
+DOMAIN_CASES = [
+    ("SYSTem:DEVice:NAME", False,
+     "the ordinary shape -- letters, digits, ':' separators only"),
+    ("*IDN?", False,
+     "leading '*' and trailing '?' are both inside the modelled domain -- "
+     "one of the real table's own IEEE common commands"),
+    ("SYSTem:DEVice:NAME#", True,
+     "libscpi's matchPattern strips a trailing '#' repeat-count suffix and "
+     "accepts the spelling without it too (utils.c:478) -- S1/S2/S3 "
+     "split on ':' only and would treat '#' as an ordinary letter"),
+    ("SYSTem:DEVice[:NAME]", True,
+     "libscpi's matchCommand expands a '[...]' optional node into multiple "
+     "accepted spellings -- S1/S2/S3 would treat '[' and ']' as ordinary "
+     "letters"),
+]
+
+
+def _self_test_domain_guard():
+    """Pin the domain-guard finding from PR #1036's SECOND adversarial audit
+    round -- one level over S1/S2/S3.
+
+    S1/S2/S3 (`style_violations`, `duplicate_pattern_violations`) tokenize a
+    pattern by splitting on ':' and treating every other character as an
+    ordinary letter. libscpi's own parser does not: `matchPattern`
+    (utils.c:478) strips a trailing '#' repeat-count suffix and defers
+    to `compareStrAndNum`, which ALSO accepts the spelling with that suffix
+    omitted, and `matchCommand` expands a '[...]' optional node into
+    multiple accepted spellings. A pattern using either construct could
+    collide with another registration at the parser -- winning or losing in
+    `findCommandHeader` by table order -- while every check above prints
+    clean, because none of them knows '#'/'['/']' is anything other than an
+    ordinary character.
+
+    Case 1/2 (via `DOMAIN_CASES`) drive `domain_violations` directly against
+    synthetic single-pattern sets carrying each construct, proving the
+    detector fires on both -- and does NOT fire on the ordinary shapes
+    (plain node, and the real table's own leading-'*'/trailing-'?' IEEE
+    common-command shape), which is the vacuity check for false positives.
+
+    Case 3 is the real-table vacuity guard mirroring `_self_test_style`'s
+    and `_self_test_duplicate_patterns`'s own: on the live SCPIInterface.c
+    table, `domain_violations` must report NOTHING (294 registrations,
+    characters in use are letters, digits, ':', a trailing '?', and a
+    leading '*' on 13 IEEE common commands -- `*CLS *ESE *ESE? *ESR? *IDN?
+    *OPC *OPC? *RST *SRE *SRE? *STB? *TST? *WAI`, all verified individually
+    clean; measured 2026-09-11. An earlier count of 8 missed the five
+    trailing entries -- corrected here after an opus review caught it, and
+    noted since the guard's own vacuity claim must not repeat a miscount).
+    If this ever fires, the domain was mis-specified against what actually
+    ships and must be widened to match it, not loosened until it passes.
+
+    Case 4 pins that the finding actually SURVIVES to `main()`'s exit code,
+    not just that `domain_violations()` computes the right list (case 1
+    already proves that) -- the exact "computed but discarded before the
+    exit code" hole an opus review found one round earlier on this same
+    file, for S3's own verdict wiring (see `_self_test_duplicate_patterns`'s
+    case 3). This drives `main()` itself with `--style-only` on a table
+    carrying the '#' pattern from case 1 and asserts a NON-ZERO exit, using
+    the same module-level `self_test` spy `_self_test_duplicate_patterns`
+    and `_self_test_style_only_entry` use -- required so `main()`'s own
+    unconditional `self_test()` call does not recurse back into this
+    function.
+    """
+    import contextlib
+    import io
+    import tempfile
+    cases, failures = len(DOMAIN_CASES), 0  # cases 1/2 folded into the table
+
+    for pattern, expected, why in DOMAIN_CASES:
+        v = domain_violations({pattern})
+        got = any(p == pattern for p, _c in v)
+        if got != expected:
+            failures += 1
+            print(f"  FAIL domain guard({pattern!r}) violation={got}, "
+                  f"expected {expected} -- {why}")
+
+    # Case 3: real-table vacuity guard.
+    scpi_c = "firmware/src/services/SCPI/SCPIInterface.c"
+    if os.path.exists(scpi_c):
+        cases += 1
+        live, _commented, _live_list = registered_patterns(scpi_c)
+        v = domain_violations(live)
+        if v:
+            failures += 1
+            print(f"  FAIL domain guard vacuity: the real command table has "
+                  f"pattern(s) outside the checker's modelled domain "
+                  f"{v!r} -- if this syntax is genuinely shipping, S1/S2/S3 "
+                  f"need a real extension, not a loosened guard.")
+
+    # Case 4: the verdict must reach main()'s exit code under --style-only.
+    cases += 1
+    src = ('const scpi_command_t scpi_commands[] = {\n'
+           '    {.pattern = "SYSTem:DEVice:NAME#", .callback = SCPI_A,},\n'
+           '    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n};\n')
+    with tempfile.TemporaryDirectory() as d:
+        c = os.path.join(d, "scpi.c")
+        with open(c, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        global self_test
+        real_self_test = self_test
+        argv_saved = sys.argv
+
+        def _spy_pass():
+            return 0
+
+        try:
+            self_test = _spy_pass
+            sys.argv = ["scpi_wiki_sync.py", "--style-only", "--scpi", c]
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = main()
+        finally:
+            self_test = real_self_test
+            sys.argv = argv_saved
+        if rc == 0:
+            failures += 1
+            print("  FAIL domain guard verdict wiring: main() --style-only "
+                  "returned 0 on a table with a '#' pattern -- the domain "
+                  "guard finding was computed but discarded somewhere "
+                  "between domain_violations() and the exit code")
+    return cases, failures
+
+
 def _self_test_style_only_entry():
     """Pin that `main()`'s `--style-only` branch runs `self_test()` first.
 
@@ -798,6 +1014,8 @@ def self_test():
     failures += style_failures
     dup_cases, dup_failures = _self_test_duplicate_patterns()
     failures += dup_failures
+    domain_cases, domain_failures = _self_test_domain_guard()
+    failures += domain_failures
     entry_cases, entry_failures = _self_test_style_only_entry()
     failures += entry_failures
     if failures:
@@ -807,6 +1025,7 @@ def self_test():
           f"cases + {e2e_cases}/{e2e_cases} end-to-end cases + "
           f"{style_cases}/{style_cases} house-style cases + "
           f"{dup_cases}/{dup_cases} duplicate-pattern cases + "
+          f"{domain_cases}/{domain_cases} domain-guard cases + "
           f"{entry_cases}/{entry_cases} style-only entry cases pass")
     return 0
 
@@ -881,13 +1100,16 @@ def _self_test_end_to_end():
 
 
 def load_and_check_style(scpi_c):
-    """(live, commented, style_short, style_ambig, style_dup) for --scpi's table.
+    """(live, commented, style_short, style_ambig, style_dup, style_domain)
+    for --scpi's table.
 
     `style_short`/`style_ambig` already have `STYLE_ALLOWLIST` applied.
-    `style_dup` does NOT -- see `duplicate_pattern_violations` for why an
-    exact-duplicate pattern string has no allowlistable case. Shared by
-    `--style-only` and the normal wiki-comparison flow so the two do not
-    diverge on how the table is loaded or the allowlist is applied.
+    `style_dup` and `style_domain` do NOT -- see `duplicate_pattern_violations`
+    and `domain_violations` for why neither an exact-duplicate pattern string
+    nor a pattern outside the checker's modelled syntax has an allowlistable
+    case. Shared by `--style-only` and the normal wiki-comparison flow so the
+    two do not diverge on how the table is loaded or the allowlist is
+    applied.
     """
     live, commented, live_list = registered_patterns(scpi_c)
     if not live:
@@ -897,11 +1119,13 @@ def load_and_check_style(scpi_c):
     style_short, style_ambig = apply_style_allowlist(
         style_short, style_ambig, STYLE_ALLOWLIST)
     style_dup = duplicate_pattern_violations(live_list)
-    return live, commented, style_short, style_ambig, style_dup
+    style_domain = domain_violations(live)
+    return live, commented, style_short, style_ambig, style_dup, style_domain
 
 
-def print_style_violations(short_v, ambig, dup):
-    """Print #907 house-style findings (S1, S2, S3); return True if any remain."""
+def print_style_violations(short_v, ambig, dup, domain):
+    """Print #907 house-style findings (S1, S2, S3, domain guard); return
+    True if any remain."""
     if short_v:
         print(f"\n::error::{len(short_v)} SCPI node(s) have a short form "
               f"under 2 characters:")
@@ -931,7 +1155,26 @@ def print_style_violations(short_v, ambig, dup):
         print("  is silently unreachable no matter what its callback does --")
         print("  no error, just dead code. Give it a distinct pattern string,")
         print("  or remove the duplicate registration.")
-    return bool(short_v or ambig or dup)
+    if domain:
+        print(f"\n::error::{len(domain)} pattern(s) use SCPI syntax this "
+              f"checker cannot model:")
+        for pat, construct in domain:
+            print(f"    {pat}  ({construct})")
+        print("\n  S1/S2/S3 above split a pattern on ':' only and treat")
+        print("  every other character as an ordinary letter -- they do not")
+        print("  know libscpi's own special syntax: matchPattern")
+        print("  (utils.c:478) strips a trailing '#' repeat-count suffix")
+        print("  and also accepts the spelling with it omitted, and")
+        print("  matchCommand expands a '[...]' optional node into multiple")
+        print("  accepted spellings. A pattern using either construct could")
+        print("  collide with another registration at the PARSER while")
+        print("  every check above reports clean, because they would treat")
+        print("  '#'/'['/']' as ordinary characters instead. Respell the")
+        print("  pattern within the modelled domain (letters and digits,")
+        print("  ':' separators, a trailing '?', a leading '*'), or extend")
+        print("  this checker to understand the construct before")
+        print("  registering it.")
+    return bool(short_v or ambig or dup or domain)
 
 
 def main():
@@ -940,8 +1183,9 @@ def main():
     ap.add_argument("--self-test", action="store_true",
                     help="check the abbreviation matcher and exit")
     ap.add_argument("--style-only", action="store_true",
-                    help="check the #907 house-style gate (S1/S2/S3) over "
-                         "--scpi and exit -- no --wiki clone needed")
+                    help="check the #907 house-style gate (S1/S2/S3 + domain "
+                         "guard) over --scpi and exit -- no --wiki clone "
+                         "needed")
     ap.add_argument("--wiki",
                     help="path to a clone of the daqifi-nyquist-firmware.wiki repo")
     ap.add_argument("--allow", default="tools/lint/scpi-wiki-allow.txt",
@@ -957,11 +1201,13 @@ def main():
     if args.style_only:
         if self_test() != 0:  # a broken matcher/detector makes this verdict junk --
             return 1           # same guard the --wiki path takes below, not skipped here
-        live, commented, style_short, style_ambig, style_dup = load_and_check_style(args.scpi)
+        live, commented, style_short, style_ambig, style_dup, style_domain = \
+            load_and_check_style(args.scpi)
         print(f"registered SCPI commands : {len(live)}")
         print(f"commented-out patterns   : {len(commented)} (not shipped, ignored)")
         print(f"house-style allowlist    : {len(STYLE_ALLOWLIST)} pattern(s)")
-        has_violations = print_style_violations(style_short, style_ambig, style_dup)
+        has_violations = print_style_violations(
+            style_short, style_ambig, style_dup, style_domain)
         if not has_violations:
             print("\nOK: no house-style violations (#907).")
             return 0
@@ -977,10 +1223,12 @@ def main():
     # the module docstring's HOUSE STYLE section for why there is no
     # diff-aware mechanism), and FATAL unconditionally -- unlike `ghosts`
     # below, there is no scheduled-run ordering trap to excuse it.
-    live, commented, style_short, style_ambig, style_dup = load_and_check_style(args.scpi)
+    live, commented, style_short, style_ambig, style_dup, style_domain = \
+        load_and_check_style(args.scpi)
     rows = wiki_rows(args.wiki)
     allow = load_allowlist(args.allow)
-    style_violated = print_style_violations(style_short, style_ambig, style_dup)
+    style_violated = print_style_violations(
+        style_short, style_ambig, style_dup, style_domain)
 
     written = [cmd for cmd, _ in rows]
     # Documented means a COMMAND-TABLE ROW names it. Nothing else counts.
