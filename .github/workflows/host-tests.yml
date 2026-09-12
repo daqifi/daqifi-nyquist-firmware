@@ -103,6 +103,15 @@ name: host-tests
 #     in its own hunk further down each list. Whichever merges second should
 #     keep ONE copy of each path -- a duplicate is harmless to Actions but is
 #     noise, and the two comments explaining it are then redundant too.
+#   - test_1004_help_write_abort.c (#1004): the Makefile target's recipe greps
+#     firmware/src/config/default/FreeRTOSConfig.h for configTICK_RATE_HZ and
+#     configTICK_TYPE_WIDTH_IN_BITS -- the test derives its milliseconds<->tick
+#     assumptions from both -- but until this entry that file was not in
+#     either path list. A change touching only FreeRTOSConfig.h, exactly the
+#     change that would invalidate those assumptions, never re-ran the suite.
+#     Found by PR #976's adversarial audit (#1062) and filed rather than
+#     folded into that PR, which only added tools/lint/cdef.py to this
+#     workflow and picked this gap up from a merge with main.
 
 on:
   pull_request:
@@ -125,6 +134,10 @@ on:
       - 'firmware/src/HAL/UserSpi/UserSpi.c'
       - 'firmware/src/HAL/UserUart/UserUart.c'
       - 'firmware/src/HAL/UserI2c/UserI2c.c'
+      # #1004: the ms<->tick assumptions test_1004_help_write_abort.c derives
+      # are grepped straight out of this file (configTICK_RATE_HZ,
+      # configTICK_TYPE_WIDTH_IN_BITS).
+      - 'firmware/src/config/default/FreeRTOSConfig.h'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -146,6 +159,10 @@ on:
       - 'firmware/src/HAL/UserSpi/UserSpi.c'
       - 'firmware/src/HAL/UserUart/UserUart.c'
       - 'firmware/src/HAL/UserI2c/UserI2c.c'
+      # #1004: the ms<->tick assumptions test_1004_help_write_abort.c derives
+      # are grepped straight out of this file (configTICK_RATE_HZ,
+      # configTICK_TYPE_WIDTH_IN_BITS).
+      - 'firmware/src/config/default/FreeRTOSConfig.h'
       - '.github/workflows/host-tests.yml'
 
 permissions:
