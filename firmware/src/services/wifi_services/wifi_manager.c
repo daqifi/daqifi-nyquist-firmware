@@ -2432,6 +2432,24 @@ wifi_link_state_t wifi_manager_GetLinkState(void) {
             // outside 'add a query', so the documentation was corrected to
             // what these flags can support instead. Changing the flag itself
             // is a separate state-machine change with its own blast radius.
+            //
+            // KNOWN RESIDUAL, #1060: this flag can also be STALE. The AP->STA
+            // APPLY branch clears AP_STARTED but not STA_CONNECTED (its
+            // mirror-image STA->AP branch does clear it), so after a switch
+            // away from an AP that had an associated station, this test can
+            // report CONNECTED with no link at all -- through the 500 ms
+            // vTaskDelay and until a failed-connect callback fires. The
+            // periodic reconciler cannot cover it: it is gated on STA_STARTED,
+            // which is not set yet, and it runs from the same app_WifiTask that
+            // is sitting in that delay.
+            //
+            // NOT fixed here because it is PRE-EXISTING, checked rather than
+            // assumed: wifi_manager_GetWiFiStatus() on main at d71147e31 tests
+            // this flag first in exactly this order, so it already answered
+            // CONNECTED in that window. This PR neither touches the mode-switch
+            // branch nor changes the ordering -- it made the existing wrongness
+            // visible by publishing a contract about it. #1060 carries the fix
+            // and the second-device bench test it needs.
             if (0u != (flags & WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
                 return WIFI_LINK_STATE_CONNECTED;
             }
@@ -2450,6 +2468,34 @@ wifi_link_state_t wifi_manager_GetLinkState(void) {
                 }
                 // AP is running but no clients connected
                 return WIFI_LINK_STATE_AP_IDLE;
+            }
+
+            // Before calling this "radio up, no link", check the driver. A
+            // LATE failure inside m2m_wifi_init_start() leaves gu8WifiState at
+            // WIFI_STATE_START -- it is assigned before hif_init() and before
+            // nm_get_firmware_full_info(), and only the hif_init failure path
+            // winds it back to DEINIT. So a blank/mismatched WINC firmware
+            // (reg==0 -> M2M_ERR_FAIL, or M2M_ERR_FW_VER_MISMATCH) returns an
+            // error with the state still reading START, WDRV_WINC_Tasks latches
+            // SYS_STATUS_ERROR, and wifi_manager re-queues its INIT event about
+            // every 10 ms forever without ever starting AP or STA.
+            //
+            // That is exactly what INITFAULT was added for, and without this
+            // test it could never be reported for it: the m2m state reads START,
+            // not INIT, so the INIT arm below is never entered and a permanently
+            // wedged driver answered NOLINK -- indistinguishable from an ordinary
+            // STA that simply has not associated yet. Found by the adversarial
+            // audit of PR #1044; the new value was failing at the one case it
+            // exists to name.
+            //
+            // Placed HERE, after the CONNECTED and AP branches, deliberately: a
+            // link that is actually up keeps its answer whatever the driver
+            // status says, so this can only ever refine "no link" into "no link,
+            // and the driver is why". The 3-value projection is unchanged either
+            // way -- INIT_FAULT and NO_LINK both map to WIFI_STATUS_DISCONNECTED
+            // -- so no existing consumer can observe this.
+            if (WDRV_WINC_Status(sysObj.drvWifiWinc) < SYS_STATUS_UNINITIALIZED) {
+                return WIFI_LINK_STATE_INIT_FAULT;
             }
 
             // Radio is up but there is no link at all: a STA that has not
