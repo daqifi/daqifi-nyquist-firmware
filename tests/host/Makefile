@@ -90,6 +90,29 @@ SUSPENDREASON_BIN := run_985_tests
 # whole board/driver graph). No UUT copy, no stubs, and NOT $(INCLUDES).
 JSONESC_BIN := run_json_escape_tests
 
+# #947: SCPI_SysInfoTextGet's shared-response-buffer write-abort bound. Same
+# situation as #943 -- SCPIInterface.c is NOT includable on the host (libscpi
+# + FreeRTOS + the whole board/driver graph), so the test re-implements
+# SCPI_WriteWithRetry's loop and SysInfoText_Write's two guards against a mock
+# clock and mock transport, and compares pre-#947/guard-1-only/post-#947
+# verdicts.
+#
+# That makes three firmware constants a COPY (the two SCPI_WriteWithRetry
+# retry constants, shared with every other SCPI write, plus the new
+# SCPI_SYSINFO_WRITE_BUDGET_MS this issue adds), PLUS the same 1000 Hz /
+# 32-bit-TickType_t assumption #943 already makes (this test's MS_TO_TICKS is
+# the identity only because of that). The recipe greps all of them out of the
+# real source first and refuses to build if any has changed -- including the
+# two FreeRTOS tick-config values, which #943 documented as an assumption but
+# never pinned (found by Qodo /agentic_review on this PR: a change to either
+# would silently invalidate this test's, and #943's, millisecond arithmetic
+# without the build failing). Deliberately grepped here rather than adding a
+# 4th grep to $(BENCH_BIN) -- this is the newer, still-open PR; #943 is
+# shipped and untouched by this change.
+SYSINFO_BIN := run_947_tests
+SCPI_INTERFACE_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
+FREERTOS_CONFIG_SRC := ../../firmware/src/config/default/FreeRTOSConfig.h
+
 # #913: UserSpi.c's spi_XferByte busy-spin -> spin-then-vTaskDelay yield.
 # Like BENCH_BIN this needs no UUT copy and no stubs -- UserSpi.c is NOT
 # includable on the host (FreeRTOS, Harmony's definitions.h/configuration.h,
@@ -207,6 +230,32 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	       echo "       Update FW_STALL_POLL_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
+
+$(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE_SRC) $(FREERTOS_CONFIG_SRC)
+	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_INTERFACE_SRC) \
+	  || { echo "ERROR: SCPI_WRITE_MAX_RETRIES is no longer '200' in $(SCPI_INTERFACE_SRC)."; \
+	       echo "       Update FW_WRITE_MAX_RETRIES in test_947_sysinfo_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+SCPI_WRITE_RETRY_DELAY_MS[[:space:]]+5[[:space:]]*$$' $(SCPI_INTERFACE_SRC) \
+	  || { echo "ERROR: SCPI_WRITE_RETRY_DELAY_MS is no longer '5' in $(SCPI_INTERFACE_SRC)."; \
+	       echo "       Update FW_WRITE_RETRY_DELAY_MS in test_947_sysinfo_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+SCPI_SYSINFO_WRITE_BUDGET_MS[[:space:]]+2000U[[:space:]]*$$' $(SCPI_INTERFACE_SRC) \
+	  || { echo "ERROR: SCPI_SYSINFO_WRITE_BUDGET_MS is no longer '2000U' in $(SCPI_INTERFACE_SRC)."; \
+	       echo "       Update FW_SYSINFO_BUDGET_MS in test_947_sysinfo_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_RATE_HZ[[:space:]]+\( \( TickType_t \) 1000 \)[[:space:]]*$$' $(FREERTOS_CONFIG_SRC) \
+	  || { echo "ERROR: configTICK_RATE_HZ is no longer '1000' in $(FREERTOS_CONFIG_SRC)."; \
+	       echo "       This test's MS_TO_TICKS(ms) == ms identity (and #943's) assumes a 1000 Hz"; \
+	       echo "       tick. Re-derive the timing model in test_947_sysinfo_write_abort.c (and"; \
+	       echo "       test_943_bench_stall_bound.c) before trusting either against new firmware."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_TYPE_WIDTH_IN_BITS[[:space:]]+TICK_TYPE_WIDTH_32_BITS[[:space:]]*$$' $(FREERTOS_CONFIG_SRC) \
+	  || { echo "ERROR: configTICK_TYPE_WIDTH_IN_BITS is no longer TICK_TYPE_WIDTH_32_BITS in $(FREERTOS_CONFIG_SRC)."; \
+	       echo "       This test's uint32_t elapsed-tick arithmetic (and #943's) assumes a 32-bit"; \
+	       echo "       TickType_t. Re-derive the timing model before trusting either against new firmware."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(SYSINFO_BIN) test_947_sysinfo_write_abort.c
 
 # THE GREPS BELOW PIN CONSTANTS, AND THAT IS ALL THEY CLAIM. They do not pin
 # the loop's SHAPE. Review of #1009 was right that constants alone cannot catch
@@ -485,26 +534,27 @@ $(SUSPENDREASON_BIN): test_985_suspend_reason_consistency.c test_framework.h $(S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPENDREASON_BIN) test_985_suspend_reason_consistency.c
 
-# Every suite, and every one of the eleven binaries. SEVENTH additive
+# Every suite, and every one of the twelve binaries. EIGHTH additive
 # collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
-# fw#1000, fw#913 vs fw#980, and now fw#913 vs fw#985 -- every one of them
-# two branches appending a line to these same two lists. Resolved the same
-# way every time: keep each side's target rule INTACT and union only `run`
-# and `clean`. Dropping a rule loses a suite silently; duplicating one
-# silently shadows the other.
+# fw#1000, fw#913 vs fw#980, fw#913 vs fw#985, and now the fw#913-accumulated
+# head vs fw#947 -- every one of them two branches appending a line to these
+# same two lists. Resolved the same way every time: keep each side's target
+# rule INTACT and union only `run` and `clean`. Dropping a rule loses a suite
+# silently; duplicating one silently shadows the other.
 #
 # #1026 is the ticket to stop this, and PR #1040 implements it by moving each
 # target into tests/host/tests/<issue>-<slug>.mk so a new suite appends to an
 # accumulator instead of editing a shared line. Whichever lands first, the rest
 # re-express their target as a fragment -- a mechanical move of one recipe,
-# which is strictly cheaper than this resolution has been seven times running.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
+# which is strictly cheaper than this resolution has been eight times running.
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
      $(SPI913_BIN) $(SDLOG_BIN) $(SUSPENDREASON_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
 	./$(JSONESC_BIN)
+	./$(SYSINFO_BIN)
 	./$(SUSPEND_BIN)
 	./$(DAC980_BIN)
 	./$(HELP_BIN)
@@ -513,7 +563,7 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) 
 	./$(SUSPENDREASON_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(SPI913_BIN) $(SDLOG_BIN) $(SUSPENDREASON_BIN) $(GEN_1000)
 
 .PHONY: run clean

@@ -69,6 +69,18 @@ name: host-tests
 #     "refactor escapes the trigger" gap without dragging in every unrelated
 #     services/ file (streaming.c, wifi_manager.c, sd_card_manager.c, the
 #     whole SCPI/ subdirectory, ...).
+#   - test_947_sysinfo_write_abort.c: greps SCPIInterface.c for three
+#     constants (the two shared SCPI_WriteWithRetry retry constants plus the
+#     new per-callback SCPI_SYSINFO_WRITE_BUDGET_MS) and fails the build if
+#     any drifts. Already covered by the existing 'firmware/src/services/SCPI/**'
+#     entry above. It ALSO greps firmware/src/config/default/FreeRTOSConfig.h
+#     for the 1000 Hz tick rate and 32-bit TickType_t width its millisecond
+#     arithmetic assumes (the same assumption test_943_bench_stall_bound.c
+#     already makes, undocumented in this file's trigger list until now) --
+#     that file is NOT matched by any entry above, so it gets its own line.
+#     Found by Qodo /agentic_review on the #947 PR: without this entry, a
+#     tick-config change could silently invalidate both host tests' timing
+#     model and CI would stay green.
 #   - test_980_dac7718_error_paths.c (#980): the Makefile target lists
 #     firmware/src/HAL/DAC7718/DAC7718.c as a build dependency (its grep
 #     guards pin identifiers/branch-counts in that file, and SCPIDAC.c) --
@@ -122,6 +134,7 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/config/default/FreeRTOSConfig.h'
       - 'firmware/src/HAL/UserSpi/UserSpi.c'
       - 'firmware/src/HAL/UserUart/UserUart.c'
       - 'firmware/src/HAL/UserI2c/UserI2c.c'
@@ -143,6 +156,7 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/config/default/FreeRTOSConfig.h'
       - 'firmware/src/HAL/UserSpi/UserSpi.c'
       - 'firmware/src/HAL/UserUart/UserUart.c'
       - 'firmware/src/HAL/UserI2c/UserI2c.c'
