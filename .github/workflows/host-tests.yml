@@ -51,6 +51,16 @@ name: host-tests
 # which the glob added in the same commit plainly matches. Caught by #941's
 # round-2 pre-merge audit.
 #
+#   - test_958_sd_benchmark_filename_collision.c: greps SCPIStorageSD.c for the
+#     scratch-name format (covered by the SCPI/ entry above) AND
+#     sd_card_services/sd_card_manager.h for SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX
+#     being 40, which its no-truncation case is arithmetic on. That header had
+#     no entry here, so a PR changing ONLY the length constant matched no path
+#     and the guard did not run -- a guard that cannot fire for the file it
+#     guards. Listed by file, not by directory: sd_card_manager.c is large and
+#     changes often, and no host test reads it. (Its dependence on
+#     FreeRTOSConfig.h's tick width is covered by the test_1004 bullet below --
+#     see the note appended there.)
 #   - test_913_spi_wait_stat.c: models the #913 spin-then-yield wait loop,
 #     whose shape is shared by all THREE files carrying it -- UserSpi.c,
 #     UserUart.c and UserI2c.c. Only UserSpi.c was listed here at first, so a
@@ -112,6 +122,11 @@ name: host-tests
 #     Found by PR #976's adversarial audit (#1062) and filed rather than
 #     folded into that PR, which only added tools/lint/cdef.py to this
 #     workflow and picked this gap up from a merge with main.
+#
+#     test_958_sd_benchmark_filename_collision.c's uniqueness argument also
+#     rests on this same 32-bit tick width -- a 16-bit tick would make its
+#     sequence field the only discriminator -- so this entry is load-bearing
+#     for two suites, not one.
 
 on:
   pull_request:
@@ -131,6 +146,7 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/HAL/UserSpi/UserSpi.c'
       - 'firmware/src/HAL/UserUart/UserUart.c'
       - 'firmware/src/HAL/UserI2c/UserI2c.c'
@@ -156,6 +172,7 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/HAL/UserSpi/UserSpi.c'
       - 'firmware/src/HAL/UserUart/UserUart.c'
       - 'firmware/src/HAL/UserI2c/UserI2c.c'
