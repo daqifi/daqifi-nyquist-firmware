@@ -276,6 +276,22 @@ TEST(separate_storage_input_buffer_not_aliased) {
      * on real hardware by the companion daqifi-python-test-suite test
      * `test_999_scpi_cross_transport_isolation.py` (daqifi-python-test-suite
      * PR #339, https://github.com/daqifi/daqifi-python-test-suite/pull/339).
+     *
+     * BE CLEAR ABOUT WHAT THAT DELEGATION CURRENTLY BUYS: that companion is
+     * NOT in release validation today, for two independent reasons, and a
+     * reader should not assume the device-level case is covered by CI.
+     *   1. PR #339 is unmerged, so the pinned daqifi-python-test-suite does
+     *      not contain the file at all, and regression_gate.discover() can
+     *      only enrol files that exist.
+     *   2. Once it IS merged it is registered gate=False on purpose, because
+     *      it correctly FAILS on firmware without this fix -- gating it before
+     *      this PR lands would redden the nightly for a known-open issue. It
+     *      flips to gated when this merges; that is written in its registry
+     *      entry with the same instruction.
+     * Measured both directions on hardware (board 7E2837886201026A, images
+     * told apart by identity.firmware_crc32): FAIL 2/2 pre-fix (CA73B47E),
+     * PASS 2/2 on this fix (693DC962). So the coverage exists and is proven;
+     * it is the SEQUENCING that leaves it outside the gate right now.
      * This check instead pins the structural precondition for that
      * corruption -- aliased buffer.data pointers -- by proving it is FALSE
      * for the fixed shape.) */
