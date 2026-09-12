@@ -2507,13 +2507,10 @@ wifi_link_state_t wifi_manager_GetLinkState(void) {
             // by the adversarial audit of PR #1044, in the fix for the round
             // before it.
             //
-            // Note this arm therefore differs from the WIFI_STATE_INIT arm
-            // below, which deliberately does NOT guard on validity -- do not
-            // harmonise them. The REINIT park leaves gu8WifiState alone, so the
-            // transient lands with m2m reading START and reaches THIS arm only.
-            // Nothing parks an invalid object while m2m reports INIT: there, an
-            // invalid object means WDRV_WINC_Initialize never produced one,
-            // which is honestly a fault.
+            // The WIFI_STATE_INIT arm below carries the IDENTICAL test. An
+            // earlier revision of this comment said the two deliberately
+            // differed and told the reader not to harmonise them; that was
+            // wrong, and the FW-update path in that arm's comment is why.
             //
             // A re-initialising driver with a VALID object cannot trip this
             // either: WDRV_WINC_Initialize sets sysStat to SYS_STATUS_BUSY
@@ -2541,10 +2538,23 @@ wifi_link_state_t wifi_manager_GetLinkState(void) {
             // would report the normal couple-of-seconds post-power-up window as
             // a fault, which is a false alarm, not observability.
             //
-            // WDRV_WINC_Status() itself returns SYS_STATUS_ERROR for an invalid
-            // module object, so no separate SYS_MODULE_OBJ_INVALID guard is
-            // needed here -- "no driver instance while m2m reports INIT" is
-            // honestly a fault.
+            // The module object must be VALID, exactly as in the START arm.
+            // Two earlier revisions of this comment claimed no such guard was
+            // needed here, on the premise that nothing parks an invalid object
+            // while m2m reports INIT. That premise is FALSE and an adversarial
+            // audit of PR #1044 produced the path: the WiFi serial bridge calls
+            // m2m_wifi_download_mode(), which sets gu8WifiState to
+            // WIFI_STATE_INIT, and the FW-update exit queues DEINIT, which
+            // parks sysObj.drvWifiWinc at SYS_MODULE_OBJ_INVALID before its
+            // ~120 ms reset. Nothing restores the m2m state in that window, so
+            // an ordinary SYST:COMM:LAN:FWUpdate exit reported INITFAULT on a
+            // healthy board -- the same false alarm the START arm was fixed for.
+            //
+            // Both arms now carry the SAME test, deliberately. The asymmetry
+            // was the defect: it rested on a claim about what cannot happen,
+            // and that claim was wrong twice. A negative status counts as a
+            // fault only when there is a real driver instance behind it, in
+            // every state -- which needs no claim about the world at all.
             //
             // WDRV_WINC_Status() reads driver state WITHOUT synchronization
             // while the WINC task writes it -- both fields are plain, not
@@ -2571,7 +2581,8 @@ wifi_link_state_t wifi_manager_GetLinkState(void) {
             // is the ordinary cost of polling a state that is still moving. It
             // reaches no control path either -- wifi_manager_GetWiFiStatus()
             // maps INIT and INIT_FAULT to the same DISCONNECTED value.
-            if (WDRV_WINC_Status(sysObj.drvWifiWinc) < SYS_STATUS_UNINITIALIZED) {
+            if ((SYS_MODULE_OBJ_INVALID != sysObj.drvWifiWinc) &&
+                (WDRV_WINC_Status(sysObj.drvWifiWinc) < SYS_STATUS_UNINITIALIZED)) {
                 return WIFI_LINK_STATE_INIT_FAULT;
             }
             return WIFI_LINK_STATE_INIT;
