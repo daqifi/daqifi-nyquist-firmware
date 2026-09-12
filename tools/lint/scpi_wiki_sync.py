@@ -618,7 +618,16 @@ def _self_test_style():
     would leave `--style-only` green on the real table while establishing
     nothing -- the same failure class `scpi_claim_path.py --self-test`
     guards against for its own gate.
+
+    Two further cases at the end drive `main()` itself and pin that the S1
+    and S2 verdicts -- not just `style_violations()`'s raw return, which the
+    cases above already check -- reach the exit code. See their own comment
+    for why: this is the round-4 finding, the sharpest of the three
+    adversarial-audit rounds against this branch.
     """
+    import contextlib
+    import io
+    import tempfile
     failures = 0
     for pattern, expected, why in STYLE_S1_CASES:
         short_v, _ = style_violations({pattern})
@@ -664,6 +673,80 @@ def _self_test_style():
             print(f"  FAIL style vacuity guard: unfiltered S2 ambiguous "
                   f"pairs on the real table are {sorted(ambig_pairs_only)}, "
                   f"expected exactly {{{expected_pair}}}.")
+
+    # The S1/S2 verdict must reach main()'s exit code, not just
+    # style_violations()'s raw return -- which every case above checks
+    # directly, bypassing print_style_violations()/main() entirely.
+    #
+    # The round-3 adversarial audit against this branch reproduced exactly
+    # this hole by mutating print_style_violations's own combined return:
+    #
+    #     return bool(short_v or ambig or dup or domain)
+    #     ->    return bool(dup or domain)
+    #
+    # Under that mutation the self-test as it stood then (14 matcher + 3
+    # end-to-end + 14 style + 3 duplicate-pattern + 6 domain-guard + 2
+    # style-only-entry cases) passed IN FULL at exit 0, while a real
+    # lowercase-start violation (`CONFigure:ADC:chanBADnode`) went from exit
+    # 1 to exit 0 -- because `_self_test_style_only_entry` drives `main()`
+    # over a ZERO-violation table, so it only proves `self_test()` itself is
+    # invoked and honoured, not that a real S1/S2 finding survives to the
+    # exit code. `duplicate_pattern_violations` and `domain_violations`
+    # already got this exact protection, one round each
+    # (`_self_test_duplicate_patterns`'s case 3, `_self_test_domain_guard`'s
+    # case 4, each added after a review found the identical hole for that
+    # detector); S1 and S2 -- the two original #907 detectors this whole
+    # file exists for -- never did, which is the asymmetry the round-3 audit
+    # named as the sharpest finding of the three rounds.
+    #
+    # Each synthetic table below isolates ONE detector, so a mutation that
+    # drops either half of the `or` chain is caught by the matching case
+    # regardless of which half survives:
+    #   - the S1 table's sole registration's violating node ("chanCALM") has
+    #     an empty short form (starts lowercase) and cannot collide with
+    #     anything -- nothing else is registered -- so S2 stays silent and
+    #     only S1 can be firing.
+    #   - the S2 table's pair both pass S1 individually (CONF/ADC/CHAN are
+    #     each >=2 characters) but share the spelling CONF:ADC:CHAN, so only
+    #     S2 can be firing.
+    cases += 2
+    for src, label in (
+        ('const scpi_command_t scpi_commands[] = {\n'
+         '    {.pattern = "SYSTem:chanCALM", .callback = SCPI_A,},\n'
+         '    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n};\n',
+         "S1 short-form-only"),
+        ('const scpi_command_t scpi_commands[] = {\n'
+         '    {.pattern = "CONFigure:ADC:CHANnel", .callback = SCPI_A,},\n'
+         '    {.pattern = "CONFigure:ADC:CHANcalm", .callback = SCPI_B,},\n'
+         '    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n};\n',
+         "S2 ambiguous-pair-only"),
+    ):
+        with tempfile.TemporaryDirectory() as d:
+            c = os.path.join(d, "scpi.c")
+            with open(c, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            global self_test
+            real_self_test = self_test
+            argv_saved = sys.argv
+
+            def _spy_pass():
+                return 0
+
+            try:
+                self_test = _spy_pass
+                sys.argv = ["scpi_wiki_sync.py", "--style-only", "--scpi", c]
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rc = main()
+            finally:
+                self_test = real_self_test
+                sys.argv = argv_saved
+        if rc == 0:
+            failures += 1
+            print(f"  FAIL {label} verdict wiring: main() --style-only "
+                  f"returned 0 on a table with only a {label} violation -- "
+                  f"the finding was computed but discarded somewhere "
+                  f"between style_violations() and the exit code")
+
     return cases, failures
 
 
@@ -995,6 +1078,182 @@ def _self_test_style_only_entry():
     return cases, failures
 
 
+def _self_test_wiki_entry():
+    """Pin that a #907 violation reaching `print_style_violations()` through
+    the `--wiki` entry path also reaches `main()`'s exit code -- not just
+    through `--style-only`.
+
+    Round-3's adversarial audit named this as the second of the round-4
+    family: EVERY case in this file that drives `main()` end to end
+    (`_self_test_duplicate_patterns`'s case 3, `_self_test_domain_guard`'s
+    case 4, `_self_test_style_only_entry`, and the two new cases at the end
+    of `_self_test_style` above) uses `--style-only`. None drove `--wiki` --
+    which is the path CI actually runs
+    (`.github/workflows/scpi-wiki-sync.yml`). `--style-only` and `--wiki`
+    call `print_style_violations(short_v, ambig, dup, domain)` from two
+    DIFFERENT call sites in `main()` with the same four POSITIONAL
+    arguments; a regression isolated to just the `--wiki` call site --
+    dropping ANY ONE of the four arguments there, or short-circuiting
+    `style_violated` on that path -- would leave every `--style-only`-driven
+    case in this file green while CI itself stayed silently broken, because
+    the live table itself is clean and would never trip
+    `undocumented`/`ghosts` on its own.
+
+    ONE table per detector, not one table covering all four: because the
+    four arguments are positional, a table whose only violation is (say)
+    domain proves the `style_domain` argument reaches the exit code through
+    `--wiki`, but says nothing about `style_short`/`style_ambig`/`style_dup`
+    -- a regression dropping any of THOSE from the same call site would
+    still pass a domain-only case. Confirmed by mutation: dropping
+    `style_short`/`style_ambig` (individually, or together) from the
+    `--wiki` call is caught ONLY by the S1/S2 cases below, not by the S3 or
+    domain cases -- each of the four sub-cases is independently necessary.
+
+    Each synthetic `--scpi` table carries exactly one violation, isolated
+    the same way the case in `_self_test_style` above and
+    `_self_test_duplicate_patterns`/`_self_test_domain_guard` isolate theirs
+    -- see those for the per-pattern reasoning. Each table's synthetic
+    `--wiki` clone documents every one of its live patterns by exact
+    spelling, so `undocumented` and `ghosts` are both empty and the only
+    possible reason for a non-zero exit is the style gate itself. Spies only
+    `self_test`, as every other main()-driving case here does, drives
+    `main()` with `--wiki` (not `--style-only`), and asserts a non-zero
+    exit.
+    """
+    import contextlib
+    import io
+    import tempfile
+
+    wiki_entry_cases = (
+        ('    {.pattern = "SYSTem:chanCALM", .callback = SCPI_A,},\n',
+         ("SYSTem:chanCALM",), "S1"),
+        ('    {.pattern = "CONFigure:ADC:CHANnel", .callback = SCPI_A,},\n'
+         '    {.pattern = "CONFigure:ADC:CHANcalm", .callback = SCPI_B,},\n',
+         ("CONFigure:ADC:CHANnel", "CONFigure:ADC:CHANcalm"), "S2"),
+        ('    {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_A,},\n'
+         '    {.pattern = "SYSTem:DEVice:NAME", .callback = SCPI_B,},\n',
+         ("SYSTem:DEVice:NAME",), "S3"),
+        ('    {.pattern = "SYSTem:DEVice:NAME#", .callback = SCPI_A,},\n',
+         ("SYSTem:DEVice:NAME#",), "domain guard"),
+    )
+    cases, failures = len(wiki_entry_cases), 0
+
+    for rows_c, wiki_cmds, label in wiki_entry_cases:
+        src = ('const scpi_command_t scpi_commands[] = {\n' + rows_c +
+               '    {.pattern = NULL, .callback = SCPI_NotImplemented,},\n'
+               '};\n')
+        with tempfile.TemporaryDirectory() as d:
+            c = os.path.join(d, "scpi.c")
+            with open(c, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            wiki = os.path.join(d, "wiki")
+            os.makedirs(wiki)
+            with open(os.path.join(wiki, "01.md"), "w", encoding="utf-8") as fh:
+                fh.write("| SCPI Command | Description |\n| -- | -- |\n")
+                for cmd in wiki_cmds:
+                    fh.write(f"| {cmd} | x |\n")
+            allow = os.path.join(d, "empty-allow.txt")
+            with open(allow, "w", encoding="utf-8"):
+                pass  # deliberately empty -- no pattern here is allowlisted
+
+            global self_test
+            real_self_test = self_test
+            argv_saved = sys.argv
+
+            def _spy_pass():
+                return 0
+
+            try:
+                self_test = _spy_pass
+                sys.argv = ["scpi_wiki_sync.py", "--wiki", wiki, "--scpi", c,
+                            "--allow", allow]
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rc = main()
+            finally:
+                self_test = real_self_test
+                sys.argv = argv_saved
+        if rc == 0:
+            failures += 1
+            print(f"  FAIL wiki entry ({label}): main() --wiki returned 0 "
+                  f"on a table whose only violation is {label} and whose "
+                  f"wiki rows otherwise fully document it "
+                  f"(undocumented/ghosts both empty) -- no self-test case "
+                  f"drove the --wiki call site before these, so a "
+                  f"regression isolated to it (dropping this category's "
+                  f"argument from the --wiki call to "
+                  f"print_style_violations, or discarding style_violated on "
+                  f"that path) could not have been caught, even though "
+                  f"--wiki is the path CI actually runs")
+    return cases, failures
+
+
+def _self_test_diagnostics_stdout():
+    """Pin that `print_style_violations()` actually PRINTS each category's
+    named pattern/construct to stdout -- not just that its combined boolean
+    return reaches the exit code, which every verdict-wiring case in this
+    file (S3's case 3, the domain guard's case 4, S1/S2's two cases, and
+    `_self_test_wiki_entry` above) already pins.
+
+    Round-3's adversarial audit named this as the third of the round-4
+    family. A regression that silences ONE category's print block (e.g.
+    rewriting `if short_v:` to `if False and short_v:`) while a DIFFERENT
+    category still has a violation leaves the combined
+    `bool(short_v or ambig or dup or domain)` verdict -- and therefore every
+    exit-code-only case above -- completely unchanged, because the other
+    category's violation still makes the OR true. The diagnostic naming the
+    actual offending pattern is what a human reads to go fix the problem; if
+    it silently stops printing, the gate still fails the build but tells
+    nobody why, which is a real regression this file has never had a case
+    for.
+
+    Feeds all FOUR categories (S1, S2, S3, domain guard) to
+    `print_style_violations()` at once, each carrying a distinct, uniquely
+    identifiable synthetic pattern string, and asserts each pattern's own
+    line is present in the captured stdout. Because all four are non-empty
+    simultaneously, silencing any ONE category's print block cannot be
+    masked by the others going quiet too -- each category's own presence in
+    the output is checked independently.
+    """
+    import contextlib
+    import io
+
+    short_v = [("SYSTem:StdoutS1Case", "StdoutS1Case")]
+    ambig = [(("SYSTem:StdoutS2CaseA", "SYSTem:StdoutS2CaseB"),
+              ["STDOUTS2CASE"])]
+    dup = ["SYSTem:StdoutS3Case"]
+    domain = [("SYSTem:StdoutDomainCase#",
+               "'#' repeat-count suffix (matchPattern strips it and also "
+               "accepts the spelling without it)")]
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        print_style_violations(short_v, ambig, dup, domain)
+    out = buf.getvalue()
+
+    # The two S2 patterns are checked as separate needles, not the joined
+    # "A <-> B" string print_style_violations happens to emit today -- a
+    # needle baking in that separator would fail on a purely cosmetic
+    # formatting change even though both pattern names are still printed,
+    # which is not the regression this case exists to catch.
+    checks = [
+        ("SYSTem:StdoutS1Case", "S1 (short-form) diagnostic"),
+        ("SYSTem:StdoutS2CaseA", "S2 (ambiguous-pair) diagnostic (pattern A)"),
+        ("SYSTem:StdoutS2CaseB", "S2 (ambiguous-pair) diagnostic (pattern B)"),
+        ("SYSTem:StdoutS3Case", "S3 (duplicate-pattern) diagnostic"),
+        ("SYSTem:StdoutDomainCase#", "domain-guard diagnostic"),
+    ]
+    cases, failures = len(checks), 0
+    for needle, why in checks:
+        if needle not in out:
+            failures += 1
+            print(f"  FAIL diagnostics-stdout: {why} for {needle!r} did not "
+                  f"reach stdout -- a category's print block can be "
+                  f"silenced while the combined return value (and therefore "
+                  f"the exit code) stays correct, because another "
+                  f"category's violation is still present")
+    return cases, failures
+
+
 def self_test():
     """Check the abbreviation rule and the #907 house-style gate.
 
@@ -1018,6 +1277,10 @@ def self_test():
     failures += domain_failures
     entry_cases, entry_failures = _self_test_style_only_entry()
     failures += entry_failures
+    wiki_cases, wiki_failures = _self_test_wiki_entry()
+    failures += wiki_failures
+    stdout_cases, stdout_failures = _self_test_diagnostics_stdout()
+    failures += stdout_failures
     if failures:
         print(f"\n::error::{failures} self-test(s) failed")
         return 1
@@ -1026,7 +1289,9 @@ def self_test():
           f"{style_cases}/{style_cases} house-style cases + "
           f"{dup_cases}/{dup_cases} duplicate-pattern cases + "
           f"{domain_cases}/{domain_cases} domain-guard cases + "
-          f"{entry_cases}/{entry_cases} style-only entry cases pass")
+          f"{entry_cases}/{entry_cases} style-only entry cases + "
+          f"{wiki_cases}/{wiki_cases} wiki-entry cases + "
+          f"{stdout_cases}/{stdout_cases} diagnostics-stdout cases pass")
     return 0
 
 
