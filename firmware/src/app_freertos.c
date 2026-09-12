@@ -503,17 +503,36 @@ bool app_SDCard_HoldsSpiBus(void) {
 }
 
 /**
+ * #985: is a WiFi STREAMING session -- specifically that, not either of the
+ * other two SPI4 owners -- active right now?
+ *
+ * Split out of app_SDCard_SpiOwnedByWifi() below, which ORs this term with a
+ * WiFi firmware update and the jam quarantine. SD_SuspendReasonText()
+ * (SCPIStorageSD.c) has to name WHICH owner it is, and it cannot get that
+ * from the composite: calling the composite and then separately re-reading
+ * its parts IS the #985 defect -- the parts move between the two reads, so
+ * the cause named can be one no single instant ever showed. It needs this
+ * term on its own, sampled once alongside the other two.
+ *
+ * Exposed here rather than re-derived in SCPIStorageSD.c so "WiFi is
+ * streaming" keeps one definition in the tree: the Interface_All caveat below
+ * is exactly the kind of detail a second copy loses.
+ */
+bool app_SDCard_WifiStreamActive(void) {
+    StreamingRuntimeConfig* pStreamConfig =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    /* Interface_All is USB+SD — WiFi is NOT used in that mode. Only
+     * explicit Interface_WiFi puts WiFi on the SPI bus. */
+    return pStreamConfig->IsEnabled &&
+           pStreamConfig->ActiveInterface == StreamingInterface_WiFi;
+}
+
+/**
  * Check if WiFi needs the SPI bus (streaming to WiFi or firmware update).
  */
 bool app_SDCard_SpiOwnedByWifi(void) {
-    StreamingRuntimeConfig* pStreamConfig =
-        BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    bool isStreaming = pStreamConfig->IsEnabled;
-    /* Interface_All is USB+SD — WiFi is NOT used in that mode. Only
-     * explicit Interface_WiFi puts WiFi on the SPI bus. */
-    bool isWifiStreaming = isStreaming &&
-                          pStreamConfig->ActiveInterface == StreamingInterface_WiFi;
-    return isWifiStreaming || wifi_manager_IsWifiFirmwareUpdateActive() ||
+    return app_SDCard_WifiStreamActive() ||
+           wifi_manager_IsWifiFirmwareUpdateActive() ||
            SpiBusHealth_IsSdQuarantined();  // #589: jammed-bus quarantine
 }
 

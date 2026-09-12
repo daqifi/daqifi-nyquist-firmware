@@ -601,12 +601,21 @@ void SCPI_ResponseBuf_Init(void) {
     // directly from app boot AND implicitly from the first CreateSCPIContext),
     // the second call is a no-op.
     //
-    // The check-and-create pair is guarded by a critical section. The
-    // intended caller is single-threaded (app_SystemInit runs pre-scheduler,
-    // then CreateSCPIContext runs during serial boot-time transport init)
-    // and taskENTER_CRITICAL is a no-op before the scheduler starts, so this
-    // is cost-free in practice. The guard catches any future misuse where
-    // SCPI_ResponseBuf_Init is invoked concurrently.
+    // The check-and-create pair is guarded by a critical section. Today's
+    // first call is direct from app_SystemInit; each transport's later,
+    // idempotent re-call (via CreateSCPIContext) finds the mutex already
+    // created, because app_SystemInit runs to completion, sequentially,
+    // before app_TasksCreate() spawns the USB/WiFi tasks that make those
+    // calls (see SCPI_InitIdentification()'s comment for the same ordering
+    // argument). The scheduler is already running throughout this:
+    // app_SystemInit executes inside the priority-1 APP_FREERTOS_Tasks boot
+    // task, not before vTaskStartScheduler(). taskENTER_CRITICAL is not a
+    // no-op either way -- vTaskEnterCritical() disables interrupts
+    // unconditionally; it's vTaskExitCritical() that only re-enables them
+    // once the scheduler is running (see UserEdge.c's edge_IpcGuardEnter()
+    // comment for the same FreeRTOS detail). So this is an ordinary, working
+    // critical section, and the guard catches any future misuse where
+    // SCPI_ResponseBuf_Init is invoked genuinely concurrently.
     taskENTER_CRITICAL();
     if (gScpiRespMutex == NULL) {
         gScpiRespMutex = xSemaphoreCreateMutexStatic(&gScpiRespMutexStorage);
