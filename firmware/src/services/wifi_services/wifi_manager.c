@@ -2446,6 +2446,32 @@ wifi_link_state_t wifi_manager_GetLinkState(void) {
             // module object, so no separate SYS_MODULE_OBJ_INVALID guard is
             // needed here -- "no driver instance while m2m reports INIT" is
             // honestly a fault.
+            //
+            // WDRV_WINC_Status() reads driver state WITHOUT synchronization
+            // while the WINC task writes it -- both fields are plain, not
+            // volatile (`bool isInit;` / `SYS_STATUS sysStat;`, wdrv_winc.h)
+            // -- and it reads sysStat TWICE, once in its UNINITIALIZED test
+            // and again in its return (wdrv_winc.c). A review of this PR
+            // raised that as able to invert INIT and INITFAULT. It cannot,
+            // and the reason is the SIGN test below rather than any locking:
+            //
+            //   - It returns BUSY (+1) only on the arm that already tested
+            //     `sysStat == UNINITIALIZED`, so a stale or torn isInit can
+            //     only move the answer between 0 and +1. Both are >= 0, so
+            //     both classify INIT.
+            //   - Otherwise it returns sysStat itself. Whichever of the two
+            //     loads wins, the value returned IS a real sysStat from some
+            //     instant in the call, and a single aligned 32-bit load is
+            //     atomic on PIC32MZ -- it cannot tear into or out of a
+            //     negative value.
+            //
+            // So a negative result always means sysStat really was negative at
+            // some instant during the call. The residual effect is TEMPORAL,
+            // not an inversion: a query issued just before the driver latches
+            // an error answers INIT and the next one answers INITFAULT, which
+            // is the ordinary cost of polling a state that is still moving. It
+            // reaches no control path either -- wifi_manager_GetWiFiStatus()
+            // maps INIT and INIT_FAULT to the same DISCONNECTED value.
             if (WDRV_WINC_Status(sysObj.drvWifiWinc) < SYS_STATUS_UNINITIALIZED) {
                 return WIFI_LINK_STATE_INIT_FAULT;
             }
