@@ -61,12 +61,49 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # and should be looked at rather than skipped.
 SUSPEND_BIN := run_953_tests
 
+# #985: SD_SuspendReasonText() itself -- the function the cascade above calls.
+# Third target on SCPIStorageSD.c and, for the same reason as the two above,
+# the same technique: no UUT copy, no stubs, both decision SHAPES (pre-fix and
+# post-fix) re-implemented against an injected environment and compared.
+#
+# It copies no constants either, but it does copy the SHAPE, and here the
+# shape IS the whole fix: the four flags read ONCE each, ahead of every
+# branch, with no call to the composed gate app_SDCard_SpiOwnedByWifi()
+# (calling that AND separately re-reading its parts is the #985 defect). A
+# drift back to two samples would leave this test passing green against a
+# model the firmware no longer has -- which is exactly the failure a guard is
+# for. So the guard reads the real function and requires exactly one call to
+# each of the four flag accessors, zero to the composite, and the four arms
+# still in the precedence order the test asserts.
+#
+# Comment lines are stripped before counting, because the function's own
+# comments name both the accessors and the composite on purpose. A comment
+# restyled so its lines do not begin with `*` or `/` therefore fails this
+# guard -- loudly, which is the right outcome for a guard whose job is to
+# notice edits to this function.
+SUSPENDREASON_BIN := run_985_tests
+
 # #164: JSON_StringEscape.h is header-only and dependency-free for the same
 # reason AD7609Scale.h is -- the pure byte-escaping logic was split out of
 # JSON_Encoder.c, which is unusable on a host (it pulls in
 # state/board/BoardConfig.h -> Harmony's configuration.h/definitions.h and the
 # whole board/driver graph). No UUT copy, no stubs, and NOT $(INCLUDES).
 JSONESC_BIN := run_json_escape_tests
+
+# #913: UserSpi.c's spi_XferByte busy-spin -> spin-then-vTaskDelay yield.
+# Like BENCH_BIN this needs no UUT copy and no stubs -- UserSpi.c is NOT
+# includable on the host (FreeRTOS, Harmony's definitions.h/configuration.h,
+# the DIO ownership registry), so the test re-implements spi_WaitStat's loop
+# SHAPE against a mock tick clock and mock hardware-condition flag.
+#
+# That makes the fast-spin count and the timeout budget a COPY, which can
+# drift. The recipe greps both out of the real source first and refuses to
+# build if either has changed, so a stale copy can't pass silently -- same
+# convention as BENCH_BIN above.
+SPI913_BIN := run_913_tests
+USER_SPI_SRC := ../../firmware/src/HAL/UserSpi/UserSpi.c
+USER_UART_SRC := ../../firmware/src/HAL/UserUart/UserUart.c
+USER_I2C_SRC := ../../firmware/src/HAL/UserI2c/UserI2c.c
 
 # #1004: SCPI_Help's shared-buffer write-abort bound. Same shape as
 # SUSPEND_BIN's sibling SD_BENCH_SRC-style guard and #995's own host test --
@@ -177,9 +214,28 @@ RECIPES := Makefile
 # on NQ1/NQ2 (every board on this bench) where the pre-PR getter always
 # succeeded. Two more grep guards below pin the predicate and the
 # lockHeld-threaded Unlock call.
+#
+# Part E (#1030): SCPI_DACVoltageGet must release gDacCommandMutex BEFORE
+# calling SCPI_ResultVoltage, not across it -- the transport write's own
+# retry budget (up to ~1s per value against a stalled reader) must not
+# extend how long the whole-command lock is held. Three more grep guards
+# below pin the local-copy array and the line-number ordering of the
+# Unlock call against both transport-write call sites.
 DAC980_BIN := run_980_tests
 DAC7718_SRC := ../../firmware/src/HAL/DAC7718/DAC7718.c
 SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
+
+# #1057 (#913's twin): DAC7718_ReadWriteReg's six SPI2 busy-spins ->
+# dac7718_WaitStat, the same bounded-spin-then-vTaskDelay(1) shape #913 gave
+# UserSpi.c's spi_XferByte. Same host-testability constraint as DAC980_BIN
+# above -- DAC7718.c is not includable on the host -- so this re-implements
+# the loop SHAPE against a mock tick clock and mock hardware-condition flag,
+# identically to test_913_spi_wait_stat.c (DAC7718 has only the one wait
+# shape, shared by all three of its call sites, unlike UserSpi/UserUart/
+# UserI2c's three separate shapes). The two firmware constants this depends
+# on are a COPY; the recipe greps them and refuses to build on drift, same
+# convention as SPI913_BIN.
+DAC1057_BIN := run_1057_tests
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
@@ -204,6 +260,62 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	       echo "       Update FW_STALL_POLL_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
+
+# THE GREPS BELOW PIN CONSTANTS, AND THAT IS ALL THEY CLAIM. They do not pin
+# the loop's SHAPE. Review of #1009 was right that constants alone cannot catch
+# the defect this suite exists for -- delete the fresh register read at expiry,
+# move the deadline test after the yield, or drop the vTaskDelay(1), and every
+# grep here still passes while the modelled test stays green.
+#
+# A SHAPE CHECKER WAS BUILT FOR EXACTLY THAT AND HAS BEEN DELETED. It went
+# through five generations, each defeated by the next review round:
+# constants-only, then file-scoped presence, then presence anchored to a
+# signature within a 40-line window, then a self-test that asked only whether
+# ANY problem came back, then one that named the expected problem text. The
+# fifth round found the two holes that ended it. The window anchors on a
+# signature and has no notion of where the function ENDS, so gutting the real
+# wait function and leaving its loop in a same-shaped sibling ten lines below
+# reported zero problems. And the self-test only ever exercised the spi shape,
+# so the uart and i2c checks could both be deleted while it printed 9/9 passed.
+#
+# The first of those cannot be closed without finding function boundaries, i.e.
+# PARSING C -- which is the mechanism #1032 exists to get this repo OUT of. So
+# the checker was deleted rather than given a sixth generation, and the durable
+# fix is tracked as #1056: make the wait loop host-compilable so the test
+# exercises the REAL code instead of a copy, the way #889 split AD7609Scale.h
+# out so test_ad7609_scale.c could include the shipped header directly.
+#
+# What is left is honest about its reach. Same convention as every other suite
+# here, with the constants pinned PER FILE because the modelled shape is shared
+# by all three wait loops and uart and i2c had no pin of their own at all. The
+# host test still proves the shape's BEHAVIOUR; nothing here claims any more to
+# prove the firmware still has that shape.
+$(SPI913_BIN): test_913_spi_wait_stat.c test_framework.h $(USER_SPI_SRC) \
+               $(USER_UART_SRC) $(USER_I2C_SRC) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+USER_SPI_BYTE_TIMEOUT_MS[[:space:]]+20u[[:space:]]*$$' $(USER_SPI_SRC) \
+	  || { echo "ERROR: USER_SPI_BYTE_TIMEOUT_MS is no longer '20u' in $(USER_SPI_SRC)."; \
+	       echo "       Update FW_BYTE_TIMEOUT_MS in test_913_spi_wait_stat.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*for \(uint32_t s = 0; s < 8000u; \+\+s\)' $(USER_SPI_SRC) \
+	  || { echo "ERROR: spi_WaitStat's fast-spin bound is no longer 's < 8000u' in $(USER_SPI_SRC)."; \
+	       echo "       Update FW_SPIN_COUNT in test_913_spi_wait_stat.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*for \(uint32_t s = 0; s < 4000u; \+\+s\)' $(USER_UART_SRC) \
+	  || { echo "ERROR: uart_WaitSta's fast-spin bound is no longer 's < 4000u' in $(USER_UART_SRC)."; \
+	       echo "       The modelled shape is SHARED by all three wait loops, so each"; \
+	       echo "       file's bound is pinned separately -- re-derive against the new one."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*for \(uint32_t s = 0; s < 8000u; \+\+s\)' $(USER_I2C_SRC) \
+	  || { echo "ERROR: i2c_WaitMif's fast-spin bound is no longer 's < 8000u' in $(USER_I2C_SRC)."; \
+	       echo "       Same shared shape, pinned per file -- re-derive."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+I2C_OP_TIMEOUT_CP0[[:space:]]+700000u' $(USER_I2C_SRC) \
+	  || { echo "ERROR: I2C_OP_TIMEOUT_CP0 is no longer '700000u' in $(USER_I2C_SRC)."; \
+	       echo "       i2c is the most reachable of the three -- a false timeout there"; \
+	       echo "       fires i2c_BusRecover() on a healthy bus -- and the test's budget"; \
+	       echo "       arithmetic is derived from this number. Re-derive it."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(SPI913_BIN) test_913_spi_wait_stat.c
 
 $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(SCPIDAC_SRC) $(RECIPES)
 	@grep -qE '^[[:space:]]*bool lockHeld = false;' $(DAC7718_SRC) \
@@ -265,6 +377,37 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	       echo "       to Unlock, since dacWriterPossible == false deliberately skips the lock."; \
 	       echo "       Part D's getter_gated_shape() models this -- re-derive it if this moved."; \
 	       exit 1; }
+	@grep -qE '^[[:space:]]*double allVoltages\[MAX_AOUT_CHANNEL\]' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: SCPI_DACVoltageGet's 'allVoltages[MAX_AOUT_CHANNEL]' local copy is gone"; \
+	       echo "       from $(SCPIDAC_SRC). Part E (#1030) models copying every BoardData read"; \
+	       echo "       into a local BEFORE releasing gDacCommandMutex -- re-derive it if this moved."; \
+	       exit 1; }
+	@a=`grep -nF 'SCPIDAC_UnlockCommand(lockHeld);' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 b=`grep -nF 'SCPI_ResultVoltage(context, singleVoltage, precision);' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 c=`grep -nF 'SCPI_ResultVoltage(context, allVoltages[i], precision);' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 test -n "$$a" && test -n "$$b" && test -n "$$c" \
+	   && test "$$a" -lt "$$b" && test "$$a" -lt "$$c" \
+	   || { echo "ERROR: SCPI_DACVoltageGet's Unlock->write ordering (#1030) is gone or reordered"; \
+	        echo "       in $(SCPIDAC_SRC) (markers found at a='$$a' b='$$b' c='$$c')."; \
+	        echo "       gDacCommandMutex must be released (line a) strictly BEFORE either transport"; \
+	        echo "       write (lines b, c) -- Part E's differential test models exactly this ordering."; \
+	        exit 1; }
+# Part E2 (#1030 audit finding): the ERROR push must also land after the
+# unlock. SCPI_ErrorPush reaches the transport (SCPI_ErrorEmit ->
+# interface->error -> SCPI_WriteWithRetry), so pushing it under the lock is
+# the same defect as writing a value under the lock. The original Part E
+# guard pinned only the two SCPI_ResultVoltage sites, which is exactly why
+# the out-of-range arm slipped past it.
+# WHAT THIS DOES NOT COVER: it pins the ONE deferred push by its unique
+# variable name. It cannot prove some future arm has not added a fresh
+# SCPI_ErrorPush under the lock -- grep has no notion of the lock region.
+	@d=`grep -nF 'SCPI_ErrorPush(context, deferredError);' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 a=`grep -nF 'SCPIDAC_UnlockCommand(lockHeld);' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 test -n "$$d" && test -n "$$a" && test "$$a" -lt "$$d" \
+	   || { echo "ERROR: SCPI_DACVoltageGet's deferred error push (#1030) is gone or moved"; \
+	        echo "       back under the lock in $(SCPIDAC_SRC) (unlock a='$$a', push d='$$d')."; \
+	        echo "       SCPI_ErrorPush writes to the transport; it must run after the unlock."; \
+	        exit 1; }
 	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
 
 $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
@@ -282,6 +425,14 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        echo "       before changing either."; \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
+
+# Every suite, and every one of the seven binaries. Third merge around this
+# same block (fw#961 JSONESC_BIN, fw#983 SUSPEND_BIN, fw#913 SPI913_BIN),
+# resolved the same way every time: keep each side's target INTACT and merge
+# only `run` and `clean` -- a duplicated rule here would silently shadow one
+# of them. $(RECIPES) is main's (#983) fix and applies to SPI913_BIN too,
+# because it carries grep guards: a guard re-run only when its SOURCE changes
+# is not re-run when the GUARD changes.
 
 $(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(FW_RTOS_CFG) $(RECIPES)
 	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_IFACE_SRC) \
@@ -458,23 +609,99 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 	 printf '#endif\n' >> $(GEN_1000)
 	$(CC) $(CFLAGS) -o $(SDLOG_BIN) test_1000_sd_log_arm_budget.c
 
-# Every suite, and every one of the TEN binaries below. A new suite always
-# touches this same `run:`/`clean:` pair, so any two branches that add a
-# suite around the same time collide here. History, each resolved the same
+# #985: build-time guard over SD_SuspendReasonText() -- see the merge-history
+# comment above `run:` below for how this target's registration in run/clean
+# was resolved.
+$(SUSPENDREASON_BIN): test_985_suspend_reason_consistency.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
+	@body=`sed -n '/^const char \*SD_SuspendReasonText(void)[[:space:]]*$$/,/^}/p' $(SD_BENCH_SRC) | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: SD_SuspendReasonText(void) was not found in $(SD_BENCH_SRC),"; \
+	        echo "       or no longer opens at column 0 -- the guard below can see"; \
+	        echo "       nothing, and a guard that examines nothing must fail."; \
+	        exit 1; }; \
+	 nq=`printf '%s\n' "$$body" | grep -o 'SpiBusHealth_IsSdQuarantined()' | wc -l | tr -d ' '`; \
+	 nf=`printf '%s\n' "$$body" | grep -o 'wifi_manager_IsWifiFirmwareUpdateActive()' | wc -l | tr -d ' '`; \
+	 nw=`printf '%s\n' "$$body" | grep -o 'app_SDCard_WifiStreamActive()' | wc -l | tr -d ' '`; \
+	 ns=`printf '%s\n' "$$body" | grep -o 'SpiBusHealth_IsSdSuspended()' | wc -l | tr -d ' '`; \
+	 nc=`printf '%s\n' "$$body" | grep -o 'app_SDCard_SpiOwnedByWifi()' | wc -l | tr -d ' '`; \
+	 test "$$nq" -eq 1 && test "$$nf" -eq 1 && test "$$nw" -eq 1 \
+	   && test "$$ns" -eq 1 && test "$$nc" -eq 0 \
+	   || { echo "ERROR: SD_SuspendReasonText() in $(SD_BENCH_SRC) no longer reads"; \
+	        echo "       each flag exactly once with no composed-gate call"; \
+	        echo "       (quarantine=$$nq fwUpdate=$$nf wifiStream=$$nw"; \
+	        echo "        suspended=$$ns SpiOwnedByWifi=$$nc; want 1 1 1 1 0)."; \
+	        echo "       A second read of any of them, or a call to the composite"; \
+	        echo "       that already ORs three of them, reintroduces #985 -- and"; \
+	        echo "       test_985_suspend_reason_consistency.c models the"; \
+	        echo "       single-snapshot shape, so it would pass regardless."; \
+	        exit 1; }; \
+	 q=`printf '%s\n' "$$body" | grep -n 'if (quarantined)' | cut -d: -f1`; \
+	 f=`printf '%s\n' "$$body" | grep -n 'if (fwUpdate)' | cut -d: -f1`; \
+	 w=`printf '%s\n' "$$body" | grep -n 'if (wifiStream)' | cut -d: -f1`; \
+	 s=`printf '%s\n' "$$body" | grep -n 'if (suspended)' | cut -d: -f1`; \
+	 test -n "$$q" && test -n "$$f" && test -n "$$w" && test -n "$$s" \
+	   && test "$$q" -lt "$$f" && test "$$f" -lt "$$w" && test "$$w" -lt "$$s" \
+	   || { echo "ERROR: the four arms of SD_SuspendReasonText() in $(SD_BENCH_SRC)"; \
+	        echo "       are no longer quarantine -> fwUpdate -> wifiStream ->"; \
+	        echo "       suspended, or an arm was renamed, moved or duplicated"; \
+	        echo "       (markers at q='$$q' f='$$f' w='$$w' s='$$s')."; \
+	        echo "       That order is the precedence test_985 asserts, and the"; \
+	        echo "       quarantine-first part of it is load-bearing: it is the"; \
+	        echo "       one cause that does not clear on its own."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(SUSPENDREASON_BIN) test_985_suspend_reason_consistency.c
+
+$(DAC1057_BIN): test_1057_dac7718_wait_stat.c test_framework.h $(DAC7718_SRC) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+DAC7718_SPI_FAST_SPIN_COUNT[[:space:]]+8000u[[:space:]]*$$' $(DAC7718_SRC) \
+	  || { echo "ERROR: DAC7718_SPI_FAST_SPIN_COUNT is no longer '8000u' in $(DAC7718_SRC)."; \
+	       echo "       Update FW_SPIN_COUNT in test_1057_dac7718_wait_stat.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+DAC7718_SPI_BYTE_TIMEOUT_MS[[:space:]]+20u[[:space:]]*$$' $(DAC7718_SRC) \
+	  || { echo "ERROR: DAC7718_SPI_BYTE_TIMEOUT_MS is no longer '20u' in $(DAC7718_SRC)."; \
+	       echo "       Update FW_BYTE_TIMEOUT_MS in test_1057_dac7718_wait_stat.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*for \(uint32_t s = 0; s < DAC7718_SPI_FAST_SPIN_COUNT; \+\+s\)' $(DAC7718_SRC) \
+	  || { echo "ERROR: dac7718_WaitStat's fast-spin loop is gone or reshaped in $(DAC7718_SRC)."; \
+	       echo "       The two constant greps above cannot see this -- they pin VALUES, not the"; \
+	       echo "       shape that consumes them. test_1057_dac7718_wait_stat.c models this loop;"; \
+	       echo "       re-read both before changing either."; \
+	       exit 1; }
+	@grep -qF 'return (((SPI2STAT & mask) != 0u) == want);' $(DAC7718_SRC) \
+	  || { echo "ERROR: dac7718_WaitStat's deadline branch no longer takes a FRESH SPI2STAT"; \
+	       echo "       read at expiry in $(DAC7718_SRC) -- that fresh-read is the exact #913"; \
+	       echo "       opus-review defect (a bare 'return false;' trusting the pre-check above"; \
+	       echo "       it) this suite exists to keep out. Neither constant grep above, nor the"; \
+	       echo "       modelled host test, can see this on its own -- see the file header of"; \
+	       echo "       test_1057_dac7718_wait_stat.c."; \
+	       exit 1; }
+	@test "$$(grep -cF 'dac7718_WaitStat(' $(DAC7718_SRC))" = "7" \
+	  || { echo "ERROR: expected exactly 7 occurrences of 'dac7718_WaitStat(' in $(DAC7718_SRC)"; \
+	       echo "       (1 definition + 6 call sites -- 3 in the write frame, 3 in the RW=1 NOP"; \
+	       echo "       readback), found $$(grep -cF 'dac7718_WaitStat(' $(DAC7718_SRC)). A call"; \
+	       echo "       site reverting to a bare register-poll spin would not otherwise be caught"; \
+	       echo "       by any guard here."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(DAC1057_BIN) test_1057_dac7718_wait_stat.c
+# Every suite, and every one of the THIRTEEN binaries below. A new suite
+# always touches this same `run:`/`clean:` pair, so any two branches that add
+# a suite around the same time collide here. History, each resolved the same
 # way (keep each side's target rule INTACT, union only `run` and `clean` --
 # dropping a rule loses a suite silently, duplicating one silently shadows
 # the other): fw#961 JSONESC_BIN vs fw#983 SUSPEND_BIN; fw#1012 vs fw#958;
 # fw#913 vs fw#1004 HELP_BIN; fw#958 vs fw#1000 SDLOG_BIN; fw#980 DAC980_BIN
-# landing on main alongside fw#1004 HELP_BIN and fw#1000 SDLOG_BIN; and now
-# this merge, uniting fw#958's NAME_BIN with main's DAC980_BIN -- the EIGHTH
-# occurrence of this exact conflict.
+# landing on main alongside fw#1004 HELP_BIN and fw#1000 SDLOG_BIN; fw#958's
+# NAME_BIN vs main's DAC980_BIN; fw#913 vs fw#1004/fw#1000/fw#980/fw#985
+# (SPI913_BIN, SUSPENDREASON_BIN) landing together on main; and now this
+# merge, uniting fw#958's NAME_BIN with SPI913_BIN, SUSPENDREASON_BIN (#985)
+# and DAC1057_BIN (#1057), all landed on main since the previous resolution
+# -- the NINTH occurrence of this exact conflict.
 #
 # #1026 is the ticket to stop this and PR #1040 implements it, moving each
 # target into tests/host/tests/<issue>-<slug>.mk so a new suite appends to an
 # accumulator instead of editing a shared line. Whichever lands first, the
 # rest re-express their target as a fragment.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(NAME_BIN) $(SDLOG_BIN)
+     $(NAME_BIN) $(SPI913_BIN) $(SDLOG_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -484,10 +711,13 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) 
 	./$(DAC980_BIN)
 	./$(HELP_BIN)
 	./$(NAME_BIN)
+	./$(SPI913_BIN)
 	./$(SDLOG_BIN)
+	./$(SUSPENDREASON_BIN)
+	./$(DAC1057_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(NAME_BIN) $(SDLOG_BIN) $(GEN_1000)
+	      $(NAME_BIN) $(SPI913_BIN) $(SDLOG_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN) $(GEN_1000)
 
 .PHONY: run clean
