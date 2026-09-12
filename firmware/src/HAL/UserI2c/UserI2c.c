@@ -113,7 +113,14 @@ static bool i2c_WaitMif(void) {
         }
         if ((IFS4 & _IFS4_I2C2MIF_MASK) != 0u) { return true; }
         if ((uint32_t)(_CP0_GET_COUNT() - start) > I2C_OP_TIMEOUT_CP0) {
-            return false;
+            /* #913: FRESH read, not a reuse of the pre-check above. MIF setting
+             * while this task is preempted must still count as success. A
+             * hardcoded `false` reports a COMPLETED transfer as a timeout,
+             * which here triggers i2c_BusRecover() / aborts an address scan on
+             * a HEALTHY bus -- and the ~5.5 ms I2C_OP_TIMEOUT_CP0 budget is far
+             * easier to exceed under streaming-load preemption than uart's
+             * shared 15 s one, so this is the more reachable of the twins. */
+            return ((IFS4 & _IFS4_I2C2MIF_MASK) != 0u);
         }
         /* A slow/low-baud/stuck op must not busy-wait the SCPI task and starve
          * lower-priority tasks (esp. a 112-address SCAN); the I2C hardware
