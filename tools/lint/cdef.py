@@ -73,6 +73,43 @@ class AmbiguousDefinition(Exception):
     """
 
 
+def line_comment_end(src, start):
+    """Index of the newline that truly ends a `//` comment beginning at
+    `start` (the index of its leading `/`).
+
+    C's translation phase 2 deletes a backslash immediately followed by a
+    newline, splicing the two physical lines into one logical line -- BEFORE
+    phase 3 even recognises comments. So a `//` comment does not end at a
+    newline that phase 2 already erased; it continues onto the next physical
+    line, and the next, for as many such splices as appear in a row (#976
+    audit round 6). A comment-boundary finder that stops at the first bare
+    newline is looking for a boundary the compiler never sees.
+
+    NOT HANDLED, TRACKED SEPARATELY (#1066): a splice can also CREATE the
+    `//` marker in the first place -- `/` + `\\` + newline + `/` splices into
+    `//` under the same phase-2 rule, and every caller of this function (and
+    `mask()`'s / `mask_for_match()`'s `/*` detection, and the equivalent
+    checks in `hash_function.strip_comments()` and
+    `scpi_wiki_sync._CODE_OR_COMMENT`) looks for a literal, unspliced `//` or
+    `/*` at the START of a comment before this function -- or its
+    equivalents -- ever runs. Verified live against `SCPIStorageSD.c`: this
+    shape deletes the CRC claim guard with `scpi_sd_arm_path.py` reporting
+    zero problems. The fix is almost certainly to normalize splices across
+    the whole text ONCE, before any comment/token recognition -- not another
+    per-call-site patch -- so it is filed rather than done here.
+    """
+    n = len(src)
+    i = start
+    while True:
+        end = src.find("\n", i)
+        if end < 0:
+            return n
+        if end > 0 and src[end - 1] == "\\":
+            i = end + 1
+            continue
+        return end
+
+
 def mask(src):
     """`src` with every comment and literal blanked, LENGTH and LINES kept.
 
@@ -108,10 +145,9 @@ def mask(src):
             i = end
             continue
         if c == "/" and i + 1 < n and src[i + 1] == "/":
-            end = src.find("\n", i)
-            end = n if end < 0 else end
+            end = line_comment_end(src, i)
             for j in range(i, end):
-                out[j] = " "
+                out[j] = "\n" if src[j] == "\n" else " "
             i = end
             continue
         i += 1
@@ -131,9 +167,13 @@ def mask_for_match(src):
     Length is preserved, so offsets remain offsets into the original.
     """
     # `mask()` keeps every newline the source has, including the ones inside
-    # a block comment. Those are the ones to blank here, so re-walk the
-    # SOURCE for comment spans and flatten them; string literals cannot
-    # contain a raw newline in C, so they need no such pass.
+    # a block comment OR a `//` comment extended by a backslash-newline
+    # splice (`line_comment_end`, #976 audit round 6 -- a spliced `//`
+    # comment straddling a signature is the same round-4 shape, reached
+    # through a line comment instead of a block comment). Those are the ones
+    # to blank here, so re-walk the SOURCE for comment spans and flatten
+    # them; string literals cannot contain a raw newline in C, so they need
+    # no such pass.
     out = list(mask(src))
     i, n = 0, len(src)
     while i < n:
@@ -146,8 +186,10 @@ def mask_for_match(src):
             i = end
             continue
         if c == "/" and i + 1 < n and src[i + 1] == "/":
-            end = src.find("\n", i)
-            i = n if end < 0 else end
+            end = line_comment_end(src, i)
+            for j in range(i, end):
+                out[j] = " "
+            i = end
             continue
         if c in ('"', "'"):
             quote = c
@@ -184,11 +226,68 @@ _ATTR = (r"(?:__attribute__\s*\(\((?:[^()]|\([^()]*\))*\)\)[\w \t\*]*)?")
 _BREAK = r"(?:[ \t]*\n[ \t]*)?"
 HEAD = r"(?m)^" + _INDENT + _PREFIX + _BREAK + _ATTR + _BREAK
 
+# A declarator's name may sit inside one level of redundant parentheses --
+# `static bool (F)(void)` declares exactly the same function as
+# `static bool F(void)` (a parenthesized direct-declarator, C11 6.7.6). It is
+# valid, warning-free C, though NOT how `SD_ArmOrRefuseWithCleanup` is
+# actually written in `SCPIStorageSD.c` today (that shipped source is the
+# ordinary, unparenthesized form; an earlier revision of this comment claimed
+# otherwise -- checked against source, corrected). The audit reproduced the
+# bypass by rewriting that real function's declarator as
+# `static bool (SD_ArmOrRefuseWithCleanup)(scpi_t *ctx)` -- a shape the
+# compiler accepts unchanged -- because `_PREFIX` cannot span the `(`, so
+# without this every matcher here was blind to the form at once: an
+# `#if 0`-disabled original plus a live parenthesized replacement left
+# `find_definitions` reporting the DEAD one as the only definition, and
+# `AmbiguousDefinition` never fired (#976 audit round 6).
+#
+# Open and close are NOT independently-optional groups -- a first draft of
+# this fix used `(?:\(...)?` and `(?:...\))?` separately, and that let a
+# lone wrap-open borrow an UNRELATED `)` from real code that happened to
+# follow: `if (F(x)) {` matched as a definition of F, with the `if`
+# condition's own `(` eaten as the "wrap" and the call's closing `)` (plus
+# its own `(x)`) reinterpreted as the parameter list -- caught by this
+# module's OWN self-test, not by inspection. Each nesting level captures
+# whether ITS open paren was seen (groups 1 and 2, outer then inner); the
+# matching conditional (`(?(2)...)`, then `(?(1)...)`, innermost first)
+# REQUIRES a close only for a level that opened -- open and close are
+# all-or-nothing, at every level, and a level can only open if the one
+# outside it did too (it is nested inside that level's own optional group).
+#
+# TWO levels, not one: a second-round finding (#976 audit round 6 review)
+# showed the single-level version still silently bound an ambiguous pair to
+# the WRONG (disabled) copy when the live replacement used `((F))` instead of
+# `(F)` -- the exact defect class this rule exists to close, one paren away.
+# A single newline (with surrounding spaces/tabs) is allowed at each
+# boundary too, for the same reason `_BREAK` allows it elsewhere: C does not
+# care about the line, and refusing a definition over formatting is how a
+# live replacement gets silently outvoted by a disabled one.
+#
+# Three or more levels remain UNSUPPORTED -- `_CASES` records this
+# explicitly rather than leaving it an unstated assumption; nothing in the
+# 446-file firmware source tree uses even one level, so the boundary is
+# believed inert today, not proven irrelevant. The cost of supporting two
+# levels is two extra numbered groups ahead of whatever the caller captures:
+# `capture_params=True`'s parameter-list group and `ANY_DEF`'s name group
+# both shift from group 1 to group 3. Every reader of either has been
+# updated to match.
+_WRAP_SPACE = r"[ \t]*(?:\n[ \t]*)?"
+_NAME_WRAP_OPEN = (r"(?:(\()" + _WRAP_SPACE
+                    + r"(?:(\()" + _WRAP_SPACE + r")?)?")
+_NAME_WRAP_CLOSE = (r"(?(2)" + _WRAP_SPACE + r"\))"
+                     r"(?(1)" + _WRAP_SPACE + r"\))")
+
 
 def def_pattern(name, capture_params=False):
-    """The definition pattern for ONE named function, as a string."""
+    """The definition pattern for ONE named function, as a string.
+
+    When `capture_params` is True, the parameter list is GROUP 3, not group
+    1 -- groups 1 and 2 are `_NAME_WRAP_OPEN`'s own paren-seen markers (see
+    its comment above).
+    """
     inner = r"([^;{]*)" if capture_params else r"[^;{]*"
-    return HEAD + r"\b" + re.escape(name) + r"\s*\(" + inner + r"\)\s*\{"
+    return (HEAD + _NAME_WRAP_OPEN + r"\b" + re.escape(name)
+            + _NAME_WRAP_CLOSE + r"\s*\(" + inner + r"\)\s*\{")
 
 
 def definition_re(name, capture_params=False):
@@ -196,7 +295,10 @@ def definition_re(name, capture_params=False):
     return re.compile(def_pattern(name, capture_params))
 
 
-ANY_DEF = re.compile(HEAD + r"\b([A-Za-z_]\w*)\s*\([^;{]*\)\s*\{")
+# GROUP 3 is the name; groups 1 and 2 are `_NAME_WRAP_OPEN`'s markers (see
+# `def_pattern`'s docstring).
+ANY_DEF = re.compile(HEAD + _NAME_WRAP_OPEN + r"\b([A-Za-z_]\w*)"
+                      + _NAME_WRAP_CLOSE + r"\s*\([^;{]*\)\s*\{")
 
 
 def find_definitions(text, name, capture_params=False):
@@ -260,6 +362,63 @@ _CASES = [
     ("...and with a comment hiding one of them, which is round 4's",
      "#if 0\nstatic bool F(void)\n{\n}\n#endif\n"
      "static bool /*\n * why\n */ F(void)\n{\n}\n", "ambiguous"),
+    ("the name wrapped in one level of redundant parentheses -- "
+     "`static bool (F)(void)` declares the same function as "
+     "`static bool F(void)` (C11 6.7.6) -- the shape the #976 round-6 audit "
+     "used to reproduce the bypass, by rewriting the real "
+     "`SD_ArmOrRefuseWithCleanup(scpi_t *ctx)` declarator this way (not how "
+     "shipped source is actually written; the compiler accepts either)",
+     "static bool (F)(void)\n{\n}\n", "one"),
+    ("a disabled original plus a PARENTHESIZED live replacement is still "
+     "TWO -- the exact bypass this rule was missing (#976 audit round 6): "
+     "`_PREFIX` cannot span a `(`, so without name-wrap support only the "
+     "disabled copy matched and AmbiguousDefinition never fired",
+     "#if 0\nstatic bool F(void)\n{\n}\n#endif\n"
+     "static bool (F)(void)\n{\n}\n", "ambiguous"),
+    ("a parenthesized CALL inside a condition is still not a definition -- "
+     "the name-wrap addition must not turn a call into one",
+     "void b(void)\n{\n    if ((F)(x)) {\n    }\n}\n", "none"),
+    ("a DOUBLY-parenthesized CALL inside a condition is still not a "
+     "definition -- the two-level wrap must not widen the false-positive "
+     "window the single-level one already had to avoid",
+     "void b(void)\n{\n    if (((F))(x)) {\n    }\n}\n", "none"),
+    ("a `//` comment spanning TWO physical lines via a trailing backslash, "
+     "sitting between the return type and the name, is still ONE break to "
+     "the compiler -- the round-4 shape reached through a spliced line "
+     "comment instead of a block comment (#976 audit round 6)",
+     "static bool // why \\\n1;\nF(void)\n{\n}\n", "one"),
+    # #976 audit round 6 review: the FIRST version of this rule supported
+    # only one level of wrapping parens, which left `((F))` reproducing the
+    # exact bypass it was meant to close -- an ambiguous pair silently bound
+    # to the dead copy, one paren away. Two levels are supported now (see
+    # `_NAME_WRAP_OPEN`'s comment); these two rows pin that the SECOND level
+    # is not itself narrow the same way the first was.
+    ("the name wrapped in TWO levels of redundant parentheses is still ONE "
+     "legal way to declare it -- `((F))(void)` (C11 6.7.6 applies "
+     "recursively: a parenthesized declarator is itself a declarator)",
+     "static bool ((F))(void)\n{\n}\n", "one"),
+    ("a disabled original plus a DOUBLY-parenthesized live replacement is "
+     "still TWO -- the one-level fix's own bypass, one paren deeper",
+     "#if 0\nstatic bool F(void)\n{\n}\n#endif\n"
+     "static bool ((F))(void)\n{\n}\n", "ambiguous"),
+    ("a single newline is allowed inside the wrap, on either side of the "
+     "name, matching `_BREAK`'s tolerance everywhere else in this file -- "
+     "refusing a definition over formatting is how a live replacement gets "
+     "silently outvoted by a disabled one",
+     "static bool (\nF\n)(void)\n{\n}\n", "one"),
+    # THREE levels are explicitly UNSUPPORTED -- recorded here rather than
+    # left an unstated assumption. The single-definition case fails CLOSED
+    # (safe: "not found", not a wrong answer); the ambiguous-pair case does
+    # NOT -- it silently rebinds to the disabled copy, the same class of
+    # defect this rule exists to close, one level beyond what it currently
+    # reaches. Nothing in the firmware source tree uses even ONE level
+    # (checked: zero occurrences across `firmware/src`, third-party
+    # excluded), so this boundary is believed inert today, not proven
+    # irrelevant -- if a THREE-level form is ever found live, this matcher
+    # needs a third nesting level or a fail-closed refusal, not neither.
+    ("three levels of wrapping parentheses are NOT supported -- fails "
+     "closed (none), which is safe for a single definition",
+     "static bool (((F)))(void)\n{\n}\n", "none"),
 ]
 
 
@@ -281,13 +440,39 @@ def self_test():
             bad.append("%s: expected %s, got %s" % (why, expect, got))
 
     # The generic scanner must agree with the named one, or the census and
-    # the pin part company again.
-    names = [m.group(1) for m in
+    # the pin part company again. GROUP 3 is the name -- groups 1 and 2 are
+    # `_NAME_WRAP_OPEN`'s own paren-seen markers.
+    names = [m.group(3) for m in
              ANY_DEF.finditer(mask_for_match(
                  "bool __attribute__((weak)) A(int x)\n{\n}\n"
                  "static bool\nB(void)\n{\n}\n"))]
     if names != ["A", "B"]:
         bad.append("the generic scanner read %r, expected ['A', 'B']" % names)
+
+    # The generic scanner must ALSO recognise a parenthesized declarator, or
+    # ANY_DEF and the named matcher disagree about what a definition is --
+    # precisely the class of drift this module exists to end (#976 round 6).
+    wrapped_names = [m.group(3) for m in
+                      ANY_DEF.finditer(mask_for_match(
+                          "static bool (C)(void)\n{\n}\n"))]
+    if wrapped_names != ["C"]:
+        bad.append("the generic scanner read %r for a parenthesized "
+                   "declarator, expected ['C']" % wrapped_names)
+
+    # Comment splicing (#976 round 6): phase 2 deletes a backslash
+    # immediately before a newline BEFORE phase 3 recognises comments, so a
+    # `//` comment ending in one continues onto the next physical line. A
+    # brace that lands there must stay hidden from brace counting, and
+    # mask()'s own contract -- length and every newline preserved -- must
+    # still hold across the (now multi-physical-line) comment span.
+    spliced = "// keep \\\n} tail\n"
+    masked_spliced = mask(spliced)
+    if len(masked_spliced) != len(spliced):
+        bad.append("mask() changed length across a spliced // comment")
+    if masked_spliced.count("\n") != spliced.count("\n"):
+        bad.append("mask() lost a newline across a spliced // comment")
+    if "}" in masked_spliced:
+        bad.append("mask() left a brace inside a spliced // comment unmasked")
 
     # Vacuity guard: a matcher that never matched would pass every "none"
     # row above. One positive row asserted directly, against the real shape.

@@ -345,7 +345,10 @@ def function_spans(text):
             continue                     # inside a body already collected
         end = _match_brace(masked, start)
         if end is not None:
-            spans.append((m.group(1), start, end))
+            # GROUP 3 is the name; groups 1 and 2 are cdef's own paren-seen
+            # markers for a (possibly two-level) parenthesized declarator
+            # (`cdef.ANY_DEF`, #976 round 6).
+            spans.append((m.group(3), start, end))
     return spans
 
 
@@ -450,7 +453,10 @@ def signature_params(text, name):
     sig = one_definition(text, name, capture_params=True)
     if not sig:
         return None
-    inner = _balanced_params(sig.group(1)).strip()
+    # GROUP 3 is the parameter list; groups 1 and 2 are cdef's own
+    # paren-seen markers for a (possibly two-level) parenthesized
+    # declarator (`cdef.def_pattern`, #976 round 6).
+    inner = _balanced_params(sig.group(3)).strip()
     return _split_top_level(inner) if inner else []
 
 
@@ -1237,9 +1243,12 @@ def self_test():
                        "while (F(x)) {\n}\n",
                        "for (i = 0; F(i); i++) {\n}\n",
                        "switch (F(x)) {\ndefault: break;\n}\n"):
+            # GROUP 3 is the name; groups 1 and 2 are cdef's own paren-seen
+            # markers for a (possibly two-level) parenthesized declarator
+            # (`cdef.ANY_DEF`, #976 round 6).
             _ck("control flow calling F() is not a definition of F: %r"
                 % _shape.split("\n")[0],
-                [m.group(1) for m in _DEF.finditer(_shape)], [])
+                [m.group(3) for m in _DEF.finditer(_shape)], [])
 
         _ck("the helper's parameters are found when its type is on its own line",
             callback_param(strip_c_comments(helper_split), ARM_HELPER)[0],
@@ -1347,6 +1356,37 @@ static scpi_result_t decoy(scpi_t * c) {
         assert noclaim != _GOOD
         probs, _ = check(noclaim)
         _ck("an arm with no claim taken in its own function is caught",
+            any("calls SD_ClaimOrRefuse() 0 times" in p for p in probs), True)
+
+        # The SAME defect, but the claim call is still THERE in the text --
+        # deleted only by a `//` comment ending in a backslash, which C's
+        # phase 2 splices onto the next physical line before phase 3 even
+        # recognises the comment. `check()` runs `strip_c_comments` -- NOT
+        # this file's own; it is imported from `scpi_wiki_sync.py` (see the
+        # import above) -- and until #976 round 6 that stripper stopped a
+        # `//` comment at the first bare newline, so the spliced-away claim
+        # call was still handed to the census as LIVE code. A mutation of
+        # this shape passed clean before the fix; a review pass on this same
+        # fix reproduced the defect CLASS against the real
+        # `SCPIStorageSD.c` too, with a different anchor (the CRC claim, not
+        # SPACe's). Positive control is `noclaim` immediately above: same
+        # missing claim, different means.
+        # Putting the `{`/`}` on the SAME line as the `if` keeps this
+        # compilable AND keeps the splice brace-neutral -- both braces are
+        # swallowed into the comment together, so nothing is unbalanced;
+        # splicing the comment above a multi-line `if (...) {` instead
+        # swallows only the OPENING brace, corrupts the count, and reports a
+        # different (misleading) problem instead of the one this row pins.
+        splicedclaim = _GOOD.replace(
+            "    if (!SD_ClaimOrRefuse(context, \"SPACe\")) {\n"
+            "        return SCPI_RES_ERR;\n    }\n",
+            "    // the compiler deletes the next physical line \\\n"
+            "    if (!SD_ClaimOrRefuse(context, \"SPACe\")) { return SCPI_RES_ERR; }\n",
+            1)
+        assert splicedclaim != _GOOD
+        probs, _ = check(splicedclaim)
+        _ck("an arm whose claim call is spliced into a comment is still "
+            "caught, not silently read as present",
             any("calls SD_ClaimOrRefuse() 0 times" in p for p in probs), True)
 
         # A SECOND arm in the same function. Both helpers release the claim

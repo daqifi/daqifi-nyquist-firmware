@@ -32,7 +32,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 os.pardir, os.pardir, "tools", "lint"))
 import cdef                                              # noqa: E402
-from cdef import AmbiguousDefinition, mask                # noqa: E402,F401
+from cdef import AmbiguousDefinition, mask, line_comment_end  # noqa: E402,F401
 
 
 def signature_name(signature):
@@ -82,7 +82,23 @@ def extract(text, signature):
 
 
 def strip_comments(src):
-    """Remove C comments, leaving string and char literals intact."""
+    """Remove C comments, leaving string and char literals intact.
+
+    A `//` comment ending in a backslash-newline does not end there: C's
+    translation phase 2 deletes that backslash and its newline, splicing the
+    physical lines together, BEFORE phase 3 even recognises a comment -- so
+    the comment actually continues onto (and can swallow) the next physical
+    line. A naive scan that stops at the first bare newline hashes the
+    swallowed line as ordinary code, so an edit that turns an ordinary
+    comment into a line-splicing one -- silently deleting whatever code
+    follows it, e.g. a trailing backslash added to an ordinary
+    `// release the claim` comment placed just above a call --
+    changes what the compiler builds without moving this file's digest
+    (#976 audit round 6). `cdef.line_comment_end` is the shared boundary
+    finder that already accounts for this splicing for `cdef.mask()`'s own
+    callers; reusing it here keeps this file's comment rule and cdef's from
+    drifting apart the way the docstring above warns about.
+    """
     out = []
     i, n = 0, len(src)
     while i < n:
@@ -109,8 +125,7 @@ def strip_comments(src):
             out.append(" ")
             continue
         if c == "/" and i + 1 < n and src[i + 1] == "/":
-            end = src.find("\n", i)
-            i = n if end < 0 else end
+            i = line_comment_end(src, i)
             out.append(" ")
             continue
         out.append(c)
@@ -149,6 +164,32 @@ _SELF_TEST_CASES = (
     ("comments are removed from what is hashed",
      'static bool F(void)\n{\n    /* SECRET */\n    return 1;\n}\n',
      "static bool F(", "return", "SECRET"),
+    # #976 audit round 6: a `//` comment ending in a backslash-newline is
+    # spliced onto the next physical line by C's translation phase 2, BEFORE
+    # phase 3 even recognises the comment -- so the call right after it is
+    # REMOVED from the compiled program, not merely annotated. A stripper
+    # that stops at the first bare newline hashes that call as if it were
+    # still there, so an edit adding exactly this trailing backslash -- e.g.
+    # `// release the claim \` placed just above
+    # `sd_card_manager_ReleaseClaim();` -- changes what ships without moving
+    # the digest. `return` (on the line after the swallowed call) must
+    # survive, proving the splice does not eat the WHOLE rest of the
+    # function -- only through its own unspliced terminating newline.
+    ("a `//` comment ending in a backslash-newline swallows the next "
+     "physical line, removing its call from what gets hashed",
+     'static bool F(void)\n{\n    // release the claim \\\n'
+     '    G();\n    return 1;\n}\n',
+     "static bool F(", "return", "G()"),
+    # The identical splice rule has to hold for cdef.mask()'s BRACE COUNTING
+    # too, or extract() (which locates the body via cdef.mask()) truncates
+    # the digest at a `}` that the compiler never treats as code -- the same
+    # class of drift this file's own module docstring warns about, just
+    # reached through cdef instead of strip_comments (#976 round 6 twin).
+    ("a `}` inside a `//` comment spliced onto the next physical line by a "
+     "trailing backslash does not close the body early",
+     'static bool F(void)\n{\n    // pretend close \\\n}\n'
+     '    int keep = 1;\n    return keep;\n}\n',
+     "static bool F(", "keep", None),
 )
 
 
