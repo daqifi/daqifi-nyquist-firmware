@@ -51,15 +51,17 @@ static uint8_t spi_rxData[3] __attribute__((coherent, aligned(4)));
 //! Mutex to protect DAC7718 initialization and SPI access
 static SemaphoreHandle_t gDAC7718_Mutex = NULL;
 
-// Helper to acquire mutex with lazy creation
+// Helper to acquire mutex. #980: the mutex is created once in
+// DAC7718_InitGlobal() (single-threaded, pre-scheduler) -- see the comment
+// there for why the lazy "create on first use" this replaced was itself a
+// second, unsynchronized TOCTOU race (two tasks could each see NULL and each
+// create their OWN mutex, so neither ever excluded the other from SPI2).
+// Fail closed if it is absent rather than manufacture one here.
 static bool DAC7718_Lock(void)
 {
     if (gDAC7718_Mutex == NULL) {
-        gDAC7718_Mutex = xSemaphoreCreateMutex();
-        if (gDAC7718_Mutex == NULL) {
-            LOG_E("DAC7718_Lock: Failed to create mutex");
-            return false;
-        }
+        LOG_E("DAC7718_Lock: mutex not created");
+        return false;
     }
 
     if (xSemaphoreTake(gDAC7718_Mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
@@ -70,16 +72,21 @@ static bool DAC7718_Lock(void)
     return true;
 }
 
-// Helper to release mutex and cleanup CS pin state
-static void DAC7718_Unlock(tDAC7718Config* config, bool csAsserted)
+// Helper to release mutex and cleanup CS pin state.
+// #980 item 2: `lockHeld` must be true only when THIS call's own
+// DAC7718_Lock() succeeded -- callers that jump here after a validation
+// failure (before ever calling Lock) pass lockHeld=false so a mutex this call
+// never took is never given. Giving an unowned mutex trips FreeRTOS's
+// ownership assertion if another task currently holds it.
+static void DAC7718_Unlock(tDAC7718Config* config, bool csAsserted, bool lockHeld)
 {
     // De-assert CS if still asserted
     if (csAsserted && (config != NULL)) {
         GPIO_PinWrite(config->CS_Pin, true);
     }
 
-    // Release mutex
-    if (gDAC7718_Mutex != NULL) {
+    // Release mutex -- only what this call actually took.
+    if (lockHeld && (gDAC7718_Mutex != NULL)) {
         xSemaphoreGive(gDAC7718_Mutex);
     }
 }
@@ -96,6 +103,22 @@ void DAC7718_InitGlobal( void )
 {
     memset(m_DAC7718Config, 0, MAX_DAC7718_CONFIG * sizeof(tDAC7718Config));
     m_DAC7718ConfigCount = 0;
+
+    // #980: create the SPI/init mutex HERE rather than lazily in
+    // DAC7718_Lock()/DAC7718_Init(). This runs from app_SystemInit(), which
+    // APP_FREERTOS_Tasks() completes before app_TasksCreate() starts
+    // app_USBDeviceTask / app_WifiTask -- a single context, so this create
+    // cannot race. The lazy "if (gDAC7718_Mutex == NULL) create" it replaces
+    // was itself check-then-act: two SCPI tasks could both observe NULL and
+    // each create their OWN mutex, leaving SPI2 with no mutual exclusion at
+    // all (plus a leaked semaphore) instead of the shared lock every caller
+    // assumes exists.
+    if (gDAC7718_Mutex == NULL) {
+        gDAC7718_Mutex = xSemaphoreCreateMutex();
+        if (gDAC7718_Mutex == NULL) {
+            LOG_E("DAC7718_InitGlobal: Failed to create mutex; DAC unavailable");
+        }
+    }
 }
 
 uint8_t DAC7718_NewConfig(const tDAC7718Config *newDAC7718Config)
@@ -172,25 +195,38 @@ tDAC7718Config* DAC7718_GetConfig(uint8_t id)
     return &m_DAC7718Config[id];
 }
 
-void DAC7718_Init(uint8_t id, uint8_t range)
+bool DAC7718_Init(uint8_t id, uint8_t range)
 {
     tDAC7718Config* config = DAC7718_GetConfig(id);
 
     if (config == NULL) {
         LOG_E("DAC7718_Init: invalid config id=%u", id);
-        return;
+        return false;   // #980 item 1: honest failure, not a silent success
     }
 
-    // Create mutex on first use (thread-safe in FreeRTOS context)
+    // #980: the mutex is created once in DAC7718_InitGlobal(), not lazily
+    // here -- see that function's comment for why the lazy create this
+    // replaced was itself an unsynchronized race. Fail closed (rather than
+    // create one now) if it is somehow still absent.
     if (gDAC7718_Mutex == NULL) {
-        gDAC7718_Mutex = xSemaphoreCreateMutex();
-        if (gDAC7718_Mutex == NULL) {
-            LOG_E("DAC7718_Init: Failed to create mutex");
-            return;
-        }
+        LOG_E("DAC7718_Init: mutex not created");
+        return false;
     }
 
     // SPI2 is already initialized by MCC
+
+	// #980: serialize the GPIO reset pulse against any in-flight
+	// DAC7718_ReadWriteReg SPI transaction. This pulse used to run outside any
+	// lock; that was tolerable while it could only ever happen once, at boot,
+	// before any command could reach DAC7718_ReadWriteReg. #980 item 3 makes
+	// this function re-entrant (a power cycle can trigger a full re-init at
+	// any time), so an in-flight SPI frame from a live command can now overlap
+	// this reset -- taking the lock here closes that. Released before the
+	// register write below, which takes this SAME non-recursive mutex itself
+	// (recursion would need item 4's separate mutex-recursion change).
+	if (!DAC7718_Lock()) {
+	    return false;
+	}
 
 	// Configure GPIO pins as outputs before setting values (prevents glitches)
     GPIO_PinOutputEnable(config->CS_Pin);
@@ -206,6 +242,8 @@ void DAC7718_Init(uint8_t id, uint8_t range)
 	DAC7718_Delay_us(1);  // 1us delay (10x minimum spec, guaranteed safe)
 	GPIO_PinWrite(config->RST_Pin, true);   // De-assert reset (return to idle high)
 
+	DAC7718_Unlock(config, false, true);  // csAsserted=false (CS untouched here), lockHeld=true
+
 	// Configure DAC gain based on range parameter
 	// Range 0: 0-5V  (GAIN-A=0, GAIN-B=0 for 2x gain)
 	// Range 1: 0-10V (GAIN-A=1, GAIN-B=1 for 4x gain)
@@ -217,11 +255,11 @@ void DAC7718_Init(uint8_t id, uint8_t range)
 	uint32_t result = DAC7718_ReadWriteReg(id, 0, 0, configReg);
 	if (result == UINT32_MAX) {
 	    LOG_E("DAC7718_Init: Failed to write configuration register");
-	    return;
+	    return false;   // #980 item 1
 	}
 
-	// Update latch to apply configuration
-	DAC7718_UpdateLatch(id);
+	// Update latch to apply configuration, and report whether it worked
+	return DAC7718_UpdateLatch(id);
 }
 
 uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data)
@@ -230,6 +268,11 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     uint32_t rdData = 0;
     uint8_t x;
     bool csAsserted = false;
+    // #980 item 2: tracks whether THIS call's own DAC7718_Lock() succeeded.
+    // The three validation `goto cleanup` sites below run before Lock() is
+    // ever attempted, so without this Unlock() would give a mutex this call
+    // never took -- see DAC7718_Unlock()'s comment.
+    bool lockHeld = false;
     tDAC7718Config* config = NULL;
 
     // Validate inputs
@@ -254,6 +297,7 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         rdData = UINT32_MAX;
         goto cleanup;
     }
+    lockHeld = true;   // set ONLY after a successful take (#980 item 2)
 
     // Assert CS (active low)
     GPIO_PinWrite(config->CS_Pin, false);
@@ -361,16 +405,16 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     rdData = (rdData & (DAC7718_MAX_VALUE << DAC7718_READBACK_SHIFT)) >> DAC7718_READBACK_SHIFT;
 
 cleanup:
-    DAC7718_Unlock(config, csAsserted);
+    DAC7718_Unlock(config, csAsserted, lockHeld);
     return rdData;
 }
 
-void DAC7718_UpdateLatch(uint8_t id)
+bool DAC7718_UpdateLatch(uint8_t id)
 {
 	// Validate ID
 	if (id >= MAX_DAC7718_CONFIG) {
 		LOG_E("DAC7718_UpdateLatch: invalid id=%u", id);
-		return;
+		return false;   // #980 item 1
 	}
 
 	// Write to configuration register with LD bit set to update all DAC outputs
@@ -379,7 +423,9 @@ void DAC7718_UpdateLatch(uint8_t id)
 
 	if (result == UINT32_MAX) {
 		LOG_E("DAC7718_UpdateLatch: Failed to update latch");
+		return false;
 	}
+	return true;
 }
 
 // SPI2 configuration is handled by MCC-generated initialization
