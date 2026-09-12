@@ -52,7 +52,7 @@ unrelated to compiler optimization or volatile semantics.
 
 The volatile-pointer narrative ("at -O3 GCC may hoist/merge address
 loads") was a misattribution that propagated through PR #420 → issue
-#421 → CLAUDE.md atomicity rules. The codegen evidence below confirms
+#421 → the atomicity rules in `docs/MCU_REFERENCE.md`. The codegen evidence below confirms
 the misattribution.
 
 ## Codegen A/B evidence
@@ -181,11 +181,11 @@ For every site PR #443 proposed to qualify (and for the existing
 | `pModuleConfigAD7609` | `firmware/src/HAL/ADC/AD7609.c:85` | Leave non-volatile |
 | `gpStreamingConfig`, `gpRuntimeConfigStream` | `firmware/src/services/streaming.c:185, 188` | Leave non-volatile |
 | `buffer`, `bufferSize` | `firmware/src/services/streaming.c:177-178` | **Remove volatile, in this PR.** A first-pass n=1 bench (4 tests × ~150k samples) hinted the qualifier was load-bearing (1 encoder failure on no-volatile vs 0 on main); a multi-trial follow-up (8 trials × ~400k samples per branch) showed both branches produce ~2 encoder failures per 3.2M samples — a baseline rate, not a difference. The n=1 was noise. The qualifier is redundant; codegen saves 8 instructions in `streaming_Task` (528 bytes total). |
-| `gQuesBits`, `gInTimerHandler`, `gIsEnabled` | various (added in `971fac37f`) | **Keep volatile** — these are NOT set-once pointers; they are RMW flags / single-bit ISR flags where the qualifier serves the standard "volatile flag set in ISR, polled in task" pattern from CLAUDE.md atomicity rules. Different shape, different rationale. |
+| `gQuesBits`, `gInTimerHandler`, `gIsEnabled` | various (added in `971fac37f`) | **Keep volatile** — these are NOT set-once pointers; they are RMW flags / single-bit ISR flags where the qualifier serves the standard "volatile flag set in ISR, polled in task" pattern from the atomicity rules in `docs/MCU_REFERENCE.md`. Different shape, different rationale. |
 
-## CLAUDE.md update
+## Documentation update
 
-The "Atomicity & Concurrency Rules" section gets a new bullet
+The "Atomicity & Concurrency Rules" section (`docs/MCU_REFERENCE.md`) gets a new bullet
 capturing this finding so future audits don't re-litigate the
 question:
 

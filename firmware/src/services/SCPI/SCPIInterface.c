@@ -2370,7 +2370,7 @@ static void RestoreSdMode(sd_card_manager_mode_t savedMode) {
 
 // StreamingRuntimeConfig.Frequency is uint64_t — non-atomic on PIC32MZ, so the
 // benchmark/finder paths read/write it through a critical section per the
-// project atomicity rule (CLAUDE.md / Compliance ID 8).  These run in SCPI task
+// project atomicity rule (docs/MCU_REFERENCE.md / Compliance ID 8).  These run in SCPI task
 // context (one-shot commands, not a hot ISR path) so the latency cost is nil.
 static inline uint64_t StreamFreq_Get(const StreamingRuntimeConfig* c) {
     taskENTER_CRITICAL();
@@ -3755,7 +3755,7 @@ static void SCPI_SyncOperSdBitLocked(void) {
      * case returns the address of a member of a static struct, and
      * BOARDRUNTIME_SD_CARD_SETTINGS is a compile-time constant naming a real
      * case. Every other callback in this file relies on the same reasoning
-     * (CLAUDE.md standing rule), so guarding only here would be inconsistent. */
+     * (docs/MCU_REFERENCE.md standing rule), so guarding only here would be inconsistent. */
     const bool logging = Streaming_IsActiveOnNonWifiInterface() &&
                          sd->enable &&
                          (sd->mode == SD_CARD_MANAGER_MODE_WRITE) &&
@@ -4442,7 +4442,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     //
     // Floor is 2500 B (lowered from 10 KB 2026-05-31 — see
     // MIN_HEAP_FREE_FOR_STREAM_START_BYTES in SCPIInterface.h for the
-    // rationale + tradeoff).  Boot-idle HeapFree is ~13 KB per CLAUDE.md,
+    // rationale + tradeoff).  Boot-idle HeapFree is ~13 KB per docs/MEMORY_ARCHITECTURE.md,
     // so the guard now only bites under severe accumulated pressure (the
     // #490 per-session leak), not on ordinary post-boot starts.
     //
@@ -4530,7 +4530,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     if (!freqProvided) {
         // 64-bit read needs a critical section on the 32-bit PIC32MZ bus to avoid
         // a torn read if another SCPI task writes Frequency concurrently
-        // (CLAUDE.md atomicity rules; Qodo /agentic_review pass-6).
+        // (docs/MCU_REFERENCE.md atomicity rules; Qodo /agentic_review pass-6).
         taskENTER_CRITICAL();
         uint64_t stored = pRunTimeStreamConfig->Frequency;
         taskEXIT_CRITICAL();
@@ -4582,11 +4582,17 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                  * achievable max is in the LOG_E (SYST:LOG?); clients should
                  * pre-validate against current_max_rate_hz (CONF:CAP:JSON?).
                  * Benchmark mode (SYST:STR:BENCHmark) bypasses the cap entirely. */
-                LOG_E("Streaming rejected: %d Hz exceeds max %u Hz for this config "
-                      "(%u ch, %u type1) - request <= %u Hz or use SYST:STR:BENCHmark",
+                /* #1000 class: this rendered 130 bytes against Logger's
+                  * 125-byte ceiling, so the tail was cut to "SYST:STR:BENC" --
+                  * which is neither the registered SYST:STR:BENCHmark nor its
+                  * only legal abbreviation SYST:STR:BENCH, so an operator who
+                  * followed the printed remedy got -113. The max was also
+                  * interpolated twice; once is enough. */
+                LOG_E("STR:START refused (#524): %d Hz > max %u Hz "
+                      "(%u ch, %u T1) - use <= that or SYST:STR:BENCHmark",
                       (int)freq, (unsigned)maxFreq,
                       (unsigned)totalEnabledPublicChannels,
-                      (unsigned)activeType1ChannelCount, (unsigned)maxFreq);
+                      (unsigned)activeType1ChannelCount);
                 SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
                 return SCPI_RES_ERR;
             }
@@ -4929,14 +4935,15 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
          * to print ifaceForStart under the word "was", which is the interface
          * the start WANTED, not one it ever held (Qodo). */
         if (ifaceRacedBySet) {
-            LOG_E("STR:START refused (#848): SYST:STR:INT selected interface "
-                  "%d during start setup, but this start was set up for %d. "
-                  "Retry.",
+            /* #1000 class: kept under Logger's 125-byte ceiling. */
+            LOG_E("STR:START refused (#848): SYST:STR:INT moved to %d "
+                  "mid-start; set up for %d. Retry.",
                   (int)gStreamIfaceLastSet, (int)ifaceForStart);
         } else {
-            LOG_E("STR:START refused (#848): stream interface moved during "
-                  "start setup - set up for %d, pinned %d at detect, found %d "
-                  "at publish. Retry.",
+            /* #1000 class: the fixed text alone was 127 bytes, so this line
+              * was truncated on every firing regardless of the values. */
+            LOG_E("STR:START refused (#848): iface moved mid-start - setup %d, "
+                  "detect %d, publish %d. Retry.",
                   (int)ifaceForStart, (int)ifaceAtDetect, (int)ifaceAtPublish);
         }
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -5143,8 +5150,21 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                 SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
-                LOG_E("Cannot start SD logging - could not arm the write "
-                      "(#942: raced the #589 suspend check): %s\r\n",
+                /* #1000: the old prefix here was 88 characters against a
+                 * 125-byte effective ceiling (LOG_MESSAGE_SIZE - 3, Logger.c),
+                 * leaving 35 for the reason after the CRLF -- short of every
+                 * SD_SuspendReasonText() return (46/58/76), all three cut.
+                 * The NULL fallback ("the SD task is not accepting work", 33
+                 * chars) fit the old prefix (88+33+2=123<=125) and was never
+                 * the problem; it is the one case a bench repro would not
+                 * have caught. This prefix is 27 characters, leaving 96: the
+                 * longest reachable case (the 76-character quarantine
+                 * reason) totals 105, well inside the ceiling. The #942/#589
+                 * narrative moved to this comment -- it is still greppable
+                 * via the LOG_E line's #1000 tag and this issue number, just
+                 * not inside the 128-byte message the device actually
+                 * emits. */
+                LOG_E("SD log arm refused (#942): %s\r\n",
                       why ? why : "the SD task is not accepting work");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
                 return SCPI_RES_ERR;
@@ -5174,7 +5194,18 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                      * full directory AND a bucket that could not be created or read.
                      * Naming only fullness misdirects the operator when the real
                      * fault is the media; the SD-side LOG_E names which it was. */
-                    LOG_E("[SD] STR:START refused (#689): %s",
+                    /* #1000 twin: this prefix was "[SD] STR:START refused
+                     * (#689): " (31 chars). sd_card_manager_WriteRefuseText()
+                     * returns up to 98 bytes (the bucket-name-collision arm),
+                     * so 31+98 = 129 against Logger's 125-byte effective
+                     * ceiling -- two of its five arms were cut, including the
+                     * one naming the remedy. At 25 chars the worst case is 123.
+                     * The margin is only 2 bytes because those reason strings
+                     * are themselves near the ceiling; a concatenation-aware
+                     * guard that would catch a future reason growing past it is
+                     * #1001, not this site. The sibling in SCPIStorageSD.c's
+                     * SD:BENCH arm already fits at exactly 125. */
+                    LOG_E("SD start refused (#689): %s",
                           sd_card_manager_WriteRefuseText());
                 } else if (sd_card_manager_StartupDiskFull()) {
                     /* #851: the numbers, not just the verdict. This detail used
@@ -5184,7 +5215,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                     uint64_t freeBytes = 0, totalBytes = 0;
                     bool haveSpace = sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes);
                     /* Snapshot the 64-bit floor under critical section per
-                     * CLAUDE.md atomicity rules — pairs with the setter's
+                     * docs/MCU_REFERENCE.md atomicity rules — pairs with the setter's
                      * critical-section write in SCPI_StorageSDMinFreeSet. */
                     uint64_t floor;
                     taskENTER_CRITICAL();
@@ -5453,8 +5484,10 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         /* Which of the two terms fired, because the operator's next move
          * differs: an in-flight stop clears by itself in at most the SD
          * finalise wait, while a completed one means the session this start
-         * was setting up was deliberately ended. Kept under LOG_MESSAGE_SIZE
-         * (128, so 127 usable) with the longer arm -- 108 chars. */
+         * was setting up was deliberately ended. Fits with the longer arm at
+         * 108 chars. NB the usable ceiling is 125, not the 127 this comment
+         * used to claim: Logger.c clamps at LOG_MESSAGE_SIZE - 3, not - 1.
+         * This message was never over it; the stated constant was. */
         LOG_E("STR:START refused (#861): %s; the device stays stopped. Retry.",
               stopInFlight ? "a stop is still in flight on the other transport"
                            : "a stop was issued during start setup");
@@ -5473,9 +5506,12 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
-        LOG_E("STR:START refused (#847): a streaming config change is in "
-              "flight on the other SCPI transport - its store would land on "
-              "this session. Retry.");
+        /* #1000 class: this was a fixed 139-byte literal with no
+          * substitutions, so it was cut identically on every firing. The
+          * dropped half explained WHY: the other transport's store would
+          * otherwise land on this session. */
+        LOG_E("STR:START refused (#847): a config change is in flight on the "
+              "other SCPI transport. Retry.");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
@@ -5502,8 +5538,9 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         if (sdLoggingRequested) {
             SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
-        LOG_E("STR:START refused (#844): stream interface changed during start "
-              "(%d -> %d); the SD/buffer setup no longer matches. Retry.",
+        /* #1000 class: kept under Logger's 125-byte ceiling. */
+        LOG_E("STR:START refused (#844): iface changed mid-start (%d -> %d); "
+              "setup stale. Retry.",
               (int)ifaceForStart, (int)ifaceObserved);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
@@ -5527,8 +5564,14 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
          * on this path (SD not ready, #589 SPI gate, #847) that a distinct
          * code is worth having. The log line is what names WHICH guard fired.
          *
-         * Kept under LOG_MESSAGE_SIZE (128, so 127 usable): the logger stores
-         * a fixed-size message and TRUNCATES past it, silently. 117 chars. */
+         * Kept under Logger's usable ceiling of 125 -- LOG_MESSAGE_SIZE is
+         * 128 and Logger.c clamps at LOG_MESSAGE_SIZE - 3, so the old "127
+         * usable" here was wrong by two. The message is 117 chars, so it was
+         * never truncated; the CONSTANT was the defect, and a sibling sized
+         * against 127 would have reproduced #1000. The identical claim above
+         * the #861 refusal was corrected in this branch's previous commit and
+         * this twin was missed -- exactly the pattern that commit set out to
+         * end. The logger truncates past the ceiling silently. */
         LOG_E("STR:START refused (#846): the enabled-channel set changed during "
               "start; the mapping and sample pool are stale. Retry.");
         SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
@@ -5545,8 +5588,10 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
-        LOG_E("STR:START refused (#844): config changed during start - %d Hz now "
-              "exceeds max %u Hz. Re-read CONF:CAP:JSON? and retry",
+        /* #1000 class: this rendered to exactly 125 at ordinary values, i.e.
+          * zero margin, and over it for wider ones. */
+        LOG_E("STR:START refused (#844): config changed mid-start - %d Hz > "
+              "max %u Hz. Re-read CONF:CAP:JSON?",
               (int)freq, (unsigned)revalidatedMax);
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
@@ -5640,7 +5685,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      *
      * A bare 32-bit load, not a critical section: unlike the interface pins
      * inside the body it has no partner field it must describe one instant
-     * with, and CLAUDE.md's atomicity rule is explicit that wrapping a plain
+     * with, and docs/MCU_REFERENCE.md's atomicity rule is explicit that wrapping a plain
      * aligned 32-bit load only costs interrupt latency.
      *
      * Unused on the SYSTem:STReam:START 0 disable path, which returns before
@@ -7257,10 +7302,15 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSz);
     AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount, sElemSz);
     if (sPoolMem == NULL || sFreeMem == NULL || sCount == 0 || sElemSz == 0) {
-        LOG_E("PrepareStreamingBuffers: refused - partition left no sample "
-              "slots (pool=%p free=%p count=%u elem=%u); reduce "
-              "SYST:MEM:USB/WIFI/SD/ENCoder:BUFfer or SYST:MEM:AUTO",
-              sPoolMem, (void*)sFreeMem, (unsigned)sCount, (unsigned)sElemSz);
+        /* #1000 class: 153 bytes of fixed text plus four substitutions, so
+          * the whole remedy was cut -- an operator saw the refusal and never
+          * saw SYST:MEM:AUTO. The two %p were dropped rather than the remedy:
+          * a NULL pool or free-list is a partition bug rather than an operator
+          * misconfiguration, and SYST:MEM:FREE? reports the partition. The
+          * counts stay because they name which of the four conditions fired. */
+        LOG_E("Buffer prep refused: no sample slots (count=%u elem=%u); "
+              "try SYST:MEM:AUTO",
+              (unsigned)sCount, (unsigned)sElemSz);
         return false;
     }
     return true;
@@ -8051,7 +8101,7 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
        MIN/MAX_AIN_SAMPLE_COUNT) so the advertised min/max can't drift from
        the enforced min/max. (The encoder + sample-pool setters additionally
        accept 0 as an auto sentinel — outside the emitted min/max by design,
-       documented as a convention in the wiki schema + CLAUDE.md.) wifi/sd
+       documented as a convention in the wiki schema + docs/MEMORY_ARCHITECTURE.md.) wifi/sd
        mins and the 65536 caps are literals in their setters too — keep them
        literal here to match. */
     scpi_printf(context,
@@ -8592,16 +8642,27 @@ static const scpi_command_t scpi_commands[] = {
     // DAC
     {.pattern = "SOURce:VOLTage:LEVel", .callback = SCPI_DACVoltageSet,},
     {.pattern = "SOURce:VOLTage:LEVel?", .callback = SCPI_DACVoltageGet,},
-    {.pattern = "CONFigure:DAC:chanCALM", .callback = SCPI_DACChanCalmSet,},
-    {.pattern = "CONFigure:DAC:chanCALB", .callback = SCPI_DACChanCalbSet,},
-    {.pattern = "CONFigure:DAC:chanCALM?", .callback = SCPI_DACChanCalmGet,},
-    {.pattern = "CONFigure:DAC:chanCALB?", .callback = SCPI_DACChanCalbGet,},
-    {.pattern = "CONFigure:DAC:SAVEcal", .callback = SCPI_DACCalSave,},
-    {.pattern = "CONFigure:DAC:SAVEFcal", .callback = SCPI_DACCalFSave,},
-    {.pattern = "CONFigure:DAC:LOADcal", .callback = SCPI_DACCalLoad,},
-    {.pattern = "CONFigure:DAC:LOADFcal", .callback = SCPI_DACCalFLoad,},
-    {.pattern = "CONFigure:DAC:USECal", .callback = SCPI_DACUseCalSet,},
-    {.pattern = "CONFigure:DAC:USECal?", .callback = SCPI_DACUseCalGet,},
+    // #919: DAC calibration family was never implemented (getters fabricated
+    // 1.0/0.0, setters/NVM ops silently no-opped). NOT IMPLEMENTED decision:
+    // DAC7718 is NQ3-only hardware, not available to validate an implementation.
+    // Patterns stay registered (SCPI_Help still lists them) but route to the
+    // shared not-implemented stub instead of lying about success.
+    {.pattern = "CONFigure:DAC:chanCALM", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:chanCALB", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:chanCALM?", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:chanCALB?", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:SAVEcal", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:SAVEFcal", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:LOADcal", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:LOADFcal", .callback = SCPI_NotImplemented,},
+    // #1002: same defect, two sites #919 didn't name. USECal/USECal? parsed
+    // and discarded their argument / fabricated a constant 0 rather than
+    // reading or storing anything -- #919's own "Out of scope" section names
+    // only the eight commands above, not these two. Same NOT IMPLEMENTED
+    // disposition and the same reason: DAC7718 is NQ3-only hardware not
+    // available on this bench to validate a real implementation.
+    {.pattern = "CONFigure:DAC:USECal", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:USECal?", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:UPDATE", .callback = SCPI_DACUpdate,},
     //
     //    // SPI
@@ -8712,16 +8773,100 @@ static const scpi_command_t scpi_commands[] = {
 char scpi_input_buffer[SCPI_INPUT_BUFFER_LENGTH];
 scpi_error_t scpi_error_queue_data[SCPI_ERROR_QUEUE_SIZE];
 
+/* #1004: total time SCPI_Help may spend writing while it holds the shared
+ * SCPI response buffer (gScpiRespMutex, #347). Same budget and same
+ * reasoning as the SCPI_CMDHISTORY_WRITE_BUDGET_MS #995 proposes on the
+ * still-open PR #1008 -- that constant is NOT in this tree: generous against a
+ * normally-reading host (HELP's whole reply is a few KB against a 16 KB
+ * USB / 14 KB WiFi circular buffer), tight enough to bound a stalled one. */
+#define SCPI_HELP_WRITE_BUDGET_MS  2000U
+
+/* #1004: self-gating transport write for SCPI_Help.
+ *
+ * SCPI_Help emits its reply as up to 1 + (2 x number of 2048-byte-buffer
+ * fills) separate context->interface->write() calls while holding
+ * gScpiRespMutex: it formats the command table into the shared response
+ * buffer and cannot let go of the buffer between formatting a chunk and
+ * writing it (a peer callback granted the mutex in that window would
+ * snprintf over the bytes this function is about to hand to the transport).
+ *
+ * Both transports route write() through SCPI_WriteWithRetry, bounded per
+ * call at SCPI_WRITE_MAX_RETRIES(200) x SCPI_WRITE_RETRY_DELAY_MS(5) ~ 1 s.
+ * With every return value discarded (the pre-#1004 shape), a host that
+ * stopped reading made EVERY one of those ~5-7 calls burn its own full ~1 s
+ * budget -- ~5-7 s of held mutex, blocking every other SCPI callback on BOTH
+ * transports for the same span. Two sibling callbacks carry the same defect:
+ * SCPI_SysInfoTextGet (#947, PR #992) and SCPI_GetCommandHistory (#995,
+ * PR #1008). BOTH OF THOSE PRs ARE STILL OPEN as of this commit, so both of
+ * those holds are LIVE in this tree -- do not read this comment as saying
+ * the class is closed. #1004 records why each site carries its own small
+ * helper instead of one shared generic one.
+ *
+ * TWO guards, because neither alone bounds the hold (the same two-guard
+ * algebra #995 proposes for CmdHistoryWrite on PR #1008; that helper does
+ * not exist in this tree yet):
+ *   (1) short write -> latch. SCPI_WriteWithRetry has no resend path, so a
+ *       short write has already DROPPED those bytes; the reply is truncated
+ *       at that chunk and the remaining budget buys nothing.
+ *   (2) cumulative deadline. Guard (1) never fires for a transport draining
+ *       at exactly the trickle rate that lets each write finish just inside
+ *       its own ~1 s budget. Sampling one startTick and checking it before
+ *       each write bounds the hold at BUDGET + one write budget (~3 s)
+ *       regardless of drain pattern.
+ *
+ * Gating lives INSIDE the helper rather than at the call sites so the change
+ * is a mechanical substitution: no early returns, no gotos, and no way to
+ * skip the single SCPI_ResponseBuf_Give() on the way out.
+ *
+ * Deliberately does NOT push a SCPI error itself: SCPI_ErrorPush would add
+ * another retry-bounded write to the very hold this exists to shrink. The
+ * caller returns SCPI_RES_ERR
+ * instead and libscpi's processCommand pushes SCPI_ERROR_EXECUTION_ERROR
+ * after the callback -- and therefore after the Give.
+ *
+ * @param context   libscpi context (supplies the transport write fn)
+ * @param ok        in/out latch; false on entry short-circuits the write,
+ *                  and is cleared here on the first incomplete or
+ *                  over-budget write
+ * @param startTick tick sampled once by the caller right after the take
+ * @param data      bytes to write
+ * @param len       number of bytes
+ */
+static void ScpiHelpWrite(scpi_t * context, bool * ok, TickType_t startTick,
+                          const char * data, size_t len) {
+    if (!*ok) {
+        return;
+    }
+    /* Unsigned tick subtraction: correct across the 32-bit xTaskGetTickCount
+     * wrap (~49.7 days at configTICK_RATE_HZ 1000). */
+    if ((TickType_t)(xTaskGetTickCount() - startTick) >=
+            pdMS_TO_TICKS(SCPI_HELP_WRITE_BUDGET_MS)) {
+        *ok = false;
+        LOG_E("HELP: transport write budget (%u ms) exhausted "
+              "(host not reading) - reply truncated",
+              (unsigned)SCPI_HELP_WRITE_BUDGET_MS);
+        return;
+    }
+    size_t written = context->interface->write(context, data, len);
+    if (written != len) {
+        *ok = false;
+        LOG_E("HELP: transport write dropped %u of %u bytes "
+              "(host not reading) - reply truncated",
+              (unsigned)(len - written), (unsigned)len);
+    }
+}
+
 // Append formatted text to `buffer` at offset `count`, flushing via
-// `context->interface->write` when the next chunk would overflow. Returns
-// the updated count. snprintf negative returns (encoding errors) are
+// ScpiHelpWrite (bounded, self-gating) when the next chunk would overflow.
+// Returns the updated count. snprintf negative returns (encoding errors) are
 // treated as empty append — safer than storing -1 into size_t.
 static size_t scpi_help_append(scpi_t* context, char* buffer, size_t count,
-                               const char* pattern) {
+                               const char* pattern, bool* ok,
+                               TickType_t startTick) {
     size_t cmdSize = strlen(pattern) + 5;  // "  " + pattern + "\r\n"
     if (count + cmdSize >= SCPI_RESPONSE_BUF_SIZE) {
         buffer[count] = '\0';
-        context->interface->write(context, buffer, count);
+        ScpiHelpWrite(context, ok, startTick, buffer, count);
         count = 0;
     }
     int n = snprintf(buffer + count, SCPI_RESPONSE_BUF_SIZE - count,
@@ -8744,6 +8889,14 @@ scpi_result_t SCPI_Help(scpi_t* context) {
     size_t numCommands = sizeof (scpi_commands) / sizeof (scpi_command_t);
     size_t i = 0;
 
+    // #1004: every write below goes through ScpiHelpWrite, which latches
+    // this false on the first incomplete or over-budget write and turns the
+    // rest into no-ops. startTick is sampled HERE, after the take, so the
+    // budget covers only the writes -- time spent blocked on the mutex is
+    // not this call's to spend.
+    bool writeOk = true;
+    TickType_t startTick = xTaskGetTickCount();
+
     int hdr = snprintf(buffer, SCPI_RESPONSE_BUF_SIZE,
                        "%s", "\r\nImplemented:\r\n");
     size_t count = (hdr > 0) ? (size_t)hdr : 0;
@@ -8751,12 +8904,13 @@ scpi_result_t SCPI_Help(scpi_t* context) {
         if (scpi_commands[i].callback != SCPI_NotImplemented &&
                 scpi_commands[i].pattern != NULL) {
             count = scpi_help_append(context, buffer, count,
-                                     scpi_commands[i].pattern);
+                                     scpi_commands[i].pattern,
+                                     &writeOk, startTick);
         }
     }
 
     if (count > 0) {
-        context->interface->write(context, buffer, count);
+        ScpiHelpWrite(context, &writeOk, startTick, buffer, count);
     }
 
     hdr = snprintf(buffer, SCPI_RESPONSE_BUF_SIZE,
@@ -8766,16 +8920,17 @@ scpi_result_t SCPI_Help(scpi_t* context) {
         if (scpi_commands[i].callback == SCPI_NotImplemented &&
                 scpi_commands[i].pattern != NULL) {
             count = scpi_help_append(context, buffer, count,
-                                     scpi_commands[i].pattern);
+                                     scpi_commands[i].pattern,
+                                     &writeOk, startTick);
         }
     }
 
     if (count > 0) {
-        context->interface->write(context, buffer, count);
+        ScpiHelpWrite(context, &writeOk, startTick, buffer, count);
     }
 
     SCPI_ResponseBuf_Give();
-    return SCPI_RES_OK;
+    return writeOk ? SCPI_RES_OK : SCPI_RES_ERR;
 }
 
 #define SCPI_WRITE_MAX_RETRIES      200

@@ -51,6 +51,14 @@ name: host-tests
 # which the glob added in the same commit plainly matches. Caught by #941's
 # round-2 pre-merge audit.
 #
+#   - test_913_spi_wait_stat.c: models the #913 spin-then-yield wait loop,
+#     whose shape is shared by all THREE files carrying it -- UserSpi.c,
+#     UserUart.c and UserI2c.c. Only UserSpi.c was listed here at first, so a
+#     PR touching only the uart or i2c twin matched no path and the suite's
+#     constant pins did not run for the file they guard. A shape checker,
+#     tools/lint/wait_loop_shape.py, was listed here too and has been deleted;
+#     the block above $(SPI913_BIN) in tests/host/Makefile records why, and
+#     what this suite does and does not claim without it.
 #   - test_json_string_escape.c (#164): compiles
 #     firmware/src/services/JSON_StringEscape.h directly. Scoped to that one
 #     file PLUS firmware/src/services/JSON_Encoder.c (its sole consumer, and
@@ -73,6 +81,40 @@ name: host-tests
 #     Found by Qodo /agentic_review on the #947 PR: without this entry, a
 #     tick-config change could silently invalidate both host tests' timing
 #     model and CI would stay green.
+#   - test_980_dac7718_error_paths.c (#980): the Makefile target lists
+#     firmware/src/HAL/DAC7718/DAC7718.c as a build dependency (its grep
+#     guards pin identifiers/branch-counts in that file, and SCPIDAC.c) --
+#     but until this entry, only firmware/src/services/SCPI/** (SCPIDAC.c)
+#     was covered here, not the DAC7718/ directory itself. A PR touching
+#     ONLY DAC7718.c (no SCPIDAC.c change) matched no path and would not
+#     have run this suite, silently skipping the error-path checks on
+#     exactly the file whose control-flow shape they exist to mirror.
+#     Found by Qodo's #990 pre-merge review.
+#   - test_1000_sd_log_arm_budget.c (#1000): measures the #942 SD-log-arm
+#     refusal's LOG_E line against the ceiling Logger actually cuts at. Its
+#     fixture is GENERATED at build time from SCPIInterface.c and
+#     SCPIStorageSD.c -- both already covered by the SCPI/ entry -- AND from
+#     firmware/src/Util/Logger.h and firmware/src/Util/Logger.c, which is why
+#     both are listed below. The ceiling is split across those two files:
+#     LOG_MESSAGE_SIZE is the constant in the header, but what survives is set
+#     by the two reservations in the .c -- vsnprintf(buffer,
+#     LOG_MESSAGE_SIZE - 2, ...) and the min((LOG_MESSAGE_SIZE - 3), size)
+#     clamp. A PR that lowered either and touched nothing else would change
+#     what "fits" means while queueing no job that re-measures it, leaving the
+#     extraction to run for the first time on some later, unrelated PR.
+#
+#     Listed by name rather than as Util/, matching the CircularBuffer and
+#     FixedPointFmt entries above: this directory holds many files no host
+#     test reads, so a glob would queue the job on most edits to it for
+#     nothing. The "refactor escapes the trigger" worry that made HAL/ADC/ a
+#     directory does not bite the same way here -- the extraction fails the
+#     BUILD, loudly and by name, if either constant stops parsing where it
+#     looks for it, so a move cannot pass silently.
+#
+#     NOTE: PR #1017 (#1001) adds these same two entries for the same reason,
+#     in its own hunk further down each list. Whichever merges second should
+#     keep ONE copy of each path -- a duplicate is harmless to Actions but is
+#     noise, and the two comments explaining it are then redundant too.
 
 on:
   pull_request:
@@ -82,11 +124,20 @@ on:
       - 'firmware/src/Util/CircularBuffer.c'
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
+      # #1000: the generated log-budget fixture reads the ceiling out of both
+      # of these -- the constant from the .h, the two reservations that make
+      # it effective from the .c.
+      - 'firmware/src/Util/Logger.h'
+      - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
       - 'firmware/src/HAL/ADC/**'
+      - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
+      - 'firmware/src/HAL/UserSpi/UserSpi.c'
+      - 'firmware/src/HAL/UserUart/UserUart.c'
+      - 'firmware/src/HAL/UserI2c/UserI2c.c'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -95,11 +146,20 @@ on:
       - 'firmware/src/Util/CircularBuffer.c'
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
+      # #1000: the generated log-budget fixture reads the ceiling out of both
+      # of these -- the constant from the .h, the two reservations that make
+      # it effective from the .c.
+      - 'firmware/src/Util/Logger.h'
+      - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
       - 'firmware/src/HAL/ADC/**'
+      - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
+      - 'firmware/src/HAL/UserSpi/UserSpi.c'
+      - 'firmware/src/HAL/UserUart/UserUart.c'
+      - 'firmware/src/HAL/UserI2c/UserI2c.c'
       - '.github/workflows/host-tests.yml'
 
 permissions:

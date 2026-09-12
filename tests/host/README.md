@@ -40,7 +40,8 @@ three tests here, not just the one #946 added.
 - NULL-argument safety on every entry point
 
 `test_943_bench_stall_bound.c` covers the per-chunk write loop inside
-`SYST:STOR:SD:BENCHmark` (issue #943). Unlike the other two it does **not**
+`SYST:STOR:SD:BENCHmark` (issue #943). Unlike the CircularBuffer /
+FixedPointFmt / AD7609Scale tests it does **not**
 include any firmware source: `SCPIStorageSD.c` drags in libscpi, FreeRTOS and
 the SD manager, so the test re-implements the pre-fix and post-fix loop
 **shapes** against an injected mock clock and mock `WriteToBuffer`, then
@@ -55,6 +56,126 @@ wrap.
 Because the test re-implements rather than includes, the two firmware timeout
 constants are a copy. The Makefile target greps them out of `SCPIStorageSD.c`
 and **fails the build** if either drifts, so a stale copy cannot pass silently.
+
+`test_953_bench_suspend_diagnosis.c` covers the branch a little further down
+the same function (issue #953): the one that has to say *why* the benchmark's
+file never opened. Same technique as `test_943` and for the same reason — the
+decision cascade is re-implemented against injected values rather than
+included. Until #953 it had two arms, so a benchmark whose arm succeeded and
+whose SD task was then suspended mid-wait (WiFi streaming taking SPI4, a WiFi
+FW update, the #925 jam quarantine) hit the fallback and blamed the *card* —
+"likely SPI-mode incompatible" — for a task that had simply stopped running.
+The fix adds a third arm reporting `SD_SuspendReasonText()`.
+
+The test asserts all four quadrants of (suspended × dir-full) against **both**
+the pre-fix and post-fix shapes, and its headline property is that **exactly
+one** quadrant moves. That is what pins the ordering decision: the recorded
+`#689`/`#690` dir-full verdict is tested **before** the live suspend reason,
+because it can only have been set by the SD task actually running and refusing
+this request's open — so with both true the refusal is the real cause and the
+suspend is incidental. Testing the suspend first (as #953's ticket proposed)
+would have moved that quadrant too, silently narrowing #690.
+
+No constants are copied here, so this target has no equivalent of `test_943`'s
+two greps. What it copies is the **order of the three arms**, so the Makefile
+guards that instead: it locates each arm's marker in `SCPIStorageSD.c` and
+**fails the build** unless they still appear as dir-full → suspend → card.
+
+`test_1004_help_write_abort.c` covers `SCPI_Help`'s (the `HELP` command)
+shared-response-buffer write-abort bound (issue #1004) — the third site of a
+pattern whose other two fixes are still IN FLIGHT: #947/PR #992 for
+`SCPI_SysInfoTextGet` and #995/PR #1008 for `SCPI_GetCommandHistory` are both
+still open, so neither sibling fix — nor `test_995` — is in this tree. Same
+technique as `test_943`/`test_953`: `SCPIInterface.c` is not includable on the host, so the test
+re-implements the pre-fix and post-fix write **shapes** — the self-gating
+`ScpiHelpWrite` helper's two guards (cumulative deadline, checked before each
+transport call; short-write latch, checked after) — against an injected mock
+clock and mock transport, then compares their verdicts. Unlike #995's planned test,
+`SCPI_Help`'s write count is not pinned to a single firmware constant (it
+depends on the registered command table's total text size), so the test uses
+a representative write count from the issue's own measurement plus a sweep
+over a range, rather than one pinned to a `#define`. The Makefile target
+greps the three firmware constants (`SCPI_WRITE_MAX_RETRIES`,
+`SCPI_WRITE_RETRY_DELAY_MS`, `SCPI_HELP_WRITE_BUDGET_MS`) plus the FreeRTOS
+tick-rate/width assumption out of the real source and **fails the build** if
+any has drifted.
+
+`test_1000_sd_log_arm_budget.c` covers the LOG_E line emitted by
+`SCPI_StartStreamingClaimed`'s `#942` refusal arm (issue #1000) — the one that
+names *why* an SD-logging start could not arm the write. Its cause text is
+`SD_SuspendReasonText()`'s return, or the call site's own fallback when that is
+NULL, and Logger cuts the formatted line at `LOG_MESSAGE_SIZE - 3` = 125 bytes
+and staples a CRLF onto the stump, so a cut message still looks well-formed.
+The prefix used to be 88 characters, leaving 35 — less than the shortest of the
+three reasons (46), so all three were cut and the 76-character quarantine
+reason lost `SYST:STOR:SD:ENAble 1`, the command that clears a quarantine. The
+fix shortens the prefix to 27.
+
+Unlike `test_943` / `test_953` / `test_1004` this one models no *shape* — the
+subject is a length — so instead of re-implementing a loop it reproduces
+Logger's truncation for real (same `vsnprintf`, same bound, same clamp, same
+CRLF fixup) and runs the actual strings through it, asserting the emitted bytes
+equal the intended bytes. The headline is that the quarantine remedy survives
+now and provably did not before.
+
+Almost nothing here is a copy. The Makefile target **extracts**
+`LOG_MESSAGE_SIZE` from `Logger.h`, *both* of `Logger.c`'s reservations (the
+`vsnprintf` bound and the clamp — the arithmetic is split across the two
+files), and the prefix plus the NULL fallback from `SCPIInterface.c`, into a
+generated `gen_1000_log_budget.h`. So lowering the ceiling or growing the
+prefix makes the test fail on the real values rather than ask to be updated.
+Extraction has a failure mode a grep guard does not — finding *nothing*, which
+would satisfy every length assertion while checking none — so each extraction
+is checked non-empty and the prefix is round-tripped back into the source text
+before the build proceeds.
+
+The three `SD_SuspendReasonText()` strings are the one copy. They belong to
+that function rather than to this call site, and #1001 is building the general
+mechanism that measures them against every caller; until then the Makefile
+greps each full `return` statement and fails the build on drift. The old
+88-character prefix is kept in the test as a frozen historical control, so the
+suite carries its own evidence that these assertions bite.
+
+One thing this test pins that is easy to get wrong: the **NULL fallback fit**
+under the old prefix (88 + 33 + 2 = 123). Only `SD_SuspendReasonText()`'s three
+returns were cut. That matters because the NULL case is the one a casual bench
+reproduction reaches first, so a complete-looking line there is not evidence
+the bug was absent.
+`test_985_suspend_reason_consistency.c` covers `SD_SuspendReasonText()` itself
+(issue #985) — the function `test_953` only tests against NULL. Same
+re-implementation technique as the two above, for the same reason. Until #985
+it decided *whether* the SD stack was suspended from one pair of reads
+(`app_SDCard_SpiOwnedByWifi()`, itself `wifiStream || fwUpdate || quarantined`,
+then `SpiBusHealth_IsSdSuspended()`) and *which cause to name* from a second,
+later pair — re-reading two of the composite's three terms, and returning the
+third as an unconditional default. So a cause that ended between the two pairs
+was reported as a different one: a WiFi firmware update that opened the gate
+and finished before its own re-read produced "WiFi streaming owns SPI4 -
+SYST:STR:STOP first", telling the operator to stop a stream that was not
+running. That string reaches every #589 refusal (`SD:GET`, `SD:LISt?`,
+`SD:CRC?`, `SD:DELete`, `SD:FORmat`, `SD:SPACe?`, `SD:BENCHmark`) via
+`SYST:LOG?`. The fix takes one flat snapshot of all four flags — using the new
+`app_SDCard_WifiStreamActive()` accessor so the composite is not called *and*
+decomposed — and adds a fourth arm for the previously unnamed quadrant
+(suspended, no owner in this snapshot).
+
+The environment each shape runs against is a **timeline** per flag, not a bool:
+a sequence of what successive reads observe. That is what lets a case say "the
+FW update was over by the second read", which is the entire defect and which a
+flat-bool fixture cannot express at all. Covered: both mislabels (a FW update
+and a quarantine ending mid-call), the new fourth quadrant, the all-clear NULL,
+the three inherited strings and their precedence pinned by identity/content/
+length, and the headline — over all sixteen *stable* combinations exactly one
+verdict moves, so the NULL boundary and the other fifteen messages are
+unchanged. Staleness is explicitly **not** under test: the fixed function is
+still a snapshot, and no critical section is added or asserted.
+
+No constants are copied, but the *shape* is, so the Makefile guards it: the
+target extracts the real function (comment lines stripped) and **fails the
+build** unless it reads each of the four flags exactly once, calls
+`app_SDCard_SpiOwnedByWifi()` zero times, and still tests the four arms in the
+order quarantine → fwUpdate → wifiStream → suspended. Both halves were checked
+by mutating the firmware and confirming the build stops.
 
 `test_json_string_escape.c` covers `firmware/src/services/JSON_StringEscape.h`
 (issue #164) — the JSON string-escaping helper split out of `JSON_Encoder.c`

@@ -133,18 +133,105 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
  */
 const char *SD_SuspendReasonText(void)
 {
-    if (!app_SDCard_SpiOwnedByWifi() && !SpiBusHealth_IsSdSuspended()) {
-        return NULL;
-    }
+    /* #985: ONE flat snapshot of all four flags, taken here, ahead of every
+     * branch -- and the branches below read NOTHING but these locals.
+     *
+     * It used to decide WHETHER it was suspended from one pair of reads
+     * (app_SDCard_SpiOwnedByWifi(), which internally ORs WiFi-streaming, the
+     * FW update and the quarantine, then SpiBusHealth_IsSdSuspended()) and
+     * then WHICH cause to name from a second, later pair -- the quarantine
+     * and the FW update, read again. The four are independent and
+     * asynchronous, so a cause that ENDED between the two pairs was reported
+     * as a different one: a FW update that opened the gate and completed
+     * before its own re-read fell through to the WiFi-streaming string,
+     * telling the operator to stop a stream that was not running. No single
+     * read was wrong; the verdict was assembled out of reads taken at
+     * different instants.
+     *
+     * A snapshot can still be STALE -- any of these can change the instant
+     * after it is read -- and that is fine and unchanged: these flags are for
+     * REPORTING, not synchronisation (SD_RefuseIfSuspended below says the
+     * same). What a snapshot cannot be is self-contradictory. Whatever this
+     * names, it observed.
+     *
+     * No critical section, deliberately. Each read is a plain aligned load,
+     * already atomic on PIC32MZ, and a lock would not make the four MUTUALLY
+     * consistent anyway -- their writers are three unsynchronised tasks, so
+     * the set is never guaranteed to describe one instant. What is achievable
+     * is that the verdict is built from exactly one read of each, which is
+     * this.
+     *
+     * app_SDCard_SpiOwnedByWifi() is deliberately NOT called here: it
+     * composes three of these four internally, so calling it and also reading
+     * the parts is two samples of the same state, which is the defect itself.
+     * Its WiFi-streaming term is exposed separately as
+     * app_SDCard_WifiStreamActive() (app_freertos.c) so this can read it once
+     * without duplicating the IsEnabled/ActiveInterface derivation. */
+    const bool quarantined = SpiBusHealth_IsSdQuarantined();
+    const bool fwUpdate    = wifi_manager_IsWifiFirmwareUpdateActive();
+    const bool wifiStream  = app_SDCard_WifiStreamActive();
+    const bool suspended   = SpiBusHealth_IsSdSuspended();
+
     /* Quarantine first: it is the one that does NOT clear on its own. */
-    if (SpiBusHealth_IsSdQuarantined()) {
-        return "SD quarantined after a bus jam - reseat or remove the card, "
-               "then SYST:STOR:SD:ENAble 1 to retry";
+    if (quarantined) {
+        /* 76 characters, against a ceiling of 84 for THIS FILE'S callers --
+         * and that scope is the whole of what has been audited, so read it
+         * narrowly. Logger formats with vsnprintf(buf, LOG_MESSAGE_SIZE - 2,
+         * ...), 125 bytes survive, and the longest prefix interpolating a
+         * reason in SCPIStorageSD.c is 39 characters plus a CRLF. At 94 -- its
+         * length until #986 -- the line was cut at "then SYST:STOR:SD:ENAb",
+         * losing the command that clears a quarantine from the message whose
+         * entire job is to name it.
+         *
+         * NOT SAFE EVERYWHERE, and an earlier revision of this comment implied
+         * it was. This function is declared in the shared header, and one of
+         * its callers -- SCPI_StartStreamingClaimed's #942 refusal
+         * (SCPIInterface.c) -- used to interpolate it into an 88-character
+         * prefix, which left 35: short of even the shortest reachable reason
+         * (46), so all three were cut, the shortest included. #1000 fixed
+         * that call site by shortening ITS prefix (27 characters, not the
+         * reason strings here) rather than this function's return values --
+         * shortening the reasons was never the available lever, since the
+         * ceiling is shared across callers with different prefix costs. This
+         * function's two other SCPIInterface.c callers (the "SD suspended: %s"
+         * prefix, 40 characters) were already within budget for all four
+         * reachable strings here (measured, not just assumed: 118 worst case
+         * against the same 125-byte ceiling) and needed no change.
+         *
+         * NOT guarded by a test. Three attempts at one were each defeated in
+         * review -- a grep for the reason's own words matched the string it
+         * replaced, a hash of the function collapsed whitespace inside the
+         * literals, and a copy in the test can drift from this line. The guard
+         * has to measure the REAL string, which is a design rather than a
+         * patch: #1001. Until then this length is held by review. */
+        return "SD quarantined after a bus jam - reseat the card, "
+               "then SYST:STOR:SD:ENAble 1";
     }
-    if (wifi_manager_IsWifiFirmwareUpdateActive()) {
+    if (fwUpdate) {
         return "a WiFi firmware update owns SPI4 - retry when it completes";
     }
-    return "WiFi streaming owns SPI4 - SYST:STR:STOP first";
+    if (wifiStream) {
+        return "WiFi streaming owns SPI4 - SYST:STR:STOP first";
+    }
+    if (suspended) {
+        /* #985: suspended, with not one of the three owners set in THIS
+         * snapshot. Reachable, and until now it was the silent default.
+         * app_SDCardTask publishes the flag as `state == SUSPENDED ||
+         * app_SDCard_SpiOwnedByWifi()` once per loop iteration
+         * (app_freertos.c), so when the owner clears, the flag stays true
+         * until that task next runs, sees the bus released and leaves
+         * SUSPENDED -- a window in which the pump really is parked and there
+         * really is no owner to name. The old shape returned the
+         * WiFi-streaming string here, asserting the one thing this snapshot
+         * flatly does not show, and sending the operator to stop a stream
+         * that is not running.
+         *
+         * Says only what was observed: the task has not resumed. 46
+         * characters, the same as the WiFi-streaming string above and well
+         * inside the 84 the note above derives for this file's callers. */
+        return "the SD task has not resumed yet - retry shortly";
+    }
+    return NULL;
 }
 
 
@@ -442,7 +529,7 @@ typedef struct {
 
 /* volatile: written by the SCPI task running a benchmark and read by the
  * OTHER transport's SCPI task (SCPI_StorageSDLoggingSet's guard below, and
- * the benchmark's own re-entrancy claim). Per CLAUDE.md a value written by
+ * the benchmark's own re-entrancy claim). Per docs/MCU_REFERENCE.md a value written by
  * one task and read by another needs volatile so the compiler cannot cache
  * it in a register. volatile does NOT make the read-modify-write atomic —
  * the claim still takes a critical section (#736). */
@@ -1473,6 +1560,26 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     // Wait for file to be open and ready before writing
     {
         int readyWait = 0;
+        /* A suspension that starts AND ENDS inside this wait is NOT covered
+         * here, and the gap is deliberate rather than unnoticed.
+         * app_SDCard_GracefulShutdown() stores MODE_NONE over this benchmark's
+         * MODE_WRITE arm on its way into APP_SD_STATE_SUSPENDED
+         * (app_freertos.c), nothing restores it, and
+         * sd_card_manager_IsWriteReady() requires MODE_WRITE -- so the arm is
+         * dead for the rest of the wait and the cascade below reaches the card
+         * advisory with SD_SuspendReasonText() already back to NULL.
+         *
+         * Three rounds of this PR tried to close it by latching what was
+         * observed during the poll, and every round found the same thing from a
+         * new angle: an ambient condition is not evidence about THIS request.
+         * A live WiFi owner can be sampled and then vanish without the SD task
+         * ever suspending (the streaming auto-stop beats it to the check), and
+         * the latch then blames a suspension for a genuine card fault -- worse
+         * than the advisory it replaced, because it is confidently wrong. The
+         * fix is to latch that this arm's MODE_WRITE was torn down, which is
+         * true of every teardown cause including the power-state path, and
+         * that is a design change with its own ticket: #988. Left undone here
+         * rather than half-done. */
         while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
             if (sd_card_manager_StartupDirFull()) {   /* #690: early-exit */
                 break;
@@ -1481,6 +1588,54 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
             readyWait++;
         }
         if (!sd_card_manager_IsWriteReady()) {
+            /* #953: three arms, and the ORDER is the substance of this fix.
+             *
+             * Reaching here means the file never opened. Three different
+             * things cause that and each wants a different next action from
+             * the operator, so the cascade is ordered by how much each arm
+             * actually KNOWS -- recorded verdict first, live condition second,
+             * inference last.
+             *
+             * 1. StartupDirFull is a RECORDED VERDICT, and it is necessarily
+             *    THIS request's. sd_card_manager_ClearStartupDirFull() ran
+             *    synchronously a few lines above the mode=WRITE write, and the
+             *    only writer is the SD task's own OPEN_FILE refusal
+             *    (sd_card_manager.c:2070) -- which cannot run while that task
+             *    is suspended, and which no other SD command can reach in this
+             *    window because `mode` is WRITE and keeps IsBusy() true. So a
+             *    `true` here PROVES the SD task ran, attempted the open, and
+             *    refused it for a named reason. It is also the condition the
+             *    loop's #690 early-exit `break` above stops for. It stays
+             *    first.
+             *
+             *    #953's ticket proposed putting the suspend test first. That
+             *    would re-diagnose this arm whenever a suspend merely landed
+             *    AFTER the refusal -- telling the operator to stop streaming
+             *    for a card that will refuse the open identically once
+             *    streaming stops. That is the same mis-diagnosis this issue is
+             *    about, pointed the other way, and it would have silently
+             *    narrowed #690. Ordered as below, #953 changes exactly one
+             *    quadrant of (suspended x dirFull): the one it was filed for.
+             *
+             * 2. Otherwise, a live suspend reason -- THIS is #953. The
+             *    `!benchArmed` branch above already reports a suspend that was
+             *    present at the arm (#936/#955); a suspend that lands DURING
+             *    this wait was covered by nothing. Once app_SDCardTask parks
+             *    in APP_SD_STATE_SUSPENDED it pumps neither DRV_SDSPI_Tasks()
+             *    nor sd_card_manager_ProcessState() (app_freertos.c), so
+             *    IsWriteReady() can never become true and the wait can only
+             *    end at its full 5 s -- blaming the card for a task that
+             *    stopped running.
+             *
+             * 3. Only with neither of the above is the card diagnosis honest:
+             *    the SD task was running, recorded no refusal, and the open
+             *    still never completed.
+             *
+             * Sampled ONCE, before the cascade, rather than called again
+             * inside the arm that logs it: a second call could observe a
+             * different owner (or none) and print a reason other than the one
+             * that steered the branch. */
+            const char *why = SD_SuspendReasonText();
             if (sd_card_manager_StartupDirFull()) {
                 /* #690: name the real cause instead of the card advisory.
                  * #689: the flag covers every "no writable location" cause, not
@@ -1489,12 +1644,26 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
                  * card that is not the problem. */
                 LOG_E("SD:BENCH refused (#689): %s\r\n",
                       sd_card_manager_WriteRefuseText());
+            } else if (why != NULL) {
+                LOG_E("SD:BENCH - could not complete the arm: %s\r\n", why);
             } else {
                 LOG_E("SD:BENCH - File not ready after timeout\r\n");
                 LOG_E("SD:BENCH - if reads/LIST work but writes hang, the card is "
                       "likely SPI-mode incompatible (wiki: SD-Card-Compatibility)\r\n");
             }
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+            /* #953: this teardown is NOT a no-op under a suspend -- which is
+             * the natural worry, since sd_card_manager_UpdateSettings() DOES
+             * refuse while the SD task is suspended and
+             * SD_ArmOrRefuseWithCleanup above depends on exactly that. The
+             * gate is `mode != MODE_NONE && suspended` (sd_UpdateSettingsImpl,
+             * sd_card_manager.c), and mode NONE is DELIBERATELY exempt -- its
+             * own comment says NONE is how the timeout and shutdown paths TEAR
+             * DOWN an operation, and refusing it would strand the machine. The
+             * store below runs first, so this call passes the gate, raises
+             * gSdTeardownRequested and parks the machine at DEINIT exactly as
+             * it does un-suspended. Unchanged by #953; written down so the
+             * next reader need not re-derive it. */
             pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
             sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
             result = SCPI_RES_ERR;
@@ -2091,7 +2260,7 @@ scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
             ? SD_CARD_MANAGER_FAT32_SAFE_MAX_FILE_SIZE  // 3.9GB safe default
             : (uint64_t)maxSizeBytes;
 
-    // 64-bit shared write needs a critical section per CLAUDE.md atomicity
+    // 64-bit shared write needs a critical section per docs/MCU_REFERENCE.md atomicity
     // rules — PIC32MZ's 32-bit data bus tears 64-bit stores under task
     // preemption. maxFileSizeBytes is read live by WRITE_TO_FILE from
     // app_SDCardTask on every pass; without this, that reader could see a
@@ -2305,7 +2474,7 @@ scpi_result_t SCPI_StorageSDMinFreeSet(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
-    // 64-bit shared write needs critical section per CLAUDE.md
+    // 64-bit shared write needs critical section per docs/MCU_REFERENCE.md
     // atomicity rules — PIC32MZ's 32-bit data bus tears 64-bit
     // stores under task preemption.  The runtime config is read
     // by SCPI_StartStreaming from a different task and by the
