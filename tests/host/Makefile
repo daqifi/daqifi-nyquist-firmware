@@ -211,11 +211,25 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 
 SCPI999_WIRING_GUARD := check_999_createscpicontext_wiring.sh
 SCPI999_ARG_EXTRACTOR := extract_call_args.pl
+SCPI999_ARG_EXTRACTOR_TEST := test_extract_call_args.sh
 
 $(SCPI999_BIN): test_999_scpi_context_storage_isolation.c test_framework.h \
                 $(LIBSCPI_SRCS) $(LIBSCPI_HDRS) $(SCPI_INTERFACE_H) $(SCPI_INTERFACE_C) \
                 $(USBCDC_SRC) $(WIFI_TCP_SRC) $(SCPI999_WIRING_GUARD) \
-                $(SCPI999_ARG_EXTRACTOR) $(RECIPES)
+                $(SCPI999_ARG_EXTRACTOR) $(SCPI999_ARG_EXTRACTOR_TEST) $(RECIPES)
+	@# extract_call_args.pl decides whether the caller checks below and
+	@# check_999_createscpicontext_wiring.sh's check (c) can fail at all: they
+	@# ask it for a call's own arguments and then require EQUALITY of one whole
+	@# argument. A parser that returned the wrong list -- or the whole call as
+	@# one argument -- would leave both guards running, green, and vacuous. So
+	@# its own self-test runs FIRST, before anything it decides.
+	@bash $(SCPI999_ARG_EXTRACTOR_TEST) > /dev/null \
+	  || { echo "ERROR: $(SCPI999_ARG_EXTRACTOR_TEST) failed --"; \
+	       echo "       extract_call_args.pl is the engine of the CreateSCPIContext()"; \
+	       echo "       caller checks and of check_999_createscpicontext_wiring.sh's"; \
+	       echo "       check (c). Until it is correct, neither guard can be trusted"; \
+	       echo "       to fail. Run 'bash $(SCPI999_ARG_EXTRACTOR_TEST)' for detail."; \
+	       exit 1; }
 	@grep -qE 'typedef struct \{' $(SCPI_INTERFACE_H) \
 	  && grep -qE 'char inputBuffer\[SCPI_INPUT_BUFFER_LENGTH\];' $(SCPI_INTERFACE_H) \
 	  && grep -qE 'scpi_error_t errorQueue\[SCPI_ERROR_QUEUE_SIZE\];' $(SCPI_INTERFACE_H) \

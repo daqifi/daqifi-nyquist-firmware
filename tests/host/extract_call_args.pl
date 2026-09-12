@@ -54,6 +54,18 @@
 # see the Makefile and check_999_createscpicontext_wiring.sh), because a
 # comment containing a comma would otherwise be miscounted as an argument
 # boundary.
+#
+# It is likewise NOT string- or char-literal aware: parens, brackets and
+# commas inside "..." or '...' are counted as if they were code. Neither
+# real call site passes a literal today, and the failure direction is
+# fail-CLOSED for both consumers -- a literal paren truncates the argument
+# list, so the whole argument they require by EQUALITY goes missing and the
+# guard turns RED. So adding a string argument to either call breaks the
+# build loudly rather than blinding the guard, which is the safe direction
+# but is still a limitation and not a property to rely on. Making the scan
+# literal-aware is the fix if a literal argument ever becomes legitimate.
+# test_extract_call_args.sh pins this behaviour in two cases marked
+# LIMITATION so it cannot change silently.
 # ==========================================================================
 use strict;
 use warnings;
@@ -88,12 +100,11 @@ for (my $i = $paren_start; $i < $len; $i++) {
         $depth++;
     } elsif ($c eq ')' || $c eq ']') {
         $depth--;
-        if ($depth < 0) {
-            # An unmatched closer before the call's own open paren balances
-            # -- malformed input. Bail rather than report a partial arg
-            # list as if it were complete.
-            last;
-        }
+        # The scan starts AT the call's own '(' (so depth is 1 after the
+        # first character) and stops the moment depth returns to 0, which
+        # means depth can never go negative here -- a guard for that case
+        # would be unreachable. Trailing text after the call, including a
+        # closer belonging to an enclosing expression, is simply never read.
         if ($depth == 0) {
             push @args, substr($text, $arg_start, $i - $arg_start);
             $closed = 1;
