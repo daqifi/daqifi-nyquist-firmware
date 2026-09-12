@@ -219,11 +219,29 @@ extern "C" {
          *  a STA that has not associated yet, or an AP whose WDRV_WINC_APStart
          *  has not (or will never) complete. */
         WIFI_LINK_STATE_NO_LINK,
-        /** WIFI_STATE_START, AP_STARTED set, and no TCP client connected: the
-         *  soft-AP is up and beaconing, just idle. */
+        /** WIFI_STATE_START, AP_STARTED set, and NEITHER a recorded station
+         *  association NOR a connected TCP client: the soft-AP is up and
+         *  beaconing, with nobody on it.
+         *
+         *  An earlier revision of this comment said only "no TCP client".
+         *  That was wrong and an adversarial audit of PR #1044 caught it: a
+         *  station that merely ASSOCIATES to our soft-AP raises
+         *  WIFI_MANAGER_STATE_FLAG_STA_CONNECTED (ApEventCallback runs only
+         *  in AP mode and its handler sets that flag with no AP/STA
+         *  discrimination), which GetLinkState tests first -- so an
+         *  associated station reads CONNECTED, not AP_IDLE, with no TCP
+         *  session anywhere. The flag behaviour predates #951; the promise
+         *  did not, which is why the promise is what changed. */
         WIFI_LINK_STATE_AP_IDLE,
-        /** STA associated with an AP, or our soft-AP has a connected TCP
-         *  client. Identical condition to WIFI_STATUS_CONNECTED. */
+        /** A peer is attached: a STA association to an AP, or a station
+         *  associated to our soft-AP. An active TCP client on our soft-AP
+         *  also reaches this through the AP branch's own fallback, which is
+         *  reachable when the association flag is clear (the association
+         *  event is queued and its enqueue result is not checked, while the
+         *  accepted socket is published independently).
+         *
+         *  Deliberately NOT "an AP client has opened TCP": see AP_IDLE above.
+         *  Identical condition to WIFI_STATUS_CONNECTED. */
         WIFI_LINK_STATE_CONNECTED
     } wifi_link_state_t;
 

@@ -662,12 +662,30 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
  *              treat it as "the module is down" and reset/reflash.
  *   NOLINK     Radio up, but no link: a STA that has not associated yet, or an
  *              AP whose WDRV_WINC_APStart has not (or will never) completed.
- *   APIDLE     The soft-AP is up and BEACONING, with no client connected. This
+ *   APIDLE     The soft-AP is up and BEACONING with NOBODY ON IT -- neither a
+ *              recorded station association nor a connected TCP client. This
  *              is the value that says "the module is live" without requiring a
- *              peer -- the distinction #951 exists to make.
- *   CONNECTED  STA associated with an AP, or our soft-AP has a connected TCP
- *              client. Exactly the condition wifi_manager_GetWiFiStatus()
- *              reports as WIFI_STATUS_CONNECTED.
+ *              peer, which is the distinction #951 exists to make.
+ *   CONNECTED  A peer is attached: a STA association to an AP, or a station
+ *              associated to our soft-AP. An active TCP client on our soft-AP
+ *              also reaches this. Exactly the condition
+ *              wifi_manager_GetWiFiStatus() reports as WIFI_STATUS_CONNECTED.
+ *
+ *              APIDLE and CONNECTED are deliberately NOT split on "has a TCP
+ *              client". An adversarial audit of PR #1044 showed that they
+ *              cannot be: a station that merely associates to our soft-AP
+ *              raises the same state flag a STA association does, and
+ *              GetLinkState tests it first -- so APIDLE is unreachable while
+ *              any station is associated, TCP session or not. Splitting them
+ *              on TCP would mean reordering that test, which would flip
+ *              wifi_manager_GetWiFiStatus() to DISCONNECTED for the same case
+ *              and reach consumers well outside this query: iperf2 refuses a
+ *              client start unless the status is exactly CONNECTED, and
+ *              Streaming_AllConfiguredTransportsDead would start the #397
+ *              transport-down timer and auto-stop an AP-mode WiFi session
+ *              after the grace window. The contract is written to what the
+ *              state flags can actually support; the flag behaviour itself is
+ *              older than this command and is left alone here.
  *
  * WiFi disabled / deinitialised is NOT a reply value -- it is refused with
  * -200, the same as every other LAN getter (ADDRess?, MASK?, MAC?, BSSID? ...)

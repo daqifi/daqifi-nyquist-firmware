@@ -2410,12 +2410,38 @@ wifi_link_state_t wifi_manager_GetLinkState(void) {
         case WIFI_STATE_START:
             // WiFi is active, check connection status
 
-            // For STA mode: connected means connected to a router
+            // A peer is attached. Despite the flag's name this is NOT
+            // STA-only: ApEventCallback runs only in AP mode and, on a plain
+            // station ASSOCIATION to our soft-AP, queues
+            // WIFI_MANAGER_EVENT_STA_CONNECTED, whose handler sets this flag
+            // with no AP/STA discrimination. So in AP mode an associated
+            // station reaches CONNECTED here, before the AP branch below, and
+            // AP_IDLE is unreachable while any station is associated.
+            //
+            // That is the CONTRACT, not an accident to be reordered around.
+            // An adversarial audit of PR #1044 proposed testing AP_STARTED
+            // first so AP mode could decide on the TCP socket. That would
+            // flip wifi_manager_GetWiFiStatus() -- a pure projection of this
+            // function -- to DISCONNECTED for an associated-but-no-TCP
+            // station, and two consumers act on exactly that value:
+            // iperf2's RequireWifiConnected refuses a client start unless the
+            // status is exactly CONNECTED, and
+            // Streaming_AllConfiguredTransportsDead would start the #397
+            // transport-down timer and auto-stop a running AP-mode WiFi
+            // session after the grace window (60 s by default). Both are far
+            // outside 'add a query', so the documentation was corrected to
+            // what these flags can support instead. Changing the flag itself
+            // is a separate state-machine change with its own blast radius.
             if (0u != (flags & WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
                 return WIFI_LINK_STATE_CONNECTED;
             }
 
-            // For AP mode: AP_STARTED means the soft-AP is up and beaconing
+            // AP mode with no association recorded. The TCP-client test below
+            // is NOT dead code, though it is shadowed in settled operation:
+            // the association event is queued and its enqueue result is not
+            // checked, while an accepted client socket is published
+            // independently, so AP_STARTED && !STA_CONNECTED && clientSocket
+            // >= 0 is reachable.
             if (0u != (flags & WIFI_MANAGER_STATE_FLAG_AP_STARTED)) {
                 // Check if we have an active TCP client connection
                 if (gStateMachineContext.pTcpServerContext &&
