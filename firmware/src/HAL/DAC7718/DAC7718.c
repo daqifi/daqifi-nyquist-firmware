@@ -329,11 +329,19 @@ bool DAC7718_Init(uint8_t id, uint8_t range)
  * DAC7718's "shift register empty" wait was previously expressed via the
  * PLIB helper SPI2_IsTransmitterBusy(), which is
  * `(SPI2STAT & _SPI2STAT_SRMT_MASK) == 0` (plib_spi2_master.c:167) --
- * i.e. NOT busy is the SRMT bit SET. Testing that mask/want pair here
- * directly, rather than calling the PLIB function and inverting the sense,
- * lets all three of this driver's wait shapes (TX-buffer-empty,
- * RX-buffer-not-empty, shift-register-empty) route through this one
- * helper instead of two different waiting idioms. */
+ * i.e. NOT busy is the SRMT bit SET. [V, PIC32 Family Reference Manual
+ * Section 23 "Serial Peripheral Interface (SPI)", DS61106G, Register 23-3
+ * (SPIxSTAT), bit 7: "SRMT: Shift Register Empty bit (valid only when
+ * ENHBUF = 1) -- 1 = When SPI module shift register is empty, 0 = When SPI
+ * module shift register is not empty." SRMT's ENHBUF precondition is met
+ * here: SPI2_Initialize sets ENHBUF=1 (plib_spi2_master.c:99).] Testing
+ * that mask/want pair here directly, rather than calling the PLIB function
+ * and inverting the sense, lets all three of this driver's wait shapes
+ * (TX-buffer-empty, RX-buffer-not-empty, shift-register-empty) route
+ * through this one helper instead of two different waiting idioms -- the
+ * design choice this PR makes over routing this one condition through
+ * SPI2_IsTransmitterBusy() and keeping two wait idioms (Qodo /agentic_review,
+ * declined with rationale on the PR). */
 static bool dac7718_WaitStat(uint32_t mask, bool want,
                               TickType_t start, TickType_t timeoutTicks)
 {
