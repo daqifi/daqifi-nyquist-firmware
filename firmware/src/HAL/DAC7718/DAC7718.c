@@ -337,10 +337,24 @@ bool DAC7718_Init(uint8_t id, uint8_t range)
 static bool dac7718_WaitStat(uint32_t mask, bool want,
                               TickType_t start, TickType_t timeoutTicks)
 {
+    /* The fast spin runs ONCE, not once per retry -- it exists to cover the
+     * common fast-completion case with zero context switches, not to be
+     * re-paid on every wake from vTaskDelay(1). Once it has missed, the
+     * condition is being waited on for real, and a single register read per
+     * 1ms tick detects a level-sensitive status bit exactly as reliably as
+     * an 8000-iteration re-spin would (there is nothing here that could flip
+     * and flip back between one tick and the next). Re-spinning per retry
+     * was flagged by Qodo /improve on this PR: it burns ~8000 extra register
+     * reads per tick for the whole fault-path duration for no additional
+     * detection value -- the inherited shape in UserSpi.c's spi_WaitStat /
+     * UserUart.c's uart_WaitSta / UserI2c.c's i2c_WaitMif has the identical
+     * per-retry re-spin (see the comment left on #1056, which tracks
+     * consolidating all four into one shared definition -- that
+     * consolidation should use THIS hoisted shape, not the original). */
+    for (uint32_t s = 0; s < DAC7718_SPI_FAST_SPIN_COUNT; ++s) {
+        if (((SPI2STAT & mask) != 0u) == want) { return true; }
+    }
     for (;;) {
-        for (uint32_t s = 0; s < DAC7718_SPI_FAST_SPIN_COUNT; ++s) {
-            if (((SPI2STAT & mask) != 0u) == want) { return true; }
-        }
         if (((SPI2STAT & mask) != 0u) == want) { return true; }
         /* Rollover-safe: unsigned (now - start) is the true elapsed count
          * even across a tick-counter wrap, unlike an absolute-deadline

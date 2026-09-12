@@ -179,17 +179,26 @@ static void mock_delay_1_tick(MockEnv *env)
 /* ==========================================================================
  * The loop shape, extracted line-for-line from dac7718_WaitStat (DAC7718.c)
  * with the SPI2STAT read / xTaskGetTickCount / vTaskDelay(1) replaced by
- * their mock counterparts. Identical structure to spi_WaitStat
- * (UserSpi.c, #913): inner bounded spin, one more check, THEN the deadline
- * test -- which takes a FRESH read rather than trusting the post-spin check
- * above it, so a condition that goes true only in the gap between them is
- * still caught -- THEN the yield. */
+ * their mock counterparts. The fast spin runs ONCE (a Qodo /improve finding
+ * on this PR, applied to DAC7718.c -- the ORIGINAL nested-per-retry shape
+ * this mirrored from spi_WaitStat re-spun 8000 iterations after every single
+ * vTaskDelay(1) wake, which burns CPU on the fault path for no additional
+ * detection value: a level-sensitive status bit is caught by one check per
+ * tick exactly as reliably as by a fresh 8000-iteration re-spin). After the
+ * one-shot spin, the retry loop does a single check, THEN the deadline test
+ * -- which takes a FRESH read rather than trusting that check above it, so a
+ * condition that goes true only in the gap between them is still caught --
+ * THEN the yield. Every existing test below still exercises the same
+ * boundaries: none of them require a SECOND full spin to reach their
+ * trigger point, so hoisting the spin out of the retry loop changes no
+ * test's expected counts (verified by running the suite unchanged after the
+ * source change -- see the file header). */
 static bool dac7718_wait_stat_shape(MockEnv *env, uint32_t start, uint32_t timeoutTicks)
 {
+    for (uint32_t s = 0; s < FW_SPIN_COUNT; ++s) {
+        if (mock_condition_met(env)) { return true; }
+    }
     for (;;) {
-        for (uint32_t s = 0; s < FW_SPIN_COUNT; ++s) {
-            if (mock_condition_met(env)) { return true; }
-        }
         if (mock_condition_met(env)) { return true; }
         if ((uint32_t)(mock_tick_count(env) - start) >= timeoutTicks) {
             return mock_condition_met_at_deadline(env);
