@@ -717,6 +717,14 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
     double singleVoltage = 0.0;
     double allVoltages[MAX_AOUT_CHANNEL] = {0};
     size_t nChannels = 0;
+    /* #1030 follow-up: the out-of-range arm below used to call
+     * SCPI_ErrorPush WHILE THE LOCK WAS HELD. That is a transport write:
+     * SCPI_ErrorPush -> SCPI_ErrorEmit (libscpi/src/error.c:81-83) calls
+     * context->interface->error, and both transports' error callbacks go
+     * through SCPI_WriteWithRetry's ~1s budget. So the code is recorded
+     * here and pushed after the unlock, exactly as the values are.
+     * Declared before the lock so no `goto cleanup` can skip it. */
+    int16_t deferredError = 0;
 
     if (dacWriterPossible) {
         if (!SCPIDAC_LockCommand()) {
@@ -741,7 +749,7 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
         // exists for a different reason.
         if (channel < 0 || channel > 255) {
             LOG_E("SOUR:VOLT:LEV?: channel out of range (max 255)");
-            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+            deferredError = SCPI_ERROR_DATA_OUT_OF_RANGE;
             result = SCPI_RES_ERR;
             goto cleanup;
         }
@@ -780,9 +788,18 @@ cleanup:
     SCPIDAC_UnlockCommand(lockHeld);
 
     // #1030: every transport write happens here, after the lock (if any) is
-    // released. On an error path (result != SCPI_RES_OK) nothing was copied
-    // into the locals above, so no result is written -- unchanged from the
+    // released -- INCLUDING the error push. SCPI_ErrorPush reaches the wire
+    // (SCPI_ErrorEmit -> interface->error -> SCPI_WriteWithRetry), so doing
+    // it under the lock would be the same defect this change exists to fix.
+    // The other error arm below deliberately pushes nothing: libscpi does it
+    // for us after the callback returns (parser.c:144-147), which is already
+    // after the unlock.
+    // On an error path (result != SCPI_RES_OK) nothing was copied into the
+    // value locals above, so no result is written -- unchanged from the
     // prior behavior, which also wrote nothing on those paths.
+    if (deferredError != 0) {
+        SCPI_ErrorPush(context, deferredError);
+    }
     if (result == SCPI_RES_OK) {
         if (chanOpt == SCPI_OPT_PRESENT) {
             SCPI_ResultVoltage(context, singleVoltage, precision);

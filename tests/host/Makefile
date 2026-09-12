@@ -346,6 +346,22 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	        echo "       gDacCommandMutex must be released (line a) strictly BEFORE either transport"; \
 	        echo "       write (lines b, c) -- Part E's differential test models exactly this ordering."; \
 	        exit 1; }
+# Part E2 (#1030 audit finding): the ERROR push must also land after the
+# unlock. SCPI_ErrorPush reaches the transport (SCPI_ErrorEmit ->
+# interface->error -> SCPI_WriteWithRetry), so pushing it under the lock is
+# the same defect as writing a value under the lock. The original Part E
+# guard pinned only the two SCPI_ResultVoltage sites, which is exactly why
+# the out-of-range arm slipped past it.
+# WHAT THIS DOES NOT COVER: it pins the ONE deferred push by its unique
+# variable name. It cannot prove some future arm has not added a fresh
+# SCPI_ErrorPush under the lock -- grep has no notion of the lock region.
+	@d=`grep -nF 'SCPI_ErrorPush(context, deferredError);' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 a=`grep -nF 'SCPIDAC_UnlockCommand(lockHeld);' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 test -n "$$d" && test -n "$$a" && test "$$a" -lt "$$d" \
+	   || { echo "ERROR: SCPI_DACVoltageGet's deferred error push (#1030) is gone or moved"; \
+	        echo "       back under the lock in $(SCPIDAC_SRC) (unlock a='$$a', push d='$$d')."; \
+	        echo "       SCPI_ErrorPush writes to the transport; it must run after the unlock."; \
+	        exit 1; }
 	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
 
 $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
