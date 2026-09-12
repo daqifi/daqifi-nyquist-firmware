@@ -116,6 +116,20 @@
  * the mutex's own creation, and the only two writers of
  * BOARDDATA_AOUT_LATEST, are gated on), and threads the resulting lockHeld
  * through to SCPIDAC_UnlockCommand() so a skipped lock is never given back.
+ *
+ * PART E -- SCPI_DACVoltageGet must not hold gDacCommandMutex across the
+ * transport write (#1030). Before this fix, SCPI_ResultVoltage (which
+ * performs a retry-bounded transport write, up to ~1s per value against a
+ * stalled reader -- SCPI_WriteWithRetry) was called for every channel WHILE
+ * gDacCommandMutex was still held, so a stalled reader on the querying
+ * transport could hold the whole-command lock for as long as the write
+ * retries took, refusing every DAC command on the OTHER transport
+ * ("DAC command busy") for that whole window -- the same defect class as
+ * #947/#994/#992/#1008, applied to this getter. The fix copies every value
+ * out of BoardData into a local while the lock is held, releases the lock,
+ * and only then calls SCPI_ResultVoltage on the local copies. No behavior
+ * change to the returned data (same values, same error semantics on an
+ * invalid channel) -- only WHEN the lock is released relative to the writes.
  * ========================================================================== */
 
 #include <stdint.h>
@@ -1007,6 +1021,249 @@ TEST(getter_on_nq3_still_locks_and_unlocks_unchanged)
     ASSERT_EQ(busy.unlockCalls, 0);          /* never took it, never gives it */
 }
 
+/* ==========================================================================
+ * PART E -- SCPI_DACVoltageGet: the lock must be released BEFORE any
+ * transport write (#1030)
+ * ========================================================================== */
+
+#define VOLTAGE_GET_MAX_CH 8
+
+typedef struct {
+    int    boardVariant;      /* mirrors pCfg->BoardVariant; 3 == NQ3 */
+    bool   lockTakeSucceeds;
+    int    lockCalls;
+    int    unlockCalls;
+    int    step;              /* monotonic event counter, 1-based */
+    int    unlockStep;        /* step at which Unlock fired (0 = never) */
+    int    firstWriteStep;    /* step of the FIRST transport write (0 = never) */
+    double boardVoltages[VOLTAGE_GET_MAX_CH]; /* stand-in for BOARDDATA_AOUT_LATEST */
+    double writtenVoltages[VOLTAGE_GET_MAX_CH];
+    int    writtenCount;
+} VoltageGetMockEnv;
+
+static void voltage_get_mock_init(VoltageGetMockEnv *env, int boardVariant,
+                                   bool lockTakeSucceeds)
+{
+    memset(env, 0, sizeof(*env));
+    env->boardVariant = boardVariant;
+    env->lockTakeSucceeds = lockTakeSucceeds;
+}
+
+/* Mirrors SCPIDAC_LockCommand() -- same predicate as Part D's mock_lock_command. */
+static bool mock_lock_v(VoltageGetMockEnv *env)
+{
+    env->step++;
+    env->lockCalls++;
+    if (env->boardVariant != 3) {
+        return false;
+    }
+    return env->lockTakeSucceeds;
+}
+
+/* Mirrors SCPIDAC_UnlockCommand(lockHeld). Records the step it fired at so a
+ * test can compare it against firstWriteStep. */
+static void mock_unlock_v(VoltageGetMockEnv *env, bool lockHeld)
+{
+    env->step++;
+    env->unlockCalls++;
+    if (env->unlockStep == 0) {
+        env->unlockStep = env->step;
+    }
+    (void)lockHeld; /* the timing question this part tests doesn't depend on it */
+}
+
+/* Mirrors BoardData_Get(BOARDDATA_AOUT_LATEST, index)->Voltage. */
+static double mock_board_data_get_v(VoltageGetMockEnv *env, size_t index)
+{
+    env->step++;
+    return env->boardVoltages[index];
+}
+
+/* Mirrors SCPI_ResultVoltage's transport write. Records the step of the
+ * FIRST call so a test can prove it happened after (not before, not
+ * interleaved with) Unlock. */
+static void mock_result_voltage_v(VoltageGetMockEnv *env, double v)
+{
+    env->step++;
+    if (env->firstWriteStep == 0) {
+        env->firstWriteStep = env->step;
+    }
+    env->writtenVoltages[env->writtenCount++] = v;
+}
+
+/* POST-FIX shape, all channels -- mirrors SCPI_DACVoltageGet's "Get all
+ * channels" branch as it stands after #1030: every BoardData read is copied
+ * into a local array WHILE the lock is held, the lock is released, and only
+ * THEN does the code write any result to the transport. */
+static bool voltage_get_all_new_shape(VoltageGetMockEnv *env, size_t nChannels)
+{
+    bool dacWriterPossible = (env->boardVariant == 3);
+    bool lockHeld = false;
+
+    if (dacWriterPossible) {
+        if (!mock_lock_v(env)) {
+            return false;
+        }
+        lockHeld = true;
+    }
+
+    double allVoltages[VOLTAGE_GET_MAX_CH];
+    for (size_t i = 0; i < nChannels; i++) {
+        allVoltages[i] = mock_board_data_get_v(env, i);
+    }
+
+    mock_unlock_v(env, lockHeld);
+
+    for (size_t i = 0; i < nChannels; i++) {
+        mock_result_voltage_v(env, allVoltages[i]);
+    }
+    return true;
+}
+
+/* PRE-FIX shape, all channels -- the #1030 defect: each channel's transport
+ * write happens INSIDE the read loop, before Unlock is ever reached, so the
+ * whole-command lock is held across every write's own retry budget. */
+static bool voltage_get_all_old_shape(VoltageGetMockEnv *env, size_t nChannels)
+{
+    bool dacWriterPossible = (env->boardVariant == 3);
+    bool lockHeld = false;
+
+    if (dacWriterPossible) {
+        if (!mock_lock_v(env)) {
+            return false;
+        }
+        lockHeld = true;
+    }
+
+    for (size_t i = 0; i < nChannels; i++) {
+        double v = mock_board_data_get_v(env, i);
+        mock_result_voltage_v(env, v); /* <-- still holding the lock */
+    }
+
+    mock_unlock_v(env, lockHeld);
+    return true;
+}
+
+/* POST-FIX shape, single channel. `indexValid` false models the "invalid
+ * channel" -> goto cleanup path: no value is ever copied, so no write
+ * happens -- mirrors "no behavior change to error semantics". */
+static bool voltage_get_single_new_shape(VoltageGetMockEnv *env, size_t index,
+                                          bool indexValid)
+{
+    bool dacWriterPossible = (env->boardVariant == 3);
+    bool lockHeld = false;
+    bool ok = true;
+    double value = 0.0;
+
+    if (dacWriterPossible) {
+        if (!mock_lock_v(env)) {
+            return false;
+        }
+        lockHeld = true;
+    }
+
+    if (indexValid) {
+        value = mock_board_data_get_v(env, index);
+    } else {
+        ok = false;
+    }
+
+    mock_unlock_v(env, lockHeld);
+
+    if (ok) {
+        mock_result_voltage_v(env, value);
+    }
+    return ok;
+}
+
+/* THE differential test: same mock inputs (NQ3, lock succeeds, 3 distinct
+ * channel voltages), fixed shape vs the pre-fix shape. The fixed shape must
+ * release the lock strictly before its first write; the old shape must not
+ * -- proving the ordering assertion is load-bearing rather than vacuously
+ * true for any shape. */
+TEST(voltage_get_all_channels_writes_after_unlock_new_shape_but_before_old_shape)
+{
+    VoltageGetMockEnv env;
+    voltage_get_mock_init(&env, 3 /* NQ3 */, true /* lock succeeds */);
+    env.boardVoltages[0] = 1.0;
+    env.boardVoltages[1] = 2.5;
+    env.boardVoltages[2] = -3.25;
+
+    ASSERT_TRUE(voltage_get_all_new_shape(&env, 3));
+    ASSERT_EQ(env.lockCalls, 1);
+    ASSERT_EQ(env.unlockCalls, 1);
+    ASSERT_EQ(env.writtenCount, 3);
+    ASSERT_TRUE(env.unlockStep > 0);
+    ASSERT_TRUE(env.firstWriteStep > 0);
+    ASSERT_TRUE(env.unlockStep < env.firstWriteStep); /* the #1030 fix */
+    ASSERT_TRUE(env.writtenVoltages[0] == 1.0);
+    ASSERT_TRUE(env.writtenVoltages[1] == 2.5);
+    ASSERT_TRUE(env.writtenVoltages[2] == -3.25);
+
+    VoltageGetMockEnv old;
+    voltage_get_mock_init(&old, 3, true);
+    old.boardVoltages[0] = 1.0;
+    old.boardVoltages[1] = 2.5;
+    old.boardVoltages[2] = -3.25;
+
+    ASSERT_TRUE(voltage_get_all_old_shape(&old, 3));
+    ASSERT_EQ(old.lockCalls, 1);
+    ASSERT_EQ(old.unlockCalls, 1);
+    ASSERT_EQ(old.writtenCount, 3);
+    /* the #1030 defect: the FIRST write happens strictly BEFORE Unlock --
+     * the lock is held across every write's own retry budget. */
+    ASSERT_TRUE(old.firstWriteStep < old.unlockStep);
+    /* values are identical either way -- #1030 changes WHEN, not WHAT */
+    ASSERT_TRUE(old.writtenVoltages[0] == 1.0);
+    ASSERT_TRUE(old.writtenVoltages[1] == 2.5);
+    ASSERT_TRUE(old.writtenVoltages[2] == -3.25);
+}
+
+TEST(voltage_get_single_channel_writes_after_unlock)
+{
+    VoltageGetMockEnv env;
+    voltage_get_mock_init(&env, 3, true);
+    env.boardVoltages[2] = 4.2;
+
+    ASSERT_TRUE(voltage_get_single_new_shape(&env, 2, true));
+    ASSERT_EQ(env.lockCalls, 1);
+    ASSERT_EQ(env.unlockCalls, 1);
+    ASSERT_EQ(env.writtenCount, 1);
+    ASSERT_TRUE(env.unlockStep < env.firstWriteStep);
+    ASSERT_TRUE(env.writtenVoltages[0] == 4.2);
+}
+
+/* Invalid channel: no behavior change from #1030 -- still no write, and the
+ * lock (if taken) is still released via the cleanup path. */
+TEST(voltage_get_single_channel_invalid_index_writes_nothing)
+{
+    VoltageGetMockEnv env;
+    voltage_get_mock_init(&env, 3, true);
+
+    ASSERT_FALSE(voltage_get_single_new_shape(&env, 0, false /* invalid */));
+    ASSERT_EQ(env.lockCalls, 1);
+    ASSERT_EQ(env.unlockCalls, 1); /* cleanup still runs, still unlocks */
+    ASSERT_EQ(env.writtenCount, 0);
+    ASSERT_EQ(env.firstWriteStep, 0);
+}
+
+/* NQ1/NQ2 (dacWriterPossible == false, Part D's gate): no lock is ever taken
+ * or given, but the value is still copied through a local and written
+ * exactly once -- #1030 does not change this path's shape, only the NQ3
+ * path's ordering. */
+TEST(voltage_get_on_non_nq3_never_locks_and_still_writes_the_value)
+{
+    VoltageGetMockEnv env;
+    voltage_get_mock_init(&env, 1 /* NQ1 */, true /* irrelevant -- never consulted */);
+    env.boardVoltages[0] = 7.0;
+
+    ASSERT_TRUE(voltage_get_single_new_shape(&env, 0, true));
+    ASSERT_EQ(env.lockCalls, 0);
+    ASSERT_EQ(env.unlockCalls, 1);
+    ASSERT_EQ(env.writtenCount, 1);
+    ASSERT_TRUE(env.writtenVoltages[0] == 7.0);
+}
+
 int main(void)
 {
     printf("#980 -- DAC7718 error-path honesty (extracted control-flow shapes)\n");
@@ -1037,6 +1294,12 @@ int main(void)
     /* Part D */
     RUN(getter_on_non_nq3_succeeds_gated_but_fails_unconditional);
     RUN(getter_on_nq3_still_locks_and_unlocks_unchanged);
+
+    /* Part E */
+    RUN(voltage_get_all_channels_writes_after_unlock_new_shape_but_before_old_shape);
+    RUN(voltage_get_single_channel_writes_after_unlock);
+    RUN(voltage_get_single_channel_invalid_index_writes_nothing);
+    RUN(voltage_get_on_non_nq3_never_locks_and_still_writes_the_value);
 
     return TEST_SUMMARY();
 }

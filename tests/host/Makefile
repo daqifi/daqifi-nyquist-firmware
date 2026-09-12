@@ -180,6 +180,13 @@ RECIPES := Makefile
 # on NQ1/NQ2 (every board on this bench) where the pre-PR getter always
 # succeeded. Two more grep guards below pin the predicate and the
 # lockHeld-threaded Unlock call.
+#
+# Part E (#1030): SCPI_DACVoltageGet must release gDacCommandMutex BEFORE
+# calling SCPI_ResultVoltage, not across it -- the transport write's own
+# retry budget (up to ~1s per value against a stalled reader) must not
+# extend how long the whole-command lock is held. Three more grep guards
+# below pin the local-copy array and the line-number ordering of the
+# Unlock call against both transport-write call sites.
 DAC980_BIN := run_980_tests
 DAC7718_SRC := ../../firmware/src/HAL/DAC7718/DAC7718.c
 SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
@@ -324,6 +331,21 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	       echo "       to Unlock, since dacWriterPossible == false deliberately skips the lock."; \
 	       echo "       Part D's getter_gated_shape() models this -- re-derive it if this moved."; \
 	       exit 1; }
+	@grep -qE '^[[:space:]]*double allVoltages\[MAX_AOUT_CHANNEL\]' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: SCPI_DACVoltageGet's 'allVoltages[MAX_AOUT_CHANNEL]' local copy is gone"; \
+	       echo "       from $(SCPIDAC_SRC). Part E (#1030) models copying every BoardData read"; \
+	       echo "       into a local BEFORE releasing gDacCommandMutex -- re-derive it if this moved."; \
+	       exit 1; }
+	@a=`grep -nF 'SCPIDAC_UnlockCommand(lockHeld);' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 b=`grep -nF 'SCPI_ResultVoltage(context, singleVoltage, precision);' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 c=`grep -nF 'SCPI_ResultVoltage(context, allVoltages[i], precision);' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 test -n "$$a" && test -n "$$b" && test -n "$$c" \
+	   && test "$$a" -lt "$$b" && test "$$a" -lt "$$c" \
+	   || { echo "ERROR: SCPI_DACVoltageGet's Unlock->write ordering (#1030) is gone or reordered"; \
+	        echo "       in $(SCPIDAC_SRC) (markers found at a='$$a' b='$$b' c='$$c')."; \
+	        echo "       gDacCommandMutex must be released (line a) strictly BEFORE either transport"; \
+	        echo "       write (lines b, c) -- Part E's differential test models exactly this ordering."; \
+	        exit 1; }
 	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
 
 $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
