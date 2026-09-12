@@ -146,7 +146,7 @@
 #     say nothing about what a DIFFERENT function (or a build-system /
 #     linker trick) could do to the same effect.
 #
-# FOUR SPECIFIC BYPASSES ARE PROVEN OPEN. An adversarial audit of PR #1016
+# THE BYPASSES BELOW ARE PROVEN OPEN. An adversarial audit of PR #1016
 # demonstrated each with a valid-C edit that reintroduces #999 while every
 # check here still reports green. They are recorded rather than patched,
 # because five rounds of patching this script produced five rounds of new
@@ -166,10 +166,38 @@
 #      parameter slot with the right label elsewhere as a void*.
 #   4. `(storage) = &shared;` evades the reassignment ban, which requires the
 #      `=` to follow the bare identifier. A parenthesised lvalue is ordinary C.
+#   5. CHECK (b) RECOGNISES EXACTLY ONE DECLARATOR SHAPE: an identifier
+#      immediately followed by `;` or `=`. EVERY OTHER C DECLARATOR FORM
+#      EVADES IT. This is stated as a rule rather than as more instances
+#      because the instances do not end -- measured against the shipped
+#      regex, all four of these pass:
+#          ScpiContextStorage storage[1];                     (array)
+#          ScpiContextStorage *p;                             (pointer)
+#          ScpiContextStorage storage , other;                (comma list)
+#          ScpiContextStorage storage __attribute__((...));   (decorated)
+#      The round-6 audit reproduced the ARRAY one end-to-end: the mutant
+#      passes this guard with exit 0, and the two contexts then genuinely
+#      alias -- push -113 on USB, -200 on TCP, pop USB, get -200, which is
+#      #999 itself. It found one of the four; the other three came from
+#      asking how many shapes the regex admits rather than how many an
+#      auditor happened to send.
+#      Deliberately NOT patched. Adding `[` to the character class closes
+#      one of four and leaves three, which is the sixth regex round this
+#      header already refuses. Note also a FALSE POSITIVE in the same
+#      check: a `typedef ScpiContextStorage Alias;` inside the function
+#      body matches and fails the guard, though it declares no instance.
+#
+# The count was itself the defect. An earlier revision of this header opened
+# "FOUR SPECIFIC BYPASSES ARE PROVEN OPEN" and the PR text claimed naming four
+# while missing a fifth would be worse than naming none -- which is exactly
+# what had happened. An enumeration of bypasses goes stale the moment anyone
+# finds another, so where a rule can be stated instead, it is: item 5 is a
+# characterisation and cannot be invalidated by a new instance the way a count
+# can.
 #
 # So: treat a green run as evidence against HONEST REGRESSION only. It is not
 # evidence against a determined or half-finished refactor, and it never was --
-# what changed is that the four routes above are now named instead of implied.
+# what changed is that the routes above are now named instead of implied.
 # Closing these needs the real link this repo has twice done for similarly
 # non-includable UUTs (AD7609Scale.h split out of AD7609.h for #889,
 # JSON_StringEscape.h split out of JSON_Encoder.c for #164): split the pure
