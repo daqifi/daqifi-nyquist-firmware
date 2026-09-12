@@ -249,7 +249,14 @@ extern "C" {
          *  accepted socket is published independently).
          *
          *  Deliberately NOT "an AP client has opened TCP": see AP_IDLE above.
-         *  Identical condition to WIFI_STATUS_CONNECTED. */
+         *  Identical condition to WIFI_STATUS_CONNECTED.
+         *
+         *  CAVEAT, #1060: transiently WRONG across an AP->STA APPLY. That
+         *  branch clears AP_STARTED but not STA_CONNECTED, so this reads
+         *  CONNECTED with no peer attached until a failed-connect callback
+         *  fires. Pre-existing (the legacy status did the same, verified
+         *  against main at d71147e31); documented here because this enum is
+         *  what newly promises "a peer is attached". */
         WIFI_LINK_STATE_CONNECTED
     } wifi_link_state_t;
 

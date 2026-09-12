@@ -684,6 +684,22 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
  *              also reaches this. Exactly the condition
  *              wifi_manager_GetWiFiStatus() reports as WIFI_STATUS_CONNECTED.
  *
+ *
+ *              CAVEAT, #1060: CONNECTED can be briefly WRONG across an
+ *              AP->STA APPLY. That branch clears AP_STARTED but not
+ *              STA_CONNECTED (its mirror-image STA->AP branch does clear it),
+ *              so after switching away from an AP that had an associated
+ *              station this answers CONNECTED with no peer attached at all --
+ *              through the 500 ms delay and on until a failed-connect callback
+ *              fires. Do not poll this query as a readiness signal across a
+ *              mode switch; it can say yes before the new link exists.
+ *
+ *              The flag behaviour is PRE-EXISTING and unchanged here -- the
+ *              legacy 3-value status answered CONNECTED in that window too,
+ *              verified against main at d71147e31 -- but this command is what
+ *              newly PUBLISHES "a peer is attached", so the caveat belongs
+ *              with the promise. #1060 carries the fix and the second-device
+ *              bench test it needs.
  *              APIDLE and CONNECTED are deliberately NOT split on "has a TCP
  *              client". An adversarial audit of PR #1044 showed that they
  *              cannot be: a station that merely associates to our soft-AP
