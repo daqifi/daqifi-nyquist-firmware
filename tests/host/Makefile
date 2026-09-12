@@ -425,13 +425,15 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
-# Every suite, and every one of the seven binaries. Third merge around this
-# same block (fw#961 JSONESC_BIN, fw#983 SUSPEND_BIN, fw#913 SPI913_BIN),
-# resolved the same way every time: keep each side's target INTACT and merge
-# only `run` and `clean` -- a duplicated rule here would silently shadow one
-# of them. $(RECIPES) is main's (#983) fix and applies to SPI913_BIN too,
-# because it carries grep guards: a guard re-run only when its SOURCE changes
-# is not re-run when the GUARD changes.
+# $(RECIPES) is main's (#983) fix and applies to SPI913_BIN too, because it
+# carries grep guards: a guard re-run only when its SOURCE changes is not
+# re-run when the GUARD changes.
+#
+# This used to open with a count of the binaries and a merge ordinal, both of
+# which went stale the moment the next branch landed -- it still said "seven"
+# and "Third merge" while the list above `run` had reached twelve and the
+# eighth. A count belongs in exactly one place, and that place is the banner
+# over `run`, which is the line a resolution actually has to touch.
 
 $(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(FW_RTOS_CFG) $(RECIPES)
 	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_IFACE_SRC) \
