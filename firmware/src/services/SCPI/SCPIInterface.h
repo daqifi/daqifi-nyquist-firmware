@@ -122,11 +122,11 @@ extern "C" {
      *
      * **2500 (lowered from 10000, 2026-05-31, user decision).** The
      * original 10 KB was an unmeasured "first defensive cut": boot-idle
-     * HeapFree is only ~13 KB (CLAUDE.md "Heap Allocation Map"), so a
-     * 10 KB floor sat just ~3 KB below idle and false-blocked legitimate
-     * starts the moment any per-session pressure (the #490 leak) ate into
-     * headroom — exactly what was observed while validating #520 (heap
-     * slid to ~4.3 KB after a test session, blocking all WiFi starts).
+     * HeapFree is only ~13 KB (docs/MEMORY_ARCHITECTURE.md, "Heap Allocation
+     * Map"), so a 10 KB floor sat just ~3 KB below idle and false-blocked
+     * legitimate starts the moment any per-session pressure (the #490 leak)
+     * ate into headroom — exactly what was observed while validating #520
+     * (heap slid to ~4.3 KB after a test session, blocking all WiFi starts).
      * The ~7 KB figure the 10 KB was built around is our own #475 note,
      * NOT a measured allocation profile.  2500 keeps a minimal guard
      * against a start with almost no heap while letting legitimate
