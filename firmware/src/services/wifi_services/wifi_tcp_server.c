@@ -265,6 +265,11 @@ static scpi_interface_t scpi_interface = {
     .flush = SCPI_TCP_Flush,
 };
 
+/* #999: this transport's own SCPI parse buffer + error queue. Must NOT be
+ * shared with UsbCdc.c's -- see ScpiContextStorage in SCPIInterface.h for
+ * why sharing corrupts both transports' commands and errors. */
+static ScpiContextStorage gTcpScpiStorage;
+
 /**
  * Gets the TcpClientData associated with the microrl context
  * @param context The context to lookup
@@ -359,7 +364,9 @@ void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData) {
         microrl_init(&gpServerData->client.console, microrl_echo);
         microrl_set_echo(&gpServerData->client.console, false);
         microrl_set_execute_callback(&gpServerData->client.console, microrl_commandComplete);
-        gpServerData->client.scpiContext = CreateSCPIContext(&scpi_interface, &gpServerData->client);
+        gpServerData->client.scpiContext = CreateSCPIContext(&scpi_interface,
+                                                             &gpServerData->client,
+                                                             &gTcpScpiStorage);
         {
             uint8_t* buf; uint32_t len;
             StreamingBufferPool_GetWifi(&buf, &len);

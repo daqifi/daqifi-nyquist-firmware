@@ -1171,6 +1171,12 @@ static scpi_interface_t scpi_interface = {
     .flush = SCPI_USB_Flush,
 };
 
+/* #999: this transport's own SCPI parse buffer + error queue. Must NOT be
+ * shared with wifi_tcp_server.c's -- see ScpiContextStorage in
+ * SCPIInterface.h for why sharing corrupts both transports' commands and
+ * errors. */
+static ScpiContextStorage gUsbScpiStorage;
+
 /**
  * Called to echo commands to the console
  * @param context The console theat made this call
@@ -1253,7 +1259,9 @@ void UsbCdc_Initialize() {
     microrl_set_execute_callback(
             &gRunTimeUsbSttings.console,
             microrl_commandComplete);
-    gRunTimeUsbSttings.scpiContext = CreateSCPIContext(&scpi_interface, &gRunTimeUsbSttings);
+    gRunTimeUsbSttings.scpiContext = CreateSCPIContext(&scpi_interface,
+                                                       &gRunTimeUsbSttings,
+                                                       &gUsbScpiStorage);
 
     // Allocate DMA write staging buffer from coherent pool (auto-sized at stream start)
     gRunTimeUsbSttings.dmaWriteBufferSize = USBCDC_DMA_WBUFFER_MAX;
