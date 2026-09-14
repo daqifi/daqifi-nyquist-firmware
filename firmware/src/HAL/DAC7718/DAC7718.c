@@ -460,13 +460,14 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     // Readback if requested
     if (RW == 1U) {
         // Inter-frame delay: DAC7718 requires minimum CS high time between transactions.
-        // Datasheet specifies minimum 50ns. The CS rising edge latches the read command,
+        // Datasheet (SBAS361A, t8 "CS high time") specifies a minimum of 10/19/28 ns at
+        // IOVDD = 5/3/1.8 V. The CS rising edge latches the read command,
         // and the DAC loads the readback data during this CS high period.
         // Cannot eliminate CS toggle - it's required by the protocol to delimit frames.
         // DAC7718_Delay_us(1) below waits ~1us -- the function's granularity is
         // whole microseconds, and it converts them to core-timer ticks at the
-        // configured frequency -- comfortably above the 50ns datasheet minimum.
-        DAC7718_Delay_us(1);  // ~1us actual (minimum resolution), datasheet requires 50ns
+        // configured frequency -- far above that minimum at every IOVDD.
+        DAC7718_Delay_us(1);  // ~1us actual (minimum resolution); datasheet t8 min is <=28ns
 
         Com = 0b000000001000000110100000U; // NOP to clock out data
 
