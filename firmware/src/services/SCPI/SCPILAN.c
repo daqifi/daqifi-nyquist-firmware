@@ -685,28 +685,18 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
  *              wifi_manager_GetWiFiStatus() reports as WIFI_STATUS_CONNECTED.
  *
  *
- *              CAVEAT, #1060: CONNECTED can be WRONG after an APPLY that stops
- *              the soft-AP while a station is associated -- a switch to STA
- *              mode, or a settings change that stays in AP mode -- because
- *              neither of those two branches clears STA_CONNECTED:
- *                - AP->STA mode switch: CONNECTED with no peer attached through
- *                  the 500 ms delay and on until the new STA link is up or a
- *                  failed-connect callback clears the flag.
- *                - AP settings change that stays in AP mode (e.g. a new SSID):
- *                  CONNECTED with NO time bound -- until some other event
- *                  clears the flag, such as a station associating to or
- *                  leaving the new AP, a disable, or a reset. A station still
- *                  configured for the old SSID never returns to end it.
- *              Do not use this query as a readiness or peer-present signal
- *              after either of those APPLYs; it can say yes when no peer
- *              exists.
+ *              CAVEAT, #1060: CONNECTED can be reported with no peer
+ *              attached, because the association flag behind it is
+ *              event-latched rather than a live measurement. It can happen
+ *              around an AP stop or restart, or a mode switch -- in at least
+ *              one path with no time bound. Do not treat CONNECTED as proof
+ *              that a peer is attached now.
  *
  *              The flag behaviour is PRE-EXISTING and unchanged here -- the
- *              legacy 3-value status answered CONNECTED in both cases too,
- *              verified against main at d71147e31 -- but this command is what
- *              newly PUBLISHES "a peer is attached", so the caveat belongs
- *              with the promise. #1060 carries the fix at both sites and the
- *              second-device bench test it needs.
+ *              legacy 3-value status tests the same flag first, verified
+ *              against main at d71147e31 -- but this command is what newly
+ *              PUBLISHES "a peer is attached", so the caveat belongs with the
+ *              promise. #1060 carries the fix.
  *              APIDLE and CONNECTED are deliberately NOT split on "has a TCP
  *              client". An adversarial audit of PR #1044 showed that they
  *              cannot be: a station that merely associates to our soft-AP
