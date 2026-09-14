@@ -463,9 +463,9 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         // Datasheet specifies minimum 50ns. The CS rising edge latches the read command,
         // and the DAC loads the readback data during this CS high period.
         // Cannot eliminate CS toggle - it's required by the protocol to delimit frames.
-        // DAC7718_Delay_us(1) below yields ~1us actual (this function's minimum
-        // resolution, not a tunable 100ns/200ns figure), comfortably above the 50ns
-        // datasheet minimum regardless of core clock.
+        // DAC7718_Delay_us(1) below waits ~1us -- the function's granularity is
+        // whole microseconds, and it converts them to core-timer ticks at the
+        // configured frequency -- comfortably above the 50ns datasheet minimum.
         DAC7718_Delay_us(1);  // ~1us actual (minimum resolution), datasheet requires 50ns
 
         Com = 0b000000001000000110100000U; // NOP to clock out data
