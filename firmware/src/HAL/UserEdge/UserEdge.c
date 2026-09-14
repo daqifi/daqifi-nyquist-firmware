@@ -251,27 +251,29 @@ static bool edge_Streaming(void) {
  * pri 7 can preempt WiFi pri 2 mid-RMW) could clobber the write. The RMW must
  * be atomic against both tasks and the pri-3 ISRs that touch these registers.
  *
- * The setters below run in BOTH contexts, so the guard picks per call:
+ * The guard supports two contexts, though only one is exercised by any
+ * caller today:
  *
- *  - scheduler RUNNING (the #702 re-assert on the SCPI arm path, lines ~420 and
- *    ~566) -> taskENTER_CRITICAL. It raises IPL to
- *    configMAX_SYSCALL_INTERRUPT_PRIORITY (4), which covers every context that
- *    can reach these registers while leaving the priority 5+ sources FreeRTOS
- *    deliberately never disables alone. This is the FreeRTOS-idiomatic path and
- *    the one taken at runtime (Qodo #705, second pass).
+ *  - scheduler RUNNING (the #702 re-assert on the SCPI arm path, lines ~449
+ *    and ~595, AND UserEdge_Initialize's own call at boot -- its only call
+ *    site is inside app_SystemInit, which runs from the priority-1
+ *    APP_FREERTOS_Tasks task body, i.e. AFTER vTaskStartScheduler(), not
+ *    before it; see this file's own comment above (line ~238) and
+ *    streaming.c:2541-2543 / SCPIInterface.c:335-339) -> taskENTER_CRITICAL. It
+ *    raises IPL to configMAX_SYSCALL_INTERRUPT_PRIORITY (4), which covers
+ *    every context that can reach these registers while leaving the
+ *    priority 5+ sources FreeRTOS deliberately never disables alone. This
+ *    is the FreeRTOS-idiomatic path, and every caller takes it at runtime
+ *    (Qodo #705, second pass).
  *
- *  - scheduler NOT STARTED (UserEdge_Initialize, reached from app_SystemInit
- *    inside SYS_Initialize: main.c -> initialization.c APP_FREERTOS_Initialize
- *    -> app_SystemInit, i.e. BEFORE vTaskStartScheduler(), which lives in
- *    SYS_Tasks()) -> raw mask. FreeRTOS_tasks.c wraps the whole body of
- *    vTaskExitCritical(), portENABLE_INTERRUPTS() included, in
- *    `if (xSchedulerRunning != pdFALSE)`, so pre-scheduler the exit is a no-op
- *    and a critical section would leave interrupts masked for the rest of boot.
- *
- * (An earlier revision claimed app_SystemInit runs inside the pri-1
- * APP_FREERTOS_Tasks task. It does not — APP_FREERTOS_Initialize and
- * APP_FREERTOS_Tasks are different functions, and that confusion is what put a
- * plain critical section on a pre-scheduler path in the first place.) */
+ *  - scheduler NOT STARTED -> raw mask. No current caller reaches this
+ *    branch; it exists so edge_IpcGuardEnter() stays correct if a
+ *    genuinely pre-scheduler caller is ever added. FreeRTOS_tasks.c wraps
+ *    the whole body of vTaskExitCritical(), portENABLE_INTERRUPTS()
+ *    included, in `if (xSchedulerRunning != pdFALSE)`, so pre-scheduler
+ *    the exit is a no-op and a critical section would leave interrupts
+ *    masked for the rest of boot -- which is why this branch cannot just
+ *    always taskENTER_CRITICAL(). */
 typedef struct { bool crit; uint32_t st; } EdgeIpcGuard_t;
 
 static EdgeIpcGuard_t edge_IpcGuardEnter(void) {
