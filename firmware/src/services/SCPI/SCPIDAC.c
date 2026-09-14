@@ -704,6 +704,28 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
 
     scpi_result_t result = SCPI_RES_OK;
     bool lockHeld = false;
+
+    // #1030: gDacCommandMutex protects the BOARDDATA_AOUT_LATEST read only
+    // (the torn-64-bit-double hazard the block comment above describes) -- it
+    // must NOT still be held across SCPI_ResultVoltage's transport write,
+    // whose retry budget (SCPI_WriteWithRetry) can block for up to ~1s per
+    // value against a stalled reader. So every value is copied into a local
+    // while the lock is held, the lock is released in `cleanup` below, and
+    // only THEN does the code write any result to the transport. Declared
+    // here, before the lock is even taken, so a future `goto cleanup` added
+    // above this point can never jump past these initializers.
+    double singleVoltage = 0.0;
+    double allVoltages[MAX_AOUT_CHANNEL] = {0};
+    size_t nChannels = 0;
+    /* #1030 follow-up: the out-of-range arm below used to call
+     * SCPI_ErrorPush WHILE THE LOCK WAS HELD. That is a transport write:
+     * SCPI_ErrorPush -> SCPI_ErrorEmit (libscpi/src/error.c:81-83) calls
+     * context->interface->error, and both transports' error callbacks go
+     * through SCPI_WriteWithRetry's ~1s budget. So the code is recorded
+     * here and pushed after the unlock, exactly as the values are.
+     * Declared before the lock so no `goto cleanup` can skip it. */
+    int16_t deferredError = 0;
+
     if (dacWriterPossible) {
         if (!SCPIDAC_LockCommand()) {
             SCPI_ExecutionError(context, "SOUR:VOLT:LEV?: DAC command busy, try again");
@@ -727,7 +749,7 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
         // exists for a different reason.
         if (channel < 0 || channel > 255) {
             LOG_E("SOUR:VOLT:LEV?: channel out of range (max 255)");
-            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+            deferredError = SCPI_ERROR_DATA_OUT_OF_RANGE;
             result = SCPI_RES_ERR;
             goto cleanup;
         }
@@ -738,22 +760,21 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
             goto cleanup;
         }
 
-        // Read last commanded voltage from BoardData
+        // Read last commanded voltage from BoardData into a local -- no
+        // transport write yet.
         AOutSample* pSample = (AOutSample*)BoardData_Get(BOARDDATA_AOUT_LATEST, index);
-        if (pSample != NULL) {
-            SCPI_ResultVoltage(context, pSample->Voltage, precision);
-        } else {
-            SCPI_ResultVoltage(context, 0.0, precision);
-        }
+        singleVoltage = (pSample != NULL) ? pSample->Voltage : 0.0;
     } else {
-        // Get all channels
-        for (size_t i = 0; i < pBoardConfigAOutChannels->Size; i++) {
+        // Get all channels. Bound by the AOutArray's own capacity, not just
+        // its live Size, so `allVoltages[]` is provably in range regardless
+        // (same defensive pattern as SCPI_DACVoltageSet's `staged[]` above).
+        nChannels = pBoardConfigAOutChannels->Size;
+        if (nChannels > MAX_AOUT_CHANNEL) {
+            nChannels = MAX_AOUT_CHANNEL;
+        }
+        for (size_t i = 0; i < nChannels; i++) {
             AOutSample* pSample = (AOutSample*)BoardData_Get(BOARDDATA_AOUT_LATEST, i);
-            if (pSample != NULL) {
-                SCPI_ResultVoltage(context, pSample->Voltage, precision);
-            } else {
-                SCPI_ResultVoltage(context, 0.0, precision);
-            }
+            allVoltages[i] = (pSample != NULL) ? pSample->Voltage : 0.0;
         }
     }
 
@@ -765,6 +786,29 @@ cleanup:
     // earlier return is SCPIDAC_LockCommand()'s own failure, which returns
     // directly without giving a lock it never took.)
     SCPIDAC_UnlockCommand(lockHeld);
+
+    // #1030: every transport write happens here, after the lock (if any) is
+    // released -- INCLUDING the error push. SCPI_ErrorPush reaches the wire
+    // (SCPI_ErrorEmit -> interface->error -> SCPI_WriteWithRetry), so doing
+    // it under the lock would be the same defect this change exists to fix.
+    // The other error arm below deliberately pushes nothing: libscpi does it
+    // for us after the callback returns (parser.c:144-147), which is already
+    // after the unlock.
+    // On an error path (result != SCPI_RES_OK) nothing was copied into the
+    // value locals above, so no result is written -- unchanged from the
+    // prior behavior, which also wrote nothing on those paths.
+    if (deferredError != 0) {
+        SCPI_ErrorPush(context, deferredError);
+    }
+    if (result == SCPI_RES_OK) {
+        if (chanOpt == SCPI_OPT_PRESENT) {
+            SCPI_ResultVoltage(context, singleVoltage, precision);
+        } else {
+            for (size_t i = 0; i < nChannels; i++) {
+                SCPI_ResultVoltage(context, allVoltages[i], precision);
+            }
+        }
+    }
     return result;
 }
 
