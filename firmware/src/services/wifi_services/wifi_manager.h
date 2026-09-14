@@ -251,12 +251,17 @@ extern "C" {
          *  Deliberately NOT "an AP client has opened TCP": see AP_IDLE above.
          *  Identical condition to WIFI_STATUS_CONNECTED.
          *
-         *  CAVEAT, #1060: transiently WRONG across an AP->STA APPLY. That
-         *  branch clears AP_STARTED but not STA_CONNECTED, so this reads
-         *  CONNECTED with no peer attached until a failed-connect callback
-         *  fires. Pre-existing (the legacy status did the same, verified
-         *  against main at d71147e31); documented here because this enum is
-         *  what newly promises "a peer is attached". */
+         *  CAVEAT, #1060: can be WRONG after an APPLY that stops the soft-AP
+         *  with a station associated, to switch to STA mode or to change AP
+         *  settings -- neither branch clears STA_CONNECTED. Across an AP->STA
+         *  switch it lasts until the new STA link is up or a failed-connect
+         *  callback clears the flag; across an AP settings change that stays
+         *  in AP mode it has NO time bound (it lasts until some other event
+         *  clears the flag, such as a station associating to or leaving the
+         *  new AP, a disable, or a reset). Pre-existing (the legacy
+         *  status did the same, verified against main at d71147e31);
+         *  documented here because this enum is what newly promises "a peer
+         *  is attached". */
         WIFI_LINK_STATE_CONNECTED
     } wifi_link_state_t;
 

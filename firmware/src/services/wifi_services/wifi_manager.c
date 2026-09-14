@@ -2433,23 +2433,35 @@ wifi_link_state_t wifi_manager_GetLinkState(void) {
             // what these flags can support instead. Changing the flag itself
             // is a separate state-machine change with its own blast radius.
             //
-            // KNOWN RESIDUAL, #1060: this flag can also be STALE. The AP->STA
-            // APPLY branch clears AP_STARTED but not STA_CONNECTED (its
-            // mirror-image STA->AP branch does clear it), so after a switch
-            // away from an AP that had an associated station, this test can
-            // report CONNECTED with no link at all -- through the 500 ms
-            // vTaskDelay and until a failed-connect callback fires. The
-            // periodic reconciler cannot cover it: it is gated on STA_STARTED,
-            // which is not set yet, and it runs from the same app_WifiTask that
-            // is sitting in that delay.
+            // KNOWN RESIDUAL, #1060: this flag can also be STALE, from TWO
+            // APPLY branches that stop the soft-AP without clearing it. (The
+            // third AP-stop site, the disable path, does clear it, as does the
+            // STA->AP branch.) With a station associated beforehand, this test
+            // then reports CONNECTED with no peer attached:
+            //   - AP->STA mode switch: through the 500 ms vTaskDelay and until
+            //     the new STA link is up or a failed-connect callback clears
+            //     the flag.
+            //   - AP restart that stays in AP mode ("Restarting Soft AP mode
+            //     with new settings", e.g. a new SSID + APPLY): with NO time
+            //     bound. A disconnect delivered while the AP is stopped is
+            //     discarded (ApEventCallback returns while AP_STARTED is
+            //     clear), no STA failed-connect callback exists in AP mode,
+            //     and a station still configured for the old SSID does not
+            //     come back. Nothing on that path clears it, so it persists
+            //     until some OTHER event does: a station associating to or
+            //     leaving the new AP, or a later teardown such as a disable
+            //     or a reset.
+            // The periodic reconciler covers neither: it only ever SETS this
+            // flag, and only while STA_STARTED is set.
             //
             // NOT fixed here because it is PRE-EXISTING, checked rather than
-            // assumed: wifi_manager_GetWiFiStatus() on main at d71147e31 tests
-            // this flag first in exactly this order, so it already answered
-            // CONNECTED in that window. This PR neither touches the mode-switch
-            // branch nor changes the ordering -- it made the existing wrongness
-            // visible by publishing a contract about it. #1060 carries the fix
-            // and the second-device bench test it needs.
+            // assumed: on main at d71147e31 neither branch touches this flag,
+            // and wifi_manager_GetWiFiStatus() tests it first in exactly this
+            // order, so the legacy status already answered CONNECTED in both
+            // cases. This PR changes neither branch nor the ordering -- it made
+            // the existing wrongness visible by publishing a contract about it.
+            // #1060 carries the fix, at both AP-stop sites, and the
+            // second-device bench test it needs.
             if (0u != (flags & WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
                 return WIFI_LINK_STATE_CONNECTED;
             }
