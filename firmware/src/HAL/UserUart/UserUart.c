@@ -409,7 +409,15 @@ static bool uart_WaitSta(const UartDesc_t* u, uint32_t mask, bool want,
         if (((*(u->sta) & mask) != 0u) == want) { return true; }
         /* Rollover-safe: unsigned (now - start) is the true elapsed count even
          * across a tick-counter wrap, unlike an absolute-deadline compare. */
-        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) { return false; }
+        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) {
+            /* #913: FRESH read, not a reuse of the pre-check above. This task
+             * can be preempted between that check and this one, and a bit that
+             * set during the preemption must still count as success -- a
+             * hardcoded `false` here reports a COMPLETED operation as a
+             * spurious timeout. Ported from spi_WaitStat, where review found
+             * this shape; uart and i2c carried the identical defect. */
+            return (((*(u->sta) & mask) != 0u) == want);
+        }
         vTaskDelay(1);
     }
 }

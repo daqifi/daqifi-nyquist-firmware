@@ -127,7 +127,7 @@ static volatile bool gNeedSharedScan = false;
  * task -> SD task boundary, and the bytes are read only after gSdHeaderLen
  * has been published non-zero. Each is an aligned scalar of 32 bits or less,
  * so its store is atomic on PIC32MZ and a single-writer publish needs no
- * critical section (CLAUDE.md atomicity rules). */
+ * critical section (docs/MCU_REFERENCE.md atomicity rules). */
 #define STREAMING_SD_HEADER_MAX  512u
 static uint8_t gSdHeaderBytes[STREAMING_SD_HEADER_MAX];
 static volatile uint32_t gSdHeaderLen = 0;
@@ -233,7 +233,7 @@ static volatile uint32_t gScanStaleDropped = 0;  // ticks scan armed but no new 
  * a stale cache value that looks exactly like the bottom rail.
  *
  * They are updated inside the same taskENTER_CRITICAL as that counter, which
- * the 64-bit clippedSamples requires anyway (CLAUDE.md: 64-bit operations
+ * the 64-bit clippedSamples requires anyway (docs/MCU_REFERENCE.md: 64-bit operations
  * always need one) and which makes the two RMWs consistent with their
  * neighbours rather than relying on a single-writer argument. */
 static volatile uint32_t gClipLiveMask = 0;      // channels at a rail THIS tick
@@ -452,7 +452,7 @@ static AInChannelMapping gChannelMapping = {0};
  * re-partition is worse than a stale one.
  *
  * Concurrency: 64-bit, so BOTH the store and the read take a critical section
- * -- CLAUDE.md's atomicity rule is categorical for 64-bit ("always need a
+ * -- docs/MCU_REFERENCE.md's atomicity rule is categorical for 64-bit ("always need a
  * critical section"), and a torn access here would compare half of one mask
  * against half of another, deciding a refusal or an admission on a value that
  * never existed.
@@ -513,7 +513,7 @@ static TaskHandle_t gStreamingTaskHandle;
  * higher-priority deferred ISR task (pri 9) can each finish their
  * iteration and clear the flag.
  *
- * uint32_t (not bool) — CLAUDE.md "Atomicity & Concurrency Rules":
+ * uint32_t (not bool) — docs/MCU_REFERENCE.md "Atomicity & Concurrency Rules":
  * 32-bit reads/writes are atomic on the PIC32MZ bus.  volatile keeps
  * the compiler from caching the value across loop iterations.
  * No RMW: writes are unconditional 0 or 1, no |= or &=. */
@@ -710,7 +710,7 @@ void Streaming_CountActiveChannels(uint16_t* out_type1Count,
     uint16_t total = 0;
     bool has7609 = false;
 
-    /* Per CLAUDE.md: BoardRunTimeConfig_Get / BoardConfig_Get index into
+    /* Per docs/MCU_REFERENCE.md: BoardRunTimeConfig_Get / BoardConfig_Get index into
      * static arrays populated at boot and never return NULL. No guard. */
     volatile AInRuntimeArray* rt =
         BoardRunTimeConfig_Get(BOARDRUNTIMECONFIG_AIN_CHANNELS);
@@ -746,7 +746,7 @@ uint32_t Streaming_ComputeMaxFreqTermsForConfigIface(StreamingInterface iface,
     uint16_t type1 = 0, total = 0;
     Streaming_CountActiveChannels(&type1, &total, NULL);
 
-    /* BoardRunTimeConfig_Get / BoardConfig_Get never return NULL (CLAUDE.md). */
+    /* BoardRunTimeConfig_Get / BoardConfig_Get never return NULL (docs/MCU_REFERENCE.md). */
     StreamingRuntimeConfig* sc =
         BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
     tBoardConfig* bc = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
@@ -2114,7 +2114,7 @@ static void Streaming_Start(void) {
                      * BOARDRUNTIME_SD_CARD_SETTINGS is a compile-time constant
                      * naming a real case, so this call cannot reach that
                      * branch. Guarding here would also be inconsistent with
-                     * every other call site (CLAUDE.md standing rule). */
+                     * every other call site (docs/MCU_REFERENCE.md standing rule). */
                     gSdExpectedThisSession =
                         sdCfg->enable &&
                         (sdCfg->mode == SD_CARD_MANAGER_MODE_WRITE) &&
@@ -2403,7 +2403,7 @@ static void Streaming_Stop(void) {
         // immediately after the stop.  It's cleared by Streaming_ClearStats
         // at next session start, so STAT:QUES:COND? between auto-stop and
         // next start correctly reports "transport down was the cause".
-        // RMW (`&=`) needs taskENTER_CRITICAL per the CLAUDE.md atomicity
+        // RMW (`&=`) needs taskENTER_CRITICAL per the docs/MCU_REFERENCE.md atomicity
         // rules — gQuesBits is also `|=`'d by the deferred ISR task and
         // streaming task at the overflow sites.
         taskENTER_CRITICAL();
@@ -2626,7 +2626,7 @@ void Streaming_SdInterfaceReleased(void) {
  * one. It must NOT move to the SD task: Nanopb_Encode's stack frame is 1,744
  * bytes and app_SDCardTask has 4,096 with 1,872 peak-used, and the
  * DaqifiOutMessage it builds has float members while that task is on
- * CLAUDE.md's pure-integer list -- the #369 corruption pattern.
+ * docs/MCU_REFERENCE.md's pure-integer list -- the #369 corruption pattern.
  *
  * Building once is correct rather than merely cheap: everything the header
  * reports is frozen for the session. SYST:STR:FORmat is rejected while
@@ -2981,7 +2981,7 @@ void Streaming_AddProfileSample_DmaCopy(uint32_t cycles) {
     taskEXIT_CRITICAL();
 }
 void Streaming_AddProfileSample_DmaIdle(void) {
-    // CLAUDE.md: 32-bit RMW (`++`) is NOT atomic — must be critical-
+    // docs/MCU_REFERENCE.md: 32-bit RMW (`++`) is NOT atomic — must be critical-
     // section guarded.  Streaming_ClearStats() zeroes gStreamStats under
     // taskENTER_CRITICAL, so an unguarded ++ here could lose a count
     // across the clear boundary.
@@ -3188,7 +3188,7 @@ void streaming_Task(void) {
          * Nanopb_Encode's frame measures 1,744 bytes (xc32-objdump: `addiu
          * sp,sp,-1744`) against that task's 4,096-byte stack with 1,872 already
          * peak-used, and the DaqifiOutMessage it builds there carries float
-         * members while the task is on CLAUDE.md's pure-integer list -- the
+         * members while the task is on docs/MCU_REFERENCE.md's pure-integer list -- the
          * #369 pattern. The SCPI task calling Streaming_Start() could afford
          * it (SCPI_SysInfoGet already pays the same frame), so this is about
          * the reader, not the writer.
@@ -3428,7 +3428,7 @@ void streaming_Task(void) {
                 // SD path below already backpressures via WriteWithRetry).
                 if (Streaming_UsbWrite((const char*)buffer, packetSize) != packetSize) {
                     bool pastGrace = Streaming_PastStartupGrace();
-                    // CLAUDE.md atomicity: 32-bit RMW (+=) is not atomic.
+                    // docs/MCU_REFERENCE.md atomicity: 32-bit RMW (+=) is not atomic.
                     // Single critical section covers both counter bumps so
                     // a concurrent Streaming_GetStats snapshot sees the
                     // pair coherently (steady never > total).
@@ -3722,7 +3722,7 @@ StreamingCfgClaim Streaming_BeginConfigChange(void) {
      * non-NULL for every OTHER eBoardRunTimeParameter, and every call site
      * including this one passes a named constant, so the NULL arm is
      * unreachable here by construction. A check would be dead code, which is
-     * why the project declines to add them (CLAUDE.md) -- but "never returns
+     * why the project declines to add them (docs/MCU_REFERENCE.md) -- but "never returns
      * NULL" is not true of the function, and stating it that way is what
      * licenses an unsafe refactor later (Qodo, citing PR #752). */
     StreamingRuntimeConfig* pStreamCfg = BoardRunTimeConfig_Get(

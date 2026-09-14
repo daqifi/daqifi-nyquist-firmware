@@ -141,6 +141,41 @@ under the old prefix (88 + 33 + 2 = 123). Only `SD_SuspendReasonText()`'s three
 returns were cut. That matters because the NULL case is the one a casual bench
 reproduction reaches first, so a complete-looking line there is not evidence
 the bug was absent.
+`test_985_suspend_reason_consistency.c` covers `SD_SuspendReasonText()` itself
+(issue #985) — the function `test_953` only tests against NULL. Same
+re-implementation technique as the two above, for the same reason. Until #985
+it decided *whether* the SD stack was suspended from one pair of reads
+(`app_SDCard_SpiOwnedByWifi()`, itself `wifiStream || fwUpdate || quarantined`,
+then `SpiBusHealth_IsSdSuspended()`) and *which cause to name* from a second,
+later pair — re-reading two of the composite's three terms, and returning the
+third as an unconditional default. So a cause that ended between the two pairs
+was reported as a different one: a WiFi firmware update that opened the gate
+and finished before its own re-read produced "WiFi streaming owns SPI4 -
+SYST:STR:STOP first", telling the operator to stop a stream that was not
+running. That string reaches every #589 refusal (`SD:GET`, `SD:LISt?`,
+`SD:CRC?`, `SD:DELete`, `SD:FORmat`, `SD:SPACe?`, `SD:BENCHmark`) via
+`SYST:LOG?`. The fix takes one flat snapshot of all four flags — using the new
+`app_SDCard_WifiStreamActive()` accessor so the composite is not called *and*
+decomposed — and adds a fourth arm for the previously unnamed quadrant
+(suspended, no owner in this snapshot).
+
+The environment each shape runs against is a **timeline** per flag, not a bool:
+a sequence of what successive reads observe. That is what lets a case say "the
+FW update was over by the second read", which is the entire defect and which a
+flat-bool fixture cannot express at all. Covered: both mislabels (a FW update
+and a quarantine ending mid-call), the new fourth quadrant, the all-clear NULL,
+the three inherited strings and their precedence pinned by identity/content/
+length, and the headline — over all sixteen *stable* combinations exactly one
+verdict moves, so the NULL boundary and the other fifteen messages are
+unchanged. Staleness is explicitly **not** under test: the fixed function is
+still a snapshot, and no critical section is added or asserted.
+
+No constants are copied, but the *shape* is, so the Makefile guards it: the
+target extracts the real function (comment lines stripped) and **fails the
+build** unless it reads each of the four flags exactly once, calls
+`app_SDCard_SpiOwnedByWifi()` zero times, and still tests the four arms in the
+order quarantine → fwUpdate → wifiStream → suspended. Both halves were checked
+by mutating the firmware and confirming the build stops.
 
 `test_json_string_escape.c` covers `firmware/src/services/JSON_StringEscape.h`
 (issue #164) — the JSON string-escaping helper split out of `JSON_Encoder.c`
@@ -157,6 +192,58 @@ high byte would make the whole JSON stream invalid UTF-8), the `inLen` bound
 (no over-read past a non-NUL-terminated source), buffer-too-small refusing
 wholesale rather than truncating mid-escape, the exact worst-case sizing
 `JSON_Encoder.c` allocates on its stack, and NULL/zero-size safety.
+
+`test_999_scpi_context_storage_isolation.c` covers `CreateSCPIContext()`
+(`firmware/src/services/SCPI/SCPIInterface.c`, issue #999): USB and TCP used
+to be handed the SAME file-scope input-buffer and error-queue arrays, so
+their independent parse/error-FIFO cursors clobbered each other's in-flight
+commands and queued errors. `SCPIInterface.c` itself is not includable on the
+host (same reason as `SCPIStorageSD.c` above, worse: 42 direct includes
+spanning Harmony PLIB, the USB HS and WINC WiFi drivers, and FreeRTOS's
+MIPS-specific port layer — confirmed by trying), but the vendored libscpi
+sources that implement the actual clobber mechanism (`parser.c`/`fifo.c`/
+`error.c` + their internal dependents) are portable C with zero FreeRTOS/
+Harmony dependency, and this target links the REAL production libscpi
+against a minimal harness. Part A reproduces the bug against real fifo/
+error/parser code with storage deliberately shared the old way; Part B/D
+prove the fix's shape (separate storage, no cross-talk) — but neither part
+ever calls the real `CreateSCPIContext()`, since it isn't linked in. Part C's
+Makefile guards therefore grep the real sources to pin that the fix's shape
+(`ScpiContextStorage`, per-transport instances in `UsbCdc.c`/
+`wifi_tcp_server.c`) still exists.
+
+That gap — asserting shape via declarations while never executing
+`CreateSCPIContext()`'s body — was exploited by round 2 of an adversarial
+audit: reassigning the `storage` parameter to a function-local instance
+inside the body reintroduces #999's exact bug without touching any
+declaration, signature or caller, so it passed every original guard. A
+round-2 fix added three inline Makefile greps against the body text (forbid
+reassigning `storage`, forbid a local `ScpiContextStorage` instance, require
+`storage->inputBuffer`/`storage->errorQueue` literally present) — but an
+independent round-3 counter-audit defeated all three (an aliased pointer
+with the real `storage->` text surviving only in a nearby comment; a
+correct `SCPI_Init()` call followed by code that re-seats `buffer.data` and
+calls `SCPI_ErrorInit()` again onto shared storage; splitting the
+reassignment across two physical lines to dodge a single-line grep) and
+found three false positives against legitimate code (a defensive NULL
+check; a comment mentioning "ScpiContextStorage instance"; writing *through*
+the pointer via `*storage = ...` rather than reassigning it).
+
+`check_999_createscpicontext_wiring.sh` (round 3, current) replaces those
+inline greps with a dedicated script: it bounds the extracted body to
+`CreateSCPIContext()`'s own closing brace (not "signature to EOF"), strips
+comments and flattens the body before any keyword search, scopes the wiring
+check to the actual `SCPI_Init()` call's own argument text rather than
+"anywhere in the body", and adds two checks forbidding the body from
+touching `.buffer.data` / `error_queue` or calling `SCPI_ErrorInit()`
+directly at all — closing the "correct call, then re-seat afterward" bypass
+that the round-2 checks had no way to see. Mutation-proven against all of
+the above (11 cases: the original reassignment, all three round-3 bypasses,
+two more probes, and the three false-positive cases, all verified to fail
+or pass as intended). See the Makefile's `SCPI999_BIN` comment and the
+script's own header comment for the full account, including why linking
+`SCPIInterface.c` itself was tried first and ruled out, and what a textual
+guard still does not establish.
 
 ## Framework
 

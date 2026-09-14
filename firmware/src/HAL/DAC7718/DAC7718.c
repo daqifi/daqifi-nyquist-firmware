@@ -36,8 +36,56 @@ static void DAC7718_Delay_us(uint32_t microseconds) {
 //! Max number of configuration to DAC7718 module
 #define MAX_DAC7718_CONFIG 1
 
-//! SPI timeout in iterations (approximately 100k iterations = ~10ms at 200MHz)
-#define DAC7718_SPI_TIMEOUT 100000
+/* Fast-spin bound before falling back to a yielding wait (#913's twin,
+ * #1057). A tight register poll covers the legitimate case with no context
+ * switch, mirroring UserSpi.c's spi_WaitStat -- see that function's comment
+ * for the full derivation of why 8000 register reads is the right cutover
+ * point for a command/response SPI HAL. DAC7718's own worst-case byte is far
+ * faster than the case that sizing was chosen for (see
+ * DAC7718_SPI_BYTE_TIMEOUT_MS below), so this spin catches every legitimate
+ * transfer without ever reaching the yielding path below; reusing the same
+ * constant avoids a second unreviewed magic number. */
+#define DAC7718_SPI_FAST_SPIN_COUNT 8000u
+
+/* Per-WAIT wall-clock budget in ms, consulted only after the fast spin above
+ * misses (#913's twin, #1057) -- "per-wait", not "per-byte": each byte pays
+ * TWO of these (TX-buffer-empty, then RX-buffer-not-empty), and each 3-byte
+ * frame pays a third for the trailing shift-register-empty wait, so a single
+ * DAC7718_ReadWriteReg call's worst-case fault hold is 7x this figure
+ * (140 ms) for a plain write (RW=0) and 14x (280 ms) once the RW=1 readback
+ * doubles the frame. Still comfortably inside SCPIDAC.c's outer
+ * SCPIDAC_COMMAND_LOCK_TIMEOUT_MS (2000 ms), including the 8-channel
+ * all-voltage loop -- see the PR description for the exact margin -- but
+ * that margin is a function of THIS constant and would need re-checking
+ * before raising it.
+ *
+ * SPI2's baud is fixed, not user-configurable like UserSpi's: SPI2BRG = 5
+ * (plib_spi2_master.c:85) off PBCLK2 (84 MHz -- Clock Tree table, CLAUDE.md),
+ * so SPI_CLK = 84e6 / (2*(5+1)) = 7 MHz [V, formula per CLAUDE.md's SPI4 BRG
+ * derivation -- same SPIx peripheral family]. (The 100 MHz legacy PBCLK2
+ * branch that predates #487, still present in clock_config.h, would give
+ * 8.33 MHz -- FASTER -- so 84 MHz/7 MHz is the binding, slower worst case
+ * across both, same reasoning UserSpi.c's own sizing comment uses.) SPI2BRG
+ * is not literally unwritable -- `SPI2_TransferSetup` (plib_spi2_master.c:148)
+ * can rewrite it, and a live `DRV_SPI` instance for index 2 exists
+ * (initialization.c) -- it is simply never CALLED: nothing in this tree opens
+ * `DRV_SPI_INDEX_2`, only 0 and 1 have clients. This constant-BRG premise
+ * therefore holds on the absence of a caller, not the absence of a writer; a
+ * future SPI2 client changing the baud at runtime would invalidate it.
+ *
+ * A SPI slave cannot stretch or otherwise gate SCK the way an I2C slave can
+ * clock-stretch SCL -- the master (this driver) generates every edge
+ * regardless of what DAC7718 does with MISO -- so the worst legitimate byte
+ * is a fixed 8 bits / 7 MHz ~= 1.14 us in BOTH directions (this applies to
+ * the RW=1 readback path too, which clocks data OUT of the DAC -- DAC7718 is
+ * not receive-only). 20 ms is ~17,500x that per-wait margin -- expiry here
+ * means SPI2 is not responding at all (peripheral off, PMD-gated, or a
+ * wiring fault), never a slow transfer. Numerically equal to UserSpi.c's
+ * USER_SPI_BYTE_TIMEOUT_MS for an unrelated reason: that one is sized against
+ * a configurable LOW baud floor, this one against this driver's fixed HIGH
+ * baud with enormous margin either way; kept equal only because both are
+ * "obviously enough" and one fewer number needs explaining. */
+#define DAC7718_SPI_BYTE_TIMEOUT_MS 20u
 
 //! Buffer with DAC7718 configurations
 static tDAC7718Config m_DAC7718Config[MAX_DAC7718_CONFIG];
@@ -51,15 +99,17 @@ static uint8_t spi_rxData[3] __attribute__((coherent, aligned(4)));
 //! Mutex to protect DAC7718 initialization and SPI access
 static SemaphoreHandle_t gDAC7718_Mutex = NULL;
 
-// Helper to acquire mutex with lazy creation
+// Helper to acquire mutex. #980: the mutex is created once in
+// DAC7718_InitGlobal() (single-threaded, pre-scheduler) -- see the comment
+// there for why the lazy "create on first use" this replaced was itself a
+// second, unsynchronized TOCTOU race (two tasks could each see NULL and each
+// create their OWN mutex, so neither ever excluded the other from SPI2).
+// Fail closed if it is absent rather than manufacture one here.
 static bool DAC7718_Lock(void)
 {
     if (gDAC7718_Mutex == NULL) {
-        gDAC7718_Mutex = xSemaphoreCreateMutex();
-        if (gDAC7718_Mutex == NULL) {
-            LOG_E("DAC7718_Lock: Failed to create mutex");
-            return false;
-        }
+        LOG_E("DAC7718_Lock: mutex not created");
+        return false;
     }
 
     if (xSemaphoreTake(gDAC7718_Mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
@@ -70,16 +120,21 @@ static bool DAC7718_Lock(void)
     return true;
 }
 
-// Helper to release mutex and cleanup CS pin state
-static void DAC7718_Unlock(tDAC7718Config* config, bool csAsserted)
+// Helper to release mutex and cleanup CS pin state.
+// #980 item 2: `lockHeld` must be true only when THIS call's own
+// DAC7718_Lock() succeeded -- callers that jump here after a validation
+// failure (before ever calling Lock) pass lockHeld=false so a mutex this call
+// never took is never given. Giving an unowned mutex trips FreeRTOS's
+// ownership assertion if another task currently holds it.
+static void DAC7718_Unlock(tDAC7718Config* config, bool csAsserted, bool lockHeld)
 {
     // De-assert CS if still asserted
     if (csAsserted && (config != NULL)) {
         GPIO_PinWrite(config->CS_Pin, true);
     }
 
-    // Release mutex
-    if (gDAC7718_Mutex != NULL) {
+    // Release mutex -- only what this call actually took.
+    if (lockHeld && (gDAC7718_Mutex != NULL)) {
         xSemaphoreGive(gDAC7718_Mutex);
     }
 }
@@ -96,6 +151,22 @@ void DAC7718_InitGlobal( void )
 {
     memset(m_DAC7718Config, 0, MAX_DAC7718_CONFIG * sizeof(tDAC7718Config));
     m_DAC7718ConfigCount = 0;
+
+    // #980: create the SPI/init mutex HERE rather than lazily in
+    // DAC7718_Lock()/DAC7718_Init(). This runs from app_SystemInit(), which
+    // APP_FREERTOS_Tasks() completes before app_TasksCreate() starts
+    // app_USBDeviceTask / app_WifiTask -- a single context, so this create
+    // cannot race. The lazy "if (gDAC7718_Mutex == NULL) create" it replaces
+    // was itself check-then-act: two SCPI tasks could both observe NULL and
+    // each create their OWN mutex, leaving SPI2 with no mutual exclusion at
+    // all (plus a leaked semaphore) instead of the shared lock every caller
+    // assumes exists.
+    if (gDAC7718_Mutex == NULL) {
+        gDAC7718_Mutex = xSemaphoreCreateMutex();
+        if (gDAC7718_Mutex == NULL) {
+            LOG_E("DAC7718_InitGlobal: Failed to create mutex; DAC unavailable");
+        }
+    }
 }
 
 uint8_t DAC7718_NewConfig(const tDAC7718Config *newDAC7718Config)
@@ -172,25 +243,38 @@ tDAC7718Config* DAC7718_GetConfig(uint8_t id)
     return &m_DAC7718Config[id];
 }
 
-void DAC7718_Init(uint8_t id, uint8_t range)
+bool DAC7718_Init(uint8_t id, uint8_t range)
 {
     tDAC7718Config* config = DAC7718_GetConfig(id);
 
     if (config == NULL) {
         LOG_E("DAC7718_Init: invalid config id=%u", id);
-        return;
+        return false;   // #980 item 1: honest failure, not a silent success
     }
 
-    // Create mutex on first use (thread-safe in FreeRTOS context)
+    // #980: the mutex is created once in DAC7718_InitGlobal(), not lazily
+    // here -- see that function's comment for why the lazy create this
+    // replaced was itself an unsynchronized race. Fail closed (rather than
+    // create one now) if it is somehow still absent.
     if (gDAC7718_Mutex == NULL) {
-        gDAC7718_Mutex = xSemaphoreCreateMutex();
-        if (gDAC7718_Mutex == NULL) {
-            LOG_E("DAC7718_Init: Failed to create mutex");
-            return;
-        }
+        LOG_E("DAC7718_Init: mutex not created");
+        return false;
     }
 
     // SPI2 is already initialized by MCC
+
+	// #980: serialize the GPIO reset pulse against any in-flight
+	// DAC7718_ReadWriteReg SPI transaction. This pulse used to run outside any
+	// lock; that was tolerable while it could only ever happen once, at boot,
+	// before any command could reach DAC7718_ReadWriteReg. #980 item 3 makes
+	// this function re-entrant (a power cycle can trigger a full re-init at
+	// any time), so an in-flight SPI frame from a live command can now overlap
+	// this reset -- taking the lock here closes that. Released before the
+	// register write below, which takes this SAME non-recursive mutex itself
+	// (recursion would need item 4's separate mutex-recursion change).
+	if (!DAC7718_Lock()) {
+	    return false;
+	}
 
 	// Configure GPIO pins as outputs before setting values (prevents glitches)
     GPIO_PinOutputEnable(config->CS_Pin);
@@ -206,6 +290,8 @@ void DAC7718_Init(uint8_t id, uint8_t range)
 	DAC7718_Delay_us(1);  // 1us delay (10x minimum spec, guaranteed safe)
 	GPIO_PinWrite(config->RST_Pin, true);   // De-assert reset (return to idle high)
 
+	DAC7718_Unlock(config, false, true);  // csAsserted=false (CS untouched here), lockHeld=true
+
 	// Configure DAC gain based on range parameter
 	// Range 0: 0-5V  (GAIN-A=0, GAIN-B=0 for 2x gain)
 	// Range 1: 0-10V (GAIN-A=1, GAIN-B=1 for 4x gain)
@@ -217,11 +303,78 @@ void DAC7718_Init(uint8_t id, uint8_t range)
 	uint32_t result = DAC7718_ReadWriteReg(id, 0, 0, configReg);
 	if (result == UINT32_MAX) {
 	    LOG_E("DAC7718_Init: Failed to write configuration register");
-	    return;
+	    return false;   // #980 item 1
 	}
 
-	// Update latch to apply configuration
-	DAC7718_UpdateLatch(id);
+	// Update latch to apply configuration, and report whether it worked
+	return DAC7718_UpdateLatch(id);
+}
+
+/* Wait for a SPI2STAT bit to reach @p want (true = wait for set, false =
+ * wait for clear), YIELDING so a stuck SPI2 peripheral does not busy-spin at
+ * the caller's (SCPI command) task priority for the whole budget (#913's
+ * twin, #1057). Mirrors UserSpi.c's spi_WaitStat exactly, including the
+ * ordering that a status change during the final yield is not lost: the
+ * condition is tested BEFORE the deadline is ever consulted, on every pass,
+ * and the deadline branch takes a FRESH read rather than trusting the
+ * immediately-preceding check -- this task can be preempted in the gap
+ * between them (an opus review of #913 caught this same gap for UserSpi;
+ * the same reasoning applies here since it is the same scheduler). See
+ * UserSpi.c's spi_WaitStat for the full derivation -- not re-derived here to
+ * avoid a fourth copy of the same reasoning drifting out of sync (#1056
+ * tracks collapsing UserSpi.c/UserUart.c/UserI2c.c's three existing copies,
+ * and now this one, into a single shared definition).
+ *
+ * The one shape this collapses that the other three drivers don't have:
+ * DAC7718's "shift register empty" wait was previously expressed via the
+ * PLIB helper SPI2_IsTransmitterBusy(), which is
+ * `(SPI2STAT & _SPI2STAT_SRMT_MASK) == 0` (plib_spi2_master.c:167) --
+ * i.e. NOT busy is the SRMT bit SET. [V, PIC32 Family Reference Manual
+ * Section 23 "Serial Peripheral Interface (SPI)", DS61106G, Register 23-3
+ * (SPIxSTAT), bit 7: "SRMT: Shift Register Empty bit (valid only when
+ * ENHBUF = 1) -- 1 = When SPI module shift register is empty, 0 = When SPI
+ * module shift register is not empty." SRMT's ENHBUF precondition is met
+ * here: SPI2_Initialize sets ENHBUF=1 (plib_spi2_master.c:99).] Testing
+ * that mask/want pair here directly, rather than calling the PLIB function
+ * and inverting the sense, lets all three of this driver's wait shapes
+ * (TX-buffer-empty, RX-buffer-not-empty, shift-register-empty) route
+ * through this one helper instead of two different waiting idioms -- the
+ * design choice this PR makes over routing this one condition through
+ * SPI2_IsTransmitterBusy() and keeping two wait idioms (Qodo /agentic_review,
+ * declined with rationale on the PR). */
+static bool dac7718_WaitStat(uint32_t mask, bool want,
+                              TickType_t start, TickType_t timeoutTicks)
+{
+    /* The fast spin runs ONCE, not once per retry -- it exists to cover the
+     * common fast-completion case with zero context switches, not to be
+     * re-paid on every wake from vTaskDelay(1). Once it has missed, the
+     * condition is being waited on for real, and a single register read per
+     * 1ms tick detects a level-sensitive status bit exactly as reliably as
+     * an 8000-iteration re-spin would (there is nothing here that could flip
+     * and flip back between one tick and the next). Re-spinning per retry
+     * was flagged by Qodo /improve on this PR: it burns ~8000 extra register
+     * reads per tick for the whole fault-path duration for no additional
+     * detection value -- the inherited shape in UserSpi.c's spi_WaitStat /
+     * UserUart.c's uart_WaitSta / UserI2c.c's i2c_WaitMif has the identical
+     * per-retry re-spin (see the comment left on #1056, which tracks
+     * consolidating all four into one shared definition -- that
+     * consolidation should use THIS hoisted shape, not the original). */
+    for (uint32_t s = 0; s < DAC7718_SPI_FAST_SPIN_COUNT; ++s) {
+        if (((SPI2STAT & mask) != 0u) == want) { return true; }
+    }
+    for (;;) {
+        if (((SPI2STAT & mask) != 0u) == want) { return true; }
+        /* Rollover-safe: unsigned (now - start) is the true elapsed count
+         * even across a tick-counter wrap, unlike an absolute-deadline
+         * compare. */
+        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) {
+            /* Fresh read, not a reuse of the check above: this task can be
+             * preempted between that check and this one, and a bit that set
+             * during the preemption must still count as success. */
+            return (((SPI2STAT & mask) != 0u) == want);
+        }
+        vTaskDelay(1);
+    }
 }
 
 uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data)
@@ -230,6 +383,11 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     uint32_t rdData = 0;
     uint8_t x;
     bool csAsserted = false;
+    // #980 item 2: tracks whether THIS call's own DAC7718_Lock() succeeded.
+    // The three validation `goto cleanup` sites below run before Lock() is
+    // ever attempted, so without this Unlock() would give a mutex this call
+    // never took -- see DAC7718_Unlock()'s comment.
+    bool lockHeld = false;
     tDAC7718Config* config = NULL;
 
     // Validate inputs
@@ -254,6 +412,7 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         rdData = UINT32_MAX;
         goto cleanup;
     }
+    lockHeld = true;   // set ONLY after a successful take (#980 item 2)
 
     // Assert CS (active low)
     GPIO_PinWrite(config->CS_Pin, false);
@@ -269,9 +428,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
 
     // Transmit 24-bit command (MSB first) with timeout protection
     for (x = 0U; x < DAC7718_TRANSFER_BYTES; x++) {
-        uint32_t timeout = DAC7718_SPI_TIMEOUT;
-        while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0U) && (--timeout > 0U)) { }
-        if (timeout == 0U) {
+        if (!dac7718_WaitStat(_SPI2STAT_SPITBE_MASK, true, xTaskGetTickCount(),
+                               pdMS_TO_TICKS(DAC7718_SPI_BYTE_TIMEOUT_MS))) {
             LOG_E("DAC7718_ReadWriteReg: TX buffer timeout on byte %u", x);
             rdData = UINT32_MAX;
             goto cleanup;
@@ -279,9 +437,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         SPI2BUF = (uint8_t)((Com & 0x00FF0000UL) >> 16);
         Com <<= 8;
 
-        timeout = DAC7718_SPI_TIMEOUT;
-        while (((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0U) && (--timeout > 0U)) { }
-        if (timeout == 0U) {
+        if (!dac7718_WaitStat(_SPI2STAT_SPIRBE_MASK, false, xTaskGetTickCount(),
+                               pdMS_TO_TICKS(DAC7718_SPI_BYTE_TIMEOUT_MS))) {
             LOG_E("DAC7718_ReadWriteReg: RX buffer timeout on byte %u", x);
             rdData = UINT32_MAX;
             goto cleanup;
@@ -290,9 +447,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     }
 
     // Wait for shift register to empty (transmission complete)
-    uint32_t timeout = DAC7718_SPI_TIMEOUT;
-    while (SPI2_IsTransmitterBusy() && (--timeout > 0U)) { }
-    if (timeout == 0U) {
+    if (!dac7718_WaitStat(_SPI2STAT_SRMT_MASK, true, xTaskGetTickCount(),
+                           pdMS_TO_TICKS(DAC7718_SPI_BYTE_TIMEOUT_MS))) {
         LOG_E("DAC7718_ReadWriteReg: Shift register timeout");
         rdData = UINT32_MAX;
         goto cleanup;
@@ -322,18 +478,16 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         csAsserted = true;
 
         for (uint8_t i = 0U; i < DAC7718_TRANSFER_BYTES; i++) {
-            uint32_t to = DAC7718_SPI_TIMEOUT;
-            while (((SPI2STAT & _SPI2STAT_SPITBE_MASK) == 0U) && (--to > 0U)) { }
-            if (to == 0U) {
+            if (!dac7718_WaitStat(_SPI2STAT_SPITBE_MASK, true, xTaskGetTickCount(),
+                                   pdMS_TO_TICKS(DAC7718_SPI_BYTE_TIMEOUT_MS))) {
                 LOG_E("DAC7718_ReadWriteReg: NOP TX timeout on byte %u", i);
                 rdData = UINT32_MAX;
                 goto cleanup;
             }
             SPI2BUF = spi_txData[i];
 
-            to = DAC7718_SPI_TIMEOUT;
-            while (((SPI2STAT & _SPI2STAT_SPIRBE_MASK) != 0U) && (--to > 0U)) { }
-            if (to == 0U) {
+            if (!dac7718_WaitStat(_SPI2STAT_SPIRBE_MASK, false, xTaskGetTickCount(),
+                                   pdMS_TO_TICKS(DAC7718_SPI_BYTE_TIMEOUT_MS))) {
                 LOG_E("DAC7718_ReadWriteReg: NOP RX timeout on byte %u", i);
                 rdData = UINT32_MAX;
                 goto cleanup;
@@ -342,9 +496,8 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         }
 
         // Wait for shift register to empty (readback transmission complete)
-        timeout = DAC7718_SPI_TIMEOUT;
-        while (SPI2_IsTransmitterBusy() && (--timeout > 0U)) { }
-        if (timeout == 0U) {
+        if (!dac7718_WaitStat(_SPI2STAT_SRMT_MASK, true, xTaskGetTickCount(),
+                               pdMS_TO_TICKS(DAC7718_SPI_BYTE_TIMEOUT_MS))) {
             LOG_E("DAC7718_ReadWriteReg: NOP shift register timeout");
             rdData = UINT32_MAX;
             goto cleanup;
@@ -361,16 +514,16 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     rdData = (rdData & (DAC7718_MAX_VALUE << DAC7718_READBACK_SHIFT)) >> DAC7718_READBACK_SHIFT;
 
 cleanup:
-    DAC7718_Unlock(config, csAsserted);
+    DAC7718_Unlock(config, csAsserted, lockHeld);
     return rdData;
 }
 
-void DAC7718_UpdateLatch(uint8_t id)
+bool DAC7718_UpdateLatch(uint8_t id)
 {
 	// Validate ID
 	if (id >= MAX_DAC7718_CONFIG) {
 		LOG_E("DAC7718_UpdateLatch: invalid id=%u", id);
-		return;
+		return false;   // #980 item 1
 	}
 
 	// Write to configuration register with LD bit set to update all DAC outputs
@@ -379,7 +532,9 @@ void DAC7718_UpdateLatch(uint8_t id)
 
 	if (result == UINT32_MAX) {
 		LOG_E("DAC7718_UpdateLatch: Failed to update latch");
+		return false;
 	}
+	return true;
 }
 
 // SPI2 configuration is handled by MCC-generated initialization

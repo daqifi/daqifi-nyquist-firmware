@@ -712,7 +712,7 @@ def check_streaming(streaming_text):
                 "%s() sets %s with no %s()/%s() around it. Granting the claim "
                 "is a read-modify-write (test the flag, then set it), which is "
                 "NOT atomic on PIC32MZ, so both SCPI transports can be granted "
-                "it at once (CLAUDE.md, Atomicity & Concurrency Rules)."
+                "it at once (docs/MCU_REFERENCE.md, Atomicity & Concurrency Rules)."
                 % (CLAIM_BEGIN, flag, TASK_ENTER, TASK_EXIT))
         elif len(enters) != 1 or len(exits) != 1:
             problems.append(_ONE_REGION % {

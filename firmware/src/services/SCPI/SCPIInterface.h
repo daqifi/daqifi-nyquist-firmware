@@ -59,13 +59,50 @@ extern "C" {
     void SCPI_PrecomputeFirmwareImageCrc32(void);
 
     /**
+     * Per-transport SCPI parser storage (#999).
+     *
+     * libscpi does NOT own the input buffer or the error-queue backing
+     * array -- SCPI_Init() only stores the pointers it is handed
+     * (parser.c's context->buffer.data assignment for the input buffer;
+     * SCPI_ErrorInit -> fifo_init for the error queue). The scpi_t struct
+     * itself is per-transport (each CreateSCPIContext caller keeps its own
+     * copy), but the wr/rd/count cursors that struct holds index into
+     * whatever backing array was passed at Init time -- so two contexts
+     * handed the SAME array corrupt each other's in-flight command text
+     * and silently swap or lose each other's queued errors.
+     *
+     * Bundled in a struct so a caller cannot pass a mismatched
+     * pointer/length pair, and so sharing one block of storage between two
+     * transports would require doing so explicitly and visibly at the call
+     * site rather than by omission.
+     */
+    #define SCPI_INPUT_BUFFER_LENGTH 512  /* Match USB CDC max packet size
+                                            * (#263); a shorter buffer
+                                            * silently truncated long
+                                            * commands (#100). Do not
+                                            * reduce. */
+    #define SCPI_ERROR_QUEUE_SIZE 17
+
+    typedef struct {
+        char inputBuffer[SCPI_INPUT_BUFFER_LENGTH];
+        scpi_error_t errorQueue[SCPI_ERROR_QUEUE_SIZE];
+    } ScpiContextStorage;
+
+    /**
      * Creates a new SCPI context object.
      * This allows us to have multiple independent consoles.
      * @param interface Defines the SCPI callback functions
      * @param user_context Additional information to pass to the client
+     * @param storage This transport's OWN parse buffer + error queue
+     *        (#999). Must not be shared with any other transport's
+     *        context -- see ScpiContextStorage above. Caller-owned;
+     *        must outlive the returned context (a file-scope static is
+     *        the correct lifetime, since every current caller creates
+     *        exactly one context, once, at boot).
      * @return A newly created SCPI context
      */
-    scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context);
+    scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context,
+                             ScpiContextStorage* storage);
 
     /**
      * Size of the shared SCPI response scratch buffer. Sized to hold the
@@ -85,11 +122,11 @@ extern "C" {
      *
      * **2500 (lowered from 10000, 2026-05-31, user decision).** The
      * original 10 KB was an unmeasured "first defensive cut": boot-idle
-     * HeapFree is only ~13 KB (CLAUDE.md "Heap Allocation Map"), so a
-     * 10 KB floor sat just ~3 KB below idle and false-blocked legitimate
-     * starts the moment any per-session pressure (the #490 leak) ate into
-     * headroom — exactly what was observed while validating #520 (heap
-     * slid to ~4.3 KB after a test session, blocking all WiFi starts).
+     * HeapFree is only ~13 KB (docs/MEMORY_ARCHITECTURE.md, "Heap Allocation
+     * Map"), so a 10 KB floor sat just ~3 KB below idle and false-blocked
+     * legitimate starts the moment any per-session pressure (the #490 leak)
+     * ate into headroom — exactly what was observed while validating #520
+     * (heap slid to ~4.3 KB after a test session, blocking all WiFi starts).
      * The ~7 KB figure the 10 KB was built around is our own #475 note,
      * NOT a measured allocation profile.  2500 keeps a minimal guard
      * against a start with almost no heap while letting legitimate

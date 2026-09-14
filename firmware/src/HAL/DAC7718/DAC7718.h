@@ -53,9 +53,11 @@ tDAC7718Config* DAC7718_GetConfig(uint8_t id);
 * Initializes the DAC7718.
 * @param id Driver instance ID
 * @param range Range setting
-* @return
+* @return true on success, false if the mutex could not be acquired/created
+*         or the configuration register write failed (#980: a failed init
+*         used to be reported the same as a successful one)
 */
-void DAC7718_Init(uint8_t id, uint8_t range);
+bool DAC7718_Init(uint8_t id, uint8_t range);
 
 /*!
 * Reads/Writes to a register in the DAC7718.
@@ -65,14 +67,14 @@ void DAC7718_Init(uint8_t id, uint8_t range);
 * @param Data Data to write to DAC7718 (12-bit value)
 * @return Read data on success, UINT32_MAX on error
 */
-uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data); 
+uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data);
 
 /*!
 * Updates latches with values written to the DAC7718.
-* @param id Driver instance ID 
-* @return
+* @param id Driver instance ID
+* @return true on success, false if the id is invalid or the SPI write failed
 */
-void DAC7718_UpdateLatch(uint8_t id);
+bool DAC7718_UpdateLatch(uint8_t id);
 
 
 #ifdef	__cplusplus

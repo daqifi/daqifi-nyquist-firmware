@@ -601,12 +601,21 @@ void SCPI_ResponseBuf_Init(void) {
     // directly from app boot AND implicitly from the first CreateSCPIContext),
     // the second call is a no-op.
     //
-    // The check-and-create pair is guarded by a critical section. The
-    // intended caller is single-threaded (app_SystemInit runs pre-scheduler,
-    // then CreateSCPIContext runs during serial boot-time transport init)
-    // and taskENTER_CRITICAL is a no-op before the scheduler starts, so this
-    // is cost-free in practice. The guard catches any future misuse where
-    // SCPI_ResponseBuf_Init is invoked concurrently.
+    // The check-and-create pair is guarded by a critical section. Today's
+    // first call is direct from app_SystemInit; each transport's later,
+    // idempotent re-call (via CreateSCPIContext) finds the mutex already
+    // created, because app_SystemInit runs to completion, sequentially,
+    // before app_TasksCreate() spawns the USB/WiFi tasks that make those
+    // calls (see SCPI_InitIdentification()'s comment for the same ordering
+    // argument). The scheduler is already running throughout this:
+    // app_SystemInit executes inside the priority-1 APP_FREERTOS_Tasks boot
+    // task, not before vTaskStartScheduler(). taskENTER_CRITICAL is not a
+    // no-op either way -- vTaskEnterCritical() disables interrupts
+    // unconditionally; it's vTaskExitCritical() that only re-enables them
+    // once the scheduler is running (see UserEdge.c's edge_IpcGuardEnter()
+    // comment for the same FreeRTOS detail). So this is an ordinary, working
+    // critical section, and the guard catches any future misuse where
+    // SCPI_ResponseBuf_Init is invoked genuinely concurrently.
     taskENTER_CRITICAL();
     if (gScpiRespMutex == NULL) {
         gScpiRespMutex = xSemaphoreCreateMutexStatic(&gScpiRespMutexStorage);
@@ -2248,7 +2257,7 @@ static void RestoreSdMode(sd_card_manager_mode_t savedMode) {
 
 // StreamingRuntimeConfig.Frequency is uint64_t — non-atomic on PIC32MZ, so the
 // benchmark/finder paths read/write it through a critical section per the
-// project atomicity rule (CLAUDE.md / Compliance ID 8).  These run in SCPI task
+// project atomicity rule (docs/MCU_REFERENCE.md / Compliance ID 8).  These run in SCPI task
 // context (one-shot commands, not a hot ISR path) so the latency cost is nil.
 static inline uint64_t StreamFreq_Get(const StreamingRuntimeConfig* c) {
     taskENTER_CRITICAL();
@@ -3633,7 +3642,7 @@ static void SCPI_SyncOperSdBitLocked(void) {
      * case returns the address of a member of a static struct, and
      * BOARDRUNTIME_SD_CARD_SETTINGS is a compile-time constant naming a real
      * case. Every other callback in this file relies on the same reasoning
-     * (CLAUDE.md standing rule), so guarding only here would be inconsistent. */
+     * (docs/MCU_REFERENCE.md standing rule), so guarding only here would be inconsistent. */
     const bool logging = Streaming_IsActiveOnNonWifiInterface() &&
                          sd->enable &&
                          (sd->mode == SD_CARD_MANAGER_MODE_WRITE) &&
@@ -4320,7 +4329,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     //
     // Floor is 2500 B (lowered from 10 KB 2026-05-31 — see
     // MIN_HEAP_FREE_FOR_STREAM_START_BYTES in SCPIInterface.h for the
-    // rationale + tradeoff).  Boot-idle HeapFree is ~13 KB per CLAUDE.md,
+    // rationale + tradeoff).  Boot-idle HeapFree is ~13 KB per docs/MEMORY_ARCHITECTURE.md,
     // so the guard now only bites under severe accumulated pressure (the
     // #490 per-session leak), not on ordinary post-boot starts.
     //
@@ -4408,7 +4417,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     if (!freqProvided) {
         // 64-bit read needs a critical section on the 32-bit PIC32MZ bus to avoid
         // a torn read if another SCPI task writes Frequency concurrently
-        // (CLAUDE.md atomicity rules; Qodo /agentic_review pass-6).
+        // (docs/MCU_REFERENCE.md atomicity rules; Qodo /agentic_review pass-6).
         taskENTER_CRITICAL();
         uint64_t stored = pRunTimeStreamConfig->Frequency;
         taskEXIT_CRITICAL();
@@ -5093,7 +5102,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                     uint64_t freeBytes = 0, totalBytes = 0;
                     bool haveSpace = sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes);
                     /* Snapshot the 64-bit floor under critical section per
-                     * CLAUDE.md atomicity rules — pairs with the setter's
+                     * docs/MCU_REFERENCE.md atomicity rules — pairs with the setter's
                      * critical-section write in SCPI_StorageSDMinFreeSet. */
                     uint64_t floor;
                     taskENTER_CRITICAL();
@@ -5563,7 +5572,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      *
      * A bare 32-bit load, not a critical section: unlike the interface pins
      * inside the body it has no partner field it must describe one instant
-     * with, and CLAUDE.md's atomicity rule is explicit that wrapping a plain
+     * with, and docs/MCU_REFERENCE.md's atomicity rule is explicit that wrapping a plain
      * aligned 32-bit load only costs interrupt latency.
      *
      * Unused on the SYSTem:STReam:START 0 disable path, which returns before
@@ -7979,7 +7988,7 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
        MIN/MAX_AIN_SAMPLE_COUNT) so the advertised min/max can't drift from
        the enforced min/max. (The encoder + sample-pool setters additionally
        accept 0 as an auto sentinel — outside the emitted min/max by design,
-       documented as a convention in the wiki schema + CLAUDE.md.) wifi/sd
+       documented as a convention in the wiki schema + docs/MEMORY_ARCHITECTURE.md.) wifi/sd
        mins and the 65536 caps are literals in their setters too — keep them
        literal here to match. */
     scpi_printf(context,
@@ -8662,11 +8671,6 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = NULL, .callback = SCPI_NotImplemented,},
 };
 
-#define SCPI_INPUT_BUFFER_LENGTH 512  // Match USB CDC max packet size to prevent silent truncation
-#define SCPI_ERROR_QUEUE_SIZE 17
-char scpi_input_buffer[SCPI_INPUT_BUFFER_LENGTH];
-scpi_error_t scpi_error_queue_data[SCPI_ERROR_QUEUE_SIZE];
-
 /* #1004: total time SCPI_Help may spend writing while it holds the shared
  * SCPI response buffer (gScpiRespMutex, #347). Same budget and same
  * reasoning as the SCPI_CMDHISTORY_WRITE_BUDGET_MS #995 proposes on the
@@ -8844,7 +8848,8 @@ size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
     return written;
 }
 
-scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
+scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context,
+                         ScpiContextStorage* storage) {
     // Defense in depth: SCPI_ResponseBuf_Init() is supposed to have been
     // called during app boot before any transport creates its SCPI context.
     // Call it again here — it's idempotent — so the shared response-buffer
@@ -8857,13 +8862,23 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
     // Init context.  gIdnModel and gIdnSerial are populated once pre-scheduler
     // by SCPI_InitIdentification() so concurrent CreateSCPIContext() calls
     // from USB and WiFi tasks just read the same finished strings.
+    //
+    // #999: the input buffer and error queue come from the CALLER's own
+    // storage, not a file-scope global. They used to be two singleton
+    // arrays (scpi_input_buffer[512], scpi_error_queue_data[17]) handed to
+    // EVERY context, so USB and WiFi shared one parse buffer and one error
+    // FIFO while each kept its own independent read/write cursor into that
+    // shared memory -- a command being parsed on one transport could be
+    // overwritten mid-dispatch by the other, and a pushed error could be
+    // silently swapped for (or overwritten by) the other transport's error.
+    // See ScpiContextStorage in SCPIInterface.h.
     SCPI_Init(&daqifiScpiContext,
             scpi_commands,
             interface,
             scpi_units_def,
             SCPI_IDN1, gIdnModel, gIdnSerial, SCPI_IDN4,
-            scpi_input_buffer, SCPI_INPUT_BUFFER_LENGTH,
-            scpi_error_queue_data, SCPI_ERROR_QUEUE_SIZE);
+            storage->inputBuffer, SCPI_INPUT_BUFFER_LENGTH,
+            storage->errorQueue, SCPI_ERROR_QUEUE_SIZE);
 
     // #598: SCPI_Init doesn't take user_context, and this function accepted
     // the parameter without ever storing it - both transports were passing

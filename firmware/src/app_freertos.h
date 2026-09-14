@@ -277,6 +277,20 @@ void APP_FREERTOS_Initialize ( void );
 bool app_SDCard_SpiOwnedByWifi(void);
 
 /**
+ * #985: the WiFi-STREAMING term of app_SDCard_SpiOwnedByWifi() above, on its
+ * own. Same liveness and same callable-from-any-task contract; it is one of
+ * the three conditions that function ORs together.
+ *
+ * For callers that must name WHICH owner has SPI4 rather than merely whether
+ * one does. Such a caller must NOT call the composite and then re-read its
+ * parts: the parts are independent and asynchronous, so the two reads can
+ * disagree and the cause reported is then one that no single instant showed
+ * (that was #985, in SD_SuspendReasonText). Read this and the other two flags
+ * once each, into locals, and decide from those.
+ */
+bool app_SDCard_WifiStreamActive(void);
+
+/**
  * #925: does the SD-card client currently hold the shared SPI4 bus's DRV_SPI
  * exclusive lock?
  *
