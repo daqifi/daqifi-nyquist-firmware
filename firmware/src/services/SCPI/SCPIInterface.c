@@ -7176,6 +7176,15 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
                 (unsigned)AInSampleList_PoolInUse());
     scpi_printf(context, "SamplePoolMaxUsed=%u\r\n",
                 (unsigned)AInSampleList_PoolMaxUsed());
+    /* #1082: the streaming pool's total byte size (STATIC_POOL_SIZE) had no
+     * SCPI caller, so a host could only learn it from a "Pool partition"
+     * LOG_I line -- captured only if GENERAL is at INFO when some
+     * StreamingBufferPool_Partition() call runs, never for the boot-time
+     * partition (GENERAL boots at ERROR). StreamingBufferPool_TotalSize()
+     * has no side effects and needs no stream/repartition. Appended per the
+     * #828 convention: existing keys keep their name, value and order. */
+    scpi_printf(context, "StreamingPoolTotal=%u\r\n",
+                (unsigned)StreamingBufferPool_TotalSize());
     return SCPI_RES_OK;
 }
 
