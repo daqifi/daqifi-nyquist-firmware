@@ -526,11 +526,38 @@ static scpi_result_t SCPI_Reset(scpi_t * context) {
         }
     }
 
+    // #1071: have the next boot restore the power state instead of coming
+    // back in STANDBY with WiFi and the front end unpowered, for
+    // SYSTem:REboot only. *RST shares this callback but keeps the boot it
+    // always had: IEEE 488.2 defines *RST as a known state independent of the
+    // device's past-use history, and #1071 asks only for SYSTem:REboot.
+    // SCPI_IsCmd is libscpi's test for a callback bound to several patterns.
+    // It checks the table entry the parser matched, so the client's spelling
+    // does not matter, and if the pattern ever stopped matching, the reboot
+    // would fail safe to the pre-#1071 STANDBY boot.
+    const bool restorePower = SCPI_IsCmd(context, "SYSTem:REboot");
+
     // Allow time for message transmission and any pending operations
     vTaskDelay(100 / portTICK_PERIOD_MS);
 
-    // Perform the software reset
+    // #1071 (Qodo /agentic_review finding on PR #1081): snapshot the power
+    // state and reset as one step. Every writer of requestedPowerState and
+    // powerState is task code (Button_Tasks, the power state machine, a SCPI
+    // callback on the other transport), and this critical section stops the
+    // scheduler switching to any of them, so no power request can land
+    // between the snapshot and the reset. Armed any earlier (the original
+    // #1071 placement), a power-down posted in that gap was replaced on the
+    // next boot by the power-up it followed. Power_ArmRebootRestore() ends
+    // with a SYNC, so its stores are in SRAM before the reset — the settle
+    // delay above no longer sits between the stores and the reset.
+    // RCON_SoftwareReset() disables interrupts itself and never returns; the
+    // exit below is only for the unreachable fallback.
+    taskENTER_CRITICAL();
+    if (restorePower) {
+        Power_ArmRebootRestore();
+    }
     RCON_SoftwareReset();
+    taskEXIT_CRITICAL();
 
     // If we get here, the reset didn't work
     SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
