@@ -18,6 +18,8 @@
 #include "state/board/BoardConfig.h"
 #include "HAL/DIO.h"
 #include "services/streaming.h"   /* #730: timebase helpers */
+#include "FreeRTOS.h"
+#include "task.h"                 /* #1054: taskENTER_CRITICAL for the CalM/CalB reads */
 #ifndef min
 #define min(x,y) ((x) <= (y) ? (x) : (y))
 #endif // min
@@ -859,6 +861,22 @@ size_t Nanopb_Encode(tBoardData* state,
 
                 break;
             }
+            /* #1054 (the read half of #904): the four calibration cases below
+             * each read one 64-bit double per channel -- two 32-bit loads on
+             * PIC32MZ (CLAUDE.md atomicity rules) -- and a calibration writer
+             * on another task (CONF:ADC:chanCALM/chanCALB, LOADcal/USECal) can
+             * land between them. #1048 makes the writes atomic, which does not
+             * stop a reader straddling a completed write, so each read copies
+             * its value under its own minimal critical section and the store
+             * into the message happens outside it.
+             *
+             * That makes every cal_m[] and cal_b[] ENTRY untorn. It does not
+             * make cal_m[i] and cal_b[i] a coherent PAIR: they are separate
+             * tags filled by separate loops, so a writer can still land
+             * between the two. That was already true before this change and
+             * follows from the wire reporting slope and offset as independent
+             * fields; it is not introduced here, and closing it would mean
+             * holding the whole channel array across both loops. */
             case DaqifiOutMessage_analog_in_cal_m_tag:
 
             {
@@ -874,7 +892,11 @@ size_t Nanopb_Encode(tBoardData* state,
                     // CalM applies to all public channels regardless of type
                     if (AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
                         if (message.analog_in_cal_m_count < sizeof (message.analog_in_cal_m) / sizeof (message.analog_in_cal_m[0])) {
-                            message.analog_in_cal_m[message.analog_in_cal_m_count++] = pRuntimeAInChannels->Data[x].CalM;
+                            // #1054: untorn 64-bit read -- see the note above analog_in_cal_m_tag.
+                            taskENTER_CRITICAL();
+                            double calM = pRuntimeAInChannels->Data[x].CalM;
+                            taskEXIT_CRITICAL();
+                            message.analog_in_cal_m[message.analog_in_cal_m_count++] = calM;
                         }
                     }
                 }
@@ -895,7 +917,11 @@ size_t Nanopb_Encode(tBoardData* state,
                     // CalB applies to all public channels regardless of type
                     if (AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
                         if (message.analog_in_cal_b_count < sizeof (message.analog_in_cal_b) / sizeof (message.analog_in_cal_b[0])) {
-                            message.analog_in_cal_b[message.analog_in_cal_b_count++] = pRuntimeAInChannels->Data[x].CalB;
+                            // #1054: untorn 64-bit read -- see the note above analog_in_cal_m_tag.
+                            taskENTER_CRITICAL();
+                            double calB = pRuntimeAInChannels->Data[x].CalB;
+                            taskEXIT_CRITICAL();
+                            message.analog_in_cal_b[message.analog_in_cal_b_count++] = calB;
                         }
                     }
                 }
@@ -916,7 +942,11 @@ size_t Nanopb_Encode(tBoardData* state,
                     // CalM applies to all private channels regardless of type
                     if (!AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
                         if (message.analog_in_cal_m_priv_count < sizeof (message.analog_in_cal_m_priv) / sizeof (message.analog_in_cal_m_priv[0])) {
-                            message.analog_in_cal_m_priv[message.analog_in_cal_m_priv_count++] = pRuntimeAInChannels->Data[x].CalM;
+                            // #1054: untorn 64-bit read -- see the note above analog_in_cal_m_tag.
+                            taskENTER_CRITICAL();
+                            double calM = pRuntimeAInChannels->Data[x].CalM;
+                            taskEXIT_CRITICAL();
+                            message.analog_in_cal_m_priv[message.analog_in_cal_m_priv_count++] = calM;
                         }
                     }
                 }
@@ -937,7 +967,11 @@ size_t Nanopb_Encode(tBoardData* state,
                     // CalB applies to all private channels regardless of type
                     if (!AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
                         if (message.analog_in_cal_b_priv_count < sizeof (message.analog_in_cal_b_priv) / sizeof (message.analog_in_cal_b_priv[0])) {
-                            message.analog_in_cal_b_priv[message.analog_in_cal_b_priv_count++] = pRuntimeAInChannels->Data[x].CalB;
+                            // #1054: untorn 64-bit read -- see the note above analog_in_cal_m_tag.
+                            taskENTER_CRITICAL();
+                            double calB = pRuntimeAInChannels->Data[x].CalB;
+                            taskEXIT_CRITICAL();
+                            message.analog_in_cal_b_priv[message.analog_in_cal_b_priv_count++] = calB;
                         }
                     }
                 }

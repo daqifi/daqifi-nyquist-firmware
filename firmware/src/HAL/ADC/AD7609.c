@@ -544,6 +544,16 @@ double AD7609_ConvertToVoltage(
     // (ADC_ConvertToVoltageByIndex) passes a live channel config.
     // With the shipped defaults (CalM = 1, CalB = 0) this is bit-identical
     // to the uncalibrated expression it replaces.
-    return AD7609_ScaleToVolts(signedValue, fullScaleVoltage,
-                               runtimeConfig->CalM, runtimeConfig->CalB);
+    //
+    // #1054 (the read half of #904): same snapshot as MC12b_ConvertToVoltage,
+    // for the same reason -- CalM/CalB are 64-bit doubles (two 32-bit loads
+    // each on PIC32MZ) and #1048's atomic writes do not stop a reader
+    // straddling a completed one. Copy the pair under one critical section,
+    // scale outside it.
+    taskENTER_CRITICAL();
+    double calM = runtimeConfig->CalM;
+    double calB = runtimeConfig->CalB;
+    taskEXIT_CRITICAL();
+
+    return AD7609_ScaleToVolts(signedValue, fullScaleVoltage, calM, calB);
 }

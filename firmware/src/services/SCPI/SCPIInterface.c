@@ -7631,12 +7631,24 @@ static void EmitAinChannelJson(scpi_t* context,
         allowDifferential ? "true" : "false",
         rangeMin, rangeMax);
 
+    /* #1054 (the read half of #904): CalM/CalB are 64-bit doubles -- two
+     * 32-bit loads each on PIC32MZ (CLAUDE.md atomicity rules) -- and a
+     * CONF:ADC:chanCALM/chanCALB setter on the OTHER SCPI transport can land
+     * between them. #1048 makes the writes atomic, which does not stop a
+     * reader straddling a completed write. Snapshot the pair under one
+     * critical section so the advertised slope and intercept are untorn and
+     * read at the same instant, then format outside it. */
+    taskENTER_CRITICAL();
+    double calM = rt->CalM;
+    double calB = rt->CalB;
+    taskEXIT_CRITICAL();
+
     scpi_printf(context,
         "\"calibration\":{\"model\":\"linear\","
         "\"user_override_supported\":true,"
         "\"slope\":%.6f,\"intercept\":%.6f},"
         "\"extensions\":{}}",
-        rt->CalM, rt->CalB);
+        calM, calB);
 }
 
 static void EmitAoutChannelJson(scpi_t* context,
