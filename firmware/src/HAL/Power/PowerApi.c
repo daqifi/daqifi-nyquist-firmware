@@ -274,11 +274,11 @@ static void Power_ConsumeRebootRestore(void) {
             ((payload & POWER_REBOOT_HANDOFF_AUTOEXT_OFF) == 0u);
     /* #454: latch the power-up as the AUTOOn promote does when it issues its
      * own DO_POWER_UP. The replay bypasses that path, because
-     * Power_HandleStandbyState() only promotes on NO_CHANGE. Unlatched, the
-     * first manual power-off after the reboot would be undone with AUTOOn on
-     * and VBUS present: a button long-press posts DO_POWER_DOWN without
-     * setting the latch (Button_Tasks, UI.c), and the STANDBY pass that
-     * executes it would promote the board straight back up. */
+     * Power_HandleStandbyState() only promotes on NO_CHANGE, so this counts
+     * the restored power-up as this VBUS session's promote. When #1081 added
+     * it, it was also what kept a button long-press after the reboot from
+     * being undone with AUTOOn on and VBUS present; since #1084 Button_Tasks
+     * (UI.c) sets the latch itself, as SYSTem:POWer:STATe 0 always did. */
     pData->autoPromotedThisVbusSession = true;
 }
 

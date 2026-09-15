@@ -79,6 +79,12 @@ void Button_Tasks( void )
                     gpPowerData->shutdownNotified = true;   
                     // Signal board to power off
                     gpPowerData->requestedPowerState = DO_POWER_DOWN;
+                    // #454/#1084: latch the per-VBUS-session auto-promote
+                    // suppression, as SYSTem:POWer:STATe 0 does, so with
+                    // AUTOOn on and USB present the STANDBY pass that runs
+                    // this power-down does not promote the board straight
+                    // back up. It re-arms when VBUS goes away.
+                    gpPowerData->autoPromotedThisVbusSession = true;
                     oneShot = true;
                 }
                 break;

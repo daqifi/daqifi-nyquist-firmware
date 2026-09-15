@@ -132,10 +132,13 @@ typedef struct sPowerData{
     bool autoPowerOnUsb;
     /* #454 tracking: have we already auto-promoted during the current
      * VBUS session?  Set when we issue the auto DO_POWER_UP request,
-     * cleared when VBUS goes away.  Prevents re-promote after the user
-     * manually returns to STANDBY (POW:STAT 0) while USB stays plugged
-     * in.  Also set by a #1071 reboot restore, which powers the board up
-     * on its own without going through the auto-promote. */
+     * cleared when VBUS goes away or AUTOOn is re-set (SYSTem:POWer:AUTOOn,
+     * :LOAD).  Prevents re-promote after the user manually returns to
+     * STANDBY while USB stays plugged in, so both manual power-offs set
+     * it: SYSTem:POWer:STATe 0 (SCPI_SetPowerState) and a button
+     * long-press (Button_Tasks, UI.c; #1084).  Also set by a #1071 reboot
+     * restore, which powers the board up on its own without going through
+     * the auto-promote. */
     bool autoPromotedThisVbusSession;
 
     tBQ24297Data BQ24297Data;
