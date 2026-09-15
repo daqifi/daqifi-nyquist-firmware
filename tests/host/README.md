@@ -272,14 +272,18 @@ session and unmounted at the end of one, so a stat from that callback fails
 with an unmounted-volume error rather than "absent". See the file header for
 the exact error/line citations; the follow-up on #958 tracks it.
 
-Seven greps guard this target. Three are about the text being right: the
+Eight greps guard this target. Three are about the text being right: the
 post-fix format expression must be present (matched with newlines squashed,
 since it wraps across two lines), the field-length constant must still be 40,
 and the masked pre-fix form must **not** be back (a suite whose premise is "the
-mask is gone" has to fail if it returns). Four are about the sequence field,
+mask is gone" has to fail if it returns). Five are about the sequence field,
 which a format pin alone would only prove is *present*: the counter must be
 advanced once per run, the advance must happen **before** the format, it must
 never be assigned anywhere but its definition (a reset reopens the collision),
+the local copy that carries the advanced value into the format call must
+itself be assigned exactly once outside its own declaration (otherwise a
+second write to that copy — after the advance, before the format — defeats
+the order pin while leaving the two lines' positions it checks unchanged),
 and the tick-only form must not return either.
 
 The order pin exists because the pre-merge audit reproduced a swap of those two
