@@ -215,20 +215,27 @@ static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2us
          * the 1-channel and multi-channel points spends nearly all of the
          * 1-channel headroom to reach the others.
          *
-         * JSON IS EXCLUDED and keeps the #563 law. It shares this branch, and
-         * at USB 1ch the additive is its BINDING term (10589, below its own
-         * #529/#831 transport single of 11000) -- so raising this branch would
-         * lift JSON's enforced cap on the strength of a CSV measurement, and
-         * JSON has never been characterised at precision 4. Its own precision-4
-         * basis is #529 follow-up work, tracked as #920: the decisive single-cell
-         * check (ch4, OBDiag off, precision 4, 600 s at-cap) plus the 1/5/10/16ch
-         * grid live in test_529_json_transport_cap.py. If that run finds a
-         * dropping cell, THIS branch (isJson == 0u guard above) is where a
-         * JSON-specific additive term would go -- do not touch this file until
-         * that measurement exists; a guessed coefficient here already dropped
-         * data once at its own advertised cap (#714/#715). CsvCompact IS
-         * included: it emits strictly fewer bytes per row than CSV (#619), so a
-         * CSV-fitted cap is never-over for it. */
+         * JSON IS EXCLUDED and keeps the #563 law -- the `isJson == 0u` guard
+         * above means JSON (isJson=1) never enters THIS branch. With armed=0 it
+         * falls instead to the final `else` below, which is shared with the
+         * armed/over-precision CSV cases and still runs the unmodified #563
+         * coefficients (71000 + 4550*nT1). At USB 1ch that shared term is
+         * JSON's BINDING one (10589, below its own #529/#831 transport single
+         * of 11000), and JSON has never been characterised at precision 4. Its
+         * own precision-4 basis is #529 follow-up work, tracked as #920: the
+         * decisive single-cell check (ch4, OBDiag off, precision 4, 600 s
+         * at-cap) plus the 1/5/10/16ch grid are #920's companion test in
+         * daqifi-python-test-suite (see that PR; not yet landed as of this
+         * comment -- do not assume it has run). If that measurement finds a
+         * dropping cell, the fix is a NEW isJson-gated condition inserted
+         * before the final `else` (mirroring this branch's shape), never an
+         * edit to the shared `else` itself -- that also serves armed CSV and
+         * over-precision CSV, so changing it would move their measured caps on
+         * the strength of a JSON-only measurement. Do not touch either branch
+         * until that measurement exists; a guessed coefficient here already
+         * dropped data once at its own advertised cap (#714/#715). CsvCompact
+         * IS included in THIS branch: it emits strictly fewer bytes per row
+         * than CSV (#619), so a CSV-fitted cap is never-over for it. */
         /* PRECISION-GATED. The basis is precision 4, and precision changes how
          * much work csv_encoder does per value, so the raise may only be
          * applied where the encoder is no more expensive than it was when
