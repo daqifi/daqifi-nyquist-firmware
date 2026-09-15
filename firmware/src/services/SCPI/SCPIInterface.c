@@ -7882,10 +7882,11 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         (unsigned)0x04D8,   /* Microchip VID (matches usb_device_init_data) */
         (unsigned)0xF794);  /* DAQiFi Nyquist PID */
 
-    /* #908: factory-cal provenance, derived once at boot from the factory-cal
-     * NVM load, so a CONF:ADC:SAVEFcal shows here only after the next reboot.
-     * "factory" = boot loaded the factory slot; "identity" = that slot was
-     * blank/invalid and the CalM=1/CalB=0 defaults were kept. Reports the
+    /* #908: factory-cal provenance -- true from boot's factory-cal NVM load,
+     * or as soon as a CONF:ADC:SAVEFcal succeeds (SCPIADC.c's CalSaveCommon
+     * clears it immediately, so this need not wait for a reboot to catch up).
+     * "factory" = the factory slot is populated; "identity" = it is
+     * blank/invalid and the CalM=1/CalB=0 defaults are in use. Reports the
      * factory baseline only: USECal 1 or chanCALM/chanCALB can overlay it.
      * The second closing brace closes identity{}. */
     const bool factoryCalMissing = daqifi_settings_FactoryCalIsMissing();
