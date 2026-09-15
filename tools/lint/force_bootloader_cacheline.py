@@ -75,6 +75,15 @@ _DECL_RE = re.compile(
     re.DOTALL,
 )
 
+# Blanks /* block */ and // line comments so a commented-OUT declaration
+# (e.g. a correct one left disabled while a broken replacement was added
+# elsewhere) cannot satisfy the search below. Not string-literal-aware --
+# proportionate to this file's narrow job (one declaration, in one source
+# file we control), unlike the general-purpose splice-safe masking
+# `cdef.py`/`hash_function.py` need for arbitrary C (#1066 tracks that
+# harder class separately).
+_COMMENT_RE = re.compile(r"/\*.*?\*/|//[^\r\n]*", re.DOTALL)
+
 
 def check(source_text):
     """-> list of problem strings; [] means the reservation is intact.
@@ -90,16 +99,17 @@ def check(source_text):
     together happen to span 16 bytes) -- the fix this guards is "one object,
     one full line", and that is what SCPIInterface.c does today.
     """
-    idx = source_text.find("address(%s)" % ADDR_MACRO)
+    code = _COMMENT_RE.sub(" ", source_text)
+    idx = code.find("address(%s)" % ADDR_MACRO)
     if idx == -1:
         return ["no declaration places anything at %s -- "
                  "SCPI_ForceBootloader has nothing to write" % ADDR_MACRO]
 
-    start = source_text.rfind(";", 0, idx) + 1
-    end = source_text.find(";", idx)
+    start = code.rfind(";", 0, idx) + 1
+    end = code.find(";", idx)
     if end == -1:
         return ["unterminated declaration containing address(%s)" % ADDR_MACRO]
-    stmt = source_text[start:end + 1]
+    stmt = code[start:end + 1]
 
     m = _DECL_RE.search(stmt)
     if not m or ADDR_MACRO not in m.group("attrs"):
@@ -237,6 +247,24 @@ def self_test():
     _ck("no declaration at all is flagged", len(nd_problems), 1)
     _ck("no-declaration problem says so",
         "nothing to write" in nd_problems[0] if nd_problems else False, True)
+
+    commented_out = (
+        "/*\n" + fixed + "*/\n"
+        "static volatile uint32_t gLogLevels[8];\n"
+    )
+    co_problems = check(commented_out)
+    _ck("a commented-out (disabled) correct declaration does not pass",
+        len(co_problems), 1)
+    _ck("commented-out case reports 'nothing to write', not a false pass",
+        "nothing to write" in co_problems[0] if co_problems else False, True)
+
+    line_commented_out = (
+        "// " + fixed.replace("\n", "\n// ") + "\n"
+        "static volatile uint32_t gLogLevels[8];\n"
+    )
+    lco_problems = check(line_commented_out)
+    _ck("a //-commented-out declaration (every line) does not pass",
+        len(lco_problems), 1)
 
     unparsable = (
         "volatile uint32_t sForceBootloaderLine "

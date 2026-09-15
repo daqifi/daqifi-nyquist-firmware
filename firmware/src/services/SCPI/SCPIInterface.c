@@ -135,6 +135,12 @@ static volatile uint32_t sForceBootloaderLine[4]
 // that half; this only catches the array shrinking back down.
 _Static_assert(sizeof(sForceBootloaderLine) >= 16,
     "sForceBootloaderLine must reserve the full 16-byte D-cache line (#1083)");
+// A correctly-SIZED 16-byte object at a MISALIGNED address still spans two
+// cache lines, leaving room for a cached object in the gap before the next
+// aligned boundary -- the identical hazard under a different cause. Both
+// asserts are needed; neither implies the other.
+_Static_assert(((FORCE_BOOTLOADER_FLAG_ADDR) & 0xFu) == 0,
+    "FORCE_BOOTLOADER_FLAG_ADDR must be 16-byte aligned to a D-cache line (#1083)");
 
 const NanopbFlagsArray fields_info = {
     .Size = 62,
