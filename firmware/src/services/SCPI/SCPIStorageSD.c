@@ -1700,24 +1700,47 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
          *
          * What this bound is NOT: it is not sized to exceed every legitimate
          * hold of gScpiRespMutex by a peer SCPI callback. It cannot be. The
-         * full caller enumeration is in the #946 PR body; the long tail is
-         * SCPI_SysInfoTextGet (SCPIInterface.c:747-1214), which holds the
-         * buffer across ~90 transport writes, each bounded by
-         * SCPI_WriteWithRetry at ~1 s (SCPI_WRITE_MAX_RETRIES 200 x
-         * SCPI_WRITE_RETRY_DELAY_MS 5) against a host that stopped reading --
-         * so ~90 s. HELP (~7 s) sits between that and here. (The UART getters
-         * -- SCPI_UartRead / SCPI_UartCount -- used to belong on this list too,
-         * transitively blocked behind UserUart_Write's own 15 s hold of the
-         * UART mutex; #948 reordered them to sample the UART state before
-         * taking the shared buffer, so their hold is now the same short
-         * formatting-only duration as every other short caller.) A concurrent
-         * SCPI command on the OTHER transport can
+         * shape of the problem is one callback holding the buffer across N
+         * transport writes, each of which SCPI_WriteWithRetry bounds at ~1 s
+         * (SCPI_WRITE_MAX_RETRIES 200 x SCPI_WRITE_RETRY_DELAY_MS 5) against a
+         * host that stopped reading -- so such a caller's hold is ~N seconds.
+         * The full caller enumeration is in the #946 PR body; the ranking below
+         * is current as of #947 and each entry states the N it comes from.
+         *
+         *   SCPI_GetCommandHistory (SYSTem:LOG:CMDHistory?) -- 1 header + up to
+         *     SCPI_CMD_HISTORY_SIZE(10) entries = up to 11 writes, ~11 s. This
+         *     is the long tail now, and it is the one entry here that still
+         *     exceeds SCPI_SD_BENCH_STALL_TIMEOUT_MS.
+         *   SCPI_Help (HELP) -- one write per 2048 B flush of the ~8 KB command
+         *     list plus a trailing write per section, ~5-7 writes, ~7 s.
+         *   SCPI_SysInfoTextGet (SYSTem:INFo?) -- ~3 s, and it USED to head
+         *     this list at ~90 s. It holds the buffer across ~90 writes and
+         *     discarded every return value, so a stalled host bought ~90
+         *     consecutive 1 s waits. #947 made each write checked (a short
+         *     return means its whole retry budget was already spent, so the
+         *     next section would only spend another) and put a
+         *     SCPI_SYSINFO_WRITE_BUDGET_MS(2000) deadline across the held
+         *     region; worst case is now that budget plus one in-flight retry
+         *     budget. Do not re-derive ~90 s from the write count -- the count
+         *     is unchanged, the accounting is not.
+         *   (The UART getters -- SCPI_UartRead / SCPI_UartCount -- used to
+         *     belong on this list too, transitively blocked behind
+         *     UserUart_Write's own 15 s hold of the UART mutex; #948 reordered
+         *     them to sample the UART state before taking the shared buffer, so
+         *     their hold is now the same short formatting-only duration as
+         *     every other short caller.)
+         *
+         * A concurrent SCPI command on the OTHER transport can
          * therefore abort a benchmark. That trade is deliberate: a budget big
          * enough to dominate that tail would be ~2 minutes of hang on a
          * genuine deadlock, which is barely distinguishable from the
          * portMAX_DELAY this replaces, and the quiescence rule already says
-         * not to issue SCPI during a benchmarked run. The abort is a clean,
-         * logged SCPI error; the old behaviour was an unbounded hang.
+         * not to issue SCPI during a benchmarked run. (#947 shrank the tail
+         * from ~90 s to ~11 s, which narrows that gap but does not close it,
+         * and is not on its own a reason to retune this constant -- SD:BENCH
+         * would still abort against a SYSTem:LOG:CMDHistory? issued on a
+         * stalled transport.) The abort is a clean, logged SCPI error; the old
+         * behaviour was an unbounded hang.
          *
          * Single call, not a re-take loop: xSemaphoreTake blocks the task
          * rather than spinning, and zero time has elapsed since
