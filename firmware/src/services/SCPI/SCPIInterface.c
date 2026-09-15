@@ -46,6 +46,9 @@
 
 /* SD write metrics accessed via sd_card_manager API */
 #include "../streaming.h"
+#if READ_LOOP_PROFILE
+#include "peripheral/coretimer/plib_coretimer.h"  // #251: CORETIMER_FrequencyGet()
+#endif
 #include "../Capabilities.h"
 #include "Util/StreamingBufferPool.h"
 #include "state/data/AInSample.h"
@@ -4016,6 +4019,40 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     // the deferred task's direct read.  Expected 0; non-zero ticks emitted
     // that channel with its validMask bit clear.
     scpi_printf(context, "T1ArdyMisses=%u\r\n", (unsigned)s.t1ArdyMisses);
+#if READ_LOOP_PROFILE
+    {
+        /* #251: per-tick time of the deferred task's per-channel loop -- the
+         * ADC-side term of the NQ1 cap. Divide the mean by the enabled channel
+         * count for a per-channel figure; T1-only vs T2-only configs separate
+         * the ARDY-direct branch from the LATEST-cache branch.
+         *
+         * Nanoseconds, not microseconds: a one-channel loop is well under a
+         * microsecond, so integer us would print 0 exactly where the T1 figure
+         * is wanted. It stays an integer because every STATS consumer parses
+         * integers (the python harness int-coerces, python-core skips what
+         * int() rejects, daqifi-core's map is ulong.TryParse), and ns is the
+         * cap model's own unit. One count is 1e9 / CORETIMER_FrequencyGet() ns
+         * (7.94 ns at 126 MHz). That is the clock the BUILD targets; a unit
+         * whose PLL did not switch at boot (TimerApi_ClockMatchesBuild() false)
+         * would scale these by the clock ratio, as it does every SYS_TIME delay.
+         *
+         * Integer only, ordered so nothing wraps 64 bits: the mean is taken in
+         * counts first (< 2^32, because no tick exceeds the max), kept to 1/1000
+         * count, then scaled. Never sum * 1e9, which would wrap after ~146 s of
+         * summed loop time. */
+        const uint64_t coreHz = (uint64_t)CORETIMER_FrequencyGet();
+        const uint64_t maxNs = ((uint64_t)s.readLoopMaxCycles * 1000000000ULL) / coreHz;
+        uint64_t meanNs = 0u;
+        if (s.readLoopCount > 0u) {
+            const uint64_t meanMilliCycles =
+                (s.readLoopCycles / s.readLoopCount) * 1000ULL +
+                ((s.readLoopCycles % s.readLoopCount) * 1000ULL) / s.readLoopCount;
+            meanNs = (meanMilliCycles * 1000000ULL) / coreHz;
+        }
+        scpi_printf(context, "ReadLoopMaxNs=%llu\r\n", (unsigned long long)maxNs);
+        scpi_printf(context, "ReadLoopMeanNs=%llu\r\n", (unsigned long long)meanNs);
+    }
+#endif
     // Timer ISR tracking (#265): actual ISR entry count this session (64-bit
     // so it never wraps in practice). Compare against (TotalSamplesStreamed
     // + QueueDroppedSamples) to verify every timer event is accounted for,
