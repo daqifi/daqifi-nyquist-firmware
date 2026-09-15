@@ -235,8 +235,8 @@ extern "C" {
          *  That was wrong and an adversarial audit of PR #1044 caught it: a
          *  station that merely ASSOCIATES to our soft-AP raises
          *  WIFI_MANAGER_STATE_FLAG_STA_CONNECTED (ApEventCallback runs only
-         *  in AP mode and its handler sets that flag with no AP/STA
-         *  discrimination), which GetLinkState tests first -- so an
+         *  in AP mode, and the handler for the event it queues sets that
+         *  same flag), which GetLinkState tests first -- so an
          *  associated station reads CONNECTED, not AP_IDLE, with no TCP
          *  session anywhere. The flag behaviour predates #951; the promise
          *  did not, which is why the promise is what changed. */
@@ -253,13 +253,15 @@ extern "C" {
          *
          *  CAVEAT, #1060: can still read CONNECTED with no peer attached,
          *  because the association flag behind it is event-latched rather
-         *  than a live measurement, and not every path that can leave it
-         *  stale is closed. The AP->STA APPLY path #1060 was filed with a
-         *  concrete repro for IS fixed (that branch now resets the flag
-         *  before tearing the AP down, mirroring the STA->AP branch); the
-         *  flag itself is still fundamentally event-latched, so this enum
-         *  keeps the caveat until every path is enumerated and closed, not
-         *  just the one #1060 named. */
+         *  than a live measurement. Closed: the AP->STA APPLY path #1060 was
+         *  filed for (that branch now resets the flag before tearing the AP
+         *  down), and a stale association event queued across a mode switch
+         *  or teardown (dropped when consumed, instead of re-setting the
+         *  flag). Still open, by code reading: an in-place soft-AP restart
+         *  never clears the flag, so a station that was associated before it
+         *  and does not come back leaves CONNECTED standing -- see
+         *  wifi_manager_GetLinkState(). Keep the caveat until no such path is
+         *  left. */
         WIFI_LINK_STATE_CONNECTED
     } wifi_link_state_t;
 

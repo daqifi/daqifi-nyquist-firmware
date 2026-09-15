@@ -691,13 +691,17 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
  *              path that can leave it stale is closed. Do not treat CONNECTED
  *              as proof that a peer is attached now.
  *
- *              #1060's AP->STA APPLY path (the one it was filed with a
- *              concrete repro for) IS fixed: that branch now resets the flag
- *              before tearing the AP down, mirroring the STA->AP branch. The
- *              flag is still fundamentally event-latched rather than
- *              chip-derived, so this command is what newly PUBLISHES "a peer
- *              is attached" and the caveat stays with the promise until every
- *              path is enumerated and closed, not just the one #1060 named.
+ *              Closed: #1060's AP->STA APPLY path (that branch now resets the
+ *              flag before tearing the AP down, mirroring the STA->AP branch),
+ *              and a stale association event still queued across a mode
+ *              switch, disable or teardown (the handler now drops an event
+ *              whose mode is no longer up, instead of re-setting the flag).
+ *              Still open, by code reading: an in-place soft-AP restart never
+ *              clears the flag, so a station that was associated before it
+ *              and does not come back leaves CONNECTED standing -- see
+ *              wifi_manager_GetLinkState(). This command is what newly
+ *              PUBLISHES "a peer is attached", so the caveat stays with the
+ *              promise until no such path is left.
  *              APIDLE and CONNECTED are deliberately NOT split on "has a TCP
  *              client". An adversarial audit of PR #1044 showed that they
  *              cannot be: a station that merely associates to our soft-AP
