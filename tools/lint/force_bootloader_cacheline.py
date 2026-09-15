@@ -39,6 +39,18 @@ coherent` object placed inside the same 16-byte address range under a
 different declaration shape than the one matched here -- see `check()`'s
 docstring.
 
+It masks comments, string/char literals, and literal `#if 0` blocks before
+searching, so a declaration-shaped string constant or a disabled copy of
+the real declaration cannot satisfy the check ahead of a genuinely broken
+active one, and requires exactly one remaining candidate rather than
+picking the first. It does not evaluate the C preprocessor in general
+(`#ifdef NEVER_DEFINED`, a macro expanding to 0, `#if defined(X) && 0`
+are all invisible to it), and does not special-case an `#else`/`#elif`
+inside a masked `#if 0` block -- both are documented, narrow limitations
+rather than silent gaps: every failure mode they can cause is "reports a
+problem" (caught by CI), never a silent pass on a declaration this script
+did not actually see.
+
 ## Usage
 
     python3 tools/lint/force_bootloader_cacheline.py
@@ -77,12 +89,76 @@ _DECL_RE = re.compile(
 
 # Blanks /* block */ and // line comments so a commented-OUT declaration
 # (e.g. a correct one left disabled while a broken replacement was added
-# elsewhere) cannot satisfy the search below. Not string-literal-aware --
-# proportionate to this file's narrow job (one declaration, in one source
-# file we control), unlike the general-purpose splice-safe masking
+# elsewhere) cannot satisfy the search below. Not string-literal-aware on
+# its own -- see _mask_literals and _mask_disabled_blocks below, which
+# close that specific gap (a Qodo /agentic_review finding on this PR: a
+# declaration-shaped string constant, or one inside `#if 0`, could
+# otherwise satisfy the search ahead of an undersized active one).
+# Still proportionate to this file's narrow job (one declaration, in one
+# source file we control), not the general-purpose splice-safe masking
 # `cdef.py`/`hash_function.py` need for arbitrary C (#1066 tracks that
 # harder class separately).
 _COMMENT_RE = re.compile(r"/\*.*?\*/|//[^\r\n]*", re.DOTALL)
+
+_STRING_RE = re.compile(r'"(?:\\.|[^"\\\n])*"')
+_CHAR_RE = re.compile(r"'(?:\\.|[^'\\\n])*'")
+
+
+def _mask_literals(text):
+    """Blank the CONTENTS of string/char literals, keeping the quotes and
+    the overall length (so this stays a pure textual pass with no effect
+    on `;`/brace counting elsewhere). A string like
+    `"__attribute__((persistent, coherent, address(FORCE_BOOTLOADER_FLAG_"
+    `ADDR)))"` must not satisfy the search the way a real declaration does.
+    """
+    text = _STRING_RE.sub(lambda m: '"' + " " * (len(m.group(0)) - 2) + '"',
+                           text)
+    text = _CHAR_RE.sub(lambda m: "'" + " " * (len(m.group(0)) - 2) + "'",
+                         text)
+    return text
+
+
+_PP_IF_RE = re.compile(r"^[ \t]*#[ \t]*(?:if|ifdef|ifndef)\b", re.MULTILINE)
+_PP_ENDIF_RE = re.compile(r"^[ \t]*#[ \t]*endif\b", re.MULTILINE)
+_PP_IF0_RE = re.compile(r"^[ \t]*#[ \t]*if[ \t]+0[ \t]*(?:$|//)", re.MULTILINE)
+
+
+def _mask_disabled_blocks(text):
+    """Blank every `#if 0` ... `#endif` block, line-preserving, nesting-aware.
+
+    Deliberately narrow: recognizes only the literal `#if 0` spelling, not
+    `#ifdef NEVER_DEFINED`, a macro that expands to 0, or `#if defined(X)
+    && 0`. A real preprocessor is out of scope for a checker whose whole
+    job is one declaration in one file we control.
+
+    Does NOT special-case a `#else`/`#elif` inside a masked block, so a
+    declaration in that live alternative branch is blanked too. That is
+    conservative in the SAFE direction for this checker: the failure mode
+    is "no declaration found" (a refusal, caught by CI) or a real reservation
+    problem, never a silent pass on a declaration this function could not
+    actually see. See the self-test's `if0_else_case`.
+    """
+    lines = text.split("\n")
+    out = []
+    masking = False
+    nested_ifs = 0
+    for line in lines:
+        if masking:
+            if _PP_IF_RE.match(line):
+                nested_ifs += 1
+            elif _PP_ENDIF_RE.match(line):
+                if nested_ifs:
+                    nested_ifs -= 1
+                else:
+                    masking = False
+            out.append("")
+            continue
+        if _PP_IF0_RE.match(line):
+            masking = True
+            out.append("")
+            continue
+        out.append(line)
+    return "\n".join(out)
 
 
 def check(source_text):
@@ -100,10 +176,21 @@ def check(source_text):
     one full line", and that is what SCPIInterface.c does today.
     """
     code = _COMMENT_RE.sub(" ", source_text)
-    idx = code.find("address(%s)" % ADDR_MACRO)
-    if idx == -1:
+    code = _mask_literals(code)
+    code = _mask_disabled_blocks(code)
+
+    needle = "address(%s)" % ADDR_MACRO
+    positions = [m.start() for m in re.finditer(re.escape(needle), code)]
+    if not positions:
         return ["no declaration places anything at %s -- "
                  "SCPI_ForceBootloader has nothing to write" % ADDR_MACRO]
+    if len(positions) > 1:
+        return ["%d candidate declarations place something at %s in active "
+                 "code (comments, string/char literals and `#if 0` blocks "
+                 "excluded) -- refusing to guess which is authoritative; "
+                 "there must be exactly one"
+                 % (len(positions), ADDR_MACRO)]
+    idx = positions[0]
 
     start = code.rfind(";", 0, idx) + 1
     end = code.find(";", idx)
@@ -265,6 +352,51 @@ def self_test():
     lco_problems = check(line_commented_out)
     _ck("a //-commented-out declaration (every line) does not pass",
         len(lco_problems), 1)
+
+    # The Qodo /agentic_review finding this guards: a declaration-shaped
+    # string literal, or one disabled via `#if 0`, must not let an
+    # UNDERSIZED ACTIVE declaration slip through as if it were the correct
+    # one quoted/disabled text happens to describe.
+    string_then_undersized = (
+        'const char *msg = "uint32_t sForceBootloaderLine[4] '
+        '__attribute__((persistent, coherent, '
+        'address(FORCE_BOOTLOADER_FLAG_ADDR)));";\n' + pre_fix
+    )
+    stu_problems = check(string_then_undersized)
+    _ck("a declaration-shaped STRING before the real undersized "
+        "declaration does not mask the real problem",
+        len(stu_problems) >= 1, True)
+    _ck("...and the reported problem is the real one (4 bytes), not a "
+        "parse failure on the string",
+        "4 byte(s)" in stu_problems[0] if stu_problems else False, True)
+
+    if0_then_undersized = (
+        "#if 0\n" + fixed + "#endif\n" + pre_fix
+    )
+    i0u_problems = check(if0_then_undersized)
+    _ck("a correct declaration disabled by #if 0 does not mask a "
+        "real undersized ACTIVE declaration below it",
+        len(i0u_problems) >= 1, True)
+    _ck("...and the reported problem is the real one (4 bytes)",
+        "4 byte(s)" in i0u_problems[0] if i0u_problems else False, True)
+
+    two_active = fixed + fixed.replace(
+        "sForceBootloaderLine", "sForceBootloaderLineTwo")
+    ta_problems = check(two_active)
+    _ck("two ACTIVE candidate declarations are refused as ambiguous "
+        "rather than silently picking the first",
+        len(ta_problems), 1)
+    _ck("ambiguity problem names the count",
+        "2 candidate" in ta_problems[0] if ta_problems else False, True)
+
+    if0_else_case = (
+        "#if 0\n" + fixed + "#else\n" + fixed + "#endif\n"
+    )
+    ie_problems = check(if0_else_case)
+    _ck("#if 0 / #else / #endif around the ONLY declaration fails "
+        "toward a reported problem, never a silent pass (documented "
+        "conservative limitation: #else is not specially unmasked)",
+        len(ie_problems) >= 1, True)
 
     unparsable = (
         "volatile uint32_t sForceBootloaderLine "

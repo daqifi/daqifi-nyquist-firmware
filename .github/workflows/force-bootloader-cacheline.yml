@@ -47,5 +47,11 @@ jobs:
       - name: Self-test the checker
         run: python3 tools/lint/force_bootloader_cacheline.py --self-test
 
+      # always(): a broken self-test already fails the job on its own step;
+      # running this one too means a maintainer reading a red run sees BOTH
+      # "the checker itself is broken" AND "here is what it says about the
+      # real file today", instead of the second question going unanswered
+      # (Qodo /agentic_review finding on this PR).
       - name: Check the cache-line reservation
+        if: ${{ always() }}
         run: python3 tools/lint/force_bootloader_cacheline.py
