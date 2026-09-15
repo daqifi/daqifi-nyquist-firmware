@@ -87,35 +87,68 @@ _DECL_RE = re.compile(
     re.DOTALL,
 )
 
-# Blanks /* block */ and // line comments so a commented-OUT declaration
-# (e.g. a correct one left disabled while a broken replacement was added
-# elsewhere) cannot satisfy the search below. Not string-literal-aware on
-# its own -- see _mask_literals and _mask_disabled_blocks below, which
-# close that specific gap (a Qodo /agentic_review finding on this PR: a
-# declaration-shaped string constant, or one inside `#if 0`, could
-# otherwise satisfy the search ahead of an undersized active one).
-# Still proportionate to this file's narrow job (one declaration, in one
-# source file we control), not the general-purpose splice-safe masking
-# `cdef.py`/`hash_function.py` need for arbitrary C (#1066 tracks that
-# harder class separately).
-_COMMENT_RE = re.compile(r"/\*.*?\*/|//[^\r\n]*", re.DOTALL)
-
-_STRING_RE = re.compile(r'"(?:\\.|[^"\\\n])*"')
-_CHAR_RE = re.compile(r"'(?:\\.|[^'\\\n])*'")
-
-
-def _mask_literals(text):
-    """Blank the CONTENTS of string/char literals, keeping the quotes and
-    the overall length (so this stays a pure textual pass with no effect
-    on `;`/brace counting elsewhere). A string like
-    `"__attribute__((persistent, coherent, address(FORCE_BOOTLOADER_FLAG_"
-    `ADDR)))"` must not satisfy the search the way a real declaration does.
+# Masks comments AND string/char literal CONTENTS in a SINGLE linear scan,
+# tracking which of (code / line-comment / block-comment / string / char)
+# the scanner currently sits in. This is deliberate, not a style choice:
+# two independent regex passes (strip comments, THEN mask literals) is
+# unsound in BOTH directions, and this PR's own review found the first
+# direction live -- a comment-delimiter substring inside a string, e.g.
+# `const char *a = "/*"; <real declaration>; const char *b = "*/";`, makes
+# a comment-first pass treat the real declaration between the two strings
+# as commented out, and reject a genuinely correct file (a Qodo
+# /agentic_review finding on this PR, round 2). A literal-first pass has
+# the same problem in reverse: a comment containing an unbalanced quote,
+# e.g. `// don't`, can make it misread where the next real string starts.
+# One pass that decides "am I in a string/comment RIGHT NOW" as it goes,
+# rather than finding all of one construct and then all of the other,
+# has neither failure mode: entering a string is checked before entering
+# a comment at each position, so a `"` seen while scanning ordinary code
+# always wins over a `/` two characters later, and nothing inside an
+# already-open string or comment is re-interpreted as opening another.
+def _mask_comments_and_literals(text):
+    """Blank comments and the CONTENTS of string/char literals (quotes
+    kept), preserving length and newlines so this stays a pure textual
+    pass with no effect on downstream `;`/brace counting.
     """
-    text = _STRING_RE.sub(lambda m: '"' + " " * (len(m.group(0)) - 2) + '"',
-                           text)
-    text = _CHAR_RE.sub(lambda m: "'" + " " * (len(m.group(0)) - 2) + "'",
-                         text)
-    return text
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        two = text[i:i + 2]
+        if two == "/*":
+            out.append("  ")
+            i += 2
+            while i < n and text[i:i + 2] != "*/":
+                out.append(text[i] if text[i] == "\n" else " ")
+                i += 1
+            if i < n:
+                out.append("  ")
+                i += 2
+            continue
+        if two == "//":
+            while i < n and text[i] != "\n":
+                out.append(" ")
+                i += 1
+            continue
+        c = text[i]
+        if c == '"' or c == "'":
+            quote = c
+            out.append(quote)
+            i += 1
+            while i < n and text[i] != quote:
+                if text[i] == "\\" and i + 1 < n:
+                    out.append("  ")
+                    i += 2
+                    continue
+                out.append(text[i] if text[i] == "\n" else " ")
+                i += 1
+            if i < n:
+                out.append(quote)
+                i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
 
 
 _PP_IF_RE = re.compile(r"^[ \t]*#[ \t]*(?:if|ifdef|ifndef)\b", re.MULTILINE)
@@ -175,8 +208,7 @@ def check(source_text):
     together happen to span 16 bytes) -- the fix this guards is "one object,
     one full line", and that is what SCPIInterface.c does today.
     """
-    code = _COMMENT_RE.sub(" ", source_text)
-    code = _mask_literals(code)
+    code = _mask_comments_and_literals(source_text)
     code = _mask_disabled_blocks(code)
 
     needle = "address(%s)" % ADDR_MACRO
@@ -369,6 +401,18 @@ def self_test():
     _ck("...and the reported problem is the real one (4 bytes), not a "
         "parse failure on the string",
         "4 byte(s)" in stu_problems[0] if stu_problems else False, True)
+
+    # Round-2 Qodo finding: strings containing raw comment delimiters must
+    # not make a comment-first pass treat the genuinely correct code
+    # between them as commented out.
+    comment_delims_in_strings = (
+        'const char *a = "/*";\n' + fixed +
+        'const char *b = "*/";\n'
+    )
+    cds_problems = check(comment_delims_in_strings)
+    _ck("a '/*' ... '*/' pair INSIDE string literals does not eat the "
+        "real, correct declaration between them",
+        cds_problems, [])
 
     if0_then_undersized = (
         "#if 0\n" + fixed + "#endif\n" + pre_fix
