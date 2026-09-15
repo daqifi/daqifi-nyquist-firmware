@@ -120,7 +120,12 @@ typedef struct sPowerData{
      * critical-battery signal until the voltage measurement validates. */
     bool battVoltageValid;
     bool pONBattPresent;
-    bool autoExtPowerEnabled;  /* Auto-manage external power based on battery level (default: true) */
+    /* SYSTem:POWer:AUTO:EXTernal: let the state machine re-enable external
+     * power from POWERED_UP_EXT_DOWN on USB power or a recovered battery.
+     * Runtime-only, never saved to NVM: Power_Init() sets it true on every
+     * boot, and a #1071 reboot restore then puts back the value the board
+     * had when SYSTem:REboot armed it (#1081 adversarial audit round 1). */
+    bool autoExtPowerEnabled;
     /* #454: Auto-transition STANDBY → POWERED_UP whenever VBUS (USB) is
      * present.  Default false (opt-in).  Loaded from NVM at boot
      * (TopLevelSettings.autoPowerOnUsb); persisted via SYST:POW:AUTOOn:SAVE. */
@@ -180,9 +185,22 @@ void Power_Write( void );
  * next Power_Init() consumes exactly once, replaying the power-up through the
  * normal STANDBY path. A board headed to STANDBY, including one whose
  * DO_POWER_DOWN the power task has not acted on yet, leaves the handoff
- * unarmed. A power-on, brown-out, MCLR or PICkit reset finds no valid handoff
- * and comes up in STANDBY as it always has. A firmware update through the USB
- * bootloader does not clear an armed handoff (see PowerApi.c).
+ * unarmed. A power-on, brown-out or PICkit reset finds no valid handoff and
+ * comes up in STANDBY as it always has -- an MCLR on a bootloader-linked
+ * image does NOT reliably: the bootloader's forced-entry check runs an
+ * unconditional ~2 s window before the application ever sees the handoff,
+ * and MCLR does not clear the SRAM it lives in, so an MCLR inside that
+ * window leaves an armed handoff for the application boot that eventually
+ * follows to consume (#1081 adversarial audit round 1; see the "Which boots
+ * see it" note in PowerApi.c for the citations). The outcome stays bounded
+ * to a gated power-up replay, never an unsafe state, and needs physical
+ * MCLR/ICSP access inside that narrow window. A firmware update through the
+ * USB bootloader does not clear an armed handoff either (see PowerApi.c).
+ *
+ * An armed handoff also carries the SYSTem:POWer:AUTO:EXTernal setting, so a
+ * board restored into POWERED_UP_EXT_DOWN with auto recovery off stays there
+ * instead of being promoted to POWERED_UP on its first power-task pass. A
+ * reboot that leaves the handoff unarmed comes back with the default, on.
  *
  * Call it with task switching already disabled, immediately before
  * RCON_SoftwareReset() (SCPI_Reset holds a critical section): it takes no

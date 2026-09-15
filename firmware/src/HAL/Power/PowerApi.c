@@ -89,12 +89,34 @@ static tPowerWriteVars *pWriteVariables;
  * *RST shares SCPI_Reset but does not arm the handoff (see SCPI_Reset).
  *
  * Which boots see it. Every boot consumes and clears the block, so a boot that
- * does not directly follow an armed reset (power-on, brown-out, MCLR, a PICkit
- * reflash) finds no valid handoff and comes up in STANDBY. A firmware update
- * through the USB bootloader is NOT one of those cases. The bootloader never
- * writes the two trusted words (see Placement), so when the bootloader entered
- * from an armed SYSTem:REboot stays for an update instead of jumping straight
- * to the application, the newly loaded application's first boot consumes the
+ * does not directly follow an armed reset finds no valid handoff and comes up
+ * in STANDBY -- true without qualification for a power-on, brown-out or PICkit
+ * reflash, none of which this SRAM class survives. It is NOT true for an MCLR
+ * on a bootloader-linked image (#1081 adversarial audit round 1, falsifying an
+ * earlier revision of this comment and of the PowerApi.h doc, which both
+ * claimed MCLR unconditionally came up in STANDBY like the other three). MCLR
+ * does not clear this SRAM -- the #409 note below relies on exactly that
+ * survival for pData/pWriteVariables -- and the bootloader's forced-entry
+ * check runs, and waits out an unconditional 2 s window, before the
+ * application (and this file's Power_ConsumeRebootRestore()) ever executes:
+ * BOOTLOADER_LEGACY is undefined project-wide, so Bootloader_Tasks() always
+ * calls ForceBootloadFunc (bootloader.c:373-384) instead of the #ifdef'd
+ * legacy trigger check, and that callback is APP_Bootloader_ForceEvent, whose
+ * body ends in an unconditional DelayMs(2000) (bootloader/firmware/src/app.c:
+ * 131-143) before it returns and lets the bootloader decide whether to jump to
+ * the application. An MCLR asserted after an armed SYSTem:REboot but inside
+ * that window leaves the handoff intact, so the application boot that
+ * eventually follows -- not the one directly after the armed reset -- still
+ * consumes and restores it. The outcome stays bounded: only a power-up is
+ * ever armed (see "What it carries" below), so a stale replay is gated by the
+ * normal STANDBY power-up path like any other request, never an unsafe or
+ * unbounded state, and it needs physical MCLR/ICSP access inside that narrow
+ * window. A firmware update through the USB bootloader is a related but
+ * separate case, and IS one where a boot that does not directly follow the
+ * armed reset still restores. The bootloader never writes the two trusted
+ * words (see Placement), so when the bootloader entered from an armed
+ * SYSTem:REboot stays for an update instead of jumping straight to the
+ * application, the newly loaded application's first boot consumes the
  * handoff and restores the pre-reboot power state. That is benign, since the
  * replay is one request that the state machine gates like any other, but that
  * boot is a restore, not a STANDBY boot.
@@ -106,6 +128,21 @@ static tPowerWriteVars *pWriteVariables;
  * gate would never fire on a released unit. The RCON flags are also
  * hardware-set and never hardware-cleared (DS60001320H Register 6-1), so a
  * set SWR says nothing about which reset came last.
+ *
+ * What it carries. The request to replay, and the SYSTem:POWer:AUTO:EXTernal
+ * setting (autoExtPowerEnabled) at arm time. That setting is runtime-only and
+ * Power_Init() resets it to 1 on every boot. Left to that reset, a board
+ * restored into POWERED_UP_EXT_DOWN with auto recovery off would come back
+ * with it on, and the next Power_HandlePoweredUpExtDownState() pass
+ * (Power_Tasks() runs the state machine once per 1000 ms) would turn EN_5_10V
+ * on and move it to POWERED_UP whenever USB power was present or the battery
+ * read 25 % or more, undoing the user's AUTO:EXTernal 0 (#1081 adversarial
+ * audit, round 1). Before #1071 a reboot could not reach that gate on its
+ * own, since it always came back in STANDBY. The setting rides only with an
+ * armed handoff, as part of the power state being restored: a reboot headed
+ * to STANDBY, and *RST, still come back with the default. A carried 0 can
+ * only keep EN_5_10V off, as that recovery is all it gates, so it is as
+ * benign as the request on the bootloader-update path described above.
  *
  * Placement. `persistent` keeps our crt0 from clearing the block (XC32
  * DS50002799E 18.2.8) and implies `coherent`, so the arming stores bypass the
@@ -123,7 +160,15 @@ static tPowerWriteVars *pWriteVariables;
 #define POWER_REBOOT_HANDOFF_ADDR        (FORCE_BOOTLOADER_FLAG_ADDR - 16)
 #define POWER_REBOOT_HANDOFF_MAGIC       0x1071B007u
 #define POWER_REBOOT_HANDOFF_MAGIC_WORD  2u  /* words 0-1 are padding, never read */
-#define POWER_REBOOT_HANDOFF_REQ_WORD    3u  /* request in 15:0, complement in 31:16 */
+#define POWER_REBOOT_HANDOFF_REQ_WORD    3u  /* payload in 15:0, complement in 31:16 */
+/* Payload bits 7:0 hold the POWER_STATE_REQUEST to replay, DO_POWER_UP or
+ * DO_POWER_UP_EXT_DOWN (no request value reaches bit 8). Bit 8 is set when
+ * SYSTem:POWer:AUTO:EXTernal was 0; clear means the default, so a missing bit
+ * never switches recovery off. Bits 15:9 are zero. The complement covers all
+ * sixteen bits, so a flipped flag fails the check like any other corruption,
+ * and a payload with any other bit set is rejected as not armed, as a flagged
+ * payload is by an image that predates the flag. */
+#define POWER_REBOOT_HANDOFF_AUTOEXT_OFF 0x0100u
 
 static volatile uint32_t sRebootHandoff[4]
     __attribute__((persistent, coherent, address(POWER_REBOOT_HANDOFF_ADDR)));
@@ -169,11 +214,19 @@ void Power_ArmRebootRestore(void) {
         sRebootHandoff[POWER_REBOOT_HANDOFF_MAGIC_WORD] = 0;
         sRebootHandoff[POWER_REBOOT_HANDOFF_REQ_WORD] = 0;
     } else {
+        /* Carry SYSTem:POWer:AUTO:EXTernal with the request (see "What it
+         * carries"). autoExtPowerEnabled is a bool, one byte load, and once
+         * Power_Init() has returned its only writer is SCPI_SetAutoExtPower(),
+         * task code that cannot run inside the caller's critical section, so
+         * this reads the setting the reset leaves behind. */
+        uint32_t payload = (uint32_t)replay & 0xFFu;
+        if (!pData->autoExtPowerEnabled) {
+            payload |= POWER_REBOOT_HANDOFF_AUTOEXT_OFF;
+        }
         /* Request word before the magic, so the magic never vouches for a
          * stale request word. */
-        const uint32_t req = (uint32_t)replay & 0xFFFFu;
         sRebootHandoff[POWER_REBOOT_HANDOFF_REQ_WORD] =
-                req | ((~req & 0xFFFFu) << 16);
+                payload | ((~payload & 0xFFFFu) << 16);
         sRebootHandoff[POWER_REBOOT_HANDOFF_MAGIC_WORD] =
                 POWER_REBOOT_HANDOFF_MAGIC;
     }
@@ -200,11 +253,25 @@ static void Power_ConsumeRebootRestore(void) {
         (word >> 16) != (~word & 0xFFFFu)) {
         return;  /* not armed (see "Which boots see it" above) */
     }
-    const POWER_STATE_REQUEST replay = (POWER_STATE_REQUEST)(word & 0xFFFFu);
-    if (replay != DO_POWER_UP && replay != DO_POWER_UP_EXT_DOWN) {
+    const uint32_t payload = word & 0xFFFFu;
+    /* Clear only the AUTO:EXT flag and compare the rest as an integer, before
+     * any cast to the enum. That admits exactly four payloads, DO_POWER_UP and
+     * DO_POWER_UP_EXT_DOWN each with the flag clear or set; any other bit set
+     * leaves a value that is neither request. */
+    const uint32_t req = payload & ~POWER_REBOOT_HANDOFF_AUTOEXT_OFF;
+    if (req != (uint32_t)DO_POWER_UP && req != (uint32_t)DO_POWER_UP_EXT_DOWN) {
         return;  /* only a power-up is ever armed; anything else is invalid */
     }
-    pData->requestedPowerState = replay;
+    pData->requestedPowerState = (POWER_STATE_REQUEST)req;
+    /* #1081 adversarial audit round 1: put back the AUTO:EXTernal setting the
+     * board had when it was armed (see "What it carries"). This overrides the
+     * default Power_Init() set before calling here, and every return above
+     * leaves that default, so an unarmed or corrupt handoff still gives the
+     * plain STANDBY boot with auto recovery on. A clear flag restores the
+     * default too, so a board rebooted with the setting untouched recovers
+     * exactly as before. */
+    pData->autoExtPowerEnabled =
+            ((payload & POWER_REBOOT_HANDOFF_AUTOEXT_OFF) == 0u);
     /* #454: latch the power-up as the AUTOOn promote does when it issues its
      * own DO_POWER_UP. The replay bypasses that path, because
      * Power_HandleStandbyState() only promotes on NO_CHANGE. Unlatched, the
@@ -269,7 +336,10 @@ void Power_Init(
     // NOTE: This is called before the RTOS is running.
     // Don't call any RTOS functions here!
 
-    // Initialize auto external power control (enabled by default)
+    /* Auto external power recovery (SYSTem:POWer:AUTO:EXTernal) is on by
+     * default at every boot; the setting is never saved to NVM. A #1071
+     * reboot restore puts back the pre-reboot value, so this default must be
+     * set before the Power_ConsumeRebootRestore() call below. */
     pData->autoExtPowerEnabled = true;
 
     /* #454: seed autoPowerOnUsb from NVM-persisted TopLevelSettings.
@@ -288,7 +358,10 @@ void Power_Init(
         }
     }
 
-    /* #1071: re-request the power state a SYSTem:REboot / *RST left behind. */
+    /* #1071: re-request the power state an armed SYSTem:REboot left behind
+     * (*RST does not arm), with its AUTO:EXTernal setting. Plain stores are
+     * enough: the power task and the SCPI transports, which read and write
+     * these fields, are created by app_TasksCreate() after this returns. */
     Power_ConsumeRebootRestore();
 
     BQ24297_InitHardware(
