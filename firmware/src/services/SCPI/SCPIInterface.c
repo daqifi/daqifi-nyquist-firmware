@@ -8313,28 +8313,32 @@ static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
      * itself, so a client can ask "is the shared bus stuck?" and get an answer
      * that does not depend on somebody else's traffic. */
     bool held = false, sdHolds = false;
-    uint32_t holder = 0, depth = 0, recovered = 0;
+    uint32_t holder = 0, depth = 0, recovered = 0, holdMaxMs = 0;
     SpiBusHealth_GetExclusive(&held, &holder, &depth);
     sdHolds = app_SDCard_HoldsSpiBus();
     recovered = app_SDCard_BusRecoveryCount();
+    holdMaxMs = app_SDCard_BusHoldMaxMs();  // #930
 
-    /* 224, not 192: the worst case is 193 characters plus the NUL, which
-     * 192 truncates. Field-by-field, with every counter at its 10-digit
-     * maximum -- RejStale 20, RejExclusive 24, RejLock 19, RejQueueFull 24,
-     * ExclusiveHeld 16, ExclusiveDepth 26, ExclusiveHolder 25, SdHoldsBus 13,
-     * SdBusRecoveries 26 (no trailing comma). Recompute this if a field is
-     * added. Stays a stack local rather than the shared response buffer
-     * because it is under the 256 B threshold that rule applies to. */
+    /* 224, not 192: the worst case is 219 characters plus the NUL (220),
+     * which 192 truncates. Field-by-field, with every counter at its
+     * 10-digit maximum -- RejStale 20, RejExclusive 24, RejLock 19,
+     * RejQueueFull 24, ExclusiveHeld 16, ExclusiveDepth 26,
+     * ExclusiveHolder 25, SdHoldsBus 13, SdBusRecoveries 27,
+     * SdBusHoldMaxMs 25 (no trailing comma, it is now last). Recompute
+     * this if a field is added. Stays a stack local rather than the
+     * shared response buffer because it is under the 256 B threshold
+     * that rule applies to. */
     char out[224];
     snprintf(out, sizeof(out),
              "RejStale=%lu,RejExclusive=%lu,RejLock=%lu,RejQueueFull=%lu,"
              "ExclusiveHeld=%u,ExclusiveDepth=%lu,ExclusiveHolder=%08lx,"
-             "SdHoldsBus=%u,SdBusRecoveries=%lu",
+             "SdHoldsBus=%u,SdBusRecoveries=%lu,SdBusHoldMaxMs=%lu",
              (unsigned long)st, (unsigned long)ex, (unsigned long)lk,
              (unsigned long)qf,
              (unsigned)(held ? 1U : 0U), (unsigned long)depth,
              (unsigned long)holder,
-             (unsigned)(sdHolds ? 1U : 0U), (unsigned long)recovered);
+             (unsigned)(sdHolds ? 1U : 0U), (unsigned long)recovered,
+             (unsigned long)holdMaxMs);
     SCPI_ResultText(context, out);
     return SCPI_RES_OK;
 }
