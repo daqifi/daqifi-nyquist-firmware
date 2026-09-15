@@ -58,9 +58,45 @@ AMBIGUITY IS REFUSED, NEVER RESOLVED. Two definitions answering to one name
 is a question about preprocessor state, and no tool here evaluates that.
 Taking the first is how the pin digested dead code; taking the last is no
 better. `find_definitions()` returns all of them and the callers refuse.
+
+EVERY OCCURRENCE IS ACCOUNTED FOR. Rounds 5 and 6 and the review after them
+kept finding ONE MORE valid spelling the matchers above had not been taught
+-- an indented definition, an attribute on its own line, `(F)`, `((F))`, a
+spliced `//` -- and after them two more were live at once: a replacement
+with TWO `__attribute__((...))` prefixes next to an `#if 0` original (one
+definition found, the DEAD one, reported unambiguous and pinned), and a
+call written `(F)(...)` (invisible to the arm census). Every one was
+FAIL-OPEN: live code left the text being checked while the check reported
+clean. Teaching the definition regex every valid C spelling, one per audit
+round, cannot terminate.
+
+So the question is turned round. Instead of recognising every valid
+spelling positively, `account_occurrences()` requires that EVERY raw
+occurrence of a name -- every identifier token the compiler would see,
+found WITHOUT any grammar -- be claimed by exactly one recogniser:
+definition, file-scope prototype, or call inside a function body this
+module can find. Anything left over is reported, with its physical line:
+an alias, `&F`, `p = F;`, a declaration, a spelling nobody has thought of.
+An unrecognised construct therefore fails CLOSED -- the lint reds -- instead
+of silently falling out of view; nobody has to anticipate the next
+spelling, only whether every occurrence was explained. Two cross-checks
+make the claim bind the callers rather than float beside them: the
+definitions the as-written matcher (`find_definitions`) reports must be the
+ones the compiler's view reports, and `scpi_sd_arm_path.py` requires its
+census to count exactly the calls accounting found.
+
+What that does NOT buy: anything about compiled behaviour. It is still
+textual -- no preprocessor evaluation (an `#if 0` copy's occurrences still
+count, deliberately), no reachability, no control flow, no symbol table
+(`int x = 0, F(void);` declares F in a statement shaped like a comma
+expression). The one spelling it cannot see at all is token pasting; see
+`line_comment_end`'s #1066 note.
 """
 
+import bisect
+import os
 import re
+from collections import namedtuple
 
 
 class AmbiguousDefinition(Exception):
@@ -85,18 +121,43 @@ def line_comment_end(src, start):
     audit round 6). A comment-boundary finder that stops at the first bare
     newline is looking for a boundary the compiler never sees.
 
-    NOT HANDLED, TRACKED SEPARATELY (#1066): a splice can also CREATE the
-    `//` marker in the first place -- `/` + `\\` + newline + `/` splices into
-    `//` under the same phase-2 rule, and every caller of this function (and
-    `mask()`'s / `mask_for_match()`'s `/*` detection, and the equivalent
-    checks in `hash_function.strip_comments()` and
-    `scpi_wiki_sync._CODE_OR_COMMENT`) looks for a literal, unspliced `//` or
-    `/*` at the START of a comment before this function -- or its
-    equivalents -- ever runs. Verified live against `SCPIStorageSD.c`: this
-    shape deletes the CRC claim guard with `scpi_sd_arm_path.py` reporting
-    zero problems. The fix is almost certainly to normalize splices across
-    the whole text ONCE, before any comment/token recognition -- not another
-    per-call-site patch -- so it is filed rather than done here.
+    NOT HANDLED HERE, AND WHERE IT IS HANDLED (#1066): a splice can also
+    CREATE the `//` marker in the first place -- `/` + `\\` + newline + `/`
+    splices into `//` under the same phase-2 rule -- and a splice can land
+    INSIDE an identifier (`SD_Arm` + `\\` + newline + `OrRefuseWithCleanup`
+    is ONE token, `SD_ArmOrRefuseWithCleanup`, to the compiler). This
+    function, `mask()`/`mask_for_match()` when fed raw text,
+    `hash_function.strip_comments()` and `scpi_wiki_sync._CODE_OR_COMMENT`
+    all look for a literal, unspliced `//` or `/*`, and an unspliced
+    identifier, so on raw text they see neither. Verified live against
+    `SCPIStorageSD.c` before occurrence accounting existed: the first shape
+    deleted the CRC claim guard with `scpi_sd_arm_path.py` reporting zero
+    problems.
+
+    CLOSED -- for every caller that accounts occurrences -- by `splice()`,
+    which joins every splice across the whole text ONCE, BEFORE `mask()` and
+    `mask_for_match()` run on the result (the "splice-then-mask" view in
+    `_View`). On joined text a splice-made `//` is a literal `//` and a split
+    identifier is whole, so both gaps close as a side effect rather than by
+    another per-site patch. The raw-text strippers above are deliberately
+    left as they are (two of them belong to files other checkers depend on);
+    what binds them is that callers compare their answers to the joined
+    view and refuse on any disagreement -- `account_occurrences` for
+    definitions, `scpi_sd_arm_path._accounting_problems` for the census's
+    calls. The joined view also takes GCC's backslash-SPACE-newline, which
+    none of the strippers above do (see `_SPLICE`).
+
+    THE ONE RESIDUAL GAP, AND WHY IT IS STRUCTURAL: macro token pasting.
+    `CAT(SD_ArmOrRefuse, WithCleanup)(...)` contains no occurrence of the
+    target name at all -- the identifier is assembled by the preprocessor
+    from two half-tokens (`##`) -- so NO lexical scan, however it is built,
+    can see it. This module's domain is the spellings VISIBLE in the text it
+    is given, not compiled behaviour; this gap is believed unreachable by
+    this technique, not merely untested. (The alias `#define A F` is NOT this
+    gap: F is visible there, and an occurrence in a directive is refused.)
+    Also outside it, and believed inert: trigraphs (`??/` is a backslash in
+    phase 1 under strict ISO modes; the firmware build passes no `-std`, so
+    XC32 runs in a GNU mode, where GCC does not replace them).
     """
     n = len(src)
     i = start
@@ -263,10 +324,13 @@ HEAD = r"(?m)^" + _INDENT + _PREFIX + _BREAK + _ATTR + _BREAK
 # care about the line, and refusing a definition over formatting is how a
 # live replacement gets silently outvoted by a disabled one.
 #
-# Three or more levels remain UNSUPPORTED -- `_CASES` records this
-# explicitly rather than leaving it an unstated assumption; nothing in the
-# 446-file firmware source tree uses even one level, so the boundary is
-# believed inert today, not proven irrelevant. The cost of supporting two
+# Three or more levels remain UNSUPPORTED BY THIS MATCHER -- `_CASES`
+# records this explicitly rather than leaving it an unstated assumption;
+# nothing in the 446-file firmware source tree uses even one level. The
+# matcher alone still binds an `#if 0` original plus a `(((F)))` replacement
+# to the dead copy; what makes that safe for every caller is occurrence
+# accounting, which finds the live copy's name token claimed by nothing and
+# refuses (see "EVERY OCCURRENCE IS ACCOUNTED FOR"). The cost of supporting two
 # levels is two extra numbered groups ahead of whatever the caller captures:
 # `capture_params=True`'s parameter-list group and `ANY_DEF`'s name group
 # both shift from group 1 to group 3. Every reader of either has been
@@ -278,6 +342,21 @@ _NAME_WRAP_CLOSE = (r"(?(2)" + _WRAP_SPACE + r"\))"
                      r"(?(1)" + _WRAP_SPACE + r"\))")
 
 
+def _signature(name_re, inner, end):
+    """HEAD, the (possibly wrapped) name, a parameter list, then `end`.
+
+    The ONE grammar for "a function declarator at the start of a line".
+    `end` is `\\{` for a definition and `;` for a prototype, and nothing else
+    differs between the two -- so the prototype matcher occurrence accounting
+    needs (below) cannot drift from the definition matcher by construction,
+    which is the whole lesson of this module's docstring. `def_pattern` and
+    `ANY_DEF` produce exactly the strings they produced before this builder
+    existed.
+    """
+    return (HEAD + _NAME_WRAP_OPEN + r"\b" + name_re + _NAME_WRAP_CLOSE
+            + r"\s*\(" + inner + r"\)\s*" + end)
+
+
 def def_pattern(name, capture_params=False):
     """The definition pattern for ONE named function, as a string.
 
@@ -286,8 +365,7 @@ def def_pattern(name, capture_params=False):
     its comment above).
     """
     inner = r"([^;{]*)" if capture_params else r"[^;{]*"
-    return (HEAD + _NAME_WRAP_OPEN + r"\b" + re.escape(name)
-            + _NAME_WRAP_CLOSE + r"\s*\(" + inner + r"\)\s*\{")
+    return _signature(re.escape(name), inner, r"\{")
 
 
 def definition_re(name, capture_params=False):
@@ -297,8 +375,7 @@ def definition_re(name, capture_params=False):
 
 # GROUP 3 is the name; groups 1 and 2 are `_NAME_WRAP_OPEN`'s markers (see
 # `def_pattern`'s docstring).
-ANY_DEF = re.compile(HEAD + _NAME_WRAP_OPEN + r"\b([A-Za-z_]\w*)"
-                      + _NAME_WRAP_CLOSE + r"\s*\([^;{]*\)\s*\{")
+ANY_DEF = re.compile(_signature(r"([A-Za-z_]\w*)", r"[^;{]*", r"\{"))
 
 
 def find_definitions(text, name, capture_params=False):
@@ -321,6 +398,433 @@ def one_definition(text, name, capture_params=False):
         raise AmbiguousDefinition(
             "%d definitions answer to %r; refusing to choose" % (len(found), name))
     return found[0]
+
+
+# ===========================================================================
+# OCCURRENCE ACCOUNTING -- see "EVERY OCCURRENCE IS ACCOUNTED FOR" in the
+# module docstring for why this exists and what it does NOT do.
+# ===========================================================================
+
+# Phase 2's splice, as the compiler that builds this firmware performs it.
+# ISO C deletes a backslash IMMEDIATELY followed by a newline; GCC -- which
+# XC32 is -- also accepts spaces/tabs between the two ("backslash and newline
+# separated by space" is a warning, and the lines ARE joined; GCC cpp manual,
+# "Initial processing"). Accepting the GCC form here is the fail-CLOSED
+# direction: every other stripper in this repository stops at the ISO form,
+# so on a `// ... \<space>` comment they hand a swallowed line to their
+# callers as live code, and a caller that cross-checks against this view
+# (`scpi_sd_arm_path.py` does) then sees the disagreement and refuses. `\r`
+# is phase 1's CRLF, for text not read in universal-newline mode.
+_SPLICE = re.compile(r"\\[ \t\f\v]*\r?\n")
+
+
+def splice(src):
+    """-> (joined, omap): `src` after translation phase 2, and the way back.
+
+    Every backslash-newline splice is DELETED, so `joined` is SHORTER than
+    `src` whenever there is one. `omap[j]` is the index in `src` that
+    `joined[j]` came from; it has `len(joined) + 1` entries, the last mapping
+    one-past-the-end to `len(src)`, so an END offset maps as well as a start.
+    Counting newlines in `src` up to `omap[j]` gives the PHYSICAL line a
+    reader has to open, which is what every diagnostic below reports.
+
+    One pass, left to right, never re-scanned: `\\\\` + newline leaves ONE
+    backslash, not zero, because the result of a splice is not itself
+    spliced (phase 2 applies to the physical source, once).
+    """
+    pieces, omap, pos = [], [], 0
+    for m in _SPLICE.finditer(src):
+        pieces.append(src[pos:m.start()])
+        omap.extend(range(pos, m.start()))
+        pos = m.end()
+    pieces.append(src[pos:])
+    omap.extend(range(pos, len(src)))
+    omap.append(len(src))
+    return "".join(pieces), omap
+
+
+def match_brace(masked, start):
+    """Index just past the `}` closing the `{` at `start`, or None.
+
+    `masked` must be a `mask()`ed text, so no brace in a comment or literal
+    is counted. Moved here from `scpi_sd_arm_path.py` so the census and
+    occurrence accounting cannot disagree about where a body ends.
+    """
+    depth = 0
+    for i in range(start, len(masked)):
+        if masked[i] == "{":
+            depth += 1
+        elif masked[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return None
+
+
+def _spans(matchmask, masked):
+    """[(name, body_start, body_end)] for every OUTERMOST definition.
+
+    `body_start` is the index of the opening `{`, `body_end` is one past the
+    matching `}`. A definition-shaped match whose `{` falls inside a body
+    already collected is skipped -- inside a body, `else if (x) {` is
+    definition-SHAPED (`ANY_DEF` reads `if` as a name) and must not become a
+    function of its own.
+    """
+    spans = []
+    for m in ANY_DEF.finditer(matchmask):
+        start = m.end() - 1
+        if any(s <= start < e for _, s, e in spans):
+            continue
+        end = match_brace(masked, start)
+        if end is not None:
+            # GROUP 3 is the name; groups 1 and 2 are `_NAME_WRAP_OPEN`'s
+            # paren-seen markers.
+            spans.append((m.group(3), start, end))
+    return spans
+
+
+def function_spans(text):
+    """[(name, body_start, body_end)] for every outermost definition in
+    `text`, offsets into `text` as given (no splicing -- a caller that works
+    on already-stripped text gets offsets into THAT text).
+
+    Used to attribute an offset to the function whose body contains it. A
+    definition's own name lies BEFORE its body starts, so it falls in no
+    span and is never mistaken for a call site.
+    """
+    return _spans(mask_for_match(text), mask(text))
+
+
+def enclosing(spans, pos):
+    """Name of the function whose BODY contains `pos`, or None."""
+    for name, start, end in spans:
+        if start < pos < end:
+            return name
+    return None
+
+
+class _View(object):
+    """One text read the way the compiler reads it, with the way back.
+
+    `joined` is `src` after phase 2. `masked` and `matchmask` are the SAME
+    `mask()` and `mask_for_match()` every other caller uses, fed the joined
+    text -- not a second comment scanner -- so a splice that CREATES a
+    comment marker, or joins two halves of an identifier, is seen here the
+    way the compiler sees it.
+    """
+
+    def __init__(self, src):
+        self.src = src
+        self.joined, self.omap = splice(src)
+        self.masked = mask(self.joined)
+        self.matchmask = mask_for_match(self.joined)
+        self.spans = _spans(self.matchmask, self.masked)
+        self._newlines = [m.start() for m in re.finditer("\n", src)]
+        self._raw_matchmask = None
+
+    def raw_matchmask(self):
+        """`mask_for_match(src)` -- the AS-WRITTEN view every
+        `find_definitions` caller reads -- computed once, on demand."""
+        if self._raw_matchmask is None:
+            self._raw_matchmask = mask_for_match(self.src)
+        return self._raw_matchmask
+
+    def line_of_orig(self, orig):
+        """Physical (1-based) line of offset `orig` in the ORIGINAL text."""
+        return bisect.bisect_left(self._newlines, orig) + 1
+
+    def line(self, j):
+        """Physical line, in the ORIGINAL text, of JOINED offset `j`."""
+        return self.line_of_orig(self.omap[j])
+
+
+# One entry, keyed by IDENTITY: a caller accounting five names in one file
+# pays for the splice, the two masks and the span scan once, not five times.
+# Holding the reference keeps the id from being reused by another string.
+_VIEW_CACHE = []
+
+
+def _view(src):
+    if _VIEW_CACHE and _VIEW_CACHE[0][0] is src:
+        return _VIEW_CACHE[0][1]
+    view = _View(src)
+    _VIEW_CACHE[:] = [(src, view)]
+    return view
+
+
+RawOccurrence = namedtuple("RawOccurrence", "offset line joined_offset")
+
+
+def _token_re(name):
+    # Identifier boundaries spelled out rather than `\b`, and deliberately
+    # NOT Python's `\b`, because the census (`\bF\s*\(`) uses `\b` and the
+    # agreement check only catches what the two read DIFFERENTLY:
+    #
+    #   `$` IS an identifier character here. GCC accepts it in identifiers
+    #   (-fdollars-in-identifiers, on by default), so `my$F(x)` calls
+    #   `my$F`, not F. `\b` sees a boundary before F and the census counts
+    #   an arm; were `$` a boundary here too, accounting would count the
+    #   same phantom call, the two would AGREE, and a real arm replaced by
+    #   `my$F(...)` would pass. Reading no occurrence here makes it a
+    #   disagreement, which reds.
+    #
+    #   Non-ASCII letters are NOT (ASCII class only). `\b` treats `é` as a
+    #   word character and the census does not count `xéF(`; reading an
+    #   occurrence of F here makes that a disagreement too. Either way the
+    #   odd spelling fails closed.
+    return re.compile(r"(?<![A-Za-z0-9_$])" + re.escape(name)
+                      + r"(?![A-Za-z0-9_$])")
+
+
+def raw_occurrences(src, name):
+    """Every identifier-token occurrence of `name` the compiler would see.
+
+    Runs on the splice-joined, comment/literal-masked view, so an occurrence
+    in a comment or string is not one, and an identifier split across a
+    backslash-newline IS one. The preprocessor is NOT evaluated: a copy
+    under `#if 0` still shows up, deliberately (two textual definitions is
+    what `AmbiguousDefinition` is for). Each result carries the ORIGINAL
+    offset and PHYSICAL line, and the joined offset it was found at.
+    """
+    view = _view(src)
+    return [RawOccurrence(view.omap[m.start()], view.line(m.start()),
+                          m.start())
+            for m in _token_re(name).finditer(view.masked)]
+
+
+def _named_def_re(name):
+    """`def_pattern(name)` with the NAME TOKEN captured as group 3 (1 and 2
+    are the wrap markers). A capturing group changes what is reported, never
+    what matches, so this matches exactly where `def_pattern` does."""
+    return re.compile(_signature("(" + re.escape(name) + ")", r"[^;{]*",
+                                 r"\{"))
+
+
+def _named_proto_re(name):
+    """The PROTOTYPE twin: the same declarator grammar, ending in `;`."""
+    return re.compile(_signature("(" + re.escape(name) + ")", r"[^;{]*", ";"))
+
+
+def _call_re(name):
+    """The name -- bare, or inside the same one or two levels of redundant
+    parentheses a declarator may wear -- then `(`. Name is group 3.
+
+    `(F)(x)` calls F exactly as `F(x)` does, and `\\bF\\s*\\(` cannot see it
+    because the `(` follows a `)`, not the name: that is how a parenthesized
+    callee escaped `scpi_sd_arm_path.py`'s arm census. The wrap is
+    `_NAME_WRAP_OPEN`/`_NAME_WRAP_CLOSE` -- the definition side's own -- so
+    the two sides agree on how deep a wrap can be (two levels; a third is
+    call-shaped to neither and so fails closed as unclassified). The gap
+    before the argument list is `\\s*`, the census's own, so formatting that
+    the census reads as a call is read as one here too.
+    """
+    return re.compile(_NAME_WRAP_OPEN + "(" + re.escape(name) + ")"
+                      + _NAME_WRAP_CLOSE + r"\s*\(")
+
+
+def _call_at(call_re, matchmask, j):
+    """The call match whose NAME starts at `j`, or None.
+
+    Tried at `j` and at up to two `(` immediately before it (whitespace
+    aside) -- every place a wrapped call can begin -- rather than by a
+    left-to-right scan, which could consume one occurrence inside another's
+    match and never test it.
+    """
+    starts, k = [j], j
+    for _ in range(2):
+        i = k - 1
+        while i >= 0 and matchmask[i] in " \t\n":
+            i -= 1
+        if i < 0 or matchmask[i] != "(":
+            break
+        starts.append(i)
+        k = i
+    for s in starts:
+        m = call_re.match(matchmask, s)
+        if m and m.start(3) == j:
+            return m
+    return None
+
+
+# The words that may stand before a call in a statement that is otherwise
+# only words: `return F(x);`, `else F(x);`, `do F(x); while (0);`.
+_STMT_KEYWORDS = frozenset(("return", "else", "do"))
+_DECL_PREFIX = re.compile(r"[\w\s\*,\[\]]*\Z")
+
+
+def _declaration_shaped(matchmask, call_start):
+    """True iff a call-shaped occurrence is really a block-scope DECLARATION.
+
+    `extern bool F(void);` inside a body has a call's shape and is not one;
+    counting it as a call is counting a claim or an arm the compiler never
+    makes. Decided by the statement text before the call (back to the last
+    `;`, `{`, `}` or `:`): only words, `*`, `,` and `[]`, with at least one
+    word that is not a statement keyword, is a declaration's shape. Anything
+    with an operator or a paren in it (`ok = F(x)`, `if (!F(x))`) is an
+    expression, and so is an empty prefix (`F(x);`).
+
+    NOT DECIDABLE TEXTUALLY, and not claimed: `int x = 0, F(void);` declares
+    F in a statement that has an `=` in it, which is also the shape of the
+    comma expression `x = 0, F(y);`. Telling them apart needs a symbol table.
+    """
+    start = max(matchmask.rfind(ch, 0, call_start) for ch in ";{}:") + 1
+    prefix = matchmask[start:call_start]
+    if not _DECL_PREFIX.match(prefix):
+        return False
+    return any(w not in _STMT_KEYWORDS
+               for w in re.findall(r"[A-Za-z_]\w*", prefix))
+
+
+def _in_directive(matchmask, j):
+    """True iff offset `j` lies on a preprocessor directive's logical line.
+
+    `matchmask` is joined (so a continued `#define` is one line) and has
+    comment newlines blanked (so `#define X /*\\n*/ F` -- one directive to
+    the compiler, a comment being one space -- is one line here too).
+    """
+    line_start = matchmask.rfind("\n", 0, j) + 1
+    return matchmask[line_start:j].lstrip(" \t\f\v").startswith("#")
+
+
+Occurrence = namedtuple("Occurrence", "kind name line offset function why")
+# kind is one of: "definition", "prototype", "call", "unclassified",
+# "multiply-claimed". `line` is PHYSICAL, in the original text; `offset` is
+# the original-text offset of the name token; `function` is the function
+# whose body contains it (None at file scope); `why` says why an
+# unclassified or multiply-claimed occurrence is one.
+
+
+def classify_occurrences(src, name):
+    """Every raw occurrence of `name`, each classified exactly once.
+
+    A PARTITION, not an allowlist. Each occurrence is claimed by the
+    definition recogniser, the (file-scope) prototype recogniser or the call
+    recogniser -- or by none, and is then "unclassified", or by more than
+    one, and is then "multiply-claimed". Nothing is special-cased as
+    "expected, ignore": `#define ALIAS F`, `&F`, `p = F;`, `foo(F)`, a
+    call-shaped occurrence with no enclosing function this module can find,
+    a block-scope declaration, and any construct nobody has thought of yet
+    all land in "unclassified" by the same route -- no recogniser explained
+    them.
+
+    Raises `AmbiguousDefinition` on two or more definitions of `name` in the
+    compiler's view, exactly as `one_definition` does in the as-written one.
+    """
+    view = _view(src)
+    mm = view.matchmask
+    defs = {m.start(3) for m in _named_def_re(name).finditer(mm)}
+    if len(defs) > 1:
+        raise AmbiguousDefinition(
+            "%d definitions answer to %r; refusing to choose" % (len(defs), name))
+    protos = {m.start(3) for m in _named_proto_re(name).finditer(mm)}
+    call_re = _call_re(name)
+    out = []
+    for raw in raw_occurrences(src, name):
+        j = raw.joined_offset
+        fn = enclosing(view.spans, j)
+
+        def emit(kind, why=None):
+            out.append(Occurrence(kind, name, raw.line, raw.offset, fn, why))
+
+        if _in_directive(mm, j):
+            # Checked FIRST, and never claimable: a name in a macro's
+            # replacement list is counted once here however many times the
+            # macro is expanded, and an alias hides every later use of it.
+            emit("unclassified", "sits in a preprocessor directive (an alias, "
+                 "a macro body or a conditional), where how often -- or "
+                 "whether -- it reaches the compiler is not visible")
+            continue
+        claims, why = [], None
+        if j in defs:
+            claims.append("definition")
+        if j in protos and fn is None:
+            claims.append("prototype")
+        call = _call_at(call_re, mm, j)
+        if call is None:
+            why = ("is not followed by `(`, so it is not a call: a bare "
+                   "reference, an address-of, an argument or an alias, none of "
+                   "which this module can count")
+        elif fn is None:
+            why = ("is call-shaped but lies inside no function body this "
+                   "module can find, so there is nothing to attribute it to")
+        elif _declaration_shaped(mm, call.start()):
+            why = ("is declaration-shaped inside %s()'s body -- a block-scope "
+                   "declaration has a call's shape and is not a call" % fn)
+        else:
+            claims.append("call")
+        if len(claims) == 1:
+            emit(claims[0])
+        elif claims:
+            emit("multiply-claimed", "claimed as %s at once" % " AND ".join(claims))
+        else:
+            emit("unclassified", why)
+    return out
+
+
+def _lines(view, offsets):
+    return ", ".join("line %d" % view.line_of_orig(o) for o in offsets) or "nowhere"
+
+
+def _definition_view_problems(view, name, occurrences):
+    """The as-written definition matcher and the compiler's view must agree.
+
+    Every caller locates a definition with `find_definitions`/
+    `one_definition`, which read the text AS WRITTEN. If a splice-created
+    comment disables the copy they find while a copy with a spliced name is
+    the live one, they report ONE unambiguous definition -- the dead one --
+    and every occurrence in the compiler's view is still classified, because
+    the dead one's name is inside a comment there. Only comparing the two
+    views catches that, so it is compared: same definitions, same name-token
+    offsets, or a problem.
+    """
+    seen = sorted(o.offset for o in occurrences if o.kind == "definition")
+    named = _named_def_re(name)
+    as_written = []
+    for m in definition_re(name).finditer(view.raw_matchmask()):
+        n = named.match(view.raw_matchmask(), m.start())
+        as_written.append(n.start(3) if n else m.start())
+    as_written.sort()
+    if seen == as_written:
+        return []
+    return ["%s: the definition matcher reading the text AS WRITTEN (what "
+            "find_definitions/one_definition answer) finds it at %s, but the "
+            "compiler's view -- backslash-newline splices joined first -- finds "
+            "it at %s. Whichever a caller trusts may be text the compiler never "
+            "builds, so this refuses to choose (#1066)."
+            % (name, _lines(view, as_written), _lines(view, seen))]
+
+
+def account_occurrences(src, name):
+    """-> [problem, ...] for `name` in `src`; EMPTY means every occurrence
+    the compiler would see is explained by exactly one recogniser, and the
+    as-written definition matcher agrees with the compiler's view.
+
+    Problems are REPORTED, not raised, so callers can accumulate them the way
+    `scpi_sd_arm_path.py` accumulates everything else. The one exception is
+    two or more definitions, which raises `AmbiguousDefinition` exactly as
+    `one_definition` always has -- callers already catch it.
+
+    Each problem names `name` and a PHYSICAL line in `src`.
+    """
+    view = _view(src)
+    occurrences = classify_occurrences(src, name)
+    problems = []
+    for o in occurrences:
+        where = " (in %s())" % o.function if o.function else ""
+        if o.kind == "unclassified":
+            problems.append(
+                "%s: line %d%s: an occurrence no recogniser accounts for -- it "
+                "%s. Refusing rather than reading past it: an unrecognised "
+                "spelling is how live code escaped this check in every audit "
+                "round so far (#976)." % (name, o.line, where, o.why))
+        elif o.kind == "multiply-claimed":
+            problems.append(
+                "%s: line %d%s: MULTIPLY CLAIMED -- %s. The categories are a "
+                "partition by design, so this is a defect in the classifier, "
+                "and an occurrence two recognisers both explain is one neither "
+                "can be trusted about." % (name, o.line, where, o.why))
+    problems.extend(_definition_view_problems(view, name, occurrences))
+    return problems
 
 
 _CASES = [
@@ -406,20 +910,258 @@ _CASES = [
      "refusing a definition over formatting is how a live replacement gets "
      "silently outvoted by a disabled one",
      "static bool (\nF\n)(void)\n{\n}\n", "one"),
-    # THREE levels are explicitly UNSUPPORTED -- recorded here rather than
-    # left an unstated assumption. The single-definition case fails CLOSED
-    # (safe: "not found", not a wrong answer); the ambiguous-pair case does
-    # NOT -- it silently rebinds to the disabled copy, the same class of
-    # defect this rule exists to close, one level beyond what it currently
-    # reaches. Nothing in the firmware source tree uses even ONE level
-    # (checked: zero occurrences across `firmware/src`, third-party
-    # excluded), so this boundary is believed inert today, not proven
-    # irrelevant -- if a THREE-level form is ever found live, this matcher
-    # needs a third nesting level or a fail-closed refusal, not neither.
+    # THREE levels are explicitly UNSUPPORTED BY THE MATCHER -- recorded
+    # here rather than left an unstated assumption. The single-definition
+    # case fails CLOSED (safe: "not found", not a wrong answer). The
+    # ambiguous-pair case, AT THIS LEVEL, still does not: `one_definition`
+    # alone rebinds it to the disabled copy. The fail-closed refusal this
+    # comment used to say was missing now exists one layer up: every caller
+    # runs `account_occurrences` before trusting `one_definition`, and the
+    # live `(((F)))` token is claimed by no recogniser, so it is refused --
+    # pinned by `_accounting_self_test`'s row 2, not by this table.
     ("three levels of wrapping parentheses are NOT supported -- fails "
      "closed (none), which is safe for a single definition",
      "static bool (((F)))(void)\n{\n}\n", "none"),
 ]
+
+
+def _account(src, name="F"):
+    """-> (occurrences or None, problems), `AmbiguousDefinition` folded in."""
+    try:
+        return classify_occurrences(src, name), account_occurrences(src, name)
+    except AmbiguousDefinition as exc:
+        return None, ["AmbiguousDefinition: %s" % exc]
+
+
+def _kinds(occurrences):
+    if occurrences is None:
+        return None
+    return [(o.kind, o.line) for o in occurrences]
+
+
+# The real files every caller accounts, and the names each accounts. Read
+# only if present (this module's self-test must not need the repo root);
+# no COUNTS are pinned -- a new, ordinary call site is not a failure -- only
+# that everything there is explained, and that there is something to explain.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REAL_CONTROL = (
+    ("firmware/src/services/SCPI/SCPIStorageSD.c",
+     ("SD_ArmOrRefuseWithCleanup", "SD_ArmOrRefuse", "SD_ClaimOrRefuse",
+      "SCPI_StorageSDFormat", "sd_card_manager_SetFormatPending")),
+    ("firmware/src/services/SCPI/SCPIInterface.c",
+     ("SCPI_StartStreamingClaimed",
+      "sd_card_manager_UpdateSettingsForStreamingLog",
+      "sd_card_manager_TryClaim")),
+)
+
+# Shared prologue: F defined at lines 1-4, a function g opening at 5-6, so
+# the statement under test is always PHYSICAL line 7.
+_F_THEN_G = "static bool F(int x)\n{\n    return x;\n}\nvoid g(void)\n{\n"
+
+
+def _accounting_self_test():
+    """Rows for occurrence accounting. -> ([failure, ...], checks run)."""
+    bad = []
+    ran = [0]
+
+    def expect(why, cond):
+        ran[0] += 1
+        if not cond:
+            bad.append(why)
+
+    # ---- splice(): the phase-2 contract the rest stands on ----------------
+    src = "a\\\nb \\\\\nc\\ \t\nd"
+    joined, omap = splice(src)
+    expect("splice() joined %r, expected 'ab \\\\cd' (ISO splice, one "
+           "backslash left of a doubled pair, GCC's backslash-SPACE form)"
+           % joined, joined == "ab \\cd")
+    expect("splice()'s map must have len(joined)+1 entries, the last being "
+           "len(src)", len(omap) == len(joined) + 1 and omap[-1] == len(src))
+    expect("splice()'s map must point each kept character at itself",
+           all(src[omap[j]] == joined[j] for j in range(len(joined))))
+
+    # ---- 1. the live hole: #if 0 original + DOUBLE-attribute replacement --
+    two_attr = ("#if 0\nstatic bool F(void)\n{\n    return 0;\n}\n#endif\n"
+                "static bool __attribute__((noinline)) __attribute__((unused)) "
+                "F(void)\n{\n    return 1;\n}\n")
+    try:
+        fooled = one_definition(two_attr, "F") is not None
+    except AmbiguousDefinition:
+        fooled = False
+    expect("VACUITY: the definition matcher ALONE must still read the "
+           "double-attribute pair as one (dead) definition -- otherwise the "
+           "next row proves nothing about accounting", fooled)
+    occs, probs = _account(two_attr)
+    expect("an #if 0 original plus a live DOUBLE-__attribute__ replacement "
+           "must never account clean; got %r" % probs, probs != [])
+    expect("...and the refusal must point at the LIVE copy's physical line "
+           "7; got %r" % probs, any("line 7" in p for p in probs))
+
+    # ---- 2. #if 0 original + TRIPLE-parenthesized replacement --------------
+    three = ("#if 0\nstatic bool F(void)\n{\n    return 0;\n}\n#endif\n"
+             "static bool (((F)))(void)\n{\n    return 1;\n}\n")
+    occs, probs = _account(three)
+    expect("an #if 0 original plus a live (((F))) replacement must never "
+           "account clean; got %r" % probs, probs != [])
+
+    # ---- 3. a parenthesized callee IS a call ------------------------------
+    occs, probs = _account(_F_THEN_G + "    (F)(1);\n    if (((F))(2)) {\n"
+                           "    }\n}\n")
+    expect("(F)(1) and ((F))(2) inside g() are calls, attributed to g; got "
+           "%r / %r" % (_kinds(occs), probs),
+           _kinds(occs) == [("definition", 1), ("call", 7), ("call", 8)]
+           and all(o.function == "g" for o in occs[1:]) and probs == [])
+
+    # ---- 4. an alias fails closed, at file scope or inside a body ---------
+    for label, src in (
+            ("at file scope", "static bool F(int x)\n{\n    return x;\n}\n"
+             "#define ALIAS F\nvoid g(void)\n{\n    ALIAS(1);\n}\n"),
+            ("inside a body", _F_THEN_G + "#define ALIAS F\n    ALIAS(1);\n}\n"),
+    ):
+        occs, probs = _account(src)
+        expect("`#define ALIAS F` %s must leave F's definition classified and "
+               "the alias line UNCLASSIFIED; got %r" % (label, _kinds(occs)),
+               _kinds(occs) is not None and _kinds(occs)[0] == ("definition", 1)
+               and [k for k, _ in _kinds(occs)[1:]] == ["unclassified"]
+               and any("preprocessor directive" in p for p in probs))
+    # The row the directive check is the ONLY defence for: a macro whose
+    # body CALLS F, defined inside a function. Call-shaped, inside a body --
+    # without the check it is one "call", however many times it expands.
+    occs, probs = _account(_F_THEN_G + "#define ARM() F(1)\n    ARM();\n"
+                           "    ARM();\n}\n")
+    expect("a macro BODY calling F is unclassified, never one call standing "
+           "for every expansion; got %r" % _kinds(occs),
+           _kinds(occs) == [("definition", 1), ("unclassified", 7)])
+
+    # ---- 5. references that are not calls fail closed ---------------------
+    for label, stmt in (("a bare reference", "p = F;"),
+                        ("an address-of", "p = &F;"),
+                        ("a bare argument", "foo(F);"),
+                        ("a call through a dereference", "(*F)(1);"),
+                        ("sizeof of the name", "n = sizeof F;"),
+                        ("a block-scope declaration", "extern bool F(int x);")):
+        occs, probs = _account(_F_THEN_G + "    %s\n}\n" % stmt)
+        expect("%s (`%s`) must be UNCLASSIFIED at line 7; got %r"
+               % (label, stmt, _kinds(occs)),
+               _kinds(occs) == [("definition", 1), ("unclassified", 7)]
+               and len(probs) == 1 and "line 7" in probs[0])
+
+    # A call-shaped occurrence with no enclosing function is not auto-claimed.
+    occs, probs = _account("static bool F(int x)\n{\n    return x;\n}\n"
+                           "static int v = F(1);\n")
+    expect("a call-shaped occurrence at FILE scope must be unclassified; got "
+           "%r" % _kinds(occs),
+           _kinds(occs) == [("definition", 1), ("unclassified", 5)]
+           and any("no function body" in p for p in probs))
+
+    # ...and the statement keywords that may precede a real call do not make
+    # it a declaration.
+    occs, probs = _account(_F_THEN_G.replace("void g(void)", "bool g(int y)")
+                           + "    if (y)\n        return F(1);\n    else\n"
+                           "        F(2);\n    do F(3); while (0);\n"
+                           "    return (F)(4);\n}\n")
+    expect("`return F()`, `else F()`, `do F()` and `return (F)()` are calls; "
+           "got %r / %r" % (_kinds(occs), probs),
+           _kinds(occs) == [("definition", 1), ("call", 8), ("call", 10),
+                            ("call", 11), ("call", 12)] and probs == [])
+
+    # A file-scope prototype is a prototype.
+    occs, probs = _account("static bool F(int x);\n"
+                           "static bool F(int x)\n{\n    return x;\n}\n")
+    expect("a prototype plus its definition account clean; got %r"
+           % _kinds(occs),
+           _kinds(occs) == [("prototype", 1), ("definition", 2)]
+           and probs == [])
+
+    # `$` is an identifier character to GCC: `my$F(1)` calls `my$F`, and
+    # `F$x` is not F either. Neither is an occurrence of F.
+    occs, probs = _account(_F_THEN_G + "    my$F(1);\n    p = F$x;\n}\n")
+    expect("`my$F` and `F$x` are other identifiers to GCC, not occurrences "
+           "of F; got %r" % _kinds(occs),
+           _kinds(occs) == [("definition", 1)] and probs == [])
+
+    # ---- 6. comments and literals are not occurrences at all --------------
+    occs, probs = _account(_F_THEN_G + "    /* F(1); */\n    // F(2);\n"
+                           "    log(\"F(3)\");\n    c = 'F';\n}\n")
+    expect("F inside a comment, a string or a char literal is no occurrence; "
+           "got %r" % _kinds(occs),
+           _kinds(occs) == [("definition", 1)] and probs == [])
+
+    # ---- 7. physical lines, across and inside a splice --------------------
+    occs, probs = _account(_F_THEN_G + "    int a = 1 + \\\n        2;\n"
+                           "    p = F;\n}\n")
+    expect("an occurrence AFTER a spliced line is reported at its PHYSICAL "
+           "line 9, not the joined line 8; got %r" % probs,
+           _kinds(occs) == [("definition", 1), ("unclassified", 9)]
+           and "line 9" in probs[0])
+    occs, probs = _account("static bool FOO(int x)\n{\n    return x;\n}\n"
+                           "void g(void)\n{\n    p = FO\\\nO;\n    FO\\\nO(1);\n"
+                           "}\n", "FOO")
+    expect("an identifier SPLIT by a backslash-newline is one token to the "
+           "compiler -- a bare reference at physical line 7, a call at 9; "
+           "got %r" % _kinds(occs),
+           _kinds(occs) == [("definition", 1), ("unclassified", 7),
+                            ("call", 9)])
+
+    # ---- splice-created comments (#1066) and GCC's backslash-SPACE --------
+    created = _F_THEN_G + "    /\\\n/ F(1);\n}\n"
+    expect("VACUITY: the AS-WRITTEN mask must still show the call a splice "
+           "comments out -- that is the #1066 gap this view closes",
+           "F(1)" in mask(created))
+    occs, probs = _account(created)
+    expect("a `//` CREATED by a splice swallows the call in the compiler's "
+           "view; got %r" % _kinds(occs),
+           _kinds(occs) == [("definition", 1)] and probs == [])
+    occs, probs = _account(_F_THEN_G + "    // why \\ \n    F(1);\n}\n")
+    expect("GCC joins backslash-SPACE-newline too, so the `//` comment "
+           "swallows the next line; got %r" % _kinds(occs),
+           _kinds(occs) == [("definition", 1)] and probs == [])
+
+    # ...and the dead-copy shape that ONLY the two-view comparison catches:
+    # as written, the one definition is the copy a splice-created comment
+    # disables; the live copy's declarator is split, so as written it is no
+    # definition at all. Every occurrence in the compiler's view is claimed.
+    dead_copy = ("/\\\n/ old: \\\nstatic bool F(void)\n{\n    return 0;\n}\n"
+                 "static bool \\\nF(void)\n{\n    return 1;\n}\n")
+    as_written = one_definition(dead_copy, "F")
+    expect("VACUITY: as written, one_definition must answer the DEAD copy "
+           "(line 3) -- otherwise this row is not the hole",
+           as_written is not None
+           and dead_copy.count("\n", 0, as_written.start()) + 1 == 3)
+    occs, probs = _account(dead_copy)
+    expect("the as-written and compiler views disagreeing about WHICH text "
+           "defines F must be reported; got %r" % probs,
+           _kinds(occs) == [("definition", 8)] and len(probs) == 1
+           and "line 3" in probs[0] and "line 8" in probs[0])
+
+    # ---- the multiply-claimed guard is live, not vacuous ------------------
+    occs, probs = _account("void g(void)\n{\n    else F(x) {\n    }\n}\n")
+    expect("an occurrence the definition AND call recognisers both claim is "
+           "reported MULTIPLY CLAIMED, never given to one; got %r / %r"
+           % (_kinds(occs), probs),
+           _kinds(occs) == [("multiply-claimed", 3)]
+           and any("MULTIPLY CLAIMED" in p for p in probs))
+
+    # Two definitions still RAISE, as `one_definition` always has.
+    occs, probs = _account("#if 0\nstatic bool F(void)\n{\n}\n#endif\n"
+                           "static bool F(void)\n{\n}\n")
+    expect("two definitions must still raise AmbiguousDefinition",
+           occs is None and "refusing to choose" in probs[0])
+
+    # ---- 8. control: the real files are explained in full -----------------
+    for rel, names in _REAL_CONTROL:
+        path = os.path.join(_HERE, os.pardir, os.pardir, *rel.split("/"))
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+        for name in names:
+            occs, probs = _account(text, name)
+            expect("CONTROL: %s in %s must account clean; got %r"
+                   % (name, rel, probs), probs == [])
+            expect("CONTROL: %s in %s has no occurrences at all -- the control "
+                   "is vacuous" % (name, rel), bool(occs))
+    return bad, ran[0]
 
 
 def self_test():
@@ -480,10 +1222,15 @@ def self_test():
                       "F") is None:
         bad.append("the matcher found nothing in an ordinary definition")
 
+    accounting_bad, accounting_ran = _accounting_self_test()
+    bad.extend(accounting_bad)
+
     for b in bad:
         print("  - %s" % b)
-    print("cdef self-test: %s (%d failure(s))"
-          % ("FAILED" if bad else "all cases pass", len(bad)))
+    print("cdef self-test: %s (%d failure(s); %d definition-matcher rows, "
+          "%d occurrence-accounting checks, plus the scanner and mask checks)"
+          % ("FAILED" if bad else "all cases pass", len(bad), len(_CASES),
+             accounting_ran))
     return 1 if bad else 0
 
 
