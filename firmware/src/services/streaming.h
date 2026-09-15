@@ -220,9 +220,15 @@ static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2us
          * #529/#831 transport single of 11000) -- so raising this branch would
          * lift JSON's enforced cap on the strength of a CSV measurement, and
          * JSON has never been characterised at precision 4. Its own precision-4
-         * basis is #529 follow-up work. CsvCompact IS included: it emits
-         * strictly fewer bytes per row than CSV (#619), so a CSV-fitted cap is
-         * never-over for it. */
+         * basis is #529 follow-up work, tracked as #920: the decisive single-cell
+         * check (ch4, OBDiag off, precision 4, 600 s at-cap) plus the 1/5/10/16ch
+         * grid live in test_529_json_transport_cap.py. If that run finds a
+         * dropping cell, THIS branch (isJson == 0u guard above) is where a
+         * JSON-specific additive term would go -- do not touch this file until
+         * that measurement exists; a guessed coefficient here already dropped
+         * data once at its own advertised cap (#714/#715). CsvCompact IS
+         * included: it emits strictly fewer bytes per row than CSV (#619), so a
+         * CSV-fitted cap is never-over for it. */
         /* PRECISION-GATED. The basis is precision 4, and precision changes how
          * much work csv_encoder does per value, so the raise may only be
          * applied where the encoder is no more expensive than it was when
@@ -446,11 +452,12 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
                  * x0.80 envelope): 1xT1 gives 800e6/(71000+4550) = 10589 Hz,
                  * below this 11000, so the additive binds and the single never
                  * applies. Confirmed on the bench -- the device reports exactly
-                 * 10589 for that config. It is set to the measured-safe
+                 * 10589 for that config (re-verified against this arithmetic
+                 * 2026-09-15, #920). It is set to the measured-safe
                  * transport value anyway (<= the 12000 ceiling) so it is
                  * correct if a JSON-specific ADDITIVE fit later lifts that
-                 * bound; characterising the additive for JSON is the follow-up
-                 * that would unlock the remaining 1-channel headroom.
+                 * bound; characterising the additive for JSON is the #920
+                 * follow-up that would unlock the remaining 1-channel headroom.
                  *
                  * NQ2/NQ3 are NOT covered: their wider ADC codes cost more
                  * bytes/sample, so an NQ1-fitted Hz cap would over-cap them.
