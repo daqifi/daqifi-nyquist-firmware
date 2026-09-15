@@ -7999,8 +7999,24 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
                 break;
             }
         }
-        double moduleRange = (modIdx < rt->AInModules.Size)
-            ? rt->AInModules.Data[modIdx].Range : 0.0;
+        /* #1086 (the Range half of #904/#1054): Range is a 64-bit double
+         * -- two 32-bit loads on PIC32MZ (CLAUDE.md atomicity rules) -- and
+         * a CONF:ADC:RANGe setter on the OTHER SCPI transport can land
+         * between them. That setter's store is atomic (#1086), which does
+         * not stop a reader straddling a completed store, so copy it under a
+         * minimal critical section and hand EmitAinChannelJson the local.
+         *
+         * Deliberately NOT folded into EmitAinChannelJson's CalM/CalB
+         * section (#1054): that one lives in the callee, and a module's Range
+         * and a channel's cal pair have independent writers, so nothing
+         * needs them read at the same instant. This loop runs once per
+         * public channel on a query path, not per sample. */
+        double moduleRange = 0.0;
+        if (modIdx < rt->AInModules.Size) {
+            taskENTER_CRITICAL();
+            moduleRange = rt->AInModules.Data[modIdx].Range;
+            taskEXIT_CRITICAL();
+        }
 
         if (!firstEntry) scpi_printf(context, ",");
         firstEntry = false;
