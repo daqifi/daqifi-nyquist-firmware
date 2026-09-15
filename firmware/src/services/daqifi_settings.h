@@ -224,6 +224,23 @@ extern "C" {
     bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
 
     /**
+     * #908: Records that boot found the factory ADC-calibration NVM page
+     * blank or invalid (daqifi_settings_LoadADCCalSettings failed), so the
+     * runtime CalM/CalB were left at their identity defaults. Called only
+     * from boot. Not persisted: re-derived every boot from the load result,
+     * so it clears on the first boot after a successful CONF:ADC:SAVEFcal.
+     */
+    void daqifi_settings_MarkFactoryCalMissing(void);
+
+    /**
+     * #908: True when boot found no valid factory ADC calibration (see
+     * daqifi_settings_MarkFactoryCalMissing). Reported, inverted, as
+     * identity.cal.factory_present in CONF:CAP:JSON?.
+     * @return true if the factory calibration is missing, false otherwise
+     */
+    bool daqifi_settings_FactoryCalIsMissing(void);
+
+    /**
      * #14: Sets the runtime device friendly name cache. The value is
      * persisted to NVM only on the next TopLevelSettings save (which
      * captures this cache automatically). Truncated to fit

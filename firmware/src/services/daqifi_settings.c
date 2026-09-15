@@ -17,6 +17,13 @@ uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16
  * readers always see a valid NUL-terminated string. */
 static char gFriendlyDeviceName[FRIENDLY_DEVICE_NAME_SIZE] = {0};
 
+/* #908: set at boot when the factory-cal NVM page is blank or fails its
+ * checksum, so the runtime CalM/CalB stay at their identity defaults. Read by
+ * the CONF:CAP:JSON? emitter (identity.cal). Never persisted: re-derived from
+ * the load result every boot. Written only from boot (app_SystemInit, task
+ * context), before the SCPI transport tasks that read it are created. */
+static bool gFactoryCalMissing = false;
+
 /* #625: the friendly name is emitted UNESCAPED into the JSON info message
  * ("friendlyName":"%s") and copied into the PB info message, so it must be
  * printable ASCII with no JSON-structural characters. Reject control chars
@@ -59,6 +66,14 @@ const char* daqifi_settings_GetFriendlyName(void) {
 
 void daqifi_settings_SeedFriendlyName(const char* name) {
     daqifi_settings_SetFriendlyName(name);
+}
+
+void daqifi_settings_MarkFactoryCalMissing(void) {
+    gFactoryCalMissing = true;
+}
+
+bool daqifi_settings_FactoryCalIsMissing(void) {
+    return gFactoryCalMissing;
 }
 
 bool daqifi_settings_LoadFromNvm(DaqifiSettingsType type, DaqifiSettings* settings) {
