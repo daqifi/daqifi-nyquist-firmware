@@ -129,7 +129,8 @@ typedef struct sPowerData{
      * VBUS session?  Set when we issue the auto DO_POWER_UP request,
      * cleared when VBUS goes away.  Prevents re-promote after the user
      * manually returns to STANDBY (POW:STAT 0) while USB stays plugged
-     * in. */
+     * in.  Also set by a #1071 reboot restore, which powers the board up
+     * on its own without going through the auto-promote. */
     bool autoPromotedThisVbusSession;
 
     tBQ24297Data BQ24297Data;
@@ -172,13 +173,16 @@ void Power_USB_Sleep_Update( bool sleep );
 void Power_Write( void );
 
 /*! #1071: arm the power-state restore for the boot that follows an imminent
- * RCON_SoftwareReset() (SYSTem:REboot / *RST).
+ * RCON_SoftwareReset(). Called for SYSTem:REboot only, not for *RST.
  *
- * Records the current powerState in a retained-RAM handoff that the next
- * Power_Init() consumes exactly once, re-requesting that state through the
- * normal STANDBY power-up path. A boot that did not follow an armed reset
- * (power-on, brown-out, MCLR, PICkit, bootloader update) finds no valid
- * handoff and comes up in STANDBY as it always has.
+ * Records where the board is headed (a pending power request if there is
+ * one, otherwise the current powerState) in a retained-RAM handoff that the
+ * next Power_Init() consumes exactly once, replaying the power-up through the
+ * normal STANDBY path. A board headed to STANDBY, including one whose
+ * DO_POWER_DOWN the power task has not acted on yet, leaves the handoff
+ * unarmed. A power-on, brown-out, MCLR or PICkit reset finds no valid handoff
+ * and comes up in STANDBY as it always has. A firmware update through the USB
+ * bootloader does not clear an armed handoff (see PowerApi.c).
  */
 void Power_ArmRebootRestore( void );
 

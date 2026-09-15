@@ -526,12 +526,21 @@ static scpi_result_t SCPI_Reset(scpi_t * context) {
         }
     }
 
-    // #1071: have the next boot restore the current power state instead of
-    // coming back in STANDBY with WiFi and the front end unpowered. Armed
-    // ahead of the 100 ms settle below so the store has long reached SRAM
-    // when RCON_SoftwareReset() fires, the same store-then-delay order
+    // #1071: have the next boot restore the power state instead of coming
+    // back in STANDBY with WiFi and the front end unpowered, for
+    // SYSTem:REboot only. *RST shares this callback but keeps the boot it
+    // always had: IEEE 488.2 defines *RST as a known state independent of the
+    // device's past-use history, and #1071 asks only for SYSTem:REboot.
+    // SCPI_IsCmd is libscpi's test for a callback bound to several patterns.
+    // It checks the table entry the parser matched, so the client's spelling
+    // does not matter, and if the pattern ever stopped matching, the reboot
+    // would fail safe to the pre-#1071 STANDBY boot. Armed ahead of the 100 ms
+    // settle below so the store has long reached SRAM when
+    // RCON_SoftwareReset() fires, the same store-then-delay order
     // SCPI_ForceBootloader uses for force_bootloader_flag.
-    Power_ArmRebootRestore();
+    if (SCPI_IsCmd(context, "SYSTem:REboot")) {
+        Power_ArmRebootRestore();
+    }
 
     // Allow time for message transmission and any pending operations
     vTaskDelay(100 / portTICK_PERIOD_MS);

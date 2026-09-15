@@ -80,12 +80,24 @@ static tPowerData *pData;
 //! Pointer to a data structure with all the write variable data fields
 static tPowerWriteVars *pWriteVariables;
 
-/* #1071: power-state handoff across SYSTem:REboot and *RST.
+/* #1071: power-state handoff across SYSTem:REboot.
  *
- * Both commands end in RCON_SoftwareReset() (SCPI_Reset), and Power_Init()
+ * SYSTem:REboot ends in RCON_SoftwareReset() (SCPI_Reset), and Power_Init()
  * wipes tPowerData (#409), so a reboot used to come back in STANDBY with WiFi
  * and the front end unpowered. SCPI_Reset() now calls Power_ArmRebootRestore()
  * just before the reset, and the next Power_Init() consumes the handoff once.
+ * *RST shares SCPI_Reset but does not arm the handoff (see SCPI_Reset).
+ *
+ * Which boots see it. Every boot consumes and clears the block, so a boot that
+ * does not directly follow an armed reset (power-on, brown-out, MCLR, a PICkit
+ * reflash) finds no valid handoff and comes up in STANDBY. A firmware update
+ * through the USB bootloader is NOT one of those cases. The bootloader never
+ * writes the two trusted words (see Placement), so when the bootloader entered
+ * from an armed SYSTem:REboot stays for an update instead of jumping straight
+ * to the application, the newly loaded application's first boot consumes the
+ * handoff and restores the pre-reboot power state. That is benign, since the
+ * replay is one request that the state machine gates like any other, but that
+ * boot is a restore, not a STANDBY boot.
  *
  * The handoff is armed explicitly rather than inferred from the RCON reset
  * cause. On a bootloader-linked image the USB bootloader runs first on every
@@ -111,50 +123,85 @@ static tPowerWriteVars *pWriteVariables;
 #define POWER_REBOOT_HANDOFF_ADDR        (FORCE_BOOTLOADER_FLAG_ADDR - 16)
 #define POWER_REBOOT_HANDOFF_MAGIC       0x1071B007u
 #define POWER_REBOOT_HANDOFF_MAGIC_WORD  2u  /* words 0-1 are padding, never read */
-#define POWER_REBOOT_HANDOFF_STATE_WORD  3u  /* state in 15:0, complement in 31:16 */
+#define POWER_REBOOT_HANDOFF_REQ_WORD    3u  /* request in 15:0, complement in 31:16 */
 
 static volatile uint32_t sRebootHandoff[4]
     __attribute__((persistent, coherent, address(POWER_REBOOT_HANDOFF_ADDR)));
 
 void Power_ArmRebootRestore(void) {
-    /* powerState is written only by app_PowerAndUITask, and this is one
-     * aligned 32-bit load, atomic on PIC32MZ. A transition landing between this
-     * read and the reset makes the next boot restore the state before it,
-     * which the state machine then re-evaluates like any request. The state
-     * word is stored before the magic, so the magic never vouches for a stale
-     * state word. */
-    const uint32_t state = (uint32_t)pData->powerState & 0xFFFFu;
-    sRebootHandoff[POWER_REBOOT_HANDOFF_STATE_WORD] =
-            state | ((~state & 0xFFFFu) << 16);
+    /* Replay where the board is HEADED, not only where it is: a request the
+     * power task has not acted on yet wins over powerState. SYSTem:POWer:STATe
+     * 0 only posts DO_POWER_DOWN, and Power_UpdateState() acts on it at its
+     * next pass (Power_Tasks() gates it at 1000 ms), so a power-down sent just
+     * before SYSTem:REboot can still read POWERED_UP here. Replaying that
+     * would bring back up a unit the user had just switched off.
+     *
+     * The request is read before powerState. Every handler that consumes a
+     * request writes powerState first and clears the request after, so a
+     * NO_CHANGE read here means powerState already reflects it. Each read is
+     * one aligned 32-bit load, atomic on PIC32MZ. A request posted after these
+     * reads, inside the ~100 ms before the reset, is not seen, and the next
+     * boot replays the state before it, which the state machine re-evaluates
+     * like any request. */
+    const POWER_STATE_REQUEST pending = pData->requestedPowerState;
+    POWER_STATE_REQUEST replay = NO_CHANGE;   /* headed to STANDBY: none */
+
+    if (pending == DO_POWER_UP || pending == DO_POWER_UP_EXT_DOWN) {
+        replay = pending;
+    } else if (pending == NO_CHANGE) {
+        const POWER_STATE now = pData->powerState;
+        if (now == POWERED_UP) {
+            replay = DO_POWER_UP;
+        } else if (now == POWERED_UP_EXT_DOWN) {
+            replay = DO_POWER_UP_EXT_DOWN;
+        }
+    }
+    /* else DO_POWER_DOWN: headed to STANDBY, nothing to replay. */
+
+    if (replay == NO_CHANGE) {
+        /* Leave the block exactly as Power_ConsumeRebootRestore() does, so
+         * the next boot is the plain STANDBY boot every reset had before
+         * #1071. Magic first, so it never vouches for the request word. */
+        sRebootHandoff[POWER_REBOOT_HANDOFF_MAGIC_WORD] = 0;
+        sRebootHandoff[POWER_REBOOT_HANDOFF_REQ_WORD] = 0;
+        return;
+    }
+    /* Request word before the magic, so the magic never vouches for a stale
+     * request word. */
+    const uint32_t req = (uint32_t)replay & 0xFFFFu;
+    sRebootHandoff[POWER_REBOOT_HANDOFF_REQ_WORD] =
+            req | ((~req & 0xFFFFu) << 16);
     sRebootHandoff[POWER_REBOOT_HANDOFF_MAGIC_WORD] = POWER_REBOOT_HANDOFF_MAGIC;
 }
 
 /* Runs on every boot and always disarms the handoff, so it can only ever apply
- * to the boot straight after an armed reset. The restore is a request, handled
+ * to the boot straight after an armed reset. The replay is a request, handled
  * by the STANDBY state machine exactly like SYSTem:POWer:STATe: Power_Up()
  * sequences the rails and Power_HasSufficientPower() still gates it. */
 static void Power_ConsumeRebootRestore(void) {
     const uint32_t magic = sRebootHandoff[POWER_REBOOT_HANDOFF_MAGIC_WORD];
-    const uint32_t word = sRebootHandoff[POWER_REBOOT_HANDOFF_STATE_WORD];
+    const uint32_t word = sRebootHandoff[POWER_REBOOT_HANDOFF_REQ_WORD];
 
     sRebootHandoff[POWER_REBOOT_HANDOFF_MAGIC_WORD] = 0;
-    sRebootHandoff[POWER_REBOOT_HANDOFF_STATE_WORD] = 0;
+    sRebootHandoff[POWER_REBOOT_HANDOFF_REQ_WORD] = 0;
 
     if (magic != POWER_REBOOT_HANDOFF_MAGIC ||
         (word >> 16) != (~word & 0xFFFFu)) {
-        return;  /* not armed: power-on, brown-out, MCLR, PICkit, bootloader */
+        return;  /* not armed (see "Which boots see it" above) */
     }
-    switch ((POWER_STATE)(word & 0xFFFFu)) {
-        case POWERED_UP:
-            pData->requestedPowerState = DO_POWER_UP;
-            break;
-        case POWERED_UP_EXT_DOWN:
-            pData->requestedPowerState = DO_POWER_UP_EXT_DOWN;
-            break;
-        default:
-            /* STANDBY is already the boot state; anything else is invalid. */
-            break;
+    const POWER_STATE_REQUEST replay = (POWER_STATE_REQUEST)(word & 0xFFFFu);
+    if (replay != DO_POWER_UP && replay != DO_POWER_UP_EXT_DOWN) {
+        return;  /* only a power-up is ever armed; anything else is invalid */
     }
+    pData->requestedPowerState = replay;
+    /* #454: latch the power-up as the AUTOOn promote does when it issues its
+     * own DO_POWER_UP. The replay bypasses that path, because
+     * Power_HandleStandbyState() only promotes on NO_CHANGE. Unlatched, the
+     * first manual power-off after the reboot would be undone with AUTOOn on
+     * and VBUS present: a button long-press posts DO_POWER_DOWN without
+     * setting the latch (Button_Tasks, UI.c), and the STANDBY pass that
+     * executes it would promote the board straight back up. */
+    pData->autoPromotedThisVbusSession = true;
 }
 
 ///*! 
