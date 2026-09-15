@@ -114,8 +114,21 @@
 static char gIdnModel[8]   = "Nq?";  // Filled from BoardConfig.BoardVariant
 static char gIdnSerial[17] = "0";    // 16 hex digits of uint64 + null
 
-// Declare force bootloader RAM flag location
-volatile uint32_t force_bootloader_flag __attribute__((persistent, coherent, address(FORCE_BOOTLOADER_FLAG_ADDR)));
+// Declare force bootloader RAM flag location. Reserves the WHOLE 16-byte
+// D-cache line for itself, not just its own 4 bytes: PIC32MZ's D-cache is
+// write-back and not hardware-coherent, so an ordinary cached (KSEG0)
+// global sharing this line (as gLogLevels formerly did, at
+// FORCE_BOOTLOADER_FLAG_ADDR + 4) could be written after the flag, and a
+// later write-back of that dirty line would silently restore the flag's
+// old value over the magic SCPI_ForceBootloader() just wrote -- turning a
+// bootloader-entry request back into a normal boot (#1083). Only word 0 is
+// read or written; words 1-3 are padding that must never be touched, so
+// nothing else can ever be link-placed into this line -- the same
+// construct as PowerApi.c's reboot-handoff block, one cache line below at
+// POWER_REBOOT_HANDOFF_ADDR.
+static volatile uint32_t sForceBootloaderLine[4]
+    __attribute__((persistent, coherent, address(FORCE_BOOTLOADER_FLAG_ADDR)));
+#define force_bootloader_flag sForceBootloaderLine[0]
 
 const NanopbFlagsArray fields_info = {
     .Size = 62,

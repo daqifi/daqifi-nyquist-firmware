@@ -1,0 +1,51 @@
+name: force-bootloader-cacheline
+
+# #1083: force_bootloader_flag (SCPIInterface.c) must reserve the WHOLE
+# 16-byte PIC32MZ D-cache line it lives in, not just its own 4 bytes.
+# PIC32MZ's D-cache is write-back and not hardware-coherent, so a cached
+# (KSEG0) global sharing that line can dirty it, and a later write-back can
+# replay the flag's old value over the magic SCPI_ForceBootloader() wrote --
+# silently turning a bootloader-entry request back into a normal boot. That
+# happened by accident once already: the plain global gLogLevels used to
+# land in the remaining 12 bytes of this exact line (see the linker-map
+# evidence on PR #1083).
+#
+# No bench run catches a regression here: SYSTem:FORceBoot still writes the
+# flag and a manual PICkit-flash-then-reboot test will not hit the narrow
+# eviction-timing window that makes the write-back happen before the reset.
+# So the property is checked here, at its source, for no bench time -- same
+# rationale as scpi-claim-path.yml.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'firmware/src/services/SCPI/SCPIInterface.c'
+      - 'tools/lint/force_bootloader_cacheline.py'
+      - '.github/workflows/force-bootloader-cacheline.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'firmware/src/services/SCPI/SCPIInterface.c'
+      - 'tools/lint/force_bootloader_cacheline.py'
+      - '.github/workflows/force-bootloader-cacheline.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cacheline:
+    name: force_bootloader_flag reserves its whole D-cache line
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Runs first and separately: the checker's own logic is what decides
+      # whether the gate below means anything, and a checker that examines
+      # nothing reports a pass.
+      - name: Self-test the checker
+        run: python3 tools/lint/force_bootloader_cacheline.py --self-test
+
+      - name: Check the cache-line reservation
+        run: python3 tools/lint/force_bootloader_cacheline.py
