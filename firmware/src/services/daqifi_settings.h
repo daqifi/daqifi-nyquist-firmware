@@ -224,10 +224,14 @@ extern "C" {
     bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
 
     /**
-     * #908: Records that boot found the factory ADC-calibration NVM page
-     * blank or invalid (daqifi_settings_LoadADCCalSettings failed), so the
-     * runtime CalM/CalB were left at their identity defaults. Called only
-     * from boot.
+     * #908: Records that the factory ADC-calibration NVM page does not
+     * hold a valid calibration. Called from boot when the factory-cal
+     * load fails (daqifi_settings_LoadADCCalSettings), leaving the
+     * runtime CalM/CalB at their identity defaults; also called from
+     * SCPIADC.c's CalSaveCommon when a CONF:ADC:SAVEFcal FAILS, since
+     * daqifi_settings_SaveToNvm erases the target page before writing its
+     * replacement record, so a failed write can leave the page erased or
+     * partially written rather than restoring its prior state.
      */
     void daqifi_settings_MarkFactoryCalMissing(void);
 
