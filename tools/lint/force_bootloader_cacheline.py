@@ -109,8 +109,11 @@ def check(source_text):
 
     problems = []
     attrs = m.group("attrs")
+    # Token match, not substring: a hypothetical attribute spelled
+    # "non_coherent" or "coherent_ish" must not satisfy `"coherent" in attrs`.
+    attr_tokens = [tok.strip() for tok in attrs.split(",")]
     for required in ("persistent", "coherent"):
-        if required not in attrs:
+        if required not in attr_tokens:
             problems.append(
                 "%s is missing '%s' in its attribute list (%r) -- without "
                 "it the object is not the uncached, crt0-untouched "
@@ -120,12 +123,18 @@ def check(source_text):
     type_size = _TYPE_SIZES[m.group("type")]
     array_size = int(m.group("size")) if m.group("size") else 1
     total_bytes = type_size * array_size
-    if total_bytes < CACHE_LINE_BYTES:
+    # Exactly one line, not merely "at least": FORCE_BOOTLOADER_FLAG_ADDR is
+    # the last 16 bytes of physical RAM, so growing the reservation past 16
+    # bytes runs off the end of RAM rather than protecting anything further
+    # -- catch that misconfiguration here too, not only the under-reservation
+    # this checker was written for.
+    if total_bytes != CACHE_LINE_BYTES:
         problems.append(
-            "%s reserves only %d byte(s) (%s%s) at %s, not the full "
-            "%d-byte D-cache line -- a cached (KSEG0) global can link into "
-            "the remainder, and a later write-back can undo a "
-            "bootloader-entry request (#1083)"
+            "%s reserves %d byte(s) (%s%s) at %s, not exactly one %d-byte "
+            "D-cache line -- fewer bytes lets a cached (KSEG0) global link "
+            "into the remainder and a later write-back can undo a "
+            "bootloader-entry request (#1083); more bytes runs past the top "
+            "of physical RAM at this fixed address"
             % (m.group("name"), total_bytes, m.group("type"),
                ("[%d]" % array_size) if m.group("size") else "",
                ADDR_MACRO, CACHE_LINE_BYTES))
@@ -188,6 +197,16 @@ def self_test():
     )
     _ck("exactly 16 bytes passes (boundary)", check(exactly_16), [])
 
+    too_large = (
+        "volatile uint32_t sForceBootloaderLine[8] "
+        "__attribute__((persistent, coherent, "
+        "address(FORCE_BOOTLOADER_FLAG_ADDR)));\n"
+    )
+    tl_problems = check(too_large)
+    _ck("32 bytes (too large) is now flagged too", len(tl_problems), 1)
+    _ck("too-large problem says why (runs past the top of RAM)",
+        "top of physical RAM" in tl_problems[0] if tl_problems else False, True)
+
     missing_coherent = (
         "volatile uint32_t sForceBootloaderLine[4] "
         "__attribute__((persistent, address(FORCE_BOOTLOADER_FLAG_ADDR)));\n"
@@ -196,6 +215,15 @@ def self_test():
     _ck("missing 'coherent' is flagged", len(mc_problems), 1)
     _ck("missing-coherent problem names it",
         "coherent" in mc_problems[0] if mc_problems else False, True)
+
+    substring_coherent = (
+        "volatile uint32_t sForceBootloaderLine[4] "
+        "__attribute__((persistent, noncoherent, "
+        "address(FORCE_BOOTLOADER_FLAG_ADDR)));\n"
+    )
+    sc_problems = check(substring_coherent)
+    _ck("'noncoherent' does not satisfy 'coherent' by substring",
+        len(sc_problems), 1)
 
     missing_persistent = (
         "volatile uint32_t sForceBootloaderLine[4] "
