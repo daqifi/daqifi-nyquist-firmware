@@ -183,6 +183,10 @@ void Power_Write( void );
  * unarmed. A power-on, brown-out, MCLR or PICkit reset finds no valid handoff
  * and comes up in STANDBY as it always has. A firmware update through the USB
  * bootloader does not clear an armed handoff (see PowerApi.c).
+ *
+ * Call it with task switching already disabled, immediately before
+ * RCON_SoftwareReset() (SCPI_Reset holds a critical section): it takes no
+ * lock of its own and ends with a SYNC so its stores are in SRAM first.
  */
 void Power_ArmRebootRestore( void );
 

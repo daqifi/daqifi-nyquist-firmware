@@ -139,10 +139,14 @@ void Power_ArmRebootRestore(void) {
      * The request is read before powerState. Every handler that consumes a
      * request writes powerState first and clears the request after, so a
      * NO_CHANGE read here means powerState already reflects it. Each read is
-     * one aligned 32-bit load, atomic on PIC32MZ. A request posted after these
-     * reads, inside the ~100 ms before the reset, is not seen, and the next
-     * boot replays the state before it, which the state machine re-evaluates
-     * like any request. */
+     * one aligned 32-bit load, atomic on PIC32MZ.
+     *
+     * SCPI_Reset() calls this inside the critical section that ends in
+     * RCON_SoftwareReset(), after its settle delay (Qodo /agentic_review
+     * finding on PR #1081), so no task can post a request between these
+     * reads and the reset: a power-down posted at any point before the
+     * reset is seen here, not replaced on the next boot by the power-up it
+     * followed. */
     const POWER_STATE_REQUEST pending = pData->requestedPowerState;
     POWER_STATE_REQUEST replay = NO_CHANGE;   /* headed to STANDBY: none */
 
@@ -164,14 +168,21 @@ void Power_ArmRebootRestore(void) {
          * #1071. Magic first, so it never vouches for the request word. */
         sRebootHandoff[POWER_REBOOT_HANDOFF_MAGIC_WORD] = 0;
         sRebootHandoff[POWER_REBOOT_HANDOFF_REQ_WORD] = 0;
-        return;
+    } else {
+        /* Request word before the magic, so the magic never vouches for a
+         * stale request word. */
+        const uint32_t req = (uint32_t)replay & 0xFFFFu;
+        sRebootHandoff[POWER_REBOOT_HANDOFF_REQ_WORD] =
+                req | ((~req & 0xFFFFu) << 16);
+        sRebootHandoff[POWER_REBOOT_HANDOFF_MAGIC_WORD] =
+                POWER_REBOOT_HANDOFF_MAGIC;
     }
-    /* Request word before the magic, so the magic never vouches for a stale
-     * request word. */
-    const uint32_t req = (uint32_t)replay & 0xFFFFu;
-    sRebootHandoff[POWER_REBOOT_HANDOFF_REQ_WORD] =
-            req | ((~req & 0xFFFFu) << 16);
-    sRebootHandoff[POWER_REBOOT_HANDOFF_MAGIC_WORD] = POWER_REBOOT_HANDOFF_MAGIC;
+    /* The caller resets straight after this returns, with no settle delay in
+     * between. The block is coherent (uncached), so these stores bypass the
+     * D-cache, and SYNC makes the core complete them before any later load or
+     * store, the RSWRST access in RCON_SoftwareReset() that triggers the
+     * reset included. */
+    _sync();
 }
 
 /* Runs on every boot and always disarms the handoff, so it can only ever apply
