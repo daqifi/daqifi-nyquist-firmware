@@ -296,6 +296,15 @@ size_t Json_Encode(tBoardData* state,
     startIndex += objWritten;
     initialOffsetIndex = startIndex;
 
+    /* #959 (adversarial audit of #1076, round 1): read the ISR-written trigger
+     * stamp ONCE per call. Streaming_TimerHandler rewrites StreamTrigStamp on
+     * every tick (streaming.c, via BoardData_Set) and nothing masks the timer
+     * across this encode, so reading it at each use let the "di" elements'
+     * ages and the "ts" they are measured back from straddle a tick. Every
+     * field below that derives from the trigger stamp uses this copy. An
+     * aligned 32-bit load is atomic on the PIC32MZ, so the copy cannot tear. */
+    const uint32_t trigStamp = state->StreamTrigStamp;
+
     /* #959: whether this call asked for ADC data, needed BEFORE the fields
      * loop below: msg_time_stamp_tag is always first (streaming.c), so the
      * loop reaches the timestamp before analog_in_data_tag sets encodeADC.
@@ -333,7 +342,7 @@ size_t Json_Encode(tBoardData* state,
                 int written = snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
                         "\"ts\":%u,\n",
-                        state->StreamTrigStamp);
+                        trigStamp);
                 if (written < 0 || written >= (int)(buffSize - startIndex)) {
                     /* #164: this used to `return startIndex`, which emitted a
                      * bare "{\n" -- an object opened and never closed. Roll the
@@ -687,10 +696,20 @@ size_t Json_Encode(tBoardData* state,
             }
             elemRoom -= diReserve;
 
+            /* The element's "ts" is an AGE measured back from the trigger
+             * stamp. Known limitation (#959, audit of #1076): in a combined
+             * object whose ADC sample commits, the object's one "ts" is that
+             * sample's own timestamp (#959's Acceptance, #144), so the stamp
+             * these ages are measured from is not emitted, and object.ts - age
+             * is off by (ADC ts - trigger stamp) whenever the encoded ADC
+             * sample is older than the current trigger stamp (an ADC backlog).
+             * That predates #959 for json.loads() clients, which always kept
+             * the last duplicate "ts" -- the ADC sample's. A fix changes the
+             * wire format; the decision is tracked on #959 with Route 2/#238. */
             int elemWritten = snprintf(charBuffer + startIndex,
                     elemRoom,
                     "{\"ts\":%u, \"mask\":%u, \"val\":%u},",
-                    state->StreamTrigStamp - data.Timestamp,
+                    trigStamp - data.Timestamp,
                     data.Mask,
                     data.Values);
             if (elemWritten < 0 || elemWritten >= (int)elemRoom) {
@@ -1117,7 +1136,7 @@ size_t Json_Encode(tBoardData* state,
             int written = snprintf(charBuffer + startIndex,
                     buffSize - startIndex,
                     "\"ts\":%u,\n",
-                    state->StreamTrigStamp);
+                    trigStamp);
             if (written >= 0 && written < (int)(buffSize - startIndex)
                     && json_CloseObject(charBuffer, buffSize,
                             startIndex + (size_t) written,
