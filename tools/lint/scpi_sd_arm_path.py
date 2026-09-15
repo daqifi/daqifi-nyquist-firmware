@@ -1266,6 +1266,28 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context, int32_t freq)
 }
 '''
 
+def _unevaluated_claims(call):
+    """(label, statement) pairs, each putting `call` inside an operand GCC
+    never evaluates (measured: 0 calls each) and then opening the `if (0) {`
+    whose body the claim's own `{` used to open. These are the spellings the
+    #976 round-8 review found the first round-8 reader still misread: a
+    bracket or `;` on a directive line inside the operand, GCC's prefix
+    keywords ahead of a unary `-`/`+`, and digraph brackets."""
+    return (
+        ("an operand whose `)` stands on a directive line",
+         "(void)sizeof (0 +\n#define SD_RP_X )\n%s); if (0) {" % call),
+        ("an operand with a directive's `;` ahead of it",
+         "(void)sizeof\n#define SD_SEMI_X ;\n(0 + %s); if (0) {" % call),
+        ("a subscript operand whose `]` stands on a directive line",
+         "(void)sizeof context[0 +\n#define SD_RB_X ]\n%s]; if (0) {" % call),
+        ("`sizeof __extension__ -`",
+         "(void)sizeof __extension__ -%s; if (0) {" % call),
+        ("`sizeof __real__ +`", "(void)sizeof __real__ +%s; if (0) {" % call),
+        ("a digraph subscript", "(void)sizeof context<:%s:>; if (0) {" % call),
+        ("a digraph compound literal",
+         "(void)sizeof (bool<:1:>)<%%%s%%>; if (0) {" % call))
+
+
 _CHECKS = []
 
 
@@ -1942,6 +1964,73 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("a second arm between two `#if 0` blocks holding an apostrophe "
             "is SEEN, not masked away",
             any("arms 2 times" in p for p in check(apos)[0]), True)
+
+        # 23-25. #976 audit round 8: phase 2 applied TWICE. A `//` comment
+        #     ending in TWO backslashes has only the second spliced (phase 2
+        #     is one pass over the physical source), so the comment ends at
+        #     the blank line below it and the next line is code GCC builds
+        #     (measured). `compiler_text()` masked the JOINED text as if it
+        #     were raw, spliced the leftover backslash again, and swallowed
+        #     that line: a second arm, or a call-site retraction, placed
+        #     there passed clean. The Windows path is the spelling a person
+        #     writes by accident.
+        for label, comment in (("`// x \\\\`", "    // x \\\\\n"),
+                               ("`// see C:\\temp\\\\`",
+                                "    // see C:\\temp\\\\\n")):
+            hidden_arm = _GOOD.replace(
+                arm_block, arm_block + comment + "\n    if (!" + arm_call
+                + ") { return SCPI_RES_ERR; }\n", 1)
+            assert hidden_arm != _GOOD
+            _ck("a second arm after %s and a blank line is SEEN" % label,
+                any("arms 2 times" in p for p in check(hidden_arm)[0]), True)
+        hidden_retraction = _GOOD.replace(
+            fmt_refusal, fmt_refusal.replace(
+                "        return SCPI_RES_ERR;",
+                "        // x \\\\\n\n"
+                "        sd_card_manager_ClearFormatStatus();\n"
+                "        return SCPI_RES_ERR;"), 1)
+        assert hidden_retraction != _GOOD
+        _ck("a call-site retraction after `// x \\\\` and a blank line is SEEN",
+            any("at its own call site" in p
+                for p in check(hidden_retraction)[0]), True)
+        # (The audit's own spelling -- an early `return true;` there, inside
+        # the HELPER -- is not this file's to catch: it no longer reads the
+        # helper's control flow at all (see "What moved to a host test"),
+        # and a plain early return reads clean here too. The sha256 pin
+        # catches it; `hash_function.py --self-test` pins that.)
+
+        # 26-28. #976 audit round 8: the SPACe claim replaced by an
+        #     occurrence that is NOT an evaluated call -- `sizeof`'s operand
+        #     reached through `!` or through a compound literal, and a
+        #     parenthesized block-scope DECLARATOR -- each read as the claim.
+        for label, rep in (
+                ("an unevaluated `sizeof !` operand",
+                 "    (void)sizeof !SD_ClaimOrRefuse(context, \"SPACe\"); "
+                 "if (0) {"),
+                ("an unevaluated operand behind a compound literal",
+                 "    (void)sizeof((bool[]){SD_ClaimOrRefuse(context, "
+                 "\"SPACe\")}); if (0) {"),
+                ("a parenthesized block-scope declarator",
+                 "    extern bool (SD_ClaimOrRefuse(scpi_t *, const char *)); "
+                 "if (0) {")):
+            src = _GOOD.replace(
+                "    if (!SD_ClaimOrRefuse(context, \"SPACe\")) {", rep, 1)
+            assert src != _GOOD
+            _ck("the SPACe claim replaced by %s is refused" % label,
+                any(unaccounted in p for p in check(src)[0]), True)
+
+        # 29-35. #976 round-8 review: the same claim inside an unevaluated
+        #     operand the first round-8 reader still misread -- the first
+        #     two shapes are a REGRESSION it introduced (the original walk
+        #     refused them). See `_unevaluated_claims`.
+        for label, rep in _unevaluated_claims(
+                "SD_ClaimOrRefuse(context, \"SPACe\")"):
+            src = _GOOD.replace(
+                "    if (!SD_ClaimOrRefuse(context, \"SPACe\")) {",
+                "    " + rep, 1)
+            assert src != _GOOD
+            _ck("the SPACe claim inside %s is refused" % label,
+                any(unaccounted in p for p in check(src)[0]), True)
     finally:
         KNOWN_PLAIN_ARM_SITES = saved
 
@@ -2096,6 +2185,31 @@ static scpi_result_t decoy(scpi_t * c) {
     _ck("a second claim reached through a function pointer is refused",
         any("no recogniser accounts for" in p
             for p in check_stream(ptr_claim)[0]), True)
+    # ...and #976 audit round 8's three, at this site: the claim replaced by
+    # an unevaluated `sizeof` operand reached through `!` or a compound
+    # literal, or by a parenthesized block-scope declarator of it.
+    for label, rep in (
+            ("an unevaluated `sizeof !` operand",
+             "    (void)sizeof !sd_card_manager_TryClaim(); if (0) {"),
+            ("an unevaluated operand behind a compound literal",
+             "    (void)sizeof((bool[]){sd_card_manager_TryClaim()}); "
+             "if (0) {"),
+            ("a parenthesized block-scope declarator",
+             "    extern bool (sd_card_manager_TryClaim(void)); if (0) {")):
+        src = _GOOD_STREAM.replace("    if (!sd_card_manager_TryClaim()) {",
+                                   rep, 1)
+        assert src != _GOOD_STREAM
+        _ck("the streaming claim replaced by %s is refused" % label,
+            any("no recogniser accounts for" in p
+                for p in check_stream(src)[0]), True)
+    # ...and the round-8 review's seven, at this site too.
+    for label, rep in _unevaluated_claims("sd_card_manager_TryClaim()"):
+        src = _GOOD_STREAM.replace("    if (!sd_card_manager_TryClaim()) {",
+                                   "    " + rep, 1)
+        assert src != _GOOD_STREAM
+        _ck("the streaming claim inside %s is refused" % label,
+            any("no recogniser accounts for" in p
+                for p in check_stream(src)[0]), True)
 
     bad = _CHECKS.count(False)
     print("self-test: %d/%d checks passed" % (_CHECKS.count(True), len(_CHECKS)))

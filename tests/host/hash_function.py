@@ -114,8 +114,18 @@ def extract(text, signature):
     return None  # unbalanced: refuse rather than hash a prefix
 
 
-def strip_comments(src):
+def strip_comments(src, already_spliced=False):
     """Remove C comments, leaving string and char literals intact.
+
+    `already_spliced` says whether `src` has been through `cdef.splice()`,
+    exactly as for `cdef.mask()`, and it is passed to both of cdef's boundary
+    finders. `hashed_code` joins FIRST and so passes True: phase 2 has run,
+    once, and a backslash `\\\\` + newline leaves at a line's end is an
+    ordinary character, not a splice to apply again. Stripping that joined
+    text in raw mode let `// x \\\\` above a blank line swallow the line
+    after the blank -- an early `return true;` GCC builds -- with the digest
+    byte-identical to `SD_ARM_HELPER_SHA` (#976 audit round 8). The default
+    stays RAW, for which everything below is written.
 
     A `//` comment ending in a backslash-newline does not end there: C's
     translation phase 2 deletes that backslash and its newline, splicing the
@@ -142,7 +152,7 @@ def strip_comments(src):
             # quote, or at the newline that ends one never closed. Running
             # on to the next matching quote instead is how an apostrophe in
             # `#if 0` prose hid live code (#976 review).
-            end = cdef.literal_end(src, i)
+            end = cdef.literal_end(src, i, already_spliced)
             out.append(src[i:end])
             i = end
             continue
@@ -152,7 +162,7 @@ def strip_comments(src):
             out.append(" ")
             continue
         if c == "/" and i + 1 < n and src[i + 1] == "/":
-            i = line_comment_end(src, i)
+            i = line_comment_end(src, i, already_spliced)
             out.append(" ")
             continue
         out.append(c)
@@ -172,9 +182,13 @@ def hashed_code(body):
     `return true;` ahead of the arm -- was stripped as if it were comment.
     Measured against the real helper: the digest stayed byte-identical to
     `SD_ARM_HELPER_SHA`. `splice` is applied exactly once, as phase 2 is: a
-    backslash left at a line's end by a splice is not spliced again.
+    backslash left at a line's end by a splice is not spliced again -- which
+    is why `strip_comments` is told the text is `already_spliced`; without
+    that it re-applied the splice this function had just finished (#976
+    audit round 8).
     """
-    return re.sub(r"\s+", " ", strip_comments(cdef.splice(body)[0])).strip()
+    return re.sub(r"\s+", " ", strip_comments(cdef.splice(body)[0],
+                                              already_spliced=True)).strip()
 
 
 _SELF_TEST_CASES = (
@@ -243,6 +257,36 @@ _SELF_TEST_CASES = (
      "ends it, so the code after it is hashed",
      'static bool F(void)\n{\n    /* early out *\\\n/ early(); /* end */\n'
      '    return 1;\n}\n',
+     "static bool F(", "early()", None),
+    # #976 audit round 8: phase 2 applied TWICE. `hashed_code` joins splices
+    # first -- `\\` + newline leaves ONE backslash, exactly as phase 2 does --
+    # and then stripped comments from the joined text as if it were raw, so
+    # that leftover backslash was spliced again and a `//` comment ending in
+    # two backslashes swallowed the line after the blank line below it. GCC
+    # builds that line (measured); against the real helper an early
+    # `return true;` placed there left the digest byte-identical to
+    # `SD_ARM_HELPER_SHA`, while the same return inserted bare moved it. The
+    # Windows path is the spelling a person writes by accident.
+    ("a `//` comment ending in TWO backslashes ends at the blank line below "
+     "it, so the early return after that is hashed",
+     'static bool F(void)\n{\n    // x \\\\\n\n    return early();\n'
+     '    return 1;\n}\n',
+     "static bool F(", "early()", None),
+    ("...and so does one ending in a Windows path, `// see C:\\temp\\\\`",
+     'static bool F(void)\n{\n    // see C:\\temp\\\\\n\n    return early();\n'
+     '    return 1;\n}\n',
+     "static bool F(", "early()", None),
+    # The LITERAL twin. An unterminated literal ending in `\\` -- only a
+    # warning on a directive line -- ran on over the same next line, so the
+    # next quote it met was read as its end, every quote after that paired
+    # wrongly, and a `/*` inside a real string opened a "comment" that ate
+    # live code up to the `*/` inside another string (GCC calls `early()`
+    # here: measured).
+    ("an unterminated literal ending in TWO backslashes ends at its "
+     "newline, so the next line's quotes pair the way the compiler pairs "
+     "them and its code is hashed",
+     "static bool F(void)\n{\n#define Q 'x\\\\\n\n"
+     "    c = '\"'; t = \"/*\"; early(); u = \"*/\";\n    return 1;\n}\n",
      "static bool F(", "early()", None),
 )
 
