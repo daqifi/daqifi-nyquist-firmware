@@ -1306,8 +1306,17 @@ static scpi_result_t CalSaveCommon(scpi_t * context,
     }
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
-    scpi_result_t result = daqifi_settings_SaveADCCalSettings(
-            type, pRuntimeAInChannels) ? SCPI_RES_OK : SCPI_RES_ERR;
+    bool saved = daqifi_settings_SaveADCCalSettings(type, pRuntimeAInChannels);
+    /* #908: a successful SAVEFcal makes the factory slot present right now,
+     * not merely as of the last boot -- clear the flag immediately so
+     * CONF:CAP:JSON? does not keep reporting factory_present:false until the
+     * next reboot re-derives the same answer the save just established.
+     * SAVEcal (user bank) never touches this flag; it tracks the FACTORY
+     * slot only. */
+    if (saved && type == DaqifiSettings_FactAInCalParams) {
+        daqifi_settings_ClearFactoryCalMissing();
+    }
+    scpi_result_t result = saved ? SCPI_RES_OK : SCPI_RES_ERR;
     Streaming_EndConfigChange();
     return result;
 }

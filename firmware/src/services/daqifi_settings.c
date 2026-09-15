@@ -18,10 +18,16 @@ uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16
 static char gFriendlyDeviceName[FRIENDLY_DEVICE_NAME_SIZE] = {0};
 
 /* #908: set at boot when the factory-cal NVM page is blank or fails its
- * checksum, so the runtime CalM/CalB stay at their identity defaults. Read by
- * the CONF:CAP:JSON? emitter (identity.cal). Never persisted: re-derived from
- * the load result every boot. Written only from boot (app_SystemInit, task
- * context), before the SCPI transport tasks that read it are created. */
+ * checksum, so the runtime CalM/CalB stay at their identity defaults. Also
+ * cleared immediately by a successful CONF:ADC:SAVEFcal (SCPIADC.c's
+ * CalSaveCommon), so a capability query between the save and the next
+ * reboot reports the slot as present rather than the stale boot-time
+ * reading -- Qodo caught this PR reporting "still missing" right after a
+ * save that had already succeeded. Read by the CONF:CAP:JSON? emitter
+ * (identity.cal). Never persisted: both writers re-derive it from a real
+ * load/save outcome, never from NVM. Written only from task context (boot,
+ * or the SCPI task handling SAVEFcal), before the SCPI transport tasks
+ * that read it are created on the boot path. */
 static bool gFactoryCalMissing = false;
 
 /* #625: the friendly name is emitted UNESCAPED into the JSON info message
@@ -70,6 +76,10 @@ void daqifi_settings_SeedFriendlyName(const char* name) {
 
 void daqifi_settings_MarkFactoryCalMissing(void) {
     gFactoryCalMissing = true;
+}
+
+void daqifi_settings_ClearFactoryCalMissing(void) {
+    gFactoryCalMissing = false;
 }
 
 bool daqifi_settings_FactoryCalIsMissing(void) {

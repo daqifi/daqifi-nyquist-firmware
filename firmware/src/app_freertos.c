@@ -946,8 +946,13 @@ void app_SystemInit() {
             DaqifiSettings_FactAInCalParams,
             &gpBoardRuntimeConfig->AInChannels)) {
         daqifi_settings_MarkFactoryCalMissing();
-        LOG_E("Factory ADC calibration is missing or invalid; readings use "
-              "identity calibration until CONF:ADC:SAVEFcal is run.");
+        /* #908 Qodo: "readings use identity calibration" overclaimed --
+         * the calVals branch immediately below can still load a valid USER
+         * calibration over these identity defaults before any reading is
+         * taken, so identity is only the FACTORY baseline, not necessarily
+         * what streaming ends up using. */
+        LOG_E("Factory ADC calibration is missing or invalid; the factory "
+              "baseline defaults to identity until CONF:ADC:SAVEFcal is run.");
     }
     // If calVals has been set to 1 (user cal params), overwrite with user 
     // calibration parameters

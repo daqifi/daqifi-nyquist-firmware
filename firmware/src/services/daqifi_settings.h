@@ -227,14 +227,29 @@ extern "C" {
      * #908: Records that boot found the factory ADC-calibration NVM page
      * blank or invalid (daqifi_settings_LoadADCCalSettings failed), so the
      * runtime CalM/CalB were left at their identity defaults. Called only
-     * from boot. Not persisted: re-derived every boot from the load result,
-     * so it clears on the first boot after a successful CONF:ADC:SAVEFcal.
+     * from boot.
      */
     void daqifi_settings_MarkFactoryCalMissing(void);
 
     /**
-     * #908: True when boot found no valid factory ADC calibration (see
-     * daqifi_settings_MarkFactoryCalMissing). Reported, inverted, as
+     * #908: Records that the factory ADC-calibration NVM page now holds a
+     * real calibration -- called after a SUCCESSFUL CONF:ADC:SAVEFcal
+     * (SCPIADC.c's CalSaveCommon), so a capability query between the save
+     * and the next reboot reports the slot as present rather than the
+     * stale boot-time reading. Neither this nor
+     * daqifi_settings_MarkFactoryCalMissing persists anything; each is
+     * called only when its own caller has independently confirmed the
+     * state (a failed boot load, or a successful save) from the real NVM
+     * operation, never from each other or from a stored flag.
+     */
+    void daqifi_settings_ClearFactoryCalMissing(void);
+
+    /**
+     * #908: True when the factory ADC calibration is currently missing --
+     * either boot found no valid factory calibration and it has not since
+     * been established by a successful CONF:ADC:SAVEFcal (see
+     * daqifi_settings_MarkFactoryCalMissing /
+     * daqifi_settings_ClearFactoryCalMissing). Reported, inverted, as
      * identity.cal.factory_present in CONF:CAP:JSON?.
      * @return true if the factory calibration is missing, false otherwise
      */
