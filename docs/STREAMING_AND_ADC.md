@@ -263,11 +263,19 @@ The firmware computes a maximum safe streaming frequency as a `min()` of an **AD
 The last two additive arguments are **#832** and both exist to keep a raise
 inside the conditions it was measured under. `isJson` excludes JSON from the
 pure-T1 CSV refit — it shares that branch and is *additive-bound* at USB 1ch,
-so a CSV-measured raise would silently lift JSON's cap; it keeps the #563 law
-until it has a precision-4 basis of its own (#529 follow-up).
-`voltagePrecision` gates the refit to `<= 4`: 0 is `int_to_str` and 1..4 emit
-fewer or equal characters than the precision-4 basis, while 5..10 emit **more**
-and were never measured, so they fall through to the #563 law.
+so a CSV-measured raise would silently lift JSON's cap. JSON now has its own
+precision-4 basis (**#920**, 2026-09-15): two JSON-only branches sit ahead of
+the shared `else`, each set at 93% of a measured-clean ceiling — pure-T1 at
+1 channel (8602 Hz, was 10589) and armed/OBDiag-off at 11–16 channels
+(2335 down to 1440 Hz, was transport-bound at up to 2461–1777). They are NOT
+gated by `voltagePrecision` — see the streaming.h comment for why a cap that
+only *lowers* JSON's rate cannot be less safe at any precision than the law it
+replaces. Every other JSON config (2–5 pure-T1 channels, armed configs of up
+to 10 channels, any OBDiag-on config) still keeps the #563 law via the shared
+`else`, unmeasured at precision 4 and tracked as follow-ups.
+`voltagePrecision` gates the **CSV** refit to `<= 4`: 0 is `int_to_str` and
+1..4 emit fewer or equal characters than the precision-4 basis, while 5..10
+emit **more** and were never measured, so they fall through to the #563 law.
 `CONFigure:VOLTage:PRECision` and `CONFigure:VOLTage:LOAD` are both
 rejected while streaming
 (same idiom as the `CONF:ADC:CHANnel` #116 guard) so a session cannot move onto
