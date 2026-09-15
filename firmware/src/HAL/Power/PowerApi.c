@@ -80,6 +80,83 @@ static tPowerData *pData;
 //! Pointer to a data structure with all the write variable data fields
 static tPowerWriteVars *pWriteVariables;
 
+/* #1071: power-state handoff across SYSTem:REboot and *RST.
+ *
+ * Both commands end in RCON_SoftwareReset() (SCPI_Reset), and Power_Init()
+ * wipes tPowerData (#409), so a reboot used to come back in STANDBY with WiFi
+ * and the front end unpowered. SCPI_Reset() now calls Power_ArmRebootRestore()
+ * just before the reset, and the next Power_Init() consumes the handoff once.
+ *
+ * The handoff is armed explicitly rather than inferred from the RCON reset
+ * cause. On a bootloader-linked image the USB bootloader runs first on every
+ * reset and clears RCON.SWR before it jumps here (Bootloader_Initialize,
+ * bootloader/.../framework/bootloader/src/bootloader.c:318-320), so an SWR
+ * gate would never fire on a released unit. The RCON flags are also
+ * hardware-set and never hardware-cleared (DS60001320H Register 6-1), so a
+ * set SWR says nothing about which reset came last.
+ *
+ * Placement. `persistent` keeps our crt0 from clearing the block (XC32
+ * DS50002799E 18.2.8) and implies `coherent`, so the arming stores bypass the
+ * write-back D-cache. XC32 then requires a 16-byte-aligned address; this is
+ * the same construct as force_bootloader_flag, one cache line below it. The
+ * bootloader's startup runs before ours, and in the shipped
+ * usb_bootloader.X.production.hex every .dinit record lies below 0x80000A30,
+ * its stack starts at 0x8007FFE8 and grows down (its main() saves ra at
+ * 0x8007FFE4, so words 0-1 here are padding), and nothing stores at or above
+ * 0x8007FFE8 except the flag. The trusted words 2-3 sit at 0x8007FFE8 and
+ * 0x8007FFEC. A bootloader that did write them would break the check word,
+ * which reads as "not armed" and falls back to STANDBY, never to a wrong
+ * state. (An unaligned `noload` slot above the flag failed to link this image
+ * with xc32-ld v4.60: exit 5, no diagnostic.) */
+#define POWER_REBOOT_HANDOFF_ADDR        (FORCE_BOOTLOADER_FLAG_ADDR - 16)
+#define POWER_REBOOT_HANDOFF_MAGIC       0x1071B007u
+#define POWER_REBOOT_HANDOFF_MAGIC_WORD  2u  /* words 0-1 are padding, never read */
+#define POWER_REBOOT_HANDOFF_STATE_WORD  3u  /* state in 15:0, complement in 31:16 */
+
+static volatile uint32_t sRebootHandoff[4]
+    __attribute__((persistent, coherent, address(POWER_REBOOT_HANDOFF_ADDR)));
+
+void Power_ArmRebootRestore(void) {
+    /* powerState is written only by app_PowerAndUITask, and this is one
+     * aligned 32-bit load, atomic on PIC32MZ. A transition landing between this
+     * read and the reset makes the next boot restore the state before it,
+     * which the state machine then re-evaluates like any request. The state
+     * word is stored before the magic, so the magic never vouches for a stale
+     * state word. */
+    const uint32_t state = (uint32_t)pData->powerState & 0xFFFFu;
+    sRebootHandoff[POWER_REBOOT_HANDOFF_STATE_WORD] =
+            state | ((~state & 0xFFFFu) << 16);
+    sRebootHandoff[POWER_REBOOT_HANDOFF_MAGIC_WORD] = POWER_REBOOT_HANDOFF_MAGIC;
+}
+
+/* Runs on every boot and always disarms the handoff, so it can only ever apply
+ * to the boot straight after an armed reset. The restore is a request, handled
+ * by the STANDBY state machine exactly like SYSTem:POWer:STATe: Power_Up()
+ * sequences the rails and Power_HasSufficientPower() still gates it. */
+static void Power_ConsumeRebootRestore(void) {
+    const uint32_t magic = sRebootHandoff[POWER_REBOOT_HANDOFF_MAGIC_WORD];
+    const uint32_t word = sRebootHandoff[POWER_REBOOT_HANDOFF_STATE_WORD];
+
+    sRebootHandoff[POWER_REBOOT_HANDOFF_MAGIC_WORD] = 0;
+    sRebootHandoff[POWER_REBOOT_HANDOFF_STATE_WORD] = 0;
+
+    if (magic != POWER_REBOOT_HANDOFF_MAGIC ||
+        (word >> 16) != (~word & 0xFFFFu)) {
+        return;  /* not armed: power-on, brown-out, MCLR, PICkit, bootloader */
+    }
+    switch ((POWER_STATE)(word & 0xFFFFu)) {
+        case POWERED_UP:
+            pData->requestedPowerState = DO_POWER_UP;
+            break;
+        case POWERED_UP_EXT_DOWN:
+            pData->requestedPowerState = DO_POWER_UP_EXT_DOWN;
+            break;
+        default:
+            /* STANDBY is already the boot state; anything else is invalid. */
+            break;
+    }
+}
+
 ///*! 
 // * Funtion to write in power channel
 // */
@@ -152,6 +229,9 @@ void Power_Init(
             pData->autoPowerOnUsb = false;
         }
     }
+
+    /* #1071: re-request the power state a SYSTem:REboot / *RST left behind. */
+    Power_ConsumeRebootRestore();
 
     BQ24297_InitHardware(
             &pConfig->BQ24297Config,

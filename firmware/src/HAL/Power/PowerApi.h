@@ -170,8 +170,19 @@ void Power_USB_Sleep_Update( bool sleep );
  * Writes the state 
  */
 void Power_Write( void );
- 
-    
+
+/*! #1071: arm the power-state restore for the boot that follows an imminent
+ * RCON_SoftwareReset() (SYSTem:REboot / *RST).
+ *
+ * Records the current powerState in a retained-RAM handoff that the next
+ * Power_Init() consumes exactly once, re-requesting that state through the
+ * normal STANDBY power-up path. A boot that did not follow an armed reset
+ * (power-on, brown-out, MCLR, PICkit, bootloader update) finds no valid
+ * handoff and comes up in STANDBY as it always has.
+ */
+void Power_ArmRebootRestore( void );
+
+
 #ifdef	__cplusplus
 }
 #endif
