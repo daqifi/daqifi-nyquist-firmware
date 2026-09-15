@@ -79,12 +79,19 @@ void Button_Tasks( void )
                     gpPowerData->shutdownNotified = true;   
                     // Signal board to power off
                     gpPowerData->requestedPowerState = DO_POWER_DOWN;
-                    // #454/#1084: latch the per-VBUS-session auto-promote
-                    // suppression, as SYSTem:POWer:STATe 0 does, so with
-                    // AUTOOn on and USB present the STANDBY pass that runs
-                    // this power-down does not promote the board straight
-                    // back up. It re-arms when VBUS goes away.
-                    gpPowerData->autoPromotedThisVbusSession = true;
+                    // #454/#1084: with USB present, latch the per-VBUS-session
+                    // auto-promote suppression, as SYSTem:POWer:STATe 0 does,
+                    // so with AUTOOn on the STANDBY pass that runs this
+                    // power-down does not promote the board straight back up.
+                    // Without USB there is no session to suppress, so the
+                    // latch gets the value Power_HandleStandbyState() gives it
+                    // on a pass without VBUS (false), and a cable plugged in
+                    // before that pass still auto-promotes. pgStat is the power
+                    // task's cached VBUS state, so a cable plugged in during
+                    // the ~1.1 s hold may not be in it yet; that plug-in then
+                    // counts as a new session.
+                    gpPowerData->autoPromotedThisVbusSession =
+                            gpPowerData->BQ24297Data.status.pgStat;
                     oneShot = true;
                 }
                 break;
