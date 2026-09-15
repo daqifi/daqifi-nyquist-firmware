@@ -1024,6 +1024,28 @@ typedef struct {
     // the task wakes several us later).  Non-zero values mean T1 samples
     // were emitted with their validMask bit clear for those ticks.
     uint32_t t1ArdyMisses;
+#if READ_LOOP_PROFILE
+    /* #251: wall time of the per-channel loop in
+     * _Streaming_Deferred_Interrupt_Task, one measurement per tick that reached
+     * the loop, in raw core-timer counts (CP0 Count at SYSCLK/2: 126 MHz on
+     * the 252 MHz build, 100 MHz on the 200 MHz one).
+     *
+     * Written only by that task (priority 9), all three fields inside ONE
+     * critical section, so a Streaming_GetStats() snapshot always pairs a sum
+     * with the count it was accumulated over. The 64-bit sum and count are not
+     * atomic on PIC32MZ, and a snapshot holding a sum one tick ahead of its
+     * count would report a wrong mean. Zeroed with the rest of the struct by
+     * Streaming_ClearStats().
+     *
+     * Wall time, not CPU time: an ISR that preempts the loop lands inside the
+     * interval. That is what the tick budget pays, but it makes the max the
+     * worst tick seen, not the loop's own worst case.
+     *
+     * SYST:STR:STATS? reports these in ns as ReadLoopMaxNs / ReadLoopMeanNs. */
+    uint64_t readLoopCycles;        // Sum of per-tick loop time
+    uint64_t readLoopCount;         // Ticks summed into readLoopCycles (the mean's denominator)
+    uint32_t readLoopMaxCycles;     // Longest single-tick loop time
+#endif
     uint64_t totalSamplesStreamed;   // Samples successfully queued (64-bit for week-long sessions)
     uint64_t totalBytesStreamed;     // Total bytes encoded (64-bit for week-long sessions)
     uint32_t windowLossPercent;     // Windowed sample loss percentage (0-100)
@@ -1088,7 +1110,7 @@ void Streaming_ClearStats(void);
 // streaming_profile.h, included near the top of this file.
 
 // Increment DIO dropped sample counter (called from DIO_StreamingTrigger).
-// 32-bit increment on PIC32MZ — single writer (deferred ISR task, pri 8).
+// 32-bit increment on PIC32MZ — single writer (deferred ISR task, pri 9).
 void Streaming_IncrDioDropped(void);
 
 // Increment EOS coalesce counter (called from MC12bADC_EosInterruptTask).

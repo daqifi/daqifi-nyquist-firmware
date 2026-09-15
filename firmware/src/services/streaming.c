@@ -22,6 +22,9 @@
 #if PB_PROFILE_COUNTERS
 #include <xc.h>  // for _CP0_GET_COUNT() — coprocessor 0 cycle counter
 #endif
+#if READ_LOOP_PROFILE
+#include "peripheral/coretimer/plib_coretimer.h"  // #251: CORETIMER_CounterGet()
+#endif
 
 #include "HAL/ADC.h"
 #include "HAL/DIO.h"
@@ -1139,6 +1142,14 @@ void _Streaming_Deferred_Interrupt_Task(void) {
             const uint32_t framePattern = gTestPattern;      /* both are volatile uint32_t */
             const uint32_t frameBenchMode = gBenchmarkMode;
             uint32_t clipMask = 0;   /* #814: rails seen in THIS sample */
+#if READ_LOOP_PROFILE
+            /* #251: time this loop and nothing else -- it is the per-channel
+             * term of the cap model, which is what the probe exists to size.
+             * Pure integer (this task has no FPU context, #368/#369) and no
+             * LOG_*: the probe must not change what it measures. Accumulated
+             * just after the loop's closing brace. */
+            const uint32_t readLoopStart = CORETIMER_CounterGet();
+#endif
             for (uint8_t j = 0; j < mapping->count; j++) {
                 uint8_t cfgIdx = mapping->configIndices[j];
 
@@ -1318,6 +1329,30 @@ void _Streaming_Deferred_Interrupt_Task(void) {
                     }
                 }
             }
+#if READ_LOOP_PROFILE
+            {
+                /* #251: unsigned subtraction is exact across one wrap of the
+                 * 32-bit counter (~34 s at 126 MHz), far beyond any loop.
+                 *
+                 * One critical section for all three fields. This task is
+                 * their only writer and nothing preempts it but ISRs, which
+                 * never touch them, so the guard is not what keeps the writes
+                 * from interleaving. It is what makes the three land together:
+                 * the 64-bit sum and count are not atomic on PIC32MZ, and the
+                 * project rule for a 64-bit RMW is a critical section, as
+                 * totalSamplesStreamed++ below also follows. O(1) -- three
+                 * field updates, no call, no loop, so the time the timer ISR
+                 * is masked stays trivially short. */
+                const uint32_t readLoopTime = CORETIMER_CounterGet() - readLoopStart;
+                taskENTER_CRITICAL();
+                gStreamStats.readLoopCycles += readLoopTime;
+                gStreamStats.readLoopCount++;
+                if (readLoopTime > gStreamStats.readLoopMaxCycles) {
+                    gStreamStats.readLoopMaxCycles = readLoopTime;
+                }
+                taskEXIT_CRITICAL();
+            }
+#endif
 
 
             // #717: every emitted packet already carries the deterministic
@@ -2803,14 +2838,14 @@ void Streaming_ClearStats(void) {
     //   - gStreamStats:     written by deferred ISR task (sample/drop counters)
     //                       and streaming task (encoder/output drop counters)
     //   - gTimerISRCalls:   written by timer ISR (priority 1)
-    //   - gFlowWindow:      written by deferred ISR task (priority 8)
+    //   - gFlowWindow:      written by deferred ISR task (priority 9)
     //   - gFlowWindowCount: written by deferred ISR task
     //   - gQuesBits:        written by streaming task on threshold cross
     //   - Logger session one-shots: reset alongside so observers don't see
     //                       half-cleared session state across the boundary
     //
     // SCPI:STR:CLEARSTATS can be invoked mid-session from USB (priority 7).
-    // The deferred task at priority 8 can preempt the SCPI handler at any
+    // The deferred task at priority 9 can preempt the SCPI handler at any
     // time, so without a single atomic clear a concurrent reader could see
     // half-reset state. taskENTER_CRITICAL raises syscall priority to 4,
     // blocking the timer ISR (priority 1) — and since the deferred task
@@ -2946,7 +2981,7 @@ uint32_t Streaming_GetQuesBits(void) {
 void Streaming_IncrDioDropped(void) {
     bool pastGrace = Streaming_PastStartupGrace();
     taskENTER_CRITICAL();
-    gStreamStats.dioDroppedSamples++;  // Single writer (deferred ISR task, pri 8)
+    gStreamStats.dioDroppedSamples++;  // Single writer (deferred ISR task, pri 9)
     if (pastGrace) {
         gStreamStats.dioDroppedSamplesSteady++;
     }
@@ -2954,7 +2989,7 @@ void Streaming_IncrDioDropped(void) {
 }
 
 void Streaming_IncrEosOverruns(uint32_t missed) {
-    gStreamStats.eosOverruns += missed;  // Single writer (EOS task, pri 8)
+    gStreamStats.eosOverruns += missed;  // Single writer (EOS task, pri 9)
 }
 
 // #557: called from the ADC EOS ISR (ADC_EOSInterruptCB) each time the shared
