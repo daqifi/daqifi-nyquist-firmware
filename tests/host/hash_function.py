@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""sha256 of one C function's CODE, comments removed, whitespace collapsed.
+"""sha256 of one C function's CODE as the compiler reads it: backslash-newline
+splices joined, comments removed, whitespace collapsed (`hashed_code`).
 
 Used by the Makefile to pin a function a host test models, so that any edit to
 the real code forces someone to re-read the model. The pin claims exactly one
@@ -35,6 +36,37 @@ import cdef                                              # noqa: E402
 from cdef import AmbiguousDefinition, mask, line_comment_end  # noqa: E402,F401
 
 
+class UnaccountedOccurrence(Exception):
+    """An occurrence of the pinned name that no recogniser in `cdef` explains.
+
+    Raised, like `AmbiguousDefinition`, rather than resolved. The shape that
+    made it necessary: an `#if 0`-disabled original plus a live replacement
+    spelled in a way the definition matcher does not know (two
+    `__attribute__((...))` prefixes, three wrapping parens). `one_definition`
+    then sees ONE definition -- the dead one -- and reports it unambiguous,
+    and the pin digests text the compiler never builds. The live copy's name
+    is still there in the text, and nothing claims it, which is what this
+    reports (#976).
+    """
+
+    def __init__(self, problems):
+        Exception.__init__(self, "\n".join(problems))
+        self.problems = problems
+
+
+def require_accounted(text, name):
+    """Refuse unless every occurrence of `name` in `text` is accounted for.
+
+    Run BEFORE `cdef.one_definition` is trusted, by both the digest and
+    `--find`: a single answer from a matcher that could not see every
+    spelling is not a single answer. Two definitions still raise
+    `AmbiguousDefinition` (from here or from `one_definition`), unchanged.
+    """
+    problems = cdef.account_occurrences(text, name)
+    if problems:
+        raise UnaccountedOccurrence(problems)
+
+
 def signature_name(signature):
     """The function NAME inside a signature PREFIX like `static bool Foo(`."""
     head = signature.strip().rstrip("(").strip()
@@ -63,6 +95,7 @@ def extract(text, signature):
     name = signature_name(signature)
     if not name:
         return None
+    require_accounted(text, name)
     match = cdef.one_definition(text, name)
     if match is None:
         return None
@@ -104,20 +137,14 @@ def strip_comments(src):
     while i < n:
         c = src[i]
         if c == '"' or c == "'":
-            quote = c
-            out.append(c)
-            i += 1
-            while i < n:
-                out.append(src[i])
-                if src[i] == "\\":          # escape: take the next char too
-                    if i + 1 < n:
-                        out.append(src[i + 1])
-                        i += 2
-                        continue
-                elif src[i] == quote:
-                    i += 1
-                    break
-                i += 1
+            # Kept verbatim, ending where `cdef.literal_end` -- the ONE
+            # literal rule `cdef.mask()` also uses -- says: at the closing
+            # quote, or at the newline that ends one never closed. Running
+            # on to the next matching quote instead is how an apostrophe in
+            # `#if 0` prose hid live code (#976 review).
+            end = cdef.literal_end(src, i)
+            out.append(src[i:end])
+            i = end
             continue
         if c == "/" and i + 1 < n and src[i + 1] == "*":
             end = src.find("*/", i + 2)
@@ -131,6 +158,23 @@ def strip_comments(src):
         out.append(c)
         i += 1
     return "".join(out)
+
+
+def hashed_code(body):
+    """The text the pin digests: `body` read the way the compiler reads it --
+    backslash-newline splices joined FIRST (`cdef.splice`, translation phase
+    2) -- then comments removed and whitespace collapsed.
+
+    Joining first is the #976 review's fix. `strip_comments` on RAW text
+    looks for a literal `*/`, so a block comment closed by a SPLICED one
+    (`*` + backslash + newline + `/`) ran on, for this function, to the next
+    literal `*/`, and code the compiler builds in between -- an early
+    `return true;` ahead of the arm -- was stripped as if it were comment.
+    Measured against the real helper: the digest stayed byte-identical to
+    `SD_ARM_HELPER_SHA`. `splice` is applied exactly once, as phase 2 is: a
+    backslash left at a line's end by a splice is not spliced again.
+    """
+    return re.sub(r"\s+", " ", strip_comments(cdef.splice(body)[0])).strip()
 
 
 _SELF_TEST_CASES = (
@@ -190,6 +234,16 @@ _SELF_TEST_CASES = (
      'static bool F(void)\n{\n    // pretend close \\\n}\n'
      '    int keep = 1;\n    return keep;\n}\n',
      "static bool F(", "keep", None),
+    # #976 review: a block comment closed by a SPLICED `*/` (`*` + backslash
+    # + newline + `/`) ends THERE for the compiler, and the code after it is
+    # built -- here an early exit ahead of the rest of the body. Stripping
+    # comments from the RAW body ran the comment on to the next literal
+    # `*/` and dropped that code from the digest, which stayed identical.
+    ("a block comment closed by a SPLICED `*/` ends where the compiler "
+     "ends it, so the code after it is hashed",
+     'static bool F(void)\n{\n    /* early out *\\\n/ early(); /* end */\n'
+     '    return 1;\n}\n',
+     "static bool F(", "early()", None),
 )
 
 
@@ -207,7 +261,7 @@ def self_test():
         if body is None:
             bad.append("%s: extracted nothing" % name)
             continue
-        code = re.sub(r"\s+", " ", strip_comments(body)).strip()
+        code = hashed_code(body)
         if want not in code:
             bad.append("%s: %r missing from %r" % (name, want, code))
         if unwanted is not None and unwanted in code:
@@ -266,6 +320,33 @@ def self_test():
     if body is None or "live" not in body:
         bad.append("a prototype plus ONE definition must still extract it")
 
+    # OCCURRENCE ACCOUNTING (#976, after round 6). Each shape below is an
+    # `#if 0`-disabled original plus a live replacement the definition
+    # matcher cannot see, so `one_definition` alone answers the DEAD copy,
+    # unambiguously -- the pin then digests text the compiler never builds,
+    # and every later edit to the live helper is invisible. The live copy's
+    # name is still in the text and no recogniser claims it; that, or the
+    # two views disagreeing about which text is the definition, must refuse.
+    dead = 'static bool F(void)\n{\n    int dead = 1;\n    return dead;\n}\n'
+    live = '\n{\n    int live = 1;\n    return live;\n}\n'
+    for why, src in (
+            ("two __attribute__((...)) prefixes",
+             '#if 0\n' + dead + '#endif\n'
+             'static bool __attribute__((noinline)) __attribute__((unused)) '
+             'F(void)' + live),
+            ("THREE wrapping parens",
+             '#if 0\n' + dead + '#endif\nstatic bool (((F)))(void)' + live),
+            ("a splice-CREATED comment disabling the copy the matcher finds, "
+             "and a live copy whose declarator a splice splits (#1066)",
+             '/\\\n/ old: \\\n' + dead + 'static bool \\\nF(void)' + live),
+    ):
+        try:
+            got = extract(src, "static bool F(")
+        except (AmbiguousDefinition, UnaccountedOccurrence):
+            continue
+        bad.append("a dead original plus a live replacement with %s must "
+                   "REFUSE; the pin extracted %r" % (why, got))
+
     for b in bad:
         print("  - %s" % b)
     print("self-test: %s (%d failure(s))"
@@ -291,9 +372,14 @@ def main(argv):
         except OSError as exc:
             sys.exit("error: cannot read %s (%s)" % (path, exc))
         try:
+            require_accounted(text, name)
             found = cdef.one_definition(text, name)
         except AmbiguousDefinition as exc:
             sys.exit("error: %s in %s" % (exc, path))
+        except UnaccountedOccurrence as exc:
+            sys.exit("error: %s in %s is not accounted for, so the one "
+                     "definition found may not be the live one:\n  %s"
+                     % (name, path, "\n  ".join(exc.problems)))
         if found is None:
             sys.exit("error: no definition of %r in %s" % (name, path))
         return 0
@@ -318,9 +404,17 @@ def main(argv):
                  "board-variant or #if 0 pair, pin the LIVE one by making its "
                  "signature distinct, or teach this hasher which to take."
                  % (exc, path))
+    except UnaccountedOccurrence as exc:
+        # Also separate from a drift MISMATCH: nothing may have changed in
+        # the function at all -- what failed is this hasher's ability to say
+        # WHICH text is the function.
+        sys.exit("error: %s in %s is not accounted for -- refusing to hash "
+                 "what may be a dead copy:\n  %s"
+                 % (signature_name(signature), path,
+                    "\n  ".join(exc.problems)))
     if body is None:
         sys.exit("error: no line starting with %r in %s" % (signature, path))
-    code = re.sub(r"\s+", " ", strip_comments(body)).strip()
+    code = hashed_code(body)
     if not code:
         sys.exit("error: %r extracted to nothing -- refusing to hash it" % signature)
     print(hashlib.sha256(code.encode("utf-8")).hexdigest())

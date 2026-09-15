@@ -51,7 +51,17 @@ name: scpi-sd-arm-path
 # own call site, and the format-pending state it undoes is published before
 # the arm; the five other SCPIStorageSD.c sites pass NULL through the
 # wrapper; and the streaming-log arm's verdict is consumed rather than
-# discarded or cast to `(void)`.
+# discarded or cast to `(void)`. And every occurrence of the names those
+# counts are computed from is ACCOUNTED FOR (tools/lint/cdef.py): a
+# definition, a prototype, or an evaluated call that the census -- reading
+# the same splice-joined text the compiler reads -- also found at the SAME
+# position. So a spelling nobody taught the matchers (a double
+# `__attribute__`, a `(F)(...)` callee, an alias, a splice-made comment, a
+# declaration or `sizeof` standing in for a call, or two such spellings that
+# cancel in a count) fails this gate instead of silently moving or shrinking
+# a count. Still out of reach: a name that is not in the text (macro token
+# pasting, an alias defined in a header) and anything that needs the
+# preprocessor evaluated (a call inside `#if 0` still counts).
 
 on:
   pull_request:
@@ -94,7 +104,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Runs first and separately: the checker's own logic is what decides
+      # The shared definition rule AND occurrence accounting live in
+      # tools/lint/cdef.py, which both the checker below and
+      # tests/host/hash_function.py import. Its own self-test -- the
+      # definition-matcher rows, the occurrence-accounting rows, and a
+      # control that the real SCPIStorageSD.c / SCPIInterface.c account
+      # clean -- ran NOWHERE in CI until this step: the checker's
+      # self-test exercises cdef only through check()/check_stream(), so a
+      # regression in a primitive neither fixture happens to reach passed
+      # every gate. `python3 cdef.py` exits nonzero on any failure
+      # (`sys.exit(self_test())`).
+      - name: Self-test the shared definition and occurrence-accounting rule
+        run: python3 tools/lint/cdef.py
+
+      # Runs before the check and separately: the checker's own logic is what decides
       # whether the gate below means anything, and a checker that examines
       # nothing reports a pass. Its --self-test covers the vacuity cases
       # explicitly -- an unreadable source, a streaming-start function it

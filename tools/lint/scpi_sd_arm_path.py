@@ -43,8 +43,8 @@ for and left the next equivalent rewrite free to defeat it again.
 
 That ordering is now covered by `tests/host/test_971_sd_arm_refusal_order.c`
 instead: a deterministic model of `SD_ArmOrRefuseWithCleanup()`'s body, plus a
-sha256 drift pin on the real function's (comment-stripped, whitespace
-normalised) text. An edit to the real ordering either fails the model or is
+sha256 drift pin on the real function's (splice-joined, comment-stripped,
+whitespace-normalised) text. An edit to the real ordering either fails the model or is
 caught retyping the pin -- either way a human has to look, which a regex that
 can always be phrased around cannot force. #896 already tracks that this
 family of checker is a guard against honest regression, never against a
@@ -139,6 +139,8 @@ stays checked here (property 1, below), unlike the rest of what #942 fixed.
    mutation this now accepts, and "The same shape at a second site" above for
    what covers -- and does not yet cover -- the rest of that shape).
 
+   (Property 5, below, is what every count in 1-4 now rests on.)
+
    And "consumed" is a SHAPE, not dataflow. This matches the spelling of the
    call against the spellings that discard it; it does not trace where the
    value goes. `if ((arm(cfg), false))` puts the call inside an `if` condition
@@ -148,6 +150,40 @@ stays checked here (property 1, below), unlike the rest of what #942 fixed.
    spelling. What closes it is a tool with control flow: the host-test model
    for the helper (#971), and #998 for this second site. Read a green run as
    "the obvious discards are absent", never as "the verdict is used".
+
+5. **Every occurrence of every name 1-4 are computed from is accounted for,
+   and the census finds exactly the calls accounting found, at the same
+   positions.** Properties 1-4 are COUNTS and ORDERINGS -- arms per
+   function, the claim before the arm, the one publish between them, the
+   one WithCleanup caller -- and each is only as good as the scan that
+   produced it. Every audit round after round 5 found another valid
+   spelling that dropped live code out of that scan while the counts still
+   read correctly (a helper with two `__attribute__` prefixes next to an
+   `#if 0` original; a second arm written `(F)(...)`). So:
+
+   * the census reads the source the way the compiler does
+     (`compiler_text()`: backslash-newline splices joined first, then
+     comments and literals blanked) -- the same characters occurrence
+     accounting reads, so a splice-made comment marker, a splice-closed
+     comment or a split identifier is seen identically by both;
+   * `cdef.account_occurrences` requires each occurrence of `SD_ACCOUNTED` /
+     `STREAM_ACCOUNTED`, found with no grammar, to be a definition, a
+     prototype or an EVALUATED call; anything else (an alias, `&F`,
+     `p = F;`, a declaration, `sizeof F(x)`, `p->F(x)`, a spelling nobody
+     has thought of) is reported at its physical line;
+   * and, per name, every call the census counts must be a call accounting
+     classified AT THE SAME POSITION, and vice versa. Positions, not
+     per-function counts, are the point: a claim the census reads before
+     the arm and the compiler never makes (`my$F(...)` is another function
+     to GCC), plus the real claim made after the arm in a spelling the
+     census cannot read (`(F)(...)`), keeps every count equal while the
+     claim moves -- that pair passed clean until the #976 review.
+
+   Out of reach, by construction: a name that is not in the text -- macro
+   token pasting (`CAT(SD_ArmOr, Refuse)(...)`), or an alias defined in a
+   header -- and anything that needs the preprocessor evaluated (a claim
+   inside `#if 0` still counts as a claim) or reachability (`if (0)`). See
+   `cdef.line_comment_end` and the `cdef` module docstring.
 
 ## An inline test is accepted (#942's follow-up did not spell this out)
 
@@ -165,7 +201,8 @@ consumer this checker cannot recognise at all.
 
 `check()` reads `SCPIStorageSD.c` (property 1 at its six sites there, plus 2
 and 3) and `check_stream()` reads `SCPIInterface.c` (property 1 at its
-seventh site, plus 4); `main()` requires BOTH and defaults the second to
+seventh site, plus 4); each also asserts property 5 for its own names;
+`main()` requires BOTH and defaults the second to
 `--interface`. Separate entry points rather than one call taking two texts,
 because an optional second text is a vacuity hazard -- a run that silently
 examines one site and reports a pass is the failure half this file's self-test
@@ -177,9 +214,14 @@ Textual, no control flow, no reachability, and -- since #976 -- no reasoning
 about which branch of a function a line sits in. The same stated limits as
 `scpi_claim_path.py`, tracked as #896, which this file does not close.
 
-* Property 2 establishes that FORmat does not call the retraction it passes
-  in. It does not establish that no OTHER function retracts FORmat's state
-  after a release -- only FORmat's own body is read.
+* Property 2 establishes that FORmat's own body names the retraction it
+  passes in exactly once -- as that argument -- and that no preprocessor
+  directive in the file names it at all, so neither a plain call, a `(F)()`
+  call, a pointer taken to it nor an alias can retract at the call site. It
+  does not see a retraction reached through another NAME -- a function
+  FORmat calls that calls it, or a pointer to it initialised outside FORmat
+  -- and it does not establish that no OTHER function retracts FORmat's
+  state after a release: only FORmat's own body is read.
 * Nothing here says the claim is a real exclusion, or that `UpdateSettings`
   actually arms. That is the manager's business and this file never opens it.
 * Property 4 establishes the streaming-log arm's verdict is consumed. It does
@@ -208,10 +250,6 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# Reused rather than re-implemented, for the same reason scpi_claim_path.py
-# reuses it: a checker that counts calls inside comments reports on code that
-# is not shipped, and this file is heavily commented.
-from scpi_wiki_sync import strip_c_comments    # noqa: E402
 # THE definition rule, in one place. This file used to carry three matchers of
 # its own (`_DEF`, `function_body`, `signature_params`) and `hash_function.py`
 # carried a fourth, with a fifth grep in `tests/host/Makefile`. Six audit
@@ -219,6 +257,19 @@ from scpi_wiki_sync import strip_c_comments    # noqa: E402
 # disagreeing about what a definition looks like. `cdef` is that rule and its
 # own self-test; see its module docstring for the six.
 from cdef import (AmbiguousDefinition, ANY_DEF, one_definition)  # noqa: E402
+# ...and the span primitives (`match_brace`, `function_spans`, `enclosing`)
+# live there too now, rather than in a copy here that could drift from the
+# one occurrence accounting uses to decide what is a call site -- and so does
+# the compiler's view itself. The census used to scan
+# `scpi_wiki_sync.strip_c_comments(source)`, RAW text with its comments
+# collapsed, while occurrence accounting read the splice-joined text the
+# compiler reads. Two views of one file is how a splice-closed comment hid a
+# call-site retraction from the census, and how two misreadings that cancel
+# in a count got through (#976 review). There is one view now:
+# `compiler_text()`, below.
+from cdef import (account_occurrences, classify_occurrences,  # noqa: E402
+                  compiler_view, directive_lines, enclosing, function_spans,
+                  identifier_re, match_brace)
 
 # The helper that owns the refusal path, its NULL-passing wrapper, and the
 # claim taker each arm site must go through first. The manager primitives
@@ -296,24 +347,13 @@ def _blank(text):
 _DEF = ANY_DEF
 
 
-def _match_brace(masked, start):
-    """Index just past the `}` closing the `{` at `start`, or None."""
-    depth = 0
-    for i in range(start, len(masked)):
-        if masked[i] == "{":
-            depth += 1
-        elif masked[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return i + 1
-    return None
-
-
 def function_body(text, name):
     """The brace-delimited body of C function `name`, or None if not found.
 
-    `text` must already have comments stripped. Literals are blanked before
-    brace counting so a brace inside a format string cannot unbalance the scan.
+    `text` must already have its comments removed or blanked -- `check()`
+    passes `compiler_text()`, where literals are blanked too. Literals are
+    blanked again before brace counting, so a brace inside a format string
+    cannot unbalance the scan when a caller passes text that still has them.
     """
     # `one_definition` REFUSES two definitions rather than taking the first.
     # Taking the first is how an `#if 0`-disabled original plus a live
@@ -324,40 +364,17 @@ def function_body(text, name):
     if not sig:
         return None
     start = sig.end() - 1
-    end = _match_brace(_blank(text), start)
+    end = match_brace(_blank(text), start)
     return None if end is None else text[start:end]
 
 
-def function_spans(text):
-    """[(name, body_start, body_end)] for every definition, outermost first.
-
-    Used to attribute a call OFFSET to the function it sits in, which is how
-    the arm-site census below tells FORmat's `WithCleanup` call from the one
-    inside the wrapper -- and how a DEFINITION is told from a call at all: a
-    definition's own name occurrence lies before its body starts, so it falls
-    in no span and is never counted as a call site.
-    """
-    masked = _blank(text)
-    spans = []
-    for m in _DEF.finditer(text):
-        start = m.end() - 1
-        if any(s <= start < e for _, s, e in spans):
-            continue                     # inside a body already collected
-        end = _match_brace(masked, start)
-        if end is not None:
-            # GROUP 3 is the name; groups 1 and 2 are cdef's own paren-seen
-            # markers for a (possibly two-level) parenthesized declarator
-            # (`cdef.ANY_DEF`, #976 round 6).
-            spans.append((m.group(3), start, end))
-    return spans
-
-
-def enclosing_function(spans, pos):
-    """Name of the function whose BODY contains `pos`, or None."""
-    for name, start, end in spans:
-        if start < pos < end:
-            return name
-    return None
+# `function_spans(text)` -> [(name, body_start, body_end)] is `cdef`'s now
+# (imported above). It attributes a call OFFSET to the function it sits in,
+# which is how the arm-site census below tells FORmat's `WithCleanup` call
+# from the one inside the wrapper -- and how a DEFINITION is told from a call
+# at all: a definition's own name lies before its body starts, so it falls in
+# no span and is never counted as a call site.
+enclosing_function = enclosing
 
 
 def _calls(body, name):
@@ -661,6 +678,7 @@ def _format_problems(text):
 
     # THE shape #964 removed: retracting at the call site, after the helper has
     # already released. Both spellings pass property 3 and the helper checks.
+    mentions = len(identifier_re(retraction).findall(body))
     if _calls(body, retraction):
         problems.append(
             "%s() calls %s() at its own call site as well as passing it to "
@@ -668,6 +686,21 @@ def _format_problems(text):
             "already released, so the store is unowned and can retract the "
             "NEXT owner's format state. Pass it in and let the refusal path "
             "run it under the claim." % (FORMAT_FN, retraction, ARM_HELPER))
+    elif mentions != 1:
+        # ...and every OTHER spelling of the same thing. `_calls` reads only
+        # `name(`; a parenthesized call `(name)()`, a pointer taken to it or
+        # an alias defined inside FORmat retracts at the call site just as
+        # well. The argument is the ONE mention expected in FORmat's body
+        # (comments and literals are already blanked in `body`), so any
+        # other is refused rather than read (#976 review). An alias defined
+        # OUTSIDE FORmat is `_retraction_problems`' job.
+        problems.append(
+            "%s() names %s %d times in its body; expected exactly once, as "
+            "the argument it passes to %s(). Any other mention -- a "
+            "parenthesized call, a pointer taken to it, an alias -- can "
+            "retract at the call site after the helper has released, which "
+            "is the pre-#964 shape; refusing rather than reading which it is."
+            % (FORMAT_FN, retraction, mentions, ARM_HELPER))
 
     pubs = _call_positions(body, FORMAT_PUBLISH)
     if len(pubs) != 1:
@@ -974,23 +1007,128 @@ def _stream_arm_problems(text):
     return problems, 1
 
 
+# Every name each entry point's properties are computed from. Each one's
+# occurrences are ACCOUNTED FOR (see `_accounting_problems`): a spelling of
+# one of these that no recogniser explains fails the gate instead of silently
+# dropping out of a count.
+SD_ACCOUNTED = (ARM_HELPER, ARM_WRAPPER, CLAIM_TAKER, FORMAT_FN,
+                FORMAT_PUBLISH)
+STREAM_ACCOUNTED = (STREAM_FN, STREAM_ARM_CALL, STREAM_CLAIM_TAKER)
+
+
+def compiler_text(source_text):
+    """`source_text` as the compiler reads it, comments and literals
+    blanked, LENGTH preserved: `cdef.compiler_view(source_text).matchmask`.
+
+    Backslash-newline splices are joined FIRST (translation phase 2), then
+    every comment and literal is blanked, so a splice-made `//`, a comment
+    closed by a spliced `*/` and an identifier split across a line are what
+    the compiler says they are. Every census scan in this file runs on this
+    text and nothing else, and occurrence accounting reads the same
+    characters. Offsets into it are offsets into the JOINED text;
+    `compiler_view(source_text).omap` maps them back to the file.
+
+    This used to be `scpi_wiki_sync.strip_c_comments(source_text)` -- RAW
+    text, comments collapsed -- so the census and accounting read two
+    different files, and a `/* ... *` + backslash + newline + `/` comment hid
+    a FORmat call-site retraction from the census entirely (#976 review).
+    """
+    return compiler_view(source_text).matchmask
+
+
+def _accounting_problems(source_text, text, spans, names):
+    """Occurrence accounting for `names`, and the census's agreement with
+    it, POSITION BY POSITION.
+
+    1. `cdef.account_occurrences`: every occurrence of each name must be a
+       definition, a prototype or an evaluated call; anything else (an
+       alias, `&F`, a declaration, `sizeof F(x)`, `p->F(x)`, a construct
+       nobody has thought of yet) is reported at its PHYSICAL line.
+    2. Every call the census counts inside a function body (`\\bF\\s*\\(` on
+       `text`, which is `compiler_text(source_text)`) must be a call
+       accounting classified AT THE SAME OFFSET, and every call accounting
+       classified must be one the census counts. Without this, "classified
+       as a call" would be an allowlist the census never saw: `(F)(x)` is a
+       call to accounting and invisible to `\\bF\\s*\\(`, and `my$F(x)` is
+       the reverse -- another function to GCC, a boundary to `\\b`.
+
+    Positions, not per-function counts. Counts were the first version, and
+    one of each misreading in the same function -- a phantom claim the
+    census reads before the arm, and the real claim after it in a spelling
+    only accounting reads -- kept every count equal while the claim moved
+    past the arm. Properties 1 and 2 are ORDERINGS computed from the
+    census's positions, so both passed (#976 review).
+    """
+    view = compiler_view(source_text)
+    problems = []
+    for name in names:
+        problems.extend(account_occurrences(source_text, name))
+        found = {o.offset: o.function
+                 for o in classify_occurrences(source_text, name)
+                 if o.kind == "call"}
+        counted = {}
+        for p in _call_positions(text, name):
+            fn = enclosing_function(spans, p)
+            if fn is not None:
+                counted[view.omap[p]] = fn
+        parts = ["the census counts a call in %s() at line %d that "
+                 "accounting does not classify as one"
+                 % (counted[o], view.line_of_orig(o))
+                 for o in sorted(set(counted) - set(found))]
+        parts += ["accounting finds a call in %s() at line %d that the "
+                  "census does not count" % (found[o], view.line_of_orig(o))
+                  for o in sorted(set(found) - set(counted))]
+        if parts:
+            problems.append(
+                "%s: occurrence accounting and the census disagree about "
+                "WHICH text is a call -- %s. Every count and every ordering in "
+                "properties 1-4 is computed from the census's positions, so a "
+                "call either one misreads, or two misreadings that cancel in "
+                "a count, is refused rather than trusted (#976)."
+                % (name, "; ".join(parts)))
+    return problems
+
+
+def _retraction_problems(source_text, retraction):
+    """Every preprocessor directive in the file that names FORmat's
+    retraction.
+
+    An alias defined OUTSIDE FORmat -- `#define UNDO <retraction>` at file
+    scope, then `UNDO();` at FORmat's call site -- retracts at the call site
+    through a name FORmat's own body never spells, so `_format_problems`'s
+    exactly-once count cannot see it. The directive itself can be seen.
+    """
+    return ["%s: line %d: FORmat's retraction is named in a preprocessor "
+            "directive -- an alias or a macro body that can reach it from "
+            "FORmat's own call site without spelling it there, which is the "
+            "pre-#964 shape. Refusing rather than expanding it (#976)."
+            % (retraction, line)
+            for line in directive_lines(source_text, retraction)]
+
+
 def check(source_text):
     """-> (problems, examined). Pure, so --self-test can drive it.
 
-    No longer reads `SD_ArmOrRefuseWithCleanup()`'s own body at all: the
-    ordering that used to require it (property 1's helper-internal half) is
-    gone from this file -- see "What moved to a host test" in the module
-    docstring. `_format_problems` and `_census_problems` each independently
-    refuse rather than pass if the helper cannot be found or called, so no
-    separate vacuity gate is needed here for that case."""
-    text = strip_c_comments(source_text)
+    Reads `compiler_text(source_text)` -- the file the way the compiler
+    reads it -- and nothing else. No longer reads
+    `SD_ArmOrRefuseWithCleanup()`'s own body at all: the ordering that used
+    to require it (property 1's helper-internal half) is gone from this file
+    -- see "What moved to a host test" in the module docstring.
+    `_format_problems` and `_census_problems` each independently refuse
+    rather than pass if the helper cannot be found or called, so no separate
+    vacuity gate is needed here for that case."""
+    text = compiler_text(source_text)
     problems = []
     try:
         spans = function_spans(text)
-        fmt_problems, _retraction = _format_problems(text)
+        fmt_problems, retraction = _format_problems(text)
         problems.extend(fmt_problems)
         census, sites = _census_problems(text, spans)
         problems.extend(census)
+        problems.extend(_accounting_problems(source_text, text, spans,
+                                             SD_ACCOUNTED))
+        if retraction:
+            problems.extend(_retraction_problems(source_text, retraction))
     except AmbiguousDefinition as exc:
         # Reported, never resolved. Which definition the compiler builds is
         # preprocessor state this checker does not evaluate, so a pass here
@@ -1002,9 +1140,14 @@ def check(source_text):
 
 
 def check_stream(source_text):
-    """-> (problems, examined) for `SCPIInterface.c`. Pure, like check()."""
+    """-> (problems, examined) for `SCPIInterface.c`. Pure, like check(),
+    and like it reads `compiler_text(source_text)` and nothing else."""
+    text = compiler_text(source_text)
     try:
-        return _stream_arm_problems(strip_c_comments(source_text))
+        problems, examined = _stream_arm_problems(text)
+        problems = problems + _accounting_problems(
+            source_text, text, function_spans(text), STREAM_ACCOUNTED)
+        return problems, examined
     except AmbiguousDefinition as exc:
         return ["%s -- refusing to check either." % exc], 0
 
@@ -1179,7 +1322,7 @@ def self_test():
                              "static bool __attribute__((weak)) "
                              "SD_ArmOrRefuse(", 1)
         _ck("an __attribute__ does not become the function name",
-            [nm for nm, _, _ in function_spans(strip_c_comments(attr))
+            [nm for nm, _, _ in function_spans(compiler_text(attr))
              if nm.startswith("__")], [])
         _ck("and the annotated file still reads as compliant",
             check(attr)[0], [])
@@ -1251,7 +1394,7 @@ def self_test():
                 [m.group(3) for m in _DEF.finditer(_shape)], [])
 
         _ck("the helper's parameters are found when its type is on its own line",
-            callback_param(strip_c_comments(helper_split), ARM_HELPER)[0],
+            callback_param(compiler_text(helper_split), ARM_HELPER)[0],
             ("onRefused", 3))
         _ck("and a split helper definition is still read as compliant",
             check(helper_split)[0], [])
@@ -1260,7 +1403,7 @@ def self_test():
         # through a verdict: a definition is not a call site, and a call in a
         # condition is not a definition.
         _ck("the callback parameter is discovered from the signature",
-            callback_param(strip_c_comments(_GOOD), ARM_HELPER)[0],
+            callback_param(compiler_text(_GOOD), ARM_HELPER)[0],
             ("onRefused", 3))
         called = _GOOD + """
 static scpi_result_t decoy(scpi_t * c) {
@@ -1271,7 +1414,7 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("a call inside a condition is not read as a definition",
             function_body(called, "helper_probe"), None)
         _ck("literal braces do not unbalance the body scan",
-            "SCPI_ErrorPush" in function_body(strip_c_comments(_GOOD),
+            "SCPI_ErrorPush" in function_body(compiler_text(_GOOD),
                                               ARM_HELPER), True)
 
         # #971 acceptance 1 used to live here: the retraction moved past the
@@ -1361,11 +1504,12 @@ static scpi_result_t decoy(scpi_t * c) {
         # The SAME defect, but the claim call is still THERE in the text --
         # deleted only by a `//` comment ending in a backslash, which C's
         # phase 2 splices onto the next physical line before phase 3 even
-        # recognises the comment. `check()` runs `strip_c_comments` -- NOT
-        # this file's own; it is imported from `scpi_wiki_sync.py` (see the
-        # import above) -- and until #976 round 6 that stripper stopped a
-        # `//` comment at the first bare newline, so the spliced-away claim
-        # call was still handed to the census as LIVE code. A mutation of
+        # recognises the comment. `check()` ran `scpi_wiki_sync`'s
+        # `strip_c_comments` then, and until #976 round 6 that stripper
+        # stopped a `//` comment at the first bare newline, so the
+        # spliced-away claim call was still handed to the census as LIVE
+        # code. (The census reads `compiler_text()` now, where every splice
+        # is joined before any comment is recognised.) A mutation of
         # this shape passed clean before the fix; a review pass on this same
         # fix reproduced the defect CLASS against the real
         # `SCPIStorageSD.c` too, with a different anchor (the CRC claim, not
@@ -1500,6 +1644,304 @@ static scpi_result_t decoy(scpi_t * c) {
             any("the file moved or the call scan broke" in p for p in probs),
             True)
         _ck("...and reports nothing examined", n3, 0)
+
+        # ---- occurrence accounting (#976, after round 6) --------------------
+        # Every row below was CLEAN before accounting existed -- each is a
+        # valid C spelling that took live code out of what this file reads
+        # while it reported no problem. The fix is not a recogniser per
+        # spelling: every occurrence of every name the properties are
+        # computed from must be explained, and the census must find exactly
+        # the calls accounting found, at the same positions. See
+        # `_accounting_problems`.
+        unaccounted = "no recogniser accounts for"
+        disagree = "disagree about WHICH text is a call"
+        helper = _GOOD[_GOOD.index("static bool SD_ArmOrRefuseWithCleanup("):
+                       _GOOD.index("static bool SD_ArmOrRefuse(scpi_t")]
+
+        # 1. An `#if 0` original plus a live replacement with TWO attributes.
+        #    `cdef._ATTR` absorbs one, so only the DEAD copy is a definition
+        #    to every matcher: unambiguous, its signature read, its callers
+        #    censused -- and the compiled helper never looked at.
+        two_attr = _GOOD.replace(helper, "#if 0\n" + helper + "#endif\n" + helper.replace(
+            "static bool SD_ArmOrRefuseWithCleanup(",
+            "static bool __attribute__((noinline)) __attribute__((unused)) "
+            "SD_ArmOrRefuseWithCleanup(", 1), 1)
+        assert two_attr != _GOOD
+        _ck("an #if 0 helper plus a live DOUBLE-__attribute__ replacement is "
+            "refused, not read as the dead one",
+            any(unaccounted in p for p in check(two_attr)[0]), True)
+
+        # 2. The same with THREE wrapping parens -- one past what the
+        #    definition matcher supports, and so call-shaped to nothing.
+        three = _GOOD.replace(helper, "#if 0\n" + helper + "#endif\n" + helper.replace(
+            "static bool SD_ArmOrRefuseWithCleanup(",
+            "static bool (((SD_ArmOrRefuseWithCleanup)))(", 1), 1)
+        assert three != _GOOD
+        _ck("an #if 0 helper plus a live (((F))) replacement is refused",
+            any(unaccounted in p for p in check(three)[0]), True)
+
+        # 3. A SECOND arm, spelled with a parenthesized callee. `(F)(x)` is
+        #    a call; the census's `\bF\s*\(` cannot see it, so the "arms
+        #    exactly once" count read one.
+        paren = _GOOD.replace(
+            "    return SCPI_RES_OK;\n}\n\nscpi_result_t SCPI_StorageSDFormat",
+            "    (SD_ArmOrRefuseWithCleanup)(context, \"SPACe\", pCfg, NULL);\n"
+            "    return SCPI_RES_OK;\n}\n\nscpi_result_t SCPI_StorageSDFormat", 1)
+        assert paren != _GOOD
+        _ck("a parenthesized-callee second arm is not silently uncounted",
+            any(disagree in p and "accounting finds a call in "
+                "SCPI_StorageSDSpaceGet() at line" in p
+                for p in check(paren)[0]), True)
+
+        # 4. An alias. Replacing the one plain arm is caught by the site
+        #    FLOOR already (and by accounting); adding a SECOND arm through
+        #    the alias is caught by accounting ALONE -- the census sees one.
+        alias = _GOOD.replace(
+            "    if (!SD_ArmOrRefuse(context, \"SPACe\", pCfg)) {",
+            "#define ARM_ALIAS SD_ArmOrRefuse\n"
+            "    if (!ARM_ALIAS(context, \"SPACe\", pCfg)) {", 1)
+        assert alias != _GOOD
+        probs, _ = check(alias)
+        _ck("an arm replaced by an alias drops below the plain-site floor",
+            any("found only 0 call(s) to SD_ArmOrRefuse()" in p
+                for p in probs), True)
+        _ck("...and the alias itself is an unaccounted occurrence",
+            any(unaccounted in p and "preprocessor directive" in p
+                for p in probs), True)
+        alias2 = _GOOD.replace(
+            "    return SCPI_RES_OK;\n}\n\nscpi_result_t SCPI_StorageSDFormat",
+            "#define ARM_AGAIN SD_ArmOrRefuse\n"
+            "    if (!ARM_AGAIN(context, \"SPACe\", pCfg)) {\n"
+            "        return SCPI_RES_ERR;\n    }\n"
+            "    return SCPI_RES_OK;\n}\n\nscpi_result_t SCPI_StorageSDFormat", 1)
+        assert alias2 != _GOOD
+        _ck("a SECOND arm through an alias is refused, not counted as none",
+            any(unaccounted in p and "preprocessor directive" in p
+                for p in check(alias2)[0]), True)
+
+        # 5. A second claim through a function pointer -- bare, and `&`.
+        for spell in ("SD_ClaimOrRefuse", "&SD_ClaimOrRefuse"):
+            ptr = _GOOD.replace(
+                "    pCfg->mode = SD_CARD_MANAGER_MODE_GET_SPACE;\n",
+                "    bool (*again)(scpi_t *, const char *) = %s;\n"
+                "    (void)again(context, \"SPACe\");\n"
+                "    pCfg->mode = SD_CARD_MANAGER_MODE_GET_SPACE;\n" % spell, 1)
+            assert ptr != _GOOD
+            _ck("a claim reached through `= %s` is an unaccounted occurrence"
+                % spell, any(unaccounted in p for p in check(ptr)[0]), True)
+
+        # 6. A name in a comment or a string literal is NOT an occurrence:
+        #    no problem, and nothing counted.
+        mentioned = _GOOD.replace(
+            "    pCfg->mode = SD_CARD_MANAGER_MODE_GET_SPACE;\n",
+            "    /* SD_ArmOrRefuse(context, \"x\", pCfg); */\n"
+            "    LOG_E(\"SD_ClaimOrRefuse(\");\n"
+            "    pCfg->mode = SD_CARD_MANAGER_MODE_GET_SPACE;\n", 1)
+        assert mentioned != _GOOD
+        _ck("names inside a comment and a string are not occurrences",
+            check(mentioned), ([], 2))
+
+        # 7. Diagnostics carry the PHYSICAL line of the ORIGINAL source. The
+        #    census's text is splice-JOINED (and a multi-line comment used
+        #    to be collapsed to one space), so its offsets are not the
+        #    file's; every diagnostic maps back through the view's `omap`.
+        lined = _GOOD.replace(
+            "scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {\n",
+            "/* three\n * physical\n * lines */\n"
+            "scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {\n"
+            "    void *p = SD_ClaimOrRefuse;\n", 1)
+        assert lined != _GOOD
+        want = "line %d" % (lined[:lined.index("void *p")].count("\n") + 1)
+        _ck("an unaccounted occurrence is reported at its physical %s" % want,
+            any(unaccounted in p and want in p for p in check(lined)[0]),
+            True)
+
+        # 8. #1066, live against this file until accounting existed: a `//`
+        #    CREATED by a splice (`/` + `\` + newline + `/`) deletes the SPACe
+        #    claim guard. The census read `strip_c_comments` output then,
+        #    which looks for a literal `//`, so it still counted the claim.
+        #    It reads `compiler_text()` now, where the claim is simply gone
+        #    -- and the claim count says so directly.
+        made = _GOOD.replace(
+            "    if (!SD_ClaimOrRefuse(context, \"SPACe\")) {\n"
+            "        return SCPI_RES_ERR;\n    }\n",
+            "    /\\\n/ if (!SD_ClaimOrRefuse(context, \"SPACe\")) "
+            "{ return SCPI_RES_ERR; }\n", 1)
+        assert made != _GOOD
+        _ck("a claim swallowed by a splice-CREATED comment is refused (#1066)",
+            any("calls SD_ClaimOrRefuse() 0 times" in p
+                for p in check(made)[0]), True)
+
+        # 9. The same deletion through GCC's backslash-SPACE-newline, which
+        #    XC32 joins and an ISO-only stripper does not; the compiler's
+        #    view joins it too (`cdef._SPLICE`).
+        gcc = _GOOD.replace(
+            "    if (!SD_ClaimOrRefuse(context, \"SPACe\")) {\n"
+            "        return SCPI_RES_ERR;\n    }\n",
+            "    // deleted by GCC \\ \n"
+            "    if (!SD_ClaimOrRefuse(context, \"SPACe\")) "
+            "{ return SCPI_RES_ERR; }\n", 1)
+        assert gcc != _GOOD
+        _ck("a claim swallowed by a backslash-SPACE-continued comment is "
+            "refused", any("calls SD_ClaimOrRefuse() 0 times" in p
+                           for p in check(gcc)[0]), True)
+
+        # 10. A second arm whose NAME is split by a backslash-newline: one
+        #     token to the compiler -- and, read the compiler's way, one to
+        #     the census, which now simply counts the second arm.
+        split = _GOOD.replace(
+            "    return SCPI_RES_OK;\n}\n\nscpi_result_t SCPI_StorageSDFormat",
+            "    if (!SD_ArmOr\\\nRefuse(context, \"SPACe\", pCfg)) {\n"
+            "        return SCPI_RES_ERR;\n    }\n"
+            "    return SCPI_RES_OK;\n}\n\nscpi_result_t SCPI_StorageSDFormat", 1)
+        assert split != _GOOD
+        _ck("a second arm with a splice-split name is not silently uncounted",
+            any("arms 2 times" in p for p in check(split)[0]), True)
+
+        # 11. The census OVER-counting: `my$SD_ArmOrRefuse(...)` calls a
+        #     DIFFERENT function to GCC (`$` is an identifier character), but
+        #     `\b` sees a boundary before `SD_` and counts an arm. Accounting
+        #     reads no occurrence there, so the disagreement reds -- had it
+        #     shared the census's boundary, the two would have agreed on a
+        #     phantom arm and a real one replaced this way would pass.
+        dollar = _GOOD.replace(
+            "    if (!SD_ArmOrRefuse(context, \"SPACe\", pCfg)) {",
+            "    if (!my$SD_ArmOrRefuse(context, \"SPACe\", pCfg)) {", 1)
+        assert dollar != _GOOD
+        _ck("an arm replaced by `my$SD_ArmOrRefuse` (another function to "
+            "GCC) is refused, not counted",
+            any(disagree in p for p in check(dollar)[0]), True)
+
+        # 12. #976 review: two misreadings that CANCEL in a count. A claim
+        #     the census reads and the compiler never makes (`my$F` is
+        #     another function to GCC) BEFORE the arm, plus the real claim
+        #     AFTER it in a spelling only accounting reads (`(F)(...)`).
+        #     Every per-function count stayed equal and the claim moved past
+        #     the arm; the count-based agreement check passed it clean. Rows
+        #     3 and 11 each red alone -- this is the pair.
+        pair = _GOOD.replace(
+            "static bool SD_ClaimOrRefuse(scpi_t *context, const char *cmd)\n{",
+            "bool my$SD_ClaimOrRefuse(scpi_t *context, const char *cmd);\n"
+            "static bool SD_ClaimOrRefuse(scpi_t *context, const char *cmd)\n{",
+            1)
+        pair = pair.replace(
+            "    if (!SD_ClaimOrRefuse(context, \"SPACe\")) {",
+            "    if (!my$SD_ClaimOrRefuse(context, \"SPACe\")) {", 1)
+        pair = pair.replace(
+            "    if (!SD_ArmOrRefuse(context, \"SPACe\", pCfg)) {\n"
+            "        return SCPI_RES_ERR;\n    }\n",
+            "    if (!SD_ArmOrRefuse(context, \"SPACe\", pCfg)) {\n"
+            "        return SCPI_RES_ERR;\n    }\n"
+            "    if (!(SD_ClaimOrRefuse)(context, \"SPACe\")) {\n"
+            "        return SCPI_RES_ERR;\n    }\n", 1)
+        assert pair.count("my$") == 2 and "(SD_ClaimOrRefuse)(" in pair
+        _ck("a claim moved past the arm by two misreadings that cancel in a "
+            "count is refused",
+            any(disagree in p and "the census counts a call" in p
+                and "accounting finds a call" in p
+                for p in check(pair)[0]), True)
+
+        # 13. The same move made with splices: a splice-CREATED `//` hides
+        #     the claim ahead of the arm, and a claim whose NAME a splice
+        #     splits is made after it. Read the compiler's way, the census
+        #     simply sees a claim taken after the arm.
+        spair = _GOOD.replace(
+            "    if (!SD_ClaimOrRefuse(context, \"SPACe\")) {\n"
+            "        return SCPI_RES_ERR;\n    }\n",
+            "    /\\\n/ if (!SD_ClaimOrRefuse(context, \"SPACe\")) "
+            "{ return SCPI_RES_ERR; }\n", 1)
+        spair = spair.replace(
+            "    if (!SD_ArmOrRefuse(context, \"SPACe\", pCfg)) {\n"
+            "        return SCPI_RES_ERR;\n    }\n",
+            "    if (!SD_ArmOrRefuse(context, \"SPACe\", pCfg)) {\n"
+            "        return SCPI_RES_ERR;\n    }\n"
+            "    if (!SD_ClaimOr\\\nRefuse(context, \"SPACe\")) "
+            "{ return SCPI_RES_ERR; }\n", 1)
+        assert "SD_ClaimOr\\\nRefuse" in spair and "/\\\n/ if" in spair
+        _ck("a claim moved past the arm with splices is refused",
+            any("arms before it calls SD_ClaimOrRefuse()" in p
+                for p in check(spair)[0]), True)
+
+        # 14-17. FORmat's retraction at its own call site, in the spellings
+        #     `_calls` alone cannot read (#976 review): hidden by a comment
+        #     closed by a SPLICED `*/` (raw text ran on to the next literal
+        #     `*/`), a parenthesized call, a pointer, and an alias defined
+        #     OUTSIDE FORmat.
+        fmt_refusal = ("                                   "
+                       "sd_card_manager_ClearFormatStatus)) {\n"
+                       "        return SCPI_RES_ERR;")
+        for label, inject, want in (
+                ("hidden by a splice-closed comment",
+                 "        /* late *\\\n/ sd_card_manager_ClearFormatStatus(); "
+                 "/* end */\n",
+                 "at its own call site"),
+                ("as a parenthesized call",
+                 "        (sd_card_manager_ClearFormatStatus)();\n",
+                 "names sd_card_manager_ClearFormatStatus 2 times"),
+                ("through a pointer",
+                 "        void (*undo)(void) = "
+                 "sd_card_manager_ClearFormatStatus;\n        undo();\n",
+                 "names sd_card_manager_ClearFormatStatus 2 times")):
+            mutated = _GOOD.replace(
+                fmt_refusal,
+                fmt_refusal.replace("        return SCPI_RES_ERR;",
+                                    inject + "        return SCPI_RES_ERR;"),
+                1)
+            assert mutated != _GOOD
+            _ck("a call-site retraction %s is refused" % label,
+                any(want in p for p in check(mutated)[0]), True)
+        aliased = _GOOD.replace(
+            "scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {\n",
+            "#define UNDO_FORMAT sd_card_manager_ClearFormatStatus\n"
+            "scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {\n", 1)
+        aliased = aliased.replace(
+            fmt_refusal,
+            fmt_refusal.replace("        return SCPI_RES_ERR;",
+                                "        UNDO_FORMAT();\n"
+                                "        return SCPI_RES_ERR;"), 1)
+        assert "UNDO_FORMAT();" in aliased
+        _ck("a call-site retraction through an alias defined OUTSIDE FORmat "
+            "is refused",
+            any("named in a preprocessor directive" in p
+                for p in check(aliased)[0]), True)
+
+        # 18-22. The shapes `cdef`'s own self-test pins, here against the
+        #     whole checker -- each one once passed this file clean.
+        claim_block = ("    if (!SD_ClaimOrRefuse(context, \"SPACe\")) {\n"
+                       "        return SCPI_RES_ERR;\n    }\n")
+        arm_block = ("    if (!SD_ArmOrRefuse(context, \"SPACe\", pCfg)) {\n"
+                     "        return SCPI_RES_ERR;\n    }\n")
+        arm_call = "SD_ArmOrRefuse(context, \"SPACe\", pCfg)"
+        for label, src in (
+                ("a declaration standing where the claim was",
+                 _GOOD.replace(claim_block,
+                               "    __attribute__((unused)) bool "
+                               "SD_ClaimOrRefuse(scpi_t *context, "
+                               "const char *cmd);\n", 1)),
+                ("a member call standing where the claim was",
+                 _GOOD.replace("    if (!SD_ClaimOrRefuse(context, \"SPACe\")) {",
+                               "    if (!hooks.SD_ClaimOrRefuse(context, "
+                               "\"SPACe\")) {", 1)),
+                ("an unevaluated sizeof standing where the claim was",
+                 _GOOD.replace(claim_block,
+                               "    (void)sizeof(SD_ClaimOrRefuse(context, "
+                               "\"SPACe\"));\n", 1)),
+                ("a `%:define` macro body standing for two arms",
+                 _GOOD.replace(arm_block,
+                               "%:define ARM_SPACE() " + arm_call + "\n"
+                               + arm_block.replace(arm_call, "ARM_SPACE()", 1)
+                               + "    (void)ARM_SPACE();\n", 1))):
+            assert src != _GOOD
+            _ck("%s is refused" % label,
+                any(unaccounted in p for p in check(src)[0]), True)
+        apos = _GOOD.replace(arm_block, arm_block
+                             + "#if 0\nit's the old path\n#endif\n"
+                             "    (void)" + arm_call + ";\n"
+                             "#if 0\nthat's it\n#endif\n", 1)
+        assert apos != _GOOD
+        _ck("a second arm between two `#if 0` blocks holding an apostrophe "
+            "is SEEN, not masked away",
+            any("arms 2 times" in p for p in check(apos)[0]), True)
     finally:
         KNOWN_PLAIN_ARM_SITES = saved
 
@@ -1621,6 +2063,40 @@ static scpi_result_t decoy(scpi_t * c) {
     _ck("the arm renamed away is refused, not silently unchecked",
         any("0 times" in p for p in check_stream(noarm)[0]), True)
 
+    # ---- occurrence accounting at the seventh site --------------------------
+    # A second streaming-log arm with a parenthesized callee: `_call_positions`
+    # saw one arm, so the "exactly one" count and property 4's verdict read
+    # were computed from a file with a call in it they never saw.
+    paren_stream = _GOOD_STREAM.replace(
+        "    sd_card_manager_ReleaseClaim();\n    int readyWait",
+        "    (void)(sd_card_manager_UpdateSettingsForStreamingLog)"
+        "(pSDCardSettings);\n"
+        "    sd_card_manager_ReleaseClaim();\n    int readyWait", 1)
+    assert paren_stream != _GOOD_STREAM
+    _ck("a parenthesized-callee second streaming arm is not silently "
+        "uncounted",
+        any("disagree about WHICH text is a call" in p
+            for p in check_stream(paren_stream)[0]), True)
+    # ...and the claim replaced by a DECLARATION of it, which both views
+    # used to count as the claim (#976 review).
+    decl_claim = _GOOD_STREAM.replace(
+        "    if (!sd_card_manager_TryClaim()) {",
+        "    __attribute__((unused)) bool sd_card_manager_TryClaim(void);\n"
+        "    if (0) {", 1)
+    assert decl_claim != _GOOD_STREAM
+    _ck("a declaration standing where the streaming claim was is refused",
+        any("no recogniser accounts for" in p
+            for p in check_stream(decl_claim)[0]), True)
+    # ...and the claim taken through a pointer instead of a call.
+    ptr_claim = _GOOD_STREAM.replace(
+        "    if (!sd_card_manager_TryClaim()) {",
+        "    bool (*take)(void) = sd_card_manager_TryClaim;\n"
+        "    if (!sd_card_manager_TryClaim() || !take()) {", 1)
+    assert ptr_claim != _GOOD_STREAM
+    _ck("a second claim reached through a function pointer is refused",
+        any("no recogniser accounts for" in p
+            for p in check_stream(ptr_claim)[0]), True)
+
     bad = _CHECKS.count(False)
     print("self-test: %d/%d checks passed" % (_CHECKS.count(True), len(_CHECKS)))
     return 1 if bad else 0
@@ -1671,14 +2147,21 @@ def main():
           "sites go through %s(), which passes NULL. In %s(), the claim "
           "(%s()) precedes the arm and %s()'s verdict is consumed (captured "
           "into a variable or tested inline, not discarded or cast to "
-          "`(void)`). %s()'s own internal ordering is checked by "
+          "`(void)`). Every occurrence of the %d names those properties are "
+          "counted from is accounted for, and the census -- reading the "
+          "source the way the compiler does -- finds exactly the calls "
+          "accounting found, at the same positions. Names that are not in "
+          "the text (macro token pasting, a header alias) and anything that "
+          "needs the preprocessor evaluated (a call inside `#if 0` still "
+          "counts) are out of reach. %s()'s own internal ordering is checked by "
           "tests/host/test_971_sd_arm_refusal_order.c instead; the position "
           "of %s()'s refusal against the readiness poll, and its `mode` "
           "clear under the claim, are not checked by anything right now -- "
           "see the module docstring."
           % (examined, os.path.basename(args.sd), CLAIM_TAKER, FORMAT_FN,
              ARM_HELPER, ARM_WRAPPER, STREAM_FN, STREAM_CLAIM_TAKER,
-             STREAM_ARM_CALL, ARM_HELPER, STREAM_FN))
+             STREAM_ARM_CALL, len(SD_ACCOUNTED) + len(STREAM_ACCOUNTED),
+             ARM_HELPER, STREAM_FN))
     return 0
 
 

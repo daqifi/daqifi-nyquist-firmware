@@ -379,11 +379,6 @@ $(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) has
 	       echo "       it was renamed, moved, or its signature reformatted, re-read it"; \
 	       echo "       against the model and update SD_ARM_HELPER / SD_ARM_HELPER_SHA."; \
 	       exit 1; }
-	@command -v sha256sum >/dev/null 2>&1 \
-	  || { echo "ERROR: sha256sum not found -- it is what pins $(SD_ARM_HELPER)()'s"; \
-	       echo "       code for test_971_sd_arm_refusal_order.c. Install GNU coreutils."; \
-	       echo "       (Reported separately so it is not read as a drift failure.)"; \
-	       exit 1; }
 	@python3 hash_function.py --self-test >/dev/null \
 	  || { echo "ERROR: hash_function.py's own self-test fails, so the drift pin"; \
 	       echo "       below cannot be trusted to see an edit. Fix the hasher"; \
