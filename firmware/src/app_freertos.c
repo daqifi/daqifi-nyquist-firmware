@@ -515,9 +515,9 @@ uint32_t app_SDCard_BusHoldMaxMs(void) {
 
 /* #930: record elapsedTicks (an already-computed nowTicks - busHoldSince) into
  * gSdBusHoldMaxMs if it is a new high-water mark. Factored out because the
- * leak watchdog below has two sample points -- "still holding, still under
- * the dwell threshold" and "the hold just ended" -- and both need the exact
- * same update. */
+ * leak watchdog below has THREE sample points -- "the hold just ended",
+ * "about to unwind (dwell reached)", and "still holding, still under the
+ * dwell threshold" -- and all three need the exact same update. */
 static void SdBusHoldMax_Sample(TickType_t elapsedTicks) {
     const uint32_t elapsedMs = (uint32_t)elapsedTicks * portTICK_PERIOD_MS;
     if (elapsedMs > gSdBusHoldMaxMs) {
