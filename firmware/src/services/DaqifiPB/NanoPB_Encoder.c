@@ -686,6 +686,25 @@ size_t Nanopb_Encode(tBoardData* state,
                         sizeof (message.analog_in_port_enabled.bytes));
                 break;
             }
+            /* #1086 (the Range half of #904/#1054): the three range cases
+             * below each read a module's Range, a 64-bit double -- two 32-bit
+             * loads on PIC32MZ (CLAUDE.md atomicity rules) -- and the
+             * CONF:ADC:RANGe setter on the other SCPI transport can land
+             * between them. That setter's store is atomic (#1086), which does
+             * not stop a reader straddling a completed store, so each read
+             * copies its value under its own minimal critical section and the
+             * store into the message happens outside it -- the shape the
+             * calibration cases below use (#1054). Only the AD7609 slot has a
+             * runtime writer; the MC12b reads take the section anyway, so the
+             * rule holds per field rather than per today's writers.
+             *
+             * That makes every range ENTRY untorn. It does not make one
+             * message's entries a coherent SET: each channel re-reads its
+             * module's Range, so a store landing mid-loop can leave two
+             * AD7609 channels advertising different ranges in one message.
+             * That was already true before this change and is not introduced
+             * here; closing it would mean holding one section across the
+             * whole channel loop. */
             case DaqifiOutMessage_analog_in_port_av_range_tag:
             {
                 /**
@@ -694,8 +713,11 @@ size_t Nanopb_Encode(tBoardData* state,
                  * This tag stores the supported voltage ranges for each analog input module,
                  * indicating the possible ranges a module can operate within (e.g., 0-5V, +/-10V).
                  */
-                message.analog_in_port_av_range[0] =
-                        pRuntimeAInModules->Data[AIn_MC12bADC].Range;
+                // #1086: untorn 64-bit read -- see the note above this case.
+                taskENTER_CRITICAL();
+                double range = pRuntimeAInModules->Data[AIn_MC12bADC].Range;
+                taskEXIT_CRITICAL();
+                message.analog_in_port_av_range[0] = range;
                 message.analog_in_port_av_range_count = 1;
                 message.analog_in_port_range_count = 0;
                 break;
@@ -719,10 +741,17 @@ size_t Nanopb_Encode(tBoardData* state,
                 for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
                     if (AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x]) && chan < max_range_count) {
                         // Get range from appropriate module
+                        // #1086: each branch's read is untorn -- see the note above analog_in_port_av_range_tag.
                         if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC) {
-                            message.analog_in_port_range[chan++] = pRuntimeAInModules->Data[AIn_MC12bADC].Range;
+                            taskENTER_CRITICAL();
+                            double range = pRuntimeAInModules->Data[AIn_MC12bADC].Range;
+                            taskEXIT_CRITICAL();
+                            message.analog_in_port_range[chan++] = range;
                         } else if (pBoardConfig->AInChannels.Data[x].Type == AIn_AD7609) {
-                            message.analog_in_port_range[chan++] = pRuntimeAInModules->Data[AIn_AD7609].Range;
+                            taskENTER_CRITICAL();
+                            double range = pRuntimeAInModules->Data[AIn_AD7609].Range;
+                            taskEXIT_CRITICAL();
+                            message.analog_in_port_range[chan++] = range;
                         }
                     }
                 }
@@ -745,10 +774,17 @@ size_t Nanopb_Encode(tBoardData* state,
                 for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
                     if (!AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x]) && chan < max_range_count) {
                         // Get range from appropriate module
+                        // #1086: each branch's read is untorn -- see the note above analog_in_port_av_range_tag.
                         if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC) {
-                            message.analog_in_port_range_priv[chan++] = pRuntimeAInModules->Data[AIn_MC12bADC].Range;
+                            taskENTER_CRITICAL();
+                            double range = pRuntimeAInModules->Data[AIn_MC12bADC].Range;
+                            taskEXIT_CRITICAL();
+                            message.analog_in_port_range_priv[chan++] = range;
                         } else if (pBoardConfig->AInChannels.Data[x].Type == AIn_AD7609) {
-                            message.analog_in_port_range_priv[chan++] = pRuntimeAInModules->Data[AIn_AD7609].Range;
+                            taskENTER_CRITICAL();
+                            double range = pRuntimeAInModules->Data[AIn_AD7609].Range;
+                            taskEXIT_CRITICAL();
+                            message.analog_in_port_range_priv[chan++] = range;
                         }
                     }
                 }

@@ -252,7 +252,6 @@ double MC12b_ConvertToVoltage(
         const AInRuntimeConfig* runtimeConfig,
         uint32_t rawValue) {
 
-    double range = gpModuleRuntimeConfigMC12->Range;
     double scale = channelConfig->InternalScale;
 
     // #1054 (the read half of #904): CalM and CalB are 64-bit doubles, so a
@@ -265,9 +264,17 @@ double MC12b_ConvertToVoltage(
     // offset at the same instant, so a LOADcal/USECal bulk load (which #1048
     // writes one channel's pair at a time) is seen entirely old or entirely
     // new -- reading them separately did not guarantee that. This runs once
-    // per converted sample, so the section holds the two loads and nothing
+    // per converted sample, so the section holds the loads and nothing
     // else; the arithmetic stays outside it.
+    //
+    // #1086: the module Range is the same 64-bit shape, so it loads in this
+    // same section rather than a second one -- one more load, not another
+    // interrupt-mask round trip on this per-sample path. No runtime writer
+    // targets the MC12b module's Range today (CONF:ADC:RANGe stores only the
+    // AD7609 slot -- ADCChanRangeSetClaimed, SCPIADC.c), so on this path it
+    // is the shared-field rule applied uniformly rather than a live race.
     taskENTER_CRITICAL();
+    double range = gpModuleRuntimeConfigMC12->Range;
     double calM = runtimeConfig->CalM;
     double calB = runtimeConfig->CalB;
     taskEXIT_CRITICAL();
