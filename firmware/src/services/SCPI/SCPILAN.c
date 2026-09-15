@@ -685,18 +685,19 @@ scpi_result_t SCPI_LANBssidGet(scpi_t * context) {
  *              wifi_manager_GetWiFiStatus() reports as WIFI_STATUS_CONNECTED.
  *
  *
- *              CAVEAT, #1060: CONNECTED can be reported with no peer
+ *              CAVEAT, #1060: CONNECTED can still be reported with no peer
  *              attached, because the association flag behind it is
- *              event-latched rather than a live measurement. It can happen
- *              around an AP stop or restart, or a mode switch -- in at least
- *              one path with no time bound. Do not treat CONNECTED as proof
- *              that a peer is attached now.
+ *              event-latched rather than a live measurement, and not every
+ *              path that can leave it stale is closed. Do not treat CONNECTED
+ *              as proof that a peer is attached now.
  *
- *              The flag behaviour is PRE-EXISTING and unchanged here -- the
- *              legacy 3-value status tests the same flag first, verified
- *              against main at d71147e31 -- but this command is what newly
- *              PUBLISHES "a peer is attached", so the caveat belongs with the
- *              promise. #1060 carries the fix.
+ *              #1060's AP->STA APPLY path (the one it was filed with a
+ *              concrete repro for) IS fixed: that branch now resets the flag
+ *              before tearing the AP down, mirroring the STA->AP branch. The
+ *              flag is still fundamentally event-latched rather than
+ *              chip-derived, so this command is what newly PUBLISHES "a peer
+ *              is attached" and the caveat stays with the promise until every
+ *              path is enumerated and closed, not just the one #1060 named.
  *              APIDLE and CONNECTED are deliberately NOT split on "has a TCP
  *              client". An adversarial audit of PR #1044 showed that they
  *              cannot be: a station that merely associates to our soft-AP

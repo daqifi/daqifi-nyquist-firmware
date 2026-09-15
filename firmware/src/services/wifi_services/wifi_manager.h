@@ -251,13 +251,15 @@ extern "C" {
          *  Deliberately NOT "an AP client has opened TCP": see AP_IDLE above.
          *  Identical condition to WIFI_STATUS_CONNECTED.
          *
-         *  CAVEAT, #1060: can read CONNECTED with no peer attached, because
-         *  the association flag behind it is event-latched rather than a live
-         *  measurement -- around an AP stop or restart, or a mode switch, in
-         *  at least one path with no time bound. Pre-existing (the legacy
-         *  status tests the same flag first, verified against main at
-         *  d71147e31); documented here because this enum is what newly
-         *  promises "a peer is attached". */
+         *  CAVEAT, #1060: can still read CONNECTED with no peer attached,
+         *  because the association flag behind it is event-latched rather
+         *  than a live measurement, and not every path that can leave it
+         *  stale is closed. The AP->STA APPLY path #1060 was filed with a
+         *  concrete repro for IS fixed (that branch now resets the flag
+         *  before tearing the AP down, mirroring the STA->AP branch); the
+         *  flag itself is still fundamentally event-latched, so this enum
+         *  keeps the caveat until every path is enumerated and closed, not
+         *  just the one #1060 named. */
         WIFI_LINK_STATE_CONNECTED
     } wifi_link_state_t;
 

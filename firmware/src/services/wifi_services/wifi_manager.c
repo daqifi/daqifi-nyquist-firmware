@@ -1751,10 +1751,63 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     wifi_tcp_server_CloseSocket();
                     RESET_TCP_SOCKET_OPEN(pInstance);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
-                    
+
+                    // #1060: clear the STA flags too, mirroring the STA->AP
+                    // branch above, and BEFORE APStop below -- not after --
+                    // so nothing in this branch can observe them set once
+                    // teardown has started. STA_CONNECTED is not STA-only: a
+                    // station associating to OUR soft-AP makes
+                    // ApEventCallback queue the same
+                    // WIFI_MANAGER_EVENT_STA_CONNECTED a real STA link does,
+                    // and that event's handler sets the flag with no AP/STA
+                    // discrimination. Nothing else clears it here -- the
+                    // client's own disconnect callback arrives after
+                    // AP_STARTED goes clear below and ApEventCallback drops
+                    // it -- so GetLinkState(), which tests this flag before
+                    // AP_STARTED, would report CONNECTED through the 500 ms
+                    // settle and the STA bring-up that follows, with no link.
+                    // STA_STARTED should already be clear here in the common
+                    // case (only the STA INIT and STA-reconfigure paths set
+                    // it, and AP mode is neither), so clearing it is
+                    // defensive rather than a behavior change: it keeps
+                    // MaybeReconcileStaConnected()'s Phase-1 repair, which is
+                    // gated on STA_STARTED but not on the APPLY-in-progress
+                    // gate, from re-setting STA_CONNECTED out from under this
+                    // switch. INIT below sets STA_STARTED again once it
+                    // reaches BSSConnect.
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
+
                     WDRV_WINC_APStop(pInstance->wdrvHandle);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
-                    
+
+                    // #1060: disconnect unconditionally, mirroring what the
+                    // STA->AP branch above and the WiFi-disable path both
+                    // already do after their own APStop/APStop-equivalent.
+                    // A soft-AP client association also sets the WINC
+                    // driver's own internal isConnected, which APStop does
+                    // not clear; before this fix, the (buggy) still-set
+                    // STA_CONNECTED flag routed a subsequent DHCP failure's
+                    // ERROR/REINIT retry into the STA-reconfigure path,
+                    // whose own BSSDisconnect happened to clear isConnected
+                    // and let the #467 DHCP-wedge retry recover. With the
+                    // flag now correctly clear, that retry would instead
+                    // take the fresh-init path, which does not touch
+                    // isConnected -- so without this disconnect, fixing the
+                    // status-reporting defect could reopen the #467 wedge
+                    // for exactly the client-was-attached case this ticket
+                    // is about. BSSDisconnect returns REQUEST_ERROR
+                    // harmlessly when isConnected is already false (the
+                    // common case), matching the STA->AP branch's own
+                    // comment on the identical call.
+                    {
+                        const WDRV_WINC_STATUS discStatus = WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                        if ((WDRV_WINC_STATUS_OK != discStatus) &&
+                            (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
+                            LOG_E("WiFi: BSS disconnect failed on AP->STA (status=%d)", (int)discStatus);
+                        }
+                    }
+
                     // Don't deinitialize - the driver gets into a bad state (-1) after deinit
                     // Instead, just wait for AP to stop and then configure for STA mode
                     vTaskDelay(pdMS_TO_TICKS(500));  // Let AP fully stop
@@ -2443,12 +2496,24 @@ wifi_link_state_t wifi_manager_GetLinkState(void) {
             // the periodic reconciler only ever SETS it, and only while
             // STA_STARTED is set. So around an AP stop or restart, or a mode
             // switch, it can stay set with no peer attached -- in at least one
-            // path with no time bound. #1060 records the paths found so far.
+            // path with no time bound (see below).
             //
-            // NOT fixed here because it is PRE-EXISTING: the legacy
-            // wifi_manager_GetWiFiStatus() on main at d71147e31 tests this flag
-            // first in exactly this order. This PR made the existing wrongness
-            // visible by publishing a contract about it; #1060 carries the fix.
+            // #1060's own AP->STA APPLY path is now closed: the AP->STA branch
+            // above resets STA_CONNECTED (and STA_STARTED) before it stops the
+            // AP, mirroring what the STA->AP branch already did. That was the
+            // one concrete repro #1060 was filed with -- not a claim that every
+            // event-latch path is closed, and NOT a claim that the window is
+            // bounded (#1060's own text says explicitly it is not confined to
+            // the branch's 500 ms delay). A known, still-open instance: the
+            // client-association event this branch's clears race against is
+            // ENQUEUED (ApEventCallback's SendEvent result at the queue call
+            // site is not checked) but CONSUMED later, on this task, by
+            // whatever handler runs next -- so an association that queues
+            // just before AP_STARTED clears and is processed just after can
+            // still re-set STA_CONNECTED with nothing left to clear it, same
+            // failure shape, different trigger. File a newly found instance
+            // separately (with its own repro) rather than reopening #1060 for
+            // it, and rather than assuming this comment enumerates all of them.
             if (0u != (flags & WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
                 return WIFI_LINK_STATE_CONNECTED;
             }
