@@ -184,7 +184,7 @@ void __attribute__((used)) ADC_DATA2_Handler(void) {
 
 void __attribute__((used)) ADC_DATA3_Handler(void) {
     // #292 moved T1 result reads out of this ISR, and #541 moved the
-    // streaming-time ones on into _Streaming_Deferred_Interrupt_Task (task
+    // streaming-time ones into _Streaming_Deferred_Interrupt_Task (task
     // pri 9) -- see the block comment above. CH3 result interrupt is disabled
     // at peripheral level; this stub is a safety net — just acks the PLIB flag.
     ADC_DATA3_InterruptHandler();
