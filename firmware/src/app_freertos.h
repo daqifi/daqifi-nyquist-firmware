@@ -315,12 +315,15 @@ bool app_SDCard_HoldsSpiBus(void);
 uint32_t app_SDCard_BusRecoveryCount(void);
 
 /**
- * #930: high-water mark of the observed shared-SPI4 exclusive-hold duration
- * (milliseconds), sampled at the same SD_BUS_LEAK_POLL_MS cadence the #925
- * leak watchdog's own dwell decision uses. 0 on a healthy device that has
- * never held the bus with an SD operation armed and idle. Lets
- * SD_BUS_LEAK_DWELL_MS be measured against a real observed hold instead of
- * argued from worst-case arithmetic.
+ * #930: high-water mark, in milliseconds since boot, of how long the SD
+ * client has been seen holding the shared SPI4 exclusive lock with the SD
+ * manager idle (nothing armed) -- the span the #925 leak watchdog times
+ * against SD_BUS_LEAK_DWELL_MS, sampled at its SD_BUS_LEAK_POLL_MS cadence,
+ * so the value is good to about one poll. Unlike
+ * app_SDCard_BusRecoveryCount() above, non-zero is NORMAL: a healthy device
+ * with a card read 100 ms right after boot (bench, 2026-09-15). What matters
+ * is how close it comes to the dwell. Lets SD_BUS_LEAK_DWELL_MS be measured
+ * against a real observed hold instead of argued from worst-case arithmetic.
  */
 uint32_t app_SDCard_BusHoldMaxMs(void);
 
