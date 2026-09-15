@@ -105,6 +105,16 @@ stays checked here (property 1, below), unlike the rest of what #942 fixed.
    surviving half of what #971 originally called "the claim precedes the
    arm"; the helper-internal half (which write falls on which branch) is the
    property that moved above.
+
+   In `SCPIInterface.c` that is only half of it, because that file's check
+   reads ONE function: a call to the streaming-log arm from any other
+   function -- a retry helper called from the refusal branch after the claim
+   is released -- was classified as an ordinary call, agreed by the census,
+   and checked against no claim at all (#976 audit round 9). So every call
+   to it that accounting classifies must sit inside
+   `SCPI_StartStreamingClaimed()` itself (`_stream_arm_escape_problems`).
+   `SCPIStorageSD.c` needs no twin: its census already walks every function
+   that calls either arm helper, and checks each one.
 2. **FORmat reaches its retraction THROUGH the callback parameter, and
    publishes between the claim and the arm.** `SCPI_StorageSDFormat` takes the
    claim, THEN publishes format-pending, THEN arms; passes a non-NULL
@@ -168,22 +178,35 @@ stays checked here (property 1, below), unlike the rest of what #942 fixed.
      comment or a split identifier is seen identically by both;
    * `cdef.account_occurrences` requires each occurrence of `SD_ACCOUNTED` /
      `STREAM_ACCOUNTED`, found with no grammar, to be a definition, a
-     prototype or an EVALUATED call; anything else (an alias, `&F`,
-     `p = F;`, a declaration, `sizeof F(x)`, `p->F(x)`, a spelling nobody
-     has thought of) is reported at its physical line;
+     prototype or a call written in cdef's bounded CALL CONTRACT: the
+     entire expression of `F(args);`, `(void)F(args);`, `if (F(args))`,
+     `if (!F(args))`, `T v = F(args);`, `v = F(args);` or
+     `return F(args);`, at block level. Anything else is reported at its
+     physical line -- an alias, `&F`, `p = F;`, a declaration,
+     `sizeof F(x)`, `p->F(x)`, a spelling nobody has thought of, and some
+     calls the compiler does make (`x = a * F(1);`, `(F)(x)`, a braceless
+     `if (x) F(1);`), which the contract refuses rather than reads. It is a
+     contract about how a tracked call is WRITTEN, not a recogniser of every
+     evaluated call (cdef's docstring, "THE CALL RECOGNISER IS A BOUNDED
+     STYLE CONTRACT");
    * and, per name, every call the census counts must be a call accounting
      classified AT THE SAME POSITION, and vice versa. Positions, not
      per-function counts, are the point: a claim the census reads before
      the arm and the compiler never makes (`my$F(...)` is another function
      to GCC), plus the real claim made after the arm in a spelling the
      census cannot read (`(F)(...)`), keeps every count equal while the
-     claim moves -- that pair passed clean until the #976 review.
+     claim moves -- that pair passed clean until the #976 review. (The call
+     contract now refuses `(F)(...)` outright as well: it accepts only the
+     bare `F(args)`.)
 
    Out of reach, by construction: a name that is not in the text -- macro
    token pasting (`CAT(SD_ArmOr, Refuse)(...)`), or an alias defined in a
    header -- and anything that needs the preprocessor evaluated (a claim
-   inside `#if 0` still counts as a claim) or reachability (`if (0)`). See
-   `cdef.line_comment_end` and the `cdef` module docstring.
+   inside `#if 0` still counts as a claim) or reachability (`if (0) {
+   claim(); }` still counts as the claim); and runtime ownership -- a green
+   run says the TEXT reads claim-then-arm, never that a claim is held when
+   the arm runs. See `cdef.line_comment_end` and the `cdef` module
+   docstring.
 
 ## An inline test is accepted (#942's follow-up did not spell this out)
 
@@ -921,7 +944,11 @@ def _stream_arm_problems(text):
     for the fact that (unlike the helper) no replacement host-test model
     exists yet for this site. Property 1's claim-before-arm half stays: it is
     a plain "A before B" over the whole function, not one of the shapes three
-    rounds catalogued, so it does not share their fate."""
+    rounds catalogued, so it does not share their fate.
+
+    It reads `STREAM_FN`'s body and nothing else. A call to the arm from any
+    other function is `_stream_arm_escape_problems`'s to refuse (#976 audit
+    round 9)."""
     problems = []
     body = function_body(text, STREAM_FN)
     if body is None:
@@ -1007,6 +1034,37 @@ def _stream_arm_problems(text):
     return problems, 1
 
 
+def _stream_arm_escape_problems(source_text):
+    """Property 1's other half in `SCPIInterface.c`: the streaming-log arm
+    is called from `STREAM_FN` and from NO other function. -> [problem, ...]
+
+    `_stream_arm_problems` reads `STREAM_FN`'s body and nothing else, so a
+    call to `STREAM_ARM_CALL` in any other function was invisible to every
+    check it makes -- the one claim, the one arm, the verdict -- while
+    occurrence accounting classified it as an ordinary call and the census
+    agreed. #976 audit round 9 placed a one-line wrapper,
+    `RetryStreamingArm()`, before `STREAM_FN` and called it from the refusal
+    branch after `sd_card_manager_ReleaseClaim()`: a second arm with no claim
+    held, and `check_stream()` returned `([], 1)`.
+
+    The enclosing function is the one `cdef.classify_occurrences` already
+    attributes to every call (`Occurrence.function`), so this adds no second
+    "which function is this in" rule. Only CALLS are read: any other
+    occurrence of the name is accounting's to refuse.
+    """
+    return ["%s: line %d: called from %s(), not from %s(). Properties 1 and 4 "
+            "read only %s()'s body -- its one claim, its one arm, that arm's "
+            "verdict -- so an arm reached through any other function is "
+            "checked against no claim at all: a retry helper called from the "
+            "refusal branch arms after the claim has been released. Arm only "
+            "inside %s(), or teach this checker about the new caller (#942, "
+            "#976 audit round 9)."
+            % (STREAM_ARM_CALL, o.line, o.function, STREAM_FN, STREAM_FN,
+               STREAM_FN)
+            for o in classify_occurrences(source_text, STREAM_ARM_CALL)
+            if o.kind == "call" and o.function != STREAM_FN]
+
+
 # Every name each entry point's properties are computed from. Each one's
 # occurrences are ACCOUNTED FOR (see `_accounting_problems`): a spelling of
 # one of these that no recogniser explains fails the gate instead of silently
@@ -1041,16 +1099,22 @@ def _accounting_problems(source_text, text, spans, names):
     it, POSITION BY POSITION.
 
     1. `cdef.account_occurrences`: every occurrence of each name must be a
-       definition, a prototype or an evaluated call; anything else (an
-       alias, `&F`, a declaration, `sizeof F(x)`, `p->F(x)`, a construct
-       nobody has thought of yet) is reported at its PHYSICAL line.
+       definition, a prototype or a call written in cdef's call contract
+       (the entire expression of one of five statement shapes, at block
+       level); anything else (an alias, `&F`, a declaration, `sizeof F(x)`,
+       `p->F(x)`, a call in a style the contract does not accept, a
+       construct nobody has thought of yet) is reported at its PHYSICAL
+       line.
     2. Every call the census counts inside a function body (`\\bF\\s*\\(` on
        `text`, which is `compiler_text(source_text)`) must be a call
        accounting classified AT THE SAME OFFSET, and every call accounting
-       classified must be one the census counts. Without this, "classified
-       as a call" would be an allowlist the census never saw: `(F)(x)` is a
-       call to accounting and invisible to `\\bF\\s*\\(`, and `my$F(x)` is
-       the reverse -- another function to GCC, a boundary to `\\b`.
+       classified must be one the census counts. The census counts every
+       `F(` it sees and accounting accepts only the contract's shapes, so
+       the first direction is the live one: `my$F(x)` (another function to
+       GCC, a boundary to `\\b`) reds here, and `x = a * F(1)` (a census
+       call the contract refuses) reds here as well as in 1. The reverse --
+       a call only accounting reads -- was `(F)(x)` until the contract
+       refused wrapped callees (#976 audit round 9); it is kept as a guard.
 
     Positions, not per-function counts. Counts were the first version, and
     one of each misreading in the same function -- a phantom claim the
@@ -1141,12 +1205,16 @@ def check(source_text):
 
 def check_stream(source_text):
     """-> (problems, examined) for `SCPIInterface.c`. Pure, like check(),
-    and like it reads `compiler_text(source_text)` and nothing else."""
+    and like it reads `compiler_text(source_text)` and nothing else. Besides
+    `STREAM_FN`'s own body, it refuses a call to the arm from any other
+    function (`_stream_arm_escape_problems`)."""
     text = compiler_text(source_text)
     try:
         problems, examined = _stream_arm_problems(text)
-        problems = problems + _accounting_problems(
-            source_text, text, function_spans(text), STREAM_ACCOUNTED)
+        problems = (problems + _stream_arm_escape_problems(source_text)
+                    + _accounting_problems(source_text, text,
+                                           function_spans(text),
+                                           STREAM_ACCOUNTED))
         return problems, examined
     except AmbiguousDefinition as exc:
         return ["%s -- refusing to check either." % exc], 0
@@ -1704,16 +1772,20 @@ static scpi_result_t decoy(scpi_t * c) {
 
         # 3. A SECOND arm, spelled with a parenthesized callee. `(F)(x)` is
         #    a call; the census's `\bF\s*\(` cannot see it, so the "arms
-        #    exactly once" count read one.
+        #    exactly once" count read one. CHANGED by cdef's call contract
+        #    (#976 audit round 9): this used to red as a census/accounting
+        #    DISAGREEMENT ("accounting finds a call ... that the census does
+        #    not count"). Accounting now refuses the wrapped callee outright,
+        #    so it reds as an UNACCOUNTED occurrence in SpaceGet instead --
+        #    still refused, never silently uncounted.
         paren = _GOOD.replace(
             "    return SCPI_RES_OK;\n}\n\nscpi_result_t SCPI_StorageSDFormat",
             "    (SD_ArmOrRefuseWithCleanup)(context, \"SPACe\", pCfg, NULL);\n"
             "    return SCPI_RES_OK;\n}\n\nscpi_result_t SCPI_StorageSDFormat", 1)
         assert paren != _GOOD
         _ck("a parenthesized-callee second arm is not silently uncounted",
-            any(disagree in p and "accounting finds a call in "
-                "SCPI_StorageSDSpaceGet() at line" in p
-                for p in check(paren)[0]), True)
+            any(unaccounted in p and "(in SCPI_StorageSDSpaceGet())" in p
+                and "PARENTHESIZED" in p for p in check(paren)[0]), True)
 
         # 4. An alias. Replacing the one plain arm is caught by the site
         #    FLOOR already (and by accounting); adding a SECOND arm through
@@ -1857,11 +1929,19 @@ static scpi_result_t decoy(scpi_t * c) {
             "    if (!(SD_ClaimOrRefuse)(context, \"SPACe\")) {\n"
             "        return SCPI_RES_ERR;\n    }\n", 1)
         assert pair.count("my$") == 2 and "(SD_ClaimOrRefuse)(" in pair
+        # CHANGED by cdef's call contract (#976 audit round 9): the second
+        # misreading no longer exists -- accounting refuses `(F)(...)` rather
+        # than reading it as the claim -- so the pair reds on BOTH halves
+        # separately: the census's phantom `my$` claim as a disagreement, and
+        # the wrapped claim as unaccounted. It used to red as ONE
+        # disagreement naming both directions.
+        pair_probs = check(pair)[0]
         _ck("a claim moved past the arm by two misreadings that cancel in a "
             "count is refused",
             any(disagree in p and "the census counts a call" in p
-                and "accounting finds a call" in p
-                for p in check(pair)[0]), True)
+                for p in pair_probs)
+            and any(unaccounted in p and "PARENTHESIZED" in p
+                    for p in pair_probs), True)
 
         # 13. The same move made with splices: a splice-CREATED `//` hides
         #     the claim ahead of the arm, and a claim whose NAME a splice
@@ -2031,6 +2111,39 @@ static scpi_result_t decoy(scpi_t * c) {
             assert src != _GOOD
             _ck("the SPACe claim inside %s is refused" % label,
                 any(unaccounted in p for p in check(src)[0]), True)
+
+        # 36. #976 audit round 9 (a): the SPACe claim replaced by a prototype
+        #     whose parameter's VLA bound CALLS it. A bound at
+        #     function-prototype scope is never evaluated (C11 6.7.6.2p5), so
+        #     the claim is never made -- and the recogniser cdef's call
+        #     contract replaced read it as the claim, the census agreed, and
+        #     property 1 passed.
+        src = _GOOD.replace(
+            "    if (!SD_ClaimOrRefuse(context, \"SPACe\")) {",
+            "    extern void claim_contract(int a[1 + SD_ClaimOrRefuse("
+            "context, \"SPACe\")]); if (0) {", 1)
+        assert src != _GOOD
+        _ck("the SPACe claim inside a prototype's VLA bound is refused",
+            any(unaccounted in p for p in check(src)[0]), True)
+
+        # 37. #976 audit round 9 review: an arm through a wrapper written as
+        #     a K&R definition, called AHEAD of the SPACe claim. The
+        #     declarator grammar cannot read that definition, so its body is
+        #     no span and the census walks past it -- and `return F(...);` at
+        #     the start of a line there read as a PROTOTYPE, so accounting
+        #     agreed, and check() passed with an arm before the claim. cdef
+        #     now claims a prototype only at file scope.
+        head = "scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {\n"
+        claim = "    if (!SD_ClaimOrRefuse(context, \"SPACe\")) {"
+        assert _GOOD.count(head) == 1 and _GOOD.count(claim) == 1
+        src = _GOOD.replace(
+            head, "static bool SneakArm(context)\n    scpi_t *context;\n{\n"
+            "    return SD_ArmOrRefuse(context, \"SNEAK\", NULL);\n}\n\n"
+            + head, 1).replace(
+            claim, "    (void)SneakArm(context);\n" + claim, 1)
+        _ck("an arm through a K&R-defined wrapper ahead of the claim is "
+            "refused", any(unaccounted in p and ARM_WRAPPER in p
+                           for p in check(src)[0]), True)
     finally:
         KNOWN_PLAIN_ARM_SITES = saved
 
@@ -2162,9 +2275,12 @@ static scpi_result_t decoy(scpi_t * c) {
         "(pSDCardSettings);\n"
         "    sd_card_manager_ReleaseClaim();\n    int readyWait", 1)
     assert paren_stream != _GOOD_STREAM
+    # CHANGED by cdef's call contract (#976 audit round 9): this used to red
+    # as a census/accounting disagreement; accounting now refuses the
+    # wrapped callee outright, so it reds as unaccounted instead.
     _ck("a parenthesized-callee second streaming arm is not silently "
         "uncounted",
-        any("disagree about WHICH text is a call" in p
+        any("no recogniser accounts for" in p and "PARENTHESIZED" in p
             for p in check_stream(paren_stream)[0]), True)
     # ...and the claim replaced by a DECLARATION of it, which both views
     # used to count as the claim (#976 review).
@@ -2210,6 +2326,60 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("the streaming claim inside %s is refused" % label,
             any("no recogniser accounts for" in p
                 for p in check_stream(src)[0]), True)
+    # ...and #976 audit round 9 (a) at this site: the claim inside a
+    # prototype's VLA bound, never evaluated (C11 6.7.6.2p5).
+    src = _GOOD_STREAM.replace("    if (!sd_card_manager_TryClaim()) {",
+                               "    extern void claim_contract(int a[1 + "
+                               "sd_card_manager_TryClaim()]); if (0) {", 1)
+    assert src != _GOOD_STREAM
+    _ck("the streaming claim inside a prototype's VLA bound is refused",
+        any("no recogniser accounts for" in p
+            for p in check_stream(src)[0]), True)
+
+    # ---- #976 audit round 9 (b): an arm reached from ANOTHER function -------
+    # `_stream_arm_problems` reads STREAM_FN's body only. A one-line wrapper
+    # defined before it and called from the refusal branch AFTER the claim is
+    # released is a second arm with no claim held -- classified by accounting
+    # as an ordinary call (`return F(cfg);` in the wrapper's own body), agreed
+    # by the census, and checked by nothing: `check_stream()` returned
+    # `([], 1)` for exactly this source. Exactly ONE problem now, naming it.
+    retry_src = _GOOD_STREAM.replace(
+        "static scpi_result_t SCPI_StartStreamingClaimed(",
+        "static bool RetryStreamingArm(sd_card_manager_settings_t *cfg) "
+        "{ return sd_card_manager_UpdateSettingsForStreamingLog(cfg); }\n"
+        "static scpi_result_t SCPI_StartStreamingClaimed(", 1)
+    retry_src = retry_src.replace(
+        "        sd_card_manager_ReleaseClaim();\n"
+        "        SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);\n",
+        "        sd_card_manager_ReleaseClaim();\n"
+        "        (void)RetryStreamingArm(pSDCardSettings);\n"
+        "        SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);\n", 1)
+    assert retry_src.count("RetryStreamingArm") == 2
+    retry_probs, retry_n = check_stream(retry_src)
+    _ck("an arm reached through a wrapper called from the refusal branch is "
+        "refused -- exactly one problem, naming the escaped call",
+        (len(retry_probs),
+         any("called from RetryStreamingArm()" in p and STREAM_ARM_CALL in p
+             for p in retry_probs)), (1, True))
+    _ck("...and the one streaming site is still the one examined", retry_n, 1)
+    # ...and the same wrapper written as a K&R definition. The declarator
+    # grammar cannot read one, so its body is no span: the arm there is never
+    # a "call" for `_stream_arm_escape_problems` to see, no census counts it,
+    # and `return F(cfg);` at the start of a line is prototype-SHAPED -- it
+    # was claimed as a prototype and accounted clean, and `check_stream()`
+    # returned `([], 1)` (#976 audit round 9 review). cdef now claims a
+    # prototype only at file scope, so accounting refuses it.
+    kr_src = retry_src.replace(
+        "static bool RetryStreamingArm(sd_card_manager_settings_t *cfg) "
+        "{ return sd_card_manager_UpdateSettingsForStreamingLog(cfg); }\n",
+        "static bool RetryStreamingArm(cfg)\n"
+        "    sd_card_manager_settings_t *cfg;\n{\n"
+        "    return sd_card_manager_UpdateSettingsForStreamingLog(cfg);\n}\n",
+        1)
+    assert kr_src != retry_src
+    _ck("...and through the same wrapper written as a K&R definition",
+        any("no recogniser accounts for" in p and STREAM_ARM_CALL in p
+            for p in check_stream(kr_src)[0]), True)
 
     bad = _CHECKS.count(False)
     print("self-test: %d/%d checks passed" % (_CHECKS.count(True), len(_CHECKS)))
@@ -2259,10 +2429,13 @@ def main():
           "%s() reaches its retraction through %s()'s callback parameter and "
           "not at its own call site, and publishes before it arms; the other "
           "sites go through %s(), which passes NULL. In %s(), the claim "
-          "(%s()) precedes the arm and %s()'s verdict is consumed (captured "
+          "(%s()) precedes the arm, which no other function calls, and "
+          "%s()'s verdict is consumed (captured "
           "into a variable or tested inline, not discarded or cast to "
           "`(void)`). Every occurrence of the %d names those properties are "
-          "counted from is accounted for, and the census -- reading the "
+          "counted from is accounted for (a definition, a prototype, or a "
+          "call written in one of cdef's five contract shapes at block "
+          "level), and the census -- reading the "
           "source the way the compiler does -- finds exactly the calls "
           "accounting found, at the same positions. Names that are not in "
           "the text (macro token pasting, a header alias) and anything that "

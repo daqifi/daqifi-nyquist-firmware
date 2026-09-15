@@ -59,38 +59,90 @@ is a question about preprocessor state, and no tool here evaluates that.
 Taking the first is how the pin digested dead code; taking the last is no
 better. `find_definitions()` returns all of them and the callers refuse.
 
-EVERY OCCURRENCE IS ACCOUNTED FOR. Rounds 5 and 6 and the review after them
-kept finding ONE MORE valid spelling the matchers above had not been taught
--- an indented definition, an attribute on its own line, `(F)`, `((F))`, a
-spliced `//` -- and after them two more were live at once: a replacement
-with TWO `__attribute__((...))` prefixes next to an `#if 0` original (one
-definition found, the DEAD one, reported unambiguous and pinned), and a
-call written `(F)(...)` (invisible to the arm census). Every one was
-FAIL-OPEN: live code left the text being checked while the check reported
-clean. Teaching the definition regex every valid C spelling, one per audit
-round, cannot terminate.
+EVERY OCCURRENCE IS CLASSIFIED OR REPORTED. Rounds 5 and 6 and the review
+after them kept finding ONE MORE valid spelling the matchers above had not
+been taught -- an indented definition, an attribute on its own line, `(F)`,
+`((F))`, a spliced `//` -- and after them two more were live at once: a
+replacement with TWO `__attribute__((...))` prefixes next to an `#if 0`
+original (one definition found, the DEAD one, reported unambiguous and
+pinned), and a call written `(F)(...)` (invisible to the arm census). Every
+one was FAIL-OPEN: live code left the text being checked while the check
+reported clean. Teaching the definition regex every valid C spelling, one
+per audit round, cannot terminate.
 
 So the question is turned round. Instead of recognising every valid
 spelling positively, `account_occurrences()` requires that EVERY raw
 occurrence of a name -- every identifier token the compiler would see,
 found WITHOUT any grammar -- be claimed by exactly one recogniser:
-definition, file-scope prototype, or call inside a function body this
-module can find. Anything left over is reported, with its physical line:
-an alias, `&F`, `p = F;`, a declaration, a spelling nobody has thought of.
-An unrecognised construct therefore fails CLOSED -- the lint reds -- instead
-of silently falling out of view; nobody has to anticipate the next
-spelling, only whether every occurrence was explained.
+definition, file-scope prototype, or a call written the way the call
+contract below allows. Anything left over is reported, with its physical
+line: an alias, `&F`, `p = F;`, a declaration, a call written in a style the
+contract does not accept, a spelling nobody has thought of. An unrecognised
+construct therefore fails CLOSED -- the lint reds -- instead of silently
+falling out of view; nobody has to anticipate the next spelling, only
+whether every occurrence was explained. "Explained" means "claimed by a
+recogniser", and a claim is only as good as the recogniser's own rule: the
+declarator grammar above for definitions and prototypes, and the contract
+below for calls.
 
-The call recogniser is built the same way round. `_not_a_call` names the
-few contexts in which C EVALUATES a call-shaped name -- a statement's start,
-an operator's operand, a cast, a control statement's body -- and leaves
-everything else unclassified: a declaration, an unevaluated operand
-(`sizeof F(x)`), a member access (`p->F(x)`), a context nobody listed. The
-first version did the opposite -- it recognised DECLARATIONS and called
-everything else a call -- which is the same allowlist pointed the fail-open
-way: `__attribute__((unused)) bool F(int);` inside a body has a paren in its
-specifiers, was not declaration-shaped to it, and counted as the claim it
-replaced (#976 review).
+THE CALL RECOGNISER IS A BOUNDED STYLE CONTRACT. It does NOT recognise
+"every call C evaluates", and does not try to. A tracked name counts as a
+call only when it is written `F(args)` -- the bare name, then its argument
+list -- and that is the ENTIRE expression of one of five statement shapes:
+
+  1  an expression statement      `F(args);`  or  `(void)F(args);`
+  2  an `if` condition            `if (F(args))`  or  `if (!F(args))`
+  3  a declaration's initializer  `T v = F(args);`  -- `T` identifier words
+                                  and `*` only, `v` one identifier
+  4  an assignment                `v = F(args);`  -- `v` one identifier
+  5  a return                     `return F(args);`
+
+and that statement sits at BLOCK LEVEL: it begins right after a `;`, right
+after a compound statement's `{`, or right after the `}` that ends one; and
+every bracket enclosing it, from the function body's own `{` down, is a `{`
+that opens a compound statement -- the body, a block after the `)` of `if`,
+`while`, `for` or `switch`, a block after `else` or `do`, or a bare `{ }`
+block standing as a statement. Never a `(`, never a `[`, never an
+initializer's or a compound literal's `{`, and never a GNU statement
+expression's `({` -- nor anything inside one, however block-like it looks.
+The argument list may span lines. `_not_a_call` holds the rule, and
+`_brace_scan` walks the enclosing brackets FORWARD from the body's `{`: the
+shape alone is not enough, because `if (F(1)) {}` inside a statement
+expression inside an array bound inside a declarator LOOKS like shape 2.
+
+Everything else is unclassified, and some of it is a call the compiler DOES
+make: `x = a * F(1);`, `g(a, F(1));`, `(F)(1);`, a braceless `if (x)
+F(1);`, a `while` condition, `case 1: F(1);`, `else if (F(1))`,
+`v = F(1), w;`. That is the price, and it is deliberate. The recogniser
+this replaces inferred "is this call evaluated?" from local punctuation and
+subtracted the unevaluated and non-call contexts it had been taught
+(`sizeof`, declarations, `__typeof__`, member access, ...). Audit rounds 8
+and 9 each found another context it read as an evaluated call --
+`__builtin_choose_expr`'s unchosen operand, a statement expression inside an
+array bound, a VLA bound in a block-scope prototype (never evaluated, C11
+6.7.6.2p5) -- and an external review of that design found no completion
+criterion for it: a list of refusals is never finished. Five ACCEPTED shapes
+are finished by construction. An occurrence either is one of them or it is
+not, and one that is not is refused, for a human to read or to rewrite in
+one of the five shapes -- which every tracked call in the firmware already
+is.
+
+What the contract does NOT establish -- out of scope, by design:
+
+  * preprocessing and macro expansion. No directive is evaluated: a call
+    inside `#if 0` still counts as a call, deliberately, and a macro defined
+    in the text that expands around an accepted shape (a type word that is
+    really `if (0)`) is not seen through. A name ON a directive line is
+    refused.
+  * symbols defined outside the text given: an alias or a `-D` define in a
+    header, a typedef or macro elsewhere reusing a tracked name, and macro
+    token pasting (see `line_comment_end`'s #1066 note).
+  * reachability and control flow. `if (0) { F(x); }` counts as a call: the
+    shape is accepted, and no reachability analysis is done. That is
+    intentional -- the honest-regression limit #896 tracks for every checker
+    of this family, not a new gap -- and so is the absence of a symbol table.
+  * runtime ownership. An accepted call proves only that the TEXT reads
+    claim-then-arm; nothing here says a claim is HELD when an arm runs.
 
 Two cross-checks make the claim bind the callers rather than float beside
 them: the definitions the as-written matcher (`find_definitions`) reports
@@ -102,18 +154,11 @@ misreadings that cancel in a count -- a claim only the census reads, before
 the arm, and one only accounting reads, after it -- moved the claim past its
 arm with both reporting clean (#976 review).
 
-What that does NOT buy: anything about compiled behaviour. It is still
-textual -- no preprocessor evaluation (an `#if 0` copy's occurrences still
-count, deliberately, so a call disabled by `#if 0` is still counted as one;
-and a call handed to a macro defined elsewhere that discards its argument,
-`UNUSED(F(x))`, still reads as a call), no reachability (`if (0) F(x);` is a
-call), no control flow, no symbol table. `_NOT_EVALUATED` is the one list
-the call recogniser still keeps, and it is a list of REFUSALS: an
-unevaluated operand it does not name (`__builtin_choose_expr`'s unchosen
-arm) still reads as a call. And it cannot see a name that is not in the
-text it is given: macro token pasting (see `line_comment_end`'s #1066
-note), or an alias defined in a header or with `-D` rather than in the file
-being read.
+What none of that buys is anything about compiled behaviour: it is textual,
+with exactly the limits listed under the call contract above. (One that used
+to be listed here -- `UNUSED(F(x))`, a call handed to a macro that may
+discard it, read as a call -- is now refused: `F(x)` there is an argument,
+not the entire expression of an accepted shape.)
 """
 
 import bisect
@@ -415,7 +460,7 @@ HEAD = r"(?m)^" + _INDENT + _PREFIX + _BREAK + _ATTR + _BREAK
 # matcher alone still binds an `#if 0` original plus a `(((F)))` replacement
 # to the dead copy; what makes that safe for every caller is occurrence
 # accounting, which finds the live copy's name token claimed by nothing and
-# refuses (see "EVERY OCCURRENCE IS ACCOUNTED FOR"). The cost of supporting two
+# refuses (see "EVERY OCCURRENCE IS CLASSIFIED OR REPORTED"). The cost of supporting two
 # levels is two extra numbered groups ahead of whatever the caller captures:
 # `capture_params=True`'s parameter-list group and `ANY_DEF`'s name group
 # both shift from group 1 to group 3. Every reader of either has been
@@ -486,8 +531,9 @@ def one_definition(text, name, capture_params=False):
 
 
 # ===========================================================================
-# OCCURRENCE ACCOUNTING -- see "EVERY OCCURRENCE IS ACCOUNTED FOR" in the
-# module docstring for why this exists and what it does NOT do.
+# OCCURRENCE ACCOUNTING -- see "EVERY OCCURRENCE IS CLASSIFIED OR REPORTED"
+# and "THE CALL RECOGNISER IS A BOUNDED STYLE CONTRACT" in the module
+# docstring for why this exists and what it does NOT do.
 # ===========================================================================
 
 # Phase 2's splice, as the compiler that builds this firmware performs it.
@@ -604,10 +650,12 @@ def _code_text(matchmask):
     preprocessor removes it, and `matchmask` is joined with comment
     newlines blanked, so a continued or commented directive is one line
     here exactly as in `_in_directive` -- and every digraph is spelled as
-    the bracket it is. `_not_a_call` reads this text in BOTH directions, so
-    a forward reader and a backward one cannot disagree about a `)` on a
-    directive line (the first round-8 forward reader read it; the backward
-    walk skipped it) or about a `<:` (#976 round-8 review).
+    the bracket it is. The call contract reads this text in BOTH directions
+    -- backward from the name for the statement's shape, forward for the
+    argument list and for `_brace_scan`'s bracket chain -- so the two cannot
+    disagree about a `)` on a directive line or about a `<:` (a round-8
+    forward reader once read the one while a backward walk skipped it, #976
+    round-8 review).
     """
     lines = matchmask.split("\n")
     for n, line in enumerate(lines):
@@ -761,12 +809,15 @@ def _call_re(name):
 
     `(F)(x)` calls F exactly as `F(x)` does, and `\\bF\\s*\\(` cannot see it
     because the `(` follows a `)`, not the name: that is how a parenthesized
-    callee escaped `scpi_sd_arm_path.py`'s arm census. The wrap is
-    `_NAME_WRAP_OPEN`/`_NAME_WRAP_CLOSE` -- the definition side's own -- so
-    the two sides agree on how deep a wrap can be (two levels; a third is
-    call-shaped to neither and so fails closed as unclassified). The gap
-    before the argument list is `\\s*`, the census's own, so formatting that
-    the census reads as a call is read as one here too.
+    callee escaped `scpi_sd_arm_path.py`'s arm census. It is still FOUND
+    here, so that it is refused for what it is -- the call contract accepts
+    only the bare `F(args)` (`_not_a_call`) -- rather than reported as a name
+    "not followed by `(`". The wrap is `_NAME_WRAP_OPEN`/`_NAME_WRAP_CLOSE`
+    -- the definition side's own -- so the two sides agree on how deep a
+    wrap can be (two levels; a third is call-shaped to neither and so fails
+    closed as unclassified). The gap before the argument list is `\\s*`,
+    the census's own, so formatting that the census reads as a call is read
+    as call-shaped here too.
     """
     return re.compile(_NAME_WRAP_OPEN + "(" + re.escape(name) + ")"
                       + _NAME_WRAP_CLOSE + r"\s*\(")
@@ -801,27 +852,6 @@ def _call_at(call_re, matchmask, j):
 _IDENT_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz"
                          "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$")
 _WS = frozenset(" \t\n\f\v\r")
-# Words that may stand directly before an evaluated call -- `return F(x);`,
-# `else F(x);`, `do F(x); while (0);` -- or before a cast ahead of one
-# (`return (bool)F(x);`).
-_STMT_KEYWORDS = frozenset(("return", "else", "do"))
-# A `(` after one of these opens a control statement's header: a call inside
-# it is evaluated, and so is one right after its `)` (`if (x) F(y);`).
-_CONTROL_KEYWORDS = frozenset(("if", "while", "for", "switch"))
-# An operand of one of these is NOT evaluated, or is part of a declaration's
-# specifiers: a call-shaped name there is not a call the program makes,
-# however deeply it is nested (`sizeof(g(F(x)))`).
-_NOT_EVALUATED = frozenset((
-    "sizeof", "_Alignof", "alignof", "__alignof__", "__alignof",
-    "typeof", "__typeof__", "__typeof", "typeof_unqual", "__typeof_unqual__",
-    "_Generic", "_Alignas", "alignas", "_Atomic", "_Static_assert",
-    "static_assert", "__attribute__", "__attribute", "__declspec",
-    "asm", "__asm__", "__asm", "__builtin_constant_p",
-    "__builtin_types_compatible_p", "__builtin_offsetof", "offsetof"))
-# One character before a callee that makes it an OPERAND of an operator.
-# `*` and `,` are deliberately absent: each is also punctuation in a
-# declaration (`bool *F(int);`, `int a, F(int);`) and is decided on its own.
-_OPERATOR_CHARS = frozenset("=!~+-/%<>&|^?[")
 
 
 def _back(mm, i):
@@ -860,89 +890,6 @@ def _word_at(mm, k):
     return mm[s + 1:k + 1]
 
 
-def _open_parens(mm, start):
-    """Every `(` still open at `start` within its statement, innermost first.
-
-    Steps back over balanced groups (and directive lines); stops at a brace,
-    or at a `;` outside every group. Used ONLY for the `,` rule now -- is
-    this comma an argument separator? -- where stopping at a brace is the
-    refusing direction: a comma inside a compound literal's or an
-    initializer's braces reads as top-level and is refused. It used to
-    answer the `_NOT_EVALUATED` question too, and stopping at the brace of
-    `sizeof((bool[]){F(x)})` is exactly how that operand went unseen; that
-    question is `_unevaluated_cover`'s, which reads forward and has no
-    boundary to stop at (#976 audit round 8).
-    """
-    out, depth = [], 0
-    for k in _back(mm, start):
-        ch = mm[k]
-        if ch == ")":
-            depth += 1
-        elif ch == "(":
-            if depth:
-                depth -= 1
-            else:
-                out.append(k)
-        elif ch in "{}" or (ch == ";" and depth == 0):
-            break
-    return out
-
-
-def _matching_open(mm, close):
-    """Index of the `(` that the `)` at `close` closes; -1 if a brace or the
-    start of the text comes first."""
-    depth = 0
-    for k in _back(mm, close + 1):
-        ch = mm[k]
-        if ch == ")":
-            depth += 1
-        elif ch == "(":
-            depth -= 1
-            if depth == 0:
-                return k
-        elif ch in "{}":
-            return -1
-    return -1
-
-
-def _statement_so_far(mm, start):
-    """The statement's text before `start`, back to its `;`, `{`, `}` or `:`
-    -- directive lines left out."""
-    chars = []
-    for k in _back(mm, start):
-        if mm[k] in ";{}:":
-            break
-        chars.append(mm[k])
-    return "".join(reversed(chars))
-
-
-# ---- where an unevaluated operand ends (#976 audit round 8) ----------------
-#
-# `sizeof` and the rest of `_NOT_EVALUATED` are asked about FORWARD: each
-# such word before the call has its operand's extent read the way C's grammar
-# reads it, and the call is refused if it lies inside. The backward walk this
-# replaces only saw the word directly before the call or before an enclosing
-# `(`, so anything else between the two hid it -- a prefix operator
-# (`sizeof !F(x)`), a compound literal's `{` (`sizeof((bool[]){F(x)})`), an
-# enclosing call (`sizeof g(F(x))`), a subscript (`sizeof a[F(x)]`).
-
-# GCC's PREFIX keywords: each takes a cast-expression, the way `!` does, so
-# none of them is an operand or ends one -- `sizeof __extension__ -F(x)` and
-# `sizeof __real__ +F(x)` call nothing (measured, #976 round-8 review).
-_PREFIX_WORDS = frozenset(("__extension__", "__real__", "__real",
-                           "__imag__", "__imag"))
-# Words after which `-`, `+`, `*` or `&` BEGINS an operand rather than
-# continuing one: `return -F(x)`, `sizeof *F(x)`, `__extension__ -F(x)`,
-# `case -1:`.
-_OPENS_OPERAND = (_STMT_KEYWORDS | _CONTROL_KEYWORDS | _NOT_EVALUATED
-                  | _PREFIX_WORDS | frozenset(("case",)))
-# Any `_NOT_EVALUATED` word, as a whole GCC identifier (see `_token_re`).
-_NOT_EVALUATED_RE = re.compile(
-    r"(?<![A-Za-z0-9_$])(?:%s)(?![A-Za-z0-9_$])"
-    % "|".join(re.escape(w) for w in sorted(_NOT_EVALUATED, key=len,
-                                            reverse=True)))
-
-
 def _skip_ws(mm, i):
     """The first index at or after `i` that is not whitespace."""
     n = len(mm)
@@ -951,411 +898,341 @@ def _skip_ws(mm, i):
     return i
 
 
+# The opening bracket each closing one pairs with.
+_OPENER = {")": "(", "]": "[", "}": "{"}
+
+
 def _group_end(mm, i):
     """Index just past the bracket closing the `(`, `[` or `{` at `i`, or
-    None if the text ends first. A digraph bracket (`<:` `:>` `<%` `%>`)
-    counts too: the code view this reads (`_View.code`) spells each as the
-    bracket it is."""
-    depth = 0
+    None if the text ends first or a bracket inside closes the wrong kind of
+    group (`F(a]`). A digraph bracket (`<:` `:>` `<%` `%>`) counts too: the
+    code view this reads (`_View.code`) spells each as the bracket it is."""
+    stack = []
     for k in range(i, len(mm)):
-        if mm[k] in "([{":
-            depth += 1
-        elif mm[k] in ")]}":
-            depth -= 1
-            if depth == 0:
+        c = mm[k]
+        if c in "([{":
+            stack.append(c)
+        elif c in ")]}":
+            if not stack or stack[-1] != _OPENER[c]:
+                return None
+            stack.pop()
+            if not stack:
                 return k + 1
     return None
 
 
-def _expression_bound(mm, i):
-    """The furthest an expression beginning at `i` can reach: the bracket
-    that closes the group around it, a `;` outside every group, or the end
-    of the text."""
-    depth = 0
-    for k in range(i, len(mm)):
-        ch = mm[k]
-        if ch in "([{":
-            depth += 1
-        elif ch in ")]}":
-            if depth == 0:
-                return k
-            depth -= 1
-        elif ch == ";" and depth == 0:
-            return k
-    return len(mm)
+# ---- the call contract (#976 audit round 9) ---------------------------------
+#
+# See "THE CALL RECOGNISER IS A BOUNDED STYLE CONTRACT" in the module
+# docstring. Two questions, and a call is one only if both answers are yes:
+#
+#   * SHAPE: is `F(args)` the entire expression of one of the five statement
+#     shapes? Read from the characters directly around it
+#     (`_statement_start`).
+#   * BLOCK LEVEL: does that statement begin at a statement boundary, with
+#     nothing but compound-statement braces between it and the function
+#     body's own `{`? Read FORWARD from that `{` (`_brace_scan`).
+#
+# The second is what makes the first safe to answer locally. Every construct
+# that holds statement-shaped text without running it as a statement -- a
+# declarator's `(...)` or `[...]`, `sizeof (...)`, an initializer's `{...}`,
+# a GNU statement expression `({...})` -- holds it inside a `(`, a `[` or a
+# `{` that does not open a compound statement, and the scan sees that
+# bracket however the text inside it looks.
+
+# A `{` directly after `KW (...)` opens that statement's body.
+_BLOCK_KEYWORDS = frozenset(("if", "while", "for", "switch"))
+# Words that cannot stand in shape 3's `T`, or be the `v` of shape 3 or 4:
+# each makes the text in front of `=` something other than a declaration's
+# specifiers or a lone variable -- `else v = F(1);` is a braceless else body,
+# `return v = F(1);` returns an assignment, and `case`, `sizeof` and GCC's
+# prefix keywords begin an expression -- so a statement holding one is
+# refused.
+_NOT_TYPE_WORDS = frozenset((
+    "return", "if", "else", "do", "while", "for", "switch", "case",
+    "default", "goto", "break", "continue", "typedef",
+    "sizeof", "_Alignof", "alignof", "__alignof__", "__alignof",
+    "__extension__", "__real__", "__real", "__imag__", "__imag"))
 
 
-def _postfix_end(mm, i):
-    """Index past every postfix operator after an operand ending at `i`:
-    `(...)`, `[...]`, `.m`, `->m`, `++`, `--`."""
-    n = len(mm)
-    while True:
-        j = _skip_ws(mm, i)
-        if j < n and mm[j] in "([":
-            e = _group_end(mm, j)
-            if e is None:
-                return _expression_bound(mm, j)
-            i = e
-        elif j < n and (mm[j] == "." or mm.startswith("->", j)):
-            e = s = _skip_ws(mm, j + (1 if mm[j] == "." else 2))
-            while e < n and mm[e] in _IDENT_CHARS:
-                e += 1
-            if e == s:
-                return _expression_bound(mm, j)
-            i = e
-        elif mm.startswith("++", j) or mm.startswith("--", j):
-            i = j + 2
-        else:
-            return i
+def _opens_block(mm, k, closes, opens):
+    """True iff what stands directly before the `{` at `k` makes it a
+    COMPOUND STATEMENT's brace -- provided the bracket enclosing it is one,
+    which `_brace_scan` checks and this does not.
 
-
-def _operand_end(mm, i):
-    """Index just past the operand of the `_NOT_EVALUATED` word that ends at
-    `i`, read FORWARD the way C's grammar reads it:
-
-      * `K (...)` -- the parenthesized operand (a type name or an
-        expression), a compound literal's `{...}` if one follows, then any
-        postfix: `sizeof (a)[F(x)]`, `sizeof (F)(x)`, `sizeof (T){F(x)}`.
-        NOT a cast: `sizeof (int) - F(x)` is `sizeof(int)` minus a call
-        GCC makes (measured, #976 audit round 8).
-      * `K operand` -- a unary-expression: any prefix operators, casts,
-        nested keywords and GCC's prefix keywords (`_PREFIX_WORDS`), then
-        ONE primary and its postfix operators: `sizeof !F(x)`,
-        `sizeof -(int)F(x)`, `sizeof g(F(x))`, `sizeof a[F(x)]`,
-        `sizeof __extension__ -F(x)`.
-
-    Where the text does not read that way, the answer is
-    `_expression_bound` -- as far as the operand could possibly reach. Too
-    far refuses a call that is made; too short would pass one that is not.
-
-    A LOOP, not recursion: a nested keyword (`sizeof sizeof x`) re-enters
-    the `K ...` state in place, so no depth of nesting raises
-    RecursionError, which the first, recursive version did at ~1000 (#976
-    round-8 review). `mm` is the code view (`_View.code`).
+    This is the rule the former `_closes_block` (removed with the
+    recogniser this contract replaced) applied to the `{` that a `}`
+    closes, now applied to EVERY `{` on the way down from the body, inside
+    the one forward scan -- so "does the `}` before this statement end a
+    compound statement?" and "is every bracket around it one?" are answered
+    by the same code and cannot disagree. Accepted: a statement boundary before it
+    (`;`, or the enclosing `{` -- a bare block), a `}` that itself ended a
+    compound statement (`closes`, filled in by the scan as it goes), `else`
+    or `do`, or the `)` closing `if (...)`, `while (...)`, `for (...)` or
+    `switch (...)` (`opens` maps every `)` scanned to its `(`). Anything
+    else is not: a struct, union or enum tag or keyword, `=` (an
+    initializer), a cast's `)` (a compound literal), a `(` (a statement
+    expression), a `:` (a label or `case`), or the `)` of any other
+    `w(...)` -- a macro, an attribute, a nested function -- whose meaning
+    the text does not give. `_closes_block` accepted those last two; the
+    contract refuses labels and macros, so this does too.
     """
-    n = len(mm)
-    j = _skip_ws(mm, i)
-    direct = True   # just after a keyword, where `K (...)` is all of it
-    while j < n:
-        c = mm[j]
-        if c == "(":
-            e = _group_end(mm, j)
-            if e is None:
-                return _expression_bound(mm, j)
-            b = _skip_ws(mm, e)
-            if b < n and mm[b] == "{":
-                e = _group_end(mm, b)
-                if e is None:
-                    return _expression_bound(mm, b)
-                return _postfix_end(mm, e)
-            if (not direct and b < n
-                    and (mm[b] in _IDENT_CHARS or mm[b] in "(!~-+*&")):
-                # Read as a CAST, so the operand runs on past it. `(a) - x`
-                # has this shape too, and reading it as a cast reaches too
-                # far -- the refusing direction.
-                j = b
-                continue
-            return _postfix_end(mm, e)
-        direct = False
-        if c in "!~-+*&":
-            j = _skip_ws(mm, j + 1)
-        elif c in _IDENT_CHARS:
-            e = j
-            while e < n and mm[e] in _IDENT_CHARS:
-                e += 1
-            word = mm[j:e]
-            if word in _NOT_EVALUATED:
-                direct = True
-            elif word not in _PREFIX_WORDS:
-                return _postfix_end(mm, e)
-            j = _skip_ws(mm, e)
-        else:
-            break
-    return _expression_bound(mm, j)
-
-
-def _unevaluated_cover(mm, start, lo):
-    """The `_NOT_EVALUATED` word whose operand contains `start`, or None.
-
-    Every such word between `lo` -- the enclosing body's `{` -- and `start`
-    is tried, and its operand's extent is read forward (`_operand_end`), so
-    nothing that stands between the word and the call can hide it.
-
-    `mm` is the CODE view (`_View.code`), where every directive line is
-    blank, as the preprocessor leaves it: neither a keyword on one (a macro
-    body, expanded where this module cannot see) nor a bracket or `;` on one
-    is read. The first round-8 version scanned the matchmask instead, where
-    the `)` of a `#define RP )` placed between `sizeof (0 +` and the call
-    closed the operand early and the claim passed -- while the backward
-    walk it replaced skipped directive lines, and had refused it (#976
-    round-8 review).
-    """
-    for m in _NOT_EVALUATED_RE.finditer(mm, lo, start):
-        if start < _operand_end(mm, m.end()):
-            return m.group(0)
-    return None
-
-
-# ---- what stands directly before the callee --------------------------------
-
-def _operand_ends_at(mm, q):
-    """True iff the character at `q` ENDS an operand -- a `)`, a `]`, or an
-    identifier or number that is not a word opening one -- so an operator
-    right after it is BINARY."""
-    if q < 0:
-        return False
-    if mm[q] in ")]":
+    p = _prev(mm, k)
+    c = mm[p] if p >= 0 else ""
+    if c in (";", "{"):
         return True
-    w = _word_at(mm, q)
-    return bool(w) and w not in _OPENS_OPERAND
-
-
-def _prefix_run(mm, start):
-    """-> (leftmost, chars, before): the run of PREFIX tokens directly
-    before `start` -- `(`, `!`, `~`, and `-` `+` `*` `&` wherever what
-    precedes them is not an operand (after one they are binary, and the run
-    stops there). `leftmost` is the run's first character (`start` when it
-    is empty), `chars` the set of characters in it, and `before` the index
-    of the last character ahead of it (-1 at the start of the text).
-
-    The run is what the old one-character look-back could not see past:
-    `!` in `sizeof !F(x)`, or `(` in `extern bool (F(int));`. Deciding from
-    what stands BEFORE the run is what this module could not do before."""
-    leftmost, chars = start, set()
-    k = _prev(mm, start)
-    while k >= 0:
-        c = mm[k]
-        if c in "-+*&":
-            if _operand_ends_at(mm, _prev(mm, k)):
-                break
-        elif c not in "(!~":
-            break
-        chars.add(c)
-        leftmost = k
-        k = _prev(mm, k)
-    return leftmost, chars, k
-
-
-def _may_declare(mm, start):
-    """True iff everything from the statement's start up to `start` could
-    be a declaration's specifiers and the front of its declarator.
-
-    It must begin with a word that is not a statement or control keyword,
-    and hold only words, `*`, `(`, `)`, `,` and whitespace -- so
-    `extern bool (F(int))`, `bool *(F(int))`, `__attribute__((x)) bool
-    (F(int))`, `__typeof__(T) *F(int)` and a parameter declarator inside a
-    block-scope prototype (`extern void h(int a, bool (F(int)))`) all
-    qualify. A leading `return`, `if` or `(void)`, or any `=`, `!`, `?` or
-    `.` -- anything a declaration's own text cannot hold -- disqualifies.
-    (A literal cannot: it is blanked to spaces in the text this reads.)
-
-    `g(F(x));` qualifies too. It IS text-identical to `T (F(U));`, a
-    declaration of F, whenever `g` and `x` might be type names, and this
-    module does not know which names are types; so it is refused, where
-    `x = g(F(1))`, `return g(F(1))` and `if (g(F(1)))` are not.
-
-    A `_NOT_EVALUATED` word's own parenthesized operand is read as part of
-    the specifiers WHATEVER it holds: `__attribute__((aligned(8 + 8)))` and
-    `__typeof__(a + b)` carry an operator a declaration's own text cannot,
-    and without this they disqualified the declaration they belong to.
-    """
-    prefix = _statement_so_far(mm, start)
-    kept, pos = [], 0
-    for m in _NOT_EVALUATED_RE.finditer(prefix):
-        if m.start() < pos:
-            continue
-        j = _skip_ws(prefix, m.end())
-        if j < len(prefix) and prefix[j] == "(":
-            kept.append(prefix[pos:j] + " ")
-            pos = _group_end(prefix, j) or len(prefix)
-    prefix = "".join(kept) + prefix[pos:]
-    if not re.match(r"[\w\s\*(),$]*\Z", prefix):
-        return False
-    lead = re.match(r"\s*([A-Za-z_$][\w$]*)", prefix)
-    return bool(lead) and lead.group(1) not in (_STMT_KEYWORDS
-                                                 | _CONTROL_KEYWORDS)
-
-
-_DECLARATOR = ("may be a DECLARATOR rather than a callee: the statement so far "
-               "is only words, `*`, parentheses and commas -- the shape of a "
-               "declaration's specifiers and the front of its declarator "
-               "(`extern bool (F(int));`, `bool *F(int);`, `__typeof__(T) "
-               "*F(int);`) -- and a declaration has a call's shape without "
-               "being one. `g(F(x));` reads the same whenever g and x may be "
-               "type names, so it is refused rather than guessed")
-
-
-def _closes_block(mm, close):
-    """True iff the `}` at `close` ends a COMPOUND STATEMENT, so what follows
-    it begins a new statement.
-
-    A `}` also closes a struct, union or enum body -- and then what follows
-    is still that declaration's specifiers: `struct s { int a; } F(int);`
-    and `struct s { int a; } (F(int));` DECLARE F -- or an initializer or a
-    compound literal. Read as a statement boundary, every one of those put
-    a declaration's name at "a statement's start", which is a call. So the
-    matching `{` is found and what stands before it decides: a statement's
-    start, `else`, `do`, or a `)` closing `w(...)` for a word that is not in
-    `_NOT_EVALUATED` (`if (x) {`, a loop macro, a nested function) opens a
-    block; anything else -- a tag, `struct`, `__attribute__((packed))`,
-    `=`, an unmatched brace -- does not, and is refused.
-    """
-    depth, open_at = 0, -1
-    for q in _back(mm, close + 1):
-        if mm[q] == "}":
-            depth += 1
-        elif mm[q] == "{":
-            depth -= 1
-            if depth == 0:
-                open_at = q
-                break
-    if open_at < 0:
-        return False
-    p = _prev(mm, open_at)
-    if p < 0 or mm[p] in ";{}:":
-        return True
-    if mm[p] == ")":
-        op = _matching_open(mm, p)
-        w = _word_at(mm, _prev(mm, op)) if op > 0 else ""
-        return bool(w) and w not in _NOT_EVALUATED
+    if c == "}":
+        return closes.get(p, False)
+    if c == ")":
+        op = opens.get(p)
+        return (op is not None
+                and _word_at(mm, _prev(mm, op)) in _BLOCK_KEYWORDS)
     return _word_at(mm, p) in ("else", "do")
 
 
-def _after_close(mm, k):
-    """`_not_a_call`'s answer for a callee (or its prefix run) that follows
-    the `)` at `k`: a cast and a control statement's `)` are evaluated
-    contexts, `w(...)` is not readable, anything else is refused."""
-    op = _matching_open(mm, k)
-    if op < 0:
-        return "follows a `)` whose `(` this module cannot find"
-    pk = _prev(mm, op)
-    w = _word_at(mm, pk) if pk >= 0 else ""
-    if w in _CONTROL_KEYWORDS or w in _STMT_KEYWORDS:
-        return None
-    if w:
-        return ("follows `%s(...)` -- part of a declaration's specifiers, "
-                "an unevaluated operand, or a macro -- so whether it is a "
-                "call cannot be read from the text" % w)
-    if pk < 0 or mm[pk] in ";{}:(,*" or mm[pk] in _OPERATOR_CHARS:
-        return None
-    return ("follows `%s(...)`, a context this module does not "
-            "recognise as a call" % mm[pk])
+def _brace_scan(mm, lo, pos):
+    """-> (open, closes) for the text from the function body's `{` at `lo`
+    up to `pos`, read FORWARD; None if its brackets do not nest (a `)`
+    closing a `[`, or the body itself closing before `pos`).
 
+    `open` is every bracket still open at `pos`, outermost -- the body --
+    first, each as (index, compound). `compound` is True only for a `{`
+    that `_opens_block` accepts AND whose enclosing bracket is itself
+    compound; never for a `(` or a `[`. So everything inside a `(` or a `[`
+    is non-compound however it looks: the `{` of a GNU statement expression
+    `({ ... })`, and an `if (F(1)) {}` inside one inside a declarator's array
+    bound, which reads exactly like shape 2 to anything that only looks at
+    the characters around the call (#976 audit round 9). `closes` maps every
+    `}` scanned to whether it ended a compound statement.
 
-def _not_a_call(mm, start, lo=0):
-    """None if the call-shaped text beginning at `start` -- the callee, or
-    the first of its wrapping parens -- is a call C EVALUATES; otherwise why
-    not, as a phrase completing "it ...". `mm` is the code view
-    (`_View.code`: no directive lines, no digraphs); `lo` is the enclosing
-    body's `{`.
-
-    FAIL-CLOSED BY CONSTRUCTION. This names the contexts in which a call is
-    made and refuses every other one, the reverse of the
-    `_declaration_shaped` it replaces: that recognised DECLARATIONS and
-    called everything else a call, so a declaration with a `(` in its
-    specifiers -- `__attribute__((unused)) bool F(int);`, `__typeof__(T)
-    F(int);`, `bool (*p)(void), F(int);` -- counted as a call, and one of
-    them standing where a claim had been passed every check (#976 review).
-
-    Two questions, in order:
-
-    1. Is it inside the operand of anything in `_NOT_EVALUATED`
-       (`sizeof(F(x))`, `sizeof !F(x)`, `sizeof((bool[]){F(x)})`,
-       `sizeof g(F(x))`, `__typeof__(F(x))`)? Answered FORWARD from each
-       such word (`_unevaluated_cover`); if so, refused.
-    2. What stands before the run of prefix tokens -- `(`, `!`, `~`, unary
-       `-` `+` `*` `&` -- directly ahead of the callee (`_prefix_run`)? The
-       old look-back read ONE character, so a `!` or a `(` in front of the
-       callee was proof of a call whatever stood before it (#976 audit
-       round 8: `sizeof !F(x)`; `extern bool (F(int));`). A call is
-       recognised when what stands there is:
-
-      * a statement's start or a label (`F(x);`, `case 1: F(x);`,
-        `(F(x));`) -- after a `}` only if it ends a compound statement
-        (`_closes_block`) -- or `return`, `else` or `do`;
-      * an operator (`ok = F(x)`, `ok = !F(x)`, `c ? a : F(x)`, `a - -F(x)`);
-      * a `,` inside a paren (`g(a, F(x))`);
-      * a cast `(T)` or a control statement's `)` (`(void)F(x)`,
-        `if (x) F(y);`), or a control keyword whose `(` opens the run
-        (`if (F(x))`, `while (!F(x))`);
-      * a word ahead of a run that holds something no declarator can
-        (`g(!F(x))`), or ahead of a `(`/`*` run -- or a binary `*` -- in a
-        statement that cannot be a declaration (`x = g(F(1))`,
-        `x = a * F(1)`; see `_may_declare`).
-
-    Refused, among others: a member access (`p->F(x)`, `s.F(x)` name a
-    struct member, another entity), a declaration (`bool F(int);`,
-    `extern bool (F(int));`, `bool *F(int);`), a word directly before `!`
-    or `~` (a macro -- `#define SZ sizeof` makes `SZ !F(x)` unevaluated), a
-    top-level `,` (`int a, F(int);` and the comma expression `x = 0, F(y);`
-    read the same as text), and any context nobody has listed.
+    A loop over the text, not recursion, so no depth of nesting can raise.
     """
-    kw = _unevaluated_cover(mm, start, lo)
-    if kw:
-        return ("lies inside the operand of `%s`, which the compiler does "
-                "not evaluate (or which is part of a declaration's "
-                "specifiers), so it is not a call" % kw)
-    leftmost, chars, k = _prefix_run(mm, start)
-    if k < 0:
+    stack = [(lo, True)]
+    closes, opens = {}, {}
+    for k in range(lo + 1, pos):
+        c = mm[k]
+        if c == "{":
+            stack.append((k, stack[-1][1]
+                          and _opens_block(mm, k, closes, opens)))
+        elif c in "([":
+            stack.append((k, False))
+        elif c in ")]}":
+            if len(stack) < 2 or mm[stack[-1][0]] != _OPENER[c]:
+                return None
+            at, compound = stack.pop()
+            if c == "}":
+                closes[k] = compound
+            elif c == ")":
+                opens[k] = at
+    return stack, closes
+
+
+def _is_name(w):
+    """True iff `w` is an identifier that may be a word of shape 3's `T`,
+    or the `v` of shape 3 or 4."""
+    return bool(w) and not w[0].isdigit() and w not in _NOT_TYPE_WORDS
+
+
+def _assignment_start(mm, eq):
+    """Start of `v` in `v = `, or of `T` in `T v = `, where `eq` is the `=`;
+    None if anything else stands in front of it.
+
+    `v` is ONE identifier; `T` is identifier words and `*`, beginning with a
+    word (`bool`, `scpi_result_t`, `const char *`,
+    `sd_card_manager_settings_t*`). `a[0] = ` and `*p = ` are refused here;
+    `a.v = `, `p->v = `, `x = v = ` and `int a, v = ` get as far as the
+    block-level check, which refuses them because the statement does not
+    begin at `v` -- a `.`, `->`, `=` or `,` stands before it. Either way,
+    whatever they store to, `F(args)` is not the whole of a shape-3 or
+    shape-4 statement.
+    """
+    k = _prev(mm, eq)
+    v = _word_at(mm, k)
+    if not _is_name(v):
         return None
-    c = mm[k]
-    if c in ";{:":
-        return None
-    if c == "}":
-        if _closes_block(mm, k):
+    start, first = k - len(v) + 1, "word"
+    k = _prev(mm, start)
+    while k >= 0 and (mm[k] == "*" or mm[k] in _IDENT_CHARS):
+        if mm[k] == "*":
+            start, first = k, "*"
+            k = _prev(mm, k)
+            continue
+        w = _word_at(mm, k)
+        if not _is_name(w):
             return None
-        return ("follows a `}` that does not end a compound statement -- a "
-                "struct, union or enum body (`struct s { int a; } F(int);` "
-                "declares F), an initializer or a compound literal -- so it "
-                "does not stand at a statement's start")
-    if c == "." or (c == ">" and k > 0 and mm[k - 1] == "-"):
-        return ("is a MEMBER access (`.` or `->` before it): it names a "
-                "struct member, not this function, so it is not a call to it")
-    if c in _OPERATOR_CHARS:
+        start, first = k - len(w) + 1, "word"
+        k = _prev(mm, start)
+    return start if first == "word" else None
+
+
+def _statement_start(mm, j, end):
+    """Where the statement begins, if the call whose bare name starts at `j`
+    and whose argument list ends just before `end` is the ENTIRE expression
+    of one of the five shapes; None if it is not.
+
+    Read from the characters directly around the call and nothing further;
+    whether that statement is at block level is `_block_level`'s question:
+
+      1  `F(args);`           a `;`, `{` or `}` before, `;` after
+         `(void)F(args);`     `( void )` before, `;` after
+      2  `if (F(args))`       `if (` before, `)` after
+         `if (!F(args))`      `if ( !` before, `)` after
+      3  `T v = F(args);`     `=` before (not `==`, `<=`, `+=`, ...), with
+      4  `v = F(args);`       `_assignment_start` in front of it; `;` after
+      5  `return F(args);`    the word `return` before, `;` after
+
+    So a comma suffix (`v = F(1), w;`), a comparison (`v = F(1) == 0;`), a
+    call through the result (`F(1)(2)`), a subscript or member access on it,
+    an operator or a cast before it, and an enclosing call (`g(a, F(1))`)
+    are none of them.
+    """
+    n = len(mm)
+    a = _skip_ws(mm, end)
+    after = mm[a] if a < n else ""
+    p = _prev(mm, j)
+    before = mm[p] if p >= 0 else ""
+    if before in (";", "{", "}"):
+        return j if after == ";" else None
+    if before == ")":
+        q = _prev(mm, p)
+        r = _prev(mm, q - 3)
+        if (_word_at(mm, q) == "void" and r >= 0 and mm[r] == "("
+                and after == ";"):
+            return r
         return None
-    if c == ",":
-        if _open_parens(mm, leftmost):
+    if before in ("(", "!"):
+        q = p if before == "(" else _prev(mm, p)
+        if q < 0 or mm[q] != "(" or after != ")":
             return None
-        return ("follows a top-level `,`: a declarator list (`int a, "
-                "F(int);`) and a comma expression (`x = 0, F(y);`) read the "
-                "same as text, so it is refused rather than guessed")
-    if c == "*":
-        # A `*` after an operand: multiplication, or a pointer declarator
-        # after a declaration's specifiers (`bool *F(int);`).
-        return _DECLARATOR if _may_declare(mm, start) else None
-    if c == ")":
-        return _after_close(mm, k)
-    w = _word_at(mm, k)
-    if w in _STMT_KEYWORDS:
-        return None
-    if w in _NOT_EVALUATED:
-        return ("is the operand of `%s`, which the compiler does not "
-                "evaluate, so it is not a call" % w)
-    if w in _CONTROL_KEYWORDS:
-        if chars and mm[leftmost] == "(":
+        w = _prev(mm, q)
+        return w - 1 if _word_at(mm, w) == "if" else None
+    if before == "=":
+        if p > 0 and mm[p - 1] in "=!<>+-*/%&|^":
             return None
-        if not chars:
-            return ("is `%s`'s parenthesized CONDITION, not a callee: "
-                    "`%s (F) (x)` does not call F" % (w, w))
-    elif w and not chars:
-        return ("is declaration-shaped: it follows the word `%s`, and in a "
-                "statement only a declaration puts a word directly before a "
-                "name (`bool F(int);`, `__attribute__((unused)) bool "
-                "F(int);`) -- a declaration has a call's shape and is not a "
-                "call" % w)
-    elif w and mm[leftmost] in "!~":
-        return ("follows the word `%s` with only a prefix operator between: "
-                "an identifier cannot stand directly before `%s` in C, so "
-                "`%s` is a macro or a keyword this module does not know -- "
-                "`#define SZ sizeof` makes `SZ !F(x)` unevaluated -- and what "
-                "it expands to cannot be read from the text"
-                % (w, mm[leftmost], w))
-    elif w:
-        if chars <= set("(*") and _may_declare(mm, start):
-            return _DECLARATOR
+        s = _assignment_start(mm, p)
+        return s if s is not None and after == ";" else None
+    if _word_at(mm, p) == "return":
+        return p - 5 if after == ";" else None
+    return None
+
+
+# What a non-compound bracket on the chain is, for the refusal message.
+_NESTED = {
+    "(": "a `(` -- an argument list, a condition, a cast, a declarator, or "
+         "the `(` of a GNU statement expression `({ ... })`",
+    "[": "a `[` -- a subscript or an array declarator's bound",
+    "{": "a `{` that does not open a compound statement -- an initializer or "
+         "a compound literal, a struct, union or enum body, a GNU statement "
+         "expression's `{`, or a block after a label, a `case` or a macro",
+}
+
+
+def _block_level(view, lo, s):
+    """None if the statement beginning at `s` is at BLOCK LEVEL in the body
+    whose `{` is at `lo`; otherwise why not, completing "it ...".
+
+    Block level: every bracket open at `s` is a compound statement's `{`
+    (`_brace_scan`), and `s` follows a `;`, a compound statement's `{` (the
+    innermost open bracket, so already checked) or a `}` that ended one.
+    After anything else the statement is a braceless `if`/`else`/`do`/
+    `for`/`while` body, a labelled or `case` statement, or not a statement
+    at all, and the contract refuses every one of those rather than working
+    out which it is.
+    """
+    mm = view.code
+    scan = _brace_scan(mm, lo, s)
+    if scan is None:
+        return ("lies in a function body whose brackets do not pair up "
+                "between its `{` and this statement, so where the statement "
+                "sits cannot be read")
+    stack, closes = scan
+    for at, compound in stack:
+        if not compound:
+            return ("is written in a call shape, but the statement is not at "
+                    "BLOCK level: it lies inside %s (line %d), where "
+                    "statement-shaped text is not necessarily a statement "
+                    "that runs -- the call contract accepts a statement only "
+                    "when every bracket around it is a compound statement's "
+                    "`{`" % (_NESTED[mm[at]], view.line(at)))
+    p = _prev(mm, s)
+    if p >= 0 and (mm[p] in (";", "{") or (mm[p] == "}" and closes.get(p))):
         return None
-    return ("follows `%s`, a context this module does not recognise as a "
-            "call" % (w or c))
+    what = (_word_at(mm, p) or mm[p]) if p >= 0 else "the start of the text"
+    return ("is written in a call shape, but its statement does not begin at "
+            "a statement boundary (after a `;`, a compound statement's `{`, "
+            "or the `}` that ends one): it follows `%s` -- a braceless "
+            "`if`/`else`/`do`/`for`/`while` body, a label or `case`, a "
+            "declaration's specifiers, or a `}` ending a struct, union, enum, "
+            "initializer, compound literal or a block this module does not "
+            "recognise -- which the call contract refuses rather than reads"
+            % what)
+
+
+def _not_a_call(view, call, lo):
+    """None if `call` -- a `_call_re` match on a tracked name, inside the
+    function body whose `{` is at `lo` -- meets the CALL CONTRACT; otherwise
+    why not, as a phrase completing "it ...". `view` is the `_View`; what is
+    read is its code view (`view.code`: no directive lines, no digraphs).
+
+    The contract (module docstring, "THE CALL RECOGNISER IS A BOUNDED STYLE
+    CONTRACT"): the bare name and its argument list are the ENTIRE
+    expression of one of five statement shapes --
+
+        F(args);   (void)F(args);   if (F(args))   if (!F(args))
+        T v = F(args);   v = F(args);   return F(args);
+
+    -- and that statement is at BLOCK level: it begins after a `;`, a
+    compound statement's `{` or the `}` that ends one, and every bracket
+    around it, down from the body's `{`, opens a compound statement.
+
+        if (!F(ctx, "CRC",           a call: shape 2, its arguments over two
+               cfg)) {               lines, in the body or any block below
+        bool ok = F(cfg);            a call: shape 3
+        if (x) { return F(1); }      a call: shape 5, in an `if` block
+        if (x) return F(1);          REFUSED: a braceless if body
+        x = a * F(1);                REFUSED: F(1) is an operand, not the
+                                     whole right-hand side
+        g(a, F(1));                  REFUSED: an argument of another call,
+                                     whatever `g(...)` itself is
+        (F)(1);                      REFUSED: a wrapped callee is not `F(`
+        v = F(1), w;                 REFUSED: a comma suffix
+        (void)sizeof ({ F(1); 0; }); REFUSED: shape 1, but inside a `(`
+        extern void h(int a[({ if (F(1)) {} 1; })]);
+                                     REFUSED: shape 2, but inside `h(`, a
+                                     `[` and a `({`
+
+    It is a contract about how a tracked call is WRITTEN. It does not claim
+    that every call C evaluates is recognised -- `x = a * F(1);` is one, and
+    is refused -- nor that every accepted call runs (see the module
+    docstring's out-of-scope list: `if (0) { F(1); }` is accepted).
+    """
+    mm = view.code
+    j = call.start(3)
+    if call.start() != j:
+        return ("is a PARENTHESIZED callee (`(F)(x)` or `((F))(x)`): C calls "
+                "F there exactly as it does for `F(x)`, but the call contract "
+                "accepts only the bare `F(args)`, so it is refused rather "
+                "than read -- write it `F(args)`")
+    open_args = call.end() - 1
+    end = _group_end(mm, open_args) if mm[open_args] == "(" else None
+    if end is None:
+        return ("has an argument list whose closing `)` this module cannot "
+                "pair with its `(`, so where the call ends cannot be read")
+    s = _statement_start(mm, j, end)
+    if s is None:
+        p, a = _prev(mm, j), _skip_ws(mm, end)
+        before = (_word_at(mm, p) or mm[p]) if p >= 0 else ""
+        after = mm[a] if a < len(mm) else "the end of the text"
+        return ("is not the ENTIRE expression of any statement shape the "
+                "call contract accepts -- `F(args);`, `(void)F(args);`, "
+                "`if (F(args))`, `if (!F(args))`, `T v = F(args);`, "
+                "`v = F(args);` or `return F(args);` -- since `%s` stands "
+                "directly before it and `%s` directly after its arguments. An "
+                "operand, an argument, a declaration, an unevaluated context "
+                "and a macro's argument all look like this, and the contract "
+                "refuses them all rather than telling them apart"
+                % (before, after))
+    return _block_level(view, lo, s)
 
 
 def _in_directive(matchmask, j):
@@ -1370,6 +1247,19 @@ def _in_directive(matchmask, j):
     """
     line_start = matchmask.rfind("\n", 0, j) + 1
     return matchmask[line_start:j].lstrip(" \t\f\v").startswith(("#", "%:"))
+
+
+def _outside_brackets(code, j):
+    """True iff offset `j` of the code view (`_View.code`: no comments, no
+    literals, no directive lines, digraphs spelled as brackets) lies outside
+    every `{`, `(` and `[` -- at FILE scope, where a prototype stands.
+
+    "No function body this module can find" is NOT that: inside the body of
+    a function the declarator grammar cannot read, `fn is None` too. Counted
+    rather than paired, so it costs a C-speed `str.count`; brackets that do
+    not balance before `j` leave it inside something, and it is refused."""
+    return all(code.count(o, 0, j) == code.count(c, 0, j)
+               for o, c in (("{", "}"), ("(", ")"), ("[", "]")))
 
 
 Occurrence = namedtuple("Occurrence", "kind name line offset function why")
@@ -1394,8 +1284,10 @@ def classify_occurrences(src, name):
     unevaluated operand (`sizeof F(x)`), a member access (`p->F(x)`), and
     any construct nobody has thought of yet all land in "unclassified" by
     the same route -- no recogniser explained them. A call-shaped occurrence
-    inside a body is a call only where `_not_a_call` recognises an evaluated
-    call; everywhere else it is unclassified.
+    inside a body is a call only where it meets the call contract
+    (`_not_a_call`: the entire expression of one of five statement shapes,
+    at block level); every other one is unclassified, including some calls
+    the compiler does make (`x = a * F(1);`) -- refused, never guessed.
 
     Raises `AmbiguousDefinition` on two or more definitions of `name` in the
     compiler's view, exactly as `one_definition` does in the as-written one.
@@ -1427,7 +1319,17 @@ def classify_occurrences(src, name):
         claims, why = [], None
         if j in defs:
             claims.append("definition")
-        if j in protos and fn is None:
+        # A prototype only at FILE scope -- outside every bracket, not merely
+        # outside every body this module found. Inside the body of a function
+        # whose definition the declarator grammar cannot read (K&R, a
+        # leading attribute, an anonymous struct parameter), `fn` is None as
+        # well, and a line there that begins `return F(`, `do F(` or
+        # `__extension__ F(` is prototype-SHAPED: the prefix grammar takes the
+        # keyword for a type word. It was claimed as a prototype, so an arm
+        # inside such a wrapper was accounted clean, counted by no census and
+        # passed `check()` and `check_stream()` (#976 audit round 9 review).
+        if (j in protos and fn is None
+                and _outside_brackets(view.code, j)):
             claims.append("prototype")
         call = _call_at(call_re, mm, j)
         if call is None:
@@ -1441,17 +1343,19 @@ def classify_occurrences(src, name):
             # when the line was an ordinary prototype (#976 review).
             why = ("is call-shaped but lies inside no function body this "
                    "module can find, and is neither a definition nor a "
-                   "prototype its declarator grammar reads -- a declaration "
-                   "with a LEADING `__attribute__((...))`, two attribute "
-                   "prefixes or three wrapping parens; a file-scope "
-                   "initializer that calls it; or a call inside a function "
-                   "whose own definition that grammar cannot read -- so there "
-                   "is nothing to attribute it to")
+                   "prototype its declarator grammar reads at FILE scope "
+                   "(outside every bracket) -- a declaration with a LEADING "
+                   "`__attribute__((...))`, two attribute prefixes or three "
+                   "wrapping parens; a file-scope initializer that calls it; "
+                   "or a statement inside a function whose own definition "
+                   "that grammar cannot read (a K&R definition, say, where "
+                   "`return F(x);` is prototype-shaped) -- so there is "
+                   "nothing to attribute it to")
         else:
-            # The body's own `{`: where an unevaluated operand around this
-            # call could begin, at the earliest (`_unevaluated_cover`).
+            # The body's own `{`: the root of the bracket chain the call
+            # contract walks down to this statement (`_brace_scan`).
             lo = next((s for _, s, e in view.spans if s < j < e), 0)
-            why = _not_a_call(view.code, call.start(), lo)
+            why = _not_a_call(view, call, lo)
             if why is None:
                 claims.append("call")
         if len(claims) == 1:
@@ -1706,13 +1610,21 @@ def _accounting_self_test():
     expect("an #if 0 original plus a live (((F))) replacement must never "
            "account clean; got %r" % probs, probs != [])
 
-    # ---- 3. a parenthesized callee IS a call ------------------------------
+    # ---- 3. a parenthesized callee is REFUSED (was: IS a call) ------------
+    # FLIPPED by the call contract (#976 audit round 9). `(F)(x)` calls F
+    # exactly as `F(x)` does, and this row used to pin both occurrences as
+    # calls. The contract accepts only the bare `F(args)`: a wrapped callee
+    # is the entire expression of none of the five shapes, so both are
+    # refused -- still FOUND as call-shaped (`_call_at`), still attributed to
+    # g, and reported for what they are, not as "not followed by `(`".
     occs, probs = _account(_F_THEN_G + "    (F)(1);\n    if (((F))(2)) {\n"
                            "    }\n}\n")
-    expect("(F)(1) and ((F))(2) inside g() are calls, attributed to g; got "
-           "%r / %r" % (_kinds(occs), probs),
-           _kinds(occs) == [("definition", 1), ("call", 7), ("call", 8)]
-           and all(o.function == "g" for o in occs[1:]) and probs == [])
+    expect("(F)(1) and ((F))(2) inside g() are REFUSED as parenthesized "
+           "callees, attributed to g; got %r / %r" % (_kinds(occs), probs),
+           _kinds(occs) == [("definition", 1), ("unclassified", 7),
+                            ("unclassified", 8)]
+           and all(o.function == "g" for o in occs[1:])
+           and len(probs) == 2 and all("PARENTHESIZED" in p for p in probs))
 
     # ---- 4. an alias fails closed, at file scope or inside a body ---------
     for label, src in (
@@ -1756,16 +1668,23 @@ def _accounting_self_test():
            _kinds(occs) == [("definition", 1), ("unclassified", 5)]
            and any("no function body" in p for p in probs))
 
-    # ...and the statement keywords that may precede a real call do not make
-    # it a declaration.
+    # ...and the statement keywords that may precede a real call. FLIPPED by
+    # the call contract (#976 audit round 9): all four were pinned as calls,
+    # and all four are refused now. `return F(1);` is shape 5 but a
+    # BRACELESS `if` body -- it follows `)`, not a statement boundary;
+    # `else F(2);` and `do F(3);` are braceless else and do bodies; and
+    # `return (F)(4);` has a wrapped callee. The same statements inside
+    # `{ }` are calls: see the block-level vacuity rows in "12. (d)".
     occs, probs = _account(_F_THEN_G.replace("void g(void)", "bool g(int y)")
                            + "    if (y)\n        return F(1);\n    else\n"
                            "        F(2);\n    do F(3); while (0);\n"
                            "    return (F)(4);\n}\n")
-    expect("`return F()`, `else F()`, `do F()` and `return (F)()` are calls; "
-           "got %r / %r" % (_kinds(occs), probs),
-           _kinds(occs) == [("definition", 1), ("call", 8), ("call", 10),
-                            ("call", 11), ("call", 12)] and probs == [])
+    expect("a braceless `if (y) return F()`, `else F()`, `do F()` and "
+           "`return (F)()` are all REFUSED (were: calls); got %r / %r"
+           % (_kinds(occs), probs),
+           _kinds(occs) == [("definition", 1), ("unclassified", 8),
+                            ("unclassified", 10), ("unclassified", 11),
+                            ("unclassified", 12)] and len(probs) == 4)
 
     # A file-scope prototype is a prototype.
     occs, probs = _account("static bool F(int x);\n"
@@ -1774,6 +1693,33 @@ def _accounting_self_test():
            % _kinds(occs),
            _kinds(occs) == [("prototype", 1), ("definition", 2)]
            and probs == [])
+    # ...and ONLY at file scope (#976 audit round 9 review). `fn is None`
+    # also holds inside the body of a function whose definition the
+    # declarator grammar cannot read, and a line there beginning
+    # `__extension__ F(`, `do F(` or `return F(` is prototype-SHAPED. Claimed
+    # as prototypes, an arm inside such a wrapper was accounted clean and
+    # counted by no census. The VACUITY half proves the prototype grammar
+    # still matches all three, so it is the file-scope rule that refuses them.
+    for label, head in (
+            ("a K&R definition", "static bool K(y)\n    int y;\n{\n"),
+            ("a leading attribute",
+             "__attribute__((unused)) static bool K(int y)\n{\n"),
+            ("an anonymous struct parameter",
+             "static bool K(struct { int a; } *y)\n{\n")):
+        src = ("static bool F(int x)\n{\n    return x;\n}\n" + head
+               + "    __extension__ F(2);\n    do F(3); while (0);\n"
+               "    return F(1);\n}\n")
+        shaped = len(_named_proto_re("F").findall(compiler_view(src).matchmask))
+        expect("VACUITY: inside a body behind %s the prototype grammar must "
+               "still read all three statements as prototype-shaped; got %d"
+               % (label, shaped), shaped == 3)
+        occs, probs = _account(src)
+        expect("inside a body behind %s, `__extension__ F()`, `do F()` and "
+               "`return F()` are UNCLASSIFIED, never prototypes; got %r / %r"
+               % (label, _kinds(occs), probs),
+               _kinds(occs) is not None
+               and [k for k, _ in _kinds(occs)] == ["definition"]
+               + ["unclassified"] * 3 and len(probs) == 3)
 
     # `$` is an identifier character to GCC: `my$F(1)` calls `my$F`, and
     # `F$x` is not F either. Neither is an occurrence of F.
@@ -1836,13 +1782,26 @@ def _accounting_self_test():
            _kinds(occs) == [("definition", 8)] and len(probs) == 1
            and "line 3" in probs[0] and "line 8" in probs[0])
 
-    # ---- the multiply-claimed guard is live, not vacuous ------------------
+    # ---- the multiply-claimed guard: now UNREACHABLE by construction ------
+    # CHANGED by the call contract (#976 audit round 9), from
+    # "multiply-claimed" to "definition". `else F(x) {` (not valid C) is
+    # definition-shaped to the declarator grammar, and the recogniser the
+    # contract replaced ALSO read it as a call after `else`, so this row
+    # pinned the partition guard firing. Under the contract no token can be
+    # claimed twice: a definition needs `{` right after its parameter list,
+    # every call shape needs `;` or the `if`'s `)` right after its
+    # arguments, and a prototype is claimed only at file scope, where no
+    # call is. So only the definition claims it now: the partition holds, and
+    # the multiply-claimed branch stays as a defensive guard no input here
+    # reaches. The line is still refused where it matters -- the arm-path
+    # census counts `F(` there and accounting does not, and the two must
+    # agree; and a second "definition" of a pinned name raises
+    # AmbiguousDefinition.
     occs, probs = _account("void g(void)\n{\n    else F(x) {\n    }\n}\n")
-    expect("an occurrence the definition AND call recognisers both claim is "
-           "reported MULTIPLY CLAIMED, never given to one; got %r / %r"
-           % (_kinds(occs), probs),
-           _kinds(occs) == [("multiply-claimed", 3)]
-           and any("MULTIPLY CLAIMED" in p for p in probs))
+    expect("`else F(x) {` is claimed by exactly ONE recogniser, the "
+           "definition grammar -- the call contract no longer also claims it "
+           "(was: MULTIPLY CLAIMED); got %r / %r" % (_kinds(occs), probs),
+           _kinds(occs) == [("definition", 3)])
 
     # Two definitions still RAISE, as `one_definition` always has.
     occs, probs = _account("#if 0\nstatic bool F(void)\n{\n}\n#endif\n"
@@ -1851,11 +1810,11 @@ def _accounting_self_test():
            occs is None and "refusing to choose" in probs[0])
 
     # ---- 9. #976 review: a call is recognised; everything else is not ----
-    # `_not_a_call` names the contexts in which C EVALUATES a call and
-    # refuses the rest. Every row in this first list was classified AS A
-    # CALL by the `_declaration_shaped` it replaced (which recognised
-    # declarations and called everything else a call) -- or, for `%:`, by
-    # `_in_directive`, which knew only `#`.
+    # Every row in this first list was classified AS A CALL by the
+    # `_declaration_shaped` that preceded the round-8 recogniser (it
+    # recognised declarations and called everything else a call) -- or, for
+    # `%:`, by `_in_directive`, which knew only `#`. All stay refused under
+    # the call contract: none is the entire expression of an accepted shape.
     for label, stmt in (
             ("an attribute-prefixed block-scope declaration",
              "__attribute__((unused)) bool F(int x);"),
@@ -1874,18 +1833,35 @@ def _accounting_self_test():
                % (label, stmt, _kinds(occs)),
                _kinds(occs) == [("definition", 1), ("unclassified", 7)]
                and len(probs) == 1 and "line 7" in probs[0])
-    # ...and the calls the fail-closed rule must still recognise, one per
-    # context it names: a vacuity guard, since refusing everything would
-    # satisfy every row above.
-    for stmt in ("(void)F(1);", "ok = (bool)F(1);", "if (x) F(1);",
-                 "g(a, F(1));", "x = a * F(1);", "y = c ? 0 : F(1);",
-                 "ok = !F(1) && x;", "while (!F(1)) { }",
-                 "ok = __builtin_expect(F(1), 1);"):
+    # ...and the calls the round-8 recogniser had to recognise, one per
+    # context it named, as its vacuity guard. Under the call contract only
+    # `(void)F(1);` is still one of the five shapes, and it stays a call.
+    # Every other row FLIPPED from "call" to "unclassified" (#976 audit round
+    # 9) and is kept, with its reason, rather than deleted: each is a call
+    # GCC makes, written in a style the contract does not accept. The
+    # contract's own vacuity guard is "12. (d)" below.
+    for stmt in ("(void)F(1);",):
         occs, probs = _account(_F_THEN_G + "    %s\n}\n" % stmt)
-        expect("`%s` is an evaluated call at line 7; got %r / %r"
+        expect("`%s` is a call at line 7 (shape 1); got %r / %r"
                % (stmt, _kinds(occs), probs),
                _kinds(occs) == [("definition", 1), ("call", 7)]
                and probs == [])
+    for stmt, reason in (
+            ("ok = (bool)F(1);", "a cast other than `(void)` is no shape"),
+            ("if (x) F(1);", "a braceless if body is not at block level"),
+            ("g(a, F(1));", "an argument of another call"),
+            ("x = a * F(1);", "an operand, not the whole right-hand side"),
+            ("y = c ? 0 : F(1);", "an operand of `?:`"),
+            ("ok = !F(1) && x;", "an operand of `&&`"),
+            ("while (!F(1)) { }",
+             "a `while` condition is no shape; only an `if` condition is"),
+            ("ok = __builtin_expect(F(1), 1);",
+             "an argument of another call")):
+        occs, probs = _account(_F_THEN_G + "    %s\n}\n" % stmt)
+        expect("`%s` is REFUSED at line 7 (was: a call) -- %s; got %r / %r"
+               % (stmt, reason, _kinds(occs), probs),
+               _kinds(occs) == [("definition", 1), ("unclassified", 7)]
+               and len(probs) == 1 and "line 7" in probs[0])
     # A directive line is removed by the preprocessor, so it is never "the
     # word before" a call: `#endif` above `(void)F(1);` once made `endif`
     # the word before the cast and a plain call read as a declaration.
@@ -1908,19 +1884,22 @@ def _accounting_self_test():
            masked == "x =    \ny = 1;\n")
 
     # ---- 10. #976 audit round 8 -------------------------------------------
-    # (a) An unevaluated operand the old BACKWARD walk could not reach. It
-    #     examined only the word directly before the call or before an
-    #     enclosing `(`, so anything else between `sizeof` and the call hid
-    #     it -- a prefix operator, a compound literal's `{` (the walk stopped
-    #     there as if a block began), an enclosing call, a subscript -- and
-    #     each read as the claim it replaced. GCC makes none of these calls
-    #     (measured: 0 each). The operand is read FORWARD now.
+    # (a) An unevaluated operand the BACKWARD walk before round 8 could not
+    #     reach. It examined only the word directly before the call or
+    #     before an enclosing `(`, so anything else between `sizeof` and the
+    #     call hid it -- a prefix operator, a compound literal's `{` (the walk
+    #     stopped there as if a block began), an enclosing call, a subscript
+    #     -- and each read as the claim it replaced. GCC makes none of these
+    #     calls (measured: 0 each). Round 8 read the operand forward; the call
+    #     contract (round 9) refuses every one, because none is the entire
+    #     expression of an accepted shape.
     # (b) A parenthesized declarator. A `(` directly before the name was
     #     proof of a call whatever stood before the `(`, so
     #     `extern bool (F(int));` -- a block-scope DECLARATION, C11 6.7.6's
     #     parenthesized declarator, the shape `_NAME_WRAP_OPEN` accepts for
-    #     definitions -- read as the claim. Ambiguous with `g(F(x));` as text,
-    #     so refused (`_may_declare`), with its `*` and parameter twins.
+    #     definitions -- read as the claim. Refused, with its `*` and
+    #     parameter twins: no accepted shape has a `(`, a `*` or a type word
+    #     directly before the callee.
     for label, stmt in (
             ("sizeof through `!`, no parentheses at all", "(void)sizeof !F(1);"),
             ("sizeof through a compound literal's `{`",
@@ -1959,26 +1938,49 @@ def _accounting_self_test():
                % (label, stmt, _kinds(occs)),
                _kinds(occs) == [("definition", 1), ("unclassified", 7)]
                and len(probs) == 1 and "line 7" in probs[0])
-    # ...and their vacuity guard: an operand ends where C ends it
+    # ...and their vacuity guard, which was: an operand ends where C ends it
     # (`sizeof(int) - F(1)` calls F -- measured), a `(` or `!` before the
     # callee is still a call wherever the statement cannot be a declaration,
-    # and a `}` that ends a compound statement still ends the statement.
-    for stmt in ("n = sizeof(int) - F(1);", "n = sizeof x + F(1);",
-                 "ok = g(!F(1));", "x = g(F(1));", "return g(F(1));",
-                 "if (g(F(1))) { }", "(void)(bool[]){F(1)};", "x = (F(1));",
-                 "x = a - -F(1);", "if (x) { y = 1; } F(1);",
+    # and a `}` that ends a compound statement still ends the statement. The
+    # last four rows -- a `}` ending an if, else, bare or switch block, then
+    # `F(1);` -- are still calls under the contract (shape 1 after a `}`
+    # that ends a compound statement). The first nine FLIPPED from "call" to
+    # "unclassified" (#976 audit round 9): each is a call GCC makes, and
+    # none is the entire expression of an accepted shape.
+    for stmt in ("if (x) { y = 1; } F(1);",
                  "if (x) { } else { y = 1; } F(1);", "{ y = 1; } F(1);",
                  "switch (x) { default: break; } F(1);"):
         occs, probs = _account(_F_THEN_G + "    %s\n}\n" % stmt)
-        expect("`%s` is an evaluated call at line 7; got %r / %r"
-               % (stmt, _kinds(occs), probs),
+        expect("`%s` is a call at line 7 (shape 1 after a compound "
+               "statement's `}`); got %r / %r" % (stmt, _kinds(occs), probs),
                _kinds(occs) == [("definition", 1), ("call", 7)]
                and probs == [])
+    for stmt, reason in (
+            ("n = sizeof(int) - F(1);", "an operand of `-`"),
+            ("n = sizeof x + F(1);", "an operand of `+`"),
+            ("ok = g(!F(1));", "an argument of another call"),
+            ("x = g(F(1));", "an argument of another call"),
+            ("return g(F(1));", "an argument of another call"),
+            ("if (g(F(1))) { }",
+             "an argument of the call that IS the condition"),
+            ("(void)(bool[]){F(1)};", "inside a compound literal's `{`"),
+            ("x = (F(1));",
+             "a parenthesized right-hand side is not `v = F(args);`"),
+            ("x = a - -F(1);", "an operand of unary `-`")):
+        occs, probs = _account(_F_THEN_G + "    %s\n}\n" % stmt)
+        expect("`%s` is REFUSED at line 7 (was: a call) -- %s; got %r / %r"
+               % (stmt, reason, _kinds(occs), probs),
+               _kinds(occs) == [("definition", 1), ("unclassified", 7)]
+               and len(probs) == 1 and "line 7" in probs[0])
+    # FLIPPED too (#976 audit round 9): F(1) was a call, as the operand of
+    # the binary `+` at which `sizeof !F(2)` ends. It is still an operand --
+    # of that `+` -- so the contract refuses it along with F(2).
     occs, probs = _account(_F_THEN_G + "    n = sizeof !F(2) + F(1);\n}\n")
-    expect("in `sizeof !F(2) + F(1)` the operand ends at the binary `+`: F(2) "
-           "is refused and F(1) is a call; got %r" % _kinds(occs),
+    expect("in `sizeof !F(2) + F(1)` BOTH are refused: F(2) is sizeof's "
+           "operand and F(1) the binary `+`'s (was: F(1) a call); got %r"
+           % _kinds(occs),
            _kinds(occs) == [("definition", 1), ("unclassified", 7),
-                            ("call", 7)])
+                            ("unclassified", 7)])
     # (c) Phase 2 applied TWICE. `splice()` joins `\\` + newline ONCE and
     #     leaves one backslash; the compiler's view then masked the joined
     #     text as if it were raw, read that backslash as a splice again, and
@@ -2011,8 +2013,10 @@ def _accounting_self_test():
     #     forward reader ran on the matchmask, where the `)` of `#define RP )`
     #     closed the operand early and the claim passed; the backward walk it
     #     replaced skipped directive lines and had REFUSED it -- a regression
-    #     this fix introduced. It reads the code view now (`_View.code`), where
-    #     every directive line is blank. GCC makes none of these calls.
+    #     this fix introduced. The code view (`_View.code`) blanks every
+    #     directive line; the call contract reads that view, and refuses
+    #     these regardless (each F(1) is an operand). GCC makes none of these
+    #     calls.
     for label, body in (
             ("a `)` on a directive line inside the operand",
              "    n = sizeof (0 +\n#define RP )\n        F(1));\n"),
@@ -2047,13 +2051,18 @@ def _accounting_self_test():
                _kinds(occs) == [("definition", 1), ("unclassified", 7)]
                and len(probs) == 1 and "line 7" in probs[0])
     # ...and the calls GCC DOES make in those neighbourhoods (measured).
-    for stmt in ("x = __extension__ -F(1);", "n = sizeof sizeof (int) - F(1);",
-                 "x = arr<:F(1):>;"):
+    # FLIPPED from "call" to "unclassified" by the call contract (#976 audit
+    # round 9): each F(1) is an operand or a subscript, not the entire
+    # expression of an accepted shape -- evaluated, and refused all the same.
+    for stmt, reason in (
+            ("x = __extension__ -F(1);", "an operand of unary `-`"),
+            ("n = sizeof sizeof (int) - F(1);", "an operand of `-`"),
+            ("x = arr<:F(1):>;", "a subscript")):
         occs, probs = _account(_F_THEN_G + "    %s\n}\n" % stmt)
-        expect("`%s` is an evaluated call at line 7; got %r / %r"
-               % (stmt, _kinds(occs), probs),
-               _kinds(occs) == [("definition", 1), ("call", 7)]
-               and probs == [])
+        expect("`%s` is REFUSED at line 7 (was: a call) -- %s; got %r / %r"
+               % (stmt, reason, _kinds(occs), probs),
+               _kinds(occs) == [("definition", 1), ("unclassified", 7)]
+               and len(probs) == 1 and "line 7" in probs[0])
     # (c) No depth of nesting may crash the reader -- it refuses, it does not
     #     raise. The first round-8 reader recursed, and raised at ~1000.
     try:
@@ -2065,6 +2074,156 @@ def _accounting_self_test():
     expect("3000 nested `sizeof` must be read without raising, and refused; "
            "got %r" % (deep,),
            deep == [("definition", 1), ("unclassified", 7)])
+
+    # ---- 12. #976 audit round 9: the call contract --------------------------
+    # The recogniser rounds 8 and 9 kept patching inferred "is this call
+    # evaluated?" from local punctuation and subtracted the exceptions it
+    # knew. Round 9 found two more, and an external review of the design
+    # found no completion criterion for it, so it was replaced by a bounded
+    # contract (module docstring): five accepted statement shapes, at block
+    # level, and everything else refused.
+    #
+    # (a) Round 9's live finding: the claim replaced by a prototype whose
+    #     parameter's array bound CALLS it, then `if (0) {` where the claim's
+    #     own `{` was. A VLA bound at function-prototype scope is never
+    #     evaluated (C11 6.7.6.2p5), so the claim is never made -- and the
+    #     recogniser this replaced read it as a call (the operand of `+`).
+    # (b) The other classes the external review verified against GCC: in
+    #     each the call is never executed, or is not the entire expression of
+    #     an accepted shape. `half` says which half of the contract must
+    #     refuse it -- "ENTIRE" the shape, "BLOCK level" the bracket chain.
+    #     The last three are shape 1 or 2 EXACTLY, inside a GNU statement
+    #     expression: only the forward bracket scan (`_brace_scan`) can
+    #     refuse those, and pinning the half proves it is the one that does.
+    for label, stmt, line, half in (
+            ("a VLA bound at function-prototype scope is never evaluated -- "
+             "C11 6.7.6.2p5 (round 9's live finding)",
+             "extern void claim_contract(int a[1 + F(1)]); if (0) {\n    }",
+             7, "ENTIRE"),
+            ("a parenthesized parameter declarator after an array parameter",
+             "extern void h(int a[1], int (F(int)));", 7, "ENTIRE"),
+            ("`__builtin_classify_type`'s operand",
+             "int x = __builtin_classify_type(F(1));", 7, "ENTIRE"),
+            ("`__builtin_has_attribute`'s operand",
+             "int x = __builtin_has_attribute(F(1), aligned);", 7, "ENTIRE"),
+            ("`__builtin_choose_expr`'s unchosen operand",
+             "int x = __builtin_choose_expr(1, 0, F(1));", 7, "ENTIRE"),
+            ("a comma expression inside `__builtin_object_size`",
+             "int x = __builtin_object_size((F(1), (void *)0), 0);", 7,
+             "ENTIRE"),
+            ("a designated initializer the next one overrides",
+             "int a[1] = { [0] = F(1), [0] = 0 };", 7, "ENTIRE"),
+            ("a macro spelling `sizeof`, then `SZ(F(1))`",
+             "#define SZ sizeof\n    int x = SZ(F(1));", 8, "ENTIRE"),
+            ("a short-circuited operand", "int x = 0 && F(1);", 7, "ENTIRE"),
+            ("a statement expression inside `sizeof`",
+             "(void)sizeof ({ F(1); 0; });", 7, "BLOCK level"),
+            ("a statement expression inside `_Generic`",
+             "int x = _Generic(0, int: 0, default: ({ F(1); 0; }));", 7,
+             "BLOCK level"),
+            ("`if (F(1)) {}` inside a statement expression inside an array "
+             "bound inside a declarator",
+             "extern void h(int a[({ if (F(1)) {} 1; })]);", 7,
+             "BLOCK level")):
+        occs, probs = _account(_F_THEN_G + "    %s\n}\n" % stmt)
+        expect("%s (`%s`) must be UNCLASSIFIED at line %d, refused by the "
+               "%s half of the contract; got %r / %r"
+               % (label, stmt, line, half, _kinds(occs), probs),
+               _kinds(occs) == [("definition", 1), ("unclassified", line)]
+               and len(probs) == 1 and "line %d" % line in probs[0]
+               and half in probs[0])
+    # (c) The contract's own refusals. Each is a statement a compiler runs,
+    #     refused because it is not written in an accepted shape at block
+    #     level -- which is the design: five accepted shapes, and a human for
+    #     everything else. A comma suffix; a comparison after the call; a
+    #     store to anything but one plain variable; a compound assignment; a
+    #     condition that is more than the call; a braceless body; a label or
+    #     `case`; `else if`; a statement expression GCC does run; and a block
+    #     a macro or a label opens (the last two accepted by `_closes_block`,
+    #     refused now that one rule decides every brace).
+    bool_g = _F_THEN_G.replace("void g(void)", "bool g(int y)")
+    for label, stmt in (
+            ("a comma suffix after an assignment", "v = F(1), w;"),
+            ("a comma suffix after a return", "return F(1), w;"),
+            ("a comma suffix after a bare call", "F(1), w;"),
+            ("a comparison after the call", "v = F(1) == 0;"),
+            ("a declarator list", "int a, v = F(1);"),
+            ("a store through a pointer", "*p = F(1);"),
+            ("a store to a member", "s.v = F(1);"),
+            ("a store to an element", "a[0] = F(1);"),
+            ("a chained assignment", "x = v = F(1);"),
+            ("a compound assignment", "v += F(1);"),
+            ("a doubly parenthesized condition", "if ((F(1))) { }"),
+            ("a compound condition", "if (F(1) && v) { }"),
+            ("a braceless `for` body", "for (;;) F(1);"),
+            # Shape 1's own characters (`;` before, `;` after) inside the
+            # header's `(`: only the block-level half's `(` refuses it, and
+            # no other row pinned that -- a mutation treating `(` as compound
+            # passed every row here (#976 audit round 9 review).
+            ("a `for` header's condition", "for (;F(1);) { }"),
+            ("a label", "lbl: F(1);"),
+            ("a `case` label", "switch (v) { case 1: F(1); }"),
+            ("a block after a `case` label",
+             "switch (v) { case 1: { F(1); } }"),
+            ("`else if` -- a braceless else body",
+             "if (v) { } else if (F(1)) { }"),
+            ("a GNU statement expression GCC does run", "v = ({ F(1); 0; });"),
+            ("a block a macro opens", "FOREACH(v) { F(1); }"),
+            ("a statement after a block a macro opens",
+             "FOREACH(v) { } F(1);"),
+            ("a statement after a block a label opens", "lbl: { } F(1);")):
+        occs, probs = _account(bool_g + "    %s\n}\n" % stmt)
+        expect("%s (`%s`) must be UNCLASSIFIED at line 7; got %r / %r"
+               % (label, stmt, _kinds(occs), probs),
+               _kinds(occs) == [("definition", 1), ("unclassified", 7)]
+               and len(probs) == 1 and "line 7" in probs[0])
+    # (d) VACUITY -- refusing everything would satisfy every row above. Each
+    #     shape (both spellings of 1 and of 2, a pointer type in 3, and
+    #     arguments split over lines the way `SCPIStorageSD.c` writes
+    #     FORmat's arm) is a call at the top of the body AND one block down
+    #     in every compound-statement context the contract names -- an `if`
+    #     block, an `else` block, a `do` block, a bare block, a `while` and a
+    #     `for` block -- two blocks down, and after a sibling block's `}`.
+    #     Block level is not "the top of the function".
+    shapes = ("F(1);", "(void)F(1);", "if (F(1)) {\n    }",
+              "if (!F(1)) {\n    }", "bool v = F(1);",
+              "sd_card_manager_settings_t *p = F(1);", "v = F(1);",
+              "return F(1);",
+              "if (!F(1, \"FORmat\",\n           2)) {\n    }",
+              "bool v = F(1,\n             2);")
+    contexts = (("at the top of the body", "    %s\n", 7),
+                ("in an `if` block", "    if (y) {\n        %s\n    }\n", 8),
+                ("in an `else` block",
+                 "    if (y) {\n    } else {\n        %s\n    }\n", 9),
+                ("in a `do` block",
+                 "    do {\n        %s\n    } while (0);\n", 8),
+                ("in a bare block", "    {\n        %s\n    }\n", 8),
+                ("in a `while` block",
+                 "    while (y) {\n        %s\n    }\n", 8),
+                ("in a `for` block", "    for (;;) {\n        %s\n    }\n", 8),
+                ("two blocks down",
+                 "    if (y) {\n        {\n            %s\n        }\n    }\n",
+                 9),
+                ("after a sibling block's `}`",
+                 "    if (y) {\n    }\n    %s\n", 9))
+    for shape in shapes:
+        for where, frame, line in contexts:
+            occs, probs = _account(bool_g + frame % shape + "}\n")
+            expect("VACUITY: `%s` %s is a call at line %d; got %r / %r"
+                   % (shape.replace("\n", " "), where, line, _kinds(occs),
+                      probs),
+                   _kinds(occs) == [("definition", 1), ("call", line)]
+                   and probs == [])
+    # (e) No depth of nesting may crash the bracket scan: it is a loop.
+    try:
+        occs, probs = _account(_F_THEN_G + "    " + "{ " * 3000 + "F(1); "
+                               + "} " * 3000 + "\n}\n")
+        deep = _kinds(occs)
+    except RecursionError:
+        deep = "RecursionError"
+    expect("VACUITY: `F(1);` 3000 bare blocks down is still a call, read "
+           "without raising; got %r" % (deep,),
+           deep == [("definition", 1), ("call", 7)])
 
     # ---- 8. control: the real files are explained in full -----------------
     for rel, names in _REAL_CONTROL:
