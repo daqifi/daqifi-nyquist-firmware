@@ -8,6 +8,7 @@
 #include "configuration.h"
 #include "definitions.h"
 #include "clock_config.h"   /* #487: DAQIFI_PBCLK_MHZ for ADC TCLK */
+#include "../TimerApi/TimerApi.h"  /* #716: TimerApi_PeripheralClockHz() -- the LIVE PBCLK3, not the compile-time constant */
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
@@ -400,18 +401,51 @@ void MC12b_RestoreIdleScanList(void) {
  * CONCLKDIV semantics and the datasheet is what matches silicon; the full
  * chain is worked in docs/ADC_HW_SEMANTICS.md).
  *
- * #487: DAQIFI_PBCLK_MHZ from clock_config.h = 84 @252 MHz SYSCLK
- * (TCLK ~11.9 ns) or 100 @200 MHz (TCLK 10 ns); the numerator is scaled x1000
- * for ns.  The divide rounds UP (ceil) so tadNs never UNDER-estimates TAD —
- * for the safety cap that makes an over-estimate of busy time (-> lower max
- * freq) the conservative direction (Qodo #584), and for the reported scan
- * offset it means the published figure is an upper bound, never optimistic. */
+ * #716/#487, via TimerApi_PeripheralClockHz() (Qodo /agentic_review, PR
+ * firmware#1112, "Clock mismatches corrupt timing offsets"): TCLK comes from
+ * the LIVE PBCLK3 the silicon actually runs, not the compile-time
+ * DAQIFI_PBCLK_MHZ. On a unit whose PLL configuration word disagrees with the
+ * build (clock_ok=false — the bootloader cannot reprogram it, erratum 45; see
+ * CLAUDE.md and TimerApi.c), the OLD compile-time TAD was wrong by the same
+ * ratio pbclk_hz/pbclk_built_hz that every other streaming-rate computation
+ * was already fixed for by #716 (TimerApi_FrequencyGet's own comment: "Every
+ * streaming-rate computation funnels through this function ... making it
+ * honest here fixes the rate, the reported timebase and the caps together").
+ * MC12b_ChannelScanOffsetTicks multiplies this by timestamp_hz, which IS
+ * already live-derived — mixing a build-scaled TAD with a live-scaled
+ * multiplier is exactly the inconsistency #716 exists to close, and this
+ * closes it for the scan-busy cap term too (MC12b_HardwareScanMaxFreq below),
+ * not only the new offset.
+ *
+ * BEHAVIOUR-PRESERVING ON EVERY CLOCK-MATCHED UNIT (the overwhelming common
+ * case, clock_ok=true): TimerApi_PeripheralClockHz() returns EXACTLY
+ * DAQIFI_PBCLK_MHZ*1_000_000 there, and scaling both the ceil-divide's
+ * numerator and denominator by the same positive constant (1e6) leaves the
+ * quotient identical — verified algebraically, not merely argued: old
+ * tadNumer/DAQIFI_PBCLK_MHZ (numerator scaled x1000 for ns) is the exact
+ * same ratio as new tadNumer/pbclkHz (numerator scaled x1e9 for ns, pbclkHz
+ * = DAQIFI_PBCLK_MHZ*1e6). Only a clock-mismatched unit's result moves, and
+ * it moves toward the true value.
+ *
+ * The divide rounds UP (ceil) so tadNs never UNDER-estimates TAD — for the
+ * safety cap that makes an over-estimate of busy time (-> lower max freq) the
+ * conservative direction (Qodo #584), and for the reported scan offset it
+ * means the published figure is an upper bound, never optimistic. */
 static uint32_t MC12b_SharedTadNs(void) {
     uint32_t conclkdiv = ADCCON3bits.CONCLKDIV;   // [29:24]
     uint32_t adcdiv    = ADCCON2bits.ADCDIV;       // [6:0]
     if (adcdiv == 0u) adcdiv = 1u;          // 0 is reserved — defensive
-    uint32_t tadNumer  = 2u * adcdiv * (conclkdiv + 1u) * 1000u;
-    return (tadNumer + DAQIFI_PBCLK_MHZ - 1u) / DAQIFI_PBCLK_MHZ;
+    uint32_t pbclkHz = TimerApi_PeripheralClockHz();
+    if (pbclkHz == 0u) return 0xFFFFFFFFu;  // defensive: unmeasurable clock —
+                                             // callers already clamp/saturate
+                                             // on an oversized TAD (see
+                                             // MC12b_ChannelScanOffsetTicks'
+                                             // own UINT32_MAX clamp below)
+    /* 64-bit: 2*adcdiv*(conclkdiv+1) can reach ~2*127*64 = 16256, and the
+     * numerator is now scaled x1e9 (ns from a Hz denominator) rather than
+     * x1000 (ns from a MHz one) — 16256*1e9 ~= 1.6e13 overflows uint32_t. */
+    uint64_t tadNumer = 2ULL * adcdiv * (conclkdiv + 1u) * 1000000000ULL;
+    return (uint32_t)((tadNumer + pbclkHz - 1u) / pbclkHz);
 }
 
 /* #563/#557: the SAMC/divider-dependent hardware scan-busy limit ALONE — the
@@ -448,7 +482,7 @@ static uint32_t MC12b_CountSetBits(uint32_t v) {
 }
 
 uint32_t MC12b_ChannelScanOffsetTicks(const AInChannel* ch,
-                                      bool includeMonitoring,
+                                      uint32_t css1, uint32_t css2,
                                       uint32_t timestampHz) {
     if (ch == NULL || timestampHz == 0u) return 0u;
 
@@ -465,14 +499,29 @@ uint32_t MC12b_ChannelScanOffsetTicks(const AInChannel* ch,
     uint32_t an = (uint32_t)ch->Config.MC12b.ChannelId;   // CSS bit == AN number
     if (an >= 64u) return 0u;    // defensive: outside ADCCSS1/2 (see ComputeScanList)
 
-    /* The scan list a session would arm RIGHT NOW.  Computed live rather than
-     * cached at stream start, so the answer can never be stale; the same call
-     * with the same flags feeds cap_terms.scan_bound_hz
-     * (Streaming_ComputeMaxFreqTermsForConfigIface), so the offset and the
-     * published scan bound always describe the same scan. */
-    uint32_t css1 = 0u, css2 = 0u;
-    (void)MC12b_ComputeScanList(true, includeMonitoring, &css1, &css2);
-
+    /* css1/css2: the scan list a session would arm RIGHT NOW, PASSED IN by the
+     * caller rather than recomputed here (Qodo /agentic_review, PR
+     * firmware#1112, "Channel timing can describe wrong scan"). This used to
+     * call MC12b_ComputeScanList() itself, independently, on EVERY channel —
+     * so if the enabled-channel set or OnboardDiagEnabled changed on the
+     * OTHER SCPI transport between one channel's call and the next, two
+     * channels in the SAME capability response could be positioned against
+     * two different scans, and neither would necessarily agree with
+     * cap_terms.scan_bound_hz either (computed earlier in the same query via
+     * Streaming_ComputeMaxFreqTermsForConfigIface's own, separate,
+     * independently-timed call). Taking ONE snapshot before the per-channel
+     * loop and reusing it for every channel closes the CROSS-CHANNEL half of
+     * that window entirely — the response's channels[] array is now always
+     * self-consistent. It does not close the narrower window against
+     * scan_bound_hz itself: that term is computed by a different function,
+     * earlier in the same query, and unifying the two would mean either that
+     * function taking a snapshot parameter (an API change to a
+     * frequently-called streaming-cap path, out of scope here) or the whole
+     * query taking the streaming config-change claim (which would make a
+     * read-only diagnostic query BLOCK or GET REFUSED under contention with a
+     * legitimate config writer — a worse trade for a capability endpoint than
+     * the narrow, self-correcting-on-the-next-query inconsistency it would
+     * prevent). See docs/ADC_HW_SEMANTICS.md for the accepted residual. */
     bool inList = (an < 32u) ? (((css1 >> an) & 1u) != 0u)
                              : (((css2 >> (an - 32u)) & 1u) != 0u);
     if (!inList) return 0u;      // not scanned in this configuration

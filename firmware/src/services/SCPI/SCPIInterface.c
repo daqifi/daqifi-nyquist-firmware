@@ -8040,24 +8040,35 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     uint32_t ainLoopCount = (cfg->AInChannels.Size < rt->AInChannels.Size)
         ? cfg->AInChannels.Size : rt->AInChannels.Size;
 
-    /* #267: inputs for the per-channel scan_offset_ticks field. Read once
-     * outside the loop — both are session-wide, and taking OnboardDiagEnabled
-     * once keeps every channel's offset describing the SAME scan even if the
-     * other SCPI transport toggles OBDiag mid-emission.
+    /* #267: inputs for the per-channel scan_offset_ticks field. Read/computed
+     * ONCE outside the loop — all session-wide, and taking them once keeps
+     * EVERY channel's offset describing the SAME scan even if the other SCPI
+     * transport changes the enabled-channel set or toggles OBDiag mid-
+     * emission (Qodo /agentic_review, PR firmware#1112, "Channel timing can
+     * describe wrong scan": MC12b_ChannelScanOffsetTicks used to rebuild the
+     * scan mask itself, per channel, so two channels in one response could
+     * disagree about which scan they were even part of).
      *
-     * OnboardDiagEnabled is exactly the includeMonitoring flag
+     * ainScanObDiag is exactly the includeMonitoring flag
      * Streaming_ComputeMaxFreqTermsForConfigIface passes when it builds the
      * session scan list for cap_terms.scan_bound_hz, so the offsets and that
-     * bound describe one scan rather than two. TSTimerIndex is the timestamp
-     * timer whose rate is published as timing.timestamp_hz below. */
+     * bound describe one scan rather than two (a narrower residual window
+     * against scan_bound_hz's OWN, separately-timed computation earlier in
+     * this same query remains -- see MC12b_ChannelScanOffsetTicks' doc
+     * comment for why closing it needs the streaming config-change claim,
+     * which a read-only diagnostic query should not pay). TSTimerIndex is the
+     * timestamp timer whose rate is published as timing.timestamp_hz below.
+     * BoardRunTimeConfig_Get never returns NULL (documented, CLAUDE.md) --
+     * no defensive check here, matching every other call site in this file
+     * (e.g. streaming.c:752-758). */
     uint32_t ainScanTsHz =
         TimerApi_FrequencyGet(cfg->StreamingConfig.TSTimerIndex);
-    bool ainScanObDiag = false;
-    {
-        StreamingRuntimeConfig* sdiag =
-            BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-        if (sdiag != NULL) ainScanObDiag = (sdiag->OnboardDiagEnabled != 0);
-    }
+    StreamingRuntimeConfig* ainScanSdiag =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    bool ainScanObDiag = (ainScanSdiag->OnboardDiagEnabled != 0);
+    uint32_t ainScanCss1 = 0u, ainScanCss2 = 0u;
+    (void)MC12b_ComputeScanList(true, ainScanObDiag,
+                                &ainScanCss1, &ainScanCss2);
 
     for (uint32_t i = 0; i < ainLoopCount; i++) {
         const AInChannel* ch = &cfg->AInChannels.Data[i];
@@ -8100,7 +8111,8 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
 
         const AInRuntimeConfig* rc = &rt->AInChannels.Data[i];
         EmitAinChannelJson(context, ch, rc, moduleRange,
-                           MC12b_ChannelScanOffsetTicks(ch, ainScanObDiag,
+                           MC12b_ChannelScanOffsetTicks(ch, ainScanCss1,
+                                                        ainScanCss2,
                                                         ainScanTsHz));
     }
 

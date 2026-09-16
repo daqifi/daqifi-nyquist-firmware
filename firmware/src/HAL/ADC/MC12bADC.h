@@ -151,20 +151,25 @@ uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive);
  * channels, the first input in the scan, and any channel NOT in the scan the
  * current configuration would arm.
  *
- * Computed live from MC12b_ComputeScanList(true, includeMonitoring, ...) and
- * the ADC SFRs, so it cannot go stale; the scan list is frozen for the duration
- * of a session anyway (mid-stream CONF:ADC:CHANnel / OBDiag / SAMC are
- * rejected, #116).
+ * PURE given its inputs: css1/css2 are the caller's OWN snapshot from ONE
+ * MC12b_ComputeScanList(true, includeMonitoring, ...) call, taken once before
+ * looping over channels (Qodo /agentic_review, PR firmware#1112, "Channel
+ * timing can describe wrong scan") — NOT recomputed per channel, so every
+ * channel in one capability response is positioned against the exact same
+ * scan, even if the enabled-channel set or OnboardDiagEnabled changes on the
+ * OTHER SCPI transport between two channels' calls in the same response.
+ * SAMC and TAD7 are still read live per call (matching the same live-read
+ * convention cap_terms.scan_bound_hz already uses, and SAMC has no
+ * comparable cross-channel exposure since #116 already rejects it mid-stream
+ * and it is not iterated per public channel the way the scan mask is).
  *
- * @param ch                board-config channel entry (NULL -> 0)
- * @param includeMonitoring monitoring channels ride the same scan when OBDiag
- *                          is on — pass StreamingRuntimeConfig.OnboardDiagEnabled
- *                          so this matches the session Streaming_Compute-
- *                          MaxFreqTermsForConfigIface computes its scan bound for
- * @param timestampHz       timestamp-timer tick rate (0 -> 0)
+ * @param ch          board-config channel entry (NULL -> 0)
+ * @param css1, css2  ONE MC12b_ComputeScanList(true, includeMonitoring, ...)
+ *                    snapshot, shared across every channel in one response
+ * @param timestampHz timestamp-timer tick rate (0 -> 0)
  */
 uint32_t MC12b_ChannelScanOffsetTicks(const AInChannel* ch,
-                                      bool includeMonitoring,
+                                      uint32_t css1, uint32_t css2,
                                       uint32_t timestampHz);
 
 /**
