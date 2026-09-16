@@ -499,12 +499,21 @@ void wifi_tcp_server_CloseClientSocket() {
         // walk the chip's socket table down to nothing while looking, from our
         // side, exactly like a clean close.  Log it, mirroring the check the
         // refused-2nd-client site in wifi_manager.c already performs.
-        int8_t rc = shutdown(gpServerData->client.clientSocket);
+        // Qodo (PR #1101 round 2): snapshot the fd and clear the shared field
+        // BEFORE logging, not after. LOG_E formats and can wait on the logger
+        // mutex, and every writer gates only on clientSocket >= 0 -- so
+        // logging first left that field published (and therefore still
+        // "live" to a concurrent writer) for the width of a mutex wait, on
+        // top of an fd that shutdown() had already invalidated.  Clearing
+        // first closes that window; the snapshot keeps the diagnostic
+        // accurate regardless of when the clear becomes visible to others.
+        SOCKET closedSock = gpServerData->client.clientSocket;
+        int8_t rc = shutdown(closedSock);
+        gpServerData->client.clientSocket = -1;
         if (rc != SOCK_ERR_NO_ERROR) {
             LOG_E("TCP: shutdown(client sock=%d) failed rc=%d - WINC may still hold the socket (#1073)",
-                  (int)gpServerData->client.clientSocket, (int)rc);
+                  (int)closedSock, (int)rc);
         }
-        gpServerData->client.clientSocket = -1;
     }
     gpServerData->client.readBufferLength = 0;
     // #437: deferred-reset pattern — never block the WINC driver task
