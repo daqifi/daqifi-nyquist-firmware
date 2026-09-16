@@ -239,6 +239,26 @@ def unescape(body):
                 j += 1
             out.append(_byte_char(int(body[i:j], 8)))
             i = j
+        elif c == "\n":
+            # A backslash immediately followed by a real newline is a C
+            # line continuation (C99 5.1.1.2), not an "unknown escape" --
+            # it deletes BOTH characters, emitting zero bytes, before the
+            # string literal's contents are even formed. The pre-fix
+            # fallback (`_ESCAPES.get(c, c)`) returned `c` itself, since the
+            # newline BYTE (0x0A) is not a key in `_ESCAPES` (whose keys are
+            # the escape LETTERS, e.g. the character 'n', never the
+            # character it decodes to) -- so a continued literal was
+            # measured and re-emitted with one extra byte the firmware
+            # never emits, either rejecting a message that actually fits or
+            # generating a test string that diverges from what ships (Qodo
+            # /agentic_review, PR #1110, 2026-09-16: "Continued test
+            # messages gain a newline"). tools/lint/log_budget.py does not
+            # need this case: its splice_continuations() deletes a
+            # continuation from raw source BEFORE literal boundaries are
+            # even recognized, so its own unescape() never sees one.
+            i += 1
+        elif c == "\r" and i + 1 < n and body[i + 1] == "\n":
+            i += 2                    # \<CR><LF> continuation: same, 0 bytes
         else:
             out.append(_ESCAPES.get(c, c))
             i += 1
