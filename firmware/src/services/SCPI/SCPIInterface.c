@@ -7690,7 +7690,8 @@ static scpi_result_t SCPI_CapabilitiesApiVersionGet(scpi_t * context) {
 static void EmitAinChannelJson(scpi_t* context,
                                const AInChannel* ch,
                                const AInRuntimeConfig* rt,
-                               double moduleRangeSpan) {
+                               double moduleRangeSpan,
+                               uint32_t scanOffsetTicks) {
     uint8_t id = ch->DaqifiAdcChannelId;
     bool    isTemperature     = false;
     bool    allowDifferential = false;
@@ -7730,11 +7731,34 @@ static void EmitAinChannelJson(scpi_t* context,
         isTemperature ? "Cel"         : "V",
         (unsigned)resolutionBits);
 
+    /* #267 scan_offset_ticks — the companion fact to "simultaneous". That flag
+     * says WHETHER a channel converts with the others; this says BY HOW MUCH it
+     * does not. Units are timestamp-timer ticks, the same domain as
+     * timing.timestamp_hz below, so a client divides by that one published rate
+     * and needs to know nothing about the ADC clock.
+     *
+     * Per-channel rather than a parallel channel_timing_offsets[] array beside
+     * "timing": the value IS a per-channel property, it belongs next to
+     * "simultaneous" which a client already reads for exactly this question, and
+     * a sibling array would impose an index<->channel alignment contract that
+     * nothing in this schema enforces (channels[] mixes analog-input,
+     * analog-output and digital-io, so the indices would not even be the
+     * channel ids). Additive key — older clients ignore it, no schema_version
+     * bump (see the escape-hatch note at the top of the blob).
+     *
+     * 0 has one meaning, "no deterministic offset applies", covering: a
+     * simultaneous channel, the first input in the scan, and a channel the
+     * current configuration would not scan at all. It describes the scan the
+     * device would arm for the channel set enabled RIGHT NOW (the same scan
+     * cap_terms.scan_bound_hz is computed for), so it is a fact about the
+     * session a client is about to start, not a hypothetical. */
     scpi_printf(context,
         "\"simultaneous\":%s,\"differential\":%s,"
+        "\"scan_offset_ticks\":%u,"
         "\"ranges\":[{\"min\":%.3f,\"max\":%.3f}],",
         simultaneous      ? "true" : "false",
         allowDifferential ? "true" : "false",
+        (unsigned)scanOffsetTicks,
         rangeMin, rangeMax);
 
     /* #1054 (the read half of #904): CalM/CalB are 64-bit doubles -- two
@@ -8015,6 +8039,26 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * but defending the read is cheap. */
     uint32_t ainLoopCount = (cfg->AInChannels.Size < rt->AInChannels.Size)
         ? cfg->AInChannels.Size : rt->AInChannels.Size;
+
+    /* #267: inputs for the per-channel scan_offset_ticks field. Read once
+     * outside the loop — both are session-wide, and taking OnboardDiagEnabled
+     * once keeps every channel's offset describing the SAME scan even if the
+     * other SCPI transport toggles OBDiag mid-emission.
+     *
+     * OnboardDiagEnabled is exactly the includeMonitoring flag
+     * Streaming_ComputeMaxFreqTermsForConfigIface passes when it builds the
+     * session scan list for cap_terms.scan_bound_hz, so the offsets and that
+     * bound describe one scan rather than two. TSTimerIndex is the timestamp
+     * timer whose rate is published as timing.timestamp_hz below. */
+    uint32_t ainScanTsHz =
+        TimerApi_FrequencyGet(cfg->StreamingConfig.TSTimerIndex);
+    bool ainScanObDiag = false;
+    {
+        StreamingRuntimeConfig* sdiag =
+            BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+        if (sdiag != NULL) ainScanObDiag = (sdiag->OnboardDiagEnabled != 0);
+    }
+
     for (uint32_t i = 0; i < ainLoopCount; i++) {
         const AInChannel* ch = &cfg->AInChannels.Data[i];
         bool isPublic =
@@ -8055,7 +8099,9 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         firstEntry = false;
 
         const AInRuntimeConfig* rc = &rt->AInChannels.Data[i];
-        EmitAinChannelJson(context, ch, rc, moduleRange);
+        EmitAinChannelJson(context, ch, rc, moduleRange,
+                           MC12b_ChannelScanOffsetTicks(ch, ainScanObDiag,
+                                                        ainScanTsHz));
     }
 
     /* AOut — always emitted, just empty on boards without a DAC */
@@ -8178,6 +8224,9 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      *   while the core-timer ratio would not be (see #731).
      * - timestamp_ticks_per_sample: exactly what the deferred task stamps with
      *   (#717 gStreamPeriodTicks), from the shared helper so it cannot drift.
+     *   timestamp_hz is also the domain of each channel's scan_offset_ticks in
+     *   channels[] above (#267) — every sample in a set carries ONE stamp, and
+     *   that field is how far after it each input actually converted.
      * - actual_rate_millihz: the QUANTIZED rate. `Frequency` is what was asked
      *   for; the period register is an integer, so asking for 4500 Hz yields
      *   4498.714 Hz at 252 MHz (~286 ppm). Millihertz keeps it integral.

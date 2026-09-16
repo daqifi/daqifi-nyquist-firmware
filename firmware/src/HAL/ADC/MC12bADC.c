@@ -392,33 +392,132 @@ void MC12b_RestoreIdleScanList(void) {
     MC12b_ApplyScanList(css1, css2);
 }
 
+/* Shared-MODULE7 ADC clock period TAD7, in nanoseconds, derived live from the
+ * SFRs.  ONE definition, so every consumer of the scan timing model (the
+ * scan-busy cap below and the per-channel scan offset) uses the SAME TAD:
+ *   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV + 1) x TCLK;  TCLK = 1/PBCLK3
+ * (DS60001320H Reg 28-2/28-3 — the EF datasheet deviates from the FRM on
+ * CONCLKDIV semantics and the datasheet is what matches silicon; the full
+ * chain is worked in docs/ADC_HW_SEMANTICS.md).
+ *
+ * #487: DAQIFI_PBCLK_MHZ from clock_config.h = 84 @252 MHz SYSCLK
+ * (TCLK ~11.9 ns) or 100 @200 MHz (TCLK 10 ns); the numerator is scaled x1000
+ * for ns.  The divide rounds UP (ceil) so tadNs never UNDER-estimates TAD —
+ * for the safety cap that makes an over-estimate of busy time (-> lower max
+ * freq) the conservative direction (Qodo #584), and for the reported scan
+ * offset it means the published figure is an upper bound, never optimistic. */
+static uint32_t MC12b_SharedTadNs(void) {
+    uint32_t conclkdiv = ADCCON3bits.CONCLKDIV;   // [29:24]
+    uint32_t adcdiv    = ADCCON2bits.ADCDIV;       // [6:0]
+    if (adcdiv == 0u) adcdiv = 1u;          // 0 is reserved — defensive
+    uint32_t tadNumer  = 2u * adcdiv * (conclkdiv + 1u) * 1000u;
+    return (tadNumer + DAQIFI_PBCLK_MHZ - 1u) / DAQIFI_PBCLK_MHZ;
+}
+
 /* #563/#557: the SAMC/divider-dependent hardware scan-busy limit ALONE — the
  * real #539 bound (retriggering MODULE7 mid-conversion is documented-undefined,
  * FRM §22.3.2). Extracted from MC12b_ScanMaxFreq so the NQ1 freeze-aware additive
  * cap can min() with it directly: the additive model intentionally replaces the
  * EOS-rate/event-rate terms (re-tested non-fatal on v3.6.1, #557) but NOT this
  * one, which must scale with the live SAMC/TAD config. All terms read live:
- *   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV+1) x TCLK, TCLK = 1000/84 ns (PBCLK3 84MHz, #487).
+ *   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV+1) x TCLK, TCLK = 1000/84 ns (PBCLK3 84MHz, #487)
+ *          — see MC12b_SharedTadNs above, which is where that is now computed.
  *   T_busy = N x (SAMC + 16) x TAD7 + ~6us;  cap = 1 / (T_busy x 1.1).
  * Returns 0xFFFFFFFF when no scan is armed (no bound). */
 uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive) {
     if (nActive == 0u) return 0xFFFFFFFFu;  // no scan armed — no bound
-    uint32_t conclkdiv = ADCCON3bits.CONCLKDIV;   // [29:24]
-    uint32_t adcdiv    = ADCCON2bits.ADCDIV;       // [6:0]
-    if (adcdiv == 0u) adcdiv = 1u;          // 0 is reserved — defensive
     uint32_t samc      = ADCCON2bits.SAMC;         // [25:16]
-    /* #487: TCLK = 1/PBCLK3 (ADC control clock).  DAQIFI_PBCLK_MHZ from
-     * clock_config.h = 84 @252 MHz SYSCLK (TCLK ~11.9 ns) or 100 @200 MHz
-     * (TCLK 10 ns). tadNs = 2·ADCDIV·(CONCLKDIV+1)·TCLK, scaled ×1000 for ns.
-     * Round the divide UP (ceil) so tadNs never under-estimates TAD — this is a
-     * safety bound, so an over-estimate of busy time (→ lower max freq) is the
-     * conservative direction. Qodo #584. */
-    uint32_t tadNumer  = 2u * adcdiv * (conclkdiv + 1u) * 1000u;
-    uint32_t tadNs     = (tadNumer + DAQIFI_PBCLK_MHZ - 1u) / DAQIFI_PBCLK_MHZ;
+    uint32_t tadNs     = MC12b_SharedTadNs();
     uint64_t busyNs    = (uint64_t)nActive * (samc + 16u) * tadNs + 6000u;
     uint64_t minPeriodNs = (busyNs * 11u) / 10u;   // +10% margin
     uint32_t hz = (uint32_t)(1000000000ULL / minPeriodNs);
     return (hz == 0u) ? 1u : hz;
+}
+
+/* Population count over a 32-bit scan mask.  Written out rather than
+ * __builtin_popcount: this runs on a SCPI query path (once per public channel,
+ * never per sample), so the loop costs nothing worth a builtin, and the code
+ * stays independent of the toolchain's builtin set. */
+static uint32_t MC12b_CountSetBits(uint32_t v) {
+    uint32_t n = 0u;
+    while (v != 0u) {
+        v &= (v - 1u);      // clear the lowest set bit
+        n++;
+    }
+    return n;
+}
+
+uint32_t MC12b_ChannelScanOffsetTicks(const AInChannel* ch,
+                                      bool includeMonitoring,
+                                      uint32_t timestampHz) {
+    if (ch == NULL || timestampHz == 0u) return 0u;
+
+    /* AD7609 (NQ2/NQ3) converts all 8 inputs simultaneously — no scan-order
+     * skew, and no MODULE7 scan to be positioned within. */
+    if (ch->Type != AIn_MC12bADC) return 0u;
+
+    /* Type 1 / Class 1: dedicated S&H per input.  "When a trigger occurs, all
+     * Class 1 inputs are captured simultaneously and conversions are started
+     * simultaneously" — DS60001344E §22.3.2 "Input Scan", p.22-64.  Offset is
+     * structurally 0, regardless of what else is in the scan list. */
+    if (ch->Config.MC12b.ChannelType == MC12B_CHANNEL_TYPE_DEDICATED) return 0u;
+
+    uint32_t an = (uint32_t)ch->Config.MC12b.ChannelId;   // CSS bit == AN number
+    if (an >= 64u) return 0u;    // defensive: outside ADCCSS1/2 (see ComputeScanList)
+
+    /* The scan list a session would arm RIGHT NOW.  Computed live rather than
+     * cached at stream start, so the answer can never be stale; the same call
+     * with the same flags feeds cap_terms.scan_bound_hz
+     * (Streaming_ComputeMaxFreqTermsForConfigIface), so the offset and the
+     * published scan bound always describe the same scan. */
+    uint32_t css1 = 0u, css2 = 0u;
+    (void)MC12b_ComputeScanList(true, includeMonitoring, &css1, &css2);
+
+    bool inList = (an < 32u) ? (((css1 >> an) & 1u) != 0u)
+                             : (((css2 >> (an - 32u)) & 1u) != 0u);
+    if (!inList) return 0u;      // not scanned in this configuration
+
+    /* Scan position = how many OTHER armed inputs convert BEFORE this one.
+     *
+     * V (DS60001344E §22.3.2 "Input Scan", p.22-64): "For Class 2 or Class 3
+     * inputs, the sampling and conversion occur in the natural input order is
+     * used; lower number inputs are sampled before higher number inputs."
+     * (sic — the sentence is garbled in the FRM, the meaning is not.)  §22.3
+     * p.22-63 states the same rule for the shared module generally: "the ADC
+     * module is used to convert the next in line Class 2 or Class 3 inputs,
+     * according to the natural order of priority", where "AN7 has a higher
+     * priority than AN12".  So the CSS bit index IS the conversion order, and
+     * counting set bits below this input's bit gives its position.
+     *
+     * The one documented way this order can be perturbed is an INDIVIDUAL
+     * Class 2 trigger pre-empting the scan (§22.3.2 / Figure 22-8, p.22-64) —
+     * not reachable here: MC12b_ConfigureHardwareTrigger sets every scanned
+     * Class 1/2 input's ADCTRGx TRGSRC to STRIG, so no input has an
+     * independent trigger while a session is armed. */
+    uint32_t pos;
+    if (an < 32u) {
+        pos = MC12b_CountSetBits(css1 & ((1U << an) - 1U));
+    } else {
+        /* every ADCCSS1 input is a lower AN number than any ADCCSS2 input */
+        pos = MC12b_CountSetBits(css1)
+            + MC12b_CountSetBits(css2 & ((1U << (an - 32u)) - 1U));
+    }
+    if (pos == 0u) return 0u;    // converts first — no offset
+
+    /* Per-input step = the same (SAMC + 16) x TAD7 term the scan-busy bound
+     * uses: (SAMC + 2) TAD acquisition + ~14 TAD conversion/handoff, pinned by
+     * the silicon anchors in docs/ADC_HW_SEMANTICS.md.  The per-SCAN fixed
+     * term (~6 us) deliberately does NOT appear: it is paid once per scan, not
+     * per input, so it shifts the whole scan rather than one channel within
+     * it. */
+    uint64_t offsetNs = (uint64_t)pos * (ADCCON2bits.SAMC + 16u)
+                                     * MC12b_SharedTadNs();
+
+    /* ns -> timestamp-timer ticks:  ticks = offsetNs * timestampHz / 1e9.
+     * Multiply first, in 64-bit, so no precision is lost to the divide (the
+     * tick period is tens of ns, the offset hundreds of us). */
+    uint64_t ticks = (offsetNs * (uint64_t)timestampHz) / 1000000000ULL;
+    return (ticks > 0xFFFFFFFFULL) ? 0xFFFFFFFFu : (uint32_t)ticks;
 }
 
 uint32_t MC12b_ScanMaxFreq(uint32_t nActive, uint32_t nUserT2) {

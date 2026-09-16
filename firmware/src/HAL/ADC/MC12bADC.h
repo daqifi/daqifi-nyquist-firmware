@@ -135,6 +135,39 @@ uint32_t MC12b_ScanMaxFreq(uint32_t nActive, uint32_t nUserT2);
 uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive);
 
 /**
+ * #267: a channel's DETERMINISTIC intra-scan conversion offset, expressed in
+ * timestamp-timer ticks (the `timestamp_hz` domain the capability document and
+ * SYSTem:SYSInfoPB? already publish) — NOT in ADC TAD or nanoseconds, so a
+ * caller never has to know anything about the ADC clock tree.
+ *
+ * Every channel in a sample set carries the same timestamp (the acquisition
+ * TRIGGER instant, #729/#722), but shared-MODULE7 (Type 2) inputs convert
+ * SEQUENTIALLY inside one scan, in ascending AN order — so input k's conversion
+ * lands this many ticks after the scan trigger.  The offset is fixed by the
+ * ADCHS configuration and the armed scan list, not measured, which is why it is
+ * reported once per session rather than per sample.
+ *
+ * Returns 0 for: Type 1 (dedicated S&H — simultaneous, FRM §22.3.2), AD7609
+ * channels, the first input in the scan, and any channel NOT in the scan the
+ * current configuration would arm.
+ *
+ * Computed live from MC12b_ComputeScanList(true, includeMonitoring, ...) and
+ * the ADC SFRs, so it cannot go stale; the scan list is frozen for the duration
+ * of a session anyway (mid-stream CONF:ADC:CHANnel / OBDiag / SAMC are
+ * rejected, #116).
+ *
+ * @param ch                board-config channel entry (NULL -> 0)
+ * @param includeMonitoring monitoring channels ride the same scan when OBDiag
+ *                          is on — pass StreamingRuntimeConfig.OnboardDiagEnabled
+ *                          so this matches the session Streaming_Compute-
+ *                          MaxFreqTermsForConfigIface computes its scan bound for
+ * @param timestampHz       timestamp-timer tick rate (0 -> 0)
+ */
+uint32_t MC12b_ChannelScanOffsetTicks(const AInChannel* ch,
+                                      bool includeMonitoring,
+                                      uint32_t timestampHz);
+
+/**
  * Returns bitmask of enabled Type 1 ADCHS channels (bits 0-4).
  */
 uint32_t MC12b_GetType1EnabledMask(void);

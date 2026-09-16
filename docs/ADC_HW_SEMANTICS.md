@@ -535,22 +535,101 @@ this regime.
    edge-to-sample absolute comparison carries both offsets. Ordering and
    timebase are sound; the sub-µs absolute anchor is not established.
 
+### Per-channel intra-scan conversion offset — REPORTED since #267
+
+One packet carries one stamp, but NQ1 Type-2 inputs do not convert at one
+instant: they convert **sequentially** inside the shared MODULE7 scan. That
+skew is deterministic — fixed by the ADCHS configuration and the armed scan
+list, both of which are frozen for the life of a session (mid-stream
+`CONF:ADC:CHANnel`, `CONF:ADC:OBDiag` and `CONF:ADC:SAMC` are all rejected,
+#116) — so it is *derived and reported once*, not measured and not stamped
+per sample.
+
+**Wire shape.** Each analog-input object in `CONFigure:CAPabilities:JSON?`'s
+`channels[]` array carries `"scan_offset_ticks":<uint32>`, in
+**timestamp-timer ticks** — the same domain as `timing.timestamp_hz` in the
+same document (42 MHz / ~23.8 ns per tick on the 252 MHz build), so a client
+divides by one published rate and never touches the ADC clock tree. It sits
+next to `"simultaneous"`, which answers *whether* a channel converts with the
+others; this answers *by how much* it does not. Additive key, no
+`schema_version` bump.
+
+**Scan order (V — DS60001344E §22.3.2 "Input Scan", p.22-64):**
+
+> For Class 2 or Class 3 inputs, the sampling and conversion occur in the
+> natural input order is used; lower number inputs are sampled before higher
+> number inputs.
+
+(sic — the sentence is garbled in the FRM; the rule is not.) §22.3, p.22-63
+states the same for the shared module generally: on completing a conversion
+"the ADC module is used to convert the next in line Class 2 or Class 3 inputs,
+according to the natural order of priority", where "AN7 has a higher priority
+than AN12". Since `MC12b_ComputeScanList` sets CSS bit *n* for AN *n*, the CSS
+bit index **is** the conversion order. The one documented perturbation — an
+individual Class 2 trigger pre-empting a scan (§22.3.2 / Figure 22-8, p.22-64)
+— cannot occur here: `MC12b_ConfigureHardwareTrigger` puts every scanned
+Class 1/2 input's `ADCTRGx` TRGSRC at STRIG, so no input has an independent
+trigger while a session is armed.
+
+**Derivation** (`MC12b_ChannelScanOffsetTicks`, `firmware/src/HAL/ADC/MC12bADC.c`):
+
+```
+scanPosition = popcount(armed CSS bits strictly below this input's AN bit)
+offsetNs     = scanPosition x (SAMC + 16) x TAD7
+offsetTicks  = offsetNs x timestamp_hz / 1e9
+```
+
+- `(SAMC + 16) x TAD7` is the **same per-input term the scan-busy cap uses**
+  ((SAMC+2) TAD acquisition + ~14 TAD conversion/handoff, pinned by the
+  silicon anchors above); `TAD7` comes from one shared helper
+  (`MC12b_SharedTadNs`) reading `ADCCON3.CONCLKDIV` / `ADCCON2.ADCDIV` live,
+  so the offset and `cap_terms.scan_bound_hz` can never disagree about TAD.
+  The TAD divide rounds **up**, so a reported offset is an upper bound, never
+  optimistic.
+- The **per-scan** fixed term (~6 µs) deliberately does not appear: it is paid
+  once per scan, so it shifts the whole scan rather than one channel within it.
+- The armed list is recomputed **at query time** with
+  `MC12b_ComputeScanList(true, OnboardDiagEnabled, …)` — the exact flags
+  `Streaming_ComputeMaxFreqTermsForConfigIface` uses for the scan bound, so the
+  offsets and that bound describe the same scan. A live computation cannot go
+  stale, which is why nothing is cached at stream start.
+- **0 means "no deterministic offset applies"**, covering all of: a
+  `simultaneous` channel (Type 1 dedicated S&H, and AD7609 — "all Class 1
+  inputs are captured simultaneously and conversions are started
+  simultaneously", §22.3.2), the first input in the scan, and a channel the
+  current configuration would not scan at all.
+
+**Evidence class: V for the order and the register semantics; E for the
+per-input timing constant** (the SAMC sweep and the two silicon anchors above).
+The composed per-channel figure has **not** itself been measured against a
+known-phase input — that measurement would upgrade it to E and is the same
+experiment that would pin the two offsets below.
+
 ### Client guidance
 
 - Δt between samples is exact: consecutive stamps differ by exactly
   `timestamp_ticks_per_sample` (#730), or an integer multiple when a
   sample was dropped.
-- For **absolute** phase alignment against an external event, two separate
-  offsets apply: (a) up to one scan period of *acquisition* latency on
-  cached-path channels — T1 on the ARDY-direct path has none; and (b) the
-  session-wide ISR-entry seed offset above, which applies to **every**
-  path including T1. Neither is currently measured or reported.
-- The exact per-config latency is **not currently reported**. #730 exposes
-  the timebase (`timestamp_hz`, `stream_timer_hz`,
-  `timestamp_ticks_per_sample`, `actual_rate_millihz`) but not this
-  offset; surfacing it is open follow-up work.
+- For **absolute** phase alignment against an external event, three separate
+  offsets apply:
+  1. the per-channel **intra-scan conversion offset** — *reported* since #267
+     as `channels[].scan_offset_ticks` (previous subsection); T1 and AD7609
+     have none;
+  2. up to one scan period of *acquisition* latency on cached-path channels
+     (the scan armed at tick N completes after the tick-N deferred task has
+     already read LATEST) — T1 on the ARDY-direct path has none;
+  3. the session-wide ISR-entry seed offset above, which applies to **every**
+     path including T1.
 
-**Evidence class: I** (design-intent reasoning over V-class code reads at
+  (1) is now derivable from the device. **(2) and (3) are still neither
+  measured nor reported** — surfacing them remains open follow-up work. #730
+  exposes the timebase (`timestamp_hz`, `stream_timer_hz`,
+  `timestamp_ticks_per_sample`, `actual_rate_millihz`); #267 adds (1) beside
+  it; neither addresses (2) or (3).
+
+**Evidence class: I** — for the value-to-stamp skew, i.e. offsets (2) and (3)
+above; the intra-scan offset (1) carries its own V/E tag in its subsection
+(design-intent reasoning over V-class code reads at
 `firmware/src/services/streaming.c` ~795/~823-857/~931 and `firmware/src/HAL/ADC.c:64,89`). The skew has
 **not** been measured — no bench run has quantified it against a
 known-phase input. A measurement would upgrade this to E and pin the
