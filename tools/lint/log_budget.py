@@ -60,10 +60,21 @@ Usage:
     python3 tools/lint/log_budget.py --list           # print all findings
     python3 tools/lint/log_budget.py --write-baseline # regenerate the baseline
 Exit codes:
-    0 = no findings outside the baseline
-    1 = new findings (or a failed self-test)
+    0 = this tree's findings are EXACTLY the committed baseline
+    1 = the baseline no longer describes this tree -- new findings, or baseline
+        entries that are no longer reported, or a failed self-test. All three
+        have the same remedy (read the report, then one deliberate commit), and
+        drift is failed in BOTH directions for the same reason cppcheck.sh
+        fails it in both: a record left behind after its finding was fixed
+        still matches by text, so it silently re-blesses that exact message if
+        it is ever reintroduced.
     2 = the tool could not run (missing file, unreadable Logger.c, bad
         suppression file) -- never confused with "clean"
+
+Only the gate run compares against the baseline, so only it can drift: --list
+just prints what it sees, and --write-baseline IS the remedy for drift. Neither
+reads the baseline to reach a verdict, so neither has anything analogous to
+check; both exit 0 on success.
 """
 import argparse
 import collections
@@ -138,6 +149,24 @@ WIDTHS = {
     "td": 11, "ti": 11,
     "c": 1, "lc": 1,
 }
+
+# Sign bytes folded into each integer conversion's WIDTHS entry, so an explicit
+# PRECISION can replace the digit half without disturbing the sign half.
+#
+# C99 7.19.6.1p6: for d, i, o, u, x and X the precision is "the minimum number
+# of DIGITS to appear" -- a value with fewer digits is padded with leading
+# zeros. The sign is not a digit, so `%.200d` of a negative number is 1 + 200 =
+# 201 bytes, not 200 and not 211. Splitting WIDTHS this way keeps one source of
+# truth: digits = WIDTHS[key] - INT_SIGN_BYTES[conv], which reproduces the
+# reasoning in the table above exactly ("-2147483648" = 1 sign + 10 digits;
+# "4294967295" = 0 + 10; "18446744073709551615" = 0 + 20).
+#
+# A '+' or ' ' flag makes a POSITIVE signed value carry a sign too, but never
+# more than the one byte already charged, so the flags need no separate term.
+# The '#' prefix for x/X/o is charged on top, as it always was: it is a prefix,
+# not a digit, and C99 raises the precision for '#o' only by the one digit the
+# +2 already over-covers.
+INT_SIGN_BYTES = {"d": 1, "i": 1, "u": 0, "o": 0, "x": 0, "X": 0}
 
 # %[flags][width][.precision][length]conversion -- the full C99 shape. `*` is
 # matched (and then rejected in measure()) rather than left out, so a
@@ -481,6 +510,18 @@ def measure(fmt, annotation):
                           f"(conversion '%{conv}') -- add it to WIDTHS in "
                           f"tools/lint/log_budget.py or annotate the site")
         w = WIDTHS[key]
+        if conv in INT_SIGN_BYTES and prec:
+            # An explicit precision on an integer conversion is a MINIMUM digit
+            # count, not a maximum: `%.200d` zero-pads to at least 200 digits,
+            # so charging the plain 11 would let a site 190 bytes over budget
+            # walk through the gate (Qodo round-1 finding 1 on PR #1110). The
+            # sign is charged separately because precision counts digits only.
+            #
+            # `prec` is falsy here for BOTH "no precision" and the bare `%.d`
+            # form, which is precision ZERO -- fewer digits than the natural
+            # worst case, never more -- so both correctly leave w alone.
+            sign = INT_SIGN_BYTES[conv]
+            w = sign + max(w - sign, int(prec))
         if "#" in flags and conv in "xXo":
             w += 2                         # the 0x / 0 prefix the '#' flag adds
         total += max(field, w)
@@ -560,6 +601,36 @@ def suppress_key(f):
     return f"{f.path}{SEP}{f.fmt}"
 
 
+def compare_to_baseline(current, baseline):
+    """Return (new, fixed, exit_code) for this tree against the baseline.
+
+    A gate that failed only on NEW findings would be half a gate. The baseline
+    is keyed on `file :: reason :: message text`, so a record that stops being
+    reported and is left in the file keeps matching if that exact text is ever
+    reintroduced in that file -- the regression then lands already blessed, and
+    the commit that fixed it need not even be in living memory (Qodo round-1
+    finding 2 on PR #1110).
+
+    So drift in EITHER direction is a failure, which is exactly the policy
+    tools/lint/cppcheck.sh already runs under (CLAUDE.md, "Static Analysis":
+    CI "fails the check if the new output differs from the committed baseline
+    -- added findings = potential bugs; removed findings = baseline drift").
+    Both directions exit 1 rather than splitting into two codes, because both
+    have the identical remedy and the identical meaning: the committed baseline
+    no longer describes this tree, and saying so takes one deliberate
+    `--write-baseline` commit. Exit 2 stays reserved for "the tool could not
+    produce a verdict at all", which is a different kind of statement and must
+    never be confused with either.
+
+    Returned as a pure function of two Counters so the self-test can pin the
+    verdict directly; main() reads its exit code from here rather than
+    recomputing one, so there is a single decision to test.
+    """
+    new = current - baseline
+    fixed = baseline - current
+    return new, fixed, (1 if (new or fixed) else 0)
+
+
 def load_baseline(path):
     if not path.exists():
         return collections.Counter()
@@ -599,6 +670,13 @@ def load_suppressions(path):
                 f"{path}:{lineno}: malformed entry, expected "
                 f"'<file>{SEP}<format string>':\n    {line}")
         entries.add(line.strip())
+        # A reason authorizes exactly ONE waiver. Clearing the flag here --
+        # not only on a blank line -- is what makes the requirement PER-ENTRY:
+        # left set, a single comment would silently cover every consecutive
+        # entry below it, which is the whole safety property inverted (Qodo
+        # round-1 finding 3 on PR #1110). The next line must now be a comment
+        # of its own or it is rejected above.
+        had_comment = False
     return entries
 
 
@@ -717,6 +795,63 @@ SELF_TEST_CASES = [
         1,
         "not statically knowable -- reported rather than skipped",
     ),
+    # ---- integer precision (Qodo round-1 finding 1 on PR #1110) ------------
+    # C99 7.19.6.1p6: on d/i/o/u/x/X the precision is a MINIMUM DIGIT COUNT,
+    # so it can only make a conversion wider. Charging the plain WIDTHS entry
+    # let a site hundreds of bytes over budget through; every case below is
+    # one the pre-fix tool called clean, or a boundary that pins the sign and
+    # prefix arithmetic in BOTH directions so a fix that over-charges is
+    # caught as readily as one that under-charges.
+    (
+        "integer precision alone pushes a site over",
+        'LOG_E("Code %.200d", v);',
+        1,
+        "%.200d zero-pads to at least 200 digits; the pre-fix tool charged "
+        "the plain 11 and called this 16 bytes",
+    ),
+    (
+        "octal and hex precision are charged too",
+        'LOG_E("mode=%.200o mask=%.200x", m, k);',
+        1,
+        "11 fixed + 200 + 200 = 411; the pre-fix tool charged 11+8 and called "
+        "it 30",
+    ),
+    (
+        "unsigned precision is not charged a sign byte",
+        'LOG_E("Trim word (zero-padded): %.100u", w);',
+        0,
+        "25 fixed + 100 digits = 125, exactly at the ceiling -- a phantom "
+        "sign byte would fail a site that fits",
+    ),
+    (
+        "signed precision IS charged its sign byte",
+        'LOG_E("Trim word (zero-padded): %.100d", w);',
+        1,
+        "the same 25 fixed + 1 sign + 100 digits = 126: precision counts "
+        "digits, the sign is separate, and dropping it would call this clean",
+    ),
+    (
+        "'#' prefix is charged on top of the precision",
+        'LOG_E("Register mask (padded): %#.100x", m);',
+        1,
+        "24 fixed + 2 ('0x') + 100 digits = 126; the prefix is not a digit, "
+        "so precision does not absorb it",
+    ),
+    (
+        "...and only when the '#' flag is there",
+        'LOG_E("Register mask (padded): %.100x", m);',
+        0,
+        "the same site without '#' is 24 + 100 = 124 -- the twin above must "
+        "fail for the prefix, not because precision is over-charged",
+    ),
+    (
+        "a precision SMALLER than the natural width changes nothing",
+        'LOG_E("Streaming stalled while the encoder drained and the transport '
+        'did not come back; sample counter stands at %.1llu", n);',
+        1,
+        "106 fixed + 20 = 126: %.1llu still prints up to 20 digits, so the "
+        "charge is max(natural, precision), never the precision alone",
+    ),
     (
         "LOG_E_ONCE takes its format second",
         'LOG_E_ONCE(LOG_BIT_X, "WiFi unreachable and an SD card IS present on '
@@ -732,6 +867,88 @@ SELF_TEST_CASES = [
         "the call matcher must not fire on an identifier that merely starts "
         "with LOG_E",
     ),
+]
+
+
+# Suppression-file fixtures (Qodo round-1 finding 3 on PR #1110).
+#
+# The suppression file is the one place a finding can be turned off FOREVER,
+# and the rule that makes that safe is "every waiver states why". Before the
+# fix the reason flag survived an accepted entry, so one comment silently
+# covered every consecutive entry under it -- the property inverted, with no
+# diagnostic. `expect` is the number of entries accepted, or None for
+# "must raise ToolError".
+SELF_TEST_SUPPRESSION_CASES = [
+    (
+        "one comment, one entry",
+        "# the reason this waiver is safe\na.c :: msg one\n",
+        1,
+        "the shape the file documents -- must keep working",
+    ),
+    (
+        "one comment, TWO entries",
+        "# the reason this waiver is safe\na.c :: msg one\nb.c :: msg two\n",
+        None,
+        "the second entry has no reason of its own; before the fix BOTH were "
+        "accepted on the strength of the first one's comment",
+    ),
+    (
+        "one comment, THREE entries",
+        "# the reason\na.c :: one\nb.c :: two\nc.c :: three\n",
+        None,
+        "it is not a two-line special case -- the flag stayed set for the "
+        "whole run",
+    ),
+    (
+        "two entries, each with its own comment",
+        "# why a.c is safe\na.c :: msg one\n# why b.c is safe\nb.c :: msg two\n",
+        2,
+        "the legitimate multi-waiver shape must still be accepted, or the fix "
+        "would have made the file unusable instead of safe",
+    ),
+    (
+        "a blank line does not carry a reason across",
+        "# why a.c is safe\na.c :: msg one\n\nb.c :: msg two\n",
+        None,
+        "pre-existing behaviour, pinned here because the fix moved the code "
+        "that clears the flag",
+    ),
+    (
+        "an entry with no comment at all",
+        "a.c :: msg one\n",
+        None,
+        "pre-existing behaviour and the rule's base case",
+    ),
+    (
+        "a malformed entry is rejected, not accepted",
+        "# why this is safe\na.c -- no separator here\n",
+        None,
+        "a waiver that cannot match anything is a typo, not a waiver",
+    ),
+]
+
+# Gate-verdict fixtures (Qodo round-1 finding 2 on PR #1110).
+#
+# Baseline records are matched by TEXT, so an entry left behind after its
+# finding was fixed keeps blessing that exact message if it is reintroduced.
+# Drift therefore fails in both directions, as it already does for cppcheck.
+# Each case is (name, current, baseline, expected exit code, why).
+SELF_TEST_GATE_CASES = [
+    ("empty tree, empty baseline", [], [], 0,
+     "nothing to report and nothing stale"),
+    ("current matches the baseline exactly", ["a", "b"], ["a", "b"], 0,
+     "the only clean state"),
+    ("a new finding", ["a", "b"], ["a"], 1,
+     "the case the gate always failed"),
+    ("a fixed finding and nothing new", ["a"], ["a", "b"], 1,
+     "the finding: before the fix this printed a suggestion and exited 0, "
+     "leaving 'b' in the file to bless its own reintroduction"),
+    ("both directions at once", ["a", "c"], ["a", "b"], 1,
+     "reported together, one exit code"),
+    ("a duplicate record disappeared", ["a"], ["a", "a"], 1,
+     "counts matter: two identical messages, one fixed, is still drift"),
+    ("a duplicate record appeared", ["a", "a"], ["a"], 1,
+     "the same in the other direction"),
 ]
 
 
@@ -792,11 +1009,49 @@ def self_test():
             print(f"  FAIL [ceiling]: '{label}' did not raise -- the tool would "
                   f"gate against an assumed ceiling")
 
+        # The suppression file is checked through load_suppressions() itself,
+        # on a real file on disk, so these cases run the same code path the
+        # gate does rather than a re-implementation of it.
+        for i, (name, text, expected, why) in enumerate(
+                SELF_TEST_SUPPRESSION_CASES):
+            p = Path(d) / f"suppress{i}.txt"
+            p.write_text(text, encoding="utf-8")
+            try:
+                got = len(load_suppressions(p))
+            except ToolError:
+                if expected is not None:
+                    failures += 1
+                    print(f"  FAIL [suppress: {name}]: raised ToolError, "
+                          f"expected {expected} entr(ies) -- {why}")
+                continue
+            if expected is None:
+                failures += 1
+                print(f"  FAIL [suppress: {name}]: accepted {got} entr(ies), "
+                      f"expected a ToolError -- {why}")
+            elif got != expected:
+                failures += 1
+                print(f"  FAIL [suppress: {name}]: accepted {got} entr(ies), "
+                      f"expected {expected} -- {why}")
+
+    # The gate's verdict, pinned on the same function main() takes its exit
+    # code from.
+    for name, cur, base, expected, why in SELF_TEST_GATE_CASES:
+        _, _, status = compare_to_baseline(collections.Counter(cur),
+                                           collections.Counter(base))
+        if status != expected:
+            failures += 1
+            print(f"  FAIL [gate: {name}]: exit {status}, expected {expected} "
+                  f"-- {why}")
+
     if failures:
         print(f"\n::error::log_budget: {failures} self-test(s) failed")
         return 1
     print(f"log_budget self-test: {len(SELF_TEST_CASES)}/"
-          f"{len(SELF_TEST_CASES)} extraction cases + 4/4 ceiling cases pass")
+          f"{len(SELF_TEST_CASES)} extraction cases + 4/4 ceiling cases + "
+          f"{len(SELF_TEST_SUPPRESSION_CASES)}/"
+          f"{len(SELF_TEST_SUPPRESSION_CASES)} suppression cases + "
+          f"{len(SELF_TEST_GATE_CASES)}/{len(SELF_TEST_GATE_CASES)} gate "
+          f"cases pass")
     return 0
 
 
@@ -884,39 +1139,48 @@ def main():
 
     baseline = load_baseline(args.baseline)
     current = collections.Counter(record(f) for f in kept)
-    new = current - baseline
-    fixed = baseline - current
+    new, fixed, status = compare_to_baseline(current, baseline)
 
-    if not new:
+    if status == 0:
         print(f"log_budget: clean - {len(kept)} finding(s) in {scanned} "
               f"file(s), all in the baseline ({suppressed} suppressed)")
-        if fixed:
-            print(f"\n{sum(fixed.values())} baseline entr(ies) no longer "
-                  f"reported. Regenerate so the gate keeps the ground it "
-                  f"gained:\n"
-                  f"    python3 tools/lint/log_budget.py --write-baseline")
-            for ln in sorted(fixed):
-                print(f"  - {ln}")
         return 0
 
     by_record = {}
     for f in kept:
         by_record.setdefault(record(f), f)
-    print(f"\n::error::log_budget: {sum(new.values())} new finding(s) not in "
-          f"{args.baseline}\n")
-    for ln in sorted(new):
-        f = by_record[ln]
-        print(f"::error file={f.path},line={f.line}::{f.reason}  --  "
-              f"\"{f.fmt}\"")
-    print(f"\nLogger.c truncates a formatted message at {ceiling} bytes with "
-          f"no error and no marker, and the remedy is written last, so the "
-          f"remedy is what is lost. Either:")
-    print("  - shorten the message (keep the remedy; see #1025 / #1039 for the "
-          "comment convention), or")
-    print("  - bound a %s with /* log_budget: max=N */ above the call, or")
-    print("  - add a permanent waiver WITH a reason to "
-          "tools/lint/log_budget-suppress.txt")
-    return 1
+
+    if new:
+        print(f"\n::error::log_budget: {sum(new.values())} new finding(s) not "
+              f"in {args.baseline}\n")
+        for ln in sorted(new):
+            f = by_record[ln]
+            print(f"::error file={f.path},line={f.line}::{f.reason}  --  "
+                  f"\"{f.fmt}\"")
+        print(f"\nLogger.c truncates a formatted message at {ceiling} bytes "
+              f"with no error and no marker, and the remedy is written last, "
+              f"so the remedy is what is lost. Either:")
+        print("  - shorten the message (keep the remedy; see #1025 / #1039 for "
+              "the comment convention), or")
+        print("  - bound a %s with /* log_budget: max=N */ above the call, or")
+        print("  - add a permanent waiver WITH a reason to "
+              "tools/lint/log_budget-suppress.txt")
+
+    if fixed:
+        # A FAILURE, not a suggestion. See compare_to_baseline(): a stale
+        # record silently re-blesses the same text if it comes back.
+        print(f"\n::error::log_budget: {sum(fixed.values())} baseline "
+              f"entr(ies) in {args.baseline} are no longer reported\n")
+        for ln in sorted(fixed):
+            print(f"::error file={args.baseline}::stale baseline entry, no "
+                  f"longer reported  --  {ln}")
+        print("\nA baseline record is matched by text, not by history, so an "
+              "entry left in the file keeps blessing that exact message if it "
+              "is ever reintroduced. Regenerate so the gate keeps the ground "
+              "it gained:")
+        print("    python3 tools/lint/log_budget.py --write-baseline")
+
+    return status
 
 
 if __name__ == "__main__":

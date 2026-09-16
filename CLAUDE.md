@@ -117,16 +117,20 @@ python3 tools/lint/log_budget.py --list           # every current finding
 python3 tools/lint/log_budget.py --write-baseline # after fixing one
 ```
 
-Same baseline/suppress pattern as cppcheck:
-`tools/lint/log_budget-baseline.txt` is generated and CI fails only on
-findings **not** in it (so the count shrinks but never grows);
-`tools/lint/log_budget-suppress.txt` holds permanent waivers and
-**requires a reason comment above each entry** — enforced, not asked
-for. Unlike the cppcheck baseline, records are keyed on file + reason +
-message text, **not line number**, so editing anything above a `LOG_E`
-does not turn the gate red. CI gate: `.github/workflows/log-budget.yml`
-(job **LOG_E message budget**), same trigger scoping as cppcheck.
-Baseline at introduction: 105 findings, 96 of them unannotated `%s`.
+Same baseline/suppress pattern as cppcheck, **including that drift fails
+in both directions**: `tools/lint/log_budget-baseline.txt` is generated,
+and CI fails on findings **not** in it *and* on entries in it that are
+no longer reported. A record is matched by text, so one left behind
+after its finding was fixed silently re-blesses that exact message if it
+comes back — fixing a site and regenerating the baseline are one commit,
+not two. `tools/lint/log_budget-suppress.txt` holds permanent waivers
+and **requires a reason comment above each entry**, enforced per entry
+(one comment authorizes exactly one waiver). Unlike the cppcheck
+baseline, records are keyed on file + reason + message text, **not line
+number**, so editing anything above a `LOG_E` does not turn the gate
+red. CI gate: `.github/workflows/log-budget.yml` (job **LOG_E message
+budget**), same trigger scoping as cppcheck. Baseline at introduction:
+105 findings, 96 of them unannotated `%s`.
 
 ### Programming with PICkit 4 (ipecmd)
 
