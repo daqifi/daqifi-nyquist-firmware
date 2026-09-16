@@ -822,8 +822,46 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 gTcpRxPending = true;
 
             } else {
-                LOG_E("[%s:%d]Error Socket MSG Recv", __FILE__, __LINE__);
-                wifi_tcp_server_CloseClientSocket();
+                // #1073 (PR #1101 round 5): this is the THIRD site that used to
+                // call wifi_tcp_server_CloseClientSocket() directly, and it is
+                // the one a real peer RST/FIN actually takes -- socket.c's
+                // SOCKET_CMD_RECV reply is the ONLY close/abort notification
+                // channel (verified against winc/drv/socket/socket.c, cited in
+                // #1073's original commit e3f1bd1a4), and s16BufferSize <= 0
+                // here IS that reply. It runs on the WINC driver task, same as
+                // the accept-time recv-arm-failure site a few lines up.
+                //
+                // wifi_tcp_server_CloseClientSocket() -> CloseClientSocketBody(
+                // false) issues shutdown() UNCONDITIONALLY: the best-effort,
+                // non-blocking xSemaphoreTake(wMutex, 0) in that function only
+                // gates whether the LOCAL BUFFER reset runs now or is deferred
+                // via pendingBufferReset -- the shutdown() HIF call itself is
+                // not gated on it at all. A peer RST arriving mid-batch (this
+                // ticket's own scenario: streaming_Task or a TCP SCPI reply
+                // holding wMutex inside send()) therefore hits precisely the
+                // #452 shutdown()-races-send() HIF re-entrancy that CloseClient
+                // SocketBody's own header comment documents as wedging all TCP
+                // I/O until SYST:COMM:LAN:HRESet -- the same hazard round 4
+                // fixed at the OTHER two call sites (findings 4 + 5), just left
+                // standing at this one. Bench evidence (PR #1101 comment
+                // 5694263577): AcceptRefused climbed 0 -> 1 on the very next
+                // reconnect attempt, which only happens while clientSocket is
+                // still seen as held -- proof the close never completed, not
+                // merely that it was slow.
+                //
+                // Fix: record the close instead of performing it here, exactly
+                // like the other two sites. wifi_tcp_server_RequestClientClose()
+                // does no HIF traffic and cannot block, so it is safe from this
+                // task; the generation-bound record is drained by app_WifiTask's
+                // single consumer (wifi_manager_ServicePendingClientClose), which
+                // waits on wMutex before ever calling shutdown() -- the same
+                // lock every send() on this socket already holds, making the
+                // close and a send mutually exclusive regardless of which task
+                // is sending. Filed before the log, matching both sibling sites:
+                // the record binds to whoever holds the slot when it runs, and
+                // LOG_E can block.
+                wifi_tcp_server_RequestClientClose();
+                LOG_E("TCP: recv() reported close/RST - releasing client slot (#1073)");
             }
             break;
         }
@@ -3192,9 +3230,11 @@ static void wifi_manager_ServiceConsoleIdleTimeout(void)
     }
 }
 
-// #1073: the SINGLE consumer of the owed-close record that the two recv-arm
-// failure sites file.  Runs once per normal WifiTask ProcessState iteration
-// (~5 ms), under gProcessStateMutex, on the drainTcpRx path only.
+// #1073: the SINGLE consumer of the owed-close record that all three
+// SocketEventCallback filers use -- the accept-time and post-batch recv-arm
+// failures, and (round 5) the ordinary peer close/RST path.  Runs once per
+// normal WifiTask ProcessState iteration (~5 ms), under gProcessStateMutex,
+// on the drainTcpRx path only.
 //
 // SPLIT OF RESPONSIBILITY, stated because getting it backwards is what the
 // original code did.  wifi_tcp_server_ServicePendingClientClose() owns SAFETY:

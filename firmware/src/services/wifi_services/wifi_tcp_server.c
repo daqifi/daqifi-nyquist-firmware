@@ -538,22 +538,36 @@ void wifi_tcp_server_CloseSocket() {
 // instruction stale is harmless.
 //
 // wMutexHeld == false keeps #437's invariant exactly: the take is a 0-timeout
-// poll, so the WINC driver task (SOCKET_MSG_RECV error path) never blocks.
-// Acquiring BEFORE the shutdown() rather than after it is what extends the
-// protection to the shutdown itself, and it costs nothing, because on a miss we
-// do precisely what the old code did.
+// poll, so a caller on the WINC driver task never blocks.  Acquiring BEFORE
+// the shutdown() rather than after it is what extends the protection to the
+// shutdown itself, and it costs nothing, because on a miss we do precisely
+// what the old code did.
 //
 // BE CLEAR ABOUT WHAT THAT MISS MEANS, because it is not a guarantee: a miss
 // happens exactly when somebody else holds wMutex, which is exactly when a
 // send() may be in flight -- so the fallback shutdown() is as exposed to #452
 // as every call on this entry point was before #1073.  That is unchanged, not
-// introduced, and it is unavoidable for the two callers that remain on this
-// entry point and cannot wait: SocketEventCallback's SOCKET_MSG_RECV error
-// (the WINC driver task, #437) and the #663 idle watchdog (which must not stall
-// the 5 ms WiFi loop).  The two #1073 sites do NOT use this entry point: they
-// file an owed close and the consumer below waits for the mutex, so their close
-// is protected unconditionally.  Any future caller that CAN wait should join
-// them rather than call this.
+// introduced, and it is unavoidable for the ONE caller that remains on this
+// entry point and cannot wait: the #663 idle watchdog (which must not stall
+// the 5 ms WiFi loop; its own #452 exposure is narrower -- it only fires after
+// the client has been observed RX/TX-idle, so a send() racing it requires a
+// write to begin in the instant between the watchdog's snapshot and its
+// shutdown(), not a send already mid-batch).
+//
+// PR #1101 round 5 (#1073 bench re-fail) moved the THIRD caller --
+// SocketEventCallback's SOCKET_MSG_RECV error branch, the site a real peer
+// RST/FIN actually takes -- off this entry point and onto
+// wifi_tcp_server_RequestClientClose() instead, joining the accept-time and
+// post-batch recv-arm-failure sites in wifi_manager.c that already used it.
+// It used to call this function directly from the WINC driver task with no
+// gate on the miss case at all, which is precisely the #452 hazard this
+// comment describes: the round-4 bench acceptance run reproduced it
+// (AcceptRefused climbing 0 -> 1 on the immediate reconnect -- proof the slot
+// was never actually freed, not merely slow to free).  The two #1073 sites and
+// the SOCKET_MSG_RECV error site do NOT use this entry point: they file an
+// owed close and the consumer below waits for the mutex, so their close is
+// protected unconditionally.  Any future caller that CAN defer rather than
+// close synchronously should join them rather than call this.
 //
 // No LOG_E in here.  LOG_E can block on the logger mutex (Util/Logger.c), and
 // it must run neither while wMutex is held (it would park streaming_Task and

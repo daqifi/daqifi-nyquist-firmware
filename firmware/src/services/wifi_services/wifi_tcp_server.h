@@ -197,10 +197,12 @@ typedef struct s_tcpClientContext
     /** #1073: a client-slot close is OWED on the connection whose generation is
      *  pendingCloseGen, but the site that discovered the need could not perform
      *  it there and then.  Two reasons, both real:
-     *    - the discovering site runs on the WINC driver task (the accept-time
-     *      recv-arm failure in SocketEventCallback), which #437 forbids from
-     *      blocking, and a close that is SAFE against a concurrent send() has
-     *      to be able to wait on wMutex;
+     *    - the discovering site runs on the WINC driver task (SocketEventCallback
+     *      -- the accept-time recv-arm failure, the post-batch re-arm failure,
+     *      AND (round 5) the ordinary peer close/RST path, SOCKET_MSG_RECV with
+     *      s16BufferSize <= 0), which #437 forbids from blocking, and a close
+     *      that is SAFE against a concurrent send() has to be able to wait on
+     *      wMutex;
      *    - a WiFi stream is live, and tearing its transport down mid-session
      *      would be worse than the deaf socket it replaces (a deaf socket can
      *      still TRANSMIT -- only recv is latched broken, socket.c's
@@ -211,9 +213,9 @@ typedef struct s_tcpClientContext
      *  than at the 300 s idle watchdog.
      *
      *  GENERATION-BOUND, and it has to be: the slot can also be released by a
-     *  path that knows nothing about this record (peer close via
-     *  SOCKET_MSG_RECV, the #663 idle watchdog, wifi_tcp_server_CloseSocket).
-     *  A bare boolean would then close the NEXT, healthy client.
+     *  path that knows nothing about this record (the #663 idle watchdog,
+     *  wifi_tcp_server_CloseSocket).  A bare boolean would then close the NEXT,
+     *  healthy client.
      *
      *  WRITERS, all in wifi_tcp_server.c: wifi_tcp_server_RequestClientClose
      *  (any context, including the WINC driver task), the close body once the
