@@ -273,9 +273,12 @@ measured-clean ceiling), and **armed/OBDiag-off at ANY channel count**
 only (2335 down to 1440 Hz); a same-day **T2-ramp refit** widened it to every
 armed count after the initial grid's follow-up run found 3×T2/5×T2/8×T2/11×T2
 also over ceiling — a T2 (MODULE7 scan) channel costs more CPU per tick than a
-T1 channel, and both the shared `#563` law and the `#529` transport curve
-`32000/(2+n)` price them alike, so they under-priced T2 at precision 4 on
-`main` even where this PR's own original branch didn't reach. The refit law
+T1 channel. The shared `#563` law already prices them differently (4550 ns/T1
+vs 15190 ns/T2 in its armed form) but not differently ENOUGH at precision 4;
+the `#529` transport curve `32000/(2+n)` is channel-type-**blind** (same cost
+per channel regardless of type) and is wrong for the opposite reason. Both
+under-priced T2 at precision 4 on `main` even where this PR's own original
+branch didn't reach. The refit law
 (`period_ns = 73576 + 27921·nT1 + 31975·nT2user`) is applied as
 `max(this, the shared `else` period)` so it can only lower a config's cap,
 never raise one — load-bearing at 1×T2, where the raw law alone would have
