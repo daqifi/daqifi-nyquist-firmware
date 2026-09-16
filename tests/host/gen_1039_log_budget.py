@@ -365,7 +365,18 @@ def extract_site(site):
         raise GenError(f"{where}: extracted an empty message -- an empty "
                        f"string satisfies every budget assertion while "
                        f"establishing nothing")
-    specs = ["%" + m.group(1) for m in SPEC_RE.finditer(text)
+    # The COMPLETE match (m.group(0)), not "%" + the final conversion
+    # letter alone (m.group(1)): the letter-only form makes "%u" and "%lu"
+    # -- or "%d" and "%lld" -- look like the identical signature, silently
+    # losing a length-modifier change. On THIS target a bare 'l' happens not
+    # to widen an int-class conversion (log_budget.py's WIDTHS table:
+    # "long is 32-bit"), but 'll'/'j'/'z'/'t' do, and this check exists
+    # precisely so a site gaining or losing a length modifier is caught
+    # here rather than silently measured with the OLD worst-case arguments
+    # test_1039_log_message_budget.c hand-substitutes for the signature
+    # (Qodo /improve, PR #1110, importance 9, "Preserve complete format
+    # conversion signatures").
+    specs = [m.group(0) for m in SPEC_RE.finditer(text)
              if m.group(1) != "%"]
     if specs != site["specs"]:
         raise GenError(
