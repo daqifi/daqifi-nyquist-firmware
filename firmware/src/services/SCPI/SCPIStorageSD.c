@@ -31,6 +31,7 @@
 #include "../wifi_services/wifi_tcp_server.h"  /* #598 ContextIsTcp */
 #include "../wifi_services/wifi_manager.h"     /* #589 FW-update owner */
 #include "app_freertos.h"                       /* #589 live SPI-owner test */
+#include "state/data/BoardData.h"                /* #756 round 3: WAIT_POWER_UP gate */
 #include "../../state/runtime/BoardRuntimeConfig.h"
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/fs/sys_fs.h"
@@ -79,29 +80,94 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
  * exclude the paths where blocking is unsafe or futile -- see the function's
  * own comment.
  *
- * DERIVED, not guessed (opus design review, 2026-09-16, on this ticket's own
- * PR, found the original 1500 was ~10x below what this codebase's own
- * budgets say the covered span needs). A full attach resolves through
- * TASK_CHECK_DEVICE then TASK_MEDIA_INIT (drv_sdspi.c), whose BOUNDED
- * sub-waits are DRV_SDSPI_APP_CMD_RESP_TIMEOUT_IN_MS (1000, the ACMD41 busy
- * loop) and DRV_SDSPI_CSD_TOKEN_TIMEOUT_IN_MS (1000), each backed by
- * DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS (500) x DRV_SDSPI_COMMAND_RESPONSE_TRIES
- * (10) per command underneath (drv_sdspi_local.h). 5000 ms covers both
- * top-level budgets plus headroom for retries on a card that is responding,
- * while staying well under the 15 s this driver's OWN SPI-bus-hold watchdog
- * uses for the same span (app_freertos.c) -- that comment's own warning
- * applies here too: some of media init's sub-waits (CSD/CID data phases,
- * the post-attach re-verify) hold with NO timer armed at all, so no finite
- * bound is a guarantee against a truly wedged card, only against the
- * ordinary responding-card case this ticket is about. A card that never
- * resolves within this window is refused exactly as before this fix --
- * this is strictly a best-effort improvement to the common case, not a new
- * guarantee. Not bench-measured directly: this session tried to force the
- * exact stale-DETACHED-with-card-present race (stop a WiFi stream, query
- * immediately) and could not reproduce it either, consistent with #756's
- * own history of four prior failed bench attempts -- see the PR body. */
-#define SD_PRESENCE_RECHECK_BOUND_MS   5000U
-#define SD_PRESENCE_RECHECK_POLL_MS    100U
+ * THE CEILING IS THE CLIENT, NOT THE CARD. The first revision of this
+ * constant derived 5000 from the SDSPI driver's own media-init budgets and
+ * sanity-checked it only against this firmware's 15 s SPI-bus-hold watchdog
+ * (SD_BUS_LEAK_DWELL_MS, app_freertos.c:470). That is the wrong ceiling.
+ * Withholding the reply also withholds the card-absent ERROR, so every
+ * millisecond spent here is spent inside the window the SDK at the other end
+ * of the link is willing to wait -- and both shipped SDKs give up well under
+ * 5 s, which turned "No SD Card Detected" into a client-side TIMEOUT on
+ * exactly the commands #756 is about (round-2 review finding on PR #1094).
+ *
+ * The client budgets this has to fit inside (V, read from source at the
+ * revisions named, 2026-09-15):
+ *
+ *  - daqifi-core (.NET) @ origin/main e668055 -- 3000 ms for the FIRST
+ *    response, on each of its SD text exchanges: LIST?
+ *    (SdCardOperations.cs:279), SPACe? (:558, :576) and DELete+LIST?
+ *    (:867, :896, :955). A hard deadline, not an idle timer:
+ *    TextExchangeEngine.cs:733 takes waitStart right after the send action
+ *    returns, and :788 spends responseTimeoutMs as the inactivity budget
+ *    only while nothing has arrived yet. (The exchange default is 1000 --
+ *    DaqifiDevice.cs:1972, :2011 -- but no SD-gated command takes it.)
+ *
+ *  - daqifi-core again, and this is the BINDING one -- 1000 ms. Once the
+ *    first line has landed, :788 switches the budget to completionTimeoutMs,
+ *    which these exchanges set to SD_LIST_COMPLETION_TIMEOUT_MS
+ *    (SdCardOperations.cs:66). DELete+LIST? puts TWO gated commands in ONE
+ *    exchange, and on an absent card the LIST? waits out this bound a SECOND
+ *    time -- with only that 1000 ms window, measured from the DELete reply,
+ *    to do it in. Overrunning it does not merely truncate the listing: the
+ *    late LIST? reply then arrives after the exchange has closed, where it
+ *    becomes a leftover line for whatever runs next (I).
+ *
+ *  - daqifi-python-core @ origin/main 76f8b73 -- response_timeout_s=3.0 for
+ *    get_sd_card_files (devices.py:1816) and delete_sd_card_file (:1748).
+ *    Armed at the top of _accumulate (:1946), i.e. after pre_capture has
+ *    already sent the command and slept the 0.1 s interface settle, so the
+ *    whole 3.0 s is ours; and it RESETS on each arriving byte (:1963), so
+ *    unlike the .NET side every reply of a multi-command capture gets the
+ *    full 3.0 s. Not the binding budget, but the worse failure mode: on
+ *    expiry _accumulate returns SILENTLY, and an empty line list is
+ *    classified as "no error" (sdcard.py:179) -- so an overrun here shows up
+ *    as an empty file list, not as a raised timeout.
+ *
+ * So: fit inside 1000 ms -- and what must fit is more than this number
+ * alone. The loop below tests elapsed time BEFORE its vTaskDelay, so a final
+ * iteration can overshoot by a whole poll period (and vTaskDelay guarantees
+ * AT LEAST its argument, never at most); add the write of
+ * SD_CARD_NOT_PRESENT_ERROR_MSG and the USB CDC round trip -- order of
+ * milliseconds, daqifi-core having measured ~6 ms device turnaround on a
+ * bench Nq1 (TextExchangeEngine.cs:605 -- X, quoted for magnitude only).
+ * 500 + 25 = 525 ms worst case leaves ~475 ms of that 1000 ms window for
+ * transport and for preemption of the SCPI task, and is ~1/6 of the 3000 ms
+ * first-response deadline.
+ *
+ * POLL drops 100 -> 25 for two reasons: it is what bounds that overshoot,
+ * and five samples across a 500 ms bound is coarse for a flag the SD task
+ * refreshes at a 1 ms cadence (SD_CARD_MANAGER_TASK_DELAY_MS,
+ * sd_card_manager.h:32). The poll itself is a small table scan plus a flag
+ * read (SYS_FS_MEDIA_MANAGER_MediaStatusGet, sys_fs_media_manager.c:1123) --
+ * no mutex, nothing that can block -- so 20 of them cost nothing.
+ *
+ * WHAT THIS GIVES UP, PLAINLY: the full-media-init coverage 5000 was chosen
+ * for. The kick forces TASK_CHECK_DEVICE then TASK_MEDIA_INIT (drv_sdspi.c),
+ * whose BOUNDED sub-waits are DRV_SDSPI_APP_CMD_RESP_TIMEOUT_IN_MS (1000,
+ * the ACMD41 busy loop) and DRV_SDSPI_CSD_TOKEN_TIMEOUT_IN_MS (1000), each
+ * backed by DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS (500) x
+ * DRV_SDSPI_COMMAND_RESPONSE_TRIES (10) per command underneath
+ * (drv_sdspi_local.h:114-119). 500 ms does NOT cover that span, and no value
+ * can: the driver's worst case (>= 2000 ms) is larger than the client window
+ * it would have to fit inside. A card whose init runs to those budgets is
+ * refused here exactly as it was before this fix. What 500 ms buys is the
+ * ordinary case -- a present, healthy card whose init is dominated by an
+ * ACMD41 that answers in tens of milliseconds rather than by its 1000 ms
+ * ceiling (I: derived from the client ceiling, NOT measured on this bench;
+ * anything slower falls back to pre-#756 behaviour rather than breaking).
+ *
+ * The kick is unconditional and unaffected by this number, so a card that
+ * misses this window is still re-detected in time for the client's NEXT
+ * command -- the retry both SDKs already perform (SD_LIST_MAX_RETRIES,
+ * SdCardOperations.cs:53). That retry, not a longer bound, is what covers
+ * the slow-init case.
+ *
+ * Not bench-measured: this session tried to force the exact
+ * stale-DETACHED-with-card-present race (stop a WiFi stream, query
+ * immediately) and could not reproduce it, consistent with #756's own
+ * history of four prior failed bench attempts -- see the PR body. */
+#define SD_PRESENCE_RECHECK_BOUND_MS   500U
+#define SD_PRESENCE_RECHECK_POLL_MS    25U
 
 /* ************************************************************************** */
 /* ************************************************************************** */
@@ -427,25 +493,41 @@ static bool SD_RefuseIfSuspended(scpi_t *context, const char *cmd)
  *    streams") -- so this function cannot assume the caller already
  *    checked. Waiting anyway would be a bounded delay for an answer that
  *    provably cannot change.
- * 2. This command arrived over TCP (wifi_tcp_server_ContextIsTcp). Its
+ * 2. The device is not powered enough for the SD task to run its PROCESS
+ *    state (#756 round 3). app_SDCardTask parks in APP_SD_STATE_WAIT_POWER_UP
+ *    -- doing nothing but vTaskDelay(100) -- until BOARDDATA_POWER_DATA reads
+ *    POWERED_UP or POWERED_UP_EXT_DOWN (app_freertos.c's app_SDCardTask,
+ *    WAIT_POWER_UP case). Neither app_SDCard_SpiOwnedByWifi() nor
+ *    SpiBusHealth_IsSdSuspended() catches this: `suspended` is driven only by
+ *    `state == APP_SD_STATE_SUSPENDED || app_SDCard_SpiOwnedByWifi()`
+ *    (app_freertos.c), and WAIT_POWER_UP is neither of those -- so an
+ *    ordinary power-down or an early-boot SD command would otherwise poll a
+ *    detect FSM nobody is running for the entire bound. Read the SAME
+ *    BoardData power state the FSM's own transition test reads, rather than
+ *    adding a new app_freertos.c predicate: this round's fix is scoped to
+ *    this file and drv_sdspi.c, and the condition below mirrors
+ *    app_SDCardTask's WAIT_POWER_UP<->PROCESS test exactly, including a NULL
+ *    power pointer reading as "not ready" in both places.
+ * 3. This command arrived over TCP (wifi_tcp_server_ContextIsTcp). Its
  *    handler runs inside wifi_manager_ProcessStateImpl's gProcessStateMutex,
  *    whose OTHER callers bail out after a 250 ms timeout and whose own
  *    comment states the documented worst-case in-mutex delay is ~120 ms
- *    (nm_reset() during DEINIT). Blocking SD_PRESENCE_RECHECK_BOUND_MS
- *    (see its own comment -- multiple seconds) there is many times that
- *    budget: it starves gEventQH, delays the TCP recv() re-arm, skips
- *    ApplyPowerSavePolicy/the #663 idle guard/mDNS health, and stalls WiFi
- *    streaming egress (also serviced on WifiTask) for the whole wait. Over
- *    TCP the kick alone -- which starts the re-detect so the caller's retry
- *    can succeed -- is the fix; the blocking wait is not worth its cost on
- *    this transport.
+ *    (nm_reset() during DEINIT). Blocking SD_PRESENCE_RECHECK_BOUND_MS (see
+ *    its own comment -- 500 ms as of #756 round 3, was 5000 ms) there is
+ *    still several times that budget: it starves gEventQH, delays the TCP
+ *    recv() re-arm, skips ApplyPowerSavePolicy/the #663 idle guard/mDNS
+ *    health, and stalls WiFi streaming egress (also serviced on WifiTask)
+ *    for the whole wait. Over TCP the kick alone -- which starts the
+ *    re-detect so the caller's retry can succeed -- is the fix; the blocking
+ *    wait is not worth its cost on this transport.
  *
- * Neither condition disqualifies the KICK, only the WAIT: the FSM still
- * gets nudged toward a correct answer either way, just not synchronously
- * inside this call. (Opus design review, 2026-09-16, on this ticket's own
- * PR -- both gaps found before merge, neither bench-reproduced: forcing
- * them needs a WiFi-owned-bus/TCP-in-flight window this session did not
- * construct.)
+ * None of these conditions disqualifies the KICK, only the WAIT: the FSM
+ * still gets nudged toward a correct answer either way, just not
+ * synchronously inside this call. (Opus design review, 2026-09-16, on this
+ * ticket's own PR -- round 2 found conditions 1 and [what is now] 3, neither
+ * bench-reproduced: forcing them needs a WiFi-owned-bus/TCP-in-flight window
+ * this session did not construct. Round 3 added condition 2, an independent
+ * opus review's own finding on this same PR.)
  */
 static bool SCPI_CheckSDCardPresent(scpi_t *context) {
     if (SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
@@ -454,7 +536,17 @@ static bool SCPI_CheckSDCardPresent(scpi_t *context) {
 
     DRV_SDSPI_DetectPollExpireNow(0);
 
-    const bool canWait = !app_SDCard_SpiOwnedByWifi() &&
+    /* #756 round 3 (canWait condition 2 above): mirrors app_SDCardTask's own
+     * WAIT_POWER_UP<->PROCESS transition test (app_freertos.c) so a NULL
+     * power pointer or an unpowered device reads the same way here as it
+     * does there -- gated, not waited on. */
+    const tPowerData *pPowerState = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    const bool sdTaskCanProgress = (pPowerState != NULL) &&
+                                   (pPowerState->powerState == POWERED_UP ||
+                                    pPowerState->powerState == POWERED_UP_EXT_DOWN);
+
+    const bool canWait = sdTaskCanProgress &&
+                          !app_SDCard_SpiOwnedByWifi() &&
                           !SpiBusHealth_IsSdSuspended() &&
                           !wifi_tcp_server_ContextIsTcp(context);
     if (canWait) {
@@ -467,6 +559,17 @@ static bool SCPI_CheckSDCardPresent(scpi_t *context) {
                 return true;
             }
             vTaskDelay(pdMS_TO_TICKS(SD_PRESENCE_RECHECK_POLL_MS));
+        }
+        /* #756 round 3: the loop above samples, THEN delays -- so the
+         * deadline can be reached mid-delay with that last delay's own
+         * outcome never observed. One more sample here catches a card whose
+         * SYS_MEDIA_ATTACHED publish landed during that final
+         * SD_PRESENCE_RECHECK_POLL_MS window, before falling through to the
+         * refusal below. */
+        if (SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
+            LOG_D("SD - card detected present on the final post-bound sample "
+                  "(was stale-DETACHED)\r\n");
+            return true;
         }
     }
 
