@@ -9150,10 +9150,14 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context,
     return daqifiScpiContext;
 }
 
-/* #914: the SD manager's deferred error code is a plain int (sd_card_manager.h
- * has no SCPI dependency); pin it against the real libscpi value so the two
+/* #914: the SD manager's deferred error codes are plain ints (sd_card_manager.h
+ * has no SCPI dependency); pin each against the real libscpi value so the two
  * headers cannot drift apart silently. */
 _Static_assert(SD_ASYNC_ERR_FILE_NOT_FOUND == SCPI_ERROR_FILE_NAME_NOT_FOUND,
+               "#914: the SD manager's deferred code must match the libscpi one");
+_Static_assert(SD_ASYNC_ERR_FILE_NAME_ERROR == SCPI_ERROR_FILE_NAME_ERROR,
+               "#914: the SD manager's deferred code must match the libscpi one");
+_Static_assert(SD_ASYNC_ERR_MASS_STORAGE == SCPI_ERROR_MASS_STORAGE_ERROR,
                "#914: the SD manager's deferred code must match the libscpi one");
 
 /* #914: drain the SD task's deferred failure (see sd_card_manager_LatchAsyncError)
@@ -9170,10 +9174,19 @@ void SCPI_DrainDeferredSdError(scpi_t *context) {
     if (context == NULL) {
         return;
     }
+    const bool isTcp = wifi_tcp_server_ContextIsTcp(context);
     const sd_card_manager_reply_target_t target =
-            wifi_tcp_server_ContextIsTcp(context) ? SD_CARD_REPLY_WIFI_TCP
-                                                  : SD_CARD_REPLY_USB;
-    const int32_t err = sd_card_manager_TakeAsyncError(target);
+            isTcp ? SD_CARD_REPLY_WIFI_TCP : SD_CARD_REPLY_USB;
+    /* #599's connection generation, asked of the transport at DRAIN time. The
+     * failure was latched against the connection that ARMED the GET; if that
+     * client is gone and this context now serves its successor on the single
+     * TCP slot, the two will not match and TakeAsyncError discards instead of
+     * handing over someone else's error. USB has no such identity, so it
+     * latches 0 and takes 0 and the comparison is a no-op there -- one code
+     * path, no special case. Mirrors the check sd_card_manager_DataReadyCB
+     * already makes on the streamed reply (app_freertos.c). */
+    const uint32_t generation = isTcp ? wifi_tcp_server_GetConnGeneration() : 0u;
+    const int32_t err = sd_card_manager_TakeAsyncError(target, generation);
     if (err != 0) {
         SCPI_ErrorPush(context, (int16_t)err);
     }

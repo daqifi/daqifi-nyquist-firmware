@@ -426,48 +426,126 @@ static const char eofMarker[] = "__END_OF_FILE__";
  * sd_card_manager_LatchAsyncError) and SYST:LOG?, not by the marker. */
 static const char transferErrorMarker[] = "__TRANSFER_ERROR__";
 
-/* #914: one-deep latch for a failure the SD TASK detects AFTER the SCPI
- * handler that armed the operation has already returned SCPI_RES_OK (e.g. a
- * GET whose file will not open). The SD task owns no scpi_t and must not
- * touch one directly: SCPI_ErrorPush is two things at once -- an UNLOCKED
+/* #914: per-transport, one-deep latch for a failure the SD TASK detects AFTER
+ * the SCPI handler that armed the operation has already returned SCPI_RES_OK
+ * (e.g. a GET whose file will not open). The SD task owns no scpi_t and must
+ * not touch one directly: SCPI_ErrorPush is two things at once -- an UNLOCKED
  * mutation of the transport context's error fifo (libscpi/src/fifo.c has no
- * locking anywhere), and a TRANSPORT WRITE (SCPI_ErrorEmit ->
- * interface->error -> SCPI_WriteWithRetry's ~1 s retry budget). Called from
- * here that would race the owning transport task's own queue pushes/pops
- * (the #999 hazard class) and interleave "**ERROR: ..." into the SD reply
- * this task is itself streaming.
+ * locking anywhere), and a TRANSPORT WRITE (SCPI_ErrorEmit -> interface->error
+ * -> SCPI_WriteWithRetry's ~1 s retry budget). Called from here that would
+ * race the owning transport task's own queue pushes/pops (the #999 hazard
+ * class) and interleave "**ERROR: ..." into the SD reply this task is itself
+ * streaming.
  *
- * So this task only RECORDS the code plus which transport asked for the
- * operation; the transport task drains it into its OWN context at the next
- * command boundary via SCPI_DrainDeferredSdError (SCPIInterface.c), called
- * from its own UsbCdc.c / wifi_tcp_server.c command-complete handler, before
- * SCPI_Input. */
-static int32_t gSdAsyncError;      /* 0 = nothing pending */
-static sd_card_manager_reply_target_t gSdAsyncErrorTarget;
+ * So this task only RECORDS the code plus who asked; the transport task drains
+ * it into its OWN context at the next command boundary via
+ * SCPI_DrainDeferredSdError (SCPIInterface.c), called from its UsbCdc.c /
+ * wifi_tcp_server.c command-complete handler, before SCPI_Input.
+ *
+ * ONE SLOT PER TRANSPORT, not one globally. #829 makes the SD manager
+ * single-owner, so only one GET is ever in flight -- but a latched failure
+ * lives until ITS transport's next command boundary, and `mode = NONE` on the
+ * failure path releases the claim immediately, so the other transport is free
+ * to arm and fail its own GET inside that window. A single slot let the second
+ * failure overwrite the first, and the first transport then drained nothing
+ * and read "No error" -- not the wrong code, NO code, which is the exact
+ * silence #914 exists to remove, reintroduced one level down. Two slots make
+ * the transports independent. Newest-wins is still right WITHIN a slot: a
+ * client asks about the failure it just provoked.
+ *
+ * Each slot also carries the TCP connection generation the operation was armed
+ * for (#599's replyGeneration; 0 and meaningless for USB). A client that
+ * disconnects before its next command leaves its slot loaded, and disconnect
+ * clears nothing that would help: wifi_tcp_server_CloseClientSocket() resets
+ * buffers only -- it does not bump the generation, does not reset
+ * client->scpiContext, and does not clear the SCPI error queue (microrl_init /
+ * CreateSCPIContext run once, behind isInitDone). So without the generation
+ * the NEXT client to take the single TCP slot drains the previous client's
+ * error on its first command. This is the same invariant, by the same
+ * mechanism, that sd_card_manager_DataReadyCB already applies to the streamed
+ * reply itself (app_freertos.c).
+ *
+ * Concurrency. Writer: app_SDCardTask ONLY -- sd_card_manager_ProcessState()
+ * is called from exactly two places, app_freertos.c (inside
+ * app_SDCard_GracefulShutdown, "we ARE the SD task") and the task loop, both
+ * on that task. Readers: app_USBDeviceTask (pri 7) for [SD_CARD_REPLY_USB],
+ * app_WifiTask (pri 2) for [SD_CARD_REPLY_WIFI_TCP] -- one reader per slot,
+ * and a reader never touches the other's slot. The critical section stays
+ * anyway, because the take is a read-modify-write over a TWO-field struct:
+ * `volatile` would make each aligned 32-bit field's own load/store atomic
+ * (docs/MCU_REFERENCE.md) and still let a reader pair a new code with an old
+ * generation. */
+#define SD_ASYNC_ERR_SLOT_COUNT  ((int)SD_CARD_REPLY_WIFI_TCP + 1)
+
+typedef struct {
+    int32_t  code;        /* 0 = nothing pending */
+    uint32_t generation;  /* conn generation it was latched for; 0 = USB */
+} sd_async_error_slot_t;
+
+/* Funded by the 512 B #914 trim in StreamingBufferPool.c's STATIC_POOL_SIZE
+ * (16 B of actual BSS; paid at the established 512 B quantum). */
+static sd_async_error_slot_t gSdAsyncError[SD_ASYNC_ERR_SLOT_COUNT];
 
 void sd_card_manager_LatchAsyncError(int32_t scpiError,
-                                     sd_card_manager_reply_target_t target) {
+                                     sd_card_manager_reply_target_t target,
+                                     uint32_t generation) {
+    if (((int)target < 0) || ((int)target >= SD_ASYNC_ERR_SLOT_COUNT)) {
+        return;   /* unreachable today; costs nothing and cannot corrupt BSS */
+    }
     taskENTER_CRITICAL();
-    /* Newest wins: a one-deep latch, not a queue. The failure the host just
-     * provoked is the one it is about to ask about; keeping an older code
-     * around would answer this request with a previous operation's error. */
-    gSdAsyncError = scpiError;
-    gSdAsyncErrorTarget = target;
+    gSdAsyncError[target].code = scpiError;
+    gSdAsyncError[target].generation = generation;
     taskEXIT_CRITICAL();
 }
 
-int32_t sd_card_manager_TakeAsyncError(sd_card_manager_reply_target_t target) {
+int32_t sd_card_manager_TakeAsyncError(sd_card_manager_reply_target_t target,
+                                       uint32_t generation) {
     int32_t err = 0;
-    /* Critical section, not `volatile`: an aligned 32-bit load or store is
-     * atomic on PIC32MZ, but take-and-clear is a read-modify-write and this
-     * runs on a different task from the writer (#914). */
+    if (((int)target < 0) || ((int)target >= SD_ASYNC_ERR_SLOT_COUNT)) {
+        return 0;
+    }
     taskENTER_CRITICAL();
-    if ((gSdAsyncError != 0) && (gSdAsyncErrorTarget == target)) {
-        err = gSdAsyncError;
-        gSdAsyncError = 0;
+    if (gSdAsyncError[target].code != 0) {
+        if (gSdAsyncError[target].generation == generation) {
+            err = gSdAsyncError[target].code;
+        }
+        /* Cleared either way. A mismatch means the connection that provoked
+         * the failure is gone and this caller is its successor on the single
+         * TCP slot: the error is not ours to report, and it can never match
+         * again (the generation only increases), so holding it would just park
+         * dead state in BSS for the life of the boot. */
+        gSdAsyncError[target].code = 0;
+        gSdAsyncError[target].generation = 0;
     }
     taskEXIT_CRITICAL();
     return err;
+}
+
+/* #914: SYS_FS_Error() -> a SCPI code the host can act on.
+ *
+ * Deliberately three-way, not a FatFs taxonomy. The only distinction a client
+ * can act on is "the name you asked for is not there" (fix the name) vs "the
+ * storage is not usable" (fix the card or the mount); everything else collapses
+ * into the second, and SYST:LOG? still carries the exact SYS_FS_ERROR for
+ * anyone who needs to tell NOT_READY from NO_FILESYSTEM.
+ *
+ * SYS_FS_FileOpen sets errorValue on every path that can return
+ * HANDLE_INVALID -- including `errorValue = (SYS_FS_ERROR)fileStatus` for the
+ * native-FS result (sys_fs.c) -- so the default arm is never reached with a
+ * stale OK in practice; it is defensive. */
+static int32_t SdAsyncErrorForFsError(SYS_FS_ERROR fsErr) {
+    switch (fsErr) {
+    case SYS_FS_ERROR_NO_FILE:      /* FR_NO_FILE  -- the name is not there  */
+    case SYS_FS_ERROR_NO_PATH:      /* FR_NO_PATH  -- the directory is not   */
+        return SD_ASYNC_ERR_FILE_NOT_FOUND;
+    case SYS_FS_ERROR_INVALID_NAME: /* FR_INVALID_NAME / bad volume prefix   */
+        return SD_ASYNC_ERR_FILE_NAME_ERROR;
+    default:
+        /* NOT_READY (no card), NO_FILESYSTEM (unmounted/unformatted),
+         * DISK_ERR, DENIED, LOCKED, TOO_MANY_OPEN_FILES, NOT_ENOUGH_CORE:
+         * the storage, not the name, is the problem. */
+        return SD_ASYNC_ERR_MASS_STORAGE;
+    }
 }
 
 void __attribute__((weak)) sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
@@ -2503,6 +2581,20 @@ void sd_card_manager_ProcessState() {
 
                 gSDCardData.fileHandle = SYS_FS_FileOpen(gSDCardData.filePath,
                         (SYS_FS_FILE_OPEN_READ));
+                /* #914: read the FS error HERE, immediately, before anything
+                 * else can run a filesystem operation. SYS_FS_Error() returns
+                 * sys_fs.c's file-scope `errorValue` -- one global written from
+                 * every FS call in the system -- and the failure path below
+                 * calls sd_card_manager_DataReadyCB, which yields
+                 * (vTaskDelay(1) on a partial write and on every retry, up to
+                 * USB_TRANSFER_MAX_RETRIES on a stalled peer). Reading it after
+                 * that can report another task's fault as this open's: worse
+                 * than no code at all, because it looks authoritative. Same
+                 * rule the SYS_FS_DirectoryMake branch above already states.
+                 * Conditional so a successful open costs nothing. */
+                const SYS_FS_ERROR openFsError =
+                        (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID)
+                        ? SYS_FS_Error() : SYS_FS_ERROR_OK;
                 if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_COMPUTE_CRC) {
                     /* #306: invalidate prior result, arm the accumulator */
                     taskENTER_CRITICAL();
@@ -2542,28 +2634,62 @@ void sd_card_manager_ProcessState() {
                      * SAME error marker #725 uses mid-transfer: both mean "this
                      * reply is not a file, discard it", and one vocabulary is
                      * worth more to a client than two shades of failure. WHICH
-                     * failure is carried by the SCPI error code below and by
-                     * SYST:LOG?, which is where this project puts diagnosis. */
+                     * failure is carried by the SCPI error code below (three-way:
+                     * see SdAsyncErrorForFsError) and by SYST:LOG?, which is
+                     * where this project puts diagnosis. */
+
+                    /* #914: name the exact FS error in the log, and do it
+                     * BEFORE the marker goes out. The SCPI code below now
+                     * separates "the name is not there" from "the storage is
+                     * not usable", but only the log separates NOT_READY from
+                     * NO_FILESYSTEM from TOO_MANY_OPEN_FILES inside that second
+                     * class -- and a transport stalling on its full retry
+                     * budget must not delay the diagnosis. */
+                    LOG_E("[%s:%d]Failed to open SD Card file for reading: '%s' (fs err=%d)",
+                          __FILE__, __LINE__, gSDCardData.filePath, (int)openFsError);
+
                     if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ) {
+                        /* #914: LATCH FIRST, THEN send the marker.
+                         *
+                         * DataReadyCB is not a store -- it drives a real
+                         * transport write and yields, and on USB the draining
+                         * task OUTRANKS this one (app_USBDeviceTask pri 7 vs
+                         * app_SDCardTask pri 5, docs/MCU_REFERENCE.md). With
+                         * the latch second, a host that saw __TRANSFER_ERROR__
+                         * and immediately asked SYST:ERR? could be answered
+                         * "No error" -- marker out, latch not yet written --
+                         * which is the #747 signature this fix exists to
+                         * remove, reintroduced through a narrower window.
+                         * Latching first makes the marker's visibility imply
+                         * the error is already recorded.
+                         *
+                         * The converse is NOT guaranteed and cannot be: the
+                         * announcement is bound to a COMMAND boundary, not to a
+                         * position in the GET reply, so a host that pipelines
+                         * its next command may see the "**ERROR:" line ahead of
+                         * the marker. That is ordering noise, not loss; binding
+                         * the two would mean pushing from this task, which is
+                         * exactly what sd_card_manager_LatchAsyncError
+                         * documents as unsafe.
+                         *
+                         * Both operands are read into locals before the call
+                         * for the same reason. The #829 claim is still held
+                         * here so they cannot change -- but reading them across
+                         * a yielding call would make this code's correctness a
+                         * fact about #829's timing rather than about itself. */
+                        const sd_card_manager_reply_target_t replyTarget =
+                                gpSDCardSettings->replyTarget;
+                        const uint32_t replyGeneration =
+                                gpSDCardSettings->replyGeneration;
+                        sd_card_manager_LatchAsyncError(
+                                SdAsyncErrorForFsError(openFsError),
+                                replyTarget, replyGeneration);
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
                                 (uint8_t*)transferErrorMarker,
                                 sizeof(transferErrorMarker) - 1);
-                        /* #914: and make it loud in the error queue. The SCPI
-                         * handler returned OK at arm time, so this is the only
-                         * chance to report it; see sd_card_manager_LatchAsyncError
-                         * for why the push itself cannot happen on this task. */
-                        sd_card_manager_LatchAsyncError(
-                                SD_ASYNC_ERR_FILE_NOT_FOUND,
-                                gpSDCardSettings->replyTarget);
                     }
                     gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                    /* #914: name the FS error too. The marker is the coarse
-                     * class; a missing file, an unmounted volume and a handle
-                     * exhaustion all reach here, and only the log separates
-                     * them. */
-                    LOG_E("[%s:%d]Failed to open SD Card file for reading: '%s' (fs err=%d)",
-                          __FILE__, __LINE__, gSDCardData.filePath, (int)SYS_FS_Error());
                 }
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_LIST_DIRECTORY) {
                 // LIST mode doesn't need to open a file, just list the directory

@@ -591,29 +591,46 @@ bool sd_card_manager_WriteIsStreamingLog(void);
      */
     void sd_card_manager_ResetWriteMetrics(void);
 
-    /* #914: libscpi's SCPI_ERROR_FILE_NAME_NOT_FOUND, kept as a plain int here
-     * so this header needs no SCPI dependency. SCPIInterface.c static-asserts
-     * the two agree. */
-    #define SD_ASYNC_ERR_FILE_NOT_FOUND  (-256)
+    /* #914: libscpi error codes, kept as plain ints here so this header needs
+     * no SCPI dependency. SCPIInterface.c static-asserts each against the real
+     * libscpi value. Three, not one: an open failure that is really a storage
+     * outage must not be reported to the host as a missing file NAME -- that
+     * is not coarse, it is a specific wrong answer, and it undercuts the point
+     * of #914 (be MORE specific than the -200 every other SD refusal uses, not
+     * differently wrong). The mapping is SdAsyncErrorForFsError() in
+     * sd_card_manager.c. */
+    #define SD_ASYNC_ERR_FILE_NOT_FOUND   (-256)  /* SCPI_ERROR_FILE_NAME_NOT_FOUND */
+    #define SD_ASYNC_ERR_FILE_NAME_ERROR  (-257)  /* SCPI_ERROR_FILE_NAME_ERROR */
+    #define SD_ASYNC_ERR_MASS_STORAGE     (-250)  /* SCPI_ERROR_MASS_STORAGE_ERROR */
 
     /**
      * @brief Record a SCPI error code for a failure this task detected AFTER
      *        the SCPI handler that armed the operation already returned OK
-     *        (e.g. a GET whose file will not open). One-deep latch, newest
-     *        wins — see the definition in sd_card_manager.c for why the SD
-     *        task cannot push into a scpi_t's error queue directly.
-     * @param scpiError  A negative libscpi error code (e.g. SD_ASYNC_ERR_FILE_NOT_FOUND).
-     * @param target     Which transport's reply this failure belongs to.
+     *        (e.g. a GET whose file will not open). ONE SLOT PER REPLY TARGET,
+     *        one-deep and newest-wins within a slot — see the definition in
+     *        sd_card_manager.c for why the SD task cannot push into a scpi_t's
+     *        error queue directly, and why the slots are per-transport.
+     * @param scpiError   A negative libscpi error code (SD_ASYNC_ERR_*).
+     * @param target      Which transport's reply this failure belongs to.
+     * @param generation  The TCP connection generation the operation was armed
+     *                    for (settings->replyGeneration, #599); 0 for USB.
      */
     void sd_card_manager_LatchAsyncError(int32_t scpiError,
-                                         sd_card_manager_reply_target_t target);
+                                         sd_card_manager_reply_target_t target,
+                                         uint32_t generation);
 
     /**
      * @brief Take and clear the pending deferred error for `target`, if any.
      *        Called once per command boundary by SCPI_DrainDeferredSdError.
-     * @return The latched error code, or 0 if nothing is pending for `target`.
+     * @param target      The caller's transport.
+     * @param generation  The caller's CURRENT connection generation
+     *                    (wifi_tcp_server_GetConnGeneration()); 0 for USB.
+     * @return The latched code, or 0 if nothing is pending for `target` or the
+     *         pending one belongs to a previous connection — in which case it
+     *         is DISCARDED, not held, since it can never match again.
      */
-    int32_t sd_card_manager_TakeAsyncError(sd_card_manager_reply_target_t target);
+    int32_t sd_card_manager_TakeAsyncError(sd_card_manager_reply_target_t target,
+                                           uint32_t generation);
 
     /* Provide C++ Compatibility */
 #ifdef __cplusplus

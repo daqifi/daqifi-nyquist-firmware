@@ -71,8 +71,24 @@
  * (#828). Do NOT pay for a future static by shrinking SCPI_INPUT_BUFFER_LENGTH
  * or SCPI_ERROR_QUEUE_SIZE instead: those sizes are what keep the two
  * transports from corrupting each other's in-flight command text and error
- * queues (#999), and 512 is already pinned by #100/#263. */
-#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U - 2048U)
+ * queues (#999), and 512 is already pinned by #100/#263.
+ *
+ * Trimmed a further 512 B (#914) to pay for sd_card_manager.c's
+ * gSdAsyncError[], a 2-element array (one per SD reply target: USB, WiFi-TCP)
+ * of {int32_t code; uint32_t generation;} used to hand a GET open-failure's
+ * deferred SCPI error from the SD task to the owning transport at its next
+ * command boundary. The array itself is 16 B (2 * 8 B, no padding — both
+ * fields are already 4-byte aligned); same mechanism as #824/#925/#999, and
+ * paid at the same 512 B quantum those two used rather than a byte-exact
+ * amount, because (as #999's comment already states) BSS growth does not map
+ * 1:1 onto stack-region "available" — the link is the arbiter, not the
+ * arithmetic. Verified with a real link at this size (rc=0, hex produced);
+ * raise the trim if a future link fails with "Not enough memory for stack".
+ *
+ * Cost, on the same basis as above: 512/74 = ~7 slots at 16 channels, taking
+ * the USB-only partitioned capacity 1558 -> 1551 against the same 1100-deep
+ * queue clamp (#828) — nil in practice, like #824/#925 before it. */
+#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U - 2048U - 512U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
 /* The overcommit fallback below carves these four minimums and expects the
