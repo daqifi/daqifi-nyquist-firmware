@@ -13,8 +13,12 @@
 #include "Util/Logger.h"
 // #1069: the 10V-rail re-check below. BoardData.h supplies
 // BOARDDATA_POWER_DATA/tPowerData; PowerApi.h supplies the POWERED_UP enum
-// constant. Same pair SCPIDAC.c includes for the caller-side check.
+// constant and tPowerWriteVars; BoardRuntimeConfig.h supplies
+// BoardRunTimeConfig_Get/BOARDRUNTIME_POWER_WRITE_VARIABLES, which reaches the
+// live EN_5_10V_Val rail-enable flag. Same set SCPIDAC.c includes for the
+// caller-side check.
 #include "state/data/BoardData.h"
+#include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/Power/PowerApi.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -394,7 +398,17 @@ static bool dac7718_WaitStat(uint32_t mask, bool want,
  * gDacCommandMutex is even taken) is KEPT -- this one narrows the TOCTOU
  * window between the two, it does not replace the caller's check.
  *
- * It is NOT proof against the rail dropping MID-transfer. The check happens
+ * It checks TWO independent things, because powerState alone does not decide
+ * whether the 5/10V rail is on:
+ *   1. powerState == POWERED_UP  -- the board-level power state.
+ *   2. PowerWriteVars.EN_5_10V_Val -- the rail's own commanded enable, which
+ *      SYSTem:FORce5V5POWer:STATe can clear WITHOUT changing powerState.
+ * Condition 2 was added in a second pass over #1069 after a Qodo
+ * /agentic_review finding on PR #1099 ("Unpowered voltage writes report
+ * success") showed condition 1 by itself lets a voltage write through with
+ * the rail commanded off.
+ *
+ * It is NOT proof against the rail dropping MID-transfer. The checks happen
  * once, at the top; the SPI transaction that follows is not re-guarded
  * byte-by-byte, and the RW==1 readback's second CS assertion is not
  * re-checked either. A drop after this point still produces a frame clocked
@@ -402,6 +416,12 @@ static bool dac7718_WaitStat(uint32_t mask, bool want,
  * of a whole SCPI command, which is the property this check buys and the
  * only one it claims. Closing it completely would need the rail's own
  * state-change notification to abort an in-flight transfer, not a wider poll.
+ *
+ * Nor is EN_5_10V_Val a MEASUREMENT: it is the state the rail has been
+ * COMMANDED into, the same flag Power_Write() consumes to drive the enable
+ * GPIO. It proves the rail was asked to be on, not that it has settled or is
+ * in regulation. A settling/stabilization guarantee would need the power
+ * module to expose a measured readiness signal, which it does not today.
  */
 uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data)
 {
@@ -421,6 +441,7 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     // jump-skips-initialization (-Wjump-misses-init) shape. Same reason every
     // other local in this goto-structured function is declared here.
     const tPowerData* pPowerState = NULL;
+    const tPowerWriteVars* pPowerWriteVars = NULL;   // same reason as above
 
     // Validate inputs
     if (RW > 1U) {
@@ -468,6 +489,37 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     if (pPowerState->powerState != POWERED_UP) {
         LOG_E("DAC7718_ReadWriteReg: 10V rail down (powerState=%u)",
               (unsigned)pPowerState->powerState);
+        rdData = UINT32_MAX;
+        goto cleanup;
+    }
+
+    // #1069 second pass -- Qodo /agentic_review finding on PR #1099,
+    // "Unpowered voltage writes report success". powerState == POWERED_UP is
+    // NOT by itself proof that the 5/10V rail is enabled.
+    // SYSTem:FORce5V5POWer:STATe 0 (SCPI_Force5v5PowerStateSet in
+    // SCPIInterface.c) requires POWERED_UP to run, then clears
+    // PowerWriteVars.EN_5_10V_Val and calls Power_Write() to drop the rail's
+    // enable GPIO -- and it deliberately never touches powerState. So after
+    // that command the check above still passes, as does SCPIDAC.c's
+    // identical caller-side one, and a voltage command clocks and latches a
+    // frame into a DAC whose output rail is off while reporting success.
+    //
+    // EN_5_10V_Val is the SAME field Power_Write() itself reads to decide the
+    // rail's GPIO state (PowerApi.c: `pWriteVariables->EN_5_10V_Val`, where
+    // pWriteVariables is bound to &gpBoardRuntimeConfig->PowerWriteVars by
+    // Power_Init() from app_freertos.c), reached here through the getter that
+    // returns that same instance -- so this site and the power module cannot
+    // disagree about what "rail commanded on" means. See this function's
+    // header comment for what this does NOT buy: it is the COMMANDED state,
+    // not a measured or settled one.
+    pPowerWriteVars = BoardRunTimeConfig_Get(BOARDRUNTIME_POWER_WRITE_VARIABLES);
+    if (pPowerWriteVars == NULL) {
+        LOG_E("DAC7718_ReadWriteReg: Cannot get power write variables");
+        rdData = UINT32_MAX;
+        goto cleanup;
+    }
+    if (!pPowerWriteVars->EN_5_10V_Val) {
+        LOG_E("DAC7718_ReadWriteReg: 10V rail not enabled (EN_5_10V_Val=0)");
         rdData = UINT32_MAX;
         goto cleanup;
     }

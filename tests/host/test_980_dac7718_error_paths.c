@@ -142,17 +142,40 @@
  * own lock, immediately before its first CS assertion, so the function no
  * longer relies entirely on its caller. It does not REPLACE the caller's
  * check, and it is not proof against a mid-transfer drop (see FIDELITY note 5
- * below). Part F extends Part A's shape rather than adding a new one: the two
+ * below). Part F extends Part A's shape rather than adding a new one: the
  * new branches live in read_write_reg_shape_ex(), in that same relative
  * position.
  *
+ * PART F, second pass -- the RAIL-ENABLE arm (Qodo /agentic_review finding on
+ * PR #1099, "Unpowered voltage writes report success"). The first pass above
+ * gated only on powerState, which is NOT the rail's enable.
+ * SYSTem:FORce5V5POWer:STATe 0 (SCPI_Force5v5PowerStateSet) requires
+ * POWERED_UP to run, then clears PowerWriteVars.EN_5_10V_Val and calls
+ * Power_Write() to drop the rail's GPIO -- deliberately leaving powerState at
+ * POWERED_UP. Both the caller's check and the first-pass re-check therefore
+ * still pass, and the write is clocked out and reported as a success against
+ * a dead rail. The fix reads EN_5_10V_Val (the same field Power_Write()
+ * consumes) through BoardRunTimeConfig_Get(BOARDRUNTIME_POWER_WRITE_VARIABLES)
+ * and refuses when it is clear, in the SAME position as the powerState arm:
+ * under the driver's own lock, above its first CS assertion. Modelled by the
+ * `powerVarsOk` / `railEnabled` mock inputs, which sit immediately after
+ * `powerDataOk` / `powerUp` for exactly that reason.
+ *
  * FIDELITY note 5 (Part F) -- the mock proves the ORDER of the new branches
- * relative to the lock and the first CS assertion, and that both refuse
+ * relative to the lock and the first CS assertion, and that each refuses
  * without a side effect while still releasing the lock. It cannot prove
  * anything about the window that remains OPEN: the real rail can drop after
  * the check and mid-frame, and neither the driver nor this mock re-reads
  * power state per byte. That residual is stated in the source comment above
  * DAC7718_ReadWriteReg, not tested here.
+ *
+ * FIDELITY note 6 (Part F, second pass) -- `railEnabled` models the COMMANDED
+ * rail enable, not a measured one, because EN_5_10V_Val is itself only the
+ * commanded state. A shape model cannot say anything about settling time or
+ * regulation; that would need a measured readiness signal the power module
+ * does not expose. What this part proves is strictly that the commanded-off
+ * rail is refused before any side effect -- the exact scenario the Qodo
+ * finding describes -- and nothing about the analog behaviour of the rail.
  * ========================================================================== */
 
 #include <stdint.h>
@@ -219,26 +242,34 @@ static void old_buggy_unlock(RegMockEnv *env)
 }
 
 /* Mirrors DAC7718_ReadWriteReg's shape line-for-line: three validations that
- * `goto cleanup` before Lock() is ever attempted, then Lock(), then the two
+ * `goto cleanup` before Lock() is ever attempted, then Lock(), then the four
  * #1069 power arms, then the first CS assert, then an SPI step (collapsed to
  * one bool here -- see FIDELITY note 2 in the file header), then cleanup.
  * `useOldShape` selects which Unlock the cleanup path calls, so both variants
  * share every branch above the label.
  *
- * `powerDataOk` / `powerUp` model Part F (#1069): the self-contained power
- * re-check DAC7718_ReadWriteReg now performs itself, in this exact position
- * -- after its own Lock(), before its own first CS assertion -- rather than
- * relying entirely on the caller having checked the rail earlier. They are
- * two separate booleans because the real function has two separate branches
- * with two distinct LOG_E messages (BoardData_Get returned NULL vs
- * powerState != POWERED_UP), exercised separately below for the same reason
- * Part B exercises boardOk and variantOk separately. `read_write_reg_shape()`
+ * `powerDataOk` / `powerUp` / `powerVarsOk` / `railEnabled` model Part F
+ * (#1069): the self-contained power re-check DAC7718_ReadWriteReg now performs
+ * itself, in this exact position -- after its own Lock(), before its own first
+ * CS assertion -- rather than relying entirely on the caller having checked
+ * the rail earlier. They are four separate booleans because the real function
+ * has four separate branches with four distinct LOG_E messages (BoardData_Get
+ * returned NULL, powerState != POWERED_UP, BoardRunTimeConfig_Get returned
+ * NULL, EN_5_10V_Val clear), exercised separately below for the same reason
+ * Part B exercises boardOk and variantOk separately: one arm standing in for
+ * another is how a deleted branch passes unnoticed. `read_write_reg_shape()`
  * below is the pre-existing 6-arg call shape every other Part A test uses,
- * forwarding both as true so none of that coverage changes; only the
- * dedicated Part F tests exercise the false cases. */
+ * forwarding all four as true so none of that coverage changes; only the
+ * dedicated Part F tests exercise the false cases.
+ *
+ * The `powerVarsOk` / `railEnabled` pair is the second Part F pass (the Qodo
+ * PR #1099 finding). It follows `powerDataOk` / `powerUp` here because it
+ * follows the powerState arm in the real function -- the order matters only in
+ * that ALL FOUR precede mock_assert_cs(). */
 static uint32_t read_write_reg_shape_ex(RegMockEnv *env, bool rwValid, bool regValid,
                                         bool configValid, bool lockSucceeds,
                                         bool powerDataOk, bool powerUp,
+                                        bool powerVarsOk, bool railEnabled,
                                         bool spiSucceeds, bool useOldShape)
 {
     uint32_t rdData = 0;
@@ -251,9 +282,13 @@ static uint32_t read_write_reg_shape_ex(RegMockEnv *env, bool rwValid, bool regV
     if (!mock_lock(env, lockSucceeds)) { rdData = UINT32_MAX; goto cleanup; }
     lockHeld = true;   /* set ONLY after a successful take (#980 item 2) */
 
-    /* #1069: both arms sit under the lock and above the first side effect. */
-    if (!powerDataOk) { rdData = UINT32_MAX; goto cleanup; }
-    if (!powerUp)     { rdData = UINT32_MAX; goto cleanup; }
+    /* #1069: all four arms sit under the lock and above the first side
+     * effect. The first two are the board power STATE; the second two are the
+     * 5/10V rail's own commanded ENABLE, which powerState does not imply. */
+    if (!powerDataOk)  { rdData = UINT32_MAX; goto cleanup; }
+    if (!powerUp)      { rdData = UINT32_MAX; goto cleanup; }
+    if (!powerVarsOk)  { rdData = UINT32_MAX; goto cleanup; }
+    if (!railEnabled)  { rdData = UINT32_MAX; goto cleanup; }
 
     mock_assert_cs(env);   /* GPIO_PinWrite(config->CS_Pin, false) */
 
@@ -276,7 +311,8 @@ static uint32_t read_write_reg_shape(RegMockEnv *env, bool rwValid, bool regVali
 {
     return read_write_reg_shape_ex(env, rwValid, regValid, configValid,
                                    lockSucceeds, true /* powerDataOk */,
-                                   true /* powerUp */, spiSucceeds,
+                                   true /* powerUp */, true /* powerVarsOk */,
+                                   true /* railEnabled */, spiSucceeds,
                                    useOldShape);
 }
 
@@ -1341,14 +1377,15 @@ TEST(voltage_get_on_non_nq3_never_locks_and_still_writes_the_value)
  * ========================================================================== */
 
 /* Pre-#1069 shape -- identical to read_write_reg_shape_ex() above except that
- * the two power arms are absent entirely: the function went straight from
+ * the power arms are absent entirely: the function went straight from
  * `lockHeld = true` to asserting CS, trusting whatever check its caller had
  * performed earlier (SCPIDAC.c's DAC_EnsureHardwareInitialized, once per
- * command, before parameter parsing and before any lock). `powerDataOk` /
- * `powerUp` are accepted only so both shapes can be driven from the same mock
- * inputs; this shape ignores both completely, which IS the defect. */
+ * command, before parameter parsing and before any lock). The four power
+ * booleans are accepted only so both shapes can be driven from the same mock
+ * inputs; this shape ignores all of them, which IS the defect. */
 static uint32_t read_write_reg_pre1069_shape(RegMockEnv *env, bool powerDataOk,
-                                             bool powerUp)
+                                             bool powerUp, bool powerVarsOk,
+                                             bool railEnabled)
 {
     uint32_t rdData = 0;
     bool lockHeld = false;
@@ -1358,8 +1395,41 @@ static uint32_t read_write_reg_pre1069_shape(RegMockEnv *env, bool powerDataOk,
 
     (void)powerDataOk;   /* never consulted -- the #1069 defect */
     (void)powerUp;       /* never consulted -- the #1069 defect */
+    (void)powerVarsOk;   /* never consulted -- the #1069 defect */
+    (void)railEnabled;   /* never consulted -- the #1069 defect */
 
     mock_assert_cs(env);   /* reached even with the rail DOWN */
+
+    rdData = 42U;
+
+cleanup:
+    new_unlock(env, lockHeld);
+    return rdData;
+}
+
+/* The FIRST-PASS #1069 shape -- powerState is re-checked, the rail's own
+ * commanded enable is NOT. This is what PR #1099 shipped before the Qodo
+ * /agentic_review finding, and it is the differential that makes the
+ * rail-force-disabled test below load-bearing: without it, "the fixed shape
+ * refuses" could be true of any shape that refuses for some other reason.
+ * EN_5_10V_Val is accepted and ignored, which IS the finding. */
+static uint32_t read_write_reg_pre1099_shape(RegMockEnv *env, bool powerDataOk,
+                                             bool powerUp, bool powerVarsOk,
+                                             bool railEnabled)
+{
+    uint32_t rdData = 0;
+    bool lockHeld = false;
+
+    if (!mock_lock(env, true)) { rdData = UINT32_MAX; goto cleanup; }
+    lockHeld = true;
+
+    if (!powerDataOk) { rdData = UINT32_MAX; goto cleanup; }
+    if (!powerUp)     { rdData = UINT32_MAX; goto cleanup; }
+
+    (void)powerVarsOk;   /* never consulted -- the PR #1099 Qodo finding */
+    (void)railEnabled;   /* never consulted -- the PR #1099 Qodo finding */
+
+    mock_assert_cs(env);   /* reached with POWERED_UP but the rail forced OFF */
 
     rdData = 42U;
 
@@ -1385,6 +1455,8 @@ TEST(rail_down_refuses_before_asserting_cs_and_still_gives_the_lock)
     ASSERT_EQ(read_write_reg_shape_ex(&env, true, true, true, true,
                                       true  /* BoardData_Get returned data */,
                                       false /* powerState != POWERED_UP */,
+                                      true /* powerVarsOk */,
+                                      true /* railEnabled */,
                                       true, false),
               UINT32_MAX);
     ASSERT_EQ(env.lockCalls, 1);
@@ -1394,9 +1466,79 @@ TEST(rail_down_refuses_before_asserting_cs_and_still_gives_the_lock)
 
     RegMockEnv old;
     reg_mock_init(&old);
-    ASSERT_EQ(read_write_reg_pre1069_shape(&old, true, false /* rail DOWN */), 42);
+    ASSERT_EQ(read_write_reg_pre1069_shape(&old, true, false /* rail DOWN */,
+                                           true, true), 42);
     ASSERT_EQ(old.csAssertCalls, 1);    /* CS asserted against an unpowered chip */
     ASSERT_EQ(old.giveCalls, 1);        /* and it reports SUCCESS -- the defect */
+}
+
+/* THE headline for the second Part F pass (Qodo /agentic_review on PR #1099,
+ * "Unpowered voltage writes report success"). The literal scenario the finding
+ * describes: SYSTem:FORce5V5POWer:STATe 0 has cleared EN_5_10V_Val, and
+ * powerState is STILL POWERED_UP because SCPI_Force5v5PowerStateSet never
+ * touches it. Every pre-existing power check on this path therefore passes.
+ * The fixed shape must nonetheless refuse, above the first CS assert, with the
+ * lock given back.
+ *
+ * The differential is against read_write_reg_pre1099_shape() -- the shape this
+ * PR shipped one round earlier, which re-checks powerState but not the rail
+ * enable. Given the IDENTICAL mock inputs it asserts CS and reports success,
+ * which is what makes the assertion above load-bearing rather than vacuous:
+ * the ONLY input that differs between pass and fail is EN_5_10V_Val. */
+TEST(rail_force_disabled_while_powered_up_refuses_before_asserting_cs)
+{
+    RegMockEnv env;
+    reg_mock_init(&env);
+
+    ASSERT_EQ(read_write_reg_shape_ex(&env, true, true, true, true,
+                                      true  /* BoardData_Get returned data */,
+                                      true  /* powerState IS POWERED_UP */,
+                                      true  /* runtime config readable */,
+                                      false /* EN_5_10V_Val cleared by
+                                             * SYSTem:FORce5V5POWer:STATe 0 */,
+                                      true, false),
+              UINT32_MAX);
+    ASSERT_EQ(env.lockCalls, 1);
+    ASSERT_EQ(env.csAssertCalls, 0);    /* refused ABOVE the first side effect */
+    ASSERT_EQ(env.giveCalls, 1);        /* post-lock failure -- must still give */
+    ASSERT_TRUE(env.lastLockHeldAtUnlock);
+
+    /* The shape PR #1099 shipped before this finding: same inputs, clocks the
+     * frame out and reports the requested voltage as applied. */
+    RegMockEnv prev;
+    reg_mock_init(&prev);
+    ASSERT_EQ(read_write_reg_pre1099_shape(&prev, true, true /* POWERED_UP */,
+                                           true, false /* rail forced OFF */),
+              42);
+    ASSERT_EQ(prev.csAssertCalls, 1);   /* CS asserted against a dead rail */
+    ASSERT_EQ(prev.giveCalls, 1);       /* and it reports SUCCESS -- the finding */
+
+    /* And the same inputs on the ORIGINAL pre-#1069 shape, for completeness:
+     * it too sails straight through. Both prior shapes are blind here. */
+    RegMockEnv old;
+    reg_mock_init(&old);
+    ASSERT_EQ(read_write_reg_pre1069_shape(&old, true, true, true, false), 42);
+    ASSERT_EQ(old.csAssertCalls, 1);
+}
+
+/* The NULL-runtime-config arm is a SEPARATE branch in the real function, with
+ * its own LOG_E ("Cannot get power write variables"), and must behave
+ * identically -- same reason the NULL-BoardData arm below is exercised on its
+ * own rather than folded into the rail-down case. */
+TEST(power_write_vars_unavailable_refuses_before_asserting_cs_and_still_gives_the_lock)
+{
+    RegMockEnv env;
+    reg_mock_init(&env);
+
+    ASSERT_EQ(read_write_reg_shape_ex(&env, true, true, true, true,
+                                      true, true,
+                                      false /* BoardRunTimeConfig_Get NULL */,
+                                      true, true, false),
+              UINT32_MAX);
+    ASSERT_EQ(env.lockCalls, 1);
+    ASSERT_EQ(env.csAssertCalls, 0);
+    ASSERT_EQ(env.giveCalls, 1);
+    ASSERT_TRUE(env.lastLockHeldAtUnlock);
 }
 
 /* The NULL-BoardData arm is a SEPARATE branch in the real function, with its
@@ -1412,7 +1554,7 @@ TEST(power_data_unavailable_refuses_before_asserting_cs_and_still_gives_the_lock
 
     ASSERT_EQ(read_write_reg_shape_ex(&env, true, true, true, true,
                                       false /* BoardData_Get returned NULL */,
-                                      true, true, false),
+                                      true, true, true, true, false),
               UINT32_MAX);
     ASSERT_EQ(env.lockCalls, 1);
     ASSERT_EQ(env.csAssertCalls, 0);
@@ -1420,14 +1562,15 @@ TEST(power_data_unavailable_refuses_before_asserting_cs_and_still_gives_the_lock
     ASSERT_TRUE(env.lastLockHeldAtUnlock);
 }
 
-/* Powered -- the default every other Part A test forwards -- is UNCHANGED by
- * #1069: the CS assert is reached exactly once and the transfer succeeds.
- * Guards the mutation "make the power arm always refuse", which would pass
- * both tests above while bricking every DAC write on real hardware.
+/* Powered AND rail-enabled -- the default every other Part A test forwards --
+ * is UNCHANGED by #1069: the CS assert is reached exactly once and the
+ * transfer succeeds. Guards the mutation "make a power arm always refuse",
+ * which would pass every refusal test above while bricking every DAC write on
+ * real hardware.
  *
  * The second half pins where #1069 sits in the order: a PRE-lock validation
  * failure must still reach neither Lock(), the power arms, nor the CS assert
- * -- the new check is strictly below all three, not hoisted above them. */
+ * -- the new checks are strictly below all three, not hoisted above them. */
 TEST(rail_up_reaches_cs_and_succeeds_unchanged_and_prelock_failures_still_precede_it)
 {
     RegMockEnv env;
@@ -1443,6 +1586,7 @@ TEST(rail_up_reaches_cs_and_succeeds_unchanged_and_prelock_failures_still_preced
     reg_mock_init(&early);
     ASSERT_EQ(read_write_reg_shape_ex(&early, false /* RW>1 */, true, true, true,
                                       false /* power would ALSO fail */,
+                                      false, false /* as would the rail arms */,
                                       false, true, false),
               UINT32_MAX);
     ASSERT_EQ(early.lockCalls, 0);       /* never locked */
@@ -1506,6 +1650,8 @@ int main(void)
 
     /* Part F */
     RUN(rail_down_refuses_before_asserting_cs_and_still_gives_the_lock);
+    RUN(rail_force_disabled_while_powered_up_refuses_before_asserting_cs);
+    RUN(power_write_vars_unavailable_refuses_before_asserting_cs_and_still_gives_the_lock);
     RUN(power_data_unavailable_refuses_before_asserting_cs_and_still_gives_the_lock);
     RUN(rail_up_reaches_cs_and_succeeds_unchanged_and_prelock_failures_still_precede_it);
     RUN(postcs_spi_failure_still_recorded_the_cs_assert);

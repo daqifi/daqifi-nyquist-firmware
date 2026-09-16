@@ -445,11 +445,12 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	  || { echo "ERROR: DAC7718_Unlock's call site no longer passes (config, csAsserted, lockHeld) in $(DAC7718_SRC)."; \
 	       echo "       Part A's mock signature mirrors this exact call -- re-derive it."; \
 	       exit 1; }
-	@test "$$(grep -c 'goto cleanup;' $(DAC7718_SRC))" = "12" \
-	  || { echo "ERROR: DAC7718.c's 'goto cleanup;' count in DAC7718_ReadWriteReg changed from 12."; \
+	@test "$$(grep -c 'goto cleanup;' $(DAC7718_SRC))" = "14" \
+	  || { echo "ERROR: DAC7718.c's 'goto cleanup;' count in DAC7718_ReadWriteReg changed from 14."; \
 	       echo "       Part A's read_write_reg_shape_ex() models exactly 3 PRE-lock validations"; \
-	       echo "       (RW, Reg, config), the 2 post-lock #1069 power arms Part F adds"; \
-	       echo "       (BoardData_Get returned NULL, powerState != POWERED_UP), and 7 post-lock"; \
+	       echo "       (RW, Reg, config), the 4 post-lock #1069 power arms Part F adds"; \
+	       echo "       (BoardData_Get returned NULL, powerState != POWERED_UP,"; \
+	       echo "       BoardRunTimeConfig_Get returned NULL, EN_5_10V_Val clear), and 7 post-lock"; \
 	       echo "       SPI-timeout branches, all reaching the same cleanup label -- a branch added"; \
 	       echo "       or removed changes what the mock's shape claims to cover. Re-derive the"; \
 	       echo "       test against the new branch count."; \
@@ -460,6 +461,17 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	       echo "       function is back to trusting the caller's single, much-earlier check and"; \
 	       echo "       the TOCTOU window the ticket names is reopened. Re-derive Part F."; \
 	       exit 1; }
+	@grep -qE '^[[:space:]]*if \(!pPowerWriteVars->EN_5_10V_Val\) \{' $(DAC7718_SRC) \
+	  || { echo "ERROR: DAC7718_ReadWriteReg's 5/10V rail-ENABLE check is gone from"; \
+	       echo "       $(DAC7718_SRC). powerState == POWERED_UP does NOT imply the rail is on:"; \
+	       echo "       SYSTem:FORce5V5POWer:STATe 0 clears PowerWriteVars.EN_5_10V_Val and calls"; \
+	       echo "       Power_Write() WITHOUT changing powerState, so without this arm a voltage"; \
+	       echo "       write passes every other power check, clocks the DAC, and reports the"; \
+	       echo "       requested voltage against a dead rail (Qodo /agentic_review on PR #1099,"; \
+	       echo "       'Unpowered voltage writes report success'). Part F's"; \
+	       echo "       rail_force_disabled_while_powered_up_refuses_before_asserting_cs models"; \
+	       echo "       exactly this predicate -- re-derive it."; \
+	       exit 1; }
 	@p=`grep -nF 'pPowerState = BoardData_Get(BOARDDATA_POWER_DATA, 0);' $(DAC7718_SRC) | cut -d: -f1 | head -1`; \
 	 c=`grep -nF 'GPIO_PinWrite(config->CS_Pin, false);' $(DAC7718_SRC) | cut -d: -f1 | head -1`; \
 	 test -n "$$p" && test -n "$$c" && test "$$p" -lt "$$c" \
@@ -468,6 +480,16 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	        echo "       (power read p='$$p', first CS assert c='$$c')."; \
 	        echo "       A re-check that runs once CS is already low authorizes nothing --"; \
 	        echo "       Part F's 'csAssertCalls == 0' assertions model exactly this ordering."; \
+	        exit 1; }
+	@r=`grep -nF 'pPowerWriteVars = BoardRunTimeConfig_Get(BOARDRUNTIME_POWER_WRITE_VARIABLES);' $(DAC7718_SRC) | cut -d: -f1 | head -1`; \
+	 c=`grep -nF 'GPIO_PinWrite(config->CS_Pin, false);' $(DAC7718_SRC) | cut -d: -f1 | head -1`; \
+	 test -n "$$r" && test -n "$$c" && test "$$r" -lt "$$c" \
+	   || { echo "ERROR: DAC7718_ReadWriteReg's rail-enable read is gone, or no longer precedes"; \
+	        echo "       the FIRST CS assertion in $(DAC7718_SRC)"; \
+	        echo "       (rail read r='$$r', first CS assert c='$$c')."; \
+	        echo "       Same reasoning as the powerState ordering guard above: a rail check that"; \
+	        echo "       runs once CS is already low authorizes nothing. Part F's"; \
+	        echo "       'csAssertCalls == 0' assertion on the rail-disabled case models this."; \
 	        exit 1; }
 	@grep -qE '^#define MAX_DAC7718_CONFIG 1[[:space:]]*$$' $(DAC7718_SRC) \
 	  || { echo "ERROR: MAX_DAC7718_CONFIG is no longer '1' in $(DAC7718_SRC)."; \
