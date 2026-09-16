@@ -591,6 +591,30 @@ bool sd_card_manager_WriteIsStreamingLog(void);
      */
     void sd_card_manager_ResetWriteMetrics(void);
 
+    /* #914: libscpi's SCPI_ERROR_FILE_NAME_NOT_FOUND, kept as a plain int here
+     * so this header needs no SCPI dependency. SCPIInterface.c static-asserts
+     * the two agree. */
+    #define SD_ASYNC_ERR_FILE_NOT_FOUND  (-256)
+
+    /**
+     * @brief Record a SCPI error code for a failure this task detected AFTER
+     *        the SCPI handler that armed the operation already returned OK
+     *        (e.g. a GET whose file will not open). One-deep latch, newest
+     *        wins — see the definition in sd_card_manager.c for why the SD
+     *        task cannot push into a scpi_t's error queue directly.
+     * @param scpiError  A negative libscpi error code (e.g. SD_ASYNC_ERR_FILE_NOT_FOUND).
+     * @param target     Which transport's reply this failure belongs to.
+     */
+    void sd_card_manager_LatchAsyncError(int32_t scpiError,
+                                         sd_card_manager_reply_target_t target);
+
+    /**
+     * @brief Take and clear the pending deferred error for `target`, if any.
+     *        Called once per command boundary by SCPI_DrainDeferredSdError.
+     * @return The latched error code, or 0 if nothing is pending for `target`.
+     */
+    int32_t sd_card_manager_TakeAsyncError(sd_card_manager_reply_target_t target);
+
     /* Provide C++ Compatibility */
 #ifdef __cplusplus
 }

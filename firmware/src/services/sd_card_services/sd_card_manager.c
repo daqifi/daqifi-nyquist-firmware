@@ -409,6 +409,67 @@ typedef struct {
 sd_card_manager_context_t gSDCardData;
 sd_card_manager_settings_t *gpSDCardSettings;
 
+/* #914: file-scope so both the open-failure path (below) and the mid-transfer
+ * read-error path (the READ_FROM_FILE case, further down) send the identical
+ * literal instead of each carrying its own copy. Flash-resident string
+ * literals; safe to hand out from either site because the reply path COPIES
+ * (DataReadyCB hands the pointer to sd_reply_write_usb/_tcp, which write into
+ * their own buffers rather than DMA-ing from the caller's) -- same reasoning
+ * as the SD:LISt? end markers above. */
+static const char eofMarker[] = "__END_OF_FILE__";
+/* #725: mid-transfer failure terminator, reused by #914 for an open failure
+ * too. Distinct from the EOF marker so a host can tell "complete" from
+ * "aborted / never started" -- both cases mean the same thing to a client
+ * ("discard whatever arrived, this is not a file"), so one wire vocabulary
+ * serves both rather than adding a third marker for open failure alone. WHICH
+ * failure occurred is carried by the SCPI error queue (see
+ * sd_card_manager_LatchAsyncError) and SYST:LOG?, not by the marker. */
+static const char transferErrorMarker[] = "__TRANSFER_ERROR__";
+
+/* #914: one-deep latch for a failure the SD TASK detects AFTER the SCPI
+ * handler that armed the operation has already returned SCPI_RES_OK (e.g. a
+ * GET whose file will not open). The SD task owns no scpi_t and must not
+ * touch one directly: SCPI_ErrorPush is two things at once -- an UNLOCKED
+ * mutation of the transport context's error fifo (libscpi/src/fifo.c has no
+ * locking anywhere), and a TRANSPORT WRITE (SCPI_ErrorEmit ->
+ * interface->error -> SCPI_WriteWithRetry's ~1 s retry budget). Called from
+ * here that would race the owning transport task's own queue pushes/pops
+ * (the #999 hazard class) and interleave "**ERROR: ..." into the SD reply
+ * this task is itself streaming.
+ *
+ * So this task only RECORDS the code plus which transport asked for the
+ * operation; the transport task drains it into its OWN context at the next
+ * command boundary via SCPI_DrainDeferredSdError (SCPIInterface.c), called
+ * from its own UsbCdc.c / wifi_tcp_server.c command-complete handler, before
+ * SCPI_Input. */
+static int32_t gSdAsyncError;      /* 0 = nothing pending */
+static sd_card_manager_reply_target_t gSdAsyncErrorTarget;
+
+void sd_card_manager_LatchAsyncError(int32_t scpiError,
+                                     sd_card_manager_reply_target_t target) {
+    taskENTER_CRITICAL();
+    /* Newest wins: a one-deep latch, not a queue. The failure the host just
+     * provoked is the one it is about to ask about; keeping an older code
+     * around would answer this request with a previous operation's error. */
+    gSdAsyncError = scpiError;
+    gSdAsyncErrorTarget = target;
+    taskEXIT_CRITICAL();
+}
+
+int32_t sd_card_manager_TakeAsyncError(sd_card_manager_reply_target_t target) {
+    int32_t err = 0;
+    /* Critical section, not `volatile`: an aligned 32-bit load or store is
+     * atomic on PIC32MZ, but take-and-clear is a read-modify-write and this
+     * runs on a different task from the writer (#914). */
+    taskENTER_CRITICAL();
+    if ((gSdAsyncError != 0) && (gSdAsyncErrorTarget == target)) {
+        err = gSdAsyncError;
+        gSdAsyncError = 0;
+    }
+    taskEXIT_CRITICAL();
+    return err;
+}
+
 void __attribute__((weak)) sd_card_manager_DataReadyCB(sd_card_manager_mode_t mode, uint8_t *pDataBuff, size_t dataLen) {
 
 }
@@ -932,8 +993,8 @@ done:
      * SD lockout #754 was filed for. An aborted listing therefore ends with
      * no marker at all, and that absence is the signal. */
     /* The marker is a flash-resident string literal, like the SD:GET path's
-     * __END_OF_FILE__ a few hundred lines below. That is safe here because
-     * the reply path COPIES: DataReadyCB hands the pointer to
+     * eofMarker / transferErrorMarker at file scope above. That is safe here
+     * because the reply path COPIES: DataReadyCB hands the pointer to
      * sd_reply_write_usb / _tcp, which write into their own buffers rather
      * than DMA-ing from the caller's. */
     if (sendChunk && result != SD_LISTDIR_ABORTED) {
@@ -2466,19 +2527,43 @@ void sd_card_manager_ProcessState() {
                      * SYST:STOR:SD:CRC "missing" wedge and the pre-existing
                      * latent SD:GET open-fail wedge. */
                     /* #703: for a READ (SD:GET) the host is blocked waiting for
-                     * the file bytes + __END_OF_FILE__ terminator; without a
-                     * terminator it hangs on a missing/unopenable file. Emit the
-                     * marker so the GET terminates as an empty transfer. (CRC has
-                     * no streamed terminator — its result is queried via SD:CRC?
-                     * — so only send it for READ.) */
+                     * the file bytes + a terminator; without one it hangs on a
+                     * missing/unopenable file. (CRC has no streamed terminator
+                     * — its result is queried via SD:CRC? — so only send one
+                     * for READ.)
+                     *
+                     * #914: that terminator used to be __END_OF_FILE__, which
+                     * says "the transfer ended normally and what preceded it is
+                     * the whole file". For a file that never opened, nothing
+                     * preceded it, so the host could not tell a bad path from a
+                     * genuinely empty file — the #747 signature (15-byte reply,
+                     * SYST:ERR? "No error") reachable through any unresolvable
+                     * operand, e.g. a path SD:LISt? "<dir>" printed. Send the
+                     * SAME error marker #725 uses mid-transfer: both mean "this
+                     * reply is not a file, discard it", and one vocabulary is
+                     * worth more to a client than two shades of failure. WHICH
+                     * failure is carried by the SCPI error code below and by
+                     * SYST:LOG?, which is where this project puts diagnosis. */
                     if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ) {
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                                (uint8_t*)"__END_OF_FILE__",
-                                sizeof("__END_OF_FILE__") - 1);
+                                (uint8_t*)transferErrorMarker,
+                                sizeof(transferErrorMarker) - 1);
+                        /* #914: and make it loud in the error queue. The SCPI
+                         * handler returned OK at arm time, so this is the only
+                         * chance to report it; see sd_card_manager_LatchAsyncError
+                         * for why the push itself cannot happen on this task. */
+                        sd_card_manager_LatchAsyncError(
+                                SD_ASYNC_ERR_FILE_NOT_FOUND,
+                                gpSDCardSettings->replyTarget);
                     }
                     gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
-                    LOG_E("[%s:%d]Failed to open SD Card file for reading: '%s'", __FILE__, __LINE__, gSDCardData.filePath);
+                    /* #914: name the FS error too. The marker is the coarse
+                     * class; a missing file, an unmounted volume and a handle
+                     * exhaustion all reach here, and only the log separates
+                     * them. */
+                    LOG_E("[%s:%d]Failed to open SD Card file for reading: '%s' (fs err=%d)",
+                          __FILE__, __LINE__, gSDCardData.filePath, (int)SYS_FS_Error());
                 }
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_LIST_DIRECTORY) {
                 // LIST mode doesn't need to open a file, just list the directory
@@ -3068,14 +3153,8 @@ void sd_card_manager_ProcessState() {
             TickType_t lastYieldTime = xTaskGetTickCount();
             const TickType_t yieldInterval = pdMS_TO_TICKS(1000);
 
-            // EOF marker as literal constant (safer than sprintf).
-            // Declared before the buffer-size check so the terminal bail
-            // below (#703) can also emit it.
-            static const char eofMarker[] = "__END_OF_FILE__";
-            /* #725: mid-transfer failure terminator. Distinct from the EOF
-             * marker so a host can tell "complete" from "aborted with partial
-             * data" -- see the read-error path below. */
-            static const char transferErrorMarker[] = "__TRANSFER_ERROR__";
+            // eofMarker / transferErrorMarker: file-scope now (#914), so the
+            // open-failure path above can send the same literals.
 
             // Calculate safe read size based on buffer capacity
             size_t maxRead = gSdSharedBufferSize;

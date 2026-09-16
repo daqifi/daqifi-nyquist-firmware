@@ -9149,3 +9149,32 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context,
     // Return it to the app
     return daqifiScpiContext;
 }
+
+/* #914: the SD manager's deferred error code is a plain int (sd_card_manager.h
+ * has no SCPI dependency); pin it against the real libscpi value so the two
+ * headers cannot drift apart silently. */
+_Static_assert(SD_ASYNC_ERR_FILE_NOT_FOUND == SCPI_ERROR_FILE_NAME_NOT_FOUND,
+               "#914: the SD manager's deferred code must match the libscpi one");
+
+/* #914: drain the SD task's deferred failure (see sd_card_manager_LatchAsyncError)
+ * into THIS transport's own queue.
+ *
+ * Called at the command boundary, BEFORE SCPI_Input, and that placement is
+ * load-bearing: processCommand() clears context->cmd_error on entry
+ * (libscpi/src/parser.c), so a push made here cannot make the FOLLOWING
+ * command's own SCPI_RES_OK read as a failure. Pushed from inside a callback
+ * instead it would (a set cmd_error turns SCPI_Input's result FALSE even on
+ * SCPI_RES_OK, and that FALSE is what gates USB's immediate-flush path) — so
+ * this must run once per command, ahead of dispatch, never inside one. */
+void SCPI_DrainDeferredSdError(scpi_t *context) {
+    if (context == NULL) {
+        return;
+    }
+    const sd_card_manager_reply_target_t target =
+            wifi_tcp_server_ContextIsTcp(context) ? SD_CARD_REPLY_WIFI_TCP
+                                                  : SD_CARD_REPLY_USB;
+    const int32_t err = sd_card_manager_TakeAsyncError(target);
+    if (err != 0) {
+        SCPI_ErrorPush(context, (int16_t)err);
+    }
+}
