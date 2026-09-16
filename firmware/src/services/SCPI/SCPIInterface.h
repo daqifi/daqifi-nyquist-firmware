@@ -206,9 +206,9 @@ extern "C" {
      * interface->write() implementations call this first, so a pending ';'
      * lands ahead of the unit's own first byte regardless of whether that
      * byte comes from SCPI_ResultXxx() or a callback writing straight to
-     * interface->write() (SD:LIST?, SYST:LOG?, and the rest of the ~20
-     * direct-write query callbacks). A unit whose callback fails before
-     * writing anything never reaches here; SCPI_ErrorEmit() (error.c)
+     * interface->write() (SYSTem:STORage:SD:LISt?, SYST:LOG?, and the rest
+     * of the ~20 direct-write query callbacks). A unit whose callback fails
+     * before writing anything never reaches here; SCPI_ErrorEmit() (error.c)
      * discards the armed flag instead.
      * @param context SCPI context (its pending_delimiter field is consumed)
      * @param writeFn Transport write function (USB or WiFi buffer write)
@@ -220,6 +220,25 @@ extern "C" {
      */
     size_t SCPI_FlushPendingDelimiter(scpi_t * context, ScpiTransportWriteFn writeFn,
                                        size_t nextWriteLen);
+
+    /*!
+     * #1003/#1010 round 1 (Qodo /agentic_review, "Storage failures still
+     * add blank lines"): track whether the wire currently ends in
+     * SCPI_LINE_ENDING, for SCPI_ErrorEmit() (error.c) to read as
+     * context->line_open. Both transports' interface->write()
+     * implementations call this AFTER their real payload write (never for
+     * the ';' SCPI_FlushPendingDelimiter() may have just written -- that
+     * never ends in a terminator, and the payload write that follows always
+     * determines the final state). Checked against the caller's own `data`/
+     * `len`, not SCPI_WriteWithRetry()'s return count: a persistent short
+     * write is an existing, untracked failure mode elsewhere in this file
+     * (SCPI_USB_Error/SCPI_TCP_Error tolerate it the same way) and is not
+     * this function's job to newly detect.
+     * @param context SCPI context (its line_open field is written)
+     * @param data The bytes just written (same pointer passed to write())
+     * @param len Length of data; 0 is a no-op (nothing changed on the wire)
+     */
+    void SCPI_TrackLineOpen(scpi_t * context, const char * data, size_t len);
 
     /**
      * Printf-style helper for writing formatted text to a SCPI response.

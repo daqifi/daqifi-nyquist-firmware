@@ -1200,9 +1200,15 @@ static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len) {
      * (SCPI_FlushPendingDelimiter, SCPIInterface.c) ahead of this unit's
      * own output, whether that output is about to arrive via
      * SCPI_ResultXxx() or straight through this call, as several
-     * registered query callbacks (SD:LIST?, SYST:LOG?, ...) do. */
+     * registered query callbacks (SYSTem:STORage:SD:LISt?, SYST:LOG?, ...)
+     * do. */
     SCPI_FlushPendingDelimiter(context, UsbCdc_ScpiWrite, len);
-    return SCPI_WriteWithRetry(UsbCdc_ScpiWrite, data, len);
+    size_t written = SCPI_WriteWithRetry(UsbCdc_ScpiWrite, data, len);
+    /* #1003/#1010 round 1: record whether the wire now ends in a line
+     * terminator, for SCPI_ErrorEmit() (error.c) to read before deciding
+     * whether an error needs its own closing line first. */
+    SCPI_TrackLineOpen(context, data, len);
+    return written;
 }
 
 /**

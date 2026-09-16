@@ -588,6 +588,13 @@ $(SCPI1003_BIN): test_1003_1010_compound_error_line.c test_framework.h \
 	       echo "       reverted or reshaped? test_1003_1010_compound_error_line.c's"; \
 	       echo "       TestWrite() mock assumes this exact field."; \
 	       exit 1; }
+	@grep -qE 'line_open' $(LIBSCPI_DIR)/inc/scpi/types.h \
+	  || { echo "ERROR: scpi_t no longer has a line_open field in"; \
+	       echo "       $(LIBSCPI_DIR)/inc/scpi/types.h -- has #1003/#1010's round-1 fix"; \
+	       echo "       (Qodo /agentic_review, 'Storage failures still add blank lines')"; \
+	       echo "       been reverted or reshaped? test_1003_1010_compound_error_line.c's"; \
+	       echo "       TestWrite() mock assumes this exact field."; \
+	       exit 1; }
 	@# Comments are stripped from each extracted body before the containment
 	@# grep below (same technique check_999_createscpicontext_wiring.sh uses,
 	@# and for the same reason): every one of these three functions' bodies
@@ -607,6 +614,17 @@ $(SCPI1003_BIN): test_1003_1010_compound_error_line.c test_framework.h \
 	   || { echo "ERROR: SCPI_FlushPendingDelimiter() in $(SCPI_INTERFACE_C) no longer"; \
 	        echo "       reads pending_delimiter -- has #1003/#1010's fix been reshaped?"; \
 	        exit 1; }
+	@tlobody=`sed -n '/^void SCPI_TrackLineOpen(/,/^}/p' $(SCPI_INTERFACE_C) \
+	        | sed -E 's@//.*$$@@' | perl -0pe 's{/\*.*?\*/}{}gs'`; \
+	 test -n "$$tlobody" \
+	   || { echo "ERROR: SCPI_TrackLineOpen() was not found in $(SCPI_INTERFACE_C), or no"; \
+	        echo "       longer opens at column 0 -- the guard below can see nothing, and"; \
+	        echo "       a guard that examines nothing must fail."; \
+	        exit 1; }; \
+	 printf '%s\n' "$$tlobody" | grep -qF 'line_open' \
+	   || { echo "ERROR: SCPI_TrackLineOpen() in $(SCPI_INTERFACE_C) no longer writes"; \
+	        echo "       line_open -- has #1003/#1010's round-1 fix been reshaped?"; \
+	        exit 1; }
 	@usbbody=`sed -n '/^static size_t SCPI_USB_Write(/,/^}/p' $(USBCDC_SRC) \
 	           | sed -E 's@//.*$$@@' | perl -0pe 's{/\*.*?\*/}{}gs'`; \
 	 test -n "$$usbbody" \
@@ -619,6 +637,11 @@ $(SCPI1003_BIN): test_1003_1010_compound_error_line.c test_framework.h \
 	        echo "       fix would no longer apply to the USB transport, and"; \
 	        echo "       test_1003_1010_compound_error_line.c's mock would be testing a"; \
 	        echo "       mechanism production has stopped wiring up."; \
+	        exit 1; }; \
+	 printf '%s\n' "$$usbbody" | grep -qF 'SCPI_TrackLineOpen' \
+	   || { echo "ERROR: SCPI_USB_Write() in $(USBCDC_SRC) no longer calls"; \
+	        echo "       SCPI_TrackLineOpen() outside a comment -- #1003/#1010's round-1 fix"; \
+	        echo "       would no longer apply to the USB transport."; \
 	        exit 1; }
 	@tcpbody=`sed -n '/^static size_t SCPI_TCP_Write(/,/^}/p' $(WIFI_TCP_SRC) \
 	           | sed -E 's@//.*$$@@' | perl -0pe 's{/\*.*?\*/}{}gs'`; \
@@ -632,6 +655,11 @@ $(SCPI1003_BIN): test_1003_1010_compound_error_line.c test_framework.h \
 	        echo "       fix would no longer apply to the TCP transport, and"; \
 	        echo "       test_1003_1010_compound_error_line.c's mock would be testing a"; \
 	        echo "       mechanism production has stopped wiring up."; \
+	        exit 1; }; \
+	 printf '%s\n' "$$tcpbody" | grep -qF 'SCPI_TrackLineOpen' \
+	   || { echo "ERROR: SCPI_TCP_Write() in $(WIFI_TCP_SRC) no longer calls"; \
+	        echo "       SCPI_TrackLineOpen() outside a comment -- #1003/#1010's round-1 fix"; \
+	        echo "       would no longer apply to the TCP transport."; \
 	        exit 1; }
 	$(CC) $(CFLAGS) -DUSE_DEVICE_DEPENDENT_ERROR_INFORMATION=0 -I$(LIBSCPI_DIR)/inc \
 	    -o $(SCPI1003_BIN) test_1003_1010_compound_error_line.c $(LIBSCPI_SRCS) -lm

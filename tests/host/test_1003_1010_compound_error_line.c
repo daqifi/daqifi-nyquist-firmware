@@ -44,10 +44,26 @@
  *     (SCPIInterface.c), which both transports' interface->write()
  *     implementations (SCPI_USB_Write, SCPI_TCP_Write) call before their own
  *     payload. That covers a query's SCPI_ResultXxx() output AND a
- *     callback's direct interface->write() calls (SD:LIST?, SYST:LOG?, and
- *     the rest of the ~20 direct-write query callbacks) with the SAME
- *     mechanism, so the compound separator lands correctly for either shape
- *     without auditing each callback individually.
+ *     callback's direct interface->write() calls (SYSTem:STORage:SD:LISt?,
+ *     SYST:LOG?, and the rest of the ~20 direct-write query callbacks) with
+ *     the SAME mechanism, so the compound separator lands correctly for
+ *     either shape without auditing each callback individually.
+ *
+ * Round 1 fix (Qodo /agentic_review on this PR, "Storage failures still add
+ * blank lines"): the FIRST cut of the above used !first_output, not
+ * line_open, to decide whether an error needs a closing line first --
+ * first_output answers "has ANY unit in this compound message produced
+ * output yet" (message-level), which is the wrong question for THIS
+ * decision. A direct-write callback that closes its OWN line before raising
+ * (SCPIStorageSD.c's SCPI_CheckSDCardPresent() writes a message that already
+ * ends "\r\n", then pushes an error) was still seeing first_output FALSE
+ * from an EARLIER, unrelated unit's still-open result, and got a second,
+ * spurious "\r\n" inserted ahead of its already-terminated diagnostic. New
+ * scpi_t.line_open, tracked at the same transport-write funnel
+ * (SCPI_TrackLineOpen(), called after the real payload write) answers the
+ * narrower, correct question -- does the wire right now end in a terminator
+ * -- for BOTH write shapes. See TestTerminatedFailQuery() below, which
+ * mirrors SCPI_CheckSDCardPresent()'s exact shape.
  *
  * Host-testability: same situation as #999's own test (see that file's
  * header) -- SCPIInterface.c, UsbCdc.c and wifi_tcp_server.c are not
@@ -77,8 +93,8 @@
 #include "scpi/scpi.h"
 
 /* ---- minimal scpi_interface_t: mirrors the #1003/#1010 fix's transport
- * side (SCPI_USB_Write/SCPI_TCP_Write + SCPI_FlushPendingDelimiter), capture
- * everything else ------------------------------------------------------- */
+ * side (SCPI_USB_Write/SCPI_TCP_Write + SCPI_FlushPendingDelimiter +
+ * SCPI_TrackLineOpen), capture everything else --------------------------- */
 
 #define CAPTURE_SIZE 512
 
@@ -108,6 +124,18 @@ static size_t TestWrite(scpi_t * context, const char * data, size_t len) {
         }
         memcpy(cap->data + cap->len, data, n);
         cap->len += n;
+    }
+    /* Mirrors SCPI_TrackLineOpen() (SCPIInterface.c) exactly, against the
+     * SAME data/len this call received -- not whatever SCPI_FlushPending
+     * Delimiter() wrote above (the ';' never ends in a terminator, and this
+     * payload write always determines the final state). */
+    if (len > 0) {
+        size_t termLen = strlen(SCPI_LINE_ENDING);
+        if (len >= termLen && memcmp(data + len - termLen, SCPI_LINE_ENDING, termLen) == 0) {
+            context->line_open = FALSE;
+        } else {
+            context->line_open = TRUE;
+        }
     }
     return len;
 }
@@ -171,12 +199,18 @@ static scpi_interface_t gTestInterface = {
  *                 (SYSTem:COMMunicate:LAN:MAC with a bad value).
  * TEST:DIRECT? -- succeeds by writing straight through
  *                 context->interface->write(), bypassing SCPI_ResultXxx() --
- *                 the shape SD:LIST?, SYST:LOG? and ~18 other registered
- *                 query callbacks use, and exactly the shape that broke a
- *                 round-1 attempt at this fix (moving the ';' write into
- *                 SCPI_ResultXxx()'s own delimiter helper silently dropped
- *                 it for every one of these). This fix's flush point
- *                 (interface->write() itself) does not have that gap.
+ *                 the shape SYSTem:STORage:SD:LISt?, SYST:LOG? and ~18 other
+ *                 registered query callbacks use, and exactly the shape that
+ *                 broke a round-1 attempt at this fix (moving the ';' write
+ *                 into SCPI_ResultXxx()'s own delimiter helper silently
+ *                 dropped it for every one of these). This fix's flush
+ *                 point (interface->write() itself) does not have that gap.
+ * TEST:TERMFAIL? -- mirrors SCPIStorageSD.c's SCPI_CheckSDCardPresent()
+ *                 exactly: writes an ALREADY CRLF-terminated diagnostic
+ *                 straight through interface->write(), then pushes an
+ *                 error. Regression case for this PR's own round-1 Qodo
+ *                 finding ("Storage failures still add blank lines") --
+ *                 see line_open in types.h/error.c.
  * ------------------------------------------------------------------------- */
 static scpi_result_t TestOkQuery(scpi_t * context) {
     SCPI_ResultCharacters(context, "OK", 2);
@@ -198,11 +232,20 @@ static scpi_result_t TestDirectQuery(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+#define TEST_TERMFAIL_MSG "\r\nError !! Diagnostic\r\n"
+
+static scpi_result_t TestTerminatedFailQuery(scpi_t * context) {
+    context->interface->write(context, TEST_TERMFAIL_MSG, strlen(TEST_TERMFAIL_MSG));
+    SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    return SCPI_RES_ERR;
+}
+
 static const scpi_command_t gTestCommands[] = {
     {.pattern = "*OK?", .callback = TestOkQuery},
     {.pattern = "TEST:FAIL?", .callback = TestFailQuery},
     {.pattern = "TEST:FAILSET", .callback = TestFailSet},
     {.pattern = "TEST:DIRECT?", .callback = TestDirectQuery},
+    {.pattern = "TEST:TERMFAIL?", .callback = TestTerminatedFailQuery},
     SCPI_CMD_LIST_END,
 };
 
@@ -287,6 +330,35 @@ TEST(undefined_header_after_success_terminates_cleanly) {
     FeedLine(&ctx, "*OK?;NOSUCH:HEADER?");
 
     ASSERT_CAPTURE_EQ("OK\r\n**ERROR: -113, \"Undefined header\"\r\n");
+}
+
+/* ---- round-1 Qodo finding: a direct writer that already terminates its
+ * own diagnostic before raising must not get a second, spurious blank line
+ * from an EARLIER, unrelated unit's still-open result. Mirrors
+ * SCPIStorageSD.c's SCPI_CheckSDCardPresent() exactly. ------------------- */
+
+TEST(terminated_direct_write_failure_after_success_has_no_blank_line) {
+    NEW_TEST_CONTEXT(ctx);
+
+    FeedLine(&ctx, "*OK?;TEST:TERMFAIL?");
+
+    /* *OK? left first_output FALSE (its own "OK" is still awaiting the
+     * deferred end-of-message newline) but the wire is now properly closed
+     * -- TEST:TERMFAIL? closed ITS OWN line before raising. A first-cut fix
+     * keyed on !first_output would have inserted a second "\r\n" here,
+     * between the diagnostic and the error line. */
+    ASSERT_CAPTURE_EQ("OK;" TEST_TERMFAIL_MSG "**ERROR: -200, \"Execution error\"\r\n");
+}
+
+TEST(terminated_direct_write_failure_as_single_command_unchanged) {
+    NEW_TEST_CONTEXT(ctx);
+
+    FeedLine(&ctx, "TEST:TERMFAIL?");
+
+    /* Single-command control: no earlier unit, first_output was already
+     * TRUE, so this shape was never broken by the round-1 finding -- pinned
+     * anyway so a future change to line_open can't quietly break it. */
+    ASSERT_CAPTURE_EQ(TEST_TERMFAIL_MSG "**ERROR: -200, \"Execution error\"\r\n");
 }
 
 /* ---- #1003 acceptance: "the single-command case is unchanged" ---------- */
@@ -379,6 +451,8 @@ int main(void) {
     RUN(query_fails_after_success_terminates_cleanly);
     RUN(command_fails_after_success_gets_a_separator);
     RUN(undefined_header_after_success_terminates_cleanly);
+    RUN(terminated_direct_write_failure_after_success_has_no_blank_line);
+    RUN(terminated_direct_write_failure_as_single_command_unchanged);
     RUN(single_command_error_is_unchanged);
     RUN(two_successful_queries_keep_semicolon_mediated_path);
     RUN(two_successful_queries_keep_semicolon_direct_write_path);

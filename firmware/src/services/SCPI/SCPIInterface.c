@@ -9117,6 +9117,20 @@ size_t SCPI_FlushPendingDelimiter(scpi_t * context, ScpiTransportWriteFn writeFn
     return 0;
 }
 
+void SCPI_TrackLineOpen(scpi_t * context, const char * data, size_t len) {
+    size_t termLen = strlen(SCPI_LINE_ENDING);
+    if (len == 0) {
+        /* Nothing written; the wire's terminator state is unchanged either
+         * way. */
+        return;
+    }
+    if (len >= termLen && memcmp(data + len - termLen, SCPI_LINE_ENDING, termLen) == 0) {
+        context->line_open = FALSE;
+    } else {
+        context->line_open = TRUE;
+    }
+}
+
 scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context,
                          ScpiContextStorage* storage) {
     // Defense in depth: SCPI_ResponseBuf_Init() is supposed to have been

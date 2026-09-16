@@ -442,6 +442,24 @@ extern "C" {
          * this stays armed and is discarded by SCPI_ErrorEmit() (error.c)
          * instead of ever reaching the wire. */
         scpi_bool_t pending_delimiter;
+        /* #1003/#1010 (Qodo /agentic_review round 1, "Storage failures
+         * still add blank lines"): TRUE iff the most recent byte(s) written
+         * to the wire do NOT already end in SCPI_LINE_ENDING -- i.e. there
+         * is currently open, unterminated content. Tracked at the SAME
+         * transport-write funnel as pending_delimiter (SCPIInterface.c's
+         * SCPI_USB_Write/SCPI_TCP_Write, right after the real payload write)
+         * so it is accurate for BOTH a query's SCPI_ResultXxx() output
+         * (never self-terminated) and a callback's direct interface->write()
+         * call (SOMETIMES self-terminated -- e.g. SCPIStorageSD.c's
+         * SD_CARD_NOT_PRESENT_ERROR_MSG already ends "\r\n" before its
+         * caller pushes an error). SCPI_ErrorEmit() (error.c) reads this,
+         * not first_output, to decide whether an error needs a closing line
+         * ending first: first_output answers "has ANY unit in this compound
+         * message produced output yet" (message-level, drives the deferred
+         * end-of-message writeNewLine()), which is the wrong question here
+         * -- a direct writer can close its OWN line while first_output is
+         * still FALSE from an EARLIER unit's still-open result. */
+        scpi_bool_t line_open;
         scpi_fifo_t error_queue;
 #if USE_DEVICE_DEPENDENT_ERROR_INFORMATION && !USE_MEMORY_ALLOCATION_FREE
         scpi_error_info_heap_t error_info_heap;

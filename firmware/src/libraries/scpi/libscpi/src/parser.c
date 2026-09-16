@@ -100,14 +100,19 @@ static size_t writeNewLine(scpi_t * context) {
 #endif
         len = writeData(context, SCPI_LINE_ENDING, strlen(SCPI_LINE_ENDING));
         flushData(context);
-        /* #1003/#1010: re-arm so first_output correctly reads "nothing
-         * unterminated pending" between this SCPI_Parse() and the next.
-         * Without this, an error raised outside a parse (e.g. SCPI_Input()'s
-         * input-buffer-overrun push) would see the stale FALSE this parse
-         * leaves behind and have SCPI_ErrorEmit() (error.c) prefix it with a
-         * spurious blank line. SCPI_Parse() still resets both flags itself
-         * at the start of every top-level parse regardless. */
+        /* #1003/#1010: re-arm so first_output/line_open correctly read
+         * "nothing unterminated pending" between this SCPI_Parse() and the
+         * next. Without this, an error raised outside a parse (e.g.
+         * SCPI_Input()'s input-buffer-overrun push) would see the stale
+         * state this parse leaves behind and have SCPI_ErrorEmit() (error.c)
+         * prefix it with a spurious blank line. SCPI_Parse() still resets
+         * both flags itself at the start of every top-level parse
+         * regardless. This write always emits exactly SCPI_LINE_ENDING, so
+         * line_open can be set directly rather than routed through the
+         * firmware-side byte-inspecting tracker (SCPIInterface.c's
+         * SCPI_USB_Write/SCPI_TCP_Write) that vendored libscpi cannot call. */
         context->first_output = TRUE;
+        context->line_open = FALSE;
         return len;
     } else {
         return 0;
@@ -218,6 +223,7 @@ scpi_bool_t SCPI_Parse(scpi_t * context, char * data, int len) {
     context->output_count = 0;
     context->first_output = TRUE;
     context->pending_delimiter = FALSE;
+    context->line_open = FALSE;
 
     while (1) {
         r = scpiParser_detectProgramMessageUnit(state, data, len);
