@@ -409,21 +409,27 @@ typedef struct {
 sd_card_manager_context_t gSDCardData;
 sd_card_manager_settings_t *gpSDCardSettings;
 
-/* #914: file-scope so both the open-failure path (below) and the mid-transfer
- * read-error path (the READ_FROM_FILE case, further down) send the identical
- * literal instead of each carrying its own copy. Flash-resident string
- * literals; safe to hand out from either site because the reply path COPIES
- * (DataReadyCB hands the pointer to sd_reply_write_usb/_tcp, which write into
- * their own buffers rather than DMA-ing from the caller's) -- same reasoning
- * as the SD:LISt? end markers above. */
+/* #914: file-scope so the open-failure path (below) and the READ_FROM_FILE
+ * paths (further down) send the identical literal instead of each carrying its
+ * own copy. Flash-resident string literals; safe to hand out from either site
+ * because the reply path COPIES (DataReadyCB hands the pointer to
+ * sd_reply_write_usb/_tcp, which write into their own buffers rather than
+ * DMA-ing from the caller's) -- same reasoning as the SD:LISt? end markers
+ * above.
+ *
+ * eofMarker ends every SD:GET reply that sent either all of its content or
+ * none: a complete file, a genuinely empty file, and -- see the open-failure
+ * block below -- a file that never opened. */
 static const char eofMarker[] = "__END_OF_FILE__";
-/* #725: mid-transfer failure terminator, reused by #914 for an open failure
- * too. Distinct from the EOF marker so a host can tell "complete" from
- * "aborted / never started" -- both cases mean the same thing to a client
- * ("discard whatever arrived, this is not a file"), so one wire vocabulary
- * serves both rather than adding a third marker for open failure alone. WHICH
- * failure occurred is carried by the SCPI error queue (see
- * sd_card_manager_LatchAsyncError) and SYST:LOG?, not by the marker. */
+/* #725: the MID-TRANSFER failure terminator, and only that. It exists for the
+ * one case where a plain EOF would be a lie with consequences: content has
+ * already streamed, so EOF would hand the host a TRUNCATED file that looks
+ * complete -- on a data-acquisition product, the tail of a measurement lost
+ * silently. It is deliberately NOT sent for an open failure, where nothing has
+ * gone out and that argument has no purchase; see the open-failure block for
+ * why sending it there is actively harmful. WHICH failure occurred is carried
+ * by the SCPI error queue (sd_card_manager_LatchAsyncError) and SYST:LOG?, not
+ * by the marker. */
 static const char transferErrorMarker[] = "__TRANSFER_ERROR__";
 
 /* #914: per-transport, one-deep latch for a failure the SD TASK detects AFTER
@@ -2624,19 +2630,61 @@ void sd_card_manager_ProcessState() {
                      * — its result is queried via SD:CRC? — so only send one
                      * for READ.)
                      *
-                     * #914: that terminator used to be __END_OF_FILE__, which
-                     * says "the transfer ended normally and what preceded it is
-                     * the whole file". For a file that never opened, nothing
-                     * preceded it, so the host could not tell a bad path from a
-                     * genuinely empty file — the #747 signature (15-byte reply,
-                     * SYST:ERR? "No error") reachable through any unresolvable
-                     * operand, e.g. a path SD:LISt? "<dir>" printed. Send the
-                     * SAME error marker #725 uses mid-transfer: both mean "this
-                     * reply is not a file, discard it", and one vocabulary is
-                     * worth more to a client than two shades of failure. WHICH
-                     * failure is carried by the SCPI error code below (three-way:
-                     * see SdAsyncErrorForFsError) and by SYST:LOG?, which is
-                     * where this project puts diagnosis. */
+                     * #914: that terminator STAYS __END_OF_FILE__. What #914
+                     * adds is the deferred SCPI error below, which is where
+                     * this project puts errors ("All errors go through the
+                     * error logging function and are never sent out in the
+                     * stream", CLAUDE.md Standing Rules).
+                     *
+                     * An earlier revision of this fix sent __TRANSFER_ERROR__
+                     * here so an open failure and a mid-transfer read error
+                     * would share one wire vocabulary. That is wrong for THIS
+                     * call site, for three reasons:
+                     *
+                     * 1. It converts a wrong answer into a HANG for every
+                     *    Python client. daqifi-python-core contains no
+                     *    "__TRANSFER_ERROR__" literal anywhere: device.py's
+                     *    sd_get_file() / sd_get_file_binary() and sdcard.py's
+                     *    SdCardFileReceiver.receive() each block scanning for
+                     *    __END_OF_FILE__ alone, so the other marker unblocks
+                     *    nothing -- 30 s for the first two, 30 MINUTES for the
+                     *    receiver. Before #914 this path already sent a
+                     *    terminator all of them recognise. Replacing it breaks
+                     *    the very property #914 is for ("the host is not left
+                     *    waiting"). The mid-transfer site is NOT in that
+                     *    position: its only alternatives are silence or a lie,
+                     *    so its marker stays.
+                     * 2. Nothing has been sent yet. The mid-transfer marker
+                     *    exists because a plain EOF AFTER partial data makes a
+                     *    truncated file look complete. Here the reply is zero
+                     *    bytes long: there is no tail to lose.
+                     * 3. It is the wrong channel, and it carries less. The
+                     *    marker is framing; the deferred error below separates
+                     *    a bad name (-256/-257) from unusable storage (-250),
+                     *    which no second marker could express.
+                     *
+                     * So the wire for an open failure is byte-for-byte what it
+                     * was before #914 -- one bare __END_OF_FILE__, no content
+                     * -- and the #747 ambiguity ("empty file, or no file?") is
+                     * closed one layer up: the owning transport announces
+                     * `**ERROR: -256, "File name not found"` unprompted at its
+                     * next command boundary (SCPI_DrainDeferredSdError,
+                     * SCPIInterface.c), where pre-#914 firmware left SYST:ERR?
+                     * reading 0,"No error". A zero-length reply is not silent
+                     * on the wire either, to a client that knows the listed
+                     * size: daqifi-core's SdCardFileReceiver throws
+                     * SdCardEmptyTransferException on an EOF with no preceding
+                     * bytes unless the listing says the file really is empty.
+                     *
+                     * Do NOT "fix" this by sending BOTH markers. A receiver
+                     * that scans for both stops at the FIRST one and does not
+                     * consume the rest (daqifi-core returns or throws the
+                     * moment FindTerminalMarker hits), so the second marker is
+                     * either left in the transport to corrupt the NEXT reply or
+                     * silently dropped, depending on how the two writes land in
+                     * the peer's read chunks -- nondeterministic corruption.
+                     * And EOF first is worse still: earliest-match then reports
+                     * a clean empty transfer, and #747 is back. */
 
                     /* #914: name the exact FS error in the log, and do it
                      * BEFORE the marker goes out. The SCPI code below now
@@ -2655,7 +2703,7 @@ void sd_card_manager_ProcessState() {
                          * transport write and yields, and on USB the draining
                          * task OUTRANKS this one (app_USBDeviceTask pri 7 vs
                          * app_SDCardTask pri 5, docs/MCU_REFERENCE.md). With
-                         * the latch second, a host that saw __TRANSFER_ERROR__
+                         * the latch second, a host that saw the terminator
                          * and immediately asked SYST:ERR? could be answered
                          * "No error" -- marker out, latch not yet written --
                          * which is the #747 signature this fix exists to
@@ -2685,8 +2733,7 @@ void sd_card_manager_ProcessState() {
                                 SdAsyncErrorForFsError(openFsError),
                                 replyTarget, replyGeneration);
                         sd_card_manager_DataReadyCB(SD_CARD_MANAGER_MODE_READ,
-                                (uint8_t*)transferErrorMarker,
-                                sizeof(transferErrorMarker) - 1);
+                                (uint8_t*)eofMarker, sizeof(eofMarker) - 1);
                     }
                     gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                     gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_ERROR;
@@ -3280,7 +3327,9 @@ void sd_card_manager_ProcessState() {
             const TickType_t yieldInterval = pdMS_TO_TICKS(1000);
 
             // eofMarker / transferErrorMarker: file-scope now (#914), so the
-            // open-failure path above can send the same literals.
+            // open-failure path above can send eofMarker without a second copy
+            // of the literal. transferErrorMarker is used only here, in the
+            // mid-transfer read-error case.
 
             // Calculate safe read size based on buffer capacity
             size_t maxRead = gSdSharedBufferSize;
