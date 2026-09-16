@@ -2426,11 +2426,24 @@ static inline void StreamFreq_Set(StreamingRuntimeConfig* c, uint64_t f) {
 /* #850: the shared refusal. SCPI_StartStreaming does NOT go through the
  * runner (it must parse before claiming -- see its wrapper), so without this
  * the two refusal sites would drift apart and an operator could not tell them
- * apart in the log. */
+ * apart in the log.
+ *
+ * #977: STREAM_START_CLAIM_BUSY now also means "a guarded config change holds
+ * the interlocked claim", so the wording names both holders. Which one it was
+ * is logged by Streaming_BeginSessionStart one line earlier (streaming.c), the
+ * same arrangement SCPI_RejectCfgClaim uses on the other side. The error code
+ * is unchanged: -200, which is what the arm-time cfgChanging refusal this
+ * supersedes already answered -- the difference is that the refusal now lands
+ * before PrepareStreamingBuffers instead of after it. */
 static scpi_result_t SCPI_RefuseSessionStartBusy(scpi_t * context,
                                                  const char *what) {
-    LOG_E("%s refused (#850): another streaming session start is in "
-          "flight on the other SCPI transport. Retry.", what);
+    /* 105 characters at the longest `what` this is called with
+     * ("SYSTem:STReam:THRoughput", 24), against Logger.c's usable 125.
+     * "on the other SCPI transport" was dropped to fit rather than "Retry.":
+     * the remedy is the actionable half, and WHICH transport holds it is in
+     * the Streaming_Begin* line this one follows. */
+    LOG_E("%s refused (#850/#977): another session start or config change is "
+          "in flight. Retry.", what);
     SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
     return SCPI_RES_ERR;
 }
@@ -6948,18 +6961,32 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
  * BoardRunTimeConfig_Get. Stated because they are NEW parameters, and an
  * unexplained absence reads as an oversight.
  *
- * NOT CLOSED HERE, and pre-existing rather than introduced. SYST:STR:THRoughput
- * and the WiFi rate finder call PrepareStreamingBuffers BEFORE they observe the
- * claim (SCPIInterface.c -- the prepare, then the arm-time critical section), so
- * a SYST:MEM:AUTO holding the claim can still be re-partitioning while one of
- * them partitions too. The old && guard admitted exactly the same overlap, so
- * this is unchanged by the conversion, and the outcome is strictly better: the
- * arm now sees the claim and refuses instead of arming onto a pool being
- * re-carved. Making it airtight needs those two to TAKE the claim rather than
- * observe it, which they cannot do as written -- they would then read their own
- * claim at the arm and refuse themselves. What the claim does close outright is
- * two SYST:MEM:AUTO commands racing each other: the loser now gets
- * STREAM_CFG_CLAIM_BUSY instead of a second concurrent re-partition.
+ * CLOSED BY #977, and the shape of the fix is worth recording because #857 got
+ * as far as naming the hole and then ruled out the only fix it could see.
+ *
+ * What #857 left open: SYST:STR:THRoughput and the WiFi rate finder call
+ * PrepareStreamingBuffers BEFORE they observe the claim (the prepare, then the
+ * arm-time critical section), so a SYST:MEM:AUTO holding the claim could still
+ * be re-partitioning while one of them partitioned too -- and SCPI_StartStreaming
+ * has the same ordering. The old && guard admitted the identical overlap, so the
+ * conversion neither introduced nor widened it.
+ *
+ * Why the fix #857 considered was correctly rejected: making those commands TAKE
+ * this claim does not work, because they would then read their own claim at the
+ * arm (Streaming_ConfigChangeInProgress) and refuse themselves unconditionally.
+ * That reasoning still holds, and it is why #977 did NOT merge the two claims.
+ *
+ * What #977 did instead: INTERLOCK them. Streaming_BeginConfigChange now also
+ * refuses while the session-start claim is held, and Streaming_BeginSessionStart
+ * refuses while this one is. The two Begins exclude each other; neither takes
+ * the other's claim, so nothing reads its own. Streaming_ConfigChangeInProgress
+ * keeps meaning "a CONFIG change is in flight" and the three arm sites keep
+ * reading it -- now as a second line of defence rather than the only one.
+ *
+ * So all four PrepareStreamingBuffers callers are now mutually exclusive: the
+ * three arm sites through the session-start claim (#850), SYST:MEM:AUTO and
+ * SYST:MEM:RESet through this one, and the two groups against each other
+ * through the interlock. tools/lint/scpi_claim_path.py property 5 gates it.
  */
 static scpi_result_t SCPI_MemRunClaimed(scpi_t * context,
                                         scpi_result_t (*body)(scpi_t *),
@@ -7361,17 +7388,23 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
      *
      * READ AND USE ARE ADJACENT ON PURPOSE, and an earlier revision of this
      * commit had them sixty lines apart, up beside the other partition
-     * checks. That grouping reads better and is wrong: `PrepareStreamingBuffers`
-     * releases the SD buffer lock partway down, and the session-start claim the
-     * bench and the finder hold (`Streaming_BeginSessionStart`) does NOT
-     * interlock with the config-change claim `SYSTem:MEMory:AUTO` takes
-     * (`Streaming_BeginConfigChange` tests IsEnabled/Running and gCfgChangeBusy,
-     * never gSessionStartBusy). Neither is armed yet at this point in the
-     * finder's preparation, so an AUTO on the other transport CAN take its
-     * claim and re-partition in between -- and the wider that gap, the more of
-     * it there is to land in. Keeping the fetch next to the install does not
-     * close that race (it is pre-existing and covers this whole function --
-     * filed as #977); it declines to widen it.
+     * checks. That grouping reads better and was wrong at the time:
+     * `PrepareStreamingBuffers` releases the SD buffer lock partway down, and
+     * the session-start claim the bench and the finder hold
+     * (`Streaming_BeginSessionStart`) did NOT interlock with the config-change
+     * claim `SYSTem:MEMory:AUTO` takes, so an AUTO on the other transport could
+     * take its claim and re-partition in between -- and the wider that gap, the
+     * more of it there was to land in. #950 declined to widen a race it could
+     * not close; #977 then closed it, by making each claim's Begin refuse while
+     * the other is held (streaming.c), so no second caller can enter this
+     * function while one is inside it.
+     *
+     * They stay adjacent anyway. The interlock excludes the OTHER SCPI
+     * transport, not a future in-function yield: this function calls vTaskDelay
+     * in three places, and a fetch sixty lines above its use would once again
+     * be a value read before waits and used after them. Adjacency is cheap and
+     * is the property that does not depend on the claim structure staying as it
+     * is.
      *
      * It also invalidates as it refuses: returning here without that would
      * leave the PREVIOUS partition's pool live, which is the state the other
