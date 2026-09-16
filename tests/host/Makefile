@@ -872,6 +872,76 @@ $(DAC1057_BIN): test_1057_dac7718_wait_stat.c test_framework.h $(DAC7718_SRC) $(
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(DAC1057_BIN) test_1057_dac7718_wait_stat.c
 
+# #1096 (Qodo finding on PR #1096): SCPI_FinishDirectResult -- a direct-writing
+# query callback now states, per write, whether it left the wire terminated, so
+# a synchronous error can neither gain a blank line nor be glued onto a mid-line
+# fragment. Same build shape as SCPI999_BIN: the mechanism is entirely inside
+# the vendored libscpi (writeDelimiter / writeNewLine /
+# scpiParser_TerminatePendingOutput / processCommand's post-callback flip /
+# SCPI_Prepare+FinishDirectResult), which builds standalone on a host, so this
+# links the REAL production sources and asserts on the resulting wire bytes.
+# The firmware CALLBACKS are not includable here (SCPIInterface.c, same reason
+# SCPI999_BIN documents at length), so the test registers synthetic callbacks
+# that reproduce each real one's write shape -- and the greps below pin that the
+# real shapes are still what the synthetics model.
+DIRECT1096_BIN := run_1096_tests
+SCPI_IFACE_H := ../../firmware/src/services/SCPI/SCPIInterface.h
+SCPI_SD_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
+
+$(DIRECT1096_BIN): test_1096_direct_result_termination.c test_framework.h \
+                   $(LIBSCPI_SRCS) $(LIBSCPI_HDRS) \
+                   $(SCPI_IFACE_H) $(SCPI_IFACE_SRC) $(SCPI_SD_SRC) $(RECIPES)
+	@# (1) The pairing invariant this whole test's premise rests on: a site that
+	@# claims a direct query's ";" must also say what its write left on the
+	@# wire. A Prepare with no Finish near it is exactly the pre-#1096 state --
+	@# silently correct for a single-command message and silently wrong in a
+	@# compound one -- and no assertion in the test file can see it, because the
+	@# test's callbacks are synthetic.
+	@for f in $(SCPI_IFACE_H) $(SCPI_IFACE_SRC) $(SCPI_SD_SRC); do \
+	   awk -v F="$$f" ' \
+	     /SCPI_PrepareDirectResult\(context\);/ { pend[NR] = 0 } \
+	     /SCPI_FinishDirectResult\(/ { \
+	         for (n in pend) { if (pend[n] == 0 && NR - n <= 30) { pend[n] = 1 } } } \
+	     END { bad = 0; \
+	           for (n in pend) { \
+	             if (pend[n] == 1) { continue } \
+	             printf "ERROR: %s:%d has SCPI_PrepareDirectResult() with no\n", F, n; \
+	             printf "       SCPI_FinishDirectResult() within 30 lines. Every direct write\n"; \
+	             printf "       in a query callback must state whether it ended the line --\n"; \
+	             printf "       see SCPI_FinishDirectResult in libscpi/src/parser.c.\n"; \
+	             bad = 1 } \
+	           exit bad }' $$f || exit 1; \
+	 done
+	@# (2) Cb_TerminatedThenFail models SCPI_CheckSDCardPresent byte for byte,
+	@# including that its message ENDS the line. If the message stops doing that,
+	@# the real call site needs FALSE and the synthetic no longer stands in for
+	@# it -- a drift this test would otherwise pass straight through.
+	@grep -qE '^#define[[:space:]]+SD_CARD_NOT_PRESENT_ERROR_MSG[[:space:]]+".*\\r\\n"[[:space:]]*$$' $(SCPI_SD_SRC) \
+	  || { echo "ERROR: SD_CARD_NOT_PRESENT_ERROR_MSG in $(SCPI_SD_SRC) no longer ends"; \
+	       echo "       in a CR-LF escape. SCPI_CheckSDCardPresent passes TRUE to"; \
+	       echo "       SCPI_FinishDirectResult on the strength of that ending, and"; \
+	       echo "       Cb_TerminatedThenFail in test_1096_direct_result_termination.c"; \
+	       echo "       models it. Re-check both."; \
+	       exit 1; }
+	@# (3) SYSTem:SYSInfoPB? is the one query whose reply is not text at all, and
+	@# the only site in SCPIInterface.c that answers FALSE. Cb_Binary models that
+	@# answer. Be clear about what this guard is worth: on the SUCCESS path the
+	@# answer is inert (processCommand's flip absorbs either value -- see
+	@# SCPI_FinishDirectResult in libscpi/src/parser.c), so no assertion in the
+	@# test file can see it flip. It is pinned TEXTUALLY for exactly that reason:
+	@# the day that callback gains an error path after its write, FALSE is what
+	@# keeps the error off the end of a binary blob, and nothing else would catch
+	@# it having silently become TRUE in the meantime.
+	@grep -qF 'SCPI_FinishDirectResult(context, FALSE);' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: no 'SCPI_FinishDirectResult(context, FALSE);' left in"; \
+	       echo "       $(SCPI_IFACE_SRC). SYSTem:SYSInfoPB? writes raw Protocol Buffer"; \
+	       echo "       bytes, which are not line-framed in any sense, and must report"; \
+	       echo "       its output as unterminated. Cb_Binary in"; \
+	       echo "       test_1096_direct_result_termination.c models that answer."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -DUSE_DEVICE_DEPENDENT_ERROR_INFORMATION=0 -I$(LIBSCPI_DIR)/inc \
+	    -o $(DIRECT1096_BIN) test_1096_direct_result_termination.c $(LIBSCPI_SRCS) -lm
+
 # Every suite, and every one of the eleven binaries. SEVENTH additive
 # collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
 # fw#1000, fw#913 vs fw#980, and now fw#913 vs fw#985 -- every one of them
@@ -894,7 +964,7 @@ $(DAC1057_BIN): test_1057_dac7718_wait_stat.c test_framework.h $(DAC7718_SRC) $(
 # re-express their target as a fragment -- a mechanical move of one recipe,
 # which is strictly cheaper than this resolution has been nine times running.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(SPI913_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN)
+     $(SPI913_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN) $(DIRECT1096_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -909,9 +979,10 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(SCPI999_BIN)
 	./$(SUSPENDREASON_BIN)
 	./$(DAC1057_BIN)
+	./$(DIRECT1096_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(SPI913_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN) $(GEN_1000)
+	      $(SPI913_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN) $(DIRECT1096_BIN) $(GEN_1000)
 
 .PHONY: run clean

@@ -377,6 +377,15 @@ static bool SCPI_CheckSDCardPresent(scpi_t *context) {
          * separated -- so no call site has to know which kind it is. */
         SCPI_PrepareDirectResult(context);
         context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
+        /* #1096: TRUE -- SD_CARD_NOT_PRESENT_ERROR_MSG ends in "\r\n", so the
+         * line is already closed when the push below emits "**ERROR: -200".
+         * This is the exact case the Qodo finding named: without this, the
+         * earlier unit of a compound message ("*IDN?;SYSTem:STORage:SD:SPACe?")
+         * had left first_output saying "unterminated", and the error line was
+         * preceded by a second, empty one. Stated here rather than assumed in
+         * the parser because the very next callback to use this pattern might
+         * write a message that does NOT end a line. */
+        SCPI_FinishDirectResult(context, TRUE);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return false;
     }
@@ -2032,6 +2041,12 @@ scpi_result_t SCPI_StorageSDBenchmarkQuery(scpi_t * context) {
          * otherwise expect. Reply bytes are unchanged either way. */
         SCPI_PrepareDirectResult(context);
         context->interface->write(context, "0,0,0\r\n", 7);
+        /* #1096: TRUE -- the placeholder ends the line. Inert today for the
+         * same reason the Prepare call above is (the "**ERROR" line was already
+         * written and re-armed first_output), and live for the same reason: if
+         * the placeholder is ever moved BEFORE the error, this is what keeps
+         * the error on its own line with nothing between. */
+        SCPI_FinishDirectResult(context, TRUE);
         return SCPI_RES_ERR;
     }
     
@@ -2044,6 +2059,8 @@ scpi_result_t SCPI_StorageSDBenchmarkQuery(scpi_t * context) {
     /* #1003/#1010: direct writer -- claim this query's ";" before its first byte. */
     SCPI_PrepareDirectResult(context);
     context->interface->write(context, resultStr, strlen(resultStr));
+    /* #1096: TRUE -- the CSV row's format ends in "\r\n". */
+    SCPI_FinishDirectResult(context, TRUE);
 
     return SCPI_RES_OK;
 }
@@ -2691,7 +2708,15 @@ scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
      * byte (the second write below is a no-op for the separator). */
     SCPI_PrepareDirectResult(context);
     context->interface->write(context, result, (size_t)len);
+    /* #1096: FALSE. `result` is the CID field list with NO line ending -- this
+     * query closes its line with the separate write below. It is the one call
+     * site in the tree that needs both answers, and it is why the state is
+     * per-WRITE rather than per-callback: between these two writes the wire is
+     * genuinely mid-line, and an error raised there (none can be today) would
+     * need its own line ending, not a blank one. */
+    SCPI_FinishDirectResult(context, FALSE);
     context->interface->write(context, "\r\n", 2);
+    SCPI_FinishDirectResult(context, TRUE);
 
     return SCPI_RES_OK;
 }

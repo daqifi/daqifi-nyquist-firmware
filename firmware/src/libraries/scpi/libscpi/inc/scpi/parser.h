@@ -74,6 +74,35 @@ extern "C" {
      * re-creates the #1003 defect -- see the definition in parser.c. */
     void SCPI_PrepareDirectResult(scpi_t * context);
 
+    /* DAQiFi patch (issue #1096 Qodo finding, round 3) -- NOT upstream libscpi.
+     *
+     * The other half of the contract above: call this immediately AFTER each
+     * actual direct write, inside the same guard as the write, with
+     * `terminated` TRUE iff the bytes that reached the transport ended with
+     * SCPI_LINE_ENDING.
+     *
+     * It sets context->first_output, the "an unterminated result is pending"
+     * flag that SCPI_ErrorEmit() reads before writing "**ERROR: ...".  Without
+     * it, a direct writer that prints a self-terminated message and then raises
+     * gets a BLANK LINE before its error in a compound message (the earlier
+     * unit left the flag saying "pending"); with it forced the other way, a
+     * writer that left the wire mid-line would get its error glued on.  Only
+     * the caller knows which it wrote.
+     *
+     * A write that did not happen gets no call.  Not idempotent -- the last
+     * call wins, which is what a multi-write callback needs.  Non-query
+     * commands are filtered out, same as above.  See parser.c for the full
+     * rationale and the residuals. */
+    void SCPI_FinishDirectResult(scpi_t * context, scpi_bool_t terminated);
+
+    /* DAQiFi patch (issue #1096) -- NOT upstream libscpi.  Pure predicate:
+     * TRUE iff [data, data+len) ends with SCPI_LINE_ENDING.  For direct writers
+     * whose termination is a property of the bytes rather than of the call site
+     * (scpi_printf's format string, SysInfoText_Write's ~90 mixed chunks), so
+     * they can answer SCPI_FinishDirectResult()'s question exactly instead of
+     * hard-coding "\r\n" per call site. */
+    scpi_bool_t SCPI_DirectResultEndsLine(const char * data, size_t len);
+
     size_t SCPI_ResultCharacters(scpi_t * context, const char * data, size_t len);
 #define SCPI_ResultMnemonic(context, data) SCPI_ResultCharacters((context), (data), strlen(data))
 #define SCPI_ResultUInt8Base(c, v, b) SCPI_ResultUInt32Base((c), (v), (uint8_t)(b))

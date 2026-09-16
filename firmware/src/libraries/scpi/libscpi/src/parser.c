@@ -184,6 +184,37 @@ void scpiParser_TerminatePendingOutput(scpi_t * context) {
 }
 
 /**
+ * DAQiFi patch (issues #1003 / #1010, extracted in #1096 round 3) -- is the
+ * program-message unit currently being processed a QUERY that takes part in the
+ * direct-result protocol?
+ *
+ * Extracted verbatim from SCPI_PrepareDirectResult()'s first two guards so that
+ * SCPI_FinishDirectResult() below cannot drift away from them.  The two
+ * functions are a matched pair -- one claims the separator before a direct
+ * write, the other records what that write left on the wire -- and they must
+ * agree EXACTLY on which units they apply to, or a callback gets its ";" from
+ * one and its line-state bookkeeping from neither.  Behaviour of
+ * SCPI_PrepareDirectResult() is unchanged; only the text moved.
+ */
+static scpi_bool_t directResultUnitIsQuery(scpi_t * context) {
+    /* Not inside a program-message unit (or a context that has never parsed):
+     * cmd_raw is zeroed by SCPI_Init's memset and set by SCPI_Parse. */
+    if ((context->param_list.cmd_raw.data == NULL)
+            || (context->param_list.cmd_raw.length == 0)) {
+        return FALSE;
+    }
+
+    /* Same test processCommand() makes: only a query takes part in the ";"
+     * protocol. */
+    if (context->param_list.cmd_raw.data[context->param_list.cmd_raw.length - 1]
+            != '?') {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+/**
  * DAQiFi patch (issues #1003 / #1010) -- claim this query's result separator on
  * behalf of a callback that writes its own reply.
  *
@@ -244,10 +275,19 @@ void scpiParser_TerminatePendingOutput(scpi_t * context) {
  * callback returned SCPI_RES_OK.  Leaving the flag alone keeps every
  * single-command reply byte-identical to origin/main.
  *
- * The residual: a direct writer that emits UNTERMINATED text and then fails
- * would have its error glued on, as it does on main today.  No registered
- * callback has that shape (every one of them terminates its text), and a
- * future one should call SCPI_ResultXxx() rather than rely on this.
+ * SUPERSEDED IN PART by SCPI_FinishDirectResult() below (issue #1096 round 3).
+ * The paragraph above is why this function must not GUESS at first_output; it
+ * is not an argument for never setting it.  The caller knows what it wrote, so
+ * it now says so explicitly after the write, and the two shapes -- terminated
+ * and unterminated -- are handled separately instead of by one global
+ * assumption.  What is written here still holds: THIS function writes the
+ * separator and nothing else, and never touches first_output.
+ *
+ * The residual named here -- a direct writer that emits UNTERMINATED text and
+ * then fails would have its error glued on -- is what SCPI_FinishDirectResult()
+ * closes.  It was NOT hypothetical: SYSTem:INFo?'s channel-list and DIO-state
+ * loops write mid-line fragments ("  DIO state: ", "1", ",") and its
+ * __stalled_exit path raises an execution error straight after one of them.
  *
  * WHY THE QUERY TEST.  The deleted speculative write was gated on is_query, and
  * so is this, using the same expression over the same bytes.  It matters
@@ -267,17 +307,7 @@ void SCPI_PrepareDirectResult(scpi_t * context) {
         return;
     }
 
-    /* Not inside a program-message unit (or a context that has never parsed):
-     * cmd_raw is zeroed by SCPI_Init's memset and set by SCPI_Parse. */
-    if ((context->param_list.cmd_raw.data == NULL)
-            || (context->param_list.cmd_raw.length == 0)) {
-        return;
-    }
-
-    /* Same test processCommand() makes: only a query takes part in the ";"
-     * protocol. */
-    if (context->param_list.cmd_raw.data[context->param_list.cmd_raw.length - 1]
-            != '?') {
+    if (!directResultUnitIsQuery(context)) {
         return;
     }
 
@@ -294,6 +324,146 @@ void SCPI_PrepareDirectResult(scpi_t * context) {
         writeData(context, ";", 1);
     }
     context->output_count = 1;
+}
+
+/**
+ * DAQiFi patch (issue #1096 Qodo finding, round 3) -- does this exact run of
+ * bytes end at a line boundary?
+ *
+ * A convenience for the direct writers whose termination is a property of the
+ * BYTES rather than of the call site: scpi_printf() renders whatever format
+ * string its ~200 callers hand it (CONFigure:CAPabilities:JSON? deliberately
+ * emits unterminated JSON fragments -- "\"channels\":[", "," -- while
+ * SYSTem:STReam:STATS? emits one "Key=value\r\n" line per call), and
+ * SysInfoText_Write (SCPIInterface.c) is one funnel for ~90 chunks of which
+ * some are whole lines and some are mid-line fragments.  Those call sites
+ * cannot answer SCPI_FinishDirectResult()'s question with a literal, but they
+ * CAN answer it exactly, about the bytes they actually put on the wire -- which
+ * is still the caller stating what it wrote, not the parser guessing.
+ *
+ * It lives here so the comparison is made against SCPI_LINE_ENDING, the same
+ * macro writeNewLine() emits, rather than against a "\r\n" hard-coded five
+ * times over in firmware/src/services/SCPI/.
+ *
+ * It takes no scpi_t deliberately: it is a pure predicate over bytes, with no
+ * business reading or writing parser state.
+ *
+ * @param data start of the bytes that were written
+ * @param len number of bytes that were written
+ * @return TRUE iff the last strlen(SCPI_LINE_ENDING) bytes are that ending
+ */
+scpi_bool_t SCPI_DirectResultEndsLine(const char * data, size_t len) {
+    size_t endingLen;
+
+    if (data == NULL) {
+        return FALSE;
+    }
+
+#ifndef SCPI_LINE_ENDING
+#error no termination character defined
+#endif
+    endingLen = strlen(SCPI_LINE_ENDING);
+    if ((endingLen == 0) || (len < endingLen)) {
+        return FALSE;
+    }
+
+    return (memcmp(&data[len - endingLen], SCPI_LINE_ENDING, endingLen) == 0)
+            ? TRUE : FALSE;
+}
+
+/**
+ * DAQiFi patch (issue #1096 Qodo finding, round 3) -- record what a direct
+ * write left on the wire, so the next error line lands correctly.
+ *
+ * THE DEFECT THIS CLOSES.  first_output FALSE means "an UNTERMINATED result is
+ * on the wire"; SCPI_ErrorEmit() (error.c) reads it through
+ * scpiParser_TerminatePendingOutput() to decide whether to close the line
+ * before the transports write "**ERROR: ...".  Rounds 1 and 2 left the flag
+ * strictly alone across a direct write (see the long note on
+ * SCPI_PrepareDirectResult above), which is correct for a SINGLE-command
+ * message -- SCPI_Parse() has just set first_output TRUE, so a
+ * self-terminated direct reply followed by an error got its error on a fresh
+ * line with nothing between.  In a COMPOUND message it is wrong: an earlier
+ * unit's SCPI_ResultXxx() value left the flag FALSE, and the flag still said
+ * "unterminated" after the direct writer had already ended its own line, so
+ * the terminator was written a SECOND time and
+ *
+ *     *IDN?;SYSTem:STORage:SD:SPACe?      (no card in the slot)
+ *
+ * came back with a blank line wedged between the message and its error:
+ *
+ *     DAQiFi,Nq1,<serial>,01-02;\r\nError !! No SD Card Detected\r\n
+ *     \r\n
+ *     **ERROR: -200, "Execution error"\r\n
+ *
+ * The same shape reaches SYSTem:INFo? with BoardData missing,
+ * SYSTem:POWer:BQ:REGisters? and SYSTem:POWer:BQ:DIAGnostics? with the I2C bus
+ * down -- every direct-write query that prints an explanation and THEN raises.
+ *
+ * WHY A PARAMETER AND NOT A RULE.  Neither global assumption works.  "Direct
+ * output is always terminated" (clear the flag unconditionally in
+ * SCPI_PrepareDirectResult) glues the error onto callbacks that write mid-line
+ * -- SYSTem:INFo? writes "  DIO state: ", then one byte per pin, and its
+ * __stalled_exit path raises an execution error from inside exactly that loop.
+ * "Direct output is never terminated" is the pre-#1096 state, i.e. the blank
+ * line above.  Only the code that produced the bytes knows which it wrote, so
+ * it is the code that produced the bytes that says.
+ *
+ * CONTRACT for callers.  Call it immediately AFTER each actual write, inside
+ * the same guard the write is inside, passing TRUE iff the bytes that reached
+ * the transport ended with SCPI_LINE_ENDING.  A write that does not happen
+ * gets no call: leaving the flag alone is what correctly preserves an EARLIER
+ * unit's pending state.  A short write ended the line only if the whole of it
+ * got through, so callers that can detect one (SysInfoText_Write) must fold
+ * that in.  SCPI_DirectResultEndsLine() above answers the question for callers
+ * whose bytes are not known at compile time.
+ *
+ * NOT idempotent, unlike its Prepare counterpart, and deliberately so: a
+ * callback with several write sites calls it once per write, and the LAST call
+ * -- the state the wire is actually in -- wins.
+ *
+ * INTERACTION WITH processCommand()'s POST-CALLBACK FLIP, which is unchanged
+ * and must stay that way.  That flip exists to give a direct-write query the
+ * trailing SCPI_LINE_ENDING that SCPI_Parse()'s closing writeNewLine() emits;
+ * it runs only after a SUCCESSFUL callback and only when first_output is TRUE,
+ * so passing TRUE here re-arms it and the closing newline still appears exactly
+ * where it did before.  Note what that means for a callback that SUCCEEDS: the
+ * flip absorbs the difference (TRUE -> flip clears the flag -> closing newline
+ * fires; FALSE -> flip is a no-op -> closing newline fires), so the argument is
+ * inert on that path.  It decides the wire only when an error is raised in the
+ * same unit AFTER the write, which is before the flip -- which is exactly the
+ * bug above.  SYSTem:SYSInfoPB? therefore passes FALSE on principle rather than
+ * on today's consequences: raw Protocol Buffer bytes are not line-framed at
+ * all (a payload can even END in 0x0D 0x0A without that meaning anything), so
+ * FALSE is the true description of the wire and stays correct if that callback
+ * ever gains an error path after its write.
+ *
+ * WHY THE QUERY FILTER.  Same reason SCPI_PrepareDirectResult has one, over the
+ * same shared helpers (scpi_printf(), SCPI_CheckSDCardPresent()): a non-query
+ * command's direct output has never taken part in this protocol, before or
+ * after #1003, and giving it line-state bookkeeping here would silently drop
+ * the trailing newline SCPI_Parse() currently emits after, say,
+ * "*IDN?;SYSTem:POWer:BQ:ILIM 1".  The residual is stated plainly: a NON-query
+ * direct writer that prints terminated text and then raises still gets the
+ * blank line this function removes for queries.  That is unchanged behaviour,
+ * not new, and changing it is a wire change for a dozen commands that this
+ * issue did not look at.
+ *
+ * @param context
+ * @param terminated TRUE iff the bytes just written ended with SCPI_LINE_ENDING
+ */
+void SCPI_FinishDirectResult(scpi_t * context, scpi_bool_t terminated) {
+    if (context == NULL) {
+        return;
+    }
+
+    if (!directResultUnitIsQuery(context)) {
+        return;
+    }
+
+    /* The whole point: first_output is the "something unterminated is pending"
+     * flag, and the caller has just told us whether that is now true. */
+    context->first_output = terminated ? TRUE : FALSE;
 }
 
 /**
@@ -337,14 +507,22 @@ static scpi_bool_t processCommand(scpi_t * context) {
      * SCPI_LINE_ENDING that SCPI_Parse()'s closing writeNewLine() emits for
      * those replies today -- a wire change well outside these two issues.
      *
-     * Those same callbacks now ALSO call SCPI_PrepareDirectResult() (below) to
-     * claim their ";" at the moment they write, which clears first_output too
-     * -- so for them this flip is usually a no-op.  It still carries the two
-     * cases the helper cannot reach: a direct-write query whose reply leaves
-     * the device OUT OF BAND rather than through context->interface->write
-     * (SYSTem:STORage:SD:LISt?, whose listing is pushed by the SD task through
-     * sd_card_manager_DataReadyCB), and any query callback that succeeds
-     * without producing output at all. */
+     * Those same callbacks now ALSO call SCPI_PrepareDirectResult() (above) to
+     * claim their ";" at the moment they write, and SCPI_FinishDirectResult()
+     * (issue #1096) immediately after each write to say whether it ended the
+     * line.  A reply that DID end its line leaves first_output TRUE, so this
+     * flip fires and the closing writeNewLine() still appends the trailing
+     * SCPI_LINE_ENDING those replies have always carried; a reply that did not
+     * (SYSTem:SYSInfoPB?'s Protocol Buffer bytes, a mid-line fragment) leaves
+     * it FALSE, this flip is a no-op, and the closing writeNewLine() terminates
+     * the message instead.  Either way the wire is unchanged from before
+     * #1096 -- which is the property that makes those two functions safe.
+     *
+     * The flip additionally carries the two cases neither helper can reach: a
+     * direct-write query whose reply leaves the device OUT OF BAND rather than
+     * through context->interface->write (SYSTem:STORage:SD:LISt?, whose listing
+     * is pushed by the SD task through sd_card_manager_DataReadyCB), and any
+     * query callback that succeeds without producing output at all. */
     context->cmd_error = FALSE;
     context->output_count = 0;
     context->input_count = 0;

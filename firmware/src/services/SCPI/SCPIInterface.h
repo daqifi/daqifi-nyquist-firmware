@@ -247,6 +247,17 @@ extern "C" {
              * callers (BQ:ILIM, BQ:DPDM, STReam:THRoughput) untouched. */
             SCPI_PrepareDirectResult(context);
             context->interface->write(context, buf, sizeof(buf) - 1);
+            /* #1096: say what those bytes left on the wire. Computed, not
+             * assumed: scpi_printf renders ~200 different format strings, some
+             * whole lines ("Key=value\r\n") and some deliberate fragments
+             * (CONF:CAP:JSON?'s "\"channels\":[", ","). On THIS branch the
+             * answer is essentially always FALSE -- the text was cut off at 191
+             * bytes, so whatever ending the format carried is gone -- but it is
+             * derived from the bytes rather than asserted, because a format
+             * whose 191st and 192nd bytes happen to be the ending would leave
+             * the wire genuinely terminated. */
+            SCPI_FinishDirectResult(context,
+                    SCPI_DirectResultEndsLine(buf, sizeof(buf) - 1));
             return n;
         }
         if (n > 0) {
@@ -255,6 +266,11 @@ extern "C" {
              * must never be emitted ahead of a write that does not happen. */
             SCPI_PrepareDirectResult(context);
             context->interface->write(context, buf, (size_t)n);
+            /* #1096 -- see the truncated branch. The whole format reached the
+             * wire here, so this is exactly "did the caller's format end in
+             * \r\n". */
+            SCPI_FinishDirectResult(context,
+                    SCPI_DirectResultEndsLine(buf, (size_t)n));
         }
         return n;
     }
