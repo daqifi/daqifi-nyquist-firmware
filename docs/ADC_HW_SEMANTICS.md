@@ -57,9 +57,22 @@ Three-point SAMC sweep (1×T1 OBDiag=1 @ 4000 Hz, timer→EOS median):
 list; linear to <0.5%).
 
 - **Structural match with the FRM model is exact**: per-input time =
-  (SAMC+2)·TAD sample + conversion, and the fit's intercept/slope ratio
-  gives **conversion + handoff ≈ 14 TAD** — the documented 13-TAD 12-bit
-  conversion plus ~1 TAD (E confirming V).
+  (SAMC+2)·TAD sample + conversion, and the fit's intercept/slope ratio is
+  *consistent with* **conversion + handoff ≈ 14 TAD** — the documented
+  13-TAD 12-bit conversion plus ~1 TAD.
+  **Corrected #1112 round 3 — this is NOT an independent confirmation (I,
+  not "E confirming V" as an earlier revision of this doc claimed).** This
+  same two-point SAMC sweep does not discriminate a 13-TAD (K=15 step) from
+  a 14-TAD (K=16 step) conversion/handoff constant: solving the two silicon
+  anchors below for the per-scan fixed term `T_fixed` independently at each
+  candidate gives `T_fixed ≈ 0.25 µs` at K=16 and `≈ 2.1 µs` at K=15 — both
+  well outside the `5.4–7.3 µs` window the n=7 anchor demands on its own,
+  i.e. the fit is not precise enough to prefer either candidate. The ≤2%
+  measurement uncertainty in this data (see the reconciliation table below,
+  where even the FRM-literal SAMC+15 prediction already overshoots the
+  SAMC=100 measurement) exceeds the ~0.9%-per-scan-position quantity the
+  disputed TAD represents. See #1117 for the direct per-position measurement
+  that would actually settle this.
 - **Absolute-scale ambiguity: RESOLVED (V, DS60001320H).** The EF *device
   datasheet deviates from the FRM* on the ADC clock bit semantics — its own
   revision history flags it ("The bit value definitions for the ADCSEL<1:0>
@@ -307,7 +320,13 @@ f_scan_max = 1 / T_scan                  ≈ 4.58 kHz
 
 Residuals (≤2%) are the conversion constant (13 vs ~14 TAD7, i.e. ~1 TAD7
 of scan handoff per input) plus slope-fit noise — all within the documented
-model. **The published values and the silicon agree.**
+model. **The published values and the silicon agree at the ~2% level this
+data can resolve** — that agreement bounds `T_scan` for the scan-busy safety
+cap (`MC12b_ScanMaxFreq`, which is what this section is deriving), but it
+does NOT discriminate the disputed ~1-TAD7 residual itself (13 vs 14 TAD7
+conversion/handoff), since that quantity is smaller than the measurement's
+own uncertainty. **Corrected #1112 round 3**: do not cite this agreement as
+confirming the 14-TAD7 figure specifically — see #1117.
 
 ### Generalized bound for firmware (Phase-2 requirement 3)
 
@@ -596,8 +615,12 @@ at `scanPosition x (SAMC+16) x TAD7`; round 2 unified them, see below.)
   is latched (Hold begins) until its OWN `(SAMC+2) x TAD7` acquisition window
   elapses (Equation 22-2, "Sample Time for the Shared ADC Module"), on top of
   whatever full `(SAMC+16) x TAD7` slots (acquisition + ~14 TAD
-  conversion/handoff, pinned by the silicon anchors above) the channels ahead
-  of it consumed. Before the #1112 round-1 fix, position 0 returned 0,
+  conversion/handoff) the channels ahead of it consumed. **The 14-TAD figure
+  is imported from `MC12b_ScanMaxFreq`'s deliberately conservative scan-busy
+  bound (`MC12bADC.c:660-700`, over-estimates busy time on purpose, plus a
+  10% margin, because operating at that boundary is fatal — #539/#543), not
+  independently measured for this exact-timestamp use; corrected #1112 round
+  3, see the Evidence class note below and #1117.** Before the #1112 round-1 fix, position 0 returned 0,
   identical to a Type 1 channel's offset, even though the two are not
   physically equivalent — a real, deterministic error of ~510 timestamp
   ticks (~12.1 µs) at the shipped default SAMC=100/ADCDIV=1/CONCLKDIV=4.
@@ -650,8 +673,16 @@ at `scanPosition x (SAMC+16) x TAD7`; round 2 unified them, see below.)
 
 **Evidence class: V for the order, the register semantics, and the
 per-position aperture correction (DS60001344E §22.3.2 Figure 22-7 +
-Equation 22-2, cited above); E for the per-input timing constant** (the SAMC
-sweep and the two silicon anchors above).
+Equation 22-2, cited above); V for the 13-TAD FRM-documented conversion
+constant. The extra ~1-TAD scan-handoff term (13 vs 14 TAD7, i.e. whether
+the per-position step is `SAMC+15` or `SAMC+16`) is I, not E — corrected
+#1112 round 3.** An earlier revision of this doc tagged that term E,
+citing the SAMC sweep and the two silicon anchors above as confirmation;
+re-examined during PR #1112's round-3 adversarial audit, that same data
+does not actually discriminate a 13-TAD from a 14-TAD conversion/handoff
+constant (see the SAMC-sweep subsection above), so citing it as
+confirmation was circular. #1117 tracks the direct per-position measurement
+that would upgrade this to E/V.
 The composed per-channel figure has **not** itself been measured against a
 known-phase input — that measurement would upgrade it to E and is the same
 experiment that would pin the two offsets below.

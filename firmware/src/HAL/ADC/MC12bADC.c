@@ -330,6 +330,57 @@ uint32_t MC12b_ComputeScanList(bool enabledOnly, bool includeMonitoring,
     uint32_t css1 = 0, css2 = 0, count = 0;
     size_t n = (pCfg->AInChannels.Size < pRt->Size)
              ? pCfg->AInChannels.Size : pRt->Size;
+    if (n > MAX_AIN_RUNTIME_CHANNEL) {
+        n = MAX_AIN_RUNTIME_CHANNEL;   // defensive: the snapshot below is a
+                                       // fixed-size local, and Size is runtime
+                                       // data like every other field here
+    }
+
+    /* #1112 round 3 -- PHASE 1: CAPTURE THE ENABLE FLAGS ATOMICALLY.
+     *
+     * The mask-building loop below used to read pRt->Data[i].IsEnabled inline,
+     * one entry at a time, holding nothing: up to 48 independently-timed live
+     * reads rather than one observation of the channel set. The scan list it
+     * returned could therefore describe a channel combination that never
+     * existed. Concrete case (Qodo /agentic_review, PR firmware#1112, round 2,
+     * reported independently by two hunters, confirmed by the arbiter): idle
+     * NQ1, OBDiag=0, SAMC=100, only channel 0 enabled. A WiFi CONF:CAP:JSON?
+     * enters here and reads channel 0 as enabled; the USB task then runs
+     * `CONF:ADC:CHAN 2` to completion, which CLEARS channel 0 and SETS channel
+     * 1, in that order -- so the true sequence of enabled-sets is {0}, {}, {1},
+     * never {0,1}. The resumed loop reads channel 1 as enabled too and reports
+     * BOTH, and the response's scan_offset_ticks for channel 1 comes out a
+     * whole (SAMC+16)*TAD7 scan-position step wrong.
+     *
+     * Deliberately NOT Streaming_BeginConfigChange(): a read-only diagnostic
+     * query must never BLOCK or be REFUSED under contention with a legitimate
+     * config writer -- the same trade MC12b_ChannelScanOffsetTicks' comment
+     * below records for its own residual. A bounded <=48-field-read critical
+     * section costs microseconds and refuses nothing.
+     *
+     * This is the READER half only. The WRITER half is the matching section
+     * around the bulk-mask loop in ADCChanEnableSetClaimed (SCPIADC.c), which
+     * applies up to 16 per-channel stores: without it this snapshot can still
+     * land strictly INSIDE that loop and capture an intermediate enabled-set
+     * the operator never commanded. Neither half is sufficient alone -- the
+     * same pairing #1048/#1054 state for CalM/CalB and #1086 states for the
+     * AD7609 Range (ADCChanRangeSetClaimed / SCPI_ADCChanRangeGet, SCPIADC.c).
+     *
+     * The section holds field reads and nothing else -- no logging, no SCPI
+     * parsing, no blocking call -- matching MC12b_ConvertToVoltage's CalM/CalB
+     * section above. Task context only: every caller is a SCPI callback, the
+     * streaming start/stop path, or boot init; none is an ISR, so
+     * taskENTER_CRITICAL (not the FROM_ISR form) is the right primitive. */
+    bool enabledSnapshot[MAX_AIN_RUNTIME_CHANNEL];
+    taskENTER_CRITICAL();
+    for (size_t i = 0; i < n; i++) {
+        enabledSnapshot[i] = pRt->Data[i].IsEnabled;
+    }
+    taskEXIT_CRITICAL();
+
+    /* PHASE 2: pure computation over the snapshot. No live read of
+     * pRt->Data[].IsEnabled occurs below this line -- that is the property the
+     * $(SCAN1112_BIN) guard in tests/host/Makefile pins. */
     for (size_t i = 0; i < n; i++) {
         const AInChannel* ch = &pCfg->AInChannels.Data[i];
         if (ch->Type != AIn_MC12bADC) continue;
@@ -344,8 +395,8 @@ uint32_t MC12b_ComputeScanList(bool enabledOnly, bool includeMonitoring,
             if (!includeMonitoring) continue;
             // Monitoring channels are not user-controllable; IsEnabled is
             // the boot default (true except the dead temp sensor).
-            if (pRt->Data[i].IsEnabled != 1) continue;
-        } else if (enabledOnly && pRt->Data[i].IsEnabled != 1) {
+            if (!enabledSnapshot[i]) continue;
+        } else if (enabledOnly && !enabledSnapshot[i]) {
             continue;
         }
         if (an < 32u) css1 |= (1U << an);
@@ -638,11 +689,32 @@ uint32_t MC12b_ChannelScanOffsetTicks(const AInChannel* ch,
      * default clocks) for every channel after the first.
      *
      * Per-input step = the same (SAMC + 16) x TAD7 term the scan-busy bound
-     * uses: (SAMC + 2) TAD acquisition + ~14 TAD conversion/handoff, pinned
-     * by the silicon anchors in docs/ADC_HW_SEMANTICS.md. The per-SCAN
-     * fixed term (~6 us) still deliberately does NOT appear: it is paid
-     * once per scan, so it shifts the whole scan (T1 and T2 alike) rather
-     * than being a cross-class skew the way the aperture is. */
+     * uses: (SAMC + 2) TAD acquisition + ~14 TAD conversion/handoff.
+     *
+     * #1112 round 3: that 14-TAD figure is IMPORTED from
+     * MC12b_ScanMaxFreq's deliberately conservative scan-busy bound above
+     * (MC12bADC.c:660-700 — over-estimates busy time on purpose, plus a 10%
+     * margin, because operating at that boundary is fatal, #539/#543), not
+     * independently measured for this exact-timestamp use. An earlier
+     * revision of this comment (and docs/ADC_HW_SEMANTICS.md) cited the
+     * SAMC-sweep fit + silicon anchors as confirming 14 TAD specifically
+     * ("E confirming V") — re-examined during round 3's adversarial audit,
+     * that same fit does NOT discriminate a 13-TAD (K=15 step) from a
+     * 14-TAD (K=16 step) conversion/handoff constant: solving the two
+     * anchors for the per-scan fixed term independently at each candidate
+     * gives ~0.25us (K=16) vs ~2.1us (K=15), both outside the ~5.4-7.3us the
+     * n=7 anchor demands on its own. So this is an I (inference), not an
+     * E-confirmed V, per CLAUDE.md's V/E/I/X/N discipline — reusing a
+     * safety-biased conservative term as an exact per-channel timestamp
+     * inherits that bias as a systematic error of up to ~1 TAD7 (5
+     * timestamp ticks, ~119ns at the shipped default clocks) per scan
+     * position, cumulative (~15 ticks at position 3, ~90 ticks/~2.1us at
+     * the tail of a 19-input scan). See docs/ADC_HW_SEMANTICS.md's Evidence
+     * class note (same section) and #1117 for the direct per-position
+     * measurement that would resolve K=15 vs K=16 for real. The per-SCAN
+     * fixed term (~6 us) still deliberately does NOT appear here: it is
+     * paid once per scan, so it shifts the whole scan (T1 and T2 alike)
+     * rather than being a cross-class skew the way the aperture is. */
     uint64_t numer = ((uint64_t)pos * (timing->samc + 16u) + (timing->samc + 2u))
                     * clockTerm * (uint64_t)timestampHz;
     uint64_t ticks = numer / (uint64_t)timing->pbclkHz;

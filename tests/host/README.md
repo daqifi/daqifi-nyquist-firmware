@@ -290,6 +290,50 @@ script's own header comment for the full account, including why linking
 `SCPIInterface.c` itself was tried first and ruled out, and what a textual
 guard still does not establish.
 
+`test_1112_scan_list_snapshot_race.c` covers `MC12b_ComputeScanList()`
+(`HAL/ADC/MC12bADC.c`) and the mask form of `ADCChanEnableSetClaimed()`
+(`services/SCPI/SCPIADC.c`), issue #267 / PR firmware#1112 round 3. Neither
+is host-includable (Harmony's `configuration.h`/`definitions.h`, FreeRTOS,
+libscpi and the board graph), so this follows `test_985`/`test_953`/`test_943`:
+both the READ shape and the WRITE shape are re-implemented against an
+injected **writer-progress schedule** (how many of the writer's ascending
+per-channel stores had landed at each reader read), and their resulting scan
+masks compared. Until this fix, `MC12b_ComputeScanList` read each channel's
+`IsEnabled` flag inline with no lock, while `ADCChanEnableSetClaimed`'s
+bulk-mask form wrote up to 16 of those flags one store at a time — so
+`CONF:CAP:JSON?` on one SCPI transport could report a scan list (and derived
+per-channel `scan_offset_ticks`) describing a channel combination a
+`CONF:ADC:CHANnel <mask>` command on the other transport never actually
+commanded.
+
+The fix is two matching critical sections — the reader snapshots every
+`IsEnabled` under one `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()` before
+building the mask, and the writer stages its per-channel targets, then
+applies them all under one matching section — the same "neither half is
+sufficient alone" pairing this codebase already uses for the MC12b
+CalM/CalB pair (#1048/#1054) and the AD7609 Range (#1086). The suite proves
+that pairing is necessary, not just sufficient: it sweeps all four
+reader/writer combinations (inline read × torn write, snapshot read × torn
+write, inline read × atomic write, snapshot read × atomic write) and shows a
+non-commanded mask is reachable in the first three and structurally
+impossible only in the fourth — so a reader-only or writer-only fix would
+leave this suite red rather than quietly narrowing the window. Also covered:
+both of the audit's concrete scenarios (`CONF:ADC:CHAN 1`→`2` and `CONF:ADC:CHAN
+3`→`514`), a stable-configuration regression (both shapes must agree exactly
+when nothing races), and that both shapes read each channel's flag exactly
+once (unlike #985's per-flag timeline, no flag here is ever reread within one
+call — what varies is only *when*, relative to the writer, each of several
+different channels' single read lands).
+
+No constants are copied, but the shape is, so the Makefile guards both
+halves independently: it fails the build unless `MC12b_ComputeScanList`
+touches `pRt->Data[]` exactly once (inside the section, feeding the local
+snapshot) with the mask built from the snapshot afterward, and unless
+`ADCChanEnableSetClaimed`'s mask form stages into `maskTargets[]`/
+`maskValues[]` outside its section and applies them together inside it,
+leaving the four single-channel stores (already atomic — one aligned `bool`
+store on PIC32MZ) untouched and outside either section.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a
