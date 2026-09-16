@@ -40,6 +40,9 @@
 #include "scpi/ieee488.h"
 #include "scpi/error.h"
 #include "fifo_private.h"
+/* DAQiFi patch (issues #1003 / #1010) -- for scpiParser_TerminatePendingOutput().
+ * Not an upstream include. */
+#include "parser_private.h"
 #include "scpi/constants.h"
 
 #if USE_DEVICE_DEPENDENT_ERROR_INFORMATION
@@ -79,6 +82,37 @@ static void SCPI_ErrorEmit(scpi_t * context, int16_t err) {
     SCPI_RegSetBits(context, SCPI_REG_STB, STB_QMA);
 
     if (context->interface && context->interface->error) {
+        /* DAQiFi patch (issues #1003 / #1010).
+         *
+         * This call is SYNCHRONOUS and mid-message: SCPI_ErrorPushEx() below
+         * invokes it the instant an error is raised, and this firmware's two
+         * transports -- SCPI_USB_Error() (UsbCdc.c) and SCPI_TCP_Error()
+         * (wifi_tcp_server.c) -- both format "**ERROR: %d, \"%s\"\r\n" and
+         * write it through the very same context->interface->write() that
+         * carries query results.  In a compound program message
+         * ("*IDN?;FOO:BAR?") the preceding query's result has NOT been
+         * newline-terminated yet -- SCPI_Parse() defers that to a single
+         * writeNewLine() after every unit has run -- so the error sentence was
+         * being written straight into the middle of that response:
+         *
+         *     DAQiFi,Nq1,<serial>,01-02**ERROR: -113, "Undefined header"
+         *
+         * Terminating the pending result here closes the line first, puts the
+         * error on its own line, and re-arms first_output so SCPI_Parse()'s
+         * closing writeNewLine() does not then add a second, blank line.
+         *
+         * Guarded on err != 0 because both transports SKIP writing for err ==
+         * 0 (the "no error" notification SCPI_ErrorEmitEmpty() sends on a
+         * queue that has just drained).  Terminating a line ahead of a write
+         * that never happens would itself inject a stray newline.
+         *
+         * Placed here rather than in either transport because this is the one
+         * funnel every error path shares: parser.c's undefined-header reject,
+         * its SCPI_RES_ERR auto-push, and every firmware callback that calls
+         * SCPI_ErrorPush() during argument validation. */
+        if (err != 0) {
+            scpiParser_TerminatePendingOutput(context);
+        }
         context->interface->error(context, err);
     }
 }

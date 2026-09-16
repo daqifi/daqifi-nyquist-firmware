@@ -505,18 +505,22 @@ static int LogMessageAdd(const char *message) {
  *        Uses pop-and-print pattern to avoid holding mutex during I/O.
  *
  * @param context SCPI context used to write and flush messages
+ * @return true if at least one message reached the transport (#1096 -- the
+ *         SYSTem:LOG? callback reports this to SCPI_FinishDirectResult; see
+ *         Logger.h). Both early returns below are "wrote nothing".
  */
-void LogMessageDump(scpi_t * context) {
+bool LogMessageDump(scpi_t * context) {
 
     char tempBuffer[LOG_MESSAGE_SIZE];
     bool hasMessage;
+    bool wroteAny = false;
 
     if (context == NULL || context->interface == NULL || context->interface->write == NULL) {
-        return;
+        return false;
     }
 
     if (logBuffer.mutex == NULL) {
-        return;
+        return false;
     }
 
     // Pop-and-print loop: mutex held only during memory copy, not I/O
@@ -542,6 +546,7 @@ void LogMessageDump(scpi_t * context) {
         // I/O section: write message (mutex released)
         if (hasMessage) {
             context->interface->write(context, tempBuffer, strlen(tempBuffer));
+            wroteAny = true;
             if (context->interface->flush) {
                 context->interface->flush(context);
             }
@@ -550,6 +555,8 @@ void LogMessageDump(scpi_t * context) {
 
     /* Allow one-shot log sites to fire again after user reads the log */
     Logger_ResetOneShots();
+
+    return wroteAny;
 }
 
 /**

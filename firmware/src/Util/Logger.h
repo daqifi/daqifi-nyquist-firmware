@@ -352,8 +352,16 @@ size_t LogMessageCount(void);
  *        Messages are written oldest-first, with flush after each message.
  *
  * @param context SCPI context for output (must not be NULL)
+ * @return true if at least one message was written to the transport.
+ *         #1096: SYSTem:LOG?'s callback needs this to tell
+ *         SCPI_FinishDirectResult() whether anything actually reached the wire.
+ *         Every stored message is guaranteed to end in "\r\n" (see the
+ *         formatting helper in Logger.c), so "wrote something" and "the line is
+ *         closed" are the same question here -- but an EMPTY log writes nothing
+ *         at all, and claiming a closed line then would discard a PRECEDING
+ *         unit's pending result in a compound message.
  */
-void LogMessageDump(scpi_t * context);
+bool LogMessageDump(scpi_t * context);
 
 /**
  * @brief Initializes the log buffer and mutex (idempotent).

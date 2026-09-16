@@ -754,7 +754,30 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
     if (count < 1) {
         result = SCPI_RES_ERR;
     } else {
+        /* #1003/#1010: SYSTem:SYSInfoPB? is a direct writer -- it never calls
+         * SCPI_ResultXxx(), so writeDelimiter() never runs for it and only this
+         * claims its ";" in a compound message. Inside the else so it cannot
+         * precede a reply that is never written. */
+        SCPI_PrepareDirectResult(context);
         context->interface->write(context, (char*) buf, count);
+        /* #1096: FALSE -- and deliberately a literal, not
+         * SCPI_DirectResultEndsLine(buf, count). This reply is a Protocol
+         * Buffer message: a length-delimited binary blob that is not line-framed
+         * in any sense, so the wire is left mid-line by definition and the
+         * trailing SCPI_LINE_ENDING comes from SCPI_Parse()'s closing
+         * writeNewLine(), exactly as it did before #1096. Asking the BYTES would
+         * be the wrong question here -- a PB payload can legitimately end in
+         * 0x0D 0x0A and that would not mean the reply had ended a line.
+         *
+         * Honest about what this choice is worth today: on the SUCCESS path it
+         * is inert either way, because processCommand()'s post-callback flip
+         * compensates (TRUE -> flip sets FALSE -> closing writeNewLine fires;
+         * FALSE -> flip is a no-op -> closing writeNewLine fires). It becomes
+         * load-bearing the moment an error can be raised in this unit AFTER the
+         * write, since that happens before the flip -- the `count < 1` branch
+         * above writes nothing, so no such path exists today. FALSE is the
+         * statement that stays correct when one is added. */
+        SCPI_FinishDirectResult(context, FALSE);
     }
 
     SCPI_ResponseBuf_Give();
@@ -835,7 +858,32 @@ static bool SysInfoText_Write(scpi_t * context, TickType_t startTick,
             pdMS_TO_TICKS(SCPI_SYSINFO_WRITE_BUDGET_MS)) {
         return false;
     }
-    return (context->interface->write(context, data, len) == len);
+    /* #1003/#1010: SYSTem:INFo? never calls SCPI_ResultXxx(), so this funnel --
+     * which every one of its ~37 section writes goes through -- is where its
+     * ";" is claimed in a compound message. AFTER the deadline check, so an
+     * aborted reply that emits nothing also emits no separator;
+     * SCPI_PrepareDirectResult is a no-op on the second and later calls. */
+    SCPI_PrepareDirectResult(context);
+    const bool whole = (context->interface->write(context, data, len) == len);
+    /* #1096: this funnel carries BOTH shapes, which is why the answer is
+     * computed per chunk and not fixed. Most sections are whole lines
+     * ("[Network]\r\n"), but the enabled-channel list and the DIO-state loop
+     * write mid-line fragments ("  Enabled user ch: ", "3", ",", "  DIO state: ",
+     * "1") and only close the line with a separate "\r\n" at the end. That
+     * matters because __stalled_exit raises an execution error from inside
+     * exactly those loops. Pre-#1096 the wire there depended on where the query
+     * sat in the message: alone, first_output was still TRUE and the "**ERROR"
+     * line was GLUED straight onto the half-written fragment; after an earlier
+     * unit's value it was FALSE and the line got closed by accident. Reporting
+     * the real state makes both positions come out the same.
+     *
+     * ANDed with `whole` because a short write ended the line only if all of it
+     * got through -- SCPI_WriteWithRetry can return short (that is the whole
+     * subject of #947 above), and the bytes that did not arrive include the
+     * ending. */
+    SCPI_FinishDirectResult(context,
+            (whole && SCPI_DirectResultEndsLine(data, len)) ? TRUE : FALSE);
+    return whole;
 }
 
 /* Capture-by-name on `context` and `startTick`, which every call site has in
@@ -865,7 +913,17 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     if (!pBoardData || !pBoardConfig) {
         const char* err = !pBoardData ? "ERROR: BoardData not available\r\n"
                                       : "ERROR: BoardConfig not available\r\n";
+        /* #1003/#1010: this early path writes without going through
+         * SysInfoText_Write, so it claims the separator itself. */
+        SCPI_PrepareDirectResult(context);
         context->interface->write(context, err, strlen(err));
+        /* #1096: TRUE -- both messages above end in "\r\n", so the line is
+         * closed. This is one of the four live instances of the defect: the
+         * very next thing that happens is SCPI_RES_ERR, which processCommand
+         * turns into SCPI_ERROR_EXECUTION_ERROR and the transport prints as
+         * "**ERROR: ...". Before #1096, "*IDN?;SYSTem:INFo?" on a board with no
+         * BoardData put a blank line between the two. */
+        SCPI_FinishDirectResult(context, TRUE);
         return SCPI_RES_ERR;
     }
 
@@ -1382,7 +1440,38 @@ __stalled_exit:
  * @return 
  */
 static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
-    LogMessageDump(context);
+    /* #1003/#1010: SYSTem:LOG? writes its reply itself (LogMessageDump ->
+     * context->interface->write, one call per buffered message), so nothing in
+     * libscpi would otherwise separate it from an earlier unit's reply in a
+     * compound message -- "*IDN?;SYST:LOG?" ran the two together.
+     *
+     * Unconditional, rather than pushed down into LogMessageDump's per-message
+     * loop: an EMPTY log then yields a bare ";" placeholder, which is exactly
+     * what this query did before the #1003 fix (processCommand wrote the ";"
+     * for every query, empty reply or not), and keeping it here leaves
+     * Util/Logger.c free of a libscpi dependency it does not otherwise have. */
+    SCPI_PrepareDirectResult(context);
+    /* #1096: every buffered message is guaranteed to end in "\r\n" (Logger.c's
+     * formatter appends one if the caller's format did not), so a dump that
+     * wrote anything left the line closed.
+     *
+     * Guarded on the return value because an EMPTY log writes nothing at all,
+     * and the flag must keep describing the WIRE: after no write, the wire is
+     * still whatever the previous unit left it as. That distinction is not
+     * observable today -- this callback cannot fail, and on the success path
+     * processCommand's post-callback flip absorbs either value (see
+     * SCPI_FinishDirectResult in libscpi/src/parser.c) -- so the guard is what
+     * makes the statement true rather than merely harmless.
+     *
+     * The call itself is likewise inert today, for the same reason: the only
+     * error that can follow it in this unit is processCommand's
+     * PARAMETER_NOT_ALLOWED, raised after that flip. It is here because the
+     * contract is uniform -- every direct write in a query callback is followed
+     * by a statement of what it left on the wire -- so a future edit that gives
+     * this callback an error return does not silently reintroduce #1096. */
+    if (LogMessageDump(context)) {
+        SCPI_FinishDirectResult(context, TRUE);
+    }
     return SCPI_RES_OK;
 }
 
@@ -1488,7 +1577,19 @@ static scpi_result_t SCPI_SysLogLevelGet(scpi_t * context) {
                                Logger_GetLevel((LogModule_t)i),
                                Logger_GetCeiling((LogModule_t)i));
             if (len > 0) {
-                context->interface->write(context, buf, ((size_t)len < sizeof(buf) - 1) ? (size_t)len : sizeof(buf) - 1);
+                /* #1003/#1010: this branch is a direct writer (the branch above
+                 * uses SCPI_ResultInt32 and is separated by writeDelimiter).
+                 * Inside the loop and inside the len > 0 guard so the ";" only
+                 * precedes a write that happens; no-op after the first. */
+                const size_t wlen = ((size_t)len < sizeof(buf) - 1)
+                                    ? (size_t)len : sizeof(buf) - 1;
+                SCPI_PrepareDirectResult(context);
+                context->interface->write(context, buf, wlen);
+                /* #1096: the format ends in "\r\n", but the write is CLAMPED to
+                 * sizeof(buf)-1, so ask the bytes rather than the format -- a
+                 * module name long enough to truncate would drop the ending. */
+                SCPI_FinishDirectResult(context,
+                        SCPI_DirectResultEndsLine(buf, wlen));
             }
         }
     }
@@ -6862,7 +6963,14 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
     if (len > 0) {
         size_t wlen = ((size_t)len < SCPI_RESPONSE_BUF_SIZE)
                       ? (size_t)len : (SCPI_RESPONSE_BUF_SIZE - 1);
+        /* #1003/#1010: direct-write branch (the empty-history branch above
+         * returns through SCPI_ResultCharacters, which separates itself). */
+        SCPI_PrepareDirectResult(context);
         context->interface->write(context, buffer, wlen);
+        /* #1096: the header format ends in "\r\n"; asked of the bytes because
+         * wlen is clamped (SCPI_RESPONSE_BUF_SIZE is 2048 so it cannot bite
+         * today, but the clamp is what decides, not the format string). */
+        SCPI_FinishDirectResult(context, SCPI_DirectResultEndsLine(buffer, wlen));
     }
 
     // Send command history
@@ -6874,7 +6982,14 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
         if (len > 0) {
             size_t wlen = ((size_t)len < SCPI_RESPONSE_BUF_SIZE)
                           ? (size_t)len : (SCPI_RESPONSE_BUF_SIZE - 1);
+            /* #1003/#1010: no-op after the header write above claimed it; here
+             * so the separator is still emitted if that snprintf returned <= 0. */
+            SCPI_PrepareDirectResult(context);
             context->interface->write(context, buffer, wlen);
+            /* #1096: per-entry, for the same reason as the header -- a stored
+             * command long enough to fill the buffer loses the ending. */
+            SCPI_FinishDirectResult(context,
+                    SCPI_DirectResultEndsLine(buffer, wlen));
         }
     }
 

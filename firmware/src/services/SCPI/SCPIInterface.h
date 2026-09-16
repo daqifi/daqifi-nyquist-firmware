@@ -238,11 +238,39 @@ extern "C" {
             LOG_E("scpi_printf TRUNCATED: needed %d of %u bytes - response is "
                   "corrupt, not merely short (fmt starts '%.48s')",
                   n, (unsigned)sizeof(buf), fmt);
+            /* #1003/#1010: claim this query's ";" before the first byte of its
+             * reply leaves. See SCPI_PrepareDirectResult (parser.c) -- it is
+             * idempotent per program-message unit and ignores non-query
+             * commands, so putting it here covers every scpi_printf-based
+             * query callback (the ten listed in docs/BUILD_AND_TOOLCHAIN.md)
+             * with no per-callback bookkeeping, and leaves the three non-query
+             * callers (BQ:ILIM, BQ:DPDM, STReam:THRoughput) untouched. */
+            SCPI_PrepareDirectResult(context);
             context->interface->write(context, buf, sizeof(buf) - 1);
+            /* #1096: say what those bytes left on the wire. Computed, not
+             * assumed: scpi_printf renders ~200 different format strings, some
+             * whole lines ("Key=value\r\n") and some deliberate fragments
+             * (CONF:CAP:JSON?'s "\"channels\":[", ","). On THIS branch the
+             * answer is essentially always FALSE -- the text was cut off at 191
+             * bytes, so whatever ending the format carried is gone -- but it is
+             * derived from the bytes rather than asserted, because a format
+             * whose 191st and 192nd bytes happen to be the ending would leave
+             * the wire genuinely terminated. */
+            SCPI_FinishDirectResult(context,
+                    SCPI_DirectResultEndsLine(buf, sizeof(buf) - 1));
             return n;
         }
         if (n > 0) {
+            /* #1003/#1010 -- see the note on the truncated branch above. Guarded
+             * by n > 0 for the same reason that branch writes first: the ";"
+             * must never be emitted ahead of a write that does not happen. */
+            SCPI_PrepareDirectResult(context);
             context->interface->write(context, buf, (size_t)n);
+            /* #1096 -- see the truncated branch. The whole format reached the
+             * wire here, so this is exactly "did the caller's format end in
+             * \r\n". */
+            SCPI_FinishDirectResult(context,
+                    SCPI_DirectResultEndsLine(buf, (size_t)n));
         }
         return n;
     }

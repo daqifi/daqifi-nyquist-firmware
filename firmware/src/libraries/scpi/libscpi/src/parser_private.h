@@ -48,6 +48,12 @@ extern "C" {
     int scpiParser_parseAllProgramData(lex_state_t * state, scpi_token_t * token, int * numberOfParameters) LOCAL;
     int scpiParser_detectProgramMessageUnit(scpi_parser_state_t * state, char * buffer, int len) LOCAL;
 
+    /* DAQiFi patch (issues #1003 / #1010) -- not upstream.  error.c calls this
+     * before the transports write an "**ERROR: ..." line, so the error can
+     * never land inside an unterminated query response.  See the definition in
+     * parser.c for the full rationale. */
+    void scpiParser_TerminatePendingOutput(scpi_t * context) LOCAL;
+
 #ifdef	__cplusplus
 }
 #endif
