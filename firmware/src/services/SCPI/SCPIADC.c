@@ -295,9 +295,23 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
             // count (user + monitoring), not the settable channel-id range,
             // which is sparse (NQ1 user 0..15, monitoring 248..255; NQ3 0..7).
             // A numeric range here would be wrong per-variant (#630 review).
-            LOG_E("CONF:ADC:CHAN: channel %d not addressable (not a settable "
-                  "analog channel). The two-arg form is <channel>,<state>; use "
-                  "the one-arg <mask> form to enable channels by bitmask.",
+            /* #1039 (#1000 class): the old text was 170 fixed bytes plus one
+             * %d (11 at the 32-bit worst case, "-2147483648"), a 181-byte
+             * worst case against Logger's 125-byte effective ceiling
+             * (LOG_MESSAGE_SIZE 128, minus vsnprintf's 2-byte and the clamp's
+             * 3-byte reservation in LogMessageFormatImpl) -- so the tail was
+             * cut on every firing, and the tail was the remedy naming the
+             * one-arg <mask> form. The text below is 101 fixed bytes, worst
+             * case 101+11 = 112, margin 13.
+             *
+             * What was dropped is the parenthetical gloss "(not a settable
+             * analog channel)", which restates "not addressable"; both legal
+             * argument forms -- the actionable half -- are kept. The command
+             * path named is CONF:ADC:CHAN, the legal short form of the
+             * registered CONFigure:ADC:CHANnel (SCPIInterface.c), so an
+             * operator who retypes what was printed does not get -113. */
+            LOG_E("CONF:ADC:CHAN: channel %d not addressable; two-arg form is "
+                  "<channel>,<state>, one-arg form is a <mask>.",
                   param1);
             // Push a specific error (not the libscpi-default generic -200) so
             // the failure is classifiable via SYST:ERR? too — consistent with
