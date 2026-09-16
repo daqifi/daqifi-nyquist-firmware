@@ -396,9 +396,13 @@ void MC12b_RestoreIdleScanList(void) {
 /* Shared-MODULE7 ADC clock period TAD7, in nanoseconds (rounded UP — see
  * below), derived live from the SFRs:
  *   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV + 1) x TCLK;  TCLK = 1/PBCLK3
- * (DS60001320H Reg 28-2/28-3 — the EF datasheet deviates from the FRM on
- * CONCLKDIV semantics and the datasheet is what matches silicon; the full
- * chain is worked in docs/ADC_HW_SEMANTICS.md).
+ * ADCDIV is ADCCON2<6:0>; CONCLKDIV is ADCCON3<29:24> (Qodo /agentic_review,
+ * PR firmware#1112, round 2, "ADC timing math is hard to verify" — both
+ * bitfields named explicitly here, not only by register number). DS60001320H
+ * Reg 28-2 (ADCCON2) / Reg 28-3 (ADCCON3) — the EF datasheet deviates from
+ * the FRM (DS60001344E §22 "12-bit High-Speed SAR ADC") on CONCLKDIV
+ * semantics and the DATASHEET is what matches silicon; the full chain is
+ * worked in docs/ADC_HW_SEMANTICS.md.
  *
  * #716/#487, via TimerApi_PeripheralClockHz() (Qodo /agentic_review, PR
  * firmware#1112, "Clock mismatches corrupt timing offsets"): TCLK comes from
@@ -594,6 +598,10 @@ uint32_t MC12b_ChannelScanOffsetTicks(const AInChannel* ch,
      * on the shipped default clocks is EXACTLY 5 timestamp ticks, so an exact
      * integer answer exists and no rounding was structurally required).
      *   TAD7[ns]      = 2 x adcdiv x (conclkdiv+1) x 1e9 / pbclkHz
+     *                   (adcdiv = ADCCON2<6:0> ADCDIV, conclkdiv =
+     *                   ADCCON3<29:24> CONCLKDIV — DS60001320H Reg 28-2/28-3;
+     *                   see MC12b_SharedTadNs above for the full FRM-vs-
+     *                   datasheet citation)
      *   ticks(pos)    = [pos x (SAMC+16) + (SAMC+2)] x TAD7[ns] x timestampHz
      *                   / 1e9
      *                 = [pos x (SAMC+16) + (SAMC+2)]

@@ -7747,9 +7747,13 @@ static void EmitAinChannelJson(scpi_t* context,
      * bump (see the escape-hatch note at the top of the blob).
      *
      * 0 has one meaning, "no deterministic offset applies", covering: a
-     * simultaneous channel, the first input in the scan, and a channel the
-     * current configuration would not scan at all. It describes the scan the
-     * device would arm for the channel set enabled RIGHT NOW (the same scan
+     * simultaneous channel (Type 1 dedicated S&H, or AD7609) and a channel
+     * the current configuration would not scan at all. The first input in
+     * the scan is NOT among these (#1112 round-2, "One timing comment
+     * preserves old semantics" — every scanned shared/Type-2 position,
+     * including the first, carries its own nonzero acquisition aperture;
+     * see MC12b_ChannelScanOffsetTicks). It describes the scan the device
+     * would arm for the channel set enabled RIGHT NOW (the same scan
      * cap_terms.scan_bound_hz is computed for), so it is a fact about the
      * session a client is about to start, not a hypothetical. */
     scpi_printf(context,
