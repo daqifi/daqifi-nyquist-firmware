@@ -301,17 +301,23 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
              * (LOG_MESSAGE_SIZE 128, minus vsnprintf's 2-byte and the clamp's
              * 3-byte reservation in LogMessageFormatImpl) -- so the tail was
              * cut on every firing, and the tail was the remedy naming the
-             * one-arg <mask> form. The text below is 101 fixed bytes, worst
-             * case 101+11 = 112, margin 13.
+             * one-arg <mask> form. The text below is 109 fixed bytes, worst
+             * case 109+11 = 120, margin 5.
              *
              * What was dropped is the parenthetical gloss "(not a settable
              * analog channel)", which restates "not addressable"; both legal
              * argument forms -- the actionable half -- are kept. The command
-             * path named is CONF:ADC:CHAN, the legal short form of the
-             * registered CONFigure:ADC:CHANnel (SCPIInterface.c), so an
-             * operator who retypes what was printed does not get -113. */
-            LOG_E("CONF:ADC:CHAN: channel %d not addressable; two-arg form is "
-                  "<channel>,<state>, one-arg form is a <mask>.",
+             * path is spelled out in full, CONFigure:ADC:CHANnel, copied
+             * verbatim from its registration (SCPIInterface.c:8768) rather
+             * than printed as the short form CONF:ADC:CHAN this message used
+             * to carry: both are legal spellings a device accepts
+             * (utils.c's matchPattern/compareStr), but a diagnostic whose text
+             * differs from the registered string cannot be kept in sync with
+             * a later rename mechanically -- only a verbatim copy can (PR
+             * #1110 review item 5, worker ruling 2026-09-16). */
+            LOG_E("CONFigure:ADC:CHANnel: channel %d not addressable; "
+                  "two-arg form is <channel>,<state>, one-arg form is a "
+                  "<mask>.",
                   param1);
             // Push a specific error (not the libscpi-default generic -200) so
             // the failure is classifiable via SYST:ERR? too — consistent with
