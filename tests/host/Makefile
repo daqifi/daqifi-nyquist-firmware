@@ -597,6 +597,41 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        echo "       ever observable' from 'torn down by a cause that has since"; \
 	        echo "       lifted'. Re-read both before changing either."; \
 	        exit 1; }
+# #988's RECONCILIATION READ. The loop's latch has a sampling gap it cannot close
+# itself -- the body samples `mode` and then yields 10 ms before the `readyWait <
+# 500` bound is re-tested, so a teardown in that final delay is observed by
+# nobody -- and the fix is one more sample at the head of the !IsWriteReady()
+# block. Two properties, both grep-checkable and both load-bearing:
+#
+#   POSITION. It must sit AFTER the in-loop latch and BEFORE the arm that
+#     consumes it. Moved above the loop it would sample the arm this callback
+#     just published and could never observe a teardown at all.
+#   THE `||`. Pinned by matching the literal `armTornDown = armTornDown ||`
+#     rather than just the variable. A plain `armTornDown = (mode != WRITE)`
+#     would satisfy a position-only check while overwriting the loop's finding
+#     whenever a different caller had re-armed WRITE -- reintroducing #988
+#     through its own fix. `the_reconciliation_ors_it_does_not_overwrite_the_
+#     latch` is the test that models that mutation.
+#
+# WHAT THIS DOES NOT PIN: that the read is inside the !IsWriteReady() block
+# rather than merely between the two markers, and that the loop's own latch was
+# not deleted in favour of it (the guard above holds that one). Line order is all
+# grep has; the rest is the comment at the firmware site and review.
+	@f=`grep -nF 'armTornDown = true;' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 g=`grep -nF 'armTornDown = armTornDown ||' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 d=`grep -nF '} else if (armTornDown) {' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 test -n "$$f" && test -n "$$g" && test -n "$$d" \
+	   && test "$$f" -lt "$$g" && test "$$g" -lt "$$d" \
+	   || { echo "ERROR: #988's post-loop reconciliation read in $(SD_BENCH_SRC) is"; \
+	        echo "       gone, moved out of the file-not-ready block, or rewritten as"; \
+	        echo "       an assignment (markers found at latch='$$f'"; \
+	        echo "       reconcile='$$g' arm='$$d')."; \
+	        echo "       It must read 'armTornDown = armTornDown || (...)' and sit"; \
+	        echo "       between the loop's latch and the arm that consumes it."; \
+	        echo "       test_953_bench_suspend_diagnosis.c models it as a separate"; \
+	        echo "       step (bench_reconcile) for exactly that reason. Re-read both"; \
+	        echo "       before changing either."; \
+	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
 SCPI999_WIRING_GUARD := check_999_createscpicontext_wiring.sh

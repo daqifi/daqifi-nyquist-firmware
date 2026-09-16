@@ -96,13 +96,32 @@ cascade with identical inputs and differ only in *when* the suspend reason was
 non-NULL. Its headline property is the same one, one dimension wider: over the
 eight cells of (dir-full × suspended × torn-down), **exactly one** moves.
 
+The latch has a **second writer**, and the model has a third piece because of
+it. The poll loop samples `mode` at the top of its body and then yields 10 ms
+before its `readyWait < 500` bound is re-tested, so its last observation and its
+exit are different instants: a teardown landing in that final delay (or between
+the `while` condition's `IsWriteReady()` and the `if`'s) is latched by nobody and
+the cascade walks past the torn-down arm into the card advisory — the same
+mis-diagnosis #988 exists to stop, at a timing boundary the in-loop latch alone
+cannot reach. So the failure block opens with a **reconciliation read** that ORs
+one final sample in, modelled here as its own step (`bench_reconcile`) rather
+than folded into the loop, because its sample is strictly later than
+`polls[last]`. The `||` is load-bearing: a plain assignment would erase the
+loop's finding whenever a different caller had re-armed `WRITE` in the meantime.
+`torn_down_after_the_last_poll_sample_is_still_a_teardown` and
+`the_reconciliation_ors_it_does_not_overwrite_the_latch` are those two
+properties, and the first also re-asserts that reconciling still loses to the
+dir-full and suspend arms — the ordering is unchanged by it.
+
 No constants are copied here, so this target has no equivalent of `test_943`'s
 two greps. What it copies is the **order of the four arms** and the position of
 the latch, so the Makefile guards those instead: it locates each marker in
 `SCPIStorageSD.c` and **fails the build** unless the arms still appear as
-dir-full → suspend → torn-down → card and the latch still sits inside the poll
-loop between the `#690` early-exit and the arm that reads it. Both guards were
-proven to fire (a renamed arm, a reordered pair, a deleted latch).
+dir-full → suspend → torn-down → card, the latch still sits inside the poll
+loop between the `#690` early-exit and the arm that reads it, and the
+reconciliation read still sits between that latch and that arm spelled as an
+`||`. All three guards were proven to fire (a renamed arm, a reordered pair, a
+deleted latch; a deleted, hoisted and assignment-rewritten reconciliation).
 
 `test_1004_help_write_abort.c` covers `SCPI_Help`'s (the `HELP` command)
 shared-response-buffer write-abort bound (issue #1004) — the third site of a

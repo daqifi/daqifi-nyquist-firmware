@@ -1645,6 +1645,15 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
          * have had (nothing restores MODE_WRITE for it) and is what the code
          * did before #988 anyway.
          *
+         * THE LOOP IS NOT THE ONLY READ. Its sample point and its exit are
+         * different instants -- the body samples `mode` and then yields 10 ms
+         * before the condition is re-tested -- so a teardown in that last delay
+         * would be latched by nobody. A reconciliation read at the head of the
+         * `!IsWriteReady()` block below ORs one final sample in; its own comment
+         * has the two exits that reach it. Read them together: this latch is
+         * "torn down, observed during the wait", that one is "torn down, and the
+         * wait ended before the loop could see it".
+         *
          * RESIDUAL, pre-existing and unchanged -- stated so it is not mistaken
          * for something this latch introduced. The loop's exit condition is
          * still sd_card_manager_IsWriteReady(), which asks whether SOME write
@@ -1667,6 +1676,73 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
             readyWait++;
         }
         if (!sd_card_manager_IsWriteReady()) {
+            /* #988: RECONCILIATION READ -- one last sample of `mode`, because
+             * the loop above cannot have taken it.
+             *
+             * The loop samples `mode` at the TOP of its body and then yields for
+             * 10 ms before re-testing its condition, so its last observation and
+             * its exit are not the same instant. Two exits land in that gap:
+             *
+             *   the bound. On the iteration where readyWait is 499 the body
+             *     samples `mode`, delays 10 ms, increments to 500 -- and
+             *     `readyWait < 500` is now false, so the body never runs again.
+             *     A teardown inside that final delay is sampled by nobody.
+             *   a readiness flip. The sd_card_manager_IsWriteReady() in the
+             *     `while` condition and the one in this `if` are two separate
+             *     calls, and this task can be preempted between them, so the
+             *     loop can exit "ready" and this `if` still find it false --
+             *     again with the teardown unobserved.
+             *
+             * Both leave a genuinely dead arm with armTornDown false, and the
+             * cascade below then walks past arm 3 into the card advisory: the
+             * exact mis-diagnosis #988 exists to stop, at the one timing
+             * boundary the in-loop latch alone cannot see. A read here is as
+             * late as the information can be taken: no vTaskDelay separates it
+             * from the cascade, which is the next statement. (A preemption can
+             * still land between the two -- nothing short of a critical section
+             * over the whole cascade would change that, and the cascade calls
+             * into two other modules. What is closed is the 10 ms hole, not
+             * every instruction boundary.)
+             *
+             * THE `||` IS LOAD-BEARING; this must not become a plain assignment.
+             * The loop's latch is a FACT already established ("mode left the
+             * MODE_WRITE this callback published"), and nothing makes it untrue
+             * later. `mode` can read WRITE again at this instant if a different
+             * caller armed its own operation after the teardown -- an
+             * assignment would erase the loop's finding on exactly the
+             * interleaving that most needs it. Only ever OR.
+             *
+             * AFTER THE LOOP, NOT BEFORE IT. A read taken before the wait
+             * describes the arm this callback just published and can say
+             * nothing about a teardown that has not happened yet; the whole
+             * defect is that the wait's last 10 ms are unobserved, and only a
+             * read downstream of them observes anything.
+             *
+             * THE ARM ORDER IS UNTOUCHED. This changes only WHEN armTornDown
+             * may become true, never which arm consumes it. Arm 1 still re-reads
+             * sd_card_manager_StartupDirFull() itself, first, so the recorded
+             * #690 verdict still outranks this; arm 2 still outranks it for the
+             * reason set out below. And it cannot fire falsely: this callback
+             * published MODE_WRITE and never touches `mode` again before here,
+             * so any other value is proof that something outside the callback
+             * destroyed the arm -- the same inference the in-loop latch makes,
+             * one sample later.
+             *
+             * WHAT IT STILL DOES NOT CLOSE, so the next reader does not mistake
+             * it for a general fix: a teardown whose ENTIRE mode-is-NONE window
+             * falls between two samples -- another caller claiming and arming
+             * its own WRITE in the gap -- is invisible to the loop AND to this
+             * read, which would see the re-armed WRITE. That is the same
+             * "IsWriteReady() asks whether SOME write is ready" interleaving the
+             * RESIDUAL note above the loop already scopes out (#728, #739
+             * closed won't-fix), seen from the diagnosis side; the outcome is an
+             * execution error either way and only the message is imprecise.
+             * Naming it properly needs a per-request arm generation owned by the
+             * SD manager -- new shared state with its own writers and orderings
+             * -- which is a design, not this reconciliation. */
+            armTornDown = armTornDown ||
+                          (pSDCardRuntimeConfig->mode != SD_CARD_MANAGER_MODE_WRITE);
+
             /* #953/#988: FOUR arms, and the ORDER is still the substance.
              *
              * Reaching here means the file never opened. Four different things
@@ -1740,8 +1816,10 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
              *    by #988, and its recommended action stays correct either way.
              *
              * 3. Otherwise, THIS request's arm was torn down and nothing names
-             *    a cause -- #988. The latch above is set only by a transition
-             *    away from the MODE_WRITE this callback itself published, so
+             *    a cause -- #988. Its input has TWO writers, the poll loop's
+             *    latch and the reconciliation read immediately above this
+             *    cascade, and both set it on the same evidence: a transition
+             *    away from the MODE_WRITE this callback itself published. So
              *    unlike arm 2 it cannot be someone else's weather; what it
              *    cannot do is say who. Its domain is what is left after arm 2:
              *    the power-state teardown, which publishes no suspension at

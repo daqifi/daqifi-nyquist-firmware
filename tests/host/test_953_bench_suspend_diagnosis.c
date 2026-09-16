@@ -48,6 +48,27 @@
  * THIS request, not an ambient condition. See THE TRANSIENT QUADRANT below for
  * the three rounds of #983 that tried the ambient version and withdrew it.
  *
+ * It has TWO writers, and the second is the SAMPLING BOUNDARY the first cannot
+ * reach. The loop samples `mode` at the top of its body and then yields 10 ms
+ * before its condition is re-tested, so its last observation and its exit are
+ * different instants: on the iteration where readyWait is 499 the body samples,
+ * delays, increments to 500, and the bound ends the loop with no further sample.
+ * A teardown inside that delay -- or between the `while` condition's
+ * IsWriteReady() and the separate call on the line below it -- is latched by
+ * nobody, and the cascade walks past arm 3 into the card advisory for an arm
+ * that is just as dead. So the failure block opens with a RECONCILIATION READ:
+ *
+ *     armTornDown = armTornDown ||
+ *                   (pSDCardRuntimeConfig->mode != MODE_WRITE);
+ *
+ * one final sample, ORed in, with no gap left after it. The `||` is load-bearing
+ * -- an assignment would erase the loop's finding whenever a different caller
+ * had re-armed WRITE in the meantime -- and the arm ORDER is untouched: this
+ * changes only when `armTornDown` may become true, never which arm reads it.
+ * `torn_down_after_the_last_poll_sample_is_still_a_teardown` and
+ * `the_reconciliation_ors_it_does_not_overwrite_the_latch` are those two
+ * properties.
+ *
  * StartupDirFull stays FIRST, which is NOT what #953's ticket proposed. It is
  * a recorded verdict and necessarily this request's own: the callback clears
  * it synchronously just before arming, and its only writer is the SD task's
@@ -224,15 +245,26 @@
  *
  * FIDELITY -- what the extracted functions are NOT
  *
- * 1. #988 MOVED THIS ITEM, as the previous revision predicted it would. Two
+ * 1. #988 MOVED THIS ITEM, as the previous revision predicted it would. THREE
  *    things are modelled now: the DECISION CASCADE after the wait loop (as
- *    before) and, for the #988 cases only, the parts of the `readyWait < 500`
+ *    before); for the #988 cases only, the parts of the `readyWait < 500`
  *    poll loop that DECIDE the latch -- the order of its two in-loop tests (the
  *    #690 early-exit `break` first, the `mode != MODE_WRITE` latch second) and
- *    the fact that the latch is sticky. Still out of scope, because neither
- *    #953 nor #988 changes them: the vTaskDelay cadence, the 5 s bound, and the
+ *    the fact that the latch is sticky; and the RECONCILIATION READ between the
+ *    two (bench_reconcile), which is a separate step here because it is a
+ *    separate step in the firmware and because its sample is strictly later than
+ *    the loop's last one. Still out of scope, because neither #953 nor #988
+ *    changes them: the vTaskDelay cadence, the 5 s bound, and the
  *    iteration count -- a poll script's length stands in for the 500, and no
  *    test here asserts anything about how long the wait takes.
+ *
+ *    The reconciliation's TIMING is therefore not modelled either, only its
+ *    position in the data flow: `bench_reconcile`'s argument is "what `mode`
+ *    reads at the cascade", and which real-world delay produced that value --
+ *    the final vTaskDelay, the gap between the two IsWriteReady() calls -- is
+ *    the same input to this model. Both are named at the firmware site; the
+ *    model's job is that a LATER read exists at all and is ORed rather than
+ *    assigned.
  *
  *    The latch must also not `break`, and it is worth being precise about how
  *    far that is covered. Breaking would end the wait at the instant the
@@ -518,6 +550,37 @@ static void bench_run_wait(const BenchPoll *polls, size_t n, BenchEnv *out)
 
     env_init_torn(out, polls[last].startupDirFull, polls[last].suspendReason,
                   armTornDown);
+}
+
+/* #988: the RECONCILIATION READ, as its own step -- which is what it is in the
+ * firmware too:
+ *
+ *     if (!sd_card_manager_IsWriteReady()) {
+ *         armTornDown = armTornDown ||
+ *                       (pSDCardRuntimeConfig->mode != MODE_WRITE);
+ *         const char *why = SD_SuspendReasonText();
+ *         ...
+ *
+ * It is NOT folded into bench_run_wait() on purpose. The loop's last sample and
+ * the loop's EXIT are different instants -- the body samples `mode`, then yields
+ * 10 ms, and the bound can expire in that delay -- so `modeIsWrite` at the
+ * cascade is a genuinely later observation than polls[last].modeIsWrite and has
+ * to be supplied separately. A model that reused polls[last] for it could not
+ * express the boundary case at all, which is precisely how the defect survived
+ * the first round of #988.
+ *
+ * Calling this is the POST-reconciliation shape; not calling it is the shape
+ * #988 originally shipped. The two new tests below run the same script through
+ * both, which is the whole proof.
+ *
+ * The OR is modelled, not an assignment, because the firmware's is an OR and
+ * the difference is load-bearing -- see `the_reconciliation_ors_it_does_not_
+ * overwrite_the_latch`. */
+static void bench_reconcile(BenchEnv *env, bool modeIsWriteAtCascade)
+{
+    if (!modeIsWriteAtCascade) {
+        env->armTornDown = true;
+    }
 }
 
 /* ==========================================================================
@@ -982,6 +1045,166 @@ TEST(a_card_that_never_opens_the_file_does_not_latch)
     ASSERT_TRUE(latchedV.text == NULL);
 }
 
+/* #988 (f) -- THE SAMPLING BOUNDARY: a teardown the LOOP could never have seen.
+ *
+ * The loop samples `mode` at the top of its body and then yields 10 ms before
+ * its condition is re-tested, so its last observation and its exit are different
+ * instants. On the iteration where readyWait is 499 the body samples, delays,
+ * increments to 500 -- and `readyWait < 500` ends the loop with no further
+ * sample. app_SDCard_GracefulShutdown() running on the SD task inside that final
+ * delay stores MODE_NONE over this benchmark's arm and is observed by nobody.
+ * (The same gap swallows a teardown that lands between the `while` condition's
+ * IsWriteReady() call and the separate one on the line below it.)
+ *
+ * The arm is exactly as dead as in case (a) -- nothing restores MODE_WRITE --
+ * but `armTornDown` is false, so the shape #988 shipped walks past its own arm
+ * into the card advisory. That is the defect this reconciliation closes, and it
+ * is the assertion that screams if the reconciliation read is removed.
+ *
+ * Note what the script says: EVERY poll observes the arm standing. There is no
+ * iteration to which the teardown could be attributed, which is what makes this
+ * a different case from (a)-(e) rather than a re-spelling of (a). */
+TEST(torn_down_after_the_last_poll_sample_is_still_a_teardown)
+{
+    static const BenchPoll kPolls[] = {
+        /* dirFull, modeIsWrite, suspendReason */
+        { false,    true,        NULL },   /* armed, waiting for the open      */
+        { false,    true,        NULL },
+        { false,    true,        NULL },   /* the wait's LAST sample: still ours */
+    };
+    const size_t n = sizeof(kPolls) / sizeof(kPolls[0]);
+    BenchEnv preEnv, postEnv;
+    BenchVerdict preV, postV;
+
+    /* Same script into both shapes; the reconciliation is the only difference. */
+    bench_run_wait(kPolls, n, &preEnv);
+    bench_run_wait(kPolls, n, &postEnv);
+
+    /* The loop latched nothing -- in BOTH -- which is the premise of the case.
+     * Assert it, so a failure below cannot be mistaken for a loop bug. */
+    ASSERT_FALSE(preEnv.armTornDown);
+    ASSERT_FALSE(postEnv.armTornDown);
+
+    /* ...and then the teardown lands in the final delay: MODE_NONE by the time
+     * the cascade reads it. */
+    bench_reconcile(&postEnv, false);
+    ASSERT_TRUE(postEnv.armTornDown);
+
+    preV  = latched_bench_not_ready_diagnosis(&preEnv);
+    postV = latched_bench_not_ready_diagnosis(&postEnv);
+
+    /* The shipped #988 shape blames the card for a teardown that happened. */
+    ASSERT_EQ(preV.diag, DIAG_GENERIC_TIMEOUT);
+    /* The reconciliation says what actually happened. */
+    ASSERT_EQ(postV.diag, DIAG_ARM_TORN_DOWN);
+    ASSERT_TRUE(postV.diag != preV.diag);
+
+    /* Still one sample of the reason, on an arm that discards it. */
+    ASSERT_EQ(postEnv.suspendReasonCalls, 1);
+
+    /* THE CARD GUARD SURVIVES. The reconciliation must not fire merely because
+     * it exists: a genuinely SPI-incompatible card never clears `mode`
+     * (sd_card_manager.c takes a failed WRITE-mode open to PROCESS_STATE_ERROR
+     * with the arm standing), so the read finds MODE_WRITE and the operator
+     * still gets the card hint. This is what stops the lazy mutation
+     * "reconcile unconditionally". */
+    {
+        BenchEnv cardEnv;
+        BenchVerdict cardV;
+
+        bench_run_wait(kPolls, n, &cardEnv);
+        bench_reconcile(&cardEnv, true);      /* arm still standing at the cascade */
+        ASSERT_FALSE(cardEnv.armTornDown);
+
+        cardV = latched_bench_not_ready_diagnosis(&cardEnv);
+        ASSERT_EQ(cardV.diag, DIAG_GENERIC_TIMEOUT);
+        ASSERT_TRUE(cardV.text == NULL);
+    }
+
+    /* THE ARM ORDER IS UNTOUCHED, both directions. The reconciliation changes
+     * only WHEN armTornDown may become true, never which arm consumes it -- so
+     * on the two inputs that outrank it, the verdict must be identical to what
+     * it was before. Reconciling `false` (the strongest possible push toward arm
+     * 3) must still lose to a recorded #690 verdict and to a live suspend
+     * reason. Hoist the reconciliation's effect above either arm and these two
+     * blocks are what fail. */
+    {
+        static const BenchPoll kDirFull[] = {
+            { false, true, NULL },
+            { true,  true, NULL },        /* the #690 refusal is recorded */
+        };
+        BenchEnv dirEnv;
+        BenchVerdict dirV;
+
+        bench_run_wait(kDirFull, sizeof(kDirFull) / sizeof(kDirFull[0]), &dirEnv);
+        bench_reconcile(&dirEnv, false);
+        ASSERT_TRUE(dirEnv.armTornDown);
+        ASSERT_TRUE(dirEnv.startupDirFull);
+
+        dirV = latched_bench_not_ready_diagnosis(&dirEnv);
+        ASSERT_EQ(dirV.diag, DIAG_STARTUP_DIR_FULL);
+        ASSERT_TRUE(dirV.text == kRefuseBucketsExhausted);
+    }
+    {
+        static const BenchPoll kSuspended[] = {
+            { false, true, NULL },
+            { false, true, kReasonWifiStream },   /* cause live at the cascade */
+        };
+        BenchEnv suspEnv;
+        BenchVerdict suspV;
+
+        bench_run_wait(kSuspended, sizeof(kSuspended) / sizeof(kSuspended[0]),
+                       &suspEnv);
+        bench_reconcile(&suspEnv, false);
+        ASSERT_TRUE(suspEnv.armTornDown);
+        ASSERT_TRUE(suspEnv.suspendReason == kReasonWifiStream);
+
+        suspV = latched_bench_not_ready_diagnosis(&suspEnv);
+        ASSERT_EQ(suspV.diag, DIAG_SUSPEND_REASON);
+        ASSERT_TRUE(suspV.text == kReasonWifiStream);
+    }
+}
+
+/* #988 (g) -- THE RECONCILIATION IS AN `||`, AND THAT IS THE POINT OF IT.
+ *
+ * Writing it as `armTornDown = (mode != MODE_WRITE)` passes case (f) -- and
+ * silently destroys the loop's own finding on the interleaving that most needs
+ * it. The loop's latch records a FACT about this request ("mode left the
+ * MODE_WRITE this callback published"); nothing makes that fact untrue later.
+ * But `mode` can read MODE_WRITE again at the cascade, because after the
+ * teardown released the manager a DIFFERENT caller is free to claim and arm its
+ * own operation (sd_card_manager_TryClaim succeeds once mode is NONE and the
+ * machine is idle). An assignment would then overwrite `true` with `false` and
+ * hand that request the card advisory -- reintroducing the #988 bug through the
+ * fix for it.
+ *
+ * This is the test that goes red on that mutation, and it is why the firmware
+ * line reads `armTornDown = armTornDown || (...)` and not `armTornDown = (...)`. */
+TEST(the_reconciliation_ors_it_does_not_overwrite_the_latch)
+{
+    static const BenchPoll kPolls[] = {
+        /* dirFull, modeIsWrite, suspendReason */
+        { false,    true,        NULL },   /* armed                            */
+        { false,    false,       NULL },   /* teardown -- the LOOP sees it     */
+        { false,    false,       NULL },
+    };
+    const size_t n = sizeof(kPolls) / sizeof(kPolls[0]);
+    BenchEnv env;
+    BenchVerdict v;
+
+    bench_run_wait(kPolls, n, &env);
+    ASSERT_TRUE(env.armTornDown);          /* the loop established the fact */
+
+    /* Another caller has since armed its own WRITE, so the reconciliation's
+     * sample reads MODE_WRITE. The latch must survive it. */
+    bench_reconcile(&env, true);
+    ASSERT_TRUE(env.armTornDown);
+
+    v = latched_bench_not_ready_diagnosis(&env);
+    ASSERT_EQ(v.diag, DIAG_ARM_TORN_DOWN);
+    ASSERT_TRUE(v.diag != DIAG_GENERIC_TIMEOUT);
+}
+
 /* The #988 cube, asserted as a table for the same reason #953's quadrants are:
  * so "exactly one cell moves" is a checked property of the pair of shapes and
  * not a claim in a comment.
@@ -1065,6 +1288,8 @@ int main(void)
     RUN(torn_down_with_a_live_cause_still_names_the_cause);
     RUN(dir_full_that_also_tore_the_arm_down_keeps_its_verdict);
     RUN(a_card_that_never_opens_the_file_does_not_latch);
+    RUN(torn_down_after_the_last_poll_sample_is_still_a_teardown);
+    RUN(the_reconciliation_ors_it_does_not_overwrite_the_latch);
     RUN(the_latch_moves_exactly_one_cell_of_the_eight);
     return TEST_SUMMARY();
 }
