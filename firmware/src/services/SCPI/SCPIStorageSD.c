@@ -75,9 +75,32 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
 
 /* #756 Part A: how long SCPI_CheckSDCardPresent will wait, after kicking the
  * detect poll, for a card that the driver's cache says is DETACHED to prove
- * otherwise. Bounded and only ever engaged on the negative branch -- see the
- * function's own comment for why this cannot regress the present-card case. */
-#define SD_PRESENCE_RECHECK_BOUND_MS   1500U
+ * otherwise. Only ever engaged on the negative branch, and gated further to
+ * exclude the paths where blocking is unsafe or futile -- see the function's
+ * own comment.
+ *
+ * DERIVED, not guessed (opus design review, 2026-09-16, on this ticket's own
+ * PR, found the original 1500 was ~10x below what this codebase's own
+ * budgets say the covered span needs). A full attach resolves through
+ * TASK_CHECK_DEVICE then TASK_MEDIA_INIT (drv_sdspi.c), whose BOUNDED
+ * sub-waits are DRV_SDSPI_APP_CMD_RESP_TIMEOUT_IN_MS (1000, the ACMD41 busy
+ * loop) and DRV_SDSPI_CSD_TOKEN_TIMEOUT_IN_MS (1000), each backed by
+ * DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS (500) x DRV_SDSPI_COMMAND_RESPONSE_TRIES
+ * (10) per command underneath (drv_sdspi_local.h). 5000 ms covers both
+ * top-level budgets plus headroom for retries on a card that is responding,
+ * while staying well under the 15 s this driver's OWN SPI-bus-hold watchdog
+ * uses for the same span (app_freertos.c) -- that comment's own warning
+ * applies here too: some of media init's sub-waits (CSD/CID data phases,
+ * the post-attach re-verify) hold with NO timer armed at all, so no finite
+ * bound is a guarantee against a truly wedged card, only against the
+ * ordinary responding-card case this ticket is about. A card that never
+ * resolves within this window is refused exactly as before this fix --
+ * this is strictly a best-effort improvement to the common case, not a new
+ * guarantee. Not bench-measured directly: this session tried to force the
+ * exact stale-DETACHED-with-card-present race (stop a WiFi stream, query
+ * immediately) and could not reproduce it either, consistent with #756's
+ * own history of four prior failed bench attempts -- see the PR body. */
+#define SD_PRESENCE_RECHECK_BOUND_MS   5000U
 #define SD_PRESENCE_RECHECK_POLL_MS    100U
 
 /* ************************************************************************** */
@@ -379,31 +402,71 @@ static bool SD_RefuseIfSuspended(scpi_t *context, const char *cmd)
  * as 5 s after DRV_SDSPI_DETECT_BACKOFF_AFTER_POLLS (10) consecutive
  * detached polls (#589 P1) -- so a card that is physically present but was
  * inserted while that backoff timer was already running in flight reads
- * DETACHED here until the pending timer happens to expire on its own. Kick
- * the detect poll (DRV_SDSPI_DetectPollKick, which now also forces the
- * pending timer to expire immediately -- see its own comment) and give the
- * FSM a short, bounded window to resolve before refusing.
+ * DETACHED here until the pending timer happens to expire on its own.
  *
  * This cannot add latency to the healthy case: when the card IS attached the
  * first read below succeeds and the function returns immediately, before
- * the kick or the wait loop are ever reached. The added cost only exists on
- * the branch that was already about to refuse.
+ * anything else in this function runs.
+ *
+ * The kick (DRV_SDSPI_DetectPollExpireNow) is unconditional -- it is O(1)
+ * and it starts the re-detect regardless of whether we can afford to WAIT
+ * for it here, so even when this call refuses below, the caller's own retry
+ * (or a client that reissues the command) finds a fresh answer instead of
+ * whatever the pending timer would have delivered eventually anyway.
+ *
+ * The BLOCKING RE-CHECK LOOP is gated by canWait, and must NOT run when:
+ *
+ * 1. Nothing is pumping the FSM. DRV_SDSPI_Tasks() (and
+ *    sd_card_manager_ProcessState()) run ONLY in APP_SD_STATE_PROCESS
+ *    (app_freertos.c) -- never while the SD task is suspended for WiFi
+ *    (app_SDCard_SpiOwnedByWifi() / SpiBusHealth_IsSdSuspended()), and this
+ *    function is reachable in that state: SCPI_StorageSDLoggingSet (SD:FILE)
+ *    deliberately does NOT call SD_RefuseIfSuspended before this check (its
+ *    own comment: "it needs nothing from the suspended SD task, and refusing
+ *    it would stop a client preparing the next session while WiFi
+ *    streams") -- so this function cannot assume the caller already
+ *    checked. Waiting anyway would be a bounded delay for an answer that
+ *    provably cannot change.
+ * 2. This command arrived over TCP (wifi_tcp_server_ContextIsTcp). Its
+ *    handler runs inside wifi_manager_ProcessStateImpl's gProcessStateMutex,
+ *    whose OTHER callers bail out after a 250 ms timeout and whose own
+ *    comment states the documented worst-case in-mutex delay is ~120 ms
+ *    (nm_reset() during DEINIT). Blocking SD_PRESENCE_RECHECK_BOUND_MS
+ *    (see its own comment -- multiple seconds) there is many times that
+ *    budget: it starves gEventQH, delays the TCP recv() re-arm, skips
+ *    ApplyPowerSavePolicy/the #663 idle guard/mDNS health, and stalls WiFi
+ *    streaming egress (also serviced on WifiTask) for the whole wait. Over
+ *    TCP the kick alone -- which starts the re-detect so the caller's retry
+ *    can succeed -- is the fix; the blocking wait is not worth its cost on
+ *    this transport.
+ *
+ * Neither condition disqualifies the KICK, only the WAIT: the FSM still
+ * gets nudged toward a correct answer either way, just not synchronously
+ * inside this call. (Opus design review, 2026-09-16, on this ticket's own
+ * PR -- both gaps found before merge, neither bench-reproduced: forcing
+ * them needs a WiFi-owned-bus/TCP-in-flight window this session did not
+ * construct.)
  */
 static bool SCPI_CheckSDCardPresent(scpi_t *context) {
     if (SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
         return true;
     }
 
-    DRV_SDSPI_DetectPollKick(0);
+    DRV_SDSPI_DetectPollExpireNow(0);
 
-    TickType_t startTick = xTaskGetTickCount();
-    while ((TickType_t)(xTaskGetTickCount() - startTick) <
-           pdMS_TO_TICKS(SD_PRESENCE_RECHECK_BOUND_MS)) {
-        vTaskDelay(pdMS_TO_TICKS(SD_PRESENCE_RECHECK_POLL_MS));
-        if (SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
-            LOG_D("SD - card detected present after a detect-poll kick "
-                  "(was stale-DETACHED)\r\n");
-            return true;
+    const bool canWait = !app_SDCard_SpiOwnedByWifi() &&
+                          !SpiBusHealth_IsSdSuspended() &&
+                          !wifi_tcp_server_ContextIsTcp(context);
+    if (canWait) {
+        TickType_t startTick = xTaskGetTickCount();
+        while ((TickType_t)(xTaskGetTickCount() - startTick) <
+               pdMS_TO_TICKS(SD_PRESENCE_RECHECK_BOUND_MS)) {
+            if (SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
+                LOG_D("SD - card detected present after a detect-poll kick "
+                      "(was stale-DETACHED)\r\n");
+                return true;
+            }
+            vTaskDelay(pdMS_TO_TICKS(SD_PRESENCE_RECHECK_POLL_MS));
         }
     }
 
@@ -773,7 +836,16 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
      * reads, so a card inserted during a WiFi stream still reads DETACHED --
      * and answering "No SD Card Detected" sends the user after a card that is
      * sitting in the slot. "SD suspended" is both true and actionable; the
-     * stale probe is neither. */
+     * stale probe is neither.
+     *
+     * #756: on a USB-issued request with a stale-DETACHED read, this can now
+     * hold the #829 claim across SCPI_CheckSDCardPresent's bounded re-check
+     * (up to SD_PRESENCE_RECHECK_BOUND_MS) -- every other SD command from
+     * either transport sees a spurious "SD card busy" for that span. Accepted
+     * rather than reordered: the #829 claim-before-operand ordering this file
+     * already depends on makes checking presence before the claim its own
+     * hazard (a malformed request would then also disturb a cached CRC, which
+     * is exactly what the comment above this block exists to avoid). */
     if (!SCPI_CheckSDCardPresent(context)) {
         sd_card_manager_ReleaseClaim();  /* #829 release */
         return SCPI_RES_ERR;
