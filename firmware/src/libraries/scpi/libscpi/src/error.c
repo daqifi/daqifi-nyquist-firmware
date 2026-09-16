@@ -78,6 +78,49 @@ static void SCPI_ErrorEmitEmpty(scpi_t * context) {
 static void SCPI_ErrorEmit(scpi_t * context, int16_t err) {
     SCPI_RegSetBits(context, SCPI_REG_STB, STB_QMA);
 
+    /* #1003/#1010: a compound message's error line must not corrupt an
+     * earlier unit's still-open result. Discard whatever separator
+     * processCommand() (parser.c) armed for the unit that is raising this
+     * error -- it must never reach the wire -- before either write below
+     * can flush it. */
+    context->pending_delimiter = FALSE;
+
+    if (err != 0) {
+        /* #1003/#1010 round 1 (Qodo /agentic_review, "Storage failures
+         * still add blank lines"): the wire needs closing before the error
+         * text ONLY if it is not already at a line boundary -- line_open,
+         * not first_output. A direct-write callback can close its OWN line
+         * (SCPIStorageSD.c's SCPI_CheckSDCardPresent() writes a message that
+         * already ends "\r\n", then pushes an error) while first_output is
+         * still FALSE from an EARLIER, unrelated unit's still-open result;
+         * checking first_output here inserted a second, spurious "\r\n"
+         * ahead of an already-terminated diagnostic. line_open answers the
+         * narrower, correct question ("does the wire right now end in a
+         * terminator"), tracked at the same transport-write funnel as
+         * pending_delimiter (SCPI_USB_Write/SCPI_TCP_Write, SCPIInterface.c)
+         * so it is accurate for a direct write exactly as it is for a
+         * SCPI_ResultXxx() one. */
+        if (context->line_open) {
+            if (context->interface && context->interface->write) {
+                /* Return value (possible short write) intentionally not
+                 * inspected -- same tolerance SCPI_USB_Error/SCPI_TCP_Error
+                 * already apply to the error text's own write just below: a
+                 * partial 1-2 byte line ending is not something this
+                 * callback has a recovery path for either way. */
+                context->interface->write(context, SCPI_LINE_ENDING, strlen(SCPI_LINE_ENDING));
+            }
+        }
+        /* Unconditional, not just inside the line_open branch above: by the
+         * time this function returns, the error's own text (written via
+         * interface->error() below) will itself end in SCPI_LINE_ENDING, so
+         * the wire is properly terminated either way. first_output must
+         * therefore be TRUE regardless of which branch fired, or the
+         * deferred end-of-message writeNewLine() (SCPI_Parse(), parser.c)
+         * would read the still-FALSE flag left over from an earlier unit's
+         * success and add a second, blank line after the error. */
+        context->first_output = TRUE;
+    }
+
     if (context->interface && context->interface->error) {
         context->interface->error(context, err);
     }

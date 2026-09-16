@@ -9108,6 +9108,61 @@ size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
     return written;
 }
 
+size_t SCPI_FlushPendingDelimiter(scpi_t * context, ScpiTransportWriteFn writeFn,
+                                   size_t nextWriteLen) {
+    /* #1115: nextWriteLen is no longer gating this. The original guard
+     * (nextWriteLen > 0) was meant to let a callback "probe" with a
+     * zero-length write without losing the separator for its real write
+     * that follows -- but parser.c's writeData() now makes exactly ONE such
+     * zero-length call on purpose, specifically WHEN THERE IS NO real write
+     * coming this unit (SCPI_ResultCharacters(ctx, data, 0), an empty-but-
+     * successful query result), to give it the one chance every other unit
+     * gets to flush and consume this flag. Dropping the guard costs nothing
+     * for the case it was meant to protect: this function's own separator
+     * write two lines down was ALREADY unconditional on nextWriteLen (only
+     * ever gated on pending_delimiter), so a genuine zero-length probe
+     * followed by a later real write in the same unit produces the exact
+     * same final bytes on the wire either way -- the ';' just lands ahead
+     * of the probe instead of ahead of the real write, with nothing else
+     * written to the wire in between to tell the two apart. */
+    if (context->pending_delimiter) {
+        context->pending_delimiter = FALSE;
+        return SCPI_WriteWithRetry(writeFn, ";", 1);
+    }
+    return 0;
+}
+
+void SCPI_TrackLineOpen(scpi_t * context, const char * data, size_t len,
+                         scpi_bool_t delimiterFlushed) {
+    size_t termLen = strlen(SCPI_LINE_ENDING);
+    if (len == 0) {
+        /* #1115 round 3 (finding 1/3, "A flushed empty-result separator is
+         * not tracked as open output"): len == 0 no longer means "nothing
+         * changed on the wire" -- SCPI_FlushPendingDelimiter(), called by
+         * the caller just before this, may have just written a bare ';'
+         * with no payload write of its own to follow it (a query result
+         * that resolves to zero bytes, e.g. SYSTem:COMMunicate:UART:READ?
+         * with a 0-byte count). That ';' is not a line terminator, so it
+         * genuinely leaves the wire open; the OLD unconditional early
+         * return here left line_open at its previous, now-stale value
+         * instead, so a following error's SCPI_ErrorEmit() (error.c) read
+         * line_open == FALSE and skipped its own leading CRLF, gluing the
+         * error text directly onto the separator. When no delimiter was
+         * flushed either, len == 0 really is a complete no-op and
+         * line_open is correctly left untouched -- e.g. SCPIStorageSD.c's
+         * SD:LISt? bypass entry-flush on a unit with no predecessor. */
+        if (delimiterFlushed) {
+            context->line_open = TRUE;
+        }
+        return;
+    }
+    if (len >= termLen && memcmp(data + len - termLen, SCPI_LINE_ENDING, termLen) == 0) {
+        context->line_open = FALSE;
+    } else {
+        context->line_open = TRUE;
+    }
+}
+
 scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context,
                          ScpiContextStorage* storage) {
     // Defense in depth: SCPI_ResponseBuf_Init() is supposed to have been

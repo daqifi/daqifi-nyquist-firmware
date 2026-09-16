@@ -164,6 +164,14 @@ on:
       # are grepped straight out of this file (configTICK_RATE_HZ,
       # configTICK_TYPE_WIDTH_IN_BITS).
       - 'firmware/src/config/default/FreeRTOSConfig.h'
+      # #1003/#1010: run_1003_tests links the real vendored libscpi sources
+      # (parser.c, error.c, ...) the same way run_999_tests already does, but
+      # run_999_tests's own LIBSCPI_SRCS dependency was never matched by any
+      # path here -- a libscpi-only PR (the fix for these two tickets) queued
+      # no host-tests job at all. The Makefile already tracks the dependency
+      # for local incremental builds (LIBSCPI_SRCS/LIBSCPI_HDRS); this entry
+      # is what makes CI actually invalidate on it too.
+      - 'firmware/src/libraries/scpi/**'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -194,6 +202,8 @@ on:
       # are grepped straight out of this file (configTICK_RATE_HZ,
       # configTICK_TYPE_WIDTH_IN_BITS).
       - 'firmware/src/config/default/FreeRTOSConfig.h'
+      # #1003/#1010: see the matching entry under pull_request above.
+      - 'firmware/src/libraries/scpi/**'
       - '.github/workflows/host-tests.yml'
 
 permissions:

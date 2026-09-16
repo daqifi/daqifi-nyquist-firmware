@@ -56,6 +56,23 @@
 static size_t writeData(scpi_t * context, const char * data, size_t len) {
     if ((len > 0) && (data != NULL)) {
         return context->interface->write(context, data, len);
+    } else if (context->pending_delimiter) {
+        /* #1115: an empty-but-successful query result (SCPI_ResultCharacters
+         * et al. called with len == 0 -- e.g. SYSTem:COMMunicate:UART:READ?
+         * with a 0-byte count, or SYSTem:LOG? on an empty buffer) used to
+         * return here without ever calling interface->write(), so a
+         * pending_delimiter armed for THIS unit (processCommand(), below)
+         * never reached the one funnel that flushes it
+         * (SCPI_FlushPendingDelimiter(), SCPIInterface.c) and stayed armed.
+         * The NEXT unit's processCommand() then ASSIGNS (not merges) its own
+         * freshly computed value over that stale TRUE, so only one ';' ever
+         * reaches the wire for what should be two separate compound-message
+         * fields ("1;1" instead of "1;;1" for *OPC?;<empty query>;*OPC?) --
+         * silently dropping the empty unit's own response slot. Still route
+         * this through interface->write() (a zero-length call carries no
+         * payload either way) so the funnel gets the one chance to flush
+         * and consume the flag that every other unit gets. */
+        return context->interface->write(context, data, len);
     } else {
         return 0;
     }
@@ -100,6 +117,19 @@ static size_t writeNewLine(scpi_t * context) {
 #endif
         len = writeData(context, SCPI_LINE_ENDING, strlen(SCPI_LINE_ENDING));
         flushData(context);
+        /* #1003/#1010: re-arm so first_output/line_open correctly read
+         * "nothing unterminated pending" between this SCPI_Parse() and the
+         * next. Without this, an error raised outside a parse (e.g.
+         * SCPI_Input()'s input-buffer-overrun push) would see the stale
+         * state this parse leaves behind and have SCPI_ErrorEmit() (error.c)
+         * prefix it with a spurious blank line. SCPI_Parse() still resets
+         * both flags itself at the start of every top-level parse
+         * regardless. This write always emits exactly SCPI_LINE_ENDING, so
+         * line_open can be set directly rather than routed through the
+         * firmware-side byte-inspecting tracker (SCPIInterface.c's
+         * SCPI_USB_Write/SCPI_TCP_Write) that vendored libscpi cannot call. */
+        context->first_output = TRUE;
+        context->line_open = FALSE;
         return len;
     } else {
         return 0;
@@ -129,10 +159,46 @@ static scpi_bool_t processCommand(scpi_t * context) {
     scpi_bool_t result = TRUE;
     scpi_bool_t is_query = context->param_list.cmd_raw.data[context->param_list.cmd_raw.length - 1] == '?';
 
-    /* conditionally write ; */
-    if(!context->first_output && is_query) {
-        writeData(context, ";", 1);
+    /* #1115 round 3 (finding 0/2, "Empty SYST:LOG? still loses its compound
+     * response slot"): flush a still-armed pending_delimiter left over from
+     * the PREVIOUS unit before the assignment below overwrites -- not
+     * merges with -- it. Round 2's fix routed writeData()'s len == 0 CALL
+     * through the funnel, but that only helps a unit that calls writeData()
+     * at all (SCPI_ResultCharacters(ctx, "", 0) and friends). A unit whose
+     * callback returns SCPI_RES_OK having made NO write call whatsoever --
+     * LogMessageDump() (Util/Logger.c) on an empty log buffer calls
+     * interface->write() only inside `if (hasMessage)`, so an empty buffer
+     * makes zero calls, not even a zero-length one -- never reaches
+     * writeData() at all, so its own armed separator sat unconsumed until
+     * THIS line silently clobbered it with the new unit's freshly computed
+     * value, dropping the empty unit's response field entirely
+     * ("1;1" instead of "1;;1" for *OPC?;SYST:LOG?;*OPC?).
+     *
+     * A unit whose callback FAILED instead can never leave a stale TRUE
+     * here: SCPI_ErrorPush() (error.c's SCPI_ErrorPushEx) calls
+     * SCPI_ErrorEmit() synchronously, before that unit's processCommand()
+     * call returns, and SCPI_ErrorEmit() unconditionally clears
+     * pending_delimiter for itself before either of its own writes. So a
+     * TRUE seen here can only be a prior unit's genuine success-with-no-
+     * write, never a discarded error's flag.
+     *
+     * Routed through writeData() (defined above in this file) rather than
+     * a direct interface->write() call, so it is the exact same funnel
+     * every other write already uses -- including the len == 0 shape that
+     * lets a callback with truly nothing to send still get its one chance
+     * to flush and consume the flag. */
+    if (context->pending_delimiter) {
+        writeData(context, NULL, 0);
     }
+
+    /* #1003/#1010: ARM the compound separator rather than writing it here.
+     * Writing it unconditionally, ahead of a callback that might fail,
+     * is exactly how an error line used to end up preceded by a stray ';'
+     * (or, for a non-query unit, glued straight onto the prior result with
+     * no separator at all). Consumed at the unit's first actual write --
+     * see pending_delimiter's declaration in types.h -- or discarded
+     * silently by SCPI_ErrorEmit() (error.c) if the unit fails first. */
+    context->pending_delimiter = (!context->first_output && is_query);
 
     context->cmd_error = FALSE;
     context->output_count = 0;
@@ -154,6 +220,59 @@ static scpi_bool_t processCommand(scpi_t * context) {
                     context->first_output = FALSE;
                 }
             }
+        }
+
+        /* #1115: reconcile first_output against line_open once the unit is
+         * completely done, regardless of which branch above ran. Any error
+         * raised during this unit -- whether pushed by the callback itself
+         * (cmd_error branch, just above) or synthesized by processCommand()
+         * on a non-OK return (the outer if) -- runs SCPI_ErrorEmit()
+         * (error.c), which forces first_output = TRUE unconditionally on
+         * the assumption that the unit is finished the moment its error
+         * text hits the wire. A callback that keeps writing real payload
+         * AFTER raising (SYSTem:SYSInfoPB? substituting a default for a
+         * bad optional parameter and still emitting its protobuf) falsifies
+         * that assumption: first_output stays wrongly TRUE while the wire
+         * genuinely holds unterminated content, so the NEXT unit's own
+         * pending_delimiter arm (top of this function, next call) omits
+         * its leading ';' and fuses onto the payload, and if nothing
+         * follows, the deferred end-of-message writeNewLine() (below) skips
+         * the payload's own closing CRLF entirely.
+         *
+         * line_open is the one signal immune to write order -- it is
+         * updated at the SAME transport-write funnel as pending_delimiter
+         * (SCPI_TrackLineOpen(), SCPIInterface.c) after EVERY real write
+         * this unit made, whichever came last: the error text (always
+         * self-terminated, leaves line_open FALSE) or a callback's own
+         * further payload write (usually not self-terminated, leaves
+         * line_open TRUE). If it is TRUE here, real, unterminated content
+         * from THIS unit is genuinely sitting on the wire, so first_output
+         * must be FALSE regardless of what SCPI_ErrorEmit() assumed. If it
+         * is FALSE (nothing further was written, or the last write -- the
+         * error text, or a self-terminating direct writer like
+         * SCPIStorageSD.c's SCPI_CheckSDCardPresent() -- already closed the
+         * line), first_output is left exactly as the callback/error path
+         * set it.
+         *
+         * #1115 round 3 (finding 4, "Non-query acknowledgements now arm
+         * query separators"): gated on is_query. Every scenario motivating
+         * this reconciliation -- above, and in SCPI_ErrorEmit()'s own
+         * comment (error.c) -- is a QUERY unit that kept writing (or
+         * terminated its own line) around an error; pending_delimiter and
+         * first_output's read of it (`!first_output && is_query` at the top
+         * of this function) exist to place the ';' separator BETWEEN QUERY
+         * RESULT FIELDS, which only a query unit ever contributes. Without
+         * this gate, a non-query unit that writes real, non-terminated
+         * text straight through interface->write() -- SCPI_SysLogClear()
+         * (SCPIInterface.c) writes "Log cleared\n", no CRLF tail -- left
+         * line_open TRUE and this line forced first_output = FALSE even
+         * though is_query is FALSE here, so the NEXT unit's arm (top of
+         * this function, next call) wrongly read "a query result is open"
+         * and armed a separator that does not belong to any query field:
+         * "Log cleared\n;1\r\n" instead of "Log cleared\n1\r\n" for
+         * SYST:LOG:CLEar;*OPC?. */
+        if (is_query && context->line_open) {
+            context->first_output = FALSE;
         }
     }
 
@@ -205,6 +324,8 @@ scpi_bool_t SCPI_Parse(scpi_t * context, char * data, int len) {
     state = &context->parser_state;
     context->output_count = 0;
     context->first_output = TRUE;
+    context->pending_delimiter = FALSE;
+    context->line_open = FALSE;
 
     while (1) {
         r = scpiParser_detectProgramMessageUnit(state, data, len);
@@ -278,6 +399,12 @@ void SCPI_Init(scpi_t * context,
     context->cmdlist = commands;
     context->interface = interface;
     context->units = units;
+    /* #1003/#1010: the memset above leaves first_output FALSE. SCPI_Parse()
+     * always resets it TRUE at the start of a parse, but an error can be
+     * pushed before the first parse ever runs; without this, SCPI_ErrorEmit()
+     * (error.c) would read the zeroed FALSE as "unterminated output pending"
+     * and prefix that very first error with a spurious blank line. */
+    context->first_output = TRUE;
     context->idn[0] = idn1;
     context->idn[1] = idn2;
     context->idn[2] = idn3;
