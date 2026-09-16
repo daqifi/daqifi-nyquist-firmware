@@ -265,14 +265,28 @@ inside the conditions it was measured under. `isJson` excludes JSON from the
 pure-T1 CSV refit — it shares that branch and is *additive-bound* at USB 1ch,
 so a CSV-measured raise would silently lift JSON's cap. JSON now has its own
 precision-4 basis (**#920**, 2026-09-15): two JSON-only branches sit ahead of
-the shared `else`, each set at 93% of a measured-clean ceiling — pure-T1 at
-1 channel (8602 Hz, was 10589) and armed/OBDiag-off at 11–16 channels
-(2335 down to 1440 Hz, was transport-bound at up to 2461–1777). They are NOT
-gated by `voltagePrecision` — see the streaming.h comment for why a cap that
-only *lowers* JSON's rate cannot be less safe at any precision than the law it
-replaces. Every other JSON config (2–5 pure-T1 channels, armed configs of up
-to 10 channels, any OBDiag-on config) still keeps the #563 law via the shared
-`else`, unmeasured at precision 4 and tracked as follow-ups.
+the shared `else` — pure-T1 at 1 channel (8602 Hz, was 10589, set at 93% of a
+measured-clean ceiling), and **armed/OBDiag-off at ANY channel count**
+(7442 down to 1416 Hz). That second branch originally covered 11–16 channels
+only (2335 down to 1440 Hz); a same-day **T2-ramp refit** widened it to every
+armed count after the initial grid's follow-up run found 3×T2/5×T2/8×T2/11×T2
+also over ceiling — a T2 (MODULE7 scan) channel costs more CPU per tick than a
+T1 channel, and both the shared `#563` law and the `#529` transport curve
+`32000/(2+n)` price them alike, so they under-priced T2 at precision 4 on
+`main` even where this PR's own original branch didn't reach. The refit law
+(`period_ns = 73576 + 27921·nT1 + 31975·nT2user`) is applied as
+`max(this, the shared `else` period)` so it can only lower a config's cap,
+never raise one — load-bearing at 1×T2, where the raw law alone would have
+raised 7442→7579 Hz. It lands at or under 93% of every measured-clean ceiling,
+tighter (~93%) at the two points that bind (3×T2, 11×T2) and looser (~80–92%)
+elsewhere, including a clean-but-never-failed point (5T1+5T2, 2666→2144 Hz)
+that only bounds the fit from above. Both branches are NOT gated by
+`voltagePrecision` — see the streaming.h comment for why a cap that only
+*lowers* JSON's rate cannot be less safe at any precision than the law it
+replaces. Every other JSON config (2–5 pure-T1 channels, any OBDiag-on
+config) still keeps the #563 law via the shared `else`, unmeasured at
+precision 4 and tracked as follow-ups; so is JSON at precisions 5–10, and
+JSON on NQ2/NQ3.
 `voltagePrecision` gates the **CSV** refit to `<= 4`: 0 is `int_to_str` and
 1..4 emit fewer or equal characters than the precision-4 basis, while 5..10
 emit **more** and were never measured, so they fall through to the #563 law.
