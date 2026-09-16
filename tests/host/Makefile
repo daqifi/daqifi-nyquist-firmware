@@ -409,15 +409,29 @@ $(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE
 # this binary for `make`'s incremental build to be trustworthy. Three of them
 # (spi/uart/i2c) are the only consumers of the header under test and nothing
 # here reads them further. DAC7718_SRC joined in #1108, when dac7718_WaitStat
-# folded onto this same shared loop instead of keeping its own grep-guarded
+# folded onto this same shared header instead of keeping its own grep-guarded
 # copy (see the retired comment above DAC7718_SRC's definition, above) --
-# and DOES get one guard below, because it is the one thing the retired
-# target checked that compiling WaitLoop.h for real cannot: that DAC7718.c
-# itself still ROUTES every wait through dac7718_WaitStat rather than a call
-# site reverting to bare polling. test_1056_wait_loop.c has no visibility
-# into DAC7718.c's text at all -- it only proves the shared loop's shape --
-# so without this grep a reverted call site would rebuild and pass silently
-# (Qodo /agentic_review, PR #1109).
+# and DOES get two guards below, because they are the two things the retired
+# target checked that compiling WaitLoop.h for real cannot.
+#
+# GUARD 1 (unchanged by #1108's correction): that DAC7718.c itself still
+# ROUTES every wait through dac7718_WaitStat rather than a call site reverting
+# to bare polling. test_1056_wait_loop.c has no visibility into DAC7718.c's
+# text at all -- it only proves the header's shapes -- so without this grep a
+# reverted call site would rebuild and pass silently (Qodo /agentic_review,
+# PR #1109).
+#
+# GUARD 2 (added correcting #1109's own regression): that dac7718_WaitStat
+# calls WaitLoop_HoistedSpinThenYield specifically, not its RE-spinning
+# sibling WaitLoop_SpinThenYield. #1108's first attempt folded DAC7718 onto
+# the shape the other three drivers use, silently turning its one register
+# read per 1 ms fault-path tick into up to DAC7718_SPI_FAST_SPIN_COUNT reads
+# per tick -- a duty-cycle regression #913 exists to prevent (measured +316 B
+# vs main; #1109 comment 5697480428). Both functions compile clean, both
+# satisfy GUARD 1's call-count, and test_1056_wait_loop.c proves each shape's
+# OWN correctness without knowing which one any driver actually calls -- so
+# only this grep, naming the specific function, catches a call site silently
+# swapped back to the wrong shape.
 $(WAITLOOP_BIN): test_1056_wait_loop.c test_framework.h $(WAITLOOP_H) \
                  $(USER_SPI_SRC) $(USER_UART_SRC) $(USER_I2C_SRC) $(DAC7718_SRC) $(RECIPES)
 	@test "$$(grep -cF 'dac7718_WaitStat(' $(DAC7718_SRC))" = "7" \
@@ -427,6 +441,16 @@ $(WAITLOOP_BIN): test_1056_wait_loop.c test_framework.h $(WAITLOOP_H) \
 	       echo "       site reverting to a bare register-poll spin would not otherwise be caught"; \
 	       echo "       by anything here -- test_1056_wait_loop.c proves WaitLoop.h's shape, not"; \
 	       echo "       that DAC7718.c still calls into it."; \
+	       exit 1; }
+	@grep -qF 'return WaitLoop_HoistedSpinThenYield(dac7718_WaitBitMet' $(DAC7718_SRC) \
+	  || { echo "ERROR: dac7718_WaitStat no longer calls WaitLoop_HoistedSpinThenYield in $(DAC7718_SRC)."; \
+	       echo "       PR #1109 folded it onto the RE-spinning WaitLoop_SpinThenYield instead -- the"; \
+	       echo "       shape the other three drivers use -- which silently turned DAC7718's one"; \
+	       echo "       register read per 1 ms fault-path tick into up to DAC7718_SPI_FAST_SPIN_COUNT"; \
+	       echo "       reads per tick (measured +316 B vs main; #1109 comment 5697480428). Neither"; \
+	       echo "       test_1056_wait_loop.c (proves WaitLoop.h's two shapes, not which one DAC7718.c"; \
+	       echo "       calls) nor the guard above (matches either shape's call syntax identically)"; \
+	       echo "       can see this coupling -- only this grep does."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -I$(FW_HAL) -o $(WAITLOOP_BIN) test_1056_wait_loop.c
 

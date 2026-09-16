@@ -1,13 +1,17 @@
 /* ==========================================================================
- * test_1056_wait_loop.c -- issue #1056 (the durable fix for #913's test)
+ * test_1056_wait_loop.c -- issue #1056 (the durable fix for #913's test),
+ * extended by #1108/#1109 for WaitLoop_HoistedSpinThenYield
  *
  * WHAT IS UNDER TEST
  *
- * firmware/src/HAL/WaitLoop.h's WaitLoop_SpinThenYield -- THE REAL ONE. This
- * file `#include`s the shipped header and calls the shipped function; the only
- * things mocked are the three things the drivers inject (the status read, the
- * budget test, the yield). There is no re-implementation here, and therefore
- * nothing to drift.
+ * firmware/src/HAL/WaitLoop.h's WaitLoop_SpinThenYield AND
+ * WaitLoop_HoistedSpinThenYield -- THE REAL ONES. This file `#include`s the
+ * shipped header and calls the shipped functions; the only things mocked are
+ * the three things the drivers inject (the status read, the budget test, the
+ * yield). There is no re-implementation here, and therefore nothing to drift.
+ * WaitLoop_SpinThenYield's coverage is below; WaitLoop_HoistedSpinThenYield's
+ * is in its own block further down, with the #1109 regression story and its
+ * own mutation coverage.
  *
  * #913 gave UserSpi.c's spi_XferByte a bounded spin-then-vTaskDelay(1) wait so
  * `SYST:COMM:SPI:TRANsfer?` would stop busy-spinning at the SCPI task's
@@ -233,9 +237,27 @@ static bool run_wait(WaitMock *m, uint32_t spinCount)
                                   mock_yield, m, spinCount);
 }
 
+/* One call into the REAL hoisted-spin loop (#1108/#1109 -- see the block
+ * below the original tests for what this proves and why it is a separate
+ * function under test rather than another argument to run_wait above). */
+static bool run_wait_hoisted(WaitMock *m, uint32_t spinCount)
+{
+    return WaitLoop_HoistedSpinThenYield(mock_status_met, mock_budget_spent,
+                                         mock_yield, m, spinCount);
+}
+
 /* Reads per pass that does NOT return: spinCount spin reads + one post-spin
  * read. The final pass adds the fresh read at expiry. */
 #define READS_PER_PASS(spin)   ((spin) + 1u)
+
+/* Hoisted-shape equivalents. The spin runs ONCE, outside the retry loop, so
+ * a non-terminal retry pass costs exactly ONE status read (not spin + 1) --
+ * that is the whole property under test. TIMEOUT adds the initial spin, one
+ * read per pass across (budget + 1) passes, and the fresh read at expiry.
+ * READY_AT_EXPIRY has one fewer pass (the pass that observes the flipped
+ * status returns without a budget check) and no fresh read. */
+#define HOISTED_READS_TIMEOUT(spin, budget)         ((spin) + (budget) + 2u)
+#define HOISTED_READS_READY_AT_EXPIRY(spin, budget) ((spin) + (budget) + 1u)
 
 /* ==========================================================================
  * Tests
@@ -535,9 +557,278 @@ TEST(real_driver_spin_counts_are_honoured)
     check_spin_bound(UART_SPIN);
 }
 
+/* ==========================================================================
+ * WaitLoop_HoistedSpinThenYield (#1108/#1109) -- DAC7718's shape
+ *
+ * #1057 deliberately hoisted DAC7718's fast spin OUTSIDE its retry loop; the
+ * first #1108 attempt folded dac7718_WaitStat onto WaitLoop_SpinThenYield
+ * above as though it shared the other three drivers' RE-spinning shape. It
+ * does not, and PR #1109 shipped that regression uncaught: every existing
+ * test above stayed green, because they prove WaitLoop_SpinThenYield's shape
+ * correctly and say nothing about which shape a DIFFERENT driver should be
+ * calling. Acceptance item 5, added when #1108 was corrected: a test that
+ * counts status-read invocations across a multi-tick wait and fails if the
+ * count scales with the number of yields --
+ * hoisted_spin_status_reads_do_not_scale_with_yield_count below is that test.
+ *
+ * The other tests in this block are the same boundary/ordering coverage the
+ * re-spinning shape gets above, adjusted for the one-read-per-pass shape (see
+ * HOISTED_READS_TIMEOUT/HOISTED_READS_READY_AT_EXPIRY above) -- #913's
+ * ordering guarantee (status before budget, fresh read at expiry, the
+ * preemption-gap case) is IDENTICAL between the two shapes and just as
+ * load-bearing here, so it is proven here too rather than assumed to carry
+ * over.
+ *
+ * MUTATION COVERAGE (2026-09-16, gcc 13.3): WaitLoop_HoistedSpinThenYield's
+ * body was edited to move its `for (uint32_t s = 0; s < spinCount; ++s)`
+ * spin INSIDE the retry loop -- i.e. made it byte-for-byte
+ * WaitLoop_SpinThenYield's shape, which is exactly what #1109 shipped by
+ * calling the wrong function. Re-run, then reverted:
+ *   hoisted_spin_status_reads_do_not_scale_with_yield_count FAILS
+ *     (readDelta went from 27 to 216027 = 27 * (8000 + 1), i.e. the mutation
+ *     this test exists to catch, and the assertion it exists to make: reads
+ *     scale with SPIN per yield, not 1:1). Also FAILS:
+ *     hoisted_status_never_met_times_out_at_exactly_the_budget,
+ *     hoisted_status_ready_exactly_at_budget_expiry_still_succeeds and
+ *     hoisted_status_true_only_in_the_preemption_gap_is_still_caught, whose
+ *     exact multi-pass read counts assume one read per non-terminal pass (4
+ *     of 14 failed; the single-pass boundary tests at SPIN/SPIN+1/SPIN+2
+ *     reads can't distinguish the two shapes on their own -- a re-spun first
+ *     pass reads the same counts a hoisted spin plus one retry pass does --
+ *     which is exactly why the scaling test above them is the one #1108
+ *     asked for, not another boundary count).
+ * ========================================================================== */
+
+/* Happy path: mirrors status_already_met_returns_immediately_no_yield. */
+TEST(hoisted_status_already_met_returns_immediately_no_yield)
+{
+    WaitMock m;
+    mock_init(&m, true, 0u, BUDGET);
+
+    ASSERT_TRUE(run_wait_hoisted(&m, SPIN));
+    ASSERT_EQ(m.statusReads, 1);
+    ASSERT_EQ(m.yieldCalls, 0);
+    ASSERT_EQ(m.budgetChecks, 0);
+    ASSERT_EQ(m.now, 0);
+    ASSERT_FALSE(m.runaway);
+}
+
+/* Met partway through the one-time hoisted spin: still no yield. */
+TEST(hoisted_status_met_mid_spin_returns_without_yield)
+{
+    WaitMock m;
+    mock_init(&m, false, 0u, BUDGET);
+    m.setTrueAfterReads = SPIN - 2u;
+
+    ASSERT_TRUE(run_wait_hoisted(&m, SPIN));
+    ASSERT_EQ(m.statusReads, SPIN - 2u);
+    ASSERT_EQ(m.yieldCalls, 0);
+    ASSERT_FALSE(m.runaway);
+}
+
+/* Met on the LAST hoisted-spin iteration (read #SPIN): still caught inside
+ * the spin, clock never consulted. */
+TEST(hoisted_status_met_on_last_spin_iteration_no_yield)
+{
+    WaitMock m;
+    mock_init(&m, false, 0u, BUDGET);
+    m.setTrueAfterReads = SPIN;
+
+    ASSERT_TRUE(run_wait_hoisted(&m, SPIN));
+    ASSERT_EQ(m.statusReads, SPIN);
+    ASSERT_EQ(m.yieldCalls, 0);
+    ASSERT_EQ(m.budgetChecks, 0);
+    ASSERT_FALSE(m.runaway);
+}
+
+/* Met at read #(SPIN + 1): the hoisted spin misses, but the retry loop's OWN
+ * first status check -- its ordinary first pass, not a dedicated post-spin
+ * read -- catches it with zero yields and zero budget checks. */
+TEST(hoisted_status_met_on_first_retry_check_no_yield)
+{
+    WaitMock m;
+    mock_init(&m, false, 0u, BUDGET);
+    m.setTrueAfterReads = SPIN + 1u;
+
+    ASSERT_TRUE(run_wait_hoisted(&m, SPIN));
+    ASSERT_EQ(m.statusReads, SPIN + 1u);
+    ASSERT_EQ(m.yieldCalls, 0);
+    ASSERT_EQ(m.budgetChecks, 0);
+    ASSERT_FALSE(m.runaway);
+}
+
+/* Met at read #(SPIN + 2): the hoisted spin and the retry loop's first check
+ * both miss, so the budget is consulted (room left), the loop yields exactly
+ * ONCE, and the retry loop's SECOND pass catches it on its first read. This
+ * is the read count the re-spinning shape reaches the same way but would
+ * keep re-paying SPIN reads for on every later yield -- see the scaling test
+ * below, which is the same property at driver-realistic magnitude. */
+TEST(hoisted_status_met_after_one_yield)
+{
+    WaitMock m;
+    mock_init(&m, false, 0u, BUDGET);
+    m.setTrueAfterReads = SPIN + 2u;
+
+    ASSERT_TRUE(run_wait_hoisted(&m, SPIN));
+    ASSERT_EQ(m.statusReads, SPIN + 2u);
+    ASSERT_EQ(m.yieldCalls, 1);
+    ASSERT_EQ(m.budgetChecks, 1);
+    ASSERT_FALSE(m.runaway);
+}
+
+/* The headline timeout case, exact counts -- sensitive to the loop's SHAPE
+ * the same way status_never_met_times_out_at_exactly_the_budget is: every
+ * non-terminal pass reads the status ONCE (not SPIN + 1) before touching the
+ * clock, there are BUDGET such passes plus one terminal pass, and the
+ * terminal pass adds the fresh read at expiry. */
+TEST(hoisted_status_never_met_times_out_at_exactly_the_budget)
+{
+    WaitMock m;
+    mock_init(&m, false, 0u, BUDGET);
+
+    ASSERT_FALSE(run_wait_hoisted(&m, SPIN));
+    ASSERT_EQ(m.yieldCalls, BUDGET);
+    ASSERT_EQ(m.now, BUDGET);
+    ASSERT_EQ(m.budgetChecks, BUDGET + 1u);
+    ASSERT_EQ(m.statusReads, HOISTED_READS_TIMEOUT(SPIN, BUDGET));
+    ASSERT_FALSE(m.runaway);
+}
+
+/* THE load-bearing ordering property, same as its re-spinning counterpart:
+ * status becomes met on exactly the yield that pushes the clock to expiry,
+ * and the wait still returns TRUE because the status is read before the
+ * budget is ever consulted on the next pass. */
+TEST(hoisted_status_ready_exactly_at_budget_expiry_still_succeeds)
+{
+    WaitMock m;
+    mock_init(&m, false, 0u, BUDGET);
+    m.setTrueAfterYields = BUDGET;
+
+    ASSERT_TRUE(run_wait_hoisted(&m, SPIN));
+    ASSERT_EQ(m.yieldCalls, BUDGET);
+    ASSERT_EQ(m.now, BUDGET);
+    ASSERT_EQ(m.statusReads, HOISTED_READS_READY_AT_EXPIRY(SPIN, BUDGET));
+    ASSERT_FALSE(m.runaway);
+}
+
+/* One yield later: the boundary is exactly one tick wide, same as the
+ * re-spinning shape. */
+TEST(hoisted_status_ready_one_tick_past_expiry_times_out)
+{
+    WaitMock m;
+    mock_init(&m, false, 0u, BUDGET);
+    m.setTrueAfterYields = BUDGET + 1u;
+
+    ASSERT_FALSE(run_wait_hoisted(&m, SPIN));
+    ASSERT_EQ(m.yieldCalls, BUDGET);
+    ASSERT_EQ(m.now, BUDGET);
+    ASSERT_FALSE(m.runaway);
+}
+
+/* MUTATION 1's tripwire for the hoisted shape: a status that goes true only
+ * in the gap between the retry loop's read and its budget check -- see
+ * trueInPreemptionGap -- must still be caught by the fresh read at expiry.
+ * Identical guarantee to the re-spinning shape's twin test; proven separately
+ * because the hoisted function is its own implementation, not a thin wrapper
+ * over the other one. */
+TEST(hoisted_status_true_only_in_the_preemption_gap_is_still_caught)
+{
+    WaitMock m;
+    mock_init(&m, false, 0u, BUDGET);
+    m.trueInPreemptionGap = true;
+
+    ASSERT_TRUE(run_wait_hoisted(&m, SPIN));
+    ASSERT_EQ(m.yieldCalls, BUDGET);
+    ASSERT_EQ(m.now, BUDGET);
+    ASSERT_EQ(m.statusReads, HOISTED_READS_TIMEOUT(SPIN, BUDGET));
+    ASSERT_FALSE(m.runaway);
+}
+
+/* MUTATION 2's tripwire for the hoisted shape: entered with the budget
+ * already spent, it must not sleep -- it reads the status once (the retry
+ * loop's first pass), finds the budget gone, takes its fresh read, returns. */
+TEST(hoisted_budget_already_spent_on_entry_never_yields)
+{
+    WaitMock m;
+    mock_init(&m, false, 0u, BUDGET);
+    m.now = BUDGET;
+
+    ASSERT_FALSE(run_wait_hoisted(&m, SPIN));
+    ASSERT_EQ(m.yieldCalls, 0);
+    ASSERT_EQ(m.now, BUDGET);
+    ASSERT_EQ(m.budgetChecks, 1);
+    ASSERT_EQ(m.statusReads, SPIN + 2u);   /* hoist spin + retry read + fresh */
+    ASSERT_FALSE(m.runaway);
+}
+
+/* Companion: an exhausted budget must not turn a COMPLETED operation into a
+ * failure. Caught on the very first read (still inside the hoisted spin),
+ * before the clock is consulted at all. */
+TEST(hoisted_budget_already_spent_on_entry_still_reports_a_met_status)
+{
+    WaitMock m;
+    mock_init(&m, true, 0u, BUDGET);
+    m.now = BUDGET;
+
+    ASSERT_TRUE(run_wait_hoisted(&m, SPIN));
+    ASSERT_EQ(m.statusReads, 1);
+    ASSERT_EQ(m.budgetChecks, 0);
+    ASSERT_EQ(m.yieldCalls, 0);
+    ASSERT_FALSE(m.runaway);
+}
+
+/* Degenerate spin bound: with spinCount 0 the hoisted spin does nothing, but
+ * the retry loop's ordering guarantee (status before budget) survives. */
+TEST(hoisted_zero_spin_count_still_checks_status_before_yielding)
+{
+    WaitMock m;
+    mock_init(&m, false, 0u, BUDGET);
+
+    ASSERT_FALSE(run_wait_hoisted(&m, 0u));
+    ASSERT_EQ(m.yieldCalls, BUDGET);
+    ASSERT_EQ(m.statusReads, HOISTED_READS_TIMEOUT(0u, BUDGET));
+    ASSERT_FALSE(m.runaway);
+}
+
+/* THE #1108 acceptance item 5 test -- the one that would have caught #1109
+ * before any build. Two runs at DAC7718_SPI_FAST_SPIN_COUNT's real magnitude
+ * (8000, a literal per this suite's convention of not pinning driver
+ * constants -- see the file header), different budgets, status never met
+ * (the fault path this function exists for). If the spin is paid ONCE, the
+ * delta in status reads between the two runs equals the delta in YIELDS --
+ * one extra register read per extra tick waited, independent of the spin
+ * bound entirely. If the spin were re-paid on every wake (#1109's actual
+ * defect: dac7718_WaitStat calling WaitLoop_SpinThenYield), the delta would
+ * instead scale by (spin + 1) per extra yield -- 27 * 8001 = 216027, not 27. */
+TEST(hoisted_spin_status_reads_do_not_scale_with_yield_count)
+{
+    const uint32_t spin = 8000u;   /* DAC7718_SPI_FAST_SPIN_COUNT, today */
+    WaitMock shortWait;
+    WaitMock longWait;
+    uint32_t yieldDelta;
+    uint32_t readDelta;
+
+    mock_init(&shortWait, false, 0u, 3u);
+    ASSERT_FALSE(run_wait_hoisted(&shortWait, spin));
+
+    mock_init(&longWait, false, 0u, 30u);
+    ASSERT_FALSE(run_wait_hoisted(&longWait, spin));
+
+    yieldDelta = longWait.yieldCalls - shortWait.yieldCalls;
+    readDelta  = longWait.statusReads - shortWait.statusReads;
+
+    ASSERT_EQ(yieldDelta, 27u);
+    /* THE load-bearing assertion: reads scale with YIELDS 1:1, not with
+     * spinCount per yield. */
+    ASSERT_EQ(readDelta, yieldDelta);
+    ASSERT_TRUE(readDelta < spin);
+    ASSERT_FALSE(shortWait.runaway);
+    ASSERT_FALSE(longWait.runaway);
+}
+
 int main(void)
 {
-    printf("#1056 -- the shared spin-then-yield wait loop (HAL/WaitLoop.h)\n");
+    printf("#1056/#1108/#1109 -- the shared spin-then-yield wait loop (HAL/WaitLoop.h)\n");
     printf("---------------------------------------------\n");
     RUN(status_already_met_returns_immediately_no_yield);
     RUN(status_met_mid_spin_returns_without_yield);
@@ -554,5 +845,18 @@ int main(void)
     RUN(zero_spin_count_still_checks_status_before_yielding);
     RUN(budget_survives_counter_wrap);
     RUN(real_driver_spin_counts_are_honoured);
+    RUN(hoisted_status_already_met_returns_immediately_no_yield);
+    RUN(hoisted_status_met_mid_spin_returns_without_yield);
+    RUN(hoisted_status_met_on_last_spin_iteration_no_yield);
+    RUN(hoisted_status_met_on_first_retry_check_no_yield);
+    RUN(hoisted_status_met_after_one_yield);
+    RUN(hoisted_status_never_met_times_out_at_exactly_the_budget);
+    RUN(hoisted_status_ready_exactly_at_budget_expiry_still_succeeds);
+    RUN(hoisted_status_ready_one_tick_past_expiry_times_out);
+    RUN(hoisted_status_true_only_in_the_preemption_gap_is_still_caught);
+    RUN(hoisted_budget_already_spent_on_entry_never_yields);
+    RUN(hoisted_budget_already_spent_on_entry_still_reports_a_met_status);
+    RUN(hoisted_zero_spin_count_still_checks_status_before_yielding);
+    RUN(hoisted_spin_status_reads_do_not_scale_with_yield_count);
     return TEST_SUMMARY();
 }

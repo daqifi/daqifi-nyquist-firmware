@@ -327,28 +327,25 @@ bool DAC7718_Init(uint8_t id, uint8_t range)
  * that stood in for it here. What stays below is what is specific to SPI2:
  * the status read, the tick budget, and the spin bound.
  *
- * WHY THE FAST SPIN IS NO LONGER HOISTED OUT OF THE RETRY LOOP. #1057 shipped
- * a variant shape -- one fast spin at entry, then a retry loop doing a SINGLE
- * status read per 1 ms wake -- answering a Qodo /improve finding that
- * re-spinning 8000 times per wake buys no extra detection for a
- * level-sensitive bit. Folding onto the shared loop gives that up
- * [V: WaitLoop.h's WaitLoop_SpinThenYield spins inside its outer `for (;;)`,
- * as it already did for the three drivers it serves]. The trade [I -- a
- * judgement call, recorded so the next reader need not re-derive it]: the
- * hoist is invisible on every successful transfer, because a legitimate byte
- * is ~1.14 us and returns inside the FIRST spin without ever reaching a retry
- * (see DAC7718_SPI_BYTE_TIMEOUT_MS above), so it only ever applied once SPI2
- * was genuinely not responding -- a path bounded by the same 20 ms budget and
- * ending in the same logged error + UINT32_MAX either way. What it saved
- * there was duty cycle, not latency: ~8000 register reads (~400 us, from
- * UserSpi.c's own explicitly-estimated sizing of 8000 as about one 20 kHz
- * byte) per 1 ms pass instead of one. Buying that back needs a second entry
- * point in a header three other drivers depend on -- a second wait shape with
- * exactly one caller, covered by test_1056_wait_loop.c's mutation suite only
- * if that suite grows a whole second set of cases -- which is the drift #1056
- * existed to remove. One shape wins. If the re-spin duty is worth reclaiming,
- * hoist it ONCE in WaitLoop.h for all four callers, with its own mutation
- * coverage; do not keep a private copy here.
+ * WHY THIS CALLS WaitLoop_HoistedSpinThenYield, NOT WaitLoop_SpinThenYield.
+ * #1057 deliberately moved the fast spin OUTSIDE the retry loop -- one spin
+ * at entry, then a retry loop doing a SINGLE status read per 1 ms wake --
+ * answering a Qodo /improve finding that re-spinning 8000 times per wake buys
+ * no extra detection for a level-sensitive bit: once the fast path has
+ * missed, SPI2 is genuinely not responding, and a single register read per
+ * tick detects that exactly as reliably as an 8000-iteration re-spin would,
+ * for a fraction of the CPU cost. #1108's first attempt folded this onto the
+ * three OTHER drivers' shape (WaitLoop_SpinThenYield, which spins INSIDE its
+ * retry loop and re-pays the spin on every wake) as though DAC7718 were a
+ * fourth instance of that shape. It is not, and PR #1109 shipped that
+ * regression: measured at +316 B against main versus -35 B for #1056's fold
+ * of the three drivers that really do share a shape (detail on #1109 comment
+ * 5697480428 and the #1108 correction, comment 5697483101). This call site
+ * now names WaitLoop_HoistedSpinThenYield -- see that function's doc comment
+ * in WaitLoop.h for the full derivation -- which keeps the loop shared with
+ * the other three drivers' HEADER while restoring DAC7718's own retry shape,
+ * proven for real by tests/host/test_1056_wait_loop.c the same way
+ * WaitLoop_SpinThenYield is.
  *
  * The one shape this collapses that the other three drivers don't have:
  * DAC7718's "shift register empty" wait was previously expressed via the
@@ -398,10 +395,12 @@ static bool dac7718_WaitStat(uint32_t mask, bool want,
     /* Named directly, never through a variable, so the optimiser's
      * inline -> constant-propagate -> devirtualise chain applies and the
      * spin keeps costing one register read per iteration (WaitLoop.h's
-     * "COST" paragraph). */
-    return WaitLoop_SpinThenYield(dac7718_WaitBitMet, dac7718_WaitBudgetSpent,
-                                  dac7718_WaitYield, &w,
-                                  DAC7718_SPI_FAST_SPIN_COUNT);
+     * "COST" paragraph). HoistedSpinThenYield, not SpinThenYield: see the
+     * doc comment above this function for why the two are not
+     * interchangeable here (#1109). */
+    return WaitLoop_HoistedSpinThenYield(dac7718_WaitBitMet, dac7718_WaitBudgetSpent,
+                                         dac7718_WaitYield, &w,
+                                         DAC7718_SPI_FAST_SPIN_COUNT);
 }
 
 uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data)
