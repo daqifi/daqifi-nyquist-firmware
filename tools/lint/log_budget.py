@@ -420,6 +420,58 @@ def pos_to_line(src, orig_pos, pos):
     return src.count("\n", 0, idx) + 1
 
 
+def mask_literals(text):
+    """Blank the CONTENTS of every string/char literal -- not the quote
+    marks -- preserving length and newlines. Same technique as
+    mask_comments(), for a different purpose: this view decides where a
+    call-site match is LEGITIMATE and is never used to read a call's actual
+    content.
+
+    find_calls() used to run its call-site regex directly against `masked`
+    -- comment-blanked, but literal CONTENT preserved verbatim, because a
+    genuine call's real arguments have to survive. That same preservation
+    let a literal whose TEXT happens to contain something shaped like
+    "LOG_E(" match as if it were a real call. This got a new, narrower way
+    to fire once splice_continuations() started running on raw source
+    (deleting a continuation wherever it falls, phase 2, literals included
+    -- matching real C, where splicing precedes even literal recognition):
+    a literal such as `"LOG` + backslash + newline + `_E(value);"` becomes,
+    post-splice, one containing the contiguous text `LOG_E(value);`, which
+    the call-site regex then matches -- a valid, harmless log message incorrectly
+    reported as an unresolvable call (Qodo /agentic_review, PR #1110,
+    2026-09-16: "Valid source fails logging gate", verified empirically
+    against 076bdce84).
+
+    Used ONLY to locate a call's start; find_calls() still reads the actual
+    call -- parens, quotes, the real format string -- from the unmodified
+    `masked` text at the same offsets, so genuine literal content is never
+    lost.
+    """
+    out = list(text)
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c != '"' and c != "'":
+            i += 1
+            continue
+        quote = c
+        content_start = i + 1
+        i += 1
+        while i < n:
+            if text[i] == "\\":
+                i += 2                # skip the escape pair -- see
+                continue               # mask_comments()'s identical walk
+            if text[i] == quote:
+                break
+            i += 1
+        content_end = i               # the closing quote's position, or n
+        for k in range(content_start, content_end):
+            if out[k] != "\n":
+                out[k] = " "
+        i = content_end + 1 if content_end < n else n
+    return "".join(out)
+
+
 def find_calls(masked, macros):
     """Yield (macro, pos, arg_list, call_text) for each log-macro call.
 
@@ -429,7 +481,8 @@ def find_calls(masked, macros):
     """
     names = "|".join(sorted(macros, key=len, reverse=True))
     call_re = re.compile(r"(?<![A-Za-z0-9_])(" + names + r")\s*\(")
-    for m in call_re.finditer(masked):
+    match_view = mask_literals(masked)
+    for m in call_re.finditer(match_view):
         open_paren = m.end() - 1
         i, depth, n = open_paren, 0, len(masked)
         while i < n:
@@ -1266,6 +1319,31 @@ SELF_TEST_CASES = [
         "continuation inside the macro name was still entirely absent from "
         "the scan (verified empirically against 827284cc1, 2026-09-16: "
         "0 findings)",
+    ),
+    # ---- follow-up Qodo /agentic_review Bug on PR #1110 (2026-09-16, "Valid
+    # source fails logging gate"), found against the fix immediately above:
+    # once splice_continuations() ran on raw source before literal
+    # recognition (matching real C, where phase-2 splicing precedes phase-3
+    # tokenization), a continuation that happens to fall INSIDE a string
+    # literal is spliced too -- correctly, since that is what C does -- but
+    # find_calls() still ran its call-site regex against literal CONTENT
+    # left otherwise untouched, so a harmless message like
+    # "LOG" + backslash-newline + "_E(value);" became, post-splice, a
+    # literal containing the contiguous text LOG_E(value);, which the call
+    # regex then matched as if it were a real call -- a valid message
+    # incorrectly reported as unresolvable (a false positive, never a
+    # silent pass, but still a Bug in this PR's own product code). Fixed
+    # with mask_literals(), used only to LOCATE a call; the real content is
+    # still read from the untouched masked text at the same offsets.
+    (
+        "call detection must not fire on text that only LOOKS like a call "
+        "inside a literal",
+        'LOG_D("LOG\\\n_E(value);");',
+        0,
+        "a continuation splicing 'LOG' and '_E' together INSIDE a string "
+        "literal (not gated -- LOG_D isn't in DEFAULT_MACROS) must not be "
+        "mistaken for a real call to the LOG_E macro (verified empirically "
+        "against 076bdce84, 2026-09-16: 1 spurious finding)",
     ),
     # ---- deferred /improve item on PR #1110, importance 7, same
     # silent-undercount class as the five above: measure() dispatched purely
