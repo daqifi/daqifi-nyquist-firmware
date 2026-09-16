@@ -143,18 +143,29 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
  *
  * WHAT THIS GIVES UP, PLAINLY: the full-media-init coverage 5000 was chosen
  * for. The kick forces TASK_CHECK_DEVICE then TASK_MEDIA_INIT (drv_sdspi.c),
- * whose BOUNDED sub-waits are DRV_SDSPI_APP_CMD_RESP_TIMEOUT_IN_MS (1000,
- * the ACMD41 busy loop) and DRV_SDSPI_CSD_TOKEN_TIMEOUT_IN_MS (1000), each
+ * whose one BOUNDED sub-wait actually armed by this driver is
+ * DRV_SDSPI_APP_CMD_RESP_TIMEOUT_IN_MS (1000, the ACMD41 busy loop), itself
  * backed by DRV_SDSPI_SPI_XFER_TIMEOUT_IN_MS (500) x
  * DRV_SDSPI_COMMAND_RESPONSE_TRIES (10) per command underneath
- * (drv_sdspi_local.h:114-119). 500 ms does NOT cover that span, and no value
- * can: the driver's worst case (>= 2000 ms) is larger than the client window
- * it would have to fit inside. A card whose init runs to those budgets is
- * refused here exactly as it was before this fix. What 500 ms buys is the
- * ordinary case -- a present, healthy card whose init is dominated by an
- * ACMD41 that answers in tens of milliseconds rather than by its 1000 ms
- * ceiling (I: derived from the client ceiling, NOT measured on this bench;
- * anything slower falls back to pre-#756 behaviour rather than breaking).
+ * (drv_sdspi_local.h:114-119, confirmed by grepping every call site: only
+ * these three are ever passed to a *TimerStart). DRV_SDSPI_CSD_TOKEN_TIMEOUT_IN_MS
+ * (drv_sdspi_local.h:117) is defined but arms no timer anywhere in this
+ * driver -- round-2 review finding #6, still true of this rewritten comment
+ * until now: the CSD/CID data phases it names run with NO timer at all, so
+ * they were never part of what 5000 (or any bound) could cover, and citing
+ * that constant as a "bounded sub-wait" was wrong even under the old 5000 ms
+ * derivation. 500 ms does NOT cover even the one budget that IS real
+ * (DRV_SDSPI_APP_CMD_RESP_TIMEOUT_IN_MS's 1000 ms alone is already double
+ * it), and no value can: the client window this bound must fit inside
+ * (1000 ms, see above) is itself smaller than that single top-level SDSPI
+ * budget, before even counting the CSD/CID phases' unbounded wait on top. A
+ * card whose ACMD41 runs anywhere near its 1000 ms ceiling, or whose CSD/CID
+ * phase is merely slow, is refused here exactly as it was before this fix.
+ * What 500 ms buys is the ordinary case -- a present,
+ * healthy card whose init is dominated by an ACMD41 that answers in tens of
+ * milliseconds rather than by its 1000 ms ceiling (I: derived from the
+ * client ceiling, NOT measured on this bench; anything slower falls back to
+ * pre-#756 behaviour rather than breaking).
  *
  * The kick is unconditional and unaffected by this number, so a card that
  * misses this window is still re-detected in time for the client's NEXT
