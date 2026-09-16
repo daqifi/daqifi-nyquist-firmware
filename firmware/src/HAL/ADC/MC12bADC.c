@@ -393,9 +393,8 @@ void MC12b_RestoreIdleScanList(void) {
     MC12b_ApplyScanList(css1, css2);
 }
 
-/* Shared-MODULE7 ADC clock period TAD7, in nanoseconds, derived live from the
- * SFRs.  ONE definition, so every consumer of the scan timing model (the
- * scan-busy cap below and the per-channel scan offset) uses the SAME TAD:
+/* Shared-MODULE7 ADC clock period TAD7, in nanoseconds (rounded UP — see
+ * below), derived live from the SFRs:
  *   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV + 1) x TCLK;  TCLK = 1/PBCLK3
  * (DS60001320H Reg 28-2/28-3 — the EF datasheet deviates from the FRM on
  * CONCLKDIV semantics and the datasheet is what matches silicon; the full
@@ -411,11 +410,6 @@ void MC12b_RestoreIdleScanList(void) {
  * was already fixed for by #716 (TimerApi_FrequencyGet's own comment: "Every
  * streaming-rate computation funnels through this function ... making it
  * honest here fixes the rate, the reported timebase and the caps together").
- * MC12b_ChannelScanOffsetTicks multiplies this by timestamp_hz, which IS
- * already live-derived — mixing a build-scaled TAD with a live-scaled
- * multiplier is exactly the inconsistency #716 exists to close, and this
- * closes it for the scan-busy cap term too (MC12b_HardwareScanMaxFreq below),
- * not only the new offset.
  *
  * BEHAVIOUR-PRESERVING ON EVERY CLOCK-MATCHED UNIT (the overwhelming common
  * case, clock_ok=true): TimerApi_PeripheralClockHz() returns EXACTLY
@@ -427,20 +421,32 @@ void MC12b_RestoreIdleScanList(void) {
  * = DAQIFI_PBCLK_MHZ*1e6). Only a clock-mismatched unit's result moves, and
  * it moves toward the true value.
  *
- * The divide rounds UP (ceil) so tadNs never UNDER-estimates TAD — for the
- * safety cap that makes an over-estimate of busy time (-> lower max freq) the
- * conservative direction (Qodo #584), and for the reported scan offset it
- * means the published figure is an upper bound, never optimistic. */
+ * The divide rounds UP (ceil) so tadNs never UNDER-estimates TAD — the
+ * conservative direction for MC12b_HardwareScanMaxFreq's safety cap below
+ * (over-estimating busy time -> a lower, safer max freq; Qodo #584).
+ *
+ * ONLY MC12b_HardwareScanMaxFreq uses this whole-nanosecond, rounded form.
+ * MC12b_ChannelScanOffsetTicks (below) does NOT call this helper: rounding
+ * TAD7 up before multiplying by pos x (SAMC+16) compounds the rounding error
+ * pos times, which is itself a confirmed defect (Qodo /agentic_review, PR
+ * firmware#1112, round 1, "Rounding each ADC clock period introduces
+ * cumulative timestamp error") — that function instead reads
+ * adcdiv/conclkdiv/pbclkHz from its own MC12b_ScanTimingSnapshot and carries
+ * the UN-rounded rational value through to one final division, so its
+ * reported offset is not an upper bound the way the busy-time cap is; it is
+ * the nearest-below-exact tick count. */
 static uint32_t MC12b_SharedTadNs(void) {
     uint32_t conclkdiv = ADCCON3bits.CONCLKDIV;   // [29:24]
     uint32_t adcdiv    = ADCCON2bits.ADCDIV;       // [6:0]
     if (adcdiv == 0u) adcdiv = 1u;          // 0 is reserved — defensive
     uint32_t pbclkHz = TimerApi_PeripheralClockHz();
     if (pbclkHz == 0u) return 0xFFFFFFFFu;  // defensive: unmeasurable clock —
-                                             // callers already clamp/saturate
-                                             // on an oversized TAD (see
-                                             // MC12b_ChannelScanOffsetTicks'
-                                             // own UINT32_MAX clamp below)
+                                             // MC12b_HardwareScanMaxFreq below
+                                             // folds this straight into its
+                                             // own busy-time bound, which
+                                             // saturates the same direction
+                                             // (a huge TAD -> a lower max
+                                             // freq, never a higher one)
     /* 64-bit: 2*adcdiv*(conclkdiv+1) can reach ~2*127*64 = 16256, and the
      * numerator is now scaled x1e9 (ns from a Hz denominator) rather than
      * x1000 (ns from a MHz one) — 16256*1e9 ~= 1.6e13 overflows uint32_t. */
@@ -481,10 +487,37 @@ static uint32_t MC12b_CountSetBits(uint32_t v) {
     return n;
 }
 
+/* #267/#1112 round-1: one-shot read of the SAMC/clock-divider state, taken
+ * ONCE by the caller before the per-channel emission loop (Qodo
+ * /agentic_review, PR firmware#1112, round 1, "Snapshot SAMC before emitting
+ * channel offsets" — see the .h-file comment for the full reachability
+ * argument: a CONF:ADC:SAMC:SHARed setter is only rejected #116 MID-STREAM,
+ * so it is NOT blocked while a CONF:CAP:JSON? query is idle-time emitting the
+ * channels[] array, and MC12b_ChannelScanOffsetTicks used to reread
+ * ADCCON2.SAMC and the ADCCON2/ADCCON3 dividers behind MC12b_SharedTadNs on
+ * EVERY call — so two channels in the SAME response could each be scored
+ * against a different SAMC). Deliberately reads adcdiv/conclkdiv/pbclkHz
+ * itself rather than delegating to MC12b_SharedTadNs(): that helper rounds
+ * TAD7 UP to a whole nanosecond for MC12b_HardwareScanMaxFreq's safety-cap
+ * use (intentional there, Qodo #584 — an over-estimate makes the cap more
+ * conservative); MC12b_ChannelScanOffsetTicks needs the UN-rounded rational
+ * value so pos x (SAMC+16) x TAD7 doesn't compound that rounding pos times
+ * (Qodo /agentic_review, PR firmware#1112, round 1, "Rounding each ADC clock
+ * period introduces cumulative timestamp error" — see below). */
+MC12b_ScanTimingSnapshot MC12b_CaptureScanTiming(void) {
+    MC12b_ScanTimingSnapshot snap;
+    snap.samc      = ADCCON2bits.SAMC;
+    snap.adcdiv    = ADCCON2bits.ADCDIV;
+    snap.conclkdiv = ADCCON3bits.CONCLKDIV;
+    snap.pbclkHz   = TimerApi_PeripheralClockHz();
+    return snap;
+}
+
 uint32_t MC12b_ChannelScanOffsetTicks(const AInChannel* ch,
                                       uint32_t css1, uint32_t css2,
+                                      const MC12b_ScanTimingSnapshot* timing,
                                       uint32_t timestampHz) {
-    if (ch == NULL || timestampHz == 0u) return 0u;
+    if (ch == NULL || timestampHz == 0u || timing == NULL) return 0u;
 
     /* AD7609 (NQ2/NQ3) converts all 8 inputs simultaneously — no scan-order
      * skew, and no MODULE7 scan to be positioned within. */
@@ -551,21 +584,66 @@ uint32_t MC12b_ChannelScanOffsetTicks(const AInChannel* ch,
         pos = MC12b_CountSetBits(css1)
             + MC12b_CountSetBits(css2 & ((1U << (an - 32u)) - 1U));
     }
-    if (pos == 0u) return 0u;    // converts first — no offset
 
-    /* Per-input step = the same (SAMC + 16) x TAD7 term the scan-busy bound
-     * uses: (SAMC + 2) TAD acquisition + ~14 TAD conversion/handoff, pinned by
-     * the silicon anchors in docs/ADC_HW_SEMANTICS.md.  The per-SCAN fixed
-     * term (~6 us) deliberately does NOT appear: it is paid once per scan, not
-     * per input, so it shifts the whole scan rather than one channel within
-     * it. */
-    uint64_t offsetNs = (uint64_t)pos * (ADCCON2bits.SAMC + 16u)
-                                     * MC12b_SharedTadNs();
+    /* clockTerm x pbclkHz-denominator carries TAD7 UN-rounded through every
+     * multiply, so the one unavoidable floor happens ONCE, at the very end,
+     * instead of a whole-nanosecond ceil(TAD7) compounding pos times (Qodo
+     * /agentic_review, PR firmware#1112, round 1, "Rounding each ADC clock
+     * period introduces cumulative timestamp error" — ~415 ticks / ~9.9us at
+     * SAMC=1023 from the old ceil-then-multiply order; e.g. TAD7 = 119.0476ns
+     * on the shipped default clocks is EXACTLY 5 timestamp ticks, so an exact
+     * integer answer exists and no rounding was structurally required).
+     *   TAD7[ns]     = 2 x adcdiv x (conclkdiv+1) x 1e9 / pbclkHz
+     *   ticks(pos,K) = pos x K x TAD7[ns] x timestampHz / 1e9
+     *                = pos x K x [2 x adcdiv x (conclkdiv+1)] x timestampHz
+     *                  / pbclkHz                        (the 1e9 cancels)
+     * 64-bit is required and sufficient: worst case pos<=~50, K<=1039,
+     * clockTerm<=2*127*64=16256, timestampHz a few hundred MHz — the product
+     * stays under 2^63 (verified: 50*1039*16256*4e8 ~= 3.4e17 << 9.2e18). */
+    uint32_t adcdiv = (timing->adcdiv == 0u) ? 1u : timing->adcdiv; // 0 reserved
+    if (timing->pbclkHz == 0u) return 0xFFFFFFFFu;  // unmeasurable clock —
+                                                     // saturate like every
+                                                     // other clamp here
+    uint64_t clockTerm = 2ULL * adcdiv * (timing->conclkdiv + 1u);
 
-    /* ns -> timestamp-timer ticks:  ticks = offsetNs * timestampHz / 1e9.
-     * Multiply first, in 64-bit, so no precision is lost to the divide (the
-     * tick period is tens of ns, the offset hundreds of us). */
-    uint64_t ticks = (offsetNs * (uint64_t)timestampHz) / 1000000000ULL;
+    uint64_t ticks;
+    if (pos == 0u) {
+        /* First shared channel: NOT captured at the trigger the way a Type 1
+         * (dedicated) input is (Qodo /agentic_review, PR firmware#1112,
+         * round 1, "First shared channel incorrectly receives the
+         * dedicated-channel timestamp offset"). V — DS60001344E §22.3.2
+         * Figure 22-7 "Input Scan Conversion Sequence": "Trigger causes S&H
+         * circuit to begin sampling first input in the scan list ... Once
+         * sampling is complete, the conversion begins" — unlike Class 1
+         * ("captured simultaneously" at the trigger, same section), the
+         * shared S&H's own acquisition must still elapse before its value is
+         * latched (Hold begins). Equation 22-2 "Sample Time for the Shared
+         * ADC Module": tSAMC = (SAMC+2) x TAD — exactly that acquisition
+         * window, i.e. the instant the analog value is actually captured,
+         * which is the physically meaningful "when was this reading taken"
+         * instant a client needs (the same instant a Type 1 channel's own
+         * offset=0 represents: "captured AT the trigger"). Positions >= 1
+         * are UNCHANGED: each already carries the full (SAMC+16) x TAD7 slot
+         * of every channel ahead of it (acquisition + conversion/handoff),
+         * so they remain self-consistent among the shared channels
+         * themselves — only position 0 has no prior slot to fold this
+         * acquisition into, and returning 0 there aliased it onto the SAME
+         * value a physically-different Type 1 channel returns. */
+        uint64_t apertureNumer = (uint64_t)(timing->samc + 2u) * clockTerm
+                                * (uint64_t)timestampHz;
+        ticks = apertureNumer / (uint64_t)timing->pbclkHz;
+    } else {
+        /* Per-input step = the same (SAMC + 16) x TAD7 term the scan-busy
+         * bound uses: (SAMC + 2) TAD acquisition + ~14 TAD conversion/
+         * handoff, pinned by the silicon anchors in
+         * docs/ADC_HW_SEMANTICS.md. The per-SCAN fixed term (~6 us)
+         * deliberately does NOT appear: it is paid once per scan, not per
+         * input, so it shifts the whole scan rather than one channel within
+         * it. */
+        uint64_t numer = (uint64_t)pos * (timing->samc + 16u) * clockTerm
+                        * (uint64_t)timestampHz;
+        ticks = numer / (uint64_t)timing->pbclkHz;
+    }
     return (ticks > 0xFFFFFFFFULL) ? 0xFFFFFFFFu : (uint32_t)ticks;
 }
 

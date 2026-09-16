@@ -8069,6 +8069,14 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
     uint32_t ainScanCss1 = 0u, ainScanCss2 = 0u;
     (void)MC12b_ComputeScanList(true, ainScanObDiag,
                                 &ainScanCss1, &ainScanCss2);
+    /* #1112 round-1 fix: SAMC and the ADC clock dividers, snapshotted ONCE
+     * alongside the css1/css2 scan list above (Qodo /agentic_review, PR
+     * firmware#1112, round 1, "Snapshot SAMC before emitting channel
+     * offsets" — MC12b_ChannelScanOffsetTicks used to reread ADCCON2.SAMC on
+     * every call, and a CONF:ADC:SAMC:SHARed setter on the OTHER SCPI
+     * transport is only rejected #116 MID-STREAM, so it is reachable between
+     * two channels of this same idle-time query). */
+    MC12b_ScanTimingSnapshot ainScanTiming = MC12b_CaptureScanTiming();
 
     for (uint32_t i = 0; i < ainLoopCount; i++) {
         const AInChannel* ch = &cfg->AInChannels.Data[i];
@@ -8113,6 +8121,7 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         EmitAinChannelJson(context, ch, rc, moduleRange,
                            MC12b_ChannelScanOffsetTicks(ch, ainScanCss1,
                                                         ainScanCss2,
+                                                        &ainScanTiming,
                                                         ainScanTsHz));
     }
 

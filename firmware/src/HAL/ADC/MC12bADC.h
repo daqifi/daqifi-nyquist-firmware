@@ -135,6 +135,34 @@ uint32_t MC12b_ScanMaxFreq(uint32_t nActive, uint32_t nUserT2);
 uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive);
 
 /**
+ * #267/#1112 round-1: one-shot snapshot of the SAMC/clock-divider state that
+ * MC12b_ChannelScanOffsetTicks needs, taken ONCE by the caller — alongside its
+ * css1/css2 scan-list snapshot — via MC12b_CaptureScanTiming() below, instead
+ * of each call re-reading ADCCON2.SAMC / ADCCON2.ADCDIV / ADCCON3.CONCLKDIV /
+ * the live PBCLK3 from hardware (Qodo /agentic_review, PR firmware#1112,
+ * round 1, "Snapshot SAMC before emitting channel offsets": a
+ * CONF:ADC:SAMC:SHARed setter on the OTHER SCPI transport is NOT rejected
+ * while idle — #116 only rejects it mid-STREAM — so it could land between two
+ * channels of the same CONF:CAP:JSON? response and make their offsets
+ * describe two different scans).
+ */
+typedef struct {
+    uint32_t samc;       ///< ADCCON2bits.SAMC, [0..1023]
+    uint32_t adcdiv;      ///< ADCCON2bits.ADCDIV (0 treated as 1 — reserved)
+    uint32_t conclkdiv;    ///< ADCCON3bits.CONCLKDIV
+    uint32_t pbclkHz;      ///< TimerApi_PeripheralClockHz(), live PBCLK3
+} MC12b_ScanTimingSnapshot;
+
+/**
+ * #267/#1112 round-1: read the SAMC/clock-divider state ONCE. Call before the
+ * per-channel emission loop, exactly like the existing
+ * MC12b_ComputeScanList(true, includeMonitoring, ...) css1/css2 snapshot, and
+ * pass the SAME struct to every MC12b_ChannelScanOffsetTicks() call in that
+ * response.
+ */
+MC12b_ScanTimingSnapshot MC12b_CaptureScanTiming(void);
+
+/**
  * #267: a channel's DETERMINISTIC intra-scan conversion offset, expressed in
  * timestamp-timer ticks (the `timestamp_hz` domain the capability document and
  * SYSTem:SYSInfoPB? already publish) — NOT in ADC TAD or nanoseconds, so a
@@ -148,28 +176,37 @@ uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive);
  * reported once per session rather than per sample.
  *
  * Returns 0 for: Type 1 (dedicated S&H — simultaneous, FRM §22.3.2), AD7609
- * channels, the first input in the scan, and any channel NOT in the scan the
- * current configuration would arm.
+ * channels, and any channel NOT in the scan the current configuration would
+ * arm. The FIRST shared/Type-2 channel in the scan does NOT return 0 (fixed
+ * Qodo /agentic_review, PR firmware#1112, round 1, "First shared channel
+ * incorrectly receives the dedicated-channel timestamp offset") — unlike a
+ * Type 1 input, it is not captured at the trigger instant: DS60001344E
+ * §22.3.2 Figure 22-7 has the trigger START the shared S&H's own acquisition,
+ * which must still elapse ((SAMC+2) x TAD7, Equation 22-2) before the value is
+ * latched. See MC12b_ChannelScanOffsetTicks' .c-file comment for the full
+ * derivation and why positions >= 1 are unchanged.
  *
- * PURE given its inputs: css1/css2 are the caller's OWN snapshot from ONE
- * MC12b_ComputeScanList(true, includeMonitoring, ...) call, taken once before
- * looping over channels (Qodo /agentic_review, PR firmware#1112, "Channel
- * timing can describe wrong scan") — NOT recomputed per channel, so every
- * channel in one capability response is positioned against the exact same
- * scan, even if the enabled-channel set or OnboardDiagEnabled changes on the
- * OTHER SCPI transport between two channels' calls in the same response.
- * SAMC and TAD7 are still read live per call (matching the same live-read
- * convention cap_terms.scan_bound_hz already uses, and SAMC has no
- * comparable cross-channel exposure since #116 already rejects it mid-stream
- * and it is not iterated per public channel the way the scan mask is).
+ * PURE given its inputs: css1/css2 and *timing are the caller's OWN snapshots
+ * — ONE MC12b_ComputeScanList(true, includeMonitoring, ...) call and ONE
+ * MC12b_CaptureScanTiming() call, both taken once before looping over
+ * channels (Qodo /agentic_review, PR firmware#1112: "Channel timing can
+ * describe wrong scan" round 1, then "Snapshot SAMC before emitting channel
+ * offsets" round 1) — NOT recomputed/reread per channel, so every channel in
+ * one capability response is positioned against the exact same scan AND the
+ * exact same acquisition timing, even if the enabled-channel set,
+ * OnboardDiagEnabled, or SAMC changes on the OTHER SCPI transport between two
+ * channels' calls in the same response.
  *
  * @param ch          board-config channel entry (NULL -> 0)
  * @param css1, css2  ONE MC12b_ComputeScanList(true, includeMonitoring, ...)
  *                    snapshot, shared across every channel in one response
+ * @param timing      ONE MC12b_CaptureScanTiming() snapshot, shared across
+ *                    every channel in one response (NULL -> 0)
  * @param timestampHz timestamp-timer tick rate (0 -> 0)
  */
 uint32_t MC12b_ChannelScanOffsetTicks(const AInChannel* ch,
                                       uint32_t css1, uint32_t css2,
+                                      const MC12b_ScanTimingSnapshot* timing,
                                       uint32_t timestampHz);
 
 /**

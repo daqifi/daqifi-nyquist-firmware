@@ -571,36 +571,80 @@ individual Class 2 trigger pre-empting a scan (§22.3.2 / Figure 22-8, p.22-64)
 Class 1/2 input's `ADCTRGx` TRGSRC at STRIG, so no input has an independent
 trigger while a session is armed.
 
-**Derivation** (`MC12b_ChannelScanOffsetTicks`, `firmware/src/HAL/ADC/MC12bADC.c`):
+**Derivation** (`MC12b_ChannelScanOffsetTicks`, `firmware/src/HAL/ADC/MC12bADC.c`;
+fixed round-1 of the Qodo /agentic_review adversarial audit on PR firmware#1112 —
+see the two `#1112 round-1` findings folded in below):
 
 ```
 scanPosition = popcount(armed CSS bits strictly below this input's AN bit)
-offsetNs     = scanPosition x (SAMC + 16) x TAD7
-offsetTicks  = offsetNs x timestamp_hz / 1e9
-```
 
-- `(SAMC + 16) x TAD7` is the **same per-input term the scan-busy cap uses**
-  ((SAMC+2) TAD acquisition + ~14 TAD conversion/handoff, pinned by the
-  silicon anchors above); `TAD7` comes from one shared helper
-  (`MC12b_SharedTadNs`) reading `ADCCON3.CONCLKDIV` / `ADCCON2.ADCDIV` live,
-  so the offset and `cap_terms.scan_bound_hz` can never disagree about TAD.
-  The TAD divide rounds **up**, so a reported offset is an upper bound, never
-  optimistic.
+if scanPosition == 0:
+    offsetTicks = (SAMC + 2) x TAD7 x timestamp_hz     # this channel's OWN
+                                                        # acquisition, exact
+else:
+    offsetTicks = scanPosition x (SAMC + 16) x TAD7 x timestamp_hz   # exact
+```
+(both divided once by `pbclkHz` at the very end — see below.)
+
+- **The first scanned Type-2 channel (scanPosition 0) is NOT captured at the
+  trigger.** Unlike Type 1/Class 1 ("all Class 1 inputs are captured
+  simultaneously and conversions are started simultaneously", §22.3.2), a
+  shared/Class-2-or-3 input's trigger only *starts* its own Sample&Hold
+  acquisition (Figure 22-7: "Trigger causes S&H circuit to begin sampling
+  first input in the scan list ... Once sampling is complete, the conversion
+  begins") — the value isn't latched (Hold begins) until `(SAMC+2) x TAD7`
+  later (Equation 22-2, "Sample Time for the Shared ADC Module"). Before the
+  #1112 round-1 fix this position returned 0, identical to a Type 1 channel's
+  offset, even though the two are not physically equivalent — a real,
+  deterministic error of ~510 timestamp ticks (~12.1 µs) at the shipped
+  default SAMC=100/ADCDIV=1/CONCLKDIV=4. Every later position (`scanPosition
+  >= 1`) is unchanged: each already carries the full `(SAMC + 16) x TAD7`
+  slot of every channel ahead of it — (SAMC+2) TAD acquisition + ~14 TAD
+  conversion/handoff, pinned by the silicon anchors above — so it remains
+  self-consistent among the shared channels themselves; only position 0 had
+  no prior slot to fold its own acquisition into.
+- **The division happens exactly once, after every multiply**, instead of
+  rounding `TAD7` up to a whole nanosecond first and then multiplying by
+  `scanPosition x (SAMC+16)` — the pre-fix code did the latter, which
+  compounds the ~1 ns whole-number rounding `scanPosition` times (~415 ticks
+  / ~9.9 µs of pure rounding error at SAMC=1023; on the shipped default
+  clocks `TAD7` = 119.0476 ns is *exactly* 5 timestamp ticks, so an exact
+  integer answer exists and no rounding was structurally required). The
+  un-rounded form multiplies `2 x ADCDIV x (CONCLKDIV+1) x timestamp_hz` all
+  the way through and divides by `pbclkHz` once at the end — algebraically
+  the same value as the ns-intermediate form with the `1e9` scale factor
+  cancelled out, just without the intermediate rounding.
+  `MC12b_HardwareScanMaxFreq`'s busy-time cap still uses the OLD,
+  whole-nanosecond `MC12b_SharedTadNs()` helper unchanged — over-estimating
+  busy time is the conservative direction for a safety cap (Qodo #584), so
+  that ceiling stays; only the *reported offset*, which has no such
+  conservative-direction requirement, was moved to exact arithmetic.
 - The **per-scan** fixed term (~6 µs) deliberately does not appear: it is paid
   once per scan, so it shifts the whole scan rather than one channel within it.
-- The armed list is recomputed **at query time** with
-  `MC12b_ComputeScanList(true, OnboardDiagEnabled, …)` — the exact flags
-  `Streaming_ComputeMaxFreqTermsForConfigIface` uses for the scan bound, so the
-  offsets and that bound describe the same scan. A live computation cannot go
-  stale, which is why nothing is cached at stream start.
-- **0 means "no deterministic offset applies"**, covering all of: a
-  `simultaneous` channel (Type 1 dedicated S&H, and AD7609 — "all Class 1
-  inputs are captured simultaneously and conversions are started
-  simultaneously", §22.3.2), the first input in the scan, and a channel the
-  current configuration would not scan at all.
+- The armed list is snapshotted **once per query**, before the per-channel
+  loop, with `MC12b_ComputeScanList(true, OnboardDiagEnabled, …)` — the exact
+  flags `Streaming_ComputeMaxFreqTermsForConfigIface` uses for the scan bound,
+  so every channel in one response describes the same scan. **SAMC and the
+  ADC clock dividers are snapshotted the same way**, via one
+  `MC12b_CaptureScanTiming()` call taken alongside it (`#1112 round-1`: before
+  this fix, `MC12b_ChannelScanOffsetTicks` reread `ADCCON2.SAMC` live on
+  *every* call, and a `CONF:ADC:SAMC:SHARed` setter on the other SCPI
+  transport is rejected mid-stream by #116 but **not** while this idle-time
+  query is running — so it could land between two channels of the same
+  response and make their offsets describe two different SAMC values,
+  e.g. one lower than the position before it despite converting later). Both
+  snapshots are taken once per query, not cached across queries, so neither
+  can go stale.
+- **0 means "no deterministic offset applies"**, covering: a `simultaneous`
+  channel (Type 1 dedicated S&H, and AD7609 — "all Class 1 inputs are
+  captured simultaneously and conversions are started simultaneously",
+  §22.3.2) and a channel the current configuration would not scan at all.
+  The first *scanned* input is no longer among these (see above).
 
-**Evidence class: V for the order and the register semantics; E for the
-per-input timing constant** (the SAMC sweep and the two silicon anchors above).
+**Evidence class: V for the order, the register semantics, and the
+first-position aperture correction (DS60001344E §22.3.2 Figure 22-7 +
+Equation 22-2, cited above); E for the per-input timing constant** (the SAMC
+sweep and the two silicon anchors above).
 The composed per-channel figure has **not** itself been measured against a
 known-phase input — that measurement would upgrade it to E and is the same
 experiment that would pin the two offsets below.
