@@ -46,6 +46,9 @@
 
 /* SD write metrics accessed via sd_card_manager API */
 #include "../streaming.h"
+#if READ_LOOP_PROFILE
+#include "peripheral/coretimer/plib_coretimer.h"  // #251: CORETIMER_FrequencyGet()
+#endif
 #include "../Capabilities.h"
 #include "Util/StreamingBufferPool.h"
 #include "state/data/AInSample.h"
@@ -526,11 +529,38 @@ static scpi_result_t SCPI_Reset(scpi_t * context) {
         }
     }
 
+    // #1071: have the next boot restore the power state instead of coming
+    // back in STANDBY with WiFi and the front end unpowered, for
+    // SYSTem:REboot only. *RST shares this callback but keeps the boot it
+    // always had: IEEE 488.2 defines *RST as a known state independent of the
+    // device's past-use history, and #1071 asks only for SYSTem:REboot.
+    // SCPI_IsCmd is libscpi's test for a callback bound to several patterns.
+    // It checks the table entry the parser matched, so the client's spelling
+    // does not matter, and if the pattern ever stopped matching, the reboot
+    // would fail safe to the pre-#1071 STANDBY boot.
+    const bool restorePower = SCPI_IsCmd(context, "SYSTem:REboot");
+
     // Allow time for message transmission and any pending operations
     vTaskDelay(100 / portTICK_PERIOD_MS);
 
-    // Perform the software reset
+    // #1071 (Qodo /agentic_review finding on PR #1081): snapshot the power
+    // state and reset as one step. Every writer of requestedPowerState and
+    // powerState is task code (Button_Tasks, the power state machine, a SCPI
+    // callback on the other transport), and this critical section stops the
+    // scheduler switching to any of them, so no power request can land
+    // between the snapshot and the reset. Armed any earlier (the original
+    // #1071 placement), a power-down posted in that gap was replaced on the
+    // next boot by the power-up it followed. Power_ArmRebootRestore() ends
+    // with a SYNC, so its stores are in SRAM before the reset — the settle
+    // delay above no longer sits between the stores and the reset.
+    // RCON_SoftwareReset() disables interrupts itself and never returns; the
+    // exit below is only for the unreachable fallback.
+    taskENTER_CRITICAL();
+    if (restorePower) {
+        Power_ArmRebootRestore();
+    }
     RCON_SoftwareReset();
+    taskEXIT_CRITICAL();
 
     // If we get here, the reset didn't work
     SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
@@ -2396,11 +2426,24 @@ static inline void StreamFreq_Set(StreamingRuntimeConfig* c, uint64_t f) {
 /* #850: the shared refusal. SCPI_StartStreaming does NOT go through the
  * runner (it must parse before claiming -- see its wrapper), so without this
  * the two refusal sites would drift apart and an operator could not tell them
- * apart in the log. */
+ * apart in the log.
+ *
+ * #977: STREAM_START_CLAIM_BUSY now also means "a guarded config change holds
+ * the interlocked claim", so the wording names both holders. Which one it was
+ * is logged by Streaming_BeginSessionStart one line earlier (streaming.c), the
+ * same arrangement SCPI_RejectCfgClaim uses on the other side. The error code
+ * is unchanged: -200, which is what the arm-time cfgChanging refusal this
+ * supersedes already answered -- the difference is that the refusal now lands
+ * before PrepareStreamingBuffers instead of after it. */
 static scpi_result_t SCPI_RefuseSessionStartBusy(scpi_t * context,
                                                  const char *what) {
-    LOG_E("%s refused (#850): another streaming session start is in "
-          "flight on the other SCPI transport. Retry.", what);
+    /* 105 characters at the longest `what` this is called with
+     * ("SYSTem:STReam:THRoughput", 24), against Logger.c's usable 125.
+     * "on the other SCPI transport" was dropped to fit rather than "Retry.":
+     * the remedy is the actionable half, and WHICH transport holds it is in
+     * the Streaming_Begin* line this one follows. */
+    LOG_E("%s refused (#850/#977): another session start or config change is "
+          "in flight. Retry.", what);
     SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
     return SCPI_RES_ERR;
 }
@@ -3989,6 +4032,40 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     // the deferred task's direct read.  Expected 0; non-zero ticks emitted
     // that channel with its validMask bit clear.
     scpi_printf(context, "T1ArdyMisses=%u\r\n", (unsigned)s.t1ArdyMisses);
+#if READ_LOOP_PROFILE
+    {
+        /* #251: per-tick time of the deferred task's per-channel loop -- the
+         * ADC-side term of the NQ1 cap. Divide the mean by the enabled channel
+         * count for a per-channel figure; T1-only vs T2-only configs separate
+         * the ARDY-direct branch from the LATEST-cache branch.
+         *
+         * Nanoseconds, not microseconds: a one-channel loop is well under a
+         * microsecond, so integer us would print 0 exactly where the T1 figure
+         * is wanted. It stays an integer because every STATS consumer parses
+         * integers (the python harness int-coerces, python-core skips what
+         * int() rejects, daqifi-core's map is ulong.TryParse), and ns is the
+         * cap model's own unit. One count is 1e9 / CORETIMER_FrequencyGet() ns
+         * (7.94 ns at 126 MHz). That is the clock the BUILD targets; a unit
+         * whose PLL did not switch at boot (TimerApi_ClockMatchesBuild() false)
+         * would scale these by the clock ratio, as it does every SYS_TIME delay.
+         *
+         * Integer only, ordered so nothing wraps 64 bits: the mean is taken in
+         * counts first (< 2^32, because no tick exceeds the max), kept to 1/1000
+         * count, then scaled. Never sum * 1e9, which would wrap after ~146 s of
+         * summed loop time. */
+        const uint64_t coreHz = (uint64_t)CORETIMER_FrequencyGet();
+        const uint64_t maxNs = ((uint64_t)s.readLoopMaxCycles * 1000000000ULL) / coreHz;
+        uint64_t meanNs = 0u;
+        if (s.readLoopCount > 0u) {
+            const uint64_t meanMilliCycles =
+                (s.readLoopCycles / s.readLoopCount) * 1000ULL +
+                ((s.readLoopCycles % s.readLoopCount) * 1000ULL) / s.readLoopCount;
+            meanNs = (meanMilliCycles * 1000000ULL) / coreHz;
+        }
+        scpi_printf(context, "ReadLoopMaxNs=%llu\r\n", (unsigned long long)maxNs);
+        scpi_printf(context, "ReadLoopMeanNs=%llu\r\n", (unsigned long long)meanNs);
+    }
+#endif
     // Timer ISR tracking (#265): actual ISR entry count this session (64-bit
     // so it never wraps in practice). Compare against (TotalSamplesStreamed
     // + QueueDroppedSamples) to verify every timer event is accounted for,
@@ -6884,18 +6961,32 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
  * BoardRunTimeConfig_Get. Stated because they are NEW parameters, and an
  * unexplained absence reads as an oversight.
  *
- * NOT CLOSED HERE, and pre-existing rather than introduced. SYST:STR:THRoughput
- * and the WiFi rate finder call PrepareStreamingBuffers BEFORE they observe the
- * claim (SCPIInterface.c -- the prepare, then the arm-time critical section), so
- * a SYST:MEM:AUTO holding the claim can still be re-partitioning while one of
- * them partitions too. The old && guard admitted exactly the same overlap, so
- * this is unchanged by the conversion, and the outcome is strictly better: the
- * arm now sees the claim and refuses instead of arming onto a pool being
- * re-carved. Making it airtight needs those two to TAKE the claim rather than
- * observe it, which they cannot do as written -- they would then read their own
- * claim at the arm and refuse themselves. What the claim does close outright is
- * two SYST:MEM:AUTO commands racing each other: the loser now gets
- * STREAM_CFG_CLAIM_BUSY instead of a second concurrent re-partition.
+ * CLOSED BY #977, and the shape of the fix is worth recording because #857 got
+ * as far as naming the hole and then ruled out the only fix it could see.
+ *
+ * What #857 left open: SYST:STR:THRoughput and the WiFi rate finder call
+ * PrepareStreamingBuffers BEFORE they observe the claim (the prepare, then the
+ * arm-time critical section), so a SYST:MEM:AUTO holding the claim could still
+ * be re-partitioning while one of them partitioned too -- and SCPI_StartStreaming
+ * has the same ordering. The old && guard admitted the identical overlap, so the
+ * conversion neither introduced nor widened it.
+ *
+ * Why the fix #857 considered was correctly rejected: making those commands TAKE
+ * this claim does not work, because they would then read their own claim at the
+ * arm (Streaming_ConfigChangeInProgress) and refuse themselves unconditionally.
+ * That reasoning still holds, and it is why #977 did NOT merge the two claims.
+ *
+ * What #977 did instead: INTERLOCK them. Streaming_BeginConfigChange now also
+ * refuses while the session-start claim is held, and Streaming_BeginSessionStart
+ * refuses while this one is. The two Begins exclude each other; neither takes
+ * the other's claim, so nothing reads its own. Streaming_ConfigChangeInProgress
+ * keeps meaning "a CONFIG change is in flight" and the three arm sites keep
+ * reading it -- now as a second line of defence rather than the only one.
+ *
+ * So all four PrepareStreamingBuffers callers are now mutually exclusive: the
+ * three arm sites through the session-start claim (#850), SYST:MEM:AUTO and
+ * SYST:MEM:RESet through this one, and the two groups against each other
+ * through the interlock. tools/lint/scpi_claim_path.py property 5 gates it.
  */
 static scpi_result_t SCPI_MemRunClaimed(scpi_t * context,
                                         scpi_result_t (*body)(scpi_t *),
@@ -7112,6 +7203,15 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
                 (unsigned)AInSampleList_PoolInUse());
     scpi_printf(context, "SamplePoolMaxUsed=%u\r\n",
                 (unsigned)AInSampleList_PoolMaxUsed());
+    /* #1082: the streaming pool's total byte size (STATIC_POOL_SIZE) had no
+     * SCPI caller, so a host could only learn it from a "Pool partition"
+     * LOG_I line -- captured only if GENERAL is at INFO when some
+     * StreamingBufferPool_Partition() call runs, never for the boot-time
+     * partition (GENERAL boots at ERROR). StreamingBufferPool_TotalSize()
+     * has no side effects and needs no stream/repartition. Appended per the
+     * #828 convention: existing keys keep their name, value and order. */
+    scpi_printf(context, "StreamingPoolTotal=%u\r\n",
+                (unsigned)StreamingBufferPool_TotalSize());
     return SCPI_RES_OK;
 }
 
@@ -7288,17 +7388,23 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
      *
      * READ AND USE ARE ADJACENT ON PURPOSE, and an earlier revision of this
      * commit had them sixty lines apart, up beside the other partition
-     * checks. That grouping reads better and is wrong: `PrepareStreamingBuffers`
-     * releases the SD buffer lock partway down, and the session-start claim the
-     * bench and the finder hold (`Streaming_BeginSessionStart`) does NOT
-     * interlock with the config-change claim `SYSTem:MEMory:AUTO` takes
-     * (`Streaming_BeginConfigChange` tests IsEnabled/Running and gCfgChangeBusy,
-     * never gSessionStartBusy). Neither is armed yet at this point in the
-     * finder's preparation, so an AUTO on the other transport CAN take its
-     * claim and re-partition in between -- and the wider that gap, the more of
-     * it there is to land in. Keeping the fetch next to the install does not
-     * close that race (it is pre-existing and covers this whole function --
-     * filed as #977); it declines to widen it.
+     * checks. That grouping reads better and was wrong at the time:
+     * `PrepareStreamingBuffers` releases the SD buffer lock partway down, and
+     * the session-start claim the bench and the finder hold
+     * (`Streaming_BeginSessionStart`) did NOT interlock with the config-change
+     * claim `SYSTem:MEMory:AUTO` takes, so an AUTO on the other transport could
+     * take its claim and re-partition in between -- and the wider that gap, the
+     * more of it there was to land in. #950 declined to widen a race it could
+     * not close; #977 then closed it, by making each claim's Begin refuse while
+     * the other is held (streaming.c), so no second caller can enter this
+     * function while one is inside it.
+     *
+     * They stay adjacent anyway. The interlock excludes the OTHER SCPI
+     * transport, not a future in-function yield: this function calls vTaskDelay
+     * in three places, and a fetch sixty lines above its use would once again
+     * be a value read before waits and used after them. Adjacency is cheap and
+     * is the property that does not depend on the claim structure staying as it
+     * is.
      *
      * It also invalidates as it refuses: returning here without that would
      * leave the PREVIOUS partition's pool live, which is the state the other
@@ -7631,12 +7737,24 @@ static void EmitAinChannelJson(scpi_t* context,
         allowDifferential ? "true" : "false",
         rangeMin, rangeMax);
 
+    /* #1054 (the read half of #904): CalM/CalB are 64-bit doubles -- two
+     * 32-bit loads each on PIC32MZ (CLAUDE.md atomicity rules) -- and a
+     * CONF:ADC:chanCALM/chanCALB setter on the OTHER SCPI transport can land
+     * between them. #1048 makes the writes atomic, which does not stop a
+     * reader straddling a completed write. Snapshot the pair under one
+     * critical section so the advertised slope and intercept are untorn and
+     * read at the same instant, then format outside it. */
+    taskENTER_CRITICAL();
+    double calM = rt->CalM;
+    double calB = rt->CalB;
+    taskEXIT_CRITICAL();
+
     scpi_printf(context,
         "\"calibration\":{\"model\":\"linear\","
         "\"user_override_supported\":true,"
         "\"slope\":%.6f,\"intercept\":%.6f},"
         "\"extensions\":{}}",
-        rt->CalM, rt->CalB);
+        calM, calB);
 }
 
 static void EmitAoutChannelJson(scpi_t* context,
@@ -7914,8 +8032,24 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
                 break;
             }
         }
-        double moduleRange = (modIdx < rt->AInModules.Size)
-            ? rt->AInModules.Data[modIdx].Range : 0.0;
+        /* #1086 (the Range half of #904/#1054): Range is a 64-bit double
+         * -- two 32-bit loads on PIC32MZ (CLAUDE.md atomicity rules) -- and
+         * a CONF:ADC:RANGe setter on the OTHER SCPI transport can land
+         * between them. That setter's store is atomic (#1086), which does
+         * not stop a reader straddling a completed store, so copy it under a
+         * minimal critical section and hand EmitAinChannelJson the local.
+         *
+         * Deliberately NOT folded into EmitAinChannelJson's CalM/CalB
+         * section (#1054): that one lives in the callee, and a module's Range
+         * and a channel's cal pair have independent writers, so nothing
+         * needs them read at the same instant. This loop runs once per
+         * public channel on a query path, not per sample. */
+        double moduleRange = 0.0;
+        if (modIdx < rt->AInModules.Size) {
+            taskENTER_CRITICAL();
+            moduleRange = rt->AInModules.Data[modIdx].Range;
+            taskEXIT_CRITICAL();
+        }
 
         if (!firstEntry) scpi_printf(context, ",");
         firstEntry = false;
@@ -8313,28 +8447,32 @@ static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
      * itself, so a client can ask "is the shared bus stuck?" and get an answer
      * that does not depend on somebody else's traffic. */
     bool held = false, sdHolds = false;
-    uint32_t holder = 0, depth = 0, recovered = 0;
+    uint32_t holder = 0, depth = 0, recovered = 0, holdMaxMs = 0;
     SpiBusHealth_GetExclusive(&held, &holder, &depth);
     sdHolds = app_SDCard_HoldsSpiBus();
     recovered = app_SDCard_BusRecoveryCount();
+    holdMaxMs = app_SDCard_BusHoldMaxMs();  // #930
 
-    /* 224, not 192: the worst case is 193 characters plus the NUL, which
-     * 192 truncates. Field-by-field, with every counter at its 10-digit
-     * maximum -- RejStale 20, RejExclusive 24, RejLock 19, RejQueueFull 24,
-     * ExclusiveHeld 16, ExclusiveDepth 26, ExclusiveHolder 25, SdHoldsBus 13,
-     * SdBusRecoveries 26 (no trailing comma). Recompute this if a field is
-     * added. Stays a stack local rather than the shared response buffer
-     * because it is under the 256 B threshold that rule applies to. */
+    /* 224, not 192: the worst case is 219 characters plus the NUL (220),
+     * which 192 truncates. Field-by-field, with every counter at its
+     * 10-digit maximum -- RejStale 20, RejExclusive 24, RejLock 19,
+     * RejQueueFull 24, ExclusiveHeld 16, ExclusiveDepth 26,
+     * ExclusiveHolder 25, SdHoldsBus 13, SdBusRecoveries 27,
+     * SdBusHoldMaxMs 25 (no trailing comma, it is now last). Recompute
+     * this if a field is added. Stays a stack local rather than the
+     * shared response buffer because it is under the 256 B threshold
+     * that rule applies to. */
     char out[224];
     snprintf(out, sizeof(out),
              "RejStale=%lu,RejExclusive=%lu,RejLock=%lu,RejQueueFull=%lu,"
              "ExclusiveHeld=%u,ExclusiveDepth=%lu,ExclusiveHolder=%08lx,"
-             "SdHoldsBus=%u,SdBusRecoveries=%lu",
+             "SdHoldsBus=%u,SdBusRecoveries=%lu,SdBusHoldMaxMs=%lu",
              (unsigned long)st, (unsigned long)ex, (unsigned long)lk,
              (unsigned long)qf,
              (unsigned)(held ? 1U : 0U), (unsigned long)depth,
              (unsigned long)holder,
-             (unsigned)(sdHolds ? 1U : 0U), (unsigned long)recovered);
+             (unsigned)(sdHolds ? 1U : 0U), (unsigned long)recovered,
+             (unsigned long)holdMaxMs);
     SCPI_ResultText(context, out);
     return SCPI_RES_OK;
 }

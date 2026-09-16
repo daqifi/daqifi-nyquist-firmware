@@ -101,7 +101,7 @@ bool wifi_tcp_server_ProcessReceivedBuff(void);
  * and clears any pending data in the client's buffers.
  */
 void wifi_tcp_server_CloseClientSocket(void);
-static bool TcpServerFlush() {
+static bool TcpServerFlush(void) {
     int16_t sockRet;
     bool funRet = false;
     if (gpServerData->client.clientSocket < 0) {
@@ -336,7 +336,7 @@ static int CircularBufferToTcpWrite(uint8_t* buf, uint32_t len) {
 
     // Return number of bytes written on success, negative on error
     // Circular buffer expects this API: return >= 0 (bytes written) or < 0 (error)
-    bool flushResult = TcpServerFlush(&gpServerData->client);
+    bool flushResult = TcpServerFlush();
     return flushResult ? (int)len : -1;
 }
 //==========================External Apis==========================

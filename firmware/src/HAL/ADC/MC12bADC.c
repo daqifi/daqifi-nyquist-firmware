@@ -12,6 +12,8 @@
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/Logger.h"
+#include "FreeRTOS.h"
+#include "task.h"           /* #1054: taskENTER_CRITICAL for the CalM/CalB snapshot */
 
 //#define UNUSED(x) (void)(x)
 #define UNUSED(identifier) /* identifier */
@@ -250,12 +252,35 @@ double MC12b_ConvertToVoltage(
         const AInRuntimeConfig* runtimeConfig,
         uint32_t rawValue) {
 
-    double range = gpModuleRuntimeConfigMC12->Range;
     double scale = channelConfig->InternalScale;
-    double CalM = runtimeConfig->CalM;
 
-    return (range * scale * CalM * (double)rawValue) /
-            (gpModuleConfigMC12->Resolution) + runtimeConfig->CalB;
+    // #1054 (the read half of #904): CalM and CalB are 64-bit doubles, so a
+    // bare read of either is two 32-bit loads on PIC32MZ (CLAUDE.md
+    // atomicity rules), and a calibration writer on another task (the
+    // CONF:ADC:chanCALM/chanCALB setters, or the LOADcal/USECal bulk load)
+    // can land between them. #1048 makes the WRITES atomic, which does not
+    // stop a reader straddling a completed write. Copy the pair under ONE
+    // critical section: that closes the tear, and also reads slope and
+    // offset at the same instant, so a LOADcal/USECal bulk load (which #1048
+    // writes one channel's pair at a time) is seen entirely old or entirely
+    // new -- reading them separately did not guarantee that. This runs once
+    // per converted sample, so the section holds the loads and nothing
+    // else; the arithmetic stays outside it.
+    //
+    // #1086: the module Range is the same 64-bit shape, so it loads in this
+    // same section rather than a second one -- one more load, not another
+    // interrupt-mask round trip on this per-sample path. No runtime writer
+    // targets the MC12b module's Range today (CONF:ADC:RANGe stores only the
+    // AD7609 slot -- ADCChanRangeSetClaimed, SCPIADC.c), so on this path it
+    // is the shared-field rule applied uniformly rather than a live race.
+    taskENTER_CRITICAL();
+    double range = gpModuleRuntimeConfigMC12->Range;
+    double calM = runtimeConfig->CalM;
+    double calB = runtimeConfig->CalB;
+    taskEXIT_CRITICAL();
+
+    return (range * scale * calM * (double)rawValue) /
+            (gpModuleConfigMC12->Resolution) + calB;
 }
 
 bool MC12b_ReadResult(ADCHS_CHANNEL_NUM channel, uint32_t *pVal) {
