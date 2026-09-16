@@ -227,6 +227,22 @@ def read_literal_group(masked, start, where):
     Raises unless the run is followed by a ',' or the call's ')': stopping in
     the middle of a concatenation is the failure that would understate a
     message's length and pass every assertion downstream.
+
+    EACH LITERAL IS DECODED (via unescape()) BEFORE IT IS JOINED TO THE NEXT
+    ONE, never after. This mirrors tools/lint/log_budget.py's literal_text(),
+    which had the identical bug: C99 6.4.4.4 decodes the escapes inside a
+    single string literal in translation phase 5, strictly before phase 6
+    concatenates adjacent literals, so a literal boundary is not a character
+    a maximal-munch escape (\\xHH / \\OOO) can see across in real C. Joining
+    every literal's RAW text first and decoding once at the end -- what this
+    function did before -- would let a hex/octal escape at the tail of one
+    literal spill into the next literal's leading characters when they
+    happen to be valid hex/octal digits, silently understating the message
+    (verified against log_budget.py's twin of this bug, PR #1110 audit,
+    2026-09-16). No real site this generator extracts uses a numeric escape
+    today, so this is a latent-bug fix, not an output change -- but a future
+    site that does would otherwise be measured with the wrong text and no
+    warning.
     """
     i, n = start, len(masked)
     pieces = []
@@ -249,7 +265,7 @@ def read_literal_group(masked, start, where):
             i += 1
         else:
             raise GenError(f"{where}: unterminated string literal")
-        pieces.append("".join(body))
+        pieces.append(unescape("".join(body)))
     if not pieces:
         raise GenError(f"{where}: the LOG_E format argument is not a string "
                        f"literal -- this test measures literal message text")
@@ -261,7 +277,7 @@ def read_literal_group(masked, start, where):
             f"{where}: the format literal is followed by {masked[j:j + 20]!r}, "
             f"not ',' or ')'. The extraction stopped in the middle of the "
             f"message; measuring that fragment would understate its length.")
-    return unescape("".join(pieces)), i
+    return "".join(pieces), i
 
 
 def extract_site(site):

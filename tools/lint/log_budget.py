@@ -127,7 +127,28 @@ OPTIONAL_MACROS = {
 #   ll*    20  64-bit: "18446744073709551615" and "-9223372036854775808" are
 #              both 20 chars.
 #   llx    16  64-bit hex, 16 nibbles.
-#   c       1  one character.
+#   c       1  one character, NARROW only. `l` (a wide `wchar_t`) is
+#              intercepted in measure() before this table is ever consulted
+#              -- see "lc"/"ls" below.
+#   lc/ls       DELIBERATELY ABSENT, and deliberately not merely "missing":
+#               measure() refuses %lc/%ls explicitly, by name, rather than
+#               falling through to the generic "no conservative width"
+#               message, because the danger here is not the same shape as an
+#               unlisted specifier. A previous version of this table charged
+#               "lc": 1 -- the SAME width as a narrow %c -- and measure()
+#               dispatched %ls through the identical code path as a narrow
+#               %s, ignoring the `l` length modifier entirely. Both silently
+#               assumed one wide character costs the same as one narrow byte.
+#               How many bytes THIS target's vsnprintf actually emits per
+#               wide character is unverified, and firmware/src has zero
+#               %lc/%ls call sites (2026-09-16) to derive a real width from
+#               empirically -- so refuse rather than guess. Chosen over
+#               charging a conservative multi-byte constant (e.g. 4, for
+#               UTF-8's worst case) because a constant here would still be
+#               unverified against what this vsnprintf actually does with a
+#               wide conversion, and an explicit refusal is simpler and no
+#               less safe than a guessed bound (deferred /improve item,
+#               importance 7, PR #1110).
 #   p           DELIBERATELY ABSENT. The format of a pointer is
 #               implementation-defined; a number here would be a guess dressed
 #               as a bound. An unlisted specifier is a named finding, which is
@@ -150,7 +171,7 @@ WIDTHS = {
     "llx": 16, "llX": 16,
     "zd": 11, "zi": 11, "zu": 10, "zx": 8, "zX": 8,
     "td": 11, "ti": 11,
-    "c": 1, "lc": 1,
+    "c": 1,
 }
 
 # Sign bytes folded into each integer conversion's WIDTHS entry, so an explicit
@@ -339,11 +360,44 @@ def split_args(text):
     return args
 
 
+_CONTINUATION_RE = re.compile(r"\\\r?\n")
+
+
+def splice_continuations(text):
+    """Return `text` with every backslash-newline continuation neutralized
+    for call matching -- same length, same newline positions, same line
+    numbers.
+
+    C splices a line ending in a bare backslash onto the line that follows it
+    in translation phase 2, BEFORE tokenization (C99 5.1.1.2), so
+    `LOG_E \\` <newline> `("...");` is one call to the compiler whatever a
+    naive scanner sees. find_calls() matched the macro name to its opening
+    paren with `\\s*\\(`, which already crosses a REAL newline (`\\s` matches
+    one) but not the backslash in front of it -- a backslash is not
+    whitespace, so the match simply failed and the whole call was invisible
+    to this tool: an over-budget LOG_E split this way passed the gate clean
+    (verified empirically against ca3b4254f, 2026-09-16: 0 findings for a
+    126-byte literal reached only through a spliced call).
+
+    Only the backslash is replaced, with a single space; the newline itself
+    (and any \\r before it) is left exactly where it was, so this changes no
+    character's position and no newline count -- every line number
+    find_calls() reports from the result is exactly the line number in the
+    real file. Applied to a COPY used only to locate the macro name and its
+    opening paren; find_calls() still reads the call's actual content --
+    parens, quotes, the format string -- from the original `masked` text at
+    the same offsets, so nothing about literal decoding changes.
+    """
+    return _CONTINUATION_RE.sub(
+        lambda m: " " * (len(m.group(0)) - 1) + m.group(0)[-1], text)
+
+
 def find_calls(masked, macros):
     """Yield (macro, line, arg_list, call_text) for each log-macro call."""
     names = "|".join(sorted(macros, key=len, reverse=True))
     call_re = re.compile(r"(?<![A-Za-z0-9_])(" + names + r")\s*\(")
-    for m in call_re.finditer(masked):
+    spliced = splice_continuations(masked)
+    for m in call_re.finditer(spliced):
         open_paren = m.end() - 1
         i, depth, n = open_paren, 0, len(masked)
         while i < n:
@@ -383,21 +437,47 @@ def literal_text(arg):
     else in the argument (an identifier, a ternary, a macro) means the format is
     not statically knowable, and None tells the caller to report that rather
     than guess.
+
+    EACH LITERAL IS DECODED BEFORE THE PIECES ARE JOINED, never after. C99
+    6.4.4.4 decodes the escapes within a single string literal in translation
+    phase 5, strictly before phase 6 concatenates adjacent literals -- a
+    literal boundary is not a character a maximal-munch escape can see across
+    in real C. An earlier version of this function joined the RAW (undecoded)
+    text of every piece first and called unescape() once on the result, which
+    let a hex/octal escape at the tail of one literal spill into the next
+    literal's leading characters when they happened to be valid hex/octal
+    digits: `"....\\x41" "B"` decodes, correctly, to "....AB" (\\x41 is 'A',
+    then a separate 'B'), but joining first produced the single string
+    "....\\x41B", whose \\x41B maximal-munches all of "41B" as one hex
+    escape, silently dropping the 'B' and undercounting the message by a byte
+    (verified empirically against ca3b4254f, 2026-09-16: 0 findings on the
+    unfixed tool for a message that is 126 bytes over the ceiling).
     """
     pieces, pos = [], 0
     for m in LITERAL_RE.finditer(arg):
         if arg[pos:m.start()].strip():
             return None                   # non-literal token between the parts
-        pieces.append(m.group(1))
+        pieces.append(unescape(m.group(1)))
         pos = m.end()
     if arg[pos:].strip() or not pieces:
         return None
-    return unescape("".join(pieces))
+    return "".join(pieces)
 
 
 _SIMPLE_ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "a": "\a", "b": "\b",
                    "f": "\f", "v": "\v", "\\": "\\", "'": "'", '"': '"',
                    "?": "?", "0": "\0"}
+
+
+def _byte_char(value):
+    """Map a raw 0-255 byte to a str that round-trips to exactly that one
+    byte through `.encode('utf-8', errors='surrogateescape')` -- the same
+    convention scan_file() already relies on for a non-UTF-8 source byte, so
+    a decoded escape and a raw source byte are charged identically by
+    literal_bytes().
+    """
+    value &= 0xFF
+    return chr(value) if value < 0x80 else chr(0xDC00 + value)
 
 
 def unescape(body):
@@ -406,6 +486,30 @@ def unescape(body):
     Source length is not output length: "\\r\\n" is four characters of source
     and two bytes of message. Measuring the source form would over-count and
     make this tool fail sites that fit.
+
+    A NUMERIC ESCAPE IS DECODED TO ITS REAL BYTE, NEVER BLANKED TO A '?'
+    PLACEHOLDER. An earlier version of this function did exactly that,
+    reasoning that only the BYTE COUNT of a \\xHH / \\OOO escape mattered.
+    That reasoning breaks for the one byte whose VALUE is 0x25: \\x25 (or the
+    octal spelling \\045) compiles to a literal '%' character, identical to
+    typing % directly in the source -- vsnprintf cannot tell the two apart.
+    Blanking it to '?' destroyed that '%' before measure()'s conversion scan
+    ever ran, so `LOG_E("Code \\x25.200u", n)` was measured as 11 inert bytes
+    instead of the real 205-byte %.200u directive it actually compiles to --
+    the exact silent-undercount failure this gate exists to catch (verified
+    empirically against ca3b4254f, 2026-09-16: 0 findings on the unfixed
+    tool). Decoding to the real byte needs no special case in measure(): a
+    plain decoded byte flows through literal_bytes() exactly as before, and a
+    decoded '%' is scanned by SPEC_RE exactly like one that was typed.
+
+    Values above 0x7F are re-encoded through _byte_char()'s surrogateescape
+    convention, so a decoded escape and a raw non-UTF-8 source byte are
+    charged identically downstream.
+
+    An out-of-range hex escape (\\xHH... wider than one byte) is
+    implementation-defined per C99 6.4.4.4; XC32/GCC truncate to the target
+    char width (8 bits here), so this does too (mod 256) rather than raising
+    or guessing at undefined behaviour.
     """
     out, i, n = [], 0, len(body)
     while i < n:
@@ -421,13 +525,14 @@ def unescape(body):
             j = i + 1
             while j < n and body[j] in "0123456789abcdefABCDEF":
                 j += 1               # maximal munch, C99 6.4.4.4
-            out.append("?")          # one byte, whatever its value
+            digits = body[i + 1:j]
+            out.append(_byte_char(int(digits, 16)) if digits else "x")
             i = j
         elif c in "01234567":
             j = i
             while j < n and j < i + 3 and body[j] in "01234567":
                 j += 1
-            out.append("?")
+            out.append(_byte_char(int(body[i:j], 8)))
             i = j
         else:
             out.append(_SIMPLE_ESCAPES.get(c, c))
@@ -529,6 +634,21 @@ def measure(fmt, annotation):
             return None, (f"unbounded: '{m.group(0)}' takes its width from an "
                           f"argument")
         field = int(width) if width else 0
+        length = m.group("length") or ""
+        if conv in "sc" and length == "l":
+            # %ls/%lc take a wchar_t*/wchar_t, not a narrow char*/char --
+            # refused explicitly, by name, rather than falling through to the
+            # narrow %s/%c handling below (which does not look at `length` at
+            # all) or to WIDTHS' generic "no conservative width" message. See
+            # the "lc/ls DELIBERATELY ABSENT" note above WIDTHS for why a
+            # guessed multi-byte constant is not used instead.
+            return None, (
+                f"unresolvable: '%{length}{conv}' is a WIDE conversion "
+                f"(wchar_t) -- its printed width on this vsnprintf is "
+                f"unverified and firmware/src has zero %l{conv} call sites "
+                f"to derive one from; annotate or extend WIDTHS only after "
+                f"checking what this target's vsnprintf actually emits for "
+                f"one")
         if conv == "s":
             str_seen += 1
             if prec not in (None, ""):
@@ -547,7 +667,7 @@ def measure(fmt, annotation):
                 return None, (f"annotation declares {len(str_widths)} width(s) "
                               f"but the call has more %s than that")
             continue
-        key = (m.group("length") or "") + conv
+        key = length + conv
         if key not in WIDTHS:
             return None, (f"no conservative width for '{m.group(0)}' "
                           f"(conversion '%{conv}') -- add it to WIDTHS in "
@@ -1027,6 +1147,100 @@ SELF_TEST_CASES = [
         0,
         "the call matcher must not fire on an identifier that merely starts "
         "with LOG_E",
+    ),
+    # ---- five confirmed BLOCK findings from the adversarial pre-merge audit
+    # on PR #1110 (2026-09-16, https://github.com/daqifi/daqifi-nyquist-
+    # firmware/pull/1110#issuecomment-5698980187), all reproduced empirically
+    # against the tool at ca3b4254f before any of these cases existed: every
+    # one below reported ZERO findings on the unfixed tool. Two silent-undercount
+    # root causes:
+    #
+    #   A) unescape() replaced a numeric (\\xHH / \\OOO) escape with a literal
+    #      '?' placeholder instead of the real decoded byte, and literal_text()
+    #      joined adjacent literals' RAW text before decoding instead of after.
+    #      Both let a decoded '%' (or a decoded byte that spuriously extends a
+    #      neighbouring literal's leading hex/octal digits) vanish before
+    #      measure() ever saw it -- an escaped-percent directive was silently
+    #      undercounted as inert text.
+    #   B) find_calls()'s call-site regex (`\\s*\\(`) never accounted for a C
+    #      backslash-newline line continuation between the macro name and its
+    #      opening paren -- `\\s` matches a real newline but not the backslash
+    #      in front of it, so a call split that way was invisible to the
+    #      scanner although GCC splices it into a normal, potentially
+    #      truncating call.
+    (
+        "an escaped '%' (\\x25) must not be destroyed before the conversion "
+        "scan sees it",
+        r'LOG_E("Code \x25.200u", 1u);',
+        1,
+        "\\x25 compiles to a literal '%', identical to typing % directly -- "
+        "the pre-fix unescape() replaced it with '?' and this 205-byte "
+        "%.200u directive measured as 11 inert bytes and passed clean",
+    ),
+    (
+        "the octal spelling of the same escaped '%' (\\045) is caught too",
+        r'LOG_E("Code \045.200u", 1u);',
+        1,
+        "0o45 is also 0x25 -- the octal branch of unescape() had the "
+        "identical '?' bug as the hex branch, and a fix that touched only "
+        "one branch would leave this one still silently passing",
+    ),
+    (
+        "a hex escape must not consume the next adjacent literal's text",
+        'LOG_E("....\\x41" "B" '
+        '"WiFi down and an SD card IS present on the shared bus - likely '
+        'bus-incompatible; remove it (wiki: SD-Card-Compatibility)");',
+        1,
+        "C decodes each literal before concatenating (C99 6.4.4.4); joining "
+        "the raw prefix first let \\x41's maximal munch eat the following "
+        "literal's 'B', undercounting a 126-byte message (real SDPRESENT "
+        "site, #589/#1039) by exactly the one byte that put it over the "
+        "125-byte ceiling and calling it clean at exactly 125",
+    ),
+    (
+        "a backslash-newline between the macro name and its paren is not "
+        "invisible",
+        'LOG_E \\\n("' + ("X" * 126) + '");',
+        1,
+        "GCC splices this into one ordinary call before parsing anything; "
+        "the pre-fix call-site regex required only whitespace (never a "
+        "backslash) between the macro name and '(' and so never matched "
+        "this call at all -- a 126-byte literal, 1 byte over the ceiling, "
+        "was entirely absent from the scan",
+    ),
+    # ---- deferred /improve item on PR #1110, importance 7, same
+    # silent-undercount class as the five above: measure() dispatched purely
+    # on the conversion letter and ignored the `l` length modifier, so %lc
+    # was charged the same 1 byte as a narrow %c and %ls ran through the
+    # identical code path as a narrow %s (including an annotation meant to
+    # bound a narrow %s's character count). Disposition: REFUSE rather than
+    # charge a guessed multi-byte constant -- see the "lc/ls DELIBERATELY
+    # ABSENT" note above WIDTHS for why. firmware/src has zero %ls/%lc call
+    # sites as of 2026-09-16 (verified with a known-positive control: these
+    # same cases DO fire against the synthetic fixtures below).
+    (
+        "%lc is a WIDE conversion, not a narrow %c",
+        'LOG_E("Char: %lc", wc);',
+        1,
+        "the pre-fix WIDTHS table charged \"lc\": 1, the same as a narrow "
+        "%c, with no verification of what this target's vsnprintf actually "
+        "emits for a wchar_t",
+    ),
+    (
+        "%ls is a WIDE conversion, not a narrow %s",
+        'LOG_E("Str: %ls", ws);',
+        1,
+        "measure() dispatched on conv == 's' alone; ignoring the 'l' length "
+        "modifier ran %ls through the exact narrow-%s annotation path",
+    ),
+    (
+        "an annotated %ls is still refused, not silently narrowed",
+        '/* log_budget: max=40 */\nLOG_E("Str: %ls", ws);',
+        1,
+        "the annotation exists to bound a narrow %s's CHARACTER count; "
+        "applying it to a wide conversion would just be a different "
+        "unverified guess -- %ls stays refused regardless of an annotation "
+        "aimed at %s",
     ),
 ]
 
