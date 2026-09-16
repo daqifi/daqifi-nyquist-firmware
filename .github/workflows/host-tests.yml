@@ -151,6 +151,16 @@ on:
       # are grepped straight out of this file (configTICK_RATE_HZ,
       # configTICK_TYPE_WIDTH_IN_BITS).
       - 'firmware/src/config/default/FreeRTOSConfig.h'
+      # #1003/#1010: test_999_scpi_context_storage_isolation.c does not stub
+      # or copy libscpi -- $(LIBSCPI_SRCS) COMPILES AND LINKS the nine real
+      # vendored sources, parser.c and error.c among them, and $(LIBSCPI_HDRS)
+      # wildcards both header directories. They were the one UUT in this
+      # workflow with no trigger of their own, so a PR editing only libscpi
+      # (exactly what #1003's compound-reply framing fix is) matched no path
+      # here and the suite that builds it never ran. Scoped to the whole
+      # vendored tree rather than the two files, for the same "a refactor must
+      # not be able to step out of its trigger" reason as HAL/ADC/ above.
+      - 'firmware/src/libraries/scpi/**'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -177,6 +187,10 @@ on:
       # are grepped straight out of this file (configTICK_RATE_HZ,
       # configTICK_TYPE_WIDTH_IN_BITS).
       - 'firmware/src/config/default/FreeRTOSConfig.h'
+      # #1003/#1010: see the matching entry in the pull_request list above --
+      # run_999_tests links the real vendored libscpi, so an edit to it must
+      # queue this suite.
+      - 'firmware/src/libraries/scpi/**'
       - '.github/workflows/host-tests.yml'
 
 permissions:

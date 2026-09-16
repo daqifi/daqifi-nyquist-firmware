@@ -78,13 +78,48 @@ static int flushData(scpi_t * context) {
  * Write result delimiter to output
  * @param context
  * @return number of bytes written
+ *
+ * DAQiFi patch (issues #1003 / #1010) -- this function now owns BOTH result
+ * separators, not just the intra-command ",".
+ *
+ * The separator used to be written at the top of processCommand(), BEFORE the
+ * command's callback ran -- here as "!first_output && is_query", in pristine
+ * upstream as writeSemicolon()'s "output_count > 0"; either way it is a
+ * speculative write.  If the callback then fails and produces no value at all,
+ * the ";" is already on the wire and ends up introducing the transports'
+ * "**ERROR: ..." line instead of a value --
+ *
+ *     *IDN?;SYST:COMM:LAN:DNS2?
+ *     -> DAQiFi,Nq1,<serial>,01-02;**ERROR: -200, "Execution error"
+ *
+ * -- so a client splitting the compound reply on ";" reads an error sentence
+ * where it expected a field.  Worse, the sibling shape (an UNDEFINED header,
+ * which SCPI_Parse rejects without ever entering processCommand) emitted no
+ * separator at all, so the same class had two different spellings on the wire.
+ *
+ * output_count is reset to 0 at the top of every processCommand() and
+ * incremented once per SCPI_ResultXxx() call, so at this point
+ * "output_count == 0" means exactly "this command has not produced a value
+ * yet" -- which makes this the one place that can emit the ";" at the moment a
+ * value ACTUALLY appears rather than in the hope that one will.  first_output
+ * is cleared here too, for the same reason: the flag must mean "something
+ * unterminated is on the wire", which is what SCPI_ErrorEmit() (error.c) now
+ * tests before writing an error line.
  */
 static size_t writeDelimiter(scpi_t * context) {
     if (context->output_count > 0) {
+        /* 2nd+ value of THIS command */
         return writeData(context, ",", 1);
-    } else {
-        return 0;
     }
+
+    /* First value of this command. If an earlier unit of the same program
+     * message already wrote a value, this one has to be separated from it. */
+    if (!context->first_output) {
+        return writeData(context, ";", 1);
+    }
+
+    context->first_output = FALSE;
+    return 0;
 }
 
 /**
@@ -100,9 +135,51 @@ static size_t writeNewLine(scpi_t * context) {
 #endif
         len = writeData(context, SCPI_LINE_ENDING, strlen(SCPI_LINE_ENDING));
         flushData(context);
+        /* DAQiFi patch (issues #1003 / #1010): nothing is pending once the
+         * line ending is out.  Upstream left first_output FALSE here, so it
+         * stayed FALSE after any program message that produced output -- and
+         * SCPI_ErrorPush() reached from OUTSIDE a parse (SCPI_Input()'s
+         * input-buffer-overrun push below, SCPI_ERROR_INPUT_BUFFER_OVERRUN,
+         * currently parser.c:427) would then see
+         * a "pending result" that had already been terminated and prepend a
+         * spurious blank line to its error.  SCPI_Parse() re-arms the flag on
+         * entry, so upstream never depended on the value left behind. */
+        context->first_output = TRUE;
         return len;
     } else {
         return 0;
+    }
+}
+
+/**
+ * DAQiFi patch (issues #1003 / #1010) -- terminate a result that is on the
+ * wire but not yet newline-terminated.
+ *
+ * Called from SCPI_ErrorEmit() (error.c) immediately before the transports
+ * write their "**ERROR: %d, \"%s\"\r\n" line.  Both SCPI_USB_Error()
+ * (UsbCdc.c) and SCPI_TCP_Error() (wifi_tcp_server.c) push that text through
+ * the SAME context->interface->write() that carries query results, and
+ * SCPI_ErrorPushEx() calls them SYNCHRONOUSLY, mid-message -- so without this
+ * the error text lands inside the preceding query's still-open response
+ * ("...,01-02**ERROR: -113, ...").
+ *
+ * This is the choke point for every error path, not just the two in
+ * processCommand(): an undefined header (SCPI_Parse), a callback that returns
+ * SCPI_RES_ERR, and any firmware callback that calls SCPI_ErrorPush() during
+ * argument validation all funnel through SCPI_ErrorEmit().
+ *
+ * It lives in parser.c rather than being open-coded in error.c so the line
+ * ending, the flush, and the first_output bookkeeping stay in exactly one
+ * place (writeNewLine); error.c has no visibility of any of the three.
+ *
+ * @param context
+ */
+void scpiParser_TerminatePendingOutput(scpi_t * context) {
+    if (context != NULL) {
+        /* writeNewLine() is itself conditional on first_output and re-arms it,
+         * so this is a no-op when nothing is pending -- which is what keeps
+         * the single-command error case byte-identical to before the patch. */
+        writeNewLine(context);
     }
 }
 
@@ -129,11 +206,23 @@ static scpi_bool_t processCommand(scpi_t * context) {
     scpi_bool_t result = TRUE;
     scpi_bool_t is_query = context->param_list.cmd_raw.data[context->param_list.cmd_raw.length - 1] == '?';
 
-    /* conditionally write ; */
-    if(!context->first_output && is_query) {
-        writeData(context, ";", 1);
-    }
-
+    /* DAQiFi patch (issues #1003 / #1010): the speculative
+     *
+     *     if (!context->first_output && is_query) writeData(context, ";", 1);
+     *
+     * that stood here is GONE.  It ran before the callback, so a failing
+     * callback still got its ";" written and the error line that followed was
+     * introduced by a value separator.  The ";" now comes out of
+     * writeDelimiter() at the moment a value is actually produced -- see the
+     * long note on that function.
+     *
+     * The first_output flip below is deliberately KEPT, and is not redundant
+     * with writeDelimiter()'s: several firmware query callbacks (SD:LIST?,
+     * SD:GET?, SYST:LOG?, ...) bypass SCPI_ResultXxx() entirely and write
+     * straight to context->interface->write, so writeDelimiter() never runs
+     * for them.  Dropping the flip would silently remove the trailing
+     * SCPI_LINE_ENDING that SCPI_Parse()'s closing writeNewLine() emits for
+     * those replies today -- a wire change well outside these two issues. */
     context->cmd_error = FALSE;
     context->output_count = 0;
     context->input_count = 0;
@@ -275,6 +364,13 @@ void SCPI_Init(scpi_t * context,
         char * input_buffer, size_t input_buffer_length,
         scpi_error_t * error_queue_data, int16_t error_queue_size) {
     memset(context, 0, sizeof (*context));
+    /* DAQiFi patch (issues #1003 / #1010): the memset above leaves
+     * first_output FALSE, i.e. "a result is pending", on a context that has
+     * never parsed anything.  SCPI_Parse() sets it TRUE on entry so upstream
+     * never noticed, but SCPI_ErrorEmit() now reads the flag and an error
+     * raised BEFORE the first parse (SCPI_Input()'s input-buffer-overrun push)
+     * would otherwise be prefixed with a blank line. */
+    context->first_output = TRUE;
     context->cmdlist = commands;
     context->interface = interface;
     context->units = units;
