@@ -3040,7 +3040,44 @@ bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object)
 }
 
 /* #589 P1: reset the detect-poll backoff so an expected insertion (user just
-   enabled SD / requested an operation) is noticed at the fast cadence. */
+   enabled SD / requested an operation) is noticed at the fast cadence.
+ *
+ * #756: zeroing detachedPollCount alone only changes the interval that
+ * TASK_START_POLLING_TIMER computes the NEXT time it runs -- it does nothing
+ * about a timer that is already running, which after the backoff has
+ * engaged can be up to DRV_SDSPI_DETECT_BACKOFF_INTERVAL_MS (5 s) out. The
+ * task loop only leaves TASK_WAIT_POLLING_TIMER_EXPIRE when
+ * cardPollingTimerExpired reads true, so a caller with an urgent reason to
+ * know (SCPI_CheckSDCardPresent's re-probe) would otherwise still wait out
+ * whatever is left of that pending timer. Force it here so the very next
+ * DRV_SDSPI_Tasks() pass (the SD task runs it at a 1 ms cadence -- see
+ * SD_CARD_MANAGER_TASK_DELAY_MS) advances the FSM regardless of which state
+ * it is currently in:
+ *   - TASK_WAIT_POLLING_TIMER_EXPIRE: the intended target -- skips the rest
+ *     of the pending wait and runs TASK_CHECK_DEVICE immediately.
+ *   - TASK_START_POLLING_TIMER: about to call
+ *     DRV_SDSPI_CardDetectPollingTimerStart(), which unconditionally sets
+ *     this flag back to false before arming the real timer, so this write is
+ *     harmless (overwritten) and the reset detachedPollCount still gives it
+ *     the fast interval.
+ *   - Any other state: inert now, and consumed (reset to false) the next
+ *     time TASK_WAIT_POLLING_TIMER_EXPIRE is reached, at worst causing one
+ *     extra poll to run without waiting out its interval -- an acceptable
+ *     one-time cost, not a correctness issue.
+ * A plain write is sufficient (no critical section): this is not a
+ * read-modify-write, and cardPollingTimerExpired is already written this way
+ * elsewhere in this file (DRV_SDSPI_CardDetectPollingTimerStart,
+ * TASK_WAIT_POLLING_TIMER_EXPIRE) with no lock, matching PIC32MZ's
+ * byte-store atomicity (mcu-hygiene section 3).
+ *
+ * HAND-EDITED. This file sits under config/default/, i.e. MCC/Harmony
+ * territory: a regeneration would restore the stock body (detachedPollCount
+ * reset only) and silently remove the timer-expiry fix with NO build error.
+ * Team direction (2026-06-10, see FreeRTOSConfig.h) is that MCC/Harmony
+ * regeneration will not be used on this codebase again, so this is a
+ * documentation hazard rather than a live one -- but if a regen ever does
+ * happen, the `cardPollingTimerExpired = true;` line below must be restored
+ * (#756). */
 void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object)
 {
     if (object < DRV_SDSPI_INSTANCES_NUMBER)
@@ -3048,6 +3085,7 @@ void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object)
         LOG_D("SDSPI detect-poll kick (count was %u)",
               (unsigned)gDrvSDSPIObj[object].detachedPollCount);
         gDrvSDSPIObj[object].detachedPollCount = 0U;
+        gDrvSDSPIObj[object].cardPollingTimerExpired = true;
     }
 }
 

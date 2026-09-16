@@ -73,6 +73,13 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
 #define SCPI_SD_BENCH_STALL_TIMEOUT_MS 10000U
 #define SCPI_SD_BENCH_STALL_POLL_MS    5U
 
+/* #756 Part A: how long SCPI_CheckSDCardPresent will wait, after kicking the
+ * detect poll, for a card that the driver's cache says is DETACHED to prove
+ * otherwise. Bounded and only ever engaged on the negative branch -- see the
+ * function's own comment for why this cannot regress the present-card case. */
+#define SD_PRESENCE_RECHECK_BOUND_MS   1500U
+#define SD_PRESENCE_RECHECK_POLL_MS    100U
+
 /* ************************************************************************** */
 /* ************************************************************************** */
 /* Section: File Scope or Global Data                                         */
@@ -366,15 +373,44 @@ static bool SD_RefuseIfSuspended(scpi_t *context, const char *cmd)
  * @brief Check if SD card media is present
  * @param context SCPI context for error reporting
  * @return true if present, false if not (error already pushed to context)
+ *
+ * #756 Part A: a negative read here can be STALE, not just false. The SDSPI
+ * detect FSM polls at a fast 1 s cadence normally, but backs off to as much
+ * as 5 s after DRV_SDSPI_DETECT_BACKOFF_AFTER_POLLS (10) consecutive
+ * detached polls (#589 P1) -- so a card that is physically present but was
+ * inserted while that backoff timer was already running in flight reads
+ * DETACHED here until the pending timer happens to expire on its own. Kick
+ * the detect poll (DRV_SDSPI_DetectPollKick, which now also forces the
+ * pending timer to expire immediately -- see its own comment) and give the
+ * FSM a short, bounded window to resolve before refusing.
+ *
+ * This cannot add latency to the healthy case: when the card IS attached the
+ * first read below succeeds and the function returns immediately, before
+ * the kick or the wait loop are ever reached. The added cost only exists on
+ * the branch that was already about to refuse.
  */
 static bool SCPI_CheckSDCardPresent(scpi_t *context) {
-    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
-        LOG_E("SD - No SD card detected\r\n");
-        context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return false;
+    if (SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
+        return true;
     }
-    return true;
+
+    DRV_SDSPI_DetectPollKick(0);
+
+    TickType_t startTick = xTaskGetTickCount();
+    while ((TickType_t)(xTaskGetTickCount() - startTick) <
+           pdMS_TO_TICKS(SD_PRESENCE_RECHECK_BOUND_MS)) {
+        vTaskDelay(pdMS_TO_TICKS(SD_PRESENCE_RECHECK_POLL_MS));
+        if (SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
+            LOG_D("SD - card detected present after a detect-poll kick "
+                  "(was stale-DETACHED)\r\n");
+            return true;
+        }
+    }
+
+    LOG_E("SD - No SD card detected\r\n");
+    context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
+    SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    return false;
 }
 
 
