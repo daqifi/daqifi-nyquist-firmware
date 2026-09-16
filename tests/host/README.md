@@ -41,7 +41,7 @@ three tests here, not just the one #946 added.
 
 `test_943_bench_stall_bound.c` covers the per-chunk write loop inside
 `SYST:STOR:SD:BENCHmark` (issue #943). Unlike the CircularBuffer /
-FixedPointFmt / AD7609Scale tests it does **not**
+FixedPointFmt / AD7609Scale / WaitLoop tests it does **not**
 include any firmware source: `SCPIStorageSD.c` drags in libscpi, FreeRTOS and
 the SD manager, so the test re-implements the pre-fix and post-fix loop
 **shapes** against an injected mock clock and mock `WriteToBuffer`, then
@@ -176,6 +176,33 @@ build** unless it reads each of the four flags exactly once, calls
 `app_SDCard_SpiOwnedByWifi()` zero times, and still tests the four arms in the
 order quarantine → fwUpdate → wifiStream → suspended. Both halves were checked
 by mutating the firmware and confirming the build stops.
+
+`test_1056_wait_loop.c` covers `firmware/src/HAL/WaitLoop.h` (issue #1056) —
+the single spin-then-`vTaskDelay(1)` wait loop that `spi_WaitStat`
+(`UserSpi.c`), `uart_WaitSta` (`UserUart.c`) and `i2c_WaitMif` (`UserI2c.c`)
+share. Like `AD7609Scale.h` it compiles the **real** header, with the three
+things the drivers inject — the status read, the budget test, the yield —
+supplied as mocks.
+
+It replaces `test_913_spi_wait_stat.c`, which could only re-implement the loop
+(none of the three drivers is includable on a host) and so proved the shape's
+behaviour without proving the firmware still had that shape: deleting the
+fresh status read at expiry, or moving the deadline test after the yield, left
+it green. Splitting the loop into a header — #889's route, after a textual
+shape checker failed through five generations — is what makes those mutations
+turn this suite red. Six of them are enumerated in the test's file header,
+each verified to fail and then reverted.
+
+Covered: the status is read (spin, then once more) before the budget is ever
+consulted, and **again, freshly, at expiry** — so an operation that completed
+while the task was preempted is a success however late it is observed, while
+one still unmet at expiry is a genuine timeout; a wait entered with its budget
+already spent does not sleep (`uart_WriteLocked` shares one budget across a
+whole write, so this happens); exact read/yield counts at the spin bound and
+one either side of it; the degenerate zero spin bound; and counter wrap. The
+Makefile target carries **no grep guards** — with the loop shared there is no
+copied constant left to pin, and each driver's own spin bound and budget are
+ordinary tuning values this suite has no opinion about.
 
 `test_json_string_escape.c` covers `firmware/src/services/JSON_StringEscape.h`
 (issue #164) — the JSON string-escaping helper split out of `JSON_Encoder.c`

@@ -33,9 +33,9 @@
  * definitions.h/configuration.h, and the GPIO/SPI2 PLIBs. So this file
  * re-implements `dac7718_WaitStat`'s loop SHAPE line-for-line against an
  * injected mock hardware-condition flag and mock tick clock -- the identical
- * technique test_913_spi_wait_stat.c uses for spi_WaitStat, because the two
- * functions are the same shape by design (#1057 explicitly mirrors #913
- * rather than inventing a second one). The two firmware constants this
+ * technique the since-deleted test_913_spi_wait_stat.c used for spi_WaitStat,
+ * because the two functions are the same shape by design (#1057 explicitly
+ * mirrors #913 rather than inventing a second one). The two firmware constants this
  * shape depends on, and the SHAPE itself (see the warning below), are
  * pinned against the real source via the Makefile's grep guards, so drift
  * in either fails the build loudly instead of silently invalidating this
@@ -62,11 +62,14 @@
  * catches that class of regression is the Makefile's `$(DAC1057_BIN)` recipe,
  * which greps the real source for the fast-spin loop's shape, the exact
  * fresh-read return statement, and a call-site count (1 definition + 6
- * sites) -- not this file's own assertions. This is the same gap
- * `test_913_spi_wait_stat.c` has for `spi_WaitStat` (its file header makes
- * the identical claim this file used to, and it is equally untrue there);
- * recording it here rather than re-deriving it a third time whenever this
- * shape gets a fourth copy (#1056).
+ * sites) -- not this file's own assertions. This was the same gap
+ * `test_913_spi_wait_stat.c` had for `spi_WaitStat`, and #1056 has since
+ * CLOSED that one: spi_WaitStat, uart_WaitSta and i2c_WaitMif now share one
+ * definition in firmware/src/HAL/WaitLoop.h, which test_1056_wait_loop.c
+ * compiles for real, so mutating that loop turns its suite red. This file is
+ * now the LAST place where a grep guard stands in for the shape itself.
+ * Folding dac7718_WaitStat onto WaitLoop.h is the obvious follow-up; #1056
+ * was filed before #1057 existed and deliberately kept to its three files.
  *
  * FIDELITY -- what this does NOT cover
  *
@@ -78,8 +81,8 @@
  *    comment above dac7718_WaitStat in DAC7718.c).
  * 2. configTICK_RATE_HZ is 1000 and TickType_t is 32-bit
  *    (firmware/src/config/default/FreeRTOSConfig.h:58,126), so pdMS_TO_TICKS
- *    is the identity and one tick is one simulated millisecond here -- same
- *    assumption as test_913_spi_wait_stat.c.
+ *    is the identity and one tick is one simulated millisecond here -- the
+ *    same assumption test_1056_wait_loop.c's mock clock makes.
  * 3. The mock clock advances only inside the mock vTaskDelay -- it does not
  *    model real elapsed wall-clock time passing during the register-poll
  *    spin itself (the real spin's cost is a few tens of microseconds, see
@@ -122,7 +125,8 @@ typedef struct {
      * stands in for "true by the time the deadline branch takes its fresh
      * read" -- consulted ONLY by mock_condition_met_at_deadline(), never by
      * the ordinary spin/post-spin checks, so it cannot be caught any other
-     * way. Same technique as test_913_spi_wait_stat.c's trueAtDeadlineCheck. */
+     * way. Same technique as test_1056_wait_loop.c's trueInPreemptionGap
+     * (which it inherited from the deleted test_913_spi_wait_stat.c). */
     bool     trueAtDeadlineCheck;
 } MockEnv;
 
@@ -399,7 +403,7 @@ TEST(condition_still_false_at_deadline_check_truly_times_out)
 /* Rollover safety: the unsigned (now - start) subtraction must still read as
  * the true elapsed count across a TickType_t wrap. Starting 16 ticks below
  * UINT32_MAX puts the wrap inside the timeout window. Mirrors
- * deadline_survives_tick_counter_wrap in test_913_spi_wait_stat.c. */
+ * budget_survives_counter_wrap in test_1056_wait_loop.c. */
 TEST(deadline_survives_tick_counter_wrap)
 {
     MockEnv env;

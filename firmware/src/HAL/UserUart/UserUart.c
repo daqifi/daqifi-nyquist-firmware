@@ -20,6 +20,7 @@
 #include "semphr.h"
 #include "clock_config.h"
 #include "HAL/DIO.h"
+#include "HAL/WaitLoop.h"
 #include "Util/Logger.h"
 
 /* UART source clock = PBCLK2, single-sourced so it tracks DAQIFI_SYSCLK_252.
@@ -399,27 +400,53 @@ static bool uart_DisableLocked(void) {
  * starve streaming (pri 6) / SD (5) / WiFi (2). A brief spin covers the fast
  * path (a byte at 115200 leaves in ~87 us — no context switch); if still not
  * ready (low baud) vTaskDelay(1) lets lower-priority work run. Returns false at
- * the wall-clock @p deadline (hardware fault). */
+ * the wall-clock @p deadline (hardware fault).
+ *
+ * 4000 here against spi_WaitStat's and i2c_WaitMif's 8000: this driver's
+ * default (USER_UART_DEFAULT_BAUD_HZ = 115200, UserUart.h) puts a byte at
+ * ~87 us, faster than those two's ~100 kHz command/response defaults, so a
+ * shorter spin still covers the common case. See spi_WaitStat's comment for
+ * the other side of that trade.
+ *
+ * THE LOOP ITSELF LIVES IN HAL/WaitLoop.h (#1056), one definition shared with
+ * both twins rather than three copies of the same shape; what stays here is
+ * the UxSTA read (through the descriptor, so it follows whichever UxART the
+ * requested DIO pair selected), the tick budget, and the 4000 above. #913's
+ * ordering guarantee — status read before the deadline is ever consulted, and
+ * ONCE MORE, freshly, at expiry, so a bit that set while this task was
+ * preempted still counts as success rather than a spurious timeout — is stated
+ * and exercised there: tests/host/test_1056_wait_loop.c compiles that header
+ * for real. */
+typedef struct {
+    const UartDesc_t* u;
+    uint32_t          mask;
+    bool              want;
+    TickType_t        start;
+    TickType_t        timeoutTicks;
+} UartWaitCtx_t;
+
+static bool uart_WaitBitMet(void* ctx) {
+    const UartWaitCtx_t* w = (const UartWaitCtx_t*)ctx;
+    return ((*(w->u->sta) & w->mask) != 0u) == w->want;
+}
+
+static bool uart_WaitBudgetSpent(void* ctx) {
+    const UartWaitCtx_t* w = (const UartWaitCtx_t*)ctx;
+    /* Rollover-safe: unsigned (now - start) is the true elapsed count even
+     * across a tick-counter wrap, unlike an absolute-deadline compare. */
+    return (TickType_t)(xTaskGetTickCount() - w->start) >= w->timeoutTicks;
+}
+
+static void uart_WaitYield(void* ctx) {
+    (void)ctx;
+    vTaskDelay(1);
+}
+
 static bool uart_WaitSta(const UartDesc_t* u, uint32_t mask, bool want,
                          TickType_t start, TickType_t timeoutTicks) {
-    for (;;) {
-        for (uint32_t s = 0; s < 4000u; ++s) {
-            if (((*(u->sta) & mask) != 0u) == want) { return true; }
-        }
-        if (((*(u->sta) & mask) != 0u) == want) { return true; }
-        /* Rollover-safe: unsigned (now - start) is the true elapsed count even
-         * across a tick-counter wrap, unlike an absolute-deadline compare. */
-        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) {
-            /* #913: FRESH read, not a reuse of the pre-check above. This task
-             * can be preempted between that check and this one, and a bit that
-             * set during the preemption must still count as success -- a
-             * hardcoded `false` here reports a COMPLETED operation as a
-             * spurious timeout. Ported from spi_WaitStat, where review found
-             * this shape; uart and i2c carried the identical defect. */
-            return (((*(u->sta) & mask) != 0u) == want);
-        }
-        vTaskDelay(1);
-    }
+    UartWaitCtx_t w = { u, mask, want, start, timeoutTicks };
+    return WaitLoop_SpinThenYield(uart_WaitBitMet, uart_WaitBudgetSpent,
+                                  uart_WaitYield, &w, 4000u);
 }
 
 static bool uart_WriteLocked(const uint8_t* data, uint16_t len) {
