@@ -58,6 +58,22 @@ extern "C" {
     scpi_bool_t SCPI_Input(scpi_t * context, const char * data, int len);
     scpi_bool_t SCPI_Parse(scpi_t * context, char * data, int len);
 
+    /* DAQiFi patch (issues #1003 / #1010) -- NOT upstream libscpi.
+     *
+     * A registered QUERY callback that writes its reply itself, straight
+     * through context->interface->write() instead of through the
+     * SCPI_ResultXxx() family below, must call this immediately before its
+     * FIRST write.  It emits the top-level ";" separating this query's reply
+     * from an earlier unit's in the same compound program message -- the job
+     * writeDelimiter() does for SCPI_ResultXxx(), which such a callback never
+     * reaches.
+     *
+     * Safe to call repeatedly (later calls in the same unit are no-ops) and
+     * safe to call from a helper shared with non-query commands (they are
+     * filtered out).  Calling it before the callback has decided to write
+     * re-creates the #1003 defect -- see the definition in parser.c. */
+    void SCPI_PrepareDirectResult(scpi_t * context);
+
     size_t SCPI_ResultCharacters(scpi_t * context, const char * data, size_t len);
 #define SCPI_ResultMnemonic(context, data) SCPI_ResultCharacters((context), (data), strlen(data))
 #define SCPI_ResultUInt8Base(c, v, b) SCPI_ResultUInt32Base((c), (v), (uint8_t)(b))

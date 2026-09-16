@@ -754,6 +754,11 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
     if (count < 1) {
         result = SCPI_RES_ERR;
     } else {
+        /* #1003/#1010: SYSTem:SYSInfoPB? is a direct writer -- it never calls
+         * SCPI_ResultXxx(), so writeDelimiter() never runs for it and only this
+         * claims its ";" in a compound message. Inside the else so it cannot
+         * precede a reply that is never written. */
+        SCPI_PrepareDirectResult(context);
         context->interface->write(context, (char*) buf, count);
     }
 
@@ -835,6 +840,12 @@ static bool SysInfoText_Write(scpi_t * context, TickType_t startTick,
             pdMS_TO_TICKS(SCPI_SYSINFO_WRITE_BUDGET_MS)) {
         return false;
     }
+    /* #1003/#1010: SYSTem:INFo? never calls SCPI_ResultXxx(), so this funnel --
+     * which every one of its ~37 section writes goes through -- is where its
+     * ";" is claimed in a compound message. AFTER the deadline check, so an
+     * aborted reply that emits nothing also emits no separator;
+     * SCPI_PrepareDirectResult is a no-op on the second and later calls. */
+    SCPI_PrepareDirectResult(context);
     return (context->interface->write(context, data, len) == len);
 }
 
@@ -865,6 +876,9 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     if (!pBoardData || !pBoardConfig) {
         const char* err = !pBoardData ? "ERROR: BoardData not available\r\n"
                                       : "ERROR: BoardConfig not available\r\n";
+        /* #1003/#1010: this early path writes without going through
+         * SysInfoText_Write, so it claims the separator itself. */
+        SCPI_PrepareDirectResult(context);
         context->interface->write(context, err, strlen(err));
         return SCPI_RES_ERR;
     }
@@ -1382,6 +1396,17 @@ __stalled_exit:
  * @return 
  */
 static scpi_result_t SCPI_SysLogGet(scpi_t * context) {
+    /* #1003/#1010: SYSTem:LOG? writes its reply itself (LogMessageDump ->
+     * context->interface->write, one call per buffered message), so nothing in
+     * libscpi would otherwise separate it from an earlier unit's reply in a
+     * compound message -- "*IDN?;SYST:LOG?" ran the two together.
+     *
+     * Unconditional, rather than pushed down into LogMessageDump's per-message
+     * loop: an EMPTY log then yields a bare ";" placeholder, which is exactly
+     * what this query did before the #1003 fix (processCommand wrote the ";"
+     * for every query, empty reply or not), and keeping it here leaves
+     * Util/Logger.c free of a libscpi dependency it does not otherwise have. */
+    SCPI_PrepareDirectResult(context);
     LogMessageDump(context);
     return SCPI_RES_OK;
 }
@@ -1488,6 +1513,11 @@ static scpi_result_t SCPI_SysLogLevelGet(scpi_t * context) {
                                Logger_GetLevel((LogModule_t)i),
                                Logger_GetCeiling((LogModule_t)i));
             if (len > 0) {
+                /* #1003/#1010: this branch is a direct writer (the branch above
+                 * uses SCPI_ResultInt32 and is separated by writeDelimiter).
+                 * Inside the loop and inside the len > 0 guard so the ";" only
+                 * precedes a write that happens; no-op after the first. */
+                SCPI_PrepareDirectResult(context);
                 context->interface->write(context, buf, ((size_t)len < sizeof(buf) - 1) ? (size_t)len : sizeof(buf) - 1);
             }
         }
@@ -6862,6 +6892,9 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
     if (len > 0) {
         size_t wlen = ((size_t)len < SCPI_RESPONSE_BUF_SIZE)
                       ? (size_t)len : (SCPI_RESPONSE_BUF_SIZE - 1);
+        /* #1003/#1010: direct-write branch (the empty-history branch above
+         * returns through SCPI_ResultCharacters, which separates itself). */
+        SCPI_PrepareDirectResult(context);
         context->interface->write(context, buffer, wlen);
     }
 
@@ -6874,6 +6907,9 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
         if (len > 0) {
             size_t wlen = ((size_t)len < SCPI_RESPONSE_BUF_SIZE)
                           ? (size_t)len : (SCPI_RESPONSE_BUF_SIZE - 1);
+            /* #1003/#1010: no-op after the header write above claimed it; here
+             * so the separator is still emitted if that snprintf returned <= 0. */
+            SCPI_PrepareDirectResult(context);
             context->interface->write(context, buffer, wlen);
         }
     }

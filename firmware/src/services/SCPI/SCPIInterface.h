@@ -238,10 +238,22 @@ extern "C" {
             LOG_E("scpi_printf TRUNCATED: needed %d of %u bytes - response is "
                   "corrupt, not merely short (fmt starts '%.48s')",
                   n, (unsigned)sizeof(buf), fmt);
+            /* #1003/#1010: claim this query's ";" before the first byte of its
+             * reply leaves. See SCPI_PrepareDirectResult (parser.c) -- it is
+             * idempotent per program-message unit and ignores non-query
+             * commands, so putting it here covers every scpi_printf-based
+             * query callback (the ten listed in docs/BUILD_AND_TOOLCHAIN.md)
+             * with no per-callback bookkeeping, and leaves the three non-query
+             * callers (BQ:ILIM, BQ:DPDM, STReam:THRoughput) untouched. */
+            SCPI_PrepareDirectResult(context);
             context->interface->write(context, buf, sizeof(buf) - 1);
             return n;
         }
         if (n > 0) {
+            /* #1003/#1010 -- see the note on the truncated branch above. Guarded
+             * by n > 0 for the same reason that branch writes first: the ";"
+             * must never be emitted ahead of a write that does not happen. */
+            SCPI_PrepareDirectResult(context);
             context->interface->write(context, buf, (size_t)n);
         }
         return n;

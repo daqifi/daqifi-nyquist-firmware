@@ -184,6 +184,119 @@ void scpiParser_TerminatePendingOutput(scpi_t * context) {
 }
 
 /**
+ * DAQiFi patch (issues #1003 / #1010) -- claim this query's result separator on
+ * behalf of a callback that writes its own reply.
+ *
+ * WHY THIS EXISTS.  writeDelimiter() above is the only place the top-level ";"
+ * is now written, and it runs only from the SCPI_ResultXxx() family.  A large
+ * minority of this firmware's registered QUERY callbacks never call
+ * SCPI_ResultXxx(): they format their reply themselves and push it through
+ * context->interface->write() directly (SYSTem:INFo?, SYSTem:LOG?,
+ * SYSTem:STReam:STATS?, CONFigure:CAPabilities:JSON?, ... -- see the call sites
+ * listed in docs/BUILD_AND_TOOLCHAIN.md).  Before this patch series those
+ * replies got their ";" from the speculative write at the top of
+ * processCommand(), which fired for EVERY query regardless of how the callback
+ * produced output; deleting that write (the #1003 fix) therefore left them with
+ * no separator at all, so "*IDN?;SYST:LOG?" -- two commands that both SUCCEED
+ * -- ran together on the wire.  This function gives those callbacks the same
+ * separator, on the same terms, without the speculation: they call it
+ * immediately before their FIRST actual write, so the ";" still only appears
+ * when bytes really follow it.
+ *
+ * CONTRACT for callers.  Call it immediately before the first byte you write.
+ * Calling it earlier re-creates exactly the #1003 defect (a ";" introducing an
+ * error line instead of a value) if the callback then fails without writing.
+ * It is safe to call more than once -- the second and later calls in the same
+ * program-message unit are no-ops -- so a callback with several write sites may
+ * simply call it at each of them rather than reasoning about which one runs
+ * first.  It is equally safe to call from a helper shared with NON-query
+ * commands: those are filtered out here (see below).
+ *
+ * WHY output_count IS THE IDEMPOTENCE MARKER.  processCommand() resets
+ * output_count to 0 before each unit and every SCPI_ResultXxx() increments it,
+ * so "> 0" already means exactly "this unit has produced a value"; taking it to
+ * 1 here says the same thing about a value this unit wrote itself.  Nothing
+ * else in libscpi reads output_count (only writeDelimiter, and writeSemicolon
+ * below, which the DAQiFi fork does not call).  The visible consequence is that
+ * a callback which direct-writes AND then calls SCPI_ResultXxx() gets a ","
+ * between the two -- the correct SCPI separator for two values of one command.
+ * No registered callback does that today (every mixed one -- SYSTem:LOG:LEVel?,
+ * SYSTem:LOG:CMDHistory?, SYSTem:STORage:SD:SPACe? -- picks one path or the
+ * other on mutually exclusive branches), so no reply changes shape because of
+ * it.
+ *
+ * WHY IT DOES NOT TOUCH first_output, although writeDelimiter() does.  This
+ * function writes the separator and NOTHING else; who owns first_output is left
+ * exactly where upstream and processCommand() put it (the post-callback flip on
+ * a SUCCESSFUL query).  That asymmetry is deliberate and it is load-bearing.
+ * first_output FALSE means "an UNTERMINATED result is on the wire", which is
+ * what SCPI_ErrorEmit() and the closing writeNewLine() both act on -- and a
+ * direct writer's text, unlike a SCPI_ResultXxx() value, is usually
+ * SELF-terminated ("...\r\n" from scpi_printf, from the SD "no card" message,
+ * from SYSTem:INFo?'s sections).  Clearing the flag here would therefore claim
+ * a pending terminator that is not pending, and every direct-write query that
+ * writes text and THEN fails -- SYSTem:INFo? with no BoardData,
+ * SYSTem:POWer:BQ:REGisters? with the I2C bus down, SYSTem:STORage:SD:SPACe?
+ * with no card -- would have a BLANK LINE inserted between its text and its
+ * "**ERROR" line by scpiParser_TerminatePendingOutput().  That is defect (C) of
+ * this very issue, re-created by its own fix, and it is exactly the case
+ * processCommand()'s flip deliberately does not cover: it runs only when the
+ * callback returned SCPI_RES_OK.  Leaving the flag alone keeps every
+ * single-command reply byte-identical to origin/main.
+ *
+ * The residual: a direct writer that emits UNTERMINATED text and then fails
+ * would have its error glued on, as it does on main today.  No registered
+ * callback has that shape (every one of them terminates its text), and a
+ * future one should call SCPI_ResultXxx() rather than rely on this.
+ *
+ * WHY THE QUERY TEST.  The deleted speculative write was gated on is_query, and
+ * so is this, using the same expression over the same bytes.  It matters
+ * because several firmware helpers that direct-write are shared between queries
+ * and plain commands (scpi_printf(), SCPI_CheckSDCardPresent()), and because a
+ * dozen NON-query commands emit human-readable reports through
+ * context->interface->write (SYSTem:STORage:SD:GET, SYSTem:POWer:BQ:ILIM,
+ * HELP, ...).  Those have never been ";"-separated, before or after #1003;
+ * giving them one here would be an unrelated wire change.  Filtering inside
+ * this function -- rather than at each call site -- is what makes the helper
+ * safe to drop into a shared writer.
+ *
+ * @param context
+ */
+void SCPI_PrepareDirectResult(scpi_t * context) {
+    if (context == NULL) {
+        return;
+    }
+
+    /* Not inside a program-message unit (or a context that has never parsed):
+     * cmd_raw is zeroed by SCPI_Init's memset and set by SCPI_Parse. */
+    if ((context->param_list.cmd_raw.data == NULL)
+            || (context->param_list.cmd_raw.length == 0)) {
+        return;
+    }
+
+    /* Same test processCommand() makes: only a query takes part in the ";"
+     * protocol. */
+    if (context->param_list.cmd_raw.data[context->param_list.cmd_raw.length - 1]
+            != '?') {
+        return;
+    }
+
+    /* Already separated -- this unit has produced a value. */
+    if (context->output_count > 0) {
+        return;
+    }
+
+    /* The ";" is needed iff an earlier unit of the same program message already
+     * wrote a value. Same condition as writeDelimiter's output_count == 0 arm,
+     * open-coded rather than delegated because that arm also assigns
+     * first_output, which this function must not -- see the note above. */
+    if (!context->first_output) {
+        writeData(context, ";", 1);
+    }
+    context->output_count = 1;
+}
+
+/**
  * Conditionaly write ";"
  * @param context
  * @return number of characters written
@@ -222,7 +335,16 @@ static scpi_bool_t processCommand(scpi_t * context) {
      * straight to context->interface->write, so writeDelimiter() never runs
      * for them.  Dropping the flip would silently remove the trailing
      * SCPI_LINE_ENDING that SCPI_Parse()'s closing writeNewLine() emits for
-     * those replies today -- a wire change well outside these two issues. */
+     * those replies today -- a wire change well outside these two issues.
+     *
+     * Those same callbacks now ALSO call SCPI_PrepareDirectResult() (below) to
+     * claim their ";" at the moment they write, which clears first_output too
+     * -- so for them this flip is usually a no-op.  It still carries the two
+     * cases the helper cannot reach: a direct-write query whose reply leaves
+     * the device OUT OF BAND rather than through context->interface->write
+     * (SYSTem:STORage:SD:LISt?, whose listing is pushed by the SD task through
+     * sd_card_manager_DataReadyCB), and any query callback that succeeds
+     * without producing output at all. */
     context->cmd_error = FALSE;
     context->output_count = 0;
     context->input_count = 0;

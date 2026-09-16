@@ -370,6 +370,12 @@ static bool SD_RefuseIfSuspended(scpi_t *context, const char *cmd)
 static bool SCPI_CheckSDCardPresent(scpi_t *context) {
     if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
         LOG_E("SD - No SD card detected\r\n");
+        /* #1003/#1010: this text is written straight to the transport, so it
+         * needs its own ";" when it is a QUERY's reply (SD:LISt?, SD:SPACe?).
+         * SCPI_PrepareDirectResult filters out the non-query callers of this
+         * shared helper (SD:DELete, SD:FORmat), which have never been
+         * separated -- so no call site has to know which kind it is. */
+        SCPI_PrepareDirectResult(context);
         context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return false;
@@ -2015,6 +2021,16 @@ scpi_result_t SCPI_StorageSDBenchmarkQuery(scpi_t * context) {
     
     if (!gSDBenchmarkResults.resultAvailable) {
         SCPI_ExecutionError(context, "SYST:STOR:SD:BENCH?: no benchmark result available");
+        /* #1003/#1010: the uniform contract -- every direct write inside a
+         * query callback claims the separator first, so no site has to be
+         * reasoned about individually. On THIS path it is currently inert and
+         * deliberately kept: SCPI_ExecutionError above already emitted the
+         * "**ERROR" line, which terminated any pending result and re-armed
+         * first_output, so there is nothing to separate from and no ";" is
+         * written. It becomes live the moment the placeholder is written before
+         * the error rather than after, which is the ordering a reader would
+         * otherwise expect. Reply bytes are unchanged either way. */
+        SCPI_PrepareDirectResult(context);
         context->interface->write(context, "0,0,0\r\n", 7);
         return SCPI_RES_ERR;
     }
@@ -2024,9 +2040,11 @@ scpi_result_t SCPI_StorageSDBenchmarkQuery(scpi_t * context) {
              (unsigned int)gSDBenchmarkResults.totalBytesWritten,
              (unsigned int)gSDBenchmarkResults.totalTimeMs,
              (unsigned int)gSDBenchmarkResults.writeSpeedBps);
-    
+
+    /* #1003/#1010: direct writer -- claim this query's ";" before its first byte. */
+    SCPI_PrepareDirectResult(context);
     context->interface->write(context, resultStr, strlen(resultStr));
-    
+
     return SCPI_RES_OK;
 }
 
@@ -2669,6 +2687,9 @@ scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #1003/#1010: direct writer -- claim this query's ";" before its first
+     * byte (the second write below is a no-op for the separator). */
+    SCPI_PrepareDirectResult(context);
     context->interface->write(context, result, (size_t)len);
     context->interface->write(context, "\r\n", 2);
 
