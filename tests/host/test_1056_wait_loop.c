@@ -91,8 +91,9 @@
  *    costs it.
  * 3. That any driver still CALLS WaitLoop_SpinThenYield. The compiler does
  *    that for the firmware build (spi_WaitStat et al. would not compile
- *    otherwise), not this suite; the Makefile keeps the three drivers as
- *    prerequisites so an edit to one still re-runs this.
+ *    otherwise), not this suite; the Makefile keeps all four drivers
+ *    (dac7718_WaitStat joined in #1108) as prerequisites so an edit to any
+ *    one still re-runs this.
  * ========================================================================== */
 
 #include <stdint.h>
@@ -113,10 +114,10 @@
  * one (USER_SPI_BYTE_TIMEOUT_MS is 20 ms) purely for readability.
  *
  * real_driver_spin_counts_are_honoured re-runs the boundary cases at the
- * values the drivers pass TODAY (8000 for spi/i2c, 4000 for uart) so the
- * arithmetic is exercised at the real magnitudes too. Nothing pins those
- * either -- if a driver retunes its spin, that is a driver decision and this
- * suite has no opinion about it.
+ * values the drivers pass TODAY (8000 for spi/i2c/dac7718 -- the last joined
+ * in #1108 -- 4000 for uart) so the arithmetic is exercised at the real
+ * magnitudes too. Nothing pins those either -- if a driver retunes its spin,
+ * that is a driver decision and this suite has no opinion about it.
  * ------------------------------------------------------------------------ */
 #define SPIN                 5u
 #define BUDGET              20u

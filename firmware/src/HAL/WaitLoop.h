@@ -23,9 +23,9 @@
  * to pin. The three drivers keep their own signatures, their own constants and
  * their own register reads, and differ only in what they inject.
  *
- * WHY CALLBACKS AND NOT A SHARED TIME BASE. The three waits do NOT share a
- * clock: spi and uart measure a FreeRTOS TickType_t budget from
- * xTaskGetTickCount(), while i2c measures CP0 core-timer CYCLES from
+ * WHY CALLBACKS AND NOT A SHARED TIME BASE. The four waits do NOT share a
+ * clock: spi, uart and dac7718 (#1108) measure a FreeRTOS TickType_t budget
+ * from xTaskGetTickCount(), while i2c measures CP0 core-timer CYCLES from
  * _CP0_GET_COUNT() against I2C_OP_TIMEOUT_CP0. Baking either in would force a
  * behaviour change on the other, so the loop below owns no clock at all: each
  * driver supplies its own "has my budget run out" predicate, its own status
