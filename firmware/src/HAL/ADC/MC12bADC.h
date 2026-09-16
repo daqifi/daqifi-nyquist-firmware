@@ -177,14 +177,19 @@ MC12b_ScanTimingSnapshot MC12b_CaptureScanTiming(void);
  *
  * Returns 0 for: Type 1 (dedicated S&H — simultaneous, FRM §22.3.2), AD7609
  * channels, and any channel NOT in the scan the current configuration would
- * arm. The FIRST shared/Type-2 channel in the scan does NOT return 0 (fixed
- * Qodo /agentic_review, PR firmware#1112, round 1, "First shared channel
- * incorrectly receives the dedicated-channel timestamp offset") — unlike a
- * Type 1 input, it is not captured at the trigger instant: DS60001344E
- * §22.3.2 Figure 22-7 has the trigger START the shared S&H's own acquisition,
- * which must still elapse ((SAMC+2) x TAD7, Equation 22-2) before the value is
- * latched. See MC12b_ChannelScanOffsetTicks' .c-file comment for the full
- * derivation and why positions >= 1 are unchanged.
+ * arm. EVERY scanned shared/Type-2 channel — including the first — carries
+ * its own (SAMC+2) x TAD7 acquisition aperture (Equation 22-2) on top of the
+ * pos x (SAMC+16) x TAD7 slots consumed by the channels ahead of it (fixed
+ * Qodo /agentic_review, PR firmware#1112: round 1, "First shared channel
+ * incorrectly receives the dedicated-channel timestamp offset" — position 0
+ * only; then round 2, "Clients place later samples too early" — round 1 had
+ * left positions >= 1 short by that same aperture, an inconsistency this
+ * project's own re-derivation independently confirmed). Unlike a Type 1
+ * input, no shared/Type-2 position is captured at the trigger instant:
+ * DS60001344E §22.3.2 Figure 22-7 has the trigger START the shared S&H's own
+ * acquisition, which must still elapse before the value is latched (Hold
+ * begins) — for EVERY position, not only the first. See
+ * MC12b_ChannelScanOffsetTicks' .c-file comment for the full derivation.
  *
  * PURE given its inputs: css1/css2 and *timing are the caller's OWN snapshots
  * — ONE MC12b_ComputeScanList(true, includeMonitoring, ...) call and ONE

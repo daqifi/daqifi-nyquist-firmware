@@ -593,57 +593,51 @@ uint32_t MC12b_ChannelScanOffsetTicks(const AInChannel* ch,
      * SAMC=1023 from the old ceil-then-multiply order; e.g. TAD7 = 119.0476ns
      * on the shipped default clocks is EXACTLY 5 timestamp ticks, so an exact
      * integer answer exists and no rounding was structurally required).
-     *   TAD7[ns]     = 2 x adcdiv x (conclkdiv+1) x 1e9 / pbclkHz
-     *   ticks(pos,K) = pos x K x TAD7[ns] x timestampHz / 1e9
-     *                = pos x K x [2 x adcdiv x (conclkdiv+1)] x timestampHz
-     *                  / pbclkHz                        (the 1e9 cancels)
-     * 64-bit is required and sufficient: worst case pos<=~50, K<=1039,
-     * clockTerm<=2*127*64=16256, timestampHz a few hundred MHz — the product
-     * stays under 2^63 (verified: 50*1039*16256*4e8 ~= 3.4e17 << 9.2e18). */
+     *   TAD7[ns]      = 2 x adcdiv x (conclkdiv+1) x 1e9 / pbclkHz
+     *   ticks(pos)    = [pos x (SAMC+16) + (SAMC+2)] x TAD7[ns] x timestampHz
+     *                   / 1e9
+     *                 = [pos x (SAMC+16) + (SAMC+2)]
+     *                   x [2 x adcdiv x (conclkdiv+1)] x timestampHz
+     *                   / pbclkHz                        (the 1e9 cancels)
+     * 64-bit is required and sufficient: worst case pos<=~50, (SAMC+16)<=1039
+     * so the bracket <=~53000, clockTerm<=2*127*64=16256, timestampHz a few
+     * hundred MHz — the product stays under 2^63 (verified:
+     * 53000*16256*4e8 ~= 3.4e17 << 9.2e18). */
     uint32_t adcdiv = (timing->adcdiv == 0u) ? 1u : timing->adcdiv; // 0 reserved
     if (timing->pbclkHz == 0u) return 0xFFFFFFFFu;  // unmeasurable clock —
                                                      // saturate like every
                                                      // other clamp here
     uint64_t clockTerm = 2ULL * adcdiv * (timing->conclkdiv + 1u);
 
-    uint64_t ticks;
-    if (pos == 0u) {
-        /* First shared channel: NOT captured at the trigger the way a Type 1
-         * (dedicated) input is (Qodo /agentic_review, PR firmware#1112,
-         * round 1, "First shared channel incorrectly receives the
-         * dedicated-channel timestamp offset"). V — DS60001344E §22.3.2
-         * Figure 22-7 "Input Scan Conversion Sequence": "Trigger causes S&H
-         * circuit to begin sampling first input in the scan list ... Once
-         * sampling is complete, the conversion begins" — unlike Class 1
-         * ("captured simultaneously" at the trigger, same section), the
-         * shared S&H's own acquisition must still elapse before its value is
-         * latched (Hold begins). Equation 22-2 "Sample Time for the Shared
-         * ADC Module": tSAMC = (SAMC+2) x TAD — exactly that acquisition
-         * window, i.e. the instant the analog value is actually captured,
-         * which is the physically meaningful "when was this reading taken"
-         * instant a client needs (the same instant a Type 1 channel's own
-         * offset=0 represents: "captured AT the trigger"). Positions >= 1
-         * are UNCHANGED: each already carries the full (SAMC+16) x TAD7 slot
-         * of every channel ahead of it (acquisition + conversion/handoff),
-         * so they remain self-consistent among the shared channels
-         * themselves — only position 0 has no prior slot to fold this
-         * acquisition into, and returning 0 there aliased it onto the SAME
-         * value a physically-different Type 1 channel returns. */
-        uint64_t apertureNumer = (uint64_t)(timing->samc + 2u) * clockTerm
-                                * (uint64_t)timestampHz;
-        ticks = apertureNumer / (uint64_t)timing->pbclkHz;
-    } else {
-        /* Per-input step = the same (SAMC + 16) x TAD7 term the scan-busy
-         * bound uses: (SAMC + 2) TAD acquisition + ~14 TAD conversion/
-         * handoff, pinned by the silicon anchors in
-         * docs/ADC_HW_SEMANTICS.md. The per-SCAN fixed term (~6 us)
-         * deliberately does NOT appear: it is paid once per scan, not per
-         * input, so it shifts the whole scan rather than one channel within
-         * it. */
-        uint64_t numer = (uint64_t)pos * (timing->samc + 16u) * clockTerm
-                        * (uint64_t)timestampHz;
-        ticks = numer / (uint64_t)timing->pbclkHz;
-    }
+    /* Unified model — EVERY scanned shared/Type-2 position, including
+     * position 0, carries its own (SAMC+2) x TAD7 acquisition aperture ON
+     * TOP OF the pos x (SAMC+16) x TAD7 slots consumed by the channels
+     * ahead of it (Qodo /agentic_review, PR firmware#1112, round 2,
+     * "Clients place later samples too early", confirmed by this project's
+     * own re-derivation from first principles — matches Qodo's independently
+     * recommended formula exactly).
+     *
+     * Round 1 folded the aperture into position 0 ONLY and left pos>=1 at
+     * `pos * (SAMC+16) * TAD7` alone, on the theory that pos>=1 was already
+     * self-consistent among the shared channels — true internally, but
+     * WRONG relative to the Type-1-zero baseline every position is meant to
+     * share. V — DS60001344E §22.3.2 Figure 22-7 + Equation 22-2: the
+     * (SAMC+2) x TAD acquisition delay is the instant THIS channel's OWN
+     * value is latched (Hold begins) — it applies to every shared channel's
+     * own Hold instant, not only the first one's. A client reconstructing
+     * position k's true capture instant as `packetTimestamp + offsetTicks`
+     * was therefore short by the whole aperture (~510 ticks at the shipped
+     * default clocks) for every channel after the first.
+     *
+     * Per-input step = the same (SAMC + 16) x TAD7 term the scan-busy bound
+     * uses: (SAMC + 2) TAD acquisition + ~14 TAD conversion/handoff, pinned
+     * by the silicon anchors in docs/ADC_HW_SEMANTICS.md. The per-SCAN
+     * fixed term (~6 us) still deliberately does NOT appear: it is paid
+     * once per scan, so it shifts the whole scan (T1 and T2 alike) rather
+     * than being a cross-class skew the way the aperture is. */
+    uint64_t numer = ((uint64_t)pos * (timing->samc + 16u) + (timing->samc + 2u))
+                    * clockTerm * (uint64_t)timestampHz;
+    uint64_t ticks = numer / (uint64_t)timing->pbclkHz;
     return (ticks > 0xFFFFFFFFULL) ? 0xFFFFFFFFu : (uint32_t)ticks;
 }
 

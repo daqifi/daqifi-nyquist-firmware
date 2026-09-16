@@ -572,37 +572,44 @@ Class 1/2 input's `ADCTRGx` TRGSRC at STRIG, so no input has an independent
 trigger while a session is armed.
 
 **Derivation** (`MC12b_ChannelScanOffsetTicks`, `firmware/src/HAL/ADC/MC12bADC.c`;
-fixed round-1 of the Qodo /agentic_review adversarial audit on PR firmware#1112 —
-see the two `#1112 round-1` findings folded in below):
+fixed across rounds 1 and 2 of the Qodo /agentic_review adversarial audit on
+PR firmware#1112 — see the `#1112 round-1`/`round-2` findings folded in
+below):
 
 ```
 scanPosition = popcount(armed CSS bits strictly below this input's AN bit)
 
-if scanPosition == 0:
-    offsetTicks = (SAMC + 2) x TAD7 x timestamp_hz     # this channel's OWN
-                                                        # acquisition, exact
-else:
-    offsetTicks = scanPosition x (SAMC + 16) x TAD7 x timestamp_hz   # exact
+offsetTicks = [scanPosition x (SAMC + 16) + (SAMC + 2)] x TAD7 x timestamp_hz
 ```
-(both divided once by `pbclkHz` at the very end — see below.)
+(divided once by `pbclkHz` at the very end — see below. This is ONE formula
+for every scanned Type-2 position, scanPosition 0 included — round 1 briefly
+special-cased position 0 to `(SAMC+2) x TAD7` alone and left later positions
+at `scanPosition x (SAMC+16) x TAD7`; round 2 unified them, see below.)
 
-- **The first scanned Type-2 channel (scanPosition 0) is NOT captured at the
-  trigger.** Unlike Type 1/Class 1 ("all Class 1 inputs are captured
-  simultaneously and conversions are started simultaneously", §22.3.2), a
-  shared/Class-2-or-3 input's trigger only *starts* its own Sample&Hold
-  acquisition (Figure 22-7: "Trigger causes S&H circuit to begin sampling
-  first input in the scan list ... Once sampling is complete, the conversion
-  begins") — the value isn't latched (Hold begins) until `(SAMC+2) x TAD7`
-  later (Equation 22-2, "Sample Time for the Shared ADC Module"). Before the
-  #1112 round-1 fix this position returned 0, identical to a Type 1 channel's
-  offset, even though the two are not physically equivalent — a real,
-  deterministic error of ~510 timestamp ticks (~12.1 µs) at the shipped
-  default SAMC=100/ADCDIV=1/CONCLKDIV=4. Every later position (`scanPosition
-  >= 1`) is unchanged: each already carries the full `(SAMC + 16) x TAD7`
-  slot of every channel ahead of it — (SAMC+2) TAD acquisition + ~14 TAD
-  conversion/handoff, pinned by the silicon anchors above — so it remains
-  self-consistent among the shared channels themselves; only position 0 had
-  no prior slot to fold its own acquisition into.
+- **Every scanned Type-2 channel carries its own `(SAMC+2) x TAD7`
+  acquisition aperture — not just the first one.** Unlike Type 1/Class 1
+  ("all Class 1 inputs are captured simultaneously and conversions are
+  started simultaneously", §22.3.2), a shared/Class-2-or-3 input's trigger
+  only *starts* its own Sample&Hold acquisition (Figure 22-7: "Trigger causes
+  S&H circuit to begin sampling first input in the scan list ... Once
+  sampling is complete, the conversion begins") — no shared position's value
+  is latched (Hold begins) until its OWN `(SAMC+2) x TAD7` acquisition window
+  elapses (Equation 22-2, "Sample Time for the Shared ADC Module"), on top of
+  whatever full `(SAMC+16) x TAD7` slots (acquisition + ~14 TAD
+  conversion/handoff, pinned by the silicon anchors above) the channels ahead
+  of it consumed. Before the #1112 round-1 fix, position 0 returned 0,
+  identical to a Type 1 channel's offset, even though the two are not
+  physically equivalent — a real, deterministic error of ~510 timestamp
+  ticks (~12.1 µs) at the shipped default SAMC=100/ADCDIV=1/CONCLKDIV=4.
+  Round 1 fixed position 0 alone (`(SAMC+2) x TAD7`) and left positions >= 1
+  unchanged (`scanPosition x (SAMC+16) x TAD7`, no aperture term) — reasoning
+  that later positions were already self-consistent *among the shared
+  channels themselves*, true internally but WRONG relative to the Type-1-zero
+  baseline every position is meant to share (Qodo /agentic_review round 2,
+  "Clients place later samples too early": every position after the first
+  was then short by that same ~510-tick aperture, confirmed by this
+  project's own re-derivation from first principles). Round 2 folds the
+  aperture into every position uniformly, per the formula above.
 - **The division happens exactly once, after every multiply**, instead of
   rounding `TAD7` up to a whole nanosecond first and then multiplying by
   `scanPosition x (SAMC+16)` — the pre-fix code did the latter, which
@@ -642,7 +649,7 @@ else:
   The first *scanned* input is no longer among these (see above).
 
 **Evidence class: V for the order, the register semantics, and the
-first-position aperture correction (DS60001344E §22.3.2 Figure 22-7 +
+per-position aperture correction (DS60001344E §22.3.2 Figure 22-7 +
 Equation 22-2, cited above); E for the per-input timing constant** (the SAMC
 sweep and the two silicon anchors above).
 The composed per-channel figure has **not** itself been measured against a
