@@ -9108,6 +9108,15 @@ size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
     return written;
 }
 
+size_t SCPI_FlushPendingDelimiter(scpi_t * context, ScpiTransportWriteFn writeFn,
+                                   size_t nextWriteLen) {
+    if (nextWriteLen > 0 && context->pending_delimiter) {
+        context->pending_delimiter = FALSE;
+        return SCPI_WriteWithRetry(writeFn, ";", 1);
+    }
+    return 0;
+}
+
 scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context,
                          ScpiContextStorage* storage) {
     // Defense in depth: SCPI_ResponseBuf_Init() is supposed to have been

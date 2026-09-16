@@ -100,6 +100,14 @@ static size_t writeNewLine(scpi_t * context) {
 #endif
         len = writeData(context, SCPI_LINE_ENDING, strlen(SCPI_LINE_ENDING));
         flushData(context);
+        /* #1003/#1010: re-arm so first_output correctly reads "nothing
+         * unterminated pending" between this SCPI_Parse() and the next.
+         * Without this, an error raised outside a parse (e.g. SCPI_Input()'s
+         * input-buffer-overrun push) would see the stale FALSE this parse
+         * leaves behind and have SCPI_ErrorEmit() (error.c) prefix it with a
+         * spurious blank line. SCPI_Parse() still resets both flags itself
+         * at the start of every top-level parse regardless. */
+        context->first_output = TRUE;
         return len;
     } else {
         return 0;
@@ -129,10 +137,14 @@ static scpi_bool_t processCommand(scpi_t * context) {
     scpi_bool_t result = TRUE;
     scpi_bool_t is_query = context->param_list.cmd_raw.data[context->param_list.cmd_raw.length - 1] == '?';
 
-    /* conditionally write ; */
-    if(!context->first_output && is_query) {
-        writeData(context, ";", 1);
-    }
+    /* #1003/#1010: ARM the compound separator rather than writing it here.
+     * Writing it unconditionally, ahead of a callback that might fail,
+     * is exactly how an error line used to end up preceded by a stray ';'
+     * (or, for a non-query unit, glued straight onto the prior result with
+     * no separator at all). Consumed at the unit's first actual write --
+     * see pending_delimiter's declaration in types.h -- or discarded
+     * silently by SCPI_ErrorEmit() (error.c) if the unit fails first. */
+    context->pending_delimiter = (!context->first_output && is_query);
 
     context->cmd_error = FALSE;
     context->output_count = 0;
@@ -205,6 +217,7 @@ scpi_bool_t SCPI_Parse(scpi_t * context, char * data, int len) {
     state = &context->parser_state;
     context->output_count = 0;
     context->first_output = TRUE;
+    context->pending_delimiter = FALSE;
 
     while (1) {
         r = scpiParser_detectProgramMessageUnit(state, data, len);
@@ -278,6 +291,12 @@ void SCPI_Init(scpi_t * context,
     context->cmdlist = commands;
     context->interface = interface;
     context->units = units;
+    /* #1003/#1010: the memset above leaves first_output FALSE. SCPI_Parse()
+     * always resets it TRUE at the start of a parse, but an error can be
+     * pushed before the first parse ever runs; without this, SCPI_ErrorEmit()
+     * (error.c) would read the zeroed FALSE as "unterminated output pending"
+     * and prefix that very first error with a spurious blank line. */
+    context->first_output = TRUE;
     context->idn[0] = idn1;
     context->idn[1] = idn2;
     context->idn[2] = idn3;

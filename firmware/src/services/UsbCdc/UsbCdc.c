@@ -1196,7 +1196,12 @@ static size_t UsbCdc_ScpiWrite(const char* data, size_t len) {
  * @return The number of characters written
  */
 static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len) {
-    UNUSED(context);
+    /* #1003/#1010: flush a compound-message ';' armed by libscpi
+     * (SCPI_FlushPendingDelimiter, SCPIInterface.c) ahead of this unit's
+     * own output, whether that output is about to arrive via
+     * SCPI_ResultXxx() or straight through this call, as several
+     * registered query callbacks (SD:LIST?, SYST:LOG?, ...) do. */
+    SCPI_FlushPendingDelimiter(context, UsbCdc_ScpiWrite, len);
     return SCPI_WriteWithRetry(UsbCdc_ScpiWrite, data, len);
 }
 

@@ -78,6 +78,33 @@ static void SCPI_ErrorEmitEmpty(scpi_t * context) {
 static void SCPI_ErrorEmit(scpi_t * context, int16_t err) {
     SCPI_RegSetBits(context, SCPI_REG_STB, STB_QMA);
 
+    /* #1003/#1010: a compound message's error line must not corrupt an
+     * earlier unit's still-open result. Discard whatever separator
+     * processCommand() (parser.c) armed for the unit that is raising this
+     * error -- it must never reach the wire -- before either write below
+     * can flush it. */
+    context->pending_delimiter = FALSE;
+
+    if (err != 0 && !context->first_output) {
+        /* An earlier unit in this compound message already produced a
+         * result that SCPI_Parse() has not yet newline-terminated (it
+         * defers that to a single end-of-message writeNewLine()). Close it
+         * out here, on its own line, before the error text lands, and mark
+         * it closed so that deferred call does not add a second, blank
+         * line. Skipped entirely for a message's first/only error (the
+         * common case): first_output is still TRUE then, and the existing
+         * single-line "**ERROR: ...\r\n" is unchanged. */
+        if (context->interface && context->interface->write) {
+            /* Return value (possible short write) intentionally not
+             * inspected -- same tolerance SCPI_USB_Error/SCPI_TCP_Error
+             * already apply to the error text's own write just below: a
+             * partial 1-2 byte line ending is not something this callback
+             * has a recovery path for either way. */
+            context->interface->write(context, SCPI_LINE_ENDING, strlen(SCPI_LINE_ENDING));
+        }
+        context->first_output = TRUE;
+    }
+
     if (context->interface && context->interface->error) {
         context->interface->error(context, err);
     }

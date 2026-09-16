@@ -196,6 +196,12 @@ static size_t SCPI_TCP_Write(scpi_t * context, const char* data, size_t len) {
     if (gpServerData == NULL || gpServerData->client.clientSocket < 0) {
         return 0;
     }
+    /* #1003/#1010: flush a compound-message ';' armed by libscpi
+     * (SCPI_FlushPendingDelimiter, SCPIInterface.c) ahead of this unit's
+     * own output, whether that output is about to arrive via
+     * SCPI_ResultXxx() or straight through this call, as several
+     * registered query callbacks (SD:LIST?, SYST:LOG?, ...) do. */
+    SCPI_FlushPendingDelimiter(context, wifi_tcp_server_WriteBuffer, len);
     return SCPI_WriteWithRetry(wifi_tcp_server_WriteBuffer, data, len);
 }
 

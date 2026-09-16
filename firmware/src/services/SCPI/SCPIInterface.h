@@ -196,6 +196,31 @@ extern "C" {
     size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
                                const char* data, size_t len);
 
+    /*!
+     * #1003/#1010: flush libscpi's compound-message separator if one is
+     * pending. processCommand() (parser.c) arms context->pending_delimiter
+     * ahead of a query unit that follows an already-written result in the
+     * same compound message, but does not write it -- writing it before
+     * knowing whether the unit's own callback succeeds is exactly how an
+     * error line used to end up preceded by a stray ';'. Both transports'
+     * interface->write() implementations call this first, so a pending ';'
+     * lands ahead of the unit's own first byte regardless of whether that
+     * byte comes from SCPI_ResultXxx() or a callback writing straight to
+     * interface->write() (SD:LIST?, SYST:LOG?, and the rest of the ~20
+     * direct-write query callbacks). A unit whose callback fails before
+     * writing anything never reaches here; SCPI_ErrorEmit() (error.c)
+     * discards the armed flag instead.
+     * @param context SCPI context (its pending_delimiter field is consumed)
+     * @param writeFn Transport write function (USB or WiFi buffer write)
+     * @param nextWriteLen Length of the write this call is guarding; a
+     *                     zero-length write consumes nothing, so a callback
+     *                     probing with len==0 doesn't silently drop the
+     *                     pending separator for its real write that follows
+     * @return bytes written for the separator itself (0 or 1)
+     */
+    size_t SCPI_FlushPendingDelimiter(scpi_t * context, ScpiTransportWriteFn writeFn,
+                                       size_t nextWriteLen);
+
     /**
      * Printf-style helper for writing formatted text to a SCPI response.
      * Uses an internal 192-byte buffer; each call is one write.

@@ -430,6 +430,18 @@ extern "C" {
         int_fast16_t input_count;
         scpi_bool_t first_output;
         scpi_bool_t cmd_error;
+        /* #1003/#1010: armed by processCommand() ahead of a query unit in a
+         * compound message that already has a predecessor's output on the
+         * wire; NOT written there. Every write this library or a callback
+         * makes ends up at interface->write(), so consuming the flag at
+         * that single funnel (SCPI_FlushPendingDelimiter() in
+         * SCPIInterface.c, called by both transports' interface->write()
+         * implementations before their own payload) covers a query's
+         * SCPI_ResultXxx() output and a callback's direct interface->write()
+         * calls alike. If the unit fails without ever writing anything,
+         * this stays armed and is discarded by SCPI_ErrorEmit() (error.c)
+         * instead of ever reaching the wire. */
+        scpi_bool_t pending_delimiter;
         scpi_fifo_t error_queue;
 #if USE_DEVICE_DEPENDENT_ERROR_INFORMATION && !USE_MEMORY_ALLOCATION_FREE
         scpi_error_info_heap_t error_info_heap;
