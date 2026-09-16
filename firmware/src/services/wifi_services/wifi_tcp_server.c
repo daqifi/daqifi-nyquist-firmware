@@ -800,11 +800,39 @@ size_t wifi_tcp_server_WriteBuffer(const char* data, size_t len) {
 
     if (len == 0)return 0;
 
+    // Qodo (PR #1101 round 5, finding 1): snapshot the connection identity
+    // BEFORE waiting for wMutex, an unlocked read safe for the same reason
+    // wifi_tcp_server_GetConnGeneration()'s callers already rely on it
+    // (connGeneration is single-writer, bumped only in SocketEventCallback's
+    // SOCKET_MSG_ACCEPT). The #1073 deferred-close consumer
+    // (wifi_tcp_server_ServicePendingClientClose) can run to completion --
+    // including the buffer reset -- while this call is blocked on the take
+    // below. Without a POST-lock re-check, bytes that belonged to the
+    // connection which was just torn down would get queued into the
+    // freshly-reset buffer, and could later reach a REPLACEMENT client once
+    // one connects: TcpServerFlush()'s only guard is clientSocket >= 0,
+    // which is true again for any new client, not just this one.
+    uint32_t generation = wifi_tcp_server_GetConnGeneration();
+
     // Non-blocking check for buffer space
     // If buffer is full, return 0 immediately instead of blocking
     // This prevents the streaming task from stalling for 10-60ms
     xSemaphoreTake(gpServerData->client.wMutex, portMAX_DELAY);
     DrainPendingBufferReset();
+    if (!wifi_tcp_server_ConnIsCurrent(generation)) {
+        // The connection this data belonged to is already gone, or a
+        // different client now holds the slot -- discard rather than queue
+        // stale bytes for whoever that is. Returns 0 exactly like the
+        // existing no-space rejection just below, so every caller's
+        // established "0 means try again / count as dropped" handling
+        // (e.g. Streaming_WriteWithRetry's bounded retry in streaming.c)
+        // applies unchanged. Deliberately NOT counted in
+        // wifiWriteBufferRejectedCalls/Bytes -- that pair is #371's
+        // no-space diagnostic specifically; this is a different rejection
+        // reason and conflating them would misattribute it.
+        xSemaphoreGive(gpServerData->client.wMutex);
+        return 0;
+    }
     if (CircularBuf_NumBytesFree(&gpServerData->client.wCirbuf) < len) {
         // #371: count rejections to verify wifiDroppedBytes accounting is working.
         gpServerData->client.wifiWriteBufferRejectedCalls++;

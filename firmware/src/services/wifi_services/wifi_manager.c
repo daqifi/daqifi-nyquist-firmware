@@ -717,12 +717,39 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 // brand-new client. Stamping first makes a live socket always
                 // carry a fresh tick.
                 gStateMachineContext.pTcpServerContext->client.lastActivityTick = xTaskGetTickCount();
-                gStateMachineContext.pTcpServerContext->client.clientSocket = pAcceptMessage->sock;
-                // #599: this connection now owns the single TCP slot.  Bump the
-                // generation so any still-in-flight async SD GET/LIST reply that
-                // was bound to the previous connection stops writing to us.
-                // Single-writer (this callback only) -> plain ++ is safe.
+                // Qodo (PR #1101 round 5, finding 7): bump connGeneration BEFORE
+                // publishing clientSocket, not after. This callback runs on the
+                // WINC driver task (priority 1) with no critical section across
+                // these two stores, so app_WifiTask's #1073 owed-close consumer
+                // (priority 2) can preempt between them. The consumer's own read
+                // of clientSocket and connGeneration together IS atomic (one
+                // taskENTER_CRITICAL region in wifi_tcp_server_ServicePendingClient
+                // Close), so the only place an inconsistent pair can be OBSERVED is
+                // a preemption landing inside this writer's two-statement window.
+                // Under the old order (clientSocket published, then generation
+                // bumped), a consumer preempting in that window saw a live,
+                // brand-new socket still paired with the OLD generation -- which
+                // is exactly the pendingCloseGen a record left over from the PRIOR
+                // connection (e.g. one wifi_tcp_server_CloseSocket() left standing,
+                // per its own comment, for the consumer's staleness test to drop)
+                // would match, authorizing a close of the healthy replacement.
+                // With generation bumped first, every window a preemption can land
+                // in is safe: before either store, clientSocket is still the old
+                // value (-1 or already torn down) so the consumer's own
+                // clientSocket>=0 test fails; after both stores, connGeneration
+                // already reflects the new connection so no stale pendingCloseGen
+                // can match it; the only new window (between the two stores here)
+                // has connGeneration already current but clientSocket not yet
+                // published, which the consumer's clientSocket>=0 test also
+                // rejects. #599's own comment below documents the same variable;
+                // the fix is a two-line reorder, not new synchronization.
                 gStateMachineContext.pTcpServerContext->client.connGeneration++;
+                // #599: this connection now owns the single TCP slot.  The
+                // generation bump above is also what stops any still-in-flight
+                // async SD GET/LIST reply that was bound to the previous
+                // connection from writing to us.  Single-writer (this callback
+                // only) -> plain ++ is safe.
+                gStateMachineContext.pTcpServerContext->client.clientSocket = pAcceptMessage->sock;
                 LOG_D("Connection from %s:%d\r\n", inet_ntop(AF_INET, &pAcceptMessage->strAddr.sin_addr.s_addr, s, sizeof (s)), pAcceptMessage->strAddr.sin_port);
                 // #1073: the arm is NOT fire-and-forget.  This recv() is what
                 // makes the socket able to report anything at all -- inbound
