@@ -58,14 +58,14 @@ constants are a copy. The Makefile target greps them out of `SCPIStorageSD.c`
 and **fails the build** if either drifts, so a stale copy cannot pass silently.
 
 `test_953_bench_suspend_diagnosis.c` covers the branch a little further down
-the same function (issue #953): the one that has to say *why* the benchmark's
-file never opened. Same technique as `test_943` and for the same reason — the
-decision cascade is re-implemented against injected values rather than
-included. Until #953 it had two arms, so a benchmark whose arm succeeded and
-whose SD task was then suspended mid-wait (WiFi streaming taking SPI4, a WiFi
-FW update, the #925 jam quarantine) hit the fallback and blamed the *card* —
-"likely SPI-mode incompatible" — for a task that had simply stopped running.
-The fix adds a third arm reporting `SD_SuspendReasonText()`.
+the same function (issues #953 **and #988**): the one that has to say *why* the
+benchmark's file never opened. Same technique as `test_943` and for the same
+reason — the decision cascade is re-implemented against injected values rather
+than included. Until #953 it had two arms, so a benchmark whose arm succeeded
+and whose SD task was then suspended mid-wait (WiFi streaming taking SPI4, a
+WiFi FW update, the #925 jam quarantine) hit the fallback and blamed the *card*
+— "likely SPI-mode incompatible" — for a task that had simply stopped running.
+#953 adds a third arm reporting `SD_SuspendReasonText()`.
 
 The test asserts all four quadrants of (suspended × dir-full) against **both**
 the pre-fix and post-fix shapes, and its headline property is that **exactly
@@ -76,10 +76,33 @@ this request's open — so with both true the refusal is the real cause and the
 suspend is incidental. Testing the suspend first (as #953's ticket proposed)
 would have moved that quadrant too, silently narrowing #690.
 
+**#988 adds a fourth arm** for the case #953 documented as still open: a
+teardown of *this request's* `MODE_WRITE` arm with no cause left to name. The
+poll loop latches any transition away from the mode the callback itself
+published — a fact about this request, unlike the ambient suspend condition
+three rounds of #953's PR tried and withdrew — and the cascade becomes dir-full
+→ suspend → torn-down → card. The new arm sits **below** the suspend arm on
+purpose: the WiFi/quarantine teardown clears `mode` on its way into
+`APP_SD_STATE_SUSPENDED`, so the latch is always set in #953's own headline
+case, and hoisting it would have reverted #953 while claiming to extend it.
+What the new arm catches is what is left: the power-state teardown (which
+publishes no suspension at all), an `SD:ENAble` from the other transport, a
+mount/filesystem failure, and the transient case where the owner has already
+gone again.
+
+For #988 the test also models the **poll loop**, not just the cascade — it has
+to, because the two scenarios #988's acceptance criteria name present the
+cascade with identical inputs and differ only in *when* the suspend reason was
+non-NULL. Its headline property is the same one, one dimension wider: over the
+eight cells of (dir-full × suspended × torn-down), **exactly one** moves.
+
 No constants are copied here, so this target has no equivalent of `test_943`'s
-two greps. What it copies is the **order of the three arms**, so the Makefile
-guards that instead: it locates each arm's marker in `SCPIStorageSD.c` and
-**fails the build** unless they still appear as dir-full → suspend → card.
+two greps. What it copies is the **order of the four arms** and the position of
+the latch, so the Makefile guards those instead: it locates each marker in
+`SCPIStorageSD.c` and **fails the build** unless the arms still appear as
+dir-full → suspend → torn-down → card and the latch still sits inside the poll
+loop between the `#690` early-exit and the arm that reads it. Both guards were
+proven to fire (a renamed arm, a reordered pair, a deleted latch).
 
 `test_1004_help_write_abort.c` covers `SCPI_Help`'s (the `HELP` command)
 shared-response-buffer write-abort bound (issue #1004) — the third site of a

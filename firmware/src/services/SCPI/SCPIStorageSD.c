@@ -1560,47 +1560,129 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     // Wait for file to be open and ready before writing
     {
         int readyWait = 0;
-        /* A suspension that starts AND ENDS inside this wait is NOT covered
-         * here, and the gap is deliberate rather than unnoticed.
-         * app_SDCard_GracefulShutdown() stores MODE_NONE over this benchmark's
-         * MODE_WRITE arm on its way into APP_SD_STATE_SUSPENDED
-         * (app_freertos.c), nothing restores it, and
-         * sd_card_manager_IsWriteReady() requires MODE_WRITE -- so the arm is
-         * dead for the rest of the wait and the cascade below reaches the card
-         * advisory with SD_SuspendReasonText() already back to NULL.
+        /* #988: did THIS request's arm die while we were waiting for it?
          *
-         * Three rounds of this PR tried to close it by latching what was
-         * observed during the poll, and every round found the same thing from a
-         * new angle: an ambient condition is not evidence about THIS request.
-         * A live WiFi owner can be sampled and then vanish without the SD task
-         * ever suspending (the streaming auto-stop beats it to the check), and
-         * the latch then blames a suspension for a genuine card fault -- worse
-         * than the advisory it replaced, because it is confidently wrong. The
-         * fix is to latch that this arm's MODE_WRITE was torn down, which is
-         * true of every teardown cause including the power-state path, and
-         * that is a design change with its own ticket: #988. Left undone here
-         * rather than half-done. */
+         * The benchmark published `mode = MODE_WRITE` a few lines above and
+         * nothing in this callback touches it again before the cascade below,
+         * so any OTHER value observed during the wait is proof that something
+         * outside this callback destroyed the arm. That is a fact about THIS
+         * request. It is what #983 could not get out of the poll, and it is the
+         * whole of #988.
+         *
+         * WHAT #983 TRIED AND WITHDREW, written down so it is not tried again.
+         * Three rounds latched what the poll OBSERVED -- a live suspend reason
+         * -- and each found the same defect from a new angle: an ambient
+         * condition is not evidence about this request. A live WiFi owner can
+         * be sampled and then vanish without the SD task ever suspending (the
+         * streaming task's dead-transport auto-stop runs at priority 6 and
+         * beats the SD task at 5 to its own ownership check), and a latch set
+         * from that blames a suspension for what may be a genuine card fault.
+         * `mode` has no such problem: this callback is the only thing that put
+         * WRITE there, so a transition AWAY from it cannot be someone else's
+         * weather.
+         *
+         * WHO ELSE CAN MOVE `mode` WHILE THIS ARM IS IN FLIGHT -- established,
+         * not assumed:
+         *
+         *   app_freertos.c's app_SDCard_GracefulShutdown() -- ONE function,
+         *     called from BOTH teardown branches of app_SDCardTask's
+         *     APP_SD_STATE_PROCESS case: "power state dropped" (->
+         *     APP_SD_STATE_WAIT_POWER_UP) and the WiFi / FW-update /
+         *     quarantine case (-> APP_SD_STATE_SUSPENDED). It stores MODE_NONE
+         *     directly, with no claim, and calls UpdateSettings(). Only the
+         *     SECOND publishes anything SD_SuspendReasonText() can see, which
+         *     is exactly why the first was invisible to #953.
+         *   sd_card_manager.c's OPEN_FILE bucket refusal (:2164-2170) -- sets
+         *     startupDirFull AND clears `mode`, so on the #690 path this latch
+         *     and that recorded verdict are BOTH true. Arm 1 of the cascade
+         *     below is what keeps the verdict.
+         *   sd_card_manager.c's two MOUNT_DISK failures (:1483 mount failed,
+         *     :1510 unsupported filesystem) and the CHECK_DISK_FULL free-space
+         *     floor (:1866) -- WRITE-mode paths that clear `mode` after logging
+         *     their own precise cause.
+         *   SCPI_StorageSDEnableSet (this file, :506) -- `SD:ENAble 1` from the
+         *     other transport clears `mode` with no busy check, by design: it
+         *     is the #589 manual escape hatch.
+         *   The remaining ELEVEN of sd_card_manager.c's sixteen direct
+         *     `gpSDCardSettings->mode = MODE_NONE` stores are terminal steps of
+         *     a READ / LIST / DELETE / FORMAT / GET_SPACE / CRC operation and
+         *     are reachable only when `mode` already IS that operation, i.e.
+         *     only once this arm is already gone. (Sixteen re-counted against
+         *     the current file rather than taken from that file's own #871
+         *     comment.)
+         *
+         * The other SCPI transport cannot reach its own `mode` store while this
+         * arm stands. Every other SD entry point here runs SD_ClaimOrRefuse ->
+         * operands -> `mode` LAST (the claim protocol in sd_card_manager.h),
+         * and sd_card_manager_TryClaim() fails while IsBusyLocked() is true,
+         * which `mode != MODE_NONE` alone makes true. SD:ENAble is the
+         * documented exception listed above.
+         *
+         * NO CRITICAL SECTION, deliberately. `mode` is a plain enum, and the
+         * size and alignment were MEASURED rather than assumed: compiled by
+         * xc32-gcc v4.60 for 32MZ2048EFM144 at -O3, sizeof is 4 and its offset
+         * inside a `{bool enable; <the enum> mode; ...}` struct is 4 (this
+         * project passes no -fshort-enums). An aligned 32-bit load is atomic on
+         * PIC32MZ. The project's rule reserves a critical section for a
+         * read-modify-write or a multi-word object; this is one aligned load
+         * compared against one constant. There is nothing to make
+         * CONSISTENT either: it is a single variable, and `armTornDown` is a
+         * stack local of this task that no other context can see. Nor can the
+         * load be hoisted out of the loop -- each iteration calls three
+         * functions in other translation units and this project builds without
+         * -flto, so the compiler must assume any of them may write through a
+         * pointer that escaped via BoardRunTimeConfig_Get(). The
+         * sd_card_manager_IsWriteReady() call in the loop condition already
+         * reads this same field under exactly that assumption.
+         *
+         * IT LATCHES BUT DOES NOT `break`, unlike the #690 early-exit above it,
+         * and the difference is load-bearing. Breaking would end the wait at
+         * the instant the teardown becomes visible -- which is also the instant
+         * at which whatever caused it is still visible -- so the cascade would
+         * never reach the case #988 exists for: a suspension that starts AND
+         * ENDS inside the wait, leaving a dead arm and no owner left to name.
+         * Waiting out the rest of the poll costs this request nothing it could
+         * have had (nothing restores MODE_WRITE for it) and is what the code
+         * did before #988 anyway.
+         *
+         * RESIDUAL, pre-existing and unchanged -- stated so it is not mistaken
+         * for something this latch introduced. The loop's exit condition is
+         * still sd_card_manager_IsWriteReady(), which asks whether SOME write
+         * is ready, not whether THIS one is. If the arm is torn down and a
+         * different caller then arms a WRITE whose file opens inside the
+         * remaining wait, the loop exits "ready" and the benchmark writes into
+         * that session's file. That is the #728 hazard from the other
+         * direction, it belongs to #739's family (closed won't-fix), and the
+         * condition here is byte-identical before and after #988 -- the latch
+         * neither opens nor widens it. */
+        bool armTornDown = false;
         while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
             if (sd_card_manager_StartupDirFull()) {   /* #690: early-exit */
                 break;
+            }
+            if (pSDCardRuntimeConfig->mode != SD_CARD_MANAGER_MODE_WRITE) {
+                armTornDown = true;                   /* #988: latch, keep waiting */
             }
             vTaskDelay(pdMS_TO_TICKS(10));
             readyWait++;
         }
         if (!sd_card_manager_IsWriteReady()) {
-            /* #953: three arms, and the ORDER is the substance of this fix.
+            /* #953/#988: FOUR arms, and the ORDER is still the substance.
              *
-             * Reaching here means the file never opened. Three different
-             * things cause that and each wants a different next action from
-             * the operator, so the cascade is ordered by how much each arm
-             * actually KNOWS -- recorded verdict first, live condition second,
+             * Reaching here means the file never opened. Four different things
+             * cause that and each wants a different next action from the
+             * operator, so the cascade is ordered by what each arm can TELL
+             * THEM: a named request-specific cause first, a named ambient
+             * cause second, an unnamed request-specific fact third, an
              * inference last.
              *
              * 1. StartupDirFull is a RECORDED VERDICT, and it is necessarily
              *    THIS request's. sd_card_manager_ClearStartupDirFull() ran
              *    synchronously a few lines above the mode=WRITE write, and the
              *    only writer is the SD task's own OPEN_FILE refusal
-             *    (sd_card_manager.c:2070) -- which cannot run while that task
+             *    (sd_card_manager.c:2164 -- this citation read :2070 until
+             *    #988 re-checked it against the current file) -- which cannot
+             *    run while that task
              *    is suspended, and which no other SD command can reach in this
              *    window because `mode` is WRITE and keeps IsBusy() true. So a
              *    `true` here PROVES the SD task ran, attempted the open, and
@@ -1614,8 +1696,20 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
              *    for a card that will refuse the open identically once
              *    streaming stops. That is the same mis-diagnosis this issue is
              *    about, pointed the other way, and it would have silently
-             *    narrowed #690. Ordered as below, #953 changes exactly one
-             *    quadrant of (suspended x dirFull): the one it was filed for.
+             *    narrowed #690. Ordered as below, each fix moves exactly one
+             *    cell of its own input space and no more: #953 one quadrant of
+             *    (suspended x dirFull), #988 one cell of (suspended x dirFull
+             *    x tornDown) -- each the one it was filed for.
+             *
+             *    #988 MAKES THIS ARM'S PRIMACY LOAD-BEARING TWICE OVER. That
+             *    same OPEN_FILE refusal clears `mode` as part of itself
+             *    (sd_card_manager.c:2164-2170 raises startupDirFull and then
+             *    stores MODE_NONE), so arm 3's latch is ALSO set on every #690
+             *    path. Re-reading the flag HERE rather than inferring anything
+             *    from the loop's exit is what keeps the refusal reported as
+             *    the cause and the teardown as merely how the SD task carried
+             *    it out -- whichever of the two the poll happened to see
+             *    first.
              *
              * 2. Otherwise, a live suspend reason -- THIS is #953. The
              *    `!benchArmed` branch above already reports a suspend that was
@@ -1627,9 +1721,53 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
              *    end at its full 5 s -- blaming the card for a task that
              *    stopped running.
              *
-             * 3. Only with neither of the above is the card diagnosis honest:
-             *    the SD task was running, recorded no refusal, and the open
-             *    still never completed.
+             *    #988 DELIBERATELY LEFT THIS ABOVE ARM 3, even though arm 3
+             *    knows the stronger FACT. Arm 3 proves the arm is dead; this
+             *    one only observes who owns SPI4 now. But the arms are ranked
+             *    by what the operator can DO with the message, and this is the
+             *    only arm that can name an owner AND the command that clears
+             *    it ("SYST:STR:STOP first", "reseat the card, then
+             *    SYST:STOR:SD:ENAble 1"). Where both fire they almost always
+             *    describe one event: the WiFi / FW-update / quarantine
+             *    teardown kills the arm and publishes the suspension through
+             *    the SAME app_SDCard_GracefulShutdown() call. So putting arm 3
+             *    first would silence this one in precisely the case #953
+             *    shipped for -- that path stores MODE_NONE on its way into
+             *    APP_SD_STATE_SUSPENDED, so the latch is ALWAYS set there --
+             *    and would have reverted #953 while claiming to extend it.
+             *    The residual this arm carries (naming an owner that did not
+             *    cause the teardown) is the shipped #953 behaviour, unchanged
+             *    by #988, and its recommended action stays correct either way.
+             *
+             * 3. Otherwise, THIS request's arm was torn down and nothing names
+             *    a cause -- #988. The latch above is set only by a transition
+             *    away from the MODE_WRITE this callback itself published, so
+             *    unlike arm 2 it cannot be someone else's weather; what it
+             *    cannot do is say who. Its domain is what is left after arm 2:
+             *    the power-state teardown, which publishes no suspension at
+             *    all (app_SDCardTask goes to APP_SD_STATE_WAIT_POWER_UP, and
+             *    the flag it publishes is `state == SUSPENDED ||
+             *    app_SDCard_SpiOwnedByWifi()`, false in both terms) -- that is
+             *    the gap #988 was filed for; a teardown by SD:ENAble from the
+             *    other transport; a mount or filesystem failure; and the
+             *    transient case where the owner has already gone again.
+             *
+             *    The message claims only the fact, and prints the manager's
+             *    state/mode as breadcrumbs -- the #782 pattern, and what
+             *    separates "torn down to NONE" from "another command has it
+             *    now". Those two are a third, later sample, descriptive only:
+             *    they do not steer the branch, and `mode` can even read WRITE
+             *    again if a different caller re-armed meanwhile, which is why
+             *    the wording says SD is NOW in that state rather than that it
+             *    was.
+             *
+             * 4. Only with none of the above is the card diagnosis honest: the
+             *    SD task was running, recorded no refusal, nothing owned the
+             *    bus, and this request's arm was still standing -- and the
+             *    open still never completed. A genuinely SPI-incompatible card
+             *    lands here and nowhere else: its WRITE open failure goes to
+             *    PROCESS_STATE_ERROR WITHOUT clearing `mode`
+             *    (sd_card_manager.c:2358-2365), so arm 3 cannot swallow it.
              *
              * Sampled ONCE, before the cascade, rather than called again
              * inside the arm that logs it: a second call could observe a
@@ -1646,6 +1784,17 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
                       sd_card_manager_WriteRefuseText());
             } else if (why != NULL) {
                 LOG_E("SD:BENCH - could not complete the arm: %s\r\n", why);
+            } else if (armTornDown) {
+                /* #988/#986: 109 bytes at worst against Logger's usable 125
+                 * (LOG_MESSAGE_SIZE 128, clamped at LOG_MESSAGE_SIZE - 3 in
+                 * Logger.c) -- 93 of literal, plus the longest state name
+                 * ("CURDRIVE", 8) and the longest mode name ("GETSPACE", 8).
+                 * Measured over every string those two switches can return,
+                 * not eyeballed; 16 bytes of margin. */
+                LOG_E("SD:BENCH - the write arm was torn down before the file "
+                      "opened (SD now state=%s mode=%s) - retry\r\n",
+                      sd_card_manager_GetStateName(),
+                      sd_card_manager_GetModeName());
             } else {
                 LOG_E("SD:BENCH - File not ready after timeout\r\n");
                 LOG_E("SD:BENCH - if reads/LIST work but writes hang, the card is "
