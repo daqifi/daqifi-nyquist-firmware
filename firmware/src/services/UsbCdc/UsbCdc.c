@@ -1205,12 +1205,16 @@ static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len) {
      * function entirely (sd_card_manager_DataReadyCB(), app_freertos.c,
      * writes straight into UsbCdc_WriteToBuffer()); SCPI_StorageSDListDir()
      * (SCPIStorageSD.c) calls SCPI_FlushPendingDelimiter() itself instead. */
-    SCPI_FlushPendingDelimiter(context, UsbCdc_ScpiWrite, len);
+    size_t delimiterWritten = SCPI_FlushPendingDelimiter(context, UsbCdc_ScpiWrite, len);
     size_t written = SCPI_WriteWithRetry(UsbCdc_ScpiWrite, data, len);
     /* #1003/#1010 round 1: record whether the wire now ends in a line
      * terminator, for SCPI_ErrorEmit() (error.c) to read before deciding
-     * whether an error needs its own closing line first. */
-    SCPI_TrackLineOpen(context, data, len);
+     * whether an error needs its own closing line first. #1115 round 3:
+     * also tell it whether the flush above actually wrote a ';' this call,
+     * so a flush-only zero-length write (delimiterWritten > 0, len == 0)
+     * is correctly tracked as leaving the line open instead of being read
+     * as a total no-op. */
+    SCPI_TrackLineOpen(context, data, len, delimiterWritten > 0);
     return written;
 }
 

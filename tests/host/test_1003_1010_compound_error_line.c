@@ -73,6 +73,25 @@
  * ever tracked for it. See the #1115 section below (TEST:BYPASS? and its
  * tests) for the fix and the four findings it closes.
  *
+ * #1115 ROUND 3 (audit round 2, arbiter verdict comment 5703331367): three
+ * more defects, all in round 1/2's OWN code -- the round-3 signal that a
+ * per-callback patch was the wrong shape. Fixed instead at the two places
+ * every unit and every transport write actually crosses:
+ *   - processCommand() (parser.c) now flushes a still-armed
+ *     pending_delimiter through writeData() itself, right before the
+ *     top-of-function assignment would otherwise silently overwrite it --
+ *     covers ANY callback that returns SCPI_RES_OK having made zero writes
+ *     at all (finding 0/2), not just the ones round 2 special-cased through
+ *     writeData()'s len==0 branch.
+ *   - The line_open reconciliation the round-2 Qodo finding added is now
+ *     gated on is_query -- it exists to place the ';' between QUERY result
+ *     fields, and a non-query unit's own direct write must not be misread
+ *     as one (finding 4).
+ *   - TestWrite()'s mirror of SCPI_TrackLineOpen() now tracks a flush-only
+ *     zero-length write as opening the line, matching the real fix
+ *     (finding 1/3) -- see its own updated comment.
+ * See the new tests after the #1115 round-1 section below.
+ *
  * Host-testability: same situation as #999's own test (see that file's
  * header) -- SCPIInterface.c, UsbCdc.c and wifi_tcp_server.c are not
  * includable on a host (FreeRTOS + the full USB/WiFi driver graph), but
@@ -127,8 +146,10 @@ static size_t TestWrite(scpi_t * context, const char * data, size_t len) {
      * every other unit gets. A failed unit that never writes anything never
      * reaches this at all -- SCPI_ErrorEmit() (error.c) discards the flag
      * first. */
+    scpi_bool_t delimiterFlushed = FALSE;
     if (context->pending_delimiter) {
         context->pending_delimiter = FALSE;
+        delimiterFlushed = TRUE;
         if (cap != NULL && cap->len < CAPTURE_SIZE) {
             cap->data[cap->len++] = ';';
         }
@@ -141,10 +162,18 @@ static size_t TestWrite(scpi_t * context, const char * data, size_t len) {
         memcpy(cap->data + cap->len, data, n);
         cap->len += n;
     }
-    /* Mirrors SCPI_TrackLineOpen() (SCPIInterface.c) exactly, against the
-     * SAME data/len this call received -- not whatever SCPI_FlushPending
-     * Delimiter() wrote above (the ';' never ends in a terminator, and this
-     * payload write always determines the final state). */
+    /* Mirrors SCPI_TrackLineOpen() (SCPIInterface.c) exactly, #1115 round 3
+     * fix (finding 1/3, "A flushed empty-result separator is not tracked
+     * as open output"): against the SAME data/len this call received --
+     * UNLESS this call flushed a bare ';' above with NOTHING following it
+     * (len == 0), in which case that ';' IS the last byte now on the wire,
+     * and it is not a line terminator, so the line must be treated as open.
+     * The pre-#1115-round-3 version of this mirror (and of the real
+     * SCPI_TrackLineOpen()) left line_open untouched whenever len == 0,
+     * on the reasoning that "the payload write that follows always
+     * determines the final state" -- true only when a payload write
+     * actually follows in the SAME call, which is exactly what does not
+     * happen for a flush-only zero-length write. */
     if (len > 0) {
         size_t termLen = strlen(SCPI_LINE_ENDING);
         if (len >= termLen && memcmp(data + len - termLen, SCPI_LINE_ENDING, termLen) == 0) {
@@ -152,6 +181,8 @@ static size_t TestWrite(scpi_t * context, const char * data, size_t len) {
         } else {
             context->line_open = TRUE;
         }
+    } else if (delimiterFlushed) {
+        context->line_open = TRUE;
     }
     return len;
 }
@@ -255,6 +286,19 @@ static scpi_interface_t gTestInterface = {
  *                 this is a faithful stand-in for the ACTUAL fix's shape,
  *                 the same way TEST:DIRECT?/TEST:TERMFAIL? stand in for
  *                 their production callbacks.
+ * TEST:NOWRITE? -- #1115 round 3, finding 0/2: mirrors SCPI_SysLogGet() ->
+ *                 LogMessageDump() (Util/Logger.c) on an EMPTY log buffer
+ *                 exactly -- a query callback that returns SCPI_RES_OK
+ *                 having made LITERALLY ZERO calls to interface->write(),
+ *                 not even a zero-length one. A DIFFERENT shape from
+ *                 TEST:EMPTY? above, which calls SCPI_ResultCharacters(...,
+ *                 0) and so DOES reach writeData()'s zero-length branch --
+ *                 the round-2 #1115 fix covers that shape but not this one.
+ * TEST:LOGCLEAR -- #1115 round 3, finding 4: mirrors SCPI_SysLogClear()
+ *                 (SCPIInterface.c) exactly -- a NON-query command that
+ *                 writes a real, non-CRLF-terminated acknowledgement
+ *                 straight through interface->write(), then reports
+ *                 success.
  * ------------------------------------------------------------------------- */
 static scpi_result_t TestOkQuery(scpi_t * context) {
     SCPI_ResultCharacters(context, "OK", 2);
@@ -331,6 +375,27 @@ static scpi_result_t TestBypassQuery(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t TestNoWriteQuery(scpi_t * context) {
+    (void) context;
+    /* Mirrors LogMessageDump() (Util/Logger.c) on an empty log buffer:
+     * interface->write() is called ONLY inside `if (hasMessage)` in its
+     * pop-and-print loop, so an empty buffer makes ZERO calls -- not even
+     * the zero-length one TEST:EMPTY? above makes via
+     * SCPI_ResultCharacters(..., 0). A callback with truly nothing to send
+     * never reaches writeData() (parser.c) at all. */
+    return SCPI_RES_OK;
+}
+
+#define TEST_LOGCLEAR_MSG "Log cleared\n"
+
+static scpi_result_t TestLogClearSet(scpi_t * context) {
+    /* Mirrors SCPI_SysLogClear() (SCPIInterface.c) exactly: a non-query
+     * command writing a real acknowledgement -- no SCPI_LINE_ENDING tail --
+     * straight through interface->write(), then reporting success. */
+    context->interface->write(context, TEST_LOGCLEAR_MSG, strlen(TEST_LOGCLEAR_MSG));
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t TestBypassTimeoutQuery(scpi_t * context) {
     /* Mirrors SCPIStorageSD.c's SCPI_StorageSDListDir() timeout branch, AS
      * FIXED by this PR's round-2 Qodo finding ("Early SD timeouts add a
@@ -357,6 +422,8 @@ static const scpi_command_t gTestCommands[] = {
     {.pattern = "TEST:BYPASS?", .callback = TestBypassQuery},
     {.pattern = "TEST:BYPASSTIMEOUT?", .callback = TestBypassTimeoutQuery},
     {.pattern = "TEST:TERMFAIL?", .callback = TestTerminatedFailQuery},
+    {.pattern = "TEST:NOWRITE?", .callback = TestNoWriteQuery},
+    {.pattern = "TEST:LOGCLEAR", .callback = TestLogClearSet},
     SCPI_CMD_LIST_END,
 };
 
@@ -707,6 +774,123 @@ TEST(payload_after_partial_error_still_gets_final_terminator) {
     ASSERT_CAPTURE_EQ("OK\r\n**ERROR: -104, \"Data type error\"\r\nPAYLOAD\r\n");
 }
 
+/* ==========================================================================
+ * #1115 round-2 audit findings (PR #1115, arbiter verdict comment 5703331367,
+ * /mnt/c/daqifi/wt/nq-c/.claude/audit-1115-r2.json): all three surviving
+ * defects live in code round 1/2 themselves wrote or failed to cover. Fixed
+ * at the ONE place every unit crosses (processCommand()'s top-of-function
+ * arm, and its line_open reconciliation) plus the ONE funnel both
+ * transports share (SCPI_TrackLineOpen()'s mirror, TestWrite() above) --
+ * not three more per-callback special cases. Run against the pre-round-3
+ * head (a6fb2436a) to confirm each of the three new cases below FAILS there
+ * before the fix (reported in this fire's own report, same convention the
+ * sections above document in this file's own header).
+ * ========================================================================== */
+
+/* ---- finding 0/2: a query that makes literally ZERO write calls (not even
+ * a zero-length one) still loses its own compound-response field. Different
+ * shape from TEST:EMPTY? above (which DOES reach writeData()'s zero-length
+ * branch, the round-2 fix's actual coverage) -- TEST:NOWRITE? mirrors
+ * LogMessageDump() on an empty log buffer, which never calls
+ * interface->write() at all. ------------------------------------------------ */
+
+TEST(query_with_no_writes_at_all_keeps_its_own_separator_slot) {
+    NEW_TEST_CONTEXT(ctx);
+
+    FeedLine(&ctx, "*OK?;TEST:NOWRITE?;*OK?");
+
+    /* Pre-round-3: TEST:NOWRITE? never reaches writeData() (parser.c) at
+     * all, so its own armed pending_delimiter sits unconsumed until the
+     * THIRD unit's own top-of-processCommand assignment silently overwrites
+     * -- not merges with -- it, and only ONE ';' ever reaches the wire:
+     * "OK;OK\r\n" (the empty middle field's own separator dropped) instead
+     * of "OK;;OK\r\n". Exactly SYST:LOG?'s real bug: *OPC?;SYST:LOG?;*OPC?
+     * on an empty log returns "1;1\r\n" instead of "1;;1\r\n". */
+    ASSERT_CAPTURE_EQ("OK;;OK\r\n");
+}
+
+TEST(query_with_no_writes_at_all_as_last_unit_still_gets_leading_separator) {
+    NEW_TEST_CONTEXT(ctx);
+
+    FeedLine(&ctx, "*OK?;TEST:NOWRITE?");
+
+    /* No third unit to expose the dropped field via a missing ';' -- the
+     * deferred end-of-message writeNewLine() (parser.c) still writes real
+     * bytes (SCPI_LINE_ENDING) through the same funnel, which flushes the
+     * stale pending_delimiter on its own; pinned so the top-of-function
+     * half of the round-3 fix can't silently regress this shape. */
+    ASSERT_CAPTURE_EQ("OK;\r\n");
+}
+
+/* ---- finding 1/3: a bare ';' flushed with no payload following it is not
+ * tracked as open output, so a subsequent error skips its own leading CRLF
+ * and glues onto the separator. General form of the #1003/#1010 invariant,
+ * reachable through TEST:EMPTY? (SYSTem:COMMunicate:UART:READ? 0's real
+ * shape) -- NOT the narrower, already-declined SD:LISt? arm/timeout case
+ * (TEST:BYPASSTIMEOUT? above), which this does not reopen. --------------- */
+
+TEST(separator_only_flush_is_tracked_as_open_line) {
+    NEW_TEST_CONTEXT(ctx);
+
+    /* Leading ':' on units 2/3 forces an ABSOLUTE header (utils.c's
+     * composeCompoundCommand(): "Common command or command root -- nothing
+     * to do") -- without it, "TEST:EMPTY?;TEST:EMPTY?" composes the second
+     * unit as RELATIVE under the first's own path ("TEST:TEST:EMPTY?", an
+     * undefined header), since neither unit here is a leading-'*' common
+     * command. TEST:EMPTY? leads (not *OK?) so line_open is genuinely FALSE
+     * going into the flush-only write below -- *OK? would leave line_open
+     * TRUE from its own "OK", which would make the buggy and fixed
+     * behaviors produce the SAME bytes and this test would not discriminate. */
+    FeedLine(&ctx, "TEST:EMPTY?;:TEST:EMPTY?;:NOSUCH:HEADER?");
+
+    /* Unit 1 (first unit, pending_delimiter FALSE): SCPI_ResultCharacters(
+     * ctx, "", 0) never reaches interface->write() at all (writeData()'s
+     * len==0 branch requires pending_delimiter TRUE) -- zero bytes, wire
+     * state unchanged. Unit 2: pending_delimiter TRUE (armed behind unit
+     * 1's success) -> the flush-only write ';' -- with the round-3 fix,
+     * TRACKED as opening the line; without it, line_open is left FALSE
+     * (the pre-fix "len == 0 is always a no-op" rule). Unit 3: undefined
+     * header -> SCPI_ErrorEmit() (error.c) reads line_open to decide
+     * whether to prepend a closing CRLF before the error text.
+     * Pre-fix: ";**ERROR: -113, \"Undefined header\"\r\n" (glued).
+     * Fixed:   ";\r\n**ERROR: -113, \"Undefined header\"\r\n". */
+    ASSERT_CAPTURE_EQ(";\r\n**ERROR: -113, \"Undefined header\"\r\n");
+}
+
+/* ---- finding 4: the round-2 first_output/line_open reconciliation
+ * (processCommand(), parser.c) was not gated on is_query, so a successful
+ * NON-query unit that writes real, non-CRLF-terminated payload direct to
+ * interface->write() wrongly armed the NEXT query's separator. ----------- */
+
+TEST(nonquery_direct_write_does_not_arm_next_querys_separator) {
+    NEW_TEST_CONTEXT(ctx);
+
+    FeedLine(&ctx, "TEST:LOGCLEAR;*OK?");
+
+    /* Pre-round-3: line_open TRUE after TEST:LOGCLEAR's own unterminated
+     * write (no CRLF tail) made the UNGATED reconciliation force
+     * first_output = FALSE even though is_query is FALSE for this unit --
+     * so *OK?'s own arm read "a query result is open" and added a spurious
+     * separator: "Log cleared\n;OK\r\n" instead of "Log cleared\nOK\r\n".
+     * Exactly SYST:LOG:CLEar;*OPC?'s real bug ("Log cleared\n;1\r\n"
+     * instead of "Log cleared\n1\r\n"). */
+    ASSERT_CAPTURE_EQ(TEST_LOGCLEAR_MSG "OK\r\n");
+}
+
+TEST(nonquery_direct_write_alone_gets_no_spurious_blank_line) {
+    NEW_TEST_CONTEXT(ctx);
+
+    FeedLine(&ctx, "TEST:LOGCLEAR");
+
+    /* Second symptom of the same finding: pre-round-3, the ungated
+     * reconciliation wrongly cleared first_output for this single non-query
+     * unit, so the deferred end-of-message writeNewLine() (parser.c) saw
+     * !first_output == TRUE and appended an extra, spurious blank
+     * "\r\n" after the already-\n-terminated message: "Log cleared\n\r\n"
+     * instead of just "Log cleared\n". */
+    ASSERT_CAPTURE_EQ(TEST_LOGCLEAR_MSG);
+}
+
 int main(void) {
     RUN(query_fails_after_success_terminates_cleanly);
     RUN(command_fails_after_success_gets_a_separator);
@@ -727,5 +911,10 @@ int main(void) {
     RUN(empty_successful_query_as_last_unit_still_gets_leading_separator);
     RUN(payload_after_partial_error_keeps_next_units_separator);
     RUN(payload_after_partial_error_still_gets_final_terminator);
+    RUN(query_with_no_writes_at_all_keeps_its_own_separator_slot);
+    RUN(query_with_no_writes_at_all_as_last_unit_still_gets_leading_separator);
+    RUN(separator_only_flush_is_tracked_as_open_line);
+    RUN(nonquery_direct_write_does_not_arm_next_querys_separator);
+    RUN(nonquery_direct_write_alone_gets_no_spurious_blank_line);
     return test_summary();
 }

@@ -9132,11 +9132,28 @@ size_t SCPI_FlushPendingDelimiter(scpi_t * context, ScpiTransportWriteFn writeFn
     return 0;
 }
 
-void SCPI_TrackLineOpen(scpi_t * context, const char * data, size_t len) {
+void SCPI_TrackLineOpen(scpi_t * context, const char * data, size_t len,
+                         scpi_bool_t delimiterFlushed) {
     size_t termLen = strlen(SCPI_LINE_ENDING);
     if (len == 0) {
-        /* Nothing written; the wire's terminator state is unchanged either
-         * way. */
+        /* #1115 round 3 (finding 1/3, "A flushed empty-result separator is
+         * not tracked as open output"): len == 0 no longer means "nothing
+         * changed on the wire" -- SCPI_FlushPendingDelimiter(), called by
+         * the caller just before this, may have just written a bare ';'
+         * with no payload write of its own to follow it (a query result
+         * that resolves to zero bytes, e.g. SYSTem:COMMunicate:UART:READ?
+         * with a 0-byte count). That ';' is not a line terminator, so it
+         * genuinely leaves the wire open; the OLD unconditional early
+         * return here left line_open at its previous, now-stale value
+         * instead, so a following error's SCPI_ErrorEmit() (error.c) read
+         * line_open == FALSE and skipped its own leading CRLF, gluing the
+         * error text directly onto the separator. When no delimiter was
+         * flushed either, len == 0 really is a complete no-op and
+         * line_open is correctly left untouched -- e.g. SCPIStorageSD.c's
+         * SD:LISt? bypass entry-flush on a unit with no predecessor. */
+        if (delimiterFlushed) {
+            context->line_open = TRUE;
+        }
         return;
     }
     if (len >= termLen && memcmp(data + len - termLen, SCPI_LINE_ENDING, termLen) == 0) {

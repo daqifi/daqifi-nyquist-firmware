@@ -235,19 +235,31 @@ extern "C" {
      * add blank lines"): track whether the wire currently ends in
      * SCPI_LINE_ENDING, for SCPI_ErrorEmit() (error.c) to read as
      * context->line_open. Both transports' interface->write()
-     * implementations call this AFTER their real payload write (never for
-     * the ';' SCPI_FlushPendingDelimiter() may have just written -- that
-     * never ends in a terminator, and the payload write that follows always
-     * determines the final state). Checked against the caller's own `data`/
+     * implementations call this AFTER their real payload write, passing
+     * whether SCPI_FlushPendingDelimiter() (just before it) actually wrote
+     * a separator this same call. Checked against the caller's own `data`/
      * `len`, not SCPI_WriteWithRetry()'s return count: a persistent short
      * write is an existing, untracked failure mode elsewhere in this file
      * (SCPI_USB_Error/SCPI_TCP_Error tolerate it the same way) and is not
      * this function's job to newly detect.
+     * #1115 round 3 (finding 1/3, "A flushed empty-result separator is not
+     * tracked as open output"): `len == 0` is a no-op ONLY when
+     * `delimiterFlushed` is also false. A flushed ';' with no payload
+     * write following it in the SAME call (an empty-but-successful query
+     * result, e.g. SYSTem:COMMunicate:UART:READ? with a 0-byte count) is
+     * itself a non-terminator byte now on the wire and must open the line
+     * -- see the implementation's own comment. The previous unconditional
+     * "len == 0 changes nothing" rule left line_open stale in exactly that
+     * case, so a following error skipped its own leading CRLF and glued
+     * onto the separator.
      * @param context SCPI context (its line_open field is written)
      * @param data The bytes just written (same pointer passed to write())
-     * @param len Length of data; 0 is a no-op (nothing changed on the wire)
+     * @param len Length of data; 0 with delimiterFlushed false is a no-op
+     * @param delimiterFlushed Whether SCPI_FlushPendingDelimiter() wrote a
+     *                         ';' ahead of this same write
      */
-    void SCPI_TrackLineOpen(scpi_t * context, const char * data, size_t len);
+    void SCPI_TrackLineOpen(scpi_t * context, const char * data, size_t len,
+                             scpi_bool_t delimiterFlushed);
 
     /**
      * Printf-style helper for writing formatted text to a SCPI response.

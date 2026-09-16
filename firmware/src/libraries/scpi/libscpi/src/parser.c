@@ -159,6 +159,38 @@ static scpi_bool_t processCommand(scpi_t * context) {
     scpi_bool_t result = TRUE;
     scpi_bool_t is_query = context->param_list.cmd_raw.data[context->param_list.cmd_raw.length - 1] == '?';
 
+    /* #1115 round 3 (finding 0/2, "Empty SYST:LOG? still loses its compound
+     * response slot"): flush a still-armed pending_delimiter left over from
+     * the PREVIOUS unit before the assignment below overwrites -- not
+     * merges with -- it. Round 2's fix routed writeData()'s len == 0 CALL
+     * through the funnel, but that only helps a unit that calls writeData()
+     * at all (SCPI_ResultCharacters(ctx, "", 0) and friends). A unit whose
+     * callback returns SCPI_RES_OK having made NO write call whatsoever --
+     * LogMessageDump() (Util/Logger.c) on an empty log buffer calls
+     * interface->write() only inside `if (hasMessage)`, so an empty buffer
+     * makes zero calls, not even a zero-length one -- never reaches
+     * writeData() at all, so its own armed separator sat unconsumed until
+     * THIS line silently clobbered it with the new unit's freshly computed
+     * value, dropping the empty unit's response field entirely
+     * ("1;1" instead of "1;;1" for *OPC?;SYST:LOG?;*OPC?).
+     *
+     * A unit whose callback FAILED instead can never leave a stale TRUE
+     * here: SCPI_ErrorPush() (error.c's SCPI_ErrorPushEx) calls
+     * SCPI_ErrorEmit() synchronously, before that unit's processCommand()
+     * call returns, and SCPI_ErrorEmit() unconditionally clears
+     * pending_delimiter for itself before either of its own writes. So a
+     * TRUE seen here can only be a prior unit's genuine success-with-no-
+     * write, never a discarded error's flag.
+     *
+     * Routed through writeData() (defined above in this file) rather than
+     * a direct interface->write() call, so it is the exact same funnel
+     * every other write already uses -- including the len == 0 shape that
+     * lets a callback with truly nothing to send still get its one chance
+     * to flush and consume the flag. */
+    if (context->pending_delimiter) {
+        writeData(context, NULL, 0);
+    }
+
     /* #1003/#1010: ARM the compound separator rather than writing it here.
      * Writing it unconditionally, ahead of a callback that might fail,
      * is exactly how an error line used to end up preceded by a stray ';'
@@ -220,8 +252,26 @@ static scpi_bool_t processCommand(scpi_t * context) {
          * error text, or a self-terminating direct writer like
          * SCPIStorageSD.c's SCPI_CheckSDCardPresent() -- already closed the
          * line), first_output is left exactly as the callback/error path
-         * set it. */
-        if (context->line_open) {
+         * set it.
+         *
+         * #1115 round 3 (finding 4, "Non-query acknowledgements now arm
+         * query separators"): gated on is_query. Every scenario motivating
+         * this reconciliation -- above, and in SCPI_ErrorEmit()'s own
+         * comment (error.c) -- is a QUERY unit that kept writing (or
+         * terminated its own line) around an error; pending_delimiter and
+         * first_output's read of it (`!first_output && is_query` at the top
+         * of this function) exist to place the ';' separator BETWEEN QUERY
+         * RESULT FIELDS, which only a query unit ever contributes. Without
+         * this gate, a non-query unit that writes real, non-terminated
+         * text straight through interface->write() -- SCPI_SysLogClear()
+         * (SCPIInterface.c) writes "Log cleared\n", no CRLF tail -- left
+         * line_open TRUE and this line forced first_output = FALSE even
+         * though is_query is FALSE here, so the NEXT unit's arm (top of
+         * this function, next call) wrongly read "a query result is open"
+         * and armed a separator that does not belong to any query field:
+         * "Log cleared\n;1\r\n" instead of "Log cleared\n1\r\n" for
+         * SYST:LOG:CLEar;*OPC?. */
+        if (is_query && context->line_open) {
             context->first_output = FALSE;
         }
     }
