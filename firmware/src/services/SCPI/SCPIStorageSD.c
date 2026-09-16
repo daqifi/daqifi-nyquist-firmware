@@ -1040,13 +1040,27 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
         LOG_E("SD:LIST? - Operation timeout\r\n");
         pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
         sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
-        /* #1115: the pump above may already have drained partial, unterminated
-         * listing bytes through the same bypass before the timeout fired --
-         * line_open cannot be trusted to still be accurate. Close it out by
-         * hand so SCPI_ErrorPush()'s SCPI_ErrorEmit() (error.c) makes the
-         * same "does the wire need a closing line first" call it would have
-         * made had those bytes gone through the real funnel. */
-        context->line_open = TRUE;
+        /* #1115 round 2 (Qodo, "Early SD timeouts add a blank line"): do NOT
+         * force line_open here. A round-1 cut of this fix did, reasoning
+         * that the pump above may have drained partial, unterminated
+         * listing bytes before the timeout fired -- true, but ALSO true
+         * when the timeout fires before sd_card_manager_DataReadyCB() ever
+         * ran a single time (the SD task never picked the request up at
+         * all), in which case forcing line_open = TRUE fabricates "the wire
+         * is open" and makes SCPI_ErrorPush()'s SCPI_ErrorEmit() (error.c)
+         * prepend a spurious blank CRLF before the error -- the exact
+         * defect class #1003/#1010 exists to eliminate, now self-inflicted
+         * on a path this same round added. Nothing exposes a byte-delivered
+         * count to check instead (sd_card_manager.c has no such counter),
+         * so leave line_open exactly as it already is: nothing from THIS
+         * bypass write path ever touches it (that is finding 0's whole
+         * premise), so it still accurately reflects whatever the PRECEDING
+         * unit in this compound message left behind. The narrower residual
+         * this accepts -- a large listing that streams real bytes for a
+         * while and then stalls right at the 10 s boundary loses its own
+         * closing CRLF before the error text -- is the pre-#1115 behavior
+         * for this exact branch (line_open did not exist here before this
+         * PR) and is not one of this round's four confirmed findings. */
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;

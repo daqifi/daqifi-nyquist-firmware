@@ -331,6 +331,22 @@ static scpi_result_t TestBypassQuery(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+static scpi_result_t TestBypassTimeoutQuery(scpi_t * context) {
+    /* Mirrors SCPIStorageSD.c's SCPI_StorageSDListDir() timeout branch, AS
+     * FIXED by this PR's round-2 Qodo finding ("Early SD timeouts add a
+     * blank line"): the entry flush still runs (mirrors the real code
+     * unconditionally reaching it before arming), but NO bypass bytes are
+     * ever written -- mirroring a timeout that fires before
+     * sd_card_manager_DataReadyCB() ran even once -- and line_open is left
+     * completely untouched, unlike TestBypassQuery()'s success path above.
+     * A round-1 cut of the real fix forced line_open = TRUE here
+     * unconditionally, fabricating "the wire is open" and making the
+     * SCPI_ErrorPush() below prepend a spurious blank CRLF. */
+    context->interface->write(context, "", 0);
+    SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    return SCPI_RES_ERR;
+}
+
 static const scpi_command_t gTestCommands[] = {
     {.pattern = "*OK?", .callback = TestOkQuery},
     {.pattern = "TEST:FAIL?", .callback = TestFailQuery},
@@ -339,6 +355,7 @@ static const scpi_command_t gTestCommands[] = {
     {.pattern = "TEST:EMPTY?", .callback = TestEmptyQuery},
     {.pattern = "TEST:PARTIALERR?", .callback = TestPartialErrQuery},
     {.pattern = "TEST:BYPASS?", .callback = TestBypassQuery},
+    {.pattern = "TEST:BYPASSTIMEOUT?", .callback = TestBypassTimeoutQuery},
     {.pattern = "TEST:TERMFAIL?", .callback = TestTerminatedFailQuery},
     SCPI_CMD_LIST_END,
 };
@@ -583,6 +600,45 @@ TEST(bypass_writer_as_only_unit_is_unaffected) {
     ASSERT_CAPTURE_EQ(TEST_BYPASS_PAYLOAD "\r\n");
 }
 
+/* ---- round-2 Qodo finding ("Early SD timeouts add a blank line"): a
+ * timeout with ZERO bytes delivered must not fabricate an open line ------- */
+
+TEST(bypass_timeout_with_no_bytes_delivered_has_no_blank_line) {
+    NEW_TEST_CONTEXT(ctx);
+
+    FeedLine(&ctx, "TEST:BYPASSTIMEOUT?");
+
+    /* No predecessor, no bypass bytes ever written -- line_open stays at its
+     * untouched default (FALSE), so SCPI_ErrorEmit() (error.c) correctly
+     * skips the closing-CRLF branch. A round-1 cut that forced
+     * line_open = TRUE unconditionally in the real timeout branch would have
+     * produced a leading "\r\n" here. */
+    ASSERT_CAPTURE_EQ("**ERROR: -200, \"Execution error\"\r\n");
+}
+
+TEST(bypass_timeout_after_a_success_carries_the_disclosed_stray_separator) {
+    NEW_TEST_CONTEXT(ctx);
+
+    FeedLine(&ctx, "*OK?;TEST:BYPASSTIMEOUT?");
+
+    /* A predecessor DID leave an open line ("OK", unterminated), arming a
+     * pending_delimiter for this unit. The entry flush (which must run
+     * BEFORE arming the SD task, not after -- see SCPIStorageSD.c's own
+     * #1115 comment on why: on the TCP transport the SD task, priority 5,
+     * outranks WifiTask, priority 2, and really can preempt between any two
+     * statements once the SD task's mode is set, so there is no later safe
+     * point to defer to) has ALREADY consumed that ';' by the time the
+     * timeout is discovered and the error is pushed -- so it lands right
+     * before the closing CRLF instead of vanishing. This is the disclosed
+     * residual from finding 6 ("Arm failures leave a stray separator"),
+     * generalised: ANY failure reachable after the unconditional entry
+     * flush (not just SD_ArmOrRefuse() being refused) carries it. Declined
+     * with rationale on the PR rather than fixed -- see this fire's report.
+     * Pinned here so it is a known, asserted state rather than an
+     * unexamined one. */
+    ASSERT_CAPTURE_EQ("OK;\r\n**ERROR: -200, \"Execution error\"\r\n");
+}
+
 /* ---- findings 1 and 2: an empty successful query loses its own
  * compound-response field (same root cause, two different real callbacks --
  * SYSTem:COMMunicate:UART:READ? 0 and SYST:LOG? on an empty buffer; TEST:
@@ -665,6 +721,8 @@ int main(void) {
     RUN(error_between_two_parses_has_no_leading_blank_line);
     RUN(bypass_writer_gets_its_leading_separator_and_closes_the_line);
     RUN(bypass_writer_as_only_unit_is_unaffected);
+    RUN(bypass_timeout_with_no_bytes_delivered_has_no_blank_line);
+    RUN(bypass_timeout_after_a_success_carries_the_disclosed_stray_separator);
     RUN(empty_successful_query_keeps_its_own_separator_slot);
     RUN(empty_successful_query_as_last_unit_still_gets_leading_separator);
     RUN(payload_after_partial_error_keeps_next_units_separator);
