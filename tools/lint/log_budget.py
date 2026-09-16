@@ -360,44 +360,76 @@ def split_args(text):
     return args
 
 
-_CONTINUATION_RE = re.compile(r"\\\r?\n")
+def splice_continuations(src):
+    """Delete every backslash-newline continuation from `src`. Returns
+    (spliced, orig_pos), where orig_pos[i] is the index in `src` that
+    spliced[i] came from.
 
+    C deletes a line-ending backslash and the newline right after it in
+    translation phase 2 (C99 5.1.1.2) -- strictly BEFORE comments are
+    recognized (phase 3) or anything is tokenized. So this runs FIRST, on
+    raw source text, and mask_comments() / find_calls() / literal decoding
+    all work on its output rather than on `src` directly: whatever those
+    later stages see is what the compiler would actually tokenize.
 
-def splice_continuations(text):
-    """Return `text` with every backslash-newline continuation neutralized
-    for call matching -- same length, same newline positions, same line
-    numbers.
+    A FIRST VERSION OF THIS FUNCTION REPLACED THE BACKSLASH WITH A SINGLE
+    SPACE AND LEFT THE NEWLINE, reasoning that the call-site regex's `\\s*`
+    already crosses a real newline, so that was enough to "cross" the gap.
+    That is true only when the continuation falls BETWEEN two tokens. When
+    it falls INSIDE one -- splitting a macro name itself, e.g. `LOG\\`
+    <newline> `_E(...)` -- C really does delete both characters and glue the
+    two halves into ONE token, `LOG_E`. A whitespace separator keeps them as
+    TWO tokens forever, so the macro name is no longer contiguous text and
+    the call-site regex cannot match it: the call goes invisible again, in
+    exactly the direction this tool exists to prevent (Qodo /agentic_review,
+    PR #1110, 2026-09-16: "Split macro names evade checks" -- verified
+    empirically against 827284cc1, 0 findings for a 126-byte literal reached
+    only through a continuation inside the macro name).
 
-    C splices a line ending in a bare backslash onto the line that follows it
-    in translation phase 2, BEFORE tokenization (C99 5.1.1.2), so
-    `LOG_E \\` <newline> `("...");` is one call to the compiler whatever a
-    naive scanner sees. find_calls() matched the macro name to its opening
-    paren with `\\s*\\(`, which already crosses a REAL newline (`\\s` matches
-    one) but not the backslash in front of it -- a backslash is not
-    whitespace, so the match simply failed and the whole call was invisible
-    to this tool: an over-budget LOG_E split this way passed the gate clean
-    (verified empirically against ca3b4254f, 2026-09-16: 0 findings for a
-    126-byte literal reached only through a spliced call).
-
-    Only the backslash is replaced, with a single space; the newline itself
-    (and any \\r before it) is left exactly where it was, so this changes no
-    character's position and no newline count -- every line number
-    find_calls() reports from the result is exactly the line number in the
-    real file. Applied to a COPY used only to locate the macro name and its
-    opening paren; find_calls() still reads the call's actual content --
-    parens, quotes, the format string -- from the original `masked` text at
-    the same offsets, so nothing about literal decoding changes.
+    LINE NUMBERS STILL HAVE TO BE REAL. Splicing can delete an actual
+    newline (when it was part of a continuation), so a position in the
+    spliced text cannot be turned into a line number by counting newlines
+    IN the spliced text -- that undercounts every line after a splice.
+    orig_pos is the fix: translate a spliced-text position `p` back to a
+    real source line with `pos_to_line(src, orig_pos, p)`, never by counting
+    "\\n" in the spliced text itself.
     """
-    return _CONTINUATION_RE.sub(
-        lambda m: " " * (len(m.group(0)) - 1) + m.group(0)[-1], text)
+    out, orig_pos = [], []
+    i, n = 0, len(src)
+    while i < n:
+        if src[i] == "\\" and i + 1 < n:
+            if src[i + 1] == "\n":
+                i += 2
+                continue
+            if src[i + 1] == "\r" and i + 2 < n and src[i + 2] == "\n":
+                i += 3
+                continue
+        out.append(src[i])
+        orig_pos.append(i)
+        i += 1
+    return "".join(out), orig_pos
+
+
+def pos_to_line(src, orig_pos, pos):
+    """Translate a position in a spliced/masked text back to its 1-based
+    line number in the real, original `src` -- see splice_continuations().
+    """
+    if not orig_pos:
+        return 1
+    idx = orig_pos[pos] if pos < len(orig_pos) else orig_pos[-1]
+    return src.count("\n", 0, idx) + 1
 
 
 def find_calls(masked, macros):
-    """Yield (macro, line, arg_list, call_text) for each log-macro call."""
+    """Yield (macro, pos, arg_list, call_text) for each log-macro call.
+
+    `pos` is the macro name's start offset in `masked` (the already-spliced,
+    comment-masked text) -- this function has no access to the original
+    source, so translate `pos` to a real line with pos_to_line().
+    """
     names = "|".join(sorted(macros, key=len, reverse=True))
     call_re = re.compile(r"(?<![A-Za-z0-9_])(" + names + r")\s*\(")
-    spliced = splice_continuations(masked)
-    for m in call_re.finditer(spliced):
+    for m in call_re.finditer(masked):
         open_paren = m.end() - 1
         i, depth, n = open_paren, 0, len(masked)
         while i < n:
@@ -422,8 +454,7 @@ def find_calls(masked, macros):
         if i >= n:
             continue                      # unbalanced: nothing trustworthy here
         inner = masked[open_paren + 1:i]
-        line = masked.count("\n", 0, m.start()) + 1
-        yield m.group(1), line, split_args(inner), masked[m.start():i + 1]
+        yield m.group(1), m.start(), split_args(inner), masked[m.start():i + 1]
 
 
 LITERAL_RE = re.compile(r'"((?:[^"\\]|\\.)*)"', re.S)
@@ -707,9 +738,11 @@ def escape_for_record(text):
 def scan_file(path, rel, macros, ceiling):
     src = path.read_text(encoding="utf-8", errors="surrogateescape")
     src_lines = src.splitlines()
-    masked = mask_comments(src)
+    spliced, orig_pos = splice_continuations(src)
+    masked = mask_comments(spliced)
     found = []
-    for macro, line, args, _call in find_calls(masked, macros):
+    for macro, pos, args, _call in find_calls(masked, macros):
+        line = pos_to_line(src, orig_pos, pos)
         fmt_index = macros[macro]
         if len(args) <= fmt_index:
             found.append(Finding(rel, line, f"{macro} has no format argument",
@@ -1207,6 +1240,32 @@ SELF_TEST_CASES = [
         "backslash) between the macro name and '(' and so never matched "
         "this call at all -- a 126-byte literal, 1 byte over the ceiling, "
         "was entirely absent from the scan",
+    ),
+    # ---- follow-up Qodo /agentic_review Bug on PR #1110 (2026-09-16, "Split
+    # macro names evade checks"), found against the fix for root cause B
+    # immediately above: that fix neutralized a continuation by turning its
+    # backslash into a SPACE and leaving the newline in place, which works
+    # when the continuation falls BETWEEN the macro name and '(' (real
+    # whitespace there is already legal) but not when it falls INSIDE the
+    # macro name itself -- a space there permanently splits one token into
+    # two, and a split token can never match the call-site regex. Fixed by
+    # replacing the whitespace-substitution with a real C phase-2 splice
+    # (the backslash-newline is deleted, not blanked), applied once up front
+    # in scan_file() before comment masking or call matching, with a
+    # position map (orig_pos / pos_to_line()) so every reported line number
+    # is still the real line in the source file.
+    (
+        "a continuation splitting the MACRO NAME ITSELF is not invisible "
+        "either",
+        "LOG\\\n_E(\"" + ("X" * 126) + "\");",
+        1,
+        "C deletes the backslash and the newline and glues 'LOG' and '_E' "
+        "into one token, LOG_E, before anything is tokenized; the "
+        "whitespace-substitution fix for the case above left them as two "
+        "tokens forever, so a 126-byte literal reached only through a "
+        "continuation inside the macro name was still entirely absent from "
+        "the scan (verified empirically against 827284cc1, 2026-09-16: "
+        "0 findings)",
     ),
     # ---- deferred /improve item on PR #1110, importance 7, same
     # silent-undercount class as the five above: measure() dispatched purely
