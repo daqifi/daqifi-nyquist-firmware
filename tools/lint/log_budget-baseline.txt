@@ -1,0 +1,120 @@
+# log_budget baseline - GENERATED, do not hand-edit.
+#
+# Regenerate after fixing or annotating a site:
+#     python3 tools/lint/log_budget.py --write-baseline
+# and commit the result. CI fails only on findings NOT listed
+# here, so this file stops the count growing; it does not bless
+# what is in it. Shrinking it is the point.
+#
+# Format: <file> :: <reason> :: <format string, one line>
+# No line number: a LOG_E's line moves whenever anything above it
+# is edited, and a line-keyed baseline this size would go red on
+# changes that touched no log message at all.
+#
+# Permanent waivers with a stated reason go in
+# tools/lint/log_budget-suppress.txt instead.
+firmware/src/HAL/ADC/AD7609.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: AD7609_ReadSamples: SPI transfer %s
+firmware/src/HAL/ADC/AdcThreshold.c :: worst case 130 bytes > ceiling 125 :: ADC threshold ch %u inactive this stream: channel not in the session scan (still monitors at idle; config/latch preserved)
+firmware/src/HAL/BQ24297/BQ24297.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: BQ24297_ChargeEnable: REG01 read failed, cannot %s charging
+firmware/src/HAL/DioProbe.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: DioProbe: channel %u owned by %s
+firmware/src/Util/SpiBusHealth.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SpiBusHealth: ACTIVE jammer - %lu/16 bytes answered %s
+firmware/src/Util/SpiBusHealth.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SpiBusHealth: release ritual done - bus now %s
+firmware/src/app_freertos.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD reply] %s timeout: sent %u/%u bytes after %u retries
+firmware/src/app_freertos.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] Graceful shutdown timeout after %u ms: %s
+firmware/src/services/SCPI/SCPIADC.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: %s: channel %d out of range (max 255)
+firmware/src/services/SCPI/SCPIDAC.c :: no conservative width for '%.2f' (conversion '%f') -- add it to WIDTHS in tools/lint/log_budget.py or annotate the site :: DAC_VoltageToCounts: Invalid hardwareFullScale (%.2f), returning 0
+firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: %s refused (#850/#977): another session start or config change is in flight. Retry.
+firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: Cannot start SD logging - SD suspended: %s\r\n
+firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: Cannot start SD logging - SD suspended: %s\r\n
+firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SCPI: '%s' is registered but not implemented
+firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD log arm refused (#942): %s\r\n
+firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD start refused (#689): %s
+firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: STR:START refused (#861): %s; the device stays stopped. Retry.
+firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: Throughput benchmark: %s
+firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: WIFI:FIND %u Hz: arm refused - %s
+firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] Streaming stop: SD still finalising in state=%s mode=%s; OPER bit 11 set until idle. Poll STAT:OPER:COND?
+firmware/src/services/SCPI/SCPIInterface.c :: worst case 127 bytes > ceiling 125 :: STR:START refused (#524): %d Hz > max %u Hz (%u ch, %u T1) - use <= that or SYST:STR:BENCHmark
+firmware/src/services/SCPI/SCPIStorageSD.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD:%s - SD card busy, state=%s mode=%s\r\n
+firmware/src/services/SCPI/SCPIStorageSD.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD:%s - could not arm the operation: %s\r\n
+firmware/src/services/SCPI/SCPIStorageSD.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD:%s refused - SD suspended: %s\r\n
+firmware/src/services/SCPI/SCPIStorageSD.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD:BENCH - could not arm the operation: %s\r\n
+firmware/src/services/SCPI/SCPIStorageSD.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD:BENCH - could not claim the SD manager, state=%s mode=%s\r\n
+firmware/src/services/SCPI/SCPIStorageSD.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD:BENCH - could not complete the arm: %s\r\n
+firmware/src/services/SCPI/SCPIStorageSD.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD:BENCH refused (#689): %s\r\n
+firmware/src/services/SCPI/SCPIStorageSD.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]SD:MAXSize - Size %llu too small (minimum %llu bytes)
+firmware/src/services/SCPI/SCPIStorageSD.c :: unresolvable: LOG_E's format argument is not a string literal :: 
+firmware/src/services/SCPI/SCPIStorageSD.c :: worst case 137 bytes > ceiling 125 :: SD:BENCH - shared SCPI response buffer not free within %u ms at %u/%u bytes (a concurrent SCPI command held it)\r\n
+firmware/src/services/UsbCdc/UsbCdc.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SCPI Error %d: %s\r\n
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Bucket path too long: dir='%s' bucket=%u (max %zu)
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error Setting SD Card drive
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error Writing to SD Card
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error closing file before rotation
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error flushing before file rotation
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error flushing before unmount
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error flushing to SD Card
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Failed to open SD Card file for reading: '%s'
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Failed to open SD Card file for writing: '%s'
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Failed to open SD Card file: '%s'
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]File counter limit reached (%d files). Stopping streaming.
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Filename buffer overflow (needed %d bytes, have %zu): dir='%s' base='%s' cnt=%u ext='%s'
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Filename too long for split file: dir='%s' base='%s' ext='%s' (max %zu)
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Filename too long: dir='%s' file='%s' (max %zu)
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Invalid SD Card Directory or file name (dir='%s', file='%s')
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]SD DirectoryMake('%s') failed, SYS_FS_Error=%d
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Zero-byte write to SD Card
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] #689 bucket '%s' unreadable - refusing rather than rolling
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] #689 bucket mkdir '%s' failed err=%d
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] #689 bucket name '%s' is taken by a non-directory - rename or remove it, or use a different directory
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] #689 bucket stat '%s' failed err=%d - failing safe rather than reading it as absent
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] #689 part stat '%s' failed err=%d - failing safe rather than reading it as absent
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] CRC read error before EOF on '%s'
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] CountDirEntries: DirOpen('%s') failed err=%d - failing safe (refuse)
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] Delete path rejected (traversal attempt): '%s'\r\n
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] Failed to close file during unmount: '%s', error=%d
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] Failed to delete file '%s', error=%d\r\n
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] HANG DETECTED: %s took %u ms (limit %u ms), result=%d
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] HANG DETECTED: Mutex timeout at %s after %u ms
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] ListFiles: #795 unstorable name in '%s' -- bytes: %s(attrib=0x%02X size=%u)
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] ListFiles: Failed to close directory '%s', error=%d
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] ListFiles: Failed to open directory '%s', error=%d\r\n
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] ListFiles: Failed to open subdir '%s', error=%d
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] ListFiles: Failed to read directory '%s', error=%d
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] ListFiles: Path too long, skipping '%s/%s'
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] ListFiles: entry does not fit, omitting '%s'
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] ListFiles: max depth %d reached at '%s', listing truncated
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] Unmount unrecoverable (card %s, %u attempts) - forcing state clear
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] WRITE refused: no writable bucket under '%s' (active '%s', bucket %u, %u per bucket, max %u) - FatFs file-create wedges large directories (#689). Use a larger SD:MAXSize, a different directory, or clear the card.
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] header write short: expected=%u written=%d ('%s')
+firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] rotation open abandoned (%s): discarded %u buffered byte(s)
+firmware/src/services/sd_card_services/sd_card_manager.c :: worst case 137 bytes > ceiling 125 :: [SD] aborted after %u bytes - no terminator sent (a plain EOF would look like a complete file; #725 tracks a distinguishable one)
+firmware/src/services/sd_card_services/sd_card_manager.c :: worst case 192 bytes > ceiling 125 :: [SD] operations hanging while reads work - likely (a) target directory too large (#689: larger SD:MAXSize / clear the card) or (b) an SPI-mode-incompatible card (wiki: SD-Card-Compatibility)\r\n
+firmware/src/services/streaming.c :: worst case 212 bytes > ceiling 125 :: Stream end: lost %u/%llu samples (%u%%), USB=%u WiFi=%u SD=%u bytes, encFail=%u encDrop=%u dioDrop=%u eos=%u (all post-grace)
+firmware/src/services/wifi_services/iperf2/iperf2.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: iperf2: %s refused - WINC not started
+firmware/src/services/wifi_services/iperf2/iperf2.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: iperf2: %s refused - WINC not started
+firmware/src/services/wifi_services/iperf2/iperf2.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: iperf2: %s refused - WiFi DISABLED
+firmware/src/services/wifi_services/iperf2/iperf2.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: iperf2: %s refused - WiFi not CONNECTED
+firmware/src/services/wifi_services/iperf2/iperf2.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: iperf2: bad remote IP %s
+firmware/src/services/wifi_services/iperf2/iperf2.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: iperf2: bad remote IP %s
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: %s : %d : State Change Requested, but NextSate is NULL
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: WiFi STA Disconnected - Error Code: %d, Time: %u ticks, Reason: %s\r\n
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error Socket MSG Recv
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Error WiFi init
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Warning: Could not set device name
+firmware/src/services/wifi_services/wifi_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]WiFi error occurred (count: %d)\r\n
+firmware/src/services/wifi_services/wifi_tcp_server.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SCPI Error %d: %s\r\n
+firmware/src/state/data/AInSample.c :: no conservative width for '%p' (conversion '%p') -- add it to WIDTHS in tools/lint/log_budget.py or annotate the site :: Sample pool external init: NULL or zero (%p, %p, %u, %u)
