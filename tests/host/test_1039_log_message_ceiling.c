@@ -350,19 +350,26 @@ TEST(old_msg4_spi4_clear_was_cut)
  * one with room to pad up TO the boundary and still demonstrate a genuine
  * "grows past the ceiling" failure rather than starting past it.
  *
- * `extra` steps 0 -> 3, skipping 1 and 2 deliberately: LOG_BUDGET+1 loses
- * only the fixup's own trailing LF (the message body is untouched), and
- * LOG_BUDGET+2 is repaired by the fixup outright (vsnprintf drops exactly
- * the two bytes the fixup re-adds) -- the same degenerate window
- * test_1000_sd_log_arm_budget.c's mirror_cuts_exactly_where_logger_does
- * documents for this identical clamp. Neither loses a byte of the message,
- * so neither is the regression this test guards against; +3 is the first
- * length at which the message itself starts disappearing. */
+ * `extra` steps 0 -> 3. This test's format is bare "%s" (no baked-in CRLF),
+ * unlike test_1000_sd_log_arm_budget.c's growing_the_shipped_prefix_...
+ * sibling, whose format is "%s%s\r\n" -- there the format's OWN trailing
+ * CRLF competes with the clamp for the same 2 bytes of slack, which is what
+ * creates that test's degenerate +1/+2 window (an overrun of 1 or 2 costs
+ * only the format's own terminator, not the caller's content). No such
+ * competition exists here: with nothing but the message itself ahead of the
+ * clamp, `min(LOG_BUDGET, size)` cuts message BYTES starting at the very
+ * first byte past LOG_BUDGET. So every one of +0/+1/+2/+3 is worth pinning,
+ * and +1 is already a genuine loss, not a fixup-only artifact (Qodo
+ * /agentic_review, PR #1116: the original three-row table here wrongly
+ * carried over the sibling test's degenerate-window reasoning without
+ * checking it depended on that trailing "\r\n"). */
 TEST(growing_a_shipped_message_is_detected_at_the_boundary)
 {
     static const struct { int extra; int expectIntact; } kSteps[] = {
-        { 0, 1 },   /* padded to exactly LOG_BUDGET: still intact           */
-        { 3, 0 },   /* 3 past LOG_BUDGET: the message itself starts cutting */
+        { 0, 1 },   /* exactly at LOG_BUDGET: intact                        */
+        { 1, 0 },   /* 1 past: the clamp already drops the last message byte */
+        { 2, 0 },   /* 2 past: two message bytes dropped                    */
+        { 3, 0 },   /* 3 past: three message bytes dropped                  */
     };
     const int nSteps  = (int)(sizeof(kSteps) / sizeof(kSteps[0]));
     const size_t base = strlen(MSG4_TEXT);
