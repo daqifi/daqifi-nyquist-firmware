@@ -190,8 +190,9 @@ behaviour without proving the firmware still had that shape: deleting the
 fresh status read at expiry, or moving the deadline test after the yield, left
 it green. Splitting the loop into a header — #889's route, after a textual
 shape checker failed through five generations — is what makes those mutations
-turn this suite red. Six of them are enumerated in the test's file header,
-each verified to fail and then reverted.
+turn this suite red. Seven are enumerated in the test's file header (the
+seventh covering two spin-bound variants, one iteration shorter and halved,
+for eight mutations in total), each verified to fail and then reverted.
 
 Covered: the status is read (spin, then once more) before the budget is ever
 consulted, and **again, freshly, at expiry** — so an operation that completed
