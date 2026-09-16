@@ -301,6 +301,19 @@ RECIPES := Makefile
 # extend how long the whole-command lock is held. Three more grep guards
 # below pin the local-copy array and the line-number ordering of the
 # Unlock call against both transport-write call sites.
+#
+# Part F (#1069): DAC7718_ReadWriteReg had no power-state check of its OWN --
+# the only POWERED_UP test on the DAC write path was the caller's, in
+# DAC_EnsureHardwareInitialized, which runs once per command, before parameter
+# parsing and before any lock is taken, so the 10V rail could drop in the
+# window between it and the SPI transaction that check was supposed to
+# authorize. The function now re-checks the rail itself, under its own lock,
+# immediately before its first CS assertion -- in ADDITION to the caller's
+# check, not instead of it. Two more grep guards below pin that predicate and
+# the fact that it still precedes the first GPIO_PinWrite(CS, false); a
+# re-check that ran after CS was already low would authorize nothing. The
+# 'goto cleanup;' count guard below moves from 10 to 12 for the two arms it
+# adds (BoardData_Get returned NULL, and powerState != POWERED_UP).
 DAC980_BIN := run_980_tests
 DAC7718_SRC := ../../firmware/src/HAL/DAC7718/DAC7718.c
 SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
@@ -432,13 +445,30 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	  || { echo "ERROR: DAC7718_Unlock's call site no longer passes (config, csAsserted, lockHeld) in $(DAC7718_SRC)."; \
 	       echo "       Part A's mock signature mirrors this exact call -- re-derive it."; \
 	       exit 1; }
-	@test "$$(grep -c 'goto cleanup;' $(DAC7718_SRC))" = "10" \
-	  || { echo "ERROR: DAC7718.c's 'goto cleanup;' count in DAC7718_ReadWriteReg changed from 10."; \
-	       echo "       Part A's read_write_reg_shape() models exactly 3 PRE-lock validations"; \
-	       echo "       (RW, Reg, config) plus 7 post-lock SPI-timeout branches, all reaching the"; \
-	       echo "       same cleanup label -- a branch added or removed changes what the mock's"; \
-	       echo "       shape claims to cover. Re-derive the test against the new branch count."; \
+	@test "$$(grep -c 'goto cleanup;' $(DAC7718_SRC))" = "12" \
+	  || { echo "ERROR: DAC7718.c's 'goto cleanup;' count in DAC7718_ReadWriteReg changed from 12."; \
+	       echo "       Part A's read_write_reg_shape_ex() models exactly 3 PRE-lock validations"; \
+	       echo "       (RW, Reg, config), the 2 post-lock #1069 power arms Part F adds"; \
+	       echo "       (BoardData_Get returned NULL, powerState != POWERED_UP), and 7 post-lock"; \
+	       echo "       SPI-timeout branches, all reaching the same cleanup label -- a branch added"; \
+	       echo "       or removed changes what the mock's shape claims to cover. Re-derive the"; \
+	       echo "       test against the new branch count."; \
 	       exit 1; }
+	@grep -qE '^[[:space:]]*if \(pPowerState->powerState != POWERED_UP\) \{' $(DAC7718_SRC) \
+	  || { echo "ERROR: DAC7718_ReadWriteReg's own POWERED_UP re-check (#1069) is gone from"; \
+	       echo "       $(DAC7718_SRC). Part F models exactly this predicate; without it the"; \
+	       echo "       function is back to trusting the caller's single, much-earlier check and"; \
+	       echo "       the TOCTOU window the ticket names is reopened. Re-derive Part F."; \
+	       exit 1; }
+	@p=`grep -nF 'pPowerState = BoardData_Get(BOARDDATA_POWER_DATA, 0);' $(DAC7718_SRC) | cut -d: -f1 | head -1`; \
+	 c=`grep -nF 'GPIO_PinWrite(config->CS_Pin, false);' $(DAC7718_SRC) | cut -d: -f1 | head -1`; \
+	 test -n "$$p" && test -n "$$c" && test "$$p" -lt "$$c" \
+	   || { echo "ERROR: DAC7718_ReadWriteReg's #1069 power re-check is gone, or no longer"; \
+	        echo "       precedes the FIRST CS assertion in $(DAC7718_SRC)"; \
+	        echo "       (power read p='$$p', first CS assert c='$$c')."; \
+	        echo "       A re-check that runs once CS is already low authorizes nothing --"; \
+	        echo "       Part F's 'csAssertCalls == 0' assertions model exactly this ordering."; \
+	        exit 1; }
 	@grep -qE '^#define MAX_DAC7718_CONFIG 1[[:space:]]*$$' $(DAC7718_SRC) \
 	  || { echo "ERROR: MAX_DAC7718_CONFIG is no longer '1' in $(DAC7718_SRC)."; \
 	       echo "       Part B's mock_new_config() models a ONE-slot allocator; a different capacity"; \

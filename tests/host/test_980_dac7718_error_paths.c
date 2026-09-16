@@ -130,6 +130,29 @@
  * and only then calls SCPI_ResultVoltage on the local copies. No behavior
  * change to the returned data (same values, same error semantics on an
  * invalid channel) -- only WHEN the lock is released relative to the writes.
+ *
+ * PART F -- DAC7718_ReadWriteReg's own power-state re-check (#1069). The
+ * function had NO power check of its own: the only POWERED_UP test on the DAC
+ * write path was the caller's, in DAC_EnsureHardwareInitialized, which runs
+ * once per command -- before parameter parsing, before gDacCommandMutex, and
+ * before DAC7718_Lock() -- leaving a TOCTOU window in which the 10V rail can
+ * drop between that check and the SPI transaction it was supposed to
+ * authorize. #1069 adds a self-contained re-check (the same BoardData_Get /
+ * NULL / `powerState != POWERED_UP` pair the caller uses) under the driver's
+ * own lock, immediately before its first CS assertion, so the function no
+ * longer relies entirely on its caller. It does not REPLACE the caller's
+ * check, and it is not proof against a mid-transfer drop (see FIDELITY note 5
+ * below). Part F extends Part A's shape rather than adding a new one: the two
+ * new branches live in read_write_reg_shape_ex(), in that same relative
+ * position.
+ *
+ * FIDELITY note 5 (Part F) -- the mock proves the ORDER of the new branches
+ * relative to the lock and the first CS assertion, and that both refuse
+ * without a side effect while still releasing the lock. It cannot prove
+ * anything about the window that remains OPEN: the real rail can drop after
+ * the check and mid-frame, and neither the driver nor this mock re-reads
+ * power state per byte. That residual is stated in the source comment above
+ * DAC7718_ReadWriteReg, not tested here.
  * ========================================================================== */
 
 #include <stdint.h>
@@ -145,6 +168,8 @@
 typedef struct {
     int lockCalls;
     int giveCalls;             /* stands in for xSemaphoreGive() */
+    int csAssertCalls;         /* stands in for GPIO_PinWrite(CS_Pin, false) --
+                                * see mock_assert_cs() below (Part F, #1069) */
     bool lastLockHeldAtUnlock; /* the value Unlock() was actually called with */
 } RegMockEnv;
 
@@ -152,6 +177,7 @@ static void reg_mock_init(RegMockEnv *env)
 {
     env->lockCalls = 0;
     env->giveCalls = 0;
+    env->csAssertCalls = 0;
     env->lastLockHeldAtUnlock = false;
 }
 
@@ -160,6 +186,17 @@ static bool mock_lock(RegMockEnv *env, bool lockSucceeds)
 {
     env->lockCalls++;
     return lockSucceeds;
+}
+
+/* Stands in for the first `GPIO_PinWrite(config->CS_Pin, false)` -- the
+ * earliest GPIO/SPI side effect DAC7718_ReadWriteReg produces, and therefore
+ * the line every PRE-transfer refusal must stay above. Counted, not
+ * modelled: Part A is about which primitives fire and how often, not what
+ * they drive onto the bus. Added for Part F (#1069), which is precisely an
+ * assertion about what happens BEFORE this point. */
+static void mock_assert_cs(RegMockEnv *env)
+{
+    env->csAssertCalls++;
 }
 
 /* #980 shape -- DAC7718_Unlock(config, csAsserted, lockHeld): gives ONLY when
@@ -182,13 +219,27 @@ static void old_buggy_unlock(RegMockEnv *env)
 }
 
 /* Mirrors DAC7718_ReadWriteReg's shape line-for-line: three validations that
- * `goto cleanup` before Lock() is ever attempted, then Lock(), then an SPI
- * step (collapsed to one bool here -- see FIDELITY note 2 in the file
- * header), then cleanup. `useOldShape` selects which Unlock the cleanup path
- * calls, so both variants share every branch above the label. */
-static uint32_t read_write_reg_shape(RegMockEnv *env, bool rwValid, bool regValid,
-                                     bool configValid, bool lockSucceeds,
-                                     bool spiSucceeds, bool useOldShape)
+ * `goto cleanup` before Lock() is ever attempted, then Lock(), then the two
+ * #1069 power arms, then the first CS assert, then an SPI step (collapsed to
+ * one bool here -- see FIDELITY note 2 in the file header), then cleanup.
+ * `useOldShape` selects which Unlock the cleanup path calls, so both variants
+ * share every branch above the label.
+ *
+ * `powerDataOk` / `powerUp` model Part F (#1069): the self-contained power
+ * re-check DAC7718_ReadWriteReg now performs itself, in this exact position
+ * -- after its own Lock(), before its own first CS assertion -- rather than
+ * relying entirely on the caller having checked the rail earlier. They are
+ * two separate booleans because the real function has two separate branches
+ * with two distinct LOG_E messages (BoardData_Get returned NULL vs
+ * powerState != POWERED_UP), exercised separately below for the same reason
+ * Part B exercises boardOk and variantOk separately. `read_write_reg_shape()`
+ * below is the pre-existing 6-arg call shape every other Part A test uses,
+ * forwarding both as true so none of that coverage changes; only the
+ * dedicated Part F tests exercise the false cases. */
+static uint32_t read_write_reg_shape_ex(RegMockEnv *env, bool rwValid, bool regValid,
+                                        bool configValid, bool lockSucceeds,
+                                        bool powerDataOk, bool powerUp,
+                                        bool spiSucceeds, bool useOldShape)
 {
     uint32_t rdData = 0;
     bool lockHeld = false;   /* #980 item 2 */
@@ -199,6 +250,12 @@ static uint32_t read_write_reg_shape(RegMockEnv *env, bool rwValid, bool regVali
 
     if (!mock_lock(env, lockSucceeds)) { rdData = UINT32_MAX; goto cleanup; }
     lockHeld = true;   /* set ONLY after a successful take (#980 item 2) */
+
+    /* #1069: both arms sit under the lock and above the first side effect. */
+    if (!powerDataOk) { rdData = UINT32_MAX; goto cleanup; }
+    if (!powerUp)     { rdData = UINT32_MAX; goto cleanup; }
+
+    mock_assert_cs(env);   /* GPIO_PinWrite(config->CS_Pin, false) */
 
     if (!spiSucceeds) { rdData = UINT32_MAX; goto cleanup; }
 
@@ -211,6 +268,16 @@ cleanup:
         new_unlock(env, lockHeld);
     }
     return rdData;
+}
+
+static uint32_t read_write_reg_shape(RegMockEnv *env, bool rwValid, bool regValid,
+                                     bool configValid, bool lockSucceeds,
+                                     bool spiSucceeds, bool useOldShape)
+{
+    return read_write_reg_shape_ex(env, rwValid, regValid, configValid,
+                                   lockSucceeds, true /* powerDataOk */,
+                                   true /* powerUp */, spiSucceeds,
+                                   useOldShape);
 }
 
 /* The headline: each of the three PRE-lock validation failures must reach
@@ -1264,6 +1331,142 @@ TEST(voltage_get_on_non_nq3_never_locks_and_still_writes_the_value)
     ASSERT_TRUE(env.writtenVoltages[0] == 7.0);
 }
 
+/* ==========================================================================
+ * PART F -- DAC7718_ReadWriteReg's own power-state re-check (#1069)
+ *
+ * Extends Part A's shape rather than introducing a new one: the branches
+ * under test live inside read_write_reg_shape_ex() above, in the same
+ * relative position as the real fix (after the function's own DAC7718_Lock(),
+ * before its own first CS assertion).
+ * ========================================================================== */
+
+/* Pre-#1069 shape -- identical to read_write_reg_shape_ex() above except that
+ * the two power arms are absent entirely: the function went straight from
+ * `lockHeld = true` to asserting CS, trusting whatever check its caller had
+ * performed earlier (SCPIDAC.c's DAC_EnsureHardwareInitialized, once per
+ * command, before parameter parsing and before any lock). `powerDataOk` /
+ * `powerUp` are accepted only so both shapes can be driven from the same mock
+ * inputs; this shape ignores both completely, which IS the defect. */
+static uint32_t read_write_reg_pre1069_shape(RegMockEnv *env, bool powerDataOk,
+                                             bool powerUp)
+{
+    uint32_t rdData = 0;
+    bool lockHeld = false;
+
+    if (!mock_lock(env, true)) { rdData = UINT32_MAX; goto cleanup; }
+    lockHeld = true;
+
+    (void)powerDataOk;   /* never consulted -- the #1069 defect */
+    (void)powerUp;       /* never consulted -- the #1069 defect */
+
+    mock_assert_cs(env);   /* reached even with the rail DOWN */
+
+    rdData = 42U;
+
+cleanup:
+    new_unlock(env, lockHeld);
+    return rdData;
+}
+
+/* THE headline (#1069): with the 10V rail down, the fixed shape must refuse
+ * BEFORE any GPIO/SPI side effect -- no CS assertion, no transfer -- while
+ * still giving back the lock it legitimately took.
+ *
+ * Contrast within one test, same convention as Part D's
+ * getter_on_non_nq3_succeeds_gated_but_fails_unconditional: the pre-#1069
+ * shape, given the IDENTICAL mock inputs, asserts CS and reports success --
+ * which is what proves this assertion is load-bearing rather than vacuously
+ * true of any shape. */
+TEST(rail_down_refuses_before_asserting_cs_and_still_gives_the_lock)
+{
+    RegMockEnv env;
+    reg_mock_init(&env);
+
+    ASSERT_EQ(read_write_reg_shape_ex(&env, true, true, true, true,
+                                      true  /* BoardData_Get returned data */,
+                                      false /* powerState != POWERED_UP */,
+                                      true, false),
+              UINT32_MAX);
+    ASSERT_EQ(env.lockCalls, 1);
+    ASSERT_EQ(env.csAssertCalls, 0);    /* refused ABOVE the first side effect */
+    ASSERT_EQ(env.giveCalls, 1);        /* post-lock failure -- must still give */
+    ASSERT_TRUE(env.lastLockHeldAtUnlock);
+
+    RegMockEnv old;
+    reg_mock_init(&old);
+    ASSERT_EQ(read_write_reg_pre1069_shape(&old, true, false /* rail DOWN */), 42);
+    ASSERT_EQ(old.csAssertCalls, 1);    /* CS asserted against an unpowered chip */
+    ASSERT_EQ(old.giveCalls, 1);        /* and it reports SUCCESS -- the defect */
+}
+
+/* The NULL-BoardData arm is a SEPARATE branch in the real function, with its
+ * own LOG_E ("Cannot get power state data"), and must behave identically.
+ * Exercised on its own for the same reason Part B's
+ * board_and_variant_refusals_never_touch_the_claim_or_allocator exercises its
+ * two same-outcome arms separately: one arm standing in for both is how a
+ * deleted branch passes unnoticed. */
+TEST(power_data_unavailable_refuses_before_asserting_cs_and_still_gives_the_lock)
+{
+    RegMockEnv env;
+    reg_mock_init(&env);
+
+    ASSERT_EQ(read_write_reg_shape_ex(&env, true, true, true, true,
+                                      false /* BoardData_Get returned NULL */,
+                                      true, true, false),
+              UINT32_MAX);
+    ASSERT_EQ(env.lockCalls, 1);
+    ASSERT_EQ(env.csAssertCalls, 0);
+    ASSERT_EQ(env.giveCalls, 1);
+    ASSERT_TRUE(env.lastLockHeldAtUnlock);
+}
+
+/* Powered -- the default every other Part A test forwards -- is UNCHANGED by
+ * #1069: the CS assert is reached exactly once and the transfer succeeds.
+ * Guards the mutation "make the power arm always refuse", which would pass
+ * both tests above while bricking every DAC write on real hardware.
+ *
+ * The second half pins where #1069 sits in the order: a PRE-lock validation
+ * failure must still reach neither Lock(), the power arms, nor the CS assert
+ * -- the new check is strictly below all three, not hoisted above them. */
+TEST(rail_up_reaches_cs_and_succeeds_unchanged_and_prelock_failures_still_precede_it)
+{
+    RegMockEnv env;
+    reg_mock_init(&env);
+
+    ASSERT_EQ(read_write_reg_shape(&env, true, true, true, true, true, false), 42);
+    ASSERT_EQ(env.lockCalls, 1);
+    ASSERT_EQ(env.csAssertCalls, 1);
+    ASSERT_EQ(env.giveCalls, 1);
+    ASSERT_TRUE(env.lastLockHeldAtUnlock);
+
+    RegMockEnv early;
+    reg_mock_init(&early);
+    ASSERT_EQ(read_write_reg_shape_ex(&early, false /* RW>1 */, true, true, true,
+                                      false /* power would ALSO fail */,
+                                      false, true, false),
+              UINT32_MAX);
+    ASSERT_EQ(early.lockCalls, 0);       /* never locked */
+    ASSERT_EQ(early.csAssertCalls, 0);   /* never asserted CS */
+    ASSERT_EQ(early.giveCalls, 0);       /* never gives what it never took */
+    ASSERT_FALSE(early.lastLockHeldAtUnlock);
+}
+
+/* A POST-CS failure (SPI timeout) still records the CS assertion -- the
+ * counter is not vacuously zero for every failure path, which is what makes
+ * `csAssertCalls == 0` above mean something. */
+TEST(postcs_spi_failure_still_recorded_the_cs_assert)
+{
+    RegMockEnv env;
+    reg_mock_init(&env);
+
+    ASSERT_EQ(read_write_reg_shape(&env, true, true, true, true,
+                                   false /* SPI times out */, false),
+              UINT32_MAX);
+    ASSERT_EQ(env.lockCalls, 1);
+    ASSERT_EQ(env.csAssertCalls, 1);
+    ASSERT_EQ(env.giveCalls, 1);
+}
+
 int main(void)
 {
     printf("#980 -- DAC7718 error-path honesty (extracted control-flow shapes)\n");
@@ -1300,6 +1503,12 @@ int main(void)
     RUN(voltage_get_single_channel_writes_after_unlock);
     RUN(voltage_get_single_channel_invalid_index_writes_nothing);
     RUN(voltage_get_on_non_nq3_never_locks_and_still_writes_the_value);
+
+    /* Part F */
+    RUN(rail_down_refuses_before_asserting_cs_and_still_gives_the_lock);
+    RUN(power_data_unavailable_refuses_before_asserting_cs_and_still_gives_the_lock);
+    RUN(rail_up_reaches_cs_and_succeeds_unchanged_and_prelock_failures_still_precede_it);
+    RUN(postcs_spi_failure_still_recorded_the_cs_assert);
 
     return TEST_SUMMARY();
 }

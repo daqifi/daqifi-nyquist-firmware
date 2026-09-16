@@ -11,6 +11,11 @@
 #include "peripheral/spi/spi_master/plib_spi2_master.h"
 #include "peripheral/coretimer/plib_coretimer.h"
 #include "Util/Logger.h"
+// #1069: the 10V-rail re-check below. BoardData.h supplies
+// BOARDDATA_POWER_DATA/tPowerData; PowerApi.h supplies the POWERED_UP enum
+// constant. Same pair SCPIDAC.c includes for the caller-side check.
+#include "state/data/BoardData.h"
+#include "HAL/Power/PowerApi.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
@@ -377,6 +382,27 @@ static bool dac7718_WaitStat(uint32_t mask, bool want,
     }
 }
 
+/* Read or write one DAC7718 register over SPI2. Returns the readback data
+ * (RW==1) or 0 (RW==0) on success, and UINT32_MAX on every failure.
+ *
+ * POWER PRECONDITION -- how far this function can be trusted standalone
+ * (#1069). This function now checks the 10V-rail power state ITSELF, under
+ * its own lock and immediately before it asserts CS for the first time, so it
+ * no longer relies entirely on its caller having checked power state earlier.
+ * That earlier caller-side check (SCPIDAC.c's DAC_EnsureHardwareInitialized,
+ * which runs once per command, before parameter parsing and before
+ * gDacCommandMutex is even taken) is KEPT -- this one narrows the TOCTOU
+ * window between the two, it does not replace the caller's check.
+ *
+ * It is NOT proof against the rail dropping MID-transfer. The check happens
+ * once, at the top; the SPI transaction that follows is not re-guarded
+ * byte-by-byte, and the RW==1 readback's second CS assertion is not
+ * re-checked either. A drop after this point still produces a frame clocked
+ * into an under-powered chip -- the window is now microseconds wide instead
+ * of a whole SCPI command, which is the property this check buys and the
+ * only one it claims. Closing it completely would need the rail's own
+ * state-change notification to abort an in-flight transfer, not a wider poll.
+ */
 uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data)
 {
     uint32_t Com;
@@ -389,6 +415,12 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
     // never took -- see DAC7718_Unlock()'s comment.
     bool lockHeld = false;
     tDAC7718Config* config = NULL;
+    // #1069: declared up here with the other locals rather than at its use
+    // site below, because the validation branches above it `goto cleanup` --
+    // an initialized declaration in the middle of this function would be a
+    // jump-skips-initialization (-Wjump-misses-init) shape. Same reason every
+    // other local in this goto-structured function is declared here.
+    const tPowerData* pPowerState = NULL;
 
     // Validate inputs
     if (RW > 1U) {
@@ -413,6 +445,32 @@ uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data
         goto cleanup;
     }
     lockHeld = true;   // set ONLY after a successful take (#980 item 2)
+
+    // #1069: re-check the power precondition HERE, under our own lock and
+    // immediately before the first CS assertion, instead of trusting the
+    // caller's earlier one. The only other POWERED_UP check on this path is
+    // SCPIDAC.c's DAC_EnsureHardwareInitialized(), which runs once per
+    // command -- before parameter parsing, before gDacCommandMutex is taken,
+    // and before DAC7718_Lock() above -- so the 10V rail can drop in the
+    // window between it and this SPI transaction, and this function would
+    // otherwise drive a chip that no longer meets its own stated
+    // precondition. Same read and same predicate as that function
+    // (SCPIDAC.c) so the two sites cannot disagree about what "powered"
+    // means. See this function's header comment for what this does NOT buy:
+    // the rail can still drop mid-transfer.
+    pPowerState = BoardData_Get(BOARDDATA_POWER_DATA, 0);
+    if (pPowerState == NULL) {
+        LOG_E("DAC7718_ReadWriteReg: Cannot get power state data");
+        rdData = UINT32_MAX;
+        goto cleanup;
+    }
+    // POWERED_UP (1) has 10V rail, POWERED_UP_EXT_DOWN (2) does not have 10V rail
+    if (pPowerState->powerState != POWERED_UP) {
+        LOG_E("DAC7718_ReadWriteReg: 10V rail down (powerState=%u)",
+              (unsigned)pPowerState->powerState);
+        rdData = UINT32_MAX;
+        goto cleanup;
+    }
 
     // Assert CS (active low)
     GPIO_PinWrite(config->CS_Pin, false);
