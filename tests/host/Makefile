@@ -917,14 +917,6 @@ $(SUSPENDREASON_BIN): test_985_suspend_reason_consistency.c test_framework.h $(S
 # guard to pin. Same move #1056 made retiring the analogous grep guard that
 # used to stand in for spi_WaitStat/uart_WaitSta/i2c_WaitMif.
 
-# Every suite, and every one of the eleven binaries. SEVENTH additive
-# collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
-# fw#1000, fw#913 vs fw#980, and now fw#913 vs fw#985 -- every one of them
-# two branches appending a line to these same two lists. Resolved the same
-# way every time: keep each side's target rule INTACT and union only `run`
-# and `clean`. Dropping a rule loses a suite silently; duplicating one
-# silently shadows the other.
-
 # Every suite, and every one of the FOURTEEN binaries. ELEVENTH additive
 # collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
 # fw#1000, fw#913 vs fw#980, fw#913 vs fw#985, fw#999 vs fw#985, fw#999 vs

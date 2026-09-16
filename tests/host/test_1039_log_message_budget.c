@@ -547,10 +547,31 @@ TEST(growing_any_shipped_message_is_detected_at_the_boundary)
             char grownIntended[WORK];
             char wanted[WORK + 4];
             char emitted[FW_LOG_MESSAGE_SIZE];
+            int  padFits;
 
-            ASSERT_TRUE(steps[s].pad >= 0
-                        && steps[s].pad + (int)strlen(kSites[i].fmt)
-                           < (int)sizeof(grown));
+            /* ASSERT_TRUE RECORDS a failure and carries on -- it bumps
+             * g_current_failed and prints, it does not abort
+             * (test_framework.h). So this bounds check cannot stand as a bare
+             * assertion above the memset: were a future change to the padFit
+             * / padRemedy arithmetic to make it false, the failure would be
+             * logged and then execution would walk straight into
+             * memset(grown, '.', (size_t)pad) with a negative pad, which
+             * (size_t) turns into a multi-exabyte length -- a crash or a
+             * smashed stack instead of the clean test failure that was
+             * intended. Hold the verdict in a variable so the assertion still
+             * counts on every step, then let it gate the unsafe work: the
+             * same assert-then-skip shape the padFit guard above uses. */
+            padFits = steps[s].pad >= 0
+                      && steps[s].pad + (int)strlen(kSites[i].fmt)
+                         < (int)sizeof(grown);
+            ASSERT_TRUE(padFits);
+            if (!padFits) {
+                printf("    site '%s', step '%s': pad %d + %d format bytes "
+                       "does not fit the %d-byte work buffer; step skipped\n",
+                       kSites[i].name, steps[s].what, steps[s].pad,
+                       (int)strlen(kSites[i].fmt), (int)sizeof(grown));
+                continue;
+            }
             memset(grown, '.', (size_t)steps[s].pad);
             strcpy(grown + steps[s].pad, kSites[i].fmt);
 

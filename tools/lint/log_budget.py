@@ -18,15 +18,18 @@ is that gate.
 WHAT IS MEASURED
     The WORST-CASE formatted length of each `LOG_E(...)` format string: its
     fixed bytes (after decoding C escapes -- "\\r\\n" is two bytes of output,
-    not four) plus, for each conversion specifier, the widest that specifier
-    could print. If that total exceeds the ceiling the site is a finding.
+    not four -- and counted as UTF-8 BYTES, because Logger's ceiling bounds a
+    `char[]` and a two-byte character spends two of it) plus, for each
+    conversion specifier, the widest that specifier could print. If that total
+    exceeds the ceiling the site is a finding.
 
     A message is also a finding when its worst case cannot be BOUNDED at all --
     an unannotated `%s`, a `*` width, a specifier with no entry in the width
-    table, or a format argument that is not a string literal. Those are not
-    skipped and not assumed to be zero: "we could not measure it" is reported
-    with the same severity as "we measured it and it is too long", because the
-    failure mode this gate exists to stop is exactly the silent one.
+    table, a `%` sequence that is not a conversion this tool can parse, or a
+    format argument that is not a string literal. Those are not skipped and not
+    assumed to be zero: "we could not measure it" is reported with the same
+    severity as "we measured it and it is too long", because the failure mode
+    this gate exists to stop is exactly the silent one.
 
 WHAT IS NOT MEASURED
     * LOG_I / LOG_D. #1039's acceptance criterion is about LOG_E, and the
@@ -464,6 +467,43 @@ def find_annotation(src_lines, line):
 Finding = collections.namedtuple("Finding", "path line reason fmt")
 
 
+def literal_bytes(chunk):
+    """Return (emitted byte count, None) for a run of literal format text.
+
+    Returns (None, reason) if the chunk is not literal text after all. Both of
+    measure()'s literal chunks -- the text before each conversion and the tail
+    after the last one -- go through this one function, so neither can be fixed
+    while the other is left behind.
+
+    BYTES, NOT CHARACTERS. The ceiling read out of Logger.c is a byte budget:
+    `vsnprintf` formats into a `char[LOG_MESSAGE_SIZE]`, so a two-byte UTF-8
+    character spends two of the 125. Counting Python characters under-counts
+    any non-ASCII message and would call a site that truncates "safe". The
+    encoding here is the one scan_file() reads sources with (utf-8 with
+    `surrogateescape`), so a source byte that is not valid UTF-8 round-trips to
+    exactly the one byte the compiler emits instead of raising.
+
+    A SURVIVING '%' IS NOT LITERAL TEXT. SPEC_RE has already consumed every
+    conversion this tool understands, `%%` included -- its `conv` class
+    contains a literal '%', so an escaped percent is matched and charged one
+    byte in measure()'s loop, never left in a chunk seen here. A '%' that
+    reaches this function is therefore a directive `vsnprintf` WILL act on and
+    this tool could not parse: a typo, or a conversion outside the C99 set.
+    What it prints is unspecified -- it can consume the wrong argument or emit
+    something wider than anything in WIDTHS -- so charging its source bytes as
+    plain text would be a bound the tool cannot justify. It is reported
+    unbounded, on the same footing as a '*' width or an unannotated %s, which
+    is what this gate exists to do with anything it cannot measure.
+    """
+    i = chunk.find("%")
+    if i >= 0:
+        return None, (f"unbounded: unrecognized printf sequence "
+                      f"{chunk[i:i + 16]!r} -- not a conversion this tool can "
+                      f"parse, and vsnprintf's behaviour for one is "
+                      f"unspecified")
+    return len(chunk.encode("utf-8", errors="surrogateescape")), None
+
+
 def measure(fmt, annotation):
     """Return (worst_case, None) or (None, reason) for a decoded format string.
 
@@ -475,7 +515,10 @@ def measure(fmt, annotation):
     str_widths = list(annotation) if annotation else None
     str_seen = 0
     for m in SPEC_RE.finditer(fmt):
-        fixed += m.start() - pos
+        n, reason = literal_bytes(fmt[pos:m.start()])
+        if reason is not None:
+            return None, reason
+        fixed += n
         pos = m.end()
         conv = m.group("conv")
         if conv == "%":
@@ -525,7 +568,10 @@ def measure(fmt, annotation):
         if "#" in flags and conv in "xXo":
             w += 2                         # the 0x / 0 prefix the '#' flag adds
         total += max(field, w)
-    fixed += len(fmt) - pos
+    n, reason = literal_bytes(fmt[pos:])
+    if reason is not None:
+        return None, reason
+    fixed += n
     if str_widths is not None and str_seen and len(str_widths) > max(1, str_seen):
         return None, (f"annotation declares {len(str_widths)} width(s) but the "
                       f"call has {str_seen} %s")
@@ -647,10 +693,20 @@ def load_suppressions(path):
     comment above it is a tool error, not a silent pass. A permanent waiver with
     no stated reason is indistinguishable from an accident, and this file is the
     one place in the gate where a human can turn a finding off for good.
+
+    Returns a Counter, not a set, because ONE entry waives ONE finding. The key
+    is `<file> :: <format string>` and carries no line number (deliberately --
+    see the baseline comment above), so two call sites in the same file logging
+    the same text share a key. With a set, the single reason comment the loop
+    below insists on would cover both of them, and every further copy added
+    later, without anyone writing a word about the second one -- the same
+    "one reason, unlimited waivers" inversion the had_comment reset fixes
+    within the file, reappearing at the point of USE. Counting here lets
+    apply_suppressions() spend each waiver exactly once.
     """
     if not path.exists():
-        return set()
-    entries, had_comment = set(), False
+        return collections.Counter()
+    entries, had_comment = collections.Counter(), False
     for lineno, raw in enumerate(
             path.read_text(encoding="utf-8").splitlines(), 1):
         line = raw.rstrip()
@@ -669,7 +725,7 @@ def load_suppressions(path):
             raise ToolError(
                 f"{path}:{lineno}: malformed entry, expected "
                 f"'<file>{SEP}<format string>':\n    {line}")
-        entries.add(line.strip())
+        entries[line.strip()] += 1
         # A reason authorizes exactly ONE waiver. Clearing the flag here --
         # not only on a blank line -- is what makes the requirement PER-ENTRY:
         # left set, a single comment would silently cover every consecutive
@@ -680,10 +736,43 @@ def load_suppressions(path):
     return entries
 
 
+def apply_suppressions(findings, suppressions):
+    """Return (kept, suppressed_count), spending each waiver at most once.
+
+    A waiver is a claim about ONE message that a human reasoned about and wrote
+    a reason for, so it retires ONE finding. A membership test would instead
+    retire every finding sharing the key, which for a key with no line number
+    in it means every OTHER copy of the same text in that file -- including
+    copies added months later, which nobody has reasoned about and which are
+    exactly what a gate is for. Findings are spent in the order given, so which
+    copy is waived is stable for a given tree; it does not matter which, since
+    the key cannot tell them apart in the first place.
+
+    A pure function of a list and a Counter, for the same reason
+    compare_to_baseline() is one: it is a decision the gate makes, so the
+    self-test pins it directly and main() has no second copy of the logic.
+    """
+    remaining = collections.Counter(suppressions)
+    kept, suppressed = [], 0
+    for f in findings:
+        key = suppress_key(f)
+        if remaining[key]:
+            remaining[key] -= 1
+            suppressed += 1
+        else:
+            kept.append(f)
+    return kept, suppressed
+
+
 # ---------------------------------------------------------------------------
 # Self-test
 # ---------------------------------------------------------------------------
 SELF_TEST_CEILING = 125
+
+# U+00B5 MICRO SIGN: one character, and the two bytes C2 B5 once encoded. The
+# one fixture ingredient this file cannot write as plain ASCII, so it is built
+# from its codepoint (see the byte-counting cases below).
+MICRO_SIGN = chr(0xB5)
 
 SELF_TEST_CASES = [
     (
@@ -852,6 +941,78 @@ SELF_TEST_CASES = [
         "106 fixed + 20 = 126: %.1llu still prints up to 20 digits, so the "
         "charge is max(natural, precision), never the precision alone",
     ),
+    # ---- unparsed '%' sequences ------------------------------------------
+    # (Qodo on PR #1110: "Reject unparsed format sequences".)
+    # Everything between two SPEC_RE matches used to be counted as literal
+    # text, so a '%' the regex could not parse was charged as its own source
+    # bytes and the site was pronounced measured. It is not measured: what
+    # vsnprintf does with an unrecognized directive is unspecified. Both
+    # literal chunks -- between matches, and the tail after the last one --
+    # have a case, because a fix applied to only one of them would leave the
+    # other silently charging source bytes.
+    (
+        "an unparsed '%' BETWEEN two specifiers is unbounded",
+        'LOG_E("Trim %q applied at step %u", a, b);',
+        1,
+        "%q is not a C99 conversion; the pre-fix tool charged its 2 source "
+        "bytes as plain text and called the site measured",
+    ),
+    (
+        "an unparsed '%' AFTER the last specifier is unbounded",
+        'LOG_E("Step %u reached, gain %q", a, b);',
+        1,
+        "the tail chunk after the final match is a second accounting site, "
+        "and a fix that touched only the in-loop one would miss it",
+    ),
+    (
+        "a trailing bare '%' is unbounded",
+        r'LOG_E("Duty cycle reached 100%");',
+        1,
+        "a '%' with no conversion character after it is a directive C does "
+        "not define; it is not a literal percent sign",
+    ),
+    (
+        "%% is still a literal percent after that rejection",
+        'LOG_E("100%% done");',
+        0,
+        "SPEC_RE matches %% (its conv class contains '%'), so an escaped "
+        "percent never reaches the unparsed-'%' check -- the rejection must "
+        "not turn every correctly-escaped message into a finding",
+    ),
+    # ---- literal text is measured in BYTES, not characters ----------------
+    # (Qodo on PR #1110: "Measure literals by emitted bytes".)
+    # Logger's ceiling bounds the char[] vsnprintf writes into, so a two-byte
+    # UTF-8 character spends two of the 125. These twins are the SAME
+    # 125-character message differing in one character: 'u' becomes U+00B5
+    # MICRO SIGN, which encodes as the two bytes C2 B5. The character count
+    # cannot tell them apart; the byte count must. Counting characters -- what
+    # the tool did before -- passes both, so the second twin is the case that
+    # goes red on the pre-fix code, and the first is here to prove the fix
+    # does not simply over-charge everything.
+    #
+    # The character is built with chr() rather than written inline, so this
+    # file stays ASCII and the codepoint under test is named instead of
+    # eyeballed. Not a "\\u00b5" escape either: one stray backslash there and
+    # the fixture silently becomes a 129-byte ASCII message that fails for
+    # length rather than for encoding -- green, and testing nothing.
+    (
+        "a 125-byte ASCII literal sits exactly on the ceiling",
+        'LOG_E("Timebase resynchronised: the ADC sample window slipped past '
+        'the us guard band, so every reading below is suspect; resync now.");',
+        0,
+        "125 characters, 125 bytes -- the twin below must fail for its extra "
+        "BYTE, not because a 125-byte message is over-charged",
+    ),
+    (
+        "the same 125 characters are over budget with one multi-byte char",
+        'LOG_E("Timebase resynchronised: the ADC sample window slipped past '
+        'the ' + MICRO_SIGN + 's guard band, so every reading below is '
+        'suspect; resync now.");',
+        1,
+        "U+00B5 is one character and TWO UTF-8 bytes, so this message is 126 "
+        "bytes and truncates; len() of the Python string says 125 and calls "
+        "it clean",
+    ),
     (
         "LOG_E_ONCE takes its format second",
         'LOG_E_ONCE(LOG_BIT_X, "WiFi unreachable and an SD card IS present on '
@@ -925,6 +1086,49 @@ SELF_TEST_SUPPRESSION_CASES = [
         None,
         "a waiver that cannot match anything is a typo, not a waiver",
     ),
+    (
+        "the SAME waiver twice, each with its own reason, counts twice",
+        "# why the first site is safe\na.c :: msg one\n"
+        "# why the second site is safe\na.c :: msg one\n",
+        2,
+        "two reasoned waivers for two same-text sites are two waivers; while "
+        "this returned a set they collapsed into one, and the count is what "
+        "apply_suppressions() spends",
+    ),
+]
+
+# Waiver-spending fixtures (Qodo on PR #1110: "Limit waivers to one finding").
+#
+# The suppress key is `<file> :: <format string>` with no line number in it, so
+# two call sites in one file logging the same text are indistinguishable to it.
+# A membership test therefore let ONE reasoned waiver retire ALL of them,
+# including copies added long after the reason was written -- exactly the
+# "one comment, unlimited entries" inversion the had_comment reset fixes inside
+# the file, reappearing at the point of use. Each case is
+# (name, waiver lines, [(path, fmt)...], expected kept, expected suppressed,
+# why).
+SELF_TEST_WAIVER_CASES = [
+    ("one waiver, one matching finding",
+     ["a.c :: msg one"], [("a.c", "msg one")], 0, 1,
+     "the documented common case -- the fix must not change it"),
+    ("one waiver, TWO findings sharing the key",
+     ["a.c :: msg one"], [("a.c", "msg one"), ("a.c", "msg one")], 1, 1,
+     "the finding: one reason waived both, so the second site was never "
+     "reported and never reasoned about"),
+    ("two waivers cover both of them",
+     ["a.c :: msg one", "a.c :: msg one"],
+     [("a.c", "msg one"), ("a.c", "msg one")], 0, 2,
+     "waiving both is still possible -- it just costs a second entry with a "
+     "second reason, which is the whole point"),
+    ("a waiver is keyed on the file too",
+     ["b.c :: msg one"], [("a.c", "msg one")], 1, 0,
+     "same text, different file: not this waiver's site"),
+    ("an unused waiver suppresses nothing",
+     ["a.c :: msg one"], [("a.c", "msg two")], 1, 0,
+     "a waiver retires the message it names, not the next one along"),
+    ("no waivers at all",
+     [], [("a.c", "msg one"), ("b.c", "msg two")], 2, 0,
+     "the empty suppression file every clean tree has"),
 ]
 
 # Gate-verdict fixtures (Qodo round-1 finding 2 on PR #1110).
@@ -1012,12 +1216,16 @@ def self_test():
         # The suppression file is checked through load_suppressions() itself,
         # on a real file on disk, so these cases run the same code path the
         # gate does rather than a re-implementation of it.
+        #
+        # Counted with sum(values()), not len(): the number of WAIVERS is the
+        # quantity apply_suppressions() spends, and it is the one that differs
+        # from the pre-fix set behaviour when two entries share a key.
         for i, (name, text, expected, why) in enumerate(
                 SELF_TEST_SUPPRESSION_CASES):
             p = Path(d) / f"suppress{i}.txt"
             p.write_text(text, encoding="utf-8")
             try:
-                got = len(load_suppressions(p))
+                got = sum(load_suppressions(p).values())
             except ToolError:
                 if expected is not None:
                     failures += 1
@@ -1032,6 +1240,19 @@ def self_test():
                 failures += 1
                 print(f"  FAIL [suppress: {name}]: accepted {got} entr(ies), "
                       f"expected {expected} -- {why}")
+
+    # Waiver spending, pinned on the same function main() filters with.
+    for (name, waivers, sites, want_kept, want_suppressed,
+            why) in SELF_TEST_WAIVER_CASES:
+        findings = [Finding(path, n + 1, "worst case 999 bytes > ceiling 125",
+                            fmt) for n, (path, fmt) in enumerate(sites)]
+        kept, suppressed = apply_suppressions(findings,
+                                              collections.Counter(waivers))
+        if len(kept) != want_kept or suppressed != want_suppressed:
+            failures += 1
+            print(f"  FAIL [waiver: {name}]: kept {len(kept)}/suppressed "
+                  f"{suppressed}, expected {want_kept}/{want_suppressed} "
+                  f"-- {why}")
 
     # The gate's verdict, pinned on the same function main() takes its exit
     # code from.
@@ -1089,6 +1310,8 @@ def self_test():
           f"{len(SELF_TEST_CASES)} extraction cases + 4/4 ceiling cases + "
           f"{len(SELF_TEST_SUPPRESSION_CASES)}/"
           f"{len(SELF_TEST_SUPPRESSION_CASES)} suppression cases + "
+          f"{len(SELF_TEST_WAIVER_CASES)}/{len(SELF_TEST_WAIVER_CASES)} "
+          f"waiver cases + "
           f"{len(SELF_TEST_GATE_CASES)}/{len(SELF_TEST_GATE_CASES)} gate "
           f"cases + 1/1 IO-error case pass")
     return 0
@@ -1180,8 +1403,7 @@ def main(argv=None):
           f"clamp reserves {r2}) - read from "
           f"{args.logger_h} / {args.logger_c}")
 
-    kept = [f for f in findings if suppress_key(f) not in suppressions]
-    suppressed = len(findings) - len(kept)
+    kept, suppressed = apply_suppressions(findings, suppressions)
     kept.sort(key=lambda f: (f.path, f.line, f.reason))
 
     if args.list:
