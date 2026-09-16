@@ -181,6 +181,8 @@ SYSTem:STReam:STATS:CLEar  # Reset all counters
 | `SampleLossPercent` | uint32 | `QueueDroppedSamples / (Total + Dropped) * 100` |
 | `ByteLossPercent` | uint32 | `(USB + WiFi + SD dropped) / TotalBytesStreamed * 100` |
 | `WindowLossPercent` | uint32 | Sliding-window sample loss % (0-100), updated every N samples |
+| `ReadLoopMaxNs` | uint64 | #251: longest single tick of the per-channel read loop in `_Streaming_Deferred_Interrupt_Task`, in ns. **Wall time**, so an interrupt that preempts the loop is counted inside it: this is the worst tick seen, not the loop's own worst case. Present only in a `READ_LOOP_PROFILE` build (the default); `-DREAD_LOOP_PROFILE=0` removes both `ReadLoop*` fields. |
+| `ReadLoopMeanNs` | uint64 | #251: mean per-tick time of that loop in ns, over every tick that reached it since the last clear. Divide by the enabled channel count for a per-channel figure (the ADC-side term of the NQ1 cap, which `streaming.h` states in the same unit), and compare T1-only against T2-only configs to separate the ARDY-direct branch from the LATEST-cache branch. Integer ns, not µs, because a one-channel loop is under a microsecond. Resolution is one core-timer count, 1e9 / (SYSCLK/2): 7.94 ns on the 252 MHz build. The conversion assumes the clock the build targets. |
 
 **Distinguishing failure modes** with the ISR counter (#265):
 - `TimerISRCalls < freq × duration` → timer is rate-limited (PIC32MZ ~90 kHz hardware ceiling)

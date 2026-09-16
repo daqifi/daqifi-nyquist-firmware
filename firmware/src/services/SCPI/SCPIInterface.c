@@ -46,6 +46,9 @@
 
 /* SD write metrics accessed via sd_card_manager API */
 #include "../streaming.h"
+#if READ_LOOP_PROFILE
+#include "peripheral/coretimer/plib_coretimer.h"  // #251: CORETIMER_FrequencyGet()
+#endif
 #include "../Capabilities.h"
 #include "Util/StreamingBufferPool.h"
 #include "state/data/AInSample.h"
@@ -4016,6 +4019,40 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     // the deferred task's direct read.  Expected 0; non-zero ticks emitted
     // that channel with its validMask bit clear.
     scpi_printf(context, "T1ArdyMisses=%u\r\n", (unsigned)s.t1ArdyMisses);
+#if READ_LOOP_PROFILE
+    {
+        /* #251: per-tick time of the deferred task's per-channel loop -- the
+         * ADC-side term of the NQ1 cap. Divide the mean by the enabled channel
+         * count for a per-channel figure; T1-only vs T2-only configs separate
+         * the ARDY-direct branch from the LATEST-cache branch.
+         *
+         * Nanoseconds, not microseconds: a one-channel loop is well under a
+         * microsecond, so integer us would print 0 exactly where the T1 figure
+         * is wanted. It stays an integer because every STATS consumer parses
+         * integers (the python harness int-coerces, python-core skips what
+         * int() rejects, daqifi-core's map is ulong.TryParse), and ns is the
+         * cap model's own unit. One count is 1e9 / CORETIMER_FrequencyGet() ns
+         * (7.94 ns at 126 MHz). That is the clock the BUILD targets; a unit
+         * whose PLL did not switch at boot (TimerApi_ClockMatchesBuild() false)
+         * would scale these by the clock ratio, as it does every SYS_TIME delay.
+         *
+         * Integer only, ordered so nothing wraps 64 bits: the mean is taken in
+         * counts first (< 2^32, because no tick exceeds the max), kept to 1/1000
+         * count, then scaled. Never sum * 1e9, which would wrap after ~146 s of
+         * summed loop time. */
+        const uint64_t coreHz = (uint64_t)CORETIMER_FrequencyGet();
+        const uint64_t maxNs = ((uint64_t)s.readLoopMaxCycles * 1000000000ULL) / coreHz;
+        uint64_t meanNs = 0u;
+        if (s.readLoopCount > 0u) {
+            const uint64_t meanMilliCycles =
+                (s.readLoopCycles / s.readLoopCount) * 1000ULL +
+                ((s.readLoopCycles % s.readLoopCount) * 1000ULL) / s.readLoopCount;
+            meanNs = (meanMilliCycles * 1000000ULL) / coreHz;
+        }
+        scpi_printf(context, "ReadLoopMaxNs=%llu\r\n", (unsigned long long)maxNs);
+        scpi_printf(context, "ReadLoopMeanNs=%llu\r\n", (unsigned long long)meanNs);
+    }
+#endif
     // Timer ISR tracking (#265): actual ISR entry count this session (64-bit
     // so it never wraps in practice). Compare against (TotalSamplesStreamed
     // + QueueDroppedSamples) to verify every timer event is accounted for,
@@ -7139,6 +7176,15 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
                 (unsigned)AInSampleList_PoolInUse());
     scpi_printf(context, "SamplePoolMaxUsed=%u\r\n",
                 (unsigned)AInSampleList_PoolMaxUsed());
+    /* #1082: the streaming pool's total byte size (STATIC_POOL_SIZE) had no
+     * SCPI caller, so a host could only learn it from a "Pool partition"
+     * LOG_I line -- captured only if GENERAL is at INFO when some
+     * StreamingBufferPool_Partition() call runs, never for the boot-time
+     * partition (GENERAL boots at ERROR). StreamingBufferPool_TotalSize()
+     * has no side effects and needs no stream/repartition. Appended per the
+     * #828 convention: existing keys keep their name, value and order. */
+    scpi_printf(context, "StreamingPoolTotal=%u\r\n",
+                (unsigned)StreamingBufferPool_TotalSize());
     return SCPI_RES_OK;
 }
 
@@ -7953,8 +7999,24 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
                 break;
             }
         }
-        double moduleRange = (modIdx < rt->AInModules.Size)
-            ? rt->AInModules.Data[modIdx].Range : 0.0;
+        /* #1086 (the Range half of #904/#1054): Range is a 64-bit double
+         * -- two 32-bit loads on PIC32MZ (CLAUDE.md atomicity rules) -- and
+         * a CONF:ADC:RANGe setter on the OTHER SCPI transport can land
+         * between them. That setter's store is atomic (#1086), which does
+         * not stop a reader straddling a completed store, so copy it under a
+         * minimal critical section and hand EmitAinChannelJson the local.
+         *
+         * Deliberately NOT folded into EmitAinChannelJson's CalM/CalB
+         * section (#1054): that one lives in the callee, and a module's Range
+         * and a channel's cal pair have independent writers, so nothing
+         * needs them read at the same instant. This loop runs once per
+         * public channel on a query path, not per sample. */
+        double moduleRange = 0.0;
+        if (modIdx < rt->AInModules.Size) {
+            taskENTER_CRITICAL();
+            moduleRange = rt->AInModules.Data[modIdx].Range;
+            taskEXIT_CRITICAL();
+        }
 
         if (!firstEntry) scpi_printf(context, ",");
         firstEntry = false;
