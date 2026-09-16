@@ -735,15 +735,34 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 // holding the single client slot -- every later connect refused
                 // until the 300 s idle watchdog reclaims it.  Give the slot back
                 // now instead.  CloseClientSocket is explicitly safe from this
-                // context (#437: it never blocks the WINC driver task), and this
-                // socket has no in-flight state yet, so the #452 close-races-a-
-                // send hazard does not apply to it.
+                // context (#437: it never blocks the WINC driver task).
+                //
+                // Gated on !Streaming_IsActiveOnWifiInterface() for the SAME
+                // #452 reason as the post-batch re-arm site and the idle
+                // watchdog.  This socket is NOT in the position of the
+                // refused-2nd-client shutdown() above: that one is safe
+                // precisely because its fd is never published, whereas
+                // clientSocket was published a few lines up.  WDRV_WINC_Tasks
+                // runs at pri 1 (configuration.h DRV_WIFI_WINC_RTOS_TASK_PRIORITY)
+                // -- below every other task involved -- so if WiFi streaming was
+                // already running when this client connected, streaming_Task
+                // (pri 6) can preempt between that store and here and reach
+                // send() on this very socket via wifi_manager_WriteToBuffer ->
+                // wifi_tcp_server_WriteBuffer (which gates only on
+                // clientSocket >= 0) -> TcpServerFlush.  A synchronous shutdown()
+                // racing that send() is exactly the HIF re-entrancy that corrupts
+                // chip state and wedges all TCP I/O until SYST:COMM:LAN:HRESet.
+                // While a stream is live we therefore leave the deaf socket in
+                // place and let the idle watchdog reclaim it once the stream
+                // stops -- the same tradeoff the watchdog itself already ships.
                 if (recv(gStateMachineContext.pTcpServerContext->client.clientSocket,
                          gStateMachineContext.pTcpServerContext->client.readBuffer,
                          WIFI_RBUFFER_SIZE, 0) != SOCK_ERR_NO_ERROR) {
                     LOG_E("TCP: recv() arm failed at accept (sock=%d) - releasing client slot (#1073)",
                           pAcceptMessage->sock);
-                    wifi_tcp_server_CloseClientSocket();
+                    if (!Streaming_IsActiveOnWifiInterface()) {
+                        wifi_tcp_server_CloseClientSocket();
+                    }
                 }
 
             } else {

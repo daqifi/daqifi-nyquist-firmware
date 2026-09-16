@@ -488,7 +488,22 @@ void wifi_tcp_server_CloseSocket() {
 
 void wifi_tcp_server_CloseClientSocket() {
     if (gpServerData->client.clientSocket != -1) {
-        shutdown(gpServerData->client.clientSocket);
+        // #1073: shutdown() travels the same HIF path that a failed recv()
+        // arm congests, so it can fail for the same reason.  socket.c's
+        // shutdown() memsets the driver's socket entry unconditionally, after
+        // remapping a failed SOCKET_REQUEST to SOCK_ERR_INVALID
+        // (winc/drv/socket/socket.c:1006-1013) -- so the local entry is gone
+        // either way: the close can never be retried, while the WINC-side
+        // allocation may still be held.  There is nothing to recover here, but
+        // discarding the status left no trail at all: repeated failures would
+        // walk the chip's socket table down to nothing while looking, from our
+        // side, exactly like a clean close.  Log it, mirroring the check the
+        // refused-2nd-client site in wifi_manager.c already performs.
+        int8_t rc = shutdown(gpServerData->client.clientSocket);
+        if (rc != SOCK_ERR_NO_ERROR) {
+            LOG_E("TCP: shutdown(client sock=%d) failed rc=%d - WINC may still hold the socket (#1073)",
+                  (int)gpServerData->client.clientSocket, (int)rc);
+        }
         gpServerData->client.clientSocket = -1;
     }
     gpServerData->client.readBufferLength = 0;
