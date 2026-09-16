@@ -185,11 +185,36 @@ _ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "a": "\a", "b": "\b", "f": "\f",
             "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?", "0": "\0"}
 
 
+def _byte_char(value):
+    """Map a raw 0-255 byte to a str that round-trips to exactly that one
+    byte through `.encode('utf-8', errors='surrogateescape')` -- the same
+    convention `tools/lint/log_budget.py` uses for the identical purpose, so
+    a decoded escape here is charged/re-emitted the same way it is there.
+    """
+    value &= 0xFF
+    return chr(value) if value < 0x80 else chr(0xDC00 + value)
+
+
 def unescape(body):
     """Decode C escapes to the bytes the compiler emits.
 
     Source length is not output length: `\\r\\n` is four characters of source
     and two bytes of message, and measuring the source form would over-count.
+
+    A NUMERIC ESCAPE IS DECODED TO ITS REAL BYTE, NEVER BLANKED TO A '?'
+    PLACEHOLDER. An earlier version of this function did exactly that --
+    the same bug `tools/lint/log_budget.py`'s `unescape()` had (see its
+    docstring): `\\x25` (or octal `\\045`) compiles to a literal '%',
+    identical to typing % directly, and blanking it to '?' would make this
+    GENERATOR measure a different, shorter signature than the real compiled
+    text and than what the lint tool itself would measure for the same
+    source -- silently validating the wrong thing (Qodo /agentic_review
+    finding on PR #1110, 2026-09-16, "Generated tests misread escaped
+    formats": fixing the join-order bug in read_literal_group() without also
+    fixing this decoder left the identical twin defect in place). No real
+    extracted site uses a numeric escape today, so this changes no generated
+    output, but a future site that does is now measured correctly instead of
+    silently wrong.
     """
     out, i, n = [], 0, len(body)
     while i < n:
@@ -205,13 +230,14 @@ def unescape(body):
             j = i + 1
             while j < n and body[j] in "0123456789abcdefABCDEF":
                 j += 1
-            out.append("?")               # one byte, whatever its value
+            digits = body[i + 1:j]
+            out.append(_byte_char(int(digits, 16)) if digits else "x")
             i = j
         elif c in "01234567":
             j = i
             while j < n and j < i + 3 and body[j] in "01234567":
                 j += 1
-            out.append("?")
+            out.append(_byte_char(int(body[i:j], 8)))
             i = j
         else:
             out.append(_ESCAPES.get(c, c))
@@ -368,9 +394,25 @@ def read_ceiling():
 
 
 def c_literal(text):
-    """Re-emit a decoded message as a C string literal."""
+    """Re-emit a decoded message as a C string literal.
+
+    A byte that is not printable ASCII -- including one that came from a
+    decoded \\xHH / \\OOO escape via unescape()'s surrogateescape round-trip
+    -- is re-emitted as a 3-DIGIT ZERO-PADDED OCTAL escape (\\OOO), never
+    hex. C's hex escape has no digit limit -- it maximal-munches every
+    following hex-digit CHARACTER, escape or not -- so re-emitting byte 0x25
+    as "\\x25" immediately before a literal '3' in the message would compile
+    as the single three-hex-digit escape \\x253 (a different byte entirely),
+    not as 0x25 followed by '3'. An octal escape is defined to consume AT
+    MOST three digits regardless of what follows (C99 6.4.4.4), so padding
+    to exactly three digits makes the boundary unambiguous with no
+    string-concatenation trick needed. (Most decoded escapes -- '%' among
+    them -- are printable ASCII and never reach this branch at all; it only
+    matters for a genuinely non-printable byte.)
+    """
     out = []
     for ch in text:
+        cp = ord(ch)
         if ch == "\\":
             out.append("\\\\")
         elif ch == '"':
@@ -381,15 +423,21 @@ def c_literal(text):
             out.append("\\n")
         elif ch == "\t":
             out.append("\\t")
-        elif ch == "?":
-            out.append("?")
         elif " " <= ch <= "~":
             out.append(ch)
+        elif 0xDC80 <= cp <= 0xDCFF:
+            # a raw byte >= 0x80, round-tripped through unescape()'s
+            # surrogateescape convention -- re-emit its real byte value.
+            out.append(f"\\{cp - 0xDC00:03o}")
+        elif cp < 0x100:
+            # a narrow control byte (from an octal/hex escape, or a literal
+            # control character) that isn't printable ASCII.
+            out.append(f"\\{cp:03o}")
         else:
             raise GenError(
-                f"message contains the non-printable byte {ch!r}, which this "
-                f"generator will not re-emit blind -- decide what it should "
-                f"become and extend c_literal()")
+                f"message contains the non-byte codepoint {ch!r} (U+"
+                f"{cp:04X}), which this generator will not re-emit blind -- "
+                f"decide what it should become and extend c_literal()")
     return '"' + "".join(out) + '"'
 
 
