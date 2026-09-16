@@ -724,7 +724,27 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 // Single-writer (this callback only) -> plain ++ is safe.
                 gStateMachineContext.pTcpServerContext->client.connGeneration++;
                 LOG_D("Connection from %s:%d\r\n", inet_ntop(AF_INET, &pAcceptMessage->strAddr.sin_addr.s_addr, s, sizeof (s)), pAcceptMessage->strAddr.sin_port);
-                recv(gStateMachineContext.pTcpServerContext->client.clientSocket, gStateMachineContext.pTcpServerContext->client.readBuffer, WIFI_RBUFFER_SIZE, 0);
+                // #1073: the arm is NOT fire-and-forget.  This recv() is what
+                // makes the socket able to report anything at all -- inbound
+                // data AND the peer-close notification, which the WINC delivers
+                // only as the reply to an outstanding SOCKET_CMD_RECV (see the
+                // re-arm site in wifi_manager_ProcessStateImpl for the full
+                // mechanism and the driver citations).  If the arm fails, the
+                // driver has already latched bIsRecvPending = 1 and never clears
+                // it, so the socket is deaf for the rest of its life while still
+                // holding the single client slot -- every later connect refused
+                // until the 300 s idle watchdog reclaims it.  Give the slot back
+                // now instead.  CloseClientSocket is explicitly safe from this
+                // context (#437: it never blocks the WINC driver task), and this
+                // socket has no in-flight state yet, so the #452 close-races-a-
+                // send hazard does not apply to it.
+                if (recv(gStateMachineContext.pTcpServerContext->client.clientSocket,
+                         gStateMachineContext.pTcpServerContext->client.readBuffer,
+                         WIFI_RBUFFER_SIZE, 0) != SOCK_ERR_NO_ERROR) {
+                    LOG_E("TCP: recv() arm failed at accept (sock=%d) - releasing client slot (#1073)",
+                          pAcceptMessage->sock);
+                    wifi_tcp_server_CloseClientSocket();
+                }
 
             } else {
                 // #475: accept() arriving with a NULL message indicates a
@@ -3254,9 +3274,51 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
         if (gStateMachineContext.pTcpServerContext != NULL &&
             gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
             wifi_tcp_server_ProcessReceivedBuff();
-            recv(gStateMachineContext.pTcpServerContext->client.clientSocket,
-                 gStateMachineContext.pTcpServerContext->client.readBuffer,
-                 WIFI_RBUFFER_SIZE, 0);
+            // #1073: re-read the fd AFTER the dispatch above.  ProcessReceivedBuff
+            // runs the whole microrl + libscpi handler chain, and a handler can
+            // close the client (LAN:POWer, a WiFi REINIT, an SCPI teardown), so
+            // the fd the guard above tested may already be stale.
+            SOCKET clientSock =
+                    gStateMachineContext.pTcpServerContext->client.clientSocket;
+            if (clientSock >= 0 &&
+                recv(clientSock,
+                     gStateMachineContext.pTcpServerContext->client.readBuffer,
+                     WIFI_RBUFFER_SIZE, 0) != SOCK_ERR_NO_ERROR) {
+                // #1073: this is the close-detection gap, so the arm's result
+                // must be acted on rather than discarded.
+                //
+                // A peer close/RST reaches us ONLY as SOCKET_MSG_RECV with
+                // s16BufferSize <= 0, and the WINC sends that only as the reply
+                // to an outstanding SOCKET_CMD_RECV: socket.c's recv() issues a
+                // request only while bIsRecvPending == 0, and the reply handler
+                // is the only thing that clears that flag.  This is the single
+                // site that re-arms it after the #353 deferral, and the entire
+                // batch dispatch above runs with nothing armed -- seconds, for a
+                // burst whose replies drain through wCirbuf under backpressure.
+                //
+                // A failed arm here is unrecoverable inside the driver: it sets
+                // bIsRecvPending = 1 BEFORE issuing the HIF request and does NOT
+                // clear it when SOCKET_REQUEST fails, so every later recv() on
+                // this socket returns SOCK_ERR_NO_ERROR while queueing nothing.
+                // The socket is then permanently deaf -- no data and no close
+                // notification, ever again -- which is precisely the #1073
+                // symptom: the slot is held and every reconnect refused until the
+                // 300 s idle watchdog fires.  A large queued reply burst is what
+                // congests the HIF enough for the arm to fail right here.
+                //
+                // Only shutdown() clears that latch (it memsets the driver's
+                // socket entry), so releasing the slot IS the recovery -- a retry
+                // would silently no-op.  Gated on streaming for the same #452
+                // reason the idle watchdog is: never shutdown() a socket
+                // streaming_Task may be mid-send() on.  A streaming client is
+                // TX-alive regardless, and the #1073 scenario is a control-plane
+                // client with no stream running.
+                LOG_E("TCP: recv() re-arm failed (sock=%d) - socket is deaf (#1073)",
+                      (int)clientSock);
+                if (!Streaming_IsActiveOnWifiInterface()) {
+                    wifi_tcp_server_CloseClientSocket();
+                }
+            }
         }
     }
 
