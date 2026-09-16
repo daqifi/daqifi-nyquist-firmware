@@ -405,14 +405,29 @@ $(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE
 # ordinary tuning values, checked by nothing here, which is the correct amount
 # of claim to make about them.
 #
-# The four drivers stay as PREREQUISITES even though nothing reads them: they
-# are the only consumers of the header under test, so an edit to one must
-# invalidate this binary for `make`'s incremental build to be trustworthy.
-# DAC7718_SRC joined the other three in #1108, when dac7718_WaitStat folded
-# onto this same shared loop instead of keeping its own grep-guarded copy
-# (see the retired comment above DAC7718_SRC's definition, above).
+# The four drivers stay as PREREQUISITES so an edit to one must invalidate
+# this binary for `make`'s incremental build to be trustworthy. Three of them
+# (spi/uart/i2c) are the only consumers of the header under test and nothing
+# here reads them further. DAC7718_SRC joined in #1108, when dac7718_WaitStat
+# folded onto this same shared loop instead of keeping its own grep-guarded
+# copy (see the retired comment above DAC7718_SRC's definition, above) --
+# and DOES get one guard below, because it is the one thing the retired
+# target checked that compiling WaitLoop.h for real cannot: that DAC7718.c
+# itself still ROUTES every wait through dac7718_WaitStat rather than a call
+# site reverting to bare polling. test_1056_wait_loop.c has no visibility
+# into DAC7718.c's text at all -- it only proves the shared loop's shape --
+# so without this grep a reverted call site would rebuild and pass silently
+# (Qodo /agentic_review, PR #1109).
 $(WAITLOOP_BIN): test_1056_wait_loop.c test_framework.h $(WAITLOOP_H) \
                  $(USER_SPI_SRC) $(USER_UART_SRC) $(USER_I2C_SRC) $(DAC7718_SRC) $(RECIPES)
+	@test "$$(grep -cF 'dac7718_WaitStat(' $(DAC7718_SRC))" = "7" \
+	  || { echo "ERROR: expected exactly 7 occurrences of 'dac7718_WaitStat(' in $(DAC7718_SRC)"; \
+	       echo "       (1 definition + 6 call sites -- 3 in the write frame, 3 in the RW=1 NOP"; \
+	       echo "       readback), found $$(grep -cF 'dac7718_WaitStat(' $(DAC7718_SRC)). A call"; \
+	       echo "       site reverting to a bare register-poll spin would not otherwise be caught"; \
+	       echo "       by anything here -- test_1056_wait_loop.c proves WaitLoop.h's shape, not"; \
+	       echo "       that DAC7718.c still calls into it."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -I$(FW_HAL) -o $(WAITLOOP_BIN) test_1056_wait_loop.c
 
 $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(SCPIDAC_SRC) $(RECIPES)
