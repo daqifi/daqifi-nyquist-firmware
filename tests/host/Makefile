@@ -204,17 +204,22 @@ SCPI_INTERFACE_H := ../../firmware/src/services/SCPI/SCPIInterface.h
 SCPI_INTERFACE_C := ../../firmware/src/services/SCPI/SCPIInterface.c
 USBCDC_SRC := ../../firmware/src/services/UsbCdc/UsbCdc.c
 WIFI_TCP_SRC := ../../firmware/src/services/wifi_services/wifi_tcp_server.c
-# #913: UserSpi.c's spi_XferByte busy-spin -> spin-then-vTaskDelay yield.
-# Like BENCH_BIN this needs no UUT copy and no stubs -- UserSpi.c is NOT
-# includable on the host (FreeRTOS, Harmony's definitions.h/configuration.h,
-# the DIO ownership registry), so the test re-implements spi_WaitStat's loop
-# SHAPE against a mock tick clock and mock hardware-condition flag.
+# #1056 (was #913): the spin-then-vTaskDelay(1) wait loop UserSpi.c,
+# UserUart.c and UserI2c.c all use. It now exists ONCE, in
+# firmware/src/HAL/WaitLoop.h, and this test compiles that header directly --
+# same category as AD7609_BIN and JSONESC_BIN, not the re-implementing kind.
+# So: no UUT copy, no stubs, no grep guards, and NOT $(INCLUDES) -- just
+# -I$(FW_HAL) for the real header. There is no copy left to pin.
 #
-# That makes the fast-spin count and the timeout budget a COPY, which can
-# drift. The recipe greps both out of the real source first and refuses to
-# build if either has changed, so a stale copy can't pass silently -- same
-# convention as BENCH_BIN above.
-SPI913_BIN := run_913_tests
+# It replaces run_913_tests / test_913_spi_wait_stat.c, which could only
+# re-implement spi_WaitStat's loop line-for-line (none of the three drivers is
+# includable on a host: FreeRTOS, Harmony's definitions.h/configuration.h, the
+# DIO ownership registry) and pinned a handful of per-file constants with the
+# five greps this target used to carry. See the block above $(WAITLOOP_BIN)'s
+# rule for what that could and could not establish, and why #1056 ended it.
+WAITLOOP_BIN := run_1056_tests
+FW_HAL := ../../firmware/src/HAL
+WAITLOOP_H := $(FW_HAL)/WaitLoop.h
 USER_SPI_SRC := ../../firmware/src/HAL/UserSpi/UserSpi.c
 USER_UART_SRC := ../../firmware/src/HAL/UserUart/UserUart.c
 USER_I2C_SRC := ../../firmware/src/HAL/UserI2c/UserI2c.c
@@ -310,11 +315,17 @@ SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
 # UserSpi.c's spi_XferByte. Same host-testability constraint as DAC980_BIN
 # above -- DAC7718.c is not includable on the host -- so this re-implements
 # the loop SHAPE against a mock tick clock and mock hardware-condition flag,
-# identically to test_913_spi_wait_stat.c (DAC7718 has only the one wait
-# shape, shared by all three of its call sites, unlike UserSpi/UserUart/
+# the way the deleted test_913_spi_wait_stat.c did (DAC7718 has only the one
+# wait shape, shared by all three of its call sites, unlike UserSpi/UserUart/
 # UserI2c's three separate shapes). The two firmware constants this depends
-# on are a COPY; the recipe greps them and refuses to build on drift, same
-# convention as SPI913_BIN.
+# on are a COPY; the recipe greps them and refuses to build on drift.
+#
+# THIS IS NOW THE LAST COPY OF THAT LOOP. #1056 moved the other three onto the
+# shared firmware/src/HAL/WaitLoop.h that $(WAITLOOP_BIN) compiles for real, so
+# this target is the only place left where a grep guard stands in for the loop
+# itself -- with the limits that block spells out. Folding dac7718_WaitStat
+# onto WaitLoop.h is the obvious follow-up and was deliberately left out of
+# #1056's scope (it was filed before #1057 existed).
 DAC1057_BIN := run_1057_tests
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
@@ -367,11 +378,12 @@ $(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(SYSINFO_BIN) test_947_sysinfo_write_abort.c
 
-# THE GREPS BELOW PIN CONSTANTS, AND THAT IS ALL THEY CLAIM. They do not pin
-# the loop's SHAPE. Review of #1009 was right that constants alone cannot catch
-# the defect this suite exists for -- delete the fresh register read at expiry,
-# move the deadline test after the yield, or drop the vTaskDelay(1), and every
-# grep here still passes while the modelled test stays green.
+# THIS TARGET USED TO CARRY FIVE GREP GUARDS. THEY ARE GONE, AND SO IS WHAT
+# THEY GUARDED. They pinned CONSTANTS, and that was all they ever claimed:
+# review of #1009 was right that constants alone cannot catch the defect this
+# suite exists for -- delete the fresh register read at expiry, move the
+# deadline test after the yield, or drop the vTaskDelay(1), and every grep
+# still passed while the modelled test stayed green.
 #
 # A SHAPE CHECKER WAS BUILT FOR EXACTLY THAT AND HAS BEEN DELETED. It went
 # through five generations, each defeated by the next review round:
@@ -386,42 +398,25 @@ $(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE
 #
 # The first of those cannot be closed without finding function boundaries, i.e.
 # PARSING C -- which is the mechanism #1032 exists to get this repo OUT of. So
-# the checker was deleted rather than given a sixth generation, and the durable
-# fix is tracked as #1056: make the wait loop host-compilable so the test
-# exercises the REAL code instead of a copy, the way #889 split AD7609Scale.h
-# out so test_ad7609_scale.c could include the shipped header directly.
+# the checker was deleted rather than given a sixth generation, and #1056 took
+# #889's route instead: make the wait loop host-compilable so the test
+# exercises the REAL code, the way AD7609Scale.h was split out so
+# test_ad7609_scale.c could include the shipped header directly.
 #
-# What is left is honest about its reach. Same convention as every other suite
-# here, with the constants pinned PER FILE because the modelled shape is shared
-# by all three wait loops and uart and i2c had no pin of their own at all. The
-# host test still proves the shape's BEHAVIOUR; nothing here claims any more to
-# prove the firmware still has that shape.
-$(SPI913_BIN): test_913_spi_wait_stat.c test_framework.h $(USER_SPI_SRC) \
-               $(USER_UART_SRC) $(USER_I2C_SRC) $(RECIPES)
-	@grep -qE '^#define[[:space:]]+USER_SPI_BYTE_TIMEOUT_MS[[:space:]]+20u[[:space:]]*$$' $(USER_SPI_SRC) \
-	  || { echo "ERROR: USER_SPI_BYTE_TIMEOUT_MS is no longer '20u' in $(USER_SPI_SRC)."; \
-	       echo "       Update FW_BYTE_TIMEOUT_MS in test_913_spi_wait_stat.c and re-derive its numbers."; \
-	       exit 1; }
-	@grep -qE '^[[:space:]]*for \(uint32_t s = 0; s < 8000u; \+\+s\)' $(USER_SPI_SRC) \
-	  || { echo "ERROR: spi_WaitStat's fast-spin bound is no longer 's < 8000u' in $(USER_SPI_SRC)."; \
-	       echo "       Update FW_SPIN_COUNT in test_913_spi_wait_stat.c and re-derive its numbers."; \
-	       exit 1; }
-	@grep -qE '^[[:space:]]*for \(uint32_t s = 0; s < 4000u; \+\+s\)' $(USER_UART_SRC) \
-	  || { echo "ERROR: uart_WaitSta's fast-spin bound is no longer 's < 4000u' in $(USER_UART_SRC)."; \
-	       echo "       The modelled shape is SHARED by all three wait loops, so each"; \
-	       echo "       file's bound is pinned separately -- re-derive against the new one."; \
-	       exit 1; }
-	@grep -qE '^[[:space:]]*for \(uint32_t s = 0; s < 8000u; \+\+s\)' $(USER_I2C_SRC) \
-	  || { echo "ERROR: i2c_WaitMif's fast-spin bound is no longer 's < 8000u' in $(USER_I2C_SRC)."; \
-	       echo "       Same shared shape, pinned per file -- re-derive."; \
-	       exit 1; }
-	@grep -qE '^#define[[:space:]]+I2C_OP_TIMEOUT_CP0[[:space:]]+700000u' $(USER_I2C_SRC) \
-	  || { echo "ERROR: I2C_OP_TIMEOUT_CP0 is no longer '700000u' in $(USER_I2C_SRC)."; \
-	       echo "       i2c is the most reachable of the three -- a false timeout there"; \
-	       echo "       fires i2c_BusRecover() on a healthy bus -- and the test's budget"; \
-	       echo "       arithmetic is derived from this number. Re-derive it."; \
-	       exit 1; }
-	$(CC) $(CFLAGS) -o $(SPI913_BIN) test_913_spi_wait_stat.c
+# It now does. The loop lives once in $(WAITLOOP_H), the three drivers are thin
+# wrappers injecting their own register read / clock / yield, and
+# test_1056_wait_loop.c compiles that header -- so the mutations above turn
+# this suite RED instead of leaving it green, and there is no copied constant
+# left for a grep to pin. Each driver's own spin bound and budget are now
+# ordinary tuning values, checked by nothing here, which is the correct amount
+# of claim to make about them.
+#
+# The three drivers stay as PREREQUISITES even though nothing reads them: they
+# are the only consumers of the header under test, so an edit to one must
+# invalidate this binary for `make`'s incremental build to be trustworthy.
+$(WAITLOOP_BIN): test_1056_wait_loop.c test_framework.h $(WAITLOOP_H) \
+                 $(USER_SPI_SRC) $(USER_UART_SRC) $(USER_I2C_SRC) $(RECIPES)
+	$(CC) $(CFLAGS) -I$(FW_HAL) -o $(WAITLOOP_BIN) test_1056_wait_loop.c
 
 $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(SCPIDAC_SRC) $(RECIPES)
 	@grep -qE '^[[:space:]]*bool lockHeld = false;' $(DAC7718_SRC) \
@@ -691,12 +686,14 @@ $(SCPI999_BIN): test_999_scpi_context_storage_isolation.c test_framework.h \
 	    -o $(SCPI999_BIN) test_999_scpi_context_storage_isolation.c $(LIBSCPI_SRCS) -lm
 
 # Every suite, and every one of the seven binaries. Third merge around this
-# same block (fw#961 JSONESC_BIN, fw#983 SUSPEND_BIN, fw#913 SPI913_BIN),
-# resolved the same way every time: keep each side's target INTACT and merge
-# only `run` and `clean` -- a duplicated rule here would silently shadow one
-# of them. $(RECIPES) is main's (#983) fix and applies to SPI913_BIN too,
-# because it carries grep guards: a guard re-run only when its SOURCE changes
-# is not re-run when the GUARD changes.
+# same block (fw#961 JSONESC_BIN, fw#983 SUSPEND_BIN, fw#913 SPI913_BIN --
+# since renamed to WAITLOOP_BIN by fw#1056), resolved the same way every time:
+# keep each side's target INTACT and merge only `run` and `clean` -- a
+# duplicated rule here would silently shadow one of them. $(RECIPES) is main's
+# (#983) fix, applied to every target that carries grep guards: a guard re-run
+# only when its SOURCE changes is not re-run when the GUARD changes. (#1056
+# deleted WAITLOOP_BIN's five guards along with the copy they pinned, so for
+# that one $(RECIPES) is now just ordinary recipe-change hygiene.)
 
 $(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(FW_RTOS_CFG) $(RECIPES)
 	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_IFACE_SRC) \
@@ -894,7 +891,7 @@ $(DAC1057_BIN): test_1057_dac7718_wait_stat.c test_framework.h $(DAC7718_SRC) $(
 # re-express their target as a fragment -- a mechanical move of one recipe,
 # which is strictly cheaper than this resolution has been nine times running.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(SPI913_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN)
+     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -904,7 +901,7 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(SUSPEND_BIN)
 	./$(DAC980_BIN)
 	./$(HELP_BIN)
-	./$(SPI913_BIN)
+	./$(WAITLOOP_BIN)
 	./$(SDLOG_BIN)
 	./$(SCPI999_BIN)
 	./$(SUSPENDREASON_BIN)
@@ -912,6 +909,6 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(SPI913_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN) $(GEN_1000)
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN) $(GEN_1000)
 
 .PHONY: run clean

@@ -14,6 +14,7 @@
 #include "device.h"
 #include "UserI2c.h"
 #include "../DIO.h"
+#include "../WaitLoop.h"
 #include "clock_config.h"          /* DAQIFI_PBCLK_HZ, DAQIFI_SYSCLK_252 */
 #include "FreeRTOS.h"
 #include "semphr.h"
@@ -103,30 +104,54 @@ static void i2c_ClearMif(void) {
     IFS4CLR = _IFS4_I2C2MIF_MASK;
 }
 
+/* THE LOOP ITSELF LIVES IN HAL/WaitLoop.h (#1056), one definition shared with
+ * spi_WaitStat and uart_WaitSta rather than three copies of the same shape;
+ * tests/host/test_1056_wait_loop.c compiles that header for real. What stays
+ * here is everything specific to this driver -- and this is the twin that
+ * shares LEAST with the other two: the status is a fixed interrupt flag with
+ * no mask/want to parameterise, and the budget is measured in CP0 core-timer
+ * CYCLES from _CP0_GET_COUNT(), not in FreeRTOS ticks. That is exactly why the
+ * shared loop owns no clock of its own.
+ *
+ * #913's ordering guarantee -- the flag is read before the budget is ever
+ * consulted, and ONCE MORE, freshly, at expiry -- is stated and exercised in
+ * that header. It matters most here: a hardcoded `false` at expiry reports a
+ * COMPLETED transfer as a timeout, which triggers i2c_BusRecover() / aborts an
+ * address scan on a HEALTHY bus, and the ~5.5 ms I2C_OP_TIMEOUT_CP0 budget is
+ * far easier to exceed under streaming-load preemption than uart's shared 15 s
+ * one, making this the more reachable of the twins. */
+typedef struct {
+    uint32_t start;                  /* CP0 cycle count at entry */
+} I2cWaitCtx_t;
+
+static bool i2c_MifSet(void* ctx) {
+    (void)ctx;                       /* the flag is fixed; nothing to select */
+    return (IFS4 & _IFS4_I2C2MIF_MASK) != 0u;
+}
+
+static bool i2c_WaitBudgetSpent(void* ctx) {
+    const I2cWaitCtx_t* w = (const I2cWaitCtx_t*)ctx;
+    /* Strictly '>', where spi_WaitStat and uart_WaitSta use '>=' -- carried
+     * over exactly as shipped (one CP0 tick out of 700000; #1056 is a
+     * refactor and changes no driver's behaviour). Rollover-safe either way:
+     * unsigned (now - start) is the true elapsed count across a wrap. */
+    return (uint32_t)(_CP0_GET_COUNT() - w->start) > I2C_OP_TIMEOUT_CP0;
+}
+
+static void i2c_WaitYield(void* ctx) {
+    (void)ctx;
+    /* A slow/low-baud/stuck op must not busy-wait the SCPI task and starve
+     * lower-priority tasks (esp. a 112-address SCAN); the I2C hardware
+     * clocks the bus autonomously while we sleep. Mirrors uart_WaitSta. */
+    vTaskDelay(1);
+}
+
 static bool i2c_WaitMif(void) {
-    uint32_t start = _CP0_GET_COUNT();
-    for (;;) {
-        /* Brief tight spin: a normal byte at 100 kHz completes in ~90 us, so
-         * this returns without ever yielding on the common path. */
-        for (uint32_t s = 0; s < 8000u; ++s) {
-            if ((IFS4 & _IFS4_I2C2MIF_MASK) != 0u) { return true; }
-        }
-        if ((IFS4 & _IFS4_I2C2MIF_MASK) != 0u) { return true; }
-        if ((uint32_t)(_CP0_GET_COUNT() - start) > I2C_OP_TIMEOUT_CP0) {
-            /* #913: FRESH read, not a reuse of the pre-check above. MIF setting
-             * while this task is preempted must still count as success. A
-             * hardcoded `false` reports a COMPLETED transfer as a timeout,
-             * which here triggers i2c_BusRecover() / aborts an address scan on
-             * a HEALTHY bus -- and the ~5.5 ms I2C_OP_TIMEOUT_CP0 budget is far
-             * easier to exceed under streaming-load preemption than uart's
-             * shared 15 s one, so this is the more reachable of the twins. */
-            return ((IFS4 & _IFS4_I2C2MIF_MASK) != 0u);
-        }
-        /* A slow/low-baud/stuck op must not busy-wait the SCPI task and starve
-         * lower-priority tasks (esp. a 112-address SCAN); the I2C hardware
-         * clocks the bus autonomously while we sleep. Mirrors uart_WaitSta. */
-        vTaskDelay(1);
-    }
+    I2cWaitCtx_t w = { _CP0_GET_COUNT() };
+    /* 8000: a normal byte at the 100 kHz default completes in ~90 us, so the
+     * tight spin returns without ever yielding on the common path. */
+    return WaitLoop_SpinThenYield(i2c_MifSet, i2c_WaitBudgetSpent,
+                                  i2c_WaitYield, &w, 8000u);
 }
 
 static void i2c_DelayHalfBit(void) {
