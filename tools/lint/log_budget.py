@@ -1043,6 +1043,45 @@ def self_test():
             print(f"  FAIL [gate: {name}]: exit {status}, expected {expected} "
                   f"-- {why}")
 
+    # gather_inputs(): an unreadable input during the scan must raise, so
+    # main()'s try/except turns it into the documented exit 2 rather than an
+    # uncaught traceback (Qodo round-2 finding on PR #1110: "Report
+    # unreadable inputs consistently"). A directory named `*.c` makes
+    # `Path.read_text()` raise `IsADirectoryError` (an OSError subclass)
+    # unconditionally -- unlike `chmod 0`, this also fails as root, which is
+    # how most CI runners execute, so the fixture is reliable there too.
+    # Driven through `gather_inputs()` itself (the function main()'s try
+    # block now calls), not a hand re-implementation of its control flow.
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d) / "src"
+        root.mkdir()
+        (root / "unreadable.c").mkdir()          # a directory, not a file
+        logger_h = Path(d) / "Logger.h"
+        logger_c = Path(d) / "Logger.c"
+        logger_h.write_text("#define LOG_MESSAGE_SIZE 128\n", encoding="utf-8")
+        logger_c.write_text(
+            "static int LogMessageFormatImpl(const char* format, va_list a)"
+            "\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);\n"
+            "    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n",
+            encoding="utf-8")
+        try:
+            gather_inputs(root, logger_h, logger_c,
+                          Path(d) / "no-such-suppress.txt",
+                          Path(d) / "no-such-baseline.txt", DEFAULT_MACROS)
+            failures += 1
+            print("  FAIL [gather_inputs: unreadable scan input]: did not "
+                  "raise -- an IsADirectoryError from scan() must not be "
+                  "swallowed")
+        except ToolError:
+            failures += 1
+            print("  FAIL [gather_inputs: unreadable scan input]: raised "
+                  "ToolError instead of letting the real OSError through -- "
+                  "main()'s except clause already catches both, so this "
+                  "would still reach exit 2, but it means the wrong "
+                  "exception type was actually raised")
+        except OSError:
+            pass                                  # the expected outcome
+
     if failures:
         print(f"\n::error::log_budget: {failures} self-test(s) failed")
         return 1
@@ -1051,12 +1090,54 @@ def self_test():
           f"{len(SELF_TEST_SUPPRESSION_CASES)}/"
           f"{len(SELF_TEST_SUPPRESSION_CASES)} suppression cases + "
           f"{len(SELF_TEST_GATE_CASES)}/{len(SELF_TEST_GATE_CASES)} gate "
-          f"cases pass")
+          f"cases + 1/1 IO-error case pass")
     return 0
 
 
+def gather_inputs(root, logger_h, logger_c, suppress, baseline, macros):
+    """Read every filesystem input the gate needs, or raise.
+
+    Everything that can fail on I/O lives in this ONE function, called from
+    inside main()'s single try/except, so a `ToolError` or an `OSError` from
+    ANY of these five reads -- the ceiling, the suppression file, the source
+    scan, or the baseline -- reaches the same "the tool could not run, exit 2"
+    path instead of one of them escaping as an uncaught traceback. Before
+    this existed, `scan()` and `load_baseline()` were called AFTER the try
+    block, so a permissions change, a symlink loop, or a file deleted
+    mid-scan on either one propagated as a raw Python traceback rather than
+    the documented exit 2 -- indistinguishable in a CI log from a crash in
+    the tool's own logic, and not the "never confused with clean" the module
+    docstring promises (Qodo round-2 finding on PR #1110: "Report unreadable
+    inputs consistently"). `--list`/`--write-baseline` load the baseline too,
+    even though neither gates on it, so both get the same guard for free.
+
+    Extracted to its own function (rather than inlined in main()'s try block,
+    which is where this logic lived before) so the self-test can drive this
+    exact path directly with a hand-built broken input, without going through
+    argparse or main()'s own self-test-of-itself guard -- calling `main()`
+    from inside `self_test()` recurses into that guard.
+
+    Returns (ceiling, size, vsn_reserve, clamp_reserve, suppressions,
+    findings, scanned, baseline_counter).
+    """
+    if not root.exists():
+        raise ToolError(f"root not found: {root}")
+    ceiling, size, r1, r2 = read_ceiling(
+        logger_h.read_text(encoding="utf-8"),
+        logger_c.read_text(encoding="utf-8"))
+    suppressions = load_suppressions(suppress)
+    findings, scanned = scan(root, macros, ceiling)
+    baseline_counter = load_baseline(baseline)
+    return (ceiling, size, r1, r2, suppressions, findings, scanned,
+            baseline_counter)
+
+
 # ---------------------------------------------------------------------------
-def main():
+def main(argv=None):
+    """argv defaults to sys.argv[1:] via argparse; the self-test passes an
+    explicit list so it can drive this function directly (a real CLI
+    invocation, not a re-implementation of its control flow) without
+    touching the process's actual command line."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     ap.add_argument("--logger-h", type=Path, default=DEFAULT_LOGGER_H)
@@ -1072,7 +1153,7 @@ def main():
     ap.add_argument("--macros", default="error", choices=["error", "all"],
                     help="which log macros to measure (default: the LOG_E "
                          "family, which is what #1039 gates)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     if args.self_test:
         return self_test()
@@ -1087,12 +1168,9 @@ def main():
         macros.update(OPTIONAL_MACROS)
 
     try:
-        if not args.root.exists():
-            raise ToolError(f"root not found: {args.root}")
-        ceiling, size, r1, r2 = read_ceiling(
-            args.logger_h.read_text(encoding="utf-8"),
-            args.logger_c.read_text(encoding="utf-8"))
-        suppressions = load_suppressions(args.suppress)
+        (ceiling, size, r1, r2, suppressions, findings, scanned,
+         baseline) = gather_inputs(args.root, args.logger_h, args.logger_c,
+                                   args.suppress, args.baseline, macros)
     except (ToolError, OSError) as e:
         print(f"::error::log_budget: {e}", file=sys.stderr)
         return 2
@@ -1102,7 +1180,6 @@ def main():
           f"clamp reserves {r2}) - read from "
           f"{args.logger_h} / {args.logger_c}")
 
-    findings, scanned = scan(args.root, macros, ceiling)
     kept = [f for f in findings if suppress_key(f) not in suppressions]
     suppressed = len(findings) - len(kept)
     kept.sort(key=lambda f: (f.path, f.line, f.reason))
@@ -1137,7 +1214,6 @@ def main():
         print(f"Wrote {len(lines)} finding(s) to {args.baseline}")
         return 0
 
-    baseline = load_baseline(args.baseline)
     current = collections.Counter(record(f) for f in kept)
     new, fixed, status = compare_to_baseline(current, baseline)
 
