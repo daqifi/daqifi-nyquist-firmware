@@ -290,6 +290,42 @@ script's own header comment for the full account, including why linking
 `SCPIInterface.c` itself was tried first and ruled out, and what a textual
 guard still does not establish.
 
+`test_1039_log_message_budget.c` covers four more `LOG_E` messages cut by the
+same `Util/Logger.c` message frame `test_1000_sd_log_arm_budget.c` measures
+#1000's site against (issue #1039): the `#716` clock-mismatch warning in
+`app_freertos.c`, the `CONF:ADC:CHAN` not-addressable refusal in `SCPIADC.c`,
+and the two `#589` SPI4/SD-card hints in `wifi_manager.c`. Same technique —
+mirror `LogMessageFormatImpl` (real `vsnprintf`, same bound, same clamp, same
+three-branch CRLF fixup) and run the real texts through it at their worst-case
+substitution, asserting the emitted bytes equal the intended bytes. It is
+independent of `test_1000`'s target: different sites, its own extraction, its
+own mirror, so a mistake in one does not become the other's baseline.
+
+None of these four formats ends in CRLF, which makes the boundary simpler than
+#1000's: the fixup always appends a fresh CRLF, so there is no degenerate
+window and the first byte past 125 is a byte of the message.
+
+It also carries the four **pre-fix** texts as frozen literals (315, 181, 139
+and 139 bytes at worst case) and asserts each was cut and lost its remedy —
+without that half every assertion would pass just as happily on a tree where
+#1039 was never fixed. Proven by reverting one real message in the tree: five
+of the eight tests then fail, naming the site, its byte overage and the lost
+remedy.
+
+Like `test_1029`, it does not grep-and-copy its firmware constants.
+`gen_1039_log_budget.py` **extracts** them at build time — `LOG_MESSAGE_SIZE`,
+both of `Logger.c`'s reservations, and all four live format strings — anchoring
+each site on the CODE that gates it rather than on its message text (a re-word
+must re-*measure*, not fail the build), requiring that anchor to be unique,
+refusing a literal run not followed by `,` or `)` (a fragment would understate
+a message's length and pass everything), and pinning each site's conversion
+signature so a changed substitution count re-derives the worst case instead of
+being measured with stale arguments. It **fails the build** with a named
+diagnostic on any of it. It deliberately does not reuse
+`tools/lint/log_budget.py`'s parser: that tool is the static gate, and it
+*models* this truncation — the value of this test is that it does not share
+the model.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a

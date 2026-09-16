@@ -164,6 +164,19 @@ on:
       # are grepped straight out of this file (configTICK_RATE_HZ,
       # configTICK_TYPE_WIDTH_IN_BITS).
       - 'firmware/src/config/default/FreeRTOSConfig.h'
+      # #1039: test_1039_log_message_budget.c measures four LOG_E messages
+      # against Logger's ceiling, and gen_1039_log_budget.py EXTRACTS all four
+      # out of the sources at build time. Logger.h/Logger.c are already listed
+      # above (#1000 reads the same ceiling) and SCPIADC.c is covered by the
+      # services/SCPI/** glob, but these two files are matched by nothing else
+      # here -- so a PR re-wording one of those two messages, exactly the
+      # change that must re-measure it, would otherwise queue no job at all.
+      # Listed by name rather than as directories: each holds one message this
+      # suite reads, and the extraction fails the BUILD by name if an anchor
+      # moves, so a refactor cannot step out of the trigger silently the way
+      # it could for AD7609Scale.h.
+      - 'firmware/src/app_freertos.c'
+      - 'firmware/src/services/wifi_services/wifi_manager.c'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -194,6 +207,19 @@ on:
       # are grepped straight out of this file (configTICK_RATE_HZ,
       # configTICK_TYPE_WIDTH_IN_BITS).
       - 'firmware/src/config/default/FreeRTOSConfig.h'
+      # #1039: test_1039_log_message_budget.c measures four LOG_E messages
+      # against Logger's ceiling, and gen_1039_log_budget.py EXTRACTS all four
+      # out of the sources at build time. Logger.h/Logger.c are already listed
+      # above (#1000 reads the same ceiling) and SCPIADC.c is covered by the
+      # services/SCPI/** glob, but these two files are matched by nothing else
+      # here -- so a PR re-wording one of those two messages, exactly the
+      # change that must re-measure it, would otherwise queue no job at all.
+      # Listed by name rather than as directories: each holds one message this
+      # suite reads, and the extraction fails the BUILD by name if an anchor
+      # moves, so a refactor cannot step out of the trigger silently the way
+      # it could for AD7609Scale.h.
+      - 'firmware/src/app_freertos.c'
+      - 'firmware/src/services/wifi_services/wifi_manager.c'
       - '.github/workflows/host-tests.yml'
 
 permissions:
