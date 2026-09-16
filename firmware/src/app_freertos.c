@@ -1051,11 +1051,24 @@ void app_SystemInit() {
      * running below its intended clock and will never reach the documented
      * ceilings until it is physically reprogrammed. */
     if (!TimerApi_ClockMatchesBuild()) {
-        LOG_E("Clock mismatch (#716): PBCLK3 is %u Hz, image built for %u Hz. "
-              "Device configuration words hold an older PLL and cannot be "
-              "updated by a firmware update - reprogram with a PICkit/IPE to "
-              "reach the intended clock. Rates are derived from the ACTUAL "
-              "clock, so streaming is accurate but ceilings are lower.",
+        /* #1039 (#1000 class): the old text was 295 fixed bytes plus two %u
+         * substitutions (10 each at the 32-bit worst case, "4294967295"), a
+         * 315-byte worst case against Logger's 125-byte effective ceiling
+         * (LOG_MESSAGE_SIZE 128, minus vsnprintf's 2-byte and the clamp's
+         * 3-byte reservation in LogMessageFormatImpl). It therefore lost more
+         * than half its text on EVERY firing -- including the remedy, which
+         * was the last clause. The text below is 99 fixed bytes, worst case
+         * 99+20 = 119, margin 6.
+         *
+         * What was cut is narrative, not remedy, and it lives in the block
+         * comment above: why a firmware update cannot move the PLL (DEVCFG2 +
+         * erratum 45), and that the clock-derived rates read the ACTUAL clock
+         * so streaming stays accurate while the ceilings sit lower. The
+         * emitted line keeps the two clock values, the issue tag, and the one
+         * thing the operator can act on -- reprogram the part with a
+         * PICkit/IPE, which a firmware update will not do for them. */
+        LOG_E("Clock mismatch (#716): PBCLK3 %u Hz, built for %u Hz - "
+              "reprogram via PICkit/IPE, not a firmware update.",
               (unsigned)TimerApi_PeripheralClockHz(),
               (unsigned)TIMER_CLOCK_FRQ_BUILT);
     }
