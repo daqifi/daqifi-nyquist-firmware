@@ -23,9 +23,9 @@
  * to pin. The three drivers keep their own signatures, their own constants and
  * their own register reads, and differ only in what they inject.
  *
- * WHY CALLBACKS AND NOT A SHARED TIME BASE. The three waits do NOT share a
- * clock: spi and uart measure a FreeRTOS TickType_t budget from
- * xTaskGetTickCount(), while i2c measures CP0 core-timer CYCLES from
+ * WHY CALLBACKS AND NOT A SHARED TIME BASE. The four waits do NOT share a
+ * clock: spi, uart and dac7718 (#1108) measure a FreeRTOS TickType_t budget
+ * from xTaskGetTickCount(), while i2c measures CP0 core-timer CYCLES from
  * _CP0_GET_COUNT() against I2C_OP_TIMEOUT_CP0. Baking either in would force a
  * behaviour change on the other, so the loop below owns no clock at all: each
  * driver supplies its own "has my budget run out" predicate, its own status
@@ -47,6 +47,22 @@
  * SCOPE: control flow only. No FreeRTOS type, no register access, no logging,
  * nothing a host cannot compile. Anything hardware-shaped belongs in the
  * driver's own callbacks.
+ *
+ * TWO SHAPES, NOT ONE (#1108/#1109). DAC7718 does not share the other three
+ * drivers' retry shape: #1057 deliberately moved its fast spin OUTSIDE the
+ * retry loop so a stuck transfer pays one register read per 1 ms tick instead
+ * of re-running the whole spin on every wake -- see DAC7718.c's dac7718_WaitStat
+ * for the fault-path-duty-cycle reasoning (the #913 starvation class). #1108
+ * folded DAC7718 onto WaitLoop_SpinThenYield as though it were a fourth
+ * instance of the RE-spinning shape; it is not, and doing so silently
+ * reintroduced that duty-cycle regression (measured: +316 B against main,
+ * where #1056's fold of the three re-spinning drivers was -35 B -- a size
+ * regression from the retry loop no longer folding to the same code, not from
+ * lost devirtualisation). WaitLoop_HoistedSpinThenYield below is the second
+ * shape, spin run ONCE before the retry loop, kept side by side with the
+ * re-spinning WaitLoop_SpinThenYield rather than a flag parameter, so each
+ * driver's call site names the shape it actually wants and neither shape's
+ * host test has to branch on which behaviour it is proving.
  * ========================================================================== */
 #ifndef WAITLOOP_H
 #define WAITLOOP_H
@@ -120,6 +136,64 @@ static inline bool WaitLoop_SpinThenYield(WaitLoop_PredicateFn statusMet,
         if (budgetSpent(ctx)) {
             /* FRESH read, not a reuse of the one above: see the ordering
              * paragraph in this function's doc comment. */
+            return statusMet(ctx);
+        }
+        yield(ctx);
+    }
+}
+
+/*!
+ * Same contract, ordering guarantee and parameters as WaitLoop_SpinThenYield
+ * (read its doc comment first -- this repeats only what differs), except the
+ * fast spin is NOT re-paid on every wake: it runs @p spinCount times ONCE,
+ * before the retry loop is ever entered, and every pass through the retry
+ * loop after that reads @p statusMet exactly once instead of spinning again.
+ *
+ * WHY THIS EXISTS AS A SECOND FUNCTION RATHER THAN A FLAG. #1057 made this
+ * shape deliberately for DAC7718: a legitimate SPI2 byte completes inside the
+ * first spin (~1.14 us, far under one tick), so the hoist is invisible on the
+ * fast path and only ever matters once the fast path has already failed --
+ * i.e. it is a FAULT-PATH duty-cycle choice, not a completion-latency one.
+ * Once the status is genuinely being waited on for real (SPI2 not
+ * responding), a single register read per 1 ms tick detects a level-sensitive
+ * status bit exactly as reliably as an @p spinCount-iteration re-spin would,
+ * for a fraction of the CPU cost, paid at the dispatching SCPI task's
+ * priority -- the same starvation class #913 exists to prevent. #1108 folded
+ * DAC7718 onto the re-spinning WaitLoop_SpinThenYield as though it were a
+ * fourth instance of the same shape; it silently re-introduced that
+ * regression (see the file header). A bool parameter selected at the call
+ * site would fold away identically under inlining + constant propagation, but
+ * would also let a future caller flip it without reading either doc comment;
+ * a separately-named function makes the two fault-path duty cycles a
+ * deliberate choice at the call site instead of a drive-by argument, and
+ * keeps WaitLoop_SpinThenYield's own three call sites (and their host test
+ * coverage) untouched by this one's existence.
+ *
+ * Ordering and false-timeout-immunity are IDENTICAL to WaitLoop_SpinThenYield:
+ * the status is always read before the budget is consulted, and the budget
+ * branch takes a fresh read rather than reusing the retry loop's own check,
+ * for the same preemption-gap reason. What is NOT identical is total CPU
+ * spent once the fast path has missed: WaitLoop_SpinThenYield pays up to
+ * @p spinCount + 1 status reads per yielded pass; this pays exactly 1.
+ *
+ * @return true if the status was ever observed met (including on the fresh
+ *         read taken at expiry); false only on a genuine timeout.
+ */
+static inline bool WaitLoop_HoistedSpinThenYield(WaitLoop_PredicateFn statusMet,
+                                                  WaitLoop_PredicateFn budgetSpent,
+                                                  WaitLoop_YieldFn     yield,
+                                                  void                *ctx,
+                                                  uint32_t             spinCount)
+{
+    for (uint32_t s = 0; s < spinCount; ++s) {
+        if (statusMet(ctx)) { return true; }
+    }
+    for (;;) {
+        if (statusMet(ctx)) { return true; }
+        if (budgetSpent(ctx)) {
+            /* FRESH read, not a reuse of the one above: see the ordering
+             * paragraph in WaitLoop_SpinThenYield's doc comment, which
+             * applies identically here. */
             return statusMet(ctx);
         }
         yield(ctx);

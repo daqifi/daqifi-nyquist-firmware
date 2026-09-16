@@ -310,23 +310,17 @@ DAC980_BIN := run_980_tests
 DAC7718_SRC := ../../firmware/src/HAL/DAC7718/DAC7718.c
 SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
 
-# #1057 (#913's twin): DAC7718_ReadWriteReg's six SPI2 busy-spins ->
-# dac7718_WaitStat, the same bounded-spin-then-vTaskDelay(1) shape #913 gave
-# UserSpi.c's spi_XferByte. Same host-testability constraint as DAC980_BIN
-# above -- DAC7718.c is not includable on the host -- so this re-implements
-# the loop SHAPE against a mock tick clock and mock hardware-condition flag,
-# the way the deleted test_913_spi_wait_stat.c did (DAC7718 has only the one
-# wait shape, shared by all three of its call sites, unlike UserSpi/UserUart/
-# UserI2c's three separate shapes). The two firmware constants this depends
-# on are a COPY; the recipe greps them and refuses to build on drift.
-#
-# THIS IS NOW THE LAST COPY OF THAT LOOP. #1056 moved the other three onto the
-# shared firmware/src/HAL/WaitLoop.h that $(WAITLOOP_BIN) compiles for real, so
-# this target is the only place left where a grep guard stands in for the loop
-# itself -- with the limits that block spells out. Folding dac7718_WaitStat
-# onto WaitLoop.h is the obvious follow-up and was deliberately left out of
-# #1056's scope (it was filed before #1057 existed).
-DAC1057_BIN := run_1057_tests
+# #1057 (#913's twin) folded dac7718_WaitStat's SPI2 busy-spins onto the same
+# bounded-spin-then-vTaskDelay(1) shape #913 gave UserSpi.c's spi_XferByte;
+# #1108 then finished what #1056 started and moved dac7718_WaitStat itself
+# onto the shared firmware/src/HAL/WaitLoop.h that $(WAITLOOP_BIN) compiles
+# for real -- the same move #1056 made for spi_WaitStat/uart_WaitSta/
+# i2c_WaitMif. There is no fourth grep-guarded copy left: DAC7718_SRC is now a
+# prerequisite of $(WAITLOOP_BIN) below (see the comment on that target), the
+# same way USER_SPI_SRC/USER_UART_SRC/USER_I2C_SRC already were. This
+# target -- run_1057_tests and the DAC1057_BIN it built -- and
+# test_1057_dac7718_wait_stat.c, which re-implemented the loop shape against a
+# mock rather than compiling the real one, retired with it.
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
@@ -411,11 +405,53 @@ $(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE
 # ordinary tuning values, checked by nothing here, which is the correct amount
 # of claim to make about them.
 #
-# The three drivers stay as PREREQUISITES even though nothing reads them: they
-# are the only consumers of the header under test, so an edit to one must
-# invalidate this binary for `make`'s incremental build to be trustworthy.
+# The four drivers stay as PREREQUISITES so an edit to one must invalidate
+# this binary for `make`'s incremental build to be trustworthy. Three of them
+# (spi/uart/i2c) are the only consumers of the header under test and nothing
+# here reads them further. DAC7718_SRC joined in #1108, when dac7718_WaitStat
+# folded onto this same shared header instead of keeping its own grep-guarded
+# copy (see the retired comment above DAC7718_SRC's definition, above) --
+# and DOES get two guards below, because they are the two things the retired
+# target checked that compiling WaitLoop.h for real cannot.
+#
+# GUARD 1 (unchanged by #1108's correction): that DAC7718.c itself still
+# ROUTES every wait through dac7718_WaitStat rather than a call site reverting
+# to bare polling. test_1056_wait_loop.c has no visibility into DAC7718.c's
+# text at all -- it only proves the header's shapes -- so without this grep a
+# reverted call site would rebuild and pass silently (Qodo /agentic_review,
+# PR #1109).
+#
+# GUARD 2 (added correcting #1109's own regression): that dac7718_WaitStat
+# calls WaitLoop_HoistedSpinThenYield specifically, not its RE-spinning
+# sibling WaitLoop_SpinThenYield. #1108's first attempt folded DAC7718 onto
+# the shape the other three drivers use, silently turning its one register
+# read per 1 ms fault-path tick into up to DAC7718_SPI_FAST_SPIN_COUNT reads
+# per tick -- a duty-cycle regression #913 exists to prevent (measured +316 B
+# vs main; #1109 comment 5697480428). Both functions compile clean, both
+# satisfy GUARD 1's call-count, and test_1056_wait_loop.c proves each shape's
+# OWN correctness without knowing which one any driver actually calls -- so
+# only this grep, naming the specific function, catches a call site silently
+# swapped back to the wrong shape.
 $(WAITLOOP_BIN): test_1056_wait_loop.c test_framework.h $(WAITLOOP_H) \
-                 $(USER_SPI_SRC) $(USER_UART_SRC) $(USER_I2C_SRC) $(RECIPES)
+                 $(USER_SPI_SRC) $(USER_UART_SRC) $(USER_I2C_SRC) $(DAC7718_SRC) $(RECIPES)
+	@test "$$(grep -cF 'dac7718_WaitStat(' $(DAC7718_SRC))" = "7" \
+	  || { echo "ERROR: expected exactly 7 occurrences of 'dac7718_WaitStat(' in $(DAC7718_SRC)"; \
+	       echo "       (1 definition + 6 call sites -- 3 in the write frame, 3 in the RW=1 NOP"; \
+	       echo "       readback), found $$(grep -cF 'dac7718_WaitStat(' $(DAC7718_SRC)). A call"; \
+	       echo "       site reverting to a bare register-poll spin would not otherwise be caught"; \
+	       echo "       by anything here -- test_1056_wait_loop.c proves WaitLoop.h's shape, not"; \
+	       echo "       that DAC7718.c still calls into it."; \
+	       exit 1; }
+	@grep -qF 'return WaitLoop_HoistedSpinThenYield(dac7718_WaitBitMet' $(DAC7718_SRC) \
+	  || { echo "ERROR: dac7718_WaitStat no longer calls WaitLoop_HoistedSpinThenYield in $(DAC7718_SRC)."; \
+	       echo "       PR #1109 folded it onto the RE-spinning WaitLoop_SpinThenYield instead -- the"; \
+	       echo "       shape the other three drivers use -- which silently turned DAC7718's one"; \
+	       echo "       register read per 1 ms fault-path tick into up to DAC7718_SPI_FAST_SPIN_COUNT"; \
+	       echo "       reads per tick (measured +316 B vs main; #1109 comment 5697480428). Neither"; \
+	       echo "       test_1056_wait_loop.c (proves WaitLoop.h's two shapes, not which one DAC7718.c"; \
+	       echo "       calls) nor the guard above (matches either shape's call syntax identically)"; \
+	       echo "       can see this coupling -- only this grep does."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -I$(FW_HAL) -o $(WAITLOOP_BIN) test_1056_wait_loop.c
 
 $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(SCPIDAC_SRC) $(RECIPES)
@@ -866,44 +902,16 @@ $(SUSPENDREASON_BIN): test_985_suspend_reason_consistency.c test_framework.h $(S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPENDREASON_BIN) test_985_suspend_reason_consistency.c
 
-# Every suite, and every one of the twelve binaries. EIGHTH additive
-# collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
-# fw#1000, fw#913 vs fw#980, fw#913 vs fw#985, and now the fw#913-accumulated
-# head vs fw#947 -- every one of them two branches appending a line to these
-# same two lists. Resolved the same way every time: keep each side's target
-# rule INTACT and union only `run` and `clean`. Dropping a rule loses a suite
-# silently; duplicating one silently shadows the other.
-$(DAC1057_BIN): test_1057_dac7718_wait_stat.c test_framework.h $(DAC7718_SRC) $(RECIPES)
-	@grep -qE '^#define[[:space:]]+DAC7718_SPI_FAST_SPIN_COUNT[[:space:]]+8000u[[:space:]]*$$' $(DAC7718_SRC) \
-	  || { echo "ERROR: DAC7718_SPI_FAST_SPIN_COUNT is no longer '8000u' in $(DAC7718_SRC)."; \
-	       echo "       Update FW_SPIN_COUNT in test_1057_dac7718_wait_stat.c and re-derive its numbers."; \
-	       exit 1; }
-	@grep -qE '^#define[[:space:]]+DAC7718_SPI_BYTE_TIMEOUT_MS[[:space:]]+20u[[:space:]]*$$' $(DAC7718_SRC) \
-	  || { echo "ERROR: DAC7718_SPI_BYTE_TIMEOUT_MS is no longer '20u' in $(DAC7718_SRC)."; \
-	       echo "       Update FW_BYTE_TIMEOUT_MS in test_1057_dac7718_wait_stat.c and re-derive its numbers."; \
-	       exit 1; }
-	@grep -qE '^[[:space:]]*for \(uint32_t s = 0; s < DAC7718_SPI_FAST_SPIN_COUNT; \+\+s\)' $(DAC7718_SRC) \
-	  || { echo "ERROR: dac7718_WaitStat's fast-spin loop is gone or reshaped in $(DAC7718_SRC)."; \
-	       echo "       The two constant greps above cannot see this -- they pin VALUES, not the"; \
-	       echo "       shape that consumes them. test_1057_dac7718_wait_stat.c models this loop;"; \
-	       echo "       re-read both before changing either."; \
-	       exit 1; }
-	@grep -qF 'return (((SPI2STAT & mask) != 0u) == want);' $(DAC7718_SRC) \
-	  || { echo "ERROR: dac7718_WaitStat's deadline branch no longer takes a FRESH SPI2STAT"; \
-	       echo "       read at expiry in $(DAC7718_SRC) -- that fresh-read is the exact #913"; \
-	       echo "       opus-review defect (a bare 'return false;' trusting the pre-check above"; \
-	       echo "       it) this suite exists to keep out. Neither constant grep above, nor the"; \
-	       echo "       modelled host test, can see this on its own -- see the file header of"; \
-	       echo "       test_1057_dac7718_wait_stat.c."; \
-	       exit 1; }
-	@test "$$(grep -cF 'dac7718_WaitStat(' $(DAC7718_SRC))" = "7" \
-	  || { echo "ERROR: expected exactly 7 occurrences of 'dac7718_WaitStat(' in $(DAC7718_SRC)"; \
-	       echo "       (1 definition + 6 call sites -- 3 in the write frame, 3 in the RW=1 NOP"; \
-	       echo "       readback), found $$(grep -cF 'dac7718_WaitStat(' $(DAC7718_SRC)). A call"; \
-	       echo "       site reverting to a bare register-poll spin would not otherwise be caught"; \
-	       echo "       by any guard here."; \
-	       exit 1; }
-	$(CC) $(CFLAGS) -o $(DAC1057_BIN) test_1057_dac7718_wait_stat.c
+# #1108 RETIRED $(DAC1057_BIN) here (run_1057_tests, built from
+# test_1057_dac7718_wait_stat.c, which this same block's history recorded
+# across EIGHT prior additive collisions -- fw#961 vs fw#983, fw#913 vs
+# fw#1004, fw#913 vs fw#1000, fw#913 vs fw#980, fw#913 vs fw#985, and the
+# fw#913-accumulated head vs fw#947). Its five grep guards stood in for a loop
+# shape a host build could not compile for real; dac7718_WaitStat now calls
+# the shared $(WAITLOOP_H) that $(WAITLOOP_BIN) compiles directly (DAC7718_SRC
+# is a prerequisite of that target, see above), so there is no copy left for a
+# guard to pin. Same move #1056 made retiring the analogous grep guard that
+# used to stand in for spi_WaitStat/uart_WaitSta/i2c_WaitMif.
 
 # Every suite, and every one of the eleven binaries. SEVENTH additive
 # collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
@@ -927,7 +935,7 @@ $(DAC1057_BIN): test_1057_dac7718_wait_stat.c test_framework.h $(DAC7718_SRC) $(
 # re-express their target as a fragment -- a mechanical move of one recipe,
 # which is strictly cheaper than this resolution has been nine times running.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN)
+     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -941,10 +949,9 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(SDLOG_BIN)
 	./$(SCPI999_BIN)
 	./$(SUSPENDREASON_BIN)
-	./$(DAC1057_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(DAC1057_BIN) $(GEN_1000)
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000)
 
 .PHONY: run clean
