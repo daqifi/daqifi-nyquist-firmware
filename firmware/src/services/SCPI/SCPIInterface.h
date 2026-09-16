@@ -206,16 +206,25 @@ extern "C" {
      * interface->write() implementations call this first, so a pending ';'
      * lands ahead of the unit's own first byte regardless of whether that
      * byte comes from SCPI_ResultXxx() or a callback writing straight to
-     * interface->write() (SYSTem:STORage:SD:LISt?, SYST:LOG?, and the rest
-     * of the ~20 direct-write query callbacks). A unit whose callback fails
-     * before writing anything never reaches here; SCPI_ErrorEmit() (error.c)
+     * interface->write() (SYST:LOG? and most of the other ~20 direct-write
+     * query callbacks). #1115: SYSTem:STORage:SD:LISt? is the one exception
+     * -- its payload is delivered asynchronously by the SD task
+     * (sd_card_manager_DataReadyCB(), app_freertos.c), which has no scpi_t*
+     * and cannot reach interface->write() at all, so SCPI_StorageSDListDir()
+     * (SCPIStorageSD.c) calls this funnel itself, explicitly, before arming
+     * that transfer. A unit whose callback fails before writing anything
+     * never reaches here; SCPI_ErrorEmit() (error.c)
      * discards the armed flag instead.
      * @param context SCPI context (its pending_delimiter field is consumed)
      * @param writeFn Transport write function (USB or WiFi buffer write)
-     * @param nextWriteLen Length of the write this call is guarding; a
-     *                     zero-length write consumes nothing, so a callback
-     *                     probing with len==0 doesn't silently drop the
-     *                     pending separator for its real write that follows
+     * @param nextWriteLen Length of the write this call is guarding.
+     *                     #1115: no longer gates whether the flush happens --
+     *                     it did until parser.c's writeData() started making
+     *                     a deliberate zero-length call for an empty-but-
+     *                     successful query result, specifically so THAT case
+     *                     also gets to flush and consume this flag. See the
+     *                     implementation's own comment for why this is safe
+     *                     for every other (real-length) caller too.
      * @return bytes written for the separator itself (0 or 1)
      */
     size_t SCPI_FlushPendingDelimiter(scpi_t * context, ScpiTransportWriteFn writeFn,

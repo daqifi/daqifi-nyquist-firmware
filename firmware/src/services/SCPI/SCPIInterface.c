@@ -9110,7 +9110,22 @@ size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
 
 size_t SCPI_FlushPendingDelimiter(scpi_t * context, ScpiTransportWriteFn writeFn,
                                    size_t nextWriteLen) {
-    if (nextWriteLen > 0 && context->pending_delimiter) {
+    /* #1115: nextWriteLen is no longer gating this. The original guard
+     * (nextWriteLen > 0) was meant to let a callback "probe" with a
+     * zero-length write without losing the separator for its real write
+     * that follows -- but parser.c's writeData() now makes exactly ONE such
+     * zero-length call on purpose, specifically WHEN THERE IS NO real write
+     * coming this unit (SCPI_ResultCharacters(ctx, data, 0), an empty-but-
+     * successful query result), to give it the one chance every other unit
+     * gets to flush and consume this flag. Dropping the guard costs nothing
+     * for the case it was meant to protect: this function's own separator
+     * write two lines down was ALREADY unconditional on nextWriteLen (only
+     * ever gated on pending_delimiter), so a genuine zero-length probe
+     * followed by a later real write in the same unit produces the exact
+     * same final bytes on the wire either way -- the ';' just lands ahead
+     * of the probe instead of ahead of the real write, with nothing else
+     * written to the wire in between to tell the two apart. */
+    if (context->pending_delimiter) {
         context->pending_delimiter = FALSE;
         return SCPI_WriteWithRetry(writeFn, ";", 1);
     }

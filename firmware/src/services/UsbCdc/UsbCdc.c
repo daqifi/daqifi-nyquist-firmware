@@ -1200,8 +1200,11 @@ static size_t SCPI_USB_Write(scpi_t * context, const char* data, size_t len) {
      * (SCPI_FlushPendingDelimiter, SCPIInterface.c) ahead of this unit's
      * own output, whether that output is about to arrive via
      * SCPI_ResultXxx() or straight through this call, as several
-     * registered query callbacks (SYSTem:STORage:SD:LISt?, SYST:LOG?, ...)
-     * do. */
+     * registered query callbacks (SYST:LOG?, ...) do. #1115: SYSTem:
+     * STORage:SD:LISt? is NOT covered here -- its payload bypasses this
+     * function entirely (sd_card_manager_DataReadyCB(), app_freertos.c,
+     * writes straight into UsbCdc_WriteToBuffer()); SCPI_StorageSDListDir()
+     * (SCPIStorageSD.c) calls SCPI_FlushPendingDelimiter() itself instead. */
     SCPI_FlushPendingDelimiter(context, UsbCdc_ScpiWrite, len);
     size_t written = SCPI_WriteWithRetry(UsbCdc_ScpiWrite, data, len);
     /* #1003/#1010 round 1: record whether the wire now ends in a line

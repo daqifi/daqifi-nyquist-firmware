@@ -56,6 +56,23 @@
 static size_t writeData(scpi_t * context, const char * data, size_t len) {
     if ((len > 0) && (data != NULL)) {
         return context->interface->write(context, data, len);
+    } else if (context->pending_delimiter) {
+        /* #1115: an empty-but-successful query result (SCPI_ResultCharacters
+         * et al. called with len == 0 -- e.g. SYSTem:COMMunicate:UART:READ?
+         * with a 0-byte count, or SYSTem:LOG? on an empty buffer) used to
+         * return here without ever calling interface->write(), so a
+         * pending_delimiter armed for THIS unit (processCommand(), below)
+         * never reached the one funnel that flushes it
+         * (SCPI_FlushPendingDelimiter(), SCPIInterface.c) and stayed armed.
+         * The NEXT unit's processCommand() then ASSIGNS (not merges) its own
+         * freshly computed value over that stale TRUE, so only one ';' ever
+         * reaches the wire for what should be two separate compound-message
+         * fields ("1;1" instead of "1;;1" for *OPC?;<empty query>;*OPC?) --
+         * silently dropping the empty unit's own response slot. Still route
+         * this through interface->write() (a zero-length call carries no
+         * payload either way) so the funnel gets the one chance to flush
+         * and consume the flag that every other unit gets. */
+        return context->interface->write(context, data, len);
     } else {
         return 0;
     }
@@ -171,6 +188,41 @@ static scpi_bool_t processCommand(scpi_t * context) {
                     context->first_output = FALSE;
                 }
             }
+        }
+
+        /* #1115: reconcile first_output against line_open once the unit is
+         * completely done, regardless of which branch above ran. Any error
+         * raised during this unit -- whether pushed by the callback itself
+         * (cmd_error branch, just above) or synthesized by processCommand()
+         * on a non-OK return (the outer if) -- runs SCPI_ErrorEmit()
+         * (error.c), which forces first_output = TRUE unconditionally on
+         * the assumption that the unit is finished the moment its error
+         * text hits the wire. A callback that keeps writing real payload
+         * AFTER raising (SYSTem:SYSInfoPB? substituting a default for a
+         * bad optional parameter and still emitting its protobuf) falsifies
+         * that assumption: first_output stays wrongly TRUE while the wire
+         * genuinely holds unterminated content, so the NEXT unit's own
+         * pending_delimiter arm (top of this function, next call) omits
+         * its leading ';' and fuses onto the payload, and if nothing
+         * follows, the deferred end-of-message writeNewLine() (below) skips
+         * the payload's own closing CRLF entirely.
+         *
+         * line_open is the one signal immune to write order -- it is
+         * updated at the SAME transport-write funnel as pending_delimiter
+         * (SCPI_TrackLineOpen(), SCPIInterface.c) after EVERY real write
+         * this unit made, whichever came last: the error text (always
+         * self-terminated, leaves line_open FALSE) or a callback's own
+         * further payload write (usually not self-terminated, leaves
+         * line_open TRUE). If it is TRUE here, real, unterminated content
+         * from THIS unit is genuinely sitting on the wire, so first_output
+         * must be FALSE regardless of what SCPI_ErrorEmit() assumed. If it
+         * is FALSE (nothing further was written, or the last write -- the
+         * error text, or a self-terminating direct writer like
+         * SCPIStorageSD.c's SCPI_CheckSDCardPresent() -- already closed the
+         * line), first_output is left exactly as the callback/error path
+         * set it. */
+        if (context->line_open) {
+            context->first_output = FALSE;
         }
     }
 

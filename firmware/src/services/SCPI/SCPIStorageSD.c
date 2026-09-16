@@ -998,6 +998,25 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
         taskEXIT_CRITICAL();
     }
     
+    /* #1115: sd_card_manager_DataReadyCB() (app_freertos.c) delivers this
+     * listing's bytes through sd_reply_write_usb/tcp, which write straight
+     * into UsbCdc_WriteToBuffer()/wifi_tcp_server_WriteBuffer() -- NOT
+     * context->interface->write() (SCPI_USB_Write/SCPI_TCP_Write) -- because
+     * that callback runs on the SD task with no scpi_t* of its own. So
+     * neither pending_delimiter nor line_open is tracked for those bytes,
+     * and a ';' armed for THIS unit (processCommand(), parser.c) would sit
+     * un-flushed until the listing's own bytes have already gone out, then
+     * land AFTER them at the deferred end-of-message writeNewLine() instead
+     * of before them -- corrupting the response
+     * ("1\r\n__END_OF_LIST__ OK;\r\n" instead of
+     * "1;\r\n__END_OF_LIST__ OK\r\n"). Flush it NOW, through the real funnel,
+     * strictly before arming the SD task below (pSDCardRuntimeConfig->mode
+     * is the SD task's own signal to start, so nothing from DataReadyCB can
+     * reach the wire ahead of this call). A zero-length write carries no
+     * payload of its own either way -- see writeData()'s matching #1115
+     * comment (parser.c) for the other half of this mechanism. */
+    context->interface->write(context, "", 0);
+
     // Set mode to LIST_DIRECTORY and let sd_card_manager handle it
     const bool listOverTcp = wifi_tcp_server_ContextIsTcp(context);   /* #598 */
     pSDCardRuntimeConfig->replyTarget = listOverTcp
@@ -1021,10 +1040,29 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
         LOG_E("SD:LIST? - Operation timeout\r\n");
         pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_NONE;
         sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+        /* #1115: the pump above may already have drained partial, unterminated
+         * listing bytes through the same bypass before the timeout fired --
+         * line_open cannot be trusted to still be accurate. Close it out by
+         * hand so SCPI_ErrorPush()'s SCPI_ErrorEmit() (error.c) makes the
+         * same "does the wire need a closing line first" call it would have
+         * made had those bytes gone through the real funnel. */
+        context->line_open = TRUE;
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
+
+    /* #1115: the listing completed and its bytes (ending in one of
+     * sd_card_manager.c's SD_LIST_END_OK/INCOMPLETE/FAILED markers, none of
+     * which end in SCPI_LINE_ENDING) already went out through the same
+     * bypass. Reconcile line_open by hand to what SCPI_TrackLineOpen()
+     * (SCPIInterface.c) would have computed had this gone through the
+     * funnel like every other direct writer -- so the deferred
+     * end-of-message writeNewLine() (parser.c) still closes the line, and a
+     * unit after this one in the same compound message still gets its own
+     * leading ';' (processCommand(), parser.c, reads first_output, which
+     * the same call now reconciles against line_open). */
+    context->line_open = TRUE;
 
     result = SCPI_RES_OK;
 __exit_point:

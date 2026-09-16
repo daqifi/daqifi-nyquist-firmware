@@ -65,15 +65,24 @@
  * -- for BOTH write shapes. See TestTerminatedFailQuery() below, which
  * mirrors SCPI_CheckSDCardPresent()'s exact shape.
  *
+ * #1115 CORRECTION: the "That covers ... (SYSTem:STORage:SD:LISt?, ...)"
+ * claim two paragraphs up was wrong. SD:LISt?'s payload is delivered by the
+ * SD task (sd_card_manager_DataReadyCB(), app_freertos.c) straight into
+ * UsbCdc_WriteToBuffer()/wifi_tcp_server_WriteBuffer() -- it never reaches
+ * interface->write() at all, so neither pending_delimiter nor line_open was
+ * ever tracked for it. See the #1115 section below (TEST:BYPASS? and its
+ * tests) for the fix and the four findings it closes.
+ *
  * Host-testability: same situation as #999's own test (see that file's
  * header) -- SCPIInterface.c, UsbCdc.c and wifi_tcp_server.c are not
  * includable on a host (FreeRTOS + the full USB/WiFi driver graph), but
  * parser.c/error.c (the actual vendored fix) are plain portable C and link
  * standalone. TestWrite() below re-implements SCPI_FlushPendingDelimiter()'s
  * one decision (not merely something similar -- the identical
- * "len > 0 && pending_delimiter -> write ';', clear flag, then the payload"
- * shape) so this test exercises the REAL parser.c/error.c and a faithful
- * stand-in for the transport side. The Makefile's run_1003_tests recipe
+ * "pending_delimiter -> write ';', clear flag, then the payload" shape,
+ * #1115: no longer gated on len > 0, see TestWrite()'s own comment) so this
+ * test exercises the REAL parser.c/error.c and a faithful stand-in for the
+ * transport side. The Makefile's run_1003_tests recipe
  * greps the real SCPIInterface.c/UsbCdc.c/wifi_tcp_server.c to keep that
  * stand-in honest -- see its own comment for what it pins.
  *
@@ -108,16 +117,23 @@ static WriteCapture gCapture;
 static size_t TestWrite(scpi_t * context, const char * data, size_t len) {
     WriteCapture * cap = (WriteCapture *) context->user_context;
     /* Mirrors SCPI_FlushPendingDelimiter() (SCPIInterface.c) exactly: a
-     * pending separator is flushed ahead of a non-empty payload, and only
-     * then. A failed unit that never writes anything never reaches this at
-     * all -- SCPI_ErrorEmit() (error.c) discards the flag first. */
-    if (len > 0 && context->pending_delimiter) {
+     * pending separator is flushed the moment it is armed, regardless of
+     * len. #1115: this used to also require len > 0 ("ahead of a non-empty
+     * payload, and only then"), which was exactly what let an empty-but-
+     * successful query result's own armed separator go un-flushed (writeData(),
+     * parser.c, used to return before ever calling interface->write() for
+     * len == 0). Both writeData() and this flush now make a deliberate
+     * zero-length call specifically so that case gets the same one chance
+     * every other unit gets. A failed unit that never writes anything never
+     * reaches this at all -- SCPI_ErrorEmit() (error.c) discards the flag
+     * first. */
+    if (context->pending_delimiter) {
         context->pending_delimiter = FALSE;
         if (cap != NULL && cap->len < CAPTURE_SIZE) {
             cap->data[cap->len++] = ';';
         }
     }
-    if (cap != NULL) {
+    if (cap != NULL && len > 0) {
         size_t n = len;
         if (cap->len + n > CAPTURE_SIZE) {
             n = CAPTURE_SIZE - cap->len;
@@ -199,18 +215,46 @@ static scpi_interface_t gTestInterface = {
  *                 (SYSTem:COMMunicate:LAN:MAC with a bad value).
  * TEST:DIRECT? -- succeeds by writing straight through
  *                 context->interface->write(), bypassing SCPI_ResultXxx() --
- *                 the shape SYSTem:STORage:SD:LISt?, SYST:LOG? and ~18 other
- *                 registered query callbacks use, and exactly the shape that
- *                 broke a round-1 attempt at this fix (moving the ';' write
- *                 into SCPI_ResultXxx()'s own delimiter helper silently
- *                 dropped it for every one of these). This fix's flush
- *                 point (interface->write() itself) does not have that gap.
+ *                 the shape SYST:LOG? and ~19 other registered query
+ *                 callbacks use (SD:LISt? does NOT -- see the #1115
+ *                 correction above and TEST:BYPASS? below), and exactly the
+ *                 shape that broke a round-1 attempt at this fix (moving the
+ *                 ';' write into SCPI_ResultXxx()'s own delimiter helper
+ *                 silently dropped it for every one of these). This fix's
+ *                 flush point (interface->write() itself) does not have
+ *                 that gap.
  * TEST:TERMFAIL? -- mirrors SCPIStorageSD.c's SCPI_CheckSDCardPresent()
  *                 exactly: writes an ALREADY CRLF-terminated diagnostic
  *                 straight through interface->write(), then pushes an
  *                 error. Regression case for this PR's own round-1 Qodo
  *                 finding ("Storage failures still add blank lines") --
  *                 see line_open in types.h/error.c.
+ * TEST:EMPTY?  -- #1115 findings 1/2: succeeds via SCPI_ResultCharacters()
+ *                 with len == 0 (the exact shape of SYSTem:COMMunicate:
+ *                 UART:READ? 0 and SYST:LOG? on an empty buffer) --
+ *                 exercises writeData()'s (parser.c) real zero-length flush
+ *                 path directly, no mock needed.
+ * TEST:PARTIALERR? -- #1115 finding 3: mirrors SCPI_SysInfoGet()
+ *                 (SCPIInterface.c) exactly -- pushes a real error
+ *                 mid-callback (synchronously emitted, error.c) but keeps
+ *                 going, writing real payload straight through
+ *                 interface->write() afterward, then still reports
+ *                 success. Exercises processCommand()'s (parser.c) real
+ *                 line_open/first_output reconciliation directly.
+ * TEST:BYPASS? -- #1115 finding 0: mirrors SCPIStorageSD.c's
+ *                 SCPI_StorageSDListDir() exactly, AS FIXED by this PR --
+ *                 an explicit zero-length flush through the real funnel,
+ *                 then a payload write that lands straight in the capture
+ *                 buffer bypassing TestWrite() entirely (SD:LIST?'s async
+ *                 SD-task callback has no scpi_t* and cannot reach
+ *                 interface->write() at all -- the same reason this
+ *                 function, not TestWrite(), does the bypass here), then a
+ *                 hand-reconciled line_open = TRUE. SCPIStorageSD.c and
+ *                 app_freertos.c are not host-includable (FreeRTOS + the
+ *                 full SD driver graph) -- see this file's header -- so
+ *                 this is a faithful stand-in for the ACTUAL fix's shape,
+ *                 the same way TEST:DIRECT?/TEST:TERMFAIL? stand in for
+ *                 their production callbacks.
  * ------------------------------------------------------------------------- */
 static scpi_result_t TestOkQuery(scpi_t * context) {
     SCPI_ResultCharacters(context, "OK", 2);
@@ -240,11 +284,61 @@ static scpi_result_t TestTerminatedFailQuery(scpi_t * context) {
     return SCPI_RES_ERR;
 }
 
+static scpi_result_t TestEmptyQuery(scpi_t * context) {
+    SCPI_ResultCharacters(context, "", 0);
+    return SCPI_RES_OK;
+}
+
+#define TEST_PARTIALERR_PAYLOAD "PAYLOAD"
+
+static scpi_result_t TestPartialErrQuery(scpi_t * context) {
+    /* Mirrors SCPI_SysInfoGet's (SCPIInterface.c) exact shape: an optional
+     * parameter parser failure pushes a real SCPI error SYNCHRONOUSLY
+     * (SCPI_ErrorPush() -> SCPI_ErrorEmit(), error.c, which writes the
+     * error text to the wire immediately), but the callback substitutes a
+     * default and keeps going -- writing a real payload straight through
+     * interface->write() afterward -- then still reports success. */
+    SCPI_ErrorPush(context, SCPI_ERROR_DATA_TYPE_ERROR);
+    context->interface->write(context, TEST_PARTIALERR_PAYLOAD, strlen(TEST_PARTIALERR_PAYLOAD));
+    return SCPI_RES_OK;
+}
+
+#define TEST_BYPASS_PAYLOAD "\r\n__END_OF_LIST__ OK"
+
+static scpi_result_t TestBypassQuery(scpi_t * context) {
+    /* Mirrors SCPIStorageSD.c's SCPI_StorageSDListDir(), AS FIXED by this
+     * PR: flush any armed separator through the real funnel BEFORE the
+     * bypass write starts (SCPI_StorageSDListDir does this by calling
+     * interface->write(context, "", 0) itself, strictly before arming the
+     * SD task), then the payload write goes straight to the wire outside
+     * interface->write() (sd_card_manager_DataReadyCB() -> sd_reply_write_
+     * usb/tcp, app_freertos.c, have no scpi_t* to call it with -- here,
+     * straight into gCapture instead of through TestWrite()), then a
+     * hand-reconciled line_open = TRUE (none of sd_card_manager.c's
+     * SD_LIST_END_OK/INCOMPLETE/FAILED markers end in SCPI_LINE_ENDING,
+     * exactly like TEST_BYPASS_PAYLOAD below). */
+    context->interface->write(context, "", 0);
+    WriteCapture * cap = (WriteCapture *) context->user_context;
+    if (cap != NULL) {
+        size_t n = strlen(TEST_BYPASS_PAYLOAD);
+        if (cap->len + n > CAPTURE_SIZE) {
+            n = CAPTURE_SIZE - cap->len;
+        }
+        memcpy(cap->data + cap->len, TEST_BYPASS_PAYLOAD, n);
+        cap->len += n;
+    }
+    context->line_open = TRUE;
+    return SCPI_RES_OK;
+}
+
 static const scpi_command_t gTestCommands[] = {
     {.pattern = "*OK?", .callback = TestOkQuery},
     {.pattern = "TEST:FAIL?", .callback = TestFailQuery},
     {.pattern = "TEST:FAILSET", .callback = TestFailSet},
     {.pattern = "TEST:DIRECT?", .callback = TestDirectQuery},
+    {.pattern = "TEST:EMPTY?", .callback = TestEmptyQuery},
+    {.pattern = "TEST:PARTIALERR?", .callback = TestPartialErrQuery},
+    {.pattern = "TEST:BYPASS?", .callback = TestBypassQuery},
     {.pattern = "TEST:TERMFAIL?", .callback = TestTerminatedFailQuery},
     SCPI_CMD_LIST_END,
 };
@@ -447,6 +541,116 @@ TEST(error_between_two_parses_has_no_leading_blank_line) {
     ASSERT_CAPTURE_EQ("**ERROR: -200, \"Execution error\"\r\n");
 }
 
+/* ==========================================================================
+ * #1115 round-1 audit findings (PR #1115, https://github.com/daqifi/
+ * daqifi-nyquist-firmware/pull/1115 comment 5702308898): the choke-point
+ * design above is sound only if EVERY write path funnels through it, and
+ * the audit found real gaps. See this fire's own report for the full
+ * enumeration of write paths; these four tests pin the fix for each
+ * CONFIRMED finding, and were run against the pre-fix head (dd732511a,
+ * this PR's round-1 commit) to confirm each one FAILS there before the
+ * fix (reported in the PR body, not carried here -- same convention the
+ * #1003/#1010 tests above document in this file's own header).
+ * ========================================================================== */
+
+/* ---- finding 0: SD:LIST? bypasses the funnel entirely -------------------
+ * (TEST:BYPASS? stands in for SCPI_StorageSDListDir(); see its own comment
+ * above for exactly what it mirrors and why it can't be the real function
+ * on a host build.) -------------------------------------------------------- */
+
+TEST(bypass_writer_gets_its_leading_separator_and_closes_the_line) {
+    NEW_TEST_CONTEXT(ctx);
+
+    FeedLine(&ctx, "*OK?;TEST:BYPASS?");
+
+    /* Pre-fix (no entry flush, no line_open reconciliation): the SD task's
+     * bypass write never sees the armed ';', so it lands AFTER the listing
+     * instead of before it, and the wire ends "...OK" with no closing CRLF
+     * -- "OK\r\n__END_OF_LIST__ OK;\r\n" (matches the audit's own
+     * reproduction of the real SD:LIST? corruption byte-for-byte, with
+     * "OK" standing in for *OPC?'s "1"). */
+    ASSERT_CAPTURE_EQ("OK;" TEST_BYPASS_PAYLOAD "\r\n");
+}
+
+TEST(bypass_writer_as_only_unit_is_unaffected) {
+    NEW_TEST_CONTEXT(ctx);
+
+    FeedLine(&ctx, "TEST:BYPASS?");
+
+    /* No predecessor -- the entry flush is a genuine no-op (pending_delimiter
+     * was never armed). Pinned so a future change can't quietly make the
+     * single-command case grow a stray leading ';'. */
+    ASSERT_CAPTURE_EQ(TEST_BYPASS_PAYLOAD "\r\n");
+}
+
+/* ---- findings 1 and 2: an empty successful query loses its own
+ * compound-response field (same root cause, two different real callbacks --
+ * SYSTem:COMMunicate:UART:READ? 0 and SYST:LOG? on an empty buffer; TEST:
+ * EMPTY? exercises the one shared fix, writeData()'s real zero-length flush
+ * path, directly -- no mock needed for this one). ------------------------- */
+
+TEST(empty_successful_query_keeps_its_own_separator_slot) {
+    NEW_TEST_CONTEXT(ctx);
+
+    FeedLine(&ctx, "*OK?;TEST:EMPTY?;*OK?");
+
+    /* Pre-fix: writeData() returned before ever calling interface->write()
+     * for the len==0 result, so TEST:EMPTY?'s own armed pending_delimiter
+     * was never flushed -- it stayed armed and was silently ASSIGNED over
+     * (not merged with) the third unit's own freshly computed value
+     * (parser.c:~152, both units happen to compute TRUE here, so the
+     * overwrite is invisible in the boolean but the flush that should have
+     * fired for unit 2 never did) -- "OK;OK\r\n" (one semicolon, the empty
+     * middle field silently dropped) instead of "OK;;OK\r\n" (two
+     * semicolons -- one per boundary between three units). */
+    ASSERT_CAPTURE_EQ("OK;;OK\r\n");
+}
+
+TEST(empty_successful_query_as_last_unit_still_gets_leading_separator) {
+    NEW_TEST_CONTEXT(ctx);
+
+    FeedLine(&ctx, "*OK?;TEST:EMPTY?");
+
+    /* Same root cause, no third unit to expose the dropped field via a
+     * missing ';' -- pinned anyway so the entry-flush-only half of the fix
+     * (TEST:EMPTY? as the LAST unit, no unit afterward to "inherit" a
+     * correct-by-coincidence value) can't silently regress. */
+    ASSERT_CAPTURE_EQ("OK;\r\n");
+}
+
+/* ---- finding 3: output after an error loses its terminator and the next
+ * unit's separator (TEST:PARTIALERR? mirrors SCPI_SysInfoGet() exactly --
+ * see its own comment above). ---------------------------------------------- */
+
+TEST(payload_after_partial_error_keeps_next_units_separator) {
+    NEW_TEST_CONTEXT(ctx);
+
+    FeedLine(&ctx, "*OK?;TEST:PARTIALERR?;*OK?");
+
+    /* Pre-fix: SCPI_ErrorEmit() (error.c) forced first_output = TRUE the
+     * moment the -104 was pushed, and processCommand() (parser.c) skipped
+     * the branch that would have cleared it because cmd_error was set --
+     * even though the callback went on to write real payload afterward.
+     * The third unit's own pending_delimiter arm then read the wrongly-TRUE
+     * first_output and came up FALSE, fusing "OK" straight onto "PAYLOAD"
+     * with no separator: "...PAYLOADOK\r\n" instead of "...PAYLOAD;OK\r\n". */
+    ASSERT_CAPTURE_EQ("OK\r\n**ERROR: -104, \"Data type error\"\r\nPAYLOAD;OK\r\n");
+}
+
+TEST(payload_after_partial_error_still_gets_final_terminator) {
+    NEW_TEST_CONTEXT(ctx);
+
+    FeedLine(&ctx, "*OK?;TEST:PARTIALERR?");
+
+    /* Same finding, the other symptom: with no unit after it to expose the
+     * missing separator, the wrongly-TRUE first_output instead made the
+     * deferred end-of-message writeNewLine() (parser.c) skip the payload's
+     * own closing CRLF entirely -- pre-fix the wire ended bare
+     * "...PAYLOAD", unterminated, ready to run into whatever the next
+     * command's response put on the wire next. */
+    ASSERT_CAPTURE_EQ("OK\r\n**ERROR: -104, \"Data type error\"\r\nPAYLOAD\r\n");
+}
+
 int main(void) {
     RUN(query_fails_after_success_terminates_cleanly);
     RUN(command_fails_after_success_gets_a_separator);
@@ -459,5 +663,11 @@ int main(void) {
     RUN(success_after_a_failure_starts_clean);
     RUN(error_before_any_parse_has_no_leading_blank_line);
     RUN(error_between_two_parses_has_no_leading_blank_line);
+    RUN(bypass_writer_gets_its_leading_separator_and_closes_the_line);
+    RUN(bypass_writer_as_only_unit_is_unaffected);
+    RUN(empty_successful_query_keeps_its_own_separator_slot);
+    RUN(empty_successful_query_as_last_unit_still_gets_leading_separator);
+    RUN(payload_after_partial_error_keeps_next_units_separator);
+    RUN(payload_after_partial_error_still_gets_final_terminator);
     return test_summary();
 }
