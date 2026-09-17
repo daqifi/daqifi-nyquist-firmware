@@ -163,10 +163,16 @@
  *    against Logger's effective 125-byte ceiling (LOG_MESSAGE_SIZE 128,
  *    vsnprintf bound - 2, clamp - 3) when the change was made -- 118 bytes
  *    worst case for the reused "Cannot start SD logging - SD suspended: %s"
- *    prefix with the 76-byte quarantine reason, and 116 for the new torn-down
- *    message with an 8-character state and an 8-character mode (CURDRIVE /
- *    GETSPACE, the longest sd_card_manager_GetStateName() and GetModeName()
- *    can return) -- and those numbers are recorded at the firmware site.
+ *    prefix with the 76-byte quarantine reason, and 122 for the new torn-down
+ *    message (prefixed "[SD] STR:START refused" -- Qodo /agentic_review, PR
+ *    #1123: daqifi-python-test-suite's test_861_stop_races_start_prearm.py
+ *    parses refusal text through `_first_refusal_line()`, which matches only
+ *    'STR:START refused', 'Cannot start' or 'not ready', so the message this
+ *    site originally shipped with -- "SD start refused: ..." -- fell through
+ *    that parser unrecognized) with an 8-character state and an 8-character
+ *    mode (CURDRIVE / GETSPACE, the longest sd_card_manager_GetStateName()
+ *    and GetModeName() can return) -- and those numbers are recorded at the
+ *    firmware site.
  * ========================================================================== */
 
 #include <stddef.h>
@@ -189,8 +195,8 @@ typedef enum {
     DIAG_STARTUP_DISK_FULL,
     /* LOG_E("Cannot start SD logging - SD suspended: %s", why) -- #953. */
     DIAG_SUSPEND_REASON,
-    /* LOG_E("SD start refused: the write arm was torn down before the file
-     * opened (SD now state=%s mode=%s) - retry") -- #988. */
+    /* LOG_E("[SD] STR:START refused: the write arm was torn down before the
+     * file opened (SD now state=%s mode=%s) - retry") -- #988. */
     DIAG_ARM_TORN_DOWN,
     /* LOG_E("SD file not ready after %d ms", readyWait * 10). */
     DIAG_GENERIC_TIMEOUT

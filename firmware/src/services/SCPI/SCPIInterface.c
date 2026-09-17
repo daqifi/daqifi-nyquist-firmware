@@ -5378,12 +5378,23 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                      * breadcrumb only -- SCPIStorageSD.c's #782 pattern -- and
                      * does not steer this branch; `mode` can even read WRITE
                      * again by the time this logs, if a different caller
-                     * re-armed in between. 116 bytes worst case (state/mode
-                     * both 8 characters, CURDRIVE/GETSPACE -- verified against
-                     * every string sd_card_manager_GetStateName() and
+                     * re-armed in between. Prefixed "[SD] STR:START refused"
+                     * -- the same prefix the two STR:START refusal arms just
+                     * above already use -- rather than the "SD start refused"
+                     * this line originally shipped with: daqifi-python-test-
+                     * suite's test_861_stop_races_start_prearm.py parses the
+                     * refusal log through `_first_refusal_line()`, which
+                     * matches only 'STR:START refused', 'Cannot start' or
+                     * 'not ready'; without this prefix that test's exact
+                     * torn-down-during-the-SD-poll race (the "shape filed as
+                     * #871" note in that file) fell through to a bare error
+                     * code instead of this diagnosis (Qodo /agentic_review,
+                     * PR #1123). 122 bytes worst case (state/mode both 8
+                     * characters, CURDRIVE/GETSPACE -- verified against every
+                     * string sd_card_manager_GetStateName() and
                      * sd_card_manager_GetModeName() can return, not assumed)
                      * against the same 125-byte ceiling. */
-                    LOG_E("SD start refused: the write arm was torn down "
+                    LOG_E("[SD] STR:START refused: the write arm was torn down "
                           "before the file opened (SD now state=%s mode=%s) "
                           "- retry\r\n",
                           sd_card_manager_GetStateName(),
