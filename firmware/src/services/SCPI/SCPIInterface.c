@@ -3257,6 +3257,49 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
  * anything: the next writer overwrites all three fields unconditionally
  * before any reader runs.
  *
+ * TWO FIXES FOR "THE WINNER CAN ALSO BE REFUSED" WERE CONSIDERED AND BOTH
+ * REJECTED (Qodo, pre-merge review round 4, "Both concurrent finder calls
+ * fail" -- the scenario: USB preempts WiFi after WiFi's own #850 claim
+ * win but before WiFi reads this mailbox, USB's own finder call clobbers
+ * the stamp, USB then loses ITS claim attempt and returns -200, and WiFi
+ * resumes to find a foreign stamp and refuses too -- even though WiFi did
+ * nothing wrong):
+ *
+ * (1) Re-pin from LIVE gStreamStopGen/gStreamStopsActive on a mismatch,
+ * instead of refusing. REJECTED: this reopens #973 itself. gStreamStopsActive
+ * is decremented when a stop BODY finishes (SCPIInterface.c:6575), so a
+ * stop that begins and ends entirely inside the gap between dispatch and
+ * this read leaves the active term back at zero -- only the GENERATION
+ * term would have caught it, and a fresh re-pin captures the ALREADY-BUMPED
+ * generation as its own baseline, making that comparison read clean. That
+ * is the exact defect this ticket exists to close, reopened by the fix.
+ *
+ * (2) Write-side compare-and-set: only claim an EMPTY slot, so the mailbox
+ * holds the FIRST unconsumed pin rather than the LAST, and a losing call
+ * can no longer overwrite a winner's entry. REJECTED, on closer analysis,
+ * because it does not narrow the residual in THIS codebase -- it only
+ * relocates it. USBDeviceTask is boosted to priority 7 after init
+ * (app_freertos.c:316) and can preempt WifiTask (priority 2) at will, but
+ * never the reverse. Under compare-and-set, the dangerous interleaving
+ * becomes: WiFi claims the EMPTY slot first, is preempted before its own
+ * claim attempt, USB's concurrent call finds the slot occupied (so USB's
+ * OWN write is skipped) and goes on to WIN the #850 claim outright (WiFi
+ * had not reached it yet) -- USB then enters its claimed body, finds a
+ * foreign (WiFi's) stamp, and refuses ITSELF despite being the legitimate
+ * claim winner. Same shape, same width (a preemption landing between one
+ * write and the very next statement, in either design), just with the two
+ * transports' roles exchanged. Given USB can preempt WiFi but not the
+ * reverse, this is not a rarer trigger than the one it replaces.
+ *
+ * DISCLOSED AND ACCEPTED rather than fixed: under a genuine two-transport
+ * race for the SAME command, either party can be the one refused, always
+ * with a plain -200 the caller can retry -- never a sweep that silently ran
+ * across an unobserved stop. That is a narrower guarantee than
+ * SCPI_StartStreaming's stack-local pin has (SCPIInterface.c:5917 onward),
+ * which has no mailbox to contend over at all, and closing the gap needs
+ * that same shape here -- tracked as the #973 follow-up below, not
+ * attempted piecemeal in this Size-S ticket a second time.
+ *
  * FINDING carried to the #973 follow-up: this hazard is specific to route 1
  * (file-scope statics). Route 2 (threading pinned values as real per-call
  * arguments through SCPI_RunSessionStartClaimed, deferred out of this S-sized
