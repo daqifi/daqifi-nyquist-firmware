@@ -345,6 +345,54 @@ SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
 # test_1057_dac7718_wait_stat.c, which re-implemented the loop shape against a
 # mock rather than compiling the real one, retired with it.
 
+# PR firmware#1112 round 3 (issue #267): the scan-list enable-flag race.
+# MC12b_ComputeScanList() used to read pRt->Data[i].IsEnabled inline, one entry
+# at a time, holding nothing, while ADCChanEnableSetClaimed()'s mask form wrote
+# up to 16 of those flags one store at a time -- so CONF:CAP:JSON? could report
+# a scan list, and per-channel scan_offset_ticks derived from it, for a channel
+# combination that was never commanded.
+#
+# Neither source is host-compilable (MC12bADC.c pulls in Harmony's
+# configuration.h/definitions.h and FreeRTOS; SCPIADC.c adds libscpi and the
+# whole board graph), so test_1112_scan_list_snapshot_race.c does what #943,
+# #953 and #985 do for their own non-includable UUTs: it models the two READ
+# shapes and the two WRITE shapes against an injected writer-progress schedule
+# and compares their masks.
+#
+# It copies no constants. What it copies is the SHAPE, and here the shape IS
+# the whole fix, on both sides:
+#
+#   READER -- every IsEnabled read happens inside ONE taskENTER_CRITICAL() /
+#   taskEXIT_CRITICAL() pair, and the mask is then built from the resulting
+#   local snapshot. The decisive check is that pRt->Data[...] is touched
+#   EXACTLY ONCE in the whole function: one live read left behind in the
+#   mask-building loop is the defect back, and the modelled test -- which
+#   asserts the snapshot shape -- would stay green through it.
+#
+#   WRITER -- the board-variant switch STAGES into maskTargets[]/maskValues[]
+#   outside the section (four staging sites across the three arms: NQ1, NQ3,
+#   and the NQ2/legacy default, whose MC12b-public and non-MC12b paths are
+#   separate) and one section applies them together. A store written straight
+#   through
+#   `channelRuntimeConfig->IsEnabled = value;` is the torn writer back, and the
+#   test's SNAPSHOT x TORN row proves the reader's section alone does not cover
+#   for it.
+#
+# Also pinned: the FOUR single-channel stores stay OUTSIDE the section. Their
+# being unprotected is a claim this fix makes -- one aligned bool store is
+# already atomic on PIC32MZ -- not an oversight, so moving them means the claim
+# was re-thought and this test's premise needs re-checking.
+#
+# Comment lines are stripped before counting, because both functions' own
+# comments name these identifiers on purpose. A comment restyled so its lines
+# do not begin with `*` or `/` therefore fails this guard -- loudly, which is
+# the right outcome for a guard whose job is to notice edits to these two
+# functions. CRs are stripped too: every firmware source in this repo is CRLF,
+# and this Makefile is not.
+SCAN1112_BIN := run_1112_tests
+MC12BADC_SRC := $(FW_ADC)/MC12bADC.c
+SCPIADC_SRC  := ../../firmware/src/services/SCPI/SCPIADC.c
+
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
 	$(CC) $(CFLAGS) $(INCLUDES) -o $(BIN) test_circularbuffer.c $(UUT)
@@ -1077,6 +1125,85 @@ $(SUSPENDREASON_BIN): test_985_suspend_reason_consistency.c test_framework.h $(S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPENDREASON_BIN) test_985_suspend_reason_consistency.c
 
+# PR firmware#1112 round 3: build-time guard over BOTH halves of the scan-list
+# enable-flag race -- see the comment above $(SCAN1112_BIN)'s definition.
+$(SCAN1112_BIN): test_1112_scan_list_snapshot_race.c test_framework.h $(MC12BADC_SRC) $(SCPIADC_SRC) $(RECIPES)
+	@body=`sed -n '/^uint32_t MC12b_ComputeScanList(/,/^}/p' $(MC12BADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: MC12b_ComputeScanList() was not found in $(MC12BADC_SRC),"; \
+	        echo "       or no longer opens at column 0 -- the guards below can see"; \
+	        echo "       nothing, and a guard that examines nothing must fail."; \
+	        exit 1; }; \
+	 ne=`printf '%s\n' "$$body" | grep -c 'taskENTER_CRITICAL()'`; \
+	 nx=`printf '%s\n' "$$body" | grep -c 'taskEXIT_CRITICAL()'`; \
+	 nlive=`printf '%s\n' "$$body" | grep -o 'pRt->Data\[' | wc -l | tr -d ' '`; \
+	 test "$$ne" -eq 1 && test "$$nx" -eq 1 && test "$$nlive" -eq 1 \
+	   || { echo "ERROR: MC12b_ComputeScanList() in $(MC12BADC_SRC) no longer captures"; \
+	        echo "       the enable flags exactly once under exactly one critical"; \
+	        echo "       section (taskENTER_CRITICAL=$$ne taskEXIT_CRITICAL=$$nx"; \
+	        echo "        pRt->Data[]=$$nlive; want 1 1 1)."; \
+	        echo "       More than one pRt->Data[] reference means the mask is being"; \
+	        echo "       built from LIVE state again, which IS the #1112 race -- and"; \
+	        echo "       test_1112_scan_list_snapshot_race.c models the snapshot"; \
+	        echo "       shape, so it would pass regardless."; \
+	        exit 1; }; \
+	 e=`printf '%s\n' "$$body" | grep -n 'taskENTER_CRITICAL()' | cut -d: -f1`; \
+	 s=`printf '%s\n' "$$body" | grep -n 'enabledSnapshot\[i\] = pRt->Data\[i\]\.IsEnabled;' | cut -d: -f1`; \
+	 x=`printf '%s\n' "$$body" | grep -n 'taskEXIT_CRITICAL()' | cut -d: -f1`; \
+	 u=`printf '%s\n' "$$body" | grep -n 'enabledSnapshot\[i\]' | cut -d: -f1 | awk -v x="$$x" '$$1 > x' | wc -l | tr -d ' '`; \
+	 test -n "$$s" && test "$$e" -lt "$$s" && test "$$s" -lt "$$x" && test "$$u" -ge 2 \
+	   || { echo "ERROR: MC12b_ComputeScanList() in $(MC12BADC_SRC) is no longer"; \
+	        echo "       two-phase. The snapshot copy must sit INSIDE the critical"; \
+	        echo "       section and the mask must be built from it AFTERWARDS"; \
+	        echo "       (enter='$$e' snapshot='$$s' exit='$$x', $$u snapshot uses"; \
+	        echo "        after the section; want enter < snapshot < exit, uses >= 2)."; \
+	        exit 1; }
+	@wbody=`sed -n '/^static scpi_result_t ADCChanEnableSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$wbody" \
+	   || { echo "ERROR: ADCChanEnableSetClaimed() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0 -- the guards below can see"; \
+	        echo "       nothing, and a guard that examines nothing must fail."; \
+	        exit 1; }; \
+	 nold=`printf '%s\n' "$$wbody" | grep -o 'channelRuntimeConfig->IsEnabled = value;' | wc -l | tr -d ' '`; \
+	 nstage=`printf '%s\n' "$$wbody" | grep -o 'maskTargets\[index\] = channelRuntimeConfig;' | wc -l | tr -d ' '`; \
+	 nsingle=`printf '%s\n' "$$wbody" | grep -o 'channelRuntimeConfig->IsEnabled = (param2 > 0);' | wc -l | tr -d ' '`; \
+	 test "$$nold" -eq 0 && test "$$nstage" -eq 4 && test "$$nsingle" -eq 4 \
+	   || { echo "ERROR: the bulk-mask loop of ADCChanEnableSetClaimed() in"; \
+	        echo "       $(SCPIADC_SRC) no longer STAGES its per-channel writes"; \
+	        echo "       (direct '= value' stores=$$nold, staged=$$nstage,"; \
+	        echo "        single-channel stores=$$nsingle; want 0 4 4)."; \
+	        echo "       A direct store is the torn writer back: the reader's own"; \
+	        echo "       section then only NARROWS the #1112 window, which is the"; \
+	        echo "       SNAPSHOT x TORN row of test_1112_scan_list_snapshot_race.c."; \
+	        exit 1; }; \
+	 we=`printf '%s\n' "$$wbody" | grep -c 'taskENTER_CRITICAL()'`; \
+	 wx=`printf '%s\n' "$$wbody" | grep -c 'taskEXIT_CRITICAL()'`; \
+	 napply=`printf '%s\n' "$$wbody" | grep -o 'maskTargets\[index\]->IsEnabled = maskValues\[index\];' | wc -l | tr -d ' '`; \
+	 test "$$we" -eq 1 && test "$$wx" -eq 1 && test "$$napply" -eq 1 \
+	   || { echo "ERROR: ADCChanEnableSetClaimed() in $(SCPIADC_SRC) no longer applies"; \
+	        echo "       the staged mask exactly once under exactly one critical"; \
+	        echo "       section (taskENTER_CRITICAL=$$we taskEXIT_CRITICAL=$$wx"; \
+	        echo "        staged-apply stores=$$napply; want 1 1 1)."; \
+	        exit 1; }; \
+	 we=`printf '%s\n' "$$wbody" | grep -n 'taskENTER_CRITICAL()' | cut -d: -f1`; \
+	 wx=`printf '%s\n' "$$wbody" | grep -n 'taskEXIT_CRITICAL()' | cut -d: -f1`; \
+	 wa=`printf '%s\n' "$$wbody" | grep -n 'maskTargets\[index\]->IsEnabled = maskValues\[index\];' | cut -d: -f1`; \
+	 wstage=`printf '%s\n' "$$wbody" | grep -n 'maskTargets\[index\] = channelRuntimeConfig;' | cut -d: -f1 | awk -v e="$$we" '$$1 > e' | wc -l | tr -d ' '`; \
+	 wsingle=`printf '%s\n' "$$wbody" | grep -n 'channelRuntimeConfig->IsEnabled = (param2 > 0);' | cut -d: -f1 | awk -v e="$$we" '$$1 > e' | wc -l | tr -d ' '`; \
+	 test "$$we" -lt "$$wa" && test "$$wa" -lt "$$wx" \
+	   && test "$$wstage" -eq 0 && test "$$wsingle" -eq 0 \
+	   || { echo "ERROR: ADCChanEnableSetClaimed() in $(SCPIADC_SRC) no longer keeps"; \
+	        echo "       the table lookups out of, and the staged apply inside, its"; \
+	        echo "       critical section (enter='$$we' apply='$$wa' exit='$$wx',"; \
+	        echo "        $$wstage staging lines and $$wsingle single-channel stores"; \
+	        echo "        after the section opens; want enter < apply < exit, 0, 0)."; \
+	        echo "       The single-channel stores are OUTSIDE it deliberately -- one"; \
+	        echo "       aligned bool store is already atomic on PIC32MZ -- so moving"; \
+	        echo "       them means that claim was re-thought, not that this guard"; \
+	        echo "       should be relaxed."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(SCAN1112_BIN) test_1112_scan_list_snapshot_race.c
+
 # #1108 RETIRED $(DAC1057_BIN) here (run_1057_tests, built from
 # test_1057_dac7718_wait_stat.c, which this same block's history recorded
 # across EIGHT prior additive collisions -- fw#961 vs fw#983, fw#913 vs
@@ -1110,7 +1237,7 @@ $(SUSPENDREASON_BIN): test_985_suspend_reason_consistency.c test_framework.h $(S
 # re-express their target as a fragment -- a mechanical move of one recipe,
 # which is strictly cheaper than this resolution has been nine times running.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(STARTARM_BIN)
+     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1124,10 +1251,11 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(SDLOG_BIN)
 	./$(SCPI999_BIN)
 	./$(SUSPENDREASON_BIN)
+	./$(SCAN1112_BIN)
 	./$(STARTARM_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(STARTARM_BIN) $(GEN_1000)
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(GEN_1000)
 
 .PHONY: run clean

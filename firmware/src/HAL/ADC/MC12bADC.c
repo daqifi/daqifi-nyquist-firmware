@@ -8,6 +8,7 @@
 #include "configuration.h"
 #include "definitions.h"
 #include "clock_config.h"   /* #487: DAQIFI_PBCLK_MHZ for ADC TCLK */
+#include "../TimerApi/TimerApi.h"  /* #716: TimerApi_PeripheralClockHz() -- the LIVE PBCLK3, not the compile-time constant */
 #include "state/data/BoardData.h"
 #include "state/board/BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
@@ -329,6 +330,57 @@ uint32_t MC12b_ComputeScanList(bool enabledOnly, bool includeMonitoring,
     uint32_t css1 = 0, css2 = 0, count = 0;
     size_t n = (pCfg->AInChannels.Size < pRt->Size)
              ? pCfg->AInChannels.Size : pRt->Size;
+    if (n > MAX_AIN_RUNTIME_CHANNEL) {
+        n = MAX_AIN_RUNTIME_CHANNEL;   // defensive: the snapshot below is a
+                                       // fixed-size local, and Size is runtime
+                                       // data like every other field here
+    }
+
+    /* #1112 round 3 -- PHASE 1: CAPTURE THE ENABLE FLAGS ATOMICALLY.
+     *
+     * The mask-building loop below used to read pRt->Data[i].IsEnabled inline,
+     * one entry at a time, holding nothing: up to 48 independently-timed live
+     * reads rather than one observation of the channel set. The scan list it
+     * returned could therefore describe a channel combination that never
+     * existed. Concrete case (Qodo /agentic_review, PR firmware#1112, round 2,
+     * reported independently by two hunters, confirmed by the arbiter): idle
+     * NQ1, OBDiag=0, SAMC=100, only channel 0 enabled. A WiFi CONF:CAP:JSON?
+     * enters here and reads channel 0 as enabled; the USB task then runs
+     * `CONF:ADC:CHAN 2` to completion, which CLEARS channel 0 and SETS channel
+     * 1, in that order -- so the true sequence of enabled-sets is {0}, {}, {1},
+     * never {0,1}. The resumed loop reads channel 1 as enabled too and reports
+     * BOTH, and the response's scan_offset_ticks for channel 1 comes out a
+     * whole (SAMC+16)*TAD7 scan-position step wrong.
+     *
+     * Deliberately NOT Streaming_BeginConfigChange(): a read-only diagnostic
+     * query must never BLOCK or be REFUSED under contention with a legitimate
+     * config writer -- the same trade MC12b_ChannelScanOffsetTicks' comment
+     * below records for its own residual. A bounded <=48-field-read critical
+     * section costs microseconds and refuses nothing.
+     *
+     * This is the READER half only. The WRITER half is the matching section
+     * around the bulk-mask loop in ADCChanEnableSetClaimed (SCPIADC.c), which
+     * applies up to 16 per-channel stores: without it this snapshot can still
+     * land strictly INSIDE that loop and capture an intermediate enabled-set
+     * the operator never commanded. Neither half is sufficient alone -- the
+     * same pairing #1048/#1054 state for CalM/CalB and #1086 states for the
+     * AD7609 Range (ADCChanRangeSetClaimed / SCPI_ADCChanRangeGet, SCPIADC.c).
+     *
+     * The section holds field reads and nothing else -- no logging, no SCPI
+     * parsing, no blocking call -- matching MC12b_ConvertToVoltage's CalM/CalB
+     * section above. Task context only: every caller is a SCPI callback, the
+     * streaming start/stop path, or boot init; none is an ISR, so
+     * taskENTER_CRITICAL (not the FROM_ISR form) is the right primitive. */
+    bool enabledSnapshot[MAX_AIN_RUNTIME_CHANNEL];
+    taskENTER_CRITICAL();
+    for (size_t i = 0; i < n; i++) {
+        enabledSnapshot[i] = pRt->Data[i].IsEnabled;
+    }
+    taskEXIT_CRITICAL();
+
+    /* PHASE 2: pure computation over the snapshot. No live read of
+     * pRt->Data[].IsEnabled occurs below this line -- that is the property the
+     * $(SCAN1112_BIN) guard in tests/host/Makefile pins. */
     for (size_t i = 0; i < n; i++) {
         const AInChannel* ch = &pCfg->AInChannels.Data[i];
         if (ch->Type != AIn_MC12bADC) continue;
@@ -343,8 +395,8 @@ uint32_t MC12b_ComputeScanList(bool enabledOnly, bool includeMonitoring,
             if (!includeMonitoring) continue;
             // Monitoring channels are not user-controllable; IsEnabled is
             // the boot default (true except the dead temp sensor).
-            if (pRt->Data[i].IsEnabled != 1) continue;
-        } else if (enabledOnly && pRt->Data[i].IsEnabled != 1) {
+            if (!enabledSnapshot[i]) continue;
+        } else if (enabledOnly && !enabledSnapshot[i]) {
             continue;
         }
         if (an < 32u) css1 |= (1U << an);
@@ -392,33 +444,281 @@ void MC12b_RestoreIdleScanList(void) {
     MC12b_ApplyScanList(css1, css2);
 }
 
+/* Shared-MODULE7 ADC clock period TAD7, in nanoseconds (rounded UP — see
+ * below), derived live from the SFRs:
+ *   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV + 1) x TCLK;  TCLK = 1/PBCLK3
+ * ADCDIV is ADCCON2<6:0>; CONCLKDIV is ADCCON3<29:24> (Qodo /agentic_review,
+ * PR firmware#1112, round 2, "ADC timing math is hard to verify" — both
+ * bitfields named explicitly here, not only by register number). DS60001320H
+ * Reg 28-2 (ADCCON2) / Reg 28-3 (ADCCON3) — the EF datasheet deviates from
+ * the FRM (DS60001344E §22 "12-bit High-Speed SAR ADC") on CONCLKDIV
+ * semantics and the DATASHEET is what matches silicon; the full chain is
+ * worked in docs/ADC_HW_SEMANTICS.md.
+ *
+ * #716/#487, via TimerApi_PeripheralClockHz() (Qodo /agentic_review, PR
+ * firmware#1112, "Clock mismatches corrupt timing offsets"): TCLK comes from
+ * the LIVE PBCLK3 the silicon actually runs, not the compile-time
+ * DAQIFI_PBCLK_MHZ. On a unit whose PLL configuration word disagrees with the
+ * build (clock_ok=false — the bootloader cannot reprogram it, erratum 45; see
+ * CLAUDE.md and TimerApi.c), the OLD compile-time TAD was wrong by the same
+ * ratio pbclk_hz/pbclk_built_hz that every other streaming-rate computation
+ * was already fixed for by #716 (TimerApi_FrequencyGet's own comment: "Every
+ * streaming-rate computation funnels through this function ... making it
+ * honest here fixes the rate, the reported timebase and the caps together").
+ *
+ * BEHAVIOUR-PRESERVING ON EVERY CLOCK-MATCHED UNIT (the overwhelming common
+ * case, clock_ok=true): TimerApi_PeripheralClockHz() returns EXACTLY
+ * DAQIFI_PBCLK_MHZ*1_000_000 there, and scaling both the ceil-divide's
+ * numerator and denominator by the same positive constant (1e6) leaves the
+ * quotient identical — verified algebraically, not merely argued: old
+ * tadNumer/DAQIFI_PBCLK_MHZ (numerator scaled x1000 for ns) is the exact
+ * same ratio as new tadNumer/pbclkHz (numerator scaled x1e9 for ns, pbclkHz
+ * = DAQIFI_PBCLK_MHZ*1e6). Only a clock-mismatched unit's result moves, and
+ * it moves toward the true value.
+ *
+ * The divide rounds UP (ceil) so tadNs never UNDER-estimates TAD — the
+ * conservative direction for MC12b_HardwareScanMaxFreq's safety cap below
+ * (over-estimating busy time -> a lower, safer max freq; Qodo #584).
+ *
+ * ONLY MC12b_HardwareScanMaxFreq uses this whole-nanosecond, rounded form.
+ * MC12b_ChannelScanOffsetTicks (below) does NOT call this helper: rounding
+ * TAD7 up before multiplying by pos x (SAMC+16) compounds the rounding error
+ * pos times, which is itself a confirmed defect (Qodo /agentic_review, PR
+ * firmware#1112, round 1, "Rounding each ADC clock period introduces
+ * cumulative timestamp error") — that function instead reads
+ * adcdiv/conclkdiv/pbclkHz from its own MC12b_ScanTimingSnapshot and carries
+ * the UN-rounded rational value through to one final division, so its
+ * reported offset is not an upper bound the way the busy-time cap is; it is
+ * the nearest-below-exact tick count. */
+static uint32_t MC12b_SharedTadNs(void) {
+    uint32_t conclkdiv = ADCCON3bits.CONCLKDIV;   // [29:24]
+    uint32_t adcdiv    = ADCCON2bits.ADCDIV;       // [6:0]
+    if (adcdiv == 0u) adcdiv = 1u;          // 0 is reserved — defensive
+    uint32_t pbclkHz = TimerApi_PeripheralClockHz();
+    if (pbclkHz == 0u) return 0xFFFFFFFFu;  // defensive: unmeasurable clock —
+                                             // MC12b_HardwareScanMaxFreq below
+                                             // folds this straight into its
+                                             // own busy-time bound, which
+                                             // saturates the same direction
+                                             // (a huge TAD -> a lower max
+                                             // freq, never a higher one)
+    /* 64-bit: 2*adcdiv*(conclkdiv+1) can reach ~2*127*64 = 16256, and the
+     * numerator is now scaled x1e9 (ns from a Hz denominator) rather than
+     * x1000 (ns from a MHz one) — 16256*1e9 ~= 1.6e13 overflows uint32_t. */
+    uint64_t tadNumer = 2ULL * adcdiv * (conclkdiv + 1u) * 1000000000ULL;
+    return (uint32_t)((tadNumer + pbclkHz - 1u) / pbclkHz);
+}
+
 /* #563/#557: the SAMC/divider-dependent hardware scan-busy limit ALONE — the
  * real #539 bound (retriggering MODULE7 mid-conversion is documented-undefined,
  * FRM §22.3.2). Extracted from MC12b_ScanMaxFreq so the NQ1 freeze-aware additive
  * cap can min() with it directly: the additive model intentionally replaces the
  * EOS-rate/event-rate terms (re-tested non-fatal on v3.6.1, #557) but NOT this
  * one, which must scale with the live SAMC/TAD config. All terms read live:
- *   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV+1) x TCLK, TCLK = 1000/84 ns (PBCLK3 84MHz, #487).
+ *   TAD7 = 2 x ADCDIV x TQ;  TQ = (CONCLKDIV+1) x TCLK, TCLK = 1000/84 ns (PBCLK3 84MHz, #487)
+ *          — see MC12b_SharedTadNs above, which is where that is now computed.
  *   T_busy = N x (SAMC + 16) x TAD7 + ~6us;  cap = 1 / (T_busy x 1.1).
  * Returns 0xFFFFFFFF when no scan is armed (no bound). */
 uint32_t MC12b_HardwareScanMaxFreq(uint32_t nActive) {
     if (nActive == 0u) return 0xFFFFFFFFu;  // no scan armed — no bound
-    uint32_t conclkdiv = ADCCON3bits.CONCLKDIV;   // [29:24]
-    uint32_t adcdiv    = ADCCON2bits.ADCDIV;       // [6:0]
-    if (adcdiv == 0u) adcdiv = 1u;          // 0 is reserved — defensive
     uint32_t samc      = ADCCON2bits.SAMC;         // [25:16]
-    /* #487: TCLK = 1/PBCLK3 (ADC control clock).  DAQIFI_PBCLK_MHZ from
-     * clock_config.h = 84 @252 MHz SYSCLK (TCLK ~11.9 ns) or 100 @200 MHz
-     * (TCLK 10 ns). tadNs = 2·ADCDIV·(CONCLKDIV+1)·TCLK, scaled ×1000 for ns.
-     * Round the divide UP (ceil) so tadNs never under-estimates TAD — this is a
-     * safety bound, so an over-estimate of busy time (→ lower max freq) is the
-     * conservative direction. Qodo #584. */
-    uint32_t tadNumer  = 2u * adcdiv * (conclkdiv + 1u) * 1000u;
-    uint32_t tadNs     = (tadNumer + DAQIFI_PBCLK_MHZ - 1u) / DAQIFI_PBCLK_MHZ;
+    uint32_t tadNs     = MC12b_SharedTadNs();
     uint64_t busyNs    = (uint64_t)nActive * (samc + 16u) * tadNs + 6000u;
     uint64_t minPeriodNs = (busyNs * 11u) / 10u;   // +10% margin
     uint32_t hz = (uint32_t)(1000000000ULL / minPeriodNs);
     return (hz == 0u) ? 1u : hz;
+}
+
+/* Population count over a 32-bit scan mask.  Written out rather than
+ * __builtin_popcount: this runs on a SCPI query path (once per public channel,
+ * never per sample), so the loop costs nothing worth a builtin, and the code
+ * stays independent of the toolchain's builtin set. */
+static uint32_t MC12b_CountSetBits(uint32_t v) {
+    uint32_t n = 0u;
+    while (v != 0u) {
+        v &= (v - 1u);      // clear the lowest set bit
+        n++;
+    }
+    return n;
+}
+
+/* #267/#1112 round-1: one-shot read of the SAMC/clock-divider state, taken
+ * ONCE by the caller before the per-channel emission loop (Qodo
+ * /agentic_review, PR firmware#1112, round 1, "Snapshot SAMC before emitting
+ * channel offsets" — see the .h-file comment for the full reachability
+ * argument: a CONF:ADC:SAMC:SHARed setter is only rejected #116 MID-STREAM,
+ * so it is NOT blocked while a CONF:CAP:JSON? query is idle-time emitting the
+ * channels[] array, and MC12b_ChannelScanOffsetTicks used to reread
+ * ADCCON2.SAMC and the ADCCON2/ADCCON3 dividers behind MC12b_SharedTadNs on
+ * EVERY call — so two channels in the SAME response could each be scored
+ * against a different SAMC). Deliberately reads adcdiv/conclkdiv/pbclkHz
+ * itself rather than delegating to MC12b_SharedTadNs(): that helper rounds
+ * TAD7 UP to a whole nanosecond for MC12b_HardwareScanMaxFreq's safety-cap
+ * use (intentional there, Qodo #584 — an over-estimate makes the cap more
+ * conservative); MC12b_ChannelScanOffsetTicks needs the UN-rounded rational
+ * value so pos x (SAMC+16) x TAD7 doesn't compound that rounding pos times
+ * (Qodo /agentic_review, PR firmware#1112, round 1, "Rounding each ADC clock
+ * period introduces cumulative timestamp error" — see below). */
+MC12b_ScanTimingSnapshot MC12b_CaptureScanTiming(void) {
+    MC12b_ScanTimingSnapshot snap;
+    snap.samc      = ADCCON2bits.SAMC;
+    snap.adcdiv    = ADCCON2bits.ADCDIV;
+    snap.conclkdiv = ADCCON3bits.CONCLKDIV;
+    snap.pbclkHz   = TimerApi_PeripheralClockHz();
+    return snap;
+}
+
+uint32_t MC12b_ChannelScanOffsetTicks(const AInChannel* ch,
+                                      uint32_t css1, uint32_t css2,
+                                      const MC12b_ScanTimingSnapshot* timing,
+                                      uint32_t timestampHz) {
+    if (ch == NULL || timestampHz == 0u || timing == NULL) return 0u;
+
+    /* AD7609 (NQ2/NQ3) converts all 8 inputs simultaneously — no scan-order
+     * skew, and no MODULE7 scan to be positioned within. */
+    if (ch->Type != AIn_MC12bADC) return 0u;
+
+    /* Type 1 / Class 1: dedicated S&H per input.  "When a trigger occurs, all
+     * Class 1 inputs are captured simultaneously and conversions are started
+     * simultaneously" — DS60001344E §22.3.2 "Input Scan", p.22-64.  Offset is
+     * structurally 0, regardless of what else is in the scan list. */
+    if (ch->Config.MC12b.ChannelType == MC12B_CHANNEL_TYPE_DEDICATED) return 0u;
+
+    uint32_t an = (uint32_t)ch->Config.MC12b.ChannelId;   // CSS bit == AN number
+    if (an >= 64u) return 0u;    // defensive: outside ADCCSS1/2 (see ComputeScanList)
+
+    /* css1/css2: the scan list a session would arm RIGHT NOW, PASSED IN by the
+     * caller rather than recomputed here (Qodo /agentic_review, PR
+     * firmware#1112, "Channel timing can describe wrong scan"). This used to
+     * call MC12b_ComputeScanList() itself, independently, on EVERY channel —
+     * so if the enabled-channel set or OnboardDiagEnabled changed on the
+     * OTHER SCPI transport between one channel's call and the next, two
+     * channels in the SAME capability response could be positioned against
+     * two different scans, and neither would necessarily agree with
+     * cap_terms.scan_bound_hz either (computed earlier in the same query via
+     * Streaming_ComputeMaxFreqTermsForConfigIface's own, separate,
+     * independently-timed call). Taking ONE snapshot before the per-channel
+     * loop and reusing it for every channel closes the CROSS-CHANNEL half of
+     * that window entirely — the response's channels[] array is now always
+     * self-consistent. It does not close the narrower window against
+     * scan_bound_hz itself: that term is computed by a different function,
+     * earlier in the same query, and unifying the two would mean either that
+     * function taking a snapshot parameter (an API change to a
+     * frequently-called streaming-cap path, out of scope here) or the whole
+     * query taking the streaming config-change claim (which would make a
+     * read-only diagnostic query BLOCK or GET REFUSED under contention with a
+     * legitimate config writer — a worse trade for a capability endpoint than
+     * the narrow, self-correcting-on-the-next-query inconsistency it would
+     * prevent). See docs/ADC_HW_SEMANTICS.md for the accepted residual. */
+    bool inList = (an < 32u) ? (((css1 >> an) & 1u) != 0u)
+                             : (((css2 >> (an - 32u)) & 1u) != 0u);
+    if (!inList) return 0u;      // not scanned in this configuration
+
+    /* Scan position = how many OTHER armed inputs convert BEFORE this one.
+     *
+     * V (DS60001344E §22.3.2 "Input Scan", p.22-64): "For Class 2 or Class 3
+     * inputs, the sampling and conversion occur in the natural input order is
+     * used; lower number inputs are sampled before higher number inputs."
+     * (sic — the sentence is garbled in the FRM, the meaning is not.)  §22.3
+     * p.22-63 states the same rule for the shared module generally: "the ADC
+     * module is used to convert the next in line Class 2 or Class 3 inputs,
+     * according to the natural order of priority", where "AN7 has a higher
+     * priority than AN12".  So the CSS bit index IS the conversion order, and
+     * counting set bits below this input's bit gives its position.
+     *
+     * The one documented way this order can be perturbed is an INDIVIDUAL
+     * Class 2 trigger pre-empting the scan (§22.3.2 / Figure 22-8, p.22-64) —
+     * not reachable here: MC12b_ConfigureHardwareTrigger sets every scanned
+     * Class 1/2 input's ADCTRGx TRGSRC to STRIG, so no input has an
+     * independent trigger while a session is armed. */
+    uint32_t pos;
+    if (an < 32u) {
+        pos = MC12b_CountSetBits(css1 & ((1U << an) - 1U));
+    } else {
+        /* every ADCCSS1 input is a lower AN number than any ADCCSS2 input */
+        pos = MC12b_CountSetBits(css1)
+            + MC12b_CountSetBits(css2 & ((1U << (an - 32u)) - 1U));
+    }
+
+    /* clockTerm x pbclkHz-denominator carries TAD7 UN-rounded through every
+     * multiply, so the one unavoidable floor happens ONCE, at the very end,
+     * instead of a whole-nanosecond ceil(TAD7) compounding pos times (Qodo
+     * /agentic_review, PR firmware#1112, round 1, "Rounding each ADC clock
+     * period introduces cumulative timestamp error" — ~415 ticks / ~9.9us at
+     * SAMC=1023 from the old ceil-then-multiply order; e.g. TAD7 = 119.0476ns
+     * on the shipped default clocks is EXACTLY 5 timestamp ticks, so an exact
+     * integer answer exists and no rounding was structurally required).
+     *   TAD7[ns]      = 2 x adcdiv x (conclkdiv+1) x 1e9 / pbclkHz
+     *                   (adcdiv = ADCCON2<6:0> ADCDIV, conclkdiv =
+     *                   ADCCON3<29:24> CONCLKDIV — DS60001320H Reg 28-2/28-3;
+     *                   see MC12b_SharedTadNs above for the full FRM-vs-
+     *                   datasheet citation)
+     *   ticks(pos)    = [pos x (SAMC+16) + (SAMC+2)] x TAD7[ns] x timestampHz
+     *                   / 1e9
+     *                 = [pos x (SAMC+16) + (SAMC+2)]
+     *                   x [2 x adcdiv x (conclkdiv+1)] x timestampHz
+     *                   / pbclkHz                        (the 1e9 cancels)
+     * 64-bit is required and sufficient: worst case pos<=~50, (SAMC+16)<=1039
+     * so the bracket <=~53000, clockTerm<=2*127*64=16256, timestampHz a few
+     * hundred MHz — the product stays under 2^63 (verified:
+     * 53000*16256*4e8 ~= 3.4e17 << 9.2e18). */
+    uint32_t adcdiv = (timing->adcdiv == 0u) ? 1u : timing->adcdiv; // 0 reserved
+    if (timing->pbclkHz == 0u) return 0xFFFFFFFFu;  // unmeasurable clock —
+                                                     // saturate like every
+                                                     // other clamp here
+    uint64_t clockTerm = 2ULL * adcdiv * (timing->conclkdiv + 1u);
+
+    /* Unified model — EVERY scanned shared/Type-2 position, including
+     * position 0, carries its own (SAMC+2) x TAD7 acquisition aperture ON
+     * TOP OF the pos x (SAMC+16) x TAD7 slots consumed by the channels
+     * ahead of it (Qodo /agentic_review, PR firmware#1112, round 2,
+     * "Clients place later samples too early", confirmed by this project's
+     * own re-derivation from first principles — matches Qodo's independently
+     * recommended formula exactly).
+     *
+     * Round 1 folded the aperture into position 0 ONLY and left pos>=1 at
+     * `pos * (SAMC+16) * TAD7` alone, on the theory that pos>=1 was already
+     * self-consistent among the shared channels — true internally, but
+     * WRONG relative to the Type-1-zero baseline every position is meant to
+     * share. V — DS60001344E §22.3.2 Figure 22-7 + Equation 22-2: the
+     * (SAMC+2) x TAD acquisition delay is the instant THIS channel's OWN
+     * value is latched (Hold begins) — it applies to every shared channel's
+     * own Hold instant, not only the first one's. A client reconstructing
+     * position k's true capture instant as `packetTimestamp + offsetTicks`
+     * was therefore short by the whole aperture (~510 ticks at the shipped
+     * default clocks) for every channel after the first.
+     *
+     * Per-input step = the same (SAMC + 16) x TAD7 term the scan-busy bound
+     * uses: (SAMC + 2) TAD acquisition + ~14 TAD conversion/handoff.
+     *
+     * #1112 round 3: that 14-TAD figure is IMPORTED from
+     * MC12b_ScanMaxFreq's deliberately conservative scan-busy bound above
+     * (MC12bADC.c:660-700 — over-estimates busy time on purpose, plus a 10%
+     * margin, because operating at that boundary is fatal, #539/#543), not
+     * independently measured for this exact-timestamp use. An earlier
+     * revision of this comment (and docs/ADC_HW_SEMANTICS.md) cited the
+     * SAMC-sweep fit + silicon anchors as confirming 14 TAD specifically
+     * ("E confirming V") — re-examined during round 3's adversarial audit,
+     * that same fit does NOT discriminate a 13-TAD (K=15 step) from a
+     * 14-TAD (K=16 step) conversion/handoff constant: solving the two
+     * anchors for the per-scan fixed term independently at each candidate
+     * gives ~0.25us (K=16) vs ~2.1us (K=15), both outside the ~5.4-7.3us the
+     * n=7 anchor demands on its own. So this is an I (inference), not an
+     * E-confirmed V, per CLAUDE.md's V/E/I/X/N discipline — reusing a
+     * safety-biased conservative term as an exact per-channel timestamp
+     * inherits that bias as a systematic error of up to ~1 TAD7 (5
+     * timestamp ticks, ~119ns at the shipped default clocks) per scan
+     * position, cumulative (~15 ticks at position 3, ~90 ticks/~2.1us at
+     * the tail of a 19-input scan). See docs/ADC_HW_SEMANTICS.md's Evidence
+     * class note (same section) and #1117 for the direct per-position
+     * measurement that would resolve K=15 vs K=16 for real. The per-SCAN
+     * fixed term (~6 us) still deliberately does NOT appear here: it is
+     * paid once per scan, so it shifts the whole scan (T1 and T2 alike)
+     * rather than being a cross-class skew the way the aperture is. */
+    uint64_t numer = ((uint64_t)pos * (timing->samc + 16u) + (timing->samc + 2u))
+                    * clockTerm * (uint64_t)timestampHz;
+    uint64_t ticks = numer / (uint64_t)timing->pbclkHz;
+    return (ticks > 0xFFFFFFFFULL) ? 0xFFFFFFFFu : (uint32_t)ticks;
 }
 
 uint32_t MC12b_ScanMaxFreq(uint32_t nActive, uint32_t nUserT2) {

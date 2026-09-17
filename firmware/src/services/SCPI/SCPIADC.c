@@ -182,6 +182,13 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
 
 static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context);
 
+/* #1112 round 3: the widest user-channel span the one-argument mask form can
+ * touch. maxUserChannel below is 7 (NQ3) or 15 (every other variant), so 16
+ * entries is the hard ceiling on how many per-channel writes ONE
+ * CONF:ADC:CHANnel <mask> can stage -- and the staging arrays are sized from
+ * this, so the loop bound and the array capacity cannot drift apart. */
+#define ADC_MASK_MAX_USER_CHANNELS 16u
+
 /* #847: the claim is taken HERE and released on the single path out, so no
  * error return inside the body can leak it. The body is 259 lines with twelve
  * returns; wrapping it is what makes the release provably unconditional.
@@ -368,7 +375,46 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
         // Channel mask - board variant-aware bulk enable
         uint8_t boardVariant = pBoardConfig->BoardVariant;
         uint8_t maxUserChannel = (boardVariant == 3) ? 7 : 15; // NQ3: 0-7, others: 0-15
-        
+
+        /* #1112 round 3 -- STAGE THE MASK, THEN APPLY IT ATOMICALLY.
+         *
+         * Each IsEnabled is a properly-aligned bool, so one store is already
+         * atomic on PIC32MZ (CLAUDE.md atomicity rules) -- which is why the
+         * single-channel branch above needs no section. What is NOT atomic is
+         * this COMMAND: the mask form writes up to 16 of them in ascending
+         * channel order, and the enabled-set the operator asked for exists only
+         * once the last one has landed. Preempted mid-loop, the array holds an
+         * intermediate that was never commanded -- `CONF:ADC:CHAN 1` followed by
+         * `CONF:ADC:CHAN 2` passes through {0}, {}, {1}, and
+         * `CONF:ADC:CHAN 3` -> `CONF:ADC:CHAN 514` passes through {0,1}, {1},
+         * ..., {1,9}. A reader on the OTHER SCPI transport that samples there
+         * describes a device configuration that never existed as a commanded
+         * one: CONF:CAP:JSON? reports a scan list, and per-channel
+         * scan_offset_ticks derived from it, for the intermediate.
+         *
+         * MC12b_ComputeScanList (HAL/ADC/MC12bADC.c) is that reader, and #1112
+         * round 3 gives it its own critical section so its <=48 flag reads are
+         * one snapshot. That half alone only NARROWS this window -- it stops
+         * the reader STRADDLING this loop, not the reader landing inside it --
+         * so both halves ship together, the same pairing #1048/#1054 make for
+         * CalM/CalB and #1086 makes for the AD7609 Range (ADCChanRangeSetClaimed
+         * / SCPI_ADCChanRangeGet below): neither half is sufficient alone.
+         *
+         * The resolve pass keeps ADC_FindChannelIndex/ADC_FindModule and the
+         * variant switch OUTSIDE the section, so what runs with interrupts
+         * masked is <=16 byte stores -- not ~16 table searches. The arms below
+         * are otherwise untouched: each one's `channelRuntimeConfig->IsEnabled =
+         * value;` became `maskTargets[index] = channelRuntimeConfig;`, so which
+         * channels a variant may write is decided by exactly the same code as
+         * before. A NULL slot means "this variant does not write this channel".
+         *
+         * The claim the wrapper holds does not substitute for this. It keeps a
+         * STREAM out; it does not keep out the readers that deliberately take no
+         * claim and reach this array from the other transport -- CONF:CAP:JSON?,
+         * SYST:SYSInfoPB?, and the streaming-cap terms. */
+        AInRuntimeConfig* maskTargets[ADC_MASK_MAX_USER_CHANNELS] = { NULL };
+        bool maskValues[ADC_MASK_MAX_USER_CHANNELS] = { false };
+
         for (size_t index = 0; index <= maxUserChannel; ++index) {
             size_t channelIndex = ADC_FindChannelIndex((uint8_t) index);
             if (channelIndex < pBoardConfigAInChannels->Size) {
@@ -378,31 +424,44 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
                 const AInModule* module = ADC_FindModule(channel->Type);
                 bool value = (bool) ((param1 & (1 << index)) > 0);
 
+                maskValues[index] = value;
+
                 switch (boardVariant) {
                     case 1: // NQ1: MC12bADC user channels 0-15
                         if (module->Type == AIn_MC12bADC && channel->Config.MC12b.IsPublic) {
-                            channelRuntimeConfig->IsEnabled = value;
+                            maskTargets[index] = channelRuntimeConfig;
                         }
                         break;
-                        
+
                     case 3: // NQ3: AD7609 user channels 0-7
                         if (module->Type == AIn_AD7609) {
-                            channelRuntimeConfig->IsEnabled = value;
+                            maskTargets[index] = channelRuntimeConfig;
                         }
                         break;
-                        
+
                     default: // NQ2 or legacy
                         if (module->Type == AIn_MC12bADC) {
                             if (channel->Config.MC12b.IsPublic) {
-                                channelRuntimeConfig->IsEnabled = value;
+                                maskTargets[index] = channelRuntimeConfig;
                             }
                         } else {
-                            channelRuntimeConfig->IsEnabled = value;
+                            maskTargets[index] = channelRuntimeConfig;
                         }
                         break;
                 }
             }
         }
+
+        /* Holds the stores and nothing else -- no lookup, no logging, no
+         * blocking call, the constraint #1086's section states in full. Task
+         * context only: this is a SCPI callback. */
+        taskENTER_CRITICAL();
+        for (size_t index = 0; index <= maxUserChannel; ++index) {
+            if (maskTargets[index] != NULL) {
+                maskTargets[index]->IsEnabled = maskValues[index];
+            }
+        }
+        taskEXIT_CRITICAL();
         // Note: Monitoring channels (>maxUserChannel) are always enabled and not user-controllable
     }
     uint16_t activeType1ChannelCount = 0;
