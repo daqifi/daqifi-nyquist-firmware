@@ -131,11 +131,17 @@ static bool i2c_MifSet(void* ctx) {
 
 static bool i2c_WaitBudgetSpent(void* ctx) {
     const I2cWaitCtx_t* w = (const I2cWaitCtx_t*)ctx;
-    /* Strictly '>', where spi_WaitStat and uart_WaitSta use '>=' -- carried
-     * over exactly as shipped (one CP0 tick out of 700000; #1056 is a
-     * refactor and changes no driver's behaviour). Rollover-safe either way:
-     * unsigned (now - start) is the true elapsed count across a wrap. */
-    return (uint32_t)(_CP0_GET_COUNT() - w->start) > I2C_OP_TIMEOUT_CP0;
+    /* #1114: was a strict '>' inline here, where spi_WaitStat and uart_WaitSta
+     * use '>=' -- carried over unexamined through #1056's and #1108's folds
+     * because neither was meant to change a driver's behaviour. Decided:
+     * align to '>=' via the shared WaitLoop_BudgetSpent (WaitLoop.h), so all
+     * three drivers' budget boundary is one piece of code instead of three
+     * textually-repeated ones. Moves this timeout's boundary earlier by one
+     * CP0 cycle out of 700000 (~1.4 ppm) -- not observable on the bus; see
+     * issue #1114's "what it costs, stated honestly". Rollover-safe: unsigned
+     * (now - start) is the true elapsed count across a wrap. */
+    return WaitLoop_BudgetSpent((uint32_t)(_CP0_GET_COUNT() - w->start),
+                                 I2C_OP_TIMEOUT_CP0);
 }
 
 static void i2c_WaitYield(void* ctx) {

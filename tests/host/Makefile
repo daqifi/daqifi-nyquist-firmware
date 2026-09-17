@@ -452,6 +452,16 @@ $(WAITLOOP_BIN): test_1056_wait_loop.c test_framework.h $(WAITLOOP_H) \
 	       echo "       calls) nor the guard above (matches either shape's call syntax identically)"; \
 	       echo "       can see this coupling -- only this grep does."; \
 	       exit 1; }
+	@grep -qF 'WaitLoop_BudgetSpent(' $(USER_I2C_SRC) \
+	  || { echo "ERROR: i2c_WaitBudgetSpent no longer calls WaitLoop_BudgetSpent in $(USER_I2C_SRC)."; \
+	       echo "       #1114 decided the I2C budget boundary should be '>=', shared with"; \
+	       echo "       spi_WaitStat/uart_WaitSta via that function instead of an inline"; \
+	       echo "       comparison of its own. test_1056_wait_loop.c's"; \
+	       echo "       budget_spent_boundary_matches_all_drivers test proves the shared"; \
+	       echo "       function's boundary directly, which says nothing about whether"; \
+	       echo "       i2c_WaitBudgetSpent still calls it -- same blind spot as the DAC7718"; \
+	       echo "       guards above, same fix: only this grep sees the call site."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -I$(FW_HAL) -o $(WAITLOOP_BIN) test_1056_wait_loop.c
 
 $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(SCPIDAC_SRC) $(RECIPES)

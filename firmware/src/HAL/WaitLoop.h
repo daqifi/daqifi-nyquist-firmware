@@ -86,6 +86,29 @@ typedef bool (*WaitLoop_PredicateFn)(void *ctx);
 typedef void (*WaitLoop_YieldFn)(void *ctx);
 
 /*!
+ * True once @p elapsed ticks/cycles have reached or passed @p budget.
+ * Pure arithmetic, not a register or clock read -- the caller does the
+ * (now - start) subtraction itself, so this stays host-compilable and
+ * hardware-agnostic no matter which clock domain @p elapsed came from.
+ *
+ * #1114: spi_WaitBudgetSpent and uart_WaitBudgetSpent's own inline
+ * comparisons always used '>='; i2c_WaitBudgetSpent's used a strict '>'
+ * instead, inherited verbatim through #1056's and #1108's WaitLoop.h folds
+ * because neither refactor was meant to change a driver's behaviour.
+ * Decided: '>=' everywhere. i2c_WaitBudgetSpent (UserI2c.c) now calls this
+ * function instead of inlining the comparison, which is the part that
+ * actually closes the decision -- spi_WaitStat/uart_WaitSta's inline copies
+ * are untouched (already '>=', so migrating them is not this issue's
+ * decision to make) and stay exactly what they were. The CP0 cycle this
+ * moves the I2C timeout boundary by (~1.4 ppm of a 700,000-cycle budget) is
+ * not observable on the bus -- see UserI2c.c's own comment.
+ */
+static inline bool WaitLoop_BudgetSpent(uint32_t elapsed, uint32_t budget)
+{
+    return elapsed >= budget;
+}
+
+/*!
  * Wait for @p statusMet, spinning briefly before yielding, and give up only
  * once @p budgetSpent AND a final fresh @p statusMet both say so.
  *
