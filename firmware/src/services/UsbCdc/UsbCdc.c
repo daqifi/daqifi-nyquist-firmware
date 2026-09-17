@@ -1,5 +1,3 @@
-/* #1118 CI-trigger probe: no-op, reverted in the very next commit on this PR.
- */
 /* Execution context of this file's USB callbacks. Not uniform. Re-traced for
  * #185 on this build's interrupt-mode USBHS driver
  * (DRV_USBHS_INTERRUPT_MODE == true, configuration.h):
