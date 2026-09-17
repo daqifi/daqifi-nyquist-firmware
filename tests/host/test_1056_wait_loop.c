@@ -525,6 +525,34 @@ TEST(budget_survives_counter_wrap)
     ASSERT_FALSE(m.runaway);
 }
 
+/* #1114: WaitLoop_BudgetSpent is the boundary predicate i2c_WaitBudgetSpent
+ * (UserI2c.c) now calls instead of inlining its own comparison -- it used to
+ * be a strict '>' there, carried over unexamined through #1056's and #1108's
+ * folds, where spi_WaitStat/uart_WaitSta's inline '>=' (textually identical
+ * to this function's body) never changed. This pins THIS FUNCTION's
+ * boundary: every test above uses mock_budget_spent, which has always
+ * modelled '>=' and so cannot distinguish the decision from the bug it
+ * replaces.
+ *
+ * Renamed from 'budget_spent_boundary_matches_all_drivers' (worker STEP 3a
+ * review, PR #1119): that name claimed a cross-driver invariant nothing here
+ * checks. This is a unit test of ONE function -- flip UserSpi.c's or
+ * UserUart.c's inline '>=' to '>' and this test still passes unchanged,
+ * since it never reads either driver's source. That is the exact blind spot
+ * the WAITLOOP_BIN Makefile rule's DAC7718 guards exist for on that driver;
+ * the same rule closes it here with three greps -- one that UserI2c.c still
+ * CALLS 'WaitLoop_BudgetSpent(' (this test proves nothing about that
+ * either), and two more pinning UserSpi.c's and UserUart.c's own inline
+ * '>=' operators -- so #1114's actual decision ('>=' on all three drivers)
+ * is guarded for all three, not just the one function this test can see. */
+TEST(budget_spent_boundary_is_ge)
+{
+    ASSERT_FALSE(WaitLoop_BudgetSpent(BUDGET - 1u, BUDGET));  /* one short: not yet */
+    ASSERT_TRUE(WaitLoop_BudgetSpent(BUDGET, BUDGET));        /* exactly at budget: spent */
+    ASSERT_TRUE(WaitLoop_BudgetSpent(BUDGET + 1u, BUDGET));   /* past budget: spent */
+    ASSERT_FALSE(WaitLoop_BudgetSpent(0u, BUDGET));           /* fresh start: not spent */
+}
+
 /* The boundary cases again at the magnitudes the drivers pass today -- 8000
  * (spi_WaitStat, i2c_WaitMif) and 4000 (uart_WaitSta). Nothing here PINS
  * those: with the loop shared, a spin bound is an argument, and retuning one
@@ -844,6 +872,7 @@ int main(void)
     RUN(budget_already_spent_on_entry_still_reports_a_met_status);
     RUN(zero_spin_count_still_checks_status_before_yielding);
     RUN(budget_survives_counter_wrap);
+    RUN(budget_spent_boundary_is_ge);
     RUN(real_driver_spin_counts_are_honoured);
     RUN(hoisted_status_already_met_returns_immediately_no_yield);
     RUN(hoisted_status_met_mid_spin_returns_without_yield);
