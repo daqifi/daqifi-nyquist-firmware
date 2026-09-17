@@ -133,6 +133,39 @@ name: host-tests
 #     Found by PR #976's adversarial audit (#1062) and filed rather than
 #     folded into that PR, which only added tools/lint/cdef.py to this
 #     workflow and picked this gap up from a merge with main.
+#   - test_999_scpi_context_storage_isolation.c: proves USB and TCP SCPI
+#     contexts do not share storage. Its Makefile target ($(SCPI999_BIN))
+#     lists firmware/src/services/UsbCdc/UsbCdc.c and
+#     firmware/src/services/wifi_services/wifi_tcp_server.c as
+#     PREREQUISITES and grep-guards each transport's own CreateSCPIContext()
+#     call site against drift -- it does NOT compile or link either file
+#     into the binary; only $(LIBSCPI_SRCS) is actually linked (see the next
+#     bullet). But until this entry, NEITHER transport file was matched by
+#     any path here. A PR touching only one transport (the exact shape of
+#     change this test exists to catch) queued no job at all.
+#     Found and filed as #1118 by #1115's round-3 adversarial audit, which
+#     confirmed the mechanism against the workflow file and the Makefile
+#     dependency and dispositioned it defer_ticket: it predates that PR
+#     (run_999_tests has depended on both files since #999 shipped) and
+#     #1115's own diff is unaffected (it touches firmware/src/libraries/scpi/**,
+#     which already queues via the entry #1115 itself adds -- see the next
+#     bullet).
+#     The same audit's own new target ($(SCPI1003_BIN), for #1003/#1010)
+#     depends on the same two transport files the same way, so this entry
+#     covers it too, whichever of #1115/#1096 lands.
+#   - Checked while in here, per #1118's own "worth checking" note: a full
+#     accounting of every $(*_BIN) target's Makefile prerequisites against
+#     this list turned up one more gap of the identical shape.
+#     $(SCPI999_BIN) also links LIBSCPI_SRCS/LIBSCPI_HDRS
+#     (firmware/src/libraries/scpi/libscpi/{src,inc/scpi}/*) -- not matched by
+#     any entry here either, so a libscpi-only change (parser.c, error.c, ...)
+#     also queued no job. Closed with the same 'firmware/src/libraries/scpi/**'
+#     entry #1115 independently adds for its own new #1003/#1010 target; per
+#     this file's own precedent (see the #1001/PR-#1017 note above), a
+#     duplicate entry from whichever of this PR / #1115 merges second is
+#     harmless and expected -- keep one copy.
+#     No other target's prerequisites were unmatched: every $(*_BIN) rule's
+#     firmware-side dependencies resolve to a path already listed above.
 
 on:
   pull_request:
@@ -164,6 +197,18 @@ on:
       # are grepped straight out of this file (configTICK_RATE_HZ,
       # configTICK_TYPE_WIDTH_IN_BITS).
       - 'firmware/src/config/default/FreeRTOSConfig.h'
+      # #1118: run_999_tests ($(SCPI999_BIN)) depends on both transports'
+      # own CreateSCPIContext() call sites (grep-guarded prerequisites, not
+      # compiled/linked in); neither was matched above, so a change confined
+      # to one transport queued no job.
+      - 'firmware/src/services/UsbCdc/UsbCdc.c'
+      - 'firmware/src/services/wifi_services/wifi_tcp_server.c'
+      # #1118: same target ($(SCPI999_BIN)) also links the vendored libscpi
+      # sources (LIBSCPI_SRCS/LIBSCPI_HDRS) that #1115 adds a second consumer
+      # of ($(SCPI1003_BIN)) -- #1115 adds this same entry for its own reason;
+      # keep one copy, whichever PR merges second (see the #1001/#1017 note
+      # above for the precedent).
+      - 'firmware/src/libraries/scpi/**'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -194,6 +239,10 @@ on:
       # are grepped straight out of this file (configTICK_RATE_HZ,
       # configTICK_TYPE_WIDTH_IN_BITS).
       - 'firmware/src/config/default/FreeRTOSConfig.h'
+      # #1118: see the matching entries under pull_request above.
+      - 'firmware/src/services/UsbCdc/UsbCdc.c'
+      - 'firmware/src/services/wifi_services/wifi_tcp_server.c'
+      - 'firmware/src/libraries/scpi/**'
       - '.github/workflows/host-tests.yml'
 
 permissions:
