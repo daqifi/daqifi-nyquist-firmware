@@ -1,4 +1,3 @@
-/* #1118 CI-trigger probe: no-op, reverted in the very next commit on this PR. */
 #define LOG_LVL LOG_LEVEL_WIFI
 #define LOG_MODULE LOG_MODULE_WIFI
 #include "wifi_tcp_server.h"
