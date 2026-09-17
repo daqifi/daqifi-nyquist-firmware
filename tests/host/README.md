@@ -123,6 +123,72 @@ reconciliation read still sits between that latch and that arm spelled as an
 `||`. All three guards were proven to fire (a renamed arm, a reordered pair, a
 deleted latch; a deleted, hoisted and assignment-rewritten reconciliation).
 
+`test_1121_start_streaming_arm_cascade.c` covers the SIBLING of that cascade,
+in the other file (issue #1121). `grep readyWait firmware/src` returns exactly
+two functions — `SCPI_StorageSDBenchmark` above, and
+`SCPI_StartStreamingClaimed` (`SCPIInterface.c`), which arms an SD write for a
+streaming log and runs the textually identical poll. It was the one left
+uncovered when #988 shipped: its post-loop cascade checked only
+`StartupDirFull()` and `StartupDiskFull()` before falling through to a bare
+`LOG_E("SD file not ready after %d ms")`, so a mid-wait teardown — a WiFi
+FW-update, a bus-jam quarantine, or a power-state drop, none of which sets
+either flag — burned the full 5 s and then told the operator only how long it
+had waited. #1121 ports both arms across.
+
+Same technique and same reason as `test_953`/`test_943`: `SCPIInterface.c` is
+not includable on the host (established by `test_999`, which tried), so the
+cascade, the poll loop and the reconciliation read are re-implemented against
+injected values and the pre-/post-fix shapes compared on identical inputs.
+
+**What is not a copy of the twin** is why this is its own file rather than
+cases bolted onto `test_953`. This site has FIVE arms, because it also clears
+and re-reads the #498/#851 disk-full flag, and both new arms go *below* it —
+for the same reason they go below dir-full. `sd_card_manager.c`'s
+`CHECK_DISK_FULL` free-space rejection (`:1860-1868`) raises `startupDiskFull`,
+**then stores `MODE_NONE`**, then routes to `PROCESS_STATE_ERROR`, as one
+refusal: structurally identical to the `#690` `OPEN_FILE` path. So
+`diskFull && tornDown` is the *normal* shape of every real out-of-space
+refusal, not a corner, and hoisting the latch above it would replace #851's
+`%llu B free < %llu B floor` — the only message carrying the numbers — with
+"retry", which will fail identically because the card is still full.
+`disk_full_that_also_tore_the_arm_down_keeps_its_verdict` and
+`recorded_disk_full_refusal_outranks_a_later_suspend` are the tests that fail
+if anyone tries either reorder. The poll loop differs too: this site's
+early-exit breaks on `StartupDirFull() || StartupDiskFull()` where the twin's
+breaks on dir-full alone, and `the_loop_early_exits_on_either_recorded_flag`
+pins that — asserting the *latch* rather than a verdict, because both flags are
+sticky so a loop that ran on would still reach the same arm, and only the latch
+shows the difference.
+
+The headline property is the twin's, one dimension wider again: over the
+sixteen cells of (dir-full × disk-full × suspended × torn-down), **exactly
+three** move, and all three sit in the quadrant where nothing was recorded —
+the only quadrant #1121 is allowed to touch. Every one of the other thirteen is
+a verdict that some individually-plausible reorder would take out, and the file
+header enumerates which reorder takes which.
+
+No constants are copied here either, so like `test_953` this target has no
+equivalent of `test_943`'s greps; what it copies is the ORDER, so the Makefile
+guards that instead, in three parts mirroring the twin's three — the five arms
+still in order in `SCPIInterface.c`, the latch still inside the poll loop
+between the early-exit and the arm that reads it, and the reconciliation read
+still between the two and still spelled as an `||`. All three were proven to
+fire (seven mutations: a reworded arm, two reordered pairs, a deleted latch, an
+early-exit with the disk-full term dropped, an assignment-rewritten
+reconciliation, and a hoisted one), and each of the test's fifteen cases was
+proven against a real mutation of the model (fourteen: both arms reverted
+individually, all five hoists, a deleted and an assignment-rewritten
+reconciliation, a latch that `break`s, a latch that fires unconditionally, both
+one-sided early-exits, and a second `SD_SuspendReasonText()` sample).
+
+Lengths are deliberately not measured here, matching `test_953`'s decision and
+for the same reason (#1001 is the general mechanism; `test_1000` is the one
+call site it exists for so far). The two messages #1121 adds were measured by
+hand against Logger's effective 125-byte ceiling when the change was made — 118
+bytes worst case for the reused `"Cannot start SD logging - SD suspended: %s"`
+prefix, 116 for the new torn-down message — and those numbers are recorded at
+the firmware site.
+
 `test_1004_help_write_abort.c` covers `SCPI_Help`'s (the `HELP` command)
 shared-response-buffer write-abort bound (issue #1004) — the third site of a
 pattern whose other two fixes are still IN FLIGHT: #947/PR #992 for
