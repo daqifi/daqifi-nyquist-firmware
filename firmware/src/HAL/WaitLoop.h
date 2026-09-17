@@ -102,6 +102,15 @@ typedef void (*WaitLoop_YieldFn)(void *ctx);
  * decision to make) and stay exactly what they were. The CP0 cycle this
  * moves the I2C timeout boundary by (~1.4 ppm of a 700,000-cycle budget) is
  * not observable on the bus -- see UserI2c.c's own comment.
+ *
+ * LATENT, NOT LIVE: a future migration of spi_WaitStat/uart_WaitSta onto this
+ * function (still not this issue's decision, see above) would hand it a
+ * TickType_t subtraction instead of i2c's uint32_t CP0 cycle count. That is
+ * width-correct today only because FreeRTOSConfig.h sets
+ * configTICK_TYPE_WIDTH_IN_BITS = TICK_TYPE_WIDTH_32_BITS; the unsigned
+ * rollover subtraction is only correct done in the tick's own width, so a
+ * future 16-bit tick config would make a widened shared signature silently
+ * wrong.
  */
 static inline bool WaitLoop_BudgetSpent(uint32_t elapsed, uint32_t budget)
 {

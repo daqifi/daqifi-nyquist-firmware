@@ -406,13 +406,18 @@ $(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE
 # of claim to make about them.
 #
 # The four drivers stay as PREREQUISITES so an edit to one must invalidate
-# this binary for `make`'s incremental build to be trustworthy. Three of them
-# (spi/uart/i2c) are the only consumers of the header under test and nothing
-# here reads them further. DAC7718_SRC joined in #1108, when dac7718_WaitStat
-# folded onto this same shared header instead of keeping its own grep-guarded
-# copy (see the retired comment above DAC7718_SRC's definition, above) --
-# and DOES get two guards below, because they are the two things the retired
-# target checked that compiling WaitLoop.h for real cannot.
+# this binary for `make`'s incremental build to be trustworthy. DAC7718_SRC
+# joined in #1108, when dac7718_WaitStat folded onto this same shared header
+# instead of keeping its own grep-guarded copy (see the retired comment above
+# DAC7718_SRC's definition, above) -- and gets two guards below, because they
+# are the two things the retired target checked that compiling WaitLoop.h for
+# real cannot. #1114 added a THIRD guarded fact, on the i2c/spi/uart trio:
+# that i2c_WaitBudgetSpent calls the shared WaitLoop_BudgetSpent (one grep),
+# and that spi_WaitBudgetSpent/uart_WaitBudgetSpent still carry their OWN
+# inline '>=' rather than drifting to '>' unnoticed (one grep each) --
+# test_1056_wait_loop.c's budget_spent_boundary_is_ge proves the shared
+# function's own boundary and nothing about which driver's text still says
+# what (worker STEP 3a review, PR #1119).
 #
 # GUARD 1 (unchanged by #1108's correction): that DAC7718.c itself still
 # ROUTES every wait through dac7718_WaitStat rather than a call site reverting
@@ -457,14 +462,32 @@ $(WAITLOOP_BIN): test_1056_wait_loop.c test_framework.h $(WAITLOOP_H) \
 	       echo "       #1114 decided the I2C budget boundary should be '>=', shared with"; \
 	       echo "       spi_WaitStat/uart_WaitSta via that function instead of an inline"; \
 	       echo "       comparison of its own. test_1056_wait_loop.c's"; \
-	       echo "       budget_spent_boundary_matches_all_drivers test proves the shared"; \
-	       echo "       function's boundary directly, which says nothing about whether"; \
+	       echo "       budget_spent_boundary_is_ge test proves the shared function's"; \
+	       echo "       boundary directly, which says nothing about whether"; \
 	       echo "       i2c_WaitBudgetSpent still calls it -- same blind spot as the DAC7718"; \
 	       echo "       guards above, same fix: only this grep sees the call site. The pattern"; \
 	       echo "       is the exact return statement (function + its first argument"; \
 	       echo "       expression), not a bare file-wide occurrence of the function name --"; \
 	       echo "       an unrelated comment or a stray call elsewhere in this file cannot"; \
 	       echo "       satisfy it (Qodo /agentic_review, PR #1119 round 1)."; \
+	       exit 1; }
+	@grep -qF 'return (TickType_t)(xTaskGetTickCount() - w->start) >= w->timeoutTicks;' $(USER_SPI_SRC) \
+	  || { echo "ERROR: spi_WaitBudgetSpent's inline '>=' comparison is no longer present in $(USER_SPI_SRC)."; \
+	       echo "       #1114 decided the I2C budget boundary should align to spi/uart's existing"; \
+	       echo "       '>=', NOT that spi/uart migrate onto WaitLoop_BudgetSpent -- WaitLoop.h says"; \
+	       echo "       why (a TickType_t-vs-uint32_t width mismatch, latent not live). So this repo"; \
+	       echo "       still has THREE copies of the boundary comparison, and"; \
+	       echo "       test_1056_wait_loop.c's budget_spent_boundary_is_ge test exercises only"; \
+	       echo "       WaitLoop_BudgetSpent -- it cannot see spi_WaitBudgetSpent's own inline text and"; \
+	       echo "       would not notice it changing to '>' (worker STEP 3a review, PR #1119). Only"; \
+	       echo "       this grep pins spi's operator; it is the exact return statement, not a bare"; \
+	       echo "       substring, so an unrelated '>=' elsewhere in the file cannot satisfy it."; \
+	       exit 1; }
+	@grep -qF 'return (TickType_t)(xTaskGetTickCount() - w->start) >= w->timeoutTicks;' $(USER_UART_SRC) \
+	  || { echo "ERROR: uart_WaitBudgetSpent's inline '>=' comparison is no longer present in $(USER_UART_SRC)."; \
+	       echo "       Same guard, same reason, as the spi one immediately above -- see it for the"; \
+	       echo "       full explanation. uart_WaitSta's copy is textually identical to spi_WaitStat's,"; \
+	       echo "       which is why the two greps use the same pattern against different files."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -I$(FW_HAL) -o $(WAITLOOP_BIN) test_1056_wait_loop.c
 
