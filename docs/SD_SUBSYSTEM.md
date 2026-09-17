@@ -130,6 +130,80 @@ absent.
 
 **Implementation:** `firmware/src/services/sd_card_services/sd_card_manager.c`
 
+### Per-session integrity manifest (#924)
+
+Every SD **streaming** session writes one extra file, `<base>.mfst`, in the
+configured directory beside its stream files. It holds one line per stream
+file, appended as that file is closed:
+
+```
+experiment.csv,20480,0x1A2B3C4D
+experiment-1.csv,20480,0x7788AA99
+P001/experiment-65.csv,9012,0x00C0FFEE
+```
+
+`<name>,<bytes>,0x<CRC32>`, LF-terminated, no header row — so **the line count
+is the session's stream-file count**. The name is the path *relative to the
+configured directory*, which is exactly the operand
+`SYSTem:STORage:SD:CRC?` and `SYSTem:STORage:SD:GET` take, so a manifest line
+can be fed straight back to the device. Names in a #689 bucket keep their
+`P00n/` prefix for the same reason.
+
+**The CRC is accumulated over the WRITE path, not recomputed afterwards.**
+`sd_card_manager.c` folds each successful `SYS_FS_FileWrite`'s landed bytes
+into a running CRC-32 inside `SDCardWrite()` — the single funnel every
+stream-file byte passes through — plus one fold at the #824 header write, the
+only byte range that bypasses it. The accumulator is armed beside
+`currentFileBytes = 0` in `OPEN_FILE` and finalized at the close that emits the
+line, so `fileCrcRunning` covers precisely the bytes `currentFileBytes` counts.
+That is what makes the recorded value equal both `zlib.crc32` of the downloaded
+file and `SYST:STOR:SD:CRC?` for it; the firmware's CRC-32 (`Util/CRC32.c`) is
+bit-identical to zlib's.
+
+**Shape constraints, all of them load-bearing — do not "simplify" any of these
+without reading #924:**
+
+- **ONE file per SESSION, not per stream file.** A per-file `.crc32` sidecar
+  adds one `f_open(CREATE)` per rotation and doubles the steady-state file
+  count, and FatFs file-create is O(directory size) — that is the reproduced
+  #689 wedge. The manifest costs exactly **one** extra create per session,
+  attempted once (`manifestOpenAttempted`), so a create that *fails* is not
+  retried at the next rotation.
+- **Not a trailer inside each stream file.** The rotation path drains a
+  *snapshot* of the circular buffer and cannot reopen a closed file
+  (#757/#823/#824).
+- **Never through the SD circular buffer.** Lines are written with direct
+  `SYS_FS_FileWrite` calls, as the #824 header now is: the ring is drained into
+  the file being *retired*, so a line pushed through it would land inside a
+  stream file's payload.
+- **All of it runs on `app_SDCardTask`.** The session-boundary hooks are *not*
+  in `streaming.c` even though it owns the #824 header machinery, because that
+  code runs on the streaming task and every `SYS_FS_*` call in this firmware is
+  made by the SD task — the only task that pumps `DRV_SDSPI_Tasks()`. #824 set
+  the precedent: streaming.c *builds* the header, the SD task *writes* it. The
+  manifest has nothing for streaming.c to build, so the arm-time latch
+  `gWriteSessionIsStreamingLog` (#824's) is the whole streaming-side input.
+- **`gWriteSessionIsStreamingLog` gates it**, so `SYST:STOR:SD:BENCHmark` —
+  which shares this same WRITE state and rotation path — produces no manifest.
+
+**No per-line `FileSync`.** Lines are appended inside the rotation window that
+#757/#822/#824 spent three issues keeping short; a metadata flush per rotation
+would add SD writes to exactly the window whose cost #924's acceptance criteria
+measure. The close at session end flushes everything. **Consequence, stated:**
+a session ended by power loss or a card yank can leave the manifest short of
+its last line(s). The files it *does* name are still fully described, and
+`SYST:STOR:SD:CRC?` still answers for the ones it does not.
+
+The session's **last** file is recorded by `UNMOUNT_DISK`, not by the rotation
+path (it is never rotated), which is also why a session that never rotates
+still produces a one-line manifest.
+
+**Companion test:** `test_306b_sd_manifest.py` (daqifi-python-test-suite).
+**Host test:** `tests/host/test_924_sd_manifest.c` compiles the real
+`Util/SdManifest.h` and `Util/CRC32.c`, and its Makefile target fails the
+*build* if `sd_card_manager.c` stops folding the CRC or stops rendering lines
+through `SdManifest_FormatLine`.
+
 ### SD Card Sector-Aligned Writes
 
 The WRITE_TO_FILE state extracts data from the circular buffer in 512-byte sector-aligned chunks. This allows FatFS to use its fast path (`disk_write()` directly from the user buffer) instead of the per-sector `memcpy` + dirty-flag path. Measured improvement: ~55% throughput gain on SPI-mode SD cards (~500 KB/s vs ~320 KB/s with same benchmark method).
