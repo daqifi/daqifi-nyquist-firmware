@@ -491,9 +491,8 @@ double ADC_ConvertToVoltageByIndex(size_t channelIndex, uint32_t rawValue) {
 
 double ADC_ConvertToVoltage(const AInSample* sample) {
     size_t channelIndex = ADC_FindChannelIndex(sample->Channel);
-    if (channelIndex >= gpBoardConfig->AInChannels.Size) {
-        return 0.0;
-    }
+    // ADC_ConvertToVoltageByIndex re-checks this identical bound (#64 audit) --
+    // no behavior change, one fewer redundant comparison per sample.
     return ADC_ConvertToVoltageByIndex(channelIndex, sample->Value);
 }
 

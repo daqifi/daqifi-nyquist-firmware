@@ -745,7 +745,9 @@ void Streaming_CountActiveChannels(uint16_t* out_type1Count,
  * both directions, and a setter's store can no longer land on a live session.
  *
  * SCOPE. This is not a lock over the runtime config in general. It excludes a
- * guarded setter against an ARM; two STARTs racing each other is the SEPARATE
+ * guarded setter against an ARM -- and, since #977, against the whole BODY of a
+ * session start rather than only its arm, because the two share
+ * PrepareStreamingBuffers. Two STARTs racing each other is still the SEPARATE
  * session-start claim below (#850), and serialising SCPI execution across
  * transports outright is #694. It is also advisory-only -- nothing blocks
  * on it. The loser is refused with an error, which is the behaviour these
@@ -759,17 +761,31 @@ void Streaming_CountActiveChannels(uint16_t* out_type1Count,
  * that arm is about to publish. So "no session can arm while the claim is
  * held" is unconditional; if a fourth arm site is ever added it must join
  * them, and grepping for Streaming_ConfigChangeInProgress finds the pattern.
+ *
+ * #977: INTERLOCKED WITH THE SESSION-START CLAIM BELOW. Each Begin tests the
+ * other's flag too, inside the critical section it already had, so a config
+ * change and a session start exclude each other in both directions. They did
+ * not before, and both families reach PrepareStreamingBuffers, which re-carves
+ * the one streaming pool. See the #977 block above the two flags in
+ * streaming.c for why it is an interlock rather than one shared claim or one
+ * owner variable, and for what the refusal costs.
  */
 typedef enum {
     STREAM_CFG_CLAIM_OK = 0,      /* claim taken -- caller MUST release it */
     STREAM_CFG_CLAIM_STREAMING,   /* a session is armed or running */
-    STREAM_CFG_CLAIM_BUSY         /* another config change is in flight */
+    /* Another config change OR (#977) a session start holds the interlocked
+     * claim. One value for both because the caller's remedy is the same --
+     * retry -- and because the SCPI refusal helper collapses "not OK" into two
+     * messages (SCPI_RejectCfgClaim, SCPIInterface.h). Which holder it was is
+     * logged by Streaming_BeginConfigChange itself, readable via SYSTem:LOG?. */
+    STREAM_CFG_CLAIM_BUSY
 } StreamingCfgClaim;
 
 /**
- * Take the config-change claim if the stream is fully idle and no other config
- * change holds it. Tests IsEnabled/Running and takes the claim inside ONE
- * critical section, so the pair cannot be split by a preempting START.
+ * Take the config-change claim if the stream is fully idle and neither another
+ * config change nor a session start (#977) holds the interlocked claim. Tests
+ * IsEnabled/Running and both flags and takes the claim inside ONE critical
+ * section, so the pair cannot be split by a preempting START.
  *
  * @return STREAM_CFG_CLAIM_OK when taken -- and ONLY then must the caller call
  *         Streaming_EndConfigChange() on every path out.
@@ -780,9 +796,14 @@ StreamingCfgClaim Streaming_BeginConfigChange(void);
 void Streaming_EndConfigChange(void);
 
 /**
- * True while a guarded config change is in flight. Read by the START arm to
- * refuse a session whose configuration is mid-change. 32-bit read, atomic on
- * PIC32MZ.
+ * True while a guarded config CHANGE is in flight -- not while a session start
+ * is. Read by the three arm sites to refuse a session whose configuration is
+ * mid-change. 32-bit read, atomic on PIC32MZ.
+ *
+ * #977: deliberately NOT widened to "the interlocked claim is held". All three
+ * callers read it while HOLDING the session-start claim, so a widened form
+ * would make each of them refuse itself. See the warning on the definition in
+ * streaming.c.
  */
 bool Streaming_ConfigChangeInProgress(void);
 
@@ -790,8 +811,18 @@ bool Streaming_ConfigChangeInProgress(void);
  *
  * A SECOND claim, deliberately not the config-change one above. It excludes
  * session STARTS against each other; that claim excludes guarded config
- * SETTERS against an arm. The two are orthogonal, and START holds this one
- * while OBSERVING that one.
+ * SETTERS against an arm. START holds this one while OBSERVING that one.
+ *
+ * #977 INTERLOCKED THEM. The two were originally described as orthogonal, and
+ * for the states they guard they still are -- but the two FAMILIES share one
+ * resource, PrepareStreamingBuffers, which re-carves the single streaming pool
+ * and installs the new pointers into seven subsystems. Neither Begin looked at
+ * the other's flag, so a SYST:MEM:AUTO could re-partition while a START, a
+ * SYST:STR:THRoughput or a SYST:STR:WIFI:FINd? was midway through that
+ * function. Each Begin now also refuses while the other flag is set. The
+ * paragraphs below are unchanged by that except where they say so; in
+ * particular the two reasons START cannot take the config claim are still the
+ * reasons the claims were not merged instead.
  *
  * WHY START CANNOT SIMPLY TAKE Streaming_BeginConfigChange(). Two independent
  * reasons, either one fatal:
@@ -832,13 +863,20 @@ bool Streaming_ConfigChangeInProgress(void);
  * reach its `Running` test while a START is in that gap, because it must take
  * this claim first and will be refused.
  *
- * Stated narrowly on purpose. It is NOT true that nothing can observe the
- * IsEnabled-set-but-Running-clear window -- Streaming_BeginConfigChange reads
- * `IsEnabled || Running` (streaming.c) and never takes this claim, so a cap-
- * input or SYST:MEM:* setter still sees it. That is correct and wanted: the
- * `||` form is precisely what makes it refuse there (#116, #857). The claim
- * closes the gap for the two commands whose test is `Running` ALONE, and for
- * nothing else.
+ * Stated narrowly on purpose, and #977 narrowed the statement further rather
+ * than widening the claim. Before it: a cap-input or SYST:MEM:* setter could
+ * still observe the IsEnabled-set-but-Running-clear window, because
+ * Streaming_BeginConfigChange reads `IsEnabled || Running` (streaming.c) and
+ * never takes this claim -- which was correct and wanted, the `||` form being
+ * precisely what makes it refuse there (#116, #857). Since #977 that setter no
+ * longer REACHES the window: its Begin reads this claim's flag first and
+ * refuses. The `||` form stays, and is still what refuses a setter arriving
+ * after the claim has been released and before Running is cleared at stop.
+ *
+ * What this claim itself closes is unchanged: the gap for the two commands
+ * whose front-door test is `Running` ALONE, and nothing else. The interlock is
+ * a separate property of the same flag, and it is gated separately (property 5
+ * in tools/lint/scpi_claim_path.py).
  *
  * A FLAG, NOT A CRITICAL SECTION, and not a FreeRTOS mutex. Not a critical
  * section because the bodies call vTaskDelay -- PrepareStreamingBuffers and
@@ -851,16 +889,23 @@ bool Streaming_ConfigChangeInProgress(void);
  *
  * ADVISORY. Nothing blocks on it; the loser is refused with -200 and retries.
  * That is a BEHAVIOUR CHANGE -- a concurrent START previously returned OK and
- * raced -- which is why it ships with its own companion test.
+ * raced -- which is why it ships with its own companion test. #977 adds one
+ * more loser (a config change in flight) at the same -200, and the same for a
+ * config setter refused by a start in flight; neither error code moves.
  */
 typedef enum {
     STREAM_START_CLAIM_OK = 0,   /* claim taken -- caller MUST release it */
-    STREAM_START_CLAIM_BUSY      /* another session start is in flight */
+    /* Another session start OR (#977) a guarded config change holds the
+     * interlocked claim. One value for both, for the same reason as
+     * STREAM_CFG_CLAIM_BUSY: the remedy is to retry either way, and
+     * Streaming_BeginSessionStart logs which holder it was. */
+    STREAM_START_CLAIM_BUSY
 } StreamingStartClaim;
 
 /**
- * Take the session-start claim. Tests and takes inside ONE critical section,
- * so two STARTs on the two SCPI transports cannot both pass the test.
+ * Take the session-start claim. Tests both interlocked flags and takes inside
+ * ONE critical section, so two STARTs on the two SCPI transports cannot both
+ * pass the test, and neither can pass it against a config change (#977).
  *
  * Deliberately does NOT test IsEnabled/Running: a START may legitimately
  * restart a live session. See the block comment above.
@@ -1024,6 +1069,28 @@ typedef struct {
     // the task wakes several us later).  Non-zero values mean T1 samples
     // were emitted with their validMask bit clear for those ticks.
     uint32_t t1ArdyMisses;
+#if READ_LOOP_PROFILE
+    /* #251: wall time of the per-channel loop in
+     * _Streaming_Deferred_Interrupt_Task, one measurement per tick that reached
+     * the loop, in raw core-timer counts (CP0 Count at SYSCLK/2: 126 MHz on
+     * the 252 MHz build, 100 MHz on the 200 MHz one).
+     *
+     * Written only by that task (priority 9), all three fields inside ONE
+     * critical section, so a Streaming_GetStats() snapshot always pairs a sum
+     * with the count it was accumulated over. The 64-bit sum and count are not
+     * atomic on PIC32MZ, and a snapshot holding a sum one tick ahead of its
+     * count would report a wrong mean. Zeroed with the rest of the struct by
+     * Streaming_ClearStats().
+     *
+     * Wall time, not CPU time: an ISR that preempts the loop lands inside the
+     * interval. That is what the tick budget pays, but it makes the max the
+     * worst tick seen, not the loop's own worst case.
+     *
+     * SYST:STR:STATS? reports these in ns as ReadLoopMaxNs / ReadLoopMeanNs. */
+    uint64_t readLoopCycles;        // Sum of per-tick loop time
+    uint64_t readLoopCount;         // Ticks summed into readLoopCycles (the mean's denominator)
+    uint32_t readLoopMaxCycles;     // Longest single-tick loop time
+#endif
     uint64_t totalSamplesStreamed;   // Samples successfully queued (64-bit for week-long sessions)
     uint64_t totalBytesStreamed;     // Total bytes encoded (64-bit for week-long sessions)
     uint32_t windowLossPercent;     // Windowed sample loss percentage (0-100)
@@ -1088,7 +1155,7 @@ void Streaming_ClearStats(void);
 // streaming_profile.h, included near the top of this file.
 
 // Increment DIO dropped sample counter (called from DIO_StreamingTrigger).
-// 32-bit increment on PIC32MZ — single writer (deferred ISR task, pri 8).
+// 32-bit increment on PIC32MZ — single writer (deferred ISR task, pri 9).
 void Streaming_IncrDioDropped(void);
 
 // Increment EOS coalesce counter (called from MC12bADC_EosInterruptTask).
@@ -1185,6 +1252,18 @@ void Streaming_ComputeAutoBuffers(uint32_t* outUsbSize, uint32_t* outWifiSize,
  * Must be called before streaming starts.
  */
 void Streaming_SetEncoderBuffer(uint8_t* buf, uint32_t size);
+
+/**
+ * Size of the session encoder buffer, i.e. the LARGEST buffSize any encoder
+ * call can ever be handed.  The packet-build loop passes
+ * `bufferSize - packetSize` and resets packetSize to 0 before every packet,
+ * so its first message per wake gets exactly this many bytes and no call gets
+ * more.  An encoder that must tell "the buffer is full right now" from "this
+ * sample can never fit any buffer" needs that ceiling; JSON_Encoder.c is the
+ * caller (#164 audit).  Returns 0 before a buffer is set, which reads as
+ * "cannot prove anything" at every call site.
+ */
+uint32_t Streaming_GetEncoderBufferSize(void);
 
 // Flow window configuration (configurable via SCPI SYST:STR:LOSS commands).
 // Loss threshold: percentage (1-100) that triggers QUES data loss bit (default 5).

@@ -88,7 +88,7 @@ list; linear to <0.5%).
   **Stale firmware comments to fix in Phase 3 (N-class corrections):**
   `MC12bADC.c:376` ("With ADCDIV=1, ADC_clk=50 MHz so one clock = 20 ns" —
   actual TAD7 = 100 ns), the same claim in `SCPIADC.h`'s SAMC doc and
-  CLAUDE.md's SAMC section, and issue #328's body (which decoded boot
+  the SAMC section in `docs/STREAMING_AND_ADC.md`, and issue #328's body (which decoded boot
   shared SAMC as 1; it is 100, SCPI-verified).
 - **SAMC is a major design lever (E)**: at SAMC=10 the scan completes in
   48 µs ⇒ in-spec scan ceiling ≈ **20.7 kHz** (vs ≈4.6 kHz at the current
@@ -226,7 +226,7 @@ All ADC-module errata, swept against our usage:
 | 14 | VDD < 2.5 V: only one ADC core usable | all | None — 3.3 V rail |
 | 15 | **Turbo mode not functional** | all | **Closes the Turbo-mode option for Phase 2** (combining two dedicated cores for 2× rate is dead silicon) |
 | 18 | **Temperature sensor does not function** (workaround: none) | all | **Our monitoring scan includes AN44 (ADC_CHANNEL_TEMP)** — that slot reads a nonfunctional sensor. Follow-up: stop surfacing temp as a valid reading, and drop AN44 from the scan list when dynamic CSS lands (recovers ~11.5 µs of every scan) |
-| 39 | VREF− current when external ref used | all | Known, tracked in CLAUDE.md errata table |
+| 39 | VREF− current when external ref used | all | Known, tracked in the errata table in `docs/MCU_REFERENCE.md` |
 
 **Headline for #539/#541: no erratum touches scan retrigger, EOS, or
 per-input ARDY** — the #539 failure is not a silicon bug; it is the
@@ -268,7 +268,7 @@ for re-deriving timing after any clock or CSS change.
 
 | Quantity | Value | Source |
 |---|---|---|
-| PBCLK3 | 100 MHz (TCLK = 10 ns) | CLAUDE.md clock tree; DS60001320H Reg 28-3: `ADCSEL=00` → PBCLK3 |
+| PBCLK3 | 100 MHz (TCLK = 10 ns) | `docs/MCU_REFERENCE.md` clock tree; DS60001320H Reg 28-3: `ADCSEL=00` → PBCLK3 |
 | `ADCCON3` | `0x04002000` → CONCLKDIV = 4 | `plib_adchs.c:79` (boot; no runtime writes) |
 | `ADCCON2` | `0x00642001` → ADCDIV = 1, SAMC = 100 | `plib_adchs.c:78`; SAMC SCPI-verified at runtime (`CONF:ADC:SAMC:SHARed?` → 100) |
 | CONCLKDIV semantics | TQ = (N+1) × TCLK | DS60001320H Reg 28-3 (**EF deviation** — FRM DS60001344E says 2N; the datasheet revision history flags the change) |
@@ -403,7 +403,7 @@ runtime** (verified: no ADCCSS writes outside `plib_adchs.c`). Consequences:
    ceiling" lever until that characterization exists. (With dynamic CSS,
    most configs get their headroom from N_active anyway.)
 5. **Comment hygiene** (Phase 3): fix the 50 MHz/20 ns TAD claims listed
-   above; update CLAUDE.md's "ADC Architecture & ISR Design" section
+   above; update the "ADC Architecture & ISR Design" section in `docs/STREAMING_AND_ADC.md`
    (still documents the pre-#292 topology).
 
 ### Phase-3 addendum 2 (E, 2026-06-12) — aggregate ADC-event-rate ceiling (D-C v4)
