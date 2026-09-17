@@ -2869,11 +2869,14 @@ typedef struct {
     const tBoardConfig*    pBoardConfig;
     const AInRuntimeArray* pRuntimeChannels;
     uint64_t               mappingSelAtBuild;
-    /* #938: the sweep's stop-request pin -- generation and "a stop is running
-     * right now", read together in one critical section at basis build. It
-     * lives in the basis, not in FindMeasureStep, because a per-step re-pin
-     * cannot see a stop that began and ended between two steps; see that
-     * function's header. */
+    /* #938/#973: the sweep's stop-request pin -- generation and "a stop is
+     * running right now", read together in one critical section at command
+     * DISPATCH (SCPI_WifiFindRate, ahead of the #850 session-start claim),
+     * not at basis build -- see the gWifiFindPinOwner mailbox declared
+     * ahead of SCPI_WifiFindRateClaimed for why the placement moved and how
+     * the values get here. It lives in the basis, not in FindMeasureStep,
+     * because a per-step re-pin cannot see a stop that began and ended
+     * between two steps; see that function's header. */
     uint32_t               stopGenAtBuild;
     bool                   stopActiveAtBuild;
 } FindStepBasis;
@@ -3201,9 +3204,108 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
     return tripped;
 }
 
+/* #973: the finder's stop-request pin, handed from SCPI_WifiFindRate (the
+ * registered callback) to SCPI_WifiFindRateClaimed (the body it runs through
+ * SCPI_RunSessionStartClaimed).
+ *
+ * WHY A FILE-SCOPE MAILBOX AND NOT A PARAMETER. The pin has to be taken
+ * before Streaming_BeginSessionStart, because the claim is this command's
+ * first OBSERVABLE effect and a stop that races it must land on the near
+ * side of the baseline -- see #973's issue comment for why the previous pin
+ * site (inside this function, after the parse and the power/interface/
+ * channel-count gates) was still too late. But SCPI_RunSessionStartClaimed's
+ * `body` signature is shared with SCPI_RunThroughputBenchClaimed and is out
+ * of scope for this ticket (Size S), so the values cannot travel as real
+ * arguments the way SCPI_StartStreaming's stopGenPinned/stopActivePinned do
+ * (SCPIInterface.c:5942/5948, passed to SCPI_StartStreamingClaimed at
+ * :6027-6031) -- that path can do it because it deliberately bypasses the
+ * runner entirely (see its own header comment, "#850 + pre-merge audit").
+ * That makes this a mailbox, and a mailbox written OUTSIDE the claim has a
+ * hazard a stack local does not: USBDeviceTask boosts itself to priority 7
+ * after init (app_freertos.c:316, `vTaskPrioritySet(NULL, 7)`) and WifiTask
+ * -- which runs SCPI-over-TCP dispatch on its own stack -- stays at priority
+ * 2 (app_freertos.c:1204-1222), so USB PREEMPTS WifiTask at an arbitrary
+ * instruction whenever it has work (the same asymmetry the #938 companion
+ * test's module docstring documents for the STOP-vs-sweep race this mailbox
+ * replaces). Streaming_BeginSessionStart refuses rather than blocks
+ * (streaming.c:3933), so it does not serialise the WRAPPERS, only the
+ * bodies -- both transports can be inside SCPI_WifiFindRate at once. A
+ * second finder call that goes on to LOSE the claim and return -200 can
+ * still write this mailbox before the winner reads it: the clobbering write
+ * is always later in time than the winner's own, so the substituted
+ * baseline is always too NEW, and a stop issued between the two writes
+ * would be folded into it and become invisible -- the exact defect this
+ * ticket closes, reopened through a different door.
+ *
+ * gWifiFindPinOwner is what makes the mailbox self-invalidating. The writer
+ * stamps its own scpi_t*; the reader accepts the pin ONLY if the stamp is
+ * its own, and clears it on the way out so one pin serves exactly one
+ * sweep. The pointer is an IDENTITY TOKEN and is never dereferenced --
+ * typed const void* so that is structural rather than a promise. Comparing
+ * a context pointer against a known transport's address is this file's
+ * established idiom (SCPI_GetMicroRLClient and SCPI_GetInterface above,
+ * SCPIInterface.c:240-264); the two contexts are distinct stable globals,
+ * UsbCdc.c's gRunTimeUsbSttings.scpiContext and wifi_tcp_server.c's
+ * gpServerData->client.scpiContext.
+ *
+ * A mismatch REFUSES rather than re-pinning locally. A local re-pin would
+ * look harmless and would silently restore the too-late baseline this
+ * ticket exists to remove -- failing closed keeps the guarantee honest, and
+ * the caller that clobbered us is already being answered -200 by the #850
+ * claim, so "one of two racing finders is refused" is a contract this file
+ * already ships. A stale stamp left by a refused writer cannot poison
+ * anything: the next writer overwrites all three fields unconditionally
+ * before any reader runs.
+ *
+ * FINDING carried to the #973 follow-up: this hazard is specific to route 1
+ * (file-scope statics). Route 2 (threading pinned values as real per-call
+ * arguments through SCPI_RunSessionStartClaimed, deferred out of this S-sized
+ * ticket) would make the finder structurally identical to SCPI_StartStreaming
+ * and delete this mailbox, the owner stamp, and the refusal path together. */
+static uint32_t     volatile gWifiFindPinStopGen    = 0u;
+static bool         volatile gWifiFindPinStopActive = false;
+static const void * volatile gWifiFindPinOwner      = NULL;
+
 /* #850: the session-start claim is taken by the SCPI_WifiFindRate wrapper
  * below, which is the only caller of this body. */
 static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
+    /* #973: collect the stop pin the wrapper took at dispatch, BEFORE the
+     * parameter parse and before any of the save-state calls below.
+     *
+     * First statement for two reasons. It minimises the wrapper-write ->
+     * body-read window, which is the interval a concurrent finder call's
+     * wrapper can clobber the mailbox in (see gWifiFindPinOwner's
+     * declaration above); and it puts the refusal path ahead of every
+     * save-and-restore pair in this function (benchmark mode, test pattern,
+     * frequency, SD mode), so the refusal returns with nothing to unwind.
+     *
+     * Read-and-clear: the stamp is consumed here so one pin serves exactly
+     * one sweep. Cleared only when it is OURS -- a foreign stamp is left
+     * alone rather than destroyed, since it is not this call's to discard. */
+    uint32_t pinnedStopGen;
+    bool     pinnedStopActive;
+    bool     pinIsMine;
+    taskENTER_CRITICAL();
+    pinIsMine        = (gWifiFindPinOwner == context);
+    pinnedStopGen    = gWifiFindPinStopGen;
+    pinnedStopActive = gWifiFindPinStopActive;
+    if (pinIsMine) {
+        gWifiFindPinOwner = NULL;
+    }
+    taskEXIT_CRITICAL();
+    if (!pinIsMine) {
+        /* A finder call on the other SCPI transport overwrote our pin
+         * between the wrapper's write and this read. Its snapshot is
+         * strictly newer than ours, so using it would hide any stop issued
+         * in between -- refuse instead, the same remedy #850 already gives
+         * the losing side of this exact race. 99 characters, against
+         * Logger.c's usable 125. */
+        LOG_E("SYST:STR:WIFI:FIND refused (#973): its stop pin was "
+              "overwritten by a concurrent finder call. Retry.");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     // Optional params: startHz, maxHz (0/absent => defaults).
     int32_t startArg = 0, maxArg = 0;
     SCPI_ParamInt32(context, &startArg, FALSE);
@@ -3282,21 +3384,19 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
         .pBoardConfig     = pBoardConfig,
         .pRuntimeChannels = (const AInRuntimeArray*)pRtAin,
         .mappingSelAtBuild = 0,
-        .stopGenAtBuild    = 0,
-        .stopActiveAtBuild = false,
+        /* #973: taken at DISPATCH (SCPI_WifiFindRate, via the gWifiFindPin*
+         * mailbox above) and collected at this function's first statement,
+         * not re-read here. The #938 pin that used to sit at this line was
+         * inside the claim and after the parse and the power/interface/
+         * channel-count gates, so a stop that raced the arm had already been
+         * folded into the baseline by the time it ran -- moving the pin
+         * ahead of Streaming_BeginSessionStart (in the wrapper) is the fix.
+         * The pair still describes one instant: they were read together in
+         * one critical section, just an earlier one (this function's
+         * first-statement read of the mailbox). */
+        .stopGenAtBuild    = pinnedStopGen,
+        .stopActiveAtBuild = pinnedStopActive,
     };
-    /* #938: the sweep's stop pin, taken HERE and once, in one critical
-     * section, beside the #868 mapping provenance it sits next to in the
-     * struct -- both are "the instant this sweep committed to what it is
-     * measuring", and both are compared against by every step. Taken before
-     * the mapping build and the pool partition below, because a stop issued
-     * while the sweep is still setting up is as much an operator stop as one
-     * issued mid-climb. Two loads in one section for the reason the writer
-     * uses one: the pair has to describe a single instant, not two. */
-    taskENTER_CRITICAL();
-    basis.stopGenAtBuild    = gStreamStopGen;
-    basis.stopActiveAtBuild = (gStreamStopsActive != 0u);
-    taskEXIT_CRITICAL();
     {
         Streaming_BuildChannelMapping(pBoardConfig, (const AInRuntimeArray*)pRtAin);
         /* #868: read the provenance back FROM the mapping rather than
@@ -3539,6 +3639,33 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
 }
 
 static scpi_result_t SCPI_WifiFindRate(scpi_t * context) {
+    /* #973: the FIRST statement of the callback, ahead of the #850
+     * session-start claim -- the same placement, and for the same reason,
+     * as SCPI_StartStreaming's #861 pin (SCPIInterface.c:5917 onward).
+     * Where the pin sits IS the definition of "before this sweep", so it
+     * belongs before anything this command does, and in particular before
+     * Streaming_BeginSessionStart, which can REFUSE: once that claim is
+     * held, a finder call on the other transport already answers -200, so
+     * the claim is itself an observable effect of this command.
+     *
+     * One critical section, because the pair has to describe a single
+     * instant rather than two (the same reason the previous pin site gave),
+     * and because the owner stamp must become visible atomically with the
+     * values it authenticates -- see gWifiFindPinOwner's declaration ahead
+     * of SCPI_WifiFindRateClaimed for why the mailbox needs one at all,
+     * which SCPI_StartStreaming's plain-local pin does not.
+     *
+     * What remains ahead of this line is the gap between the callback's
+     * entry and this statement, and that is not a window to be closed: a
+     * preemption there orders the stop before this sweep did anything at
+     * all, which is what "before" means. Same non-window SCPI_StartStreaming
+     * documents at its own pin. */
+    taskENTER_CRITICAL();
+    gWifiFindPinStopGen    = gStreamStopGen;
+    gWifiFindPinStopActive = (gStreamStopsActive != 0u);
+    gWifiFindPinOwner      = context;
+    taskEXIT_CRITICAL();
+
     return SCPI_RunSessionStartClaimed(context, SCPI_WifiFindRateClaimed,
                                        "SYSTem:STReam:WIFI:FINd?");
 }
