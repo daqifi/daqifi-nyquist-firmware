@@ -452,15 +452,19 @@ $(WAITLOOP_BIN): test_1056_wait_loop.c test_framework.h $(WAITLOOP_H) \
 	       echo "       calls) nor the guard above (matches either shape's call syntax identically)"; \
 	       echo "       can see this coupling -- only this grep does."; \
 	       exit 1; }
-	@grep -qF 'WaitLoop_BudgetSpent(' $(USER_I2C_SRC) \
-	  || { echo "ERROR: i2c_WaitBudgetSpent no longer calls WaitLoop_BudgetSpent in $(USER_I2C_SRC)."; \
+	@grep -qF 'return WaitLoop_BudgetSpent((uint32_t)(_CP0_GET_COUNT() - w->start),' $(USER_I2C_SRC) \
+	  || { echo "ERROR: i2c_WaitBudgetSpent no longer returns WaitLoop_BudgetSpent(...) in $(USER_I2C_SRC)."; \
 	       echo "       #1114 decided the I2C budget boundary should be '>=', shared with"; \
 	       echo "       spi_WaitStat/uart_WaitSta via that function instead of an inline"; \
 	       echo "       comparison of its own. test_1056_wait_loop.c's"; \
 	       echo "       budget_spent_boundary_matches_all_drivers test proves the shared"; \
 	       echo "       function's boundary directly, which says nothing about whether"; \
 	       echo "       i2c_WaitBudgetSpent still calls it -- same blind spot as the DAC7718"; \
-	       echo "       guards above, same fix: only this grep sees the call site."; \
+	       echo "       guards above, same fix: only this grep sees the call site. The pattern"; \
+	       echo "       is the exact return statement (function + its first argument"; \
+	       echo "       expression), not a bare file-wide occurrence of the function name --"; \
+	       echo "       an unrelated comment or a stray call elsewhere in this file cannot"; \
+	       echo "       satisfy it (Qodo /agentic_review, PR #1119 round 1)."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -I$(FW_HAL) -o $(WAITLOOP_BIN) test_1056_wait_loop.c
 
