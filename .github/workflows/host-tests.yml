@@ -153,6 +153,18 @@ name: host-tests
 #     The same audit's own new target ($(SCPI1003_BIN), for #1003/#1010)
 #     depends on the same two transport files the same way, so this entry
 #     covers it too, whichever of #1115/#1096 lands.
+#   - test_1121_start_streaming_arm_cascade.c (#1121): the sibling of
+#     test_953's cascade, in SCPIInterface.c rather than SCPIStorageSD.c. Its
+#     Makefile target grep-guards that file for the five arms' order, the
+#     in-loop torn-down latch and the post-loop reconciliation read, and fails
+#     the BUILD (not just the test) if any has been reordered, reworded or
+#     moved. SCPIInterface.c is ALREADY covered by the
+#     'firmware/src/services/SCPI/**' entry above -- same situation as
+#     test_947_sysinfo_write_abort.c -- so this bullet adds no new path, only
+#     the record of which source the target reads and why. It compiles and
+#     links nothing from firmware/: the cascade, the poll loop and the
+#     reconciliation are re-implemented on the host, for the reason
+#     test_999's bullet below establishes about this file.
 #   - Checked while in here, per #1118's own "worth checking" note: a full
 #     accounting of every $(*_BIN) target's Makefile prerequisites against
 #     this list turned up one more gap of the identical shape.

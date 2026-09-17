@@ -13,6 +13,7 @@ run_1000_tests
 run_985_tests
 run_1057_tests
 run_1112_tests
+run_1121_tests
 CircularBuffer_uut.c
 gen_1000_log_budget.h
 *.o

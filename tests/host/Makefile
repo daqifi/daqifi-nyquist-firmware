@@ -83,6 +83,29 @@ SUSPEND_BIN := run_953_tests
 # notice edits to this function.
 SUSPENDREASON_BIN := run_985_tests
 
+# #1121: SYST:STR:START's SD write-arm ready-wait diagnosis -- the SIBLING of
+# SUSPEND_BIN's cascade, in the other file. `grep readyWait firmware/src`
+# returns exactly two functions: SCPI_StorageSDBenchmark (SCPIStorageSD.c,
+# fixed by #953/#988) and SCPI_StartStreamingClaimed (SCPIInterface.c), which
+# was left uncovered. #1121 ports both arms onto it.
+#
+# Same technique and same reason as SUSPEND_BIN -- SCPIInterface.c is not
+# includable on the host (established by SCPI999_BIN, which tried: 42 direct
+# includes spanning Harmony PLIB, the USB HS and WINC drivers and FreeRTOS's
+# MIPS port layer) -- so the cascade, the poll loop and the reconciliation read
+# are re-implemented against injected values and the pre-/post-fix shapes
+# compared.
+#
+# It copies no CONSTANTS, so it needs no equivalent of BENCH_BIN's greps. What
+# it copies is the ORDER of the FIVE arms, which is the substance: this site
+# has a #498/#851 disk-full arm the SD:BENCHmark twin does not, and both new
+# arms go BELOW it for the same reason they go below dir-full -- the
+# CHECK_DISK_FULL rejection (sd_card_manager.c:1860-1868) raises the flag AND
+# clears `mode`, so `diskFull && tornDown` is the NORMAL shape of that path,
+# exactly as `dirFull && tornDown` is of the #690 one. So the guards check
+# THAT, in three parts mirroring SUSPEND_BIN's three.
+STARTARM_BIN := run_1121_tests
+
 # #164: JSON_StringEscape.h is header-only and dependency-free for the same
 # reason AD7609Scale.h is -- the pure byte-escaping logic was split out of
 # JSON_Encoder.c, which is unusable on a host (it pulls in
@@ -719,6 +742,86 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
+# #1121: the same three guards as $(SUSPEND_BIN), against the OTHER file.
+#
+# GUARD 1 -- THE FIVE-ARM ORDER. This site's cascade is
+# dirFull -> diskFull -> suspend -> tornDown -> generic, and every adjacent
+# swap destroys a shipped fix: suspend above either recorded verdict
+# re-diagnoses a refusal that a later suspension merely followed (#953's own
+# mis-diagnosis, pointed the other way); tornDown above the suspend arm
+# silences #953 in #953's headline case (the WiFi/FW-update/quarantine teardown
+# publishes BOTH through one app_SDCard_GracefulShutdown() call, so the latch is
+# always set there); tornDown above either recorded verdict swallows the #689
+# refuse text or #851's `%llu B free < %llu B floor` numbers, because both of
+# those refusals clear `mode` as part of themselves.
+$(STARTARM_BIN): test_1121_start_streaming_arm_cascade.c test_framework.h \
+                $(SCPI_INTERFACE_SRC) $(RECIPES)
+	@a=`grep -nF 'SD start refused (#689): ' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 b=`grep -nF '} else if (sd_card_manager_StartupDiskFull()) {' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 c=`grep -nF '} else if (why != NULL) {' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 d=`grep -nF '} else if (armTornDown) {' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 e=`grep -nF 'SD file not ready after %d ms' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 test -n "$$a" && test -n "$$b" && test -n "$$c" && test -n "$$d" && test -n "$$e" \
+	   && test "$$a" -lt "$$b" && test "$$b" -lt "$$c" && test "$$c" -lt "$$d" \
+	   && test "$$d" -lt "$$e" \
+	   || { echo "ERROR: the SYST:STR:START file-not-ready cascade in"; \
+	        echo "       $(SCPI_INTERFACE_SRC) is no longer dirFull -> diskFull ->"; \
+	        echo "       suspend -> torn-down -> generic, or an arm was reworded,"; \
+	        echo "       moved or duplicated (markers found at a='$$a' b='$$b'"; \
+	        echo "       c='$$c' d='$$d' e='$$e')."; \
+	        echo "       test_1121_start_streaming_arm_cascade.c models THAT"; \
+	        echo "       ordering and its whole point is that the order is the fix"; \
+	        echo "       -- re-read both before changing either."; \
+	        exit 1; }
+# GUARD 2 -- THE IN-LOOP LATCH, between the early-exit and the arm that reads
+# it. The early-exit marker is matched in FULL, including its
+# `|| sd_card_manager_StartupDiskFull()` term: this site breaks on BOTH
+# recorded flags where the SD:BENCHmark twin breaks on dir-full alone, and
+# `the_loop_early_exits_on_either_recorded_flag` models it that way. Drop
+# either term and this grep finds nothing and the build stops.
+	@f=`grep -nF 'if (sd_card_manager_StartupDirFull() || sd_card_manager_StartupDiskFull()) {' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 g=`grep -nF 'armTornDown = true;' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 d=`grep -nF '} else if (armTornDown) {' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 test -n "$$f" && test -n "$$g" && test -n "$$d" \
+	   && test "$$f" -lt "$$g" && test "$$g" -lt "$$d" \
+	   || { echo "ERROR: #1121's torn-down latch in $(SCPI_INTERFACE_SRC) is gone,"; \
+	        echo "       moved out of the ready-wait poll loop, duplicated, or the"; \
+	        echo "       loop's early-exit no longer tests BOTH recorded flags"; \
+	        echo "       (markers found at early-exit='$$f' latch='$$g' arm='$$d')."; \
+	        echo "       test_1121_start_streaming_arm_cascade.c models the latch as"; \
+	        echo "       part of the LOOP -- that is how it distinguishes 'torn down,"; \
+	        echo "       no cause ever observable' from 'torn down by a cause that has"; \
+	        echo "       since lifted'. Re-read both before changing either."; \
+	        exit 1; }
+# GUARD 3 -- THE RECONCILIATION READ. Position (after the in-loop latch, before
+# the arm that consumes it) and the `||` (matched literally, not just the
+# variable name -- a plain `armTornDown = (mode != WRITE)` would satisfy a
+# position-only check while overwriting the loop's finding whenever a different
+# caller had re-armed WRITE in the meantime). Same two properties, same reasons,
+# as the twin's third guard.
+#
+# WHAT THIS DOES NOT PIN, identically to the twin: that the read is inside the
+# !IsWriteReady() block rather than merely between the two markers, and that the
+# loop's own latch was not deleted in favour of it (guard 2 holds that one).
+# Line order is all grep has; the rest is the comment at the firmware site and
+# review.
+	@g=`grep -nF 'armTornDown = true;' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 h=`grep -nF 'armTornDown = armTornDown ||' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 d=`grep -nF '} else if (armTornDown) {' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 test -n "$$g" && test -n "$$h" && test -n "$$d" \
+	   && test "$$g" -lt "$$h" && test "$$h" -lt "$$d" \
+	   || { echo "ERROR: #1121's post-loop reconciliation read in"; \
+	        echo "       $(SCPI_INTERFACE_SRC) is gone, moved out of the"; \
+	        echo "       file-not-ready block, or rewritten as an assignment"; \
+	        echo "       (markers found at latch='$$g' reconcile='$$h' arm='$$d')."; \
+	        echo "       It must read 'armTornDown = armTornDown || (...)' and sit"; \
+	        echo "       between the loop's latch and the arm that consumes it."; \
+	        echo "       test_1121_start_streaming_arm_cascade.c models it as a"; \
+	        echo "       separate step (start_reconcile) for exactly that reason."; \
+	        echo "       Re-read both before changing either."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(STARTARM_BIN) test_1121_start_streaming_arm_cascade.c
+
 SCPI999_WIRING_GUARD := check_999_createscpicontext_wiring.sh
 SCPI999_ARG_EXTRACTOR := extract_call_args.pl
 SCPI999_ARG_EXTRACTOR_TEST := test_extract_call_args.sh
@@ -1134,7 +1237,7 @@ $(SCAN1112_BIN): test_1112_scan_list_snapshot_race.c test_framework.h $(MC12BADC
 # re-express their target as a fragment -- a mechanical move of one recipe,
 # which is strictly cheaper than this resolution has been nine times running.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN)
+     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1149,9 +1252,10 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(SCPI999_BIN)
 	./$(SUSPENDREASON_BIN)
 	./$(SCAN1112_BIN)
+	./$(STARTARM_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(GEN_1000)
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(GEN_1000)
 
 .PHONY: run clean

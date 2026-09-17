@@ -5267,14 +5267,51 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
              * 5 s; the pre-clear above guarantees they describe ONLY this
              * request. */
             int readyWait = 0;
+            /* #1121: did THIS request's arm die while we were waiting for it?
+             * Ports #988's cascade (SCPIStorageSD.c's SCPI_StorageSDBenchmark,
+             * around its own IsWriteReady loop) onto this site -- grep confirms
+             * these two are the ONLY `readyWait` sites in firmware/src, and this
+             * was the one left uncovered when #988 shipped. `pSDCardSettings`
+             * here is the exact same sd_card_manager_settings_t singleton
+             * (BOARDRUNTIME_SD_CARD_SETTINGS) that function reads, so its
+             * atomicity argument transfers unchanged: `mode` is a plain,
+             * naturally-aligned 32-bit enum; this callback is the only writer
+             * that just published MODE_WRITE a few lines above and never
+             * touches it again before this loop; and `armTornDown` is a stack
+             * local no other context can see -- nothing here needs a critical
+             * section any more than the twin's does. Full reasoning (why the
+             * latch does not `break`, why the reconciliation read after the
+             * loop is needed, why it only ever ORs) lives on that function's
+             * copy and is not repeated here in full to avoid a second copy
+             * silently drifting from the first. */
+            bool armTornDown = false;
             while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
                 if (sd_card_manager_StartupDirFull() || sd_card_manager_StartupDiskFull()) {
                     break;
+                }
+                if (pSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
+                    armTornDown = true;   /* #1121/#988: latch, keep waiting */
                 }
                 vTaskDelay(pdMS_TO_TICKS(10));
                 readyWait++;
             }
             if (!sd_card_manager_IsWriteReady()) {
+                /* #1121/#988: reconciliation read. The loop samples `mode` at
+                 * the TOP of its body and then yields 10 ms before re-testing
+                 * its condition, so its last observation and its exit are not
+                 * the same instant -- a teardown landing in that final slice
+                 * (or between the loop's IsWriteReady() and this one) is
+                 * unobserved by the loop alone. `||`, never `=`: the loop's
+                 * latch is already a fact ("mode left the MODE_WRITE this
+                 * callback published") that a later re-arm by a different
+                 * caller must not be allowed to erase. */
+                armTornDown = armTornDown ||
+                              (pSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE);
+                /* Sampled once, before the cascade, matching SCPIStorageSD.c's
+                 * #953 arm: a second call here could observe a different owner
+                 * (or none) than the one that actually steered the branch
+                 * below. */
+                const char *why = SD_SuspendReasonText();
                 if (sd_card_manager_StartupDirFull()) {
                     /* #689: this flag means "no writable location", which covers a
                      * full directory AND a bucket that could not be created or read.
@@ -5320,6 +5357,48 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                         LOG_E("[SD] STR:START refused: disk full (space unknown), floor=%llu B",
                               (unsigned long long)floor);
                     }
+                } else if (why != NULL) {
+                    /* #953 (ported from SCPIStorageSD.c by #1121): a live
+                     * suspend reason. Ranked above the #988 latch below for the
+                     * same reason that function's copy gives -- this is the
+                     * only arm that can name an OWNER and the command that
+                     * clears it, and the WiFi/FW-update/quarantine teardown
+                     * that tears this arm down publishes the suspension
+                     * through the same app_SDCard_GracefulShutdown() call, so
+                     * where both fire they almost always describe one event.
+                     * Same "Cannot start SD logging - SD suspended: %s" prefix
+                     * this file's other two SD_SuspendReasonText() callers
+                     * already use (:4832, :5151) -- measured worst case 118
+                     * bytes against Logger's 125-byte effective ceiling,
+                     * unchanged by reuse here. */
+                    LOG_E("Cannot start SD logging - SD suspended: %s\r\n", why);
+                } else if (armTornDown) {
+                    /* #988 (ported by #1121): this request's arm was torn down
+                     * and nothing names a cause. The state/mode pair is a
+                     * breadcrumb only -- SCPIStorageSD.c's #782 pattern -- and
+                     * does not steer this branch; `mode` can even read WRITE
+                     * again by the time this logs, if a different caller
+                     * re-armed in between. Prefixed "[SD] STR:START refused"
+                     * -- the same prefix the two STR:START refusal arms just
+                     * above already use -- rather than the "SD start refused"
+                     * this line originally shipped with: daqifi-python-test-
+                     * suite's test_861_stop_races_start_prearm.py parses the
+                     * refusal log through `_first_refusal_line()`, which
+                     * matches only 'STR:START refused', 'Cannot start' or
+                     * 'not ready'; without this prefix that test's exact
+                     * torn-down-during-the-SD-poll race (the "shape filed as
+                     * #871" note in that file) fell through to a bare error
+                     * code instead of this diagnosis (Qodo /agentic_review,
+                     * PR #1123). 122 bytes worst case (state/mode both 8
+                     * characters, CURDRIVE/GETSPACE -- verified against every
+                     * string sd_card_manager_GetStateName() and
+                     * sd_card_manager_GetModeName() can return, not assumed)
+                     * against the same 125-byte ceiling. */
+                    LOG_E("[SD] STR:START refused: the write arm was torn down "
+                          "before the file opened (SD now state=%s mode=%s) "
+                          "- retry\r\n",
+                          sd_card_manager_GetStateName(),
+                          sd_card_manager_GetModeName());
                 } else {
                     LOG_E("SD file not ready after %d ms\r\n", readyWait * 10);
                 }
