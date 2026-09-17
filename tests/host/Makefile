@@ -584,18 +584,89 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
 
+# #988 added a FOURTH arm (the torn-down latch) between the live suspend reason
+# and the card advisory, so this guard now pins four markers, not three. The
+# order it pins IS the design decision the test asserts: dirFull -> suspend ->
+# torn-down -> card. In particular the torn-down arm sits BELOW the suspend arm
+# on purpose -- the WiFi/quarantine teardown clears `mode` on its way into
+# APP_SD_STATE_SUSPENDED, so the latch is always set there too, and hoisting it
+# would silence the #953 arm in exactly the case #953 shipped for.
+#
+# Two more markers pin the LATCH itself, which #988 put inside the poll loop and
+# which the test now models as a loop rather than as an injected boolean: it must
+# sit after the #690 early-exit and before the arm that consumes it.
+#
+# WHAT THESE GREPS DO NOT PIN, stated rather than implied: that the latch does
+# not also `break`. Adding one would still satisfy every marker here while
+# destroying the premise of the "cause already lifted" case -- breaking ends the
+# wait at the instant the teardown becomes visible, which is also the instant the
+# cause is still visible, so that case could never be reached. There is no cheap
+# textual check for it; it is held by the test file's own FIDELITY note and by
+# review. (A grep for `break` in the loop was tried and rejected: the #690
+# early-exit is a legitimate `break` two lines above, so the check would have to
+# know which one it was looking at, which is parsing C -- the thing #1032 exists
+# to get this repo out of.)
 $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
 	@a=`grep -nF 'SD:BENCH refused' $(SD_BENCH_SRC) | cut -d: -f1`; \
 	 b=`grep -nF '} else if (why != NULL) {' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 d=`grep -nF '} else if (armTornDown) {' $(SD_BENCH_SRC) | cut -d: -f1`; \
 	 c=`grep -nF 'SD:BENCH - File not ready after timeout' $(SD_BENCH_SRC) | cut -d: -f1`; \
-	 test -n "$$a" && test -n "$$b" && test -n "$$c" \
-	   && test "$$a" -lt "$$b" && test "$$b" -lt "$$c" \
+	 test -n "$$a" && test -n "$$b" && test -n "$$d" && test -n "$$c" \
+	   && test "$$a" -lt "$$b" && test "$$b" -lt "$$d" && test "$$d" -lt "$$c" \
 	   || { echo "ERROR: the SD:BENCHmark file-not-ready cascade in $(SD_BENCH_SRC)"; \
-	        echo "       is no longer dirFull -> suspend -> card, or an arm was"; \
-	        echo "       reworded, moved or duplicated (markers found at a='$$a'"; \
-	        echo "       b='$$b' c='$$c')."; \
+	        echo "       is no longer dirFull -> suspend -> torn-down -> card, or an"; \
+	        echo "       arm was reworded, moved or duplicated (markers found at"; \
+	        echo "       a='$$a' b='$$b' d='$$d' c='$$c')."; \
 	        echo "       test_953_bench_suspend_diagnosis.c models THAT ordering and"; \
 	        echo "       its whole point is that the order is the fix -- re-read both"; \
+	        echo "       before changing either."; \
+	        exit 1; }
+	@e=`grep -nF '/* #690: early-exit */' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 f=`grep -nF 'armTornDown = true;' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 d=`grep -nF '} else if (armTornDown) {' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 test -n "$$e" && test -n "$$f" && test -n "$$d" \
+	   && test "$$e" -lt "$$f" && test "$$f" -lt "$$d" \
+	   || { echo "ERROR: #988's torn-down latch in $(SD_BENCH_SRC) is gone, moved out"; \
+	        echo "       of the ready-wait poll loop, or duplicated (markers found at"; \
+	        echo "       early-exit='$$e' latch='$$f' arm='$$d')."; \
+	        echo "       test_953_bench_suspend_diagnosis.c models the latch as part of"; \
+	        echo "       the LOOP -- that is how it distinguishes 'torn down, no cause"; \
+	        echo "       ever observable' from 'torn down by a cause that has since"; \
+	        echo "       lifted'. Re-read both before changing either."; \
+	        exit 1; }
+# #988's RECONCILIATION READ. The loop's latch has a sampling gap it cannot close
+# itself -- the body samples `mode` and then yields 10 ms before the `readyWait <
+# 500` bound is re-tested, so a teardown in that final delay is observed by
+# nobody -- and the fix is one more sample at the head of the !IsWriteReady()
+# block. Two properties, both grep-checkable and both load-bearing:
+#
+#   POSITION. It must sit AFTER the in-loop latch and BEFORE the arm that
+#     consumes it. Moved above the loop it would sample the arm this callback
+#     just published and could never observe a teardown at all.
+#   THE `||`. Pinned by matching the literal `armTornDown = armTornDown ||`
+#     rather than just the variable. A plain `armTornDown = (mode != WRITE)`
+#     would satisfy a position-only check while overwriting the loop's finding
+#     whenever a different caller had re-armed WRITE -- reintroducing #988
+#     through its own fix. `the_reconciliation_ors_it_does_not_overwrite_the_
+#     latch` is the test that models that mutation.
+#
+# WHAT THIS DOES NOT PIN: that the read is inside the !IsWriteReady() block
+# rather than merely between the two markers, and that the loop's own latch was
+# not deleted in favour of it (the guard above holds that one). Line order is all
+# grep has; the rest is the comment at the firmware site and review.
+	@f=`grep -nF 'armTornDown = true;' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 g=`grep -nF 'armTornDown = armTornDown ||' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 d=`grep -nF '} else if (armTornDown) {' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 test -n "$$f" && test -n "$$g" && test -n "$$d" \
+	   && test "$$f" -lt "$$g" && test "$$g" -lt "$$d" \
+	   || { echo "ERROR: #988's post-loop reconciliation read in $(SD_BENCH_SRC) is"; \
+	        echo "       gone, moved out of the file-not-ready block, or rewritten as"; \
+	        echo "       an assignment (markers found at latch='$$f'"; \
+	        echo "       reconcile='$$g' arm='$$d')."; \
+	        echo "       It must read 'armTornDown = armTornDown || (...)' and sit"; \
+	        echo "       between the loop's latch and the arm that consumes it."; \
+	        echo "       test_953_bench_suspend_diagnosis.c models it as a separate"; \
+	        echo "       step (bench_reconcile) for exactly that reason. Re-read both"; \
 	        echo "       before changing either."; \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
