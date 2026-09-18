@@ -220,12 +220,18 @@ extern "C" {
      * HARDWARE_REVISION stay knowledge of this module, which is the only
      * place that stamps them today.
      *
-     * @param pTopLevelSettings The loaded image to refresh, may be NULL
-     * @return True if anything was changed, i.e. the image came from a
-     *         different build and the caller should persist it. False when it
-     *         already matches -- the caller must NOT write NVM in that case.
+     * IN MEMORY ONLY -- this writes no NVM, deliberately, and the caller must
+     * not add a save on its behalf. daqifi_settings_SaveToNvm erases the
+     * TopLevel page before writing it, so a save here would put a window on
+     * the post-update boot in which a failed write leaves the page blank and
+     * the next boot falls back to factory defaults -- losing exactly the
+     * settings #909 exists to preserve. Nothing needs the write: boot re-stamps
+     * on every startup, and SaveToNvm already re-stamps both revision strings
+     * on any ordinary TopLevel save, so the persisted copy self-heals.
+     *
+     * @param pTopLevelSettings The loaded image to refresh; NULL is a no-op
      */
-    bool daqifi_settings_RefreshTopLevelRevisions(
+    void daqifi_settings_RefreshTopLevelRevisions(
             TopLevelSettings* pTopLevelSettings);
 
     /**

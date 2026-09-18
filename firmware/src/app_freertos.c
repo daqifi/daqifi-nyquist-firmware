@@ -931,10 +931,28 @@ void app_SystemInit() {
      * branch above; the default branch stamps the current revision itself, so
      * this is a no-op there (it returns false and nothing is written).
      *
-     * The re-stamp happens HERE, before InitBoardConfig, so the live config is
-     * correct from the first boot after an update. The PERSIST is deferred to
-     * after the runtime config has been seeded -- see the paired block below. */
-    bool topLevelRevStale = daqifi_settings_RefreshTopLevelRevisions(
+     * IN MEMORY ONLY -- this deliberately does NOT write NVM.
+     *
+     * An earlier revision of this change persisted the refreshed revision here.
+     * That was wrong in the one way this PR must not be wrong:
+     * daqifi_settings_SaveToNvm ERASES the TopLevel page before writing the new
+     * row, so a failed row write leaves the page BLANK, and the next boot then
+     * takes the factory-default branch above and loses the user's voltage
+     * precision, calibration selection, friendly name and USB auto-power -- the
+     * exact loss #909 exists to prevent, introduced by #909's own fix, on the
+     * very boot that follows a firmware update.
+     *
+     * Nothing needs the write. boardFirmwareRev reaches the outside world only
+     * through InitBoardConfig -> boardConfig (BoardConfig.c), which is seeded
+     * from this in-memory struct on EVERY boot, so re-stamping here makes
+     * CONF:CAPabilities:JSON? report the running build's revision every time.
+     * The NVM copy simply lags until the next ordinary TopLevel save, and
+     * daqifi_settings_SaveToNvm re-stamps both revision strings itself on any
+     * such save, so it self-heals with no code here.
+     *
+     * Placed before InitBoardConfig so the live config is correct on the FIRST
+     * boot after an update rather than one boot later. */
+    daqifi_settings_RefreshTopLevelRevisions(
             &tmpTopLevelSettings.settings.topLevelSettings);
 
     // Load board config structures with the correct board variant values
@@ -982,35 +1000,7 @@ void app_SystemInit() {
     daqifi_settings_SeedFriendlyName(
             tmpTopLevelSettings.settings.topLevelSettings.friendlyDeviceName);
 
-    /* #909, paired with the re-stamp above: persist the refreshed revision so
-     * the NEXT boot loads it too, rather than re-deciding this every time.
-     *
-     * Deliberately AFTER the voltage-precision apply and the friendly-name
-     * seed, and not next to the re-stamp. daqifi_settings_SaveToNvm
-     * auto-captures voltagePrecision from the streaming runtime config and
-     * friendlyDeviceName from the runtime cache, so saving before those are
-     * seeded would write a zeroed precision and an empty name over the user's
-     * stored values -- destroying the very settings #909 exists to preserve.
-     *
-     * Guarded on the return value, so a device whose stored revision already
-     * matches writes NO flash at all. This is a page-erase-plus-write; doing
-     * it unconditionally on every boot would add flash wear and a boot-time
-     * cost for nothing, and is the "boot writes NVM for no reason" shape that
-     * #908 and #910 are about. */
-    if (topLevelRevStale) {
-        tmpTopLevelSettings.type = DaqifiSettings_TopLevelSettings;
-        if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) {
-            /* Not fatal: the live board config was already refreshed above, so
-             * this boot reports the right revision either way. Only the
-             * PERSISTENCE failed, so the next boot would retry. Logged rather
-             * than ignored because a failing settings write is the same
-             * symptom a user would see as "my settings don't stick", and the
-             * error queue is where this device is supposed to say so. */
-            LOG_E("#909: could not persist refreshed firmware revision to NVM");
-        }
-    }
-
-    // Try to load WiFiSettings from NVM - if this fails, store default 
+    // Try to load WiFiSettings from NVM - if this fails, store default
     // settings to NVM (first run after a program)
 
 

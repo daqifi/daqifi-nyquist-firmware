@@ -178,6 +178,13 @@ void APP_FlashErase( void )
      * ever writes PFSWAP (NVM_ProgramFlashSwapBank is never called), so it
      * stays at its power-on default.
      *
+     * Regression test: test_909_nvm_survives_inapp_update.py in
+     * daqifi-python-test-suite drives a real update over
+     * FirmwareUpdateService and asserts precision, both calibration
+     * coefficients and the WiFi credentials survive it, with firmware_crc32
+     * required to CHANGE so a no-op update cannot pass. It reflashes the
+     * board, so it is excluded from the release gate and run deliberately.
+     *
      * Deliberately NOT using the USE_PAGE_ERASE path as the fix: that loop is
      * O(pages) with a blank check per page, and #532 was a bootloader
      * watchdog/USB-servicing timeout during programming. The panel erase keeps

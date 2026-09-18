@@ -108,7 +108,14 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
  * distribution problem, so it is done once).
  *
  * IOL1WAY/PMDL1WAY are DEVCFG3 fuses meaning "once CFGCON.IOLOCK/PMDLOCK is
- * set, it can never be cleared again without a device Reset". The bootloader
+ * set, it can never be cleared again without a device Reset". That semantics
+ * is the FRM's, not the erratum's: DS60001120F (PIC32 FRM Section 12, "I/O
+ * Ports") section 12.3.1.6.2 states that with the one-way fuse programmed,
+ * setting the lock bit "blocks [the bit] from being cleared after it has been
+ * set once ... the only way to clear the bit ... is to perform a device
+ * Reset". The erratum cited below is a DIFFERENT fact -- it is why the fuse
+ * cannot be changed in the field at all -- and the two are easy to conflate.
+ * The bootloader
  * is what burns DEVCFG3 on a fielded unit -- a bootloader-linked application
  * hex carries no config words at all (old_hv2_bootld.ld discards them) and
  * erratum 45 (DS80000663R, "Run-Time Self Programming of Configuration Words

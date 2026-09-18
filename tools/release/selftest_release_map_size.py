@@ -23,16 +23,20 @@ drift from the shipping check -- the same reason selftest_release_hex_layout.py
 extracts the hex validator instead of reimplementing it.
 
 Cases, all synthetic .map text:
-  1 a real observed usage, 0xb8bbc (756,668 B, 72% of the panel)  -> pass
-  2 0xfffff, one byte under the panel                             -> pass
-  3 0x100000 exactly, the first unsafe size                       -> FAIL
-  4 0x180000, comfortably over                                    -> FAIL
-  5 no 'Total kseg0_program_mem used' line at all                  -> FAIL
-  6 the line present but with no parseable hex size                -> FAIL
+  1 a real observed usage, 0xb8bbc (756,668 B, 72% of the budget) -> pass
+  2 0xffb80, exactly the budget (panel 0x100000 minus origin 0x480) -> pass
+  3 0xffb81, one byte into the upper panel                        -> FAIL
+  4 0xfffff, under 1 MB but over the budget                       -> FAIL
+  5 0x180000, comfortably over                                    -> FAIL
+  6 no 'Total kseg0_program_mem used' line at all                  -> FAIL
+  7 the line present but with no parseable hex size                -> FAIL
 
-Cases 5 and 6 are the point of the exercise as much as 3 and 4: a guard that
+Cases 6 and 7 are the point of the exercise as much as 3-5: a guard that
 silently skips when it cannot find its input is worse than no guard, because it
-reports success. Both must fail closed.
+reports success. Both must fail closed, and both must SAY WHY -- under
+`set -euo pipefail` an untolerated `grep` miss aborts the script before the
+explicit `die`, which still fails the release but loses the diagnostic. That is
+why `run()` uses the shipping shell options and every case pins the message.
 
 Usage: python3 tools/release/selftest_release_map_size.py
 """
@@ -99,10 +103,16 @@ CASES = [
     # A real observed figure (standalone build of main, 2026-09-08) rather than
     # a made-up one, so this case stays representative of what the guard sees.
     ("a real observed usage, 0xb8bbc", used_line("0xb8bbc", 0xB8BBC), 0,
-     "< 0x100000 lower panel OK"),
-    ("0xfffff — one byte under the panel", used_line("0xfffff", 0xFFFFF), 0,
-     "< 0x100000 lower panel OK"),
-    ("0x100000 — first unsafe size", used_line("0x100000", 0x100000), 1,
+     "fits the lower panel OK"),
+    # The budget is 0x100000 (panel) - 0x480 (bootloader-linked origin) = 0xFFB80.
+    # These two straddle it. Comparing against the full megabyte instead — which
+    # this guard originally did — passes 0xFFB81, an image whose last 0x480 bytes
+    # already sit in the upper panel the bootloader never erases.
+    ("0xffb80 — exactly fills the budget", used_line("0xffb80", 0xFFB80), 0,
+     "fits the lower panel OK"),
+    ("0xffb81 — first byte into the upper panel", used_line("0xffb81", 0xFFB81), 1,
+     "LOWER FLASH PANEL"),
+    ("0xfffff — under 1 MB but over budget", used_line("0xfffff", 0xFFFFF), 1,
      "LOWER FLASH PANEL"),
     ("0x180000 — well over the panel", used_line("0x180000", 0x180000), 1,
      "LOWER FLASH PANEL"),
@@ -116,15 +126,23 @@ CASES = [
 def run(guard, map_body):
     """Run the extracted guard with MAP pointed at a synthetic map.
 
-    `die` is stubbed to exit 1 the way cut_release.sh's own does, and `set -u`
-    matches the shipping script's `set -euo pipefail` so an unset-variable bug
-    in the guard shows up here rather than at release time.
+    `die` is stubbed to exit 1 the way cut_release.sh's own does, and the shell
+    options are the shipping script's `set -euo pipefail` VERBATIM, so a guard
+    that only survives weaker options fails here rather than at release time.
     """
     with tempfile.NamedTemporaryFile("w", suffix=".map", delete=False) as f:
         f.write(MAP_TEMPLATE % map_body)
         path = f.name
     script = (
-        "set -u\n"
+        # `set -euo pipefail`, matching cut_release.sh EXACTLY -- not the `set -u`
+        # this used to run under. A guard exercised under weaker shell options is
+        # an instrument that does not reproduce the run it measures: with `-e`
+        # and `pipefail`, a `VAR="$(grep … | head -1)"` that matches nothing
+        # aborts the script AT THE ASSIGNMENT, so the explicit `die` never
+        # executes and its message never appears. Under plain `set -u` that same
+        # code passes this test's message assertions while the shipping script
+        # would print nothing. Found by review, reproduced by running it.
+        "set -euo pipefail\n"
         "die() { printf 'FATAL: %s\\n' \"$*\" >&2; exit 1; }\n"
         'MAP="$1"\n'
     ) + guard + "\n"

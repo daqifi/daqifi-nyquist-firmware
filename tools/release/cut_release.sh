@@ -196,17 +196,38 @@ echo "  .map kseg0_program_mem origin = 0x9d000480 OK"
 # by tools/release/selftest_release_map_size.py, so it can be proven to fire on
 # an oversized .map without cutting a release. Keep the markers.
 # >>>BEGIN #909 lower-panel size guard
-USED_LINE="$(grep -iE 'Total[[:space:]]+kseg0_program_mem[[:space:]]+used' "$MAP" | head -1)"
+# `|| true` on both lookups is load-bearing, NOT defensive noise. The parent
+# script runs under `set -euo pipefail`, so `VAR="$(grep … | head -1)"` with no
+# match makes the pipeline exit 1 and bash aborts AT THE ASSIGNMENT -- the
+# explicit `die` below never runs and the operator gets a bare exit 1 with no
+# hint of why the release stopped. Verified by running it: the release still
+# fails closed, but the diagnostic that explains the failure is lost, which is
+# the entire value of these two lines.
+USED_LINE="$(grep -iE 'Total[[:space:]]+kseg0_program_mem[[:space:]]+used' "$MAP" | head -1 || true)"
 [ -n "$USED_LINE" ] || die "could not find 'Total kseg0_program_mem used' in $MAP — the #909 lower-panel size guard cannot run, so this build is UNVERIFIED. DO NOT SHIP. (A toolchain change may have renamed the line; fix this check, do not delete it.)"
-USED_HEX="$(printf '%s\n' "$USED_LINE" | grep -oiE '0x[0-9a-f]+' | head -1)"
+USED_HEX="$(printf '%s\n' "$USED_LINE" | grep -oiE '0x[0-9a-f]+' | head -1 || true)"
 [ -n "$USED_HEX" ] || die "could not parse a hex size out of the .map usage line — DO NOT SHIP. (line: $USED_LINE)"
 USED=$(( USED_HEX ))
+# The budget is NOT the full megabyte. A bootloader-linked image starts at the
+# linked origin 0x9D000480 -- asserted a few lines above, so this offset is a
+# fact about the build being packaged, not an assumption -- and the first
+# upper-panel address is 0x9D100000. The space below it is therefore
+# 0x100000 - 0x480 = 0xFFB80 bytes. Comparing against the full 0x100000 would
+# pass an image whose last 0x480 bytes already sit in the upper panel.
+#
+# `used` is a byte TOTAL, not a top address, so this is exact only while the
+# sections are contiguous from the origin. That is why it is not the only
+# check: the hex-record placement test below is the authoritative one, and it
+# reads actual addresses. This check earns its place by failing EARLY and by
+# naming a number a maintainer can watch trending.
 LOWER_PANEL_BYTES=$(( 0x100000 ))
-if [ "$USED" -ge "$LOWER_PANEL_BYTES" ]; then
-  die "application uses $USED bytes ($USED_HEX) of kseg0_program_mem, which reaches or exceeds the 0x100000 (1 MB) LOWER FLASH PANEL. The bootloader erases only the lower panel (#909), so an in-app update of this image would program unerased flash and brick the device. DO NOT SHIP. Either shrink the application or revisit the #909 erase strategy (page erase is the documented fallback). (.map line: $USED_LINE)"
+BL_ORIGIN_OFFSET=$(( 0x480 ))
+LOWER_PANEL_LIMIT=$(( LOWER_PANEL_BYTES - BL_ORIGIN_OFFSET ))
+if [ "$USED" -gt "$LOWER_PANEL_LIMIT" ]; then
+  die "application uses $USED bytes ($USED_HEX) of kseg0_program_mem, more than the $LOWER_PANEL_LIMIT bytes available below the upper flash panel (0x100000 panel minus the 0x480 bootloader-linked origin offset). The bootloader erases only the LOWER FLASH PANEL (#909), so an in-app update of this image would program unerased flash and brick the device. DO NOT SHIP. Either shrink the application or revisit the #909 erase strategy (page erase is the documented fallback). (.map line: $USED_LINE)"
 fi
-printf '  .map kseg0_program_mem used = %s (%d B) < 0x100000 lower panel OK (%d%% used)\n' \
-  "$USED_HEX" "$USED" "$(( USED * 100 / LOWER_PANEL_BYTES ))"
+printf '  .map kseg0_program_mem used = %s (%d B) of %d available below the upper panel — fits the lower panel OK (%d%% used)\n' \
+  "$USED_HEX" "$USED" "$LOWER_PANEL_LIMIT" "$(( USED * 100 / LOWER_PANEL_LIMIT ))"
 # <<<END #909 lower-panel size guard
 
 python3 - "$HEX" <<'PY' || die "hex layout verification failed — DO NOT SHIP"
