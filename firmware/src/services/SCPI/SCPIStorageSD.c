@@ -690,7 +690,7 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
-    // #888: no second SCPI_ErrorPush here -- the -108 that used to sit on this
+    // #888: no second SCPI_ErrorPush here -- the -224 that used to sit on this
     // branch queued a SECOND code on top of the one libscpi had already
     // pushed, so a client that DRAINS SYST:ERR? saw two errors for one command
     // and the last one it read was the wrong one. Same remedy and the same
@@ -704,6 +704,13 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
     // SCPI_Parameter succeeds, SCPI_ParamCharacters cannot fail (parser.c:
     // 1182-1196 has no failing arm), so an unquoted token like BANANA parses
     // as a filename rather than reaching this branch at all.
+    //
+    // Evidence status: source-level only. This branch could NOT be exercised
+    // on the #888 bench run -- with no card inserted the sd_card_manager_IsBusy
+    // guard above returns -200 first (`SD:CRC - SD card busy, state=DEINIT`,
+    // COM7 2026-09-18), so the parse is never reached. The four sibling sites
+    // that ARE reachable without a card were measured going from two queue
+    // entries to one; this one and SD:BENCHmark below rest on the argument.
     if (!SCPI_ParamCharacters(context, &pBuff, &fileLen, TRUE)) {
         return SCPI_RES_ERR;
     }
@@ -1189,11 +1196,17 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     // Get test size parameter (required)
     //
     // #888: no second SCPI_ErrorPush here. The -109 that used to sit here was
-    // not just redundant but usually WRONG: `SD:BENCHmark BANANA` reported
+    // not just redundant but usually WRONG: `SD:BENCHmark BANANA` would report
     // -104 followed by a spurious -109 "Missing parameter" when the parameter
     // was present. Safe to delete because SCPI_ParamInt32 -> ParamSignUInt32
     // queues on every reachable failure exit -- the walk is written out in
     // full on ADCChanRangeSetClaimed (SCPIADC.c) and applies verbatim here.
+    //
+    // Evidence status: source-level only, like the SD:CRC site above. With no
+    // card inserted SCPI_CheckSDCardPresent returns first ("Error !! No SD
+    // Card Detected", -200, COM7 2026-09-18), so the #888 bench run could not
+    // reach this parse either way -- which is why the "would report" above is
+    // conditional rather than a measurement.
     // The goto stays exactly as it was.
     if (!SCPI_ParamInt32(context, &testSizeKB, TRUE)) {
         result = SCPI_RES_ERR;
@@ -2474,7 +2487,8 @@ scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
 
     int64_t maxSizeBytes;
     // #888: no second SCPI_ErrorPush here -- `SD:MAXSize BANANA` reported -104
-    // (libscpi's, correct) followed by a spurious -108. Safe to delete because
+    // (libscpi's, correct) followed by a spurious -224, and the bare command
+    // reported -109 then that same -224 (bench A/B 2026-09-18). Safe because
     // SCPI_ParamInt64 -> ParamSignUInt64 -> ParamSignToUInt64 is structurally
     // identical to the 32-bit pair whose exits ADCChanRangeSetClaimed
     // (SCPIADC.c) walks in full -- same arms, same codes, and the #880
