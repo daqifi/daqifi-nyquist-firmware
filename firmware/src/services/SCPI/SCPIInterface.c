@@ -9171,8 +9171,8 @@ static const scpi_command_t scpi_commands[] = {
 
 /* #1004: total time SCPI_Help may spend writing while it holds the shared
  * SCPI response buffer (gScpiRespMutex, #347). Same budget and same
- * reasoning as the SCPI_CMDHISTORY_WRITE_BUDGET_MS #995 proposes on the
- * still-open PR #1008 -- that constant is NOT in this tree: generous against a
+ * reasoning as SCPI_CMDHISTORY_WRITE_BUDGET_MS (#995, PR #1008 -- defined
+ * a few hundred lines below in this same file): generous against a
  * normally-reading host (HELP's whole reply is a few KB against a 16 KB
  * USB / 14 KB WiFi circular buffer), tight enough to bound a stalled one. */
 #define SCPI_HELP_WRITE_BUDGET_MS  2000U
@@ -9191,16 +9191,15 @@ static const scpi_command_t scpi_commands[] = {
  * With every return value discarded (the pre-#1004 shape), a host that
  * stopped reading made EVERY one of those ~5-7 calls burn its own full ~1 s
  * budget -- ~5-7 s of held mutex, blocking every other SCPI callback on BOTH
- * transports for the same span. Two sibling callbacks carry the same defect:
- * SCPI_SysInfoTextGet (#947, PR #992) and SCPI_GetCommandHistory (#995,
- * PR #1008). BOTH OF THOSE PRs ARE STILL OPEN as of this commit, so both of
- * those holds are LIVE in this tree -- do not read this comment as saying
- * the class is closed. #1004 records why each site carries its own small
- * helper instead of one shared generic one.
+ * transports for the same span. Two sibling callbacks carried the same
+ * defect and now carry the same shape of fix, each its own small helper
+ * rather than one shared generic one (why is #1004's to record):
+ * SCPI_SysInfoTextGet's SysInfoText_Write (#947, PR #992, merged) and
+ * SCPI_GetCommandHistory's CmdHistoryWrite (#995, PR #1008, a few hundred
+ * lines below in this same file).
  *
  * TWO guards, because neither alone bounds the hold (the same two-guard
- * algebra #995 proposes for CmdHistoryWrite on PR #1008; that helper does
- * not exist in this tree yet):
+ * algebra CmdHistoryWrite uses, #995/PR #1008, below in this file):
  *   (1) short write -> latch. SCPI_WriteWithRetry has no resend path, so a
  *       short write has already DROPPED those bytes; the reply is truncated
  *       at that chunk and the remaining budget buys nothing.
