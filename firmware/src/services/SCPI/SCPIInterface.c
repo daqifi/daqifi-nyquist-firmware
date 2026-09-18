@@ -9320,12 +9320,13 @@ static const scpi_command_t scpi_commands[] = {
  * With every return value discarded (the pre-#1004 shape), a host that
  * stopped reading made EVERY one of those ~5-7 calls burn its own full ~1 s
  * budget -- ~5-7 s of held mutex, blocking every other SCPI callback on BOTH
- * transports for the same span. Two sibling callbacks carry the same defect:
- * SCPI_SysInfoTextGet (#947, PR #992) and SCPI_GetCommandHistory (#995,
- * PR #1008). BOTH OF THOSE PRs ARE STILL OPEN as of this commit, so both of
- * those holds are LIVE in this tree -- do not read this comment as saying
- * the class is closed. #1004 records why each site carries its own small
- * helper instead of one shared generic one.
+ * transports for the same span. Two sibling callbacks carried the same defect:
+ * SCPI_SysInfoTextGet (#947) and SCPI_GetCommandHistory (#995). #947's fix
+ * LANDED (PR #992 merged -- SysInfoText_Write above now carries the same two
+ * guards), but #995's PR #1008 IS STILL OPEN as of this commit, so
+ * SCPI_GetCommandHistory's ~11 s hold is LIVE in this tree -- do not read this
+ * comment as saying the class is closed. #1004 records why each site carries
+ * its own small helper instead of one shared generic one.
  *
  * TWO guards, because neither alone bounds the hold (the same two-guard
  * algebra #995 proposes for CmdHistoryWrite on PR #1008; that helper does
@@ -9359,21 +9360,38 @@ static const scpi_command_t scpi_commands[] = {
  */
 static void ScpiHelpWrite(scpi_t * context, bool * ok, TickType_t startTick,
                           const char * data, size_t len) {
-    if (!*ok) {
-        return;
-    }
-    /* Unsigned tick subtraction: correct across the 32-bit xTaskGetTickCount
-     * wrap (~49.7 days at configTICK_RATE_HZ 1000). */
-    if ((TickType_t)(xTaskGetTickCount() - startTick) >=
-            pdMS_TO_TICKS(SCPI_HELP_WRITE_BUDGET_MS)) {
-        *ok = false;
-        LOG_E("HELP: transport write budget (%u ms) exhausted "
-              "(host not reading) - reply truncated",
-              (unsigned)SCPI_HELP_WRITE_BUDGET_MS);
-        return;
+    /* #1134: the DECISION now lives in ScpiBoundedWrite.h, which is pure and
+     * dependency-free, so tests/host compiles and calls THE REAL predicates
+     * rather than a parallel copy of them. This is a behaviour-preserving
+     * substitution -- the latch-then-deadline order, the `>=` boundary, the
+     * unsigned tick subtraction and the `written != len` test are unchanged,
+     * one for one -- but it is not cosmetic: written inline here, the deadline
+     * check could be DELETED and the entire host suite still passed, because
+     * SCPIInterface.c is not host-includable and test_1004 could only assert
+     * against its own re-implementation (#1098's measurement, #1134's ticket).
+     *
+     * What stays here is what a host cannot run: the transport write, this
+     * site's own LOG_E wording, and this site's own budget constant. Per #1004
+     * each site keeps its own I/O-performing wrapper; only the arithmetic
+     * underneath is shared. */
+    switch (ScpiBoundedWrite_Decide(*ok, (uint32_t)xTaskGetTickCount(),
+                                    (uint32_t)startTick,
+                                    (uint32_t)pdMS_TO_TICKS(
+                                            SCPI_HELP_WRITE_BUDGET_MS))) {
+        case SCPI_BOUNDED_WRITE_SKIP:
+            return;
+        case SCPI_BOUNDED_WRITE_EXPIRED:
+            *ok = false;
+            LOG_E("HELP: transport write budget (%u ms) exhausted "
+                  "(host not reading) - reply truncated",
+                  (unsigned)SCPI_HELP_WRITE_BUDGET_MS);
+            return;
+        case SCPI_BOUNDED_WRITE_PROCEED:
+        default:
+            break;
     }
     size_t written = context->interface->write(context, data, len);
-    if (written != len) {
+    if (ScpiBoundedWrite_IsShort(written, len)) {
         *ok = false;
         LOG_E("HELP: transport write dropped %u of %u bytes "
               "(host not reading) - reply truncated",

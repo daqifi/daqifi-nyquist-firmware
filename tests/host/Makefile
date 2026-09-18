@@ -1336,7 +1336,8 @@ $(SCPI999_BIN): test_999_scpi_context_storage_isolation.c test_framework.h \
 # deleted WAITLOOP_BIN's five guards along with the copy they pinned, so for
 # that one $(RECIPES) is now just ordinary recipe-change hygiene.)
 
-$(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(FW_RTOS_CFG) $(RECIPES)
+$(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) \
+             $(SCPI_BOUNDED_WRITE_H) $(FW_RTOS_CFG) $(RECIPES)
 	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_IFACE_SRC) \
 	  || { echo "ERROR: SCPI_WRITE_MAX_RETRIES is no longer '200' in $(SCPI_IFACE_SRC)."; \
 	       echo "       Update FW_WRITE_MAX_RETRIES in test_1004_help_write_abort.c and re-derive its numbers."; \
@@ -1355,6 +1356,46 @@ $(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(F
 	@grep -qE '^#define[[:space:]]+configTICK_TYPE_WIDTH_IN_BITS[[:space:]]+TICK_TYPE_WIDTH_32_BITS[[:space:]]*$$' $(FW_RTOS_CFG) \
 	  || { echo "ERROR: configTICK_TYPE_WIDTH_IN_BITS is no longer 32-bit in $(FW_RTOS_CFG) -- re-derive test_1004's wrap tests."; \
 	       exit 1; }
+	@# #1134 GUARD -- THE PRODUCTION HELPER USES THE HOST-TESTED DECISION.
+	@#
+	@# This is the guard that makes every OTHER assertion in test_1004 mean
+	@# something. The five greps above pin the CONSTANTS the test mirrors;
+	@# none of them can see inside ScpiHelpWrite. With the deadline and the
+	@# short-write latch written inline there -- which is how it shipped from
+	@# #1004 until #1134 -- the deadline check could be DELETED and this
+	@# binary still reported 8/8 passing, because mock_help_write carried its
+	@# own copy and was only ever checked against itself. That is not a
+	@# hypothesis: the identical deletion was MEASURED on SysLogLevelWrite and
+	@# left the ENTIRE host suite green (#1098, and the same guard there).
+	@#
+	@# So this pins the one thing that would silently reopen the gap:
+	@# ScpiHelpWrite reimplementing the decision inline instead of delegating
+	@# to ScpiBoundedWrite.h. Both predicates must appear in its body, exactly
+	@# once each, and the test must include the REAL header rather than a copy.
+	@#
+	@# Scoped by the helper's own signature -- it is `static void`, and its
+	@# body runs to the first column-0 `}`.
+	@d=`awk '/^static void ScpiHelpWrite\(/{f=1} f&&index($$0,"ScpiBoundedWrite_Decide"){n++} f&&/^\}/{exit} END{print n+0}' $(SCPI_IFACE_SRC)`; \
+	 s=`awk '/^static void ScpiHelpWrite\(/{f=1} f&&index($$0,"ScpiBoundedWrite_IsShort"){n++} f&&/^\}/{exit} END{print n+0}' $(SCPI_IFACE_SRC)`; \
+	 test "$$d" = "1" && test "$$s" = "1" \
+	   || { echo "ERROR: ScpiHelpWrite in $(SCPI_IFACE_SRC) no longer"; \
+	        echo "       delegates to the host-tested predicates in"; \
+	        echo "       ScpiBoundedWrite.h (found Decide=$$d IsShort=$$s;"; \
+	        echo "       both must be 1)."; \
+	        echo "       Inlining that arithmetic again makes it untestable from"; \
+	        echo "       tests/host: SCPIInterface.c is not host-includable, so"; \
+	        echo "       test_1004 would silently go back to asserting against a"; \
+	        echo "       COPY of the algorithm. Deleting the real deadline check"; \
+	        echo "       was measured to leave the whole suite green that way."; \
+	        exit 1; }
+	@grep -q '#include "../../firmware/src/services/SCPI/ScpiBoundedWrite.h"' \
+	     test_1004_help_write_abort.c \
+	   || { echo "ERROR: test_1004_help_write_abort.c no longer includes"; \
+	        echo "       the REAL ScpiBoundedWrite.h. Its deadline and"; \
+	        echo "       short-write assertions would then be testing a local"; \
+	        echo "       re-implementation again, which is exactly the defect"; \
+	        echo "       #1134 closed at this call site."; \
+	        exit 1; }
 	$(CC) $(CFLAGS) -o $(HELP_BIN) test_1004_help_write_abort.c
 
 $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $(SD_BENCH_SRC) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
