@@ -55,10 +55,34 @@ earlier hand-written version of this tool got exactly this wrong. Real PIC32
 alone, precisely because nothing in this codebase's own fixtures would ever
 catch a swap.
 
-A data record's bytes are applied individually: only the bytes whose
-resolved address falls inside `[base, base+length)` are written into the
-image buffer. Bytes -- and whole records -- outside that window are ignored,
-never misapplied via truncation or wraparound.
+**The two record types also do NOT wrap a data record's offset the same
+way**, per the Intel Hexadecimal Object File Format Specification (as
+reproduced verbatim in `srec_intel(5)`, the SRecord project's Intel HEX man
+page -- https://srecord.sourceforge.net/man/man5/srec_intel.5.html):
+
+- **Type 02**: `address = SBA + ((DRLO + DRI) MOD 64K)` -- the data record's
+  load offset (DRLO = `addr16`) plus the in-record byte index (DRI = `i`) is
+  wrapped modulo 0x10000 **before** it is added to the segment base (SBA).
+  A record whose offset+index crosses a 64K boundary wraps back into the
+  START of the SAME segment; the segment base itself never changes as a
+  result. This mirrors 8086 real-mode segment:offset addressing, which is
+  what "extended segment address" originally modeled.
+- **Type 04**: `address = (LBA + DRLO + DRI) MOD 4G` -- offset and index are
+  added to the linear base (LBA) FIRST, and only the total 32-bit sum wraps,
+  at the 4 GiB boundary. A record crossing a 64K boundary therefore CARRIES
+  into the next 64K block instead of wrapping back into the current one --
+  the opposite of type 02's behavior. For every address this tool's own
+  audited regions can reach (`<<` 4 GiB) the modulo-4G wrap is a no-op; it
+  is applied for spec-fidelity, not because real firmware images exercise
+  it.
+
+A data record's bytes are applied individually, using whichever wrap rule
+above matches the addressing mode most recently set by a type 02/04 record
+(type 04's rule is also the default before any such record is seen -- the
+spec's own default is upper bits zero, i.e. LBA=0, linear mode). Only the
+bytes whose wrapped, resolved address falls inside `[base, base+length)` are
+written into the image buffer; bytes -- and whole records -- outside that
+window are ignored, never misapplied via truncation.
 
 ## Usage
 
@@ -96,6 +120,13 @@ REC_START_SEGMENT_ADDR = 0x03
 REC_EXT_LINEAR_ADDR = 0x04
 REC_START_LINEAR_ADDR = 0x05
 
+# Which wrap formula applies to the currently-active extension base -- see
+# the module docstring's "do NOT wrap a data record's offset the same way"
+# section. LINEAR is also the correct default before any type 02/04 record
+# is seen (spec default: upper bits zero, i.e. an LBA of 0).
+ADDR_MODE_LINEAR = "linear"    # type 04: address = (LBA + DRLO + DRI) MOD 4G
+ADDR_MODE_SEGMENT = "segment"  # type 02: address = SBA + ((DRLO + DRI) MOD 64K)
+
 
 class HexFormatError(ValueError):
     """Raised on a malformed or unsupported Intel HEX record.
@@ -131,6 +162,22 @@ def parse_records(lines):
         except ValueError as exc:
             raise HexFormatError(
                 "line %d: not valid hex: %s" % (lineno, exc)) from exc
+
+        # bytes.fromhex() silently ignores ALL whitespace, including
+        # whitespace INSIDE body (str.strip() above only removed the
+        # leading/trailing kind) -- so the len(body) >= 10 hex-character
+        # check above does not bound len(raw_bytes): a body with internal
+        # spaces can decode to far fewer bytes than its character count
+        # implies. Validate the decoded length here, BEFORE indexing into
+        # it for the header fields below -- indexing first (the previous
+        # order) let a too-short raw_bytes raise an uncaught IndexError
+        # instead of the HexFormatError this module's contract promises.
+        if len(raw_bytes) < 4:
+            raise HexFormatError(
+                "line %d: record decodes to only %d byte(s) after "
+                "internal whitespace is stripped -- too short for the "
+                "byte-count/address/type header (need at least 4)"
+                % (lineno, len(raw_bytes)))
 
         byte_count = raw_bytes[0]
         addr16 = (raw_bytes[1] << 8) | raw_bytes[2]
@@ -172,7 +219,13 @@ def compute_image_crc32(lines, region_base, region_length,
     # bytearray multiplication (not [fill] * region_length then bytearray())
     # so a real ~2 MB region never builds an intermediate Python list.
     image = bytearray([fill]) * region_length
+    # Per-offset "has a record already assigned this byte in THIS file"
+    # tracker -- see the REC_DATA branch below (finding: conflicting writes
+    # must not silently last-write-wins). Scoped to one compute_image_crc32()
+    # call, i.e. one input file, matching main()'s one-CRC-per-file model.
+    written = bytearray(region_length)
     ext_base = 0  # accumulated from the most recent type-02/04 record
+    addr_mode = ADDR_MODE_LINEAR  # which wrap rule ext_base was set under
     saw_eof = False
 
     for lineno, addr16, rec_type, data in parse_records(lines):
@@ -191,9 +244,35 @@ def compute_image_crc32(lines, region_base, region_length,
         if rec_type == REC_DATA:
             full_addr = ext_base + addr16
             for i, byte in enumerate(data):
-                a = full_addr + i
+                # Apply the address-wrap rule for the CURRENTLY active
+                # addressing mode before region filtering / byte selection
+                # -- see the module docstring's "do NOT wrap ... the same
+                # way" section, cited from srec_intel(5). Type 02 wraps the
+                # offset alone, modulo 64K, BEFORE adding the segment base
+                # (so an overflow stays in the same segment); type 04 adds
+                # first and only wraps the whole 32-bit sum, at 4 GiB.
+                if addr_mode == ADDR_MODE_SEGMENT:
+                    a = ext_base + ((addr16 + i) & 0xFFFF)
+                else:
+                    a = (full_addr + i) & 0xFFFFFFFF
                 if region_base <= a < region_base + region_length:
-                    image[a - region_base] = byte
+                    offset = a - region_base
+                    if written[offset] and image[offset] != byte:
+                        raise HexFormatError(
+                            "line %d: address 0x%08X was already assigned "
+                            "0x%02X by an earlier record in this file; this "
+                            "record assigns a conflicting 0x%02X -- refusing "
+                            "rather than silently keeping whichever record "
+                            "came last" % (lineno, a, image[offset], byte))
+                    # A record that re-assigns the SAME value to an
+                    # already-written byte is not a conflict -- deliberately
+                    # allowed (e.g. overlapping records that happen to
+                    # re-emit identical padding/fill bytes are harmless and
+                    # common in the output of some hex-merging tools; only a
+                    # value MISMATCH indicates two genuinely disagreeing
+                    # sources for the same address).
+                    image[offset] = byte
+                    written[offset] = 1
         elif rec_type == REC_EOF:
             if addr16 != 0 or len(data) != 0:
                 raise HexFormatError(
@@ -209,6 +288,7 @@ def compute_image_crc32(lines, region_base, region_length,
                     "bytes, got %d" % (lineno, len(data)))
             upper16 = (data[0] << 8) | data[1]
             ext_base = upper16 << 16
+            addr_mode = ADDR_MODE_LINEAR
         elif rec_type == REC_EXT_SEGMENT_ADDR:
             if len(data) != 2:
                 raise HexFormatError(
@@ -216,8 +296,25 @@ def compute_image_crc32(lines, region_base, region_length,
                     "bytes, got %d" % (lineno, len(data)))
             segment = (data[0] << 8) | data[1]
             ext_base = segment << 4
+            addr_mode = ADDR_MODE_SEGMENT
         elif rec_type in (REC_START_SEGMENT_ADDR, REC_START_LINEAR_ADDR):
-            pass  # entry point only -- irrelevant to a data CRC
+            # Start Segment/Linear Address records: byte count is always 04
+            # (CS:IP or EIP) and the address field is conventionally 0000,
+            # exactly like EOF's. Validated the same way EOF, type 02 and
+            # type 04 validate their own required shape -- this module's
+            # contract is to refuse a malformed record loudly, not to wave
+            # one through just because its payload happens not to affect
+            # the CRC.
+            if len(data) != 4:
+                raise HexFormatError(
+                    "line %d: type 0x%02X start-address record must carry "
+                    "exactly 4 data bytes, got %d"
+                    % (lineno, rec_type, len(data)))
+            if addr16 != 0:
+                raise HexFormatError(
+                    "line %d: type 0x%02X start-address record must have "
+                    "address 0000, got %04X" % (lineno, rec_type, addr16))
+            # entry point value itself is irrelevant to a data CRC
         else:
             raise HexFormatError(
                 "line %d: unsupported Intel HEX record type 0x%02X"
@@ -271,6 +368,15 @@ def _ext_linear_record(upper16):
 def _ext_segment_record(segment):
     body = bytes([2, 0, 0, REC_EXT_SEGMENT_ADDR,
                   (segment >> 8) & 0xFF, segment & 0xFF])
+    return ":" + (body + bytes([_checksum_byte(body)])).hex().upper()
+
+
+def _record(addr16, rec_type, data):
+    """Build an arbitrary well-CHECKSUMMED record of any type/address/data
+    -- used where the type-specific helpers above don't apply (e.g.
+    exercising a start-address record's own length/address validation)."""
+    body = bytes([len(data), (addr16 >> 8) & 0xFF, addr16 & 0xFF, rec_type]) \
+        + bytes(data)
     return ":" + (body + bytes([_checksum_byte(body)])).hex().upper()
 
 
@@ -350,6 +456,90 @@ def self_test():
         "resolve to the same physical address",
         crc_04_conv, crc_02_conv)
 
+    # --- 2c: type-02 offset wraps modulo 0x10000 WITHIN the segment before
+    # region filtering / byte selection (SBA + ((DRLO+DRI) MOD 64K),
+    # srec_intel(5) "Extended Segment Address Record") -- this is the exact
+    # scenario from the audited finding: segment=0x1000 (SBA=0x10000),
+    # record starting at offset 0xFFFF with 2 data bytes. Byte 0 resolves to
+    # 0x10000+0xFFFF=0x1FFFF (out of the 1-byte region below); byte 1's
+    # offset 0xFFFF+1 wraps to 0x0000 within the SAME segment, landing back
+    # at 0x10000 -- NOT at 0x20000, which is what unmasked addition (the
+    # pre-fix behavior) computes and which falls outside the region,
+    # silently dropping the byte. FAILS on 6a6ce6faf (returns FF000000, the
+    # all-erased CRC, instead of 8EB18589).
+    wrap02_base = 0x10000
+    wrap02_length = 1
+    lines_wrap02 = [
+        _ext_segment_record(0x1000),
+        _data_record(0xFFFF, [0xAA, 0xBB]),
+        _EOF_RECORD,
+    ]
+    want_wrap02 = zlib.crc32(bytes([0xBB])) & 0xFFFFFFFF
+    _ck("type-02: an offset crossing 0xFFFF wraps back into the SAME "
+        "segment (SBA + ((DRLO+DRI) MOD 64K))",
+        compute_image_crc32(lines_wrap02, wrap02_base, wrap02_length),
+        want_wrap02)
+    _ck("...and that is not just the all-erased-region CRC (the check "
+        "discriminates from the pre-fix unmasked-addition failure mode)",
+        want_wrap02 != zlib.crc32(bytes([0xFF])) & 0xFFFFFFFF, True)
+
+    # --- 2d: type-04 wraps differently from type-02 -- it adds the offset
+    # to the linear base FIRST and only wraps the total 32-bit sum, at the
+    # 4 GiB boundary ((LBA+DRLO+DRI) MOD 4G, srec_intel(5) "Extended Linear
+    # Address Record"), so unlike type-02 it CARRIES into the next 64K
+    # block instead of wrapping back into the current one. upper16=1
+    # (LBA=0x10000), record starting at offset 0xFFFE with 3 data bytes:
+    # byte i=2's offset 0xFFFE+2=0x10000 carries the address to 0x20000.
+    # A type-02-style "mask the offset before adding the base" formula
+    # (the same rule that is correct for type 02) would instead wrap that
+    # byte back to segment-relative 0x0000, landing at 0x10000 -- a
+    # DIFFERENT, wrong address -- which is exactly the "conflating the two"
+    # mistake the module docstring warns about. This case passes under the
+    # correct (carry-then-wrap-at-4G) rule and fails under the type-02
+    # rule; it does not need a real firmware image to reach (upper16=1 is
+    # an ordinary, small extended-linear-address value).
+    carry_base = 0x1FFFE
+    carry_length = 4
+    lines_carry04 = [
+        _ext_linear_record(0x0001),
+        _data_record(0xFFFE, [0x11, 0x22, 0x33]),
+        _EOF_RECORD,
+    ]
+    img_carry = bytearray([0xFF] * carry_length)
+    img_carry[0:3] = bytes([0x11, 0x22, 0x33])  # 0x1FFFE, 0x1FFFF, 0x20000
+    want_carry04 = zlib.crc32(bytes(img_carry)) & 0xFFFFFFFF
+    _ck("type-04: an offset crossing a 64K boundary CARRIES into the next "
+        "block instead of wrapping back into the current one (unlike "
+        "type-02) -- (LBA+DRLO+DRI) MOD 4G",
+        compute_image_crc32(lines_carry04, carry_base, carry_length),
+        want_carry04)
+    img_carry_type02_style = bytearray([0xFF] * carry_length)
+    img_carry_type02_style[0:2] = bytes([0x11, 0x22])  # byte i=2 wraps OUT
+    want_carry04_type02_style = (
+        zlib.crc32(bytes(img_carry_type02_style)) & 0xFFFFFFFF)
+    _ck("...and that is not what applying type-02's wrap rule to a type-04 "
+        "record would give (the check discriminates the two formulas)",
+        want_carry04 != want_carry04_type02_style, True)
+
+    # --- 2e: the 4 GiB wrap that (LBA+DRLO+DRI) MOD 4G itself specifies,
+    # for completeness -- upper16=0xFFFF (LBA=0xFFFF0000), offset 0xFFFF,
+    # byte i=1's total sum 0x100000000 wraps to 0x00000000. Unrealistic for
+    # any image this tool audits (always << 4 GiB), but it is the literal
+    # spec formula and the pre-fix code (plain unmasked addition, no wrap
+    # at all) computes 0x100000000 -- outside any real region -- instead,
+    # so this also FAILS on 6a6ce6faf.
+    lines_wrap4g = [
+        _ext_linear_record(0xFFFF),
+        _data_record(0xFFFF, [0xAA, 0xBB]),
+        _EOF_RECORD,
+    ]
+    img_wrap4g = bytearray([0xFF] * 16)
+    img_wrap4g[0] = 0xBB  # byte i=1: 0xFFFF0000+0xFFFF+1 = 0x100000000 MOD 4G = 0
+    want_wrap4g = zlib.crc32(bytes(img_wrap4g)) & 0xFFFFFFFF
+    _ck("type-04: the address sum itself wraps modulo 4 GiB, per the "
+        "literal spec formula",
+        compute_image_crc32(lines_wrap4g, 0, 16), want_wrap4g)
+
     # --- 3: 0xFF fill -- a region with NO records must produce the
     # all-0xFF CRC, asserted against the explicit computed value, not just
     # "nonzero".
@@ -421,6 +611,49 @@ def self_test():
     _ck("an unsupported record type is refused",
         _raises([":01000006" + "00" + "F9"]), True)
 
+    # --- 5a': start-address records (type 03/05) are validated like their
+    # 02/04/EOF siblings, not silently waved through by a bare `pass` --
+    # even though their contents never affect the CRC. The length case is
+    # the audited finding's exact scenario: a type-05 record declaring 1
+    # data byte instead of the required 4. FAILS on 6a6ce6faf (accepted,
+    # returns AFED0EBE -- identical to the same input with the record
+    # deleted).
+    _ck("a type-05 (start linear address) record with the wrong data "
+        "length is refused",
+        _raises([_ext_linear_record(0x1D00),
+                  _record(0x0000, REC_START_LINEAR_ADDR, [0xBB]),
+                  _EOF_RECORD]),
+        True)  # byte_count=1 (not 4)
+    _ck("a type-03 (start segment address) record with the wrong data "
+        "length is refused",
+        _raises([_ext_linear_record(0x1D00),
+                  _record(0x0000, REC_START_SEGMENT_ADDR, [0xAA, 0xBB]),
+                  _EOF_RECORD]),
+        True)  # byte_count=2 (not 4)
+    _ck("a type-05 record with a nonzero address is refused",
+        _raises([_ext_linear_record(0x1D00),
+                  _record(0x0010, REC_START_LINEAR_ADDR,
+                           [0xAA, 0xBB, 0xCC, 0xDD]),
+                  _EOF_RECORD]),
+        True)  # 4 data bytes (correct length), but address 0010 not 0000
+    # The positive control: well-formed, correctly-shaped type-05/type-03
+    # records (4 data bytes, address 0000) are accepted, so the checks
+    # above are really exercising validation and not just "always throws".
+    _ck("a well-formed type-05 record (4 data bytes, address 0000) is "
+        "accepted",
+        _raises([_ext_linear_record(0x1D00),
+                  _record(0x0000, REC_START_LINEAR_ADDR,
+                           [0x11, 0x22, 0x33, 0x44]),
+                  _EOF_RECORD]),
+        False)
+    _ck("a well-formed type-03 record (4 data bytes, address 0000) is "
+        "accepted",
+        _raises([_ext_linear_record(0x1D00),
+                  _record(0x0000, REC_START_SEGMENT_ADDR,
+                           [0x00, 0x00, 0x12, 0x34]),
+                  _EOF_RECORD]),
+        False)
+
     # --- 5b: a stream that never reaches a (structurally valid) EOF is
     # refused -- covers a truly empty file and a file truncated after its
     # last data record, both of which would otherwise reach the
@@ -485,6 +718,103 @@ def self_test():
 
     _ck("a zero region length is refused", _raises_bad_length(0), True)
     _ck("a negative region length is refused", _raises_bad_length(-1), True)
+
+    # --- 5d: two checksum-valid records that assign DIFFERENT values to the
+    # same address are refused rather than silently resolved by
+    # last-write-wins. This is the audited finding's exact scenario:
+    # address 0x1D000000..3 assigned 0x00000000 by one record and
+    # 0xFFFFFFFF by another. FAILS on 6a6ce6faf (accepted, returns
+    # 4D3F7C33 -- byte-identical to the CRC of a wholly-erased region,
+    # i.e. the first record's payload is discarded with no signal at all).
+    _ck("two records assigning DIFFERENT values to the same address are "
+        "refused",
+        _raises([_ext_linear_record(0x1D00),
+                  _data_record(0x0000, [0x00, 0x00, 0x00, 0x00]),
+                  _data_record(0x0000, [0xFF, 0xFF, 0xFF, 0xFF]),
+                  _EOF_RECORD]),
+        True)
+    # The discriminating negative: re-assigning the SAME value to an
+    # already-written address is a deliberate exception, not a conflict --
+    # e.g. two overlapping records that happen to agree on a byte. Without
+    # this, a fix that refused ANY repeated write (not just a conflicting
+    # one) would pass the check above while breaking a real, harmless
+    # overlap.
+    _ck("two records assigning the SAME value to the same address are "
+        "still accepted",
+        _raises([_ext_linear_record(0x1D00),
+                  _data_record(0x0000, [0xAA, 0xAA, 0xAA, 0xAA]),
+                  _data_record(0x0002, [0xAA, 0xAA, 0xAA, 0xAA]),
+                  _EOF_RECORD]),
+        False)  # bytes at 0x0002..0x0003 overlap and agree (0xAA == 0xAA)
+    conflict_lines = [
+        _ext_linear_record(0x1D00),
+        _data_record(0x0000, [0x00, 0x00, 0x00, 0x00]),
+        _data_record(0x0000, [0xFF, 0xFF, 0xFF, 0xFF]),
+        _EOF_RECORD,
+    ]
+    _ck("...and the conflicting-write CRC is NOT the same value the tool "
+        "used to silently return (the check discriminates the two "
+        "records from the all-erased-region fallback)",
+        _raises(conflict_lines), True)
+
+    # --- 6: a record whose body has INTERNAL whitespace (distinct from the
+    # leading/trailing whitespace str.strip() already handles) decodes, via
+    # bytes.fromhex()'s own whitespace-stripping, to fewer bytes than its
+    # apparent length implies -- this must raise HexFormatError, not an
+    # uncaught IndexError from indexing the header before its length is
+    # checked. FAILS on 6a6ce6faf (uncaught IndexError, unhandled by
+    # main()'s per-file except clause, which catches only
+    # FileNotFoundError/HexFormatError).
+    _ck("a record body with internal whitespace is refused with "
+        "HexFormatError, not an uncaught IndexError",
+        _raises([":00        00"]), True)
+    _ck("...and a record body with only leading/trailing whitespace "
+        "(already handled by str.strip()) is unaffected",
+        _raises(["   " + _EOF_RECORD + "   "]), False)
+
+    # --- 6b: the actual harm named by the finding above is not the crash
+    # itself (main()'s per-file loop already turns a HexFormatError into a
+    # clean per-file error) but that an UNCAUGHT IndexError used to abort
+    # the whole batch, so a well-formed file listed AFTER a malformed one
+    # was never even attempted. Exercise main() itself -- not a
+    # reimplementation of its loop -- with a bad file followed by a good
+    # one, and require BOTH that the run is reported as failed (rc=1, for
+    # the bad file) AND that the good file's correct CRC still appears in
+    # the output.
+    def _batch_continues_past_a_malformed_file():
+        import contextlib
+        import io
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            bad_path = os.path.join(d, "bad.hex")
+            good_path = os.path.join(d, "good.hex")
+            with open(bad_path, "w", encoding="ascii") as f:
+                f.write(":00        00\n")
+            with open(good_path, "w", encoding="ascii") as f:
+                f.write(_EOF_RECORD + "\n")
+
+            old_argv = sys.argv
+            sys.argv = ["hexcrc.py", bad_path, good_path]
+            out, err = io.StringIO(), io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out), \
+                        contextlib.redirect_stderr(err):
+                    rc = main()
+            finally:
+                sys.argv = old_argv
+
+        expected_good_crc = compute_image_crc32(
+            [_EOF_RECORD], STANDALONE_PHYS_BASE, STANDALONE_AUDIT_LENGTH)
+        good_crc_line = "%08X" % expected_good_crc
+        return rc == 1 and good_crc_line in out.getvalue()
+
+    _ck("a malformed file (bad.hex) does not prevent a later, "
+        "well-formed file (good.hex) in the same invocation from being "
+        "processed -- rc=1 for the batch, but good.hex's CRC is still "
+        "printed",
+        _batch_continues_past_a_malformed_file(), True)
 
     bad = _CHECKS.count(False)
     print("self-test: %d/%d checks passed" % (_CHECKS.count(True), len(_CHECKS)))
