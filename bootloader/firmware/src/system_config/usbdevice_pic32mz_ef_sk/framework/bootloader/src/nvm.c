@@ -161,11 +161,16 @@ void APP_FlashErase( void )
      *     and neither image ever writes it, so nothing changes here.
      *
      *  3. The application must fit in the lower panel. It does, with room to
-     *     spare: main's .map reports Total kseg0_program_mem used = 0xB8BBC
-     *     (756,668 B), 72% of the 1 MB panel. This is ENFORCED, not assumed --
-     *     tools/release/cut_release.sh fails the release if the .map's
-     *     kseg0_program_mem usage reaches 0x100000, or if any record in the
-     *     release hex lands at or above 0x1D100000.
+     *     spare -- but do not trust the figure in this comment, trust the
+     *     gate. For scale only: a STANDALONE build of main measured 2026-09-08
+     *     reported Total kseg0_program_mem used = 0xB8BBC (756,668 B), 72% of
+     *     the 1 MB panel. A bootloader-linked build differs slightly (it
+     *     starts 0x480 higher), and any figure written down here goes stale
+     *     the moment someone adds a feature. So this is ENFORCED rather than
+     *     asserted: tools/release/cut_release.sh measures the ACTUAL release
+     *     build and fails the release if its .map's kseg0_program_mem usage
+     *     reaches 0x100000, or if any record in the release hex lands at or
+     *     above 0x1D100000.
      *
      * Panel swapping does not change any of this. The erase targets the
      * MAPPED region, i.e. the address range above, whichever physical bank

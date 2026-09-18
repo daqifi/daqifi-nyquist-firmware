@@ -39,8 +39,9 @@ Two things this project therefore owns on every fielded device:
    slots. Before #909 every customer update wiped them.
 
    That is correct only while the APPLICATION FITS IN THE LOWER 1 MB PANEL. It
-   is at ~72% today, and tools/release/cut_release.sh fails the release if it
-   reaches 0x100000. If the application ever genuinely outgrows the panel, the
+   was at ~72% on a standalone build of main measured 2026-09-08 -- indicative
+   only; tools/release/cut_release.sh measures the ACTUAL release build and
+   fails the release if it reaches 0x100000. If the application ever genuinely outgrows the panel, the
    documented fallback is the page-erase path (USE_PAGE_ERASE in
    src/system_config/usbdevice_pic32mz_ef_sk/system_config.h), weighed against
    #532 -- a bootloader watchdog / USB-servicing timeout during programming.

@@ -23,7 +23,7 @@ drift from the shipping check -- the same reason selftest_release_hex_layout.py
 extracts the hex validator instead of reimplementing it.
 
 Cases, all synthetic .map text:
-  1 the real current usage, 0xb8bbc (756,668 B, 72% of the panel) -> pass
+  1 a real observed usage, 0xb8bbc (756,668 B, 72% of the panel)  -> pass
   2 0xfffff, one byte under the panel                             -> pass
   3 0x100000 exactly, the first unsafe size                       -> FAIL
   4 0x180000, comfortably over                                    -> FAIL
@@ -96,7 +96,9 @@ def used_line(hexval, dec):
 # Pinning the message is what makes each path independently tested, and it is
 # also the thing a release engineer actually reads at 2am.
 CASES = [
-    ("real current usage 0xb8bbc (72%)", used_line("0xb8bbc", 0xB8BBC), 0,
+    # A real observed figure (standalone build of main, 2026-09-08) rather than
+    # a made-up one, so this case stays representative of what the guard sees.
+    ("a real observed usage, 0xb8bbc", used_line("0xb8bbc", 0xB8BBC), 0,
      "< 0x100000 lower panel OK"),
     ("0xfffff — one byte under the panel", used_line("0xfffff", 0xFFFFF), 0,
      "< 0x100000 lower panel OK"),

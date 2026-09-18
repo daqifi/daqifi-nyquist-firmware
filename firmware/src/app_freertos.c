@@ -999,7 +999,15 @@ void app_SystemInit() {
      * #908 and #910 are about. */
     if (topLevelRevStale) {
         tmpTopLevelSettings.type = DaqifiSettings_TopLevelSettings;
-        daqifi_settings_SaveToNvm(&tmpTopLevelSettings);
+        if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) {
+            /* Not fatal: the live board config was already refreshed above, so
+             * this boot reports the right revision either way. Only the
+             * PERSISTENCE failed, so the next boot would retry. Logged rather
+             * than ignored because a failing settings write is the same
+             * symptom a user would see as "my settings don't stick", and the
+             * error queue is where this device is supposed to say so. */
+            LOG_E("#909: could not persist refreshed firmware revision to NVM");
+        }
     }
 
     // Try to load WiFiSettings from NVM - if this fails, store default 

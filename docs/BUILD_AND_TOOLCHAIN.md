@@ -91,8 +91,9 @@ Two consequences worth keeping in mind:
   issues a lower-panel erase rather than a whole-PFM erase (#909) so that an
   in-app update preserves the NVM settings pages at `0x9D1E0000` — WiFi
   credentials, voltage precision and both ADC calibration slots. That is only
-  correct while the app stays under `0x100000`; it is at ~72% today, and
-  `tools/release/cut_release.sh` fails the release if it reaches the bound.
+  correct while the app stays under `0x100000` (~72% on a standalone build of
+  main measured 2026-09-08 — indicative only; `tools/release/cut_release.sh`
+  measures the actual release build and fails if it reaches the bound).
   If the app genuinely outgrows the panel, the documented fallback is the
   page-erase path (`USE_PAGE_ERASE`), weighed against #532 (a bootloader
   watchdog/USB-servicing timeout during programming).
