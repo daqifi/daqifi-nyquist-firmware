@@ -5857,7 +5857,8 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * whichever of the two merges first: an earlier draft said the finder fix
      * was "already applied", which was false and would have become a comment
      * on main asserting a race was closed where it was open.) Each load is
-     * individually atomic (aligned 32-bit on PIC32MZ), so the section is not
+     * individually atomic (aligned 32-bit on PIC32MZ; docs/MCU_REFERENCE.md,
+     * "Atomicity & Concurrency Rules", first bullet), so the section is not
      * there to make a load atomic -- it is there to make the PAIR describe
      * one instant.
      *
