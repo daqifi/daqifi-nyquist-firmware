@@ -61,6 +61,17 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # and should be looked at rather than skipped.
 SUSPEND_BIN := run_953_tests
 
+# #995: SCPI_GetCommandHistory's shared-buffer write-abort bound. Same shape
+# as BENCH_BIN above and #947's own host test -- SCPIInterface.c is not
+# includable on the host (libscpi + FreeRTOS + the whole board/driver graph),
+# so this re-implements the pre-fix and post-fix loop shapes against a mock
+# clock and compares their verdicts. The three firmware constants it depends
+# on are a COPY; the recipe greps them (plus the tick-rate/width assumption,
+# same as #947's grep) and refuses to build on drift.
+CMDHIST_BIN := run_995_tests
+SCPI_IFACE_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
+FW_RTOS_CFG := ../../firmware/src/config/default/FreeRTOSConfig.h
+
 # #985: SD_SuspendReasonText() itself -- the function the cascade above calls.
 # Third target on SCPIStorageSD.c and, for the same reason as the two above,
 # the same technique: no UUT copy, no stubs, both decision SHAPES (pre-fix and
@@ -1176,6 +1187,27 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 	 printf '#endif\n' >> $(GEN_1000)
 	$(CC) $(CFLAGS) -o $(SDLOG_BIN) test_1000_sd_log_arm_budget.c
 
+$(CMDHIST_BIN): test_995_cmdhistory_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(FW_RTOS_CFG) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_WRITE_MAX_RETRIES is no longer '200' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_WRITE_MAX_RETRIES in test_995_cmdhistory_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+SCPI_WRITE_RETRY_DELAY_MS[[:space:]]+5[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_WRITE_RETRY_DELAY_MS is no longer '5' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_WRITE_RETRY_DELAY_MS in test_995_cmdhistory_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+SCPI_CMDHISTORY_WRITE_BUDGET_MS[[:space:]]+2000U[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_CMDHISTORY_WRITE_BUDGET_MS is no longer '2000U' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_CMDHISTORY_BUDGET_MS in test_995_cmdhistory_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_RATE_HZ[[:space:]]+\( \( TickType_t \) 1000 \)[[:space:]]*$$' $(FW_RTOS_CFG) \
+	  || { echo "ERROR: configTICK_RATE_HZ is no longer 1000 Hz in $(FW_RTOS_CFG) -- re-derive test_995's ms<->tick assumption."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_TYPE_WIDTH_IN_BITS[[:space:]]+TICK_TYPE_WIDTH_32_BITS[[:space:]]*$$' $(FW_RTOS_CFG) \
+	  || { echo "ERROR: configTICK_TYPE_WIDTH_IN_BITS is no longer 32-bit in $(FW_RTOS_CFG) -- re-derive test_995's wrap tests."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(CMDHIST_BIN) test_995_cmdhistory_write_abort.c
+
 # #985: build-time guard over SD_SuspendReasonText() -- see the merge-history
 # comment above `run:` below for how this target's registration in run/clean
 # was resolved.
@@ -1395,15 +1427,20 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 # re-express their target as a fragment -- a mechanical move of one recipe,
 # which is strictly cheaper than this resolution has been nine times running.
 #
-# Every suite, and every one of the SIXTEEN binaries: main's fifteen plus
-# #998's $(START_BIN). #998 (the claim/arm/refusal/poll order of
-# SCPI_StartStreamingClaimed()'s SD arm) collided with fw#947, fw#1056, fw#980,
-# fw#1004, fw#1000, fw#999, fw#985, fw#1112 and fw#1121 here, and was resolved
-# the same way as every earlier collision: keep each side's target rule INTACT
-# and union only `run` and `clean`. #971's suite (run_971_tests, PR #976) is
-# still landing independently on another branch; when it meets this, same rule.
+# Every suite, and every one of the SIXTEEN binaries main had at the time:
+# main's fifteen plus #998's $(START_BIN). #998 (the claim/arm/refusal/poll
+# order of SCPI_StartStreamingClaimed()'s SD arm) collided with fw#947,
+# fw#1056, fw#980, fw#1004, fw#1000, fw#999, fw#985, fw#1112 and fw#1121
+# here, and was resolved the same way as every earlier collision: keep each
+# side's target rule INTACT and union only `run` and `clean`. #971's suite
+# (run_971_tests, PR #976) is still landing independently on another
+# branch; when it meets this, same rule.
+#
+# TENTH additive collision in this block, and now SEVENTEEN binaries: this
+# PR's own #995 (`$(CMDHIST_BIN)`) against main's sixteen above, hit by
+# #1008's base refresh. Same resolution as every time before.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN)
+     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(CMDHIST_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1415,6 +1452,7 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(HELP_BIN)
 	./$(WAITLOOP_BIN)
 	./$(SDLOG_BIN)
+	./$(CMDHIST_BIN)
 	./$(SCPI999_BIN)
 	./$(SUSPENDREASON_BIN)
 	./$(SCAN1112_BIN)
@@ -1423,6 +1461,6 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(GEN_1000)
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(CMDHIST_BIN) $(GEN_1000)
 
 .PHONY: run clean
