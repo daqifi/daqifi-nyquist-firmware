@@ -230,7 +230,10 @@
  * regexes. #998 exists because that removal left this site with no coverage at
  * all; re-adding the same check is explicitly out of its scope. A content hash
  * claims only "this text is unchanged", which is all a build recipe can
- * honestly know, and no refactor can slip past it.
+ * honestly know -- it detects a raw-byte change INSIDE the anchored slice
+ * (tests/host/Makefile's $(START_BIN) recipe has the full statement of what
+ * that does and does not cover); it does not establish ordering, and it does
+ * not detect a behaviour-changing edit made OUTSIDE the slice's boundaries.
  * ========================================================================== */
 
 #include "test_framework.h"
