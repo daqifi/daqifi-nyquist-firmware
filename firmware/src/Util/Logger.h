@@ -234,6 +234,7 @@ extern "C" {
         LOG_SESSION_BUFFER_TAIL,           /**< streaming.c: bytes left in WiFi circular buffer at Stop */
         LOG_SESSION_T1_ARDY_MISS,          /**< streaming.c: T1 result not ready at direct read (#541) */
         LOG_SESSION_JSON_SAMPLE_TOO_LARGE, /**< JSON_Encoder.c: sample cannot fit the encoder buffer (#164) */
+        LOG_SESSION_XPORT_UNDELIVERABLE,   /**< streaming.c: encoded packet is larger than a transport ring's TOTAL capacity, so no amount of draining can make the all-or-nothing write fit (#1021) */
         /* Add new entries above this line */
         LOG_SESSION_COUNT                  /**< Must be <= 32 */
     } LogSessionBit_t;
@@ -254,6 +255,32 @@ extern "C" {
      *        32-bit write is atomic on PIC32MZ.
      */
     void Logger_ResetSessionOneShots(void);
+
+    /**
+     * @brief Atomically test-and-set one gSessionOneShot bit.
+     *
+     *        The authoritative half of every LOG_x_SESSION: returns true only
+     *        to the ONE caller whose call moved the bit from clear to set, so
+     *        exactly that caller emits the line. Returns false if the bit was
+     *        already set, or if `bit` is out of range (>= 32).
+     *
+     *        Why a helper and not a bare `|=`: the mask is shared by tasks at
+     *        different priorities -- streaming.c's priority-9
+     *        _Streaming_Deferred_Interrupt_Task (and the priority-9
+     *        AD7609_DeferredInterruptTask) set bits in it while the priority-6
+     *        streaming_Task sets others. `|=` on it is a load, an OR and a
+     *        store; a preemption between the load and the store lets the
+     *        higher-priority task set its bit, and the resumed store then
+     *        writes back the stale snapshot and ERASES that bit, so its
+     *        "once per session" line fires again. docs/MCU_REFERENCE.md:
+     *        32-bit RMW is not atomic and must be critical-section guarded.
+     *
+     *        TASK CONTEXT ONLY -- it takes taskENTER_CRITICAL, which must not
+     *        be called from an ISR (the PIC32MZ port's vTaskEnterCritical
+     *        asserts uxInterruptNesting == 0). Every LOG_x_SESSION caller is a
+     *        task; the ISR-capable one-shots are LOG_x_ONCE.
+     */
+    bool Logger_SessionOneShotClaim(uint32_t bit);
     /** @} */
 
     /**
@@ -483,14 +510,33 @@ void LogIsrInit(void);
 // LOG_x_SESSION(bit, fmt, ...): like LOG_x but fires only once per
 // streaming session. Reset via Logger_ResetSessionOneShots() at stream
 // start. Uses gSessionOneShot bitmask (separate from gLogOneShot).
-// Task-context only — no ISR guard needed.
+// Task-context only: the claim below takes taskENTER_CRITICAL.
+//
+// The bit is set by Logger_SessionOneShotClaim(), a critical-section
+// test-and-set, NOT by a `|=` in the macro. The mask is shared across
+// priorities (pri-9 deferred-interrupt tasks and the pri-6 encoder both set
+// bits in it), and an unguarded `|=` preempted between its load and its store
+// writes back a stale mask that erases the other task's bit, re-arming that
+// line for a second "once per session" fire. See the helper's comment.
+//
+// Two tests, deliberately:
+//  - The plain `!(gSessionOneShot & ...)` read is only a FAST EXIT. It is one
+//    aligned 32-bit load (atomic on PIC32MZ) and keeps a persistent per-tick
+//    error -- pool exhaustion in the pri-9 deferred task, at up to the stream
+//    rate -- at exactly the cost it had before: no IPL raise once the line has
+//    fired. It can be stale only in the "clear" direction, which costs one trip
+//    into the claim; it never decides who logs.
+//  - Logger_SessionOneShotClaim() is the authoritative test-and-set, and
+//    LogMessage runs AFTER it has left its critical section: LogMessage takes
+//    the log mutex and runs vsnprintf, neither of which may run with
+//    interrupts masked.
 
 #if (LOG_LVL >= LOG_LEVEL_ERROR)
     #define LOG_E_SESSION(bit, fmt,...) do { \
         if ((unsigned)(bit) < 32u && \
             gLogLevels[LOG_MODULE] >= LOG_LEVEL_ERROR && \
-            !(gSessionOneShot & (1u << (bit)))) { \
-            gSessionOneShot |= (1u << (bit)); \
+            !(gSessionOneShot & (1u << (bit))) && \
+            Logger_SessionOneShotClaim((uint32_t)(bit))) { \
             LogMessage(fmt, ##__VA_ARGS__); \
         } \
     } while(0)
@@ -502,8 +548,8 @@ void LogIsrInit(void);
     #define LOG_I_SESSION(bit, fmt,...) do { \
         if ((unsigned)(bit) < 32u && \
             gLogLevels[LOG_MODULE] >= LOG_LEVEL_INFO && \
-            !(gSessionOneShot & (1u << (bit)))) { \
-            gSessionOneShot |= (1u << (bit)); \
+            !(gSessionOneShot & (1u << (bit))) && \
+            Logger_SessionOneShotClaim((uint32_t)(bit))) { \
             LogMessage(fmt, ##__VA_ARGS__); \
         } \
     } while(0)
@@ -515,8 +561,8 @@ void LogIsrInit(void);
     #define LOG_D_SESSION(bit, fmt,...) do { \
         if ((unsigned)(bit) < 32u && \
             gLogLevels[LOG_MODULE] >= LOG_LEVEL_DEBUG && \
-            !(gSessionOneShot & (1u << (bit)))) { \
-            gSessionOneShot |= (1u << (bit)); \
+            !(gSessionOneShot & (1u << (bit))) && \
+            Logger_SessionOneShotClaim((uint32_t)(bit))) { \
             LogMessage(fmt, ##__VA_ARGS__); \
         } \
     } while(0)
