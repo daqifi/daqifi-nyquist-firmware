@@ -246,8 +246,11 @@ def style_violations(live):
 
     short_violations: sorted [(pattern, node)] where `node`'s short form is
     under 2 characters -- 0 (the node starts lowercase, e.g. the pre-#907
-    `chanCALM`: `matchPattern`'s short arm can never match, only the full
-    spelling is ever legal, silently) or 1 (typeable but identifies
+    `chanCALM`: an empty short form does NOT mean only the full spelling is
+    ever legal -- `matchPattern`'s short arm ALSO matches the EMPTY string
+    (`compareStr`, utils.c:347, compares equal lengths, and 0 == 0), so the
+    DEGENERATE header `CONF:ADC:` -- a trailing colon with nothing after it
+    -- used to dispatch here silently) or 1 (typeable but identifies
     nothing, and see below -- on this table it already collides). An empty
     node (an `A::B` typo) is reported with node='' rather than crashing.
 
@@ -578,7 +581,9 @@ STYLE_S1_CASES = [
      "special-case handling, `_short_form` already treats it as any other "
      "non-lowercase character"),
     ("chanCALM", True, "the #907 defect itself: starts lowercase, short "
-     "form is empty, only the 8-character full spelling is ever legal"),
+     "form is empty -- which does NOT mean only the 8-character full "
+     "spelling is ever legal, it means the node ALSO matches the empty "
+     "string (the degenerate `CONF:ADC:` header used to dispatch here)"),
     ("CHANCALM", False, "the #907 fix: all-caps, one legal spelling, "
      "honestly declared as such"),
     ("Foobar", True, "1-character short form 'F' -- typeable but "
@@ -1396,9 +1401,12 @@ def print_style_violations(short_v, ambig, dup, domain):
               f"under 2 characters:")
         for pat, node in short_v:
             print(f"    {pat}  (node {node!r})")
-        print("\n  A node starting lowercase has an EMPTY short form -- only")
-        print("  the full spelling is ever legal, silently. Respell the node")
-        print("  so its caps-prefix run is at least 2 characters (an")
+        print("\n  A node starting lowercase has an EMPTY short form. That")
+        print("  does NOT mean only the full spelling is ever legal -- it")
+        print("  means the node ALSO matches the EMPTY string, so a")
+        print("  degenerate header (e.g. a trailing colon with nothing")
+        print("  after it) silently reaches this node too. Respell the")
+        print("  node so its caps-prefix run is at least 2 characters (an")
         print("  all-caps node, one legal spelling, is always fine). See")
         print("  CLAUDE.md's SCPI Abbreviation Rule house-style note.")
     if ambig:
