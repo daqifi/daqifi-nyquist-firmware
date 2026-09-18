@@ -36,9 +36,11 @@
 // command reads or writes the wrong channel while returning OK.
 //
 // The range is the truncation range ONLY -- the #682 narrowing. Values in
-// [0,255] are not truncated and fall through to each caller's existing
-// resolved-index guard, which keeps its own handling for the sparse id space.
-// That space is sparse on BOTH variants: user ids 0..15 on NQ1 and 0..7 on
+// [0,255] are not truncated and fall through to the resolved-index guard,
+// which handles the sparse id space -- AdcChannelResolve below, which #888
+// made the one owner of that second test (it was open-coded, three different
+// ways, at all nine sites). That space is sparse on BOTH variants: user ids
+// 0..15 on NQ1 and 0..7 on
 // NQ3, plus the same monitoring block 248..255 on each (ADC_CHANNEL_3_3V ..
 // ADC_CHANNEL_5VREF, AInConfig.h:240-247, pulled in by
 // COMMON_MONITORING_CHANNELS_BOARDCONFIG). Widening this test to the
@@ -87,13 +89,76 @@ static bool AdcChannelArgInRange(scpi_t * context, int channel, const char * cmd
     return false;
 }
 
+/* #888: the SECOND half of every channel-argument check in this file. Where
+ * AdcChannelArgInRange above bounds the ARGUMENT (the truncation range, so the
+ * (uint8_t) cast below cannot alias), this resolves the bounded argument to a
+ * table slot and rejects the ids that have no slot. Call them in that order:
+ * this function casts, so the range test has to have run first.
+ *
+ * The reachable band is "in range for the cast but absent from the board's
+ * channel table" -- on a 16-channel NQ1 every id from 16 to 255 except the
+ * monitoring block 248..255. `CONF:ADC:chanCALM 99,1.0` is in it, and so is
+ * whatever a client written against an NQ2/NQ3 channel count sends to an NQ1,
+ * or any `range(0, 32)` sweep sends to all of them.
+ *
+ * Before this helper the file had THREE behaviours at this one bound, and the
+ * spread is the whole reason #888 exists:
+ *
+ *   * SEVEN sites returned SCPI_RES_ERR having queued nothing themselves, so
+ *     libscpi's processCommand supplied its generic -200 Execution error
+ *     (`if (!context->cmd_error) SCPI_ErrorPush(... EXECUTION_ERROR)`). Not
+ *     silent -- UNSPECIFIC, and with SYST:LOG? empty nothing named the channel;
+ *   * MEASure:VOLTage:DC? pushed a BARE -222 with no log, so it classified
+ *     correctly and still named nothing;
+ *   * the two-arg CONFigure:ADC:CHANnel pushed -222 AND logged the channel.
+ *
+ * The third is the target shape and this helper is it. Routing the two already
+ * correct sites through it too is deliberate: leaving them open-coded is what
+ * lets the file drift back apart, which it has done four times (#630, #678 /
+ * #682, #720, #877 -- each pass fixing the sites in its own scope).
+ *
+ * `hint` appends a per-command remedy and is NULL at eight of the nine sites.
+ * It exists so CONFigure:ADC:CHANnel keeps the text #1039 sized for it: that
+ * command's two-arg and one-arg (mask) forms are told apart by argument COUNT,
+ * so a client that meant a mask lands on this bound and the remedy naming both
+ * forms is the actionable half of the message. Converging the file onto one
+ * behaviour must not silently delete it.
+ *
+ * Log budget (the #1000 class -- Logger's effective ceiling is 125 bytes:
+ * LOG_MESSAGE_SIZE 128 less vsnprintf's 2-byte and the clamp's 3-byte
+ * reservation, Logger.c:292,299). Without a hint the worst case is the longest
+ * cmd (19, "CONF:ADC:SINGleend?") + 26 fixed + 11 for a 32-bit %d = 56. With
+ * CONFigure:ADC:CHANnel's hint it is 21 + 26 + 11 + 62 = 120, margin 5 -- the
+ * same total #1039 computed, because the emitted bytes are unchanged there.
+ *
+ * Do NOT add a numeric valid range to this message. Size is the array entry
+ * count (user + monitoring), not the settable channel-id range, which is
+ * sparse and per-variant (NQ1 user 0..15 + monitoring 248..255; NQ3 0..7), so
+ * any number printed here is wrong on some board (#630 review).
+ */
+static bool AdcChannelResolve(scpi_t * context, int channel, const char * cmd,
+                              const char * hint, size_t * index)
+{
+    AInArray * pBoardConfigAInChannels = BoardConfig_Get(
+            BOARDCONFIG_AIN_CHANNELS,
+            0);
+    size_t resolved = ADC_FindChannelIndex((uint8_t) channel);
+
+    if (resolved < (size_t) pBoardConfigAInChannels->Size) {
+        *index = resolved;
+        return true;
+    }
+
+    LOG_E("%s: channel %d not addressable%s", cmd, channel,
+          (hint != NULL) ? hint : "");
+    SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+    return false;
+}
+
 scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
     int channel;
     AInSample *pAInLatest;
     uint32_t *pAInLatestSize;
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(
-            BOARDCONFIG_AIN_CHANNELS,
-            0);
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
     StreamingRuntimeConfig *pStreamCfg = BoardRunTimeConfig_Get(
@@ -119,9 +184,12 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
             return SCPI_RES_ERR;
         }
         uint8_t ch = (uint8_t)channel;
-        size_t index = ADC_FindChannelIndex(ch);
-        if (index >= pBoardConfigAInChannels->Size) {
-            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        // #888: was a BARE -222 with no log -- it classified correctly and
+        // still named nothing, so SYST:LOG? was empty. Same code now, plus the
+        // log, from the one helper every site in this file shares.
+        size_t index;
+        if (!AdcChannelResolve(context, channel, "MEAS:VOLT:DC?", NULL,
+                               &index)) {
             return SCPI_RES_ERR;
         }
 
@@ -290,46 +358,46 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
             return SCPI_RES_ERR;
         }
 
-        size_t channelIndex = ADC_FindChannelIndex((uint8_t) param1);
-
         // #630: bounds-check BEFORE dereferencing. ADC_FindChannelIndex returns
         // (size_t)-1 for an id not present in the channel table (e.g.
         // CONF:ADC:CHAN 16,1 on NQ1, or 65535,1 → id 255), and the old code
         // read channel->Type at Data[(size_t)-1] — a wild OOB read — before the
         // range check caught it. Guard first, then it is safe to index.
-        if (channelIndex >= (size_t) pBoardConfigAInChannels->Size) {
-            // Note: do NOT report "valid 0..Size-1" — Size is the array entry
-            // count (user + monitoring), not the settable channel-id range,
-            // which is sparse (NQ1 user 0..15, monitoring 248..255; NQ3 0..7).
-            // A numeric range here would be wrong per-variant (#630 review).
-            /* #1039 (#1000 class): the old text was 170 fixed bytes plus one
-             * %d (11 at the 32-bit worst case, "-2147483648"), a 181-byte
-             * worst case against Logger's 125-byte effective ceiling
-             * (LOG_MESSAGE_SIZE 128, minus vsnprintf's 2-byte and the clamp's
-             * 3-byte reservation in LogMessageFormatImpl) -- so the tail was
-             * cut on every firing, and the tail was the remedy naming the
-             * one-arg <mask> form. The text below is 109 fixed bytes, worst
-             * case 109+11 = 120, margin 5.
-             *
-             * What was dropped is the parenthetical gloss "(not a settable
-             * analog channel)", which restates "not addressable"; both legal
-             * argument forms -- the actionable half -- are kept. The command
-             * path is spelled out in full, CONFigure:ADC:CHANnel, copied
-             * verbatim from its registration (SCPIInterface.c:8768) rather
-             * than printed as the short form CONF:ADC:CHAN this message used
-             * to carry: both are legal spellings a device accepts
-             * (utils.c's matchPattern/compareStr), but a diagnostic whose text
-             * differs from the registered string cannot be kept in sync with
-             * a later rename mechanically -- only a verbatim copy can (PR
-             * #1110 review item 5, worker ruling 2026-09-16). */
-            LOG_E("CONFigure:ADC:CHANnel: channel %d not addressable; "
-                  "two-arg form is <channel>,<state>, one-arg form is a "
-                  "<mask>.",
-                  param1);
-            // Push a specific error (not the libscpi-default generic -200) so
-            // the failure is classifiable via SYST:ERR? too — consistent with
-            // the DIO boundary rejects (#671) and the ADCVoltageGet path above.
-            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+        //
+        /* #888: this site's -222-plus-LOG_E is the shape the other eight were
+         * converged onto, so it now calls the shared helper rather than
+         * open-coding the behaviour it donated. The EMITTED BYTES are
+         * unchanged -- the text below is the same message #1039 sized, moved
+         * into the helper's `hint` argument, which is why that analysis is
+         * restated on AdcChannelResolve rather than dropped:
+         *
+         * #1039 (#1000 class): the old text was 170 fixed bytes plus one %d
+         * (11 at the 32-bit worst case, "-2147483648"), a 181-byte worst case
+         * against Logger's 125-byte effective ceiling (LOG_MESSAGE_SIZE 128,
+         * minus vsnprintf's 2-byte and the clamp's 3-byte reservation in
+         * LogMessageFormatImpl) -- so the tail was cut on every firing, and
+         * the tail was the remedy naming the one-arg <mask> form. The text
+         * here is 109 fixed bytes, worst case 109+11 = 120, margin 5.
+         *
+         * What was dropped is the parenthetical gloss "(not a settable analog
+         * channel)", which restates "not addressable"; both legal argument
+         * forms -- the actionable half -- are kept. The command path is
+         * spelled out in full, CONFigure:ADC:CHANnel, copied verbatim from its
+         * registration (SCPIInterface.c:8768) rather than printed as the short
+         * form CONF:ADC:CHAN this message used to carry: both are legal
+         * spellings a device accepts (utils.c's matchPattern/compareStr), but
+         * a diagnostic whose text differs from the registered string cannot be
+         * kept in sync with a later rename mechanically -- only a verbatim
+         * copy can (PR #1110 review item 5, worker ruling 2026-09-16).
+         *
+         * The helper prints "<cmd>: channel %d not addressable" and appends
+         * the hint, so cmd + hint below reproduce those 109 bytes exactly. Do
+         * NOT report a numeric valid range -- see AdcChannelResolve. */
+        size_t channelIndex;
+        if (!AdcChannelResolve(context, param1, "CONFigure:ADC:CHANnel",
+                               "; two-arg form is <channel>,<state>, "
+                               "one-arg form is a <mask>.",
+                               &channelIndex)) {
             return SCPI_RES_ERR;
         }
 
@@ -563,9 +631,6 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
 
 scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context) {
     int param1;
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(
-            BOARDCONFIG_AIN_CHANNELS,
-            0);
 
     // BOARDCONFIG_ALL_CONFIG, not BOARDCONFIG_VARIANT: the latter returns
     // &boardConfig.BoardVariant -- a uint8_t*, widened to void* so nothing
@@ -597,9 +662,12 @@ scpi_result_t SCPI_ADCChanEnableGet(scpi_t * context) {
         if (!AdcChannelArgInRange(context, param1, "CONF:ADC:CHAN?")) {
             return SCPI_RES_ERR;
         }
-        size_t index = ADC_FindChannelIndex((uint8_t) param1);
         // TODO: This function should be able to read which version of the board we are using and assign the ADC channels associated that version
-        if (index >= pBoardConfigAInChannels->Size) {
+        // #888: was a bare `return SCPI_RES_ERR` -- libscpi then supplied its
+        // generic -200 and nothing named the channel. Now -222 plus the log.
+        size_t index;
+        if (!AdcChannelResolve(context, param1, "CONF:ADC:CHAN?", NULL,
+                               &index)) {
             return SCPI_RES_ERR;
         }
 
@@ -738,8 +806,10 @@ static scpi_result_t ADCChanSingleEndSetClaimed(scpi_t * context) {
         if (!AdcChannelArgInRange(context, param1, "CONF:ADC:SINGleend")) {
             return SCPI_RES_ERR;
         }
-        size_t index = ADC_FindChannelIndex((uint8_t) param1);
-        if (index >= pBoardConfigAInChannels->Size) {
+        // #888: was a bare `return SCPI_RES_ERR` -- see AdcChannelResolve.
+        size_t index;
+        if (!AdcChannelResolve(context, param1, "CONF:ADC:SINGleend", NULL,
+                               &index)) {
             return SCPI_RES_ERR;
         }
 
@@ -844,8 +914,10 @@ scpi_result_t SCPI_ADCChanSingleEndGet(scpi_t * context) {
         if (!AdcChannelArgInRange(context, param1, "CONF:ADC:SINGleend?")) {
             return SCPI_RES_ERR;
         }
-        size_t index = ADC_FindChannelIndex((uint8_t) param1);
-        if (index >= pBoardConfigAInChannels->Size) {
+        // #888: was a bare `return SCPI_RES_ERR` -- see AdcChannelResolve.
+        size_t index;
+        if (!AdcChannelResolve(context, param1, "CONF:ADC:SINGleend?", NULL,
+                               &index)) {
             return SCPI_RES_ERR;
         }
 
@@ -1194,22 +1266,30 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context);
  * The claim is the first statement (#862 ordering contract, SCPIInterface.h),
  * so `CONF:ADC:chanCALM 300,1.0` mid-stream answers -200 like every other
  * converted setter rather than the -222 AdcChannelArgInRange would give.
- * (300, not 99: 99 is <= 255 so it PASSES AdcChannelArgInRange and then fails
- * the ADC_FindChannelIndex bound below, which returns SCPI_RES_ERR without
- * pushing anything ITSELF. libscpi then queues its generic -200 --
+ * (300, not 99, because the two take DIFFERENT guards: 300 is outside [0,255]
+ * so AdcChannelArgInRange rejects it, while 99 is <= 255, passes that guard,
+ * and fails the resolve bound instead -- AdcChannelResolve, which #888 made
+ * the single owner of that bound.
+ *
+ * #888 closed what this paragraph used to describe as an open defect, and the
+ * description is kept because it is the reason the helper exists. Before it,
+ * the resolve bound returned SCPI_RES_ERR having queued nothing ITSELF at
+ * SEVEN of its nine sites, so libscpi supplied its generic -200 --
  * processCommand does `if (!context->cmd_error) SCPI_ErrorPush(...
- * EXECUTION_ERROR)` -- so the command is not literally silent, it is
- * UNSPECIFIC: -200 where TWO siblings push a specific -222 at that same
- * ADC_FindChannelIndex bound -- MEASure:VOLTage:DC? and the two-arg
- * CONF:ADC:CHANnel. Only CONF:ADC:CHANnel also LOG_Es the channel;
- * MEAS:VOLT:DC? pushes a BARE -222 (SCPI_ErrorPush passes a NULL info string)
- * with no log, so nothing there names the channel either. Pre-existing, shared
- * with chanCALB and with the SINGleend and the ...Get paths -- EVERY site in
- * this file that returns SCPI_RES_ERR straight off the ADC_FindChannelIndex
- * bound is in it, so #888's scope is "grep the bound", not a counted list
- * (a counted list is how this repo gets "fixed one site, left the twin").
- * NOT this change's subject. Whatever #888 converges them onto should be
- * CONF:ADC:CHANnel's logged form, not MEAS:VOLT:DC?'s bare push.
+ * EXECUTION_ERROR)`. Not literally silent: UNSPECIFIC, -200 where two
+ * siblings pushed a specific -222 at the very same bound (MEASure:VOLTage:DC?
+ * and the two-arg CONFigure:ADC:CHANnel), and with SYST:LOG? empty nothing
+ * named the channel. Of those two only CONFigure:ADC:CHANnel also LOG_Ed it;
+ * MEAS:VOLT:DC? pushed a BARE -222 (SCPI_ErrorPush passes a NULL info
+ * string). All nine now route through AdcChannelResolve and emit
+ * CONFigure:ADC:CHANnel's logged form -- both already-correct sites included,
+ * because leaving them open-coded is what lets the file drift apart again.
+ *
+ * The scope rule that got there was "grep the bound", not a counted list: a
+ * counted list is how this repo gets "fixed one site, left the twin". The
+ * grep is `ADC_FindChannelIndex` in this file -- nine argument sites plus
+ * three loops that SKIP an unresolvable id rather than rejecting a command,
+ * and the loops are correctly not in scope.
  *
  * Successive revisions of this paragraph have said "without pushing anything
  * at all", called it a silent-error path, called MEASure:VOLTage:DC? the one
@@ -1233,9 +1313,6 @@ scpi_result_t SCPI_ADCChanCalmSet(scpi_t * context) {
 static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context) {
     int param1;
     double param2;
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(
-            BOARDCONFIG_AIN_CHANNELS,
-            0);
 
     AInRuntimeArray * pRunTimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
@@ -1254,8 +1331,13 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context) {
     if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALM")) {
         return SCPI_RES_ERR;
     }
-    size_t index = ADC_FindChannelIndex((uint8_t) param1);
-    if (index >= pBoardConfigAInChannels->Size) {
+    // #888: was a bare `return SCPI_RES_ERR` -- see AdcChannelResolve. This is
+    // the site the ticket's worked example names: `CONF:ADC:chanCALM 99,1.0`
+    // on a 16-channel NQ1 now answers -222 and logs the channel, where it used
+    // to answer libscpi's generic -200 with SYST:LOG? empty.
+    size_t index;
+    if (!AdcChannelResolve(context, param1, "CONF:ADC:chanCALM", NULL,
+                           &index)) {
         return SCPI_RES_ERR;
     }
 
@@ -1283,9 +1365,6 @@ scpi_result_t SCPI_ADCChanCalbSet(scpi_t * context) {
 static scpi_result_t ADCChanCalbSetClaimed(scpi_t * context) {
     int param1;
     double param2;
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(
-            BOARDCONFIG_AIN_CHANNELS,
-            0);
 
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
@@ -1302,8 +1381,10 @@ static scpi_result_t ADCChanCalbSetClaimed(scpi_t * context) {
     if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALB")) {
         return SCPI_RES_ERR;
     }
-    size_t index = ADC_FindChannelIndex((uint8_t) param1);
-    if (index >= pBoardConfigAInChannels->Size) {
+    // #888: was a bare `return SCPI_RES_ERR` -- see AdcChannelResolve.
+    size_t index;
+    if (!AdcChannelResolve(context, param1, "CONF:ADC:chanCALB", NULL,
+                           &index)) {
         return SCPI_RES_ERR;
     }
 
@@ -1313,9 +1394,6 @@ static scpi_result_t ADCChanCalbSetClaimed(scpi_t * context) {
 
 scpi_result_t SCPI_ADCChanCalmGet(scpi_t * context) {
     int param1;
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(
-            BOARDCONFIG_AIN_CHANNELS,
-            0);
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
@@ -1327,8 +1405,13 @@ scpi_result_t SCPI_ADCChanCalmGet(scpi_t * context) {
     if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALM?")) {
         return SCPI_RES_ERR;
     }
-    size_t index = ADC_FindChannelIndex((uint8_t) param1);
-    if (index >= pBoardConfigAInChannels->Size) {
+    // #888: was a bare `return SCPI_RES_ERR` -- see AdcChannelResolve. Only
+    // the BOUND CHECK changes here. The unsynchronised `double` read below is
+    // the torn-read defect #904 / PR #1048 owns and is deliberately left
+    // exactly as it was, so that PR lands on an unmodified line.
+    size_t index;
+    if (!AdcChannelResolve(context, param1, "CONF:ADC:chanCALM?", NULL,
+                           &index)) {
         return SCPI_RES_ERR;
     }
 
@@ -1338,9 +1421,6 @@ scpi_result_t SCPI_ADCChanCalmGet(scpi_t * context) {
 
 scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
     int param1;
-    AInArray * pBoardConfigAInChannels = BoardConfig_Get(
-            BOARDCONFIG_AIN_CHANNELS,
-            0);
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
@@ -1352,8 +1432,12 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
     if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALB?")) {
         return SCPI_RES_ERR;
     }
-    size_t index = ADC_FindChannelIndex((uint8_t) param1);
-    if (index >= pBoardConfigAInChannels->Size) {
+    // #888: was a bare `return SCPI_RES_ERR` -- see AdcChannelResolve. As with
+    // the CalM getter above, only the BOUND CHECK changes; the unsynchronised
+    // `double` read below belongs to #904 / PR #1048.
+    size_t index;
+    if (!AdcChannelResolve(context, param1, "CONF:ADC:chanCALB?", NULL,
+                           &index)) {
         return SCPI_RES_ERR;
     }
 

@@ -690,8 +690,21 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
+    // #888: no second SCPI_ErrorPush here -- the -108 that used to sit on this
+    // branch queued a SECOND code on top of the one libscpi had already
+    // pushed, so a client that DRAINS SYST:ERR? saw two errors for one command
+    // and the last one it read was the wrong one. Same remedy and the same
+    // safety argument as #885's in SCPIADC.c (ADCChanRangeSetClaimed): removing
+    // a push is only safe if the callee always queues, and with mandatory=TRUE
+    // SCPI_ParamCharacters does -- its ONLY FALSE exits are the !value/!len
+    // -310 (unreachable, we pass two real addresses) and SCPI_Parameter
+    // returning FALSE, which queues on every one of ITS reachable exits:
+    // absent -109 (parser.c:713), bad separator -103 (:723), unusable token
+    // type -150 (:746). Note the shape differs from the integer parsers: once
+    // SCPI_Parameter succeeds, SCPI_ParamCharacters cannot fail (parser.c:
+    // 1182-1196 has no failing arm), so an unquoted token like BANANA parses
+    // as a filename rather than reaching this branch at all.
     if (!SCPI_ParamCharacters(context, &pBuff, &fileLen, TRUE)) {
-        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
     /* #747: accept the "<directory>/<name>" form SD:LISt? prints. */
@@ -1174,8 +1187,15 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     }
 
     // Get test size parameter (required)
+    //
+    // #888: no second SCPI_ErrorPush here. The -109 that used to sit here was
+    // not just redundant but usually WRONG: `SD:BENCHmark BANANA` reported
+    // -104 followed by a spurious -109 "Missing parameter" when the parameter
+    // was present. Safe to delete because SCPI_ParamInt32 -> ParamSignUInt32
+    // queues on every reachable failure exit -- the walk is written out in
+    // full on ADCChanRangeSetClaimed (SCPIADC.c) and applies verbatim here.
+    // The goto stays exactly as it was.
     if (!SCPI_ParamInt32(context, &testSizeKB, TRUE)) {
-        SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
         result = SCPI_RES_ERR;
         goto __exit_point;
     }
@@ -2453,8 +2473,14 @@ scpi_result_t SCPI_StorageSDMaxSizeSet(scpi_t * context) {
     sd_card_manager_settings_t* pSDCardRuntimeConfig = BoardRunTimeConfig_Get(BOARDRUNTIME_SD_CARD_SETTINGS);
 
     int64_t maxSizeBytes;
+    // #888: no second SCPI_ErrorPush here -- `SD:MAXSize BANANA` reported -104
+    // (libscpi's, correct) followed by a spurious -108. Safe to delete because
+    // SCPI_ParamInt64 -> ParamSignUInt64 -> ParamSignToUInt64 is structurally
+    // identical to the 32-bit pair whose exits ADCChanRangeSetClaimed
+    // (SCPIADC.c) walks in full -- same arms, same codes, and the #880
+    // whole-token patch is applied to both decimal arms there too
+    // (parser.c:869-878) -- so that proof carries over unchanged.
     if (!SCPI_ParamInt64(context, &maxSizeBytes, TRUE)) {
-        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         goto __exit_point;
     }
 
@@ -2698,8 +2724,10 @@ scpi_result_t SCPI_StorageSDMinFreeSet(scpi_t * context) {
     // Parse as uint64 directly — storage is uint64; SCPI_ParamInt64
     // would reject values above INT64_MAX.
     uint64_t minFreeBytes;
+    // #888: no second SCPI_ErrorPush here -- same defect and same argument as
+    // the SD:MAXSize setter above; SCPI_ParamUInt64 reaches the same
+    // ParamSignUInt64 / ParamSignToUInt64 pair, differing only in `sign`.
     if (!SCPI_ParamUInt64(context, &minFreeBytes, TRUE)) {
-        SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
     // 64-bit shared write needs critical section per docs/MCU_REFERENCE.md
