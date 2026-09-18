@@ -124,6 +124,28 @@ static bool DAC_EnsureHardwareInitialized(void) {
         return false;
     }
 
+    // #1100: powerState alone is not the whole precondition. SYSTem:
+    // FORce5V5POWer:STATe 0 (SCPI_Force5v5PowerStateSet, SCPIInterface.c)
+    // clears PowerWriteVars.EN_5_10V_Val -- the rail's own commanded enable --
+    // and calls Power_Write() to drop the rail, WITHOUT touching powerState.
+    // A caller can pass the check above while the rail the DAC actually needs
+    // is commanded off. Same field #1099 already added this exact check for,
+    // one call site over at the HAL level in DAC7718_ReadWriteReg() -- this
+    // closes the matching gap here so the caller-level and HAL-level checks
+    // agree about what "powered" means. EN_5_10V_Val is the COMMANDED state
+    // (what Power_Write() was last told), not a measured/settled one -- same
+    // caveat #1099's HAL-level check documents.
+    const tPowerWriteVars* pPowerWriteVars =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_POWER_WRITE_VARIABLES);
+    if ((pPowerWriteVars == NULL) || (!pPowerWriteVars->EN_5_10V_Val)) {
+        LOG_E("DAC_EnsureHardwareInitialized: 10V rail not enabled (EN_5_10V_Val=0)");
+        // Same reasoning as the powerState arm just above: drop READY so the
+        // rail's return re-runs the full init sequence rather than trusting
+        // stale hardware state.
+        dacHardwareInitialized = false;
+        return false;
+    }
+
     if (dacHardwareInitialized) {
         return true; // Already initialized and the rail is still up
     }
@@ -214,9 +236,15 @@ static bool DAC_EnsureHardwareInitialized(void) {
     // on separate supplies, so a digital transaction can still nominally
     // succeed while the requested voltage is not physically deliverable.
     // Re-validate with a FRESH read immediately before publishing, closing
-    // the window this claim's own duration opened.
+    // the window this claim's own duration opened. #1100: re-check
+    // EN_5_10V_Val too, for the identical reason -- SYSTem:FORce5V5POWer:
+    // STATe 0 can land during DAC7718_Init()'s tens-of-ms run just as easily
+    // as a powerState change, and it would not be caught by re-reading
+    // powerState alone.
     pPowerState = BoardData_Get(BOARDDATA_POWER_DATA, 0);
-    if ((pPowerState == NULL) || (pPowerState->powerState != POWERED_UP)) {
+    pPowerWriteVars = BoardRunTimeConfig_Get(BOARDRUNTIME_POWER_WRITE_VARIABLES);
+    if ((pPowerState == NULL) || (pPowerState->powerState != POWERED_UP) ||
+        (pPowerWriteVars == NULL) || (!pPowerWriteVars->EN_5_10V_Val)) {
         dacHardwareInitialized = false;
         dacInitInProgress = false;
         return false;
