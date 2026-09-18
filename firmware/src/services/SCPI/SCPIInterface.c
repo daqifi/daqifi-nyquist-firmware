@@ -5014,6 +5014,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
          * nothing. */
         if (app_SDCard_SpiOwnedByWifi() || SpiBusHealth_IsSdSuspended()) {
             const char *why = SD_SuspendReasonText();
+            /* log_budget: max=76 */
             LOG_E("Cannot start SD logging - SD suspended: %s\r\n",
                   why ? why : "SPI4 is owned elsewhere");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -5333,6 +5334,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                 SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
+                /* log_budget: max=76 */
                 LOG_E("Cannot start SD logging - SD suspended: %s\r\n",
                       why ? why : "SPI4 is owned elsewhere");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -5556,6 +5558,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                      * already use (:4832, :5151) -- measured worst case 118
                      * bytes against Logger's 125-byte effective ceiling,
                      * unchanged by reuse here. */
+                    /* log_budget: max=76 */
                     LOG_E("Cannot start SD logging - SD suspended: %s\r\n", why);
                 } else if (armTornDown) {
                     /* #988 (ported by #1121): this request's arm was torn down
@@ -5579,6 +5582,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                      * string sd_card_manager_GetStateName() and
                      * sd_card_manager_GetModeName() can return, not assumed)
                      * against the same 125-byte ceiling. */
+                    /* log_budget: max=8,8 */
                     LOG_E("[SD] STR:START refused: the write arm was torn down "
                           "before the file opened (SD now state=%s mode=%s) "
                           "- retry\r\n",
