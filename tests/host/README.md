@@ -58,14 +58,14 @@ constants are a copy. The Makefile target greps them out of `SCPIStorageSD.c`
 and **fails the build** if either drifts, so a stale copy cannot pass silently.
 
 `test_953_bench_suspend_diagnosis.c` covers the branch a little further down
-the same function (issue #953): the one that has to say *why* the benchmark's
-file never opened. Same technique as `test_943` and for the same reason — the
-decision cascade is re-implemented against injected values rather than
-included. Until #953 it had two arms, so a benchmark whose arm succeeded and
-whose SD task was then suspended mid-wait (WiFi streaming taking SPI4, a WiFi
-FW update, the #925 jam quarantine) hit the fallback and blamed the *card* —
-"likely SPI-mode incompatible" — for a task that had simply stopped running.
-The fix adds a third arm reporting `SD_SuspendReasonText()`.
+the same function (issues #953 **and #988**): the one that has to say *why* the
+benchmark's file never opened. Same technique as `test_943` and for the same
+reason — the decision cascade is re-implemented against injected values rather
+than included. Until #953 it had two arms, so a benchmark whose arm succeeded
+and whose SD task was then suspended mid-wait (WiFi streaming taking SPI4, a
+WiFi FW update, the #925 jam quarantine) hit the fallback and blamed the *card*
+— "likely SPI-mode incompatible" — for a task that had simply stopped running.
+#953 adds a third arm reporting `SD_SuspendReasonText()`.
 
 The test asserts all four quadrants of (suspended × dir-full) against **both**
 the pre-fix and post-fix shapes, and its headline property is that **exactly
@@ -76,10 +76,118 @@ this request's open — so with both true the refusal is the real cause and the
 suspend is incidental. Testing the suspend first (as #953's ticket proposed)
 would have moved that quadrant too, silently narrowing #690.
 
+**#988 adds a fourth arm** for the case #953 documented as still open: a
+teardown of *this request's* `MODE_WRITE` arm with no cause left to name. The
+poll loop latches any transition away from the mode the callback itself
+published — a fact about this request, unlike the ambient suspend condition
+three rounds of #953's PR tried and withdrew — and the cascade becomes dir-full
+→ suspend → torn-down → card. The new arm sits **below** the suspend arm on
+purpose: the WiFi/quarantine teardown clears `mode` on its way into
+`APP_SD_STATE_SUSPENDED`, so the latch is always set in #953's own headline
+case, and hoisting it would have reverted #953 while claiming to extend it.
+What the new arm catches is what is left: the power-state teardown (which
+publishes no suspension at all), an `SD:ENAble` from the other transport, a
+mount/filesystem failure, and the transient case where the owner has already
+gone again.
+
+For #988 the test also models the **poll loop**, not just the cascade — it has
+to, because the two scenarios #988's acceptance criteria name present the
+cascade with identical inputs and differ only in *when* the suspend reason was
+non-NULL. Its headline property is the same one, one dimension wider: over the
+eight cells of (dir-full × suspended × torn-down), **exactly one** moves.
+
+The latch has a **second writer**, and the model has a third piece because of
+it. The poll loop samples `mode` at the top of its body and then yields 10 ms
+before its `readyWait < 500` bound is re-tested, so its last observation and its
+exit are different instants: a teardown landing in that final delay (or between
+the `while` condition's `IsWriteReady()` and the `if`'s) is latched by nobody and
+the cascade walks past the torn-down arm into the card advisory — the same
+mis-diagnosis #988 exists to stop, at a timing boundary the in-loop latch alone
+cannot reach. So the failure block opens with a **reconciliation read** that ORs
+one final sample in, modelled here as its own step (`bench_reconcile`) rather
+than folded into the loop, because its sample is strictly later than
+`polls[last]`. The `||` is load-bearing: a plain assignment would erase the
+loop's finding whenever a different caller had re-armed `WRITE` in the meantime.
+`torn_down_after_the_last_poll_sample_is_still_a_teardown` and
+`the_reconciliation_ors_it_does_not_overwrite_the_latch` are those two
+properties, and the first also re-asserts that reconciling still loses to the
+dir-full and suspend arms — the ordering is unchanged by it.
+
 No constants are copied here, so this target has no equivalent of `test_943`'s
-two greps. What it copies is the **order of the three arms**, so the Makefile
-guards that instead: it locates each arm's marker in `SCPIStorageSD.c` and
-**fails the build** unless they still appear as dir-full → suspend → card.
+two greps. What it copies is the **order of the four arms** and the position of
+the latch, so the Makefile guards those instead: it locates each marker in
+`SCPIStorageSD.c` and **fails the build** unless the arms still appear as
+dir-full → suspend → torn-down → card, the latch still sits inside the poll
+loop between the `#690` early-exit and the arm that reads it, and the
+reconciliation read still sits between that latch and that arm spelled as an
+`||`. All three guards were proven to fire (a renamed arm, a reordered pair, a
+deleted latch; a deleted, hoisted and assignment-rewritten reconciliation).
+
+`test_1121_start_streaming_arm_cascade.c` covers the SIBLING of that cascade,
+in the other file (issue #1121). `grep readyWait firmware/src` returns exactly
+two functions — `SCPI_StorageSDBenchmark` above, and
+`SCPI_StartStreamingClaimed` (`SCPIInterface.c`), which arms an SD write for a
+streaming log and runs the textually identical poll. It was the one left
+uncovered when #988 shipped: its post-loop cascade checked only
+`StartupDirFull()` and `StartupDiskFull()` before falling through to a bare
+`LOG_E("SD file not ready after %d ms")`, so a mid-wait teardown — a WiFi
+FW-update, a bus-jam quarantine, or a power-state drop, none of which sets
+either flag — burned the full 5 s and then told the operator only how long it
+had waited. #1121 ports both arms across.
+
+Same technique and same reason as `test_953`/`test_943`: `SCPIInterface.c` is
+not includable on the host (established by `test_999`, which tried), so the
+cascade, the poll loop and the reconciliation read are re-implemented against
+injected values and the pre-/post-fix shapes compared on identical inputs.
+
+**What is not a copy of the twin** is why this is its own file rather than
+cases bolted onto `test_953`. This site has FIVE arms, because it also clears
+and re-reads the #498/#851 disk-full flag, and both new arms go *below* it —
+for the same reason they go below dir-full. `sd_card_manager.c`'s
+`CHECK_DISK_FULL` free-space rejection (`:1860-1868`) raises `startupDiskFull`,
+**then stores `MODE_NONE`**, then routes to `PROCESS_STATE_ERROR`, as one
+refusal: structurally identical to the `#690` `OPEN_FILE` path. So
+`diskFull && tornDown` is the *normal* shape of every real out-of-space
+refusal, not a corner, and hoisting the latch above it would replace #851's
+`%llu B free < %llu B floor` — the only message carrying the numbers — with
+"retry", which will fail identically because the card is still full.
+`disk_full_that_also_tore_the_arm_down_keeps_its_verdict` and
+`recorded_disk_full_refusal_outranks_a_later_suspend` are the tests that fail
+if anyone tries either reorder. The poll loop differs too: this site's
+early-exit breaks on `StartupDirFull() || StartupDiskFull()` where the twin's
+breaks on dir-full alone, and `the_loop_early_exits_on_either_recorded_flag`
+pins that — asserting the *latch* rather than a verdict, because both flags are
+sticky so a loop that ran on would still reach the same arm, and only the latch
+shows the difference.
+
+The headline property is the twin's, one dimension wider again: over the
+sixteen cells of (dir-full × disk-full × suspended × torn-down), **exactly
+three** move, and all three sit in the quadrant where nothing was recorded —
+the only quadrant #1121 is allowed to touch. Every one of the other thirteen is
+a verdict that some individually-plausible reorder would take out, and the file
+header enumerates which reorder takes which.
+
+No constants are copied here either, so like `test_953` this target has no
+equivalent of `test_943`'s greps; what it copies is the ORDER, so the Makefile
+guards that instead, in three parts mirroring the twin's three — the five arms
+still in order in `SCPIInterface.c`, the latch still inside the poll loop
+between the early-exit and the arm that reads it, and the reconciliation read
+still between the two and still spelled as an `||`. All three were proven to
+fire (seven mutations: a reworded arm, two reordered pairs, a deleted latch, an
+early-exit with the disk-full term dropped, an assignment-rewritten
+reconciliation, and a hoisted one), and each of the test's fifteen cases was
+proven against a real mutation of the model (fourteen: both arms reverted
+individually, all five hoists, a deleted and an assignment-rewritten
+reconciliation, a latch that `break`s, a latch that fires unconditionally, both
+one-sided early-exits, and a second `SD_SuspendReasonText()` sample).
+
+Lengths are deliberately not measured here, matching `test_953`'s decision and
+for the same reason (#1001 is the general mechanism; `test_1000` is the one
+call site it exists for so far). The two messages #1121 adds were measured by
+hand against Logger's effective 125-byte ceiling when the change was made — 118
+bytes worst case for the reused `"Cannot start SD logging - SD suspended: %s"`
+prefix, 116 for the new torn-down message — and those numbers are recorded at
+the firmware site.
 
 `test_1004_help_write_abort.c` covers `SCPI_Help`'s (the `HELP` command)
 shared-response-buffer write-abort bound (issue #1004) — the third site of a
@@ -325,6 +433,84 @@ diagnostic on any of it. It deliberately does not reuse
 `tools/lint/log_budget.py`'s parser: that tool is the static gate, and it
 *models* this truncation — the value of this test is that it does not share
 the model.
+
+`test_1112_scan_list_snapshot_race.c` covers `MC12b_ComputeScanList()`
+(`HAL/ADC/MC12bADC.c`) and the mask form of `ADCChanEnableSetClaimed()`
+(`services/SCPI/SCPIADC.c`), issue #267 / PR firmware#1112 round 3. Neither
+is host-includable (Harmony's `configuration.h`/`definitions.h`, FreeRTOS,
+libscpi and the board graph), so this follows `test_985`/`test_953`/`test_943`:
+both the READ shape and the WRITE shape are re-implemented against an
+injected **writer-progress schedule** (how many of the writer's ascending
+per-channel stores had landed at each reader read), and their resulting scan
+masks compared. Until this fix, `MC12b_ComputeScanList` read each channel's
+`IsEnabled` flag inline with no lock, while `ADCChanEnableSetClaimed`'s
+bulk-mask form wrote up to 16 of those flags one store at a time — so
+`CONF:CAP:JSON?` on one SCPI transport could report a scan list (and derived
+per-channel `scan_offset_ticks`) describing a channel combination a
+`CONF:ADC:CHANnel <mask>` command on the other transport never actually
+commanded.
+
+The fix is two matching critical sections — the reader snapshots every
+`IsEnabled` under one `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()` before
+building the mask, and the writer stages its per-channel targets, then
+applies them all under one matching section — the same "neither half is
+sufficient alone" pairing this codebase already uses for the MC12b
+CalM/CalB pair (#1048/#1054) and the AD7609 Range (#1086). The suite proves
+that pairing is necessary, not just sufficient: it sweeps all four
+reader/writer combinations (inline read × torn write, snapshot read × torn
+write, inline read × atomic write, snapshot read × atomic write) and shows a
+non-commanded mask is reachable in the first three and structurally
+impossible only in the fourth — so a reader-only or writer-only fix would
+leave this suite red rather than quietly narrowing the window. Also covered:
+both of the audit's concrete scenarios (`CONF:ADC:CHAN 1`→`2` and `CONF:ADC:CHAN
+3`→`514`), a stable-configuration regression (both shapes must agree exactly
+when nothing races), and that both shapes read each channel's flag exactly
+once (unlike #985's per-flag timeline, no flag here is ever reread within one
+call — what varies is only *when*, relative to the writer, each of several
+different channels' single read lands).
+
+No constants are copied, but the shape is, so the Makefile guards both
+halves independently: it fails the build unless `MC12b_ComputeScanList`
+touches `pRt->Data[]` exactly once (inside the section, feeding the local
+snapshot) with the mask built from the snapshot afterward, and unless
+`ADCChanEnableSetClaimed`'s mask form stages into `maskTargets[]`/
+`maskValues[]` outside its section and applies them together inside it,
+leaving the four single-channel stores (already atomic — one aligned `bool`
+store on PIC32MZ) untouched and outside either section.
+
+`test_998_start_streaming_claimed_order.c` covers the claim/arm/refusal/poll
+order of `SCPI_StartStreamingClaimed()`'s SD-logging arm in
+`firmware/src/services/SCPI/SCPIInterface.c` (issue #998). Like `test_943`
+and unlike the header-only suites it includes no firmware source --
+`SCPIInterface.c` is 8,705 lines and pulls in FreeRTOS, Harmony PLIBs, the
+WINC driver, nanopb and libscpi, so it is not host-includable -- and the
+function itself is ~1250 lines with more than twenty return sites. What runs
+is a MODEL of the ~30-line slice from `sd_card_manager_TryClaim()` to the head
+of the readiness poll, exercising three orderings that were each a real bug:
+a refused arm returns *before* the poll (#942/#974, or the poll burns its full
+500 iterations blaming the media); the refusal branch clears `mode` *before*
+releasing the claim (#955/#963, or the clear is an unowned write that lands on
+whichever transport claimed in the gap); and the claim is taken exactly once,
+*before* `mode = MODE_WRITE` and the arm (#836, or a concurrent `SD:GET`'s
+`MODE_READ` is silently overwritten). Each is asserted against a recorded
+event trace, and each has a committed WRONG-order variant that is *required*
+to fail the corresponding assertion -- plus a cooperative two-owner race sweep
+that offers a competing SCPI transport the CPU at every step boundary.
+
+What it explicitly does **not** establish: it is not the real function, it is
+not concurrency (no scheduler, no preemption -- a model of a race can show an
+ordering is unsound, never that one is safe on PIC32MZ), and it does not
+establish the census of arm sites. Because it models rather than includes, the
+Makefile pins the real slice with a **sha256 of its raw bytes** between two
+named anchor lines -- nothing stripped, nothing normalised, so a reworded
+comment or a reindent fires it too -- and fails the
+build with four distinct messages -- anchor missing/duplicated, anchors out of
+order, `sha256sum` absent, or the code changed. The hash is a tripwire asking
+for a review, not a verdict that the code is right; a textual check of the
+ordering itself was deliberately *not* added:
+`tools/lint/scpi_sd_arm_path.py` had exactly that for exactly this site, and
+#976 removed it after three review rounds showed how an honest refactor
+defeats it.
 
 ## Framework
 

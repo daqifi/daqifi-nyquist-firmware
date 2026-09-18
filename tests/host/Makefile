@@ -83,6 +83,29 @@ SUSPEND_BIN := run_953_tests
 # notice edits to this function.
 SUSPENDREASON_BIN := run_985_tests
 
+# #1121: SYST:STR:START's SD write-arm ready-wait diagnosis -- the SIBLING of
+# SUSPEND_BIN's cascade, in the other file. `grep readyWait firmware/src`
+# returns exactly two functions: SCPI_StorageSDBenchmark (SCPIStorageSD.c,
+# fixed by #953/#988) and SCPI_StartStreamingClaimed (SCPIInterface.c), which
+# was left uncovered. #1121 ports both arms onto it.
+#
+# Same technique and same reason as SUSPEND_BIN -- SCPIInterface.c is not
+# includable on the host (established by SCPI999_BIN, which tried: 42 direct
+# includes spanning Harmony PLIB, the USB HS and WINC drivers and FreeRTOS's
+# MIPS port layer) -- so the cascade, the poll loop and the reconciliation read
+# are re-implemented against injected values and the pre-/post-fix shapes
+# compared.
+#
+# It copies no CONSTANTS, so it needs no equivalent of BENCH_BIN's greps. What
+# it copies is the ORDER of the FIVE arms, which is the substance: this site
+# has a #498/#851 disk-full arm the SD:BENCHmark twin does not, and both new
+# arms go BELOW it for the same reason they go below dir-full -- the
+# CHECK_DISK_FULL rejection (sd_card_manager.c:1860-1868) raises the flag AND
+# clears `mode`, so `diskFull && tornDown` is the NORMAL shape of that path,
+# exactly as `dirFull && tornDown` is of the #690 one. So the guards check
+# THAT, in three parts mirroring SUSPEND_BIN's three.
+STARTARM_BIN := run_1121_tests
+
 # #164: JSON_StringEscape.h is header-only and dependency-free for the same
 # reason AD7609Scale.h is -- the pure byte-escaping logic was split out of
 # JSON_Encoder.c, which is unusable on a host (it pulls in
@@ -304,6 +327,35 @@ FW_ADC_SCPI := ../../firmware/src/services/SCPI/SCPIADC.c
 FW_WIFI_SRC := ../../firmware/src/services/wifi_services/wifi_manager.c
 PYTHON      ?= python3
 
+# #1039 (PR #1116, split from the parked #1110): the four LOG_E messages
+# #1039 shortened, measured against the SAME ceiling $(SDLOG_BIN) measures --
+# Logger's real truncation, not an arithmetic estimate of it. Deliberately
+# independent of PR #1110's parked tests/host/gen_1039_log_budget.py /
+# tools/lint/log_budget.py (13 confirmed defects across two audit rounds per
+# PR #1116's own description, while the four message edits themselves drew
+# zero findings in either round -- which is why #1116 exists as the
+# split-out PR). So unlike $(SDLOG_BIN) above, this target extracts NOTHING
+# at build time and generates no header: it hardcodes copies of the four
+# shipped format strings (and, as a frozen historical control proving the
+# harness has teeth, the four pre-#1039 originals) and reproduces
+# LogMessageFormatImpl's truncation against them directly -- the same
+# technique $(SDLOG_BIN) uses for its own strings, just without the
+# extraction step, which is proportionate to a 62-line message change.
+#
+# What COULD silently drift is therefore the four hardcoded copies, not a
+# generated ceiling -- so the recipe greps each shipped format string's
+# literal source lines back out of the three files #1039 touched and fails
+# the build if any no longer matches exactly, the same technique
+# $(SDLOG_BIN)'s own REASON_* guard above uses for SD_SuspendReasonText()'s
+# three return strings. The three Logger.h/.c ceiling lines get the same
+# plain grep treatment (restated here rather than shared with $(SDLOG_BIN)'s
+# sed extraction, since nothing downstream needs the numbers as a generated
+# header).
+LOGCEIL_BIN  := run_1039_log_ceiling_tests
+LOGCEIL_SRC1 := ../../firmware/src/app_freertos.c
+LOGCEIL_SRC2 := ../../firmware/src/services/SCPI/SCPIADC.c
+LOGCEIL_SRC3 := ../../firmware/src/services/wifi_services/wifi_manager.c
+
 # Every binary depends on this file as well as on its sources. Two of the
 # targets below carry GUARDS in their recipes -- greps that fail the build when
 # the firmware text they model has moved -- and a guard that is only re-run when
@@ -353,6 +405,147 @@ SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
 # target -- run_1057_tests and the DAC1057_BIN it built -- and
 # test_1057_dac7718_wait_stat.c, which re-implemented the loop shape against a
 # mock rather than compiling the real one, retired with it.
+
+# PR firmware#1112 round 3 (issue #267): the scan-list enable-flag race.
+# MC12b_ComputeScanList() used to read pRt->Data[i].IsEnabled inline, one entry
+# at a time, holding nothing, while ADCChanEnableSetClaimed()'s mask form wrote
+# up to 16 of those flags one store at a time -- so CONF:CAP:JSON? could report
+# a scan list, and per-channel scan_offset_ticks derived from it, for a channel
+# combination that was never commanded.
+#
+# Neither source is host-compilable (MC12bADC.c pulls in Harmony's
+# configuration.h/definitions.h and FreeRTOS; SCPIADC.c adds libscpi and the
+# whole board graph), so test_1112_scan_list_snapshot_race.c does what #943,
+# #953 and #985 do for their own non-includable UUTs: it models the two READ
+# shapes and the two WRITE shapes against an injected writer-progress schedule
+# and compares their masks.
+#
+# It copies no constants. What it copies is the SHAPE, and here the shape IS
+# the whole fix, on both sides:
+#
+#   READER -- every IsEnabled read happens inside ONE taskENTER_CRITICAL() /
+#   taskEXIT_CRITICAL() pair, and the mask is then built from the resulting
+#   local snapshot. The decisive check is that pRt->Data[...] is touched
+#   EXACTLY ONCE in the whole function: one live read left behind in the
+#   mask-building loop is the defect back, and the modelled test -- which
+#   asserts the snapshot shape -- would stay green through it.
+#
+#   WRITER -- the board-variant switch STAGES into maskTargets[]/maskValues[]
+#   outside the section (four staging sites across the three arms: NQ1, NQ3,
+#   and the NQ2/legacy default, whose MC12b-public and non-MC12b paths are
+#   separate) and one section applies them together. A store written straight
+#   through
+#   `channelRuntimeConfig->IsEnabled = value;` is the torn writer back, and the
+#   test's SNAPSHOT x TORN row proves the reader's section alone does not cover
+#   for it.
+#
+# Also pinned: the FOUR single-channel stores stay OUTSIDE the section. Their
+# being unprotected is a claim this fix makes -- one aligned bool store is
+# already atomic on PIC32MZ -- not an oversight, so moving them means the claim
+# was re-thought and this test's premise needs re-checking.
+#
+# Comment lines are stripped before counting, because both functions' own
+# comments name these identifiers on purpose. A comment restyled so its lines
+# do not begin with `*` or `/` therefore fails this guard -- loudly, which is
+# the right outcome for a guard whose job is to notice edits to these two
+# functions. CRs are stripped too: every firmware source in this repo is CRLF,
+# and this Makefile is not.
+SCAN1112_BIN := run_1112_tests
+MC12BADC_SRC := $(FW_ADC)/MC12bADC.c
+SCPIADC_SRC  := ../../firmware/src/services/SCPI/SCPIADC.c
+
+# #998: the claim/arm/refusal/poll order of SCPI_StartStreamingClaimed()'s
+# SD-logging arm. Same wall as #943 and #971, one file over -- SCPIInterface.c
+# is 8,705 lines and pulls in FreeRTOS, Harmony PLIBs, the WINC driver, nanopb
+# and libscpi, so it is not host-includable and this is a MODEL rather than the
+# real code. It therefore needs the same way to fail loudly when what it models
+# moves underneath it.
+#
+# The guard is a CONTENT HASH, for the reason #971's is: PR #976 removed a
+# branch-gated positional check of this exact shape, for this exact site, after
+# three review rounds catalogued how an honest refactor defeats reasoning about
+# which BRANCH a write sits in with regexes. #998 exists because that removal
+# left the site with no coverage; re-adding that check is explicitly out of its
+# scope. A hash claims only "this text is unchanged", which is all a build
+# recipe can honestly know.
+#
+# WHAT THIS PIN DOES NOT COVER, stated because an earlier revision of this line
+# claimed "no refactor slips past it" and that is false. This is a pin on the
+# CONTENT OF AN INTERIOR SLICE. It is not a pin on the behaviour of the
+# function. The sed range begins AT the BEGIN anchor line, so anything inserted
+# ABOVE that line is outside the hash while still changing what the slice does.
+# Demonstrated: inserting
+#
+#     pSDCardSettings->mode = SD_CARD_MANAGER_MODE_WRITE;
+#
+# immediately above the anchor publishes the operand before TryClaim, so the
+# claim is refused, START returns an error, and because the refusal branch does
+# not restore `mode` the manager reads busy until reboot -- the exact
+# publish-then-check shape property C exists to pin. Both anchors stay unique
+# and ordered, the selected bytes are unchanged, and the gate stays green.
+#
+# That gap is INTRINSIC to pinning an interior region, not an anchor-placement
+# bug: every slice has a boundary, and code above any boundary you choose can
+# change what follows it. Moving the anchor moves the gap. Hashing the whole
+# ~1250-line function would close it and is rejected for the reason in the next
+# paragraph -- it would fire on nearly every unrelated edit, and a tripwire
+# people learn to ignore protects nothing.
+#
+# So read a green pin as "the slice's bytes are unchanged", which is what it
+# checks, and never as "the ordering this models is still correct", which it
+# cannot check. The model in test_998_start_streaming_claimed_order.c is what
+# describes the ordering; the pin only tells you when to go and re-read it.
+#
+# WHAT IS HASHED, and why it is a SLICE and not a function. Unlike #971's
+# ~8-line helper, SCPI_StartStreamingClaimed() is ~1250 lines with more than
+# twenty return sites, so the whole body is impractical to pin: nearly every
+# unrelated edit to START would fire it and the tripwire would be trained away.
+# Pinned instead is the region between the two anchors below -- the TryClaim,
+# the `mode = MODE_WRITE` publish, the arm, the refusal branch's clear+release,
+# the success release, and the head of the readiness poll. That is exactly the
+# text the three modelled orderings live in, and nothing else.
+#
+# THE HASH COVERS THE SLICE'S RAW BYTES. Nothing is stripped, nothing is
+# normalised. Any byte that changes between the anchors changes the hash --
+# including a reworded comment and including reindentation.
+#
+# That is the fourth rule this pin has had, and the previous three all failed
+# the same way: each tried to make some class of "harmless" edit not fire, and
+# each turned out to erase a harmful edit too.
+#
+#   1. line-anchored comment strip  -- erased a leading-dereference statement,
+#                                      and the code half of /* note */ stmt();
+#   2. awk comment-state machine    -- erased a statement spliced into a //
+#                                      comment by a backslash-newline, and one
+#                                      hidden by comment markers inside string
+#                                      literals
+#   3. whitespace-run collapse      -- erased whitespace edits INSIDE string
+#                                      literals, which change what the firmware
+#                                      logs: padding a message past Logger's
+#                                      128-byte line truncates away its reason
+#
+# Rules 1 and 2 were about comments and rule 3 was not, which is the point --
+# the defect was never "our comment parser is wrong", it was "we are deciding
+# which edits do not matter, and we keep being wrong about that". A tripwire
+# does not get to make that judgement. So it no longer makes any.
+#
+# COST, and it is real: reindenting the slice fires, and rewording a comment in
+# it fires. 90 of the slice's 120 lines are comment, so this will fire on edits
+# that turn out to be harmless. Each such fire costs one re-read and a
+# re-derived SHA. The alternative, three times running, was a silent pass over
+# an edit that mattered. Re-derive with:
+#
+#   sed -n '/^[[:space:]]*<BEGIN anchor>/,/^[[:space:]]*<END anchor>/p' \
+#       firmware/src/services/SCPI/SCPIInterface.c | sha256sum
+#
+# The END anchor carries the poll's `readyWait < 500` bound, which the model
+# copies as MODEL_POLL_MAX. A change to that number fails the anchor check by
+# name rather than merely shifting the hash, which is the more useful message.
+START_BIN := run_998_tests
+START_CLAIMED_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
+START_CLAIMED_BEGIN := if (!sd_card_manager_TryClaim()) {
+START_CLAIMED_END := while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
+START_CLAIMED_SHA := 404e01fdd3b7c9c8eb26cfca959b498ebe9b3e921b77daa0ddd3bca72938d490
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)
@@ -438,13 +631,18 @@ $(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE
 # of claim to make about them.
 #
 # The four drivers stay as PREREQUISITES so an edit to one must invalidate
-# this binary for `make`'s incremental build to be trustworthy. Three of them
-# (spi/uart/i2c) are the only consumers of the header under test and nothing
-# here reads them further. DAC7718_SRC joined in #1108, when dac7718_WaitStat
-# folded onto this same shared header instead of keeping its own grep-guarded
-# copy (see the retired comment above DAC7718_SRC's definition, above) --
-# and DOES get two guards below, because they are the two things the retired
-# target checked that compiling WaitLoop.h for real cannot.
+# this binary for `make`'s incremental build to be trustworthy. DAC7718_SRC
+# joined in #1108, when dac7718_WaitStat folded onto this same shared header
+# instead of keeping its own grep-guarded copy (see the retired comment above
+# DAC7718_SRC's definition, above) -- and gets two guards below, because they
+# are the two things the retired target checked that compiling WaitLoop.h for
+# real cannot. #1114 added a THIRD guarded fact, on the i2c/spi/uart trio:
+# that i2c_WaitBudgetSpent calls the shared WaitLoop_BudgetSpent (one grep),
+# and that spi_WaitBudgetSpent/uart_WaitBudgetSpent still carry their OWN
+# inline '>=' rather than drifting to '>' unnoticed (one grep each) --
+# test_1056_wait_loop.c's budget_spent_boundary_is_ge proves the shared
+# function's own boundary and nothing about which driver's text still says
+# what (worker STEP 3a review, PR #1119).
 #
 # GUARD 1 (unchanged by #1108's correction): that DAC7718.c itself still
 # ROUTES every wait through dac7718_WaitStat rather than a call site reverting
@@ -483,6 +681,38 @@ $(WAITLOOP_BIN): test_1056_wait_loop.c test_framework.h $(WAITLOOP_H) \
 	       echo "       test_1056_wait_loop.c (proves WaitLoop.h's two shapes, not which one DAC7718.c"; \
 	       echo "       calls) nor the guard above (matches either shape's call syntax identically)"; \
 	       echo "       can see this coupling -- only this grep does."; \
+	       exit 1; }
+	@grep -qF 'return WaitLoop_BudgetSpent((uint32_t)(_CP0_GET_COUNT() - w->start),' $(USER_I2C_SRC) \
+	  || { echo "ERROR: i2c_WaitBudgetSpent no longer returns WaitLoop_BudgetSpent(...) in $(USER_I2C_SRC)."; \
+	       echo "       #1114 decided the I2C budget boundary should be '>=', shared with"; \
+	       echo "       spi_WaitStat/uart_WaitSta via that function instead of an inline"; \
+	       echo "       comparison of its own. test_1056_wait_loop.c's"; \
+	       echo "       budget_spent_boundary_is_ge test proves the shared function's"; \
+	       echo "       boundary directly, which says nothing about whether"; \
+	       echo "       i2c_WaitBudgetSpent still calls it -- same blind spot as the DAC7718"; \
+	       echo "       guards above, same fix: only this grep sees the call site. The pattern"; \
+	       echo "       is the exact return statement (function + its first argument"; \
+	       echo "       expression), not a bare file-wide occurrence of the function name --"; \
+	       echo "       an unrelated comment or a stray call elsewhere in this file cannot"; \
+	       echo "       satisfy it (Qodo /agentic_review, PR #1119 round 1)."; \
+	       exit 1; }
+	@grep -qF 'return (TickType_t)(xTaskGetTickCount() - w->start) >= w->timeoutTicks;' $(USER_SPI_SRC) \
+	  || { echo "ERROR: spi_WaitBudgetSpent's inline '>=' comparison is no longer present in $(USER_SPI_SRC)."; \
+	       echo "       #1114 decided the I2C budget boundary should align to spi/uart's existing"; \
+	       echo "       '>=', NOT that spi/uart migrate onto WaitLoop_BudgetSpent -- WaitLoop.h says"; \
+	       echo "       why (a TickType_t-vs-uint32_t width mismatch, latent not live). So this repo"; \
+	       echo "       still has THREE copies of the boundary comparison, and"; \
+	       echo "       test_1056_wait_loop.c's budget_spent_boundary_is_ge test exercises only"; \
+	       echo "       WaitLoop_BudgetSpent -- it cannot see spi_WaitBudgetSpent's own inline text and"; \
+	       echo "       would not notice it changing to '>' (worker STEP 3a review, PR #1119). Only"; \
+	       echo "       this grep pins spi's operator; it is the exact return statement, not a bare"; \
+	       echo "       substring, so an unrelated '>=' elsewhere in the file cannot satisfy it."; \
+	       exit 1; }
+	@grep -qF 'return (TickType_t)(xTaskGetTickCount() - w->start) >= w->timeoutTicks;' $(USER_UART_SRC) \
+	  || { echo "ERROR: uart_WaitBudgetSpent's inline '>=' comparison is no longer present in $(USER_UART_SRC)."; \
+	       echo "       Same guard, same reason, as the spi one immediately above -- see it for the"; \
+	       echo "       full explanation. uart_WaitSta's copy is textually identical to spi_WaitStat's,"; \
+	       echo "       which is why the two greps use the same pattern against different files."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -I$(FW_HAL) -o $(WAITLOOP_BIN) test_1056_wait_loop.c
 
@@ -579,21 +809,172 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
 
+# #988 added a FOURTH arm (the torn-down latch) between the live suspend reason
+# and the card advisory, so this guard now pins four markers, not three. The
+# order it pins IS the design decision the test asserts: dirFull -> suspend ->
+# torn-down -> card. In particular the torn-down arm sits BELOW the suspend arm
+# on purpose -- the WiFi/quarantine teardown clears `mode` on its way into
+# APP_SD_STATE_SUSPENDED, so the latch is always set there too, and hoisting it
+# would silence the #953 arm in exactly the case #953 shipped for.
+#
+# Two more markers pin the LATCH itself, which #988 put inside the poll loop and
+# which the test now models as a loop rather than as an injected boolean: it must
+# sit after the #690 early-exit and before the arm that consumes it.
+#
+# WHAT THESE GREPS DO NOT PIN, stated rather than implied: that the latch does
+# not also `break`. Adding one would still satisfy every marker here while
+# destroying the premise of the "cause already lifted" case -- breaking ends the
+# wait at the instant the teardown becomes visible, which is also the instant the
+# cause is still visible, so that case could never be reached. There is no cheap
+# textual check for it; it is held by the test file's own FIDELITY note and by
+# review. (A grep for `break` in the loop was tried and rejected: the #690
+# early-exit is a legitimate `break` two lines above, so the check would have to
+# know which one it was looking at, which is parsing C -- the thing #1032 exists
+# to get this repo out of.)
 $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
 	@a=`grep -nF 'SD:BENCH refused' $(SD_BENCH_SRC) | cut -d: -f1`; \
 	 b=`grep -nF '} else if (why != NULL) {' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 d=`grep -nF '} else if (armTornDown) {' $(SD_BENCH_SRC) | cut -d: -f1`; \
 	 c=`grep -nF 'SD:BENCH - File not ready after timeout' $(SD_BENCH_SRC) | cut -d: -f1`; \
-	 test -n "$$a" && test -n "$$b" && test -n "$$c" \
-	   && test "$$a" -lt "$$b" && test "$$b" -lt "$$c" \
+	 test -n "$$a" && test -n "$$b" && test -n "$$d" && test -n "$$c" \
+	   && test "$$a" -lt "$$b" && test "$$b" -lt "$$d" && test "$$d" -lt "$$c" \
 	   || { echo "ERROR: the SD:BENCHmark file-not-ready cascade in $(SD_BENCH_SRC)"; \
-	        echo "       is no longer dirFull -> suspend -> card, or an arm was"; \
-	        echo "       reworded, moved or duplicated (markers found at a='$$a'"; \
-	        echo "       b='$$b' c='$$c')."; \
+	        echo "       is no longer dirFull -> suspend -> torn-down -> card, or an"; \
+	        echo "       arm was reworded, moved or duplicated (markers found at"; \
+	        echo "       a='$$a' b='$$b' d='$$d' c='$$c')."; \
 	        echo "       test_953_bench_suspend_diagnosis.c models THAT ordering and"; \
 	        echo "       its whole point is that the order is the fix -- re-read both"; \
 	        echo "       before changing either."; \
 	        exit 1; }
+	@e=`grep -nF '/* #690: early-exit */' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 f=`grep -nF 'armTornDown = true;' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 d=`grep -nF '} else if (armTornDown) {' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 test -n "$$e" && test -n "$$f" && test -n "$$d" \
+	   && test "$$e" -lt "$$f" && test "$$f" -lt "$$d" \
+	   || { echo "ERROR: #988's torn-down latch in $(SD_BENCH_SRC) is gone, moved out"; \
+	        echo "       of the ready-wait poll loop, or duplicated (markers found at"; \
+	        echo "       early-exit='$$e' latch='$$f' arm='$$d')."; \
+	        echo "       test_953_bench_suspend_diagnosis.c models the latch as part of"; \
+	        echo "       the LOOP -- that is how it distinguishes 'torn down, no cause"; \
+	        echo "       ever observable' from 'torn down by a cause that has since"; \
+	        echo "       lifted'. Re-read both before changing either."; \
+	        exit 1; }
+# #988's RECONCILIATION READ. The loop's latch has a sampling gap it cannot close
+# itself -- the body samples `mode` and then yields 10 ms before the `readyWait <
+# 500` bound is re-tested, so a teardown in that final delay is observed by
+# nobody -- and the fix is one more sample at the head of the !IsWriteReady()
+# block. Two properties, both grep-checkable and both load-bearing:
+#
+#   POSITION. It must sit AFTER the in-loop latch and BEFORE the arm that
+#     consumes it. Moved above the loop it would sample the arm this callback
+#     just published and could never observe a teardown at all.
+#   THE `||`. Pinned by matching the literal `armTornDown = armTornDown ||`
+#     rather than just the variable. A plain `armTornDown = (mode != WRITE)`
+#     would satisfy a position-only check while overwriting the loop's finding
+#     whenever a different caller had re-armed WRITE -- reintroducing #988
+#     through its own fix. `the_reconciliation_ors_it_does_not_overwrite_the_
+#     latch` is the test that models that mutation.
+#
+# WHAT THIS DOES NOT PIN: that the read is inside the !IsWriteReady() block
+# rather than merely between the two markers, and that the loop's own latch was
+# not deleted in favour of it (the guard above holds that one). Line order is all
+# grep has; the rest is the comment at the firmware site and review.
+	@f=`grep -nF 'armTornDown = true;' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 g=`grep -nF 'armTornDown = armTornDown ||' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 d=`grep -nF '} else if (armTornDown) {' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 test -n "$$f" && test -n "$$g" && test -n "$$d" \
+	   && test "$$f" -lt "$$g" && test "$$g" -lt "$$d" \
+	   || { echo "ERROR: #988's post-loop reconciliation read in $(SD_BENCH_SRC) is"; \
+	        echo "       gone, moved out of the file-not-ready block, or rewritten as"; \
+	        echo "       an assignment (markers found at latch='$$f'"; \
+	        echo "       reconcile='$$g' arm='$$d')."; \
+	        echo "       It must read 'armTornDown = armTornDown || (...)' and sit"; \
+	        echo "       between the loop's latch and the arm that consumes it."; \
+	        echo "       test_953_bench_suspend_diagnosis.c models it as a separate"; \
+	        echo "       step (bench_reconcile) for exactly that reason. Re-read both"; \
+	        echo "       before changing either."; \
+	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
+
+# #1121: the same three guards as $(SUSPEND_BIN), against the OTHER file.
+#
+# GUARD 1 -- THE FIVE-ARM ORDER. This site's cascade is
+# dirFull -> diskFull -> suspend -> tornDown -> generic, and every adjacent
+# swap destroys a shipped fix: suspend above either recorded verdict
+# re-diagnoses a refusal that a later suspension merely followed (#953's own
+# mis-diagnosis, pointed the other way); tornDown above the suspend arm
+# silences #953 in #953's headline case (the WiFi/FW-update/quarantine teardown
+# publishes BOTH through one app_SDCard_GracefulShutdown() call, so the latch is
+# always set there); tornDown above either recorded verdict swallows the #689
+# refuse text or #851's `%llu B free < %llu B floor` numbers, because both of
+# those refusals clear `mode` as part of themselves.
+$(STARTARM_BIN): test_1121_start_streaming_arm_cascade.c test_framework.h \
+                $(SCPI_INTERFACE_SRC) $(RECIPES)
+	@a=`grep -nF 'SD start refused (#689): ' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 b=`grep -nF '} else if (sd_card_manager_StartupDiskFull()) {' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 c=`grep -nF '} else if (why != NULL) {' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 d=`grep -nF '} else if (armTornDown) {' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 e=`grep -nF 'SD file not ready after %d ms' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 test -n "$$a" && test -n "$$b" && test -n "$$c" && test -n "$$d" && test -n "$$e" \
+	   && test "$$a" -lt "$$b" && test "$$b" -lt "$$c" && test "$$c" -lt "$$d" \
+	   && test "$$d" -lt "$$e" \
+	   || { echo "ERROR: the SYST:STR:START file-not-ready cascade in"; \
+	        echo "       $(SCPI_INTERFACE_SRC) is no longer dirFull -> diskFull ->"; \
+	        echo "       suspend -> torn-down -> generic, or an arm was reworded,"; \
+	        echo "       moved or duplicated (markers found at a='$$a' b='$$b'"; \
+	        echo "       c='$$c' d='$$d' e='$$e')."; \
+	        echo "       test_1121_start_streaming_arm_cascade.c models THAT"; \
+	        echo "       ordering and its whole point is that the order is the fix"; \
+	        echo "       -- re-read both before changing either."; \
+	        exit 1; }
+# GUARD 2 -- THE IN-LOOP LATCH, between the early-exit and the arm that reads
+# it. The early-exit marker is matched in FULL, including its
+# `|| sd_card_manager_StartupDiskFull()` term: this site breaks on BOTH
+# recorded flags where the SD:BENCHmark twin breaks on dir-full alone, and
+# `the_loop_early_exits_on_either_recorded_flag` models it that way. Drop
+# either term and this grep finds nothing and the build stops.
+	@f=`grep -nF 'if (sd_card_manager_StartupDirFull() || sd_card_manager_StartupDiskFull()) {' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 g=`grep -nF 'armTornDown = true;' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 d=`grep -nF '} else if (armTornDown) {' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 test -n "$$f" && test -n "$$g" && test -n "$$d" \
+	   && test "$$f" -lt "$$g" && test "$$g" -lt "$$d" \
+	   || { echo "ERROR: #1121's torn-down latch in $(SCPI_INTERFACE_SRC) is gone,"; \
+	        echo "       moved out of the ready-wait poll loop, duplicated, or the"; \
+	        echo "       loop's early-exit no longer tests BOTH recorded flags"; \
+	        echo "       (markers found at early-exit='$$f' latch='$$g' arm='$$d')."; \
+	        echo "       test_1121_start_streaming_arm_cascade.c models the latch as"; \
+	        echo "       part of the LOOP -- that is how it distinguishes 'torn down,"; \
+	        echo "       no cause ever observable' from 'torn down by a cause that has"; \
+	        echo "       since lifted'. Re-read both before changing either."; \
+	        exit 1; }
+# GUARD 3 -- THE RECONCILIATION READ. Position (after the in-loop latch, before
+# the arm that consumes it) and the `||` (matched literally, not just the
+# variable name -- a plain `armTornDown = (mode != WRITE)` would satisfy a
+# position-only check while overwriting the loop's finding whenever a different
+# caller had re-armed WRITE in the meantime). Same two properties, same reasons,
+# as the twin's third guard.
+#
+# WHAT THIS DOES NOT PIN, identically to the twin: that the read is inside the
+# !IsWriteReady() block rather than merely between the two markers, and that the
+# loop's own latch was not deleted in favour of it (guard 2 holds that one).
+# Line order is all grep has; the rest is the comment at the firmware site and
+# review.
+	@g=`grep -nF 'armTornDown = true;' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 h=`grep -nF 'armTornDown = armTornDown ||' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 d=`grep -nF '} else if (armTornDown) {' $(SCPI_INTERFACE_SRC) | cut -d: -f1`; \
+	 test -n "$$g" && test -n "$$h" && test -n "$$d" \
+	   && test "$$g" -lt "$$h" && test "$$h" -lt "$$d" \
+	   || { echo "ERROR: #1121's post-loop reconciliation read in"; \
+	        echo "       $(SCPI_INTERFACE_SRC) is gone, moved out of the"; \
+	        echo "       file-not-ready block, or rewritten as an assignment"; \
+	        echo "       (markers found at latch='$$g' reconcile='$$h' arm='$$d')."; \
+	        echo "       It must read 'armTornDown = armTornDown || (...)' and sit"; \
+	        echo "       between the loop's latch and the arm that consumes it."; \
+	        echo "       test_1121_start_streaming_arm_cascade.c models it as a"; \
+	        echo "       separate step (start_reconcile) for exactly that reason."; \
+	        echo "       Re-read both before changing either."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(STARTARM_BIN) test_1121_start_streaming_arm_cascade.c
 
 SCPI999_WIRING_GUARD := check_999_createscpicontext_wiring.sh
 SCPI999_ARG_EXTRACTOR := extract_call_args.pl
@@ -864,6 +1245,90 @@ $(LOG1039_BIN): test_1039_log_message_budget.c test_framework.h \
                 $(LOG1039_GEN) $(RECIPES)
 	$(CC) $(CFLAGS) -o $(LOG1039_BIN) test_1039_log_message_budget.c
 
+# #1039: see the LOGCEIL_BIN comment block above for what this proves and
+# why it is deliberately independent of the parked #1110 tooling.
+$(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
+                $(LOGCEIL_SRC1) $(LOGCEIL_SRC2) $(LOGCEIL_SRC3) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+LOG_MESSAGE_SIZE[[:space:]]+128[[:space:]]*$$' $(FW_LOG_H) \
+	  || { echo "ERROR: LOG_MESSAGE_SIZE is no longer '128' in $(FW_LOG_H)."; \
+	       echo "       Update FW_LOG_MESSAGE_SIZE in test_1039_log_message_ceiling.c and"; \
+	       echo "       re-derive LOG_BUDGET (and every asserted margin) before trusting it."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*size = vsnprintf\(buffer, LOG_MESSAGE_SIZE - 2, format, args\);[[:space:]]*$$' $(FW_LOG_C) \
+	  || { echo "ERROR: LogMessageFormatImpl's vsnprintf reserve is no longer"; \
+	       echo "       'LOG_MESSAGE_SIZE - 2' in $(FW_LOG_C). Update"; \
+	       echo "       FW_LOG_VSNPRINTF_RESERVE in test_1039_log_message_ceiling.c and"; \
+	       echo "       re-derive LOG_BUDGET before trusting it."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*size = min\(\(LOG_MESSAGE_SIZE - 3\), size\);[[:space:]]*$$' $(FW_LOG_C) \
+	  || { echo "ERROR: LogMessageFormatImpl's clamp reserve is no longer"; \
+	       echo "       'LOG_MESSAGE_SIZE - 3' in $(FW_LOG_C) -- this is the reserve that"; \
+	       echo "       actually sets what survives. Update FW_LOG_CLAMP_RESERVE in"; \
+	       echo "       test_1039_log_message_ceiling.c and re-derive LOG_BUDGET (and every"; \
+	       echo "       asserted margin) before trusting it."; \
+	       exit 1; }
+# MSG1/MSG2's guards used to be two independent anchored grep pipelines
+# (opening->middle, middle->mask) not tied to the same line position --
+# audit wf_8f9d065d-2ef (CONFIRMED, medium) found that duplicating MSG2's
+# middle literal line immediately before its "<mask>." line passes both
+# pipelines (the duplicate itself satisfies the middle->mask pipeline)
+# while the shipped string grows past the 125-byte budget. check_log_block
+# below replaces both with ONE positional exact-block check per message:
+# the opening LOG_E(...) line must occur exactly once in the file, then
+# the N consecutive lines starting there (N = that message's literal line
+# count) are compared to the expected block as a single whole-block string
+# equality -- not a per-line or substring containment match, so an insert,
+# delete, duplicate, or edit of any one line inside the block fails it.
+	@check_log_block() { \
+	  f="$$1"; open_re="$$2"; n="$$3"; want="$$4"; label="$$5"; fmtname="$$6"; testfile="$$7"; \
+	  count=$$(grep -cE "$$open_re" "$$f"); \
+	  if [ "$$count" -ne 1 ]; then \
+	    echo "ERROR: $$label's opening LOG_E(...) line in $$f is expected exactly"; \
+	    echo "       once (anchored full-line match) but occurs $$count time(s)."; \
+	    echo "       A duplicate (or missing) opening line means the positional"; \
+	    echo "       block check below cannot trust where $$fmtname starts."; \
+	    return 1; \
+	  fi; \
+	  start=$$(grep -nE "$$open_re" "$$f" | head -1 | cut -d: -f1); \
+	  got=$$(sed -n "$${start},$$((start + n - 1))p" "$$f" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$$//'); \
+	  got=$$(printf '%s' "$$got" | tr '\n' '\001'); \
+	  wantnorm=$$(printf '%s' "$$want" | tr '\n' '\001'); \
+	  if [ "$$got" != "$$wantnorm" ]; then \
+	    echo "ERROR: $$label in $$f no longer matches $$fmtname in $$testfile exactly"; \
+	    echo "       (this compares the whole $$n-line block by position, not a"; \
+	    echo "       per-line or substring match -- an insert, delete, duplicate,"; \
+	    echo "       or edit of any one literal line trips it). Update the copy"; \
+	    echo "       and re-derive its length against LOG_BUDGET."; \
+	    return 1; \
+	  fi; \
+	}; \
+	want1=$$(printf '%s\n%s' \
+	  'LOG_E("Clock mismatch (#716): PBCLK3 %u Hz, built for %u Hz - "' \
+	  '"reprogram via PICkit/IPE, not a firmware update.",'); \
+	check_log_block $(LOGCEIL_SRC1) \
+	  '^[[:space:]]*LOG_E\("Clock mismatch \(#716\): PBCLK3 %u Hz, built for %u Hz - "[[:space:]]*$$' \
+	  2 "$$want1" "the #716 clock-mismatch LOG_E" MSG1_FORMAT test_1039_log_message_ceiling.c \
+	  || exit 1; \
+	want2=$$(printf '%s\n%s\n%s' \
+	  'LOG_E("CONFigure:ADC:CHANnel: channel %d not addressable; "' \
+	  '"two-arg form is <channel>,<state>, one-arg form is a "' \
+	  '"<mask>.",'); \
+	check_log_block $(LOGCEIL_SRC2) \
+	  '^[[:space:]]*LOG_E\("CONFigure:ADC:CHANnel: channel %d not addressable; "[[:space:]]*$$' \
+	  3 "$$want2" "the not-addressable-channel LOG_E" MSG2_FORMAT test_1039_log_message_ceiling.c \
+	  || exit 1
+	@grep -qF 'LOG_E("WiFi down and an SD card IS present on the shared bus - likely bus-incompatible; remove it (wiki: SD-Card-Compatibility)");' $(LOGCEIL_SRC3) \
+	  || { echo "ERROR: the SD-present LOG_E hint in $(LOGCEIL_SRC3) no longer matches"; \
+	       echo "       MSG3_TEXT in test_1039_log_message_ceiling.c. Update the copy and"; \
+	       echo "       re-derive its length against LOG_BUDGET."; \
+	       exit 1; }
+	@grep -qF 'LOG_E("WiFi down but SPI4 probes read CLEAR - remove any SD card; transfer-speed interference is not probe-visible");' $(LOGCEIL_SRC3) \
+	  || { echo "ERROR: the SPI4-clear LOG_E hint in $(LOGCEIL_SRC3) no longer matches"; \
+	       echo "       MSG4_TEXT in test_1039_log_message_ceiling.c. Update the copy and"; \
+	       echo "       re-derive its length against LOG_BUDGET."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(LOGCEIL_BIN) test_1039_log_message_ceiling.c
+
 # #985: build-time guard over SD_SuspendReasonText() -- see the merge-history
 # comment above `run:` below for how this target's registration in run/clean
 # was resolved.
@@ -906,6 +1371,85 @@ $(SUSPENDREASON_BIN): test_985_suspend_reason_consistency.c test_framework.h $(S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPENDREASON_BIN) test_985_suspend_reason_consistency.c
 
+# PR firmware#1112 round 3: build-time guard over BOTH halves of the scan-list
+# enable-flag race -- see the comment above $(SCAN1112_BIN)'s definition.
+$(SCAN1112_BIN): test_1112_scan_list_snapshot_race.c test_framework.h $(MC12BADC_SRC) $(SCPIADC_SRC) $(RECIPES)
+	@body=`sed -n '/^uint32_t MC12b_ComputeScanList(/,/^}/p' $(MC12BADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: MC12b_ComputeScanList() was not found in $(MC12BADC_SRC),"; \
+	        echo "       or no longer opens at column 0 -- the guards below can see"; \
+	        echo "       nothing, and a guard that examines nothing must fail."; \
+	        exit 1; }; \
+	 ne=`printf '%s\n' "$$body" | grep -c 'taskENTER_CRITICAL()'`; \
+	 nx=`printf '%s\n' "$$body" | grep -c 'taskEXIT_CRITICAL()'`; \
+	 nlive=`printf '%s\n' "$$body" | grep -o 'pRt->Data\[' | wc -l | tr -d ' '`; \
+	 test "$$ne" -eq 1 && test "$$nx" -eq 1 && test "$$nlive" -eq 1 \
+	   || { echo "ERROR: MC12b_ComputeScanList() in $(MC12BADC_SRC) no longer captures"; \
+	        echo "       the enable flags exactly once under exactly one critical"; \
+	        echo "       section (taskENTER_CRITICAL=$$ne taskEXIT_CRITICAL=$$nx"; \
+	        echo "        pRt->Data[]=$$nlive; want 1 1 1)."; \
+	        echo "       More than one pRt->Data[] reference means the mask is being"; \
+	        echo "       built from LIVE state again, which IS the #1112 race -- and"; \
+	        echo "       test_1112_scan_list_snapshot_race.c models the snapshot"; \
+	        echo "       shape, so it would pass regardless."; \
+	        exit 1; }; \
+	 e=`printf '%s\n' "$$body" | grep -n 'taskENTER_CRITICAL()' | cut -d: -f1`; \
+	 s=`printf '%s\n' "$$body" | grep -n 'enabledSnapshot\[i\] = pRt->Data\[i\]\.IsEnabled;' | cut -d: -f1`; \
+	 x=`printf '%s\n' "$$body" | grep -n 'taskEXIT_CRITICAL()' | cut -d: -f1`; \
+	 u=`printf '%s\n' "$$body" | grep -n 'enabledSnapshot\[i\]' | cut -d: -f1 | awk -v x="$$x" '$$1 > x' | wc -l | tr -d ' '`; \
+	 test -n "$$s" && test "$$e" -lt "$$s" && test "$$s" -lt "$$x" && test "$$u" -ge 2 \
+	   || { echo "ERROR: MC12b_ComputeScanList() in $(MC12BADC_SRC) is no longer"; \
+	        echo "       two-phase. The snapshot copy must sit INSIDE the critical"; \
+	        echo "       section and the mask must be built from it AFTERWARDS"; \
+	        echo "       (enter='$$e' snapshot='$$s' exit='$$x', $$u snapshot uses"; \
+	        echo "        after the section; want enter < snapshot < exit, uses >= 2)."; \
+	        exit 1; }
+	@wbody=`sed -n '/^static scpi_result_t ADCChanEnableSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$wbody" \
+	   || { echo "ERROR: ADCChanEnableSetClaimed() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0 -- the guards below can see"; \
+	        echo "       nothing, and a guard that examines nothing must fail."; \
+	        exit 1; }; \
+	 nold=`printf '%s\n' "$$wbody" | grep -o 'channelRuntimeConfig->IsEnabled = value;' | wc -l | tr -d ' '`; \
+	 nstage=`printf '%s\n' "$$wbody" | grep -o 'maskTargets\[index\] = channelRuntimeConfig;' | wc -l | tr -d ' '`; \
+	 nsingle=`printf '%s\n' "$$wbody" | grep -o 'channelRuntimeConfig->IsEnabled = (param2 > 0);' | wc -l | tr -d ' '`; \
+	 test "$$nold" -eq 0 && test "$$nstage" -eq 4 && test "$$nsingle" -eq 4 \
+	   || { echo "ERROR: the bulk-mask loop of ADCChanEnableSetClaimed() in"; \
+	        echo "       $(SCPIADC_SRC) no longer STAGES its per-channel writes"; \
+	        echo "       (direct '= value' stores=$$nold, staged=$$nstage,"; \
+	        echo "        single-channel stores=$$nsingle; want 0 4 4)."; \
+	        echo "       A direct store is the torn writer back: the reader's own"; \
+	        echo "       section then only NARROWS the #1112 window, which is the"; \
+	        echo "       SNAPSHOT x TORN row of test_1112_scan_list_snapshot_race.c."; \
+	        exit 1; }; \
+	 we=`printf '%s\n' "$$wbody" | grep -c 'taskENTER_CRITICAL()'`; \
+	 wx=`printf '%s\n' "$$wbody" | grep -c 'taskEXIT_CRITICAL()'`; \
+	 napply=`printf '%s\n' "$$wbody" | grep -o 'maskTargets\[index\]->IsEnabled = maskValues\[index\];' | wc -l | tr -d ' '`; \
+	 test "$$we" -eq 1 && test "$$wx" -eq 1 && test "$$napply" -eq 1 \
+	   || { echo "ERROR: ADCChanEnableSetClaimed() in $(SCPIADC_SRC) no longer applies"; \
+	        echo "       the staged mask exactly once under exactly one critical"; \
+	        echo "       section (taskENTER_CRITICAL=$$we taskEXIT_CRITICAL=$$wx"; \
+	        echo "        staged-apply stores=$$napply; want 1 1 1)."; \
+	        exit 1; }; \
+	 we=`printf '%s\n' "$$wbody" | grep -n 'taskENTER_CRITICAL()' | cut -d: -f1`; \
+	 wx=`printf '%s\n' "$$wbody" | grep -n 'taskEXIT_CRITICAL()' | cut -d: -f1`; \
+	 wa=`printf '%s\n' "$$wbody" | grep -n 'maskTargets\[index\]->IsEnabled = maskValues\[index\];' | cut -d: -f1`; \
+	 wstage=`printf '%s\n' "$$wbody" | grep -n 'maskTargets\[index\] = channelRuntimeConfig;' | cut -d: -f1 | awk -v e="$$we" '$$1 > e' | wc -l | tr -d ' '`; \
+	 wsingle=`printf '%s\n' "$$wbody" | grep -n 'channelRuntimeConfig->IsEnabled = (param2 > 0);' | cut -d: -f1 | awk -v e="$$we" '$$1 > e' | wc -l | tr -d ' '`; \
+	 test "$$we" -lt "$$wa" && test "$$wa" -lt "$$wx" \
+	   && test "$$wstage" -eq 0 && test "$$wsingle" -eq 0 \
+	   || { echo "ERROR: ADCChanEnableSetClaimed() in $(SCPIADC_SRC) no longer keeps"; \
+	        echo "       the table lookups out of, and the staged apply inside, its"; \
+	        echo "       critical section (enter='$$we' apply='$$wa' exit='$$wx',"; \
+	        echo "        $$wstage staging lines and $$wsingle single-channel stores"; \
+	        echo "        after the section opens; want enter < apply < exit, 0, 0)."; \
+	        echo "       The single-channel stores are OUTSIDE it deliberately -- one"; \
+	        echo "       aligned bool store is already atomic on PIC32MZ -- so moving"; \
+	        echo "       them means that claim was re-thought, not that this guard"; \
+	        echo "       should be relaxed."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(SCAN1112_BIN) test_1112_scan_list_snapshot_race.c
+
 # #1108 RETIRED $(DAC1057_BIN) here (run_1057_tests, built from
 # test_1057_dac7718_wait_stat.c, which this same block's history recorded
 # across EIGHT prior additive collisions -- fw#961 vs fw#983, fw#913 vs
@@ -916,6 +1460,73 @@ $(SUSPENDREASON_BIN): test_985_suspend_reason_consistency.c test_framework.h $(S
 # is a prerequisite of that target, see above), so there is no copy left for a
 # guard to pin. Same move #1056 made retiring the analogous grep guard that
 # used to stand in for spi_WaitStat/uart_WaitSta/i2c_WaitMif.
+
+# Four separate failures with four separate messages, because they send the
+# reader to four different places: the slice is GONE or DUPLICATED (the model
+# has lost, or can no longer name, its subject); the two anchors are in the
+# wrong order (the extraction is ill-formed, so the hash below would report a
+# misleading "code changed"); sha256sum is missing (a toolchain problem, not
+# drift); or the slice is there and its CODE CHANGED (the model may have gone
+# stale). Collapsing any of them into "hash mismatch" would send the reader to
+# diff a region that is not there, or not the one they think.
+$(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_CLAIMED_SRC) Makefile
+	@n=$$(grep -cF '$(START_CLAIMED_BEGIN)' $(START_CLAIMED_SRC) || true); \
+	 [ "$$n" = "1" ] \
+	  || { echo "ERROR: the slice's OPENING anchor occurs $$n times (want exactly 1)"; \
+	       echo "       in $(START_CLAIMED_SRC). The anchor is:"; \
+	       echo "         $(START_CLAIMED_BEGIN)"; \
+	       echo "       0 means SCPI_StartStreamingClaimed()'s SD arm was moved,"; \
+	       echo "       renamed or reshaped, and the model in"; \
+	       echo "       test_998_start_streaming_claimed_order.c has lost its subject."; \
+	       echo "       More than 1 means the extraction below can no longer name ONE"; \
+	       echo "       region: re-anchor it on a line that is unique and re-derive"; \
+	       echo "       START_CLAIMED_SHA. Either way, read the code against the model."; \
+	       exit 1; }
+	@n=$$(grep -cF '$(START_CLAIMED_END)' $(START_CLAIMED_SRC) || true); \
+	 [ "$$n" = "1" ] \
+	  || { echo "ERROR: the slice's CLOSING anchor occurs $$n times (want exactly 1)"; \
+	       echo "       in $(START_CLAIMED_SRC). The anchor is:"; \
+	       echo "         $(START_CLAIMED_END)"; \
+	       echo "       If the readiness poll's 500-iteration bound changed, update"; \
+	       echo "       BOTH this anchor and MODEL_POLL_MAX in"; \
+	       echo "       test_998_start_streaming_claimed_order.c, then re-derive"; \
+	       echo "       START_CLAIMED_SHA."; \
+	       exit 1; }
+	@b=$$(grep -nF '$(START_CLAIMED_BEGIN)' $(START_CLAIMED_SRC) | cut -d: -f1); \
+	 e=$$(grep -nF '$(START_CLAIMED_END)' $(START_CLAIMED_SRC) | cut -d: -f1); \
+	 [ "$$b" -lt "$$e" ] \
+	  || { echo "ERROR: the closing anchor (line $$e) is not below the opening one"; \
+	       echo "       (line $$b) in $(START_CLAIMED_SRC), so the sed range below"; \
+	       echo "       would run to end-of-file and the hash would report a"; \
+	       echo "       misleading 'the code changed'."; \
+	       echo "       This is a WELL-FORMEDNESS check on the extraction, NOT an"; \
+	       echo "       assertion about the ordering -- do not read a pass here as"; \
+	       echo "       the poll being in the right place. Re-read the code against"; \
+	       echo "       the model."; \
+	       exit 1; }
+	@command -v sha256sum >/dev/null 2>&1 \
+	  || { echo "ERROR: sha256sum not found -- it is what pins the modelled slice of"; \
+	       echo "       SCPI_StartStreamingClaimed() for"; \
+	       echo "       test_998_start_streaming_claimed_order.c. Install GNU coreutils."; \
+	       echo "       (Reported separately so it is not read as a drift failure.)"; \
+	       exit 1; }
+	@got=$$(sed -n '/^[[:space:]]*$(START_CLAIMED_BEGIN)/,/^[[:space:]]*$(START_CLAIMED_END)/p' $(START_CLAIMED_SRC) \
+	        | sha256sum | cut -d' ' -f1); \
+	 [ "$$got" = "$(START_CLAIMED_SHA)" ] \
+	  || { echo "ERROR: the CODE of SCPI_StartStreamingClaimed()'s SD arm has changed"; \
+	       echo "       in $(START_CLAIMED_SRC)."; \
+	       echo "         expected sha256 $(START_CLAIMED_SHA)"; \
+	       echo "         got      sha256 $$got"; \
+	       echo "       This is a tripwire, not a verdict: the change may be perfectly"; \
+	       echo "       correct. Re-read the slice between the two anchors against the"; \
+	       echo "       model in test_998_start_streaming_claimed_order.c -- if the"; \
+	       echo "       model still describes it (refusal before the poll, clear before"; \
+	       echo "       release, claim once before the arm), update START_CLAIMED_SHA;"; \
+	       echo "       if it does not, fix the model."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(START_BIN) test_998_start_streaming_claimed_order.c
+
+# Every suite, and every one of the eleven binaries. SEVENTH additive
 
 # Every suite, and every one of the FOURTEEN binaries. ELEVENTH additive
 # collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
@@ -934,9 +1545,36 @@ $(SUSPENDREASON_BIN): test_985_suspend_reason_consistency.c test_framework.h $(S
 # target into tests/host/tests/<issue>-<slug>.mk so a new suite appends to an
 # accumulator instead of editing a shared line. Whichever lands first, the rest
 # re-express their target as a fragment -- a mechanical move of one recipe,
-# which is strictly cheaper than this resolution has been ten times running.
+# which is strictly cheaper than this resolution has been nine times running.
+#
+# Every suite, and every one of the SIXTEEN binaries: main's fifteen plus
+# #998's $(START_BIN). #998 (the claim/arm/refusal/poll order of
+# SCPI_StartStreamingClaimed()'s SD arm) collided with fw#947, fw#1056, fw#980,
+# fw#1004, fw#1000, fw#999, fw#985, fw#1112 and fw#1121 here, and was resolved
+# the same way as every earlier collision: keep each side's target rule INTACT
+# and union only `run` and `clean`. #971's suite (run_971_tests, PR #976) is
+# still landing independently on another branch; when it meets this, same rule.
+#
+# Every suite, and every one of the SEVENTEEN binaries: the sixteen above plus
+# #1039's $(LOGCEIL_BIN) (PR #1116, the host guard for the four LOG_E messages
+# shortened under Logger's 125-byte ceiling). TENTH additive collision in this
+# block -- #1039/#1116 collided here with fw#998, fw#1112 and fw#1121, all
+# three already on main by the time this branch refreshed its base -- resolved
+# the same way as every earlier collision: keep each side's target rule INTACT
+# and union only `run` and `clean`.
+#
+# Every suite, and every one of the EIGHTEEN binaries: the seventeen above
+# plus #1110's own $(LOG1039_BIN) (see the LOG1039_BIN/LOG1039_GEN comment
+# block above), which this base refresh unions in for real for the first
+# time. ELEVENTH additive collision in this block -- fw#1039's LOG1039_BIN
+# (PR #1110, the parked lint tool half) collided here with fw#998, fw#1112,
+# fw#1121 and fw#1039/#1116's LOGCEIL_BIN, all already on main by the time
+# this branch refreshed its base -- resolved the same way as every earlier
+# collision: keep each side's target rule INTACT and union only `run` and
+# `clean`.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOG1039_BIN)
+     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
+     $(LOG1039_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -950,11 +1588,15 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(SDLOG_BIN)
 	./$(SCPI999_BIN)
 	./$(SUSPENDREASON_BIN)
+	./$(LOGCEIL_BIN)
+	./$(SCAN1112_BIN)
+	./$(STARTARM_BIN)
+	./$(START_BIN)
 	./$(LOG1039_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) \
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
 	      $(LOG1039_BIN) $(LOG1039_GEN)
 
 .PHONY: run clean
