@@ -1227,17 +1227,17 @@ $(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
 	       echo "       test_1039_log_message_ceiling.c and re-derive LOG_BUDGET (and every"; \
 	       echo "       asserted margin) before trusting it."; \
 	       exit 1; }
-	@grep -A1 -F 'LOG_E("Clock mismatch (#716): PBCLK3 %u Hz, built for %u Hz - "' $(LOGCEIL_SRC1) \
-	  | grep -qF '"reprogram via PICkit/IPE, not a firmware update.",' \
+	@grep -A1 -E '^[[:space:]]*LOG_E\("Clock mismatch \(#716\): PBCLK3 %u Hz, built for %u Hz - "[[:space:]]*$$' $(LOGCEIL_SRC1) \
+	  | grep -qE '^[[:space:]]*"reprogram via PICkit/IPE, not a firmware update\.",[[:space:]]*$$' \
 	  || { echo "ERROR: the #716 clock-mismatch LOG_E in $(LOGCEIL_SRC1) no longer matches"; \
 	       echo "       MSG1_FORMAT in test_1039_log_message_ceiling.c. Update the copy and"; \
 	       echo "       re-derive its length against LOG_BUDGET -- a stale copy would measure"; \
 	       echo "       text the device no longer emits."; \
 	       exit 1; }
-	@grep -A1 -F 'LOG_E("CONFigure:ADC:CHANnel: channel %d not addressable; "' $(LOGCEIL_SRC2) \
-	  | grep -qF '"two-arg form is <channel>,<state>, one-arg form is a "' \
-	  && grep -A1 -F '"two-arg form is <channel>,<state>, one-arg form is a "' $(LOGCEIL_SRC2) \
-	     | grep -qF '"<mask>.",' \
+	@grep -A1 -E '^[[:space:]]*LOG_E\("CONFigure:ADC:CHANnel: channel %d not addressable; "[[:space:]]*$$' $(LOGCEIL_SRC2) \
+	  | grep -qE '^[[:space:]]*"two-arg form is <channel>,<state>, one-arg form is a "[[:space:]]*$$' \
+	  && grep -A1 -E '^[[:space:]]*"two-arg form is <channel>,<state>, one-arg form is a "[[:space:]]*$$' $(LOGCEIL_SRC2) \
+	     | grep -qE '^[[:space:]]*"<mask>\.",[[:space:]]*$$' \
 	  || { echo "ERROR: the not-addressable-channel LOG_E in $(LOGCEIL_SRC2) no longer"; \
 	       echo "       matches MSG2_FORMAT in test_1039_log_message_ceiling.c. Update the"; \
 	       echo "       copy and re-derive its length against LOG_BUDGET."; \
