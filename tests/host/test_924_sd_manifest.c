@@ -62,12 +62,26 @@
  *     (chunked_equals_whole, chunked_equals_whole_every_length,
  *      zero_length_update_is_identity, header_then_data_is_concatenation,
  *      session_shape_round_trips)
- *     Note `zlib_vectors` SURVIVES that one — CRC32_Compute folds in a single
- *     Update, so a vectors-only suite would have called this firmware correct.
- *     The chunked tests are the whole reason this file exists.
+ *   - corrupt ONE entry of the CRC-32 nibble table    -> 1 fails
+ *     (zlib_vectors, and ONLY it)
  *   - remove the fold from sd_card_manager.c's SDCardWrite()
  *                                                    -> the BUILD fails, by
  *     the Makefile's first grep guard, before a single assertion runs.
+ *
+ * THE TWO CRC MUTATIONS ARE THE INTERESTING PAIR, because they are orthogonal
+ * and each is the other's blind spot -- which is the argument for carrying
+ * both kinds of test, made by measurement rather than by assertion:
+ *
+ *   - `zlib_vectors` SURVIVES the CRC32_Update mutation. CRC32_Compute folds
+ *     in a single Update, so a vectors-only suite would have called that
+ *     firmware correct.
+ *   - the chunked tests SURVIVE a corrupted table. They compare
+ *     accumulate_in_chunks against CRC32_Compute, and BOTH use the same
+ *     corrupted table -- so they establish CONSISTENCY, not CORRECTNESS.
+ *
+ * The chunked tests prove the accumulation model; zlib_vectors proves that
+ * what is being accumulated is zlib's CRC-32. Neither is redundant, and the
+ * mutation run is what shows it rather than merely claiming it.
  *
  * Run: make -C tests/host run
  * ========================================================================== */

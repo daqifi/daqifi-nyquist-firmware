@@ -138,6 +138,14 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
 #define SD_MANIFEST_LINE_MAX  (SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX \
                                + 8u + 5u + 21u + 12u + 1u)
 
+/* #924: how many SYS_FS_FileWrite calls one manifest line may take. A short
+ * write has already put bytes on the card, so abandoning the line leaves a
+ * fragment the NEXT record concatenates onto -- see sd_AppendManifestLine.
+ * Bounded rather than open-ended because this runs inside the rotation window
+ * #757/#822/#824 exist to keep short: three writes with no waiting and no
+ * yielding, then the fragment is terminated and the loss is contained. */
+#define SD_MANIFEST_WRITE_TRIES            3u
+
 /* #780: how long the pumped wait blocks between USB write pumps. Small enough
  * that a filling circular buffer is serviced promptly, large enough that the
  * wait is not a busy-spin against the SD task.
@@ -1553,6 +1561,46 @@ static void sd_OpenSessionManifest(void) {
         return;
     }
 
+    /* #924 (Qodo round 1): REFUSE A NAME THE FORMAT CANNOT REPRESENT, once,
+     * here -- rather than emitting a line that cannot be parsed back.
+     *
+     * A manifest line is `<name>,<bytes>,0xCRC`, and the name is echoed raw.
+     * SD_ValidatePathParam (SCPIStorageSD.c) rejects control characters, '\\'
+     * and ':' but ACCEPTS a comma, so `SYST:STOR:SD:FILE "trial,1.csv"` is a
+     * legal configured name whose record would read as FOUR fields -- and the
+     * name a reader extracted from it would not identify any file, so
+     * SD:CRC? / SD:GET on it would fail. A quoting rule would be the other
+     * answer; refusing is chosen because it keeps the invariant that a
+     * manifest which EXISTS is well-formed, which is what lets the companion
+     * test treat an unparsable line as a defect rather than a possibility.
+     *
+     * The whole configured name is checked, not just the base: the extension
+     * is taken from it too, so a comma can arrive in either half. CR and LF
+     * are checked with it -- SD_ValidatePathParam already rejects them, so
+     * that half is belt-and-braces against a future relaxation of that
+     * validator, which would otherwise silently break this format. */
+    if (strpbrk(gpSDCardSettings->file, ",\r\n") != NULL) {
+        LOG_E("[SD] #924 no manifest: file name '%s' contains a delimiter "
+              "(',' CR or LF) that the manifest format cannot represent",
+              gpSDCardSettings->file);
+        return;
+    }
+
+    /* #924 (Qodo round 1): a stream named '<base>.mfst' resolves to the SAME
+     * path as its own manifest. FatFs would refuse the duplicate write-open
+     * (FF_FS_LOCK is 10), so the session would silently run with no integrity
+     * records at all -- the failure mode this feature exists to remove,
+     * reachable by choosing an unlucky filename. Compared as PATHS rather
+     * than by testing the extension: filePath is the stream file that was
+     * just opened, so this is exact for bucket 0 and for a rolled bucket
+     * alike, with no reasoning about how the two names are built. */
+    if (strcmp(path, gSDCardData.filePath) == 0) {
+        LOG_E("[SD] #924 no manifest: '%s' is also this session's stream file "
+              "-- choose a file name whose extension is not " SD_MANIFEST_EXT,
+              path);
+        return;
+    }
+
     gSDCardData.manifestHandle = SYS_FS_FileOpen(path,
                                                  SYS_FS_FILE_OPEN_WRITE);
     if (gSDCardData.manifestHandle == SYS_FS_HANDLE_INVALID) {
@@ -1588,15 +1636,52 @@ static void sd_AppendManifestLine(void) {
         return;
     }
 
-    int wrote = (int)SYS_FS_FileWrite(gSDCardData.manifestHandle,
-                                      (const void*)line, (size_t)lineLen);
-    if (wrote != lineLen) {
-        /* Logged and not retried, the same call this file's header write
-         * makes: FatFs returns short only on a disk error or a full volume,
-         * neither of which an immediate second attempt fixes, and a retry loop
-         * here would block the SD task inside the rotation window. */
-        LOG_E("[SD] #924 manifest write short: expected=%d wrote=%d ('%s')",
-              lineLen, wrote, gSDCardData.filePath);
+    /* #924 (Qodo round 1): A SHORT WRITE HAS ALREADY PUT BYTES ON THE CARD, so
+     * "log it and give up" is not a no-op -- it leaves a headless FRAGMENT that
+     * the NEXT append concatenates onto, turning one lost record into two
+     * malformed ones and desynchronising every line after it. The earlier
+     * revision did exactly that, and its comment ("not retried ... a retry
+     * loop here would block the SD task inside the rotation window") justified
+     * the wrong half: the hazard is not the retry, it is the fragment.
+     *
+     * So: finish the line with a BOUNDED completion loop, which keeps the
+     * rotation-window argument intact -- at most SD_MANIFEST_WRITE_TRIES
+     * writes, no waiting, no yielding.
+     *
+     * If it still cannot be completed, terminate the fragment with a newline
+     * so the damage is CONTAINED to the one line rather than propagating.
+     * That leaves a malformed line the companion test's "every line parses"
+     * check reports, which is the honest outcome: the manifest says something
+     * went wrong here, instead of silently misnaming every later file. */
+    size_t off = 0u;
+    unsigned tries = 0u;
+    while (off < (size_t)lineLen && tries < SD_MANIFEST_WRITE_TRIES) {
+        int wrote = (int)SYS_FS_FileWrite(gSDCardData.manifestHandle,
+                                          (const void*)(line + off),
+                                          (size_t)lineLen - off);
+        if (wrote <= 0) {
+            break;      /* error or no progress: retrying cannot help */
+        }
+        off += (size_t)wrote;
+        tries++;
+    }
+
+    if (off != (size_t)lineLen) {
+        LOG_E("[SD] #924 manifest write short: %u of %d byte(s) for '%s'",
+              (unsigned)off, lineLen, gSDCardData.filePath);
+        /* ONLY when bytes actually landed. off == 0 means the very first write
+         * failed outright, so there is no fragment to terminate and adding a
+         * newline would invent a blank line the format does not have -- a
+         * second defect introduced by the recovery for the first.
+         *
+         * Best effort and deliberately unchecked otherwise: this is the
+         * recovery path for a write that has already failed, so a failure HERE
+         * has no further remedy, and the loss is already logged above. */
+        if (off > 0u) {
+            static const char nl = '\n';
+            (void)SYS_FS_FileWrite(gSDCardData.manifestHandle,
+                                   (const void*)&nl, sizeof(nl));
+        }
         return;
     }
     gSDCardData.manifestLines++;

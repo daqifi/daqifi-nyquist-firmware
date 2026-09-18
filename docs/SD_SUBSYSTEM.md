@@ -186,6 +186,33 @@ without reading #924:**
 - **`gWriteSessionIsStreamingLog` gates it**, so `SYST:STOR:SD:BENCHmark` —
   which shares this same WRITE state and rotation path — produces no manifest.
 
+**Two configured names get NO manifest, by refusal rather than by accident.**
+Both are checked once, at manifest open, and both log a `LOG_E` naming the
+reason; the logging session itself continues normally.
+
+- **A name containing `,`, CR or LF.** The line format echoes the name raw, and
+  `SD_ValidatePathParam` (`SCPIStorageSD.c`) accepts a comma — so
+  `SYST:STOR:SD:FILE "trial,1.csv"` would emit a record reading as *four*
+  fields, whose extracted name identifies no file. Refusing keeps the
+  invariant **a manifest that exists is well-formed**, which is what lets the
+  companion test treat an unparsable line as a defect rather than a
+  possibility.
+- **A name whose extension is `.mfst`.** `<base>.mfst` is then the same path as
+  the stream file itself; FatFs would refuse the duplicate write-open
+  (`FF_FS_LOCK` is 10) and the session would silently run with no integrity
+  records — the exact failure this feature exists to remove, reachable by an
+  unlucky filename. Detected by comparing the two paths, so it holds for a
+  rolled #689 bucket as well.
+
+**A short manifest write is completed, not abandoned.** The bytes of a partial
+write are already on the card, so giving up leaves a headless fragment that the
+*next* append concatenates onto — one lost record becoming two malformed ones
+and every later line desynchronised. `sd_AppendManifestLine` finishes the line
+with a bounded loop (`SD_MANIFEST_WRITE_TRIES`, no waiting and no yielding, so
+the rotation window stays short); if it still cannot complete, it terminates the
+fragment with a newline so the damage is **contained to one line**, which the
+companion test's "every line parses" check then reports.
+
 **No per-line `FileSync`.** Lines are appended inside the rotation window that
 #757/#822/#824 spent three issues keeping short; a metadata flush per rotation
 would add SD writes to exactly the window whose cost #924's acceptance criteria
