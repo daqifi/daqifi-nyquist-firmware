@@ -72,6 +72,32 @@
  * and compares their verdicts on identical inputs. What is proven is the
  * ALGEBRA of the two shapes, which is exactly what #1004 is about.
  *
+ * WHAT #1134 CHANGED, AND WHY THIS FILE WAS A FALSE GUARANTEE BEFORE IT
+ *
+ * Re-implementing the shape is necessary (the callback's I/O cannot run on a
+ * host) but it is NOT sufficient, and until #1134 this file was the proof of
+ * that. mock_help_write used to carry its own copy of the deadline and the
+ * short-write test, so every assertion below was comparing that copy against
+ * itself: ScpiHelpWrite's real deadline check could have been DELETED outright
+ * and this binary would still have reported 8/8 passing. The identical defect
+ * was MEASURED on SysLogLevelWrite before #1098/#1132 extracted the decision --
+ * deleting the production deadline check left the ENTIRE host suite green.
+ *
+ * #1134 closes that here the same way: ScpiHelpWrite now delegates to
+ * ScpiBoundedWrite.h's ScpiBoundedWrite_Decide / ScpiBoundedWrite_IsShort, and
+ * mock_help_write below CALLS THOSE REAL FUNCTIONS rather than restating them.
+ * The header is pure and dependency-free (three C standard headers) precisely
+ * so that include works -- the same property FixedPointFmt.h, AD7609Scale.h and
+ * JSON_StringEscape.h have. Every deadline and short-write verdict asserted in
+ * this file is therefore now produced by the code the firmware actually runs;
+ * mutate the header and this binary goes red. The two direct-predicate tests at
+ * the end pin the specific mutations a shape test cannot isolate on its own
+ * (the `>=` boundary, the latch-before-deadline ORDER, the wrap-safe spelling,
+ * and IsShort comparing against len rather than 0). What CANNOT be reached from
+ * a host -- the transport write, the LOG_E wording, the budget constant -- stays
+ * pinned by the Makefile's greps, including the #1134 guard that fails the build
+ * if ScpiHelpWrite ever reimplements the decision inline again.
+ *
  * ONE DIFFERENCE FROM #995's PLANNED TEST: SCPI_GetCommandHistory's write count is
  * pinned to a real firmware constant (SCPI_CMD_HISTORY_SIZE + 1). HELP's
  * write count depends on the registered command table's total text size
@@ -89,10 +115,14 @@
  *    condition, same increment/break placement, same retry decrement), with
  *    writeFn/vTaskDelay replaced by mock counterparts. It does not move any
  *    actual bytes.
- * 2. mock_help_write mirrors ScpiHelpWrite line-for-line: the
- *    already-false-latch no-op check first, then guard 1 (cumulative
- *    deadline) before the transport call, then guard 2 (short write) after
- *    it -- same order, same in/out `bool *ok` parameter shape.
+ * 2. mock_help_write mirrors ScpiHelpWrite's control flow, and since #1134 its
+ *    DECISION is not a mirror at all -- it is the production
+ *    ScpiBoundedWrite_Decide / ScpiBoundedWrite_IsShort, compiled in from the
+ *    real header and driven through the same switch the firmware helper uses:
+ *    latch (SKIP) first, then the cumulative deadline (EXPIRED) before the
+ *    transport call, then the short-write test after it -- same order, same
+ *    in/out `bool *ok` parameter shape. Only the transport write and the LOG_E
+ *    side effect are mocked.
  *    new_help_write_all then mirrors SCPI_Help's own call sequence: it
  *    calls mock_help_write unconditionally on every one of n_calls
  *    iterations (no break, no goto), exactly like the real code calls
@@ -129,6 +159,14 @@
 #include <stddef.h>
 #include <stdio.h>
 #include "test_framework.h"
+
+/* THE REAL bounded-write decision, compiled into this test -- not a copy of it
+ * (#1134). ScpiHelpWrite delegates to these two functions; so does everything
+ * below. Before this include existed, deleting ScpiHelpWrite's production
+ * deadline check left this binary reporting 8/8 pass, because the "mirror" was
+ * only ever checked against itself. The Makefile's #1134 guard fails the build
+ * if either this include or that delegation goes away. */
+#include "../../firmware/src/services/SCPI/ScpiBoundedWrite.h"
 
 /* --------------------------------------------------------------------------
  * Firmware constants, mirrored. Pinned against the real source by the
@@ -244,25 +282,32 @@ static uint32_t old_help_write_all(MockEnv *env, size_t n_calls, size_t len_per_
     return sent;
 }
 
-/* Mirrors ScpiHelpWrite exactly: no-op-if-already-false first, guard 1
- * (cumulative deadline) BEFORE the transport call, guard 2 (short write)
- * AFTER it. `ok` is the in/out latch, matching the real function's `bool
- * *ok` parameter -- the caller owns one `bool` for the whole invocation,
- * same as SCPI_Help's `writeOk` local (declared once, shared by both
- * sections). */
-static void mock_help_write(MockEnv *env, uint32_t startTick, int *ok,
+/* Mirrors ScpiHelpWrite. Since #1134 the DECISION is not mirrored -- the
+ * switch below is the production one, over the production
+ * ScpiBoundedWrite_Decide, and the short-write test is the production
+ * ScpiBoundedWrite_IsShort. What remains local is only what a host cannot run:
+ * the transport call (mock_write_with_retry) and the LOG_E the real helper
+ * emits on each abort, which has no observable effect on the wire and is not
+ * modelled. `ok` is the in/out latch, matching the real function's `bool *ok`
+ * parameter -- the caller owns one `bool` for the whole invocation, same as
+ * SCPI_Help's `writeOk` local (declared once, shared by both sections). */
+static void mock_help_write(MockEnv *env, uint32_t startTick, bool *ok,
                              size_t len)
 {
-    if (!*ok) {
-        return;
-    }
-    if ((uint32_t)(mock_tick_count(env) - startTick) >= FW_HELP_BUDGET_MS) {
-        *ok = 0;
-        return;
+    switch (ScpiBoundedWrite_Decide(*ok, mock_tick_count(env), startTick,
+                                    FW_HELP_BUDGET_MS)) {
+        case SCPI_BOUNDED_WRITE_SKIP:
+            return;
+        case SCPI_BOUNDED_WRITE_EXPIRED:
+            *ok = false;                       /* guard 1: cumulative deadline */
+            return;
+        case SCPI_BOUNDED_WRITE_PROCEED:
+        default:
+            break;
     }
     size_t w = mock_write_with_retry(env, len);
-    if (w != len) {
-        *ok = 0;
+    if (ScpiBoundedWrite_IsShort(w, len)) {
+        *ok = false;                           /* guard 2: short write */
     }
 }
 
@@ -280,10 +325,10 @@ static uint32_t new_help_write_all(MockEnv *env, size_t n_calls, size_t len_per_
 {
     uint32_t sent = 0;
     uint32_t startTick = mock_tick_count(env);
-    int ok = 1;
+    bool ok = true;
     size_t i;
     for (i = 0; i < n_calls; i++) {
-        int okBefore = ok;
+        bool okBefore = ok;
         mock_help_write(env, startTick, &ok, len_per_call);
         if (okBefore && ok) {
             sent++;
@@ -297,14 +342,21 @@ static uint32_t new_help_write_all(MockEnv *env, size_t n_calls, size_t len_per_
  * fix's own "the short-write guard is not redundant" argument is an
  * assertion, not only prose. Unlike ScpiHelpWrite this still runs every
  * iteration unconditionally (no early stop at all, matching the real
- * sequence's shape), it simply never clears `ok` on a short write. */
+ * sequence's shape), it simply never latches on a short write.
+ *
+ * Its surviving deadline arm calls the REAL ScpiBoundedWrite_Decide (#1134),
+ * so the mutation differs from the shipped shape in exactly ONE dimension --
+ * the missing short-write latch -- rather than also drifting from the
+ * production deadline the moment either is edited. */
 static uint32_t guard1_only_help_write_all(MockEnv *env, size_t n_calls, size_t len_per_call)
 {
     uint32_t sent = 0;
     uint32_t startTick = mock_tick_count(env);
     size_t i;
     for (i = 0; i < n_calls; i++) {
-        if ((uint32_t)(mock_tick_count(env) - startTick) >= FW_HELP_BUDGET_MS) {
+        if (ScpiBoundedWrite_Decide(true, mock_tick_count(env), startTick,
+                                    FW_HELP_BUDGET_MS)
+                != SCPI_BOUNDED_WRITE_PROCEED) {
             continue;   /* deadline guard still active; just no short-write latch */
         }
         size_t w = mock_write_with_retry(env, len_per_call);
@@ -553,6 +605,105 @@ TEST(zero_writes_spends_nothing)
     ASSERT_EQ(newEnv.transportCalls, 0);
 }
 
+/* ==========================================================================
+ * #1134 -- THE REAL PREDICATES, EXERCISED DIRECTLY AT HELP'S OWN BUDGET
+ *
+ * Everything above drives the production decision through HELP's write
+ * SEQUENCE, which is the property #1004 is about. A sequence test cannot
+ * isolate every way the decision itself can be broken, though: several
+ * mutations change only ONE verdict, at one input, that HELP's own traces
+ * never visit. These two tests pin those inputs against the real functions,
+ * at FW_HELP_BUDGET_MS -- this site's constant, grep-pinned to
+ * SCPI_HELP_WRITE_BUDGET_MS by the Makefile -- so a budget change here is
+ * re-derived rather than silently absorbed.
+ *
+ * Each assertion names the mutation it exists to kill. Measured, not argued:
+ * every one was applied to ScpiBoundedWrite.h and run, and turns THIS binary
+ * red -- which it could not have done before #1134, when this file compiled
+ * no firmware code at all.
+ * ========================================================================== */
+
+TEST(the_real_decide_predicate_is_what_bounds_helps_hold)
+{
+    /* Not latched, inside budget -> write. */
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, 0U, 0U, FW_HELP_BUDGET_MS),
+              SCPI_BOUNDED_WRITE_PROCEED);
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, FW_HELP_BUDGET_MS - 1U, 0U,
+                                      FW_HELP_BUDGET_MS),
+              SCPI_BOUNDED_WRITE_PROCEED);
+
+    /* MUTATION `>=` -> `>`. At exactly the budget the hold is already over, so
+     * HELP must refuse. Weakening the comparison lets one extra ~1 s write in
+     * past the bound, and only this exact input can see it. */
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, FW_HELP_BUDGET_MS, 0U,
+                                      FW_HELP_BUDGET_MS),
+              SCPI_BOUNDED_WRITE_EXPIRED);
+
+    /* MUTATION: deadline guard deleted. Past the budget there is no verdict
+     * other than EXPIRED; a deleted check answers PROCEED forever, which is
+     * precisely the deletion that used to leave the whole suite green. */
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, FW_HELP_BUDGET_MS + 1U, 0U,
+                                      FW_HELP_BUDGET_MS),
+              SCPI_BOUNDED_WRITE_EXPIRED);
+
+    /* MUTATION: latch disabled. An already-failed HELP must emit nothing more
+     * -- SCPI_WriteWithRetry has no resend path, so its reply is already
+     * truncated and every further write buys another ~1 s of held mutex. */
+    ASSERT_EQ(ScpiBoundedWrite_Decide(false, 0U, 0U, FW_HELP_BUDGET_MS),
+              SCPI_BOUNDED_WRITE_SKIP);
+
+    /* MUTATION: latch tested AFTER the deadline. This input is BOTH latched and
+     * over budget; the order is load-bearing, so it must read SKIP and not
+     * EXPIRED -- otherwise a caller that gave up on a short write starts
+     * reporting a second, different reason (and a second LOG_E) for the same
+     * abort. Swapping the two ifs changes only this answer. */
+    ASSERT_EQ(ScpiBoundedWrite_Decide(false, FW_HELP_BUDGET_MS * 2U, 0U,
+                                      FW_HELP_BUDGET_MS),
+              SCPI_BOUNDED_WRITE_SKIP);
+
+    /* A zero budget can never permit a write. */
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, 0U, 0U, 0U),
+              SCPI_BOUNDED_WRITE_EXPIRED);
+
+    /* MUTATION: the deadline respelled wrap-unsafe as `now >= start + budget`.
+     * HELP's startTick is sampled from xTaskGetTickCount(), which wraps every
+     * ~49.7 days at configTICK_RATE_HZ 1000, and `start + budget` overflows
+     * there while `now - start` does not. The discriminating window is the part
+     * of the budget BEFORE the wrap: with start 100 ticks short of UINT32_MAX,
+     * 50 ticks of real elapsed time must still PROCEED, but the unsafe spelling
+     * compares 0xFFFFFFCE against a wrapped-around sum and aborts HELP's reply
+     * on its very first write. The non-wrapped tests above cannot see this. */
+    const uint32_t nearWrap = 0xFFFFFFFFU - 99U;
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, nearWrap + 50U, nearWrap,
+                                      FW_HELP_BUDGET_MS),
+              SCPI_BOUNDED_WRITE_PROCEED);
+    /* ...and having wrapped, it must still trip at the budget, not never. */
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, FW_HELP_BUDGET_MS - 101U, nearWrap,
+                                      FW_HELP_BUDGET_MS),
+              SCPI_BOUNDED_WRITE_PROCEED);   /* elapsed budget-1, across the wrap */
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, FW_HELP_BUDGET_MS - 100U, nearWrap,
+                                      FW_HELP_BUDGET_MS),
+              SCPI_BOUNDED_WRITE_EXPIRED);   /* elapsed budget,   across the wrap */
+}
+
+TEST(the_real_short_write_predicate_is_what_latches_helps_guard_two)
+{
+    ASSERT_TRUE(ScpiBoundedWrite_IsShort(0U, LEN_PER_WRITE));              /* refused outright */
+    ASSERT_TRUE(ScpiBoundedWrite_IsShort(LEN_PER_WRITE - 1U, LEN_PER_WRITE)); /* one byte short */
+    ASSERT_FALSE(ScpiBoundedWrite_IsShort(LEN_PER_WRITE, LEN_PER_WRITE));  /* complete */
+
+    /* MUTATION: IsShort comparing against 0 instead of len. A zero-length write
+     * is COMPLETE, not short. scpi_help_append only flushes when it has bytes,
+     * so HELP does not offer a 0-length chunk today -- but a `written == 0`
+     * spelling also mislabels every partial write as complete, which is the
+     * latch failing open on exactly the case it exists for. */
+    ASSERT_FALSE(ScpiBoundedWrite_IsShort(0U, 0U));
+
+    /* MUTATION: `>=`/`<` where `!=` was meant. A transport that somehow
+     * reported MORE than it was offered is not a completed write either. */
+    ASSERT_TRUE(ScpiBoundedWrite_IsShort(LEN_PER_WRITE + 1U, LEN_PER_WRITE));
+}
+
 int main(void)
 {
     printf("#1004 -- SCPI_Help shared-buffer write-abort bound (extracted write shapes)\n");
@@ -565,5 +716,7 @@ int main(void)
     RUN(deadline_guard_survives_tick_counter_wrap);
     RUN(deadline_guard_crossing_wrap_still_trips_at_budget);
     RUN(zero_writes_spends_nothing);
+    RUN(the_real_decide_predicate_is_what_bounds_helps_hold);
+    RUN(the_real_short_write_predicate_is_what_latches_helps_guard_two);
     return TEST_SUMMARY();
 }
