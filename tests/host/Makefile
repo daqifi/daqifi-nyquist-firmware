@@ -1227,21 +1227,56 @@ $(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
 	       echo "       test_1039_log_message_ceiling.c and re-derive LOG_BUDGET (and every"; \
 	       echo "       asserted margin) before trusting it."; \
 	       exit 1; }
-	@grep -A1 -E '^[[:space:]]*LOG_E\("Clock mismatch \(#716\): PBCLK3 %u Hz, built for %u Hz - "[[:space:]]*$$' $(LOGCEIL_SRC1) \
-	  | grep -qE '^[[:space:]]*"reprogram via PICkit/IPE, not a firmware update\.",[[:space:]]*$$' \
-	  || { echo "ERROR: the #716 clock-mismatch LOG_E in $(LOGCEIL_SRC1) no longer matches"; \
-	       echo "       MSG1_FORMAT in test_1039_log_message_ceiling.c. Update the copy and"; \
-	       echo "       re-derive its length against LOG_BUDGET -- a stale copy would measure"; \
-	       echo "       text the device no longer emits."; \
-	       exit 1; }
-	@grep -A1 -E '^[[:space:]]*LOG_E\("CONFigure:ADC:CHANnel: channel %d not addressable; "[[:space:]]*$$' $(LOGCEIL_SRC2) \
-	  | grep -qE '^[[:space:]]*"two-arg form is <channel>,<state>, one-arg form is a "[[:space:]]*$$' \
-	  && grep -A1 -E '^[[:space:]]*"two-arg form is <channel>,<state>, one-arg form is a "[[:space:]]*$$' $(LOGCEIL_SRC2) \
-	     | grep -qE '^[[:space:]]*"<mask>\.",[[:space:]]*$$' \
-	  || { echo "ERROR: the not-addressable-channel LOG_E in $(LOGCEIL_SRC2) no longer"; \
-	       echo "       matches MSG2_FORMAT in test_1039_log_message_ceiling.c. Update the"; \
-	       echo "       copy and re-derive its length against LOG_BUDGET."; \
-	       exit 1; }
+# MSG1/MSG2's guards used to be two independent anchored grep pipelines
+# (opening->middle, middle->mask) not tied to the same line position --
+# audit wf_8f9d065d-2ef (CONFIRMED, medium) found that duplicating MSG2's
+# middle literal line immediately before its "<mask>." line passes both
+# pipelines (the duplicate itself satisfies the middle->mask pipeline)
+# while the shipped string grows past the 125-byte budget. check_log_block
+# below replaces both with ONE positional exact-block check per message:
+# the opening LOG_E(...) line must occur exactly once in the file, then
+# the N consecutive lines starting there (N = that message's literal line
+# count) are compared to the expected block as a single whole-block string
+# equality -- not a per-line or substring containment match, so an insert,
+# delete, duplicate, or edit of any one line inside the block fails it.
+	@check_log_block() { \
+	  f="$$1"; open_re="$$2"; n="$$3"; want="$$4"; label="$$5"; fmtname="$$6"; testfile="$$7"; \
+	  count=$$(grep -cE "$$open_re" "$$f"); \
+	  if [ "$$count" -ne 1 ]; then \
+	    echo "ERROR: $$label's opening LOG_E(...) line in $$f is expected exactly"; \
+	    echo "       once (anchored full-line match) but occurs $$count time(s)."; \
+	    echo "       A duplicate (or missing) opening line means the positional"; \
+	    echo "       block check below cannot trust where $$fmtname starts."; \
+	    return 1; \
+	  fi; \
+	  start=$$(grep -nE "$$open_re" "$$f" | head -1 | cut -d: -f1); \
+	  got=$$(sed -n "$${start},$$((start + n - 1))p" "$$f" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$$//'); \
+	  got=$$(printf '%s' "$$got" | tr '\n' '\001'); \
+	  wantnorm=$$(printf '%s' "$$want" | tr '\n' '\001'); \
+	  if [ "$$got" != "$$wantnorm" ]; then \
+	    echo "ERROR: $$label in $$f no longer matches $$fmtname in $$testfile exactly"; \
+	    echo "       (this compares the whole $$n-line block by position, not a"; \
+	    echo "       per-line or substring match -- an insert, delete, duplicate,"; \
+	    echo "       or edit of any one literal line trips it). Update the copy"; \
+	    echo "       and re-derive its length against LOG_BUDGET."; \
+	    return 1; \
+	  fi; \
+	}; \
+	want1=$$(printf '%s\n%s' \
+	  'LOG_E("Clock mismatch (#716): PBCLK3 %u Hz, built for %u Hz - "' \
+	  '"reprogram via PICkit/IPE, not a firmware update.",'); \
+	check_log_block $(LOGCEIL_SRC1) \
+	  '^[[:space:]]*LOG_E\("Clock mismatch \(#716\): PBCLK3 %u Hz, built for %u Hz - "[[:space:]]*$$' \
+	  2 "$$want1" "the #716 clock-mismatch LOG_E" MSG1_FORMAT test_1039_log_message_ceiling.c \
+	  || exit 1; \
+	want2=$$(printf '%s\n%s\n%s' \
+	  'LOG_E("CONFigure:ADC:CHANnel: channel %d not addressable; "' \
+	  '"two-arg form is <channel>,<state>, one-arg form is a "' \
+	  '"<mask>.",'); \
+	check_log_block $(LOGCEIL_SRC2) \
+	  '^[[:space:]]*LOG_E\("CONFigure:ADC:CHANnel: channel %d not addressable; "[[:space:]]*$$' \
+	  3 "$$want2" "the not-addressable-channel LOG_E" MSG2_FORMAT test_1039_log_message_ceiling.c \
+	  || exit 1
 	@grep -qF 'LOG_E("WiFi down and an SD card IS present on the shared bus - likely bus-incompatible; remove it (wiki: SD-Card-Compatibility)");' $(LOGCEIL_SRC3) \
 	  || { echo "ERROR: the SD-present LOG_E hint in $(LOGCEIL_SRC3) no longer matches"; \
 	       echo "       MSG3_TEXT in test_1039_log_message_ceiling.c. Update the copy and"; \
