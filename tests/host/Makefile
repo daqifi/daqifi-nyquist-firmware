@@ -1062,6 +1062,52 @@ $(REPLYBUF_BIN): test_1098_scpi_reply_buffer_pairing.c test_framework.h \
 	        echo "       gScpiRespMutex permanently. test_1098 models that"; \
 	        echo "       omission (leaky_sd_info) and asserts against it."; \
 	        exit 1; }
+# GUARD 5 -- THE THREE MIRRORED TIMING CONSTANTS. test_1098 copies
+# SCPI_LOGLEVEL_WRITE_BUDGET_MS as FW_LOGLEVEL_BUDGET_MS, and derives
+# MS_PER_STALLED_WRITE (1000) from SCPI_WRITE_MAX_RETRIES x
+# SCPI_WRITE_RETRY_DELAY_MS. Drift in any of them silently moves where the
+# guards fire while every assertion still passes -- guard2's "3 writes then
+# latch" arithmetic is exactly 2000 / 900.
+#
+# NOTE the trailing [[:space:]]*$$ rather than a bare $$: these sources have
+# CRLF line endings, so a `200$$` anchor never matches (the line ends "200\r").
+# [[:space:]] covers the CR. A bare $$ here fails CLOSED -- the guard reports
+# drift that has not happened -- which is the safe direction, but it would send
+# the next reader hunting a constant that never moved.
+	@grep -qE '^#define[[:space:]]+SCPI_LOGLEVEL_WRITE_BUDGET_MS[[:space:]]+2000U[[:space:]]*$$' \
+	     $(SCPI_INTERFACE_SRC) \
+	  && grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' \
+	     $(SCPI_INTERFACE_SRC) \
+	  && grep -qE '^#define[[:space:]]+SCPI_WRITE_RETRY_DELAY_MS[[:space:]]+5[[:space:]]*$$' \
+	     $(SCPI_INTERFACE_SRC) \
+	   || { echo "ERROR: one of SCPI_LOGLEVEL_WRITE_BUDGET_MS (2000U),"; \
+	        echo "       SCPI_WRITE_MAX_RETRIES (200) or"; \
+	        echo "       SCPI_WRITE_RETRY_DELAY_MS (5) has changed in"; \
+	        echo "       $(SCPI_INTERFACE_SRC)."; \
+	        echo "       test_1098 mirrors all three (FW_LOGLEVEL_BUDGET_MS and"; \
+	        echo "       MS_PER_STALLED_WRITE) and its guard-2 arithmetic depends"; \
+	        echo "       on the exact values. Update both together."; \
+	        exit 1; }
+# GUARD 6 -- THE DUMP LOOPS STAY BOUNDED. Guard 3 pins only WHERE the take and
+# give sit; it cannot see whether the writes between them are guarded. Both dump
+# callbacks must route every write through SysLogLevelWrite (which latches on a
+# short write and on the cumulative deadline) and must contain NO bare
+# context->interface->write, which would reintroduce the ~10 s hold #1098's own
+# fix created and this bound removes. test_1098 models the unbounded shape
+# (new_syslog_get_unbounded) and asserts it reaches ~10 s.
+	@for fn in SCPI_SysLogLevelGet SCPI_SysLogLevelAllSet; do \
+	   w=`$(call CNT_IN_FN,$(SCPI_INTERFACE_SRC),$$fn,SysLogLevelWrite)`; \
+	   b=`$(call CNT_IN_FN,$(SCPI_INTERFACE_SRC),$$fn,context->interface->write)`; \
+	   test "$$w" = "1" && test "$$b" = "0" \
+	     || { echo "ERROR: $$fn in $(SCPI_INTERFACE_SRC) no longer emits its"; \
+	          echo "       dump through the bounded SysLogLevelWrite helper"; \
+	          echo "       (found guarded=$$w bare-write=$$b; must be 1 and 0)."; \
+	          echo "       A bare context->interface->write inside the hold"; \
+	          echo "       restores the ~10 s worst-case stall that blocks every"; \
+	          echo "       SCPI callback on BOTH transports. test_1098 models"; \
+	          echo "       that unbounded shape and asserts against it."; \
+	          exit 1; }; \
+	 done
 	$(CC) $(CFLAGS) -o $(REPLYBUF_BIN) test_1098_scpi_reply_buffer_pairing.c
 
 SCPI999_WIRING_GUARD := check_999_createscpicontext_wiring.sh

@@ -52,9 +52,11 @@
  *
  * HOW IT IS TESTED
  *
- * Neither SCPIInterface.c nor SCPIStorageSD.c is includable on a host --
- * established by SCPI999_BIN, which tried: 42 direct includes spanning libscpi,
- * Harmony PLIB, the USB HS and WINC drivers and FreeRTOS's MIPS port layer. So,
+ * Neither SCPIInterface.c nor SCPIStorageSD.c is includable on a host. For
+ * SCPIInterface.c that was established by SCPI999_BIN, which tried: 42 direct
+ * includes spanning libscpi, Harmony PLIB, the USB HS and WINC drivers and
+ * FreeRTOS's MIPS port layer. For SCPIStorageSD.c it is BENCH_BIN's finding
+ * (libscpi + FreeRTOS + the whole SD manager) -- see both Makefile comments. So,
  * the same approach as test_943_bench_stall_bound.c, test_947_sysinfo_write_abort.c,
  * test_953_bench_suspend_diagnosis.c and test_1121_start_streaming_arm_cascade.c:
  * this file RE-IMPLEMENTS the control-flow shape of each callback against a mock
@@ -116,6 +118,8 @@ typedef struct {
     int      writes;         /* interface->write() invocations */
     unsigned bytes;          /* total bytes handed to write() */
     int      wroteWhileUnheld; /* writes issued with no buffer held */
+    unsigned now;            /* mock tick clock, ms (configTICK_RATE_HZ 1000) */
+    int      shortWrites;    /* writes the transport refused to complete */
     char     buf[FW_RESPONSE_BUF_SIZE];
 } MockEnv;
 
@@ -130,6 +134,8 @@ static void mock_init(MockEnv* e, int takeReturnsNull)
     e->writes = 0;
     e->bytes = 0;
     e->wroteWhileUnheld = 0;
+    e->now = 0;
+    e->shortWrites = 0;
     e->buf[0] = '\0';
 }
 
@@ -267,6 +273,67 @@ static int new_syslog_get(MockEnv* e, GetPath path, int moduleCount, int injecte
     for (int i = 0; i < moduleCount; i++) {
         int len = format_line(e, injectedLen);
         if (len > 0) {
+            mock_write(e, clamp_len(len));
+        }
+    }
+    mock_give(e);
+    return RES_OK;
+}
+
+/* The BOUNDED dump, as shipped: SysLogLevelWrite's two guards latch through
+ * `ok`, and the loop runs to completion either way (the helper short-circuits
+ * once latched -- the #1004 ScpiHelpWrite shape, chosen so no call site can
+ * skip the single Give). Returns RES_ERR when the reply was truncated.
+ *
+ * `attemptsPerWrite`/`budgetMs` model SCPI_WriteWithRetry's ~1 s per-call cost
+ * and SCPI_LOGLEVEL_WRITE_BUDGET_MS; `shortWriteAt` injects guard 1. */
+static int new_syslog_get_bounded(MockEnv* e, int moduleCount, int injectedLen,
+                                  unsigned msPerWrite, unsigned budgetMs,
+                                  int shortWriteAt)
+{
+    char* buf = mock_take(e);
+    if (buf == NULL) {
+        return RES_ERR;
+    }
+    unsigned startTick = e->now;
+    int ok = 1;
+    for (int i = 0; i < moduleCount; i++) {
+        int len = injectedLen;
+        if (len > 0) {
+            /* SysLogLevelWrite, inlined */
+            if (ok) {
+                if ((unsigned)(e->now - startTick) >= budgetMs) {
+                    ok = 0;                      /* guard 2: deadline */
+                } else {
+                    e->now += msPerWrite;
+                    if (shortWriteAt >= 0 && i >= shortWriteAt) {
+                        e->shortWrites++;
+                        ok = 0;                  /* guard 1: short write */
+                    } else {
+                        mock_write(e, clamp_len(len));
+                    }
+                }
+            }
+        }
+    }
+    mock_give(e);                                 /* ALWAYS, latched or not */
+    return ok ? RES_OK : RES_ERR;
+}
+
+/* The UNBOUNDED dump this PR shipped first: no guards, every write attempted,
+ * result ignored. Kept so the bound is proven to be what changed -- it pairs
+ * identically, so only the HOLD DURATION distinguishes it. */
+static int new_syslog_get_unbounded(MockEnv* e, int moduleCount,
+                                    int injectedLen, unsigned msPerWrite)
+{
+    char* buf = mock_take(e);
+    if (buf == NULL) {
+        return RES_ERR;
+    }
+    for (int i = 0; i < moduleCount; i++) {
+        int len = injectedLen;
+        if (len > 0) {
+            e->now += msPerWrite;
             mock_write(e, clamp_len(len));
         }
     }
@@ -688,6 +755,132 @@ TEST(fix_changes_where_the_reply_lives_not_what_is_written)
     }
 }
 
+/* ==========================================================================
+ * THE HOLD BOUND (SysLogLevelWrite's two guards)
+ *
+ * Moving the dumps onto the shared buffer put LOG_MODULE_COUNT retrying writes
+ * INSIDE a hold that the stack-local version never took. These pin the bound
+ * that stops that being a ~10 s cross-transport stall.
+ * ========================================================================== */
+
+#define MS_PER_STALLED_WRITE  1000U   /* SCPI_WRITE_MAX_RETRIES x DELAY_MS */
+#define FW_LOGLEVEL_BUDGET_MS 2000U   /* SCPI_LOGLEVEL_WRITE_BUDGET_MS */
+
+TEST(healthy_host_is_byte_identical_and_never_trips_a_guard)
+{
+    /* A draining transport costs ~0 ms per write, so neither guard can fire and
+     * the bounded shape must be indistinguishable from the unbounded one. */
+    for (int n = 0; n <= 12; n++) {
+        MockEnv bounded, unbounded;
+
+        mock_init(&bounded, 0);
+        mock_init(&unbounded, 0);
+        ASSERT_EQ(new_syslog_get_bounded(&bounded, n, 24, 0U,
+                                         FW_LOGLEVEL_BUDGET_MS, -1), RES_OK);
+        ASSERT_EQ(new_syslog_get_unbounded(&unbounded, n, 24, 0U), RES_OK);
+
+        ASSERT_EQ(bounded.writes, unbounded.writes);
+        ASSERT_EQ(bounded.bytes, unbounded.bytes);
+        ASSERT_EQ(bounded.shortWrites, 0);
+        assert_balanced_single_hold(&bounded);
+    }
+}
+
+TEST(guard1_short_write_stops_the_dump_instead_of_buying_nine_more_seconds)
+{
+    MockEnv e;
+
+    /* Transport refuses from the very first line. */
+    mock_init(&e, 0);
+    ASSERT_EQ(new_syslog_get_bounded(&e, 10, 24, MS_PER_STALLED_WRITE,
+                                     FW_LOGLEVEL_BUDGET_MS, 0), RES_ERR);
+    ASSERT_EQ(e.writes, 0);              /* nothing completed */
+    ASSERT_EQ(e.shortWrites, 1);         /* exactly one attempt, then latched */
+    ASSERT_EQ(e.now, MS_PER_STALLED_WRITE);   /* ~1 s held, not ~10 s */
+    assert_balanced_single_hold(&e);     /* and the buffer STILL came back */
+
+    /* Refusing midway: the lines before it went out, the rest are abandoned.
+     * msPerWrite is 0 here so guard 2 CANNOT fire -- otherwise the deadline
+     * would latch first and this would silently stop testing guard 1 at all.
+     * (It did, on the first draft of this case: a transposed argument made the
+     * budget 3 ms, guard 2 fired on write 1, and the assertion caught it.) */
+    mock_init(&e, 0);
+    ASSERT_EQ(new_syslog_get_bounded(&e, 10, 24, 0U,
+                                     FW_LOGLEVEL_BUDGET_MS, 3), RES_ERR);
+    ASSERT_EQ(e.writes, 3);              /* lines 0,1,2 went out */
+    ASSERT_EQ(e.shortWrites, 1);         /* line 3 refused, then latched */
+    assert_balanced_single_hold(&e);
+}
+
+TEST(guard2_bounds_the_trickle_transport_guard1_cannot_catch)
+{
+    /* THE CASE GUARD 1 MISSES: every write COMPLETES, just slowly (900 ms, i.e.
+     * inside its own ~1 s retry budget), so no short write ever latches. With
+     * guard 1 alone a 10-module dump still holds the mutex ~9 s. */
+    MockEnv unbounded;
+    mock_init(&unbounded, 0);
+    ASSERT_EQ(new_syslog_get_unbounded(&unbounded, 10, 24, 900U), RES_OK);
+    ASSERT_EQ(unbounded.writes, 10);
+    ASSERT_EQ(unbounded.now, 9000U);     /* ~9 s of held mutex */
+
+    /* Guard 2 stops it at the budget: 2000 ms allows writes at t=0, 900, 1800;
+     * the check before the 4th sees 2700 >= 2000 and latches. */
+    MockEnv e;
+    mock_init(&e, 0);
+    ASSERT_EQ(new_syslog_get_bounded(&e, 10, 24, 900U,
+                                     FW_LOGLEVEL_BUDGET_MS, -1), RES_ERR);
+    ASSERT_EQ(e.writes, 3);
+    ASSERT_EQ(e.shortWrites, 0);         /* guard 1 never fired -- guard 2 did */
+    ASSERT_TRUE(e.now < unbounded.now);  /* strictly shorter hold */
+    ASSERT_TRUE(e.now <= FW_LOGLEVEL_BUDGET_MS + MS_PER_STALLED_WRITE);
+    assert_balanced_single_hold(&e);
+}
+
+TEST(an_aborted_dump_still_releases_the_buffer_on_every_guard)
+{
+    /* The property that matters most: a latched dump must not become a leak.
+     * Both guards, and the both-at-once case, still give exactly once. */
+    MockEnv e;
+
+    mock_init(&e, 0);
+    ASSERT_EQ(new_syslog_get_bounded(&e, 10, 24, MS_PER_STALLED_WRITE,
+                                     FW_LOGLEVEL_BUDGET_MS, 0), RES_ERR);
+    assert_balanced_single_hold(&e);
+
+    mock_init(&e, 0);
+    ASSERT_EQ(new_syslog_get_bounded(&e, 10, 24, 900U,
+                                     FW_LOGLEVEL_BUDGET_MS, -1), RES_ERR);
+    assert_balanced_single_hold(&e);
+
+    /* Zero modules: the loop never runs, so neither guard can fire -- and the
+     * pair must still be exactly one each. */
+    mock_init(&e, 0);
+    ASSERT_EQ(new_syslog_get_bounded(&e, 0, 24, MS_PER_STALLED_WRITE,
+                                     FW_LOGLEVEL_BUDGET_MS, 0), RES_OK);
+    assert_balanced_single_hold(&e);
+    ASSERT_EQ(e.writes, 0);
+}
+
+TEST(the_bound_is_what_changed_unbounded_shape_reaches_ten_seconds)
+{
+    /* The canary for the bound, mirroring the old/new canary above: the shape
+     * this PR first shipped pairs perfectly AND holds for ~10 s, so pairing
+     * assertions alone could never have caught it. */
+    MockEnv unbounded;
+    mock_init(&unbounded, 0);
+    ASSERT_EQ(new_syslog_get_unbounded(&unbounded, 10, 24,
+                                       MS_PER_STALLED_WRITE), RES_OK);
+    assert_balanced_single_hold(&unbounded);        /* pairs fine... */
+    ASSERT_EQ(unbounded.now, 10U * MS_PER_STALLED_WRITE);   /* ...for ~10 s */
+
+    MockEnv bounded;
+    mock_init(&bounded, 0);
+    ASSERT_EQ(new_syslog_get_bounded(&bounded, 10, 24, MS_PER_STALLED_WRITE,
+                                     FW_LOGLEVEL_BUDGET_MS, 0), RES_ERR);
+    assert_balanced_single_hold(&bounded);
+    ASSERT_TRUE(bounded.now * 5U < unbounded.now);  /* an order of magnitude */
+}
+
 int main(void)
 {
     printf("#1098 -- SCPI reply buffers: shared-response-buffer Take/Give pairing\n");
@@ -701,5 +894,10 @@ int main(void)
     RUN(loop_shapes_hold_the_buffer_exactly_once_at_every_module_count);
     RUN(mutation_per_iteration_take_give_pairs_but_is_not_the_fixed_shape);
     RUN(fix_changes_where_the_reply_lives_not_what_is_written);
+    RUN(healthy_host_is_byte_identical_and_never_trips_a_guard);
+    RUN(guard1_short_write_stops_the_dump_instead_of_buying_nine_more_seconds);
+    RUN(guard2_bounds_the_trickle_transport_guard1_cannot_catch);
+    RUN(an_aborted_dump_still_releases_the_buffer_on_every_guard);
+    RUN(the_bound_is_what_changed_unbounded_shape_reaches_ten_seconds);
     return TEST_SUMMARY();
 }

@@ -2899,6 +2899,12 @@ scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
      * buffer exists to displace. */
     char* result = (char*)SCPI_ResponseBuf_Take();
     if (result == NULL) {
+        /* #1098: report it, matching the format-error branch below and the
+         * project rule that every error reaches the log and the SCPI error
+         * queue (CLAUDE.md). Nothing is held on this path -- the take failed --
+         * so the push costs no held-mutex time. */
+        LOG_E("[SD] Card info: response buffer unavailable");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
     }
 
