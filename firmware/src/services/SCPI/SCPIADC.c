@@ -1223,7 +1223,7 @@ scpi_result_t SCPI_ADCChanCalmSet(scpi_t * context) {
     if (claim != STREAM_CFG_CLAIM_OK) {
         return SCPI_RejectCfgClaim(context,
                                    claim == STREAM_CFG_CLAIM_BUSY,
-                                   "CONF:ADC:chanCALM");
+                                   "CONF:ADC:CHANCALM");
     }
     scpi_result_t result = ADCChanCalmSetClaimed(context);
     Streaming_EndConfigChange();
@@ -1251,7 +1251,7 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context) {
 
     // #877: reject before the (uint8_t) narrowing -- see
     // AdcChannelArgInRange.
-    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALM")) {
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:CHANCALM")) {
         return SCPI_RES_ERR;
     }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
@@ -1273,7 +1273,7 @@ scpi_result_t SCPI_ADCChanCalbSet(scpi_t * context) {
     if (claim != STREAM_CFG_CLAIM_OK) {
         return SCPI_RejectCfgClaim(context,
                                    claim == STREAM_CFG_CLAIM_BUSY,
-                                   "CONF:ADC:chanCALB");
+                                   "CONF:ADC:CHANCALB");
     }
     scpi_result_t result = ADCChanCalbSetClaimed(context);
     Streaming_EndConfigChange();
@@ -1299,7 +1299,7 @@ static scpi_result_t ADCChanCalbSetClaimed(scpi_t * context) {
 
     // #877: reject before the (uint8_t) narrowing -- see
     // AdcChannelArgInRange.
-    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALB")) {
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:CHANCALB")) {
         return SCPI_RES_ERR;
     }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
@@ -1324,7 +1324,7 @@ scpi_result_t SCPI_ADCChanCalmGet(scpi_t * context) {
 
     // #877: reject before the (uint8_t) narrowing -- see
     // AdcChannelArgInRange.
-    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALM?")) {
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:CHANCALM?")) {
         return SCPI_RES_ERR;
     }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
@@ -1349,7 +1349,7 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
 
     // #877: reject before the (uint8_t) narrowing -- see
     // AdcChannelArgInRange.
-    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALB?")) {
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:CHANCALB?")) {
         return SCPI_RES_ERR;
     }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
