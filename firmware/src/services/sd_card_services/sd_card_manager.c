@@ -518,10 +518,19 @@ static int SDCardWrite() {
      * lookups per byte), and writeBuffer is the COHERENT (KSEG1, uncached)
      * pool allocation, so each byte load is an uncached read with no cache-
      * line benefit. At the ~500 KB/s SD ceiling that is single-digit percent
-     * of one core on a task that spends its time waiting on SPI. The A/B soak
-     * in #924's acceptance criteria is what tests that claim rather than
-     * asserting it -- it compares SdDroppedBytes at the enforced cap against a
-     * no-manifest control of the same shape. */
+     * of one core on a task that spends its time waiting on SPI.
+     *
+     * THAT IS AN ESTIMATE, AND THE TEST THAT CHECKS IT IS AN ON-DEVICE A/B,
+     * NOT A COMPARISON AGAINST A NO-MANIFEST IMAGE. #924's acceptance wording
+     * asks for the latter; one firmware image cannot be its own control, so
+     * test_924_sd_manifest.py measures (SdDroppedBytes rotating -
+     * SdDroppedBytes not-rotating) / rotations on one image and compares it
+     * against test_824's 512 B/rotation gate on test_824's shape. The
+     * pre-#924 reference for that figure, measured on NQ1 7E2898F46200E8A7
+     * over two trials, is 0.0-2.1 B/rotation. Do not read this paragraph as a
+     * measurement of the CRC's cost: it bounds what the manifest adds to the
+     * ROTATION window, and the steady-path cost shows up instead as the
+     * arms' streamed-at-rate check. */
     if (writeLen > 0) {
         size_t folded = (size_t)writeLen;
         if (folded > gSDCardData.writeBufferLength) {
@@ -1513,8 +1522,10 @@ static void sd_AbandonRotationWindow(const char* why) {
  * window, which #757/#822/#824 spent three issues keeping short because the
  * encoder is filling the ring throughout it; a metadata flush per rotation
  * would add SD writes to exactly the window whose cost #924's own acceptance
- * criteria measure (no new SdDroppedBytes versus a no-manifest control). The
- * close at session end flushes everything. The stated consequence: a session
+ * criteria measure. The close at session end flushes everything, and
+ * SYS_FS_FileClose is what makes the manifest durable -- there is no window in
+ * which a cleanly-stopped session leaves it unflushed. The stated consequence
+ * of having no per-line sync is narrower than that: a session
  * ended by power loss or a card yank can leave a manifest short of its last
  * line(s) -- the stream files it does name are still fully described, and a
  * host that wants a CRC for an unnamed file can still ask
@@ -1546,7 +1557,7 @@ static void sd_OpenSessionManifest(void) {
                                                  SYS_FS_FILE_OPEN_WRITE);
     if (gSDCardData.manifestHandle == SYS_FS_HANDLE_INVALID) {
         LOG_E("[SD] #924 could not open manifest '%s' (err=%d) - session "
-              "continues without one", path, SYS_FS_Error());
+              "continues without one", path, (int)SYS_FS_Error());
         return;
     }
     gSDCardData.manifestLines = 0;
@@ -1598,7 +1609,8 @@ static void sd_CloseSessionManifest(void) {
         return;
     }
     if (SYS_FS_FileClose(gSDCardData.manifestHandle) == SYS_FS_RES_FAILURE) {
-        LOG_E("[SD] #924 failed to close manifest (err=%d)", SYS_FS_Error());
+        LOG_E("[SD] #924 failed to close manifest (err=%d)",
+              (int)SYS_FS_Error());
     } else {
         LOG_I("[SD] #924 manifest closed: %u file(s) recorded",
               (unsigned)gSDCardData.manifestLines);
