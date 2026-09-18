@@ -3671,6 +3671,38 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     else if (saturated)         reason = "LINK_SATURATED"; // confirmed ceiling + clean soak
     else                        reason = "HIT_MAX";        // climbed to backstop w/o saturating
 
+    /* #965 (pre-merge audit round 1): A REFUSAL HERE DELIBERATELY PUSHES NO
+     * SCPI ERROR, and that is a design constraint of this firmware's error
+     * path rather than an oversight. It was implemented as a push, reverted,
+     * and is documented here so it is not re-implemented a third time.
+     *
+     * SCPI_ErrorPush is NOT queue-only in this firmware. SCPI_ErrorPushEx
+     * calls SCPI_ErrorEmit (libscpi error.c:193), which calls
+     * context->interface->error (error.c:82); BOTH transports register one
+     * (UsbCdc.c:1168 .error = SCPI_USB_Error, wifi_tcp_server.c:262
+     * .error = SCPI_TCP_Error), and that callback formats
+     * "**ERROR: %d, \"%s\"\r\n" and calls interface->write SYNCHRONOUSLY
+     * (wifi_tcp_server.c:235). So a push WRITES A LINE TO THE WIRE.
+     *
+     * SYSTem:STReam:WIFI:FINd? is a QUERY with a five-field reply. Pushing
+     * BEFORE the scpi_printf below puts **ERROR ahead of the reply, so a
+     * client reading one line consumes the error instead of its answer.
+     * Pushing AFTER it leaves an unsolicited trailing line that the next
+     * query can mistake for its own response. This command already has two
+     * response shapes -- five fields alone, and (the "streaming already
+     * active" path above, via SCPI_ExecutionError) an error line with no
+     * fields -- and either placement would add a third, mixed shape.
+     *
+     * SCPI_StartStreamingClaimed's identical stopRequested refusal DOES push
+     * and return SCPI_RES_ERR. That is a valid precedent for the refusal
+     * SEMANTICS and not for the reply format: START is registered without a
+     * '?' and has no structured reply to corrupt. A query does.
+     *
+     * So the cause goes where this project puts error detail: the reply's own
+     * token (START_REFUSED / START_FAIL) plus LOG_E above, read back with
+     * SYSTem:LOG?. Unifying all four refusal causes onto one reporting style
+     * is a separate behaviour change and does not belong in this fix. */
+
     // Output: recommendedHz,recommendedKBps,reason,ceilingHz,ceilingKBps
     //   recommendedHz/KBps = soak-confirmed clean rate + its wire rate (0 if none)
     //   ceilingHz/KBps      = raw arc/refine ceiling (the pre-soak overestimate,
