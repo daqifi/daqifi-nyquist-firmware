@@ -2905,10 +2905,21 @@ static volatile uint32_t gStreamStopsActive;
 // `basis` is the sweep's #868 channel-mapping provenance and is required --
 // the sole caller passes the address of its own local, so it is never NULL and
 // is not tested for it.
+// *outStopRequested (#965) is set true only when the refusal's cause was
+// specifically the #938 stopRequested pin -- never for cfgBusy/mappingMoved/
+// inputsGone, and never on the "armed but never ran" or freq==0 producers.
+// It is how the caller learns WHICH cause fired without widening this
+// function's return shape: *outStartFailed alone (pre-existing) tells the
+// caller only THAT the step failed, and callers still read SYSTem:LOG? for
+// the human-readable cause. This one extra bit exists solely so the caller
+// can queue a real SCPI error for the stopRequested cause specifically -- see
+// the caller's own comment for why that cause, and only that cause, gets one.
 static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
                             const FindStepBasis* basis, uint32_t clkFreq,
                             uint32_t wRingCap, uint32_t freq, uint32_t obsMs,
-                            uint32_t* outKBps, bool* outStartFailed) {
+                            uint32_t* outKBps, bool* outStartFailed,
+                            bool* outStopRequested) {
+    *outStopRequested = false;
     /* #938: THE STOP PIN IS THE SWEEP'S, NOT THIS STEP'S. It is taken once,
      * under one critical section, where the caller builds `basis` -- the same
      * place, and for the same reason, as the #868 channel-mapping provenance
@@ -3083,6 +3094,11 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
              * arm -- stopRequested first, matching SCPI_StartStreamingClaimed's
              * precedence: it is the only one of the four that is an explicit
              * operator instruction rather than a consistency failure. */
+            /* #965: same precedence as the message above -- if stopRequested
+             * fired at all it is reported as the cause, even when cfgBusy/
+             * mappingMoved/inputsGone also happen to be true, because it is
+             * the one deliberate operator instruction of the four. */
+            *outStopRequested = stopRequested;
             LOG_E("WIFI:FIND %u Hz: arm refused - %s", (unsigned)freq,
                   stopRequested
                       ? (stopInFlight ? "a stop is still in flight on the other transport (#938/#861)"
@@ -3291,14 +3307,21 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
  * transports' roles exchanged. Given USB can preempt WiFi but not the
  * reverse, this is not a rarer trigger than the one it replaces.
  *
- * DISCLOSED AND ACCEPTED rather than fixed: under a genuine two-transport
+ * A REGRESSION, adjudicated as such in pre-merge audit round 2 (not a
+ * pre-existing, merely-disclosed residual, which an earlier revision of
+ * this comment called it): against merge-base 4edc4dd6e, which had no
+ * mailbox at all, the #850 session-start claim WINNER always proceeded and
+ * only the loser saw -200. With this mailbox, a losing concurrent finder
+ * can clobber the winner's stamp before the winner reads it, so the winner
+ * refuses itself too. The characterization changed; the decision did not --
+ * deferred rather than fixed here, because under a genuine two-transport
  * race for the SAME command, either party can be the one refused, always
  * with a plain -200 the caller can retry -- never a sweep that silently ran
  * across an unobserved stop. That is a narrower guarantee than
  * SCPI_StartStreaming's stack-local pin has (SCPIInterface.c:5917 onward),
  * which has no mailbox to contend over at all, and closing the gap needs
- * that same shape here -- tracked as the #973 follow-up below, not
- * attempted piecemeal in this Size-S ticket a second time.
+ * that same shape here -- tracked as the #973 follow-up below (filed as
+ * #1120), not attempted piecemeal in this Size-S ticket a second time.
  *
  * FINDING carried to the #973 follow-up: this hazard is specific to route 1
  * (file-scope statics). Route 2 (threading pinned values as real per-call
@@ -3466,6 +3489,12 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     uint32_t lastGoodHz = 0;
     uint32_t lastGoodKBps = 0;
     bool startFailed = false;
+    /* #965: latches TRUE only when the call that set startFailed also
+     * reported its cause as the #938 stopRequested pin (never cfgBusy/
+     * mappingMoved/inputsGone). Read once, at the reason chain below, to
+     * decide whether this refusal gets a queued SCPI error -- see that
+     * comment for why only this one of the four causes does. */
+    bool startFailedByStop = false;
     /* #895: has ANY step completed a full arm+dwell+observe+teardown cycle?
      * This is what separates the sweep's two failure tokens (see the reason
      * chain at the end).  A step that TRIPPED counts -- FindMeasureStep did
@@ -3486,8 +3515,9 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     while (freq <= hardMax) {
         uint32_t kbps = 0;
         bool sf = false;
-        bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, freq, FIND_DWELL_MS, &kbps, &sf);
-        if (sf) { startFailed = true; break; }
+        bool stopHit = false;
+        bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, freq, FIND_DWELL_MS, &kbps, &sf, &stopHit);
+        if (sf) { startFailed = true; startFailedByStop = stopHit; break; }
         /* #895: past the refusal test, so this step measured.  Set at ALL
          * THREE call sites even though sites 2 and 3 cannot reach it with the
          * flag still false (both are gated on lastGoodHz > 0, which only a
@@ -3535,7 +3565,8 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
             uint32_t mid = lo + (hi - lo) / 2;
             uint32_t kbps = 0;
             bool sf = false;
-            bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, mid, FIND_DWELL_MS, &kbps, &sf);
+            bool stopHit = false;
+            bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, mid, FIND_DWELL_MS, &kbps, &sf, &stopHit);
             if (sf) {
                 /* #868: PROPAGATE, don't just leave the loop. This branch used
                  * to break with startFailed still false ("keep coarse
@@ -3554,6 +3585,7 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
                  * always START_FAIL, because reaching this loop requires a
                  * clean step to have set lastGoodHz. */
                 startFailed = true;
+                startFailedByStop = stopHit;   /* #965, see site 1 */
                 break;
             }
             anyStepMeasured = true;   /* #895, see site 1 */
@@ -3582,8 +3614,9 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
         uint32_t streak = 0;   // consecutive clean 60 s soaks at the current cand
         for (uint32_t it = 0; it < FIND_SOAK_MAX_ITERS && cand >= FIND_SOAK_MIN_HZ; it++) {
             uint32_t kbps = 0; bool sf = false;
-            bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, cand, FIND_SOAK_MS, &kbps, &sf);
-            if (sf) { startFailed = true; break; }
+            bool stopHit = false;
+            bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, cand, FIND_SOAK_MS, &kbps, &sf, &stopHit);
+            if (sf) { startFailed = true; startFailedByStop = stopHit; break; }   /* #965, see site 1 */
             anyStepMeasured = true;   /* #895, see site 1 */
             if (!sat) {                       // a clean 60 s soak
                 streak++;
@@ -3653,7 +3686,11 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
      * inputsGone, #938 stopRequested) reach here through one bool, and so do
      * the other two *outStartFailed producers -- a stream that armed but
      * never went Running, and the freq == 0 guard. Callers wanting the cause
-     * read SYSTem:LOG?.
+     * read SYSTem:LOG?. (#965: `startFailedByStop`, computed alongside
+     * `startFailed` at each call site, is the ONE exception -- it survives
+     * past this point solely so the block below can queue a real SCPI error
+     * for the stopRequested cause specifically, on top of the token+log every
+     * cause already gets.)
      *
      * #938: and that instruction is now true WITHOUT QUALIFICATION. This
      * comment used to end by naming the armed-but-never-Running producer as
@@ -3671,37 +3708,69 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     else if (saturated)         reason = "LINK_SATURATED"; // confirmed ceiling + clean soak
     else                        reason = "HIT_MAX";        // climbed to backstop w/o saturating
 
-    /* #965 (pre-merge audit round 1): A REFUSAL HERE DELIBERATELY PUSHES NO
-     * SCPI ERROR, and that is a design constraint of this firmware's error
-     * path rather than an oversight. It was implemented as a push, reverted,
-     * and is documented here so it is not re-implemented a third time.
+    /* #965 (pre-merge audit round 1, then round 2): a stopRequested-caused
+     * refusal answers START_REFUSED/START_FAIL while SYSTem:ERR? reads
+     * clean -- round 1's finding. Round 1's own fix (commit 0f1a2ba12) called
+     * SCPI_ErrorPush directly on the live context and was reverted, because
+     * SCPI_ErrorPush is NOT queue-only in this firmware: SCPI_ErrorPushEx
+     * calls SCPI_ErrorEmit (error.c:193 -> :78-84), which calls
+     * context->interface->error(context, err) SYNCHRONOUSLY whenever that
+     * callback is non-NULL, and BOTH transports register one (UsbCdc.c
+     * .error = SCPI_USB_Error, wifi_tcp_server.c .error = SCPI_TCP_Error)
+     * that formats "**ERROR: %d, \"%s\"\r\n" and writes it straight to the
+     * wire. SYSTem:STReam:WIFI:FINd? is a QUERY with a five-field reply, so
+     * that write corrupts this command's framing whichever side of the
+     * scpi_printf below it lands on -- a real defect, not a taste call.
      *
-     * SCPI_ErrorPush is NOT queue-only in this firmware. SCPI_ErrorPushEx
-     * calls SCPI_ErrorEmit (libscpi error.c:193), which calls
-     * context->interface->error (error.c:82); BOTH transports register one
-     * (UsbCdc.c:1168 .error = SCPI_USB_Error, wifi_tcp_server.c:262
-     * .error = SCPI_TCP_Error), and that callback formats
-     * "**ERROR: %d, \"%s\"\r\n" and calls interface->write SYNCHRONOUSLY
-     * (wifi_tcp_server.c:235). So a push WRITES A LINE TO THE WIRE.
+     * Round 1's revert comment (removed here) then claimed the gap was
+     * UNFIXABLE without corrupting the reply. Round 2 found that premise
+     * false: context->interface is a plain, non-const pointer (types.h:428),
+     * and SCPI_ErrorEmit's transport write is gated on
+     * context->interface->error being non-NULL (error.c:78-84) -- nothing
+     * requires that pointer to reference the real, live interface struct for
+     * the duration of one push. So: swap it for a stack-local COPY of the
+     * real struct with only .error nulled, push, then restore the real
+     * pointer before the reply below is written. SCPI_ErrorPushEx still
+     * updates the error queue, the ESR bits and context->cmd_error
+     * UNCONDITIONALLY (error.c:179-199) -- none of that reads
+     * context->interface -- so the queue/ESR update happens exactly as
+     * before, with no transport write and no reply corruption.
      *
-     * SYSTem:STReam:WIFI:FINd? is a QUERY with a five-field reply. Pushing
-     * BEFORE the scpi_printf below puts **ERROR ahead of the reply, so a
-     * client reading one line consumes the error instead of its answer.
-     * Pushing AFTER it leaves an unsolicited trailing line that the next
-     * query can mistake for its own response. This command already has two
-     * response shapes -- five fields alone, and (the "streaming already
-     * active" path above, via SCPI_ExecutionError) an error line with no
-     * fields -- and either placement would add a third, mixed shape.
+     * THE SECOND TRANSPORT-FACING CALLBACK. SCPI_ErrorEmit does not stop at
+     * ->error: it first calls SCPI_RegSetBits(context, SCPI_REG_STB,
+     * STB_QMA), and SCPI_RegSet's STB/SRE handling (ieee488.c:170-186) can
+     * itself reach writeControl(context, SCPI_CTRL_SRQ, ...) ->
+     * context->interface->control(...) whenever the newly-set STB bits are
+     * also set in SRE. Nulling .error alone does not cover that path. It is
+     * left un-nulled here -- the local copy keeps the real .control pointer
+     * -- BECAUSE, not by construction, both registered .control callbacks
+     * are no-ops in this firmware: SCPI_TCP_Control (wifi_tcp_server.c) and
+     * SCPI_USB_Control (UsbCdc.c) both return SCPI_RES_OK with every write
+     * commented out, verified at the time of this fix. If either is ever
+     * made to actually write, this swap must null .control too, or move to
+     * a fully-NULL local interface.
      *
-     * SCPI_StartStreamingClaimed's identical stopRequested refusal DOES push
-     * and return SCPI_RES_ERR. That is a valid precedent for the refusal
-     * SEMANTICS and not for the reply format: START is registered without a
-     * '?' and has no structured reply to corrupt. A query does.
+     * SAFE AND BOUNDED under one critical section: SCPI_ErrorPush here
+     * passes info = NULL, so SCPI_ErrorAddInternal never calls
+     * SCPIDEFINE_strndup -- the whole section is one fifo_add plus a
+     * handful of register writes, not an allocation.
      *
-     * So the cause goes where this project puts error detail: the reply's own
-     * token (START_REFUSED / START_FAIL) plus LOG_E above, read back with
-     * SYSTem:LOG?. Unifying all four refusal causes onto one reporting style
-     * is a separate behaviour change and does not belong in this fix. */
+     * Scoped to stopRequested ONLY, same as round 1's reverted attempt. The
+     * sibling causes (#847 cfgBusy, #868 mappingMoved, #891 inputsGone) keep
+     * the pre-existing OK+token+log convention unchanged here -- unifying
+     * all four onto one refusal-reporting style is a broader behaviour
+     * change than this fix and stays out of this Size-S ticket. */
+    if (startFailed && startFailedByStop) {
+        scpi_interface_t * const realInterface = context->interface;
+        scpi_interface_t queueOnlyInterface;
+        taskENTER_CRITICAL();
+        queueOnlyInterface = *realInterface;
+        queueOnlyInterface.error = NULL;
+        context->interface = &queueOnlyInterface;
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        context->interface = realInterface;
+        taskEXIT_CRITICAL();
+    }
 
     // Output: recommendedHz,recommendedKBps,reason,ceilingHz,ceilingKBps
     //   recommendedHz/KBps = soak-confirmed clean rate + its wire rate (0 if none)
