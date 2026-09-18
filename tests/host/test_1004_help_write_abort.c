@@ -98,6 +98,15 @@
  * pinned by the Makefile's greps, including the #1134 guard that fails the build
  * if ScpiHelpWrite ever reimplements the decision inline again.
  *
+ * ONE NUMBERING TRAP, called out so nobody trips on it. This file has always
+ * numbered the two guards deadline = 1, short write = 2 (see "THE FIX" above,
+ * and guard1_only_help_write_all, whose "guard 1" is the DEADLINE). The
+ * firmware side -- ScpiBoundedWrite.h, SysLogLevelWrite and test_1098 --
+ * numbers them the other way round: short write = 1, deadline = 2. The two
+ * conventions describe the SAME two guards in the same order of execution; only
+ * the labels differ. This file keeps its own numbering rather than renaming a
+ * shape function mid-retrofit, so read "guard 1" here as "the deadline".
+ *
  * ONE DIFFERENCE FROM #995's PLANNED TEST: SCPI_GetCommandHistory's write count is
  * pinned to a real firmware constant (SCPI_CMD_HISTORY_SIZE + 1). HELP's
  * write count depends on the registered command table's total text size
@@ -623,7 +632,7 @@ TEST(zero_writes_spends_nothing)
  * no firmware code at all.
  * ========================================================================== */
 
-TEST(the_real_decide_predicate_is_what_bounds_helps_hold)
+TEST(the_real_decide_predicate_is_what_bounds_the_help_hold)
 {
     /* Not latched, inside budget -> write. */
     ASSERT_EQ(ScpiBoundedWrite_Decide(true, 0U, 0U, FW_HELP_BUDGET_MS),
@@ -686,7 +695,7 @@ TEST(the_real_decide_predicate_is_what_bounds_helps_hold)
               SCPI_BOUNDED_WRITE_EXPIRED);   /* elapsed budget,   across the wrap */
 }
 
-TEST(the_real_short_write_predicate_is_what_latches_helps_guard_two)
+TEST(the_real_short_write_predicate_is_what_latches_help_guard_two)
 {
     ASSERT_TRUE(ScpiBoundedWrite_IsShort(0U, LEN_PER_WRITE));              /* refused outright */
     ASSERT_TRUE(ScpiBoundedWrite_IsShort(LEN_PER_WRITE - 1U, LEN_PER_WRITE)); /* one byte short */
@@ -716,7 +725,7 @@ int main(void)
     RUN(deadline_guard_survives_tick_counter_wrap);
     RUN(deadline_guard_crossing_wrap_still_trips_at_budget);
     RUN(zero_writes_spends_nothing);
-    RUN(the_real_decide_predicate_is_what_bounds_helps_hold);
-    RUN(the_real_short_write_predicate_is_what_latches_helps_guard_two);
+    RUN(the_real_decide_predicate_is_what_bounds_the_help_hold);
+    RUN(the_real_short_write_predicate_is_what_latches_help_guard_two);
     return TEST_SUMMARY();
 }
