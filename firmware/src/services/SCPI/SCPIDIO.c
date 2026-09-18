@@ -961,8 +961,16 @@ scpi_result_t SCPI_DioMeasFrequency(scpi_t * context) {
     if (!SCPI_ParamInt32(context, &dio, TRUE)) {
         return SCPI_RES_ERR;
     }
-    (void)SCPI_ParamInt32(context, &gate, FALSE);   /* optional gate window (ms) */
-    if (SCPI_ParamErrorOccurred(context)) {         /* present-but-malformed gate */
+    /* #876: SCPI_ParamErrorOccurred() misses the silent-failure case -- a
+     * decimal token with no integer digits (`.5`) makes ParamSignToUInt32
+     * consume zero digits and return FALSE without queuing anything, so the
+     * old guard below let it through as if the arg were ABSENT and measured
+     * with the default gate instead of rejecting it. See
+     * SCPI_OptionalParamInt32's own doc comment (SCPIInterface.h) for the
+     * full mechanism -- this is the same contract already used elsewhere in
+     * this file (SCPI_GPIODirectionSet et al.). */
+    SCPI_OptionalParam gateOpt = SCPI_OptionalParamInt32(context, &gate);
+    if (gateOpt == SCPI_OPT_BAD) {
         return SCPI_RES_ERR;
     }
     if (dio < 0 || dio > 15) {
@@ -1007,8 +1015,11 @@ scpi_result_t SCPI_DioMeasPulseWidth(scpi_t * context) {
     if (!SCPI_ParamInt32(context, &dio, TRUE)) {
         return SCPI_RES_ERR;
     }
-    (void)SCPI_ParamInt32(context, &pol, FALSE);    /* optional polarity */
-    if (SCPI_ParamErrorOccurred(context)) {         /* present-but-malformed pol */
+    /* #876: same silent-failure gap as SCPI_DioMeasFrequency above -- see its
+     * comment. `.5` used to be silently read as ABSENT and measure with the
+     * default polarity instead of being rejected. */
+    SCPI_OptionalParam polOpt = SCPI_OptionalParamInt32(context, &pol);
+    if (polOpt == SCPI_OPT_BAD) {
         return SCPI_RES_ERR;
     }
     if (dio < 0 || dio > 15) {
