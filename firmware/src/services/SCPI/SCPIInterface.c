@@ -2,6 +2,7 @@
 #define LOG_MODULE LOG_MODULE_SCPI
 
 #include "SCPIInterface.h"
+#include "ScpiBoundedWrite.h"  /* #1098: pure bounded-write decision, host-tested */
 #include "semphr.h"  // #347: mutex for SysInfoGet static buffer
 
 
@@ -1474,20 +1475,33 @@ static scpi_result_t SCPI_SysLogClear(scpi_t * context) {
  */
 static void SysLogLevelWrite(scpi_t * context, bool * ok, TickType_t startTick,
                              const char * data, size_t len) {
-    if (!*ok) {
-        return;
-    }
-    /* Unsigned tick subtraction: correct across the 32-bit xTaskGetTickCount
-     * wrap (~49.7 days at configTICK_RATE_HZ 1000). */
-    if ((TickType_t)(xTaskGetTickCount() - startTick) >=
-            pdMS_TO_TICKS(SCPI_LOGLEVEL_WRITE_BUDGET_MS)) {
-        *ok = false;
-        LOG_E("LOG:LEV: write budget %u ms exhausted - reply truncated",
-              (unsigned)SCPI_LOGLEVEL_WRITE_BUDGET_MS);
-        return;
+    /* #1098: the DECISION lives in ScpiBoundedWrite.h, which is pure and
+     * dependency-free, so tests/host compiles and calls THE REAL predicates
+     * instead of a parallel copy of them. That is not a style preference: with
+     * the deadline and the latch inline here, deleting the deadline check was
+     * measured to leave the ENTIRE host suite green, because the Makefile guard
+     * only proved the call sites NAME this helper and the test only proved its
+     * own re-implementation was self-consistent.
+     *
+     * What stays here is what a host cannot run: the transport write, the log
+     * wording, and this site's budget constant. */
+    switch (ScpiBoundedWrite_Decide(*ok, (uint32_t)xTaskGetTickCount(),
+                                    (uint32_t)startTick,
+                                    (uint32_t)pdMS_TO_TICKS(
+                                            SCPI_LOGLEVEL_WRITE_BUDGET_MS))) {
+        case SCPI_BOUNDED_WRITE_SKIP:
+            return;
+        case SCPI_BOUNDED_WRITE_EXPIRED:
+            *ok = false;
+            LOG_E("LOG:LEV: write budget %u ms exhausted - reply truncated",
+                  (unsigned)SCPI_LOGLEVEL_WRITE_BUDGET_MS);
+            return;
+        case SCPI_BOUNDED_WRITE_PROCEED:
+        default:
+            break;
     }
     size_t written = context->interface->write(context, data, len);
-    if (written != len) {
+    if (ScpiBoundedWrite_IsShort(written, len)) {
         *ok = false;
         LOG_E("LOG:LEV: transport dropped %u of %u bytes - reply truncated",
               (unsigned)(len - written), (unsigned)len);

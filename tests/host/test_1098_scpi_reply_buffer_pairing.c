@@ -97,6 +97,16 @@
 #include <stdio.h>
 #include "test_framework.h"
 
+/* THE REAL bounded-write decision, compiled into this test -- not a copy of it.
+ * ScpiBoundedWrite.h is pure and dependency-free (three C standard headers)
+ * exactly so this include works, the same property FixedPointFmt.h,
+ * AD7609Scale.h and JSON_StringEscape.h have. Every deadline and short-write
+ * assertion below therefore exercises the code SysLogLevelWrite actually runs:
+ * break the guard in the firmware and these tests go red. They did NOT, before
+ * this extraction -- deleting the production deadline check was measured to
+ * leave the whole host suite passing, which is the defect this closes. */
+#include "../../firmware/src/services/SCPI/ScpiBoundedWrite.h"
+
 /* libscpi's scpi_result_t values (firmware/src/libraries/scpi/libscpi/inc/scpi/types.h:167). */
 #define RES_OK    1
 #define RES_ERR  (-1)
@@ -296,23 +306,34 @@ static int new_syslog_get_bounded(MockEnv* e, int moduleCount, int injectedLen,
         return RES_ERR;
     }
     unsigned startTick = e->now;
-    int ok = 1;
+    bool ok = true;
     for (int i = 0; i < moduleCount; i++) {
         int len = injectedLen;
         if (len > 0) {
-            /* SysLogLevelWrite, inlined */
-            if (ok) {
-                if ((unsigned)(e->now - startTick) >= budgetMs) {
-                    ok = 0;                      /* guard 2: deadline */
+            /* SysLogLevelWrite's body, with THE REAL decision functions. Only
+             * the transport write and the logging are mocked -- the deadline
+             * and the short-write test are the firmware's own code. */
+            switch (ScpiBoundedWrite_Decide(ok, e->now, startTick, budgetMs)) {
+            case SCPI_BOUNDED_WRITE_SKIP:
+                break;
+            case SCPI_BOUNDED_WRITE_EXPIRED:
+                ok = false;                       /* guard 2: deadline */
+                break;
+            case SCPI_BOUNDED_WRITE_PROCEED:
+            default: {
+                e->now += msPerWrite;
+                size_t offered = clamp_len(len);
+                /* A refusing transport accepts 0 of the offered bytes. */
+                size_t written = (shortWriteAt >= 0 && i >= shortWriteAt)
+                                 ? 0U : offered;
+                if (ScpiBoundedWrite_IsShort(written, offered)) {
+                    e->shortWrites++;
+                    ok = false;                   /* guard 1: short write */
                 } else {
-                    e->now += msPerWrite;
-                    if (shortWriteAt >= 0 && i >= shortWriteAt) {
-                        e->shortWrites++;
-                        ok = 0;                  /* guard 1: short write */
-                    } else {
-                        mock_write(e, clamp_len(len));
-                    }
+                    mock_write(e, offered);
                 }
+                break;
+            }
             }
         }
     }
@@ -766,6 +787,58 @@ TEST(fix_changes_where_the_reply_lives_not_what_is_written)
 #define MS_PER_STALLED_WRITE  1000U   /* SCPI_WRITE_MAX_RETRIES x DELAY_MS */
 #define FW_LOGLEVEL_BUDGET_MS 2000U   /* SCPI_LOGLEVEL_WRITE_BUDGET_MS */
 
+/* THE REAL PREDICATES, exercised directly. These are the assertions that made
+ * the guards non-vacuous: before ScpiBoundedWrite.h existed, deleting the
+ * production deadline check left the entire host suite green. */
+TEST(the_real_decide_predicate_is_what_bounds_the_hold)
+{
+    /* Not latched, inside budget -> write. */
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, 0U, 0U, 2000U),
+              SCPI_BOUNDED_WRITE_PROCEED);
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, 1999U, 0U, 2000U),
+              SCPI_BOUNDED_WRITE_PROCEED);
+
+    /* The boundary is >=, not > : at exactly the budget the hold is over. */
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, 2000U, 0U, 2000U),
+              SCPI_BOUNDED_WRITE_EXPIRED);
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, 2001U, 0U, 2000U),
+              SCPI_BOUNDED_WRITE_EXPIRED);
+
+    /* The latch is tested BEFORE the deadline, so an already-failed caller
+     * reports SKIP rather than a second, different reason for the same abort.
+     * Both inputs below would be EXPIRED but for the latch. */
+    ASSERT_EQ(ScpiBoundedWrite_Decide(false, 0U, 0U, 2000U),
+              SCPI_BOUNDED_WRITE_SKIP);
+    ASSERT_EQ(ScpiBoundedWrite_Decide(false, 5000U, 0U, 2000U),
+              SCPI_BOUNDED_WRITE_SKIP);
+
+    /* A zero budget can never permit a write. */
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, 0U, 0U, 0U),
+              SCPI_BOUNDED_WRITE_EXPIRED);
+
+    /* ACROSS THE 32-BIT TICK WRAP. `elapsed >= budget` on unsigned subtraction
+     * stays correct; the `now >= start + budget` spelling would overflow and
+     * wrongly permit writes for ~49.7 days. start is 100 ticks before the wrap. */
+    const uint32_t nearWrap = 0xFFFFFFFFU - 99U;
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, nearWrap, nearWrap, 2000U),
+              SCPI_BOUNDED_WRITE_PROCEED);
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, 1899U, nearWrap, 2000U),
+              SCPI_BOUNDED_WRITE_PROCEED);   /* elapsed 1999, wrapped */
+    ASSERT_EQ(ScpiBoundedWrite_Decide(true, 1900U, nearWrap, 2000U),
+              SCPI_BOUNDED_WRITE_EXPIRED);   /* elapsed 2000, wrapped */
+}
+
+TEST(the_real_short_write_predicate_is_what_latches_guard_one)
+{
+    ASSERT_TRUE(ScpiBoundedWrite_IsShort(0U, 24U));    /* refused outright */
+    ASSERT_TRUE(ScpiBoundedWrite_IsShort(23U, 24U));   /* one byte short */
+    ASSERT_FALSE(ScpiBoundedWrite_IsShort(24U, 24U));  /* complete */
+
+    /* A zero-length write is complete, not short -- comparing against 0
+     * instead of len would latch here and truncate a healthy reply. */
+    ASSERT_FALSE(ScpiBoundedWrite_IsShort(0U, 0U));
+}
+
 TEST(healthy_host_is_byte_identical_and_never_trips_a_guard)
 {
     /* A draining transport costs ~0 ms per write, so neither guard can fire and
@@ -894,6 +967,8 @@ int main(void)
     RUN(loop_shapes_hold_the_buffer_exactly_once_at_every_module_count);
     RUN(mutation_per_iteration_take_give_pairs_but_is_not_the_fixed_shape);
     RUN(fix_changes_where_the_reply_lives_not_what_is_written);
+    RUN(the_real_decide_predicate_is_what_bounds_the_hold);
+    RUN(the_real_short_write_predicate_is_what_latches_guard_one);
     RUN(healthy_host_is_byte_identical_and_never_trips_a_guard);
     RUN(guard1_short_write_stops_the_dump_instead_of_buying_nine_more_seconds);
     RUN(guard2_bounds_the_trickle_transport_guard1_cannot_catch);

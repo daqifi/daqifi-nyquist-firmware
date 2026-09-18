@@ -991,8 +991,11 @@ ORDER_IN_FN = awk -v fn="$(2)" \
 # FW_RESPONSE_BUF_SIZE and drives SCPI_StorageSDInfo's `len >= capacity`
 # format-error branch off that exact value, so a stale copy would still build
 # and still pass while testing the wrong boundary.
+SCPI_BOUNDED_WRITE_H := ../../firmware/src/services/SCPI/ScpiBoundedWrite.h
+
 $(REPLYBUF_BIN): test_1098_scpi_reply_buffer_pairing.c test_framework.h \
-                $(SCPI_INTERFACE_SRC) $(SCPI_INTERFACE_H) $(SD_BENCH_SRC) $(RECIPES)
+                $(SCPI_INTERFACE_SRC) $(SCPI_INTERFACE_H) $(SD_BENCH_SRC) \
+                $(SCPI_BOUNDED_WRITE_H) $(RECIPES)
 	@grep -qE '^[[:space:]]*#define[[:space:]]+SCPI_RESPONSE_BUF_SIZE[[:space:]]+2048U' \
 	     $(SCPI_INTERFACE_H) \
 	   || { echo "ERROR: SCPI_RESPONSE_BUF_SIZE is no longer 2048U in"; \
@@ -1088,6 +1091,22 @@ $(REPLYBUF_BIN): test_1098_scpi_reply_buffer_pairing.c test_framework.h \
 	        echo "       MS_PER_STALLED_WRITE) and its guard-2 arithmetic depends"; \
 	        echo "       on the exact values. Update both together."; \
 	        exit 1; }
+# GUARD 5b -- THE TICK MODEL. ScpiBoundedWrite_Decide bounds the hold with
+# unsigned 32-bit subtraction and test_1098 asserts that across the wrap at
+# 0xFFFFFFFF; both are exact only while TickType_t is 32 bits and one tick is
+# one millisecond. Same two pins as test_947, against the same file.
+	@grep -qE '^#define[[:space:]]+configTICK_RATE_HZ[[:space:]]+\( \( TickType_t \) 1000 \)[[:space:]]*$$' \
+	     $(FREERTOS_CONFIG_SRC) \
+	  && grep -qE '^#define[[:space:]]+configTICK_TYPE_WIDTH_IN_BITS[[:space:]]+TICK_TYPE_WIDTH_32_BITS[[:space:]]*$$' \
+	     $(FREERTOS_CONFIG_SRC) \
+	   || { echo "ERROR: the tick model changed in $(FREERTOS_CONFIG_SRC)"; \
+	        echo "       (configTICK_RATE_HZ must be 1000 and"; \
+	        echo "       configTICK_TYPE_WIDTH_IN_BITS TICK_TYPE_WIDTH_32_BITS)."; \
+	        echo "       ScpiBoundedWrite_Decide's wrap arithmetic and"; \
+	        echo "       test_1098's wrap assertions both assume 32-bit"; \
+	        echo "       millisecond ticks; at another width the deadline is"; \
+	        echo "       wrong in a way no assertion here would show."; \
+	        exit 1; }
 # GUARD 6 -- THE DUMP LOOPS STAY BOUNDED. Guard 3 pins only WHERE the take and
 # give sit; it cannot see whether the writes between them are guarded. Both dump
 # callbacks must route every write through SysLogLevelWrite (which latches on a
@@ -1108,6 +1127,45 @@ $(REPLYBUF_BIN): test_1098_scpi_reply_buffer_pairing.c test_framework.h \
 	          echo "       that unbounded shape and asserts against it."; \
 	          exit 1; }; \
 	 done
+# GUARD 7 -- THE PRODUCTION HELPER USES THE HOST-TESTED DECISION.
+#
+# This is the guard that makes guards 2-6 mean something. Guard 6 proves the
+# call sites NAME SysLogLevelWrite; it cannot see inside it. With the deadline
+# and the short-write latch written inline there, deleting the deadline check
+# was MEASURED to leave the entire host suite green -- the test was asserting
+# against its own re-implementation, so the production logic was unguarded by
+# construction (Qodo #1132 "Broken hold bounds can pass tests").
+#
+# The decision now lives in ScpiBoundedWrite.h, which the test compiles and
+# calls directly. So this guard pins the one thing that would silently reopen
+# the gap: SysLogLevelWrite reimplementing the decision inline instead of
+# delegating to it. Both predicates must appear in its body, and the test must
+# include the real header rather than a copy.
+#
+# Scoped by the helper's own signature -- it is `static void`, so the
+# scpi_result_t-anchored CNT_IN_FN cannot reach it; the body runs to the first
+# column-0 `}`.
+	@d=`awk '/^static void SysLogLevelWrite\(/{f=1} f&&index($$0,"ScpiBoundedWrite_Decide"){n++} f&&/^\}/{exit} END{print n+0}' $(SCPI_INTERFACE_SRC)`; \
+	 s=`awk '/^static void SysLogLevelWrite\(/{f=1} f&&index($$0,"ScpiBoundedWrite_IsShort"){n++} f&&/^\}/{exit} END{print n+0}' $(SCPI_INTERFACE_SRC)`; \
+	 test "$$d" = "1" && test "$$s" = "1" \
+	   || { echo "ERROR: SysLogLevelWrite in $(SCPI_INTERFACE_SRC) no longer"; \
+	        echo "       delegates to the host-tested predicates in"; \
+	        echo "       ScpiBoundedWrite.h (found Decide=$$d IsShort=$$s;"; \
+	        echo "       both must be 1)."; \
+	        echo "       Inlining that arithmetic again makes it untestable from"; \
+	        echo "       tests/host: SCPIInterface.c is not host-includable, so"; \
+	        echo "       the suite would silently go back to asserting against a"; \
+	        echo "       COPY of the algorithm. Deleting the real deadline check"; \
+	        echo "       was measured to leave the whole suite green that way."; \
+	        exit 1; }
+	@grep -q '#include "../../firmware/src/services/SCPI/ScpiBoundedWrite.h"' \
+	     test_1098_scpi_reply_buffer_pairing.c \
+	   || { echo "ERROR: test_1098_scpi_reply_buffer_pairing.c no longer includes"; \
+	        echo "       the REAL ScpiBoundedWrite.h. Its deadline and"; \
+	        echo "       short-write assertions would then be testing a local"; \
+	        echo "       re-implementation again, which is exactly the defect"; \
+	        echo "       the extraction closed."; \
+	        exit 1; }
 	$(CC) $(CFLAGS) -o $(REPLYBUF_BIN) test_1098_scpi_reply_buffer_pairing.c
 
 SCPI999_WIRING_GUARD := check_999_createscpicontext_wiring.sh
