@@ -975,6 +975,13 @@ bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object);
 /* #589 P1: reset the detect-poll backoff (expected insertion). */
 void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object);
 
+/* #756: DetectPollKick's urgent sibling -- also cancels the in-flight
+   detect-poll timer and forces the FSM's wait state to expire immediately,
+   for a caller (SCPI_CheckSDCardPresent) that needs the answer now rather
+   than on the FSM's own next cycle. See the .c file for why this must stay
+   a separate function from the plain kick above. */
+void DRV_SDSPI_DetectPollExpireNow(SYS_MODULE_OBJ object);
+
 // *****************************************************************************
 /* Function:
     bool DRV_SDSPI_IsWriteProtected
