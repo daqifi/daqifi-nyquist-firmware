@@ -1789,7 +1789,7 @@ void sd_card_manager_ProcessState() {
                  * SYST:STOR:SD:SPACe? doesn't surface a stale free-space
                  * value when the floor-check is bypassed (floor==0).
                  * Snapshot minFreeBytes under a critical section per
-                 * CLAUDE.md atomicity rules (64-bit read shared with the
+                 * docs/MCU_REFERENCE.md atomicity rules (64-bit read shared with the
                  * SCPI setter that writes under taskENTER_CRITICAL). */
                 /* Reset 64-bit cached space fields under a single critical
                  * section so concurrent SCPI readers (e.g. SYST:STOR:SD:
@@ -1842,7 +1842,7 @@ void sd_card_manager_ProcessState() {
             uint64_t totalBytes = (uint64_t)totalSectors * SD_SECTOR_SIZE_BYTES;
             /* Single critical section covers all the cross-task state
              * touched here:
-             *   - Snapshot the 64-bit floor (CLAUDE.md atomicity — SCPI
+             *   - Snapshot the 64-bit floor (docs/MCU_REFERENCE.md atomicity — SCPI
              *     setter writes under taskENTER_CRITICAL).
              *   - Publish the 64-bit space cache (free/total/valid) so a
              *     concurrent reader sees the new triple coherently
@@ -2656,7 +2656,7 @@ void sd_card_manager_ProcessState() {
              * pair this change created. SCPI_StorageSDMaxSizeSet now writes
              * maxFileSizeBytes inside a critical section, which stops the
              * WRITE being torn -- but the field is uint64_t, so this read is
-             * two 32-bit loads on PIC32MZ (CLAUDE.md, "Atomicity & Concurrency
+             * two 32-bit loads on PIC32MZ (docs/MCU_REFERENCE.md, "Atomicity & Concurrency
              * Rules": 64-bit always needs a critical section). The SCPI task
              * runs at priority 7 and this one at 5, so a setter landing
              * between the two loads yields a limit that was never written --
