@@ -295,6 +295,38 @@ GEN_1000  := gen_1000_log_budget.h
 FW_LOG_H  := $(FW_UTIL)/Logger.h
 FW_LOG_C  := $(FW_UTIL)/Logger.c
 
+# #1039: four more LOG_E messages cut by the SAME Util/Logger.c message frame
+# $(SDLOG_BIN) above measures #1000's site against -- in app_freertos.c,
+# SCPIADC.c and wifi_manager.c. Same host-testability situation (none of those
+# three is includable here, and neither is Logger.c, which pulls in FreeRTOS),
+# so this test also mirrors LogMessageFormatImpl and runs the REAL texts
+# through it. Independent of $(SDLOG_BIN)/$(GEN_1000): different sites,
+# separate extraction, its own mirror -- a mistake in one does not become the
+# other's baseline.
+#
+# The extraction is a Python generator rather than the sed/grep pipeline
+# $(SDLOG_BIN) uses, because three of these four format strings are
+# concatenated across physical lines and a shell one-liner cannot reassemble
+# one without risking a FRAGMENT -- and a fragment understates a message's
+# length, which passes every assertion in the test while checking nothing.
+# gen_1039_log_budget.py anchors each site on the CODE that gates it (never on
+# the message text: a re-word must re-MEASURE, not fail the build), requires
+# the anchor to be unique, refuses a literal run that is not followed by ','
+# or ')', and pins each site's conversion signature so a changed substitution
+# count re-derives the worst case instead of being measured with stale
+# arguments. It exits non-zero with a named diagnostic on any of that.
+#
+# It deliberately does NOT reuse tools/lint/log_budget.py's parser: that tool
+# is the static gate this same PR adds, and it MODELS the truncation. The
+# value of this test is that it does not share the model, so the model's
+# extractor must not sit on both sides of the check either.
+LOG1039_BIN := run_1039_tests
+LOG1039_GEN := gen_1039_log_budget.h
+FW_APP_SRC  := ../../firmware/src/app_freertos.c
+FW_ADC_SCPI := ../../firmware/src/services/SCPI/SCPIADC.c
+FW_WIFI_SRC := ../../firmware/src/services/wifi_services/wifi_manager.c
+PYTHON      ?= python3
+
 # #1039 (PR #1116, split from the parked #1110): the four LOG_E messages
 # #1039 shortened, measured against the SAME ceiling $(SDLOG_BIN) measures --
 # Logger's real truncation, not an arithmetic estimate of it. Deliberately
@@ -1205,6 +1237,14 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 	 printf '#endif\n' >> $(GEN_1000)
 	$(CC) $(CFLAGS) -o $(SDLOG_BIN) test_1000_sd_log_arm_budget.c
 
+$(LOG1039_GEN): gen_1039_log_budget.py $(FW_APP_SRC) $(FW_ADC_SCPI) \
+                $(FW_WIFI_SRC) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
+	$(PYTHON) gen_1039_log_budget.py --out $(LOG1039_GEN)
+
+$(LOG1039_BIN): test_1039_log_message_budget.c test_framework.h \
+                $(LOG1039_GEN) $(RECIPES)
+	$(CC) $(CFLAGS) -o $(LOG1039_BIN) test_1039_log_message_budget.c
+
 # #1039: see the LOGCEIL_BIN comment block above for what this proves and
 # why it is deliberately independent of the parked #1110 tooling.
 $(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
@@ -1487,20 +1527,19 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 	$(CC) $(CFLAGS) -o $(START_BIN) test_998_start_streaming_claimed_order.c
 
 # Every suite, and every one of the eleven binaries. SEVENTH additive
-# collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
-# fw#1000, fw#913 vs fw#980, and now fw#913 vs fw#985 -- every one of them
-# two branches appending a line to these same two lists. Resolved the same
-# way every time: keep each side's target rule INTACT and union only `run`
-# and `clean`. Dropping a rule loses a suite silently; duplicating one
-# silently shadows the other.
 
-# Every suite, and every one of the THIRTEEN binaries. NINTH additive collision
-# in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs fw#1000,
-# fw#913 vs fw#980, fw#913 vs fw#985, fw#999 vs fw#985, and now fw#999 vs
-# fw#1057 -- every one of them two branches appending a line to these same two
-# lists. Resolved the same way every time: keep each side's target rule INTACT
-# and union only `run` and `clean`. Dropping a rule loses a suite silently;
-# duplicating one silently shadows the other.
+# Every suite, and every one of the FOURTEEN binaries. ELEVENTH additive
+# collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
+# fw#1000, fw#913 vs fw#980, fw#913 vs fw#985, fw#999 vs fw#985, fw#999 vs
+# fw#1057, and now fw#1039 vs fw#1108 -- the first of these where one side
+# APPENDS a line (LOG1039_BIN, for test_1039_log_message_budget.c) while the
+# other RETIRES one from the same line (DAC1057_BIN, folded onto WaitLoop.h --
+# see the comment above). Resolved the same way regardless of shape: keep
+# each side's target rule intact (DAC1057_BIN's own target is gone, per
+# #1108's resolution above; LOG1039_BIN's stays, below) and union only `run`
+# and `clean` -- net +1 here, not +2, because one side's addition is the
+# other side's removal. Dropping a rule loses a suite silently; duplicating
+# one silently shadows the other.
 #
 # #1026 is the ticket to stop this, and PR #1040 implements it by moving each
 # target into tests/host/tests/<issue>-<slug>.mk so a new suite appends to an
@@ -1523,8 +1562,19 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 # three already on main by the time this branch refreshed its base -- resolved
 # the same way as every earlier collision: keep each side's target rule INTACT
 # and union only `run` and `clean`.
+#
+# Every suite, and every one of the EIGHTEEN binaries: the seventeen above
+# plus #1110's own $(LOG1039_BIN) (see the LOG1039_BIN/LOG1039_GEN comment
+# block above), which this base refresh unions in for real for the first
+# time. ELEVENTH additive collision in this block -- fw#1039's LOG1039_BIN
+# (PR #1110, the parked lint tool half) collided here with fw#998, fw#1112,
+# fw#1121 and fw#1039/#1116's LOGCEIL_BIN, all already on main by the time
+# this branch refreshed its base -- resolved the same way as every earlier
+# collision: keep each side's target rule INTACT and union only `run` and
+# `clean`.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN)
+     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
+     $(LOG1039_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1542,9 +1592,11 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(SCAN1112_BIN)
 	./$(STARTARM_BIN)
 	./$(START_BIN)
+	./$(LOG1039_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN)
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
+	      $(LOG1039_BIN) $(LOG1039_GEN)
 
 .PHONY: run clean

@@ -218,9 +218,18 @@ on:
       - 'firmware/src/Util/Logger.h'
       - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
-      # #1039: test_1039_log_message_ceiling.c greps these two for the
-      # shipped format strings it hardcodes (SCPIADC.c is already covered by
-      # the entry above).
+      # #1039: test_1039_log_message_ceiling.c (PR #1116) greps these two for
+      # the shipped format strings it hardcodes (SCPIADC.c is already covered
+      # by the entry above). Also #1039/#1110's test_1039_log_message_budget.c
+      # measures the same four LOG_E messages against Logger's ceiling, and
+      # gen_1039_log_budget.py EXTRACTS all four out of the sources at build
+      # time -- both suites need these two paths for the same underlying
+      # reason (a re-worded message must re-measure, not queue no job), so one
+      # copy of each path serves both. Listed by name rather than as
+      # directories: each holds messages these suites read, and the
+      # extraction fails the BUILD by name if an anchor moves, so a refactor
+      # cannot step out of the trigger silently the way it could for
+      # AD7609Scale.h.
       - 'firmware/src/app_freertos.c'
       - 'firmware/src/services/wifi_services/wifi_manager.c'
       - 'firmware/src/HAL/ADC/**'
@@ -265,9 +274,14 @@ on:
       - 'firmware/src/Util/Logger.h'
       - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
-      # #1039: test_1039_log_message_ceiling.c greps these two for the
-      # shipped format strings it hardcodes (SCPIADC.c is already covered by
-      # the entry above).
+      # #1039: test_1039_log_message_ceiling.c (PR #1116) greps these two for
+      # the shipped format strings it hardcodes (SCPIADC.c is already covered
+      # by the entry above). Also #1039/#1110's test_1039_log_message_budget.c
+      # measures the same four LOG_E messages against Logger's ceiling, and
+      # gen_1039_log_budget.py EXTRACTS all four out of the sources at build
+      # time -- both suites need these two paths for the same underlying
+      # reason, so one copy of each path serves both (see the matching
+      # comment under pull_request above).
       - 'firmware/src/app_freertos.c'
       - 'firmware/src/services/wifi_services/wifi_manager.c'
       - 'firmware/src/HAL/ADC/**'

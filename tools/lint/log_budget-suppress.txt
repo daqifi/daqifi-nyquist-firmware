@@ -1,0 +1,35 @@
+# log_budget suppressions — permanent waivers, hand-maintained.
+#
+# Format: <file> :: <format string, exactly as the baseline renders it>
+#   e.g.  firmware/src/services/foo.c :: Refused (#123): %s
+#
+# A comment line stating WHY the site is safe is REQUIRED immediately above
+# each entry, and that is enforced, not just asked for: an entry with no
+# comment above it is a tool error, not a silent pass. A permanent waiver with
+# no stated reason is indistinguishable from an accident, and this file is the
+# one place in the gate where a finding can be turned off for good.
+#
+# THIS IS NOT THE BASELINE. Use tools/lint/log_budget-baseline.txt for the
+# pre-existing findings this PR did not set out to fix — those are meant to
+# shrink. An entry here says "the tool's conservative arithmetic is wrong about
+# this specific site and always will be", which is a much stronger claim.
+#
+# Reach for a suppression only when the site genuinely cannot be annotated:
+#
+#   - A %s whose length is bounded by something the tool cannot see, where the
+#     inline /* log_budget: max=N */ annotation would sit in code that is
+#     regenerated or otherwise not ours to edit. Prefer the annotation: it
+#     lives next to the call, so it is re-read whenever the call is.
+#   - A site where the worst case the tool computes is provably unreachable —
+#     and note that "unreachable" needs an argument, not an assertion. A %d fed
+#     from a value range-checked to [0,15] does not print 11 characters, but
+#     the range check has to be shown.
+#
+# Matching ignores the reason field, so a suppression covers the site whatever
+# the tool says about it — but the format string is part of the key, so
+# REWORDING the message retires the waiver and the site is re-measured. That is
+# deliberate: a waiver is about a message that was reasoned about, not about a
+# line number.
+#
+# Empty on purpose. Nothing in the tree currently needs a permanent waiver;
+# every pre-existing finding is in the baseline, where it can be worked off.
