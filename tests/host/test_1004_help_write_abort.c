@@ -643,7 +643,10 @@ TEST(the_real_decide_predicate_is_what_bounds_the_help_hold)
 
     /* MUTATION `>=` -> `>`. At exactly the budget the hold is already over, so
      * HELP must refuse. Weakening the comparison lets one extra ~1 s write in
-     * past the bound, and only this exact input can see it. */
+     * past the bound. This is the only input IN THIS TEST that distinguishes
+     * the two spellings directly; the sequence tests above also catch the
+     * mutation, but indirectly, through their clock accounting
+     * (short_write_guard_is_load_bearing goes 2000 -> 3000 ms). */
     ASSERT_EQ(ScpiBoundedWrite_Decide(true, FW_HELP_BUDGET_MS, 0U,
                                       FW_HELP_BUDGET_MS),
               SCPI_BOUNDED_WRITE_EXPIRED);
@@ -708,8 +711,11 @@ TEST(the_real_short_write_predicate_is_what_latches_help_guard_two)
      * latch failing open on exactly the case it exists for. */
     ASSERT_FALSE(ScpiBoundedWrite_IsShort(0U, 0U));
 
-    /* MUTATION: `>=`/`<` where `!=` was meant. A transport that somehow
-     * reported MORE than it was offered is not a completed write either. */
+    /* MUTATION: `written < len` where `written != len` was meant. `written >
+     * len` cannot occur through a conforming transport, so this input exists
+     * ONLY to kill that mutation -- it is the single input at which `<` and
+     * `!=` disagree, and without it the `<` spelling survives every other
+     * assertion in this file. Kept for that reason, not as defensive padding. */
     ASSERT_TRUE(ScpiBoundedWrite_IsShort(LEN_PER_WRITE + 1U, LEN_PER_WRITE));
 }
 
