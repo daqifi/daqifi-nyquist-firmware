@@ -119,7 +119,68 @@ void APP_FlashErase( void )
     #if defined(BOOTLOADER_LIVE_UPDATE_STATE_SAVE)
     APP_NVMOperation(UPPER_FLASH_REGION_ERASE_OPERATION);
     #else
-    APP_NVMOperation(FLASH_ERASE_OPERATION);
+    /* #909: erase ONLY the lower program-flash panel, never the whole PFM.
+     *
+     * This used to be FLASH_ERASE_OPERATION (NVMOP = 0b0111, "erase all of
+     * program Flash memory"). That wiped 0x1D000000-0x1D1FFFFF, and the
+     * application keeps its four 16 KB NVM settings pages -- TopLevel, WiFi
+     * credentials, factory ADC calibration and user ADC calibration -- at
+     * 0x9D1E0000-0x9D1EFFFF (firmware/src/services/daqifi_settings.h:
+     * RESERVED_SETTINGS_ADDR = KSEG0_PROGRAM_MEM_BASE_END - 128 KB). So every
+     * in-app customer update destroyed the device's settings and calibration;
+     * that is the root cause of #908 and of the "my WiFi credentials /
+     * precision reset after updating" reports.
+     *
+     * NVMOP = 0b0101 erases only the LOWER mapped region of program Flash,
+     * 0x1D000000-0x1D0FFFFF on this 2 MB part, leaving the upper region --
+     * and therefore the settings pages -- untouched.
+     * [X] FRM DS60001193B "Flash Memory with Support for Live Update",
+     *     Register 52-1 (NVMCON) bits 3-0:
+     *       0111 = "erase all of program Flash memory"
+     *       0110 = "erases only the upper mapped region of program Flash"
+     *       0101 = "erases only the lower mapped region of program Flash"
+     *     and Figure 52-3, which gives the 2 MB geometry: lower mapped region
+     *     0x1D000000-0x1D0FFFFF, upper mapped region 0x1D100000-0x1D1FFFFF.
+     *
+     * Three preconditions, all satisfied here:
+     *
+     *  1. Execution location. DS60001193B section 52.11.2: "When erasing the
+     *     entire PFM area, code must be executing from BFM. When erasing a
+     *     single upper or lower PFM bank, code must either be executing from
+     *     BFM or from the PFM bank that is not being erased." This bootloader
+     *     links entirely into boot flash (btl_mz.ld puts kseg1_boot_mem at
+     *     0xBFC00000 and its kseg0_program_mem at 0x9FC01000; the shipped
+     *     usb_bootloader.X.production.hex occupies only 0x1FC00000-0x1FC0FFF3
+     *     and nothing in PFM), so it runs from BFM and satisfies the stricter
+     *     whole-PFM rule as well. The panel erase cannot erase the bootloader.
+     *
+     *  2. Write protection. The same section: a region erase "will only
+     *     succeed if no pages are write-protected in the bank being erased",
+     *     which is strictly WEAKER than the whole-PFM erase's "PFM write
+     *     protection must be completely disabled". NVMPWP is 0 out of reset
+     *     and neither image ever writes it, so nothing changes here.
+     *
+     *  3. The application must fit in the lower panel. It does, with room to
+     *     spare: main's .map reports Total kseg0_program_mem used = 0xB8BBC
+     *     (756,668 B), 72% of the 1 MB panel. This is ENFORCED, not assumed --
+     *     tools/release/cut_release.sh fails the release if the .map's
+     *     kseg0_program_mem usage reaches 0x100000, or if any record in the
+     *     release hex lands at or above 0x1D100000.
+     *
+     * Panel swapping does not change any of this. The erase targets the
+     * MAPPED region, i.e. the address range above, whichever physical bank
+     * NVMCON.PFSWAP has mapped there; and in any case nothing in either image
+     * ever writes PFSWAP (NVM_ProgramFlashSwapBank is never called), so it
+     * stays at its power-on default.
+     *
+     * Deliberately NOT using the USE_PAGE_ERASE path as the fix: that loop is
+     * O(pages) with a blank check per page, and #532 was a bootloader
+     * watchdog/USB-servicing timeout during programming. The panel erase keeps
+     * this a single bulk operation and so does not reopen that risk. Page
+     * erase remains the documented fallback if the panel erase ever proves
+     * wrong on silicon.
+     */
+    APP_NVMOperation(LOWER_FLASH_REGION_ERASE_OPERATION);
     #endif
 #endif
 }

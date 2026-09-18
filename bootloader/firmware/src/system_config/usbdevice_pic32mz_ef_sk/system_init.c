@@ -104,9 +104,37 @@ SUBSTITUTE GOODS, TECHNOLOGY, SERVICES, OR ANY CLAIMS BY THIRD PARTIES
 #pragma config USERID =     0xffff
 #pragma config FMIIEN =     ON
 #pragma config FETHIO =     ON
-#pragma config PGL1WAY =    ON
-#pragma config PMDL1WAY =   ON
-#pragma config IOL1WAY =    ON
+/* #764 item 4 (folded into the #909 bootloader respin — same respin, same
+ * distribution problem, so it is done once).
+ *
+ * IOL1WAY/PMDL1WAY are DEVCFG3 fuses meaning "once CFGCON.IOLOCK/PMDLOCK is
+ * set, it can never be cleared again without a device Reset". The bootloader
+ * is what burns DEVCFG3 on a fielded unit -- a bootloader-linked application
+ * hex carries no config words at all (old_hv2_bootld.ld discards them) and
+ * erratum 45 (DS80000663R, "Run-Time Self Programming of Configuration Words
+ * is not functional", work around: None) makes them unreachable in the field.
+ * So every fielded device runs the application under the fuse settings chosen
+ * HERE, not the ones in firmware/src/config/default/initialization.c.
+ *
+ * The #664 DIO-terminal family (SPI/I2C/UART on the terminal, #665-#668) needs
+ * RUNTIME PPS (IOLOCK) and peripheral-power (PMDLOCK) reconfiguration. PR #762
+ * already made that work on units carrying ON, by never spending the one
+ * allowed transition -- so this is defence in depth, not the fix, and it is
+ * the reason #764 called it "non-urgent". Setting the fuses OFF removes the
+ * standing hazard that one stray lock-set anywhere in the application
+ * permanently bricks the whole family on customer hardware.
+ *
+ * Matched to the application's own non-ICSP settings (initialization.c): the
+ * two locks the feature needs are relaxed, and PGL1WAY -- the permission-group
+ * lock, unrelated to PPS/PMD -- is deliberately left at its default.
+ *
+ * Reach: like the #909 erase fix in this same respin, this reaches newly
+ * manufactured units immediately and fielded units only via PICkit or RMA,
+ * because the bootloader lives in boot flash and cannot update itself.
+ */
+#pragma config PGL1WAY =    ON   /* unrelated to PPS/PMD — left at default */
+#pragma config PMDL1WAY =   OFF  /* #764: allow repeated PMDLOCK transitions */
+#pragma config IOL1WAY =    OFF  /* #764: allow repeated IOLOCK (PPS) transitions */
 #pragma config FUSBIDIO =   OFF
 
 /*** BF1SEQ0 ***/
