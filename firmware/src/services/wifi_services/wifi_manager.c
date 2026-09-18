@@ -874,6 +874,12 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                             (uint32_t)((uint16_t)sentBytes - sendSize);
                     }
                 } else {
+                    // The popped sendSize is deliberately charged to NOTHING
+                    // here, so it stays in wifiTcpBytesSent with nothing on the
+                    // other side.  That is why the identity above holds only
+                    // when wifiTcpSendErrors == 0.  See wifiTcpOverBytesExtra in
+                    // wifi_tcp_server.h for the full statement and for why it
+                    // is not charged to wifiPartialBytesMissing.
                     client->wifiTcpSendErrors++;
                     isError = true;
                 }

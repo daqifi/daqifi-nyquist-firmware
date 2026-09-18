@@ -198,7 +198,15 @@ typedef struct s_tcpClientContext
      *  wifiTcpPartialSends above), and the new wifiTcpOverBytesExtra below now
      *  counts the negative half this field discards, so
      *  BytesSent - BytesConfirmed == PartialBytesMissing - OverBytesExtra is
-     *  checkable rather than merely hoped for.  This status paragraph supersedes
+     *  checkable rather than merely hoped for -- but ONLY CONDITIONALLY.  An
+     *  errored completion, or a client teardown with sends outstanding, leaves
+     *  a permanent positive difference that no pairing fault caused, so the
+     *  identity is exact only with WifiTcpSendErrors == 0, no teardown inside
+     *  the epoch, and a drained snapshot.  The full statement and the bound
+     *  that still holds when errors are non-zero are on wifiTcpOverBytesExtra
+     *  below.  An earlier revision of this sentence stated the identity
+     *  unconditionally, which was false (PR #1024's own pre-merge audit).
+     *  This status paragraph supersedes
      *  EXACTLY ONE claim above -- the partial-counter blindness after a CLEar,
      *  corrected in place two paragraphs up -- and nothing else.  An earlier
      *  revision of this line reaffirmed everything above unchanged, which was
@@ -223,7 +231,46 @@ typedef struct s_tcpClientContext
      *          == wifiPartialBytesMissing - wifiTcpOverBytesExtra
      *  holds even under a permuted ring — it is only the discarded negative half
      *  that made a mis-pair look like loss.  Reset alongside
-     *  wifiPartialBytesMissing (same epoch, or the identity is meaningless). */
+     *  wifiPartialBytesMissing (same epoch, or the identity is meaningless).
+     *
+     *  CORRECTION: the paragraph above states the identity with no conditions.
+     *  That is false (PR #1024's own pre-merge audit), and it is withdrawn here
+     *  rather than quietly reworded.  The bijection argument is sound, but it
+     *  covers only the pops that REACH these counters, and two kinds of push
+     *  never do:
+     *    - An ERRORED completion (sentBytes < 0).  SOCKET_MSG_SEND pops its
+     *      slot BEFORE testing the sign, then only increments
+     *      wifiTcpSendErrors.  The popped sendSize is added to none of
+     *      Confirmed, this field or wifiPartialBytesMissing, although its push
+     *      already added it to Sent (V, wifi_manager.c SOCKET_MSG_SEND
+     *      else-arm).
+     *    - A send OUTSTANDING AT CLIENT TEARDOWN.  The three teardown sites zero
+     *      tcpInFlight and the ring but not Sent (wifi_tcp_server.c).  The WINC
+     *      driver then discards any later completion for the closed session:
+     *      shutdown() memsets the socket entry, and the SOCKET_CMD_SEND reply
+     *      path forwards only a matching u16SessionID (V, socket.c).  So no pop
+     *      ever answers that push.
+     *  With the ring intact (no overrun and no desyncing reset, which are the
+     *  faults this identity exists to expose), inside one epoch begun by a
+     *  reset with nothing in flight, the relation is exactly:
+     *      (Sent - Confirmed) - (PartialBytesMissing - OverBytesExtra)
+     *          ==   bytes still in flight
+     *             + sendSize of every errored completion's popped slot
+     *             + sendSize of every slot a teardown discarded
+     *  Every term is >= 0.  No errored completion contributes more than
+     *  WIFI_WBUFFER_SIZE, because TcpServerFlush clamps writeBufferLength to
+     *  it before the push (V).  So, for a DRAINED snapshot from an epoch with
+     *  no client teardown:
+     *    - WifiTcpSendErrors == 0:     the identity must hold exactly.
+     *    - WifiTcpSendErrors == E > 0: the difference must lie in
+     *                                  [0, E * WIFI_WBUFFER_SIZE].
+     *  A difference outside that range is a fault whatever E is.  A difference
+     *  inside it with E > 0 is INCONCLUSIVE, because no counter records the
+     *  errored bytes themselves.
+     *  Charging an errored send to wifiPartialBytesMissing was considered and
+     *  NOT done, for two reasons.  It would make the identity exact for errors
+     *  only, since teardown would still break it.  And it would redefine that
+     *  counter partway through the #367/#935 measurement history. */
     uint32_t wifiTcpOverBytesExtra;
     /** #371 diagnostics: count of wifi_tcp_server_WriteBuffer calls that returned 0
      *  because the circular buffer didn't have enough free space.  Streaming task

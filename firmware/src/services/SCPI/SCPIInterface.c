@@ -3989,7 +3989,13 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
         // mis-pairing, not stream damage.  With both directions counted,
         // WifiTcpBytesSent - WifiTcpBytesConfirmed ==
         // WifiPartialBytesMissing - WifiTcpOverBytesExtra, bounded in-flight
-        // residual aside.
+        // residual aside -- but ONLY when WifiTcpSendErrors (printed above, from
+        // the same snapshot) is 0 and no client teardown fell inside the epoch.
+        // An errored completion leaves its whole send, at most WIFI_WBUFFER_SIZE,
+        // on the left with nothing on the right, and a teardown strands every
+        // outstanding send the same way.  An earlier revision stated the identity
+        // unconditionally, which was false.  The full statement, and the bound
+        // that holds with errors: wifiTcpOverBytesExtra in wifi_tcp_server.h.
         scpi_printf(context, "WifiTcpOverBytesExtra=%u\r\n", (unsigned)overBytesExtra);
         // #956 diag: flush attempts refused by TcpServerFlush's authoritative
         // in-flight cap check — a count of ring overruns PREVENTED, each one an
