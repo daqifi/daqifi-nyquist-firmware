@@ -302,6 +302,18 @@ def compute_image_crc32(lines, region_base, region_length,
                 raise HexFormatError(
                     "line %d: type 04 record must carry exactly 2 data "
                     "bytes, got %d" % (lineno, len(data)))
+            # The address field of a type 04 record is defined as 0000 and
+            # carries no meaning -- a nonzero one is a malformed record, and
+            # accepting it is not harmless: a CHECKSUM-PRESERVING corruption
+            # of the address field (adversarial audit round 2) relocates every
+            # following data record out of the audited window, and the tool
+            # would still hand back a clean CRC with exit 0 for a file whose
+            # payload it never saw.
+            if addr16 != 0:
+                raise HexFormatError(
+                    "line %d: type 04 record must have address 0000, got "
+                    "%04X -- the field is defined as zero, so a nonzero one "
+                    "means the record is corrupt" % (lineno, addr16))
             upper16 = (data[0] << 8) | data[1]
             ext_base = upper16 << 16
             addr_mode = ADDR_MODE_LINEAR
@@ -310,6 +322,12 @@ def compute_image_crc32(lines, region_base, region_length,
                 raise HexFormatError(
                     "line %d: type 02 record must carry exactly 2 data "
                     "bytes, got %d" % (lineno, len(data)))
+            # Same rule and same reason as type 04 above.
+            if addr16 != 0:
+                raise HexFormatError(
+                    "line %d: type 02 record must have address 0000, got "
+                    "%04X -- the field is defined as zero, so a nonzero one "
+                    "means the record is corrupt" % (lineno, addr16))
             segment = (data[0] << 8) | data[1]
             ext_base = segment << 4
             addr_mode = ADDR_MODE_SEGMENT
@@ -317,7 +335,10 @@ def compute_image_crc32(lines, region_base, region_length,
             # Start Segment/Linear Address records: byte count is always 04
             # (CS:IP or EIP) and the address field is conventionally 0000,
             # exactly like EOF's. Validated the same way EOF, type 02 and
-            # type 04 validate their own required shape -- this module's
+            # type 04 validate their own required shape (that parity was
+            # CLAIMED HERE BEFORE IT WAS TRUE -- 02 and 04 checked only their
+            # data length until adversarial audit round 2 caught the gap) --
+            # this module's
             # contract is to refuse a malformed record loudly, not to wave
             # one through just because its payload happens not to affect
             # the CRC.
@@ -855,6 +876,72 @@ def self_test():
         "printed",
         _batch_continues_past_a_malformed_file(), True)
 
+    # --- 6c: the same harm through a DIFFERENT door (adversarial audit
+    # round 2). 6b's fix only converted a malformed RECORD into a
+    # HexFormatError; main() still caught nothing but that and
+    # FileNotFoundError, so any other OSError from the bare open() --
+    # IsADirectoryError, PermissionError, a mid-read I/O error -- escaped
+    # the per-file loop and aborted the batch. A directory is the cheapest
+    # reproducible instance. FAILS on 3b351077a with an uncaught
+    # IsADirectoryError.
+    def _batch_continues_past_an_unreadable_path():
+        import contextlib
+        import io
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            a_directory = os.path.join(d, "not-a-file")
+            os.mkdir(a_directory)
+            good_path = os.path.join(d, "good.hex")
+            with open(good_path, "w", encoding="ascii") as f:
+                f.write(_EOF_RECORD + "\n")
+
+            old_argv = sys.argv
+            sys.argv = ["hexcrc.py", a_directory, good_path]
+            out, err = io.StringIO(), io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out), \
+                        contextlib.redirect_stderr(err):
+                    rc = main()
+            finally:
+                sys.argv = old_argv
+
+        expected_good_crc = compute_image_crc32(
+            [_EOF_RECORD], STANDALONE_PHYS_BASE, STANDALONE_AUDIT_LENGTH)
+        return rc == 1 and ("%08X" % expected_good_crc) in out.getvalue()
+
+    _ck("an unreadable path (a directory) does not abort the batch -- "
+        "rc=1, but a later good file's CRC is still printed",
+        _batch_continues_past_an_unreadable_path(), True)
+
+    # --- 6d: type 02 and type 04 must validate their OWN address field is
+    # 0000, exactly as EOF and type 03/05 already did. Until adversarial
+    # audit round 2 they checked only their data length, while a comment in
+    # the 03/05 branch CLAIMED the parity -- a false claim in our own tree.
+    # The repro is the audit's: a CHECKSUM-PRESERVING corruption of the
+    # address field relocates every following data record out of the audited
+    # window, and the tool returned 4D3F7C33 (the erased-region CRC) with
+    # exit 0 for a file whose payload it never saw.
+    _ck("a type 04 record with a nonzero address is refused "
+        "(checksum-preserving corruption of :020000041D00DD)",
+        _raises([":020001041C00DD",
+                 ":01000000AA55",
+                 _EOF_RECORD]), True)
+    _ck("a type 02 record with a nonzero address is refused",
+        _raises([":020001021000EB",
+                 ":01000000AA55",
+                 _EOF_RECORD]), True)
+    # The discriminating negatives: address 0000 on either type must still
+    # be ACCEPTED, or the guard has simply broken every real hex file.
+    _ck("a type 04 record with address 0000 is still accepted",
+        _raises([_ext_linear_record(0x1D00),
+                 _data_record(0x0010, [0xAA, 0xBB]),
+                 _EOF_RECORD]), False)
+    _ck("a type 02 record with address 0000 is still accepted",
+        _raises([":020000021000EC",
+                 _EOF_RECORD]), False)
+
     bad = _CHECKS.count(False)
     print("self-test: %d/%d checks passed" % (_CHECKS.count(True), len(_CHECKS)))
     return 1 if bad else 0
@@ -904,6 +991,16 @@ def main():
             crc = compute_file_crc32(path, args.base, args.length)
         except FileNotFoundError:
             print("error: %r not found" % path, file=sys.stderr)
+            rc = 1
+            continue
+        except OSError as exc:
+            # FileNotFoundError is an OSError and is handled above for its
+            # nicer message; every OTHER OSError -- IsADirectoryError,
+            # PermissionError, a mid-read I/O error -- used to escape this
+            # loop and abort the whole invocation, discarding the results of
+            # every file queued after the bad one (adversarial audit round 2).
+            # One unreadable path is a per-file failure, not a batch failure.
+            print("error: %s: %s" % (path, exc), file=sys.stderr)
             rc = 1
             continue
         except HexFormatError as exc:
