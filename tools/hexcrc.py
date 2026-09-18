@@ -176,6 +176,18 @@ def compute_image_crc32(lines, region_base, region_length,
     saw_eof = False
 
     for lineno, addr16, rec_type, data in parse_records(lines):
+        # A record after the EOF record is refused rather than ignored (Qodo
+        # round 2). Ignoring it is the same failure this tool exists to avoid:
+        # two concatenated hex files, or one with appended garbage, would
+        # otherwise yield a perfectly plausible checksum computed from the
+        # first image alone. parse_records() already skips blank lines, so
+        # trailing whitespace after EOF is still accepted -- it is trailing
+        # RECORDS that are malformed.
+        if saw_eof:
+            raise HexFormatError(
+                "line %d: a type 0x%02X record follows the EOF (type 01) "
+                "record -- input is malformed or is two concatenated files"
+                % (lineno, rec_type))
         if rec_type == REC_DATA:
             full_addr = ext_base + addr16
             for i, byte in enumerate(data):
@@ -188,7 +200,8 @@ def compute_image_crc32(lines, region_base, region_length,
                     "line %d: EOF (type 01) record must have address 0000 "
                     "and no data" % lineno)
             saw_eof = True
-            break
+            # Deliberately NOT `break`: the loop continues so the guard above
+            # can see anything that follows.
         elif rec_type == REC_EXT_LINEAR_ADDR:
             if len(data) != 2:
                 raise HexFormatError(
@@ -427,6 +440,38 @@ def self_test():
     # throws".
     _ck("a well-formed minimal file does not raise",
         _raises([_EOF_RECORD]), False)
+
+    # --- 5b': records AFTER the EOF record are refused, not ignored (Qodo
+    # round 2). Ignoring them is how two concatenated hex files, or one with
+    # appended garbage, produce a plausible checksum for the first image
+    # alone -- the exact "believable wrong number" this tool must never
+    # return.
+    _ck("a data record after the EOF record is refused",
+        _raises([_ext_linear_record(0x1D00),
+                 _data_record(0x0010, [0xAA, 0xBB]),
+                 _EOF_RECORD,
+                 _data_record(0x0020, [0xCC, 0xDD])]), True)
+    _ck("a second EOF record after the EOF record is refused",
+        _raises([_EOF_RECORD, _EOF_RECORD]), True)
+    _ck("two concatenated well-formed files are refused, not silently halved",
+        _raises([_ext_linear_record(0x1D00),
+                 _data_record(0x0010, [0xAA]),
+                 _EOF_RECORD,
+                 _ext_linear_record(0x1D00),
+                 _data_record(0x0011, [0xBB]),
+                 _EOF_RECORD]), True)
+
+    # The discriminating negative: the guard must reject trailing RECORDS,
+    # not trailing whitespace. Without this, a fix that refused everything
+    # after EOF -- including the blank line most editors leave at EOF --
+    # would pass all three checks above while breaking every real file.
+    _ck("blank lines and whitespace after the EOF record are still accepted",
+        _raises([_ext_linear_record(0x1D00),
+                 _data_record(0x0010, [0xAA, 0xBB]),
+                 _EOF_RECORD,
+                 "",
+                 "   ",
+                 ""]), False)
 
     # --- 5c: a non-positive region length is refused by the core function
     # directly (not just by the CLI's argparse layer), so a caller that
