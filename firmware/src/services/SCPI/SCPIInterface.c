@@ -46,6 +46,9 @@
 
 /* SD write metrics accessed via sd_card_manager API */
 #include "../streaming.h"
+#if READ_LOOP_PROFILE
+#include "peripheral/coretimer/plib_coretimer.h"  // #251: CORETIMER_FrequencyGet()
+#endif
 #include "../Capabilities.h"
 #include "Util/StreamingBufferPool.h"
 #include "state/data/AInSample.h"
@@ -2448,11 +2451,24 @@ static inline void StreamFreq_Set(StreamingRuntimeConfig* c, uint64_t f) {
 /* #850: the shared refusal. SCPI_StartStreaming does NOT go through the
  * runner (it must parse before claiming -- see its wrapper), so without this
  * the two refusal sites would drift apart and an operator could not tell them
- * apart in the log. */
+ * apart in the log.
+ *
+ * #977: STREAM_START_CLAIM_BUSY now also means "a guarded config change holds
+ * the interlocked claim", so the wording names both holders. Which one it was
+ * is logged by Streaming_BeginSessionStart one line earlier (streaming.c), the
+ * same arrangement SCPI_RejectCfgClaim uses on the other side. The error code
+ * is unchanged: -200, which is what the arm-time cfgChanging refusal this
+ * supersedes already answered -- the difference is that the refusal now lands
+ * before PrepareStreamingBuffers instead of after it. */
 static scpi_result_t SCPI_RefuseSessionStartBusy(scpi_t * context,
                                                  const char *what) {
-    LOG_E("%s refused (#850): another streaming session start is in "
-          "flight on the other SCPI transport. Retry.", what);
+    /* 105 characters at the longest `what` this is called with
+     * ("SYSTem:STReam:THRoughput", 24), against Logger.c's usable 125.
+     * "on the other SCPI transport" was dropped to fit rather than "Retry.":
+     * the remedy is the actionable half, and WHICH transport holds it is in
+     * the Streaming_Begin* line this one follows. */
+    LOG_E("%s refused (#850/#977): another session start or config change is "
+          "in flight. Retry.", what);
     SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
     return SCPI_RES_ERR;
 }
@@ -4041,6 +4057,40 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     // the deferred task's direct read.  Expected 0; non-zero ticks emitted
     // that channel with its validMask bit clear.
     scpi_printf(context, "T1ArdyMisses=%u\r\n", (unsigned)s.t1ArdyMisses);
+#if READ_LOOP_PROFILE
+    {
+        /* #251: per-tick time of the deferred task's per-channel loop -- the
+         * ADC-side term of the NQ1 cap. Divide the mean by the enabled channel
+         * count for a per-channel figure; T1-only vs T2-only configs separate
+         * the ARDY-direct branch from the LATEST-cache branch.
+         *
+         * Nanoseconds, not microseconds: a one-channel loop is well under a
+         * microsecond, so integer us would print 0 exactly where the T1 figure
+         * is wanted. It stays an integer because every STATS consumer parses
+         * integers (the python harness int-coerces, python-core skips what
+         * int() rejects, daqifi-core's map is ulong.TryParse), and ns is the
+         * cap model's own unit. One count is 1e9 / CORETIMER_FrequencyGet() ns
+         * (7.94 ns at 126 MHz). That is the clock the BUILD targets; a unit
+         * whose PLL did not switch at boot (TimerApi_ClockMatchesBuild() false)
+         * would scale these by the clock ratio, as it does every SYS_TIME delay.
+         *
+         * Integer only, ordered so nothing wraps 64 bits: the mean is taken in
+         * counts first (< 2^32, because no tick exceeds the max), kept to 1/1000
+         * count, then scaled. Never sum * 1e9, which would wrap after ~146 s of
+         * summed loop time. */
+        const uint64_t coreHz = (uint64_t)CORETIMER_FrequencyGet();
+        const uint64_t maxNs = ((uint64_t)s.readLoopMaxCycles * 1000000000ULL) / coreHz;
+        uint64_t meanNs = 0u;
+        if (s.readLoopCount > 0u) {
+            const uint64_t meanMilliCycles =
+                (s.readLoopCycles / s.readLoopCount) * 1000ULL +
+                ((s.readLoopCycles % s.readLoopCount) * 1000ULL) / s.readLoopCount;
+            meanNs = (meanMilliCycles * 1000000ULL) / coreHz;
+        }
+        scpi_printf(context, "ReadLoopMaxNs=%llu\r\n", (unsigned long long)maxNs);
+        scpi_printf(context, "ReadLoopMeanNs=%llu\r\n", (unsigned long long)meanNs);
+    }
+#endif
     // Timer ISR tracking (#265): actual ISR entry count this session (64-bit
     // so it never wraps in practice). Compare against (TotalSamplesStreamed
     // + QueueDroppedSamples) to verify every timer event is accounted for,
@@ -5242,14 +5292,51 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
              * 5 s; the pre-clear above guarantees they describe ONLY this
              * request. */
             int readyWait = 0;
+            /* #1121: did THIS request's arm die while we were waiting for it?
+             * Ports #988's cascade (SCPIStorageSD.c's SCPI_StorageSDBenchmark,
+             * around its own IsWriteReady loop) onto this site -- grep confirms
+             * these two are the ONLY `readyWait` sites in firmware/src, and this
+             * was the one left uncovered when #988 shipped. `pSDCardSettings`
+             * here is the exact same sd_card_manager_settings_t singleton
+             * (BOARDRUNTIME_SD_CARD_SETTINGS) that function reads, so its
+             * atomicity argument transfers unchanged: `mode` is a plain,
+             * naturally-aligned 32-bit enum; this callback is the only writer
+             * that just published MODE_WRITE a few lines above and never
+             * touches it again before this loop; and `armTornDown` is a stack
+             * local no other context can see -- nothing here needs a critical
+             * section any more than the twin's does. Full reasoning (why the
+             * latch does not `break`, why the reconciliation read after the
+             * loop is needed, why it only ever ORs) lives on that function's
+             * copy and is not repeated here in full to avoid a second copy
+             * silently drifting from the first. */
+            bool armTornDown = false;
             while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
                 if (sd_card_manager_StartupDirFull() || sd_card_manager_StartupDiskFull()) {
                     break;
+                }
+                if (pSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
+                    armTornDown = true;   /* #1121/#988: latch, keep waiting */
                 }
                 vTaskDelay(pdMS_TO_TICKS(10));
                 readyWait++;
             }
             if (!sd_card_manager_IsWriteReady()) {
+                /* #1121/#988: reconciliation read. The loop samples `mode` at
+                 * the TOP of its body and then yields 10 ms before re-testing
+                 * its condition, so its last observation and its exit are not
+                 * the same instant -- a teardown landing in that final slice
+                 * (or between the loop's IsWriteReady() and this one) is
+                 * unobserved by the loop alone. `||`, never `=`: the loop's
+                 * latch is already a fact ("mode left the MODE_WRITE this
+                 * callback published") that a later re-arm by a different
+                 * caller must not be allowed to erase. */
+                armTornDown = armTornDown ||
+                              (pSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE);
+                /* Sampled once, before the cascade, matching SCPIStorageSD.c's
+                 * #953 arm: a second call here could observe a different owner
+                 * (or none) than the one that actually steered the branch
+                 * below. */
+                const char *why = SD_SuspendReasonText();
                 if (sd_card_manager_StartupDirFull()) {
                     /* #689: this flag means "no writable location", which covers a
                      * full directory AND a bucket that could not be created or read.
@@ -5295,6 +5382,48 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                         LOG_E("[SD] STR:START refused: disk full (space unknown), floor=%llu B",
                               (unsigned long long)floor);
                     }
+                } else if (why != NULL) {
+                    /* #953 (ported from SCPIStorageSD.c by #1121): a live
+                     * suspend reason. Ranked above the #988 latch below for the
+                     * same reason that function's copy gives -- this is the
+                     * only arm that can name an OWNER and the command that
+                     * clears it, and the WiFi/FW-update/quarantine teardown
+                     * that tears this arm down publishes the suspension
+                     * through the same app_SDCard_GracefulShutdown() call, so
+                     * where both fire they almost always describe one event.
+                     * Same "Cannot start SD logging - SD suspended: %s" prefix
+                     * this file's other two SD_SuspendReasonText() callers
+                     * already use (:4832, :5151) -- measured worst case 118
+                     * bytes against Logger's 125-byte effective ceiling,
+                     * unchanged by reuse here. */
+                    LOG_E("Cannot start SD logging - SD suspended: %s\r\n", why);
+                } else if (armTornDown) {
+                    /* #988 (ported by #1121): this request's arm was torn down
+                     * and nothing names a cause. The state/mode pair is a
+                     * breadcrumb only -- SCPIStorageSD.c's #782 pattern -- and
+                     * does not steer this branch; `mode` can even read WRITE
+                     * again by the time this logs, if a different caller
+                     * re-armed in between. Prefixed "[SD] STR:START refused"
+                     * -- the same prefix the two STR:START refusal arms just
+                     * above already use -- rather than the "SD start refused"
+                     * this line originally shipped with: daqifi-python-test-
+                     * suite's test_861_stop_races_start_prearm.py parses the
+                     * refusal log through `_first_refusal_line()`, which
+                     * matches only 'STR:START refused', 'Cannot start' or
+                     * 'not ready'; without this prefix that test's exact
+                     * torn-down-during-the-SD-poll race (the "shape filed as
+                     * #871" note in that file) fell through to a bare error
+                     * code instead of this diagnosis (Qodo /agentic_review,
+                     * PR #1123). 122 bytes worst case (state/mode both 8
+                     * characters, CURDRIVE/GETSPACE -- verified against every
+                     * string sd_card_manager_GetStateName() and
+                     * sd_card_manager_GetModeName() can return, not assumed)
+                     * against the same 125-byte ceiling. */
+                    LOG_E("[SD] STR:START refused: the write arm was torn down "
+                          "before the file opened (SD now state=%s mode=%s) "
+                          "- retry\r\n",
+                          sd_card_manager_GetStateName(),
+                          sd_card_manager_GetModeName());
                 } else {
                     LOG_E("SD file not ready after %d ms\r\n", readyWait * 10);
                 }
@@ -6936,18 +7065,32 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
  * BoardRunTimeConfig_Get. Stated because they are NEW parameters, and an
  * unexplained absence reads as an oversight.
  *
- * NOT CLOSED HERE, and pre-existing rather than introduced. SYST:STR:THRoughput
- * and the WiFi rate finder call PrepareStreamingBuffers BEFORE they observe the
- * claim (SCPIInterface.c -- the prepare, then the arm-time critical section), so
- * a SYST:MEM:AUTO holding the claim can still be re-partitioning while one of
- * them partitions too. The old && guard admitted exactly the same overlap, so
- * this is unchanged by the conversion, and the outcome is strictly better: the
- * arm now sees the claim and refuses instead of arming onto a pool being
- * re-carved. Making it airtight needs those two to TAKE the claim rather than
- * observe it, which they cannot do as written -- they would then read their own
- * claim at the arm and refuse themselves. What the claim does close outright is
- * two SYST:MEM:AUTO commands racing each other: the loser now gets
- * STREAM_CFG_CLAIM_BUSY instead of a second concurrent re-partition.
+ * CLOSED BY #977, and the shape of the fix is worth recording because #857 got
+ * as far as naming the hole and then ruled out the only fix it could see.
+ *
+ * What #857 left open: SYST:STR:THRoughput and the WiFi rate finder call
+ * PrepareStreamingBuffers BEFORE they observe the claim (the prepare, then the
+ * arm-time critical section), so a SYST:MEM:AUTO holding the claim could still
+ * be re-partitioning while one of them partitioned too -- and SCPI_StartStreaming
+ * has the same ordering. The old && guard admitted the identical overlap, so the
+ * conversion neither introduced nor widened it.
+ *
+ * Why the fix #857 considered was correctly rejected: making those commands TAKE
+ * this claim does not work, because they would then read their own claim at the
+ * arm (Streaming_ConfigChangeInProgress) and refuse themselves unconditionally.
+ * That reasoning still holds, and it is why #977 did NOT merge the two claims.
+ *
+ * What #977 did instead: INTERLOCK them. Streaming_BeginConfigChange now also
+ * refuses while the session-start claim is held, and Streaming_BeginSessionStart
+ * refuses while this one is. The two Begins exclude each other; neither takes
+ * the other's claim, so nothing reads its own. Streaming_ConfigChangeInProgress
+ * keeps meaning "a CONFIG change is in flight" and the three arm sites keep
+ * reading it -- now as a second line of defence rather than the only one.
+ *
+ * So all four PrepareStreamingBuffers callers are now mutually exclusive: the
+ * three arm sites through the session-start claim (#850), SYST:MEM:AUTO and
+ * SYST:MEM:RESet through this one, and the two groups against each other
+ * through the interlock. tools/lint/scpi_claim_path.py property 5 gates it.
  */
 static scpi_result_t SCPI_MemRunClaimed(scpi_t * context,
                                         scpi_result_t (*body)(scpi_t *),
@@ -7164,6 +7307,15 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
                 (unsigned)AInSampleList_PoolInUse());
     scpi_printf(context, "SamplePoolMaxUsed=%u\r\n",
                 (unsigned)AInSampleList_PoolMaxUsed());
+    /* #1082: the streaming pool's total byte size (STATIC_POOL_SIZE) had no
+     * SCPI caller, so a host could only learn it from a "Pool partition"
+     * LOG_I line -- captured only if GENERAL is at INFO when some
+     * StreamingBufferPool_Partition() call runs, never for the boot-time
+     * partition (GENERAL boots at ERROR). StreamingBufferPool_TotalSize()
+     * has no side effects and needs no stream/repartition. Appended per the
+     * #828 convention: existing keys keep their name, value and order. */
+    scpi_printf(context, "StreamingPoolTotal=%u\r\n",
+                (unsigned)StreamingBufferPool_TotalSize());
     return SCPI_RES_OK;
 }
 
@@ -7340,17 +7492,23 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
      *
      * READ AND USE ARE ADJACENT ON PURPOSE, and an earlier revision of this
      * commit had them sixty lines apart, up beside the other partition
-     * checks. That grouping reads better and is wrong: `PrepareStreamingBuffers`
-     * releases the SD buffer lock partway down, and the session-start claim the
-     * bench and the finder hold (`Streaming_BeginSessionStart`) does NOT
-     * interlock with the config-change claim `SYSTem:MEMory:AUTO` takes
-     * (`Streaming_BeginConfigChange` tests IsEnabled/Running and gCfgChangeBusy,
-     * never gSessionStartBusy). Neither is armed yet at this point in the
-     * finder's preparation, so an AUTO on the other transport CAN take its
-     * claim and re-partition in between -- and the wider that gap, the more of
-     * it there is to land in. Keeping the fetch next to the install does not
-     * close that race (it is pre-existing and covers this whole function --
-     * filed as #977); it declines to widen it.
+     * checks. That grouping reads better and was wrong at the time:
+     * `PrepareStreamingBuffers` releases the SD buffer lock partway down, and
+     * the session-start claim the bench and the finder hold
+     * (`Streaming_BeginSessionStart`) did NOT interlock with the config-change
+     * claim `SYSTem:MEMory:AUTO` takes, so an AUTO on the other transport could
+     * take its claim and re-partition in between -- and the wider that gap, the
+     * more of it there was to land in. #950 declined to widen a race it could
+     * not close; #977 then closed it, by making each claim's Begin refuse while
+     * the other is held (streaming.c), so no second caller can enter this
+     * function while one is inside it.
+     *
+     * They stay adjacent anyway. The interlock excludes the OTHER SCPI
+     * transport, not a future in-function yield: this function calls vTaskDelay
+     * in three places, and a fetch sixty lines above its use would once again
+     * be a value read before waits and used after them. Adjacency is cheap and
+     * is the property that does not depend on the claim structure staying as it
+     * is.
      *
      * It also invalidates as it refuses: returning here without that would
      * leave the PREVIOUS partition's pool live, which is the state the other
@@ -7636,7 +7794,8 @@ static scpi_result_t SCPI_CapabilitiesApiVersionGet(scpi_t * context) {
 static void EmitAinChannelJson(scpi_t* context,
                                const AInChannel* ch,
                                const AInRuntimeConfig* rt,
-                               double moduleRangeSpan) {
+                               double moduleRangeSpan,
+                               uint32_t scanOffsetTicks) {
     uint8_t id = ch->DaqifiAdcChannelId;
     bool    isTemperature     = false;
     bool    allowDifferential = false;
@@ -7676,19 +7835,58 @@ static void EmitAinChannelJson(scpi_t* context,
         isTemperature ? "Cel"         : "V",
         (unsigned)resolutionBits);
 
+    /* #267 scan_offset_ticks — the companion fact to "simultaneous". That flag
+     * says WHETHER a channel converts with the others; this says BY HOW MUCH it
+     * does not. Units are timestamp-timer ticks, the same domain as
+     * timing.timestamp_hz below, so a client divides by that one published rate
+     * and needs to know nothing about the ADC clock.
+     *
+     * Per-channel rather than a parallel channel_timing_offsets[] array beside
+     * "timing": the value IS a per-channel property, it belongs next to
+     * "simultaneous" which a client already reads for exactly this question, and
+     * a sibling array would impose an index<->channel alignment contract that
+     * nothing in this schema enforces (channels[] mixes analog-input,
+     * analog-output and digital-io, so the indices would not even be the
+     * channel ids). Additive key — older clients ignore it, no schema_version
+     * bump (see the escape-hatch note at the top of the blob).
+     *
+     * 0 has one meaning, "no deterministic offset applies", covering: a
+     * simultaneous channel (Type 1 dedicated S&H, or AD7609) and a channel
+     * the current configuration would not scan at all. The first input in
+     * the scan is NOT among these (#1112 round-2, "One timing comment
+     * preserves old semantics" — every scanned shared/Type-2 position,
+     * including the first, carries its own nonzero acquisition aperture;
+     * see MC12b_ChannelScanOffsetTicks). It describes the scan the device
+     * would arm for the channel set enabled RIGHT NOW (the same scan
+     * cap_terms.scan_bound_hz is computed for), so it is a fact about the
+     * session a client is about to start, not a hypothetical. */
     scpi_printf(context,
         "\"simultaneous\":%s,\"differential\":%s,"
+        "\"scan_offset_ticks\":%u,"
         "\"ranges\":[{\"min\":%.3f,\"max\":%.3f}],",
         simultaneous      ? "true" : "false",
         allowDifferential ? "true" : "false",
+        (unsigned)scanOffsetTicks,
         rangeMin, rangeMax);
+
+    /* #1054 (the read half of #904): CalM/CalB are 64-bit doubles -- two
+     * 32-bit loads each on PIC32MZ (CLAUDE.md atomicity rules) -- and a
+     * CONF:ADC:chanCALM/chanCALB setter on the OTHER SCPI transport can land
+     * between them. #1048 makes the writes atomic, which does not stop a
+     * reader straddling a completed write. Snapshot the pair under one
+     * critical section so the advertised slope and intercept are untorn and
+     * read at the same instant, then format outside it. */
+    taskENTER_CRITICAL();
+    double calM = rt->CalM;
+    double calB = rt->CalB;
+    taskEXIT_CRITICAL();
 
     scpi_printf(context,
         "\"calibration\":{\"model\":\"linear\","
         "\"user_override_supported\":true,"
         "\"slope\":%.6f,\"intercept\":%.6f},"
         "\"extensions\":{}}",
-        rt->CalM, rt->CalB);
+        calM, calB);
 }
 
 static void EmitAoutChannelJson(scpi_t* context,
@@ -7949,6 +8147,45 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * but defending the read is cheap. */
     uint32_t ainLoopCount = (cfg->AInChannels.Size < rt->AInChannels.Size)
         ? cfg->AInChannels.Size : rt->AInChannels.Size;
+
+    /* #267: inputs for the per-channel scan_offset_ticks field. Read/computed
+     * ONCE outside the loop — all session-wide, and taking them once keeps
+     * EVERY channel's offset describing the SAME scan even if the other SCPI
+     * transport changes the enabled-channel set or toggles OBDiag mid-
+     * emission (Qodo /agentic_review, PR firmware#1112, "Channel timing can
+     * describe wrong scan": MC12b_ChannelScanOffsetTicks used to rebuild the
+     * scan mask itself, per channel, so two channels in one response could
+     * disagree about which scan they were even part of).
+     *
+     * ainScanObDiag is exactly the includeMonitoring flag
+     * Streaming_ComputeMaxFreqTermsForConfigIface passes when it builds the
+     * session scan list for cap_terms.scan_bound_hz, so the offsets and that
+     * bound describe one scan rather than two (a narrower residual window
+     * against scan_bound_hz's OWN, separately-timed computation earlier in
+     * this same query remains -- see MC12b_ChannelScanOffsetTicks' doc
+     * comment for why closing it needs the streaming config-change claim,
+     * which a read-only diagnostic query should not pay). TSTimerIndex is the
+     * timestamp timer whose rate is published as timing.timestamp_hz below.
+     * BoardRunTimeConfig_Get never returns NULL (documented, CLAUDE.md) --
+     * no defensive check here, matching every other call site in this file
+     * (e.g. streaming.c:752-758). */
+    uint32_t ainScanTsHz =
+        TimerApi_FrequencyGet(cfg->StreamingConfig.TSTimerIndex);
+    StreamingRuntimeConfig* ainScanSdiag =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    bool ainScanObDiag = (ainScanSdiag->OnboardDiagEnabled != 0);
+    uint32_t ainScanCss1 = 0u, ainScanCss2 = 0u;
+    (void)MC12b_ComputeScanList(true, ainScanObDiag,
+                                &ainScanCss1, &ainScanCss2);
+    /* #1112 round-1 fix: SAMC and the ADC clock dividers, snapshotted ONCE
+     * alongside the css1/css2 scan list above (Qodo /agentic_review, PR
+     * firmware#1112, round 1, "Snapshot SAMC before emitting channel
+     * offsets" — MC12b_ChannelScanOffsetTicks used to reread ADCCON2.SAMC on
+     * every call, and a CONF:ADC:SAMC:SHARed setter on the OTHER SCPI
+     * transport is only rejected #116 MID-STREAM, so it is reachable between
+     * two channels of this same idle-time query). */
+    MC12b_ScanTimingSnapshot ainScanTiming = MC12b_CaptureScanTiming();
+
     for (uint32_t i = 0; i < ainLoopCount; i++) {
         const AInChannel* ch = &cfg->AInChannels.Data[i];
         bool isPublic =
@@ -7966,14 +8203,34 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
                 break;
             }
         }
-        double moduleRange = (modIdx < rt->AInModules.Size)
-            ? rt->AInModules.Data[modIdx].Range : 0.0;
+        /* #1086 (the Range half of #904/#1054): Range is a 64-bit double
+         * -- two 32-bit loads on PIC32MZ (CLAUDE.md atomicity rules) -- and
+         * a CONF:ADC:RANGe setter on the OTHER SCPI transport can land
+         * between them. That setter's store is atomic (#1086), which does
+         * not stop a reader straddling a completed store, so copy it under a
+         * minimal critical section and hand EmitAinChannelJson the local.
+         *
+         * Deliberately NOT folded into EmitAinChannelJson's CalM/CalB
+         * section (#1054): that one lives in the callee, and a module's Range
+         * and a channel's cal pair have independent writers, so nothing
+         * needs them read at the same instant. This loop runs once per
+         * public channel on a query path, not per sample. */
+        double moduleRange = 0.0;
+        if (modIdx < rt->AInModules.Size) {
+            taskENTER_CRITICAL();
+            moduleRange = rt->AInModules.Data[modIdx].Range;
+            taskEXIT_CRITICAL();
+        }
 
         if (!firstEntry) scpi_printf(context, ",");
         firstEntry = false;
 
         const AInRuntimeConfig* rc = &rt->AInChannels.Data[i];
-        EmitAinChannelJson(context, ch, rc, moduleRange);
+        EmitAinChannelJson(context, ch, rc, moduleRange,
+                           MC12b_ChannelScanOffsetTicks(ch, ainScanCss1,
+                                                        ainScanCss2,
+                                                        &ainScanTiming,
+                                                        ainScanTsHz));
     }
 
     /* AOut — always emitted, just empty on boards without a DAC */
@@ -8096,6 +8353,9 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      *   while the core-timer ratio would not be (see #731).
      * - timestamp_ticks_per_sample: exactly what the deferred task stamps with
      *   (#717 gStreamPeriodTicks), from the shared helper so it cannot drift.
+     *   timestamp_hz is also the domain of each channel's scan_offset_ticks in
+     *   channels[] above (#267) — every sample in a set carries ONE stamp, and
+     *   that field is how far after it each input actually converted.
      * - actual_rate_millihz: the QUANTIZED rate. `Frequency` is what was asked
      *   for; the period register is an integer, so asking for 4500 Hz yields
      *   4498.714 Hz at 252 MHz (~286 ppm). Millihertz keeps it integral.
