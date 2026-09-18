@@ -919,6 +919,24 @@ void app_SystemInit() {
         daqifi_settings_SaveToNvm(&tmpTopLevelSettings);
     }
 
+    /* #909: the bootloader now preserves the settings pages across an in-app
+     * update (it erases only the lower flash panel), so a LOADED TopLevel page
+     * still carries the PREVIOUS build's revision strings. InitBoardConfig
+     * copies those straight into the live board config, and that is what
+     * CONF:CAPabilities:JSON?'s identity.firmware_rev reports -- so without
+     * this the device would report its old version forever after an update.
+     *
+     * Before #909 the revision advanced only as a SIDE EFFECT of the
+     * whole-flash erase destroying this page, which forced the factory-default
+     * branch above; the default branch stamps the current revision itself, so
+     * this is a no-op there (it returns false and nothing is written).
+     *
+     * The re-stamp happens HERE, before InitBoardConfig, so the live config is
+     * correct from the first boot after an update. The PERSIST is deferred to
+     * after the runtime config has been seeded -- see the paired block below. */
+    bool topLevelRevStale = daqifi_settings_RefreshTopLevelRevisions(
+            &tmpTopLevelSettings.settings.topLevelSettings);
+
     // Load board config structures with the correct board variant values
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
@@ -963,6 +981,26 @@ void app_SystemInit() {
     // #14: Seed the runtime friendly-name cache from persisted NVM.
     daqifi_settings_SeedFriendlyName(
             tmpTopLevelSettings.settings.topLevelSettings.friendlyDeviceName);
+
+    /* #909, paired with the re-stamp above: persist the refreshed revision so
+     * the NEXT boot loads it too, rather than re-deciding this every time.
+     *
+     * Deliberately AFTER the voltage-precision apply and the friendly-name
+     * seed, and not next to the re-stamp. daqifi_settings_SaveToNvm
+     * auto-captures voltagePrecision from the streaming runtime config and
+     * friendlyDeviceName from the runtime cache, so saving before those are
+     * seeded would write a zeroed precision and an empty name over the user's
+     * stored values -- destroying the very settings #909 exists to preserve.
+     *
+     * Guarded on the return value, so a device whose stored revision already
+     * matches writes NO flash at all. This is a page-erase-plus-write; doing
+     * it unconditionally on every boot would add flash wear and a boot-time
+     * cost for nothing, and is the "boot writes NVM for no reason" shape that
+     * #908 and #910 are about. */
+    if (topLevelRevStale) {
+        tmpTopLevelSettings.type = DaqifiSettings_TopLevelSettings;
+        daqifi_settings_SaveToNvm(&tmpTopLevelSettings);
+    }
 
     // Try to load WiFiSettings from NVM - if this fails, store default 
     // settings to NVM (first run after a program)

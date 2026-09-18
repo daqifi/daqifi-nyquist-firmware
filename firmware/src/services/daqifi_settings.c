@@ -206,6 +206,47 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
     return true;
 }
 
+/* #909: see the contract on the declaration in daqifi_settings.h.
+ *
+ * Bounded string ops throughout, unlike the two strcpy() stamps below: those
+ * copy a compile-time literal into a field the compiler can see is big enough,
+ * whereas the COMPARISON here reads a 16-byte array that came out of flash and
+ * may not be NUL-terminated at all. strncmp stops at the field size, so a
+ * corrupt unterminated image compares unequal and gets re-stamped rather than
+ * running off the end of the struct. */
+bool daqifi_settings_RefreshTopLevelRevisions(
+        TopLevelSettings* pTopLevelSettings) {
+    bool changed = false;
+
+    if (pTopLevelSettings == NULL) {
+        return false;
+    }
+
+    if (strncmp(pTopLevelSettings->boardFirmwareRev,
+                FIRMWARE_REVISION,
+                sizeof (pTopLevelSettings->boardFirmwareRev)) != 0) {
+        memset(pTopLevelSettings->boardFirmwareRev, 0,
+                sizeof (pTopLevelSettings->boardFirmwareRev));
+        strncpy(pTopLevelSettings->boardFirmwareRev,
+                FIRMWARE_REVISION,
+                sizeof (pTopLevelSettings->boardFirmwareRev) - 1);
+        changed = true;
+    }
+
+    if (strncmp(pTopLevelSettings->boardHardwareRev,
+                HARDWARE_REVISION,
+                sizeof (pTopLevelSettings->boardHardwareRev)) != 0) {
+        memset(pTopLevelSettings->boardHardwareRev, 0,
+                sizeof (pTopLevelSettings->boardHardwareRev));
+        strncpy(pTopLevelSettings->boardHardwareRev,
+                HARDWARE_REVISION,
+                sizeof (pTopLevelSettings->boardHardwareRev) - 1);
+        changed = true;
+    }
+
+    return changed;
+}
+
 bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
     uint32_t address = 0;
     uint32_t dataSize = 0;
