@@ -2905,10 +2905,21 @@ static volatile uint32_t gStreamStopsActive;
 // `basis` is the sweep's #868 channel-mapping provenance and is required --
 // the sole caller passes the address of its own local, so it is never NULL and
 // is not tested for it.
+// *outStopRequested (#965) is set true only when the refusal's cause was
+// specifically the #938 stopRequested pin -- never for cfgBusy/mappingMoved/
+// inputsGone, and never on the "armed but never ran" or freq==0 producers.
+// It is how the caller learns WHICH cause fired without widening this
+// function's return shape: *outStartFailed alone (pre-existing) tells the
+// caller only THAT the step failed, and callers still read SYSTem:LOG? for
+// the human-readable cause. This one extra bit exists solely so the caller
+// can push a real SCPI error for the stopRequested cause specifically -- see
+// the caller's own comment for why that cause, and only that cause, gets one.
 static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
                             const FindStepBasis* basis, uint32_t clkFreq,
                             uint32_t wRingCap, uint32_t freq, uint32_t obsMs,
-                            uint32_t* outKBps, bool* outStartFailed) {
+                            uint32_t* outKBps, bool* outStartFailed,
+                            bool* outStopRequested) {
+    *outStopRequested = false;
     /* #938: THE STOP PIN IS THE SWEEP'S, NOT THIS STEP'S. It is taken once,
      * under one critical section, where the caller builds `basis` -- the same
      * place, and for the same reason, as the #868 channel-mapping provenance
@@ -3083,6 +3094,11 @@ static bool FindMeasureStep(StreamingRuntimeConfig* cfg,
              * arm -- stopRequested first, matching SCPI_StartStreamingClaimed's
              * precedence: it is the only one of the four that is an explicit
              * operator instruction rather than a consistency failure. */
+            /* #965: same precedence as the message above -- if stopRequested
+             * fired at all it is reported as the cause, even when cfgBusy/
+             * mappingMoved/inputsGone also happen to be true, because it is
+             * the one deliberate operator instruction of the four. */
+            *outStopRequested = stopRequested;
             LOG_E("WIFI:FIND %u Hz: arm refused - %s", (unsigned)freq,
                   stopRequested
                       ? (stopInFlight ? "a stop is still in flight on the other transport (#938/#861)"
@@ -3466,6 +3482,12 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     uint32_t lastGoodHz = 0;
     uint32_t lastGoodKBps = 0;
     bool startFailed = false;
+    /* #965: latches TRUE only when the call that set startFailed also
+     * reported its cause as the #938 stopRequested pin (never cfgBusy/
+     * mappingMoved/inputsGone). Read once, at the reason chain below, to
+     * decide whether this refusal gets a pushed SCPI error -- see that
+     * comment for why only this one of the four causes does. */
+    bool startFailedByStop = false;
     /* #895: has ANY step completed a full arm+dwell+observe+teardown cycle?
      * This is what separates the sweep's two failure tokens (see the reason
      * chain at the end).  A step that TRIPPED counts -- FindMeasureStep did
@@ -3486,8 +3508,9 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     while (freq <= hardMax) {
         uint32_t kbps = 0;
         bool sf = false;
-        bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, freq, FIND_DWELL_MS, &kbps, &sf);
-        if (sf) { startFailed = true; break; }
+        bool stopHit = false;
+        bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, freq, FIND_DWELL_MS, &kbps, &sf, &stopHit);
+        if (sf) { startFailed = true; startFailedByStop = stopHit; break; }
         /* #895: past the refusal test, so this step measured.  Set at ALL
          * THREE call sites even though sites 2 and 3 cannot reach it with the
          * flag still false (both are gated on lastGoodHz > 0, which only a
@@ -3535,7 +3558,8 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
             uint32_t mid = lo + (hi - lo) / 2;
             uint32_t kbps = 0;
             bool sf = false;
-            bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, mid, FIND_DWELL_MS, &kbps, &sf);
+            bool stopHit = false;
+            bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, mid, FIND_DWELL_MS, &kbps, &sf, &stopHit);
             if (sf) {
                 /* #868: PROPAGATE, don't just leave the loop. This branch used
                  * to break with startFailed still false ("keep coarse
@@ -3554,6 +3578,7 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
                  * always START_FAIL, because reaching this loop requires a
                  * clean step to have set lastGoodHz. */
                 startFailed = true;
+                startFailedByStop = stopHit;   /* #965, see site 1 */
                 break;
             }
             anyStepMeasured = true;   /* #895, see site 1 */
@@ -3582,8 +3607,9 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
         uint32_t streak = 0;   // consecutive clean 60 s soaks at the current cand
         for (uint32_t it = 0; it < FIND_SOAK_MAX_ITERS && cand >= FIND_SOAK_MIN_HZ; it++) {
             uint32_t kbps = 0; bool sf = false;
-            bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, cand, FIND_SOAK_MS, &kbps, &sf);
-            if (sf) { startFailed = true; break; }
+            bool stopHit = false;
+            bool sat = FindMeasureStep(cfg, &basis, clkFreq, wRingCap, cand, FIND_SOAK_MS, &kbps, &sf, &stopHit);
+            if (sf) { startFailed = true; startFailedByStop = stopHit; break; }   /* #965, see site 1 */
             anyStepMeasured = true;   /* #895, see site 1 */
             if (!sat) {                       // a clean 60 s soak
                 streak++;
@@ -3653,7 +3679,11 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
      * inputsGone, #938 stopRequested) reach here through one bool, and so do
      * the other two *outStartFailed producers -- a stream that armed but
      * never went Running, and the freq == 0 guard. Callers wanting the cause
-     * read SYSTem:LOG?.
+     * read SYSTem:LOG?. (#965: `startFailedByStop`, computed alongside
+     * `startFailed` at each call site, is the ONE exception -- it survives
+     * past this point solely so the block below can push a real SCPI error
+     * for the stopRequested cause specifically, on top of the token+log every
+     * cause already gets.)
      *
      * #938: and that instruction is now true WITHOUT QUALIFICATION. This
      * comment used to end by naming the armed-but-never-Running producer as
@@ -3670,6 +3700,29 @@ static scpi_result_t SCPI_WifiFindRateClaimed(scpi_t * context) {
     else if (benchClamped)      reason = "BENCH_CAP";      // soak clean but clamped to bench wire ceiling
     else if (saturated)         reason = "LINK_SATURATED"; // confirmed ceiling + clean soak
     else                        reason = "HIT_MAX";        // climbed to backstop w/o saturating
+
+    /* #965 (audit round 1 on #965, CONFIRMED): a stopRequested-caused refusal
+     * used to answer START_REFUSED/START_FAIL with SYSTem:ERR? left clean --
+     * the reply's own token and SYSTem:LOG? name the cause, but nothing was
+     * ever pushed to the SCPI error queue, against this project's standing
+     * rule that error detail goes through the error-handling path. Push one
+     * here.  SCPI_ErrorPush only enqueues (sets context->cmd_error and an ESR
+     * bit) -- it does not discard the reply scpi_printf writes below, which
+     * processCommand (libscpi parser.c) reads independently of cmd_error --
+     * so this is safe to combine with `return SCPI_RES_OK` below, which a
+     * QUERY must still do: a client waiting on this reply gets its five
+     * fields either way, and now also a non-empty SYST:ERR?.
+     *
+     * Scoped to stopRequested ONLY, deliberately. The sibling causes (#847
+     * cfgBusy, #868 mappingMoved, #891 inputsGone) keep the pre-existing
+     * OK+token+log convention unchanged here -- unifying all four onto one
+     * refusal-reporting style is a broader behaviour change than this fix,
+     * and the audit's own disposition on this finding filed that
+     * unification as a separate follow-up ticket rather than folding it into
+     * this one. */
+    if (startFailed && startFailedByStop) {
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    }
 
     // Output: recommendedHz,recommendedKBps,reason,ceilingHz,ceilingKBps
     //   recommendedHz/KBps = soak-confirmed clean rate + its wire rate (0 if none)
