@@ -17,7 +17,7 @@ here rather than re-adding the text to `CLAUDE.md`.
 | [MEMORY_ARCHITECTURE.md](MEMORY_ARCHITECTURE.md) | The four memory regions, RAM/heap budgets, dynamic sample pool, `SYSTem:MEMory:*` |
 | [SD_SUBSYSTEM.md](SD_SUBSYSTEM.md) | SPI arbitration with WiFi, file splitting and rotation, sector-aligned writes |
 | [SCPI_REFERENCE.md](SCPI_REFERENCE.md) | The `SYSTem:MEMory:*` claim-path gate, stream-control namespace aliases |
-| [BUILD_AND_TOOLCHAIN.md](BUILD_AND_TOOLCHAIN.md) | Per-file optimization overrides, -O3 source patches, vendored-library patches, linker issue |
+| [BUILD_AND_TOOLCHAIN.md](BUILD_AND_TOOLCHAIN.md) | Per-file optimization overrides, -O3 source patches, vendored-library patches, linker issue, building the USB bootloader (XC32 v2.50) and what a field update can reach |
 | [PERIPHERALS.md](PERIPHERALS.md) | DAC7718 (NQ3), BQ24297 IINLIM state machine |
 | [LOGGING.md](LOGGING.md) | Compile-time ceilings vs runtime levels, ISR-safe logging, one-shot suppression |
 | [RELEASE_PROCESS.md](RELEASE_PROCESS.md) | Bootloader-linked hex, the `.hex` asset the in-app updater requires, publishing |

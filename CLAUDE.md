@@ -26,7 +26,7 @@ test policy, the debugging-evidence rules, and the standing rules.
 | buffers, the sample pool, heap/RAM budgets, `SYSTem:MEMory:*` | [`docs/MEMORY_ARCHITECTURE.md`](docs/MEMORY_ARCHITECTURE.md) |
 | SD logging, file splitting, SPI arbitration with WiFi | [`docs/SD_SUBSYSTEM.md`](docs/SD_SUBSYSTEM.md) |
 | the `SYSTem:MEMory:*` claim-path gate, stream-control aliases | [`docs/SCPI_REFERENCE.md`](docs/SCPI_REFERENCE.md) |
-| optimization overrides, -O3 source patches, vendored-library patches | [`docs/BUILD_AND_TOOLCHAIN.md`](docs/BUILD_AND_TOOLCHAIN.md) |
+| optimization overrides, -O3 source patches, vendored-library patches, **building the bootloader** (XC32 v2.50) and what a field update can reach | [`docs/BUILD_AND_TOOLCHAIN.md`](docs/BUILD_AND_TOOLCHAIN.md) |
 | the DAC7718 or the BQ24297 charger | [`docs/PERIPHERALS.md`](docs/PERIPHERALS.md) |
 | the logging system | [`docs/LOGGING.md`](docs/LOGGING.md) |
 | cutting a release | [`docs/RELEASE_PROCESS.md`](docs/RELEASE_PROCESS.md) |
