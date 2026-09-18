@@ -1540,6 +1540,60 @@ static void sd_AbandonRotationWindow(const char* why) {
  * SYST:STOR:SD:CRC? for it.
  * ====================================================================== */
 
+/* #924 (post-merge audit, defect 1, round 2): is `path` safe to hand to
+ * SYS_FS_FILE_OPEN_WRITE, which truncates on open (FatFs FA_CREATE_ALWAYS,
+ * ff.c)?
+ *
+ * "Safe" means: nothing is there yet, or what IS there looks like one of our
+ * own manifests (the module's own accepted model is that reusing a base
+ * filename across sessions overwrites the EARLIER SESSION'S OWN MANIFEST at
+ * this exact path -- deliberate, unchanged by this check). Anything else --
+ * a real data file that landed here some other way -- must not be silently
+ * destroyed.
+ *
+ * FAILS SAFE on an unreadable stat/open/read: a transient card error at
+ * exactly this moment must not be read as "nothing is here", which would
+ * reopen the hole this function exists to close. Mirrors sd_IsExistingSplitPart's
+ * own "failing safe rather than reading it as absent" idiom above -- same
+ * shape, same reasoning, same two error codes that legitimately mean
+ * absent. */
+static bool sd_ManifestPathSafeToOverwrite(const char *path) {
+    SYS_FS_FSTAT st;
+    memset(&st, 0, sizeof(st));
+    if (SYS_FS_FileStat(path, &st) != SYS_FS_RES_SUCCESS) {
+        SYS_FS_ERROR e = SYS_FS_Error();
+        if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
+            LOG_E("[SD] #924 manifest-path stat '%s' failed err=%d - "
+                  "failing safe rather than reading it as absent", path,
+                  (int)e);
+            return false;
+        }
+        return true;    /* genuinely absent: nothing to overwrite */
+    }
+    if (st.fsize == 0u) {
+        return true;    /* nothing there to be destroyed either way */
+    }
+
+    char peek[SD_MANIFEST_LINE_MAX];
+    SYS_FS_HANDLE probeHandle = SYS_FS_FileOpen(path, SYS_FS_FILE_OPEN_READ);
+    size_t peekRead;
+
+    if (probeHandle == SYS_FS_HANDLE_INVALID) {
+        LOG_E("[SD] #924 could not inspect existing file '%s' (err=%d) "
+              "before opening it for write - refusing to risk it", path,
+              (int)SYS_FS_Error());
+        return false;
+    }
+    peekRead = SYS_FS_FileRead(probeHandle, peek, sizeof(peek));
+    (void)SYS_FS_FileClose(probeHandle);
+    if (peekRead == (size_t)-1) {
+        LOG_E("[SD] #924 could not read existing file '%s' before opening "
+              "it for write - refusing to risk it", path);
+        return false;
+    }
+    return SdManifest_FirstLineLooksLikeManifest(peek, peekRead);
+}
+
 /* Open this session's manifest. Called AT MOST ONCE per session -- see
  * manifestOpenAttempted. A failure is logged and the session continues
  * without a manifest: integrity bookkeeping must never be able to stop a
@@ -1605,12 +1659,43 @@ static void sd_OpenSessionManifest(void) {
      * ran with zero integrity records and no diagnostic. Comparing the way
      * the filesystem does is what makes this guard actually guard FatFs's
      * lock instead of a narrower byte-exact case of it. */
-    if (SdManifest_PathsEqualCaseInsensitive(path, gSDCardData.filePath)) {
+    bool needsFallback = SdManifest_PathsEqualCaseInsensitive(path,
+                                                              gSDCardData.filePath);
+    if (needsFallback) {
+        LOG_I("[SD] #924 '%s' is also the stream file; trying the fallback "
+              "manifest name instead", gSDCardData.filePath);
+    }
+
+    /* #924 (post-merge audit, defect 1): SYS_FS_FILE_OPEN_WRITE truncates on
+     * open (FatFs FA_CREATE_ALWAYS, ff.c) -- and up to here, nothing has
+     * asked whether some file ALREADY sits at the primary `path` other than
+     * the self-collision case just handled above. The module's own accepted
+     * model (see the file-level comment above) is that reusing a base
+     * filename across sessions overwrites the EARLIER SESSION'S OWN MANIFEST
+     * at this exact path -- that is deliberate and stays untouched. What is
+     * NOT accepted is destroying something else that happens to occupy this
+     * name for any other reason: for instance, an earlier session whose
+     * CONFIGURED stream name collided with ITS OWN manifest took the fallback
+     * branch below and renamed its manifest out of the way, which means ITS
+     * DATA FILE -- not a manifest at all -- is what still sits at the plain
+     * `<base>.mfst` path this session just computed. Silently opening that
+     * for WRITE would truncate real logged data with no warning, reachable
+     * by configured filenames alone, no race required.
+     *
+     * Skipped when a self-collision already forces the fallback: the primary
+     * path is not going to be used regardless of what sits in it, so
+     * inspecting it would only cost an extra stat/open/read for nothing. */
+    if (!needsFallback && !sd_ManifestPathSafeToOverwrite(path)) {
+        LOG_E("[SD] #924 '%s' already exists and does not look like a "
+              "manifest; trying the fallback manifest name instead", path);
+        needsFallback = true;
+    }
+
+    if (needsFallback) {
         /* FALL BACK TO A NAME THAT CANNOT COLLIDE, rather than giving the
          * session no manifest at all. Refusing here merely made the failure
          * VISIBLE; the session still lost its integrity records, which is the
-         * outcome this feature exists to prevent -- and it was reachable by
-         * choosing the one extension the feature itself introduced.
+         * outcome this feature exists to prevent.
          *
          * `<file>.mfst` is collision-free BY CONSTRUCTION, not by luck:
          *   - against the first stream file `<dir>/<file>`, it is that exact
@@ -1618,7 +1703,10 @@ static void sd_OpenSessionManifest(void) {
          *   - against a rotated part `<dir>/<base>-N<ext>`, equality would
          *     need `<ext>` + ".mfst" to equal "-N" + `<ext>`, and the two
          *     differ at the first character ('.' or 'm' versus '-').
-         * So one retry is enough; there is no loop and no counter.
+         * Both of those are STRUCTURAL properties (a length difference, a
+         * first-character mismatch), so they hold whether the comparison is
+         * byte-exact or case-insensitive -- defect 2 changing the guard above
+         * to SdManifest_PathsEqualCaseInsensitive does not reopen this proof.
          *
          * The buffer already holds it: dir + '/' + file + ".mfst" + NUL is
          * 40 + 1 + 40 + 5 + 1 = 87 against the 88 sized above. */
@@ -1626,68 +1714,28 @@ static void sd_OpenSessionManifest(void) {
                            gpSDCardSettings->directory,
                            gpSDCardSettings->file);
         if (written < 0 || (size_t)written >= sizeof(path)) {
-            LOG_E("[SD] #924 no manifest: collision fallback path too long "
-                  "for dir='%s' file='%s'", gpSDCardSettings->directory,
+            LOG_E("[SD] #924 no manifest: fallback path too long for "
+                  "dir='%s' file='%s'", gpSDCardSettings->directory,
                   gpSDCardSettings->file);
             return;
         }
-        LOG_I("[SD] #924 '%s' is also the stream file; manifest goes to '%s'",
-              gSDCardData.filePath, path);
-    }
 
-    /* #924 (post-merge audit, defect 1): SYS_FS_FILE_OPEN_WRITE truncates on
-     * open (FatFs FA_CREATE_ALWAYS, ff.c) -- and up to here, nothing has
-     * asked whether some file ALREADY sits at `path` other than the one case
-     * just handled above (this session's own currently-open stream file).
-     *
-     * The module's own accepted model (see the file-level comment above) is
-     * that reusing a base filename across sessions overwrites the EARLIER
-     * SESSION'S OWN MANIFEST at this exact path -- that is deliberate and
-     * stays untouched. What is NOT accepted is destroying something else
-     * that happens to occupy this name for any other reason: for instance, an
-     * earlier session whose CONFIGURED stream name collided with ITS OWN
-     * manifest took the fallback branch above and renamed its manifest out of
-     * the way, which means ITS DATA FILE -- not a manifest at all -- is what
-     * still sits at the plain `<base>.mfst` path this session just computed.
-     * Silently opening that for WRITE would truncate real logged data with no
-     * warning, reachable by configured filenames alone, no race required.
-     *
-     * So: if something is there, read enough of it to tell whether it LOOKS
-     * like one of our own manifests (SdManifest_FirstLineLooksLikeManifest,
-     * a heuristic on the first line's shape, not a proof of provenance -- see
-     * its own comment) before trusting FatFs's truncate-on-open to do the
-     * right thing. A manifest-shaped file is overwritten exactly as before;
-     * anything else is refused, logged, and left on the card untouched --
-     * the session continues without a manifest, the same fallback this
-     * function already uses for every other way opening one can fail. */
-    SYS_FS_FSTAT existingManifestStat;
-    memset(&existingManifestStat, 0, sizeof(existingManifestStat));
-    if (SYS_FS_FileStat(path, &existingManifestStat) == SYS_FS_RES_SUCCESS
-        && existingManifestStat.fsize > 0u) {
-        char peek[SD_MANIFEST_LINE_MAX];
-        SYS_FS_HANDLE probeHandle = SYS_FS_FileOpen(path,
-                                                     SYS_FS_FILE_OPEN_READ);
-        size_t peekRead;
-
-        if (probeHandle == SYS_FS_HANDLE_INVALID) {
-            LOG_E("[SD] #924 no manifest: could not inspect existing file "
-                  "'%s' (err=%d) before opening it for write - refusing to "
-                  "risk it", path, (int)SYS_FS_Error());
+        /* #924 (post-merge audit, defect 1, round 2): the fallback name gets
+         * the SAME safety check as the primary one -- reachable via
+         * configured filenames alone (an earlier session logging its DATA
+         * straight to `<file>.mfst`, no collision of its own involved), and
+         * without this the fallback would just be a second undefended path
+         * to destroy an unrelated file. One retry only: if the fallback is
+         * ALSO unsafe, this session gets no manifest, logged, exactly like
+         * every other way opening one can fail -- there is still no loop and
+         * no counter. */
+        if (!sd_ManifestPathSafeToOverwrite(path)) {
+            LOG_E("[SD] #924 no manifest: fallback path '%s' also exists and "
+                  "does not look like a manifest - giving up for this "
+                  "session", path);
             return;
         }
-        peekRead = SYS_FS_FileRead(probeHandle, peek, sizeof(peek));
-        (void)SYS_FS_FileClose(probeHandle);
-        if (peekRead == (size_t)-1) {
-            LOG_E("[SD] #924 no manifest: could not read existing file "
-                  "'%s' before opening it for write - refusing to risk it",
-                  path);
-            return;
-        }
-        if (!SdManifest_FirstLineLooksLikeManifest(peek, peekRead)) {
-            LOG_E("[SD] #924 no manifest: '%s' already exists and does not "
-                  "look like a manifest - refusing to overwrite it", path);
-            return;
-        }
+        LOG_I("[SD] #924 manifest goes to '%s'", path);
     }
 
     gSDCardData.manifestHandle = SYS_FS_FileOpen(path,

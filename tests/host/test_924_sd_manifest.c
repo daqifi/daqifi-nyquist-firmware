@@ -494,6 +494,45 @@ TEST(first_line_check_rejects_unrelated_data)
             binaryish, sizeof(binaryish) - 1u));
 }
 
+/* THE FRAGMENT SCENARIO (post-merge audit round 2, defect 1 follow-up): a
+ * disk-full mid-write can leave sd_AppendManifestLine()'s OWN bounded
+ * completion loop terminating a partial line with a bare '\n' rather than
+ * losing it outright (see that function's own comment on
+ * SD_MANIFEST_WRITE_TRIES) -- so a file this same feature wrote can itself be
+ * left holding a line that is NEITHER a complete manifest line NOR unrelated
+ * data. This check must reject it exactly like any other malformed content
+ * (accepting a fragment as "looks like a manifest" would let a corrupt file
+ * satisfy the guard by accident, which defeats the point) -- callers must not
+ * conclude "reject == permanently destroy the path": sd_OpenSessionManifest()
+ * responds to a rejection by trying the collision-fallback name instead of
+ * giving up, so a fragment here redirects the NEXT session's manifest rather
+ * than blocking it forever. */
+TEST(first_line_check_rejects_a_disk_full_fragment)
+{
+    /* Cut mid-number: the write landed "exp-3.csv,204" then nothing more
+     * could be written, so the completion loop appended just '\n'. */
+    static const char midNumber[] = "exp-3.csv,204\n";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(
+            midNumber, sizeof(midNumber) - 1u));
+
+    /* Cut right after the first comma. */
+    static const char rightAfterComma[] = "exp-3.csv,\n";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(
+            rightAfterComma, sizeof(rightAfterComma) - 1u));
+
+    /* Cut mid-CRC. */
+    static const char midCrc[] = "exp-3.csv,204,0x1A2\n";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(
+            midCrc, sizeof(midCrc) - 1u));
+
+    /* Cut before anything landed at all -- off == 0 in
+     * sd_AppendManifestLine's own accounting, so per its comment NO fragment
+     * (not even a bare newline) is written; this is the empty-file case
+     * SdManifest_FirstLineLooksLikeManifest already treats as safe (nothing
+     * to lose), covered by first_line_check_accepts_empty_content above, not
+     * repeated here. */
+}
+
 TEST(first_line_check_rejects_near_misses)
 {
     /* Missing the second comma. */
@@ -604,6 +643,7 @@ int main(void)
     RUN(first_line_check_accepts_empty_content);
     RUN(first_line_check_rejects_unrelated_data);
     RUN(first_line_check_rejects_near_misses);
+    RUN(first_line_check_rejects_a_disk_full_fragment);
     RUN(fresh_file_accounting_is_zero_bytes_and_empty_crc);
     RUN(fresh_file_accounting_renders_as_the_empty_file_it_describes);
     RUN(fresh_file_accounting_null_safety);

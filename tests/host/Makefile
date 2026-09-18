@@ -451,6 +451,31 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       relative to the configured directory -- that is the spelling"; \
 	       echo "       SYST:STOR:SD:CRC? and :GET take as their operand."; \
 	       exit 1; }
+	@grep -q 'SdManifest_PathsEqualCaseInsensitive' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer compares the manifest path against"; \
+	       echo "       the session's own stream file through"; \
+	       echo "       SdManifest_PathsEqualCaseInsensitive (#924 post-merge audit,"; \
+	       echo "       defect 2). FatFs's own duplicate-open lock (FF_FS_LOCK) is"; \
+	       echo "       case-insensitive; a plain strcmp here misses a collision FatFs"; \
+	       echo "       itself will refuse, silently losing the whole session's"; \
+	       echo "       integrity records with no diagnostic."; \
+	       exit 1; }
+	@test $$(grep -c 'sd_ManifestPathSafeToOverwrite(' $(SD_MANAGER_SRC)) -ge 3 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) calls sd_ManifestPathSafeToOverwrite fewer"; \
+	       echo "       than 3 times (its own definition plus 2 call sites: the primary"; \
+	       echo "       manifest path and the collision fallback path). #924's"; \
+	       echo "       post-merge audit defect 1 (round 2) requires BOTH candidate"; \
+	       echo "       paths checked before a truncating SYS_FS_FILE_OPEN_WRITE --"; \
+	       echo "       checking only the primary leaves the fallback name as a second"; \
+	       echo "       undefended way to destroy an unrelated file."; \
+	       exit 1; }
+	@grep -q 'SdManifest_FirstLineLooksLikeManifest' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer inspects an existing file's first"; \
+	       echo "       line through SdManifest_FirstLineLooksLikeManifest (#924"; \
+	       echo "       post-merge audit, defect 1). Without it, a manifest open would"; \
+	       echo "       truncate whatever already sits at the manifest path, no matter"; \
+	       echo "       what it is."; \
+	       exit 1; }
 	@test $$(grep -c 'SdManifest_FreshFileAccounting(' $(SD_MANAGER_SRC)) -ge 2 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) calls SdManifest_FreshFileAccounting fewer"; \
 	       echo "       than 2 times. OPEN_FILE must reset currentFileBytes/"; \
