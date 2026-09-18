@@ -451,6 +451,18 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       relative to the configured directory -- that is the spelling"; \
 	       echo "       SYST:STOR:SD:CRC? and :GET take as their operand."; \
 	       exit 1; }
+	@test $$(grep -c 'SdManifest_FreshFileAccounting(' $(SD_MANAGER_SRC)) -ge 2 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) calls SdManifest_FreshFileAccounting fewer"; \
+	       echo "       than 2 times. OPEN_FILE must reset currentFileBytes/"; \
+	       echo "       fileCrcRunning through it at BOTH places a new file becomes"; \
+	       echo "       current -- the normal open, and an ABORTED rotation-open (the"; \
+	       echo "       one #924's post-merge audit defect 3 found missing: without"; \
+	       echo "       it, UNMOUNT_DISK's unconditional manifest line for the new,"; \
+	       echo "       empty file it just closed carries the OLD file's byte count"; \
+	       echo "       and CRC instead). If a real refactor legitimately drops one"; \
+	       echo "       call site, re-derive whether the abort arm still resets before"; \
+	       echo "       lowering this count."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -I$(FW_UTIL) -o $(MANIFEST_BIN) test_924_sd_manifest.c $(FW_UTIL)/CRC32.c
 
 $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)

@@ -1593,8 +1593,19 @@ static void sd_OpenSessionManifest(void) {
      * reachable by choosing an unlucky filename. Compared as PATHS rather
      * than by testing the extension: filePath is the stream file that was
      * just opened, so this is exact for bucket 0 and for a rolled bucket
-     * alike, with no reasoning about how the two names are built. */
-    if (strcmp(path, gSDCardData.filePath) == 0) {
+     * alike, with no reasoning about how the two names are built.
+     *
+     * #924 (post-merge audit, defect 2): compared CASE-INSENSITIVELY, because
+     * FatFs's own duplicate-open detection is (FF_FS_LOCK, ffconf.h) -- `foo.
+     * MFST` and `foo.mfst` name the same file to the filesystem even though a
+     * byte-exact strcmp sees them as different. A configured stream name that
+     * differed from the manifest path only in case used to pass this guard,
+     * FatFs then refused the manifest's own open as the duplicate it is, and
+     * manifestOpenAttempted latches on the first try -- so the whole session
+     * ran with zero integrity records and no diagnostic. Comparing the way
+     * the filesystem does is what makes this guard actually guard FatFs's
+     * lock instead of a narrower byte-exact case of it. */
+    if (SdManifest_PathsEqualCaseInsensitive(path, gSDCardData.filePath)) {
         /* FALL BACK TO A NAME THAT CANNOT COLLIDE, rather than giving the
          * session no manifest at all. Refusing here merely made the failure
          * VISIBLE; the session still lost its integrity records, which is the
@@ -1622,6 +1633,61 @@ static void sd_OpenSessionManifest(void) {
         }
         LOG_I("[SD] #924 '%s' is also the stream file; manifest goes to '%s'",
               gSDCardData.filePath, path);
+    }
+
+    /* #924 (post-merge audit, defect 1): SYS_FS_FILE_OPEN_WRITE truncates on
+     * open (FatFs FA_CREATE_ALWAYS, ff.c) -- and up to here, nothing has
+     * asked whether some file ALREADY sits at `path` other than the one case
+     * just handled above (this session's own currently-open stream file).
+     *
+     * The module's own accepted model (see the file-level comment above) is
+     * that reusing a base filename across sessions overwrites the EARLIER
+     * SESSION'S OWN MANIFEST at this exact path -- that is deliberate and
+     * stays untouched. What is NOT accepted is destroying something else
+     * that happens to occupy this name for any other reason: for instance, an
+     * earlier session whose CONFIGURED stream name collided with ITS OWN
+     * manifest took the fallback branch above and renamed its manifest out of
+     * the way, which means ITS DATA FILE -- not a manifest at all -- is what
+     * still sits at the plain `<base>.mfst` path this session just computed.
+     * Silently opening that for WRITE would truncate real logged data with no
+     * warning, reachable by configured filenames alone, no race required.
+     *
+     * So: if something is there, read enough of it to tell whether it LOOKS
+     * like one of our own manifests (SdManifest_FirstLineLooksLikeManifest,
+     * a heuristic on the first line's shape, not a proof of provenance -- see
+     * its own comment) before trusting FatFs's truncate-on-open to do the
+     * right thing. A manifest-shaped file is overwritten exactly as before;
+     * anything else is refused, logged, and left on the card untouched --
+     * the session continues without a manifest, the same fallback this
+     * function already uses for every other way opening one can fail. */
+    SYS_FS_FSTAT existingManifestStat;
+    memset(&existingManifestStat, 0, sizeof(existingManifestStat));
+    if (SYS_FS_FileStat(path, &existingManifestStat) == SYS_FS_RES_SUCCESS
+        && existingManifestStat.fsize > 0u) {
+        char peek[SD_MANIFEST_LINE_MAX];
+        SYS_FS_HANDLE probeHandle = SYS_FS_FileOpen(path,
+                                                     SYS_FS_FILE_OPEN_READ);
+        size_t peekRead;
+
+        if (probeHandle == SYS_FS_HANDLE_INVALID) {
+            LOG_E("[SD] #924 no manifest: could not inspect existing file "
+                  "'%s' (err=%d) before opening it for write - refusing to "
+                  "risk it", path, (int)SYS_FS_Error());
+            return;
+        }
+        peekRead = SYS_FS_FileRead(probeHandle, peek, sizeof(peek));
+        (void)SYS_FS_FileClose(probeHandle);
+        if (peekRead == (size_t)-1) {
+            LOG_E("[SD] #924 no manifest: could not read existing file "
+                  "'%s' before opening it for write - refusing to risk it",
+                  path);
+            return;
+        }
+        if (!SdManifest_FirstLineLooksLikeManifest(peek, peekRead)) {
+            LOG_E("[SD] #924 no manifest: '%s' already exists and does not "
+                  "look like a manifest - refusing to overwrite it", path);
+            return;
+        }
     }
 
     gSDCardData.manifestHandle = SYS_FS_FileOpen(path,
@@ -2741,6 +2807,35 @@ void sd_card_manager_ProcessState() {
                      * and reset the buffer so the next session starts clean
                      * rather than inheriting a partial file's header. */
                     sd_AbandonRotationWindow("session torn down mid-open");
+                    /* #924 (post-merge audit, defect 3): gSDCardData.filePath
+                     * ALREADY names this new file -- generateFilename() set
+                     * it above, before the abort was even detected -- but
+                     * currentFileBytes/fileCrcRunning still describe the file
+                     * this rotation was retiring, because the reset that
+                     * normally pairs with a fresh open (below, in the
+                     * non-aborted arm) is never reached on this path: it sits
+                     * after the `break` two lines down.
+                     *
+                     * UNMOUNT_DISK closes gSDCardData.fileHandle and appends a
+                     * manifest line for it UNCONDITIONALLY (see the #924
+                     * block there), using whatever currentFileBytes/
+                     * fileCrcRunning hold at that point. Left stale, that line
+                     * would name the NEW, just-truncated (and, since
+                     * WRITE_TO_FILE never runs for it, genuinely empty) file
+                     * while carrying the OLD file's byte count and CRC -- a
+                     * record that is wrong, not just incomplete: a consumer
+                     * that trusts it would checksum-verify this file against a
+                     * CRC that was never its own.
+                     *
+                     * Reset here, through the SAME helper the success arm
+                     * uses below, so the line UNMOUNT_DISK writes describes
+                     * the file that actually exists on the card: 0 bytes, the
+                     * CRC of nothing. That is the true state of a file that
+                     * was opened (truncating whatever was there) and then
+                     * never written to before the session was torn down --
+                     * not a placeholder standing in for missing data. */
+                    SdManifest_FreshFileAccounting(&gSDCardData.currentFileBytes,
+                                                   &gSDCardData.fileCrcRunning);
                     LOG_I("[SD] open aborted: session torn down mid-open "
                           "(mode=%s)", sd_card_manager_GetModeName());
                     break;
@@ -2751,15 +2846,18 @@ void sd_card_manager_ProcessState() {
                  * this handle: WRITE_TO_FILE runs on THIS task, so the header
                  * written below is guaranteed to be the file's first bytes. */
                 gSDCardData.totalBytesFlushPending = 0;
-                gSDCardData.currentFileBytes = 0;  // Reset byte counter for new file
-                /* #924: arm this file's running CRC in the same breath as its
-                 * byte counter. The two describe the same bytes and are reset
-                 * by the same event -- a NEW file -- so they are reset on the
-                 * same line, where a later edit cannot move one without
-                 * seeing the other. This runs for the session's first open and
-                 * for every rotation open alike, which is exactly right: each
-                 * file's CRC covers that file and nothing before it. */
-                gSDCardData.fileCrcRunning = CRC32_Init();
+                /* #924: arm this file's byte counter and running CRC in the
+                 * same breath, through SdManifest_FreshFileAccounting (also
+                 * called from the openAborted arm above -- see its own
+                 * comment there for defect 3, the case this pairing exists to
+                 * cover). The two fields describe the same bytes and are
+                 * reset by the same event -- a NEW file -- so a later edit
+                 * cannot move one without seeing the other. This runs for the
+                 * session's first open and for every rotation open alike,
+                 * which is exactly right: each file's CRC covers that file
+                 * and nothing before it. */
+                SdManifest_FreshFileAccounting(&gSDCardData.currentFileBytes,
+                                               &gSDCardData.fileCrcRunning);
                 gSDCardData.lastFlushMillis = pdTICKS_TO_MS(xTaskGetTickCount());
 
                 if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {

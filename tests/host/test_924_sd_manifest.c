@@ -399,6 +399,184 @@ TEST(session_shape_round_trips)
     ASSERT_EQ(strcmp(l1, expect1), 0);
 }
 
+/* ================================================================
+ * Post-merge adversarial audit on #1124 (verdict issuecomment-5723694027):
+ * three confirmed defects, fixed by adding three pure helpers to
+ * SdManifest.h that sd_card_manager.c now calls at the exact points the
+ * audit named. Each block below tests the helper directly; the Makefile's
+ * grep guards (added alongside these tests) are what proves sd_card_manager.c
+ * actually calls them, the same limitation the file-level comment above
+ * already states for every other guarded call site.
+ * ================================================================ */
+
+/* -------------------------------------- defect 2: case-insensitive guard */
+
+/* FatFs's own duplicate-open lock (FF_FS_LOCK) is case-insensitive, so the
+ * self-collision guard in sd_OpenSessionManifest() must be too, or a
+ * configured stream name differing from the manifest path only in case
+ * passes the guard, then loses the FatFs race silently (manifestOpenAttempted
+ * latches, no retry, zero integrity records for the whole session). */
+TEST(paths_equal_case_insensitive_matches_across_case)
+{
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQiFi/foo.mfst",
+                                                      "DAQiFi/foo.mfst"));
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQiFi/foo.mfst",
+                                                      "DAQiFi/foo.MFST"));
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("daqifi/FOO.MfSt",
+                                                      "DAQIFI/foo.mfst"));
+}
+
+TEST(paths_equal_case_insensitive_rejects_real_differences)
+{
+    ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive("DAQiFi/foo.mfst",
+                                                       "DAQiFi/foo.csv"));
+    /* A prefix of the other string must not compare equal. */
+    ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive("DAQiFi/foo.mfst",
+                                                       "DAQiFi/foo.mfst2"));
+    ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive("DAQiFi/foo.mfst",
+                                                       "DAQiFi2/foo.mfst"));
+}
+
+TEST(paths_equal_case_insensitive_null_safety)
+{
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive(NULL, NULL));
+    ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive(NULL, "a"));
+    ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive("a", NULL));
+}
+
+/* ------------------------------ defect 1: refuse to overwrite a non-manifest */
+
+/* A real manifest line, produced by the SAME rendering function this file
+ * already pins, must be recognised -- this is the "same base filename across
+ * sessions overwrites the earlier MANIFEST" case the module's header accepts
+ * and defect 1's fix must not break. */
+TEST(first_line_check_accepts_a_real_rendered_line)
+{
+    char line[128];
+    int n = SdManifest_FormatLine(line, sizeof(line), "experiment-3.csv",
+                                  20480u, 0x1A2B3C4Du);
+    ASSERT_TRUE(n > 0);
+    ASSERT_TRUE(SdManifest_FirstLineLooksLikeManifest(line, (size_t)n));
+
+    /* A later line in the same file must not matter -- only the FIRST is
+     * inspected before deciding whether to overwrite. */
+    char twoLines[256];
+    int n1 = snprintf(twoLines, sizeof(twoLines), "%s%s", line,
+                      "garbage-that-would-fail-on-its-own,,,\n");
+    ASSERT_TRUE(n1 > 0);
+    ASSERT_TRUE(SdManifest_FirstLineLooksLikeManifest(twoLines, (size_t)n1));
+}
+
+TEST(first_line_check_accepts_empty_content)
+{
+    /* Nothing there to be destroyed either way -- an empty existing file
+     * (0 bytes) is not distinguishable from "no file", so it is fine to
+     * proceed. sd_OpenSessionManifest() itself never even reaches this
+     * check for a 0-byte SYS_FS_FSTAT.fsize, but the helper must agree. */
+    ASSERT_TRUE(SdManifest_FirstLineLooksLikeManifest("", 0u));
+    ASSERT_TRUE(SdManifest_FirstLineLooksLikeManifest(NULL, 0u));
+}
+
+/* THE DEFECT 1 SCENARIO ITSELF: an earlier session's real DATA file (not a
+ * manifest) sitting at this exact path -- e.g. because ITS configured stream
+ * name collided with ITS OWN manifest and the fallback in
+ * sd_OpenSessionManifest() renamed the manifest out of the way, leaving the
+ * data file at the plain <base>.mfst path a LATER session's manifest now
+ * computes. Ordinary logged data does not look like `name,digits,0xHEX\n`. */
+TEST(first_line_check_rejects_unrelated_data)
+{
+    static const char csvHeader[] = "timestamp,ch0,ch1,ch2\n1000,1.23,4.56,7.89\n";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(
+            csvHeader, sizeof(csvHeader) - 1u));
+
+    static const char binaryish[] = "\x02\x01\x00\x00\x00\xAB\xCD\xEF\x01";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(
+            binaryish, sizeof(binaryish) - 1u));
+}
+
+TEST(first_line_check_rejects_near_misses)
+{
+    /* Missing the second comma. */
+    static const char a[] = "name,1230x1A2B3C4D\n";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(a, sizeof(a) - 1u));
+
+    /* No digits between the commas. */
+    static const char b[] = "name,,0x1A2B3C4D\n";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(b, sizeof(b) - 1u));
+
+    /* Missing the "0x" prefix. */
+    static const char c[] = "name,123,1A2B3C4D\n";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(c, sizeof(c) - 1u));
+
+    /* 7 hex digits, one short. */
+    static const char d[] = "name,123,0x1A2B3C4\n";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(d, sizeof(d) - 1u));
+
+    /* 9 hex digits, one over -- the byte right after the 8th must be '\n'. */
+    static const char e[] = "name,123,0x1A2B3C4D5\n";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(e, sizeof(e) - 1u));
+
+    /* No trailing newline at all within the given length. */
+    static const char f[] = "name,123,0x1A2B3C4D";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(f, sizeof(f) - 1u));
+
+    /* Empty name. */
+    static const char g[] = ",123,0x1A2B3C4D\n";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(g, sizeof(g) - 1u));
+}
+
+/* ---------------------------------- defect 3: fresh-file accounting reset */
+
+/* The exact record for a file that was just truncate-opened and never
+ * written to: 0 bytes, and a CRC that finalizes to the CRC of nothing --
+ * which is what an aborted rotation-open's manifest line must carry for the
+ * new, empty file, instead of the file it was rotating away from. */
+TEST(fresh_file_accounting_is_zero_bytes_and_empty_crc)
+{
+    uint64_t bytes = 123456789ull;   /* stale, as if left by a retired file */
+    uint32_t crc = 0xDEADBEEFu;      /* stale running CRC of that same file */
+
+    SdManifest_FreshFileAccounting(&bytes, &crc);
+
+    ASSERT_EQ(bytes, 0ull);
+    /* Finalizing a freshly-armed running CRC must equal the CRC of an empty
+     * byte range -- the same value CRC32_Compute("", 0) produces, pinned by
+     * zlib_vectors above. */
+    ASSERT_EQ(CRC32_Finalize(crc), CRC32_Compute("", 0));
+    ASSERT_EQ(CRC32_Finalize(crc), 0x00000000u);
+}
+
+/* The reset must compose with the real line renderer exactly the way
+ * UNMOUNT_DISK uses it: format a line straight from freshly-armed state. */
+TEST(fresh_file_accounting_renders_as_the_empty_file_it_describes)
+{
+    uint64_t bytes = 999u;
+    uint32_t crc = 0x11111111u;
+    char line[64];
+
+    SdManifest_FreshFileAccounting(&bytes, &crc);
+    ASSERT_TRUE(SdManifest_FormatLine(line, sizeof(line), "exp-2.csv", bytes,
+                                      CRC32_Finalize(crc)) > 0);
+    ASSERT_EQ(strcmp(line, "exp-2.csv,0,0x00000000\n"), 0);
+}
+
+TEST(fresh_file_accounting_null_safety)
+{
+    uint64_t bytes = 5u;
+    uint32_t crc = 5u;
+
+    /* Neither pointer may be dereferenced when NULL -- both call sites in
+     * sd_card_manager.c pass real struct-member addresses, but a defensive
+     * helper must not assume that forever. */
+    SdManifest_FreshFileAccounting(NULL, &crc);
+    ASSERT_EQ(CRC32_Finalize(crc), CRC32_Compute("", 0));
+
+    SdManifest_FreshFileAccounting(&bytes, NULL);
+    ASSERT_EQ(bytes, 0ull);
+
+    SdManifest_FreshFileAccounting(NULL, NULL);   /* must not crash */
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
@@ -419,5 +597,15 @@ int main(void)
     RUN(non_matching_prefix_falls_back_to_full_path);
     RUN(relative_name_null_safety);
     RUN(session_shape_round_trips);
+    RUN(paths_equal_case_insensitive_matches_across_case);
+    RUN(paths_equal_case_insensitive_rejects_real_differences);
+    RUN(paths_equal_case_insensitive_null_safety);
+    RUN(first_line_check_accepts_a_real_rendered_line);
+    RUN(first_line_check_accepts_empty_content);
+    RUN(first_line_check_rejects_unrelated_data);
+    RUN(first_line_check_rejects_near_misses);
+    RUN(fresh_file_accounting_is_zero_bytes_and_empty_crc);
+    RUN(fresh_file_accounting_renders_as_the_empty_file_it_describes);
+    RUN(fresh_file_accounting_null_safety);
     return TEST_SUMMARY();
 }
