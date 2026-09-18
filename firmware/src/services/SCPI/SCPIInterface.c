@@ -5863,9 +5863,11 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      * one instant.
      *
      * As two separate loads several lines apart they did NOT, and that was a
-     * WIDER window than the one #965 closed at the finder site -- this fix
-     * (#969) is that residual, filed against this site rather than folded
-     * into #965's PR. A stop bumps gen and active together at its START,
+     * WIDER window than the one #965 PROPOSES to close at the finder site
+     * (still open and unmerged, per the paragraph above -- this file does not
+     * get to call that race closed until #965 lands) -- this fix (#969) is
+     * that residual, filed against this site rather than folded into #965's
+     * PR. A stop bumps gen and active together at its START,
      * under one critical section
      * (below), and finishes by decrementing active LAST. Let that stop's bump
      * land BEFORE the first load and its completion land BETWEEN the two
