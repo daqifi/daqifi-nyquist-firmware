@@ -1453,12 +1453,38 @@ static scpi_result_t SCPI_SysLogLevelSet(scpi_t * context) {
     Logger_SetLevel(module, (uint8_t)level);
     uint8_t actual = Logger_GetLevel(module);
 
-    char buf[80];
-    int len = snprintf(buf, sizeof(buf), "%s: %d (ceiling %d)\r\n",
+    /* #1098: format the confirmation into the shared SCPI response scratch
+     * buffer (#347) instead of a stack-local char[80]. Storage location only
+     * -- the same bytes go out, in the same order, with the same return value.
+     * The longest line this can produce is "GENERAL: 3 (ceiling 3)\r\n" (24 B),
+     * which fits both the old 80 B array and SCPI_RESPONSE_BUF_SIZE without
+     * truncation, so the clamp below never fires today; it is kept because the
+     * old code had it and it is the correct discipline either way.
+     *
+     * Take/Give contract (SCPIInterface.h): a non-NULL Take MUST be matched by
+     * exactly one Give on every exit path; a NULL Take by none. The take is
+     * deliberately here, after the Logger_SetLevel above, rather than at entry
+     * -- everything before it is parameter validation that needs no buffer, and
+     * #947 is about shrinking what happens inside the hold, not widening it.
+     *
+     * Consequence of that placement: on a NULL take the level HAS already been
+     * set but we return SCPI_RES_ERR, where the old code always returned OK.
+     * That is the right way round -- the setter's job is done, and the error
+     * reports only that we could not echo it. Take returns NULL solely when
+     * gScpiRespMutex does not exist, i.e. before CreateSCPIContext has run,
+     * which no SCPI callback can observe (SCPIInterface.h:145-148). */
+    char* buf = (char*)SCPI_ResponseBuf_Take();
+    if (buf == NULL) {
+        return SCPI_RES_ERR;
+    }
+    int len = snprintf(buf, SCPI_RESPONSE_BUF_SIZE, "%s: %d (ceiling %d)\r\n",
                        Logger_GetModuleName(module), actual, ceiling);
     if (len > 0) {
-        context->interface->write(context, buf, ((size_t)len < sizeof(buf) - 1) ? (size_t)len : sizeof(buf) - 1);
+        context->interface->write(context, buf,
+                ((size_t)len < SCPI_RESPONSE_BUF_SIZE - 1)
+                        ? (size_t)len : SCPI_RESPONSE_BUF_SIZE - 1);
     }
+    SCPI_ResponseBuf_Give();
 
     return SCPI_RES_OK;
 }
@@ -1480,17 +1506,46 @@ static scpi_result_t SCPI_SysLogLevelGet(scpi_t * context) {
         }
         SCPI_ResultInt32(context, Logger_GetLevel(module));
     } else {
-        /* No parameter — dump all modules */
-        char buf[48];
+        /* No parameter — dump all modules.
+         *
+         * #1098: one take BEFORE the loop, the same shared buffer reused for
+         * every line, one give AFTER it -- the SCPI_SysInfoTextGet shape, not a
+         * take/give per iteration. Per-iteration pairing would block on the
+         * mutex LOG_MODULE_COUNT times for one query and would let a peer
+         * callback interleave its own reply between our lines; the single hold
+         * is both cheaper and the only one that keeps the dump contiguous.
+         * ("Give, then write" is not a third option -- SCPI_WriteWithRetry
+         * re-reads its data across retries, so a peer could overwrite the
+         * shared buffer mid-write; see the REJECTED note on SysInfoText_Write.)
+         *
+         * COST, stated plainly: this hold now spans LOG_MODULE_COUNT (10)
+         * writes where the old stack buffer held no shared lock at all. Against
+         * a host that has stopped reading, each interface->write can spend
+         * SCPI_WRITE_MAX_RETRIES(200) x SCPI_WRITE_RETRY_DELAY_MS(5) ~= 1 s, so
+         * the worst-case hold is ~10 s. That is the inherent trade #347's
+         * shared buffer makes and every one of its ~17 call sites pays; it is
+         * an order of magnitude under the ~90 writes that made the same shape
+         * worth guarding in SCPI_SysInfoTextGet (#947), and #947 deliberately
+         * did not retrofit its short-write/deadline guards to the other sites.
+         * If that bound is ever tightened it should be tightened for all of
+         * them at once, not for this one callback. */
+        char* buf = (char*)SCPI_ResponseBuf_Take();
+        if (buf == NULL) {
+            return SCPI_RES_ERR;
+        }
         for (int i = 0; i < LOG_MODULE_COUNT; i++) {
-            int len = snprintf(buf, sizeof(buf), "%s: %d (ceiling %d)\r\n",
+            int len = snprintf(buf, SCPI_RESPONSE_BUF_SIZE,
+                               "%s: %d (ceiling %d)\r\n",
                                Logger_GetModuleName((LogModule_t)i),
                                Logger_GetLevel((LogModule_t)i),
                                Logger_GetCeiling((LogModule_t)i));
             if (len > 0) {
-                context->interface->write(context, buf, ((size_t)len < sizeof(buf) - 1) ? (size_t)len : sizeof(buf) - 1);
+                context->interface->write(context, buf,
+                        ((size_t)len < SCPI_RESPONSE_BUF_SIZE - 1)
+                                ? (size_t)len : SCPI_RESPONSE_BUF_SIZE - 1);
             }
         }
+        SCPI_ResponseBuf_Give();
     }
     return SCPI_RES_OK;
 }
@@ -1513,16 +1568,28 @@ static scpi_result_t SCPI_SysLogLevelAllSet(scpi_t * context) {
 
     Logger_SetAllLevels((uint8_t)level);
 
-    /* Echo result showing actual levels (may differ due to ceilings) */
-    char buf[48];
+    /* Echo result showing actual levels (may differ due to ceilings).
+     *
+     * #1098: the SCPI_SysLogLevelGet dump shape exactly -- one take before the
+     * loop, the shared buffer reused per line, one give after. Same reasoning
+     * and the same ~10-write hold cost; see the comment there. As in
+     * SCPI_SysLogLevelSet, a NULL take returns SCPI_RES_ERR after the levels
+     * have already been applied -- the set succeeded, only the echo failed. */
+    char* buf = (char*)SCPI_ResponseBuf_Take();
+    if (buf == NULL) {
+        return SCPI_RES_ERR;
+    }
     for (int i = 0; i < LOG_MODULE_COUNT; i++) {
-        int len = snprintf(buf, sizeof(buf), "%s: %d\r\n",
+        int len = snprintf(buf, SCPI_RESPONSE_BUF_SIZE, "%s: %d\r\n",
                            Logger_GetModuleName((LogModule_t)i),
                            Logger_GetLevel((LogModule_t)i));
         if (len > 0) {
-            context->interface->write(context, buf, ((size_t)len < sizeof(buf) - 1) ? (size_t)len : sizeof(buf) - 1);
+            context->interface->write(context, buf,
+                    ((size_t)len < SCPI_RESPONSE_BUF_SIZE - 1)
+                            ? (size_t)len : SCPI_RESPONSE_BUF_SIZE - 1);
         }
     }
+    SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
 }
 

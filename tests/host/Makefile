@@ -106,6 +106,23 @@ SUSPENDREASON_BIN := run_985_tests
 # THAT, in three parts mirroring SUSPEND_BIN's three.
 STARTARM_BIN := run_1121_tests
 
+# #1098: the shared-SCPI-response-buffer Take/Give pairing of the four reply
+# callbacks that used to format into a stack-local array --
+# SCPI_SysLogLevelSet / SysLogLevelGet / SysLogLevelAllSet (SCPIInterface.c)
+# and SCPI_StorageSDInfo (SCPIStorageSD.c).
+#
+# Same technique and same reason as SYSINFO_BIN and STARTARM_BIN: neither file
+# is includable on the host (SCPI999_BIN established that for SCPIInterface.c,
+# BENCH_BIN for SCPIStorageSD.c), so the control-flow shape of each callback is
+# re-implemented against a mock Take/Give/write and the pre-/post-fix shapes
+# compared.
+#
+# It copies ONE constant, SCPI_RESPONSE_BUF_SIZE, pinned by guard 1 below. It
+# deliberately does NOT copy LOG_MODULE_COUNT -- every loop assertion is swept
+# over counts 0..12 instead, so adding a log module cannot stale this file and
+# no grep guard is needed for it.
+REPLYBUF_BIN := run_1098_tests
+
 # #164: JSON_StringEscape.h is header-only and dependency-free for the same
 # reason AD7609Scale.h is -- the pure byte-escaping logic was split out of
 # JSON_Encoder.c, which is unusable on a host (it pulls in
@@ -944,6 +961,109 @@ $(STARTARM_BIN): test_1121_start_streaming_arm_cascade.c test_framework.h \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(STARTARM_BIN) test_1121_start_streaming_arm_cascade.c
 
+# #1098 guard helper. Counts LITERAL occurrences of a pattern inside ONE
+# function body, bounded by the next column-0 `scpi_result_t` signature -- so
+# the counts below are per-callback and cannot be satisfied by one of the ~17
+# OTHER Take/Give sites elsewhere in the same file, which a whole-file
+# `grep -c` could not distinguish. index() is literal, so `()` and `;` in the
+# patterns need no regex escaping.
+#   $(1)=source file   $(2)=function name   $(3)=literal pattern
+CNT_IN_FN = awk -v fn="$(2)" -v pat='$(3)' \
+	'$$0 ~ "^(static )?scpi_result_t " fn "[(]" { f=1; next } \
+	 f && /^(static )?scpi_result_t /           { exit } \
+	 f && index($$0, pat)                       { n++ } \
+	 END { print n+0 }' $(1)
+
+# #1098 guard helper. Prints "<take line> <loop line> <give line>", relative to
+# the file, for one function body -- 0 for any marker not found.
+#   $(1)=source file   $(2)=function name
+ORDER_IN_FN = awk -v fn="$(2)" \
+	'$$0 ~ "^(static )?scpi_result_t " fn "[(]" { f=1; next } \
+	 f && /^(static )?scpi_result_t /                { exit } \
+	 f && index($$0, "SCPI_ResponseBuf_Take()")      { t=NR } \
+	 f && index($$0, "LOG_MODULE_COUNT; i++")        { l=NR } \
+	 f && index($$0, "SCPI_ResponseBuf_Give();")     { g=NR } \
+	 END { print t+0, l+0, g+0 }' $(1)
+
+# #1098: the Take/Give pairing of the four converted reply callbacks.
+#
+# GUARD 1 -- THE MIRRORED CONSTANT. test_1098 copies SCPI_RESPONSE_BUF_SIZE as
+# FW_RESPONSE_BUF_SIZE and drives SCPI_StorageSDInfo's `len >= capacity`
+# format-error branch off that exact value, so a stale copy would still build
+# and still pass while testing the wrong boundary.
+$(REPLYBUF_BIN): test_1098_scpi_reply_buffer_pairing.c test_framework.h \
+                $(SCPI_INTERFACE_SRC) $(SCPI_INTERFACE_H) $(SD_BENCH_SRC) $(RECIPES)
+	@grep -qE '^[[:space:]]*#define[[:space:]]+SCPI_RESPONSE_BUF_SIZE[[:space:]]+2048U' \
+	     $(SCPI_INTERFACE_H) \
+	   || { echo "ERROR: SCPI_RESPONSE_BUF_SIZE is no longer 2048U in"; \
+	        echo "       $(SCPI_INTERFACE_H)."; \
+	        echo "       test_1098_scpi_reply_buffer_pairing.c mirrors it as"; \
+	        echo "       FW_RESPONSE_BUF_SIZE and drives SCPI_StorageSDInfo's"; \
+	        echo "       format-error boundary off that exact value -- a stale"; \
+	        echo "       copy tests the wrong boundary and still passes."; \
+	        exit 1; }
+# GUARD 2 -- EXACTLY ONE TAKE AND ONE GIVE PER LOG-LEVEL CALLBACK. This is the
+# whole contract (SCPIInterface.h:141-182) reduced to something grep can hold:
+# a second Give double-releases somebody else's hold, a missing one wedges
+# gScpiRespMutex for every SCPI callback on BOTH transports (they wait
+# portMAX_DELAY). Counted per function, so converting a NEIGHBOUR cannot
+# satisfy this for a callback that was reverted.
+	@for fn in SCPI_SysLogLevelSet SCPI_SysLogLevelGet SCPI_SysLogLevelAllSet; do \
+	   t=`$(call CNT_IN_FN,$(SCPI_INTERFACE_SRC),$$fn,SCPI_ResponseBuf_Take())`; \
+	   g=`$(call CNT_IN_FN,$(SCPI_INTERFACE_SRC),$$fn,SCPI_ResponseBuf_Give();)`; \
+	   test "$$t" = "1" && test "$$g" = "1" \
+	     || { echo "ERROR: $$fn in $(SCPI_INTERFACE_SRC) no longer holds the"; \
+	          echo "       shared SCPI response buffer exactly once"; \
+	          echo "       (found take=$$t give=$$g, both must be 1)."; \
+	          echo "       Either it was reverted to a stack-local reply buffer"; \
+	          echo "       (#1098, the bug) or its Take/Give no longer pair --"; \
+	          echo "       a missing Give wedges gScpiRespMutex for every SCPI"; \
+	          echo "       callback on both transports. test_1098 asserts the"; \
+	          echo "       1:1 pairing on every return path; re-read both."; \
+	          exit 1; }; \
+	 done
+# GUARD 3 -- ONE HOLD FOR THE WHOLE DUMP, in the two LOOP callbacks. Guard 2
+# alone does not pin this: a take/give moved INSIDE the loop still counts 1 and
+# 1 in the source while acquiring the mutex LOG_MODULE_COUNT times per query and
+# dropping the hold between lines, letting a peer callback interleave its reply.
+# Line order is what separates them -- take BEFORE the `for`, give AFTER it,
+# which is the SCPI_SysInfoTextGet shape the fix follows.
+# test_1098's per_iteration_syslog_get models the mutation this rejects.
+	@for fn in SCPI_SysLogLevelGet SCPI_SysLogLevelAllSet; do \
+	   set -- `$(call ORDER_IN_FN,$(SCPI_INTERFACE_SRC),$$fn)`; \
+	   test "$$1" -gt 0 && test "$$2" -gt 0 && test "$$3" -gt 0 \
+	     && test "$$1" -lt "$$2" && test "$$3" -gt "$$2" \
+	     || { echo "ERROR: $$fn in $(SCPI_INTERFACE_SRC) no longer takes the"; \
+	          echo "       shared buffer BEFORE its LOG_MODULE_COUNT loop and"; \
+	          echo "       gives it back AFTER (take='$$1' for='$$2' give='$$3';"; \
+	          echo "       0 means the marker is gone)."; \
+	          echo "       A take/give moved INSIDE the loop still pairs 1:1 --"; \
+	          echo "       guard 2 would not notice -- but blocks on the mutex"; \
+	          echo "       once per module and drops the hold between lines."; \
+	          echo "       test_1098 models that mutation"; \
+	          echo "       (per_iteration_syslog_get) and asserts against it."; \
+	          exit 1; }; \
+	 done
+# GUARD 4 -- SCPI_StorageSDInfo GIVES ON BOTH EXITS. The one site where the
+# port is not mechanical: pre-#1098 its `len < 0 || len >= sizeof(result)`
+# branch returned holding nothing, so it needed no release; post-fix it runs
+# under the hold and GAINS one. Hence ONE take and TWO gives -- a count of 1
+# means the error path leaks the mutex on every malformed CID.
+# test_1098's leaky_sd_info models exactly that omission.
+	@t=`$(call CNT_IN_FN,$(SD_BENCH_SRC),SCPI_StorageSDInfo,SCPI_ResponseBuf_Take())`; \
+	 g=`$(call CNT_IN_FN,$(SD_BENCH_SRC),SCPI_StorageSDInfo,SCPI_ResponseBuf_Give();)`; \
+	 test "$$t" = "1" && test "$$g" = "2" \
+	   || { echo "ERROR: SCPI_StorageSDInfo in $(SD_BENCH_SRC) is no longer one"; \
+	        echo "       take with a give on BOTH exits (found take=$$t give=$$g,"; \
+	        echo "       must be 1 and 2)."; \
+	        echo "       The second give is the format-error branch, which the"; \
+	        echo "       pre-#1098 code did not need because it held nothing"; \
+	        echo "       there. Drop it and a malformed CID wedges"; \
+	        echo "       gScpiRespMutex permanently. test_1098 models that"; \
+	        echo "       omission (leaky_sd_info) and asserts against it."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(REPLYBUF_BIN) test_1098_scpi_reply_buffer_pairing.c
+
 SCPI999_WIRING_GUARD := check_999_createscpicontext_wiring.sh
 SCPI999_ARG_EXTRACTOR := extract_call_args.pl
 SCPI999_ARG_EXTRACTOR_TEST := test_extract_call_args.sh
@@ -1523,8 +1643,15 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 # three already on main by the time this branch refreshed its base -- resolved
 # the same way as every earlier collision: keep each side's target rule INTACT
 # and union only `run` and `clean`.
+#
+# Every suite, and every one of the EIGHTEEN binaries: the seventeen above plus
+# #1098's $(REPLYBUF_BIN) (the Take/Give pairing of the four SCPI reply
+# callbacks moved off the stack onto the shared response buffer). ELEVENTH
+# additive collision in this block -- resolved the same way as every earlier
+# one: keep each side's target rule INTACT and union only `run` and `clean`.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN)
+     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
+     $(REPLYBUF_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1542,9 +1669,11 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(SCAN1112_BIN)
 	./$(STARTARM_BIN)
 	./$(START_BIN)
+	./$(REPLYBUF_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN)
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
+	      $(REPLYBUF_BIN)
 
 .PHONY: run clean
