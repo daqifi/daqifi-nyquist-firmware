@@ -50,8 +50,10 @@
  * tasks. Single-byte reads/writes are atomic on PIC32MZ.
  */
 /* One-shot suppression bitmask for LOG_x_ONCE macros.
- * Written by ISR and task contexts (|= to set bits), cleared atomically
- * by Logger_ResetOneShots() (single 32-bit write). */
+ * Claimed by ISR and task contexts via Logger_OneShotClaim() (#1125), an
+ * atomic test-and-set under the context-appropriate critical section --
+ * NOT a bare |=, which a preemption between load and store can tear.
+ * Cleared atomically by Logger_ResetOneShots() (single 32-bit write). */
 volatile uint32_t gLogOneShot = 0;
 volatile uint32_t gSessionOneShot = 0;
 
@@ -179,6 +181,54 @@ static volatile uint32_t gIsrLogDropped = 0;
 
 uint32_t Logger_GetIsrDropCount(void) {
     return gIsrLogDropped;  /* 32-bit read is atomic on PIC32MZ */
+}
+
+bool Logger_OneShotClaim(uint32_t bit) {
+    if (bit >= 32u) {
+        return false;
+    }
+    const uint32_t mask = 1u << bit;
+    bool won = false;
+
+    /* The whole test-and-set under one critical section, and nothing else in
+     * it -- mirrors Logger_SessionOneShotClaim's reasoning (#1028) for
+     * gSessionOneShot: a preemption between the load and the store of a bare
+     * `|=` lets another context claim its own bit, and the resumed store then
+     * writes back the pre-preemption snapshot and ERASES that bit, re-arming
+     * that one-shot for a second fire (NOT losing the message that already
+     * printed for the bit that won the race -- LogMessage below always runs
+     * for whichever context's test observed the bit clear; what a torn RMW
+     * loses is the SUPPRESSION state, defeating the "at most once" contract
+     * LOG_x_ONCE exists to keep, which for its documented ISR flood-guard use
+     * (an interrupt storm re-arming its own one-shot every time) reopens
+     * exactly the flooding this macro exists to prevent).
+     *
+     * UNLIKE gSessionOneShot (task-context only), LOG_x_ONCE is documented as
+     * ISR-callable, so this cannot use a single taskENTER_CRITICAL: the
+     * PIC32MZ port's vTaskEnterCritical asserts uxInterruptNesting == 0, so a
+     * caller inside an ISR needs the _FROM_ISR variant instead (same split
+     * already used in streaming.c's Streaming_AddProfileSample_DmaPending_FromISR
+     * and BoardData.c). Deciding this at runtime rather than exposing two
+     * named entry points keeps LOG_E_ONCE/LOG_I_ONCE/LOG_D_ONCE the single
+     * macro family callable from either context, matching how they already
+     * pick LogMessage(fmt) vs LogMessage(fmt, ...) on the same
+     * uxInterruptNesting test. */
+    if (LogIsInISR()) {
+        UBaseType_t saved = taskENTER_CRITICAL_FROM_ISR();
+        if ((gLogOneShot & mask) == 0u) {
+            gLogOneShot |= mask;
+            won = true;
+        }
+        taskEXIT_CRITICAL_FROM_ISR(saved);
+    } else {
+        taskENTER_CRITICAL();
+        if ((gLogOneShot & mask) == 0u) {
+            gLogOneShot |= mask;
+            won = true;
+        }
+        taskEXIT_CRITICAL();
+    }
+    return won;
 }
 
 

@@ -164,10 +164,17 @@ extern "C" {
      *        flood the 8-entry deferred queue. Also works from task context.
      *        Reset automatically on SYST:LOG? (dump) and SYST:LOG:CLEAR.
      *
-     *        The RMW on gLogOneShot (|=) is not protected by a critical
-     *        section. On PIC32MZ, a higher-priority ISR could race and
-     *        lose a bit — worst case is one extra duplicate message per
-     *        race. Acceptable for a logging system.
+     *        The bit is claimed by Logger_OneShotClaim() (#1125), an atomic
+     *        test-and-set under a context-appropriate critical section --
+     *        NOT a bare `|=` in the macro. A preemption between an unguarded
+     *        `|=`'s load and store lets another context (task or, since this
+     *        family is ISR-callable, a higher-priority ISR) claim its own
+     *        bit; the resumed store then writes back the stale snapshot and
+     *        ERASES that bit, re-arming that call site for a second fire and
+     *        defeating the "at most once" contract this macro exists to keep
+     *        -- see the helper's comment in Logger.c for the full reasoning
+     *        and why LOG_x_SESSION's sibling fix (Logger_SessionOneShotClaim,
+     *        #1028) is a plain taskENTER_CRITICAL and this one is not.
      * @{
      */
     typedef enum {
@@ -204,6 +211,24 @@ extern "C" {
      *        32-bit write is atomic on PIC32MZ.
      */
     void Logger_ResetOneShots(void);
+
+    /**
+     * @brief Atomically test-and-set one gLogOneShot bit.
+     *
+     *        The authoritative half of every LOG_x_ONCE: returns true only
+     *        to the ONE caller whose call moved the bit from clear to set, so
+     *        exactly that caller emits the line. Returns false if the bit was
+     *        already set, or if `bit` is out of range (>= 32).
+     *
+     *        CALLABLE FROM EITHER TASK OR ISR CONTEXT -- unlike
+     *        Logger_SessionOneShotClaim (task-context only), this is the
+     *        one-shot family LOG_x_ONCE documents as ISR-safe. Internally it
+     *        picks taskENTER_CRITICAL or the _FROM_ISR variant at runtime via
+     *        the same uxInterruptNesting test LOG_x_ONCE already uses to
+     *        choose LogMessage's varargs form. See Logger.c for the full
+     *        reasoning.
+     */
+    bool Logger_OneShotClaim(uint32_t bit);
     /** @} */
 
     /**
@@ -427,13 +452,27 @@ void LogIsrInit(void);
 // to prevent queue flooding, but works anywhere.
 // ISR guard: skips vararg evaluation in ISR context (use static strings).
 // Bounds check: bit must be < 32 (uint32_t bitmask).
+//
+// The bit is claimed by Logger_OneShotClaim() (#1125), NOT by a `|=` in the
+// macro. Two tests, deliberately, mirroring LOG_x_SESSION's pattern (#1028):
+//  - The plain `!(gLogOneShot & ...)` read is only a FAST EXIT. It is one
+//    aligned 32-bit load (atomic on PIC32MZ) and keeps an already-fired call
+//    site at exactly the cost it had before: no critical section once the
+//    line has fired. It can be stale only in the "clear" direction, which
+//    costs one trip into the claim; it never decides who logs.
+//  - Logger_OneShotClaim() is the authoritative test-and-set, entered ONLY
+//    when the fast exit still looks clear, and LogMessage runs after it has
+//    left its critical section -- LogMessage's task-context path takes the
+//    log mutex and runs vsnprintf, neither of which may run with interrupts
+//    masked; its ISR-context path enqueues onto gIsrLogQueue, which does not
+//    need the one-shot's own critical section held either.
 
 #if (LOG_LVL >= LOG_LEVEL_ERROR)
     #define LOG_E_ONCE(bit, fmt,...) do { \
         if ((unsigned)(bit) < 32u && \
             gLogLevels[LOG_MODULE] >= LOG_LEVEL_ERROR && \
-            !(gLogOneShot & (1u << (bit)))) { \
-            gLogOneShot |= (1u << (bit)); \
+            !(gLogOneShot & (1u << (bit))) && \
+            Logger_OneShotClaim((uint32_t)(bit))) { \
             if (uxInterruptNesting != 0u) { \
                 LogMessage(fmt); \
             } else { \
@@ -449,8 +488,8 @@ void LogIsrInit(void);
     #define LOG_I_ONCE(bit, fmt,...) do { \
         if ((unsigned)(bit) < 32u && \
             gLogLevels[LOG_MODULE] >= LOG_LEVEL_INFO && \
-            !(gLogOneShot & (1u << (bit)))) { \
-            gLogOneShot |= (1u << (bit)); \
+            !(gLogOneShot & (1u << (bit))) && \
+            Logger_OneShotClaim((uint32_t)(bit))) { \
             if (uxInterruptNesting != 0u) { \
                 LogMessage(fmt); \
             } else { \
@@ -466,8 +505,8 @@ void LogIsrInit(void);
     #define LOG_D_ONCE(bit, fmt,...) do { \
         if ((unsigned)(bit) < 32u && \
             gLogLevels[LOG_MODULE] >= LOG_LEVEL_DEBUG && \
-            !(gLogOneShot & (1u << (bit)))) { \
-            gLogOneShot |= (1u << (bit)); \
+            !(gLogOneShot & (1u << (bit))) && \
+            Logger_OneShotClaim((uint32_t)(bit))) { \
             if (uxInterruptNesting != 0u) { \
                 LogMessage(fmt); \
             } else { \
