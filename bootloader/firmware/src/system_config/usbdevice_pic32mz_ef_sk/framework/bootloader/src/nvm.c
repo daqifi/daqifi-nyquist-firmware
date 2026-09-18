@@ -378,7 +378,29 @@ char APP_ProgramHexRecord(uint8_t* HexRecord, int32_t totalLen)
                                 // Assert on error. This must be caught during debug phase.
     //                            ASSERT(Result==0);
                         }
-                        else    // Out of boundaries. Adjust and move on.
+                        else if((ProgAddress > (void *)APP_FLASH_END_ADDRESS) && (ProgAddress <= (void *)APP_FLASH_PFM_END_ADDRESS))
+                        {
+                            /* #1141: this address is still application code
+                             * space (the upper panel #909 stopped erasing),
+                             * not a boot-area/config-word address -- those
+                             * are outside APP_FLASH_PFM_END_ADDRESS entirely
+                             * and take the skip branch below unchanged.
+                             * Writing here would program flash
+                             * that was never erased and silently corrupt the
+                             * image while PROGRAM_FLASH still ACKs, so fail
+                             * the record instead of dropping it: no ACK is
+                             * sent for this command (datastream.c's
+                             * PROGRAM_FLASH case only advances to
+                             * BOOTLOADER_SEND_RESPONSE on HEX_REC_NORMAL), so
+                             * the host sees a failure instead of believing an
+                             * incomplete image flashed cleanly. No NVM
+                             * operation was attempted for this chunk, so
+                             * there is no controller error state to clear
+                             * (unlike the PLIB_NVM_WriteOperationHasTerminated
+                             * case above). */
+                            return HEX_REC_PGM_ERROR;
+                        }
+                        else    // Out of boundaries (boot area / device configuration bits). Adjust and move on.
                         {
                             // Increment the address.
                             HexRecordSt.Address += 4;

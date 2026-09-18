@@ -275,6 +275,27 @@ extern "C" {
 
 #define APP_FLASH_END_ADDRESS           (APP_FLASH_BASE_ADDRESS + APP_FLASH_LOWER_PANEL_SIZE - 1)
 
+/* #1141: the audit on #909 confirmed the hazard this comment used to only
+ * document -- a record targeting the upper panel (above APP_FLASH_END_ADDRESS
+ * but still inside the application's 2 MB program-flash span) was silently
+ * DROPPED by APP_ProgramHexRecord's existing boot-area/config-word skip, and
+ * PROGRAM_FLASH still ACKed, so a client believed an incomplete image had
+ * flashed cleanly. This span gives nvm.c a second, disjoint bound so it can
+ * tell the two cases apart: an address in (APP_FLASH_END_ADDRESS,
+ * APP_FLASH_PFM_END_ADDRESS] is application code space that is simply
+ * unerased here and must FAIL the record (HEX_REC_PGM_ERROR, no ACK) rather
+ * than dropping it; a boot-area/config-word address lies entirely outside
+ * this span (physically 0x1FC0xxxx, i.e. KVA0 ~0x9FC0xxxx) and keeps the
+ * original skip-and-succeed behaviour from #764 unchanged either way.
+ *
+ * Numerically this is exactly the pre-#909 value of APP_FLASH_END_ADDRESS
+ * (0x9D000000 + 0x200000 - 1 = 0x9D1FFFFF) -- the full 2 MB PFM span cited in
+ * nvm.c's FRM DS60001193B comment -- kept as its own named constant instead of
+ * a bare literal so the two panel sizes it is built from stay visible. */
+#define APP_FLASH_UPPER_PANEL_SIZE      (0x100000)
+
+#define APP_FLASH_PFM_END_ADDRESS       (APP_FLASH_END_ADDRESS + APP_FLASH_UPPER_PANEL_SIZE)
+
 /* Address of  the Flash from where the application starts executing */
 /* Rule: Set APP_FLASH_BASE_ADDRESS to _RESET_ADDR value of application linker script*/
 #define APP_RESET_ADDRESS               (APP_FLASH_BASE_ADDRESS)
