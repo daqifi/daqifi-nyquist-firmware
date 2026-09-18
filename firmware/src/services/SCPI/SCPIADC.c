@@ -1428,8 +1428,32 @@ static scpi_result_t CalSaveCommon(scpi_t * context,
     }
     AInRuntimeArray * pRuntimeAInChannels = BoardRunTimeConfig_Get(
             BOARDRUNTIMECONFIG_AIN_CHANNELS);
-    scpi_result_t result = daqifi_settings_SaveADCCalSettings(
-            type, pRuntimeAInChannels) ? SCPI_RES_OK : SCPI_RES_ERR;
+    bool saved = daqifi_settings_SaveADCCalSettings(type, pRuntimeAInChannels);
+    /* #908 (Qodo pass 4): daqifi_settings_SaveToNvm erases the target NVM
+     * page BEFORE writing the replacement record (daqifi_settings.c,
+     * daqifi_settings_ClearNvm then nvm_WriteRowtoAddr), so a FAILED
+     * factory-bank save (a bad row write, a size guard, ...) can leave the
+     * page erased or holding a partial record -- not the flag's prior
+     * state. A successful save makes the slot present right now, not
+     * merely as of the last boot, so clear the flag immediately; a FAILED
+     * one must equally not leave a stale "present" behind. This is the
+     * fail-safe direction deliberately: mark missing outright rather than
+     * re-validating the page with a fresh load (which the caller's own
+     * runtime array must not be overwritten by, and which costs a second
+     * AInRuntimeArray-sized scratch buffer on this task's stack for a
+     * rarely-hit failure path). SCPI_RES_ERR already tells the caller the
+     * save itself failed; factory_present:false afterward is consistent
+     * with that, not a surprise, and a retried SAVEFcal that succeeds
+     * clears it correctly. SAVEcal (user bank) never touches this flag
+     * either way; it tracks the FACTORY slot only. */
+    if (type == DaqifiSettings_FactAInCalParams) {
+        if (saved) {
+            daqifi_settings_ClearFactoryCalMissing();
+        } else {
+            daqifi_settings_MarkFactoryCalMissing();
+        }
+    }
+    scpi_result_t result = saved ? SCPI_RES_OK : SCPI_RES_ERR;
     Streaming_EndConfigChange();
     return result;
 }

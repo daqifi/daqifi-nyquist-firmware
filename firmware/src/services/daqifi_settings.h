@@ -224,6 +224,42 @@ extern "C" {
     bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
 
     /**
+     * #908: Records that the factory ADC-calibration NVM page does not
+     * hold a valid calibration. Called from boot when the factory-cal
+     * load fails (daqifi_settings_LoadADCCalSettings), leaving the
+     * runtime CalM/CalB at their identity defaults; also called from
+     * SCPIADC.c's CalSaveCommon when a CONF:ADC:SAVEFcal FAILS, since
+     * daqifi_settings_SaveToNvm erases the target page before writing its
+     * replacement record, so a failed write can leave the page erased or
+     * partially written rather than restoring its prior state.
+     */
+    void daqifi_settings_MarkFactoryCalMissing(void);
+
+    /**
+     * #908: Records that the factory ADC-calibration NVM page now holds a
+     * real calibration -- called after a SUCCESSFUL CONF:ADC:SAVEFcal
+     * (SCPIADC.c's CalSaveCommon), so a capability query between the save
+     * and the next reboot reports the slot as present rather than the
+     * stale boot-time reading. Neither this nor
+     * daqifi_settings_MarkFactoryCalMissing persists anything; each is
+     * called only when its own caller has independently confirmed the
+     * state (a failed boot load, or a successful save) from the real NVM
+     * operation, never from each other or from a stored flag.
+     */
+    void daqifi_settings_ClearFactoryCalMissing(void);
+
+    /**
+     * #908: True when the factory ADC calibration is currently missing --
+     * either boot found no valid factory calibration and it has not since
+     * been established by a successful CONF:ADC:SAVEFcal (see
+     * daqifi_settings_MarkFactoryCalMissing /
+     * daqifi_settings_ClearFactoryCalMissing). Reported, inverted, as
+     * identity.cal.factory_present in CONF:CAP:JSON?.
+     * @return true if the factory calibration is missing, false otherwise
+     */
+    bool daqifi_settings_FactoryCalIsMissing(void);
+
+    /**
      * #14: Sets the runtime device friendly name cache. The value is
      * persisted to NVM only on the next TopLevelSettings save (which
      * captures this cache automatically). Truncated to fit

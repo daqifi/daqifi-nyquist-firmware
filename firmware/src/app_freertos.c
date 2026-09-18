@@ -985,14 +985,21 @@ void app_SystemInit() {
             &tmpSettings.settings.wifi,
             sizeof (wifi_manager_settings_t));
 
-    // Load factory calibration parameters - if they are not initialized, 
-    // store them (first run after a program)
+    // Load factory calibration parameters. #908: a blank/invalid page is NOT
+    // re-stamped from the runtime array (still identity, CalM=1/CalB=0) --
+    // the next boot would load that as a genuine factory cal and the "never
+    // calibrated" signal would be gone for good. Flag and log it instead.
     if (!daqifi_settings_LoadADCCalSettings(
             DaqifiSettings_FactAInCalParams,
             &gpBoardRuntimeConfig->AInChannels)) {
-        daqifi_settings_SaveADCCalSettings(
-                DaqifiSettings_FactAInCalParams,
-                &gpBoardRuntimeConfig->AInChannels);
+        daqifi_settings_MarkFactoryCalMissing();
+        /* #908 Qodo: "readings use identity calibration" overclaimed --
+         * the calVals branch immediately below can still load a valid USER
+         * calibration over these identity defaults before any reading is
+         * taken, so identity is only the FACTORY baseline, not necessarily
+         * what streaming ends up using. */
+        LOG_E("Factory ADC calibration is missing or invalid; the factory "
+              "baseline defaults to identity until CONF:ADC:SAVEFcal is run.");
     }
     // If calVals has been set to 1 (user cal params), overwrite with user 
     // calibration parameters
