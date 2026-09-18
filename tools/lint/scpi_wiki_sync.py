@@ -264,9 +264,13 @@ def style_violations(live):
     a SILENT collision: `findCommandHeader` (libscpi/src/parser.c:177)
     returns the FIRST match in table order, so every pattern but the winner
     is simply unreachable by that spelling -- no -113, no error, just the
-    wrong command running. A node already reported by short_violations
-    contributes no spelling (an empty short form is untypeable), so its
-    pattern is skipped for S2 rather than false-flagged again there.
+    wrong command running. S2 models a node's spellings as its full form
+    plus its short form when that is non-empty. A lowercase-start node's
+    EMPTY short arm is deliberately NOT modelled as a spelling, although it
+    DOES match the degenerate empty node (see short_violations above):
+    S1 already rejects every such pattern, so S2 would only repeat that
+    report. An empty node (an `A::B` typo) has no spelling at all, so
+    its whole pattern is skipped for S2.
 
     Deliberately NOT checked: an upper bound on short-form length. See the
     module docstring's HOUSE STYLE section.
