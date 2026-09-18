@@ -178,6 +178,29 @@ name: host-tests
 #     harmless and expected -- keep one copy.
 #     No other target's prerequisites were unmatched: every $(*_BIN) rule's
 #     firmware-side dependencies resolve to a path already listed above.
+#   - test_924_sd_manifest.c (#924): compiles firmware/src/Util/SdManifest.h
+#     and LINKS firmware/src/Util/CRC32.c, so both get a line, as do
+#     CRC32.h (the streaming API the accumulation model is asserted against)
+#     and firmware/src/services/sd_card_services/sd_card_manager.c.
+#
+#     THAT LAST ONE IS THE SAME KIND OF ENTRY AS THE UsbCdc/wifi_tcp_server
+#     PAIR ABOVE: sd_card_manager.c is not compiled or linked into the binary
+#     -- it is a grep-guarded PREREQUISITE. The target fails the BUILD if that
+#     file stops folding the running CRC in SDCardWrite() (its single write
+#     funnel), or stops rendering lines through SdManifest_FormatLine /
+#     SdManifest_RelativeName. Without the entry, the change most likely to
+#     invalidate this suite -- an edit to the manager itself -- would queue no
+#     job at all, which is exactly the gap #941's audit found for
+#     AD7609Scale.h and #1118's for the two transports.
+#
+#     Listed by FILE, not as firmware/src/services/sd_card_services/**: that
+#     directory holds sd_card_manager.h and nothing else this suite reads, and
+#     the "a refactor escapes a file-scoped trigger" worry does not bite here
+#     because the guards fail the build, loudly and by name, the moment the
+#     identifiers stop appearing where they look for them.
+#
+#     Util/ is listed per-file for the same reason CircularBuffer, Logger and
+#     FixedPointFmt are: the directory holds many files no host test reads.
 #   - test_998_start_streaming_claimed_order.c (#998): models the SD-arm
 #     ordering inside SCPI_StartStreamingClaimed() and pins the real slice
 #     with a sha256 taken from firmware/src/services/SCPI/SCPIInterface.c,
@@ -231,6 +254,14 @@ on:
       # keep one copy, whichever PR merges second (see the #1001/#1017 note
       # above for the precedent).
       - 'firmware/src/libraries/scpi/**'
+      # #924: run_924_tests compiles SdManifest.h, links CRC32.c, and
+      # grep-guards sd_card_manager.c (not compiled/linked -- see the bullet
+      # above). Without the last entry an edit to the manager alone queued no
+      # job, and the manager is where this suite's premise actually lives.
+      - 'firmware/src/Util/SdManifest.h'
+      - 'firmware/src/Util/CRC32.c'
+      - 'firmware/src/Util/CRC32.h'
+      - 'firmware/src/services/sd_card_services/sd_card_manager.c'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -265,6 +296,11 @@ on:
       - 'firmware/src/services/UsbCdc/UsbCdc.c'
       - 'firmware/src/services/wifi_services/wifi_tcp_server.c'
       - 'firmware/src/libraries/scpi/**'
+      # #924: see the matching entries under pull_request above.
+      - 'firmware/src/Util/SdManifest.h'
+      - 'firmware/src/Util/CRC32.c'
+      - 'firmware/src/Util/CRC32.h'
+      - 'firmware/src/services/sd_card_services/sd_card_manager.c'
       - '.github/workflows/host-tests.yml'
 
 permissions:

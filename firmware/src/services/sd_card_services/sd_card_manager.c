@@ -10,6 +10,7 @@
 #include "sd_card_manager.h"
 #include "services/UsbCdc/UsbCdc.h"
 #include "Util/CRC32.h"   /* #306 */
+#include "Util/SdManifest.h"   /* #924: manifest line + relative-name rendering */
 #include "services/streaming.h"  // Streaming_GetSdFileHeader / Streaming_ReportSdDiscard
 #include <stddef.h>
 #include "ff.h"   /* #810: FILINFO, for the layout assert below */
@@ -108,6 +109,43 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  * more than the time it saves (see the fileCounter==0 branch for the three
  * ways the stale one went wrong). */
 #define SD_CARD_MANAGER_BUCKET_ADVANCE_MAX (SD_CARD_MANAGER_MAX_BUCKET + 1u)
+/* #924: extension of the per-session integrity manifest. Distinct from every
+ * payload extension the device writes (.csv / .pb / .json) on purpose -- host
+ * tooling that globs for stream files (download_sd_files.py,
+ * analyze_split_files.py) must not pick it up, and its own name must not be
+ * mistakable for a split part. The base name is the SESSION's base name, so
+ * `experiment.csv` logs to `experiment.mfst` alongside `experiment.csv`,
+ * `experiment-1.csv`, ... -- and a session logging under a different base
+ * gets its own manifest rather than overwriting this one. */
+#define SD_MANIFEST_EXT                    ".mfst"
+
+/* #924: worst-case rendered manifest line, DERIVED from the bounds that
+ * actually constrain it rather than picked round:
+ *
+ *   <name>   the file's path relative to the configured directory. The
+ *            longest such path is a #689 bucket prefix + a split part name:
+ *            "P064/" (5) + base+extension, and base+extension together can be
+ *            no longer than settings.file, which the settings struct caps at
+ *            SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX, + "-9999" (5) for the
+ *            split counter (SD_CARD_MANAGER_MAX_SPLIT_FILES is 9999).
+ *   <bytes>  ",18446744073709551615"   uint64_t, 20 digits + comma = 21
+ *   <crc>    ",0xXXXXXXXX\n"           10 + comma + newline         = 12
+ *
+ * 8 rather than 5 for the bucket prefix so that raising
+ * SD_CARD_MANAGER_MAX_BUCKET past 999 (which would widen the %03u) does not
+ * silently make this too small. A line that does not fit is REFUSED by
+ * SdManifest_FormatLine and logged, never truncated -- see that header. */
+#define SD_MANIFEST_LINE_MAX  (SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX \
+                               + 8u + 5u + 21u + 12u + 1u)
+
+/* #924: how many SYS_FS_FileWrite calls one manifest line may take. A short
+ * write has already put bytes on the card, so abandoning the line leaves a
+ * fragment the NEXT record concatenates onto -- see sd_AppendManifestLine.
+ * Bounded rather than open-ended because this runs inside the rotation window
+ * #757/#822/#824 exist to keep short: three writes with no waiting and no
+ * yielding, then the fragment is terminated and the loss is contained. */
+#define SD_MANIFEST_WRITE_TRIES            3u
+
 /* #780: how long the pumped wait blocks between USB write pumps. Small enough
  * that a filling circular buffer is serviced promptly, large enough that the
  * wait is not a busy-spin against the SD task.
@@ -352,6 +390,41 @@ typedef struct {
     uint64_t currentFileBytes;   // Bytes written to current file
     bool fileSplittingEnabled;   // True if maxFileSizeBytes > 0
 
+    /* #924: running CRC-32 over every byte written to the CURRENT stream
+     * file, the write-path twin of currentFileBytes above.
+     *
+     * DISTINCT FROM crcRunning below, which serves SYST:STOR:SD:CRC? and
+     * accumulates over a file READ, on demand, after the fact. This one
+     * accumulates as the bytes go OUT, so the manifest records the file as it
+     * was written rather than as it reads back later -- which is the whole
+     * point of #924. They are never live at the same time (COMPUTE_CRC and
+     * WRITE are different modes), but sharing one field would make that a
+     * coincidence to maintain rather than a property.
+     *
+     * Initialised in OPEN_FILE beside `currentFileBytes = 0`, folded in
+     * SDCardWrite() and at the #824 header write, finalized at the close that
+     * emits this file's manifest line. Touched ONLY by app_SDCardTask (the SD
+     * task): every reader and writer is inside sd_card_manager_ProcessState()
+     * or a helper it calls, so no volatile and no critical section -- exactly
+     * the reasoning the `crcRunning` comment below records. */
+    uint32_t fileCrcRunning;
+
+    /* #924: the session's manifest. ONE file per streaming session, opened at
+     * the session's first stream-file open and closed in UNMOUNT_DISK, so the
+     * feature costs exactly one extra f_open(CREATE) per session -- NOT one
+     * per rotation, which is the #689 FatFs O(directory) wedge this design was
+     * chosen to avoid (see the issue).
+     *
+     * manifestOpenAttempted is what makes "exactly one" true even when the
+     * open FAILS: without it a failed create would be retried at every
+     * rotation, which is that same O(N) create pattern wearing a different
+     * hat. Both are reset where fileCounter is, in UNMOUNT_DISK.
+     *
+     * Same single-task ownership as fileCrcRunning above. */
+    SYS_FS_HANDLE manifestHandle;
+    bool manifestOpenAttempted;
+    uint32_t manifestLines;      // lines appended this session (diagnostics)
+
     // Operation result tracking
     bool lastOperationSuccess;   // Result of last completed operation
 
@@ -419,11 +492,61 @@ static int SDCardWrite() {
         goto __exit;
     }
 
+    const uint8_t* src = gSDCardData.writeBuffer
+                       + gSDCardData.sdCardWriteBufferOffset;
     TickType_t startTick = xTaskGetTickCount();
-    writeLen = SYS_FS_FileWrite(gSDCardData.fileHandle,
-            (const void *) (gSDCardData.writeBuffer + gSDCardData.sdCardWriteBufferOffset),
+    writeLen = SYS_FS_FileWrite(gSDCardData.fileHandle, (const void *) src,
             gSDCardData.writeBufferLength);
     SD_CheckFsOpDuration(startTick, "FileWrite", writeLen);
+
+    /* #924: fold what LANDED into this file's running CRC, HERE, because this
+     * is the one funnel every stream-file byte passes through.
+     *
+     * Eleven call sites downstream do `currentFileBytes += ...` after a
+     * successful write -- WRITE_TO_FILE's steady loop, the rotation's pending
+     * flush and snapshot drain, and UNMOUNT_DISK's two stop-time drains, each
+     * in a full-write and a partial-write arm. Folding at each of them is
+     * eleven chances to miss one and a twelfth waiting for whoever adds the
+     * next drain; folding here is one place that CANNOT drift out of step with
+     * the byte counter. The only stream-file bytes that do NOT come through
+     * here are the #824 per-file header, written straight into the handle at
+     * open, which folds at its own site for the same reason it increments
+     * currentFileBytes there.
+     *
+     * THE CLAMP MAKES THE PARALLEL EXACT. The callers' full-write arm adds
+     * writeBufferLength (not writeLen) when writeLen >= writeBufferLength, and
+     * the partial arm adds writeLen; clamping to writeBufferLength folds
+     * exactly what each of them counts. SYS_FS_FileWrite cannot report more
+     * than it was asked for, so today the clamp is belt-and-braces -- but the
+     * invariant "fileCrcRunning covers precisely the bytes in
+     * currentFileBytes" is what the manifest's CRC means, and it should not
+     * rest on a return-value convention documented elsewhere.
+     *
+     * Cost: the nibble-table CRC32 is ~8-10 cycles/byte (CRC32.c, two table
+     * lookups per byte), and writeBuffer is the COHERENT (KSEG1, uncached)
+     * pool allocation, so each byte load is an uncached read with no cache-
+     * line benefit. At the ~500 KB/s SD ceiling that is single-digit percent
+     * of one core on a task that spends its time waiting on SPI.
+     *
+     * THAT IS AN ESTIMATE, AND THE TEST THAT CHECKS IT IS AN ON-DEVICE A/B,
+     * NOT A COMPARISON AGAINST A NO-MANIFEST IMAGE. #924's acceptance wording
+     * asks for the latter; one firmware image cannot be its own control, so
+     * test_924_sd_manifest.py measures (SdDroppedBytes rotating -
+     * SdDroppedBytes not-rotating) / rotations on one image and compares it
+     * against test_824's 512 B/rotation gate on test_824's shape. The
+     * pre-#924 reference for that figure, measured on NQ1 7E2898F46200E8A7
+     * over two trials, is 0.0-2.1 B/rotation. Do not read this paragraph as a
+     * measurement of the CRC's cost: it bounds what the manifest adds to the
+     * ROTATION window, and the steady-path cost shows up instead as the
+     * arms' streamed-at-rate check. */
+    if (writeLen > 0) {
+        size_t folded = (size_t)writeLen;
+        if (folded > gSDCardData.writeBufferLength) {
+            folded = gSDCardData.writeBufferLength;
+        }
+        gSDCardData.fileCrcRunning =
+                CRC32_Update(gSDCardData.fileCrcRunning, src, folded);
+    }
 __exit:
     return writeLen;
 }
@@ -977,6 +1100,20 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
      * section needed. */
     gWriteSessionIsStreamingLog = false;
     gSdRotating = false;
+    /* #924: same #409 reasoning, and OUTSIDE the isInitDone guard for the same
+     * reason the two above are. gSDCardData lands in its own .bss.gSDCardData
+     * section under -fdata-sections, so its compile-time zero is not honoured
+     * across an MCLR or an IPE flash -- and isInitDone is a retained static
+     * too, so a scrub placed under it is skipped in exactly the case it exists
+     * for. A garbage manifestHandle would be treated as a live FatFs handle by
+     * sd_AppendManifestLine and written through; a garbage
+     * manifestOpenAttempted would suppress the first session's manifest
+     * entirely. (fileHandle has the identical exposure and is scrubbed only
+     * inside the guard -- pre-existing, and left alone here rather than
+     * widened into an unrelated change.) */
+    gSDCardData.manifestHandle = SYS_FS_HANDLE_INVALID;
+    gSDCardData.manifestOpenAttempted = false;
+    gSDCardData.manifestLines = 0;
 
     static bool isInitDone = false;
     if (!isInitDone) {
@@ -1357,6 +1494,352 @@ static void sd_AbandonRotationWindow(const char* why) {
     }
 }
 
+/* ======================================================================
+ * #924: per-session SD integrity manifest.
+ *
+ * One file per SESSION, one line per stream file, `name,bytes,0xCRC`. The
+ * three functions below are the whole mechanism; everything else #924 adds is
+ * the running CRC in SDCardWrite() above.
+ *
+ * ALL THREE RUN ON app_SDCardTask, and that is deliberate rather than
+ * incidental. The issue's step 3 asks for the open/close to live in
+ * streaming.c "beside the #824 header machinery"; they are here instead
+ * because streaming.c runs on the STREAMING task (pri 6) and every SYS_FS_*
+ * call in this firmware is made by the SD task (pri 5) -- which is also the
+ * only task that pumps DRV_SDSPI_Tasks(), so an FS call made anywhere else
+ * has nothing advancing the driver underneath it (docs/SD_SUBSYSTEM.md: SPI4
+ * arbitration between the card and the WINC is at TASK level, not
+ * per-transfer). #824 set exactly this precedent and for exactly this reason:
+ * streaming.c BUILDS the per-file header, the SD task WRITES it.
+ *
+ * Nothing is left for streaming.c to build here -- a manifest line is made of
+ * the file's own name, its byte count and its CRC, all of which are this
+ * task's state -- so the only thing the streaming side could contribute is
+ * "a streaming session started", and gWriteSessionIsStreamingLog (#824's
+ * arm-time latch, set by sd_card_manager_UpdateSettingsForStreamingLog)
+ * already carries precisely that. The issue's substance is unchanged: one
+ * manifest per session, exactly one extra f_open(CREATE), written with direct
+ * SYS_FS_FileWrite calls and never through the SD circular buffer.
+ *
+ * NOT ROUTED THROUGH THE CIRCULAR BUFFER, for the same reason #824 took the
+ * header off it: bytes travelling through the ring across a rotation are
+ * unsaveable (#822/#823), and the ring is drained into the file being RETIRED
+ * -- a manifest line pushed into it would land in a stream file's payload.
+ *
+ * NO PER-LINE FileSync, deliberately. Lines are appended inside the rotation
+ * window, which #757/#822/#824 spent three issues keeping short because the
+ * encoder is filling the ring throughout it; a metadata flush per rotation
+ * would add SD writes to exactly the window whose cost #924's own acceptance
+ * criteria measure. The close at session end flushes everything, and
+ * SYS_FS_FileClose is what makes the manifest durable -- there is no window in
+ * which a cleanly-stopped session leaves it unflushed. The stated consequence
+ * of having no per-line sync is narrower than that: a session
+ * ended by power loss or a card yank can leave a manifest short of its last
+ * line(s) -- the stream files it does name are still fully described, and a
+ * host that wants a CRC for an unnamed file can still ask
+ * SYST:STOR:SD:CRC? for it.
+ * ====================================================================== */
+
+/* #924 (post-merge audit, defect 1, round 2): is `path` safe to hand to
+ * SYS_FS_FILE_OPEN_WRITE, which truncates on open (FatFs FA_CREATE_ALWAYS,
+ * ff.c)?
+ *
+ * "Safe" means: nothing is there yet, or what IS there looks like one of our
+ * own manifests (the module's own accepted model is that reusing a base
+ * filename across sessions overwrites the EARLIER SESSION'S OWN MANIFEST at
+ * this exact path -- deliberate, unchanged by this check). Anything else --
+ * a real data file that landed here some other way -- must not be silently
+ * destroyed.
+ *
+ * FAILS SAFE on an unreadable stat/open/read: a transient card error at
+ * exactly this moment must not be read as "nothing is here", which would
+ * reopen the hole this function exists to close. Mirrors sd_IsExistingSplitPart's
+ * own "failing safe rather than reading it as absent" idiom above -- same
+ * shape, same reasoning, same two error codes that legitimately mean
+ * absent. */
+static bool sd_ManifestPathSafeToOverwrite(const char *path) {
+    SYS_FS_FSTAT st;
+    memset(&st, 0, sizeof(st));
+    if (SYS_FS_FileStat(path, &st) != SYS_FS_RES_SUCCESS) {
+        SYS_FS_ERROR e = SYS_FS_Error();
+        if (e != SYS_FS_ERROR_NO_PATH && e != SYS_FS_ERROR_NO_FILE) {
+            LOG_E("[SD] #924 manifest-path stat '%s' failed err=%d - "
+                  "failing safe rather than reading it as absent", path,
+                  (int)e);
+            return false;
+        }
+        return true;    /* genuinely absent: nothing to overwrite */
+    }
+    if (st.fsize == 0u) {
+        return true;    /* nothing there to be destroyed either way */
+    }
+
+    char peek[SD_MANIFEST_LINE_MAX];
+    SYS_FS_HANDLE probeHandle = SYS_FS_FileOpen(path, SYS_FS_FILE_OPEN_READ);
+    size_t peekRead;
+
+    if (probeHandle == SYS_FS_HANDLE_INVALID) {
+        LOG_E("[SD] #924 could not inspect existing file '%s' (err=%d) "
+              "before opening it for write - refusing to risk it", path,
+              (int)SYS_FS_Error());
+        return false;
+    }
+    peekRead = SYS_FS_FileRead(probeHandle, peek, sizeof(peek));
+    (void)SYS_FS_FileClose(probeHandle);
+    if (peekRead == (size_t)-1) {
+        LOG_E("[SD] #924 could not read existing file '%s' before opening "
+              "it for write - refusing to risk it", path);
+        return false;
+    }
+    return SdManifest_FirstLineLooksLikeManifest(peek, peekRead);
+}
+
+/* Open this session's manifest. Called AT MOST ONCE per session -- see
+ * manifestOpenAttempted. A failure is logged and the session continues
+ * without a manifest: integrity bookkeeping must never be able to stop a
+ * logging session. */
+static void sd_OpenSessionManifest(void) {
+    /* directory (<= 40) + '/' + base (<= 40) + ".mfst" + NUL. Sized from the
+     * settings struct's own caps rather than from
+     * SD_CARD_MANAGER_FILE_PATH_LEN_MAX (511), which would be a needlessly
+     * large frame on a task whose stack this file already watches. */
+    char path[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX
+              + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX
+              + sizeof(SD_MANIFEST_EXT) + 2u];
+    int written = snprintf(path, sizeof(path), "%s/%s" SD_MANIFEST_EXT,
+                           gpSDCardSettings->directory,
+                           gSDCardData.baseFilename);
+    if (written < 0 || (size_t)written >= sizeof(path)) {
+        LOG_E("[SD] #924 manifest path too long: dir='%s' base='%s'",
+              gpSDCardSettings->directory, gSDCardData.baseFilename);
+        return;
+    }
+
+    /* #924 (Qodo round 1): REFUSE A NAME THE FORMAT CANNOT REPRESENT, once,
+     * here -- rather than emitting a line that cannot be parsed back.
+     *
+     * A manifest line is `<name>,<bytes>,0xCRC`, and the name is echoed raw.
+     * SD_ValidatePathParam (SCPIStorageSD.c) rejects control characters, '\\'
+     * and ':' but ACCEPTS a comma, so `SYST:STOR:SD:FILE "trial,1.csv"` is a
+     * legal configured name whose record would read as FOUR fields -- and the
+     * name a reader extracted from it would not identify any file, so
+     * SD:CRC? / SD:GET on it would fail. A quoting rule would be the other
+     * answer; refusing is chosen because it keeps the invariant that a
+     * manifest which EXISTS is well-formed, which is what lets the companion
+     * test treat an unparsable line as a defect rather than a possibility.
+     *
+     * The whole configured name is checked, not just the base: the extension
+     * is taken from it too, so a comma can arrive in either half. CR and LF
+     * are checked with it -- SD_ValidatePathParam already rejects them, so
+     * that half is belt-and-braces against a future relaxation of that
+     * validator, which would otherwise silently break this format. */
+    if (strpbrk(gpSDCardSettings->file, ",\r\n") != NULL) {
+        LOG_E("[SD] #924 no manifest: file name '%s' contains a delimiter "
+              "(',' CR or LF) that the manifest format cannot represent",
+              gpSDCardSettings->file);
+        return;
+    }
+
+    /* #924 (Qodo round 1): a stream named '<base>.mfst' resolves to the SAME
+     * path as its own manifest. FatFs would refuse the duplicate write-open
+     * (FF_FS_LOCK is 10), so the session would silently run with no integrity
+     * records at all -- the failure mode this feature exists to remove,
+     * reachable by choosing an unlucky filename. Compared as PATHS rather
+     * than by testing the extension: filePath is the stream file that was
+     * just opened, so this is exact for bucket 0 and for a rolled bucket
+     * alike, with no reasoning about how the two names are built.
+     *
+     * #924 (post-merge audit, defect 2): compared CASE-INSENSITIVELY, because
+     * FatFs's own duplicate-open detection is (FF_FS_LOCK, ffconf.h) -- `foo.
+     * MFST` and `foo.mfst` name the same file to the filesystem even though a
+     * byte-exact strcmp sees them as different. A configured stream name that
+     * differed from the manifest path only in case used to pass this guard,
+     * FatFs then refused the manifest's own open as the duplicate it is, and
+     * manifestOpenAttempted latches on the first try -- so the whole session
+     * ran with zero integrity records and no diagnostic. Comparing the way
+     * the filesystem does is what makes this guard actually guard FatFs's
+     * lock instead of a narrower byte-exact case of it. */
+    bool needsFallback = SdManifest_PathsEqualCaseInsensitive(path,
+                                                              gSDCardData.filePath);
+    if (needsFallback) {
+        LOG_I("[SD] #924 '%s' is also the stream file; trying the fallback "
+              "manifest name instead", gSDCardData.filePath);
+    }
+
+    /* #924 (post-merge audit, defect 1): SYS_FS_FILE_OPEN_WRITE truncates on
+     * open (FatFs FA_CREATE_ALWAYS, ff.c) -- and up to here, nothing has
+     * asked whether some file ALREADY sits at the primary `path` other than
+     * the self-collision case just handled above. The module's own accepted
+     * model (see the file-level comment above) is that reusing a base
+     * filename across sessions overwrites the EARLIER SESSION'S OWN MANIFEST
+     * at this exact path -- that is deliberate and stays untouched. What is
+     * NOT accepted is destroying something else that happens to occupy this
+     * name for any other reason: for instance, an earlier session whose
+     * CONFIGURED stream name collided with ITS OWN manifest took the fallback
+     * branch below and renamed its manifest out of the way, which means ITS
+     * DATA FILE -- not a manifest at all -- is what still sits at the plain
+     * `<base>.mfst` path this session just computed. Silently opening that
+     * for WRITE would truncate real logged data with no warning, reachable
+     * by configured filenames alone, no race required.
+     *
+     * Skipped when a self-collision already forces the fallback: the primary
+     * path is not going to be used regardless of what sits in it, so
+     * inspecting it would only cost an extra stat/open/read for nothing. */
+    if (!needsFallback && !sd_ManifestPathSafeToOverwrite(path)) {
+        LOG_E("[SD] #924 '%s' already exists and does not look like a "
+              "manifest; trying the fallback manifest name instead", path);
+        needsFallback = true;
+    }
+
+    if (needsFallback) {
+        /* FALL BACK TO A NAME THAT CANNOT COLLIDE, rather than giving the
+         * session no manifest at all. Refusing here merely made the failure
+         * VISIBLE; the session still lost its integrity records, which is the
+         * outcome this feature exists to prevent.
+         *
+         * `<file>.mfst` is collision-free BY CONSTRUCTION, not by luck:
+         *   - against the first stream file `<dir>/<file>`, it is that exact
+         *     string plus a suffix, so it is strictly longer;
+         *   - against a rotated part `<dir>/<base>-N<ext>`, equality would
+         *     need `<ext>` + ".mfst" to equal "-N" + `<ext>`, and the two
+         *     differ at the first character ('.' or 'm' versus '-').
+         * Both of those are STRUCTURAL properties (a length difference, a
+         * first-character mismatch), so they hold whether the comparison is
+         * byte-exact or case-insensitive -- defect 2 changing the guard above
+         * to SdManifest_PathsEqualCaseInsensitive does not reopen this proof.
+         *
+         * The buffer already holds it: dir + '/' + file + ".mfst" + NUL is
+         * 40 + 1 + 40 + 5 + 1 = 87 against the 88 sized above. */
+        written = snprintf(path, sizeof(path), "%s/%s" SD_MANIFEST_EXT,
+                           gpSDCardSettings->directory,
+                           gpSDCardSettings->file);
+        if (written < 0 || (size_t)written >= sizeof(path)) {
+            LOG_E("[SD] #924 no manifest: fallback path too long for "
+                  "dir='%s' file='%s'", gpSDCardSettings->directory,
+                  gpSDCardSettings->file);
+            return;
+        }
+
+        /* #924 (post-merge audit, defect 1, round 2): the fallback name gets
+         * the SAME safety check as the primary one -- reachable via
+         * configured filenames alone (an earlier session logging its DATA
+         * straight to `<file>.mfst`, no collision of its own involved), and
+         * without this the fallback would just be a second undefended path
+         * to destroy an unrelated file. One retry only: if the fallback is
+         * ALSO unsafe, this session gets no manifest, logged, exactly like
+         * every other way opening one can fail -- there is still no loop and
+         * no counter. */
+        if (!sd_ManifestPathSafeToOverwrite(path)) {
+            LOG_E("[SD] #924 no manifest: fallback path '%s' also exists and "
+                  "does not look like a manifest - giving up for this "
+                  "session", path);
+            return;
+        }
+        LOG_I("[SD] #924 manifest goes to '%s'", path);
+    }
+
+    gSDCardData.manifestHandle = SYS_FS_FileOpen(path,
+                                                 SYS_FS_FILE_OPEN_WRITE);
+    if (gSDCardData.manifestHandle == SYS_FS_HANDLE_INVALID) {
+        LOG_E("[SD] #924 could not open manifest '%s' (err=%d) - session "
+              "continues without one", path, (int)SYS_FS_Error());
+        return;
+    }
+    gSDCardData.manifestLines = 0;
+    LOG_D("[SD] #924 manifest '%s' open\r\n", path);
+}
+
+/* Append the line describing the file that has JUST been closed.
+ *
+ * Call it while filePath, currentFileBytes and fileCrcRunning still describe
+ * that file -- i.e. after its SYS_FS_FileClose and before OPEN_FILE resets
+ * them for the next one. A no-op when there is no manifest (open failed, or
+ * this is not a streaming log), which is what keeps every caller a single
+ * unconditional line. */
+static void sd_AppendManifestLine(void) {
+    if (gSDCardData.manifestHandle == SYS_FS_HANDLE_INVALID) {
+        return;
+    }
+
+    const char* relName = SdManifest_RelativeName(gSDCardData.filePath,
+                                                  gpSDCardSettings->directory);
+    uint32_t crc = CRC32_Finalize(gSDCardData.fileCrcRunning);
+    char line[SD_MANIFEST_LINE_MAX];
+    int lineLen = SdManifest_FormatLine(line, sizeof(line), relName,
+                                        gSDCardData.currentFileBytes, crc);
+    if (lineLen <= 0) {
+        LOG_E("[SD] #924 manifest line did not fit for '%s' - line omitted",
+              gSDCardData.filePath);
+        return;
+    }
+
+    /* #924 (Qodo round 1): A SHORT WRITE HAS ALREADY PUT BYTES ON THE CARD, so
+     * "log it and give up" is not a no-op -- it leaves a headless FRAGMENT that
+     * the NEXT append concatenates onto, turning one lost record into two
+     * malformed ones and desynchronising every line after it. The earlier
+     * revision did exactly that, and its comment ("not retried ... a retry
+     * loop here would block the SD task inside the rotation window") justified
+     * the wrong half: the hazard is not the retry, it is the fragment.
+     *
+     * So: finish the line with a BOUNDED completion loop, which keeps the
+     * rotation-window argument intact -- at most SD_MANIFEST_WRITE_TRIES
+     * writes, no waiting, no yielding.
+     *
+     * If it still cannot be completed, terminate the fragment with a newline
+     * so the damage is CONTAINED to the one line rather than propagating.
+     * That leaves a malformed line the companion test's "every line parses"
+     * check reports, which is the honest outcome: the manifest says something
+     * went wrong here, instead of silently misnaming every later file. */
+    size_t off = 0u;
+    unsigned tries = 0u;
+    while (off < (size_t)lineLen && tries < SD_MANIFEST_WRITE_TRIES) {
+        int wrote = (int)SYS_FS_FileWrite(gSDCardData.manifestHandle,
+                                          (const void*)(line + off),
+                                          (size_t)lineLen - off);
+        if (wrote <= 0) {
+            break;      /* error or no progress: retrying cannot help */
+        }
+        off += (size_t)wrote;
+        tries++;
+    }
+
+    if (off != (size_t)lineLen) {
+        LOG_E("[SD] #924 manifest write short: %u of %d byte(s) for '%s'",
+              (unsigned)off, lineLen, gSDCardData.filePath);
+        /* ONLY when bytes actually landed. off == 0 means the very first write
+         * failed outright, so there is no fragment to terminate and adding a
+         * newline would invent a blank line the format does not have -- a
+         * second defect introduced by the recovery for the first.
+         *
+         * Best effort and deliberately unchecked otherwise: this is the
+         * recovery path for a write that has already failed, so a failure HERE
+         * has no further remedy, and the loss is already logged above. */
+        if (off > 0u) {
+            static const char nl = '\n';
+            (void)SYS_FS_FileWrite(gSDCardData.manifestHandle,
+                                   (const void*)&nl, sizeof(nl));
+        }
+        return;
+    }
+    gSDCardData.manifestLines++;
+}
+
+/* Close the manifest. Idempotent, because UNMOUNT_DISK can be re-entered by
+ * its own retry loop. */
+static void sd_CloseSessionManifest(void) {
+    if (gSDCardData.manifestHandle == SYS_FS_HANDLE_INVALID) {
+        return;
+    }
+    if (SYS_FS_FileClose(gSDCardData.manifestHandle) == SYS_FS_RES_FAILURE) {
+        LOG_E("[SD] #924 failed to close manifest (err=%d)",
+              (int)SYS_FS_Error());
+    } else {
+        LOG_I("[SD] #924 manifest closed: %u file(s) recorded",
+              (unsigned)gSDCardData.manifestLines);
+    }
+    gSDCardData.manifestHandle = SYS_FS_HANDLE_INVALID;
+}
+
 void sd_card_manager_ProcessState() {
     /* #800: honour a teardown that raced a state store, before dispatching. */
     if (gSdTeardownRequested) {
@@ -1711,7 +2194,30 @@ void sd_card_manager_ProcessState() {
                     LOG_E("[SD] Failed to close file during unmount: '%s', error=%d", gSDCardData.filePath, SYS_FS_Error());
                 }
                 gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                /* #924: the SESSION'S LAST FILE gets its line here. The
+                 * rotation path records every file it retires, but the final
+                 * one is never rotated -- it is closed by this stop path -- so
+                 * without this a session would always be one line short, and a
+                 * session that never rotated would have an EMPTY manifest
+                 * rather than the one-line one #924 requires.
+                 *
+                 * Deliberately AFTER the close and deliberately NOT gated on
+                 * the close succeeding. The drains and the FileSync above have
+                 * already run, so the bytes counted are the bytes sent to the
+                 * card either way, and a close failure here is reported on its
+                 * own line. Withholding the record would make the manifest
+                 * disagree with the file list in exactly the case a reader
+                 * most needs it to agree. (The rotation path's close-failure
+                 * arm leaves fileHandle VALID and routes to ERROR ->
+                 * UNMOUNT_DISK, so that file reaches this line instead of the
+                 * rotation's -- it gets exactly one record either way, never
+                 * two.) */
+                sd_AppendManifestLine();
             }
+            /* #924: and the manifest itself closes before the unmount, so its
+             * directory entry and last cluster are flushed. Idempotent, which
+             * matters because the retry branch below can re-enter this state. */
+            sd_CloseSessionManifest();
             if (SYS_FS_Unmount(SD_CARD_MANAGER_DISK_MOUNT_NAME) == 0) {
                 gSDCardData.discMounted = false;
                 gLoggedUnmountFail = false;
@@ -1761,6 +2267,13 @@ void sd_card_manager_ProcessState() {
                  * not reintroduce it without re-reading those three cases. */
                 gSDCardData.fileCounter = 0;
                 gSDCardData.currentFileBytes = 0;
+                /* #924: the manifest's session state resets with the file
+                 * splitting state it belongs to. manifestOpenAttempted is the
+                 * one that matters -- it is what allows the NEXT session to
+                 * open a manifest of its own, and what stopped THIS one from
+                 * retrying a failed create at every rotation. */
+                gSDCardData.manifestOpenAttempted = false;
+                gSDCardData.manifestLines = 0;
                 memset(gSDCardData.baseFilename, 0, sizeof(gSDCardData.baseFilename));
                 gSDCardData.fileSplittingEnabled = false;
                 LOG_D("[SD] File splitting state reset for next session\r\n");
@@ -2342,6 +2855,35 @@ void sd_card_manager_ProcessState() {
                      * and reset the buffer so the next session starts clean
                      * rather than inheriting a partial file's header. */
                     sd_AbandonRotationWindow("session torn down mid-open");
+                    /* #924 (post-merge audit, defect 3): gSDCardData.filePath
+                     * ALREADY names this new file -- generateFilename() set
+                     * it above, before the abort was even detected -- but
+                     * currentFileBytes/fileCrcRunning still describe the file
+                     * this rotation was retiring, because the reset that
+                     * normally pairs with a fresh open (below, in the
+                     * non-aborted arm) is never reached on this path: it sits
+                     * after the `break` two lines down.
+                     *
+                     * UNMOUNT_DISK closes gSDCardData.fileHandle and appends a
+                     * manifest line for it UNCONDITIONALLY (see the #924
+                     * block there), using whatever currentFileBytes/
+                     * fileCrcRunning hold at that point. Left stale, that line
+                     * would name the NEW, just-truncated (and, since
+                     * WRITE_TO_FILE never runs for it, genuinely empty) file
+                     * while carrying the OLD file's byte count and CRC -- a
+                     * record that is wrong, not just incomplete: a consumer
+                     * that trusts it would checksum-verify this file against a
+                     * CRC that was never its own.
+                     *
+                     * Reset here, through the SAME helper the success arm
+                     * uses below, so the line UNMOUNT_DISK writes describes
+                     * the file that actually exists on the card: 0 bytes, the
+                     * CRC of nothing. That is the true state of a file that
+                     * was opened (truncating whatever was there) and then
+                     * never written to before the session was torn down --
+                     * not a placeholder standing in for missing data. */
+                    SdManifest_FreshFileAccounting(&gSDCardData.currentFileBytes,
+                                                   &gSDCardData.fileCrcRunning);
                     LOG_I("[SD] open aborted: session torn down mid-open "
                           "(mode=%s)", sd_card_manager_GetModeName());
                     break;
@@ -2352,7 +2894,18 @@ void sd_card_manager_ProcessState() {
                  * this handle: WRITE_TO_FILE runs on THIS task, so the header
                  * written below is guaranteed to be the file's first bytes. */
                 gSDCardData.totalBytesFlushPending = 0;
-                gSDCardData.currentFileBytes = 0;  // Reset byte counter for new file
+                /* #924: arm this file's byte counter and running CRC in the
+                 * same breath, through SdManifest_FreshFileAccounting (also
+                 * called from the openAborted arm above -- see its own
+                 * comment there for defect 3, the case this pairing exists to
+                 * cover). The two fields describe the same bytes and are
+                 * reset by the same event -- a NEW file -- so a later edit
+                 * cannot move one without seeing the other. This runs for the
+                 * session's first open and for every rotation open alike,
+                 * which is exactly right: each file's CRC covers that file
+                 * and nothing before it. */
+                SdManifest_FreshFileAccounting(&gSDCardData.currentFileBytes,
+                                               &gSDCardData.fileCrcRunning);
                 gSDCardData.lastFlushMillis = pdTICKS_TO_MS(xTaskGetTickCount());
 
                 if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {
@@ -2429,7 +2982,45 @@ void sd_card_manager_ProcessState() {
                         }
                         if (hdrWritten > 0) {
                             gSDCardData.currentFileBytes += (uint32_t)hdrWritten;
+                            /* #924: the header is the only stream-file byte
+                             * range that does NOT pass through SDCardWrite(),
+                             * so it folds here -- beside the counter it
+                             * already increments, for the same reason. A short
+                             * header write folds what landed, so the CRC keeps
+                             * describing the file that exists rather than the
+                             * one intended. */
+                            gSDCardData.fileCrcRunning = CRC32_Update(
+                                    gSDCardData.fileCrcRunning, hdr,
+                                    (size_t)hdrWritten);
                         }
+                    }
+
+                    /* #924: open the SESSION's integrity manifest, once.
+                     *
+                     * AT THE SESSION'S FIRST STREAM FILE, not at every open:
+                     * manifestOpenAttempted is set before the attempt, so a
+                     * create that FAILS is not retried at the next rotation.
+                     * That is the property that keeps the added f_open(CREATE)
+                     * count at exactly one per session, which is what makes
+                     * this design safe where a per-file .crc32 sidecar is not
+                     * (FatFs create is O(directory size) -- #689).
+                     *
+                     * AFTER the data file is open and its header written, so
+                     * nothing about the manifest can delay or perturb the
+                     * file the session is actually logging to.
+                     *
+                     * gWriteSessionIsStreamingLog, read directly rather than
+                     * through openNeedsStreamHeader: that one is ALSO gated on
+                     * gSdRotating, which is false for the session's first file
+                     * -- the very open this runs at. The latch alone is the
+                     * right question here ("is this write session a streaming
+                     * log?"), and it is what keeps SYST:STOR:SD:BENCHmark,
+                     * which shares this whole state, from producing a manifest
+                     * (#824 audit round 5's case, in its #924 shape). */
+                    if (gWriteSessionIsStreamingLog
+                        && !gSDCardData.manifestOpenAttempted) {
+                        gSDCardData.manifestOpenAttempted = true;
+                        sd_OpenSessionManifest();
                     }
                 }
             } else if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_READ ||
@@ -2926,6 +3517,18 @@ void sd_card_manager_ProcessState() {
                     gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                     LOG_D("[SD] Closed file '%s' (wrote %llu bytes)\r\n",
                          gSDCardData.filePath, gSDCardData.currentFileBytes);
+                    /* #924: record the file this rotation has just RETIRED.
+                     *
+                     * This is the only point at which all three things the
+                     * line needs are simultaneously true of the same file:
+                     * filePath still holds the name generateFilename actually
+                     * produced for it (OPEN_FILE overwrites it below),
+                     * currentFileBytes is its final size (both drains above
+                     * have completed), and fileCrcRunning covers exactly those
+                     * bytes (OPEN_FILE re-arms it below). Moving this after
+                     * the state advance would record the NEXT file's name
+                     * against this file's numbers. */
+                    sd_AppendManifestLine();
                 }
 
                 /* #757: open the buffer for the NEW file before the slow open.

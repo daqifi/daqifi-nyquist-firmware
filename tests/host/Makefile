@@ -304,6 +304,30 @@ FW_LOG_C  := $(FW_UTIL)/Logger.c
 # an edited recipe is exactly how a guard goes quiet. Qodo, PR #983.
 RECIPES := Makefile
 
+# #924: the per-session SD integrity manifest. Same category as AD7609_BIN and
+# JSONESC_BIN -- the pure text operations were split into
+# firmware/src/Util/SdManifest.h so this test compiles the REAL header rather
+# than a copy of its shape (sd_card_manager.c is not includable on a host:
+# Harmony, FreeRTOS, FatFs and the whole board graph). CRC32.c is LINKED IN
+# for the same reason it needs no stub -- it includes nothing but its own
+# header -- so the accumulation claims are made against the real implementation
+# too, not a reference one.
+#
+# It DOES carry grep guards, and they pin something the two targets above have
+# no equivalent of. The suite proves the two pieces are correct; it cannot see
+# whether sd_card_manager.c still USES them. Two things would silently void the
+# whole feature while leaving every assertion here green:
+#   - the running CRC stops being folded in SDCardWrite(), the single funnel
+#     every stream-file byte passes through, so the recorded CRC covers only
+#     part of the file;
+#   - lines stop being rendered through SdManifest_FormatLine, so the format
+#     this suite pins is no longer the format written to the card.
+# Both are exactly the "test passes against a model the firmware no longer
+# has" failure the guards elsewhere in this file exist for, so they fail the
+# BUILD rather than being left to the bench.
+MANIFEST_BIN := run_924_tests
+SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
+
 # #980: DAC7718 error-path honesty (lock ownership in DAC7718_ReadWriteReg,
 # init-failure propagation + slot retention in DAC_EnsureHardwareInitialized).
 # Like BENCH_BIN, neither DAC7718.c (Harmony GPIO/SPI/coretimer + FreeRTOS
@@ -498,6 +522,66 @@ $(AD7609_BIN): test_ad7609_scale.c test_framework.h $(FW_ADC)/AD7609Scale.h $(RE
 
 $(JSONESC_BIN): test_json_string_escape.c test_framework.h $(FW_SVC)/JSON_StringEscape.h $(RECIPES)
 	$(CC) $(CFLAGS) -I$(FW_SVC) -o $(JSONESC_BIN) test_json_string_escape.c
+
+$(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h \
+                 $(FW_UTIL)/CRC32.h $(FW_UTIL)/CRC32.c $(SD_MANAGER_SRC) $(RECIPES)
+	@grep -q 'CRC32_Update(gSDCardData.fileCrcRunning' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer folds the write-path running"; \
+	       echo "       CRC (expected 'CRC32_Update(gSDCardData.fileCrcRunning')."; \
+	       echo "       #924's manifest records a CRC accumulated as the bytes are"; \
+	       echo "       WRITTEN; without that fold the recorded value covers only"; \
+	       echo "       part of each file and test_924_sd_manifest.c can no longer"; \
+	       echo "       say anything about it. Re-derive both before proceeding."; \
+	       exit 1; }
+	@grep -q 'SdManifest_FormatLine' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer renders manifest lines through"; \
+	       echo "       SdManifest_FormatLine, so the line format pinned by"; \
+	       echo "       test_924_sd_manifest.c is not the one written to the card."; \
+	       exit 1; }
+	@grep -q 'SdManifest_RelativeName' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer derives the recorded name through"; \
+	       echo "       SdManifest_RelativeName. The manifest's names must stay"; \
+	       echo "       relative to the configured directory -- that is the spelling"; \
+	       echo "       SYST:STOR:SD:CRC? and :GET take as their operand."; \
+	       exit 1; }
+	@grep -q 'SdManifest_PathsEqualCaseInsensitive' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer compares the manifest path against"; \
+	       echo "       the session's own stream file through"; \
+	       echo "       SdManifest_PathsEqualCaseInsensitive (#924 post-merge audit,"; \
+	       echo "       defect 2). FatFs's own duplicate-open lock (FF_FS_LOCK) is"; \
+	       echo "       case-insensitive; a plain strcmp here misses a collision FatFs"; \
+	       echo "       itself will refuse, silently losing the whole session's"; \
+	       echo "       integrity records with no diagnostic."; \
+	       exit 1; }
+	@test $$(grep -c 'sd_ManifestPathSafeToOverwrite(' $(SD_MANAGER_SRC)) -ge 3 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) calls sd_ManifestPathSafeToOverwrite fewer"; \
+	       echo "       than 3 times (its own definition plus 2 call sites: the primary"; \
+	       echo "       manifest path and the collision fallback path). #924's"; \
+	       echo "       post-merge audit defect 1 (round 2) requires BOTH candidate"; \
+	       echo "       paths checked before a truncating SYS_FS_FILE_OPEN_WRITE --"; \
+	       echo "       checking only the primary leaves the fallback name as a second"; \
+	       echo "       undefended way to destroy an unrelated file."; \
+	       exit 1; }
+	@grep -q 'SdManifest_FirstLineLooksLikeManifest' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer inspects an existing file's first"; \
+	       echo "       line through SdManifest_FirstLineLooksLikeManifest (#924"; \
+	       echo "       post-merge audit, defect 1). Without it, a manifest open would"; \
+	       echo "       truncate whatever already sits at the manifest path, no matter"; \
+	       echo "       what it is."; \
+	       exit 1; }
+	@test $$(grep -c 'SdManifest_FreshFileAccounting(' $(SD_MANAGER_SRC)) -ge 2 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) calls SdManifest_FreshFileAccounting fewer"; \
+	       echo "       than 2 times. OPEN_FILE must reset currentFileBytes/"; \
+	       echo "       fileCrcRunning through it at BOTH places a new file becomes"; \
+	       echo "       current -- the normal open, and an ABORTED rotation-open (the"; \
+	       echo "       one #924's post-merge audit defect 3 found missing: without"; \
+	       echo "       it, UNMOUNT_DISK's unconditional manifest line for the new,"; \
+	       echo "       empty file it just closed carries the OLD file's byte count"; \
+	       echo "       and CRC instead). If a real refactor legitimately drops one"; \
+	       echo "       call site, re-derive whether the abort arm still resets before"; \
+	       echo "       lowering this count."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -I$(FW_UTIL) -o $(MANIFEST_BIN) test_924_sd_manifest.c $(FW_UTIL)/CRC32.c
 
 $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
 	@grep -qE '^#define[[:space:]]+SCPI_SD_BENCH_STALL_TIMEOUT_MS[[:space:]]+10000U[[:space:]]*$$' $(SD_BENCH_SRC) \
@@ -1403,7 +1487,8 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 # and union only `run` and `clean`. #971's suite (run_971_tests, PR #976) is
 # still landing independently on another branch; when it meets this, same rule.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN)
+     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
+     $(MANIFEST_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1420,9 +1505,10 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(SCAN1112_BIN)
 	./$(STARTARM_BIN)
 	./$(START_BIN)
+	./$(MANIFEST_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(GEN_1000)
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(MANIFEST_BIN) $(GEN_1000)
 
 .PHONY: run clean

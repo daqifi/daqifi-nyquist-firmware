@@ -442,6 +442,47 @@ snapshot) with the mask built from the snapshot afterward, and unless
 leaving the four single-channel stores (already atomic — one aligned `bool`
 store on PIC32MZ) untouched and outside either section.
 
+`test_924_sd_manifest.c` covers the per-session SD integrity manifest (#924):
+one file per streaming session, one line per stream file,
+`<name>,<bytes>,0x<CRC32>`, with the CRC accumulated over the WRITE path as
+the bytes go out rather than recomputed afterwards.
+
+Like `test_ad7609_scale.c` and `test_json_string_escape.c` — and unlike the
+re-implementing `test_943` / `test_953` family — it compiles **real firmware
+text**: `firmware/src/Util/SdManifest.h` directly (the two pure operations
+were split out of `sd_card_manager.c` precisely so this was possible; that
+file drags in Harmony, FreeRTOS, FatFs and the whole board graph) and
+`firmware/src/Util/CRC32.c` linked in, which needs no stub because it
+includes nothing but its own header.
+
+Three claims:
+
+- **The accumulation model is exact.** `CRC32_Init` + N×`CRC32_Update` +
+  `CRC32_Finalize` over *any* chunking equals `CRC32_Compute` over the
+  concatenation — checked at the real write sizes (1 sector, the extract
+  sizes, the largest measured 444-byte #824 header, a mid-sector prime) and
+  at every length 0..300, not sampled. This is what makes "the manifest's CRC
+  == `zlib.crc32` of the downloaded file" true, which is #924's headline
+  acceptance criterion.
+- **It really is zlib's CRC-32**, pinned against *external* vectors
+  (including the CRC catalogue's `"123456789"` → `0xCBF43926`). Both sides of
+  the acceptance comparison are `CRC32.c`, so comparing it to itself would
+  pass however wrong it is. Worth noting from the mutation run: making
+  `CRC32_Update` restart from `CRC32_Init` each call leaves `zlib_vectors`
+  **passing** — a vectors-only suite would have called that firmware correct.
+- **The line and name rendering**, which is a wire contract with the
+  companion bench test's parser, so it is pinned literally: exact format,
+  zero-padded 8-digit hex, a 64-bit byte count (a `%u` there would wrap
+  exactly the >4 GB file splitting exists for), all-or-nothing truncation,
+  and that `"DAQiFi"` is not treated as a prefix of `"DAQiFi2"`.
+
+What it cannot see is whether the firmware still *calls* any of it. The
+Makefile target therefore grep-guards `sd_card_manager.c` and fails the
+**build** if that file stops folding the running CRC in `SDCardWrite()` — its
+single write funnel — or stops rendering lines through
+`SdManifest_FormatLine` / `SdManifest_RelativeName`. The rest is the bench
+test's job (`test_306b_sd_manifest.py` in `daqifi-python-test-suite`).
+
 `test_998_start_streaming_claimed_order.c` covers the claim/arm/refusal/poll
 order of `SCPI_StartStreamingClaimed()`'s SD-logging arm in
 `firmware/src/services/SCPI/SCPIInterface.c` (issue #998). Like `test_943`
