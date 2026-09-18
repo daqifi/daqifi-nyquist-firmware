@@ -2882,15 +2882,44 @@ scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
     uint16_t mdt_year = 2000 + ((mdt_raw >> 4) & 0xFF);
     uint8_t mdt_month = mdt_raw & 0x0F;
 
-    char result[80];
-    int len = snprintf(result, sizeof(result),
+    /* #1098: format the reply into the shared SCPI response scratch buffer
+     * (#347) instead of a stack-local char[80]. The CID line is ~40 B, so the
+     * same bytes go out either way -- this changes only where they are built.
+     *
+     * Take/Give contract (SCPIInterface.h): a non-NULL Take MUST be matched by
+     * exactly one Give on every exit path; a NULL Take by none. Note that the
+     * format-error branch below is now one of those paths -- before this change
+     * it returned with no buffer held and so had nothing to release. The
+     * DRV_SDSPI_GetCID failure above still returns before any take, and
+     * correctly does NOT give.
+     *
+     * oid[], pnm[] and cid[] stay on the stack deliberately: they are a driver
+     * output buffer and two short field fragments consumed as %s arguments
+     * below, not response-sized reply buffers, which is what #347's shared
+     * buffer exists to displace. */
+    char* result = (char*)SCPI_ResponseBuf_Take();
+    if (result == NULL) {
+        /* #1098: report it, matching the format-error branch below and the
+         * project rule that every error reaches the log and the SCPI error
+         * queue (CLAUDE.md). Nothing is held on this path -- the take failed --
+         * so the push costs no held-mutex time. */
+        LOG_E("[SD] Card info: response buffer unavailable");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+
+    int len = snprintf(result, SCPI_RESPONSE_BUF_SIZE,
                        "%u,\"%s\",\"%s\",%u.%u,%lu,%u-%02u",
                        mid, oid, pnm,
                        prv_major, prv_minor,
                        (unsigned long)psn,
                        mdt_year, mdt_month);
 
-    if (len < 0 || (size_t)len >= sizeof(result)) {
+    if (len < 0 || (size_t)len >= SCPI_RESPONSE_BUF_SIZE) {
+        /* Released before the log/push: nothing below reads `result`, and
+         * holding the shared buffer across LOG_E buys other callbacks' latency
+         * for no benefit (#947). */
+        SCPI_ResponseBuf_Give();
         LOG_E("[SD] CID format error (len=%d)", len);
         SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
         return SCPI_RES_ERR;
@@ -2899,6 +2928,7 @@ scpi_result_t SCPI_StorageSDInfo(scpi_t * context) {
     context->interface->write(context, result, (size_t)len);
     context->interface->write(context, "\r\n", 2);
 
+    SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
 }
 

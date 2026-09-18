@@ -106,6 +106,23 @@ SUSPENDREASON_BIN := run_985_tests
 # THAT, in three parts mirroring SUSPEND_BIN's three.
 STARTARM_BIN := run_1121_tests
 
+# #1098: the shared-SCPI-response-buffer Take/Give pairing of the four reply
+# callbacks that used to format into a stack-local array --
+# SCPI_SysLogLevelSet / SysLogLevelGet / SysLogLevelAllSet (SCPIInterface.c)
+# and SCPI_StorageSDInfo (SCPIStorageSD.c).
+#
+# Same technique and same reason as SYSINFO_BIN and STARTARM_BIN: neither file
+# is includable on the host (SCPI999_BIN established that for SCPIInterface.c,
+# BENCH_BIN for SCPIStorageSD.c), so the control-flow shape of each callback is
+# re-implemented against a mock Take/Give/write and the pre-/post-fix shapes
+# compared.
+#
+# It copies ONE constant, SCPI_RESPONSE_BUF_SIZE, pinned by guard 1 below. It
+# deliberately does NOT copy LOG_MODULE_COUNT -- every loop assertion is swept
+# over counts 0..12 instead, so adding a log module cannot stale this file and
+# no grep guard is needed for it.
+REPLYBUF_BIN := run_1098_tests
+
 # #164: JSON_StringEscape.h is header-only and dependency-free for the same
 # reason AD7609Scale.h is -- the pure byte-escaping logic was split out of
 # JSON_Encoder.c, which is unusable on a host (it pulls in
@@ -294,6 +311,35 @@ SDLOG_BIN := run_1000_tests
 GEN_1000  := gen_1000_log_budget.h
 FW_LOG_H  := $(FW_UTIL)/Logger.h
 FW_LOG_C  := $(FW_UTIL)/Logger.c
+
+# #1039 (PR #1116, split from the parked #1110): the four LOG_E messages
+# #1039 shortened, measured against the SAME ceiling $(SDLOG_BIN) measures --
+# Logger's real truncation, not an arithmetic estimate of it. Deliberately
+# independent of PR #1110's parked tests/host/gen_1039_log_budget.py /
+# tools/lint/log_budget.py (13 confirmed defects across two audit rounds per
+# PR #1116's own description, while the four message edits themselves drew
+# zero findings in either round -- which is why #1116 exists as the
+# split-out PR). So unlike $(SDLOG_BIN) above, this target extracts NOTHING
+# at build time and generates no header: it hardcodes copies of the four
+# shipped format strings (and, as a frozen historical control proving the
+# harness has teeth, the four pre-#1039 originals) and reproduces
+# LogMessageFormatImpl's truncation against them directly -- the same
+# technique $(SDLOG_BIN) uses for its own strings, just without the
+# extraction step, which is proportionate to a 62-line message change.
+#
+# What COULD silently drift is therefore the four hardcoded copies, not a
+# generated ceiling -- so the recipe greps each shipped format string's
+# literal source lines back out of the three files #1039 touched and fails
+# the build if any no longer matches exactly, the same technique
+# $(SDLOG_BIN)'s own REASON_* guard above uses for SD_SuspendReasonText()'s
+# three return strings. The three Logger.h/.c ceiling lines get the same
+# plain grep treatment (restated here rather than shared with $(SDLOG_BIN)'s
+# sed extraction, since nothing downstream needs the numbers as a generated
+# header).
+LOGCEIL_BIN  := run_1039_log_ceiling_tests
+LOGCEIL_SRC1 := ../../firmware/src/app_freertos.c
+LOGCEIL_SRC2 := ../../firmware/src/services/SCPI/SCPIADC.c
+LOGCEIL_SRC3 := ../../firmware/src/services/wifi_services/wifi_manager.c
 
 # Every binary depends on this file as well as on its sources. Two of the
 # targets below carry GUARDS in their recipes -- greps that fail the build when
@@ -915,6 +961,213 @@ $(STARTARM_BIN): test_1121_start_streaming_arm_cascade.c test_framework.h \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(STARTARM_BIN) test_1121_start_streaming_arm_cascade.c
 
+# #1098 guard helper. Counts LITERAL occurrences of a pattern inside ONE
+# function body, bounded by the next column-0 `scpi_result_t` signature -- so
+# the counts below are per-callback and cannot be satisfied by one of the ~17
+# OTHER Take/Give sites elsewhere in the same file, which a whole-file
+# `grep -c` could not distinguish. index() is literal, so `()` and `;` in the
+# patterns need no regex escaping.
+#   $(1)=source file   $(2)=function name   $(3)=literal pattern
+CNT_IN_FN = awk -v fn="$(2)" -v pat='$(3)' \
+	'$$0 ~ "^(static )?scpi_result_t " fn "[(]" { f=1; next } \
+	 f && /^(static )?scpi_result_t /           { exit } \
+	 f && index($$0, pat)                       { n++ } \
+	 END { print n+0 }' $(1)
+
+# #1098 guard helper. Prints "<take line> <loop line> <give line>", relative to
+# the file, for one function body -- 0 for any marker not found.
+#   $(1)=source file   $(2)=function name
+ORDER_IN_FN = awk -v fn="$(2)" \
+	'$$0 ~ "^(static )?scpi_result_t " fn "[(]" { f=1; next } \
+	 f && /^(static )?scpi_result_t /                { exit } \
+	 f && index($$0, "SCPI_ResponseBuf_Take()")      { t=NR } \
+	 f && index($$0, "LOG_MODULE_COUNT; i++")        { l=NR } \
+	 f && index($$0, "SCPI_ResponseBuf_Give();")     { g=NR } \
+	 END { print t+0, l+0, g+0 }' $(1)
+
+# #1098: the Take/Give pairing of the four converted reply callbacks.
+#
+# GUARD 1 -- THE MIRRORED CONSTANT. test_1098 copies SCPI_RESPONSE_BUF_SIZE as
+# FW_RESPONSE_BUF_SIZE and drives SCPI_StorageSDInfo's `len >= capacity`
+# format-error branch off that exact value, so a stale copy would still build
+# and still pass while testing the wrong boundary.
+SCPI_BOUNDED_WRITE_H := ../../firmware/src/services/SCPI/ScpiBoundedWrite.h
+
+$(REPLYBUF_BIN): test_1098_scpi_reply_buffer_pairing.c test_framework.h \
+                $(SCPI_INTERFACE_SRC) $(SCPI_INTERFACE_H) $(SD_BENCH_SRC) \
+                $(SCPI_BOUNDED_WRITE_H) $(RECIPES)
+	@grep -qE '^[[:space:]]*#define[[:space:]]+SCPI_RESPONSE_BUF_SIZE[[:space:]]+2048U' \
+	     $(SCPI_INTERFACE_H) \
+	   || { echo "ERROR: SCPI_RESPONSE_BUF_SIZE is no longer 2048U in"; \
+	        echo "       $(SCPI_INTERFACE_H)."; \
+	        echo "       test_1098_scpi_reply_buffer_pairing.c mirrors it as"; \
+	        echo "       FW_RESPONSE_BUF_SIZE and drives SCPI_StorageSDInfo's"; \
+	        echo "       format-error boundary off that exact value -- a stale"; \
+	        echo "       copy tests the wrong boundary and still passes."; \
+	        exit 1; }
+# GUARD 2 -- EXACTLY ONE TAKE AND ONE GIVE PER LOG-LEVEL CALLBACK. This is the
+# whole contract (SCPIInterface.h:141-182) reduced to something grep can hold:
+# a second Give double-releases somebody else's hold, a missing one wedges
+# gScpiRespMutex for every SCPI callback on BOTH transports (they wait
+# portMAX_DELAY). Counted per function, so converting a NEIGHBOUR cannot
+# satisfy this for a callback that was reverted.
+	@for fn in SCPI_SysLogLevelSet SCPI_SysLogLevelGet SCPI_SysLogLevelAllSet; do \
+	   t=`$(call CNT_IN_FN,$(SCPI_INTERFACE_SRC),$$fn,SCPI_ResponseBuf_Take())`; \
+	   g=`$(call CNT_IN_FN,$(SCPI_INTERFACE_SRC),$$fn,SCPI_ResponseBuf_Give();)`; \
+	   test "$$t" = "1" && test "$$g" = "1" \
+	     || { echo "ERROR: $$fn in $(SCPI_INTERFACE_SRC) no longer holds the"; \
+	          echo "       shared SCPI response buffer exactly once"; \
+	          echo "       (found take=$$t give=$$g, both must be 1)."; \
+	          echo "       Either it was reverted to a stack-local reply buffer"; \
+	          echo "       (#1098, the bug) or its Take/Give no longer pair --"; \
+	          echo "       a missing Give wedges gScpiRespMutex for every SCPI"; \
+	          echo "       callback on both transports. test_1098 asserts the"; \
+	          echo "       1:1 pairing on every return path; re-read both."; \
+	          exit 1; }; \
+	 done
+# GUARD 3 -- ONE HOLD FOR THE WHOLE DUMP, in the two LOOP callbacks. Guard 2
+# alone does not pin this: a take/give moved INSIDE the loop still counts 1 and
+# 1 in the source while acquiring the mutex LOG_MODULE_COUNT times per query and
+# dropping the hold between lines, letting a peer callback interleave its reply.
+# Line order is what separates them -- take BEFORE the `for`, give AFTER it,
+# which is the SCPI_SysInfoTextGet shape the fix follows.
+# test_1098's per_iteration_syslog_get models the mutation this rejects.
+	@for fn in SCPI_SysLogLevelGet SCPI_SysLogLevelAllSet; do \
+	   set -- `$(call ORDER_IN_FN,$(SCPI_INTERFACE_SRC),$$fn)`; \
+	   test "$$1" -gt 0 && test "$$2" -gt 0 && test "$$3" -gt 0 \
+	     && test "$$1" -lt "$$2" && test "$$3" -gt "$$2" \
+	     || { echo "ERROR: $$fn in $(SCPI_INTERFACE_SRC) no longer takes the"; \
+	          echo "       shared buffer BEFORE its LOG_MODULE_COUNT loop and"; \
+	          echo "       gives it back AFTER (take='$$1' for='$$2' give='$$3';"; \
+	          echo "       0 means the marker is gone)."; \
+	          echo "       A take/give moved INSIDE the loop still pairs 1:1 --"; \
+	          echo "       guard 2 would not notice -- but blocks on the mutex"; \
+	          echo "       once per module and drops the hold between lines."; \
+	          echo "       test_1098 models that mutation"; \
+	          echo "       (per_iteration_syslog_get) and asserts against it."; \
+	          exit 1; }; \
+	 done
+# GUARD 4 -- SCPI_StorageSDInfo GIVES ON BOTH EXITS. The one site where the
+# port is not mechanical: pre-#1098 its `len < 0 || len >= sizeof(result)`
+# branch returned holding nothing, so it needed no release; post-fix it runs
+# under the hold and GAINS one. Hence ONE take and TWO gives -- a count of 1
+# means the error path leaks the mutex on every malformed CID.
+# test_1098's leaky_sd_info models exactly that omission.
+	@t=`$(call CNT_IN_FN,$(SD_BENCH_SRC),SCPI_StorageSDInfo,SCPI_ResponseBuf_Take())`; \
+	 g=`$(call CNT_IN_FN,$(SD_BENCH_SRC),SCPI_StorageSDInfo,SCPI_ResponseBuf_Give();)`; \
+	 test "$$t" = "1" && test "$$g" = "2" \
+	   || { echo "ERROR: SCPI_StorageSDInfo in $(SD_BENCH_SRC) is no longer one"; \
+	        echo "       take with a give on BOTH exits (found take=$$t give=$$g,"; \
+	        echo "       must be 1 and 2)."; \
+	        echo "       The second give is the format-error branch, which the"; \
+	        echo "       pre-#1098 code did not need because it held nothing"; \
+	        echo "       there. Drop it and a malformed CID wedges"; \
+	        echo "       gScpiRespMutex permanently. test_1098 models that"; \
+	        echo "       omission (leaky_sd_info) and asserts against it."; \
+	        exit 1; }
+# GUARD 5 -- THE THREE MIRRORED TIMING CONSTANTS. test_1098 copies
+# SCPI_LOGLEVEL_WRITE_BUDGET_MS as FW_LOGLEVEL_BUDGET_MS, and derives
+# MS_PER_STALLED_WRITE (1000) from SCPI_WRITE_MAX_RETRIES x
+# SCPI_WRITE_RETRY_DELAY_MS. Drift in any of them silently moves where the
+# guards fire while every assertion still passes -- guard2's "3 writes then
+# latch" arithmetic is exactly 2000 / 900.
+#
+# NOTE the trailing [[:space:]]*$$ rather than a bare $$: these sources have
+# CRLF line endings, so a `200$$` anchor never matches (the line ends "200\r").
+# [[:space:]] covers the CR. A bare $$ here fails CLOSED -- the guard reports
+# drift that has not happened -- which is the safe direction, but it would send
+# the next reader hunting a constant that never moved.
+	@grep -qE '^#define[[:space:]]+SCPI_LOGLEVEL_WRITE_BUDGET_MS[[:space:]]+2000U[[:space:]]*$$' \
+	     $(SCPI_INTERFACE_SRC) \
+	  && grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' \
+	     $(SCPI_INTERFACE_SRC) \
+	  && grep -qE '^#define[[:space:]]+SCPI_WRITE_RETRY_DELAY_MS[[:space:]]+5[[:space:]]*$$' \
+	     $(SCPI_INTERFACE_SRC) \
+	   || { echo "ERROR: one of SCPI_LOGLEVEL_WRITE_BUDGET_MS (2000U),"; \
+	        echo "       SCPI_WRITE_MAX_RETRIES (200) or"; \
+	        echo "       SCPI_WRITE_RETRY_DELAY_MS (5) has changed in"; \
+	        echo "       $(SCPI_INTERFACE_SRC)."; \
+	        echo "       test_1098 mirrors all three (FW_LOGLEVEL_BUDGET_MS and"; \
+	        echo "       MS_PER_STALLED_WRITE) and its guard-2 arithmetic depends"; \
+	        echo "       on the exact values. Update both together."; \
+	        exit 1; }
+# GUARD 5b -- THE TICK MODEL. ScpiBoundedWrite_Decide bounds the hold with
+# unsigned 32-bit subtraction and test_1098 asserts that across the wrap at
+# 0xFFFFFFFF; both are exact only while TickType_t is 32 bits and one tick is
+# one millisecond. Same two pins as test_947, against the same file.
+	@grep -qE '^#define[[:space:]]+configTICK_RATE_HZ[[:space:]]+\( \( TickType_t \) 1000 \)[[:space:]]*$$' \
+	     $(FREERTOS_CONFIG_SRC) \
+	  && grep -qE '^#define[[:space:]]+configTICK_TYPE_WIDTH_IN_BITS[[:space:]]+TICK_TYPE_WIDTH_32_BITS[[:space:]]*$$' \
+	     $(FREERTOS_CONFIG_SRC) \
+	   || { echo "ERROR: the tick model changed in $(FREERTOS_CONFIG_SRC)"; \
+	        echo "       (configTICK_RATE_HZ must be 1000 and"; \
+	        echo "       configTICK_TYPE_WIDTH_IN_BITS TICK_TYPE_WIDTH_32_BITS)."; \
+	        echo "       ScpiBoundedWrite_Decide's wrap arithmetic and"; \
+	        echo "       test_1098's wrap assertions both assume 32-bit"; \
+	        echo "       millisecond ticks; at another width the deadline is"; \
+	        echo "       wrong in a way no assertion here would show."; \
+	        exit 1; }
+# GUARD 6 -- THE DUMP LOOPS STAY BOUNDED. Guard 3 pins only WHERE the take and
+# give sit; it cannot see whether the writes between them are guarded. Both dump
+# callbacks must route every write through SysLogLevelWrite (which latches on a
+# short write and on the cumulative deadline) and must contain NO bare
+# context->interface->write, which would reintroduce the ~10 s hold #1098's own
+# fix created and this bound removes. test_1098 models the unbounded shape
+# (new_syslog_get_unbounded) and asserts it reaches ~10 s.
+	@for fn in SCPI_SysLogLevelGet SCPI_SysLogLevelAllSet; do \
+	   w=`$(call CNT_IN_FN,$(SCPI_INTERFACE_SRC),$$fn,SysLogLevelWrite)`; \
+	   b=`$(call CNT_IN_FN,$(SCPI_INTERFACE_SRC),$$fn,context->interface->write)`; \
+	   test "$$w" = "1" && test "$$b" = "0" \
+	     || { echo "ERROR: $$fn in $(SCPI_INTERFACE_SRC) no longer emits its"; \
+	          echo "       dump through the bounded SysLogLevelWrite helper"; \
+	          echo "       (found guarded=$$w bare-write=$$b; must be 1 and 0)."; \
+	          echo "       A bare context->interface->write inside the hold"; \
+	          echo "       restores the ~10 s worst-case stall that blocks every"; \
+	          echo "       SCPI callback on BOTH transports. test_1098 models"; \
+	          echo "       that unbounded shape and asserts against it."; \
+	          exit 1; }; \
+	 done
+# GUARD 7 -- THE PRODUCTION HELPER USES THE HOST-TESTED DECISION.
+#
+# This is the guard that makes guards 2-6 mean something. Guard 6 proves the
+# call sites NAME SysLogLevelWrite; it cannot see inside it. With the deadline
+# and the short-write latch written inline there, deleting the deadline check
+# was MEASURED to leave the entire host suite green -- the test was asserting
+# against its own re-implementation, so the production logic was unguarded by
+# construction (Qodo #1132 "Broken hold bounds can pass tests").
+#
+# The decision now lives in ScpiBoundedWrite.h, which the test compiles and
+# calls directly. So this guard pins the one thing that would silently reopen
+# the gap: SysLogLevelWrite reimplementing the decision inline instead of
+# delegating to it. Both predicates must appear in its body, and the test must
+# include the real header rather than a copy.
+#
+# Scoped by the helper's own signature -- it is `static void`, so the
+# scpi_result_t-anchored CNT_IN_FN cannot reach it; the body runs to the first
+# column-0 `}`.
+	@d=`awk '/^static void SysLogLevelWrite\(/{f=1} f&&index($$0,"ScpiBoundedWrite_Decide"){n++} f&&/^\}/{exit} END{print n+0}' $(SCPI_INTERFACE_SRC)`; \
+	 s=`awk '/^static void SysLogLevelWrite\(/{f=1} f&&index($$0,"ScpiBoundedWrite_IsShort"){n++} f&&/^\}/{exit} END{print n+0}' $(SCPI_INTERFACE_SRC)`; \
+	 test "$$d" = "1" && test "$$s" = "1" \
+	   || { echo "ERROR: SysLogLevelWrite in $(SCPI_INTERFACE_SRC) no longer"; \
+	        echo "       delegates to the host-tested predicates in"; \
+	        echo "       ScpiBoundedWrite.h (found Decide=$$d IsShort=$$s;"; \
+	        echo "       both must be 1)."; \
+	        echo "       Inlining that arithmetic again makes it untestable from"; \
+	        echo "       tests/host: SCPIInterface.c is not host-includable, so"; \
+	        echo "       the suite would silently go back to asserting against a"; \
+	        echo "       COPY of the algorithm. Deleting the real deadline check"; \
+	        echo "       was measured to leave the whole suite green that way."; \
+	        exit 1; }
+	@grep -q '#include "../../firmware/src/services/SCPI/ScpiBoundedWrite.h"' \
+	     test_1098_scpi_reply_buffer_pairing.c \
+	   || { echo "ERROR: test_1098_scpi_reply_buffer_pairing.c no longer includes"; \
+	        echo "       the REAL ScpiBoundedWrite.h. Its deadline and"; \
+	        echo "       short-write assertions would then be testing a local"; \
+	        echo "       re-implementation again, which is exactly the defect"; \
+	        echo "       the extraction closed."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(REPLYBUF_BIN) test_1098_scpi_reply_buffer_pairing.c
+
 SCPI999_WIRING_GUARD := check_999_createscpicontext_wiring.sh
 SCPI999_ARG_EXTRACTOR := extract_call_args.pl
 SCPI999_ARG_EXTRACTOR_TEST := test_extract_call_args.sh
@@ -1176,6 +1429,89 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 	 printf '#endif\n' >> $(GEN_1000)
 	$(CC) $(CFLAGS) -o $(SDLOG_BIN) test_1000_sd_log_arm_budget.c
 
+# #1039: see the LOGCEIL_BIN comment block above for what this proves and
+# why it is deliberately independent of the parked #1110 tooling.
+$(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
+                $(LOGCEIL_SRC1) $(LOGCEIL_SRC2) $(LOGCEIL_SRC3) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+LOG_MESSAGE_SIZE[[:space:]]+128[[:space:]]*$$' $(FW_LOG_H) \
+	  || { echo "ERROR: LOG_MESSAGE_SIZE is no longer '128' in $(FW_LOG_H)."; \
+	       echo "       Update FW_LOG_MESSAGE_SIZE in test_1039_log_message_ceiling.c and"; \
+	       echo "       re-derive LOG_BUDGET (and every asserted margin) before trusting it."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*size = vsnprintf\(buffer, LOG_MESSAGE_SIZE - 2, format, args\);[[:space:]]*$$' $(FW_LOG_C) \
+	  || { echo "ERROR: LogMessageFormatImpl's vsnprintf reserve is no longer"; \
+	       echo "       'LOG_MESSAGE_SIZE - 2' in $(FW_LOG_C). Update"; \
+	       echo "       FW_LOG_VSNPRINTF_RESERVE in test_1039_log_message_ceiling.c and"; \
+	       echo "       re-derive LOG_BUDGET before trusting it."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*size = min\(\(LOG_MESSAGE_SIZE - 3\), size\);[[:space:]]*$$' $(FW_LOG_C) \
+	  || { echo "ERROR: LogMessageFormatImpl's clamp reserve is no longer"; \
+	       echo "       'LOG_MESSAGE_SIZE - 3' in $(FW_LOG_C) -- this is the reserve that"; \
+	       echo "       actually sets what survives. Update FW_LOG_CLAMP_RESERVE in"; \
+	       echo "       test_1039_log_message_ceiling.c and re-derive LOG_BUDGET (and every"; \
+	       echo "       asserted margin) before trusting it."; \
+	       exit 1; }
+# MSG1/MSG2's guards used to be two independent anchored grep pipelines
+# (opening->middle, middle->mask) not tied to the same line position --
+# audit wf_8f9d065d-2ef (CONFIRMED, medium) found that duplicating MSG2's
+# middle literal line immediately before its "<mask>." line passes both
+# pipelines (the duplicate itself satisfies the middle->mask pipeline)
+# while the shipped string grows past the 125-byte budget. check_log_block
+# below replaces both with ONE positional exact-block check per message:
+# the opening LOG_E(...) line must occur exactly once in the file, then
+# the N consecutive lines starting there (N = that message's literal line
+# count) are compared to the expected block as a single whole-block string
+# equality -- not a per-line or substring containment match, so an insert,
+# delete, duplicate, or edit of any one line inside the block fails it.
+	@check_log_block() { \
+	  f="$$1"; open_re="$$2"; n="$$3"; want="$$4"; label="$$5"; fmtname="$$6"; testfile="$$7"; \
+	  count=$$(grep -cE "$$open_re" "$$f"); \
+	  if [ "$$count" -ne 1 ]; then \
+	    echo "ERROR: $$label's opening LOG_E(...) line in $$f is expected exactly"; \
+	    echo "       once (anchored full-line match) but occurs $$count time(s)."; \
+	    echo "       A duplicate (or missing) opening line means the positional"; \
+	    echo "       block check below cannot trust where $$fmtname starts."; \
+	    return 1; \
+	  fi; \
+	  start=$$(grep -nE "$$open_re" "$$f" | head -1 | cut -d: -f1); \
+	  got=$$(sed -n "$${start},$$((start + n - 1))p" "$$f" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$$//'); \
+	  got=$$(printf '%s' "$$got" | tr '\n' '\001'); \
+	  wantnorm=$$(printf '%s' "$$want" | tr '\n' '\001'); \
+	  if [ "$$got" != "$$wantnorm" ]; then \
+	    echo "ERROR: $$label in $$f no longer matches $$fmtname in $$testfile exactly"; \
+	    echo "       (this compares the whole $$n-line block by position, not a"; \
+	    echo "       per-line or substring match -- an insert, delete, duplicate,"; \
+	    echo "       or edit of any one literal line trips it). Update the copy"; \
+	    echo "       and re-derive its length against LOG_BUDGET."; \
+	    return 1; \
+	  fi; \
+	}; \
+	want1=$$(printf '%s\n%s' \
+	  'LOG_E("Clock mismatch (#716): PBCLK3 %u Hz, built for %u Hz - "' \
+	  '"reprogram via PICkit/IPE, not a firmware update.",'); \
+	check_log_block $(LOGCEIL_SRC1) \
+	  '^[[:space:]]*LOG_E\("Clock mismatch \(#716\): PBCLK3 %u Hz, built for %u Hz - "[[:space:]]*$$' \
+	  2 "$$want1" "the #716 clock-mismatch LOG_E" MSG1_FORMAT test_1039_log_message_ceiling.c \
+	  || exit 1; \
+	want2=$$(printf '%s\n%s\n%s' \
+	  'LOG_E("CONFigure:ADC:CHANnel: channel %d not addressable; "' \
+	  '"two-arg form is <channel>,<state>, one-arg form is a "' \
+	  '"<mask>.",'); \
+	check_log_block $(LOGCEIL_SRC2) \
+	  '^[[:space:]]*LOG_E\("CONFigure:ADC:CHANnel: channel %d not addressable; "[[:space:]]*$$' \
+	  3 "$$want2" "the not-addressable-channel LOG_E" MSG2_FORMAT test_1039_log_message_ceiling.c \
+	  || exit 1
+	@grep -qF 'LOG_E("WiFi down and an SD card IS present on the shared bus - likely bus-incompatible; remove it (wiki: SD-Card-Compatibility)");' $(LOGCEIL_SRC3) \
+	  || { echo "ERROR: the SD-present LOG_E hint in $(LOGCEIL_SRC3) no longer matches"; \
+	       echo "       MSG3_TEXT in test_1039_log_message_ceiling.c. Update the copy and"; \
+	       echo "       re-derive its length against LOG_BUDGET."; \
+	       exit 1; }
+	@grep -qF 'LOG_E("WiFi down but SPI4 probes read CLEAR - remove any SD card; transfer-speed interference is not probe-visible");' $(LOGCEIL_SRC3) \
+	  || { echo "ERROR: the SPI4-clear LOG_E hint in $(LOGCEIL_SRC3) no longer matches"; \
+	       echo "       MSG4_TEXT in test_1039_log_message_ceiling.c. Update the copy and"; \
+	       echo "       re-derive its length against LOG_BUDGET."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(LOGCEIL_BIN) test_1039_log_message_ceiling.c
 # #1125: gLogOneShot's bit claim (LOG_x_ONCE, ISR-callable) must be an atomic
 # test-and-set, not a bare `|=` -- a preemption between an unguarded |='s load
 # and store lets another context (task, or a higher-priority ISR) win its own
@@ -1483,8 +1819,23 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 # the same way as every earlier collision: keep each side's target rule INTACT
 # and union only `run` and `clean`. #971's suite (run_971_tests, PR #976) is
 # still landing independently on another branch; when it meets this, same rule.
+#
+# Every suite, and every one of the SEVENTEEN binaries: the sixteen above plus
+# #1039's $(LOGCEIL_BIN) (PR #1116, the host guard for the four LOG_E messages
+# shortened under Logger's 125-byte ceiling). TENTH additive collision in this
+# block -- #1039/#1116 collided here with fw#998, fw#1112 and fw#1121, all
+# three already on main by the time this branch refreshed its base -- resolved
+# the same way as every earlier collision: keep each side's target rule INTACT
+# and union only `run` and `clean`.
+#
+# Every suite, and every one of the EIGHTEEN binaries: the seventeen above plus
+# #1098's $(REPLYBUF_BIN) (the Take/Give pairing of the four SCPI reply
+# callbacks moved off the stack onto the shared response buffer). ELEVENTH
+# additive collision in this block -- resolved the same way as every earlier
+# one: keep each side's target rule INTACT and union only `run` and `clean`.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(LOGONCE_BIN)
+     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
+     $(REPLYBUF_BIN) $(LOGONCE_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1498,14 +1849,16 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(SDLOG_BIN)
 	./$(SCPI999_BIN)
 	./$(SUSPENDREASON_BIN)
+	./$(LOGCEIL_BIN)
 	./$(SCAN1112_BIN)
 	./$(STARTARM_BIN)
 	./$(START_BIN)
+	./$(REPLYBUF_BIN)
 	./$(LOGONCE_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(GEN_1000) \
-	      $(LOGONCE_BIN) $(GEN_1125)
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
+	      $(REPLYBUF_BIN) $(LOGONCE_BIN) $(GEN_1125)
 
 .PHONY: run clean

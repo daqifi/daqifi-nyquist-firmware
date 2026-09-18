@@ -2,6 +2,7 @@
 #define LOG_MODULE LOG_MODULE_SCPI
 
 #include "SCPIInterface.h"
+#include "ScpiBoundedWrite.h"  /* #1098: pure bounded-write decision, host-tested */
 #include "semphr.h"  // #347: mutex for SysInfoGet static buffer
 
 
@@ -1419,6 +1420,94 @@ static scpi_result_t SCPI_SysLogClear(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #1098: total budget the SYST:LOG:LEVel* dump loops may spend INSIDE their
+ * hold of the shared SCPI response buffer. Same value and same two-guard
+ * algebra as SCPI_SYSINFO_WRITE_BUDGET_MS (#947) and SCPI_HELP_WRITE_BUDGET_MS
+ * (#1004). */
+#define SCPI_LOGLEVEL_WRITE_BUDGET_MS   2000U
+
+/* #1098: one bounded transport write for the SYST:LOG:LEVel* dump replies.
+ *
+ * WHY THIS EXISTS. Moving these callbacks off their stack buffers onto the
+ * shared response buffer (#347) is what #1098 is for, but it also puts their
+ * writes INSIDE a hold of gScpiRespMutex that the stack-local versions never
+ * took. The two dump callbacks emit one line per module, so against a host that
+ * has stopped reading, each of LOG_MODULE_COUNT writes can spend
+ * SCPI_WRITE_MAX_RETRIES(200) x SCPI_WRITE_RETRY_DELAY_MS(5) ~= 1 s inside
+ * SCPI_WriteWithRetry -- ~10 s of held mutex, with every other SCPI callback on
+ * BOTH transports queued behind it (they wait portMAX_DELAY). That would be a
+ * regression INTRODUCED by the fix, so the fix carries its bound with it rather
+ * than leaving it for a follow-up.
+ *
+ * TWO guards, because neither alone bounds the hold -- the same algebra as #947
+ * and #1004:
+ *   (1) short write -> latch. SCPI_WriteWithRetry has no resend path, so a
+ *       short write means those bytes are already dropped and the remaining
+ *       budget buys nothing.
+ *   (2) cumulative deadline, checked BEFORE each write. Guard (1) never fires
+ *       for a transport draining at exactly the trickle rate that lets every
+ *       write finish just inside its own ~1 s budget, so guard (1) alone still
+ *       reaches ~10 s. One startTick sampled after the take bounds the hold at
+ *       BUDGET + one write budget (~3 s) regardless of drain pattern.
+ *
+ * Shape follows ScpiHelpWrite (#1004) rather than SysInfoText_Write (#947):
+ * the gating lives INSIDE the helper and latches through `ok`, so the call
+ * sites need no early return and no goto and cannot skip the single
+ * SCPI_ResponseBuf_Give() on the way out. Per #1004 this is deliberately a
+ * per-site helper rather than one shared generic one.
+ *
+ * Deliberately does NOT push a SCPI error itself: SCPI_ErrorPush emits through
+ * the same retry-bounded transport (SCPI_ErrorEmit), which would add another
+ * ~1 s to the very hold this exists to shrink. The callers return SCPI_RES_ERR
+ * after their Give and libscpi pushes SCPI_ERROR_EXECUTION_ERROR once the
+ * callback has returned -- i.e. outside the hold.
+ *
+ * SCPI_SysLogLevelSet does NOT use this: it emits a single line, so its hold is
+ * one write budget (~1 s), the same as every other single-write shared-buffer
+ * site (SCPI_SysInfoGet). The guards exist for the LOOPS.
+ *
+ * @param context   libscpi context (supplies the transport write fn)
+ * @param ok        in/out latch; false on entry short-circuits the write, and
+ *                  is cleared here on the first incomplete or over-budget write
+ * @param startTick tick sampled once by the caller right after the take
+ * @param data      bytes to write
+ * @param len       number of bytes
+ */
+static void SysLogLevelWrite(scpi_t * context, bool * ok, TickType_t startTick,
+                             const char * data, size_t len) {
+    /* #1098: the DECISION lives in ScpiBoundedWrite.h, which is pure and
+     * dependency-free, so tests/host compiles and calls THE REAL predicates
+     * instead of a parallel copy of them. That is not a style preference: with
+     * the deadline and the latch inline here, deleting the deadline check was
+     * measured to leave the ENTIRE host suite green, because the Makefile guard
+     * only proved the call sites NAME this helper and the test only proved its
+     * own re-implementation was self-consistent.
+     *
+     * What stays here is what a host cannot run: the transport write, the log
+     * wording, and this site's budget constant. */
+    switch (ScpiBoundedWrite_Decide(*ok, (uint32_t)xTaskGetTickCount(),
+                                    (uint32_t)startTick,
+                                    (uint32_t)pdMS_TO_TICKS(
+                                            SCPI_LOGLEVEL_WRITE_BUDGET_MS))) {
+        case SCPI_BOUNDED_WRITE_SKIP:
+            return;
+        case SCPI_BOUNDED_WRITE_EXPIRED:
+            *ok = false;
+            LOG_E("LOG:LEV: write budget %u ms exhausted - reply truncated",
+                  (unsigned)SCPI_LOGLEVEL_WRITE_BUDGET_MS);
+            return;
+        case SCPI_BOUNDED_WRITE_PROCEED:
+        default:
+            break;
+    }
+    size_t written = context->interface->write(context, data, len);
+    if (ScpiBoundedWrite_IsShort(written, len)) {
+        *ok = false;
+        LOG_E("LOG:LEV: transport dropped %u of %u bytes - reply truncated",
+              (unsigned)(len - written), (unsigned)len);
+    }
+}
+
 /**
  * Sets the runtime log level for a module.
  * Usage: SYST:LOG:LEVel <module_name>,<level>
@@ -1453,12 +1542,45 @@ static scpi_result_t SCPI_SysLogLevelSet(scpi_t * context) {
     Logger_SetLevel(module, (uint8_t)level);
     uint8_t actual = Logger_GetLevel(module);
 
-    char buf[80];
-    int len = snprintf(buf, sizeof(buf), "%s: %d (ceiling %d)\r\n",
+    /* #1098: format the confirmation into the shared SCPI response scratch
+     * buffer (#347) instead of a stack-local char[80]. Storage location only
+     * -- the same bytes go out, in the same order, with the same return value.
+     * The longest line this can produce is "GENERAL: 3 (ceiling 3)\r\n" (24 B),
+     * which fits both the old 80 B array and SCPI_RESPONSE_BUF_SIZE without
+     * truncation, so the clamp below never fires today; it is kept because the
+     * old code had it and it is the correct discipline either way.
+     *
+     * Take/Give contract (SCPIInterface.h): a non-NULL Take MUST be matched by
+     * exactly one Give on every exit path; a NULL Take by none. The take is
+     * deliberately here, after the Logger_SetLevel above, rather than at entry
+     * -- everything before it is parameter validation that needs no buffer, and
+     * #947 is about shrinking what happens inside the hold, not widening it.
+     *
+     * Consequence of that placement: on a NULL take the level HAS already been
+     * set but we return SCPI_RES_ERR, where the old code always returned OK.
+     * That is the right way round -- the setter's job is done, and the error
+     * reports only that we could not echo it. Take returns NULL solely when
+     * gScpiRespMutex does not exist, i.e. before CreateSCPIContext has run,
+     * which no SCPI callback can observe (SCPIInterface.h:145-148). */
+    char* buf = (char*)SCPI_ResponseBuf_Take();
+    if (buf == NULL) {
+        /* #1098: report, don't just return. Project rule (CLAUDE.md): every
+         * error goes through the log, and the client learns it via SYST:LOG?
+         * plus the SCPI error queue. Safe to push here precisely BECAUSE the
+         * take failed -- nothing is held, so SCPI_ErrorPush's own transport
+         * write cannot extend a hold (contrast SysLogLevelWrite above). */
+        LOG_E("LOG:LEV set: response buffer unavailable");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+    int len = snprintf(buf, SCPI_RESPONSE_BUF_SIZE, "%s: %d (ceiling %d)\r\n",
                        Logger_GetModuleName(module), actual, ceiling);
     if (len > 0) {
-        context->interface->write(context, buf, ((size_t)len < sizeof(buf) - 1) ? (size_t)len : sizeof(buf) - 1);
+        context->interface->write(context, buf,
+                ((size_t)len < SCPI_RESPONSE_BUF_SIZE - 1)
+                        ? (size_t)len : SCPI_RESPONSE_BUF_SIZE - 1);
     }
+    SCPI_ResponseBuf_Give();
 
     return SCPI_RES_OK;
 }
@@ -1480,16 +1602,60 @@ static scpi_result_t SCPI_SysLogLevelGet(scpi_t * context) {
         }
         SCPI_ResultInt32(context, Logger_GetLevel(module));
     } else {
-        /* No parameter — dump all modules */
-        char buf[48];
+        /* No parameter — dump all modules.
+         *
+         * #1098: one take BEFORE the loop, the same shared buffer reused for
+         * every line, one give AFTER it -- the SCPI_SysInfoTextGet shape, not a
+         * take/give per iteration. Per-iteration pairing would block on the
+         * mutex LOG_MODULE_COUNT times for one query and would let a peer
+         * callback interleave its own reply between our lines; the single hold
+         * is both cheaper and the only one that keeps the dump contiguous.
+         * ("Give, then write" is not a third option -- SCPI_WriteWithRetry
+         * re-reads its data across retries, so a peer could overwrite the
+         * shared buffer mid-write; see the REJECTED note on SysInfoText_Write.)
+         *
+         * COST, stated plainly: this hold now spans LOG_MODULE_COUNT (10)
+         * writes where the old stack buffer held no shared lock at all. Against
+         * a host that has stopped reading, each interface->write can spend
+         * SCPI_WRITE_MAX_RETRIES(200) x SCPI_WRITE_RETRY_DELAY_MS(5) ~= 1 s, so
+         * the worst-case hold is ~10 s. That is the inherent trade #347's
+         * shared buffer makes and every one of its ~17 call sites pays; it is
+         * an order of magnitude under the ~90 writes that made the same shape
+         * worth guarding in SCPI_SysInfoTextGet (#947), and #947 deliberately
+         * did not retrofit its short-write/deadline guards to the other sites.
+         * If that bound is ever tightened it should be tightened for all of
+         * them at once, not for this one callback. */
+        char* buf = (char*)SCPI_ResponseBuf_Take();
+        if (buf == NULL) {
+            /* #1098: see SCPI_SysLogLevelSet -- nothing held, so pushing the
+             * error here cannot extend a hold. */
+            LOG_E("LOG:LEV?: response buffer unavailable");
+            SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+            return SCPI_RES_ERR;
+        }
+        /* #1098: sampled AFTER the take, so the budget bounds the HOLD only --
+         * the unbounded (portMAX_DELAY) wait for the buffer is somebody else's
+         * hold and spends none of it. Same placement and reason as #947. */
+        TickType_t startTick = xTaskGetTickCount();
+        bool ok = true;
         for (int i = 0; i < LOG_MODULE_COUNT; i++) {
-            int len = snprintf(buf, sizeof(buf), "%s: %d (ceiling %d)\r\n",
+            int len = snprintf(buf, SCPI_RESPONSE_BUF_SIZE,
+                               "%s: %d (ceiling %d)\r\n",
                                Logger_GetModuleName((LogModule_t)i),
                                Logger_GetLevel((LogModule_t)i),
                                Logger_GetCeiling((LogModule_t)i));
             if (len > 0) {
-                context->interface->write(context, buf, ((size_t)len < sizeof(buf) - 1) ? (size_t)len : sizeof(buf) - 1);
+                SysLogLevelWrite(context, &ok, startTick, buf,
+                        ((size_t)len < SCPI_RESPONSE_BUF_SIZE - 1)
+                                ? (size_t)len : SCPI_RESPONSE_BUF_SIZE - 1);
             }
+        }
+        SCPI_ResponseBuf_Give();
+        if (!ok) {
+            /* Give FIRST, then report: libscpi pushes
+             * SCPI_ERROR_EXECUTION_ERROR for a SCPI_RES_ERR return after the
+             * callback returns, i.e. outside the hold. */
+            return SCPI_RES_ERR;
         }
     }
     return SCPI_RES_OK;
@@ -1513,17 +1679,36 @@ static scpi_result_t SCPI_SysLogLevelAllSet(scpi_t * context) {
 
     Logger_SetAllLevels((uint8_t)level);
 
-    /* Echo result showing actual levels (may differ due to ceilings) */
-    char buf[48];
+    /* Echo result showing actual levels (may differ due to ceilings).
+     *
+     * #1098: the SCPI_SysLogLevelGet dump shape exactly -- one take before the
+     * loop, the shared buffer reused per line, one give after. Same reasoning
+     * and the same ~10-write hold cost; see the comment there. As in
+     * SCPI_SysLogLevelSet, a NULL take returns SCPI_RES_ERR after the levels
+     * have already been applied -- the set succeeded, only the echo failed. */
+    char* buf = (char*)SCPI_ResponseBuf_Take();
+    if (buf == NULL) {
+        /* #1098: see SCPI_SysLogLevelSet -- nothing held, so pushing the error
+         * here cannot extend a hold. */
+        LOG_E("LOG:LEV:ALL: response buffer unavailable");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+    /* #1098: sampled AFTER the take -- see SCPI_SysLogLevelGet. */
+    TickType_t startTick = xTaskGetTickCount();
+    bool ok = true;
     for (int i = 0; i < LOG_MODULE_COUNT; i++) {
-        int len = snprintf(buf, sizeof(buf), "%s: %d\r\n",
+        int len = snprintf(buf, SCPI_RESPONSE_BUF_SIZE, "%s: %d\r\n",
                            Logger_GetModuleName((LogModule_t)i),
                            Logger_GetLevel((LogModule_t)i));
         if (len > 0) {
-            context->interface->write(context, buf, ((size_t)len < sizeof(buf) - 1) ? (size_t)len : sizeof(buf) - 1);
+            SysLogLevelWrite(context, &ok, startTick, buf,
+                    ((size_t)len < SCPI_RESPONSE_BUF_SIZE - 1)
+                            ? (size_t)len : SCPI_RESPONSE_BUF_SIZE - 1);
         }
     }
-    return SCPI_RES_OK;
+    SCPI_ResponseBuf_Give();
+    return ok ? SCPI_RES_OK : SCPI_RES_ERR;
 }
 
 /**

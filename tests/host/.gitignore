@@ -12,9 +12,11 @@ run_1004_tests
 run_1000_tests
 run_985_tests
 run_1057_tests
+run_1039_log_ceiling_tests
 run_1112_tests
 run_1121_tests
 run_998_tests
+run_1098_tests
 run_1125_tests
 CircularBuffer_uut.c
 gen_1000_log_budget.h
