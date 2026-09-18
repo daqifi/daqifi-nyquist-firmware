@@ -295,6 +295,35 @@ GEN_1000  := gen_1000_log_budget.h
 FW_LOG_H  := $(FW_UTIL)/Logger.h
 FW_LOG_C  := $(FW_UTIL)/Logger.c
 
+# #1039 (PR #1116, split from the parked #1110): the four LOG_E messages
+# #1039 shortened, measured against the SAME ceiling $(SDLOG_BIN) measures --
+# Logger's real truncation, not an arithmetic estimate of it. Deliberately
+# independent of PR #1110's parked tests/host/gen_1039_log_budget.py /
+# tools/lint/log_budget.py (13 confirmed defects across two audit rounds per
+# PR #1116's own description, while the four message edits themselves drew
+# zero findings in either round -- which is why #1116 exists as the
+# split-out PR). So unlike $(SDLOG_BIN) above, this target extracts NOTHING
+# at build time and generates no header: it hardcodes copies of the four
+# shipped format strings (and, as a frozen historical control proving the
+# harness has teeth, the four pre-#1039 originals) and reproduces
+# LogMessageFormatImpl's truncation against them directly -- the same
+# technique $(SDLOG_BIN) uses for its own strings, just without the
+# extraction step, which is proportionate to a 62-line message change.
+#
+# What COULD silently drift is therefore the four hardcoded copies, not a
+# generated ceiling -- so the recipe greps each shipped format string's
+# literal source lines back out of the three files #1039 touched and fails
+# the build if any no longer matches exactly, the same technique
+# $(SDLOG_BIN)'s own REASON_* guard above uses for SD_SuspendReasonText()'s
+# three return strings. The three Logger.h/.c ceiling lines get the same
+# plain grep treatment (restated here rather than shared with $(SDLOG_BIN)'s
+# sed extraction, since nothing downstream needs the numbers as a generated
+# header).
+LOGCEIL_BIN  := run_1039_log_ceiling_tests
+LOGCEIL_SRC1 := ../../firmware/src/app_freertos.c
+LOGCEIL_SRC2 := ../../firmware/src/services/SCPI/SCPIADC.c
+LOGCEIL_SRC3 := ../../firmware/src/services/wifi_services/wifi_manager.c
+
 # Every binary depends on this file as well as on its sources. Two of the
 # targets below carry GUARDS in their recipes -- greps that fail the build when
 # the firmware text they model has moved -- and a guard that is only re-run when
@@ -1222,6 +1251,90 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 	 printf '#endif\n' >> $(GEN_1000)
 	$(CC) $(CFLAGS) -o $(SDLOG_BIN) test_1000_sd_log_arm_budget.c
 
+# #1039: see the LOGCEIL_BIN comment block above for what this proves and
+# why it is deliberately independent of the parked #1110 tooling.
+$(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
+                $(LOGCEIL_SRC1) $(LOGCEIL_SRC2) $(LOGCEIL_SRC3) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+LOG_MESSAGE_SIZE[[:space:]]+128[[:space:]]*$$' $(FW_LOG_H) \
+	  || { echo "ERROR: LOG_MESSAGE_SIZE is no longer '128' in $(FW_LOG_H)."; \
+	       echo "       Update FW_LOG_MESSAGE_SIZE in test_1039_log_message_ceiling.c and"; \
+	       echo "       re-derive LOG_BUDGET (and every asserted margin) before trusting it."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*size = vsnprintf\(buffer, LOG_MESSAGE_SIZE - 2, format, args\);[[:space:]]*$$' $(FW_LOG_C) \
+	  || { echo "ERROR: LogMessageFormatImpl's vsnprintf reserve is no longer"; \
+	       echo "       'LOG_MESSAGE_SIZE - 2' in $(FW_LOG_C). Update"; \
+	       echo "       FW_LOG_VSNPRINTF_RESERVE in test_1039_log_message_ceiling.c and"; \
+	       echo "       re-derive LOG_BUDGET before trusting it."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*size = min\(\(LOG_MESSAGE_SIZE - 3\), size\);[[:space:]]*$$' $(FW_LOG_C) \
+	  || { echo "ERROR: LogMessageFormatImpl's clamp reserve is no longer"; \
+	       echo "       'LOG_MESSAGE_SIZE - 3' in $(FW_LOG_C) -- this is the reserve that"; \
+	       echo "       actually sets what survives. Update FW_LOG_CLAMP_RESERVE in"; \
+	       echo "       test_1039_log_message_ceiling.c and re-derive LOG_BUDGET (and every"; \
+	       echo "       asserted margin) before trusting it."; \
+	       exit 1; }
+# MSG1/MSG2's guards used to be two independent anchored grep pipelines
+# (opening->middle, middle->mask) not tied to the same line position --
+# audit wf_8f9d065d-2ef (CONFIRMED, medium) found that duplicating MSG2's
+# middle literal line immediately before its "<mask>." line passes both
+# pipelines (the duplicate itself satisfies the middle->mask pipeline)
+# while the shipped string grows past the 125-byte budget. check_log_block
+# below replaces both with ONE positional exact-block check per message:
+# the opening LOG_E(...) line must occur exactly once in the file, then
+# the N consecutive lines starting there (N = that message's literal line
+# count) are compared to the expected block as a single whole-block string
+# equality -- not a per-line or substring containment match, so an insert,
+# delete, duplicate, or edit of any one line inside the block fails it.
+	@check_log_block() { \
+	  f="$$1"; open_re="$$2"; n="$$3"; want="$$4"; label="$$5"; fmtname="$$6"; testfile="$$7"; \
+	  count=$$(grep -cE "$$open_re" "$$f"); \
+	  if [ "$$count" -ne 1 ]; then \
+	    echo "ERROR: $$label's opening LOG_E(...) line in $$f is expected exactly"; \
+	    echo "       once (anchored full-line match) but occurs $$count time(s)."; \
+	    echo "       A duplicate (or missing) opening line means the positional"; \
+	    echo "       block check below cannot trust where $$fmtname starts."; \
+	    return 1; \
+	  fi; \
+	  start=$$(grep -nE "$$open_re" "$$f" | head -1 | cut -d: -f1); \
+	  got=$$(sed -n "$${start},$$((start + n - 1))p" "$$f" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$$//'); \
+	  got=$$(printf '%s' "$$got" | tr '\n' '\001'); \
+	  wantnorm=$$(printf '%s' "$$want" | tr '\n' '\001'); \
+	  if [ "$$got" != "$$wantnorm" ]; then \
+	    echo "ERROR: $$label in $$f no longer matches $$fmtname in $$testfile exactly"; \
+	    echo "       (this compares the whole $$n-line block by position, not a"; \
+	    echo "       per-line or substring match -- an insert, delete, duplicate,"; \
+	    echo "       or edit of any one literal line trips it). Update the copy"; \
+	    echo "       and re-derive its length against LOG_BUDGET."; \
+	    return 1; \
+	  fi; \
+	}; \
+	want1=$$(printf '%s\n%s' \
+	  'LOG_E("Clock mismatch (#716): PBCLK3 %u Hz, built for %u Hz - "' \
+	  '"reprogram via PICkit/IPE, not a firmware update.",'); \
+	check_log_block $(LOGCEIL_SRC1) \
+	  '^[[:space:]]*LOG_E\("Clock mismatch \(#716\): PBCLK3 %u Hz, built for %u Hz - "[[:space:]]*$$' \
+	  2 "$$want1" "the #716 clock-mismatch LOG_E" MSG1_FORMAT test_1039_log_message_ceiling.c \
+	  || exit 1; \
+	want2=$$(printf '%s\n%s\n%s' \
+	  'LOG_E("CONFigure:ADC:CHANnel: channel %d not addressable; "' \
+	  '"two-arg form is <channel>,<state>, one-arg form is a "' \
+	  '"<mask>.",'); \
+	check_log_block $(LOGCEIL_SRC2) \
+	  '^[[:space:]]*LOG_E\("CONFigure:ADC:CHANnel: channel %d not addressable; "[[:space:]]*$$' \
+	  3 "$$want2" "the not-addressable-channel LOG_E" MSG2_FORMAT test_1039_log_message_ceiling.c \
+	  || exit 1
+	@grep -qF 'LOG_E("WiFi down and an SD card IS present on the shared bus - likely bus-incompatible; remove it (wiki: SD-Card-Compatibility)");' $(LOGCEIL_SRC3) \
+	  || { echo "ERROR: the SD-present LOG_E hint in $(LOGCEIL_SRC3) no longer matches"; \
+	       echo "       MSG3_TEXT in test_1039_log_message_ceiling.c. Update the copy and"; \
+	       echo "       re-derive its length against LOG_BUDGET."; \
+	       exit 1; }
+	@grep -qF 'LOG_E("WiFi down but SPI4 probes read CLEAR - remove any SD card; transfer-speed interference is not probe-visible");' $(LOGCEIL_SRC3) \
+	  || { echo "ERROR: the SPI4-clear LOG_E hint in $(LOGCEIL_SRC3) no longer matches"; \
+	       echo "       MSG4_TEXT in test_1039_log_message_ceiling.c. Update the copy and"; \
+	       echo "       re-derive its length against LOG_BUDGET."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(LOGCEIL_BIN) test_1039_log_message_ceiling.c
+
 # #985: build-time guard over SD_SuspendReasonText() -- see the merge-history
 # comment above `run:` below for how this target's registration in run/clean
 # was resolved.
@@ -1448,8 +1561,16 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 # the same way as every earlier collision: keep each side's target rule INTACT
 # and union only `run` and `clean`. #971's suite (run_971_tests, PR #976) is
 # still landing independently on another branch; when it meets this, same rule.
+#
+# Every suite, and every one of the SEVENTEEN binaries: the sixteen above plus
+# #1039's $(LOGCEIL_BIN) (PR #1116, the host guard for the four LOG_E messages
+# shortened under Logger's 125-byte ceiling). TENTH additive collision in this
+# block -- #1039/#1116 collided here with fw#998, fw#1112 and fw#1121, all
+# three already on main by the time this branch refreshed its base -- resolved
+# the same way as every earlier collision: keep each side's target rule INTACT
+# and union only `run` and `clean`.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
+     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
      $(SCPIDAC_RAILGATE_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
@@ -1464,6 +1585,7 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(SDLOG_BIN)
 	./$(SCPI999_BIN)
 	./$(SUSPENDREASON_BIN)
+	./$(LOGCEIL_BIN)
 	./$(SCAN1112_BIN)
 	./$(STARTARM_BIN)
 	./$(START_BIN)
@@ -1471,7 +1593,7 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(GEN_1000) \
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
 	      $(SCPIDAC_RAILGATE_BIN)
 
 .PHONY: run clean
