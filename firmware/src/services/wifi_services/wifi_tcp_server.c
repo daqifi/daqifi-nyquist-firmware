@@ -306,6 +306,11 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
     }
 
     if (command != NULL && commandLen > 0) {
+        // #914: drain any deferred SD-task failure into THIS context before
+        // dispatching the next command -- must run before SCPI_Input (see
+        // SCPI_DrainDeferredSdError's own comment for why the ordering
+        // matters).
+        SCPI_DrainDeferredSdError(&client->scpiContext);
         return SCPI_Input(&client->scpiContext, command, commandLen);
     }
 
