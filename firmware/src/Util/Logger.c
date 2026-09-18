@@ -50,8 +50,10 @@
  * tasks. Single-byte reads/writes are atomic on PIC32MZ.
  */
 /* One-shot suppression bitmask for LOG_x_ONCE macros.
- * Written by ISR and task contexts (|= to set bits), cleared atomically
- * by Logger_ResetOneShots() (single 32-bit write). */
+ * Claimed by ISR and task contexts via Logger_OneShotClaim() (#1125), an
+ * atomic test-and-set under the context-appropriate critical section --
+ * NOT a bare |=, which a preemption between load and store can tear.
+ * Cleared atomically by Logger_ResetOneShots() (single 32-bit write). */
 volatile uint32_t gLogOneShot = 0;
 volatile uint32_t gSessionOneShot = 0;
 
@@ -179,6 +181,73 @@ static volatile uint32_t gIsrLogDropped = 0;
 
 uint32_t Logger_GetIsrDropCount(void) {
     return gIsrLogDropped;  /* 32-bit read is atomic on PIC32MZ */
+}
+
+bool Logger_OneShotClaim(uint32_t bit) {
+    if (bit >= 32u) {
+        return false;
+    }
+    const uint32_t mask = 1u << bit;
+    bool won = false;
+
+    /* The whole test-and-set under one critical section, and nothing else in
+     * it -- mirrors Logger_SessionOneShotClaim's reasoning (#1028) for
+     * gSessionOneShot: a preemption between the load and the store of a bare
+     * `|=` lets another context claim its own bit, and the resumed store then
+     * writes back the pre-preemption snapshot and ERASES that bit, re-arming
+     * that one-shot for a second fire (NOT losing the message that already
+     * printed for the bit that won the race -- LogMessage below always runs
+     * for whichever context's test observed the bit clear; what a torn RMW
+     * loses is the SUPPRESSION state, defeating the "at most once" contract
+     * LOG_x_ONCE exists to keep, which for its documented ISR flood-guard use
+     * (an interrupt storm re-arming its own one-shot every time) reopens
+     * exactly the flooding this macro exists to prevent).
+     *
+     * UNLIKE gSessionOneShot (task-context only), LOG_x_ONCE is documented as
+     * ISR-callable, so this cannot use a single taskENTER_CRITICAL: the
+     * PIC32MZ port's vTaskEnterCritical calls portASSERT_IF_IN_ISR(), i.e.
+     * configASSERT(uxInterruptNesting == 0) -- NOT __DEBUG-gated, so it fires
+     * in production -- so a caller inside an ISR needs the _FROM_ISR variant
+     * instead. This is BoardData_Set's shape (BoardData.c), not
+     * streaming.c's: streaming.c instead exposes SEPARATE named entry points
+     * (Streaming_AddProfileSample_DmaPending vs its _FromISR twin), chosen by
+     * the CALLER at each site, because its ISR and task callers are distinct
+     * call sites. This function, like BoardData_Set, has ONE entry reached
+     * from both -- LOG_E_ONCE/LOG_I_ONCE/LOG_D_ONCE are genuinely called from
+     * both today (AdcThreshold_IsrTrip: true ISR context; the WiFi serial
+     * bridge: task context) -- so runtime dispatch is what keeps them a
+     * single macro family, matching how they already pick LogMessage(fmt) vs
+     * LogMessage(fmt, ...) on the same uxInterruptNesting test rather than
+     * needing a LOG_x_ONCE_FROM_ISR sibling at every one of their ~13
+     * call sites (the thing "No separate ISR macros needed" above means).
+     *
+     * Safe at boot: uxInterruptNesting starts at 1 pre-scheduler (port.c),
+     * so a pre-scheduler LOG_x_ONCE takes the ISR branch, which is pure CP0
+     * Status manipulation with no scheduler state to be wrong yet.
+     *
+     * Residual, not a defect: uxPortSetInterruptMaskFromISR (what
+     * taskENTER_CRITICAL_FROM_ISR calls) must not be invoked from an
+     * interrupt ABOVE configMAX_SYSCALL_INTERRUPT_PRIORITY (4) -- it would
+     * LOWER the IPL to 4 and open a preemption window instead of raising it.
+     * Every current LOG_x_ONCE ISR call site is at or below that (e.g. the
+     * ADC DC vectors, priority 3), but this function now carries that
+     * constraint for any future one. */
+    if (LogIsInISR()) {
+        UBaseType_t saved = taskENTER_CRITICAL_FROM_ISR();
+        if ((gLogOneShot & mask) == 0u) {
+            gLogOneShot |= mask;
+            won = true;
+        }
+        taskEXIT_CRITICAL_FROM_ISR(saved);
+    } else {
+        taskENTER_CRITICAL();
+        if ((gLogOneShot & mask) == 0u) {
+            gLogOneShot |= mask;
+            won = true;
+        }
+        taskEXIT_CRITICAL();
+    }
+    return won;
 }
 
 

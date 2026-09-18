@@ -1512,6 +1512,86 @@ $(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
 	       echo "       re-derive its length against LOG_BUDGET."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(LOGCEIL_BIN) test_1039_log_message_ceiling.c
+# #1125: gLogOneShot's bit claim (LOG_x_ONCE, ISR-callable) must be an atomic
+# test-and-set, not a bare `|=` -- a preemption between an unguarded |='s load
+# and store lets another context (task, or a higher-priority ISR) win its own
+# bit, and the resumed store writes back the stale snapshot and ERASES it,
+# re-arming that call site for a second fire and defeating the "at most once"
+# contract the ISR flood-guard use depends on. Logger.c is not includable on
+# the host as a whole (xc.h, SYSKEY, PIC32 __builtin_* intrinsics, Harmony's
+# clock_config.h -- same reason $(SDLOG_BIN) above extracts rather than
+# includes), so this extracts Logger_OneShotClaim's body VERBATIM -- the real
+# function, not a re-implementation -- and compiles it against mocked
+# taskENTER_CRITICAL[_FROM_ISR]/taskEXIT_CRITICAL[_FROM_ISR] in
+# test_1125_log_once_claim.c.
+#
+# A single-threaded host test cannot literally interleave two contexts inside
+# one function call, so what the guard below proves is STRUCTURAL rather than
+# behavioural, mirroring tools/lint/scpi_claim_path.py's own "exactly one
+# opener, one closer, test+set positioned between them" reasoning for this
+# identical class of property (a claim granted outside its critical section):
+# exactly one task-context and one ISR-context critical-section pair, and
+# both of the function's test-and-set pairs positioned strictly BETWEEN their
+# matching enter/exit -- refused, not silently passed, on any other count or a
+# torn positional order. That is what rules the race out: a real critical
+# section makes the interleaving unrepresentable, which is a claim about
+# POSITION in the source, not something a host thread can exercise.
+LOGONCE_BIN := run_1125_tests
+GEN_1125    := gen_1125_log_once_claim.h
+
+$(LOGONCE_BIN): test_1125_log_once_claim.c test_framework.h $(FW_LOG_C) $(RECIPES)
+	@body=`sed -n '/^bool Logger_OneShotClaim(uint32_t bit) {/,/^}/p' $(FW_LOG_C) | tr -d '\r'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: Logger_OneShotClaim(uint32_t bit) was not found in $(FW_LOG_C),"; \
+	        echo "       or no longer opens at column 0 with that exact signature -- the"; \
+	        echo "       extraction below can see nothing, and a guard that examines"; \
+	        echo "       nothing must fail rather than pass vacuously."; \
+	        exit 1; }; \
+	 n_enter_task=`printf '%s\n' "$$body" | grep -cF 'taskENTER_CRITICAL();'`; \
+	 n_exit_task=`printf '%s\n' "$$body"  | grep -cF 'taskEXIT_CRITICAL();'`; \
+	 n_enter_isr=`printf '%s\n' "$$body"  | grep -cF 'taskENTER_CRITICAL_FROM_ISR();'`; \
+	 n_exit_isr=`printf '%s\n' "$$body"   | grep -cF 'taskEXIT_CRITICAL_FROM_ISR(saved);'`; \
+	 n_test=`printf '%s\n' "$$body" | grep -cF 'if ((gLogOneShot & mask) == 0u) {'`; \
+	 n_set=`printf '%s\n' "$$body"  | grep -cF 'gLogOneShot |= mask;'`; \
+	 if [ "$$n_enter_task" != "1" ] || [ "$$n_exit_task" != "1" ] || \
+	    [ "$$n_enter_isr" != "1" ] || [ "$$n_exit_isr" != "1" ] || \
+	    [ "$$n_test" != "2" ] || [ "$$n_set" != "2" ]; then \
+	   echo "ERROR: Logger_OneShotClaim's critical-section shape has changed"; \
+	   echo "       (enter_task=$$n_enter_task exit_task=$$n_exit_task"; \
+	   echo "        enter_isr=$$n_enter_isr exit_isr=$$n_exit_isr"; \
+	   echo "        test=$$n_test set=$$n_set -- each wants 1/1/1/1/2/2)."; \
+	   echo "       test_1125_log_once_claim.c's mocks and the positional check"; \
+	   echo "       below assume exactly one task-context and one ISR-context"; \
+	   echo "       critical-section pair, each guarding exactly one test-and-set."; \
+	   exit 1; \
+	 fi; \
+	 enter_isr_ln=`printf '%s\n' "$$body" | grep -nF 'taskENTER_CRITICAL_FROM_ISR();' | cut -d: -f1`; \
+	 exit_isr_ln=`printf '%s\n' "$$body"  | grep -nF 'taskEXIT_CRITICAL_FROM_ISR(saved);' | cut -d: -f1`; \
+	 enter_task_ln=`printf '%s\n' "$$body" | grep -nF 'taskENTER_CRITICAL();' | cut -d: -f1`; \
+	 exit_task_ln=`printf '%s\n' "$$body"  | grep -nF 'taskEXIT_CRITICAL();' | cut -d: -f1`; \
+	 test_lns=`printf '%s\n' "$$body" | grep -nF 'if ((gLogOneShot & mask) == 0u) {' | cut -d: -f1`; \
+	 set_lns=`printf '%s\n' "$$body"  | grep -nF 'gLogOneShot |= mask;' | cut -d: -f1`; \
+	 isr_test_ln=`printf '%s\n' "$$test_lns" | awk -v lo="$$enter_isr_ln" -v hi="$$exit_isr_ln" '$$1>lo && $$1<hi'`; \
+	 isr_set_ln=`printf '%s\n' "$$set_lns"  | awk -v lo="$$enter_isr_ln" -v hi="$$exit_isr_ln" '$$1>lo && $$1<hi'`; \
+	 task_test_ln=`printf '%s\n' "$$test_lns" | awk -v lo="$$enter_task_ln" -v hi="$$exit_task_ln" '$$1>lo && $$1<hi'`; \
+	 task_set_ln=`printf '%s\n' "$$set_lns"  | awk -v lo="$$enter_task_ln" -v hi="$$exit_task_ln" '$$1>lo && $$1<hi'`; \
+	 if [ -z "$$isr_test_ln" ] || [ -z "$$isr_set_ln" ] || \
+	    [ -z "$$task_test_ln" ] || [ -z "$$task_set_ln" ]; then \
+	   echo "ERROR: Logger_OneShotClaim's test-and-set is no longer POSITIONED"; \
+	   echo "       inside its matching critical-section pair (ISR test@[$$isr_test_ln]"; \
+	   echo "       set@[$$isr_set_ln] between $$enter_isr_ln/$$exit_isr_ln; task"; \
+	   echo "       test@[$$task_test_ln] set@[$$task_set_ln] between"; \
+	   echo "       $$enter_task_ln/$$exit_task_ln) -- a claim outside its critical"; \
+	   echo "       section is exactly the race this function exists to close."; \
+	   exit 1; \
+	 fi; \
+	 printf '/* GENERATED at build time by tests/host/Makefile ($(LOGONCE_BIN)).\n' > $(GEN_1125); \
+	 printf ' * Do not edit, do not commit -- see tests/host/.gitignore.\n' >> $(GEN_1125); \
+	 printf ' * Verbatim body of Logger_OneShotClaim() extracted from $(FW_LOG_C). */\n' >> $(GEN_1125); \
+	 printf '#ifndef GEN_1125_LOG_ONCE_CLAIM_H\n#define GEN_1125_LOG_ONCE_CLAIM_H\n' >> $(GEN_1125); \
+	 printf '%s\n' "$$body" >> $(GEN_1125); \
+	 printf '#endif\n' >> $(GEN_1125)
+	$(CC) $(CFLAGS) -o $(LOGONCE_BIN) test_1125_log_once_claim.c
 
 # #985: build-time guard over SD_SuspendReasonText() -- see the merge-history
 # comment above `run:` below for how this target's registration in run/clean
@@ -1755,7 +1835,7 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 # one: keep each side's target rule INTACT and union only `run` and `clean`.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(REPLYBUF_BIN)
+     $(REPLYBUF_BIN) $(LOGONCE_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1774,10 +1854,11 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(STARTARM_BIN)
 	./$(START_BIN)
 	./$(REPLYBUF_BIN)
+	./$(LOGONCE_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-	      $(REPLYBUF_BIN)
+	      $(REPLYBUF_BIN) $(LOGONCE_BIN) $(GEN_1125)
 
 .PHONY: run clean
