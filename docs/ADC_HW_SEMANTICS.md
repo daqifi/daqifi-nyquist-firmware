@@ -57,9 +57,22 @@ Three-point SAMC sweep (1×T1 OBDiag=1 @ 4000 Hz, timer→EOS median):
 list; linear to <0.5%).
 
 - **Structural match with the FRM model is exact**: per-input time =
-  (SAMC+2)·TAD sample + conversion, and the fit's intercept/slope ratio
-  gives **conversion + handoff ≈ 14 TAD** — the documented 13-TAD 12-bit
-  conversion plus ~1 TAD (E confirming V).
+  (SAMC+2)·TAD sample + conversion, and the fit's intercept/slope ratio is
+  *consistent with* **conversion + handoff ≈ 14 TAD** — the documented
+  13-TAD 12-bit conversion plus ~1 TAD.
+  **Corrected #1112 round 3 — this is NOT an independent confirmation (I,
+  not "E confirming V" as an earlier revision of this doc claimed).** This
+  same two-point SAMC sweep does not discriminate a 13-TAD (K=15 step) from
+  a 14-TAD (K=16 step) conversion/handoff constant: solving the two silicon
+  anchors below for the per-scan fixed term `T_fixed` independently at each
+  candidate gives `T_fixed ≈ 0.25 µs` at K=16 and `≈ 2.1 µs` at K=15 — both
+  well outside the `5.4–7.3 µs` window the n=7 anchor demands on its own,
+  i.e. the fit is not precise enough to prefer either candidate. The ≤2%
+  measurement uncertainty in this data (see the reconciliation table below,
+  where even the FRM-literal SAMC+15 prediction already overshoots the
+  SAMC=100 measurement) exceeds the ~0.9%-per-scan-position quantity the
+  disputed TAD represents. See #1117 for the direct per-position measurement
+  that would actually settle this.
 - **Absolute-scale ambiguity: RESOLVED (V, DS60001320H).** The EF *device
   datasheet deviates from the FRM* on the ADC clock bit semantics — its own
   revision history flags it ("The bit value definitions for the ADCSEL<1:0>
@@ -88,7 +101,7 @@ list; linear to <0.5%).
   **Stale firmware comments to fix in Phase 3 (N-class corrections):**
   `MC12bADC.c:376` ("With ADCDIV=1, ADC_clk=50 MHz so one clock = 20 ns" —
   actual TAD7 = 100 ns), the same claim in `SCPIADC.h`'s SAMC doc and
-  CLAUDE.md's SAMC section, and issue #328's body (which decoded boot
+  the SAMC section in `docs/STREAMING_AND_ADC.md`, and issue #328's body (which decoded boot
   shared SAMC as 1; it is 100, SCPI-verified).
 - **SAMC is a major design lever (E)**: at SAMC=10 the scan completes in
   48 µs ⇒ in-spec scan ceiling ≈ **20.7 kHz** (vs ≈4.6 kHz at the current
@@ -226,7 +239,7 @@ All ADC-module errata, swept against our usage:
 | 14 | VDD < 2.5 V: only one ADC core usable | all | None — 3.3 V rail |
 | 15 | **Turbo mode not functional** | all | **Closes the Turbo-mode option for Phase 2** (combining two dedicated cores for 2× rate is dead silicon) |
 | 18 | **Temperature sensor does not function** (workaround: none) | all | **Our monitoring scan includes AN44 (ADC_CHANNEL_TEMP)** — that slot reads a nonfunctional sensor. Follow-up: stop surfacing temp as a valid reading, and drop AN44 from the scan list when dynamic CSS lands (recovers ~11.5 µs of every scan) |
-| 39 | VREF− current when external ref used | all | Known, tracked in CLAUDE.md errata table |
+| 39 | VREF− current when external ref used | all | Known, tracked in the errata table in `docs/MCU_REFERENCE.md` |
 
 **Headline for #539/#541: no erratum touches scan retrigger, EOS, or
 per-input ARDY** — the #539 failure is not a silicon bug; it is the
@@ -268,7 +281,7 @@ for re-deriving timing after any clock or CSS change.
 
 | Quantity | Value | Source |
 |---|---|---|
-| PBCLK3 | 100 MHz (TCLK = 10 ns) | CLAUDE.md clock tree; DS60001320H Reg 28-3: `ADCSEL=00` → PBCLK3 |
+| PBCLK3 | 100 MHz (TCLK = 10 ns) | `docs/MCU_REFERENCE.md` clock tree; DS60001320H Reg 28-3: `ADCSEL=00` → PBCLK3 |
 | `ADCCON3` | `0x04002000` → CONCLKDIV = 4 | `plib_adchs.c:79` (boot; no runtime writes) |
 | `ADCCON2` | `0x00642001` → ADCDIV = 1, SAMC = 100 | `plib_adchs.c:78`; SAMC SCPI-verified at runtime (`CONF:ADC:SAMC:SHARed?` → 100) |
 | CONCLKDIV semantics | TQ = (N+1) × TCLK | DS60001320H Reg 28-3 (**EF deviation** — FRM DS60001344E says 2N; the datasheet revision history flags the change) |
@@ -307,7 +320,13 @@ f_scan_max = 1 / T_scan                  ≈ 4.58 kHz
 
 Residuals (≤2%) are the conversion constant (13 vs ~14 TAD7, i.e. ~1 TAD7
 of scan handoff per input) plus slope-fit noise — all within the documented
-model. **The published values and the silicon agree.**
+model. **The published values and the silicon agree at the ~2% level this
+data can resolve** — that agreement bounds `T_scan` for the scan-busy safety
+cap (`MC12b_ScanMaxFreq`, which is what this section is deriving), but it
+does NOT discriminate the disputed ~1-TAD7 residual itself (13 vs 14 TAD7
+conversion/handoff), since that quantity is smaller than the measurement's
+own uncertainty. **Corrected #1112 round 3**: do not cite this agreement as
+confirming the 14-TAD7 figure specifically — see #1117.
 
 ### Generalized bound for firmware (Phase-2 requirement 3)
 
@@ -403,7 +422,7 @@ runtime** (verified: no ADCCSS writes outside `plib_adchs.c`). Consequences:
    ceiling" lever until that characterization exists. (With dynamic CSS,
    most configs get their headroom from N_active anyway.)
 5. **Comment hygiene** (Phase 3): fix the 50 MHz/20 ns TAD claims listed
-   above; update CLAUDE.md's "ADC Architecture & ISR Design" section
+   above; update the "ADC Architecture & ISR Design" section in `docs/STREAMING_AND_ADC.md`
    (still documents the pre-#292 topology).
 
 ### Phase-3 addendum 2 (E, 2026-06-12) — aggregate ADC-event-rate ceiling (D-C v4)
@@ -535,22 +554,164 @@ this regime.
    edge-to-sample absolute comparison carries both offsets. Ordering and
    timebase are sound; the sub-µs absolute anchor is not established.
 
+### Per-channel intra-scan conversion offset — REPORTED since #267
+
+One packet carries one stamp, but NQ1 Type-2 inputs do not convert at one
+instant: they convert **sequentially** inside the shared MODULE7 scan. That
+skew is deterministic — fixed by the ADCHS configuration and the armed scan
+list, both of which are frozen for the life of a session (mid-stream
+`CONF:ADC:CHANnel`, `CONF:ADC:OBDiag` and `CONF:ADC:SAMC` are all rejected,
+#116) — so it is *derived and reported once*, not measured and not stamped
+per sample.
+
+**Wire shape.** Each analog-input object in `CONFigure:CAPabilities:JSON?`'s
+`channels[]` array carries `"scan_offset_ticks":<uint32>`, in
+**timestamp-timer ticks** — the same domain as `timing.timestamp_hz` in the
+same document (42 MHz / ~23.8 ns per tick on the 252 MHz build), so a client
+divides by one published rate and never touches the ADC clock tree. It sits
+next to `"simultaneous"`, which answers *whether* a channel converts with the
+others; this answers *by how much* it does not. Additive key, no
+`schema_version` bump.
+
+**Scan order (V — DS60001344E §22.3.2 "Input Scan", p.22-64):**
+
+> For Class 2 or Class 3 inputs, the sampling and conversion occur in the
+> natural input order is used; lower number inputs are sampled before higher
+> number inputs.
+
+(sic — the sentence is garbled in the FRM; the rule is not.) §22.3, p.22-63
+states the same for the shared module generally: on completing a conversion
+"the ADC module is used to convert the next in line Class 2 or Class 3 inputs,
+according to the natural order of priority", where "AN7 has a higher priority
+than AN12". Since `MC12b_ComputeScanList` sets CSS bit *n* for AN *n*, the CSS
+bit index **is** the conversion order. The one documented perturbation — an
+individual Class 2 trigger pre-empting a scan (§22.3.2 / Figure 22-8, p.22-64)
+— cannot occur here: `MC12b_ConfigureHardwareTrigger` puts every scanned
+Class 1/2 input's `ADCTRGx` TRGSRC at STRIG, so no input has an independent
+trigger while a session is armed.
+
+**Derivation** (`MC12b_ChannelScanOffsetTicks`, `firmware/src/HAL/ADC/MC12bADC.c`;
+fixed across rounds 1 and 2 of the Qodo /agentic_review adversarial audit on
+PR firmware#1112 — see the `#1112 round-1`/`round-2` findings folded in
+below):
+
+```
+scanPosition = popcount(armed CSS bits strictly below this input's AN bit)
+
+offsetTicks = [scanPosition x (SAMC + 16) + (SAMC + 2)] x TAD7 x timestamp_hz
+```
+(divided once by `pbclkHz` at the very end — see below. This is ONE formula
+for every scanned Type-2 position, scanPosition 0 included — round 1 briefly
+special-cased position 0 to `(SAMC+2) x TAD7` alone and left later positions
+at `scanPosition x (SAMC+16) x TAD7`; round 2 unified them, see below.)
+
+- **Every scanned Type-2 channel carries its own `(SAMC+2) x TAD7`
+  acquisition aperture — not just the first one.** Unlike Type 1/Class 1
+  ("all Class 1 inputs are captured simultaneously and conversions are
+  started simultaneously", §22.3.2), a shared/Class-2-or-3 input's trigger
+  only *starts* its own Sample&Hold acquisition (Figure 22-7: "Trigger causes
+  S&H circuit to begin sampling first input in the scan list ... Once
+  sampling is complete, the conversion begins") — no shared position's value
+  is latched (Hold begins) until its OWN `(SAMC+2) x TAD7` acquisition window
+  elapses (Equation 22-2, "Sample Time for the Shared ADC Module"), on top of
+  whatever full `(SAMC+16) x TAD7` slots (acquisition + ~14 TAD
+  conversion/handoff) the channels ahead of it consumed. **The 14-TAD figure
+  is imported from `MC12b_ScanMaxFreq`'s deliberately conservative scan-busy
+  bound (`MC12bADC.c:660-700`, over-estimates busy time on purpose, plus a
+  10% margin, because operating at that boundary is fatal — #539/#543), not
+  independently measured for this exact-timestamp use; corrected #1112 round
+  3, see the Evidence class note below and #1117.** Before the #1112 round-1 fix, position 0 returned 0,
+  identical to a Type 1 channel's offset, even though the two are not
+  physically equivalent — a real, deterministic error of ~510 timestamp
+  ticks (~12.1 µs) at the shipped default SAMC=100/ADCDIV=1/CONCLKDIV=4.
+  Round 1 fixed position 0 alone (`(SAMC+2) x TAD7`) and left positions >= 1
+  unchanged (`scanPosition x (SAMC+16) x TAD7`, no aperture term) — reasoning
+  that later positions were already self-consistent *among the shared
+  channels themselves*, true internally but WRONG relative to the Type-1-zero
+  baseline every position is meant to share (Qodo /agentic_review round 2,
+  "Clients place later samples too early": every position after the first
+  was then short by that same ~510-tick aperture, confirmed by this
+  project's own re-derivation from first principles). Round 2 folds the
+  aperture into every position uniformly, per the formula above.
+- **The division happens exactly once, after every multiply**, instead of
+  rounding `TAD7` up to a whole nanosecond first and then multiplying by
+  `scanPosition x (SAMC+16)` — the pre-fix code did the latter, which
+  compounds the ~1 ns whole-number rounding `scanPosition` times (~415 ticks
+  / ~9.9 µs of pure rounding error at SAMC=1023; on the shipped default
+  clocks `TAD7` = 119.0476 ns is *exactly* 5 timestamp ticks, so an exact
+  integer answer exists and no rounding was structurally required). The
+  un-rounded form multiplies `2 x ADCDIV x (CONCLKDIV+1) x timestamp_hz` all
+  the way through and divides by `pbclkHz` once at the end — algebraically
+  the same value as the ns-intermediate form with the `1e9` scale factor
+  cancelled out, just without the intermediate rounding.
+  `MC12b_HardwareScanMaxFreq`'s busy-time cap still uses the OLD,
+  whole-nanosecond `MC12b_SharedTadNs()` helper unchanged — over-estimating
+  busy time is the conservative direction for a safety cap (Qodo #584), so
+  that ceiling stays; only the *reported offset*, which has no such
+  conservative-direction requirement, was moved to exact arithmetic.
+- The **per-scan** fixed term (~6 µs) deliberately does not appear: it is paid
+  once per scan, so it shifts the whole scan rather than one channel within it.
+- The armed list is snapshotted **once per query**, before the per-channel
+  loop, with `MC12b_ComputeScanList(true, OnboardDiagEnabled, …)` — the exact
+  flags `Streaming_ComputeMaxFreqTermsForConfigIface` uses for the scan bound,
+  so every channel in one response describes the same scan. **SAMC and the
+  ADC clock dividers are snapshotted the same way**, via one
+  `MC12b_CaptureScanTiming()` call taken alongside it (`#1112 round-1`: before
+  this fix, `MC12b_ChannelScanOffsetTicks` reread `ADCCON2.SAMC` live on
+  *every* call, and a `CONF:ADC:SAMC:SHARed` setter on the other SCPI
+  transport is rejected mid-stream by #116 but **not** while this idle-time
+  query is running — so it could land between two channels of the same
+  response and make their offsets describe two different SAMC values,
+  e.g. one lower than the position before it despite converting later). Both
+  snapshots are taken once per query, not cached across queries, so neither
+  can go stale.
+- **0 means "no deterministic offset applies"**, covering: a `simultaneous`
+  channel (Type 1 dedicated S&H, and AD7609 — "all Class 1 inputs are
+  captured simultaneously and conversions are started simultaneously",
+  §22.3.2) and a channel the current configuration would not scan at all.
+  The first *scanned* input is no longer among these (see above).
+
+**Evidence class: V for the order, the register semantics, and the
+per-position aperture correction (DS60001344E §22.3.2 Figure 22-7 +
+Equation 22-2, cited above); V for the 13-TAD FRM-documented conversion
+constant. The extra ~1-TAD scan-handoff term (13 vs 14 TAD7, i.e. whether
+the per-position step is `SAMC+15` or `SAMC+16`) is I, not E — corrected
+#1112 round 3.** An earlier revision of this doc tagged that term E,
+citing the SAMC sweep and the two silicon anchors above as confirmation;
+re-examined during PR #1112's round-3 adversarial audit, that same data
+does not actually discriminate a 13-TAD from a 14-TAD conversion/handoff
+constant (see the SAMC-sweep subsection above), so citing it as
+confirmation was circular. #1117 tracks the direct per-position measurement
+that would upgrade this to E/V.
+The composed per-channel figure has **not** itself been measured against a
+known-phase input — that measurement would upgrade it to E and is the same
+experiment that would pin the two offsets below.
+
 ### Client guidance
 
 - Δt between samples is exact: consecutive stamps differ by exactly
   `timestamp_ticks_per_sample` (#730), or an integer multiple when a
   sample was dropped.
-- For **absolute** phase alignment against an external event, two separate
-  offsets apply: (a) up to one scan period of *acquisition* latency on
-  cached-path channels — T1 on the ARDY-direct path has none; and (b) the
-  session-wide ISR-entry seed offset above, which applies to **every**
-  path including T1. Neither is currently measured or reported.
-- The exact per-config latency is **not currently reported**. #730 exposes
-  the timebase (`timestamp_hz`, `stream_timer_hz`,
-  `timestamp_ticks_per_sample`, `actual_rate_millihz`) but not this
-  offset; surfacing it is open follow-up work.
+- For **absolute** phase alignment against an external event, three separate
+  offsets apply:
+  1. the per-channel **intra-scan conversion offset** — *reported* since #267
+     as `channels[].scan_offset_ticks` (previous subsection); T1 and AD7609
+     have none;
+  2. up to one scan period of *acquisition* latency on cached-path channels
+     (the scan armed at tick N completes after the tick-N deferred task has
+     already read LATEST) — T1 on the ARDY-direct path has none;
+  3. the session-wide ISR-entry seed offset above, which applies to **every**
+     path including T1.
 
-**Evidence class: I** (design-intent reasoning over V-class code reads at
+  (1) is now derivable from the device. **(2) and (3) are still neither
+  measured nor reported** — surfacing them remains open follow-up work. #730
+  exposes the timebase (`timestamp_hz`, `stream_timer_hz`,
+  `timestamp_ticks_per_sample`, `actual_rate_millihz`); #267 adds (1) beside
+  it; neither addresses (2) or (3).
+
+**Evidence class: I** — for the value-to-stamp skew, i.e. offsets (2) and (3)
+above; the intra-scan offset (1) carries its own V/E tag in its subsection
+(design-intent reasoning over V-class code reads at
 `firmware/src/services/streaming.c` ~795/~823-857/~931 and `firmware/src/HAL/ADC.c:64,89`). The skew has
 **not** been measured — no bench run has quantified it against a
 known-phase input. A measurement would upgrade this to E and pin the
