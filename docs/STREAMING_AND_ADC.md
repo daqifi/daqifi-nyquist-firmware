@@ -45,7 +45,7 @@ The PIC32MZ ADCHS peripheral has two classes of ADC channels with different read
 3. EOS fires at full-scan completion → `MC12bADC_EosInterruptTask` reads monitoring channels (OBDiag=1 sessions and idle)
 4. Software-trigger path (`MC12b_TriggerConversion`) remains for idle polling and non-HW-trigger modes
 
-**What a sample's timestamp means (#729):** the stamp is the acquisition **trigger** instant (`baseTS + N × periodTicks` since #722), not the conversion instant. `baseTS` is a *software* read of TMR6 at TIMER_5 ISR entry, not a hardware capture at the compare match, so every stamp carries one fixed, unmeasured µs-scale session-wide offset — inter-tick spacing is exact, absolute anchoring is not. T1 channels on the ARDY-direct path are same-tick *in steady state* (see the catch-up caveat below, which applies to them too). **Cached-path channels can carry an older conversion**, for two different reasons: NQ1 Type 2 because the shared MODULE7 scan armed at tick N completes *after* the tick-N deferred task has already read `BOARDDATA_AIN_LATEST`; NQ3 AD7609 because it has no MODULE7 scan at all — `ADC_HandleAD7609Interrupt` (`firmware/src/HAL/ADC.c:64`) publishes into LATEST (`ADC.c:89`) when its BSY deferred task runs, independently of the streaming tick. In **steady state** that skew is fixed and uniform; under **deferred-task catch-up** it is not — the stamp is counter-derived while the value is read live from the one-deep slot, so a backlogged iteration can emit a value *newer* than its own stamp (#722 fixed the stamp side only). It is still the only self-consistent choice given one `Timestamp` per packet, and it matches the `ScanStaleDropped` freshness model (#557/#563: data one scan behind is *defined* as valid current-tick data). Δt between samples is exact regardless; only absolute phase alignment against an external event needs to account for it. The per-config offset is not currently reported and has not been measured — see `docs/ADC_HW_SEMANTICS.md` § "Timestamp semantics".
+**What a sample's timestamp means (#729):** the stamp is the acquisition **trigger** instant (`baseTS + N × periodTicks` since #722), not the conversion instant. `baseTS` is a *software* read of TMR6 at TIMER_5 ISR entry, not a hardware capture at the compare match, so every stamp carries one fixed, unmeasured µs-scale session-wide offset — inter-tick spacing is exact, absolute anchoring is not. T1 channels on the ARDY-direct path are same-tick *in steady state* (see the catch-up caveat below, which applies to them too). **Cached-path channels can carry an older conversion**, for two different reasons: NQ1 Type 2 because the shared MODULE7 scan armed at tick N completes *after* the tick-N deferred task has already read `BOARDDATA_AIN_LATEST`; NQ3 AD7609 because it has no MODULE7 scan at all — `ADC_HandleAD7609Interrupt` (`firmware/src/HAL/ADC.c:64`) publishes into LATEST (`ADC.c:89`) when its BSY deferred task runs, independently of the streaming tick. In **steady state** that skew is fixed and uniform; under **deferred-task catch-up** it is not — the stamp is counter-derived while the value is read live from the one-deep slot, so a backlogged iteration can emit a value *newer* than its own stamp (#722 fixed the stamp side only). It is still the only self-consistent choice given one `Timestamp` per packet, and it matches the `ScanStaleDropped` freshness model (#557/#563: data one scan behind is *defined* as valid current-tick data). Δt between samples is exact regardless; only absolute phase alignment against an external event needs to account for it. A third, finer offset is the **intra-scan** one: Type-2 inputs convert sequentially within one scan, in ascending AN order, so input *k* at scan position *p* is captured `[p × (SAMC+16) + (SAMC+2)] × TAD7` after the trigger — every position, including the first, carries its own `(SAMC+2) × TAD7` shared-S&H acquisition aperture (it is not captured *at* the trigger the way a Type 1 input is), on top of the `(SAMC+16) × TAD7` slots the channels ahead of it consumed (#1112 round-2; round-1 had folded the aperture into position 0 only and left later positions short by that same amount). That one is deterministic and **is** reported, since **#267**, as `channels[].scan_offset_ticks` in `CONF:CAP:JSON?` (timestamp-timer ticks, the `timing.timestamp_hz` domain; 0 only for simultaneous or not-scanned channels — every scanned Type-2 channel, including the first, is nonzero). The whole-scan cache lag and the session-wide seed offset above are still neither reported nor measured — see `docs/ADC_HW_SEMANTICS.md` § "Timestamp semantics".
 
 **Key files:**
 - `services/streaming.c` — deferred task T1 direct read, session CSS rebuild, scan-bound cap term
@@ -58,6 +58,8 @@ The PIC32MZ ADCHS peripheral has two classes of ADC channels with different read
 Current table = **Session 24 (2026-05-28 overnight + 2× targeted retry, 400 s endurance).** Methodology change vs Session 22: where Session 22 used a fresh 10 s ceiling sweep + 60 s endurance soak, Session 24 uses 400 s endurance soaks with iterative haircut from prior-night ceilings (12.5 % per pass, repeated until zero drops). Result: **substantially more conservative** numbers than Session 22 in many cells — these are *verified-safe steady-state rates* the device sustains for 400 s+ without losing a single byte. Fresh 10 s sweeps will still find higher rates that hold short-term; treat Session 22 as "burst ceiling" and Session 24 as "soak ceiling." Source CSVs: `daqifi-python-test-suite/benchmarks/overnight_20260528_0642.csv` + `_0827_boardE8A7.csv` + `_1604_retry3.csv`. Test-suite SHA: `22302ba` on `feat/full-stats-capture`.
 
 > **This is descriptive endurance characterization, not the firmware cap.** These soak ceilings are an empirical record of what the device sustains across many configs (incl. OBDiag variants, OBDiag here = on-board diagnostics monitoring); the rate the firmware actually *enforces* is fitted separately — see **"Streaming Frequency Capping"** below, whose **"Fit basis (normative — the zero-loss sweep subset…)"** table is the canonical 1/5/10/16-ch subset the `Streaming_TransportMaxFreq` coefficients derive from. The two use different methods (soak-with-haircut vs zero-loss sweep escalator) and so report different numbers by design. Authoritative dataset for both: `daqifi-python-test-suite/benchmarks/`.
+
+> **⚠️ The descriptive Session-24 USB and SD throughput tables that follow pre-date #487 — measured at 200 MHz/100 MHz — and so does the separate "Fit basis" table under "Streaming Frequency Capping" further down this file.** They are historical characterization, not the enforced caps. **The ENFORCED caps HAVE been re-fit for 252 MHz** (contrary to older revisions of this note): PB transport + additive were raised (**#595/#600** — USB PB single 15000→22000 curve 120000/(1+n), SD PB single 9000→13000 curve 99000/(4+n), ISR_MAX 16000→22000); USB CSV transport was raised (**#712**); and the pure-T1 PB additive was **lowered** (**#715/#714** — the 252 MHz PB refit had over-capped pure-T1 PB, silently dropping data at cap: USB PB 1×T1 19340→15799, SD PB 1×T1 9852→7900). **Still on the 200 MHz-era fit (real remaining headroom):** the CSV *additive* grid for **nT1 >= 2** (its **single-channel** case was re-fitted by **#832**, 10589 -> 15263), JSON (`CSV×0.5` placeholder except USB/NQ1, **#529**), the WiFi PB curve, and all NQ2/NQ3 caps (legacy 200 MHz envelope by design). The authoritative, current cap dataset is `daqifi-python-test-suite/benchmarks/` (e.g. `atcap_20260723_*.csv`), not any of the in-repo tables this note covers; the enforced values live in `firmware/src/services/streaming.h` (`Streaming_AdcAdditiveCap_NQ1` / `Streaming_SdAdditiveCap_NQ1` / `Streaming_TransportMaxFreq`). Cross-check those + the `#595/#600/#712/#715` PRs before running any 252 MHz cap work.
 
 **USB** (400 s endurance soak, KB/s from `pc_kbps`):
 
@@ -179,6 +181,8 @@ SYSTem:STReam:STATS:CLEar  # Reset all counters
 | `SampleLossPercent` | uint32 | `QueueDroppedSamples / (Total + Dropped) * 100` |
 | `ByteLossPercent` | uint32 | `(USB + WiFi + SD dropped) / TotalBytesStreamed * 100` |
 | `WindowLossPercent` | uint32 | Sliding-window sample loss % (0-100), updated every N samples |
+| `ReadLoopMaxNs` | uint64 | #251: longest single tick of the per-channel read loop in `_Streaming_Deferred_Interrupt_Task`, in ns. **Wall time**, so an interrupt that preempts the loop is counted inside it: this is the worst tick seen, not the loop's own worst case. Present only in a `READ_LOOP_PROFILE` build (the default); `-DREAD_LOOP_PROFILE=0` removes both `ReadLoop*` fields. |
+| `ReadLoopMeanNs` | uint64 | #251: mean per-tick time of that loop in ns, over every tick that reached it since the last clear. Divide by the enabled channel count for a per-channel figure (the ADC-side term of the NQ1 cap, which `streaming.h` states in the same unit), and compare T1-only against T2-only configs to separate the ARDY-direct branch from the LATEST-cache branch. Integer ns, not µs, because a one-channel loop is under a microsecond. Resolution is one core-timer count, 1e9 / (SYSCLK/2): 7.94 ns on the 252 MHz build. The conversion assumes the clock the build targets. |
 
 **Distinguishing failure modes** with the ISR counter (#265):
 - `TimerISRCalls < freq × duration` → timer is rate-limited (PIC32MZ ~90 kHz hardware ceiling)
@@ -311,12 +315,53 @@ JSON's ratio is **not** a flat "2–3×" — it is ~3.1× at one channel and ~1.
 
 An unrecognised format value is **rejected** with `-224` since #801/#802; before that it silently selected JSON.
 
+`Streaming_TransportMaxFreq` (`firmware/src/services/streaming.h`) branches on
+`isNQ1` for four of its eight interface/PB-or-CSV coefficient sets — the tables
+below are split per variant rather than annotated, so each cell can be read
+directly. Values below are transcribed from `streaming.h` at `d56642a38`
+(USB PB `:405-406`, USB CSV `:462-463`, WiFi `:499-500`, SD `:512-513,522`,
+USB+SD `:525,543`; the WiFi CSV `min(…, 3050)` clamp is applied after the
+per-interface switch, at `:560`, identically for both variants).
+
+**NQ1:**
+
+| interface | single (n=1) PB / CSV | A/(B+n) PB | A/(B+n) CSV |
+|-----------|----:|----:|----:|
+| USB    | 22000 / 20000 | 120000/(1+n) | 90000/(1+n) |
+| WiFi   | 8000 / 4675   | 139000/(30+n) | min(20000/(2+n), 3050) |
+| SD     | 13000 / 7500  | 99000/(4+n) | 36000/(12+n) |
+| USB+SD | 8000 / 6500   | 66000/(6+n)   | 15000/(0+n) |
+
+**NQ2/NQ3:**
+
 | interface | single (n=1) PB / CSV | A/(B+n) PB | A/(B+n) CSV |
 |-----------|----:|----:|----:|
 | USB    | 15000 / 15000 | 180000/(10+n) | 34000/(1+n) |
 | WiFi   | 5175 / 4675   | 139000/(30+n) | min(20000/(2+n), 3050) |
 | SD     | 9000 / 7500   | 150000/(15+n) | 36000/(12+n) |
-| USB+SD | 8000 / 8000   | 66000/(6+n)   | 15000/(0+n) |
+| USB+SD | 8000 / 6500   | 66000/(6+n)   | 15000/(0+n) |
+
+The two tables share nine of their sixteen cells (WiFi CSV both columns, SD
+CSV both columns, USB+SD PB both columns, USB+SD CSV both columns, WiFi PB
+curve) — `Streaming_TransportMaxFreq` does not branch on `isNQ1` for those
+coefficients.
+
+The other seven diverge because the 252 MHz refits were NQ1-only. **#595**
+raised USB PB, SD PB and the WiFi PB **single** term (5175 → 8000) — but not
+the WiFi PB multi-channel curve, which is why that curve is one of the nine
+shared cells. **#712** (issue #562) raised USB CSV.
+
+`#600` is deliberately absent here: it re-fitted the NQ1 *additive* PB cap
+(`Streaming_AdcAdditiveCap_NQ1`) and never touched `Streaming_TransportMaxFreq`,
+so it has no transport coefficient to its name. The caveat further up this file
+groups it with #595 because that sentence covers transport **and** additive
+together, which is correct at its scope and wrong at this one.
+
+The USB+SD CSV single is **6500** for every variant, and is deliberately BELOW
+the 2-channel point of its own curve: 8000 was a 200 MHz-era coefficient that
+leaked SD data at cap in 5 of 5 soak rounds, because the #712 refit covered USB
+only — #719 lowered it. `streaming.h` is authoritative; these tables are a
+reading aid.
 
 **Fit basis (normative — the zero-loss sweep subset the F3 coefficients derive from, Hz):**
 

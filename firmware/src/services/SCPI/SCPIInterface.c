@@ -46,6 +46,9 @@
 
 /* SD write metrics accessed via sd_card_manager API */
 #include "../streaming.h"
+#if READ_LOOP_PROFILE
+#include "peripheral/coretimer/plib_coretimer.h"  // #251: CORETIMER_FrequencyGet()
+#endif
 #include "../Capabilities.h"
 #include "Util/StreamingBufferPool.h"
 #include "state/data/AInSample.h"
@@ -526,11 +529,38 @@ static scpi_result_t SCPI_Reset(scpi_t * context) {
         }
     }
 
+    // #1071: have the next boot restore the power state instead of coming
+    // back in STANDBY with WiFi and the front end unpowered, for
+    // SYSTem:REboot only. *RST shares this callback but keeps the boot it
+    // always had: IEEE 488.2 defines *RST as a known state independent of the
+    // device's past-use history, and #1071 asks only for SYSTem:REboot.
+    // SCPI_IsCmd is libscpi's test for a callback bound to several patterns.
+    // It checks the table entry the parser matched, so the client's spelling
+    // does not matter, and if the pattern ever stopped matching, the reboot
+    // would fail safe to the pre-#1071 STANDBY boot.
+    const bool restorePower = SCPI_IsCmd(context, "SYSTem:REboot");
+
     // Allow time for message transmission and any pending operations
     vTaskDelay(100 / portTICK_PERIOD_MS);
 
-    // Perform the software reset
+    // #1071 (Qodo /agentic_review finding on PR #1081): snapshot the power
+    // state and reset as one step. Every writer of requestedPowerState and
+    // powerState is task code (Button_Tasks, the power state machine, a SCPI
+    // callback on the other transport), and this critical section stops the
+    // scheduler switching to any of them, so no power request can land
+    // between the snapshot and the reset. Armed any earlier (the original
+    // #1071 placement), a power-down posted in that gap was replaced on the
+    // next boot by the power-up it followed. Power_ArmRebootRestore() ends
+    // with a SYNC, so its stores are in SRAM before the reset — the settle
+    // delay above no longer sits between the stores and the reset.
+    // RCON_SoftwareReset() disables interrupts itself and never returns; the
+    // exit below is only for the unreachable fallback.
+    taskENTER_CRITICAL();
+    if (restorePower) {
+        Power_ArmRebootRestore();
+    }
     RCON_SoftwareReset();
+    taskEXIT_CRITICAL();
 
     // If we get here, the reset didn't work
     SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
@@ -601,12 +631,21 @@ void SCPI_ResponseBuf_Init(void) {
     // directly from app boot AND implicitly from the first CreateSCPIContext),
     // the second call is a no-op.
     //
-    // The check-and-create pair is guarded by a critical section. The
-    // intended caller is single-threaded (app_SystemInit runs pre-scheduler,
-    // then CreateSCPIContext runs during serial boot-time transport init)
-    // and taskENTER_CRITICAL is a no-op before the scheduler starts, so this
-    // is cost-free in practice. The guard catches any future misuse where
-    // SCPI_ResponseBuf_Init is invoked concurrently.
+    // The check-and-create pair is guarded by a critical section. Today's
+    // first call is direct from app_SystemInit; each transport's later,
+    // idempotent re-call (via CreateSCPIContext) finds the mutex already
+    // created, because app_SystemInit runs to completion, sequentially,
+    // before app_TasksCreate() spawns the USB/WiFi tasks that make those
+    // calls (see SCPI_InitIdentification()'s comment for the same ordering
+    // argument). The scheduler is already running throughout this:
+    // app_SystemInit executes inside the priority-1 APP_FREERTOS_Tasks boot
+    // task, not before vTaskStartScheduler(). taskENTER_CRITICAL is not a
+    // no-op either way -- vTaskEnterCritical() disables interrupts
+    // unconditionally; it's vTaskExitCritical() that only re-enables them
+    // once the scheduler is running (see UserEdge.c's edge_IpcGuardEnter()
+    // comment for the same FreeRTOS detail). So this is an ordinary, working
+    // critical section, and the guard catches any future misuse where
+    // SCPI_ResponseBuf_Init is invoked genuinely concurrently.
     taskENTER_CRITICAL();
     if (gScpiRespMutex == NULL) {
         gScpiRespMutex = xSemaphoreCreateMutexStatic(&gScpiRespMutexStorage);
@@ -723,6 +762,93 @@ static scpi_result_t SCPI_SysInfoGet(scpi_t * context) {
 }
 
 
+/* #947: total budget SCPI_SysInfoTextGet may spend INSIDE its hold of the
+ * shared SCPI response buffer. See SysInfoText_Write below for the derivation
+ * and for why a budget exists at all on top of the short-write check. */
+#define SCPI_SYSINFO_WRITE_BUDGET_MS    2000U
+
+/* #947: one guarded transport write for SCPI_SysInfoTextGet.
+ *
+ * THE BUG. SCPI_SysInfoTextGet holds gScpiRespMutex (the single shared 2048 B
+ * SCPI response scratch, #347) from one take at entry to one give at exit, and
+ * emits its reply as ~90 separate interface->write calls in between (37 written
+ * out in the source, plus one or two per enabled ADC channel and one per DIO
+ * bit). On BOTH transports interface->write is SCPI_WriteWithRetry
+ * (SCPI_USB_Write / SCPI_TCP_Write), which against a host that has stopped
+ * reading spins SCPI_WRITE_MAX_RETRIES(200) x SCPI_WRITE_RETRY_DELAY_MS(5)
+ * ~= 1 s before giving up and returning short. That bound is PER CALL, and
+ * every return value here was discarded -- so a stalled host bought ~90
+ * consecutive 1 s waits, ~90 s of held mutex, and every other SCPI callback on
+ * EITHER transport (the 16 OTHER SCPI_ResponseBuf_Take/TakeTimeout sites
+ * across SCPIInterface.c, SCPILAN.c and SCPIStorageSD.c) queued behind it for
+ * the same ~90 s.
+ *
+ * THE FIX, in two parts, both enforced here so no call site can forget one:
+ *   1. Short write => abort. SCPI_WriteWithRetry leaves its loop only on
+ *      completion or on exhausting the retry count, so a short return means the
+ *      full ~1 s budget was already spent and the transport is not draining.
+ *      Continuing to the next section would buy another ~1 s for bytes that are
+ *      equally undeliverable. Abort instead: worst case becomes ONE retry
+ *      budget, not ninety.
+ *   2. Cumulative deadline. (1) alone does not actually bound the hold: a write
+ *      that COMPLETES on its last allowed retry returns full length and never
+ *      trips it, so a transport draining at exactly the trickle rate that lets
+ *      each write finish just inside its ~1 s budget still reaches ~90 s with
+ *      (1) in place. A host that drains normally spends microseconds per write
+ *      here (the write
+ *      is a memcpy into the transport's multi-kilobyte circular buffer), so
+ *      SCPI_SYSINFO_WRITE_BUDGET_MS is three orders of magnitude above the
+ *      healthy cost and cannot fire on a healthy host. The check is BEFORE the
+ *      write, so the true worst-case hold is budget + one retry budget ~= 3 s.
+ *
+ * startTick is sampled AFTER the take, so this budget bounds the HOLD only and
+ * the (unbounded, portMAX_DELAY) wait for the buffer spends none of it. That is
+ * deliberately the opposite of #943's SD:BENCHmark deadline, which is sampled
+ * before its take because there the wait and the write are two stages of one
+ * per-chunk progress deadline. Here the wait is somebody else's hold, and
+ * charging it to this callback's budget would make SYSTem:INFo? abort for a
+ * reason that has nothing to do with its own transport.
+ *
+ * REJECTED: the shape #947 also offered, "take, snprintf into the shared
+ * buffer, GIVE, then write". It is unsafe as stated. SCPI_WriteWithRetry
+ * re-reads `data` on every retry -- writeFn(data + written, len - written) --
+ * across vTaskDelay sleeps. With the mutex already given back, a peer SCPI
+ * callback on the other transport takes gScpiRespBuf and snprintf's over it
+ * while this write is still mid-retry, so the tail of our reply goes out as
+ * somebody else's bytes: real torn output, on the wire, replacing a latency
+ * problem with a correctness one. Making it safe needs a private per-chunk copy
+ * of every section, which is exactly the response-sized stack allocation the
+ * shared buffer exists to prevent (#347 -- app_WifiTask has ~2.9 KB of
+ * headroom). Keeping the single take/give pair and shrinking what happens
+ * between them costs nothing and moves no lock.
+ *
+ * Byte-for-byte unchanged against a healthy host: every write completes first
+ * try, neither guard fires, and the same bytes go out in the same order.
+ *
+ * @return true if the whole of [data, data+len) reached the transport.
+ */
+static bool SysInfoText_Write(scpi_t * context, TickType_t startTick,
+                              const char * data, size_t len) {
+    /* Unsigned tick subtraction, so this is correct across the 32-bit
+     * xTaskGetTickCount wrap (same idiom as the stale-rail age below). */
+    if ((xTaskGetTickCount() - startTick) >=
+            pdMS_TO_TICKS(SCPI_SYSINFO_WRITE_BUDGET_MS)) {
+        return false;
+    }
+    return (context->interface->write(context, data, len) == len);
+}
+
+/* Capture-by-name on `context` and `startTick`, which every call site has in
+ * scope, so each of the ~37 source-level writes stays a single legible line
+ * instead of a three-line if/goto. #undef'd immediately after the function so
+ * it cannot leak into an unrelated callback that has no such deadline. */
+#define SYSINFO_WRITE_OR_ABORT(d, l)                                          \
+    do {                                                                      \
+        if (!SysInfoText_Write(context, startTick, (d), (l))) {               \
+            goto __stalled_exit;                                              \
+        }                                                                     \
+    } while (0)
+
 /**
  * SCPI Callback: Returns system information in human-readable text format
  * @return SCPI_RES_OK on success
@@ -749,14 +875,21 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #947: start the held-mutex budget HERE, after the take — see
+     * SysInfoText_Write. Every write below goes through SYSINFO_WRITE_OR_ABORT,
+     * which jumps to __stalled_exit on the first write the transport cannot
+     * take; nothing in this function may call context->interface->write
+     * directly once the buffer is held. */
+    TickType_t startTick = xTaskGetTickCount();
+
     // Header with device identification
     snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "=== DAQiFi Nyquist%d | HW:%s FW:%s ===\r\n",
         pBoardConfig->BoardVariant, pBoardConfig->boardHardwareRev, pBoardConfig->boardFirmwareRev);
-    context->interface->write(context, buffer, strlen(buffer));
+    SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Network Section
     const char* netHeader = "[Network]\r\n";
-    context->interface->write(context, netHeader, strlen(netHeader));
+    SYSINFO_WRITE_OR_ABORT(netHeader, strlen(netHeader));
     
     // WiFi status - check actual driver state
     wifi_status_t wifiStatus = wifi_manager_GetWiFiStatus();
@@ -773,20 +906,20 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  2.4GHz: On | Mode: %s | SSID: %s\r\n", 
             pWifiSettings->networkMode == WIFI_MANAGER_NETWORK_MODE_AP ? "AP" : "STA",
             pWifiSettings->ssid);
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
         
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  IP: %s | Port: %d | Security: %s\r\n", 
             ipStr, pWifiSettings->tcpPort,
             pWifiSettings->securityMode == WIFI_MANAGER_SECURITY_MODE_OPEN ? "Open" : "WPA");
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     } else {
         const char* wifiOff = "  2.4GHz: Off\r\n";
-        context->interface->write(context, wifiOff, strlen(wifiOff));
+        SYSINFO_WRITE_OR_ABORT(wifiOff, strlen(wifiOff));
     }
     
     // Connectivity Section
     const char* connHeader = "[Connectivity]\r\n";
-    context->interface->write(context, connHeader, strlen(connHeader));
+    SYSINFO_WRITE_OR_ABORT(connHeader, strlen(connHeader));
     bool hasUSBPower = (pBoardData->PowerData.externalPowerSource == USB_100MA_EXT_POWER ||
                         pBoardData->PowerData.externalPowerSource == USB_500MA_EXT_POWER);
     bool vbusDetected = UsbCdc_IsVbusDetected();
@@ -807,11 +940,11 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         pBoardData->PowerData.externalPowerSource != NO_EXT_POWER ? "Present" : "None",
         vbusDetected ? "Yes" : "No",
         vbusLevelStr);
-    context->interface->write(context, buffer, strlen(buffer));
+    SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Power Section
     const char* powHeader = "[Power]\r\n";
-    context->interface->write(context, powHeader, strlen(powHeader));
+    SYSINFO_WRITE_OR_ABORT(powHeader, strlen(powHeader));
     const char* powerState = "Unknown";
     switch(pBoardData->PowerData.powerState) {
         case POWERED_UP: powerState = "Run"; break;
@@ -831,7 +964,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         pBoardData->PowerData.powerState,
         pBoardData->PowerData.USBSleep ? "Sleep" : "Active",
         shutdownStatus);
-    context->interface->write(context, buffer, strlen(buffer));
+    SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Display battery info appropriately based on monitoring state
     if (pBoardData->PowerData.powerState == STANDBY) {
@@ -871,11 +1004,11 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             pBoardData->PowerData.battLow ? "[Low]" : "[Ok]",
             chargeStatus);
     }
-    context->interface->write(context, buffer, strlen(buffer));
+    SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Status Section
     const char* statHeader = "[Status]\r\n";
-    context->interface->write(context, statHeader, strlen(statHeader));
+    SYSINFO_WRITE_OR_ABORT(statHeader, strlen(statHeader));
     
     // Channel status - separate user and internal ADCs by channel ID
     // User channels have IDs 0-15, internal monitoring channels have IDs >= 248
@@ -920,23 +1053,27 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         userAdcEnabled, userAdcTotal,
         internalAdcEnabled, internalAdcTotal,
         dioInputs, pDIOConfig ? pDIOConfig->Size : 0);
-    context->interface->write(context, buffer, strlen(buffer));
+    SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Show which specific user ADC channels are enabled
     if (userAdcEnabled > 0 && pAInConfig && pBoardConfigAInChannels) {
-        context->interface->write(context, "  Enabled user ch: ", 19);
+        SYSINFO_WRITE_OR_ABORT("  Enabled user ch: ", 19);
         bool first = true;
         for (int i = 0; i < pAInConfig->Size; i++) {
             uint8_t channelId = pBoardConfigAInChannels->Data[i].DaqifiAdcChannelId;
             // Only show user channels (ID < 248, not internal monitoring)
             if (channelId < ADC_CHANNEL_3_3V && pAInConfig->Data[i].IsEnabled) {
-                if (!first) context->interface->write(context, ",", 1);
+                /* Braced deliberately: SYSINFO_WRITE_OR_ABORT can transfer
+                 * control, which must not hide inside a braceless if. */
+                if (!first) {
+                    SYSINFO_WRITE_OR_ABORT(",", 1);
+                }
                 snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "%d", channelId);
-                context->interface->write(context, buffer, strlen(buffer));
+                SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
                 first = false;
             }
         }
-        context->interface->write(context, "\r\n", 2);
+        SYSINFO_WRITE_OR_ABORT("\r\n", 2);
     }
     
     // DIO pin states
@@ -948,17 +1085,17 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         if (DIO_ReadSampleByMask(&sample, channelMask)) {
             // Debug: show raw value
             snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  DIO raw: %u (0x%04X)\r\n", sample.Values, sample.Values);
-            context->interface->write(context, buffer, strlen(buffer));
+            SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
             
-            context->interface->write(context, "  DIO state: ", 13);
+            SYSINFO_WRITE_OR_ABORT("  DIO state: ", 13);
             // Display the state of each pin
             for (int i = 0; i < pDIOConfig->Size && i < 16; i++) {
                 if (i == 8) {
-                    context->interface->write(context, " ", 1); // Space between bytes
+                    SYSINFO_WRITE_OR_ABORT(" ", 1); // Space between bytes
                 }
-                context->interface->write(context, (sample.Values & (1 << i)) ? "1" : "0", 1);
+                SYSINFO_WRITE_OR_ABORT((sample.Values & (1 << i)) ? "1" : "0", 1);
             }
-            context->interface->write(context, "\r\n", 2);
+            SYSINFO_WRITE_OR_ABORT("\r\n", 2);
         }
     }
     
@@ -971,22 +1108,22 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
     snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  Streaming: %s\r\n",
         (canStream && pRunTimeStreamConfig && pRunTimeStreamConfig->IsEnabled) ? "Active" : 
         (!canStream ? "Disabled" : "Idle"));
-    context->interface->write(context, buffer, strlen(buffer));
+    SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     
     // Battery Diagnostics Section
     const char* battDiagHeader = "\r\n[Battery Diagnostics]\r\n";
-    context->interface->write(context, battDiagHeader, strlen(battDiagHeader));
+    SYSINFO_WRITE_OR_ABORT(battDiagHeader, strlen(battDiagHeader));
     
     // Battery voltage and charge from ADC
     if (pBoardData->PowerData.powerState == STANDBY) {
         // Battery monitoring inactive in STANDBY
         const char* adcInactive = "  ADC: -- | --\r\n";
-        context->interface->write(context, adcInactive, strlen(adcInactive));
+        SYSINFO_WRITE_OR_ABORT(adcInactive, strlen(adcInactive));
     } else {
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  ADC: %d%% | %.2fV\r\n",
             pBoardData->PowerData.chargePct,
             pBoardData->PowerData.battVoltage);
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     }
     
     // BQ24297 status - get fresh data
@@ -1001,7 +1138,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  BQ24297: Battery %s | Charging: %s\r\n",
             pBQ24297Data->status.batPresent ? "Present" : "Not Present",
             (pBQ24297Data->status.chgStat < 4) ? chgStatStr[pBQ24297Data->status.chgStat] : "Unknown");
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
         
         // Power conditions with clear explanations
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  vsysStat: %d (Battery >3.0V: %s) | pgStat: %d (Ext power: %s)\r\n",
@@ -1009,7 +1146,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             pBQ24297Data->status.vsysStat ? "No" : "Yes",
             pBQ24297Data->status.pgStat,
             pBQ24297Data->status.pgStat ? "Yes" : "No");
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
         
         // NTC and current limit
         const char* ntcStr[] = {"Ok", "Hot", "Cold (Battery disconnected?)", "Hot/Cold"};
@@ -1023,7 +1160,7 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             (pBQ24297Data->status.inLim < 8) ? iLimStr[pBQ24297Data->status.inLim] : "Unknown",
             pBQ24297Data->status.otg ? "On" : "Off",
             otgGpioState ? "High" : "Low");
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
         
         // Read REG01 and REG07 for detailed status
         uint8_t reg01 = 0, reg07 = 0;
@@ -1047,22 +1184,22 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
                 reg01Ok ? "OK" : "ERR",
                 reg07Ok ? "OK" : "ERR");
         }
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
         
         // Power-up readiness - the key diagnostic info
         bool canPowerUp = (!pBQ24297Data->status.vsysStat || pBQ24297Data->status.pgStat);
         snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  >>> Power-up ready: %s %s\r\n",
             canPowerUp ? "Yes" : "No",
             canPowerUp ? "" : "(Battery <3.0V and no external power)");
-        context->interface->write(context, buffer, strlen(buffer));
+        SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
     } else {
-        context->interface->write(context, "  BQ24297: Not initialized\r\n", 28);
+        SYSINFO_WRITE_OR_ABORT("  BQ24297: Not initialized\r\n", 28);
     }
 
     // Voltage Rail Monitoring Section - only when powered up
     if (pBoardData->PowerData.powerState != STANDBY) {
         const char* voltHeader = "\r\n[Voltage Rails]\r\n";
-        context->interface->write(context, voltHeader, strlen(voltHeader));
+        SYSINFO_WRITE_OR_ABORT(voltHeader, strlen(voltHeader));
 
         // Read latest ADC samples for internal monitoring channels
         // Use ADC_ConvertToVoltage for proper conversion based on channel type and config
@@ -1177,16 +1314,16 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
             // Display power rails
             snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  +3.3V: %s | +5V: %s | +10V: %s\r\n",
                 str3_3, str5, str10);
-            context->interface->write(context, buffer, strlen(buffer));
+            SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
 
             snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  VSYS: %s | VBATT: %s\r\n",
                 strSys, strBatt);
-            context->interface->write(context, buffer, strlen(buffer));
+            SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
 
             // Display reference voltages
             snprintf(buffer, SCPI_RESPONSE_BUF_SIZE, "  2.5V Ref: %s | 5V Ref: %s\r\n",
                 str2_5Ref, str5Ref);
-            context->interface->write(context, buffer, strlen(buffer));
+            SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
 
             // Stale data indicator: all monitoring channels are scanned
             // together by MODULE7, so a single age applies to all rails.
@@ -1203,17 +1340,41 @@ static scpi_result_t SCPI_SysInfoTextGet(scpi_t * context) {
                              "  * Stale: last update %lus ago%s\r\n",
                              (unsigned long)ageSec,
                              diagOff ? " (diag scanning disabled)" : "");
-                    context->interface->write(context, buffer, strlen(buffer));
+                    SYSINFO_WRITE_OR_ABORT(buffer, strlen(buffer));
                 }
             }
         } else {
-            context->interface->write(context, "  Voltage monitoring unavailable\r\n", 34);
+            SYSINFO_WRITE_OR_ABORT("  Voltage monitoring unavailable\r\n", 34);
         }
     }
 
     SCPI_ResponseBuf_Give();
     return SCPI_RES_OK;
+
+    /* #947: the transport would not take a section of the reply. Whatever was
+     * already handed to it stays on the wire, so the client sees a reply
+     * truncated at a section boundary (or mid-line, inside the channel/DIO
+     * loops) followed by the transport's own "**ERROR: -200" line. That is
+     * accepted: the bytes we are abandoning are undeliverable by definition --
+     * the transport just refused them for a full ~1 s retry budget -- and this
+     * is a human-readable diagnostic query, not a parsed data path. The
+     * alternative, spending ~1 s per remaining section on bytes nobody can
+     * read, is what #947 is.
+     *
+     * Give BEFORE SCPI_ExecutionError, not after. ErrorPush -> SCPI_ErrorEmit
+     * -> context->interface->error emits the error line through the SAME
+     * retry-bounded transport write (error.c:193, wifi_tcp_server.c
+     * SCPI_TCP_Error), so calling it while still holding gScpiRespMutex would
+     * add another ~1 s to the hold this whole change exists to shrink. Outside
+     * the hold it costs only this task's own time. */
+__stalled_exit:
+    SCPI_ResponseBuf_Give();
+    SCPI_ExecutionError(context,
+            "SYSTem:INFo?: transport write stalled, reply truncated");
+    return SCPI_RES_ERR;
 }
+
+#undef SYSINFO_WRITE_OR_ABORT
 
 /**
  * Gets the system log
@@ -2248,7 +2409,7 @@ static void RestoreSdMode(sd_card_manager_mode_t savedMode) {
 
 // StreamingRuntimeConfig.Frequency is uint64_t — non-atomic on PIC32MZ, so the
 // benchmark/finder paths read/write it through a critical section per the
-// project atomicity rule (CLAUDE.md / Compliance ID 8).  These run in SCPI task
+// project atomicity rule (docs/MCU_REFERENCE.md / Compliance ID 8).  These run in SCPI task
 // context (one-shot commands, not a hot ISR path) so the latency cost is nil.
 static inline uint64_t StreamFreq_Get(const StreamingRuntimeConfig* c) {
     taskENTER_CRITICAL();
@@ -2265,11 +2426,24 @@ static inline void StreamFreq_Set(StreamingRuntimeConfig* c, uint64_t f) {
 /* #850: the shared refusal. SCPI_StartStreaming does NOT go through the
  * runner (it must parse before claiming -- see its wrapper), so without this
  * the two refusal sites would drift apart and an operator could not tell them
- * apart in the log. */
+ * apart in the log.
+ *
+ * #977: STREAM_START_CLAIM_BUSY now also means "a guarded config change holds
+ * the interlocked claim", so the wording names both holders. Which one it was
+ * is logged by Streaming_BeginSessionStart one line earlier (streaming.c), the
+ * same arrangement SCPI_RejectCfgClaim uses on the other side. The error code
+ * is unchanged: -200, which is what the arm-time cfgChanging refusal this
+ * supersedes already answered -- the difference is that the refusal now lands
+ * before PrepareStreamingBuffers instead of after it. */
 static scpi_result_t SCPI_RefuseSessionStartBusy(scpi_t * context,
                                                  const char *what) {
-    LOG_E("%s refused (#850): another streaming session start is in "
-          "flight on the other SCPI transport. Retry.", what);
+    /* 105 characters at the longest `what` this is called with
+     * ("SYSTem:STReam:THRoughput", 24), against Logger.c's usable 125.
+     * "on the other SCPI transport" was dropped to fit rather than "Retry.":
+     * the remedy is the actionable half, and WHICH transport holds it is in
+     * the Streaming_Begin* line this one follows. */
+    LOG_E("%s refused (#850/#977): another session start or config change is "
+          "in flight. Retry.", what);
     SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
     return SCPI_RES_ERR;
 }
@@ -3633,7 +3807,7 @@ static void SCPI_SyncOperSdBitLocked(void) {
      * case returns the address of a member of a static struct, and
      * BOARDRUNTIME_SD_CARD_SETTINGS is a compile-time constant naming a real
      * case. Every other callback in this file relies on the same reasoning
-     * (CLAUDE.md standing rule), so guarding only here would be inconsistent. */
+     * (docs/MCU_REFERENCE.md standing rule), so guarding only here would be inconsistent. */
     const bool logging = Streaming_IsActiveOnNonWifiInterface() &&
                          sd->enable &&
                          (sd->mode == SD_CARD_MANAGER_MODE_WRITE) &&
@@ -3858,6 +4032,40 @@ scpi_result_t SCPI_GetStreamStats(scpi_t * context) {
     // the deferred task's direct read.  Expected 0; non-zero ticks emitted
     // that channel with its validMask bit clear.
     scpi_printf(context, "T1ArdyMisses=%u\r\n", (unsigned)s.t1ArdyMisses);
+#if READ_LOOP_PROFILE
+    {
+        /* #251: per-tick time of the deferred task's per-channel loop -- the
+         * ADC-side term of the NQ1 cap. Divide the mean by the enabled channel
+         * count for a per-channel figure; T1-only vs T2-only configs separate
+         * the ARDY-direct branch from the LATEST-cache branch.
+         *
+         * Nanoseconds, not microseconds: a one-channel loop is well under a
+         * microsecond, so integer us would print 0 exactly where the T1 figure
+         * is wanted. It stays an integer because every STATS consumer parses
+         * integers (the python harness int-coerces, python-core skips what
+         * int() rejects, daqifi-core's map is ulong.TryParse), and ns is the
+         * cap model's own unit. One count is 1e9 / CORETIMER_FrequencyGet() ns
+         * (7.94 ns at 126 MHz). That is the clock the BUILD targets; a unit
+         * whose PLL did not switch at boot (TimerApi_ClockMatchesBuild() false)
+         * would scale these by the clock ratio, as it does every SYS_TIME delay.
+         *
+         * Integer only, ordered so nothing wraps 64 bits: the mean is taken in
+         * counts first (< 2^32, because no tick exceeds the max), kept to 1/1000
+         * count, then scaled. Never sum * 1e9, which would wrap after ~146 s of
+         * summed loop time. */
+        const uint64_t coreHz = (uint64_t)CORETIMER_FrequencyGet();
+        const uint64_t maxNs = ((uint64_t)s.readLoopMaxCycles * 1000000000ULL) / coreHz;
+        uint64_t meanNs = 0u;
+        if (s.readLoopCount > 0u) {
+            const uint64_t meanMilliCycles =
+                (s.readLoopCycles / s.readLoopCount) * 1000ULL +
+                ((s.readLoopCycles % s.readLoopCount) * 1000ULL) / s.readLoopCount;
+            meanNs = (meanMilliCycles * 1000000ULL) / coreHz;
+        }
+        scpi_printf(context, "ReadLoopMaxNs=%llu\r\n", (unsigned long long)maxNs);
+        scpi_printf(context, "ReadLoopMeanNs=%llu\r\n", (unsigned long long)meanNs);
+    }
+#endif
     // Timer ISR tracking (#265): actual ISR entry count this session (64-bit
     // so it never wraps in practice). Compare against (TotalSamplesStreamed
     // + QueueDroppedSamples) to verify every timer event is accounted for,
@@ -4320,7 +4528,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     //
     // Floor is 2500 B (lowered from 10 KB 2026-05-31 — see
     // MIN_HEAP_FREE_FOR_STREAM_START_BYTES in SCPIInterface.h for the
-    // rationale + tradeoff).  Boot-idle HeapFree is ~13 KB per CLAUDE.md,
+    // rationale + tradeoff).  Boot-idle HeapFree is ~13 KB per docs/MEMORY_ARCHITECTURE.md,
     // so the guard now only bites under severe accumulated pressure (the
     // #490 per-session leak), not on ordinary post-boot starts.
     //
@@ -4408,7 +4616,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
     if (!freqProvided) {
         // 64-bit read needs a critical section on the 32-bit PIC32MZ bus to avoid
         // a torn read if another SCPI task writes Frequency concurrently
-        // (CLAUDE.md atomicity rules; Qodo /agentic_review pass-6).
+        // (docs/MCU_REFERENCE.md atomicity rules; Qodo /agentic_review pass-6).
         taskENTER_CRITICAL();
         uint64_t stored = pRunTimeStreamConfig->Frequency;
         taskEXIT_CRITICAL();
@@ -4460,11 +4668,17 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                  * achievable max is in the LOG_E (SYST:LOG?); clients should
                  * pre-validate against current_max_rate_hz (CONF:CAP:JSON?).
                  * Benchmark mode (SYST:STR:BENCHmark) bypasses the cap entirely. */
-                LOG_E("Streaming rejected: %d Hz exceeds max %u Hz for this config "
-                      "(%u ch, %u type1) - request <= %u Hz or use SYST:STR:BENCHmark",
+                /* #1000 class: this rendered 130 bytes against Logger's
+                  * 125-byte ceiling, so the tail was cut to "SYST:STR:BENC" --
+                  * which is neither the registered SYST:STR:BENCHmark nor its
+                  * only legal abbreviation SYST:STR:BENCH, so an operator who
+                  * followed the printed remedy got -113. The max was also
+                  * interpolated twice; once is enough. */
+                LOG_E("STR:START refused (#524): %d Hz > max %u Hz "
+                      "(%u ch, %u T1) - use <= that or SYST:STR:BENCHmark",
                       (int)freq, (unsigned)maxFreq,
                       (unsigned)totalEnabledPublicChannels,
-                      (unsigned)activeType1ChannelCount, (unsigned)maxFreq);
+                      (unsigned)activeType1ChannelCount);
                 SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
                 return SCPI_RES_ERR;
             }
@@ -4807,14 +5021,15 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
          * to print ifaceForStart under the word "was", which is the interface
          * the start WANTED, not one it ever held (Qodo). */
         if (ifaceRacedBySet) {
-            LOG_E("STR:START refused (#848): SYST:STR:INT selected interface "
-                  "%d during start setup, but this start was set up for %d. "
-                  "Retry.",
+            /* #1000 class: kept under Logger's 125-byte ceiling. */
+            LOG_E("STR:START refused (#848): SYST:STR:INT moved to %d "
+                  "mid-start; set up for %d. Retry.",
                   (int)gStreamIfaceLastSet, (int)ifaceForStart);
         } else {
-            LOG_E("STR:START refused (#848): stream interface moved during "
-                  "start setup - set up for %d, pinned %d at detect, found %d "
-                  "at publish. Retry.",
+            /* #1000 class: the fixed text alone was 127 bytes, so this line
+              * was truncated on every firing regardless of the values. */
+            LOG_E("STR:START refused (#848): iface moved mid-start - setup %d, "
+                  "detect %d, publish %d. Retry.",
                   (int)ifaceForStart, (int)ifaceAtDetect, (int)ifaceAtPublish);
         }
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -5021,8 +5236,21 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                 SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
-                LOG_E("Cannot start SD logging - could not arm the write "
-                      "(#942: raced the #589 suspend check): %s\r\n",
+                /* #1000: the old prefix here was 88 characters against a
+                 * 125-byte effective ceiling (LOG_MESSAGE_SIZE - 3, Logger.c),
+                 * leaving 35 for the reason after the CRLF -- short of every
+                 * SD_SuspendReasonText() return (46/58/76), all three cut.
+                 * The NULL fallback ("the SD task is not accepting work", 33
+                 * chars) fit the old prefix (88+33+2=123<=125) and was never
+                 * the problem; it is the one case a bench repro would not
+                 * have caught. This prefix is 27 characters, leaving 96: the
+                 * longest reachable case (the 76-character quarantine
+                 * reason) totals 105, well inside the ceiling. The #942/#589
+                 * narrative moved to this comment -- it is still greppable
+                 * via the LOG_E line's #1000 tag and this issue number, just
+                 * not inside the 128-byte message the device actually
+                 * emits. */
+                LOG_E("SD log arm refused (#942): %s\r\n",
                       why ? why : "the SD task is not accepting work");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
                 return SCPI_RES_ERR;
@@ -5039,20 +5267,68 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
              * 5 s; the pre-clear above guarantees they describe ONLY this
              * request. */
             int readyWait = 0;
+            /* #1121: did THIS request's arm die while we were waiting for it?
+             * Ports #988's cascade (SCPIStorageSD.c's SCPI_StorageSDBenchmark,
+             * around its own IsWriteReady loop) onto this site -- grep confirms
+             * these two are the ONLY `readyWait` sites in firmware/src, and this
+             * was the one left uncovered when #988 shipped. `pSDCardSettings`
+             * here is the exact same sd_card_manager_settings_t singleton
+             * (BOARDRUNTIME_SD_CARD_SETTINGS) that function reads, so its
+             * atomicity argument transfers unchanged: `mode` is a plain,
+             * naturally-aligned 32-bit enum; this callback is the only writer
+             * that just published MODE_WRITE a few lines above and never
+             * touches it again before this loop; and `armTornDown` is a stack
+             * local no other context can see -- nothing here needs a critical
+             * section any more than the twin's does. Full reasoning (why the
+             * latch does not `break`, why the reconciliation read after the
+             * loop is needed, why it only ever ORs) lives on that function's
+             * copy and is not repeated here in full to avoid a second copy
+             * silently drifting from the first. */
+            bool armTornDown = false;
             while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
                 if (sd_card_manager_StartupDirFull() || sd_card_manager_StartupDiskFull()) {
                     break;
+                }
+                if (pSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
+                    armTornDown = true;   /* #1121/#988: latch, keep waiting */
                 }
                 vTaskDelay(pdMS_TO_TICKS(10));
                 readyWait++;
             }
             if (!sd_card_manager_IsWriteReady()) {
+                /* #1121/#988: reconciliation read. The loop samples `mode` at
+                 * the TOP of its body and then yields 10 ms before re-testing
+                 * its condition, so its last observation and its exit are not
+                 * the same instant -- a teardown landing in that final slice
+                 * (or between the loop's IsWriteReady() and this one) is
+                 * unobserved by the loop alone. `||`, never `=`: the loop's
+                 * latch is already a fact ("mode left the MODE_WRITE this
+                 * callback published") that a later re-arm by a different
+                 * caller must not be allowed to erase. */
+                armTornDown = armTornDown ||
+                              (pSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE);
+                /* Sampled once, before the cascade, matching SCPIStorageSD.c's
+                 * #953 arm: a second call here could observe a different owner
+                 * (or none) than the one that actually steered the branch
+                 * below. */
+                const char *why = SD_SuspendReasonText();
                 if (sd_card_manager_StartupDirFull()) {
                     /* #689: this flag means "no writable location", which covers a
                      * full directory AND a bucket that could not be created or read.
                      * Naming only fullness misdirects the operator when the real
                      * fault is the media; the SD-side LOG_E names which it was. */
-                    LOG_E("[SD] STR:START refused (#689): %s",
+                    /* #1000 twin: this prefix was "[SD] STR:START refused
+                     * (#689): " (31 chars). sd_card_manager_WriteRefuseText()
+                     * returns up to 98 bytes (the bucket-name-collision arm),
+                     * so 31+98 = 129 against Logger's 125-byte effective
+                     * ceiling -- two of its five arms were cut, including the
+                     * one naming the remedy. At 25 chars the worst case is 123.
+                     * The margin is only 2 bytes because those reason strings
+                     * are themselves near the ceiling; a concatenation-aware
+                     * guard that would catch a future reason growing past it is
+                     * #1001, not this site. The sibling in SCPIStorageSD.c's
+                     * SD:BENCH arm already fits at exactly 125. */
+                    LOG_E("SD start refused (#689): %s",
                           sd_card_manager_WriteRefuseText());
                 } else if (sd_card_manager_StartupDiskFull()) {
                     /* #851: the numbers, not just the verdict. This detail used
@@ -5062,7 +5338,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                     uint64_t freeBytes = 0, totalBytes = 0;
                     bool haveSpace = sd_card_manager_GetSpaceInfo(&freeBytes, &totalBytes);
                     /* Snapshot the 64-bit floor under critical section per
-                     * CLAUDE.md atomicity rules — pairs with the setter's
+                     * docs/MCU_REFERENCE.md atomicity rules — pairs with the setter's
                      * critical-section write in SCPI_StorageSDMinFreeSet. */
                     uint64_t floor;
                     taskENTER_CRITICAL();
@@ -5081,6 +5357,48 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                         LOG_E("[SD] STR:START refused: disk full (space unknown), floor=%llu B",
                               (unsigned long long)floor);
                     }
+                } else if (why != NULL) {
+                    /* #953 (ported from SCPIStorageSD.c by #1121): a live
+                     * suspend reason. Ranked above the #988 latch below for the
+                     * same reason that function's copy gives -- this is the
+                     * only arm that can name an OWNER and the command that
+                     * clears it, and the WiFi/FW-update/quarantine teardown
+                     * that tears this arm down publishes the suspension
+                     * through the same app_SDCard_GracefulShutdown() call, so
+                     * where both fire they almost always describe one event.
+                     * Same "Cannot start SD logging - SD suspended: %s" prefix
+                     * this file's other two SD_SuspendReasonText() callers
+                     * already use (:4832, :5151) -- measured worst case 118
+                     * bytes against Logger's 125-byte effective ceiling,
+                     * unchanged by reuse here. */
+                    LOG_E("Cannot start SD logging - SD suspended: %s\r\n", why);
+                } else if (armTornDown) {
+                    /* #988 (ported by #1121): this request's arm was torn down
+                     * and nothing names a cause. The state/mode pair is a
+                     * breadcrumb only -- SCPIStorageSD.c's #782 pattern -- and
+                     * does not steer this branch; `mode` can even read WRITE
+                     * again by the time this logs, if a different caller
+                     * re-armed in between. Prefixed "[SD] STR:START refused"
+                     * -- the same prefix the two STR:START refusal arms just
+                     * above already use -- rather than the "SD start refused"
+                     * this line originally shipped with: daqifi-python-test-
+                     * suite's test_861_stop_races_start_prearm.py parses the
+                     * refusal log through `_first_refusal_line()`, which
+                     * matches only 'STR:START refused', 'Cannot start' or
+                     * 'not ready'; without this prefix that test's exact
+                     * torn-down-during-the-SD-poll race (the "shape filed as
+                     * #871" note in that file) fell through to a bare error
+                     * code instead of this diagnosis (Qodo /agentic_review,
+                     * PR #1123). 122 bytes worst case (state/mode both 8
+                     * characters, CURDRIVE/GETSPACE -- verified against every
+                     * string sd_card_manager_GetStateName() and
+                     * sd_card_manager_GetModeName() can return, not assumed)
+                     * against the same 125-byte ceiling. */
+                    LOG_E("[SD] STR:START refused: the write arm was torn down "
+                          "before the file opened (SD now state=%s mode=%s) "
+                          "- retry\r\n",
+                          sd_card_manager_GetStateName(),
+                          sd_card_manager_GetModeName());
                 } else {
                     LOG_E("SD file not ready after %d ms\r\n", readyWait * 10);
                 }
@@ -5331,8 +5649,10 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         /* Which of the two terms fired, because the operator's next move
          * differs: an in-flight stop clears by itself in at most the SD
          * finalise wait, while a completed one means the session this start
-         * was setting up was deliberately ended. Kept under LOG_MESSAGE_SIZE
-         * (128, so 127 usable) with the longer arm -- 108 chars. */
+         * was setting up was deliberately ended. Fits with the longer arm at
+         * 108 chars. NB the usable ceiling is 125, not the 127 this comment
+         * used to claim: Logger.c clamps at LOG_MESSAGE_SIZE - 3, not - 1.
+         * This message was never over it; the stated constant was. */
         LOG_E("STR:START refused (#861): %s; the device stays stopped. Retry.",
               stopInFlight ? "a stop is still in flight on the other transport"
                            : "a stop was issued during start setup");
@@ -5351,9 +5671,12 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
-        LOG_E("STR:START refused (#847): a streaming config change is in "
-              "flight on the other SCPI transport - its store would land on "
-              "this session. Retry.");
+        /* #1000 class: this was a fixed 139-byte literal with no
+          * substitutions, so it was cut identically on every firing. The
+          * dropped half explained WHY: the other transport's store would
+          * otherwise land on this session. */
+        LOG_E("STR:START refused (#847): a config change is in flight on the "
+              "other SCPI transport. Retry.");
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         return SCPI_RES_ERR;
     }
@@ -5380,8 +5703,9 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         if (sdLoggingRequested) {
             SCPI_ReleaseSdLoggingArm(pSDCardSettings);
         }
-        LOG_E("STR:START refused (#844): stream interface changed during start "
-              "(%d -> %d); the SD/buffer setup no longer matches. Retry.",
+        /* #1000 class: kept under Logger's 125-byte ceiling. */
+        LOG_E("STR:START refused (#844): iface changed mid-start (%d -> %d); "
+              "setup stale. Retry.",
               (int)ifaceForStart, (int)ifaceObserved);
         SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
         SCPI_ClearStreamingOperBits(pRunTimeStreamConfig);
@@ -5405,8 +5729,14 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
          * on this path (SD not ready, #589 SPI gate, #847) that a distinct
          * code is worth having. The log line is what names WHICH guard fired.
          *
-         * Kept under LOG_MESSAGE_SIZE (128, so 127 usable): the logger stores
-         * a fixed-size message and TRUNCATES past it, silently. 117 chars. */
+         * Kept under Logger's usable ceiling of 125 -- LOG_MESSAGE_SIZE is
+         * 128 and Logger.c clamps at LOG_MESSAGE_SIZE - 3, so the old "127
+         * usable" here was wrong by two. The message is 117 chars, so it was
+         * never truncated; the CONSTANT was the defect, and a sibling sized
+         * against 127 would have reproduced #1000. The identical claim above
+         * the #861 refusal was corrected in this branch's previous commit and
+         * this twin was missed -- exactly the pattern that commit set out to
+         * end. The logger truncates past the ceiling silently. */
         LOG_E("STR:START refused (#846): the enabled-channel set changed during "
               "start; the mapping and sample pool are stale. Retry.");
         SCPI_ErrorPush(context, SCPI_ERROR_SETTINGS_CONFLICT);
@@ -5423,8 +5753,10 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
         SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
-        LOG_E("STR:START refused (#844): config changed during start - %d Hz now "
-              "exceeds max %u Hz. Re-read CONF:CAP:JSON? and retry",
+        /* #1000 class: this rendered to exactly 125 at ordinary values, i.e.
+          * zero margin, and over it for wider ones. */
+        LOG_E("STR:START refused (#844): config changed mid-start - %d Hz > "
+              "max %u Hz. Re-read CONF:CAP:JSON?",
               (int)freq, (unsigned)revalidatedMax);
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
@@ -5518,7 +5850,7 @@ static scpi_result_t SCPI_StartStreaming(scpi_t * context) {
      *
      * A bare 32-bit load, not a critical section: unlike the interface pins
      * inside the body it has no partner field it must describe one instant
-     * with, and CLAUDE.md's atomicity rule is explicit that wrapping a plain
+     * with, and docs/MCU_REFERENCE.md's atomicity rule is explicit that wrapping a plain
      * aligned 32-bit load only costs interrupt latency.
      *
      * Unused on the SYSTem:STReam:START 0 disable path, which returns before
@@ -6708,18 +7040,32 @@ static scpi_result_t SCPI_GetCommandHistory(scpi_t * context) {
  * BoardRunTimeConfig_Get. Stated because they are NEW parameters, and an
  * unexplained absence reads as an oversight.
  *
- * NOT CLOSED HERE, and pre-existing rather than introduced. SYST:STR:THRoughput
- * and the WiFi rate finder call PrepareStreamingBuffers BEFORE they observe the
- * claim (SCPIInterface.c -- the prepare, then the arm-time critical section), so
- * a SYST:MEM:AUTO holding the claim can still be re-partitioning while one of
- * them partitions too. The old && guard admitted exactly the same overlap, so
- * this is unchanged by the conversion, and the outcome is strictly better: the
- * arm now sees the claim and refuses instead of arming onto a pool being
- * re-carved. Making it airtight needs those two to TAKE the claim rather than
- * observe it, which they cannot do as written -- they would then read their own
- * claim at the arm and refuse themselves. What the claim does close outright is
- * two SYST:MEM:AUTO commands racing each other: the loser now gets
- * STREAM_CFG_CLAIM_BUSY instead of a second concurrent re-partition.
+ * CLOSED BY #977, and the shape of the fix is worth recording because #857 got
+ * as far as naming the hole and then ruled out the only fix it could see.
+ *
+ * What #857 left open: SYST:STR:THRoughput and the WiFi rate finder call
+ * PrepareStreamingBuffers BEFORE they observe the claim (the prepare, then the
+ * arm-time critical section), so a SYST:MEM:AUTO holding the claim could still
+ * be re-partitioning while one of them partitioned too -- and SCPI_StartStreaming
+ * has the same ordering. The old && guard admitted the identical overlap, so the
+ * conversion neither introduced nor widened it.
+ *
+ * Why the fix #857 considered was correctly rejected: making those commands TAKE
+ * this claim does not work, because they would then read their own claim at the
+ * arm (Streaming_ConfigChangeInProgress) and refuse themselves unconditionally.
+ * That reasoning still holds, and it is why #977 did NOT merge the two claims.
+ *
+ * What #977 did instead: INTERLOCK them. Streaming_BeginConfigChange now also
+ * refuses while the session-start claim is held, and Streaming_BeginSessionStart
+ * refuses while this one is. The two Begins exclude each other; neither takes
+ * the other's claim, so nothing reads its own. Streaming_ConfigChangeInProgress
+ * keeps meaning "a CONFIG change is in flight" and the three arm sites keep
+ * reading it -- now as a second line of defence rather than the only one.
+ *
+ * So all four PrepareStreamingBuffers callers are now mutually exclusive: the
+ * three arm sites through the session-start claim (#850), SYST:MEM:AUTO and
+ * SYST:MEM:RESet through this one, and the two groups against each other
+ * through the interlock. tools/lint/scpi_claim_path.py property 5 gates it.
  */
 static scpi_result_t SCPI_MemRunClaimed(scpi_t * context,
                                         scpi_result_t (*body)(scpi_t *),
@@ -6936,6 +7282,15 @@ static scpi_result_t SCPI_GetMemFree(scpi_t * context) {
                 (unsigned)AInSampleList_PoolInUse());
     scpi_printf(context, "SamplePoolMaxUsed=%u\r\n",
                 (unsigned)AInSampleList_PoolMaxUsed());
+    /* #1082: the streaming pool's total byte size (STATIC_POOL_SIZE) had no
+     * SCPI caller, so a host could only learn it from a "Pool partition"
+     * LOG_I line -- captured only if GENERAL is at INFO when some
+     * StreamingBufferPool_Partition() call runs, never for the boot-time
+     * partition (GENERAL boots at ERROR). StreamingBufferPool_TotalSize()
+     * has no side effects and needs no stream/repartition. Appended per the
+     * #828 convention: existing keys keep their name, value and order. */
+    scpi_printf(context, "StreamingPoolTotal=%u\r\n",
+                (unsigned)StreamingBufferPool_TotalSize());
     return SCPI_RES_OK;
 }
 
@@ -7112,17 +7467,23 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
      *
      * READ AND USE ARE ADJACENT ON PURPOSE, and an earlier revision of this
      * commit had them sixty lines apart, up beside the other partition
-     * checks. That grouping reads better and is wrong: `PrepareStreamingBuffers`
-     * releases the SD buffer lock partway down, and the session-start claim the
-     * bench and the finder hold (`Streaming_BeginSessionStart`) does NOT
-     * interlock with the config-change claim `SYSTem:MEMory:AUTO` takes
-     * (`Streaming_BeginConfigChange` tests IsEnabled/Running and gCfgChangeBusy,
-     * never gSessionStartBusy). Neither is armed yet at this point in the
-     * finder's preparation, so an AUTO on the other transport CAN take its
-     * claim and re-partition in between -- and the wider that gap, the more of
-     * it there is to land in. Keeping the fetch next to the install does not
-     * close that race (it is pre-existing and covers this whole function --
-     * filed as #977); it declines to widen it.
+     * checks. That grouping reads better and was wrong at the time:
+     * `PrepareStreamingBuffers` releases the SD buffer lock partway down, and
+     * the session-start claim the bench and the finder hold
+     * (`Streaming_BeginSessionStart`) did NOT interlock with the config-change
+     * claim `SYSTem:MEMory:AUTO` takes, so an AUTO on the other transport could
+     * take its claim and re-partition in between -- and the wider that gap, the
+     * more of it there was to land in. #950 declined to widen a race it could
+     * not close; #977 then closed it, by making each claim's Begin refuse while
+     * the other is held (streaming.c), so no second caller can enter this
+     * function while one is inside it.
+     *
+     * They stay adjacent anyway. The interlock excludes the OTHER SCPI
+     * transport, not a future in-function yield: this function calls vTaskDelay
+     * in three places, and a fetch sixty lines above its use would once again
+     * be a value read before waits and used after them. Adjacency is cheap and
+     * is the property that does not depend on the claim structure staying as it
+     * is.
      *
      * It also invalidates as it refuses: returning here without that would
      * leave the PREVIOUS partition's pool live, which is the state the other
@@ -7135,10 +7496,15 @@ static bool PrepareStreamingBuffers(uint32_t poolCount, size_t sampleElemSize) {
     StreamingBufferPool_GetSamplePool(&sPoolMem, &sFreeMem, &sCount, &sElemSz);
     AInSampleList_InitializeExternal(sPoolMem, sFreeMem, sCount, sElemSz);
     if (sPoolMem == NULL || sFreeMem == NULL || sCount == 0 || sElemSz == 0) {
-        LOG_E("PrepareStreamingBuffers: refused - partition left no sample "
-              "slots (pool=%p free=%p count=%u elem=%u); reduce "
-              "SYST:MEM:USB/WIFI/SD/ENCoder:BUFfer or SYST:MEM:AUTO",
-              sPoolMem, (void*)sFreeMem, (unsigned)sCount, (unsigned)sElemSz);
+        /* #1000 class: 153 bytes of fixed text plus four substitutions, so
+          * the whole remedy was cut -- an operator saw the refusal and never
+          * saw SYST:MEM:AUTO. The two %p were dropped rather than the remedy:
+          * a NULL pool or free-list is a partition bug rather than an operator
+          * misconfiguration, and SYST:MEM:FREE? reports the partition. The
+          * counts stay because they name which of the four conditions fired. */
+        LOG_E("Buffer prep refused: no sample slots (count=%u elem=%u); "
+              "try SYST:MEM:AUTO",
+              (unsigned)sCount, (unsigned)sElemSz);
         return false;
     }
     return true;
@@ -7403,7 +7769,8 @@ static scpi_result_t SCPI_CapabilitiesApiVersionGet(scpi_t * context) {
 static void EmitAinChannelJson(scpi_t* context,
                                const AInChannel* ch,
                                const AInRuntimeConfig* rt,
-                               double moduleRangeSpan) {
+                               double moduleRangeSpan,
+                               uint32_t scanOffsetTicks) {
     uint8_t id = ch->DaqifiAdcChannelId;
     bool    isTemperature     = false;
     bool    allowDifferential = false;
@@ -7443,19 +7810,58 @@ static void EmitAinChannelJson(scpi_t* context,
         isTemperature ? "Cel"         : "V",
         (unsigned)resolutionBits);
 
+    /* #267 scan_offset_ticks — the companion fact to "simultaneous". That flag
+     * says WHETHER a channel converts with the others; this says BY HOW MUCH it
+     * does not. Units are timestamp-timer ticks, the same domain as
+     * timing.timestamp_hz below, so a client divides by that one published rate
+     * and needs to know nothing about the ADC clock.
+     *
+     * Per-channel rather than a parallel channel_timing_offsets[] array beside
+     * "timing": the value IS a per-channel property, it belongs next to
+     * "simultaneous" which a client already reads for exactly this question, and
+     * a sibling array would impose an index<->channel alignment contract that
+     * nothing in this schema enforces (channels[] mixes analog-input,
+     * analog-output and digital-io, so the indices would not even be the
+     * channel ids). Additive key — older clients ignore it, no schema_version
+     * bump (see the escape-hatch note at the top of the blob).
+     *
+     * 0 has one meaning, "no deterministic offset applies", covering: a
+     * simultaneous channel (Type 1 dedicated S&H, or AD7609) and a channel
+     * the current configuration would not scan at all. The first input in
+     * the scan is NOT among these (#1112 round-2, "One timing comment
+     * preserves old semantics" — every scanned shared/Type-2 position,
+     * including the first, carries its own nonzero acquisition aperture;
+     * see MC12b_ChannelScanOffsetTicks). It describes the scan the device
+     * would arm for the channel set enabled RIGHT NOW (the same scan
+     * cap_terms.scan_bound_hz is computed for), so it is a fact about the
+     * session a client is about to start, not a hypothetical. */
     scpi_printf(context,
         "\"simultaneous\":%s,\"differential\":%s,"
+        "\"scan_offset_ticks\":%u,"
         "\"ranges\":[{\"min\":%.3f,\"max\":%.3f}],",
         simultaneous      ? "true" : "false",
         allowDifferential ? "true" : "false",
+        (unsigned)scanOffsetTicks,
         rangeMin, rangeMax);
+
+    /* #1054 (the read half of #904): CalM/CalB are 64-bit doubles -- two
+     * 32-bit loads each on PIC32MZ (CLAUDE.md atomicity rules) -- and a
+     * CONF:ADC:chanCALM/chanCALB setter on the OTHER SCPI transport can land
+     * between them. #1048 makes the writes atomic, which does not stop a
+     * reader straddling a completed write. Snapshot the pair under one
+     * critical section so the advertised slope and intercept are untorn and
+     * read at the same instant, then format outside it. */
+    taskENTER_CRITICAL();
+    double calM = rt->CalM;
+    double calB = rt->CalB;
+    taskEXIT_CRITICAL();
 
     scpi_printf(context,
         "\"calibration\":{\"model\":\"linear\","
         "\"user_override_supported\":true,"
         "\"slope\":%.6f,\"intercept\":%.6f},"
         "\"extensions\":{}}",
-        rt->CalM, rt->CalB);
+        calM, calB);
 }
 
 static void EmitAoutChannelJson(scpi_t* context,
@@ -7716,6 +8122,45 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * but defending the read is cheap. */
     uint32_t ainLoopCount = (cfg->AInChannels.Size < rt->AInChannels.Size)
         ? cfg->AInChannels.Size : rt->AInChannels.Size;
+
+    /* #267: inputs for the per-channel scan_offset_ticks field. Read/computed
+     * ONCE outside the loop — all session-wide, and taking them once keeps
+     * EVERY channel's offset describing the SAME scan even if the other SCPI
+     * transport changes the enabled-channel set or toggles OBDiag mid-
+     * emission (Qodo /agentic_review, PR firmware#1112, "Channel timing can
+     * describe wrong scan": MC12b_ChannelScanOffsetTicks used to rebuild the
+     * scan mask itself, per channel, so two channels in one response could
+     * disagree about which scan they were even part of).
+     *
+     * ainScanObDiag is exactly the includeMonitoring flag
+     * Streaming_ComputeMaxFreqTermsForConfigIface passes when it builds the
+     * session scan list for cap_terms.scan_bound_hz, so the offsets and that
+     * bound describe one scan rather than two (a narrower residual window
+     * against scan_bound_hz's OWN, separately-timed computation earlier in
+     * this same query remains -- see MC12b_ChannelScanOffsetTicks' doc
+     * comment for why closing it needs the streaming config-change claim,
+     * which a read-only diagnostic query should not pay). TSTimerIndex is the
+     * timestamp timer whose rate is published as timing.timestamp_hz below.
+     * BoardRunTimeConfig_Get never returns NULL (documented, CLAUDE.md) --
+     * no defensive check here, matching every other call site in this file
+     * (e.g. streaming.c:752-758). */
+    uint32_t ainScanTsHz =
+        TimerApi_FrequencyGet(cfg->StreamingConfig.TSTimerIndex);
+    StreamingRuntimeConfig* ainScanSdiag =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    bool ainScanObDiag = (ainScanSdiag->OnboardDiagEnabled != 0);
+    uint32_t ainScanCss1 = 0u, ainScanCss2 = 0u;
+    (void)MC12b_ComputeScanList(true, ainScanObDiag,
+                                &ainScanCss1, &ainScanCss2);
+    /* #1112 round-1 fix: SAMC and the ADC clock dividers, snapshotted ONCE
+     * alongside the css1/css2 scan list above (Qodo /agentic_review, PR
+     * firmware#1112, round 1, "Snapshot SAMC before emitting channel
+     * offsets" — MC12b_ChannelScanOffsetTicks used to reread ADCCON2.SAMC on
+     * every call, and a CONF:ADC:SAMC:SHARed setter on the OTHER SCPI
+     * transport is only rejected #116 MID-STREAM, so it is reachable between
+     * two channels of this same idle-time query). */
+    MC12b_ScanTimingSnapshot ainScanTiming = MC12b_CaptureScanTiming();
+
     for (uint32_t i = 0; i < ainLoopCount; i++) {
         const AInChannel* ch = &cfg->AInChannels.Data[i];
         bool isPublic =
@@ -7733,14 +8178,34 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
                 break;
             }
         }
-        double moduleRange = (modIdx < rt->AInModules.Size)
-            ? rt->AInModules.Data[modIdx].Range : 0.0;
+        /* #1086 (the Range half of #904/#1054): Range is a 64-bit double
+         * -- two 32-bit loads on PIC32MZ (CLAUDE.md atomicity rules) -- and
+         * a CONF:ADC:RANGe setter on the OTHER SCPI transport can land
+         * between them. That setter's store is atomic (#1086), which does
+         * not stop a reader straddling a completed store, so copy it under a
+         * minimal critical section and hand EmitAinChannelJson the local.
+         *
+         * Deliberately NOT folded into EmitAinChannelJson's CalM/CalB
+         * section (#1054): that one lives in the callee, and a module's Range
+         * and a channel's cal pair have independent writers, so nothing
+         * needs them read at the same instant. This loop runs once per
+         * public channel on a query path, not per sample. */
+        double moduleRange = 0.0;
+        if (modIdx < rt->AInModules.Size) {
+            taskENTER_CRITICAL();
+            moduleRange = rt->AInModules.Data[modIdx].Range;
+            taskEXIT_CRITICAL();
+        }
 
         if (!firstEntry) scpi_printf(context, ",");
         firstEntry = false;
 
         const AInRuntimeConfig* rc = &rt->AInChannels.Data[i];
-        EmitAinChannelJson(context, ch, rc, moduleRange);
+        EmitAinChannelJson(context, ch, rc, moduleRange,
+                           MC12b_ChannelScanOffsetTicks(ch, ainScanCss1,
+                                                        ainScanCss2,
+                                                        &ainScanTiming,
+                                                        ainScanTsHz));
     }
 
     /* AOut — always emitted, just empty on boards without a DAC */
@@ -7863,6 +8328,9 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      *   while the core-timer ratio would not be (see #731).
      * - timestamp_ticks_per_sample: exactly what the deferred task stamps with
      *   (#717 gStreamPeriodTicks), from the shared helper so it cannot drift.
+     *   timestamp_hz is also the domain of each channel's scan_offset_ticks in
+     *   channels[] above (#267) — every sample in a set carries ONE stamp, and
+     *   that field is how far after it each input actually converted.
      * - actual_rate_millihz: the QUANTIZED rate. `Frequency` is what was asked
      *   for; the period register is an integer, so asking for 4500 Hz yields
      *   4498.714 Hz at 252 MHz (~286 ppm). Millihertz keeps it integral.
@@ -7929,7 +8397,7 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
        MIN/MAX_AIN_SAMPLE_COUNT) so the advertised min/max can't drift from
        the enforced min/max. (The encoder + sample-pool setters additionally
        accept 0 as an auto sentinel — outside the emitted min/max by design,
-       documented as a convention in the wiki schema + CLAUDE.md.) wifi/sd
+       documented as a convention in the wiki schema + docs/MEMORY_ARCHITECTURE.md.) wifi/sd
        mins and the 65536 caps are literals in their setters too — keep them
        literal here to match. */
     scpi_printf(context,
@@ -8132,28 +8600,32 @@ static scpi_result_t SCPI_DiagSpiBusStatsGet(scpi_t * context)
      * itself, so a client can ask "is the shared bus stuck?" and get an answer
      * that does not depend on somebody else's traffic. */
     bool held = false, sdHolds = false;
-    uint32_t holder = 0, depth = 0, recovered = 0;
+    uint32_t holder = 0, depth = 0, recovered = 0, holdMaxMs = 0;
     SpiBusHealth_GetExclusive(&held, &holder, &depth);
     sdHolds = app_SDCard_HoldsSpiBus();
     recovered = app_SDCard_BusRecoveryCount();
+    holdMaxMs = app_SDCard_BusHoldMaxMs();  // #930
 
-    /* 224, not 192: the worst case is 193 characters plus the NUL, which
-     * 192 truncates. Field-by-field, with every counter at its 10-digit
-     * maximum -- RejStale 20, RejExclusive 24, RejLock 19, RejQueueFull 24,
-     * ExclusiveHeld 16, ExclusiveDepth 26, ExclusiveHolder 25, SdHoldsBus 13,
-     * SdBusRecoveries 26 (no trailing comma). Recompute this if a field is
-     * added. Stays a stack local rather than the shared response buffer
-     * because it is under the 256 B threshold that rule applies to. */
+    /* 224, not 192: the worst case is 219 characters plus the NUL (220),
+     * which 192 truncates. Field-by-field, with every counter at its
+     * 10-digit maximum -- RejStale 20, RejExclusive 24, RejLock 19,
+     * RejQueueFull 24, ExclusiveHeld 16, ExclusiveDepth 26,
+     * ExclusiveHolder 25, SdHoldsBus 13, SdBusRecoveries 27,
+     * SdBusHoldMaxMs 25 (no trailing comma, it is now last). Recompute
+     * this if a field is added. Stays a stack local rather than the
+     * shared response buffer because it is under the 256 B threshold
+     * that rule applies to. */
     char out[224];
     snprintf(out, sizeof(out),
              "RejStale=%lu,RejExclusive=%lu,RejLock=%lu,RejQueueFull=%lu,"
              "ExclusiveHeld=%u,ExclusiveDepth=%lu,ExclusiveHolder=%08lx,"
-             "SdHoldsBus=%u,SdBusRecoveries=%lu",
+             "SdHoldsBus=%u,SdBusRecoveries=%lu,SdBusHoldMaxMs=%lu",
              (unsigned long)st, (unsigned long)ex, (unsigned long)lk,
              (unsigned long)qf,
              (unsigned)(held ? 1U : 0U), (unsigned long)depth,
              (unsigned long)holder,
-             (unsigned)(sdHolds ? 1U : 0U), (unsigned long)recovered);
+             (unsigned)(sdHolds ? 1U : 0U), (unsigned long)recovered,
+             (unsigned long)holdMaxMs);
     SCPI_ResultText(context, out);
     return SCPI_RES_OK;
 }
@@ -8370,7 +8842,23 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = "SYSTem:COMMunicate:LAN:DNS2", .callback = SCPI_NotImplemented,},
     {.pattern = "SYSTem:COMMunicate:LAN:MAC?", .callback = SCPI_LANMacGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:MAC", .callback = SCPI_NotImplemented,},
-    {.pattern = "SYSTem:COMMunicate:LAN:CONnected?", .callback = SCPI_NotImplemented,},
+    /* #951: implemented on the slot that was already registered (and already
+     * documented) against SCPI_NotImplemented, so this costs no new command
+     * table entry. Reply is a bare mnemonic -- match it WHOLE, not by prefix:
+     *   INIT       WINC bring-up in progress; transient, poll again
+     *   INITFAULT  WINC answers SPI but m2m_wifi_init_start never completed;
+     *              wifi_manager re-queues INIT forever. Does NOT self-clear.
+     *   NOLINK     radio up; STA not associated, or the soft-AP never started
+     *   APIDLE     soft-AP up and BEACONING with nobody on it -- no station
+     *              associated and no TCP client
+     *   CONNECTED  a peer is attached: STA associated to an AP, or a station
+     *              associated to our soft-AP (a TCP client also reaches this).
+     *              NOT split on 'has a TCP client' -- see SCPILAN.c for why
+     *              the state flags cannot support that split
+     * WiFi disabled/deinitialised is refused with -200 by the shared LAN-getter
+     * ready gate rather than reported, as with every other LAN getter. Full
+     * contract: SCPI_LANConnectedGet in SCPILAN.c, and the wiki. */
+    {.pattern = "SYSTem:COMMunicate:LAN:CONnected?", .callback = SCPI_LANConnectedGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:HOST?", .callback = SCPI_LANHostnameGet,},
     {.pattern = "SYSTem:COMMunicate:LAN:HOST", .callback = SCPI_NotImplemented,},
     {.pattern = "SYSTem:COMMunicate:LAN:FWUpdate", .callback = SCPI_LANFwUpdate,},
@@ -8596,11 +9084,6 @@ static const scpi_command_t scpi_commands[] = {
     {.pattern = NULL, .callback = SCPI_NotImplemented,},
 };
 
-#define SCPI_INPUT_BUFFER_LENGTH 512  // Match USB CDC max packet size to prevent silent truncation
-#define SCPI_ERROR_QUEUE_SIZE 17
-char scpi_input_buffer[SCPI_INPUT_BUFFER_LENGTH];
-scpi_error_t scpi_error_queue_data[SCPI_ERROR_QUEUE_SIZE];
-
 /* #1004: total time SCPI_Help may spend writing while it holds the shared
  * SCPI response buffer (gScpiRespMutex, #347). Same budget and same
  * reasoning as the SCPI_CMDHISTORY_WRITE_BUDGET_MS #995 proposes on the
@@ -8778,7 +9261,8 @@ size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
     return written;
 }
 
-scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
+scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context,
+                         ScpiContextStorage* storage) {
     // Defense in depth: SCPI_ResponseBuf_Init() is supposed to have been
     // called during app boot before any transport creates its SCPI context.
     // Call it again here — it's idempotent — so the shared response-buffer
@@ -8791,13 +9275,23 @@ scpi_t CreateSCPIContext(scpi_interface_t* interface, void* user_context) {
     // Init context.  gIdnModel and gIdnSerial are populated once pre-scheduler
     // by SCPI_InitIdentification() so concurrent CreateSCPIContext() calls
     // from USB and WiFi tasks just read the same finished strings.
+    //
+    // #999: the input buffer and error queue come from the CALLER's own
+    // storage, not a file-scope global. They used to be two singleton
+    // arrays (scpi_input_buffer[512], scpi_error_queue_data[17]) handed to
+    // EVERY context, so USB and WiFi shared one parse buffer and one error
+    // FIFO while each kept its own independent read/write cursor into that
+    // shared memory -- a command being parsed on one transport could be
+    // overwritten mid-dispatch by the other, and a pushed error could be
+    // silently swapped for (or overwritten by) the other transport's error.
+    // See ScpiContextStorage in SCPIInterface.h.
     SCPI_Init(&daqifiScpiContext,
             scpi_commands,
             interface,
             scpi_units_def,
             SCPI_IDN1, gIdnModel, gIdnSerial, SCPI_IDN4,
-            scpi_input_buffer, SCPI_INPUT_BUFFER_LENGTH,
-            scpi_error_queue_data, SCPI_ERROR_QUEUE_SIZE);
+            storage->inputBuffer, SCPI_INPUT_BUFFER_LENGTH,
+            storage->errorQueue, SCPI_ERROR_QUEUE_SIZE);
 
     // #598: SCPI_Init doesn't take user_context, and this function accepted
     // the parameter without ever storing it - both transports were passing
