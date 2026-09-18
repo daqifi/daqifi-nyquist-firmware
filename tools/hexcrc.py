@@ -158,11 +158,22 @@ def compute_image_crc32(lines, region_base, region_length,
     """CRC-32 (zlib-compatible) of [region_base, region_base+region_length)
     as assembled from the given Intel HEX lines, 0xFF-filled where no
     record ever wrote.
+
+    Requires a structurally valid Intel HEX EOF (type 01, address 0, no
+    data) record before returning -- a truncated file (cut off mid-stream,
+    or empty) never reaches one, and without this check would otherwise
+    silently report a CRC over whatever partial image it had assembled so
+    far, indistinguishable from a complete one.
     """
+    if region_length <= 0:
+        raise ValueError(
+            "region_length must be positive, got %d" % region_length)
+
     # bytearray multiplication (not [fill] * region_length then bytearray())
     # so a real ~2 MB region never builds an intermediate Python list.
     image = bytearray([fill]) * region_length
     ext_base = 0  # accumulated from the most recent type-02/04 record
+    saw_eof = False
 
     for lineno, addr16, rec_type, data in parse_records(lines):
         if rec_type == REC_DATA:
@@ -172,6 +183,11 @@ def compute_image_crc32(lines, region_base, region_length,
                 if region_base <= a < region_base + region_length:
                     image[a - region_base] = byte
         elif rec_type == REC_EOF:
+            if addr16 != 0 or len(data) != 0:
+                raise HexFormatError(
+                    "line %d: EOF (type 01) record must have address 0000 "
+                    "and no data" % lineno)
+            saw_eof = True
             break
         elif rec_type == REC_EXT_LINEAR_ADDR:
             if len(data) != 2:
@@ -193,6 +209,11 @@ def compute_image_crc32(lines, region_base, region_length,
             raise HexFormatError(
                 "line %d: unsupported Intel HEX record type 0x%02X"
                 % (lineno, rec_type))
+
+    if not saw_eof:
+        raise HexFormatError(
+            "no Intel HEX EOF (type 01) record found -- input is "
+            "truncated or empty")
 
     return zlib.crc32(bytes(image)) & 0xFFFFFFFF
 
@@ -321,10 +342,13 @@ def self_test():
     # "nonzero".
     empty_length = 0x10
     expected_ff_crc = zlib.crc32(bytes([0xFF] * empty_length)) & 0xFFFFFFFF
-    # zlib.crc32(b'\xff' * 16) is a fixed, well-known value; pin it literally
-    # so a change to the fill byte or the region size is caught even if
-    # zlib's behaviour were ever wrong in some exotic environment.
-    _ck("all-0xFF, 16-byte fill CRC is the literal expected constant",
+    # This literal is a REGRESSION PIN, not an externally-sourced reference
+    # value: it is zlib.crc32(b'\xff' * 16), computed once and hardcoded
+    # here so a later change to the fill byte or the region size shows up
+    # as a diff against this constant -- catching a bug that broke both the
+    # implementation AND the comparison the same way, which "assert equal
+    # to a freshly recomputed value" cannot.
+    _ck("all-0xFF, 16-byte fill CRC matches the pinned regression constant",
         expected_ff_crc, 0x3FB3C61A)
     _ck("a region with no records at all produces the all-0xFF CRC",
         compute_image_crc32([_EOF_RECORD], base, empty_length),
@@ -383,15 +407,54 @@ def self_test():
         _raises([":0100000400FB"]), True)  # byte_count=1 (not 2), checksum valid
     _ck("an unsupported record type is refused",
         _raises([":01000006" + "00" + "F9"]), True)
+
+    # --- 5b: a stream that never reaches a (structurally valid) EOF is
+    # refused -- covers a truly empty file and a file truncated after its
+    # last data record, both of which would otherwise reach the
+    # unconditional CRC return over a partial image.
+    _ck("an empty input (no records at all) is refused",
+        _raises([]), True)
+    _ck("data records with no EOF at all (truncated mid-file) is refused",
+        _raises([_ext_linear_record(0x1D00),
+                  _data_record(0x0010, [0xAA, 0xBB])]), True)
+    _ck("an EOF record with a nonzero address is refused",
+        _raises([":00001001EF"]), True)  # type 01, addr=0x0010, no data
+    _ck("an EOF record carrying data is refused",
+        _raises([":010000019965"]), True)  # type 01, 1 data byte -- malformed
+
     # And the positive control: a well-formed minimal file must NOT raise,
     # so the above are really exercising validation and not just "any input
     # throws".
     _ck("a well-formed minimal file does not raise",
         _raises([_EOF_RECORD]), False)
 
+    # --- 5c: a non-positive region length is refused by the core function
+    # directly (not just by the CLI's argparse layer), so a caller that
+    # imports this module cannot construct an invalid audit region either.
+    def _raises_bad_length(region_length):
+        try:
+            compute_image_crc32([_EOF_RECORD], base, region_length)
+            return False
+        except ValueError:
+            return True
+
+    _ck("a zero region length is refused", _raises_bad_length(0), True)
+    _ck("a negative region length is refused", _raises_bad_length(-1), True)
+
     bad = _CHECKS.count(False)
     print("self-test: %d/%d checks passed" % (_CHECKS.count(True), len(_CHECKS)))
     return 1 if bad else 0
+
+
+def _positive_int(s):
+    """argparse type= for --length: a non-positive region length makes
+    compute_image_crc32() assemble a (silently) empty image and report
+    zlib's empty-input CRC (00000000) as though it were a real result."""
+    v = int(s, 0)
+    if v <= 0:
+        raise argparse.ArgumentTypeError(
+            "must be a positive integer, got %r" % s)
+    return v
 
 
 def main():
@@ -405,9 +468,9 @@ def main():
                      help="audited region physical base address "
                           "(default: 0x%X, standalone build)"
                           % STANDALONE_PHYS_BASE)
-    ap.add_argument("--length", type=lambda s: int(s, 0),
+    ap.add_argument("--length", type=_positive_int,
                      default=STANDALONE_AUDIT_LENGTH,
-                     help="audited region length in bytes "
+                     help="audited region length in bytes, must be > 0 "
                           "(default: 0x%X, standalone build)"
                           % STANDALONE_AUDIT_LENGTH)
     ap.add_argument("--self-test", action="store_true",
