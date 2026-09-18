@@ -188,6 +188,10 @@ uint16_t TimerApi_PreScalerGet(uint8_t index) {
  * them wrong silently scales every streamed rate:
  *
  *   SPLLCON PLLIDIV<2:0>  bits 10:8   000 = /1 ... 111 = /8      -> value + 1
+ *                                     IGNORED when PLLICLK = FRC (Register
+ *                                     8-3): the input divider only applies to
+ *                                     the POSC path, so FRC is effectively /1
+ *                                     regardless of the field's contents.
  *   SPLLCON PLLMULT<6:0>  bits 22:16  0000000 = x1 ... x128      -> value + 1
  *   SPLLCON PLLODIV<2:0>  bits 26:24  001 = /2, 010 = /4, 011 = /8,
  *                                     100 = /16, 101 = /32       -> 1 << value
@@ -217,10 +221,20 @@ static uint32_t TimerApi_DerivePbclkHz(bool* pDerived) {
          * this whole function exists to remove — so treat it as underivable
          * instead of guessing. */
         if ((odivField >= 1u) && (odivField <= 5u)) {
-            const uint32_t inHz = (SPLLCONbits.PLLICLK != 0u)
-                                  ? (uint32_t)DAQIFI_FRC_HZ
-                                  : (uint32_t)DAQIFI_POSC_HZ;
-            const uint32_t idiv = (uint32_t)SPLLCONbits.PLLIDIV + 1u;
+            const bool onFrc = (SPLLCONbits.PLLICLK != 0u);
+            const uint32_t inHz = onFrc ? (uint32_t)DAQIFI_FRC_HZ
+                                        : (uint32_t)DAQIFI_POSC_HZ;
+            /* Qodo /agentic_review (PR firmware#1112, "Internal-clock devices
+             * misreport timing"): Register 8-3 -- with PLLICLK = FRC the
+             * input divider is ignored and the PLL uses divide-by-1. This
+             * function used to apply PLLIDIV+1 unconditionally, which
+             * MC12b_SharedTadNs's #267 fix now makes load-bearing for ADC
+             * timing too, not only the pre-existing #716 rate/timebase
+             * consumers. initialization.c's PLL-switch logic already gets
+             * this right (same register, same distinction) -- mirrored here
+             * rather than left to diverge a second time. */
+            const uint32_t idiv = onFrc ? 1u
+                                        : ((uint32_t)SPLLCONbits.PLLIDIV + 1u);
             const uint32_t mult = (uint32_t)SPLLCONbits.PLLMULT + 1u;
             const uint32_t odiv = 1u << odivField;
 

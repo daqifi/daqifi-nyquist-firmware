@@ -5267,14 +5267,51 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
              * 5 s; the pre-clear above guarantees they describe ONLY this
              * request. */
             int readyWait = 0;
+            /* #1121: did THIS request's arm die while we were waiting for it?
+             * Ports #988's cascade (SCPIStorageSD.c's SCPI_StorageSDBenchmark,
+             * around its own IsWriteReady loop) onto this site -- grep confirms
+             * these two are the ONLY `readyWait` sites in firmware/src, and this
+             * was the one left uncovered when #988 shipped. `pSDCardSettings`
+             * here is the exact same sd_card_manager_settings_t singleton
+             * (BOARDRUNTIME_SD_CARD_SETTINGS) that function reads, so its
+             * atomicity argument transfers unchanged: `mode` is a plain,
+             * naturally-aligned 32-bit enum; this callback is the only writer
+             * that just published MODE_WRITE a few lines above and never
+             * touches it again before this loop; and `armTornDown` is a stack
+             * local no other context can see -- nothing here needs a critical
+             * section any more than the twin's does. Full reasoning (why the
+             * latch does not `break`, why the reconciliation read after the
+             * loop is needed, why it only ever ORs) lives on that function's
+             * copy and is not repeated here in full to avoid a second copy
+             * silently drifting from the first. */
+            bool armTornDown = false;
             while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
                 if (sd_card_manager_StartupDirFull() || sd_card_manager_StartupDiskFull()) {
                     break;
+                }
+                if (pSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE) {
+                    armTornDown = true;   /* #1121/#988: latch, keep waiting */
                 }
                 vTaskDelay(pdMS_TO_TICKS(10));
                 readyWait++;
             }
             if (!sd_card_manager_IsWriteReady()) {
+                /* #1121/#988: reconciliation read. The loop samples `mode` at
+                 * the TOP of its body and then yields 10 ms before re-testing
+                 * its condition, so its last observation and its exit are not
+                 * the same instant -- a teardown landing in that final slice
+                 * (or between the loop's IsWriteReady() and this one) is
+                 * unobserved by the loop alone. `||`, never `=`: the loop's
+                 * latch is already a fact ("mode left the MODE_WRITE this
+                 * callback published") that a later re-arm by a different
+                 * caller must not be allowed to erase. */
+                armTornDown = armTornDown ||
+                              (pSDCardSettings->mode != SD_CARD_MANAGER_MODE_WRITE);
+                /* Sampled once, before the cascade, matching SCPIStorageSD.c's
+                 * #953 arm: a second call here could observe a different owner
+                 * (or none) than the one that actually steered the branch
+                 * below. */
+                const char *why = SD_SuspendReasonText();
                 if (sd_card_manager_StartupDirFull()) {
                     /* #689: this flag means "no writable location", which covers a
                      * full directory AND a bucket that could not be created or read.
@@ -5320,6 +5357,48 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                         LOG_E("[SD] STR:START refused: disk full (space unknown), floor=%llu B",
                               (unsigned long long)floor);
                     }
+                } else if (why != NULL) {
+                    /* #953 (ported from SCPIStorageSD.c by #1121): a live
+                     * suspend reason. Ranked above the #988 latch below for the
+                     * same reason that function's copy gives -- this is the
+                     * only arm that can name an OWNER and the command that
+                     * clears it, and the WiFi/FW-update/quarantine teardown
+                     * that tears this arm down publishes the suspension
+                     * through the same app_SDCard_GracefulShutdown() call, so
+                     * where both fire they almost always describe one event.
+                     * Same "Cannot start SD logging - SD suspended: %s" prefix
+                     * this file's other two SD_SuspendReasonText() callers
+                     * already use (:4832, :5151) -- measured worst case 118
+                     * bytes against Logger's 125-byte effective ceiling,
+                     * unchanged by reuse here. */
+                    LOG_E("Cannot start SD logging - SD suspended: %s\r\n", why);
+                } else if (armTornDown) {
+                    /* #988 (ported by #1121): this request's arm was torn down
+                     * and nothing names a cause. The state/mode pair is a
+                     * breadcrumb only -- SCPIStorageSD.c's #782 pattern -- and
+                     * does not steer this branch; `mode` can even read WRITE
+                     * again by the time this logs, if a different caller
+                     * re-armed in between. Prefixed "[SD] STR:START refused"
+                     * -- the same prefix the two STR:START refusal arms just
+                     * above already use -- rather than the "SD start refused"
+                     * this line originally shipped with: daqifi-python-test-
+                     * suite's test_861_stop_races_start_prearm.py parses the
+                     * refusal log through `_first_refusal_line()`, which
+                     * matches only 'STR:START refused', 'Cannot start' or
+                     * 'not ready'; without this prefix that test's exact
+                     * torn-down-during-the-SD-poll race (the "shape filed as
+                     * #871" note in that file) fell through to a bare error
+                     * code instead of this diagnosis (Qodo /agentic_review,
+                     * PR #1123). 122 bytes worst case (state/mode both 8
+                     * characters, CURDRIVE/GETSPACE -- verified against every
+                     * string sd_card_manager_GetStateName() and
+                     * sd_card_manager_GetModeName() can return, not assumed)
+                     * against the same 125-byte ceiling. */
+                    LOG_E("[SD] STR:START refused: the write arm was torn down "
+                          "before the file opened (SD now state=%s mode=%s) "
+                          "- retry\r\n",
+                          sd_card_manager_GetStateName(),
+                          sd_card_manager_GetModeName());
                 } else {
                     LOG_E("SD file not ready after %d ms\r\n", readyWait * 10);
                 }
@@ -7690,7 +7769,8 @@ static scpi_result_t SCPI_CapabilitiesApiVersionGet(scpi_t * context) {
 static void EmitAinChannelJson(scpi_t* context,
                                const AInChannel* ch,
                                const AInRuntimeConfig* rt,
-                               double moduleRangeSpan) {
+                               double moduleRangeSpan,
+                               uint32_t scanOffsetTicks) {
     uint8_t id = ch->DaqifiAdcChannelId;
     bool    isTemperature     = false;
     bool    allowDifferential = false;
@@ -7730,11 +7810,38 @@ static void EmitAinChannelJson(scpi_t* context,
         isTemperature ? "Cel"         : "V",
         (unsigned)resolutionBits);
 
+    /* #267 scan_offset_ticks — the companion fact to "simultaneous". That flag
+     * says WHETHER a channel converts with the others; this says BY HOW MUCH it
+     * does not. Units are timestamp-timer ticks, the same domain as
+     * timing.timestamp_hz below, so a client divides by that one published rate
+     * and needs to know nothing about the ADC clock.
+     *
+     * Per-channel rather than a parallel channel_timing_offsets[] array beside
+     * "timing": the value IS a per-channel property, it belongs next to
+     * "simultaneous" which a client already reads for exactly this question, and
+     * a sibling array would impose an index<->channel alignment contract that
+     * nothing in this schema enforces (channels[] mixes analog-input,
+     * analog-output and digital-io, so the indices would not even be the
+     * channel ids). Additive key — older clients ignore it, no schema_version
+     * bump (see the escape-hatch note at the top of the blob).
+     *
+     * 0 has one meaning, "no deterministic offset applies", covering: a
+     * simultaneous channel (Type 1 dedicated S&H, or AD7609) and a channel
+     * the current configuration would not scan at all. The first input in
+     * the scan is NOT among these (#1112 round-2, "One timing comment
+     * preserves old semantics" — every scanned shared/Type-2 position,
+     * including the first, carries its own nonzero acquisition aperture;
+     * see MC12b_ChannelScanOffsetTicks). It describes the scan the device
+     * would arm for the channel set enabled RIGHT NOW (the same scan
+     * cap_terms.scan_bound_hz is computed for), so it is a fact about the
+     * session a client is about to start, not a hypothetical. */
     scpi_printf(context,
         "\"simultaneous\":%s,\"differential\":%s,"
+        "\"scan_offset_ticks\":%u,"
         "\"ranges\":[{\"min\":%.3f,\"max\":%.3f}],",
         simultaneous      ? "true" : "false",
         allowDifferential ? "true" : "false",
+        (unsigned)scanOffsetTicks,
         rangeMin, rangeMax);
 
     /* #1054 (the read half of #904): CalM/CalB are 64-bit doubles -- two
@@ -8015,6 +8122,45 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * but defending the read is cheap. */
     uint32_t ainLoopCount = (cfg->AInChannels.Size < rt->AInChannels.Size)
         ? cfg->AInChannels.Size : rt->AInChannels.Size;
+
+    /* #267: inputs for the per-channel scan_offset_ticks field. Read/computed
+     * ONCE outside the loop — all session-wide, and taking them once keeps
+     * EVERY channel's offset describing the SAME scan even if the other SCPI
+     * transport changes the enabled-channel set or toggles OBDiag mid-
+     * emission (Qodo /agentic_review, PR firmware#1112, "Channel timing can
+     * describe wrong scan": MC12b_ChannelScanOffsetTicks used to rebuild the
+     * scan mask itself, per channel, so two channels in one response could
+     * disagree about which scan they were even part of).
+     *
+     * ainScanObDiag is exactly the includeMonitoring flag
+     * Streaming_ComputeMaxFreqTermsForConfigIface passes when it builds the
+     * session scan list for cap_terms.scan_bound_hz, so the offsets and that
+     * bound describe one scan rather than two (a narrower residual window
+     * against scan_bound_hz's OWN, separately-timed computation earlier in
+     * this same query remains -- see MC12b_ChannelScanOffsetTicks' doc
+     * comment for why closing it needs the streaming config-change claim,
+     * which a read-only diagnostic query should not pay). TSTimerIndex is the
+     * timestamp timer whose rate is published as timing.timestamp_hz below.
+     * BoardRunTimeConfig_Get never returns NULL (documented, CLAUDE.md) --
+     * no defensive check here, matching every other call site in this file
+     * (e.g. streaming.c:752-758). */
+    uint32_t ainScanTsHz =
+        TimerApi_FrequencyGet(cfg->StreamingConfig.TSTimerIndex);
+    StreamingRuntimeConfig* ainScanSdiag =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    bool ainScanObDiag = (ainScanSdiag->OnboardDiagEnabled != 0);
+    uint32_t ainScanCss1 = 0u, ainScanCss2 = 0u;
+    (void)MC12b_ComputeScanList(true, ainScanObDiag,
+                                &ainScanCss1, &ainScanCss2);
+    /* #1112 round-1 fix: SAMC and the ADC clock dividers, snapshotted ONCE
+     * alongside the css1/css2 scan list above (Qodo /agentic_review, PR
+     * firmware#1112, round 1, "Snapshot SAMC before emitting channel
+     * offsets" — MC12b_ChannelScanOffsetTicks used to reread ADCCON2.SAMC on
+     * every call, and a CONF:ADC:SAMC:SHARed setter on the OTHER SCPI
+     * transport is only rejected #116 MID-STREAM, so it is reachable between
+     * two channels of this same idle-time query). */
+    MC12b_ScanTimingSnapshot ainScanTiming = MC12b_CaptureScanTiming();
+
     for (uint32_t i = 0; i < ainLoopCount; i++) {
         const AInChannel* ch = &cfg->AInChannels.Data[i];
         bool isPublic =
@@ -8055,7 +8201,11 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         firstEntry = false;
 
         const AInRuntimeConfig* rc = &rt->AInChannels.Data[i];
-        EmitAinChannelJson(context, ch, rc, moduleRange);
+        EmitAinChannelJson(context, ch, rc, moduleRange,
+                           MC12b_ChannelScanOffsetTicks(ch, ainScanCss1,
+                                                        ainScanCss2,
+                                                        &ainScanTiming,
+                                                        ainScanTsHz));
     }
 
     /* AOut — always emitted, just empty on boards without a DAC */
@@ -8178,6 +8328,9 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      *   while the core-timer ratio would not be (see #731).
      * - timestamp_ticks_per_sample: exactly what the deferred task stamps with
      *   (#717 gStreamPeriodTicks), from the shared helper so it cannot drift.
+     *   timestamp_hz is also the domain of each channel's scan_offset_ticks in
+     *   channels[] above (#267) — every sample in a set carries ONE stamp, and
+     *   that field is how far after it each input actually converted.
      * - actual_rate_millihz: the QUANTIZED rate. `Frequency` is what was asked
      *   for; the period register is an integer, so asking for 4500 Hz yields
      *   4498.714 Hz at 252 MHz (~286 ppm). Millihertz keeps it integral.
