@@ -65,8 +65,9 @@ never misapplied via truncation or wraparound.
     python3 tools/hexcrc.py path/to/image.hex [more.hex ...]
     python3 tools/hexcrc.py --self-test
 
-## Two committed reference pairs (2026-09, standalone builds, not committed
-## hex files -- see the issue for how they were produced)
+## Reference pairs (values only -- the .hex files that produced them are
+## multi-megabyte build artifacts and are deliberately not committed here;
+## see daqifi-nyquist-firmware#1127 for how they were produced)
 
     hex built at daqifi-nyquist-firmware#1092 (e66725c9) -> A7823538
     hex built at daqifi-nyquist-firmware#965  (ee43eb0c8) -> A849A017
@@ -120,6 +121,8 @@ def parse_records(lines):
             raise HexFormatError(
                 "line %d: record does not start with ':'" % lineno)
         body = line[1:]
+        # 10 hex chars is the minimum: byte-count(2) + address(4) + type(2)
+        # + checksum(2), for a zero-length data record.
         if len(body) < 10 or len(body) % 2 != 0:
             raise HexFormatError(
                 "line %d: record too short or odd-length hex" % lineno)
@@ -156,6 +159,8 @@ def compute_image_crc32(lines, region_base, region_length,
     as assembled from the given Intel HEX lines, 0xFF-filled where no
     record ever wrote.
     """
+    # bytearray multiplication (not [fill] * region_length then bytearray())
+    # so a real ~2 MB region never builds an intermediate Python list.
     image = bytearray([fill]) * region_length
     ext_base = 0  # accumulated from the most recent type-02/04 record
 
