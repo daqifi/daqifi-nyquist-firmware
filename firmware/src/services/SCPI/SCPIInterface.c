@@ -9172,7 +9172,7 @@ static const scpi_command_t scpi_commands[] = {
 /* #1004: total time SCPI_Help may spend writing while it holds the shared
  * SCPI response buffer (gScpiRespMutex, #347). Same budget and same
  * reasoning as SCPI_CMDHISTORY_WRITE_BUDGET_MS (#995, PR #1008 -- defined
- * a few hundred lines below in this same file): generous against a
+ * a couple thousand lines above in this same file): generous against a
  * normally-reading host (HELP's whole reply is a few KB against a 16 KB
  * USB / 14 KB WiFi circular buffer), tight enough to bound a stalled one. */
 #define SCPI_HELP_WRITE_BUDGET_MS  2000U
@@ -9195,11 +9195,11 @@ static const scpi_command_t scpi_commands[] = {
  * defect and now carry the same shape of fix, each its own small helper
  * rather than one shared generic one (why is #1004's to record):
  * SCPI_SysInfoTextGet's SysInfoText_Write (#947, PR #992, merged) and
- * SCPI_GetCommandHistory's CmdHistoryWrite (#995, PR #1008, a few hundred
- * lines below in this same file).
+ * SCPI_GetCommandHistory's CmdHistoryWrite (#995, PR #1008, a couple
+ * thousand lines above in this same file).
  *
  * TWO guards, because neither alone bounds the hold (the same two-guard
- * algebra CmdHistoryWrite uses, #995/PR #1008, below in this file):
+ * algebra CmdHistoryWrite uses, #995/PR #1008, above in this file):
  *   (1) short write -> latch. SCPI_WriteWithRetry has no resend path, so a
  *       short write has already DROPPED those bytes; the reply is truncated
  *       at that chunk and the remaining budget buys nothing.

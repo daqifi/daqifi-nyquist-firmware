@@ -1427,13 +1427,18 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 # re-express their target as a fragment -- a mechanical move of one recipe,
 # which is strictly cheaper than this resolution has been nine times running.
 #
-# Every suite, and every one of the SIXTEEN binaries: main's fifteen plus
-# #998's $(START_BIN). #998 (the claim/arm/refusal/poll order of
-# SCPI_StartStreamingClaimed()'s SD arm) collided with fw#947, fw#1056, fw#980,
-# fw#1004, fw#1000, fw#999, fw#985, fw#1112 and fw#1121 here, and was resolved
-# the same way as every earlier collision: keep each side's target rule INTACT
-# and union only `run` and `clean`. #971's suite (run_971_tests, PR #976) is
-# still landing independently on another branch; when it meets this, same rule.
+# Every suite, and every one of the SIXTEEN binaries main had at the time:
+# main's fifteen plus #998's $(START_BIN). #998 (the claim/arm/refusal/poll
+# order of SCPI_StartStreamingClaimed()'s SD arm) collided with fw#947,
+# fw#1056, fw#980, fw#1004, fw#1000, fw#999, fw#985, fw#1112 and fw#1121
+# here, and was resolved the same way as every earlier collision: keep each
+# side's target rule INTACT and union only `run` and `clean`. #971's suite
+# (run_971_tests, PR #976) is still landing independently on another
+# branch; when it meets this, same rule.
+#
+# TENTH additive collision in this block, and now SEVENTEEN binaries: this
+# PR's own #995 (`$(CMDHIST_BIN)`) against main's sixteen above, hit by
+# #1008's base refresh. Same resolution as every time before.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(CMDHIST_BIN)
 	./$(BIN)
