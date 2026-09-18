@@ -928,8 +928,8 @@ void app_SystemInit() {
      *
      * Before #909 the revision advanced only as a SIDE EFFECT of the
      * whole-flash erase destroying this page, which forced the factory-default
-     * branch above; the default branch stamps the current revision itself, so
-     * this is a no-op there (it returns false and nothing is written).
+     * branch above; that branch stamps the current revision itself, so on that
+     * path this call re-stamps the same values it already holds.
      *
      * IN MEMORY ONLY -- this deliberately does NOT write NVM.
      *
