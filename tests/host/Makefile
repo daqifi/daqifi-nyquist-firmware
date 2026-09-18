@@ -362,6 +362,17 @@ DAC980_BIN := run_980_tests
 DAC7718_SRC := ../../firmware/src/HAL/DAC7718/DAC7718.c
 SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
 
+# #1100: DAC_EnsureHardwareInitialized()'s caller-level power check missed the
+# 5/10V rail's own commanded enable (PowerWriteVars.EN_5_10V_Val) -- the same
+# blind spot #1099 closed one call site over, at the HAL level in
+# DAC7718_ReadWriteReg(). A separate binary/target from $(DAC980_BIN) rather
+# than a new Part in that file, deliberately: $(DAC980_BIN)'s own source file
+# is held by PR #1099's in-flight EN_5_10V_Val work (a new Part there, plus
+# RegMockEnv additions near the top), so editing the same lines from a second
+# PR would race it. This target only reads $(SCPIDAC_SRC) (grep guards) and
+# never touches test_980_dac7718_error_paths.c.
+SCPIDAC_RAILGATE_BIN := run_1100_tests
+
 # #1057 (#913's twin) folded dac7718_WaitStat's SPI2 busy-spins onto the same
 # bounded-spin-then-vTaskDelay(1) shape #913 gave UserSpi.c's spi_XferByte;
 # #1108 then finished what #1056 started and moved dac7718_WaitStat itself
@@ -776,6 +787,41 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	        echo "       SCPI_ErrorPush writes to the transport; it must run after the unlock."; \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
+
+$(SCPIDAC_RAILGATE_BIN): test_1100_scpidac_rail_enable_gate.c test_framework.h $(SCPIDAC_SRC) $(RECIPES)
+	@grep -qE '^[[:space:]]*if \(pPowerState->powerState != POWERED_UP\) \{' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: DAC_EnsureHardwareInitialized's top-of-function powerState gate is gone"; \
+	       echo "       from $(SCPIDAC_SRC). test_1100_scpidac_rail_enable_gate.c's model assumes"; \
+	       echo "       the #1100 rail-enable gate sits immediately after this exact check -- re-derive."; \
+	       exit 1; }
+	@test "$$(grep -c 'BOARDRUNTIME_POWER_WRITE_VARIABLES' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: BOARDRUNTIME_POWER_WRITE_VARIABLES lookup count in $(SCPIDAC_SRC) changed"; \
+	       echo "       from 2 (added by #1100). The fix needs BOTH the top-of-function rail-enable"; \
+	       echo "       gate AND a second, FRESH read immediately before publishing"; \
+	       echo "       dacHardwareInitialized=true -- exactly the same two-checkpoint shape #980"; \
+	       echo "       pass 3 established for powerState (see the sibling guard on \$$(DAC980_BIN))."; \
+	       echo "       If this count is no longer 2, one checkpoint may have been removed -- re-derive."; \
+	       exit 1; }
+	@test "$$(grep -c 'pPowerWriteVars->EN_5_10V_Val' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: pPowerWriteVars->EN_5_10V_Val reference count in $(SCPIDAC_SRC) changed"; \
+	       echo "       from 2 (the top-of-function gate + the pre-publish re-check) -- #1100's"; \
+	       echo "       rail-enable gate may have moved or lost a checkpoint. Re-derive the test."; \
+	       exit 1; }
+	@g1=`grep -nF 'pPowerWriteVars->EN_5_10V_Val' $(SCPIDAC_SRC) | head -1 | cut -d: -f1`; \
+	 g2=`grep -nF 'pPowerWriteVars->EN_5_10V_Val' $(SCPIDAC_SRC) | tail -1 | cut -d: -f1`; \
+	 i=`grep -nF 'if (!DAC7718_Init(dacInstanceId, 1)) {' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 p=`grep -nF 'dacHardwareInitialized = true;' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 test -n "$$g1" && test -n "$$g2" && test -n "$$i" && test -n "$$p" \
+	   && test "$$g1" -lt "$$i" && test "$$i" -lt "$$g2" && test "$$g2" -lt "$$p" \
+	   || { echo "ERROR: #1100's two rail-enable checkpoints are no longer ordered"; \
+	        echo "       gate1 < DAC7718_Init < gate2 < publish in $(SCPIDAC_SRC)"; \
+	        echo "       (found gate1='$$g1' init='$$i' gate2='$$g2' publish='$$p')."; \
+	        echo "       The count guard above proves BOTH reads exist; this proves the SECOND is a"; \
+	        echo "       FRESH re-read taken AFTER DAC7718_Init() returns and BEFORE the publish."; \
+	        echo "       Hoisting both above Init would restore the mid-init rail-drop bug while"; \
+	        echo "       leaving every occurrence count at 2 -- which is what this guard catches."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(SCPIDAC_RAILGATE_BIN) test_1100_scpidac_rail_enable_gate.c
 
 # #988 added a FOURTH arm (the torn-down latch) between the live suspend reason
 # and the card advisory, so this guard now pins four markers, not three. The
@@ -1524,7 +1570,8 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 # the same way as every earlier collision: keep each side's target rule INTACT
 # and union only `run` and `clean`.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN)
+     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
+     $(SCPIDAC_RAILGATE_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1542,9 +1589,11 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(SCAN1112_BIN)
 	./$(STARTARM_BIN)
 	./$(START_BIN)
+	./$(SCPIDAC_RAILGATE_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN)
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
+	      $(SCPIDAC_RAILGATE_BIN)
 
 .PHONY: run clean
