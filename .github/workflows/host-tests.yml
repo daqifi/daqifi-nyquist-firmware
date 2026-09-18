@@ -133,6 +133,21 @@ name: host-tests
 #     Found by PR #976's adversarial audit (#1062) and filed rather than
 #     folded into that PR, which only added tools/lint/cdef.py to this
 #     workflow and picked this gap up from a merge with main.
+#   - test_1039_log_message_ceiling.c (#1039, PR #1116): hardcodes the four
+#     LOG_E messages #1039 shortened and measures them against Logger's real
+#     truncation, the same technique as test_1000_sd_log_arm_budget.c but
+#     deliberately WITHOUT that test's build-time extraction (see the
+#     LOGCEIL_BIN comment block in tests/host/Makefile for why -- it is
+#     independent of PR #1110's parked generator). The Makefile recipe greps
+#     each shipped format string's literal source lines back out of
+#     app_freertos.c, SCPIADC.c and wifi_manager.c and fails the build on
+#     drift, plus the same Logger.h/Logger.c ceiling lines the #1000 entry
+#     above already covers (no new lines needed for those two). SCPIADC.c is
+#     already matched by services/SCPI/** above; app_freertos.c and
+#     wifi_services/wifi_manager.c are not matched by any existing entry, so
+#     each gets its own line below -- otherwise a PR touching only one of
+#     them would queue no job that re-measures its message against the
+#     ceiling.
 #   - test_999_scpi_context_storage_isolation.c: proves USB and TCP SCPI
 #     contexts do not share storage. Its Makefile target ($(SCPI999_BIN))
 #     lists firmware/src/services/UsbCdc/UsbCdc.c and
@@ -203,6 +218,11 @@ on:
       - 'firmware/src/Util/Logger.h'
       - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
+      # #1039: test_1039_log_message_ceiling.c greps these two for the
+      # shipped format strings it hardcodes (SCPIADC.c is already covered by
+      # the entry above).
+      - 'firmware/src/app_freertos.c'
+      - 'firmware/src/services/wifi_services/wifi_manager.c'
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
@@ -245,6 +265,11 @@ on:
       - 'firmware/src/Util/Logger.h'
       - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
+      # #1039: test_1039_log_message_ceiling.c greps these two for the
+      # shipped format strings it hardcodes (SCPIADC.c is already covered by
+      # the entry above).
+      - 'firmware/src/app_freertos.c'
+      - 'firmware/src/services/wifi_services/wifi_manager.c'
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
