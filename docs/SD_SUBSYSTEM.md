@@ -197,12 +197,19 @@ reason; the logging session itself continues normally.
   invariant **a manifest that exists is well-formed**, which is what lets the
   companion test treat an unparsable line as a defect rather than a
   possibility.
-- **A name whose extension is `.mfst`.** `<base>.mfst` is then the same path as
-  the stream file itself; FatFs would refuse the duplicate write-open
-  (`FF_FS_LOCK` is 10) and the session would silently run with no integrity
-  records — the exact failure this feature exists to remove, reachable by an
-  unlucky filename. Detected by comparing the two paths, so it holds for a
-  rolled #689 bucket as well.
+There is one more collision case, and it is handled by **renaming, not
+refusing**: a stream whose extension is already `.mfst` makes `<base>.mfst` the
+same path as the stream file itself, so FatFs would refuse the duplicate
+write-open (`FF_FS_LOCK` is 10) and the session would run with no integrity
+records at all. Detected by comparing the two paths (so it holds for a rolled
+#689 bucket too), and the manifest then goes to **`<file>.mfst`** — e.g.
+`foo.mfst` logs to `foo.mfst.mfst`, with a `LOG_I` saying so.
+
+That fallback is collision-free *by construction* rather than by luck: against
+the first stream file it is that exact string plus a suffix, so it is strictly
+longer; against a rotated part `<base>-N<ext>` equality would require
+`<ext>.mfst` to equal `-N<ext>`, and those differ at the first character. One
+retry therefore suffices — there is no loop and no counter.
 
 **A short manifest write is completed, not abandoned.** The bytes of a partial
 write are already on the card, so giving up leaves a headless fragment that the

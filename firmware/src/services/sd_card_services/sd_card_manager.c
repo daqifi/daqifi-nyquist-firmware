@@ -1595,10 +1595,33 @@ static void sd_OpenSessionManifest(void) {
      * just opened, so this is exact for bucket 0 and for a rolled bucket
      * alike, with no reasoning about how the two names are built. */
     if (strcmp(path, gSDCardData.filePath) == 0) {
-        LOG_E("[SD] #924 no manifest: '%s' is also this session's stream file "
-              "-- choose a file name whose extension is not " SD_MANIFEST_EXT,
-              path);
-        return;
+        /* FALL BACK TO A NAME THAT CANNOT COLLIDE, rather than giving the
+         * session no manifest at all. Refusing here merely made the failure
+         * VISIBLE; the session still lost its integrity records, which is the
+         * outcome this feature exists to prevent -- and it was reachable by
+         * choosing the one extension the feature itself introduced.
+         *
+         * `<file>.mfst` is collision-free BY CONSTRUCTION, not by luck:
+         *   - against the first stream file `<dir>/<file>`, it is that exact
+         *     string plus a suffix, so it is strictly longer;
+         *   - against a rotated part `<dir>/<base>-N<ext>`, equality would
+         *     need `<ext>` + ".mfst" to equal "-N" + `<ext>`, and the two
+         *     differ at the first character ('.' or 'm' versus '-').
+         * So one retry is enough; there is no loop and no counter.
+         *
+         * The buffer already holds it: dir + '/' + file + ".mfst" + NUL is
+         * 40 + 1 + 40 + 5 + 1 = 87 against the 88 sized above. */
+        written = snprintf(path, sizeof(path), "%s/%s" SD_MANIFEST_EXT,
+                           gpSDCardSettings->directory,
+                           gpSDCardSettings->file);
+        if (written < 0 || (size_t)written >= sizeof(path)) {
+            LOG_E("[SD] #924 no manifest: collision fallback path too long "
+                  "for dir='%s' file='%s'", gpSDCardSettings->directory,
+                  gpSDCardSettings->file);
+            return;
+        }
+        LOG_I("[SD] #924 '%s' is also the stream file; manifest goes to '%s'",
+              gSDCardData.filePath, path);
     }
 
     gSDCardData.manifestHandle = SYS_FS_FileOpen(path,
