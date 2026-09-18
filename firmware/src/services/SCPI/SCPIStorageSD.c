@@ -1869,6 +1869,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
                  * ("CURDRIVE", 8) and the longest mode name ("GETSPACE", 8).
                  * Measured over every string those two switches can return,
                  * not eyeballed; 16 bytes of margin. */
+                /* log_budget: max=8,8 */
                 LOG_E("SD:BENCH - the write arm was torn down before the file "
                       "opened (SD now state=%s mode=%s) - retry\r\n",
                       sd_card_manager_GetStateName(),
