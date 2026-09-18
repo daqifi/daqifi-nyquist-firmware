@@ -40,9 +40,8 @@
 // which handles the sparse id space -- AdcChannelResolve below, which #888
 // made the one owner of that second test (it was open-coded, three different
 // ways, at all nine sites). That space is sparse on BOTH variants: user ids
-// 0..15 on NQ1 and 0..7 on
-// NQ3, plus the same monitoring block 248..255 on each (ADC_CHANNEL_3_3V ..
-// ADC_CHANNEL_5VREF, AInConfig.h:240-247, pulled in by
+// 0..15 on NQ1 and 0..7 on NQ3, plus the monitoring block 248..255 on each
+// (ADC_CHANNEL_3_3V .. ADC_CHANNEL_5VREF, AInConfig.h:240-247, pulled in by
 // COMMON_MONITORING_CHANNELS_BOARDCONFIG). Widening this test to the
 // per-variant user maximum would usurp that handling, which is the regression
 // #682 had to undo.
@@ -144,7 +143,10 @@ static bool AdcChannelResolve(scpi_t * context, int channel, const char * cmd,
             0);
     size_t resolved = ADC_FindChannelIndex((uint8_t) channel);
 
-    if (resolved < (size_t) pBoardConfigAInChannels->Size) {
+    /* Size is already size_t (ArrayWrapper.h:20), so no cast: both operands
+     * are unsigned and (size_t)-1, what ADC_FindChannelIndex returns for an id
+     * with no entry, is the largest representable value and fails this test. */
+    if (resolved < pBoardConfigAInChannels->Size) {
         *index = resolved;
         return true;
     }
