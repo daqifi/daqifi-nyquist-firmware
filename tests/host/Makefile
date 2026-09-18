@@ -778,6 +778,20 @@ $(SCPIDAC_RAILGATE_BIN): test_1100_scpidac_rail_enable_gate.c test_framework.h $
 	       echo "       from 2 (the top-of-function gate + the pre-publish re-check) -- #1100's"; \
 	       echo "       rail-enable gate may have moved or lost a checkpoint. Re-derive the test."; \
 	       exit 1; }
+	@g1=`grep -nF 'pPowerWriteVars->EN_5_10V_Val' $(SCPIDAC_SRC) | head -1 | cut -d: -f1`; \
+	 g2=`grep -nF 'pPowerWriteVars->EN_5_10V_Val' $(SCPIDAC_SRC) | tail -1 | cut -d: -f1`; \
+	 i=`grep -nF 'if (!DAC7718_Init(dacInstanceId, 1)) {' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 p=`grep -nF 'dacHardwareInitialized = true;' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 test -n "$$g1" && test -n "$$g2" && test -n "$$i" && test -n "$$p" \
+	   && test "$$g1" -lt "$$i" && test "$$i" -lt "$$g2" && test "$$g2" -lt "$$p" \
+	   || { echo "ERROR: #1100's two rail-enable checkpoints are no longer ordered"; \
+	        echo "       gate1 < DAC7718_Init < gate2 < publish in $(SCPIDAC_SRC)"; \
+	        echo "       (found gate1='$$g1' init='$$i' gate2='$$g2' publish='$$p')."; \
+	        echo "       The count guard above proves BOTH reads exist; this proves the SECOND is a"; \
+	        echo "       FRESH re-read taken AFTER DAC7718_Init() returns and BEFORE the publish."; \
+	        echo "       Hoisting both above Init would restore the mid-init rail-drop bug while"; \
+	        echo "       leaving every occurrence count at 2 -- which is what this guard catches."; \
+	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SCPIDAC_RAILGATE_BIN) test_1100_scpidac_rail_enable_gate.c
 
 # #988 added a FOURTH arm (the torn-down latch) between the live suspend reason
