@@ -36,22 +36,78 @@
  * static can occupy 4 or 8 after alignment, so the answer is somewhere around
  * zero and was never measured. The operative fact needs no such number:
  * ONE uint32_t did not fit, so any future static must come with its own
- * payment.
+ * payment. Cost as above: ~7 more slots off a
+ * partitioned capacity that is not the binding constraint.
  *
- * The THIRD -512U is #956's payment -- the fourth trim overall, after the
- * -1024U and the two -512U above, which is what an earlier revision of this
- * line miscounted as "the fourth -512U". The macro contains three -512U
- * tokens, not four; the ordinal is corrected here because this whole comment
- * block exists to be exact about the accounting after two earlier rounds
- * corrected imprecise claims in it.
+ * Trimmed a further 2048 B (#999) to pay for the two per-transport
+ * ScpiContextStorage instances -- UsbCdc.c's gUsbScpiStorage and
+ * wifi_tcp_server.c's gTcpScpiStorage, 546 B each -- that replace the single
+ * pair of SCPI parse/error-queue arrays USB and TCP used to share. Same
+ * mechanism as #824/#925, and measured the same way (E): in a SHA-pinned
+ * worktree, identical steps, base 1faf6758d links (rc=0, hex produced) and
+ * head 937528950 does not, failing with "Not enough memory for stack (8208
+ * bytes needed, 8176 bytes available)". Zero compile errors -- every
+ * translation unit builds; only the link fails. The 8208 is not a mystery
+ * number: it is the project's stack-size 8192 plus stackguard 16
+ * (configurations.xml), so the requirement is fixed and only "available"
+ * moves.
+ *
+ * Why 2048 and not another 512, when the shortfall is 32 bytes: because the
+ * two link reports together show the map is NOT "you lose what you add".
+ * Adding 546 B of .bss dropped available by 24 B (8200 -> 8176), the rest
+ * landing in slack elsewhere -- XC32 best-fit places .bss.* sections into
+ * holes, so the stack's candidate hole is not a running total of BSS. That
+ * cuts both ways (I): freeing N bytes here is not guaranteed to hand N bytes
+ * to that hole either. The only trim-direction evidence is #824, where 512 B
+ * recovered at least 392 (7816 -> >=8208); read pessimistically against this
+ * PR's own 24/546 figure instead, 512 B would recover ~23 and STILL FAIL, and
+ * 1024 B would clear 32 by ~13. 2048 B clears it under both readings. None of
+ * that is a measurement of the margin the trim actually buys, and no such
+ * measurement is claimed -- the link is the arbiter.
+ *
+ * Cost, on the same basis as above: 2048/74 = ~28 slots at 16 channels,
+ * taking the USB-only partitioned capacity 1586 -> 1558 against a usable
+ * depth of 1100 that the FreeRTOS sample queue, not the partition, sets
+ * (#828). Do NOT pay for a future static by shrinking SCPI_INPUT_BUFFER_LENGTH
+ * or SCPI_ERROR_QUEUE_SIZE instead: those sizes are what keep the two
+ * transports from corrupting each other's in-flight command text and error
+ * queues (#999), and 512 is already pinned by #100/#263.
+ *
+ * Trimmed a further 512 B (#956). This is the LAST token in the macro: the
+ * THIRD -512U and the FIFTH trim overall, after #665's -1024U, #824's and
+ * #925's -512U, and #999's -2048U. The tokens stay in the order the trims
+ * landed on main, which is the order of these paragraphs, so a new trim
+ * APPENDS and never renumbers one above it. Said explicitly because this
+ * line has been miscounted twice: once as "the fourth -512U" (there are
+ * three), and once as "the fourth trim overall" -- true on the branch it was
+ * written on, stale the moment #999's -2048U merged ahead of it. Count
+ * against the macro, not against the previous revision of this comment.
  *
  * It pays for wifiTcpOverBytesExtra and wifiTcpInflightOverflow, two uint32_t
  * added to the client struct inside the static gTcpServerContext -- eight
  * bytes before alignment, paid at the same 512 B granularity as #824's and
- * #925's single scalars. Consistency with those beats exactness, and the cost
- * is the ~7 partitioned slots described above, off a capacity that is not the
- * binding constraint (the FreeRTOS sample-queue clamp is). */
-#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U - 512U)
+ * #925's single scalars. Consistency with those beats exactness: it was sized
+ * by that precedent, not from a link report. It does not double-pay #999:
+ * different objects (a struct member here, two ScpiContextStorage there), and
+ * each trim was sized on a tree without the other's statics, so the pool owes
+ * both. Nor does it contradict #999's "512 B would STILL FAIL" (I): that
+ * rejected 512 B against a MEASURED 32-byte shortfall, where the pessimistic
+ * 24/546 reading recovers ~23 B; eight added bytes fit inside ~23 even
+ * costed byte-for-byte. No margin is measured here either -- the link is the
+ * arbiter.
+ *
+ * Cost: 512/74 = ~7 slots at 16 channels. USB-only goes 1558 -> 1551
+ * partitioned against the 1100 usable depth, so nil there -- and USB-only is
+ * what the slack claims above were computed for (#824's "~500" is USB-only's
+ * 1600 - 1100; #999 names USB-only outright). It is NOT universal, and an
+ * earlier revision of this paragraph implied it was. By the same arithmetic
+ * (the buffer table in docs/MEMORY_ARCHITECTURE.md; not re-measured) USB+SD
+ * goes 1060 -> 1053, already below the 1100-slot boot queue, and when the
+ * partition is the smaller, AInSampleList_InitializeExternal keeps the queue
+ * and sets poolCapacity to the partition -- so in USB+SD these 7 slots come
+ * off the USABLE depth (~0.7%). WiFi-only goes 1107 -> 1100, exactly meeting
+ * the queue: the next trim of any size makes it partition-bound as well. */
+#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U - 2048U - 512U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
 /* The overcommit fallback below carves these four minimums and expects the
