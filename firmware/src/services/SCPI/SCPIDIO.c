@@ -961,14 +961,14 @@ scpi_result_t SCPI_DioMeasFrequency(scpi_t * context) {
     if (!SCPI_ParamInt32(context, &dio, TRUE)) {
         return SCPI_RES_ERR;
     }
-    /* #876: SCPI_ParamErrorOccurred() misses the silent-failure case -- a
-     * decimal token with no integer digits (`.5`) makes ParamSignToUInt32
-     * consume zero digits and return FALSE without queuing anything, so the
-     * old guard below let it through as if the arg were ABSENT and measured
-     * with the default gate instead of rejecting it. See
-     * SCPI_OptionalParamInt32's own doc comment (SCPIInterface.h) for the
-     * full mechanism -- this is the same contract already used elsewhere in
-     * this file (SCPI_GPIODirectionSet et al.). */
+    /* #876: SCPI_ParamErrorOccurred() alone is not a documented contract for
+     * "was the token present-but-unparseable" -- it happens to work today
+     * only because ParamSignToUInt32's DaqifiIntTokenFullyConsumed (#880)
+     * pushes an error for every not-fully-consumed decimal token. Use the
+     * explicit ABSENT/PRESENT/BAD helper instead so this site does not rely
+     * on that converter-internal behavior, matching every other optional-arg
+     * site in this file (SCPI_GPIODirectionSet et al.). See
+     * SCPI_OptionalParamInt32's own doc comment (SCPIInterface.h). */
     SCPI_OptionalParam gateOpt = SCPI_OptionalParamInt32(context, &gate);
     if (gateOpt == SCPI_OPT_BAD) {
         return SCPI_RES_ERR;
@@ -1015,9 +1015,9 @@ scpi_result_t SCPI_DioMeasPulseWidth(scpi_t * context) {
     if (!SCPI_ParamInt32(context, &dio, TRUE)) {
         return SCPI_RES_ERR;
     }
-    /* #876: same silent-failure gap as SCPI_DioMeasFrequency above -- see its
-     * comment. `.5` used to be silently read as ABSENT and measure with the
-     * default polarity instead of being rejected. */
+    /* #876: same rationale as SCPI_DioMeasFrequency above -- see its
+     * comment. Uses the explicit helper instead of relying on
+     * SCPI_ParamErrorOccurred() happening to catch a malformed `pol`. */
     SCPI_OptionalParam polOpt = SCPI_OptionalParamInt32(context, &pol);
     if (polOpt == SCPI_OPT_BAD) {
         return SCPI_RES_ERR;
