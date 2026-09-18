@@ -469,7 +469,7 @@ SCPIADC_SRC  := ../../firmware/src/services/SCPI/SCPIADC.c
 # does not get to make that judgement. So it no longer makes any.
 #
 # COST, and it is real: reindenting the slice fires, and rewording a comment in
-# it fires. 59 of the slice's 89 lines are comment, so this will fire on edits
+# it fires. 90 of the slice's 120 lines are comment, so this will fire on edits
 # that turn out to be harmless. Each such fire costs one re-read and a
 # re-derived SHA. The alternative, three times running, was a silent pass over
 # an edit that mattered. Re-derive with:
@@ -484,7 +484,7 @@ START_BIN := run_998_tests
 START_CLAIMED_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
 START_CLAIMED_BEGIN := if (!sd_card_manager_TryClaim()) {
 START_CLAIMED_END := while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
-START_CLAIMED_SHA := 188a8d9e5cc6a03e1998cefb9e506dac97a2b0f73f3c035138095187dc682942
+START_CLAIMED_SHA := 404e01fdd3b7c9c8eb26cfca959b498ebe9b3e921b77daa0ddd3bca72938d490
 
 $(BIN): test_circularbuffer.c test_framework.h stubs/Logger.h stubs/osal/osal.h $(FW_UTIL)/CircularBuffer.c $(FW_UTIL)/CircularBuffer.h $(RECIPES)
 	cp $(FW_UTIL)/CircularBuffer.c $(UUT)

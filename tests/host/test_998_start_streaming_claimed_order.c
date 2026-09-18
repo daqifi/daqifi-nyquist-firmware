@@ -30,6 +30,7 @@
  *   }
  *   sd_card_manager_ReleaseClaim();
  *   int readyWait = 0;
+ *   bool armTornDown = false;
  *   while (!sd_card_manager_IsWriteReady() && readyWait < 500) {
  *
  * The bracketed calls are elided above but ARE inside the pinned slice. They
