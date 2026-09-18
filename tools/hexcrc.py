@@ -152,6 +152,22 @@ def parse_records(lines):
             raise HexFormatError(
                 "line %d: record does not start with ':'" % lineno)
         body = line[1:]
+        # bytes.fromhex() SKIPS ASCII whitespace BETWEEN byte pairs, so a
+        # body carrying internal spaces decodes to exactly the expected
+        # length and would sail through every check below (Qodo round 4).
+        # The round-1 fix guarded only against a decode that came out TOO
+        # SHORT, which is the sub-case where the whitespace is odd-placed.
+        # An Intel HEX record body is hex digits and nothing else; anything
+        # else means the file was damaged in transit, and this tool's whole
+        # contract is to refuse a file it cannot vouch for rather than hand
+        # back a checksum for it. Checked BEFORE the length tests so those
+        # operate on a string that is really hex.
+        if any(c not in "0123456789abcdefABCDEF" for c in body):
+            raise HexFormatError(
+                "line %d: record body contains a non-hex character -- an "
+                "Intel HEX body is hex digits only (bytes.fromhex() would "
+                "silently skip internal whitespace, so it is refused here)"
+                % lineno)
         # 10 hex chars is the minimum: byte-count(2) + address(4) + type(2)
         # + checksum(2), for a zero-length data record.
         if len(body) < 10 or len(body) % 2 != 0:
@@ -771,6 +787,29 @@ def self_test():
     _ck("...and a record body with only leading/trailing whitespace "
         "(already handled by str.strip()) is unaffected",
         _raises(["   " + _EOF_RECORD + "   "]), False)
+
+    # --- 6a': the round-1 guard above only caught whitespace that made the
+    # decode come out TOO SHORT. bytes.fromhex() skips whitespace BETWEEN
+    # byte pairs, so an EVEN number of spaces in the right places decodes to
+    # exactly the expected length and passed every check (Qodo round 4).
+    # These FAIL on a8513aaa9: each returns a CRC with exit 0.
+    _ck("an EOF body with internal spaces between byte pairs is refused "
+        "(decodes to the RIGHT length, so the length guard cannot see it)",
+        _raises([":00 00 00 01 FF"]), True)
+    _ck("a DATA body with internal spaces between byte pairs is refused",
+        _raises([_ext_linear_record(0x1D00),
+                 ":02 0010 00 AABB 89",
+                 _EOF_RECORD]), True)
+    _ck("a body containing a non-hex letter is refused",
+        _raises([":0000000G FF"]), True)
+    # The discriminating negative for THIS guard: a body of pure hex digits,
+    # any case, must still be accepted. A "fix" that rejected anything
+    # outside [0-9A-F] would pass all three checks above and break every
+    # lowercase hex file in existence.
+    _ck("a lowercase-hex body is still accepted",
+        _raises([":020000041d00dd",
+                 _data_record(0x0010, [0xAA, 0xBB]),
+                 _EOF_RECORD]), False)
 
     # --- 6b: the actual harm named by the finding above is not the crash
     # itself (main()'s per-file loop already turns a HexFormatError into a
