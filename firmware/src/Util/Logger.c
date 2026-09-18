@@ -205,14 +205,33 @@ bool Logger_OneShotClaim(uint32_t bit) {
      *
      * UNLIKE gSessionOneShot (task-context only), LOG_x_ONCE is documented as
      * ISR-callable, so this cannot use a single taskENTER_CRITICAL: the
-     * PIC32MZ port's vTaskEnterCritical asserts uxInterruptNesting == 0, so a
-     * caller inside an ISR needs the _FROM_ISR variant instead (same split
-     * already used in streaming.c's Streaming_AddProfileSample_DmaPending_FromISR
-     * and BoardData.c). Deciding this at runtime rather than exposing two
-     * named entry points keeps LOG_E_ONCE/LOG_I_ONCE/LOG_D_ONCE the single
-     * macro family callable from either context, matching how they already
-     * pick LogMessage(fmt) vs LogMessage(fmt, ...) on the same
-     * uxInterruptNesting test. */
+     * PIC32MZ port's vTaskEnterCritical calls portASSERT_IF_IN_ISR(), i.e.
+     * configASSERT(uxInterruptNesting == 0) -- NOT __DEBUG-gated, so it fires
+     * in production -- so a caller inside an ISR needs the _FROM_ISR variant
+     * instead. This is BoardData_Set's shape (BoardData.c), not
+     * streaming.c's: streaming.c instead exposes SEPARATE named entry points
+     * (Streaming_AddProfileSample_DmaPending vs its _FromISR twin), chosen by
+     * the CALLER at each site, because its ISR and task callers are distinct
+     * call sites. This function, like BoardData_Set, has ONE entry reached
+     * from both -- LOG_E_ONCE/LOG_I_ONCE/LOG_D_ONCE are genuinely called from
+     * both today (AdcThreshold_IsrTrip: true ISR context; the WiFi serial
+     * bridge: task context) -- so runtime dispatch is what keeps them a
+     * single macro family, matching how they already pick LogMessage(fmt) vs
+     * LogMessage(fmt, ...) on the same uxInterruptNesting test rather than
+     * needing a LOG_x_ONCE_FROM_ISR sibling at every one of their ~13
+     * call sites (the thing "No separate ISR macros needed" above means).
+     *
+     * Safe at boot: uxInterruptNesting starts at 1 pre-scheduler (port.c),
+     * so a pre-scheduler LOG_x_ONCE takes the ISR branch, which is pure CP0
+     * Status manipulation with no scheduler state to be wrong yet.
+     *
+     * Residual, not a defect: uxPortSetInterruptMaskFromISR (what
+     * taskENTER_CRITICAL_FROM_ISR calls) must not be invoked from an
+     * interrupt ABOVE configMAX_SYSCALL_INTERRUPT_PRIORITY (4) -- it would
+     * LOWER the IPL to 4 and open a preemption window instead of raising it.
+     * Every current LOG_x_ONCE ISR call site is at or below that (e.g. the
+     * ADC DC vectors, priority 3), but this function now carries that
+     * constraint for any future one. */
     if (LogIsInISR()) {
         UBaseType_t saved = taskENTER_CRITICAL_FROM_ISR();
         if ((gLogOneShot & mask) == 0u) {
