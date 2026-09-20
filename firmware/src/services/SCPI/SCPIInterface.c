@@ -118,8 +118,33 @@
 static char gIdnModel[8]   = "Nq?";  // Filled from BoardConfig.BoardVariant
 static char gIdnSerial[17] = "0";    // 16 hex digits of uint64 + null
 
-// Declare force bootloader RAM flag location
-volatile uint32_t force_bootloader_flag __attribute__((persistent, coherent, address(FORCE_BOOTLOADER_FLAG_ADDR)));
+// Declare force bootloader RAM flag location. Reserves the WHOLE 16-byte
+// D-cache line for itself, not just its own 4 bytes: PIC32MZ's D-cache is
+// write-back and not hardware-coherent, so an ordinary cached (KSEG0)
+// global sharing this line (as gLogLevels formerly did, at
+// FORCE_BOOTLOADER_FLAG_ADDR + 4) could be written after the flag, and a
+// later write-back of that dirty line would silently restore the flag's
+// old value over the magic SCPI_ForceBootloader() just wrote -- turning a
+// bootloader-entry request back into a normal boot (#1083). Only word 0 is
+// read or written; words 1-3 are padding that must never be touched, so
+// nothing else can ever be link-placed into this line -- the same
+// construct as PowerApi.c's reboot-handoff block, one cache line below at
+// POWER_REBOOT_HANDOFF_ADDR.
+static volatile uint32_t sForceBootloaderLine[4]
+    __attribute__((persistent, coherent, address(FORCE_BOOTLOADER_FLAG_ADDR)));
+#define force_bootloader_flag sForceBootloaderLine[0]
+// Compile-time backstop for the size half of the same guarantee (belt to
+// tools/lint/force_bootloader_cacheline.py's braces): sizeof() cannot see
+// the `persistent`/`coherent` attributes, so the lint script still owns
+// that half; this only catches the array shrinking back down.
+_Static_assert(sizeof(sForceBootloaderLine) >= 16,
+    "sForceBootloaderLine must reserve the full 16-byte D-cache line (#1083)");
+// A correctly-SIZED 16-byte object at a MISALIGNED address still spans two
+// cache lines, leaving room for a cached object in the gap before the next
+// aligned boundary -- the identical hazard under a different cause. Both
+// asserts are needed; neither implies the other.
+_Static_assert(((FORCE_BOOTLOADER_FLAG_ADDR) & 0xFu) == 0,
+    "FORCE_BOOTLOADER_FLAG_ADDR must be 16-byte aligned to a D-cache line (#1083)");
 
 const NanopbFlagsArray fields_info = {
     .Size = 62,
@@ -5014,6 +5039,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
          * nothing. */
         if (app_SDCard_SpiOwnedByWifi() || SpiBusHealth_IsSdSuspended()) {
             const char *why = SD_SuspendReasonText();
+            /* log_budget: max=76 */
             LOG_E("Cannot start SD logging - SD suspended: %s\r\n",
                   why ? why : "SPI4 is owned elsewhere");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -5333,6 +5359,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                 SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
+                /* log_budget: max=76 */
                 LOG_E("Cannot start SD logging - SD suspended: %s\r\n",
                       why ? why : "SPI4 is owned elsewhere");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -5556,6 +5583,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                      * already use (:4832, :5151) -- measured worst case 118
                      * bytes against Logger's 125-byte effective ceiling,
                      * unchanged by reuse here. */
+                    /* log_budget: max=76 */
                     LOG_E("Cannot start SD logging - SD suspended: %s\r\n", why);
                 } else if (armTornDown) {
                     /* #988 (ported by #1121): this request's arm was torn down
@@ -5579,6 +5607,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                      * string sd_card_manager_GetStateName() and
                      * sd_card_manager_GetModeName() can return, not assumed)
                      * against the same 125-byte ceiling. */
+                    /* log_budget: max=8,8 */
                     LOG_E("[SD] STR:START refused: the write arm was torn down "
                           "before the file opened (SD now state=%s mode=%s) "
                           "- retry\r\n",
@@ -9291,12 +9320,13 @@ static const scpi_command_t scpi_commands[] = {
  * With every return value discarded (the pre-#1004 shape), a host that
  * stopped reading made EVERY one of those ~5-7 calls burn its own full ~1 s
  * budget -- ~5-7 s of held mutex, blocking every other SCPI callback on BOTH
- * transports for the same span. Two sibling callbacks carry the same defect:
- * SCPI_SysInfoTextGet (#947, PR #992) and SCPI_GetCommandHistory (#995,
- * PR #1008). BOTH OF THOSE PRs ARE STILL OPEN as of this commit, so both of
- * those holds are LIVE in this tree -- do not read this comment as saying
- * the class is closed. #1004 records why each site carries its own small
- * helper instead of one shared generic one.
+ * transports for the same span. Two sibling callbacks carried the same defect:
+ * SCPI_SysInfoTextGet (#947) and SCPI_GetCommandHistory (#995). #947's fix
+ * LANDED (PR #992 merged -- SysInfoText_Write above now carries the same two
+ * guards), but #995's PR #1008 IS STILL OPEN as of this commit, so
+ * SCPI_GetCommandHistory's ~11 s hold is LIVE in this tree -- do not read this
+ * comment as saying the class is closed. #1004 records why each site carries
+ * its own small helper instead of one shared generic one.
  *
  * TWO guards, because neither alone bounds the hold (the same two-guard
  * algebra #995 proposes for CmdHistoryWrite on PR #1008; that helper does
@@ -9330,21 +9360,38 @@ static const scpi_command_t scpi_commands[] = {
  */
 static void ScpiHelpWrite(scpi_t * context, bool * ok, TickType_t startTick,
                           const char * data, size_t len) {
-    if (!*ok) {
-        return;
-    }
-    /* Unsigned tick subtraction: correct across the 32-bit xTaskGetTickCount
-     * wrap (~49.7 days at configTICK_RATE_HZ 1000). */
-    if ((TickType_t)(xTaskGetTickCount() - startTick) >=
-            pdMS_TO_TICKS(SCPI_HELP_WRITE_BUDGET_MS)) {
-        *ok = false;
-        LOG_E("HELP: transport write budget (%u ms) exhausted "
-              "(host not reading) - reply truncated",
-              (unsigned)SCPI_HELP_WRITE_BUDGET_MS);
-        return;
+    /* #1134: the DECISION now lives in ScpiBoundedWrite.h, which is pure and
+     * dependency-free, so tests/host compiles and calls THE REAL predicates
+     * rather than a parallel copy of them. This is a behaviour-preserving
+     * substitution -- the latch-then-deadline order, the `>=` boundary, the
+     * unsigned tick subtraction and the `written != len` test are unchanged,
+     * one for one -- but it is not cosmetic: written inline here, the deadline
+     * check could be DELETED and the entire host suite still passed, because
+     * SCPIInterface.c is not host-includable and test_1004 could only assert
+     * against its own re-implementation (#1098's measurement, #1134's ticket).
+     *
+     * What stays here is what a host cannot run: the transport write, this
+     * site's own LOG_E wording, and this site's own budget constant. Per #1004
+     * each site keeps its own I/O-performing wrapper; only the arithmetic
+     * underneath is shared. */
+    switch (ScpiBoundedWrite_Decide(*ok, (uint32_t)xTaskGetTickCount(),
+                                    (uint32_t)startTick,
+                                    (uint32_t)pdMS_TO_TICKS(
+                                            SCPI_HELP_WRITE_BUDGET_MS))) {
+        case SCPI_BOUNDED_WRITE_SKIP:
+            return;
+        case SCPI_BOUNDED_WRITE_EXPIRED:
+            *ok = false;
+            LOG_E("HELP: transport write budget (%u ms) exhausted "
+                  "(host not reading) - reply truncated",
+                  (unsigned)SCPI_HELP_WRITE_BUDGET_MS);
+            return;
+        case SCPI_BOUNDED_WRITE_PROCEED:
+        default:
+            break;
     }
     size_t written = context->interface->write(context, data, len);
-    if (written != len) {
+    if (ScpiBoundedWrite_IsShort(written, len)) {
         *ok = false;
         LOG_E("HELP: transport write dropped %u of %u bytes "
               "(host not reading) - reply truncated",
