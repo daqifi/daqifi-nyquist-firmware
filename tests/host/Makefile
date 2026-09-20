@@ -1751,6 +1751,81 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(START_BIN) test_998_start_streaming_claimed_order.c
 
+# #1141 (fix/909-bootloader-lower-panel-erase): APP_ProgramHexRecord's
+# per-chunk address bounds test in the bootloader's nvm.c. The FIRST
+# bootloader coverage in this suite -- everything above tests firmware/src.
+#
+# nvm.c is not host-compilable: it #includes "peripheral/nvm/plib_nvm.h",
+# "system/devcon/sys_devcon.h", "peripheral/int/plib_int.h" and <sys/kmem.h>,
+# none of which exist outside the MPLAB X / XC32 install (confirmed
+# empirically -- `gcc -c` on it fails immediately on the first missing
+# header). So, like SCPIInterface.c and SCPIStorageSD.c above, this test
+# re-implements the address-classification SHAPE as a pure function and the
+# guards below pin that nvm.c's real branch structure still matches it.
+#
+# UNLIKE those, the two boundary CONSTANTS are not copied: system_config.h
+# (in the same directory) has no #includes at all and is hardware-free, so
+# test_1141_hex_record_upper_panel_error.c #includes it -- and nvm.h --
+# directly for the real APP_FLASH_BASE_ADDRESS / APP_FLASH_END_ADDRESS /
+# APP_FLASH_PFM_END_ADDRESS and the real HEX_RECORD_STATUS enum. Nothing
+# firmware-numeric is a copy here.
+#
+# #909 narrowed APP_FLASH_END_ADDRESS to the lower flash panel so an in-app
+# update stops erasing (and so destroying) the NVM settings pages, but left
+# APP_ProgramHexRecord's existing bounds test as the ONLY thing standing
+# between a record and an unerased write: an address in the upper panel
+# (still application code space, 0x9D100000-0x9D1FFFFF) took the exact same
+# "out of boundaries, skip it" path as a genuine boot-area/config-word
+# address, and PROGRAM_FLASH still ACKed the record. The adversarial audit on
+# PR #1141 confirmed this independently from two directions
+# (issuecomment-5736996706). The fix adds a THIRD branch, between the write
+# and the original skip, so an address still inside the application's 2 MB
+# PFM span but above the erased window fails the record
+# (HEX_REC_PGM_ERROR) instead of being silently dropped -- while an address
+# genuinely outside that span (boot flash / config words) keeps the original
+# skip-and-succeed path (#764's contract) untouched.
+HEXWIN_BIN := run_1141_tests
+BTL_SYSCFG_DIR := ../../bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk
+BTL_NVM_SRC := $(BTL_SYSCFG_DIR)/framework/bootloader/src/nvm.c
+BTL_NVM_H := $(BTL_SYSCFG_DIR)/framework/bootloader/src/nvm.h
+BTL_SYSCFG_H := $(BTL_SYSCFG_DIR)/system_config.h
+
+$(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
+               $(BTL_NVM_H) $(BTL_SYSCFG_H) $(BTL_NVM_SRC) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+APP_FLASH_PFM_END_ADDRESS[[:space:]]+\(APP_FLASH_END_ADDRESS \+ APP_FLASH_UPPER_PANEL_SIZE\)[[:space:]]*$$' $(BTL_SYSCFG_H) \
+	  || { echo "ERROR: APP_FLASH_PFM_END_ADDRESS is missing or no longer exactly"; \
+	       echo "       '(APP_FLASH_END_ADDRESS + APP_FLASH_UPPER_PANEL_SIZE)' in $(BTL_SYSCFG_H)."; \
+	       echo "       This is #1141's fix for #909's silent-drop hazard: without this"; \
+	       echo "       constant, nvm.c cannot tell an out-of-panel APPLICATION record from a"; \
+	       echo "       genuine boot-area/config-word one, and both were silently dropped while"; \
+	       echo "       PROGRAM_FLASH still ACKed. Re-derive"; \
+	       echo "       test_1141_hex_record_upper_panel_error.c against whatever replaced it."; \
+	       exit 1; }
+	@grep -qF 'else if((ProgAddress > (void *)APP_FLASH_END_ADDRESS) && (ProgAddress <= (void *)APP_FLASH_PFM_END_ADDRESS))' $(BTL_NVM_SRC) \
+	  || { echo "ERROR: $(BTL_NVM_SRC) no longer tests an out-of-panel application address"; \
+	       echo "       against APP_FLASH_PFM_END_ADDRESS before falling through to the"; \
+	       echo "       boot-area/config-word skip. This is #1141's fix; without this exact"; \
+	       echo "       branch a hand-built hex whose application code exceeds the lower panel"; \
+	       echo "       is silently dropped and PROGRAM_FLASH still ACKs it."; \
+	       exit 1; }
+	@awk '/else if\(\(ProgAddress > \(void \*\)APP_FLASH_END_ADDRESS\)/,/^[[:space:]]*\}/' $(BTL_NVM_SRC) \
+	     | grep -qF 'return HEX_REC_PGM_ERROR;' \
+	  || { echo "ERROR: #1141's new branch in $(BTL_NVM_SRC) no longer returns"; \
+	       echo "       HEX_REC_PGM_ERROR -- the whole point is that PROGRAM_FLASH must fail"; \
+	       echo "       the record (no ACK), not silently drop it."; \
+	       exit 1; }
+	@n=$$(grep -cF 'Out of boundaries' $(BTL_NVM_SRC)); \
+	 [ "$$n" = "1" ] \
+	  || { echo "ERROR: expected exactly 1 occurrence of 'Out of boundaries' in"; \
+	       echo "       $(BTL_NVM_SRC), found $$n. #1141 must leave the ORIGINAL"; \
+	       echo "       boot-area/config-word skip branch's behaviour completely unchanged"; \
+	       echo "       (#764's contract) -- if it moved, was duplicated, or was removed,"; \
+	       echo "       re-verify by hand that a standalone hex's config words are still"; \
+	       echo "       silently dropped, not this test."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -I$(BTL_SYSCFG_DIR) -I$(BTL_SYSCFG_DIR)/framework/bootloader/src \
+	      -o $(HEXWIN_BIN) test_1141_hex_record_upper_panel_error.c
+
 # Every suite, and every one of the eleven binaries. SEVENTH additive
 # collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
 # fw#1000, fw#913 vs fw#980, and now fw#913 vs fw#985 -- every one of them
@@ -1794,9 +1869,12 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 # callbacks moved off the stack onto the shared response buffer). ELEVENTH
 # additive collision in this block -- resolved the same way as every earlier
 # one: keep each side's target rule INTACT and union only `run` and `clean`.
+#
+# Every suite, and every one of the NINETEEN binaries: the eighteen above plus
+# #1141's $(HEXWIN_BIN) -- the first bootloader coverage in this suite.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(REPLYBUF_BIN)
+     $(REPLYBUF_BIN) $(HEXWIN_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1815,10 +1893,11 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(STARTARM_BIN)
 	./$(START_BIN)
 	./$(REPLYBUF_BIN)
+	./$(HEXWIN_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-	      $(REPLYBUF_BIN)
+	      $(REPLYBUF_BIN) $(HEXWIN_BIN)
 
 .PHONY: run clean
