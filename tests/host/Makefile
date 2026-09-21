@@ -378,6 +378,12 @@ RECIPES := Makefile
 DAC980_BIN := run_980_tests
 DAC7718_SRC := ../../firmware/src/HAL/DAC7718/DAC7718.c
 SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
+AOUTSAMPLE_SRC := ../../firmware/src/state/data/AOutSample.h
+
+# #1034: DAC_EnsureHardwareInitialized's reinit path never reconciled
+# BOARDDATA_AOUT_LATEST, so SOUR:VOLT:LEV? kept confidently reporting a
+# pre-power-loss voltage after a power cycle reset every physical output.
+DACREINIT_BIN := run_1034_tests
 
 # #1057 (#913's twin) folded dac7718_WaitStat's SPI2 busy-spins onto the same
 # bounded-spin-then-vTaskDelay(1) shape #913 gave UserSpi.c's spi_XferByte;
@@ -793,6 +799,46 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	        echo "       SCPI_ErrorPush writes to the transport; it must run after the unlock."; \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
+
+$(DACREINIT_BIN): test_1034_dac_aout_invalidated_on_reinit.c test_framework.h $(SCPIDAC_SRC) $(AOUTSAMPLE_SRC) $(RECIPES)
+	@grep -qE '^[[:space:]]*uint32_t Timestamp;' $(AOUTSAMPLE_SRC) \
+	  || { echo "ERROR: AOutSample no longer has a 'uint32_t Timestamp;' field in $(AOUTSAMPLE_SRC)."; \
+	       echo "       test_1034's MockAOutSample mirrors this exact field -- re-derive the test."; \
+	       exit 1; }
+	@test "$$(grep -c '\.Timestamp = xTaskGetTickCount()' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: '.Timestamp = xTaskGetTickCount()' count in $(SCPIDAC_SRC) changed from 2."; \
+	       echo "       SCPI_DACVoltageSet's single-channel AND all-channel branches must both stamp"; \
+	       echo "       Timestamp on every successful publish -- test_1034's set_shape() models both."; \
+	       echo "       If this count changed, one branch may have stopped stamping -- re-derive."; \
+	       exit 1; }
+	@grep -qF 'pSample->Timestamp < 1' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: SCPI_DACVoltageGet's single-channel staleness check ('pSample->Timestamp < 1')"; \
+	       echo "       is gone from $(SCPIDAC_SRC). test_1034's get_single_FIXED() mirrors this exact"; \
+	       echo "       check -- re-derive the test if this moved."; \
+	       exit 1; }
+	@grep -qF 'pSample->Timestamp >= 1' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: SCPI_DACVoltageGet's all-channel staleness check ('pSample->Timestamp >= 1')"; \
+	       echo "       is gone from $(SCPIDAC_SRC). test_1034's get_all_FIXED() mirrors this exact"; \
+	       echo "       check -- re-derive the test if this moved."; \
+	       exit 1; }
+	@grep -qF 'const AOutSample invalidatedSample = {0};' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: DAC_EnsureHardwareInitialized's post-reinit invalidation local"; \
+	       echo "       ('invalidatedSample') is gone from $(SCPIDAC_SRC). test_1034's"; \
+	       echo "       reinit_invalidate_shape() mirrors this loop -- re-derive the test."; \
+	       exit 1; }
+	@i=`grep -nF 'if (!DAC7718_Init(dacInstanceId, 1)) {' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 v=`grep -nF 'const AOutSample invalidatedSample = {0};' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 p=`grep -nF 'dacHardwareInitialized = true;   // publish READY ...' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 test -n "$$i" && test -n "$$v" && test -n "$$p" \
+	   && test "$$i" -lt "$$v" && test "$$v" -lt "$$p" \
+	   || { echo "ERROR: #1034's invalidation step is no longer ordered AFTER DAC7718_Init()"; \
+	        echo "       succeeds and BEFORE dacHardwareInitialized is published true in"; \
+	        echo "       $(SCPIDAC_SRC) (init='$$i' invalidate='$$v' publish='$$p')."; \
+	        echo "       Invalidating before the reset actually happens, or after READY is"; \
+	        echo "       already published, both reopen the confidently-wrong readback #1034"; \
+	        echo "       exists to close -- re-derive the test against the new placement."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(DACREINIT_BIN) test_1034_dac_aout_invalidated_on_reinit.c
 
 # #988 added a FOURTH arm (the torn-down latch) between the live suspend reason
 # and the card advisory, so this guard now pins four markers, not three. The
@@ -1874,7 +1920,7 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # #1141's $(HEXWIN_BIN) -- the first bootloader coverage in this suite.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(REPLYBUF_BIN) $(HEXWIN_BIN)
+     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1894,10 +1940,11 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(START_BIN)
 	./$(REPLYBUF_BIN)
 	./$(HEXWIN_BIN)
+	./$(DACREINIT_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-	      $(REPLYBUF_BIN) $(HEXWIN_BIN)
+	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN)
 
 .PHONY: run clean

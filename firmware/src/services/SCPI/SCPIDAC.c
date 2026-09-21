@@ -100,6 +100,12 @@ static const tDAC7718Config dacConfig = {
     .RST_Pin = GPIO_PIN_RJ13,   // CLR/RST on RJ13
 };
 
+// Forward declarations: defined below (with gDacCommandMutex's own
+// documentation), but DAC_EnsureHardwareInitialized needs them too -- see
+// #1034's use of them further down this function.
+static bool SCPIDAC_LockCommand(void);
+static void SCPIDAC_UnlockCommand(bool lockHeld);
+
 // Helper function to ensure DAC hardware is initialized when power is up
 static bool DAC_EnsureHardwareInitialized(void) {
     // #980 item 3: the power precondition is now checked on EVERY call,
@@ -199,6 +205,42 @@ static bool DAC_EnsureHardwareInitialized(void) {
         dacInitInProgress = false;
         return false;
     }
+
+    // #1034: DAC7718_Init() above just pulsed reset and re-latched every
+    // physical output to its hardware reset state (including on a REINIT
+    // after a power cycle, not just first boot -- dacHardwareInitialized was
+    // cleared by the top-of-function power check on the way down). Nothing
+    // in this file can say what voltage that reset state corresponds to
+    // (bipolar/unipolar config and full-scale range are HAL/board facts not
+    // available here, and this ticket is provable from source only -- no
+    // NQ3 bench to confirm one empirically). So: invalidate every channel's
+    // cached commanded voltage instead of leaving the pre-reinit value
+    // standing or guessing a replacement -- a readback that confidently
+    // claims a voltage the pin no longer holds is exactly the failure this
+    // ticket exists to close (see AOutSample.h's Timestamp field and
+    // SCPI_DACVoltageGet's staleness check below).
+    //
+    // Guarded by gDacCommandMutex: neither caller of this function
+    // (SCPI_DACVoltageSet, SCPI_DACUpdate) holds it yet at this point (both
+    // take it only AFTER DAC_EnsureHardwareInitialized returns), and
+    // BOARDDATA_AOUT_LATEST's Get/Set do a plain unprotected memcpy of a
+    // struct containing a 64-bit double -- the same torn-read hazard #990
+    // Finding 0 / #1030 added this mutex to close for every OTHER writer.
+    // Skipping the lock here would reopen it against a concurrent
+    // SOUR:VOLT:LEV? on the other SCPI transport. If the lock cannot be
+    // taken, treat it the same as a DAC7718_Init failure -- do not publish
+    // dacHardwareInitialized=true over a cache that might still be stale.
+    if (!SCPIDAC_LockCommand()) {
+        LOG_E("DAC_EnsureHardwareInitialized: could not claim command lock "
+              "to invalidate the stale AOutLatest cache after reinit");
+        dacInitInProgress = false;
+        return false;
+    }
+    const AOutSample invalidatedSample = {0};
+    for (size_t i = 0; i < MAX_AOUT_CHANNEL; i++) {
+        BoardData_Set(BOARDDATA_AOUT_LATEST, i, &invalidatedSample);
+    }
+    SCPIDAC_UnlockCommand(true);
 
     // #980 Qodo /agentic_review pass 3 (bug: "Power cycles leave the DAC
     // marked ready"): DAC7718_Init() above can take tens of ms (several SPI
@@ -465,7 +507,9 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
 
         // Store commanded voltage in BoardData for readback -- only reached
         // once the latch update above confirms the value is actually live.
-        AOutSample sample = {.Channel = (uint8_t)channel, .Voltage = voltage};
+        // #1034: stamp Timestamp so this entry reads back as known-good
+        // until the next DAC_EnsureHardwareInitialized() reinit clears it.
+        AOutSample sample = {.Timestamp = xTaskGetTickCount(), .Channel = (uint8_t)channel, .Voltage = voltage};
         BoardData_Set(BOARDDATA_AOUT_LATEST, index, &sample);
 
     } else {
@@ -621,7 +665,9 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
                 continue;
             }
             uint8_t channelId = pBoardConfigAOutChannels->Data[i].DaqifiDacChannelId;
-            AOutSample sample = {.Channel = channelId, .Voltage = voltage};
+            // #1034: see the single-channel branch above for why Timestamp
+            // is stamped here.
+            AOutSample sample = {.Timestamp = xTaskGetTickCount(), .Channel = channelId, .Voltage = voltage};
             BoardData_Set(BOARDDATA_AOUT_LATEST, i, &sample);
         }
 
@@ -763,7 +809,23 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
         // Read last commanded voltage from BoardData into a local -- no
         // transport write yet.
         AOutSample* pSample = (AOutSample*)BoardData_Get(BOARDDATA_AOUT_LATEST, index);
-        singleVoltage = (pSample != NULL) ? pSample->Voltage : 0.0;
+        // #1034: Timestamp==0 means "not known" -- never commanded, or
+        // invalidated by DAC_EnsureHardwareInitialized() on the DAC7718's
+        // most recent reinit (a power cycle resets every physical output;
+        // see AOutSample.h). Mirrors MEAS:VOLT:DC?'s existing precedent for
+        // stale monitoring data (SCPIADC.c, OBDiag-disabled channels):
+        // error the single-channel form rather than answer with a voltage
+        // the pin may no longer hold. deferredError/goto cleanup because
+        // gDacCommandMutex may still be held here (see the lock discussion
+        // above) and SCPI_ErrorPush is a transport write.
+        if ((pSample == NULL) || (pSample->Timestamp < 1)) {
+            LOG_E("SOUR:VOLT:LEV?: channel %d not known (DAC reinitialised "
+                  "since last commanded)", channel);
+            deferredError = SCPI_ERROR_EXECUTION_ERROR;
+            result = SCPI_RES_ERR;
+            goto cleanup;
+        }
+        singleVoltage = pSample->Voltage;
     } else {
         // Get all channels. Bound by the AOutArray's own capacity, not just
         // its live Size, so `allVoltages[]` is provably in range regardless
@@ -774,7 +836,13 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
         }
         for (size_t i = 0; i < nChannels; i++) {
             AOutSample* pSample = (AOutSample*)BoardData_Get(BOARDDATA_AOUT_LATEST, i);
-            allVoltages[i] = (pSample != NULL) ? pSample->Voltage : 0.0;
+            // #1034: the all-channel form cannot error mid-reply (SCPI
+            // numeric list replies are positional, one value per channel) --
+            // same shape as MEAS:VOLT:DC?'s all-channel fallback for a
+            // disabled/stale AIN channel (SCPIADC.c). Report 0.0 rather than
+            // a voltage that may no longer describe the pin.
+            allVoltages[i] = ((pSample != NULL) && (pSample->Timestamp >= 1))
+                    ? pSample->Voltage : 0.0;
         }
     }
 
