@@ -1560,7 +1560,14 @@ static const char *bounded_find(const char *hay, const char *hayEnd, const char 
     if (needleLen == 0 || hayEnd < hay) {
         return NULL;
     }
-    for (p = hay; p + needleLen <= hayEnd; p++) {
+    /* Compare remaining bytes rather than forming `p + needleLen` first: near
+     * hayEnd that sum can point past the one-past-the-end of the allocation,
+     * which is undefined behaviour to even form (C99 6.5.6p8) regardless of
+     * whether memcmp is reached. hayEnd - p stays >= 0 for every p the loop
+     * body runs with (the loop only advances p while hayEnd - p >= needleLen
+     * >= 1, so p <= hayEnd - 1 before the increment and p <= hayEnd after),
+     * so the size_t cast never wraps. */
+    for (p = hay; (size_t)(hayEnd - p) >= needleLen; p++) {
         if (memcmp(p, needle, needleLen) == 0) {
             return p;
         }
