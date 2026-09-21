@@ -865,49 +865,110 @@ $(DACREINIT_BIN): test_1034_dac_aout_invalidated_on_reinit.c test_framework.h $(
 # CONF:ADC:chanCALM/chanCALB coefficient -- see the comment above
 # $(CALFINITE_BIN)'s definition and test_1154_adc_cal_coefficient_finite.c's
 # header for what this fix is (and is deliberately not) in scope for.
+#
+# Tightened per PR #1157 review (worker pre-audit comment, 2026-09-21): the
+# original guard was presence-only (`grep -qF`, no counts, no negative-form
+# check, no comment-stripping), and TWO mutants of SCPIADC.c passed it AND
+# the host test outright: (A) `if (isfinite(value))` -> `if (!isfinite(value))`
+# -- accepts inf/NaN and rejects every finite value, worse than the #1154
+# defect -- and (B) `if (!AdcCalCoefficientFinite(...)) {` ->
+# `(void)AdcCalCoefficientFinite(...); if (0) {` -- reinstates the #1154
+# defect exactly, since the helper is still called (and still logs) but its
+# return value is discarded. Mirrors $(SCAN1112_BIN)'s technique in this
+# SAME file: strip comment lines first, pin exact counts (not mere
+# presence), pin an explicit negative-form's absence, and pin ordering.
 $(CALFINITE_BIN): test_1154_adc_cal_coefficient_finite.c test_framework.h $(SCPIADC_SRC) $(RECIPES)
-	@fbody=`sed -n '/^static bool AdcCalCoefficientFinite(/,/^}/p' $(SCPIADC_SRC) | tr -d '\r'`; \
+	@fbody=`sed -n '/^static bool AdcCalCoefficientFinite(/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
 	 test -n "$$fbody" \
 	   || { echo "ERROR: AdcCalCoefficientFinite() was not found in $(SCPIADC_SRC),"; \
 	        echo "       or no longer opens at column 0 -- the guards below can see"; \
 	        echo "       nothing, and a guard that examines nothing must fail."; \
 	        exit 1; }; \
-	 printf '%s\n' "$$fbody" | grep -qF 'isfinite(value)' \
-	   && printf '%s\n' "$$fbody" | grep -qF 'SCPI_ERROR_DATA_OUT_OF_RANGE' \
-	   && printf '%s\n' "$$fbody" | grep -qE 'return[[:space:]]+false;' \
-	   && printf '%s\n' "$$fbody" | grep -qE 'return[[:space:]]+true;' \
-	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC) no longer checks"; \
-	        echo "       isfinite(value), pushes SCPI_ERROR_DATA_OUT_OF_RANGE (-222) on"; \
-	        echo "       rejection, and returns true/false -- test_1154's SetCalCoefficient()"; \
-	        echo "       models exactly this shape and would pass regardless if it drifted."; \
+	 npos=`printf '%s\n' "$$fbody" | grep -cF 'if (isfinite(value)) {'`; \
+	 nneg=`printf '%s\n' "$$fbody" | grep -cF '!isfinite'`; \
+	 nerr=`printf '%s\n' "$$fbody" | grep -cF 'SCPI_ERROR_DATA_OUT_OF_RANGE'`; \
+	 nt=`printf '%s\n' "$$fbody" | grep -cE 'return[[:space:]]+true;'`; \
+	 nf=`printf '%s\n' "$$fbody" | grep -cE 'return[[:space:]]+false;'`; \
+	 test "$$npos" -eq 1 && test "$$nneg" -eq 0 && test "$$nerr" -eq 1 \
+	   && test "$$nt" -eq 1 && test "$$nf" -eq 1 \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC) no longer has"; \
+	        echo "       exactly the shape this guard pins (positive 'if (isfinite(value))"; \
+	        echo "       {' occurrences=$$npos, negated '!isfinite' occurrences=$$nneg,"; \
+	        echo "       SCPI_ERROR_DATA_OUT_OF_RANGE=$$nerr, return true=$$nt,"; \
+	        echo "       return false=$$nf; want 1 0 1 1 1). An inverted branch"; \
+	        echo "       (isfinite -> !isfinite) accepts inf/NaN and rejects every"; \
+	        echo "       finite value -- worse than the #1154 defect -- and it used to"; \
+	        echo "       pass this guard outright; test_1154's SetCalCoefficient()"; \
+	        echo "       models the correct polarity and would pass regardless."; \
+	        exit 1; }; \
+	 p=`printf '%s\n' "$$fbody" | grep -nF 'if (isfinite(value)) {' | cut -d: -f1`; \
+	 t=`printf '%s\n' "$$fbody" | grep -nE 'return[[:space:]]+true;' | cut -d: -f1`; \
+	 f=`printf '%s\n' "$$fbody" | grep -nE 'return[[:space:]]+false;' | cut -d: -f1`; \
+	 test "$$p" -lt "$$t" && test "$$t" -lt "$$f" \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC) no longer returns"; \
+	        echo "       true INSIDE the isfinite() branch and false afterward"; \
+	        echo "       (isfinite-line='$$p' return-true='$$t' return-false='$$f';"; \
+	        echo "       want isfinite < true < false)."; \
 	        exit 1; }
-	@mbody=`sed -n '/^static scpi_result_t ADCChanCalmSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r'`; \
+	@mbody=`sed -n '/^static scpi_result_t ADCChanCalmSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
 	 test -n "$$mbody" \
 	   || { echo "ERROR: ADCChanCalmSetClaimed() was not found in $(SCPIADC_SRC),"; \
 	        echo "       or no longer opens at column 0."; \
 	        exit 1; }; \
-	 c=`printf '%s\n' "$$mbody" | grep -n 'AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")' | cut -d: -f1`; \
-	 w=`printf '%s\n' "$$mbody" | grep -n '\.CalM = param2;' | cut -d: -f1`; \
-	 test -n "$$c" && test -n "$$w" && test "$$c" -lt "$$w" \
+	 nc=`printf '%s\n' "$$mbody" | grep -cF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {'`; \
+	 nw=`printf '%s\n' "$$mbody" | grep -cF '.CalM = param2;'`; \
+	 test "$$nc" -eq 1 && test "$$nw" -eq 1 \
 	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC) no longer calls"; \
-	        echo "       AdcCalCoefficientFinite() on param2 BEFORE writing CalM"; \
-	        echo "       (finite-check line='$$c' CalM-write line='$$w'; want both present,"; \
-	        echo "       check < write). A non-finite coefficient could reach the runtime"; \
-	        echo "       array again -- this IS the #1154 defect."; \
+	        echo "       AdcCalCoefficientFinite() in the exact guarded-call shape this"; \
+	        echo "       guard pins, or CalM is written more/fewer than once (call-shape"; \
+	        echo "       occurrences=$$nc, CalM writes=$$nw; want 1 1). Discarding the"; \
+	        echo "       call's return value (e.g. '(void)Adc...; if (0) {') still calls"; \
+	        echo "       the helper and still logs, but reinstates the #1154 defect"; \
+	        echo "       exactly -- a non-finite coefficient reaches the runtime array"; \
+	        echo "       again. A second, unguarded CalM write is the same defect by a"; \
+	        echo "       different door."; \
+	        exit 1; }; \
+	 c=`printf '%s\n' "$$mbody" | grep -nF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {' | cut -d: -f1`; \
+	 w=`printf '%s\n' "$$mbody" | grep -nF '.CalM = param2;' | cut -d: -f1`; \
+	 nextline=`printf '%s\n' "$$mbody" | sed -n "$$((c+1))p"`; \
+	 test "$$c" -lt "$$w" \
+	   && printf '%s\n' "$$nextline" | grep -qE 'return[[:space:]]+SCPI_RES_ERR;' \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC) no longer returns"; \
+	        echo "       SCPI_RES_ERR; as the line right after the finite-check, before"; \
+	        echo "       the CalM write (check='$$c' CalM-write='$$w', next line after"; \
+	        echo "       check='$$nextline'). An emptied-out if-block still shows the"; \
+	        echo "       call but falls through to the write on a non-finite value --"; \
+	        echo "       this IS the #1154 defect."; \
 	        exit 1; }
-	@bbody=`sed -n '/^static scpi_result_t ADCChanCalbSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r'`; \
+	@bbody=`sed -n '/^static scpi_result_t ADCChanCalbSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
 	 test -n "$$bbody" \
 	   || { echo "ERROR: ADCChanCalbSetClaimed() was not found in $(SCPIADC_SRC),"; \
 	        echo "       or no longer opens at column 0."; \
 	        exit 1; }; \
-	 c=`printf '%s\n' "$$bbody" | grep -n 'AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")' | cut -d: -f1`; \
-	 w=`printf '%s\n' "$$bbody" | grep -n '\.CalB = param2;' | cut -d: -f1`; \
-	 test -n "$$c" && test -n "$$w" && test "$$c" -lt "$$w" \
+	 nc=`printf '%s\n' "$$bbody" | grep -cF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {'`; \
+	 nw=`printf '%s\n' "$$bbody" | grep -cF '.CalB = param2;'`; \
+	 test "$$nc" -eq 1 && test "$$nw" -eq 1 \
 	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC) no longer calls"; \
-	        echo "       AdcCalCoefficientFinite() on param2 BEFORE writing CalB"; \
-	        echo "       (finite-check line='$$c' CalB-write line='$$w'; want both present,"; \
-	        echo "       check < write). A non-finite coefficient could reach the runtime"; \
-	        echo "       array again -- this IS the #1154 defect."; \
+	        echo "       AdcCalCoefficientFinite() in the exact guarded-call shape this"; \
+	        echo "       guard pins, or CalB is written more/fewer than once (call-shape"; \
+	        echo "       occurrences=$$nc, CalB writes=$$nw; want 1 1). Discarding the"; \
+	        echo "       call's return value (e.g. '(void)Adc...; if (0) {') still calls"; \
+	        echo "       the helper and still logs, but reinstates the #1154 defect"; \
+	        echo "       exactly -- a non-finite coefficient reaches the runtime array"; \
+	        echo "       again. A second, unguarded CalB write is the same defect by a"; \
+	        echo "       different door."; \
+	        exit 1; }; \
+	 c=`printf '%s\n' "$$bbody" | grep -nF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {' | cut -d: -f1`; \
+	 w=`printf '%s\n' "$$bbody" | grep -nF '.CalB = param2;' | cut -d: -f1`; \
+	 nextline=`printf '%s\n' "$$bbody" | sed -n "$$((c+1))p"`; \
+	 test "$$c" -lt "$$w" \
+	   && printf '%s\n' "$$nextline" | grep -qE 'return[[:space:]]+SCPI_RES_ERR;' \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC) no longer returns"; \
+	        echo "       SCPI_RES_ERR; as the line right after the finite-check, before"; \
+	        echo "       the CalB write (check='$$c' CalB-write='$$w', next line after"; \
+	        echo "       check='$$nextline'). An emptied-out if-block still shows the"; \
+	        echo "       call but falls through to the write on a non-finite value --"; \
+	        echo "       this IS the #1154 defect."; \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(CALFINITE_BIN) test_1154_adc_cal_coefficient_finite.c
 
