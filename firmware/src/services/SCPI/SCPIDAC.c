@@ -934,11 +934,20 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
             // rather than fabricating a value for the failed channel).
             //
             // SCPIADC.c's MEAS:VOLT:DC? 0.0 substitution is NOT a precedent
-            // for this: that path covers a user-DISABLED or merely-stale AIN
-            // channel, and SCPIADC.c itself errors (does not substitute) on
-            // the equivalent never-known-yet case (SCPIADC.c:137-139) -- so
-            // the precedent it actually sets is "error when the value truly
-            // cannot be known", which is what this now does too.
+            // for this, and this fix does not lean on it as one -- the
+            // justification is internal consistency with the single-channel
+            // form immediately above, full stop. For the record, since an
+            // earlier revision of this comment mischaracterised it:
+            // SCPIADC.c substitutes 0.0 for BOTH a user-disabled AIN channel
+            // AND a genuinely never-known one (Timestamp < 1 in its
+            // all-channel form at :170-172; a NULL BoardData_Get result in
+            // its single-channel form at :150-153) -- it does not error on
+            // "never known" anywhere. Its one error path (:134-139) is a
+            // DIFFERENT condition: a monitoring channel (ID >= 248) that IS
+            // known but is not currently being refreshed, because OBDiag is
+            // disabled while streaming is running. That is staleness of a
+            // known value, not absence of one, and SCPIADC.c is out of scope
+            // for this fix regardless (see the PR body).
             if ((pSample == NULL) || (pSample->Timestamp < 1)) {
                 LOG_E("SOUR:VOLT:LEV?: channel %u not known (DAC reinitialised "
                       "since last commanded)",
