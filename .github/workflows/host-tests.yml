@@ -243,6 +243,27 @@ name: host-tests
 #     Same class of gap as the four bullets above, caught the same way: by
 #     checking the new target's prerequisites against this list before
 #     claiming the test was wired in.
+#   - test_1034_dac_aout_invalidated_on_reinit.c (issue #1034, PR #1147): its
+#     Makefile target ($(DACREINIT_BIN)) grep-guards AOutSample.h for the
+#     'uint32_t Timestamp;' field #1034 adds (AOUTSAMPLE_SRC in
+#     tests/host/Makefile -- firmware/src/state/data/AOutSample.h), plus
+#     SCPIDAC.c for the reinit/invalidation shape ($(SCPIDAC_SRC), already
+#     matched by the 'firmware/src/services/SCPI/**' entry above). AOutSample.h
+#     is not: it sits in firmware/src/state/data/, which no entry above
+#     matches, so a PR editing only that header -- exactly the field this
+#     test exists to pin -- matched no path here and never queued the job.
+#     Same class of gap as #1142/test_1141 immediately above: a test wired
+#     into the suite without a path entry pointing back at what it reads.
+#     Scoped to the single file, not the state/data/ directory: that
+#     directory also holds AInSample.c/.h, BoardData.c/.h and DIOSample.c/.h,
+#     none of which this test reads, and (unlike HAL/ADC/'s AD7609Scale.h
+#     precedent) AOutSample.h has no sibling it could be folded into that
+#     would escape a file-scoped trigger.
+#     Confirmed unreachable before this entry: neither path list below
+#     matched 'state/data' or 'AOutSample.h' (verified 2026-09-21 by grepping
+#     this file at 72fba8c68c4dd28b6c6612ffdc7b28f1d64bd191, zero hits).
+#     Found by the #1147 pre-merge adversarial audit round 2 (disposition
+#     fix_now).
 
 on:
   pull_request:
@@ -305,6 +326,11 @@ on:
       - 'firmware/src/services/daqifi_settings.h'
       - 'firmware/src/Util/CRC32.c'
       - 'firmware/src/Util/CRC32.h'
+      # #1034: test_1034_dac_aout_invalidated_on_reinit.c's Makefile target
+      # grep-guards this header directly (AOUTSAMPLE_SRC in
+      # tests/host/Makefile) for the Timestamp field the fix adds; no entry
+      # above matches firmware/src/state/data/.
+      - 'firmware/src/state/data/AOutSample.h'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -351,6 +377,8 @@ on:
       - 'firmware/src/services/daqifi_settings.h'
       - 'firmware/src/Util/CRC32.c'
       - 'firmware/src/Util/CRC32.h'
+      # #1034: see the matching entry under pull_request above.
+      - 'firmware/src/state/data/AOutSample.h'
       - '.github/workflows/host-tests.yml'
 
 permissions:

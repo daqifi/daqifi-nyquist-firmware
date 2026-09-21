@@ -378,6 +378,12 @@ RECIPES := Makefile
 DAC980_BIN := run_980_tests
 DAC7718_SRC := ../../firmware/src/HAL/DAC7718/DAC7718.c
 SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
+AOUTSAMPLE_SRC := ../../firmware/src/state/data/AOutSample.h
+
+# #1034: DAC_EnsureHardwareInitialized's reinit path never reconciled
+# BOARDDATA_AOUT_LATEST, so SOUR:VOLT:LEV? kept confidently reporting a
+# pre-power-loss voltage after a power cycle reset every physical output.
+DACREINIT_BIN := run_1034_tests
 
 # #1057 (#913's twin) folded dac7718_WaitStat's SPI2 busy-spins onto the same
 # bounded-spin-then-vTaskDelay(1) shape #913 gave UserSpi.c's spi_XferByte;
@@ -793,6 +799,58 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	        echo "       SCPI_ErrorPush writes to the transport; it must run after the unlock."; \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
+
+$(DACREINIT_BIN): test_1034_dac_aout_invalidated_on_reinit.c test_framework.h $(SCPIDAC_SRC) $(AOUTSAMPLE_SRC) $(RECIPES)
+	@grep -qE '^[[:space:]]*uint32_t Timestamp;' $(AOUTSAMPLE_SRC) \
+	  || { echo "ERROR: AOutSample no longer has a 'uint32_t Timestamp;' field in $(AOUTSAMPLE_SRC)."; \
+	       echo "       test_1034's MockAOutSample mirrors this exact field -- re-derive the test."; \
+	       exit 1; }
+	@test "$$(grep -c '\.Timestamp = SCPIDAC_ValidTimestamp()' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: '.Timestamp = SCPIDAC_ValidTimestamp()' count in $(SCPIDAC_SRC) changed from 2."; \
+	       echo "       SCPI_DACVoltageSet's single-channel AND all-channel branches must both stamp"; \
+	       echo "       Timestamp on every successful publish -- test_1034's set_shape() models both."; \
+	       echo "       If this count changed, one branch may have stopped stamping, or reverted to a"; \
+	       echo "       bare xTaskGetTickCount() call (round-1 Qodo finding: tick 0 is a legitimate"; \
+	       echo "       return value and collides with the Timestamp==0 unknown sentinel) -- re-derive."; \
+	       exit 1; }
+	@grep -qF 'return (tick == 0) ? 1u : (uint32_t)tick;' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: SCPIDAC_ValidTimestamp's tick-zero substitution is gone from $(SCPIDAC_SRC)."; \
+	       echo "       test_1034's set_shape() models this exact remap -- re-derive the test if it moved."; \
+	       exit 1; }
+	@test "$$(grep -c 'pSample->Timestamp < 1' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: 'pSample->Timestamp < 1' count in $(SCPIDAC_SRC) changed from 2."; \
+	       echo "       Audit correction on PR #1147 (disposition fix_now) made the all-channel"; \
+	       echo "       form of SCPI_DACVoltageGet use the IDENTICAL staleness check as the"; \
+	       echo "       single-channel form (both now error a channel whose Timestamp is still 0,"; \
+	       echo "       instead of the all-channel form substituting a fabricated 0.0V). test_1034's"; \
+	       echo "       get_single_FIXED() and get_all_FIXED() both mirror this exact check --"; \
+	       echo "       re-derive both if this moved, and re-derive the whole test file if only one"; \
+	       echo "       of the two branches still uses it (that would reopen the asymmetry #1147"; \
+	       echo "       exists to close)."; \
+	       exit 1; }
+	@grep -qF 'const AOutSample invalidatedSample = {0};' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: DAC_EnsureHardwareInitialized's post-reinit invalidation local"; \
+	       echo "       ('invalidatedSample') is gone from $(SCPIDAC_SRC). test_1034's"; \
+	       echo "       reinit_invalidate_shape() mirrors this loop -- re-derive the test."; \
+	       exit 1; }
+	@i=`grep -nF 'bool initSucceeded = DAC7718_Init(dacInstanceId, 1);' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 v=`grep -nF 'const AOutSample invalidatedSample = {0};' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 f=`grep -nF 'if (!initSucceeded) {' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 p=`grep -nF 'dacHardwareInitialized = true;   // publish READY ...' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 test -n "$$i" && test -n "$$v" && test -n "$$f" && test -n "$$p" \
+	   && test "$$i" -lt "$$v" && test "$$v" -lt "$$f" && test "$$f" -lt "$$p" \
+	   || { echo "ERROR: #1034's invalidation step is no longer ordered AFTER DAC7718_Init() runs,"; \
+	        echo "       BEFORE the initSucceeded failure check, and BEFORE dacHardwareInitialized"; \
+	        echo "       is published true in $(SCPIDAC_SRC) (init='$$i' invalidate='$$v'"; \
+	        echo "       fail-check='$$f' publish='$$p')."; \
+	        echo "       Invalidating before the reset actually happens, or skipping invalidation"; \
+	        echo "       on a DAC7718_Init() FAILURE (round-2 Qodo finding, importance 10 --"; \
+	        echo "       DAC7718_Init()'s post-reset-pulse failure paths still leave the hardware"; \
+	        echo "       physically reset), or invalidating after READY is already published, all"; \
+	        echo "       reopen the confidently-wrong readback #1034 exists to close -- re-derive"; \
+	        echo "       the test against the new placement."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(DACREINIT_BIN) test_1034_dac_aout_invalidated_on_reinit.c
 
 # #988 added a FOURTH arm (the torn-down latch) between the live suspend reason
 # and the card advisory, so this guard now pins four markers, not three. The
@@ -2048,7 +2106,7 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 # rule loses a suite silently; duplicating one silently shadows the other.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(USECALTYPE_BIN)
+     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(USECALTYPE_BIN) $(DACREINIT_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -2069,10 +2127,11 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(REPLYBUF_BIN)
 	./$(HEXWIN_BIN)
 	./$(USECALTYPE_BIN)
+	./$(DACREINIT_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(USECALTYPE_BIN)
+	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(USECALTYPE_BIN) $(DACREINIT_BIN)
 
 .PHONY: run clean
