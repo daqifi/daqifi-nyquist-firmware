@@ -516,6 +516,78 @@ matches what the model assumes, and that `system_config.h` still defines
 `APP_FLASH_PFM_END_ADDRESS` as `(APP_FLASH_END_ADDRESS +
 APP_FLASH_UPPER_PANEL_SIZE)`.
 
+`test_1152_usecal_type_trust.c` covers `ADCUseCalSetClaimed()`
+(`services/SCPI/SCPIADC.c`) -- the body of `CONF:ADC:USECal` -- and the
+`DaqifiSettings` record it carries from `daqifi_settings_LoadFromNvm()` to
+`daqifi_settings_SaveToNvm()` (PR #1152, the follow-up to #1148).
+
+#1148 reordered that body to validate -> apply -> persist, so the calibration
+coefficients are installed into the live runtime array before the selector is
+written, and a reload that fails can no longer leave a stale selector
+persisted. Its promise is that the save is then the only step left that can
+fail, and only for a reason no caller argument can provoke -- a flash fault.
+A blind-leg review found that was not true. `DaqifiSettings` is `{ checksum[16],
+type, settings }` and **both** integrity checks cover the payload only
+(`CRC32_Compute(&(...settings), dataSize)`, and the legacy MD5 fallback the
+same way), while `LoadFromNvm` copies the **whole** stored record out once the
+payload validates. So `type` is whatever bytes are physically at that flash
+address, and `SaveToNvm` dispatches on it.
+
+Two outcomes, and the second is worse. An **out-of-enum** type hits
+`default: return false` before any flash I/O, so the command answers -200 --
+but the install has already happened, and `USECal?` still reports the old
+selector while acquisition converts against the new bank. An **in-enum but
+wrong** type (1, 2 or 3) takes a *real* arm: it erases and rewrites a
+*different* page -- the WiFi settings, or a calibration bank -- with the
+TopLevelSettings image and a checksum computed over that bank's span, and
+returns **OK**. Type 2 is the factory bank, so `USECal 0` can destroy the very
+coefficients it was asked to select, silently. Neither needs faulty hardware
+and both repeat on every call against that record. The fix is one line,
+immediately after the load: `tmpTopLevelSettings.type =
+DaqifiSettings_TopLevelSettings;` -- the pattern `SCPI_SaveAutoPowerOnUsb`,
+`SCPI_SaveDataPrecision` and `SCPI_SaveDeviceName` (`SCPIInterface.c`) already
+follow at the three other sites that reuse a loaded struct for a save.
+
+Same technique as `test_1112` / `test_985` / `test_943` and for the same
+reason -- neither `SCPIADC.c` nor `daqifi_settings.c` is host-includable -- so
+the load/install/save shape is re-implemented against an in-memory NVM and the
+pre-/post-fix shapes compared on identical fixtures, one binary carrying both.
+The **checksum is not re-implemented**: `Util/CRC32.c` includes only its own
+header, so this target links the real one, which is what makes "the record
+validates and the type is still wrong" a demonstration rather than an
+assumption.
+
+Covered: the premise itself (moving `type` does not move the CRC, moving a
+payload byte does); both defect shapes asserted as shapes, not as error
+returns -- the out-of-enum one pinned to *zero* erases and *zero* writes, which
+is what distinguishes it from #1148's accepted flash-fault residual; all 256
+single-byte stored values plus three wide ones; and four regressions that must
+**not** move -- a healthy record is byte-for-byte identical in both shapes,
+#1148's own gate still refuses a bad bank before installing or persisting, the
+flash-fault residual behaves identically before and after, and the raw-mode and
+out-of-range returns still touch no NVM. The headline is `test_1112`'s: over
+the full (stored type x value x bank validity x erase fault x write fault)
+matrix the two shapes differ in **exactly** the cells where the stored type is
+wrong and the run reached the save.
+
+Because it models rather than includes, the Makefile carries three guard
+blocks: that the real `ADCUseCalSetClaimed()` still normalizes the type exactly
+once and still runs load -> normalize -> install -> save **in that order**
+(positional, because a normalization that drifted below the install would
+satisfy a bare grep while reopening the window); that both of
+`daqifi_settings.c`'s validators still span `.settings`, that `LoadFromNvm`
+still copies the whole record, and that `SaveToNvm` still rejects an unknown
+type *before* the erase; and that `eDaqifiSettingsType` is still the same four
+implicitly-numbered enumerators the model maps onto pages. All were
+mutation-proven to fire (twelve mutations: a renamed function, a deleted,
+duplicated and relocated normalization, each of the four
+`daqifi_settings.c` spans widened, a removed dispatch, the rejection both
+`break`ing and moved below the erase, and a renumbered and a reordered
+enumerator), and five mutations of the model itself were proven to turn the
+suite red (the post-fix shape not normalizing -- i.e. the firmware at this PR's
+base commit -- the pre-fix shape normalizing too, normalizing to the wrong
+constant, #1148's order reverted, and a rejection that erases first).
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a

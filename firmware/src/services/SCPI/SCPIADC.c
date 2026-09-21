@@ -1557,11 +1557,15 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    // #620: reject an out-of-range value BEFORE any state mutation. The paths
-    // below clear RawOutputMode, assign calVals (a bool, so e.g. 7 -> 1) and
-    // SaveToNvm before the switch's default rejected it — a command that
-    // returns an error would otherwise persist a wrong calibration selection
-    // (loaded as USER cal on the next reboot).
+    // #620: reject an out-of-range value BEFORE any state mutation. Before
+    // that guard existed, the code below cleared RawOutputMode, assigned
+    // calVals (a bool, so e.g. 7 -> 1) and reached SaveToNvm before the
+    // switch's default ever rejected the value — a command that returns an
+    // error would otherwise persist a wrong calibration selection (loaded as
+    // USER cal on the next reboot).
+    //
+    // #1148 extends that promise to a value that IS in range but names a
+    // calibration bank that will not load; see the block below.
     if (param1 < 0 || param1 > 2) {
         SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
         return SCPI_RES_ERR;
@@ -1577,39 +1581,170 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
         return SCPI_RES_OK;
     }
 
-    // Values 0/1 select the calibration coefficient set and emit calibrated
-    // volts (leaving raw mode).
-    pRunTimeStreamConfig->RawOutputMode = false;
+    /* Values 0/1 select the calibration coefficient set and emit calibrated
+     * volts (leaving raw mode).
+     *
+     * #1148: ordered validate -> apply -> persist, so every step that can
+     * fail runs before the step that cannot be undone. The pre-#1148 order
+     * was persist -> reload, and a reload that failed left the selector
+     * already written: `USECal 1` against a blank or corrupt User AIn-cal
+     * bank returned -200 AND made `USECal?` answer 1, while every channel
+     * still held the factory coefficients the reload never replaced (bench,
+     * board 7E2898F46200E8A7, 2026-09-21). That lie outlives the session --
+     * boot's calVals branch discards the return value of
+     * daqifi_settings_LoadADCCalSettings (app_freertos.c:1035-1039), so every
+     * later boot silently falls back to factory while the getter goes on
+     * answering 1.
+     *
+     * Nothing depended on the old order. The reload reads a DIFFERENT NVM
+     * bank (FAINCAL/UAINCAL) from the one the save writes (TOP_LEVEL), so the
+     * persisted selector is not an input to the reload; and no other reader
+     * can observe the gap between them, because the wrapper's claim (#847)
+     * excludes the other SCPI transport and a session START across this whole
+     * body.
+     *
+     * The reorder is a real gate and not just two equally destructive steps
+     * swapped: daqifi_settings_LoadADCCalSettings validates before it copies
+     * -- its daqifi_settings_LoadFromNvm call checks the CRC32 (with the
+     * legacy-MD5 fallback) and returns false at daqifi_settings.c:341-342,
+     * well before the per-channel copy loop further down that function -- so
+     * a failed reload provably leaves pRuntimeAInChannels untouched. (The
+     * loop's own line number is deliberately not cited: #1048 wraps it in a
+     * critical section and would shift it. Nothing here depends on that
+     * hunk, and that hunk does not touch this early return.)
+     *
+     * Residual, accepted and deliberately NOT rolled back: if the reload
+     * succeeds and the SaveToNvm below then fails, the runtime array holds
+     * the new, validated coefficients while the persisted selector is left
+     * CRC-invalid -- NOT still naming the old set. SaveToNvm erases the
+     * TOP_LEVEL page unconditionally (daqifi_settings.c:290, ClearNvm ->
+     * nvm_ErasePage at :331) before the row write whose readback can fail
+     * (:298-307, nvm_WriteRowtoAddr), so a failed persist destroys the old
+     * record rather than preserving it. That is a flash fault in
+     * nvm_ErasePage/nvm_WriteRowtoAddr -- and ONLY that, now that
+     * tmpTopLevelSettings.type is normalized below right after the load (see
+     * the #1152 comment there): a corrupted stored `type` used to be a
+     * second, non-hardware way for this same SaveToNvm call to fail, and that
+     * one WAS reachable from no caller argument at all, on a record no
+     * different from any other valid save -- which is why it was outside this
+     * residual's scope rather than covered by it. With the type normalized,
+     * this residual is reachable from no argument the caller can send -- unlike
+     * the reload failure, which any board with an unwritten User bank
+     * reproduces on every `USECal 1`. The command answers -200, and `USECal?`
+     * does NOT keep reporting the previous selection: with the TOP_LEVEL
+     * record CRC-invalid, its own daqifi_settings_LoadFromNvm call fails the
+     * same checksum check, so SCPI_ADCUseCalGet (below) returns SCPI_RES_ERR
+     * instead of a cached value and answers the same bare -200. The next
+     * boot's LoadFromNvm failure on that same record takes the
+     * factory-default branch instead (app_freertos.c:916-919), which persists
+     * calVals = 0 and so skips the user-cal reload (app_freertos.c:1035-1039)
+     * -- landing on factory, which may not match what was live before the
+     * fault. That is still the safe direction; it is not the clean self-heal
+     * this paragraph used to claim. A rollback would be worse than the residual:
+     * the runtime array is not a copy of any NVM bank (CONF:ADC:chanCALM /
+     * chanCALB edit it in place), so re-loading the old bank would discard
+     * uncommitted per-channel edits, and a faithful rollback would mean
+     * snapshotting Size*2 doubles onto this callback's stack on every call,
+     * successful ones included. The LOG_E below makes the fault retrievable
+     * through SYST:LOG? instead.
+     *
+     * Each of the three failures below gets its own LOG_E because all three
+     * surface to the caller as the same bare -200 (libscpi pushes
+     * SCPI_ERROR_EXECUTION_ERROR for any SCPI_RES_ERR that pushed nothing --
+     * parser.c:144-146), and the standing rule is that the reason for a SCPI
+     * error is retrievable through SYST:LOG?. The -222 path above is left
+     * alone: its error code already says what happened. */
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,
+            &tmpTopLevelSettings)) {
+        LOG_E("CONF:ADC:USECal %d: top-level settings NVM read failed; "
+              "selection unchanged", param1);
+        return SCPI_RES_ERR;
+    }
 
-    //  Load existing settings
-    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) return SCPI_RES_ERR;
+    /* #1152: the payload checksum (daqifi_settings.c LoadFromNvm / SaveToNvm)
+     * covers settings.settings.* ONLY -- settings.type sits outside it and is
+     * copied verbatim from whatever bytes are physically at the TOP_LEVEL
+     * address. A record can therefore carry an out-of-enum type with a
+     * payload that still validates. daqifi_settings_SaveToNvm below switches
+     * on settings->type and hits `default: return false` for a value it does
+     * not recognize -- and reached from tmpTopLevelSettings.type as LOADED,
+     * that failure would land AFTER daqifi_settings_LoadADCCalSettings below
+     * has already installed the new coefficients into the runtime array:
+     * -200 back to the caller with the new bank already live and USECal?
+     * still reporting the old selection. Silent wrong data, not the
+     * documented flash-I/O residual below.
+     *
+     * Trust the type WE asked for, not the type NVM claims to hold -- we
+     * requested DaqifiSettings_TopLevelSettings above, so that is what
+     * SaveToNvm's switch must see. This is not a new pattern: it is the same
+     * one SCPI_SaveAutoPowerOnUsb, SCPI_SaveDataPrecision and
+     * SCPI_SaveDeviceName (SCPIInterface.c) already follow whenever they
+     * reuse a LoadFromNvm'd struct for a save -- each sets `.type =
+     * DaqifiSettings_TopLevelSettings` right after the load. This call site
+     * had simply omitted it.
+     *
+     * A snapshot-and-restore of the runtime coefficients was considered
+     * instead (copying pRuntimeAInChannels onto this stack before the reload
+     * and putting it back if SaveToNvm still fails) and rejected -- but not
+     * for the reason the residual paragraph above gives against RE-LOADING the
+     * old bank. Those are two different proposals and only the second loses
+     * data: a stack copy restores exactly what was there, uncommitted
+     * CONF:ADC:chanCALM/chanCALB edits included, so the discard-the-edits
+     * objection does not reach it.
+     *
+     * What a rollback does not do is remove a cause. It makes a failed save
+     * leave no trace, which is correct behaviour and also permanent: a record
+     * carrying a corrupted stored type makes this SaveToNvm fail on EVERY
+     * USECal call against it, so the rollback fires every time and the command
+     * becomes a no-op that answers -200 forever, on a board whose payload is
+     * perfectly good. It is also exactly the "faithful rollback" that
+     * paragraph prices at Size*2 doubles of stack per call, successful ones
+     * included. Normalizing the type removes the cause instead: the save takes
+     * the TopLevelSettings branch, the command SUCCEEDS, and there is nothing
+     * to roll back. What is left is the flash-I/O fault -- the residual above,
+     * whose own argument against rolling back is untouched by this. */
+    tmpTopLevelSettings.type = DaqifiSettings_TopLevelSettings;
 
-    //  Update calVals setting
-    tmpTopLevelSettings.settings.topLevelSettings.calVals = param1;
-
-    //  Store to NVM
-    if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) return SCPI_RES_ERR;
-
-    //  Update runtime values
+    DaqifiSettingsType calType;
     switch (param1) {
         case 0:
-            if (!daqifi_settings_LoadADCCalSettings(
-                    DaqifiSettings_FactAInCalParams,
-                    pRuntimeAInChannels)) {
-                return SCPI_RES_ERR;
-            }
+            calType = DaqifiSettings_FactAInCalParams;
             break;
         case 1:
-            if (!daqifi_settings_LoadADCCalSettings(
-                    DaqifiSettings_UserAInCalParams,
-                    pRuntimeAInChannels)) {
-                return SCPI_RES_ERR;
-            }
+            calType = DaqifiSettings_UserAInCalParams;
             break;
         default:
+            // Unreachable: the range test above admits only 0, 1 and 2, and 2
+            // returned. Kept rather than folded into a ternary so that
+            // widening that test later cannot silently route a new value to
+            // the factory bank.
+            LOG_E("CONF:ADC:USECal %d: no calibration bank for this value",
+                  param1);
             return SCPI_RES_ERR;
-            break;
     }
+
+    //  Update runtime values FIRST -- this validates the bank being selected
+    if (!daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)) {
+        LOG_E("CONF:ADC:USECal %d: %s cal bank failed validation "
+              "(blank or corrupt); selection unchanged", param1,
+              (param1 == 1) ? "user" : "factory");
+        return SCPI_RES_ERR;
+    }
+
+    //  Only now persist the selector the reload has proved loadable
+    tmpTopLevelSettings.settings.topLevelSettings.calVals = param1;
+    if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) {
+        LOG_E("CONF:ADC:USECal %d: NVM write failed; the coefficients are "
+              "live but the selection did not persist", param1);
+        return SCPI_RES_ERR;
+    }
+
+    /* Cleared LAST, so any failure above leaves the reported output format
+     * exactly as the caller found it. While RawOutputMode is set the encoders
+     * emit raw codes and SCPI_ADCUseCalGet answers 2, neither of which the
+     * reloaded coefficients affect -- clearing it first would have made a
+     * command that returns -200 switch the wire format anyway. */
+    pRunTimeStreamConfig->RawOutputMode = false;
     return SCPI_RES_OK;
 }
 
