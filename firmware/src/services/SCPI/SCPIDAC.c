@@ -251,13 +251,23 @@ static bool DAC_EnsureHardwareInitialized(void) {
     // the one-slot allocator's table-full sentinel and brick the DAC
     // permanently. DAC7718_Init()'s sequence starts with the RST pulse, so
     // re-running it on a previously-failed id is safe to repeat.
-    if (!DAC7718_Init(dacInstanceId, 1)) {
-        LOG_E("DAC_EnsureHardwareInitialized: DAC7718_Init failed (id=%u); "
-              "slot retained, retry permitted", (unsigned)dacInstanceId);
-        SCPIDAC_UnlockCommand(true);
-        dacInitInProgress = false;
-        return false;
-    }
+    //
+    // #1034 (Qodo /improve round 2, importance 10, "Invalidate cache after
+    // failed resets"): the outcome is captured rather than branched on
+    // immediately, because the invalidation below must run BEFORE this
+    // function returns even when DAC7718_Init() fails. Its only failure
+    // paths AFTER the RST pulse -- the configuration-register write and
+    // DAC7718_UpdateLatch(), both inside DAC7718.c -- leave the hardware
+    // ALREADY physically reset, exactly like the success path this
+    // invalidation exists for; its failure paths BEFORE the pulse (invalid
+    // config id, mutex not created, DAC7718_Lock() timeout) never touch
+    // hardware. DAC7718_Init() reports one bool, not which path failed, so
+    // there is no way to tell them apart from here -- invalidating
+    // unconditionally is correct whenever the reset actually ran, and on
+    // the rare pre-reset failure paths merely discards an already-valid
+    // cache (informative, not wrong). Matches this project's own principle:
+    // never publish a voltage that might not be true.
+    bool initSucceeded = DAC7718_Init(dacInstanceId, 1);
 
     // #1034: DAC7718_Init() above just pulsed reset and re-latched every
     // physical output to its hardware reset state (including on a REINIT
@@ -273,12 +283,20 @@ static bool DAC_EnsureHardwareInitialized(void) {
     // ticket exists to close (see AOutSample.h's Timestamp field and
     // SCPI_DACVoltageGet's staleness check below). gDacCommandMutex is
     // already held (taken above, before DAC7718_Init()) -- see that comment
-    // for why the lock now spans reset AND invalidation as one operation.
+    // for why the lock now spans reset AND invalidation as one operation,
+    // regardless of DAC7718_Init()'s outcome.
     const AOutSample invalidatedSample = {0};
     for (size_t i = 0; i < MAX_AOUT_CHANNEL; i++) {
         BoardData_Set(BOARDDATA_AOUT_LATEST, i, &invalidatedSample);
     }
     SCPIDAC_UnlockCommand(true);
+
+    if (!initSucceeded) {
+        LOG_E("DAC_EnsureHardwareInitialized: DAC7718_Init failed (id=%u); "
+              "slot retained, retry permitted", (unsigned)dacInstanceId);
+        dacInitInProgress = false;
+        return false;
+    }
 
     // #980 Qodo /agentic_review pass 3 (bug: "Power cycles leave the DAC
     // marked ready"): DAC7718_Init() above can take tens of ms (several SPI

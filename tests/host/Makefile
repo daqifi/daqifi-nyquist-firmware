@@ -832,17 +832,22 @@ $(DACREINIT_BIN): test_1034_dac_aout_invalidated_on_reinit.c test_framework.h $(
 	       echo "       ('invalidatedSample') is gone from $(SCPIDAC_SRC). test_1034's"; \
 	       echo "       reinit_invalidate_shape() mirrors this loop -- re-derive the test."; \
 	       exit 1; }
-	@i=`grep -nF 'if (!DAC7718_Init(dacInstanceId, 1)) {' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	@i=`grep -nF 'bool initSucceeded = DAC7718_Init(dacInstanceId, 1);' $(SCPIDAC_SRC) | cut -d: -f1`; \
 	 v=`grep -nF 'const AOutSample invalidatedSample = {0};' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 f=`grep -nF 'if (!initSucceeded) {' $(SCPIDAC_SRC) | cut -d: -f1`; \
 	 p=`grep -nF 'dacHardwareInitialized = true;   // publish READY ...' $(SCPIDAC_SRC) | cut -d: -f1`; \
-	 test -n "$$i" && test -n "$$v" && test -n "$$p" \
-	   && test "$$i" -lt "$$v" && test "$$v" -lt "$$p" \
-	   || { echo "ERROR: #1034's invalidation step is no longer ordered AFTER DAC7718_Init()"; \
-	        echo "       succeeds and BEFORE dacHardwareInitialized is published true in"; \
-	        echo "       $(SCPIDAC_SRC) (init='$$i' invalidate='$$v' publish='$$p')."; \
-	        echo "       Invalidating before the reset actually happens, or after READY is"; \
-	        echo "       already published, both reopen the confidently-wrong readback #1034"; \
-	        echo "       exists to close -- re-derive the test against the new placement."; \
+	 test -n "$$i" && test -n "$$v" && test -n "$$f" && test -n "$$p" \
+	   && test "$$i" -lt "$$v" && test "$$v" -lt "$$f" && test "$$f" -lt "$$p" \
+	   || { echo "ERROR: #1034's invalidation step is no longer ordered AFTER DAC7718_Init() runs,"; \
+	        echo "       BEFORE the initSucceeded failure check, and BEFORE dacHardwareInitialized"; \
+	        echo "       is published true in $(SCPIDAC_SRC) (init='$$i' invalidate='$$v'"; \
+	        echo "       fail-check='$$f' publish='$$p')."; \
+	        echo "       Invalidating before the reset actually happens, or skipping invalidation"; \
+	        echo "       on a DAC7718_Init() FAILURE (round-2 Qodo finding, importance 10 --"; \
+	        echo "       DAC7718_Init()'s post-reset-pulse failure paths still leave the hardware"; \
+	        echo "       physically reset), or invalidating after READY is already published, all"; \
+	        echo "       reopen the confidently-wrong readback #1034 exists to close -- re-derive"; \
+	        echo "       the test against the new placement."; \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(DACREINIT_BIN) test_1034_dac_aout_invalidated_on_reinit.c
 

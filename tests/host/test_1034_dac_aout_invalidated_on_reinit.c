@@ -164,24 +164,27 @@ static bool mock_DAC7718_Init(void) {
     return g_dac_init_should_succeed;
 }
 
-/* ---- #1034 round-1-fixed shape: DAC_EnsureHardwareInitialized's
+/* ---- #1034 round-1-and-2-fixed shape: DAC_EnsureHardwareInitialized's
  * reset-then-invalidate sequence. Mirrors SCPIDAC.c's corrected ordering
- * (grep-guarded below) -- lock is taken BEFORE the (mock) hardware reset and
- * held through the invalidation loop, so: (a) a lock failure leaves hardware
- * UNTOUCHED (mock_DAC7718_Init is never called -- closes round-1 finding
- * "Lock contention revives stale voltages"), and (b) reset and invalidation
- * happen as one operation with respect to any setter serialized on the same
- * lock (closes "Reset can erase a successful voltage" -- see
- * setter_cannot_publish_between_reset_and_invalidation below for the
- * ordering property this buys). ------------------------------------------ */
+ * (grep-guarded below):
+ *   - lock is taken BEFORE the (mock) hardware reset and held through the
+ *     invalidation loop, so: (a) a lock failure leaves hardware UNTOUCHED
+ *     (mock_DAC7718_Init is never called -- closes round-1 finding "Lock
+ *     contention revives stale voltages"), and (b) reset and invalidation
+ *     happen as one operation with respect to any setter serialized on the
+ *     same lock (closes round-1's "Reset can erase a successful voltage");
+ *   - the invalidation loop runs UNCONDITIONALLY after the (mock) reset,
+ *     regardless of whether it reports success -- closes round-2's
+ *     "Invalidate cache after failed resets" (importance 10): a
+ *     DAC7718_Init() failure AFTER its RST pulse (config-register write,
+ *     UpdateLatch) still leaves the hardware physically reset, so skipping
+ *     invalidation on that path reopens the exact bug #1034 exists to fix,
+ *     just reached via a failure return instead of a success one. --------- */
 static bool reinit_shape(void) {
     if (!mock_SCPIDAC_LockCommand()) {
         return false; /* hardware untouched -- see mock_dac_init_reset call counts */
     }
-    if (!mock_DAC7718_Init()) {
-        mock_SCPIDAC_UnlockCommand(true);
-        return false;
-    }
+    bool initSucceeded = mock_DAC7718_Init();
     MockAOutSample invalidated = {0};
     for (size_t i = 0; i < MOCK_MAX_AOUT_CHANNEL; i++) {
         /* g_locked observable here models "this write only happens while
@@ -189,7 +192,7 @@ static bool reinit_shape(void) {
         g_cache[i] = invalidated;
     }
     mock_SCPIDAC_UnlockCommand(true);
-    return true;
+    return initSucceeded;
 }
 
 /* ---- #1034 round-1-fixed shape: SCPIDAC_ValidTimestamp(), mirrored
@@ -442,7 +445,12 @@ TEST(round1_fix_lock_failure_leaves_hardware_untouched) {
     ASSERT_EQ(g_dac_init_calls, 0); /* hardware never touched */
 }
 
-TEST(dac_init_failure_releases_the_lock_without_invalidating) {
+TEST(dac_init_failure_still_invalidates_the_cache) {
+    /* Round-2 Qodo finding "Invalidate cache after failed resets"
+     * (importance 10): DAC7718_Init()'s failure paths that matter here run
+     * AFTER its RST pulse, so the hardware is already physically reset by
+     * the time it reports failure -- exactly like the success path. The
+     * cache must be invalidated EITHER way, not just on success. */
     cache_reset_to_boot_state();
     set_shape(4, 4, 3.14);
     mock_dac_init_reset(/*shouldSucceed=*/false);
@@ -453,8 +461,8 @@ TEST(dac_init_failure_releases_the_lock_without_invalidating) {
     ASSERT_EQ(g_unlock_calls, 1); /* released even though Init failed */
 
     double v = 0.0;
-    ASSERT_TRUE(get_single_FIXED(4, &v)); /* cache untouched -- Init never got far enough to invalidate */
-    ASSERT_TRUE(v == 3.14);
+    ASSERT_FALSE(get_single_FIXED(4, &v)); /* invalidated despite the failure */
+    ASSERT_EQ((long long)g_cache[4].Timestamp, 0);
 }
 
 TEST(old_buggy_ordering_let_a_setter_win_the_gap_and_then_be_erased) {
@@ -551,7 +559,7 @@ int main(void) {
     RUN(reinit_takes_the_command_lock_exactly_once_spanning_reset_and_invalidate);
     RUN(reinit_fails_closed_when_the_command_lock_cannot_be_taken);
     RUN(round1_fix_lock_failure_leaves_hardware_untouched);
-    RUN(dac_init_failure_releases_the_lock_without_invalidating);
+    RUN(dac_init_failure_still_invalidates_the_cache);
     RUN(old_buggy_ordering_let_a_setter_win_the_gap_and_then_be_erased);
     RUN(fixed_ordering_wraps_reset_and_invalidate_in_one_lock_acquisition);
     RUN(tick_zero_is_remapped_to_a_nonzero_timestamp);
