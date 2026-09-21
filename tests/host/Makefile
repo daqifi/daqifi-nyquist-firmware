@@ -805,11 +805,17 @@ $(DACREINIT_BIN): test_1034_dac_aout_invalidated_on_reinit.c test_framework.h $(
 	  || { echo "ERROR: AOutSample no longer has a 'uint32_t Timestamp;' field in $(AOUTSAMPLE_SRC)."; \
 	       echo "       test_1034's MockAOutSample mirrors this exact field -- re-derive the test."; \
 	       exit 1; }
-	@test "$$(grep -c '\.Timestamp = xTaskGetTickCount()' $(SCPIDAC_SRC))" = "2" \
-	  || { echo "ERROR: '.Timestamp = xTaskGetTickCount()' count in $(SCPIDAC_SRC) changed from 2."; \
+	@test "$$(grep -c '\.Timestamp = SCPIDAC_ValidTimestamp()' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: '.Timestamp = SCPIDAC_ValidTimestamp()' count in $(SCPIDAC_SRC) changed from 2."; \
 	       echo "       SCPI_DACVoltageSet's single-channel AND all-channel branches must both stamp"; \
 	       echo "       Timestamp on every successful publish -- test_1034's set_shape() models both."; \
-	       echo "       If this count changed, one branch may have stopped stamping -- re-derive."; \
+	       echo "       If this count changed, one branch may have stopped stamping, or reverted to a"; \
+	       echo "       bare xTaskGetTickCount() call (round-1 Qodo finding: tick 0 is a legitimate"; \
+	       echo "       return value and collides with the Timestamp==0 unknown sentinel) -- re-derive."; \
+	       exit 1; }
+	@grep -qF 'return (tick == 0) ? 1u : (uint32_t)tick;' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: SCPIDAC_ValidTimestamp's tick-zero substitution is gone from $(SCPIDAC_SRC)."; \
+	       echo "       test_1034's set_shape() models this exact remap -- re-derive the test if it moved."; \
 	       exit 1; }
 	@grep -qF 'pSample->Timestamp < 1' $(SCPIDAC_SRC) \
 	  || { echo "ERROR: SCPI_DACVoltageGet's single-channel staleness check ('pSample->Timestamp < 1')"; \

@@ -192,6 +192,58 @@ static bool DAC_EnsureHardwareInitialized(void) {
         dacInstanceId = newInstanceId;
     }
 
+    // #1034 (Qodo /agentic_review round 1 -- two BLOCKING findings against
+    // the first shape of this fix, both real, fixed together here):
+    //
+    // 1. "Reset can erase a successful voltage": the first shape called
+    //    DAC7718_Init() BEFORE taking gDacCommandMutex, and only took the
+    //    lock for the invalidation loop afterward. SCPI_DACVoltageSet /
+    //    SCPI_DACUpdate check readiness (this function) BEFORE they
+    //    themselves take gDacCommandMutex, and never re-check it once
+    //    they have the lock -- so a setter that had ALREADY passed its own
+    //    (earlier) readiness check could win SCPIDAC_LockCommand() in the
+    //    gap between DAC7718_Init() returning here and this function's own
+    //    (then-later) lock attempt, publish a genuinely fresh and correct
+    //    voltage, and have THIS invalidation loop wipe it a moment later.
+    // 2. "Lock contention revives stale voltages": if SCPIDAC_LockCommand()
+    //    then failed (its 2 s timeout, under contention), the hardware had
+    //    ALREADY been reset -- so the function returned false with the
+    //    cache still reporting pre-reset voltages as current, a WORSE
+    //    cache/hardware divergence than the one #1034 exists to fix.
+    //
+    // Fix: take gDacCommandMutex BEFORE DAC7718_Init() and hold it through
+    // invalidation, releasing right after the invalidation loop below (the
+    // SAME release point the pre-#1034 code already used for its own,
+    // narrower lock -- deliberately NOT widened to also cover the
+    // pre-publish power re-check a few lines further down, which is
+    // untouched by this fix and belongs to PR #1129's open hunk; nothing
+    // BOARDDATA_AOUT_LATEST-shaped happens in that re-check, so it does not
+    // need this lock). This makes "physically reset" and "cache
+    // invalidated" one atomic operation with respect to SCPI_DACVoltageSet /
+    // SCPI_DACUpdate's own register-write + BoardData-publish sequence,
+    // which take the SAME lock -- so a setter racing this sequence now
+    // either completes entirely BEFORE the reset (its publish is correctly
+    // wiped by the invalidation that follows, because the reset really did
+    // just make it stale) or entirely AFTER invalidation (its publish is
+    // the freshest state and is never touched). It also means a
+    // lock-acquisition failure now happens BEFORE DAC7718_Init() ever runs,
+    // so a failure here leaves the hardware untouched and the cache still
+    // describing it correctly -- closing finding 2 by construction rather
+    // than by a second check.
+    //
+    // No new deadlock: DAC7718_Init() and DAC7718_ReadWriteReg()/
+    // UpdateLatch() each take gDAC7718_Mutex internally for their own SPI
+    // framing (see that mutex's own docs), so gDacCommandMutex (outer) and
+    // gDAC7718_Mutex (inner) still nest in the ONE fixed order
+    // gDacCommandMutex's declaration comment documents -- unchanged by
+    // moving where the outer lock is first taken.
+    if (!SCPIDAC_LockCommand()) {
+        LOG_E("DAC_EnsureHardwareInitialized: could not claim command lock "
+              "before reinitializing hardware");
+        dacInitInProgress = false;
+        return false;
+    }
+
     // #980 item 1: propagate DAC7718_Init()'s actual outcome instead of
     // assuming success. On failure, dacInstanceId is retained above (NOT
     // reset to 0xFF) so the NEXT call retries DAC7718_Init() on this SAME
@@ -202,6 +254,7 @@ static bool DAC_EnsureHardwareInitialized(void) {
     if (!DAC7718_Init(dacInstanceId, 1)) {
         LOG_E("DAC_EnsureHardwareInitialized: DAC7718_Init failed (id=%u); "
               "slot retained, retry permitted", (unsigned)dacInstanceId);
+        SCPIDAC_UnlockCommand(true);
         dacInitInProgress = false;
         return false;
     }
@@ -218,24 +271,9 @@ static bool DAC_EnsureHardwareInitialized(void) {
     // standing or guessing a replacement -- a readback that confidently
     // claims a voltage the pin no longer holds is exactly the failure this
     // ticket exists to close (see AOutSample.h's Timestamp field and
-    // SCPI_DACVoltageGet's staleness check below).
-    //
-    // Guarded by gDacCommandMutex: neither caller of this function
-    // (SCPI_DACVoltageSet, SCPI_DACUpdate) holds it yet at this point (both
-    // take it only AFTER DAC_EnsureHardwareInitialized returns), and
-    // BOARDDATA_AOUT_LATEST's Get/Set do a plain unprotected memcpy of a
-    // struct containing a 64-bit double -- the same torn-read hazard #990
-    // Finding 0 / #1030 added this mutex to close for every OTHER writer.
-    // Skipping the lock here would reopen it against a concurrent
-    // SOUR:VOLT:LEV? on the other SCPI transport. If the lock cannot be
-    // taken, treat it the same as a DAC7718_Init failure -- do not publish
-    // dacHardwareInitialized=true over a cache that might still be stale.
-    if (!SCPIDAC_LockCommand()) {
-        LOG_E("DAC_EnsureHardwareInitialized: could not claim command lock "
-              "to invalidate the stale AOutLatest cache after reinit");
-        dacInitInProgress = false;
-        return false;
-    }
+    // SCPI_DACVoltageGet's staleness check below). gDacCommandMutex is
+    // already held (taken above, before DAC7718_Init()) -- see that comment
+    // for why the lock now spans reset AND invalidation as one operation.
     const AOutSample invalidatedSample = {0};
     for (size_t i = 0; i < MAX_AOUT_CHANNEL; i++) {
         BoardData_Set(BOARDDATA_AOUT_LATEST, i, &invalidatedSample);
@@ -367,6 +405,21 @@ static void SCPIDAC_UnlockCommand(bool lockHeld) {
     if (lockHeld && (gDacCommandMutex != NULL)) {
         xSemaphoreGive(gDacCommandMutex);
     }
+}
+
+// #1034 (Qodo /agentic_review round 1, "Valid voltage writes can read as
+// unknown"): AOutSample.Timestamp uses 0 as the "not known" sentinel
+// (AOutSample.h), but xTaskGetTickCount() legitimately RETURNS 0 -- at
+// scheduler startup (FreeRTOS's tick count starts at 0) and again every time
+// the wrapping 32-bit tick counter completes a cycle. A command that happens
+// to execute on tick 0 would otherwise be stored as its own sentinel and
+// immediately read back as unknown. Both writers (below) call this instead
+// of xTaskGetTickCount() directly, so the substitution exists in exactly one
+// place rather than being repeated -- and risking drifting apart -- at each
+// call site.
+static uint32_t SCPIDAC_ValidTimestamp(void) {
+    TickType_t tick = xTaskGetTickCount();
+    return (tick == 0) ? 1u : (uint32_t)tick;
 }
 
 scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
@@ -509,7 +562,9 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // once the latch update above confirms the value is actually live.
         // #1034: stamp Timestamp so this entry reads back as known-good
         // until the next DAC_EnsureHardwareInitialized() reinit clears it.
-        AOutSample sample = {.Timestamp = xTaskGetTickCount(), .Channel = (uint8_t)channel, .Voltage = voltage};
+        // SCPIDAC_ValidTimestamp(), not a bare tick read -- see its own
+        // comment for why a raw xTaskGetTickCount() is unsafe here.
+        AOutSample sample = {.Timestamp = SCPIDAC_ValidTimestamp(), .Channel = (uint8_t)channel, .Voltage = voltage};
         BoardData_Set(BOARDDATA_AOUT_LATEST, index, &sample);
 
     } else {
@@ -666,8 +721,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
             }
             uint8_t channelId = pBoardConfigAOutChannels->Data[i].DaqifiDacChannelId;
             // #1034: see the single-channel branch above for why Timestamp
-            // is stamped here.
-            AOutSample sample = {.Timestamp = xTaskGetTickCount(), .Channel = channelId, .Voltage = voltage};
+            // is stamped here via SCPIDAC_ValidTimestamp().
+            AOutSample sample = {.Timestamp = SCPIDAC_ValidTimestamp(), .Channel = channelId, .Voltage = voltage};
             BoardData_Set(BOARDDATA_AOUT_LATEST, i, &sample);
         }
 

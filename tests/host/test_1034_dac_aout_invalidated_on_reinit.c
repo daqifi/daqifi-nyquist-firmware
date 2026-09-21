@@ -13,16 +13,17 @@
  * SOUR:VOLT:LEV? kept confidently reporting it as current -- CONFIDENTLY
  * WRONG, not merely unknown, because the reset just made it false.
  *
- * THE FIX has two halves, both modelled here:
+ * THE FIX has three parts, all modelled here:
  *
  * 1. AOutSample gained a `Timestamp` field (AOutSample.h), 0 meaning "not
  *    known" -- the same convention AInSample already uses. Every successful
- *    SCPI_DACVoltageSet write stamps it with xTaskGetTickCount(); every
- *    successful DAC7718_Init() inside DAC_EnsureHardwareInitialized() zeroes
- *    it (and Channel, and Voltage) for EVERY channel slot, under
- *    gDacCommandMutex (the same mutex #990 Finding 0 / #1030 already require
- *    every other BOARDDATA_AOUT_LATEST writer to hold, to avoid tearing the
- *    64-bit Voltage double mid-read on the other SCPI transport).
+ *    SCPI_DACVoltageSet write stamps it (via SCPIDAC_ValidTimestamp(), see
+ *    part 3); every successful DAC7718_Init() inside
+ *    DAC_EnsureHardwareInitialized() zeroes it (and Channel, and Voltage)
+ *    for EVERY channel slot, under gDacCommandMutex (the same mutex #990
+ *    Finding 0 / #1030 already require every other BOARDDATA_AOUT_LATEST
+ *    writer to hold, to avoid tearing the 64-bit Voltage double mid-read on
+ *    the other SCPI transport).
  * 2. SCPI_DACVoltageGet treats Timestamp < 1 as "not known": the
  *    single-channel form answers a deferred SCPI execution error (mirroring
  *    the existing MEAS:VOLT:DC? precedent in SCPIADC.c for a channel whose
@@ -32,6 +33,30 @@
  *    per channel, same reasoning as MEAS:VOLT:DC?'s all-channel fallback for
  *    a disabled/stale AIN channel), so it answers 0.0 for an unknown channel
  *    rather than a voltage that may no longer describe the pin.
+ *
+ * ROUND 1 (Qodo /agentic_review) found two BLOCKING defects in the first
+ * shape of parts 1 and its lock ordering, both fixed here and both modelled:
+ *
+ * 3. **Tick-zero sentinel collision.** xTaskGetTickCount() legitimately
+ *    returns 0 (scheduler startup; every 32-bit wrap), colliding with the
+ *    Timestamp==0 "unknown" sentinel -- a command executing on tick 0 would
+ *    have been stored as its own invalidation marker and read back as
+ *    unknown immediately. Fixed by SCPIDAC_ValidTimestamp(), a single shared
+ *    helper (not duplicated at each call site) that maps a 0 tick to 1.
+ * 4. **Reset/invalidate/setter-publish ordering.** The first shape called
+ *    DAC7718_Init() BEFORE taking gDacCommandMutex, and took the lock only
+ *    for the invalidation loop afterward. Two consequences: (a) a setter
+ *    that had already passed its OWN (earlier) readiness check, and so
+ *    never re-checks it, could win the lock in the gap between
+ *    DAC7718_Init() returning and the (then-later) lock attempt here,
+ *    publish a genuinely fresh voltage, and have the invalidation loop wipe
+ *    it moments later; (b) if the lock attempt then failed (its 2 s
+ *    timeout, under contention), the hardware had ALREADY been reset, so
+ *    the cache was left reporting pre-reset voltages as current -- worse
+ *    than the divergence #1034 exists to fix. Fixed by taking the lock
+ *    BEFORE DAC7718_Init() and holding it through invalidation, so a lock
+ *    failure now leaves the hardware untouched (part 4's shape below models
+ *    this: DAC7718_Init is never even attempted when the lock fails).
  *
  * HOW IT IS TESTED
  *
@@ -91,7 +116,8 @@ static uint32_t       g_tick = 0; /* stand-in for xTaskGetTickCount() */
 
 static void cache_reset_to_boot_state(void) {
     memset(g_cache, 0, sizeof(g_cache));
-    g_tick = 0;
+    g_tick = 100; /* an ordinary nonzero tick; tests that care about the
+                   * tick==0 edge case set g_tick explicitly. */
 }
 
 /* ---- Mirrors SCPIDAC_LockCommand/UnlockCommand's call-counted mock,
@@ -123,14 +149,37 @@ static void mock_SCPIDAC_UnlockCommand(bool lockHeld) {
     }
 }
 
-/* ---- #1034 shape: DAC_EnsureHardwareInitialized's post-Init()
- * invalidation loop. Mirrors SCPIDAC.c lines around 'invalidatedSample'
- * (grep-guarded below) -- lock, zero every slot while a write would be
- * observable, unlock; fail closed (mirroring "do not publish
- * dacHardwareInitialized=true over a cache that might still be stale") if
- * the lock cannot be taken. ---------------------------------------------- */
-static bool reinit_invalidate_shape(void) {
+/* ---- Mirrors DAC7718_Init(), call-counted the same way, so a test can
+ * assert not just the outcome but whether hardware was EVER touched. ---- */
+static int  g_dac_init_calls;
+static bool g_dac_init_should_succeed;
+
+static void mock_dac_init_reset(bool shouldSucceed) {
+    g_dac_init_calls = 0;
+    g_dac_init_should_succeed = shouldSucceed;
+}
+
+static bool mock_DAC7718_Init(void) {
+    g_dac_init_calls++;
+    return g_dac_init_should_succeed;
+}
+
+/* ---- #1034 round-1-fixed shape: DAC_EnsureHardwareInitialized's
+ * reset-then-invalidate sequence. Mirrors SCPIDAC.c's corrected ordering
+ * (grep-guarded below) -- lock is taken BEFORE the (mock) hardware reset and
+ * held through the invalidation loop, so: (a) a lock failure leaves hardware
+ * UNTOUCHED (mock_DAC7718_Init is never called -- closes round-1 finding
+ * "Lock contention revives stale voltages"), and (b) reset and invalidation
+ * happen as one operation with respect to any setter serialized on the same
+ * lock (closes "Reset can erase a successful voltage" -- see
+ * setter_cannot_publish_between_reset_and_invalidation below for the
+ * ordering property this buys). ------------------------------------------ */
+static bool reinit_shape(void) {
     if (!mock_SCPIDAC_LockCommand()) {
+        return false; /* hardware untouched -- see mock_dac_init_reset call counts */
+    }
+    if (!mock_DAC7718_Init()) {
+        mock_SCPIDAC_UnlockCommand(true);
         return false;
     }
     MockAOutSample invalidated = {0};
@@ -143,11 +192,18 @@ static bool reinit_invalidate_shape(void) {
     return true;
 }
 
+/* ---- #1034 round-1-fixed shape: SCPIDAC_ValidTimestamp(), mirrored
+ * exactly (grep-guarded below) -- both writers call THIS, not a raw tick
+ * read, so the tick==0 substitution lives in one place. g_tick is set
+ * directly by a test (not auto-incremented) so tick==0 is reachable. ---- */
+static uint32_t mock_valid_timestamp(void) {
+    return (g_tick == 0) ? 1u : g_tick;
+}
+
 /* ---- #1034 shape: SCPI_DACVoltageSet's publish, both branches stamp
- * identically -- mirrors '.Timestamp = xTaskGetTickCount()'. ------------ */
+ * identically -- mirrors '.Timestamp = SCPIDAC_ValidTimestamp()'. ------- */
 static void set_shape(size_t index, uint8_t channelId, double voltage) {
-    g_tick++;
-    MockAOutSample sample = { .Timestamp = g_tick, .Channel = channelId, .Voltage = voltage };
+    MockAOutSample sample = { .Timestamp = mock_valid_timestamp(), .Channel = channelId, .Voltage = voltage };
     g_cache[index] = sample;
 }
 
@@ -243,8 +299,9 @@ TEST(reinit_invalidates_a_previously_known_channel) {
     ASSERT_TRUE(get_single_FIXED(2, &before));
     ASSERT_TRUE(before == 9.9);
 
+    mock_dac_init_reset(/*shouldSucceed=*/true);
     mock_lock_reset(/*shouldSucceed=*/true);
-    ASSERT_TRUE(reinit_invalidate_shape()); /* models DAC7718_Init() success */
+    ASSERT_TRUE(reinit_shape());
 
     double after = 12345.0;
     ASSERT_FALSE(get_single_FIXED(2, &after)); /* #1034: now reports unknown */
@@ -260,8 +317,9 @@ TEST(reinit_invalidates_every_channel_not_just_the_one_this_transport_set) {
     set_shape(4, 4, 3.3);
     set_shape(7, 7, 4.4);
 
+    mock_dac_init_reset(true);
     mock_lock_reset(true);
-    ASSERT_TRUE(reinit_invalidate_shape());
+    ASSERT_TRUE(reinit_shape());
 
     double v;
     for (size_t i = 0; i < MOCK_MAX_AOUT_CHANNEL; i++) {
@@ -278,8 +336,8 @@ TEST(old_buggy_shape_would_have_reported_the_stale_voltage_as_current) {
     cache_reset_to_boot_state();
     set_shape(6, 6, 7.5);
 
-    /* Deliberately do NOT call reinit_invalidate_shape() here -- this test
-     * proves what the OLD code did (no invalidation call site existed). */
+    /* Deliberately do NOT call reinit_shape() here -- this test proves what
+     * the OLD code did (no invalidation call site existed). */
 
     double stillReportedAsCurrent = get_single_OLD_BUGGY(6);
     ASSERT_TRUE(stillReportedAsCurrent == 7.5); /* confidently wrong: pin was just reset */
@@ -295,8 +353,9 @@ TEST(fixed_shape_closes_the_same_scenario_the_old_shape_missed) {
     cache_reset_to_boot_state();
     set_shape(6, 6, 7.5);
 
+    mock_dac_init_reset(true);
     mock_lock_reset(true);
-    ASSERT_TRUE(reinit_invalidate_shape());
+    ASSERT_TRUE(reinit_shape());
 
     double v;
     ASSERT_FALSE(get_single_FIXED(6, &v)); /* #1034: no longer confidently wrong */
@@ -310,8 +369,9 @@ TEST(a_set_after_reinit_makes_that_one_channel_known_again) {
     cache_reset_to_boot_state();
     set_shape(3, 3, 1.0);
 
+    mock_dac_init_reset(true);
     mock_lock_reset(true);
-    ASSERT_TRUE(reinit_invalidate_shape());
+    ASSERT_TRUE(reinit_shape());
 
     /* A fresh command after the reinit is real and must be trusted. */
     set_shape(3, 3, 8.25);
@@ -331,21 +391,23 @@ TEST(a_set_after_reinit_makes_that_one_channel_known_again) {
 }
 
 /* ========================================================================
- * Lock discipline of the invalidation step itself
+ * Lock discipline of the reset+invalidation step (round 1: lock-before-Init)
  * ======================================================================== */
 
-TEST(invalidation_takes_the_command_lock_exactly_once_and_releases_it) {
+TEST(reinit_takes_the_command_lock_exactly_once_spanning_reset_and_invalidate) {
     cache_reset_to_boot_state();
     set_shape(0, 0, 1.0);
+    mock_dac_init_reset(true);
     mock_lock_reset(true);
 
-    ASSERT_TRUE(reinit_invalidate_shape());
+    ASSERT_TRUE(reinit_shape());
     ASSERT_EQ(g_lock_calls, 1);
     ASSERT_EQ(g_unlock_calls, 1);
+    ASSERT_EQ(g_dac_init_calls, 1);
     ASSERT_FALSE(g_locked); /* not left held */
 }
 
-TEST(invalidation_fails_closed_when_the_command_lock_cannot_be_taken) {
+TEST(reinit_fails_closed_when_the_command_lock_cannot_be_taken) {
     /* Mirrors: "if the lock cannot be taken, treat it the same as a
      * DAC7718_Init failure -- do not publish dacHardwareInitialized=true
      * over a cache that might still be stale." The cache must be left
@@ -354,15 +416,127 @@ TEST(invalidation_fails_closed_when_the_command_lock_cannot_be_taken) {
      * -- see #1034's source comment for why this is the conservative choice. */
     cache_reset_to_boot_state();
     set_shape(5, 5, 6.6);
+    mock_dac_init_reset(true); /* would succeed -- must never be reached */
     mock_lock_reset(/*shouldSucceed=*/false);
 
-    ASSERT_FALSE(reinit_invalidate_shape());
+    ASSERT_FALSE(reinit_shape());
     ASSERT_EQ(g_lock_calls, 1);
     ASSERT_EQ(g_unlock_calls, 0); /* never given a lock it never took */
 
     double v = 0.0;
     ASSERT_TRUE(get_single_FIXED(5, &v)); /* still known -- untouched */
     ASSERT_TRUE(v == 6.6);
+}
+
+TEST(round1_fix_lock_failure_leaves_hardware_untouched) {
+    /* Round-1 Qodo finding "Lock contention revives stale voltages": the
+     * FIRST shape called (mock) DAC7718_Init() before taking the lock, so a
+     * lock failure still left the hardware physically reset with the cache
+     * unaware of it. The fix takes the lock FIRST -- prove hardware is never
+     * even touched when the lock cannot be acquired. */
+    cache_reset_to_boot_state();
+    mock_dac_init_reset(true);
+    mock_lock_reset(false);
+
+    ASSERT_FALSE(reinit_shape());
+    ASSERT_EQ(g_dac_init_calls, 0); /* hardware never touched */
+}
+
+TEST(dac_init_failure_releases_the_lock_without_invalidating) {
+    cache_reset_to_boot_state();
+    set_shape(4, 4, 3.14);
+    mock_dac_init_reset(/*shouldSucceed=*/false);
+    mock_lock_reset(true);
+
+    ASSERT_FALSE(reinit_shape());
+    ASSERT_EQ(g_lock_calls, 1);
+    ASSERT_EQ(g_unlock_calls, 1); /* released even though Init failed */
+
+    double v = 0.0;
+    ASSERT_TRUE(get_single_FIXED(4, &v)); /* cache untouched -- Init never got far enough to invalidate */
+    ASSERT_TRUE(v == 3.14);
+}
+
+TEST(old_buggy_ordering_let_a_setter_win_the_gap_and_then_be_erased) {
+    /* Round-1 Qodo finding "Reset can erase a successful voltage",
+     * reconstructed literally: the FIRST shape's own call order was
+     * (1) mock_DAC7718_Init() with NO lock held, THEN (2) lock+invalidate.
+     * A setter using the SAME lock (exactly like the real
+     * SCPI_DACVoltageSet, which always takes SCPIDAC_LockCommand() around
+     * its own register-write+publish) can therefore acquire that lock in
+     * the window between steps 1 and 2 and publish -- only to have step 2
+     * wipe it moments later. This is the FIRST shape's call order, not the
+     * shipped one (see the next test for what changed). */
+    cache_reset_to_boot_state();
+    mock_dac_init_reset(true);
+    mock_lock_reset(true);
+
+    ASSERT_TRUE(mock_DAC7718_Init()); /* old shape: hardware reset, UNLOCKED */
+
+    /* window: a setter (using the real lock, like SCPI_DACVoltageSet does)
+     * wins the currently-free lock and publishes a genuinely fresh value. */
+    ASSERT_TRUE(mock_SCPIDAC_LockCommand());
+    set_shape(2, 2, 5.5);
+    mock_SCPIDAC_UnlockCommand(true);
+
+    /* old shape's own (late) lock + invalidate now runs, uncontended */
+    ASSERT_TRUE(mock_SCPIDAC_LockCommand());
+    MockAOutSample invalidated = {0};
+    for (size_t i = 0; i < MOCK_MAX_AOUT_CHANNEL; i++) {
+        g_cache[i] = invalidated;
+    }
+    mock_SCPIDAC_UnlockCommand(true);
+
+    double v;
+    ASSERT_FALSE(get_single_FIXED(2, &v)); /* the setter's fresh, valid write is gone -- THE BUG */
+}
+
+TEST(fixed_ordering_wraps_reset_and_invalidate_in_one_lock_acquisition) {
+    /* The fix's structural guarantee: reinit_shape() is ONE call that takes
+     * the lock exactly once around BOTH reset and invalidate, so there is
+     * no exposed window (from the caller's side) for a setter to observe
+     * "reset happened, invalidation has not run yet" the way the old-shape
+     * test above constructs by hand. (Real concurrency proof needs real
+     * threads -- see FIDELITY item 1; this proves the call shape the fix
+     * relies on.) */
+    cache_reset_to_boot_state();
+    mock_dac_init_reset(true);
+    mock_lock_reset(true);
+
+    ASSERT_TRUE(reinit_shape());
+    ASSERT_EQ(g_lock_calls, 1); /* exactly one acquisition, not two */
+    ASSERT_EQ(g_dac_init_calls, 1);
+}
+
+/* ========================================================================
+ * Round 1: tick==0 sentinel collision (SCPIDAC_ValidTimestamp)
+ * ======================================================================== */
+
+TEST(tick_zero_is_remapped_to_a_nonzero_timestamp) {
+    /* xTaskGetTickCount() legitimately returns 0 at scheduler startup and
+     * on every 32-bit wrap. A command executing on that exact tick must
+     * still read back as known. */
+    cache_reset_to_boot_state();
+    g_tick = 0;
+    set_shape(1, 1, 3.3);
+
+    double v = 0.0;
+    ASSERT_TRUE(get_single_FIXED(1, &v));
+    ASSERT_TRUE(v == 3.3);
+    ASSERT_EQ((long long)g_cache[1].Timestamp, 1); /* remapped, not left at 0 */
+}
+
+TEST(old_buggy_timestamp_shape_would_have_collided_at_tick_zero) {
+    /* Round-1 bug, reconstructed literally: a bare tick assignment (the
+     * FIRST shape, before SCPIDAC_ValidTimestamp existed) stores 0 on a
+     * tick-0 command -- indistinguishable from "never commanded". */
+    cache_reset_to_boot_state();
+    g_tick = 0;
+    MockAOutSample bare = { .Timestamp = g_tick, .Channel = 1, .Voltage = 3.3 }; /* round-1 shape */
+    g_cache[1] = bare;
+
+    double v;
+    ASSERT_FALSE(get_single_FIXED(1, &v)); /* THE BUG: wrongly reads as unknown */
 }
 
 int main(void) {
@@ -374,7 +548,13 @@ int main(void) {
     RUN(old_buggy_shape_would_have_reported_the_stale_voltage_as_current);
     RUN(fixed_shape_closes_the_same_scenario_the_old_shape_missed);
     RUN(a_set_after_reinit_makes_that_one_channel_known_again);
-    RUN(invalidation_takes_the_command_lock_exactly_once_and_releases_it);
-    RUN(invalidation_fails_closed_when_the_command_lock_cannot_be_taken);
+    RUN(reinit_takes_the_command_lock_exactly_once_spanning_reset_and_invalidate);
+    RUN(reinit_fails_closed_when_the_command_lock_cannot_be_taken);
+    RUN(round1_fix_lock_failure_leaves_hardware_untouched);
+    RUN(dac_init_failure_releases_the_lock_without_invalidating);
+    RUN(old_buggy_ordering_let_a_setter_win_the_gap_and_then_be_erased);
+    RUN(fixed_ordering_wraps_reset_and_invalidate_in_one_lock_acquisition);
+    RUN(tick_zero_is_remapped_to_a_nonzero_timestamp);
+    RUN(old_buggy_timestamp_shape_would_have_collided_at_tick_zero);
     return TEST_SUMMARY();
 }
