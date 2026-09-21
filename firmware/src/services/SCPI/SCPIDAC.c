@@ -483,6 +483,17 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
     // together with dacInitInProgress, which claims a different, one-time
     // region (see gDacCommandMutex's declaration comment).
     scpi_result_t result = SCPI_RES_OK;
+    // #1065: both SCPI_ErrorPush and SCPI_ExecutionError reach the transport
+    // (SCPI_ErrorEmit -> interface->error -> SCPI_WriteWithRetry's ~1s-per-
+    // call retry budget against a stalled reader), so none of this
+    // function's five error sites below may emit while gDacCommandMutex is
+    // held -- the same defect PR #1063 fixed for SCPI_DACVoltageGet.
+    // Declared here, before the lock is even taken, so a future `goto
+    // cleanup` added above this point can never jump past these
+    // initializers. At most one of the two is ever set -- every site below
+    // sets exactly one before its `goto cleanup`, never both.
+    int16_t deferredErrorCode = 0;            // raw SCPI_ErrorPush code, if any
+    const char *deferredErrorMessage = NULL;  // SCPI_ExecutionError message, if any
     if (!SCPIDAC_LockCommand()) {
         SCPI_ExecutionError(context, "SOUR:VOLT:LEV: DAC command busy, try again");
         return SCPI_RES_ERR;
@@ -518,7 +529,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // the resolved-index path's -200 to -222.
         if (!(voltage >= 0.0 && voltage <= 255.0)) {
             LOG_E("SOUR:VOLT:LEV: channel out of range (max 255)");
-            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+            // #1065: deferred -- see the declaration comment above.
+            deferredErrorCode = SCPI_ERROR_DATA_OUT_OF_RANGE;
             result = SCPI_RES_ERR;
             goto cleanup;
         }
@@ -554,7 +566,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // ALREADY staged (stale data, not the requested voltage) --
         // report the failure instead.
         if (DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts16) == UINT32_MAX) {
-            SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to write DAC register");
+            // #1065: deferred -- see the declaration comment above.
+            deferredErrorMessage = "SOUR:VOLT:LEV: Failed to write DAC register";
             result = SCPI_RES_ERR;
             goto cleanup;
         }
@@ -571,7 +584,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // failure, and do NOT touch BoardData -- the old commanded value
         // is still what is physically on the pin.
         if (!DAC7718_UpdateLatch(dacInstanceId)) {
-            SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to update DAC latch");
+            // #1065: deferred -- see the declaration comment above.
+            deferredErrorMessage = "SOUR:VOLT:LEV: Failed to update DAC latch";
             result = SCPI_RES_ERR;
             goto cleanup;
         }
@@ -724,7 +738,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // fire even when every write failed.
         if (!DAC7718_UpdateLatch(dacInstanceId)) {
             // Nothing is known to be live; publish nothing.
-            SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to update DAC latches");
+            // #1065: deferred -- see the declaration comment above.
+            deferredErrorMessage = "SOUR:VOLT:LEV: Failed to update DAC latches";
             result = SCPI_RES_ERR;
             goto cleanup;
         }
@@ -751,7 +766,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
             // BoardData/channel-list index, matching SOUR:VOLT:LEV? ordering.
             LOG_E("SOUR:VOLT:LEV: %u of %u channels not set (index mask 0x%02X); the rest are live at the new voltage",
                   (unsigned)failedCount, (unsigned)nChannels, (unsigned)failedMask);
-            SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to write DAC register (some channels not set)");
+            // #1065: deferred -- see the declaration comment above.
+            deferredErrorMessage = "SOUR:VOLT:LEV: Failed to write DAC register (some channels not set)";
             result = SCPI_RES_ERR;
             goto cleanup;
         }
@@ -762,6 +778,18 @@ cleanup:
     // return is SCPIDAC_LockCommand()'s own failure, above, which returns
     // directly without giving a lock it never took).
     SCPIDAC_UnlockCommand(true);
+
+    // #1065: every transport write happens here, after the lock is
+    // released -- SCPI_ErrorPush/SCPI_ExecutionError both reach the wire
+    // (SCPI_ErrorEmit -> interface->error -> SCPI_WriteWithRetry), so
+    // emitting either while still holding gDacCommandMutex would be the
+    // same defect PR #1063 fixed for SCPI_DACVoltageGet. At most one of the
+    // two locals was ever set (see the declaration comment above).
+    if (deferredErrorCode != 0) {
+        SCPI_ErrorPush(context, deferredErrorCode);
+    } else if (deferredErrorMessage != NULL) {
+        SCPI_ExecutionError(context, deferredErrorMessage);
+    }
     return result;
 }
 
@@ -1008,6 +1036,11 @@ scpi_result_t SCPI_DACUpdate(scpi_t * context) {
     // comment there warns can surface another command's uncommitted shadow
     // state mid-sequence.
     scpi_result_t result = SCPI_RES_OK;
+    // #1065: declared before the lock is taken, same reason and pattern as
+    // SCPI_DACVoltageSet's deferredErrorMessage above -- SCPI_ExecutionError
+    // reaches the transport, so it must not fire while gDacCommandMutex is
+    // held.
+    const char *deferredErrorMessage = NULL;
     if (!SCPIDAC_LockCommand()) {
         SCPI_ExecutionError(context, "CONF:DAC:UPDATE: DAC command busy, try again");
         return SCPI_RES_ERR;
@@ -1017,9 +1050,16 @@ scpi_result_t SCPI_DACUpdate(scpi_t * context) {
     // entire purpose IS the latch update (same check as both SCPI_DACVoltageSet
     // branches above, added for the same reason -- see their comments).
     if (!DAC7718_UpdateLatch(dacInstanceId)) {
-        SCPI_ExecutionError(context, "CONF:DAC:UPDATE: Failed to update DAC latches");
+        // #1065: deferred -- see the declaration comment above.
+        deferredErrorMessage = "CONF:DAC:UPDATE: Failed to update DAC latches";
         result = SCPI_RES_ERR;
     }
     SCPIDAC_UnlockCommand(true);
+
+    // #1065: emitted only after the unlock -- see SCPI_DACVoltageSet's
+    // cleanup epilogue for why.
+    if (deferredErrorMessage != NULL) {
+        SCPI_ExecutionError(context, deferredErrorMessage);
+    }
     return result;
 }
