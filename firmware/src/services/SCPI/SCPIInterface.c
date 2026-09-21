@@ -7987,11 +7987,19 @@ static scpi_result_t SCPI_CapabilitiesApiVersionGet(scpi_t * context) {
  * always holds valid JSON; 32 bytes is ample for %.6g (the widest result is
  * like "-1.23457e-308", 13 characters). */
 static void CapJsonDouble(char* out, size_t outLen, double v) {
-    if (!isfinite(v)) {
+    int n = isfinite(v) ? snprintf(out, outLen, "%.6g", v) : -1;
+
+    /* The conversion's return IS checked, rather than cast away, because a
+     * half-written number is precisely the defect this function exists to
+     * prevent -- silently emitting one here would reintroduce #1144 inside
+     * its own fix. At 32 bytes with %.6g this cannot trigger (the widest
+     * result is ~13 characters), so it is a guard against a future caller
+     * shrinking the buffer, not a live path. Either way the answer is the
+     * same: if no number was written in full, there is no number to print,
+     * and "null" is valid JSON where a truncated literal is not. */
+    if (n < 0 || (size_t)n >= outLen) {
         (void)snprintf(out, outLen, "null");
-        return;
     }
-    (void)snprintf(out, outLen, "%.6g", v);
 }
 
 static void EmitAinChannelJson(scpi_t* context,
