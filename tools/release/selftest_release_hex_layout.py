@@ -12,6 +12,8 @@ Cases, all synthetic Intel-HEX:
   2 the same image plus one boot-flash record @0x1FC00000 -> FAIL (#764)
   3 a STANDALONE image (bulk at 0x1D000000)               -> fail
   4 a truncated reset vector (407 bytes)                  -> fail
+  5 a record at 0x1D100000, i.e. the UPPER panel          -> FAIL (#909)
+  6 a record ending exactly at 0x1D100000                 -> pass (#909 boundary)
 
 Usage: python3 tools/release/selftest_release_hex_layout.py
 """
@@ -73,12 +75,22 @@ CASES = [
     ("boot-flash record present (#764)",     GOOD + [(0x1FC00000, 16)],              1),
     ("standalone image (bulk at base)",      [(0x1D000000, 256)],                    1),
     ("truncated reset vector (407 B)",       [(0x1D000000, 407), (0x1D000480, 256)], 1),
+    # #909: the bootloader erases only the LOWER panel (0x1D000000-0x1D0FFFFF),
+    # so anything at/above 0x1D100000 would be programmed into unerased flash.
+    ("spills into upper panel (#909)",       GOOD + [(0x1D100000, 16)],              1),
+    # Boundary, in the direction that must still PASS: a record whose LAST byte
+    # is 0x1D0FFFFF ends exactly at 0x1D100000 and is entirely in the lower
+    # panel. An off-by-one here would reject every maximally-packed image.
+    ("fills lower panel exactly (#909)",     GOOD + [(0x1D0FFFF0, 16)],              0),
 ]
 
 def main():
     validator = extract_validator()
     if "BOOT_FLASH_LO" not in validator:
         print("FAIL: the extracted validator has no boot-flash check (#764)")
+        return 1
+    if "UPPER_PANEL_LO" not in validator:
+        print("FAIL: the extracted validator has no lower-panel containment check (#909)")
         return 1
     failures = 0
     for name, chunks, want in CASES:

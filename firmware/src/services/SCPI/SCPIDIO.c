@@ -22,6 +22,7 @@
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "HAL/DIO.h"
 #include "../../HAL/TimerApi/TimerApi.h"
+#include "../streaming.h"      // #1005: Streaming_BeginConfigChange claim
 /**
  * Sets the GPIO direction for a single pin
  * @param id The id of the pin to change
@@ -298,11 +299,45 @@ scpi_result_t SCPI_GPIOStateGet(scpi_t * context)
     return retCode;
 }
 
+static scpi_result_t GPIOEnableSetClaimed(scpi_t * context);
+
+/* #1005 (#885 family): this setter changes whether the CSV encoder emits DIO
+ * columns at all -- csv_encoder.c reads BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE
+ * LIVE on every row (tryWriteRow's `dioEnabled`), while the header that
+ * declares the column count is written exactly ONCE, on the session's first
+ * encode call (generateHeader). Left unguarded, `DIO:PORt:ENAble` mid-session
+ * changes the column count of every subsequent row against a header that will
+ * never be rewritten -- silent, undetectable misparse downstream (SDK CSV
+ * parsers, analyze_split_files.py). It is the only DIO setter that reaches
+ * anything the encoder reads for row shape: the PWM/clock/event/counter
+ * setters in this file (DIO:CLOCk:*, DIO:EVENt:*, DIO:COUNter:*, DIO:PWM:*)
+ * are read back only through their own dedicated queries, never through
+ * csv_encoder/JSON_Encoder/NanoPB_Encoder, so they carry no equivalent hazard
+ * and are deliberately left unguarded here.
+ *
+ * Guarded with the same Streaming_BeginConfigChange()/EndConfigChange() claim
+ * as #116's CONF:ADC:CHANnel and the #844 cap-input setters (refuse while
+ * IsEnabled || Running -- never &&, see SCPIADC.c's ADCChanEnableSetClaimed
+ * for why). Per the #862 ordering contract the claim is taken BEFORE the
+ * argument is parsed, so a refused call never consumes -- and never applies --
+ * its parameter. */
 scpi_result_t SCPI_GPIOEnableSet(scpi_t * context)
 {
-    bool * pRunTimeDIOGlobalEnable = BoardRunTimeConfig_Get(                
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim != STREAM_CFG_CLAIM_OK) {
+        return SCPI_RejectCfgClaim(context, claim == STREAM_CFG_CLAIM_BUSY,
+                                   "DIO:PORt:ENAble");
+    }
+    scpi_result_t result = GPIOEnableSetClaimed(context);
+    Streaming_EndConfigChange();
+    return result;
+}
+
+static scpi_result_t GPIOEnableSetClaimed(scpi_t * context)
+{
+    bool * pRunTimeDIOGlobalEnable = BoardRunTimeConfig_Get(
                         BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE);
-    bool enable = false; 
+    bool enable = false;
     int param1;
     if (!SCPI_ParamInt32(context, &param1, TRUE))
     {
@@ -926,8 +961,16 @@ scpi_result_t SCPI_DioMeasFrequency(scpi_t * context) {
     if (!SCPI_ParamInt32(context, &dio, TRUE)) {
         return SCPI_RES_ERR;
     }
-    (void)SCPI_ParamInt32(context, &gate, FALSE);   /* optional gate window (ms) */
-    if (SCPI_ParamErrorOccurred(context)) {         /* present-but-malformed gate */
+    /* #876: SCPI_ParamErrorOccurred() alone is not a documented contract for
+     * "was the token present-but-unparseable" -- it happens to work today
+     * only because ParamSignToUInt32's DaqifiIntTokenFullyConsumed (#880)
+     * pushes an error for every not-fully-consumed decimal token. Use the
+     * explicit ABSENT/PRESENT/BAD helper instead so this site does not rely
+     * on that converter-internal behavior, matching every other optional-arg
+     * site in this file (SCPI_GPIODirectionSet et al.). See
+     * SCPI_OptionalParamInt32's own doc comment (SCPIInterface.h). */
+    SCPI_OptionalParam gateOpt = SCPI_OptionalParamInt32(context, &gate);
+    if (gateOpt == SCPI_OPT_BAD) {
         return SCPI_RES_ERR;
     }
     if (dio < 0 || dio > 15) {
@@ -972,8 +1015,11 @@ scpi_result_t SCPI_DioMeasPulseWidth(scpi_t * context) {
     if (!SCPI_ParamInt32(context, &dio, TRUE)) {
         return SCPI_RES_ERR;
     }
-    (void)SCPI_ParamInt32(context, &pol, FALSE);    /* optional polarity */
-    if (SCPI_ParamErrorOccurred(context)) {         /* present-but-malformed pol */
+    /* #876: same rationale as SCPI_DioMeasFrequency above -- see its
+     * comment. Uses the explicit helper instead of relying on
+     * SCPI_ParamErrorOccurred() happening to catch a malformed `pol`. */
+    SCPI_OptionalParam polOpt = SCPI_OptionalParamInt32(context, &pol);
+    if (polOpt == SCPI_OPT_BAD) {
         return SCPI_RES_ERR;
     }
     if (dio < 0 || dio > 15) {

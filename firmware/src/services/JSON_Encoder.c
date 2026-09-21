@@ -58,6 +58,16 @@ static char tmp[ TMP_MAX_LEN ];
 #define JSON_AI_CLOSE       "\n],\n"
 #define JSON_AI_CLOSE_LEN   (sizeof(JSON_AI_CLOSE) - 1u)    /* 4 */
 
+/* #959: the widest "ts" field either timestamp can produce -- "\"ts\":%u,\n"
+ * with a full uint32_t. A RESERVATION only, and only inside the "di" element
+ * loop, where over-reserving is harmless for the reason given above (a
+ * rejected element was only peeked and stays queued). The write it reserves
+ * for -- the trigger-stamp fallback after the ADC block -- does not trust it:
+ * it asks json_CloseObject() in trial mode, so a drift here can cost that one
+ * field, never the object. */
+#define JSON_TS_FIELD_MAX       "\"ts\":4294967295,\n"
+#define JSON_TS_FIELD_MAX_LEN   (sizeof(JSON_TS_FIELD_MAX) - 1u)   /* 17 */
+
 // Track whether JSON header has been sent (reset when streaming stops)
 static bool jsonHeaderSent = false;
 
@@ -187,8 +197,9 @@ size_t json_GenerateHeaderToBuffer(char* buffer, size_t size) {
 static bool json_CloseObject(char *charBuffer, size_t buffSize,
         size_t endIndex, bool trial, size_t *pOutIndex) {
     /* Every record this object can end with -- a channel entry, a DI element,
-     * or the array closers "\n],\n" / "],\n" -- ends in ",\n". Strip that
-     * comma so the object closes after the last real value. */
+     * the array closers "\n],\n" / "],\n", or #959's fallback "ts" field --
+     * ends in ",\n". Strip that comma so the object closes after the last
+     * real value. */
     if (endIndex >= 2 && charBuffer[endIndex - 2] == ',') {
         endIndex -= 2;
     }
@@ -285,14 +296,53 @@ size_t Json_Encode(tBoardData* state,
     startIndex += objWritten;
     initialOffsetIndex = startIndex;
 
+    /* #959 (adversarial audit of #1076, round 1): read the ISR-written trigger
+     * stamp ONCE per call. Streaming_TimerHandler rewrites StreamTrigStamp on
+     * every tick (streaming.c, via BoardData_Set) and nothing masks the timer
+     * across this encode, so reading it at each use let the "di" elements'
+     * ages and the "ts" they are measured back from straddle a tick. Every
+     * field below that derives from the trigger stamp uses this copy. An
+     * aligned 32-bit load is atomic on the PIC32MZ, so the copy cannot tear. */
+    const uint32_t trigStamp = state->StreamTrigStamp;
+
+    /* #959: whether this call asked for ADC data, needed BEFORE the fields
+     * loop below: msg_time_stamp_tag is always first (streaming.c), so the
+     * loop reaches the timestamp before analog_in_data_tag sets encodeADC.
+     * Holds the same predicate encodeADC ends up holding. */
+    bool adcRequested = false;
+    for (i = 0; i < fields->Size; ++i) {
+        if (fields->Data[i] == DaqifiOutMessage_analog_in_data_tag) {
+            adcRequested = true;
+            break;
+        }
+    }
+
     for (i = 0; i < fields->Size; ++i) {
         switch (fields->Data[i]) {
             case DaqifiOutMessage_msg_time_stamp_tag:
             {
+                /* #959: when analog_in_data is requested, the object's one
+                 * "ts" is the ADC sample's own (#144's intent) and the ADC
+                 * block writes it -- so this trigger stamp is not written at
+                 * all. It used to be written here and rewound over later,
+                 * which only works while nothing sits after it: a rewind can
+                 * forget a TAIL, never a middle. A committed "di":[...] (its
+                 * elements already popped) moved initialOffsetIndex past
+                 * itself, the rewind stopped there, and this field survived
+                 * as a second "ts" key that json.loads() silently drops.
+                 * ADC-only output is byte-identical (the field was always
+                 * rewound over). DIO-only is untouched: the field is still
+                 * written, and it is the stamp the "di" elements' "ts" ages
+                 * are measured back from (StreamTrigStamp - data.Timestamp,
+                 * below). A call whose ADC block then commits nothing gets it
+                 * back at the tail -- see the fallback after the ADC loop. */
+                if (adcRequested) {
+                    break;
+                }
                 int written = snprintf(charBuffer + startIndex,
                         buffSize - startIndex,
                         "\"ts\":%u,\n",
-                        state->StreamTrigStamp);
+                        trigStamp);
                 if (written < 0 || written >= (int)(buffSize - startIndex)) {
                     /* #164: this used to `return startIndex`, which emitted a
                      * bare "{\n" -- an object opened and never closed. Roll the
@@ -627,25 +677,39 @@ size_t Json_Encode(tBoardData* state,
 
         /* #164: the ">= 65" pre-check is gone. A DIO element is popped as soon
          * as it is written and cannot be put back, so instead of a magic
-         * margin each element reserves exactly the two closers that must still
-         * fit after it: this array's "],\n" and the enclosing object's "\n}\n".
-         * That is what makes the two failure branches below unreachable rather
-         * than merely unlikely. */
+         * margin each element reserves exactly what must still fit after it:
+         * this array's "],\n", the enclosing object's "\n}\n" and -- when
+         * analog_in_data is also requested (#959) -- one "ts" field, for the
+         * trigger-stamp fallback after the ADC block. That is what makes the
+         * two failure branches below unreachable rather than merely unlikely,
+         * and the fallback deterministic rather than room-dependent. */
+        const size_t diReserve = JSON_DI_CLOSE_LEN + JSON_OBJ_CLOSE_LEN
+                + (adcRequested ? JSON_TS_FIELD_MAX_LEN : 0u);
         while (!DIOSampleList_IsEmpty(&state->DIOSamples)) {
             DIOSample data;
             // Peek first to avoid data loss if write fails
             if (!DIOSampleList_PeekFront(&state->DIOSamples, &data)) break;
 
             size_t elemRoom = buffSize - startIndex;
-            if (elemRoom <= (JSON_DI_CLOSE_LEN + JSON_OBJ_CLOSE_LEN)) {
-                break;  // no room for an element plus the closers it owes
+            if (elemRoom <= diReserve) {
+                break;  // no room for an element plus what it owes after it
             }
-            elemRoom -= (JSON_DI_CLOSE_LEN + JSON_OBJ_CLOSE_LEN);
+            elemRoom -= diReserve;
 
+            /* The element's "ts" is an AGE measured back from the trigger
+             * stamp. Known limitation (#959, audit of #1076): in a combined
+             * object whose ADC sample commits, the object's one "ts" is that
+             * sample's own timestamp (#959's Acceptance, #144), so the stamp
+             * these ages are measured from is not emitted, and object.ts - age
+             * is off by (ADC ts - trigger stamp) whenever the encoded ADC
+             * sample is older than the current trigger stamp (an ADC backlog).
+             * That predates #959 for json.loads() clients, which always kept
+             * the last duplicate "ts" -- the ADC sample's. A fix changes the
+             * wire format; the decision is tracked on #959 with Route 2/#238. */
             int elemWritten = snprintf(charBuffer + startIndex,
                     elemRoom,
                     "{\"ts\":%u, \"mask\":%u, \"val\":%u},",
-                    state->StreamTrigStamp - data.Timestamp,
+                    trigStamp - data.Timestamp,
                     data.Mask,
                     data.Values);
             if (elemWritten < 0 || elemWritten >= (int)elemRoom) {
@@ -696,7 +760,10 @@ size_t Json_Encode(tBoardData* state,
 
     // Encode ADC if needed
     if (encodeADC) {
-        startIndex = initialOffsetIndex; // Remove the initial timestamp added
+        /* #959: rewinds over any scalar field the loop above wrote (none on
+         * the streaming path). It no longer removes a message-level "ts": that
+         * field is not written at all when analog_in_data is requested. */
+        startIndex = initialOffsetIndex;
 
         uint32_t qSize = AInSampleList_Size();
         AInPublicSampleList_t *pPublicSampleList;
@@ -957,12 +1024,13 @@ size_t Json_Encode(tBoardData* state,
          *
          * The bound this buys: the room the sample got was
          * buffSize - initialOffsetIndex, and on this arm initialOffsetIndex is
-         * either 2 (no digital_data tag -- the ADC block rewinds over the
-         * message-level "ts" too; the deferral above forces this case for one
-         * call when a committed DI array was what stood in the way) or
-         * diStart, that is 2 + that "ts" field and so <= 19, when the tag was
-         * present but the DI array rolled back without committing. The ceiling
-         * any call can ever offer is buffSize - 2.
+         * always 2. Since #959 the message-level "ts" is never written when
+         * analog_in_data is requested, so nothing precedes the ADC block but
+         * "{\n" -- whether the digital_data tag was absent, skipped by the
+         * deferral above (which forces this case for one call when a committed
+         * DI array was what stood in the way), or present with the DI array
+         * rolled back without committing (diStart is then 2 as well). That is
+         * exactly the ceiling any call can ever offer, buffSize - 2.
          *
          * So when the DI array did not commit, this call measured the sample
          * against the largest room that will ever exist -- and, since #164
@@ -982,16 +1050,13 @@ size_t Json_Encode(tBoardData* state,
          * here was unencodable under the settings in force when it was
          * measured; that is the strongest statement this test supports.
          *
-         * In the single remaining shape -- tag requested, array rolled back --
-         * the room measured falls short of that ceiling by at most 17 bytes:
-         * only a sample needing within 17 bytes of the ENTIRE encoder buffer is
-         * affected, and the cost there is one dropped sample, not a stall.
-         * Closing even that means changing what
-         * initialOffsetIndex is when the DI array rolls back, which moves the
-         * emitted field order and belongs to #959, not here. The case that IS
-         * a stall -- a DI array that committed -- is NOT left as a residual:
-         * it routes to the deferral arm below, which re-runs this test one
-         * call later at buffSize - 2.
+         * No residual shape is left. Until #959 the tag-requested,
+         * array-rolled-back shape measured up to 17 bytes short of that
+         * ceiling (the message-level "ts" sat ahead of diStart); #959 stopped
+         * writing that field whenever analog_in_data is requested, which
+         * closed the gap. The case that IS a stall -- a DI array that
+         * committed -- routes to the deferral arm below, which re-runs this
+         * test one call later at buffSize - 2.
          *
          * Action: consume the sample so the queue head advances, and say so
          * once per session. Nothing here books the loss, deliberately:
@@ -1042,6 +1107,43 @@ size_t Json_Encode(tBoardData* state,
                 jsonDioDeferred = true;
             }
         }
+
+        /* #959: the trigger-stamp fallback. The message-level "ts" was skipped
+         * on the promise that an ADC sample would supply the object's one
+         * "ts"; when the ADC block committed nothing while a "di":[...] did,
+         * nothing kept that promise. Same inference as the deferral arm
+         * above: objHasPayload set while startIndex never left
+         * initialOffsetIndex means the payload is a DI array. Write the stamp
+         * at the TAIL, where writing needs no erase, so the object carries
+         * exactly what a DIO-only message does -- one "ts", the stamp the
+         * elements' "ts" ages are measured back from -- instead of a "di"
+         * array no reader can place in time. Ordinary co-streaming reaches
+         * this: a DIO backlog can fill the buffer ahead of the first ADC
+         * sample (the DIO-blocked shape above), a sample whose validMask
+         * selected no channel commits nothing, and PopFront can fail on a
+         * teardown.
+         *
+         * The "di" element loop reserved JSON_TS_FIELD_MAX_LEN for this write,
+         * so it fits; it is still checked, and against the object closer
+         * (json_CloseObject() in trial mode, as at the ADC commit site),
+         * because the DI elements are already popped -- a "ts" that left the
+         * object unclosable would make the close-out return 0 and destroy
+         * them. If it does not fit, the field is omitted, never the object.
+         *
+         * Must stay BELOW the permanence block: its deferral arm reads
+         * `startIndex == initialOffsetIndex`, which this write changes. */
+        if (encodeDIO && objHasPayload && startIndex == initialOffsetIndex) {
+            int written = snprintf(charBuffer + startIndex,
+                    buffSize - startIndex,
+                    "\"ts\":%u,\n",
+                    trigStamp);
+            if (written >= 0 && written < (int)(buffSize - startIndex)
+                    && json_CloseObject(charBuffer, buffSize,
+                            startIndex + (size_t) written,
+                            true /* trial -- restores the buffer */, NULL)) {
+                startIndex += (size_t) written;
+            }
+        }
     }
 
     /* #164: an object that committed no sample payload must not ship at all.
@@ -1050,13 +1152,13 @@ size_t Json_Encode(tBoardData* state,
      * failed -- the DIO element run, or ONE ADC sample -- which is correct for
      * that unit and says nothing about the enclosing object. When the failed
      * unit was the first thing this object would have carried, the close-out
-     * below strips the message-level timestamp's trailing ",\n", appends
-     * "\n}\n" and returns a NON-ZERO byte count for `{\n"ts":1000\n}\n` --
-     * or, when the digital_data tag was not requested and the ADC block
-     * therefore rewound over that timestamp too (initialOffsetIndex is still
-     * just past "{\n"), for the empty `{\n\n}\n`. Both are well-formed JSON
-     * records carrying no measurement, reported to the caller as bytes
-     * successfully encoded.
+     * below appends "\n}\n" and returns a NON-ZERO byte count for a record
+     * with no measurement in it: `{\n"ts":1000\n}\n` when only digital_data
+     * was requested (it strips the message-level timestamp's trailing ",\n"),
+     * or the empty `{\n\n}\n` whenever analog_in_data was requested, since
+     * the message-level "ts" is then never written at all (#959). Both are
+     * well-formed JSON records carrying no measurement, reported to the
+     * caller as bytes successfully encoded.
      *
      * Checked ONCE here rather than at each `startIndex = sampleStart` site:
      * none of those can tell on its own whether the object still holds DIO

@@ -41,6 +41,34 @@ This checker fails on all four. 4 lives in `streaming.c`, which is why the CI
 gate triggers on `firmware/src/services/streaming.*` as well -- a trigger that
 until #864 fired on a file the checker asserted nothing about.
 
+5. **Open the interlock** (#977) -- the claim above is not the only one guarding
+   streaming setup. `Streaming_BeginSessionStart` is a SECOND claim, taken by
+   `SYSTem:STReam:START`, `SYST:STR:THRoughput` and `SYST:STR:WIFI:FINd?`, and
+   BOTH families reach `PrepareStreamingBuffers`, which re-carves the single
+   streaming pool and installs the new pointers into seven subsystems. Until
+   #977 neither `Begin` looked at the other's flag, so a `SYST:MEM:AUTO` could
+   re-partition while a finder was midway through installing the previous
+   partition's pointers. Each `Begin` now also refuses while the OTHER flag is
+   set -- two conditions in two functions, which is precisely the arrangement
+   that produced the gap, so this checker gates both of them:
+
+   * `Streaming_BeginConfigChange` READS the session-start flag inside its
+     single critical section, and
+   * `Streaming_BeginSessionStart` READS the config-change flag inside its own,
+   * plus the session-start claim being a real test-and-set in its own right
+     (set inside one critical section that also reads it) and released by
+     `Streaming_EndSessionStart` -- a half of this file's subject matter that
+     nothing anywhere checked before #977.
+
+   Delete EITHER direction and the tree goes red; the two arms are asserted
+   independently, so half the property cannot stand in for the whole. Checks
+   1-4 all pass on a tree with the interlock removed -- the pre-#977 tree
+   passes every one of them.
+
+   Inside, not merely present: a cross-test hoisted ABOVE `taskENTER_CRITICAL`
+   is a TOCTOU (the other transport takes its claim between the read and the
+   take), and is refused.
+
 ## Positional reasoning, and where it stops
 
 Properties 3 and 4 are about position, and position is only meaningful against
@@ -75,6 +103,15 @@ property, not only the dead-call case above. Known and filed as #896:
   the section, gating or not: a read in the non-granting arm, a read after the
   set, a `(void)flag;`, or a log line's format argument. Instrument
   `Streaming_BeginConfigChange` once and the arm is disarmed for good.
+* Property 5's cross-read requirement inherits that limit exactly. It shows
+  each `Begin` MENTIONS the other claim's flag inside its critical section --
+  not that the mention REFUSES anything. `(void)gSessionStartBusy;` there
+  satisfies it. What it does catch is the honest regression: the arm being
+  deleted, or moved out of the section, which is how the gap existed in the
+  first place.
+* Property 5 says nothing about the two claims being the only two. A third
+  path to `PrepareStreamingBuffers` that takes neither claim is invisible here,
+  because this file reads the primitives, not the callers.
 * Property 4 says nothing about what the grant is CONDITIONED on. Delete
   `Streaming_BeginConfigChange`'s `if (pStreamCfg->IsEnabled ||
   pStreamCfg->Running)` arm and it hands the claim out mid-session, with the
@@ -150,6 +187,9 @@ CLAIM_END = "Streaming_EndConfigChange"
 # flag name rather than hard-coding it, so a rename is followed instead of
 # silently disarming the assertions below (#864).
 CLAIM_READER = "Streaming_ConfigChangeInProgress"
+# #977: the OTHER claim in the same file, which this one must interlock with.
+START_BEGIN = "Streaming_BeginSessionStart"
+START_END = "Streaming_EndSessionStart"
 TASK_ENTER = "taskENTER_CRITICAL"
 TASK_EXIT = "taskEXIT_CRITICAL"
 # The namespace, as NODES rather than one spelling. libscpi gives each node
@@ -678,12 +718,236 @@ def _reads_in(body, name, lo, hi):
     return any(lo < pos < hi for pos in reads)
 
 
+def _reads_name_in(body, name, lo, hi):
+    """True iff `name` is MENTIONED (not assigned) at a position in (lo, hi).
+
+    The strict twin of `_reads_in`: it does NOT credit a call to CLAIM_READER.
+    Used where the accessor would be the WRONG spelling. CLAIM_READER answers
+    "is a CONFIG change in flight", so crediting it as a read of the
+    SESSION-START flag would pass a Begin that never looks at its own claim --
+    and crediting it inside Streaming_BeginConfigChange would let that function
+    satisfy the interlock by reading its own flag through the accessor.
+
+    Same known limit as `_reads_in` and for the same reason (#896): ANY mention
+    counts, a diagnostic one included, because separating a gating read from an
+    incidental one needs control flow this checker does not have.
+    """
+    written = {pos for pos, _ in _assignments(body, name)}
+    return any(lo < m.start() < hi
+               for m in re.finditer(r"\b%s\b" % re.escape(name), _blank(body))
+               if m.start() not in written)
+
+
+def _single_section(who, body):
+    """-> (lo, hi, None) | (None, None, problem) for a claim-taking function.
+
+    Factored out because #977 needs the same "exactly one critical section"
+    reasoning for Streaming_BeginSessionStart that CLAIM_BEGIN already gets, and
+    a second hand-written copy is how two rules drift apart -- which is the
+    defect #977 itself was filed for, one level up.
+    """
+    enters = _call_positions(body, TASK_ENTER)
+    exits = _call_positions(body, TASK_EXIT)
+    if not enters or not exits:
+        return None, None, (
+            "%s has no %s()/%s() around its test-and-set. Granting a claim is a "
+            "read-modify-write (test the flag, then set it), which is NOT atomic "
+            "on PIC32MZ, so both SCPI transports can be granted it at once "
+            "(docs/MCU_REFERENCE.md, Atomicity & Concurrency Rules)."
+            % (who, TASK_ENTER, TASK_EXIT))
+    if len(enters) != 1 or len(exits) != 1:
+        return None, None, _ONE_REGION % {
+            "who": who,
+            "item": "assignment",
+            "counts": "%d %s() and %d %s()"
+                      % (len(enters), TASK_ENTER, len(exits), TASK_EXIT),
+            "defeat": "a flag assigned between two disjoint sections is inside "
+                      "first-enter..last-exit and inside neither section",
+        }
+    return enters[0], exits[0], None
+
+
+# --------------------------------------------------------------------------
+# #977: the INTERLOCK between the two claims.
+#
+# Everything above establishes that the config-change claim is a real
+# test-and-set and that all seven SYSTem:MEMory:* setters route through it. It
+# says nothing about the OTHER claim in the same file -- the session-start claim
+# (#850) that SYST:STR:START, SYST:STR:THRoughput and SYST:STR:WIFI:FINd? hold
+# -- and before #977 the two did not exclude each other at all. Both families
+# reach SCPIInterface.c's PrepareStreamingBuffers, which re-carves the single
+# streaming pool and installs the new pointers into seven subsystems, so a
+# SYST:MEM:AUTO could re-partition underneath a finder that was midway through
+# installing the previous partition's.
+#
+# The fix is two conditions -- each Begin also refuses while the OTHER flag is
+# set -- and two conditions in two functions are exactly the arrangement that
+# produced the gap. That is what this section gates: delete either one and the
+# tree goes red, instead of going quiet.
+# --------------------------------------------------------------------------
+def session_start_flag(text, cfg_flag):
+    """-> (flag_name, None) | (None, reason). Comment-stripped text.
+
+    Discovered, not hard-coded, for the same reason `claim_flag` is: a
+    hard-coded name becomes a silent pass the moment someone renames the
+    variable. There is no public reader for this claim to discover it through
+    (and there deliberately is not -- see Streaming_ConfigChangeInProgress's
+    warning in streaming.c), so the anchor is START_BEGIN's own body: the
+    `static volatile` file-scope names it mentions, minus the config flag it
+    mentions BECAUSE of the interlock.
+
+    The config flag is subtracted by TWO independent handles -- the name
+    `claim_flag` found through the reader, and whatever CLAIM_END releases --
+    because the first one is not always available. A reader gutted to `return
+    false;` leaves `cfg_flag` None, and without the second handle the config
+    flag would then look like a second candidate here and disarm this whole
+    section on a mutation aimed at the other one.
+
+    Exactly one is required. Two would make every positional verdict below
+    ambiguous, and this file's stance on an ambiguous input is to refuse rather
+    than pick one and report a pass it did not establish. Note the subtraction
+    is by NAME, not by "is it assigned here": discovering the flag as "the one
+    START_BEGIN writes" would have been tidier and is wrong, because it makes a
+    Begin that never writes its flag -- the exact regression this checks for --
+    undiscoverable instead of red.
+    """
+    begin = function_body(text, START_BEGIN)
+    if begin is None:
+        return None, (
+            "%s() not found in the streaming source. It is the session-start "
+            "claim SYSTem:STReam:START, SYST:STR:THRoughput and "
+            "SYST:STR:WIFI:FINd? take, and #977 requires it to interlock with "
+            "%s() -- neither could be checked." % (START_BEGIN, CLAIM_BEGIN))
+    released_by_cfg = set()
+    cfg_end = function_body(text, CLAIM_END)
+    if cfg_end is not None:
+        for m in re.finditer(r"\b([A-Za-z_]\w*)\b", _blank(cfg_end)):
+            if _assignments(cfg_end, m.group(1)):
+                released_by_cfg.add(m.group(1))
+    cands = set()
+    for m in re.finditer(r"\b([A-Za-z_]\w*)\b", _blank(begin)):
+        name = m.group(1)
+        if cfg_flag is not None and name == cfg_flag:
+            continue          # the interlock read, not this claim's own flag
+        if name in released_by_cfg:
+            continue          # the config claim's flag, by its other handle
+        if re.search(_STATIC_VOLATILE % re.escape(name), text):
+            cands.add(name)
+    if len(cands) != 1:
+        return None, (
+            "%s() mentions %d file-scope `static volatile` variable(s) other "
+            "than the config-change flag -- this checker needs exactly one to "
+            "follow the session-start claim through %s() and %s(). Found: %s."
+            % (START_BEGIN, len(cands), START_BEGIN, START_END,
+               ", ".join(sorted(cands)) or "none"))
+    return cands.pop(), None
+
+
+def check_interlock(text, cfg_flag, cfg_begin):
+    """-> problems for the session-start claim and the #977 interlock.
+
+    `cfg_flag` may be None (the config flag was not identifiable); the
+    session-start half is still checked, and the two interlock arms that need
+    the config flag are reported as unverified rather than skipped silently.
+    """
+    problems = []
+    start_flag, why = session_start_flag(text, cfg_flag)
+    if start_flag is None:
+        return [why]
+
+    begin = function_body(text, START_BEGIN)
+    end = function_body(text, START_END)
+    if end is None:
+        problems.append(
+            "%s() not found in the streaming source, so the session-start claim "
+            "is never released: one SYSTem:STReam:START and every later "
+            "streaming command is refused until reboot (#977)." % START_END)
+    elif not any(kind == "clear" for _, kind in _assignments(end, start_flag)):
+        problems.append(
+            "%s() never clears %s, so a session-start claim once taken is "
+            "never released. Since #977 that refuses the SYSTem:MEMory:* "
+            "family too, not only later starts." % (START_END, start_flag))
+
+    lo, hi, why = _single_section("%s()" % START_BEGIN, begin)
+    if why is not None:
+        return problems + [why]
+
+    sets = [pos for pos, kind in _assignments(begin, start_flag)
+            if kind == "set"]
+    if not sets:
+        problems.append(
+            "%s() never sets %s to a non-zero value, so it can report a claim "
+            "it did not take -- two starts, or a start and a SYSTem:MEMory:* "
+            "setter, would both be granted (#977)." % (START_BEGIN, start_flag))
+    elif not all(lo < pos < hi for pos in sets):
+        problems.append(
+            "%s() sets %s outside its critical section -- the test-and-set must "
+            "be bracketed by %s()/%s() to be atomic on PIC32MZ."
+            % (START_BEGIN, start_flag, TASK_ENTER, TASK_EXIT))
+    elif not _reads_name_in(begin, start_flag, lo, hi):
+        problems.append(
+            "%s() sets %s inside its critical section but never READS it there, "
+            "so it is a plain set, not a test-and-set: two session starts on the "
+            "two SCPI transports would both be granted the claim (#850). This "
+            "establishes that the flag is read in the same section as the set -- "
+            "NOT that the read gates the grant, which regex cannot show."
+            % (START_BEGIN, start_flag))
+
+    # The interlock itself. Each Begin must READ the other flag inside its own
+    # single critical section -- inside, because a cross-test read before
+    # taskENTER_CRITICAL is a TOCTOU: the other transport can take its claim
+    # between the read and the take, which is the whole failure #977 closes.
+    if cfg_flag is None:
+        problems.append(
+            "the #977 interlock could NOT be checked in either direction: the "
+            "config-change flag was not identifiable (see the reason above), so "
+            "neither %s() nor %s() could be shown to read it."
+            % (CLAIM_BEGIN, START_BEGIN))
+        return problems
+
+    # START side: reading the config flag through CLAIM_READER is a legitimate
+    # spelling of the same test (it is that flag's public accessor), so the
+    # permissive `_reads_in` is correct here and only here.
+    if not _reads_in(begin, cfg_flag, lo, hi):
+        problems.append(
+            "%s() never reads %s inside its critical section, so the #977 "
+            "interlock is open in the START direction: a session start is "
+            "granted while a SYSTem:MEMory:* or cap-input setter holds the "
+            "config-change claim, and both reach PrepareStreamingBuffers, which "
+            "re-carves the one streaming pool." % (START_BEGIN, cfg_flag))
+
+    if cfg_begin is None:
+        problems.append(
+            "%s() not found, so the #977 interlock could not be checked in the "
+            "config-change direction." % CLAIM_BEGIN)
+        return problems
+    clo, chi, why = _single_section("%s()" % CLAIM_BEGIN, cfg_begin)
+    if why is not None:
+        # Already reported by the config-change half above; do not duplicate
+        # the message, only record that this arm could not run.
+        problems.append(
+            "the #977 interlock could not be checked in the config-change "
+            "direction: %s() does not present a single critical section (see "
+            "the refusal above)." % CLAIM_BEGIN)
+    elif not _reads_name_in(cfg_begin, start_flag, clo, chi):
+        problems.append(
+            "%s() never reads %s inside its critical section, so the #977 "
+            "interlock is open in the config-change direction: a SYST:MEM:AUTO "
+            "is granted while a session start is preparing, and re-partitions "
+            "the pool that start is installing pointers from."
+            % (CLAIM_BEGIN, start_flag))
+    return problems
+
+
 def check_streaming(streaming_text):
     """-> (problems, flag_name_or_None) for the claim primitive itself."""
     text = strip_c_comments(streaming_text)
     flag, why = claim_flag(text)
     if flag is None:
-        return [why], None
+        # #977: the session-start claim and the interlock are still checked --
+        # an undiscoverable config flag must not silently disarm them too.
+        return [why] + check_interlock(text, None,
+                                       function_body(text, CLAIM_BEGIN)), None
 
     problems = []
     begin = function_body(text, CLAIM_BEGIN)
@@ -695,7 +959,7 @@ def check_streaming(streaming_text):
                 "calls it, so this checker cannot confirm the call does "
                 "anything." % fn)
     if begin is None or end is None:
-        return problems, flag
+        return problems + check_interlock(text, flag, begin), flag
 
     sets = [pos for pos, kind in _assignments(begin, flag) if kind == "set"]
     if not sets:
@@ -712,7 +976,7 @@ def check_streaming(streaming_text):
                 "%s() sets %s with no %s()/%s() around it. Granting the claim "
                 "is a read-modify-write (test the flag, then set it), which is "
                 "NOT atomic on PIC32MZ, so both SCPI transports can be granted "
-                "it at once (CLAUDE.md, Atomicity & Concurrency Rules)."
+                "it at once (docs/MCU_REFERENCE.md, Atomicity & Concurrency Rules)."
                 % (CLAIM_BEGIN, flag, TASK_ENTER, TASK_EXIT))
         elif len(enters) != 1 or len(exits) != 1:
             problems.append(_ONE_REGION % {
@@ -745,6 +1009,8 @@ def check_streaming(streaming_text):
             "%s() never clears %s, so a claim once taken is never released and "
             "every later SYSTem:MEMory:* setter is refused for the rest of the "
             "session (#864)." % (CLAIM_END, flag))
+
+    problems += check_interlock(text, flag, begin)
 
     return problems, flag
 
@@ -790,23 +1056,34 @@ static const scpi_command_t scpi_commands[] = {
 # It buys that and no more: a class widened all the way to `[\s\S]` is caught
 # with or without this line, and loosening the anchor's `\b` or its
 # `(?:=|;|\[)` tail is caught by nothing. (#899; limits tracked in #896.)
+#
+# #977 added the session-start half. The fixture carries BOTH claims and the
+# interlock between them, because that is now what "compliant" means: a
+# _GOOD_STREAM with only the config claim would fail the checker it is supposed
+# to be the clean baseline for.
 _GOOD_STREAM = '''
 static volatile bool gSomethingElse = false;
 static volatile uint32_t gCfgChangeBusy = 0u;
+static volatile uint32_t gSessionStartBusy = 0u;
 
 StreamingCfgClaim Streaming_BeginConfigChange(void) {
     StreamingRuntimeConfig* pCfg = BoardRunTimeConfig_Get(BOARDRUNTIME_STREAM);
     StreamingCfgClaim result;
+    bool startHeld = false;
     taskENTER_CRITICAL();
     if (pCfg->IsEnabled || pCfg->Running) {
         result = STREAM_CFG_CLAIM_STREAMING;
     } else if (gCfgChangeBusy != 0u) {
         result = STREAM_CFG_CLAIM_BUSY;
+    } else if (gSessionStartBusy != 0u) {
+        result = STREAM_CFG_CLAIM_BUSY;
+        startHeld = true;
     } else {
         gCfgChangeBusy = 1u;
         result = STREAM_CFG_CLAIM_OK;
     }
     taskEXIT_CRITICAL();
+    if (startHeld) { LOG_E("refused"); }
     return result;
 }
 
@@ -816,6 +1093,28 @@ void Streaming_EndConfigChange(void) {
 
 bool Streaming_ConfigChangeInProgress(void) {
     return (gCfgChangeBusy != 0u);
+}
+
+StreamingStartClaim Streaming_BeginSessionStart(void) {
+    StreamingStartClaim result;
+    bool cfgHeld = false;
+    taskENTER_CRITICAL();
+    if (gSessionStartBusy != 0u) {
+        result = STREAM_START_CLAIM_BUSY;
+    } else if (gCfgChangeBusy != 0u) {
+        result = STREAM_START_CLAIM_BUSY;
+        cfgHeld = true;
+    } else {
+        gSessionStartBusy = 1u;
+        result = STREAM_START_CLAIM_OK;
+    }
+    taskEXIT_CRITICAL();
+    if (cfgHeld) { LOG_E("refused"); }
+    return result;
+}
+
+void Streaming_EndSessionStart(void) {
+    gSessionStartBusy = 0u;
 }
 '''
 
@@ -1231,6 +1530,158 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("a bool-typed claim flag cleared with `false` is clean",
             check_streaming(as_bool)[0], [])
 
+        # ---- #977: the INTERLOCK, and the session-start claim itself -------
+        # Two conditions in two functions is the arrangement that produced the
+        # gap, so each arm is mutated on its own: deleting EITHER direction
+        # must go red, or the tree can be returned to the pre-#977 state one
+        # half at a time with the gate still green.
+        cfg_open = _GOOD_STREAM.replace(
+            "    } else if (gSessionStartBusy != 0u) {\n"
+            "        result = STREAM_CFG_CLAIM_BUSY;\n"
+            "        startHeld = true;\n", "    ")
+        assert cfg_open != _GOOD_STREAM
+        _ck("the interlock deleted on the CONFIG side is caught",
+            any("interlock is open in the config-change direction" in p
+                for p in check_streaming(cfg_open)[0]), True)
+
+        start_open = _GOOD_STREAM.replace(
+            "    } else if (gCfgChangeBusy != 0u) {\n"
+            "        result = STREAM_START_CLAIM_BUSY;\n"
+            "        cfgHeld = true;\n", "    ")
+        assert start_open != _GOOD_STREAM
+        _ck("the interlock deleted on the START side is caught",
+            any("interlock is open in the START direction" in p
+                for p in check_streaming(start_open)[0]), True)
+
+        # ...and the two arms are INDEPENDENT: neither mutation reports the
+        # other's message. Without this, one arm could be gating both and the
+        # pair above would pass with half the property implemented.
+        _ck("...and the config-side mutation does not claim the START side",
+            any("interlock is open in the START direction" in p
+                for p in check_streaming(cfg_open)[0]), False)
+        _ck("...and the START-side mutation does not claim the config side",
+            any("interlock is open in the config-change direction" in p
+                for p in check_streaming(start_open)[0]), False)
+
+        # A cross-test HOISTED OUT of the critical section is the TOCTOU the
+        # interlock exists to prevent: the other transport can take its claim
+        # between the read and the take. Textually the flag is still read in
+        # the function, so a checker that only asked "is it mentioned" passes.
+        hoisted = _GOOD_STREAM.replace(
+            "    StreamingStartClaim result;\n"
+            "    bool cfgHeld = false;\n"
+            "    taskENTER_CRITICAL();",
+            "    StreamingStartClaim result;\n"
+            "    bool cfgHeld = (gCfgChangeBusy != 0u);\n"
+            "    taskENTER_CRITICAL();").replace(
+            "    } else if (gCfgChangeBusy != 0u) {\n"
+            "        result = STREAM_START_CLAIM_BUSY;\n"
+            "        cfgHeld = true;\n", "    ")
+        assert hoisted != _GOOD_STREAM
+        _ck("a cross-test hoisted out of the critical section is caught",
+            any("interlock is open in the START direction" in p
+                for p in check_streaming(hoisted)[0]), True)
+
+        # The START claim must be a test-and-set in its own right. Every arm
+        # below was previously unchecked ANYWHERE -- the gate ran on
+        # streaming.c and asserted nothing about this half of the file.
+        _ck("a session-start Begin that never sets its flag is caught",
+            any("never sets gSessionStartBusy" in p
+                for p in check_streaming(_GOOD_STREAM.replace(
+                    "        gSessionStartBusy = 1u;\n", ""))[0]), True)
+        _ck("a session-start End that never clears is caught",
+            any("never clears gSessionStartBusy" in p
+                for p in check_streaming(_GOOD_STREAM.replace(
+                    "    gSessionStartBusy = 0u;\n}", "}"))[0]), True)
+        start_plainset = _GOOD_STREAM.replace(
+            "    if (gSessionStartBusy != 0u) {\n"
+            "        result = STREAM_START_CLAIM_BUSY;\n"
+            "    } else if", "    if (0) {\n    } else if")
+        assert start_plainset != _GOOD_STREAM
+        _ck("a session-start Begin that sets but never READS its flag is caught",
+            any("never READS it there" in p
+                for p in check_streaming(start_plainset)[0]), True)
+        # ...and the accessor must NOT stand in for that read: it answers a
+        # question about the OTHER claim. `_reads_name_in` is what makes this
+        # arm differ from the config side's, where the accessor IS legitimate.
+        start_via_reader = start_plainset.replace(
+            "    if (0) {\n    } else if (gCfgChangeBusy != 0u) {",
+            "    if (Streaming_ConfigChangeInProgress()) {")
+        assert start_via_reader != start_plainset
+        _ck("the config accessor is not credited as reading the START flag",
+            any("never READS it there" in p
+                for p in check_streaming(start_via_reader)[0]), True)
+
+        start_outside = _GOOD_STREAM.replace(
+            "    bool cfgHeld = false;\n    taskENTER_CRITICAL();",
+            "    bool cfgHeld = false;\n    gSessionStartBusy = 1u;\n"
+            "    taskENTER_CRITICAL();").replace(
+            "        gSessionStartBusy = 1u;\n"
+            "        result = STREAM_START_CLAIM_OK;",
+            "        result = STREAM_START_CLAIM_OK;")
+        assert start_outside != _GOOD_STREAM
+        _ck("a session-start set outside the critical section is caught",
+            any("sets gSessionStartBusy outside its critical section" in p
+                for p in check_streaming(start_outside)[0]), True)
+
+        start_split = _GOOD_STREAM.replace(
+            "        gSessionStartBusy = 1u;\n"
+            "        result = STREAM_START_CLAIM_OK;\n"
+            "    }\n    taskEXIT_CRITICAL();\n    if (cfgHeld)",
+            "        result = STREAM_START_CLAIM_OK;\n"
+            "    }\n    taskEXIT_CRITICAL();\n"
+            "    gSessionStartBusy = 1u;\n"
+            "    taskENTER_CRITICAL();\n    (void)result;\n"
+            "    taskEXIT_CRITICAL();\n    if (cfgHeld)")
+        assert start_split != _GOOD_STREAM
+        _ck("a session-start set between two disjoint sections is refused",
+            any("Streaming_BeginSessionStart() contains 2 taskENTER_CRITICAL() "
+                "and 2 taskEXIT_CRITICAL()" in p
+                for p in check_streaming(start_split)[0]), True)
+
+        # Vacuity, the #977 half: a missing session-start claim must FAIL
+        # rather than leave the interlock unchecked. This is the shape the
+        # whole file exists to refuse -- a gate that runs and establishes
+        # nothing -- and it is why the checker refuses instead of skipping.
+        no_start = _GOOD_STREAM[:_GOOD_STREAM.index(
+            "StreamingStartClaim Streaming_BeginSessionStart(void) {")]
+        _ck("a streaming source with no session-start claim fails",
+            any("not found in the streaming source" in p and START_BEGIN in p
+                for p in check_streaming(no_start)[0]), True)
+        no_end = _GOOD_STREAM.replace(
+            "void Streaming_EndSessionStart(void) {\n"
+            "    gSessionStartBusy = 0u;\n}\n", "")
+        assert no_end != _GOOD_STREAM
+        _ck("a session-start claim with no release at all fails",
+            any(START_END in p and "never released" in p
+                for p in check_streaming(no_end)[0]), True)
+
+        # An AMBIGUOUS session-start flag is refused, not guessed at -- the
+        # same stance `claim_flag` takes, and for the same reason.
+        ambiguous = _GOOD_STREAM.replace(
+            "    bool cfgHeld = false;\n    taskENTER_CRITICAL();",
+            "    bool cfgHeld = false;\n    (void)gSomethingElse;\n"
+            "    taskENTER_CRITICAL();")
+        assert ambiguous != _GOOD_STREAM
+        _ck("two candidate session-start flags are refused, not guessed",
+            any("needs exactly one to follow the session-start claim" in p
+                for p in check_streaming(ambiguous)[0]), True)
+
+        # A rename of EITHER flag must be followed, not reported.
+        _ck("renaming the session-start flag is followed, not flagged",
+            check_streaming(_GOOD_STREAM.replace(
+                "gSessionStartBusy", "gStartHeld"))[0], [])
+
+        # And the #977 checks must still run when the CONFIG flag is
+        # undiscoverable: an unreadable reader must not silently disarm the
+        # interlock half as well. (Both directions become unverifiable, which
+        # is reported -- not passed.)
+        gutted_both = _GOOD_STREAM.replace(
+            "    return (gCfgChangeBusy != 0u);", "    return false;")
+        _ck("an unidentifiable config flag reports the interlock as unchecked",
+            any("interlock could NOT be checked in either direction" in p
+                for p in check_streaming(gutted_both)[0]), True)
+
         # vacuity: a file with no table must FAIL, not pass quietly
         probs, n3 = check("int main(void) { return 0; }")
         _ck("an unreadable table fails rather than passing", len(probs) >= 1, True)
@@ -1268,22 +1719,28 @@ def main():
             return fh.read()
 
     problems, examined = check(_read(args.scpi))
-    stream_problems, claimflag = check_streaming(_read(args.streaming))
+    streaming_src = _read(args.streaming)
+    stream_problems, claimflag = check_streaming(streaming_src)
     problems = problems + stream_problems
+    startflag, _ = session_start_flag(strip_c_comments(streaming_src), claimflag)
 
     if problems:
         print("FAIL: SYSTem:MEMory:* claim-path check (%d examined)" % examined)
         for p in problems:
             print("  - %s" % p)
         return 1
-    # States BOTH halves, because the CI gate re-runs on streaming.* and a
+    # States ALL THREE halves, because the CI gate re-runs on streaming.* and a
     # summary naming only the SCPI half would report a pass on a file it had
-    # not spoken about.
+    # not spoken about. #977 added the third clause for the same reason: a
+    # summary that stopped at the config claim would say nothing about the
+    # interlock it had just established.
     print("OK: all %d SYSTem:MEMory:* setters take the claim via %s(), which "
           "uses its verdict and holds it across the dispatch; %s() sets and "
           "%s() clears %s, the set inside a single critical section that also "
-          "reads it"
-          % (examined, CLAIM_HELPER, CLAIM_BEGIN, CLAIM_END, claimflag))
+          "reads it; and the two claims INTERLOCK -- %s() reads %s and %s() "
+          "reads %s, each inside its own single critical section (#977)"
+          % (examined, CLAIM_HELPER, CLAIM_BEGIN, CLAIM_END, claimflag,
+             CLAIM_BEGIN, startflag, START_BEGIN, claimflag))
     return 0
 
 
