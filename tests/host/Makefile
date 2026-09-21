@@ -385,6 +385,15 @@ AOUTSAMPLE_SRC := ../../firmware/src/state/data/AOutSample.h
 # pre-power-loss voltage after a power cycle reset every physical output.
 DACREINIT_BIN := run_1034_tests
 
+# #1154: CONFigure:ADC:chanCALM / chanCALB accepted ANY double for the
+# calibration coefficient, including one that overflows to +-inf, and stored
+# it with no SCPI error (`CONF:ADC:chanCALB 0,1e400` -> `chanCALB? 0` reads
+# `inf`, SYST:ERR? reads clean -- measured on an NQ1, serial
+# 7E2837886201026A). See test_1154_adc_cal_coefficient_finite.c's header for
+# the fix's scope (setter-only; the magnitude/range question and #908's boot
+# re-stamping path are deliberately NOT this guard's job).
+CALFINITE_BIN := run_1154_tests
+
 # #1057 (#913's twin) folded dac7718_WaitStat's SPI2 busy-spins onto the same
 # bounded-spin-then-vTaskDelay(1) shape #913 gave UserSpi.c's spi_XferByte;
 # #1108 then finished what #1056 started and moved dac7718_WaitStat itself
@@ -851,6 +860,310 @@ $(DACREINIT_BIN): test_1034_dac_aout_invalidated_on_reinit.c test_framework.h $(
 	        echo "       the test against the new placement."; \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(DACREINIT_BIN) test_1034_dac_aout_invalidated_on_reinit.c
+
+# #1154: build-time guard that the real SCPIADC.c still rejects a non-finite
+# CONF:ADC:chanCALM/chanCALB coefficient -- see the comment above
+# $(CALFINITE_BIN)'s definition and test_1154_adc_cal_coefficient_finite.c's
+# header for what this fix is (and is deliberately not) in scope for.
+#
+# Tightened per PR #1157 review (worker pre-audit comment, 2026-09-21): the
+# original guard was presence-only (`grep -qF`, no counts, no negative-form
+# check, no comment-stripping), and TWO mutants of SCPIADC.c passed it AND
+# the host test outright: (A) `if (isfinite(value))` -> `if (!isfinite(value))`
+# -- accepts inf/NaN and rejects every finite value, worse than the #1154
+# defect -- and (B) `if (!AdcCalCoefficientFinite(...)) {` ->
+# `(void)AdcCalCoefficientFinite(...); if (0) {` -- reinstates the #1154
+# defect exactly, since the helper is still called (and still logs) but its
+# return value is discarded. Mirrors $(SCAN1112_BIN)'s technique in this
+# SAME file: strip comment lines first, pin exact counts (not mere
+# presence), pin an explicit negative-form's absence, and pin ordering.
+#
+# Tightened AGAIN, same PR, adversarial audit round 2 (2026-09-21): presence
+# + count + ORDER still cannot see NESTING. Moving the closing brace of
+# `if (isfinite(value)) {` down to sit right before `return true;` --
+#     if (isfinite(value)) {
+#     }
+#     return true;             /* now unconditional */
+#     LOG_E(...); SCPI_ErrorPush(...); return false;   /* both dead */
+# -- keeps npos/nneg/nerr/nt/nf at 1/0/1/1/1 and keeps isfinite-line <
+# true-line < false-line, so it passed every check above outright and is
+# the #1154 defect again (accepts inf/NaN unconditionally). Setter-side
+# guards (mbody/bbody below) were ALREADY immune to this exact trick --
+# they pin that `return SCPI_RES_ERR;` is the line IMMEDIATELY after the
+# call, i.e. adjacency, not just ordering. This gives the accept arm the
+# same treatment: `if (isfinite(value)) {`, `return true;` and the closing
+# `}` must be three CONSECUTIVE lines, checked the same line-oriented way
+# (no parser) by indexing p+1/p+2 off the isfinite line already found above.
+#
+# That still isn't enough on its own: a `/* */` block comment or a
+# `#if 0`/`#endif` span, with the delimiters on their own lines, hides the
+# pinned text from a human and from the CPU while leaving it perfectly
+# intact for `grep -v '^[[:space:]]*[*/]'` to find (that filter only drops
+# lines that themselves OPEN with `*` or `/`, not a comment SPAN) -- so
+# `if (isfinite(value)) { return true; }` sitting dead inside either wrapper
+# still satisfies every check above, including the new adjacency one,
+# while the compiler never runs it. Rather than hand-roll a second
+# comment/preprocessor state machine (this project's own history is
+# explicit that a hand-rolled parser-substitute is the wrong tool -- build
+# the oracle from the reference implementation), this re-extracts the SAME
+# range through the real C preprocessor (`$(CC) -E -P -xc -`, no headers
+# included, so no macro surprises) and re-pins presence + the same
+# adjacency triple against ITS output. Comments and disabled `#if 0` spans
+# vanish under real preprocessing the way they vanish at actual compile
+# time; live code does not, so this is a strict tightening, not a
+# different check -- verified byte-identical to the plain-text extraction
+# on the real (unmutated) source.
+#
+# Extended AGAIN, same PR (PR #1157 review comment
+# https://github.com/daqifi/daqifi-nyquist-firmware/pull/1157#issuecomment-5764273765):
+# the same comment/`#if 0` hiding trick reproduces against the CALM and CALB
+# SETTER guards (mbody/bbody below) exactly as it did against the helper --
+# `grep -v '^[[:space:]]*[*/]'` strips only the `/*`/`*/` delimiter lines
+# themselves, not the guarded call-shape text between them, so wrapping
+# either setter's `if (!AdcCalCoefficientFinite(...)) { return SCPI_RES_ERR;
+# }` in a block comment or `#if 0`/`#endif` still satisfies every plain-text
+# check below (presence, write-count, and check-before-write adjacency)
+# while the compiler discards it, reinstating #1154 on that channel's
+# setter. mbody/bbody now get the SAME preprocessor re-extraction and
+# re-pin (call-shape presence + immediate `return SCPI_RES_ERR;` adjacency)
+# against their own `$(CC) -E -P -xc -` output, right after each one's
+# existing plain-text checks -- same instrument, same technique, applied to
+# all three guarded bodies in this rule rather than fbody alone. Every
+# existing plain-text check on mbody/bbody is unchanged; this only adds a
+# second, stricter pass on top, per "keep every existing check that already
+# works."
+#
+# KNOWN, ACCEPTED RESIDUAL (adversarial audit round on PR #1157, 2026-09-21,
+# CONFIRMED and reproduced independently): every check below -- presence,
+# counts, ordering, adjacency, and the preprocessor re-extraction above -- is
+# a text/preprocessor scan, so none of it can observe RUNTIME control flow.
+# Wrapping a setter's WHOLE `if (!AdcCalCoefficientFinite(...)) { return
+# SCPI_RES_ERR; }` block in a runtime `if (0) { ... }` -- not the
+# preprocessor's `#if 0`, which the pass above DOES catch -- leaves the
+# guarded text, its ordering and its adjacency to the write completely
+# intact, so it satisfies every check in this rule outright while the
+# compiler never executes the block: the mutated setter accepts and stores a
+# non-finite coefficient with no SCPI error, reinstating #1154 exactly, and
+# this whole suite still reports green (`run_1154_tests` still passes 6
+# tests / 18 assertions, because that binary only ever exercises its own
+# re-implemented model, never this file). This is NOT a hypothetical --
+# reproduced against the real source at this PR's head.
+#
+# This is intentionally NOT closed with a fourth special-cased text pattern.
+# Arbitrary C admits unboundedly many ways to make matched text ineffective
+# (this is the third or fourth shape found in this rule alone), and this
+# guard is already ~190 Makefile lines pinning a 6-line helper -- the
+# durable fix is not another pattern here but to stop proving firmware
+# contracts by splicing and grepping, which is tracked project-wide as
+# firmware issue #1033
+# (https://github.com/daqifi/daqifi-nyquist-firmware/issues/1033) and is
+# where this residual is recorded, not silently.
+#
+# Because this guard cannot close that class, it is NOT the authoritative
+# proof that a non-finite coefficient is rejected on real firmware -- it is
+# a fast, host-side check that the source has not visibly regressed in the
+# shapes a text scan can see. The authoritative behavioural regression is
+# daqifi-python-test-suite PR #464
+# (https://github.com/daqifi/daqifi-python-test-suite/pull/464),
+# test_1154_adc_cal_coefficient_finite.py, which drives the real BUILT
+# firmware over SCPI on hardware and so catches every mutation class above,
+# the runtime `if (0)` bypass included, because it observes what the device
+# actually does rather than what its source text says. Bench-verified 8
+# PASS / 0 FAIL at firmware crc32 `553E07E4`, built from firmware commit
+# `39d1381a8` on this same branch; SCPIADC.c is byte-identical from that
+# commit through this rule's own PR head. That test-suite regression is NOT
+# run in CI (it needs a physical board), so in CI this Makefile guard is the
+# ONLY continuously-enforced check of this behaviour, and it is the weaker
+# of the two.
+$(CALFINITE_BIN): test_1154_adc_cal_coefficient_finite.c test_framework.h $(SCPIADC_SRC) $(RECIPES)
+	@fbody=`sed -n '/^static bool AdcCalCoefficientFinite(/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$fbody" \
+	   || { echo "ERROR: AdcCalCoefficientFinite() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0 -- the guards below can see"; \
+	        echo "       nothing, and a guard that examines nothing must fail."; \
+	        exit 1; }; \
+	 npos=`printf '%s\n' "$$fbody" | grep -cF 'if (isfinite(value)) {'`; \
+	 nneg=`printf '%s\n' "$$fbody" | grep -cF '!isfinite'`; \
+	 nerr=`printf '%s\n' "$$fbody" | grep -cF 'SCPI_ERROR_DATA_OUT_OF_RANGE'`; \
+	 nt=`printf '%s\n' "$$fbody" | grep -cE 'return[[:space:]]+true;'`; \
+	 nf=`printf '%s\n' "$$fbody" | grep -cE 'return[[:space:]]+false;'`; \
+	 test "$$npos" -eq 1 && test "$$nneg" -eq 0 && test "$$nerr" -eq 1 \
+	   && test "$$nt" -eq 1 && test "$$nf" -eq 1 \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC) no longer has"; \
+	        echo "       exactly the shape this guard pins (positive 'if (isfinite(value))"; \
+	        echo "       {' occurrences=$$npos, negated '!isfinite' occurrences=$$nneg,"; \
+	        echo "       SCPI_ERROR_DATA_OUT_OF_RANGE=$$nerr, return true=$$nt,"; \
+	        echo "       return false=$$nf; want 1 0 1 1 1). An inverted branch"; \
+	        echo "       (isfinite -> !isfinite) accepts inf/NaN and rejects every"; \
+	        echo "       finite value -- worse than the #1154 defect -- and it used to"; \
+	        echo "       pass this guard outright; test_1154's SetCalCoefficient()"; \
+	        echo "       models the correct polarity and would pass regardless."; \
+	        exit 1; }; \
+	 p=`printf '%s\n' "$$fbody" | grep -nF 'if (isfinite(value)) {' | cut -d: -f1`; \
+	 t=`printf '%s\n' "$$fbody" | grep -nE 'return[[:space:]]+true;' | cut -d: -f1`; \
+	 f=`printf '%s\n' "$$fbody" | grep -nE 'return[[:space:]]+false;' | cut -d: -f1`; \
+	 test "$$p" -lt "$$t" && test "$$t" -lt "$$f" \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC) no longer returns"; \
+	        echo "       true INSIDE the isfinite() branch and false afterward"; \
+	        echo "       (isfinite-line='$$p' return-true='$$t' return-false='$$f';"; \
+	        echo "       want isfinite < true < false)."; \
+	        exit 1; }; \
+	 tadj=`printf '%s\n' "$$fbody" | sed -n "$$((p+1))p"`; \
+	 badj=`printf '%s\n' "$$fbody" | sed -n "$$((p+2))p"`; \
+	 printf '%s\n' "$$tadj" | grep -qE '^[[:space:]]*return[[:space:]]+true;[[:space:]]*$$' \
+	   && printf '%s\n' "$$badj" | grep -qE '^[[:space:]]*}[[:space:]]*$$' \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC) no longer has"; \
+	        echo "       'return true;' and the closing brace as the two lines"; \
+	        echo "       IMMEDIATELY following 'if (isfinite(value)) {' (line"; \
+	        echo "       $$p+1 got '$$tadj', line $$p+2 got '$$badj'; want"; \
+	        echo "       'return true;' then '}')."; \
+	        echo "       The count and ordering checks above pin PRESENCE and"; \
+	        echo "       ORDER but not NESTING: moving the closing brace down to"; \
+	        echo "       sit just above an unconditional 'return true;' still"; \
+	        echo "       satisfies every one of them while turning the isfinite()"; \
+	        echo "       test into a no-op that accepts inf/NaN unconditionally --"; \
+	        echo "       this IS the #1154 defect, reinstated through the one"; \
+	        echo "       shape those checks cannot see."; \
+	        exit 1; }; \
+	 fbodycpp=`sed -n '/^static bool AdcCalCoefficientFinite(/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | $(CC) -E -P -xc - 2>/dev/null`; \
+	 pc=`printf '%s\n' "$$fbodycpp" | grep -cF 'if (isfinite(value)) {'`; \
+	 test "$$pc" -eq 1 \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC): the"; \
+	        echo "       'if (isfinite(value)) {' this guard pins survives the plain"; \
+	        echo "       comment-stripping grep above (npos=1) but DISAPPEARS when the"; \
+	        echo "       body is run through the real C preprocessor (occurrences=$$pc,"; \
+	        echo "       want 1) -- that only happens when it is dead text: inside a"; \
+	        echo "       /* block comment */ whose delimiters sit on their own lines, or"; \
+	        echo "       inside a '#if 0' / '#endif' span. Either shape still SHOWS the"; \
+	        echo "       check to every line-oriented grep above while the compiler"; \
+	        echo "       discards it -- so the check never runs and a non-finite"; \
+	        echo "       coefficient reaches the runtime array again. This IS the #1154"; \
+	        echo "       defect, reinstated by disabling the guard rather than editing it."; \
+	        exit 1; }; \
+	 pc1=`printf '%s\n' "$$fbodycpp" | grep -nF 'if (isfinite(value)) {' | cut -d: -f1`; \
+	 tadjc=`printf '%s\n' "$$fbodycpp" | sed -n "$$((pc1+1))p"`; \
+	 badjc=`printf '%s\n' "$$fbodycpp" | sed -n "$$((pc1+2))p"`; \
+	 printf '%s\n' "$$tadjc" | grep -qE '^[[:space:]]*return[[:space:]]+true;[[:space:]]*$$' \
+	   && printf '%s\n' "$$badjc" | grep -qE '^[[:space:]]*}[[:space:]]*$$' \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC): after real"; \
+	        echo "       preprocessing, 'return true;' and the closing brace are no"; \
+	        echo "       longer the two lines immediately following"; \
+	        echo "       'if (isfinite(value)) {' (line $$pc1+1 got '$$tadjc', line"; \
+	        echo "       $$pc1+2 got '$$badjc') -- same defect as the plain-text adjacency"; \
+	        echo "       check above, surviving because of an intervening comment or"; \
+	        echo "       preprocessor directive that this preprocessed copy strips."; \
+	        exit 1; }
+	@mbody=`sed -n '/^static scpi_result_t ADCChanCalmSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$mbody" \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0."; \
+	        exit 1; }; \
+	 nc=`printf '%s\n' "$$mbody" | grep -cF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {'`; \
+	 nw=`printf '%s\n' "$$mbody" | grep -cF '.CalM = param2;'`; \
+	 test "$$nc" -eq 1 && test "$$nw" -eq 1 \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC) no longer calls"; \
+	        echo "       AdcCalCoefficientFinite() in the exact guarded-call shape this"; \
+	        echo "       guard pins, or CalM is written more/fewer than once (call-shape"; \
+	        echo "       occurrences=$$nc, CalM writes=$$nw; want 1 1). Discarding the"; \
+	        echo "       call's return value (e.g. '(void)Adc...; if (0) {') still calls"; \
+	        echo "       the helper and still logs, but reinstates the #1154 defect"; \
+	        echo "       exactly -- a non-finite coefficient reaches the runtime array"; \
+	        echo "       again. A second, unguarded CalM write is the same defect by a"; \
+	        echo "       different door."; \
+	        exit 1; }; \
+	 c=`printf '%s\n' "$$mbody" | grep -nF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {' | cut -d: -f1`; \
+	 w=`printf '%s\n' "$$mbody" | grep -nF '.CalM = param2;' | cut -d: -f1`; \
+	 nextline=`printf '%s\n' "$$mbody" | sed -n "$$((c+1))p"`; \
+	 test "$$c" -lt "$$w" \
+	   && printf '%s\n' "$$nextline" | grep -qE 'return[[:space:]]+SCPI_RES_ERR;' \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC) no longer returns"; \
+	        echo "       SCPI_RES_ERR; as the line right after the finite-check, before"; \
+	        echo "       the CalM write (check='$$c' CalM-write='$$w', next line after"; \
+	        echo "       check='$$nextline'). An emptied-out if-block still shows the"; \
+	        echo "       call but falls through to the write on a non-finite value --"; \
+	        echo "       this IS the #1154 defect."; \
+	        exit 1; }
+	@mbodycpp=`sed -n '/^static scpi_result_t ADCChanCalmSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | $(CC) -E -P -xc - 2>/dev/null`; \
+	 ncc=`printf '%s\n' "$$mbodycpp" | grep -cF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {'`; \
+	 test "$$ncc" -eq 1 \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC): the guarded-call"; \
+	        echo "       shape this guard pins survives the plain comment-stripping grep"; \
+	        echo "       above (nc=1) but DISAPPEARS when the body is run through the real"; \
+	        echo "       C preprocessor (occurrences=$$ncc, want 1) -- that only happens"; \
+	        echo "       when it is dead text: inside a /* block comment */ whose"; \
+	        echo "       delimiters sit on their own lines, or inside a '#if 0' / '#endif'"; \
+	        echo "       span. Either shape still SHOWS the check to every line-oriented"; \
+	        echo "       grep above while the compiler discards it -- so the check never"; \
+	        echo "       runs and a non-finite CALM coefficient reaches the runtime array"; \
+	        echo "       again. This IS the #1154 defect, reinstated by disabling the"; \
+	        echo "       guard rather than editing it."; \
+	        exit 1; }; \
+	 cc=`printf '%s\n' "$$mbodycpp" | grep -nF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {' | cut -d: -f1`; \
+	 nextlinec=`printf '%s\n' "$$mbodycpp" | sed -n "$$((cc+1))p"`; \
+	 printf '%s\n' "$$nextlinec" | grep -qE 'return[[:space:]]+SCPI_RES_ERR;' \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC): after real"; \
+	        echo "       preprocessing, 'return SCPI_RES_ERR;' is no longer the line"; \
+	        echo "       immediately following the finite-check (line $$cc+1 got"; \
+	        echo "       '$$nextlinec') -- same defect as the plain-text adjacency check"; \
+	        echo "       above, surviving because of an intervening comment or"; \
+	        echo "       preprocessor directive that this preprocessed copy strips."; \
+	        exit 1; }
+	@bbody=`sed -n '/^static scpi_result_t ADCChanCalbSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$bbody" \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0."; \
+	        exit 1; }; \
+	 nc=`printf '%s\n' "$$bbody" | grep -cF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {'`; \
+	 nw=`printf '%s\n' "$$bbody" | grep -cF '.CalB = param2;'`; \
+	 test "$$nc" -eq 1 && test "$$nw" -eq 1 \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC) no longer calls"; \
+	        echo "       AdcCalCoefficientFinite() in the exact guarded-call shape this"; \
+	        echo "       guard pins, or CalB is written more/fewer than once (call-shape"; \
+	        echo "       occurrences=$$nc, CalB writes=$$nw; want 1 1). Discarding the"; \
+	        echo "       call's return value (e.g. '(void)Adc...; if (0) {') still calls"; \
+	        echo "       the helper and still logs, but reinstates the #1154 defect"; \
+	        echo "       exactly -- a non-finite coefficient reaches the runtime array"; \
+	        echo "       again. A second, unguarded CalB write is the same defect by a"; \
+	        echo "       different door."; \
+	        exit 1; }; \
+	 c=`printf '%s\n' "$$bbody" | grep -nF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {' | cut -d: -f1`; \
+	 w=`printf '%s\n' "$$bbody" | grep -nF '.CalB = param2;' | cut -d: -f1`; \
+	 nextline=`printf '%s\n' "$$bbody" | sed -n "$$((c+1))p"`; \
+	 test "$$c" -lt "$$w" \
+	   && printf '%s\n' "$$nextline" | grep -qE 'return[[:space:]]+SCPI_RES_ERR;' \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC) no longer returns"; \
+	        echo "       SCPI_RES_ERR; as the line right after the finite-check, before"; \
+	        echo "       the CalB write (check='$$c' CalB-write='$$w', next line after"; \
+	        echo "       check='$$nextline'). An emptied-out if-block still shows the"; \
+	        echo "       call but falls through to the write on a non-finite value --"; \
+	        echo "       this IS the #1154 defect."; \
+	        exit 1; }
+	@bbodycpp=`sed -n '/^static scpi_result_t ADCChanCalbSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | $(CC) -E -P -xc - 2>/dev/null`; \
+	 nccb=`printf '%s\n' "$$bbodycpp" | grep -cF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {'`; \
+	 test "$$nccb" -eq 1 \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC): the guarded-call"; \
+	        echo "       shape this guard pins survives the plain comment-stripping grep"; \
+	        echo "       above (nc=1) but DISAPPEARS when the body is run through the real"; \
+	        echo "       C preprocessor (occurrences=$$nccb, want 1) -- that only happens"; \
+	        echo "       when it is dead text: inside a /* block comment */ whose"; \
+	        echo "       delimiters sit on their own lines, or inside a '#if 0' / '#endif'"; \
+	        echo "       span. Either shape still SHOWS the check to every line-oriented"; \
+	        echo "       grep above while the compiler discards it -- so the check never"; \
+	        echo "       runs and a non-finite CALB coefficient reaches the runtime array"; \
+	        echo "       again. This IS the #1154 defect, reinstated by disabling the"; \
+	        echo "       guard rather than editing it."; \
+	        exit 1; }; \
+	 ccb=`printf '%s\n' "$$bbodycpp" | grep -nF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {' | cut -d: -f1`; \
+	 nextlinecb=`printf '%s\n' "$$bbodycpp" | sed -n "$$((ccb+1))p"`; \
+	 printf '%s\n' "$$nextlinecb" | grep -qE 'return[[:space:]]+SCPI_RES_ERR;' \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC): after real"; \
+	        echo "       preprocessing, 'return SCPI_RES_ERR;' is no longer the line"; \
+	        echo "       immediately following the finite-check (line $$ccb+1 got"; \
+	        echo "       '$$nextlinecb') -- same defect as the plain-text adjacency check"; \
+	        echo "       above, surviving because of an intervening comment or"; \
+	        echo "       preprocessor directive that this preprocessed copy strips."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(CALFINITE_BIN) test_1154_adc_cal_coefficient_finite.c
 
 # #988 added a FOURTH arm (the torn-down latch) between the live suspend reason
 # and the card advisory, so this guard now pins four markers, not three. The
@@ -1928,11 +2241,11 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # additive collision in this block -- resolved the same way as every earlier
 # one: keep each side's target rule INTACT and union only `run` and `clean`.
 #
-# Every suite, and every one of the NINETEEN binaries: the eighteen above plus
-# #1141's $(HEXWIN_BIN) -- the first bootloader coverage in this suite.
+# Every suite, and every one of the TWENTY binaries: the nineteen above plus
+# #1154's $(CALFINITE_BIN) -- CONF:ADC:chanCALM/chanCALB non-finite rejection.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN)
+     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1953,10 +2266,11 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(REPLYBUF_BIN)
 	./$(HEXWIN_BIN)
 	./$(DACREINIT_BIN)
+	./$(CALFINITE_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN)
+	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN)
 
 .PHONY: run clean
