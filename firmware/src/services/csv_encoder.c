@@ -676,22 +676,23 @@ size_t csv_Encode(
              * so an analog row that fails this test cannot become encodable
              * later in the same session.
              *
-             * ONE input is NOT guarded, and this comment used to claim
-             * otherwise: SCPI_GPIOEnableSet() (SCPIDIO.c:301-313) writes
-             * BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE with a bare memcpy, takes
-             * no claim and does not test whether a stream is running, and
+             * The DIGITAL input is guarded too, as of #1005. This comment
+             * previously recorded SCPI_GPIOEnableSet() as unguarded -- it wrote
+             * BOARDRUNTIMECONFIG_DIO_GLOBAL_ENABLE with a bare memcpy, took no
+             * claim, and did not test whether a stream was running, while
              * csv_Encode() re-reads that flag live on every call (the
-             * dioEnabled local below). So a row CAN cross the capacity
-             * boundary on DIO's ~22 bytes and a later DIO disable could have
-             * made that same analog sample encodable. Evicting is still the
-             * right call at the moment it is made -- the row does not fit
-             * the configuration in force, and waiting for an operator who
-             * may never disable DIO is precisely the #978 stall -- but the
-             * window is real and is NOT immutability. That unguarded setter
-             * is a pre-existing defect with a wider blast radius than this
-             * (toggling it mid-stream changes the CSV column count against a
-             * header written once at stream start); filed separately rather
-             * than fixed here.
+             * dioEnabled local below). PR #1011 (d71147e31) closed that:
+             * SCPIDIO.c:324-334 now takes Streaming_BeginConfigChange() BEFORE
+             * parsing its argument, which refuses while IsEnabled || Running
+             * (streaming.c:4038-4042) and pushes SCPI_ERROR_EXECUTION_ERROR
+             * (SCPIInterface.h:376). So DIO inclusion can no longer change
+             * mid-session either, and a row that fails this test cannot become
+             * encodable later in the session by any guarded input.
+             *
+             * Evicting would still be the right call even without that guard --
+             * the row does not fit the configuration in force, and waiting for
+             * an operator who may never disable DIO is precisely the #978
+             * stall -- so this fix does not depend on the guard.
              *
              * Evict every queue head the discarded row was built from --
              * AIN, DIO, or both -- exactly as the success path consumes
@@ -701,10 +702,11 @@ size_t csv_Encode(
              * %.*f fallback), but it can still be a COMPONENT of one, and
              * leaving it queued re-pairs it with the next analog sample.
              *
-             * KNOWN LIMIT (authority: streaming.c:3353 itself, read at
-             * head 495836d57; tracked by #970 / PR #991, which replaces
-             * this accounting). It is per-CALL, not per-SAMPLE:
-             * streaming.c's `encoded == 0` arm increments unconditionally,
+             * KNOWN LIMIT (authority: streaming.c's `encoded == 0` arm --
+             * line 3353 when read at head 495836d57, now line 3538 after
+             * this PR's base refresh onto main shifted it; tracked by #970 /
+             * PR #991, which replaces this accounting). It is per-CALL, not
+             * per-SAMPLE: that arm increments unconditionally,
              * on the premise stated in its own comment that "each encode
              * pops exactly one". A deferred unfittable row breaks that
              * premise by popping ZERO, so a non-evicting zero-return can
