@@ -9,6 +9,7 @@
 //// General
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>   /* #1144: isfinite, for the capabilities JSON number helper */
 //
 //// Harmony
 //#include "system_config.h"
@@ -7980,6 +7981,19 @@ static scpi_result_t SCPI_CapabilitiesApiVersionGet(scpi_t * context) {
  *
  * Chunked to stay under the 192-byte scpi_printf buffer per call. */
 
+/* Render a double as a JSON number, bounded in width, or as JSON null when
+ * it has no JSON spelling. See the #1144 note at the calibration emission
+ * for why both halves are load-bearing. `out` is always NUL-terminated and
+ * always holds valid JSON; 32 bytes is ample for %.6g (the widest result is
+ * like "-1.23457e-308", 13 characters). */
+static void CapJsonDouble(char* out, size_t outLen, double v) {
+    if (!isfinite(v)) {
+        (void)snprintf(out, outLen, "null");
+        return;
+    }
+    (void)snprintf(out, outLen, "%.6g", v);
+}
+
 static void EmitAinChannelJson(scpi_t* context,
                                const AInChannel* ch,
                                const AInRuntimeConfig* rt,
@@ -8070,12 +8084,46 @@ static void EmitAinChannelJson(scpi_t* context,
     double calB = rt->CalB;
     taskEXIT_CRITICAL();
 
+    /* #1144: these two are the only client-settable doubles in the blob
+     * (CONFigure:ADC:chanCALM / chanCALB take any double), and %.6f is
+     * unbounded, so their width is client-controlled. Two independent ways
+     * that broke the document, both measured on an NQ1:
+     *
+     *   finite but huge -- chanCALB 0,1e300 made this one call need 233 of
+     *   scpi_printf's 192 bytes (SCPIInterface.h:228). On overflow it writes
+     *   the first 191 anyway, so the trailing "}" and "extensions":{}} never
+     *   reach the wire: the object is left open and the next channel's "{"
+     *   arrives after a comma. json.loads then fails at the NEXT object,
+     *   pointing nowhere near the real cause.
+     *
+     *   non-finite -- chanCALB 0,1e400 is ACCEPTED and stored as inf (the
+     *   getter reads back "inf"), and printf spells that "inf"/"nan", which
+     *   is not JSON at any width. This one needs no truncation at all; the
+     *   blob comes back SHORTER than clean and still will not parse.
+     *
+     * So bounding the width alone is not enough. %.6g caps it (1e+300 is 7
+     * characters, and it keeps MORE significant digits than %.6f for the
+     * small slopes this field actually carries -- 0.0012207 vs 0.001221),
+     * and a non-finite value emits JSON null: the field stays present for
+     * clients that index it, and null is the honest spelling for "no
+     * representable value here". Emitting a number we cannot spell, or
+     * dropping the key, would both be worse.
+     *
+     * The %.3f "ranges" above are NOT this bug: those come from board
+     * config, not from any setter, so their width is fixed at build time.
+     * If a range ever becomes client-settable it acquires this defect and
+     * should use this same helper. */
+    char slopeText[32];
+    char interceptText[32];
+    CapJsonDouble(slopeText, sizeof(slopeText), calM);
+    CapJsonDouble(interceptText, sizeof(interceptText), calB);
+
     scpi_printf(context,
         "\"calibration\":{\"model\":\"linear\","
         "\"user_override_supported\":true,"
-        "\"slope\":%.6f,\"intercept\":%.6f},"
+        "\"slope\":%s,\"intercept\":%s},"
         "\"extensions\":{}}",
-        calM, calB);
+        slopeText, interceptText);
 }
 
 static void EmitAoutChannelJson(scpi_t* context,
