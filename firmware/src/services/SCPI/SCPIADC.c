@@ -1615,8 +1615,12 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      *
      * Residual, accepted and deliberately NOT rolled back: if the reload
      * succeeds and the SaveToNvm below then fails, the runtime array holds
-     * the new, validated coefficients while the persisted selector still
-     * names the old set. That is a flash fault in
+     * the new, validated coefficients while the persisted selector is left
+     * CRC-invalid -- NOT still naming the old set. SaveToNvm erases the
+     * TOP_LEVEL page unconditionally (daqifi_settings.c:290, ClearNvm ->
+     * nvm_ErasePage at :331) before the row write whose readback can fail
+     * (:298-307, nvm_WriteRowtoAddr), so a failed persist destroys the old
+     * record rather than preserving it. That is a flash fault in
      * nvm_ErasePage/nvm_WriteRowtoAddr -- and ONLY that, now that
      * tmpTopLevelSettings.type is normalized below right after the load (see
      * the #1152 comment there): a corrupted stored `type` used to be a
@@ -1626,10 +1630,17 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      * residual's scope rather than covered by it. With the type normalized,
      * this residual is reachable from no argument the caller can send -- unlike
      * the reload failure, which any board with an unwritten User bank
-     * reproduces on every `USECal 1`. It also fails in the safe
-     * direction and heals itself: the command answers -200, `USECal?` keeps
-     * reporting the set the NEXT BOOT will really load, and that boot
-     * converges the array to it. A rollback would be worse than the residual:
+     * reproduces on every `USECal 1`. The command answers -200, and `USECal?`
+     * does NOT keep reporting the previous selection: with the TOP_LEVEL
+     * record CRC-invalid, its own daqifi_settings_LoadFromNvm call fails the
+     * same checksum check, so SCPI_ADCUseCalGet (below) returns SCPI_RES_ERR
+     * instead of a cached value and answers the same bare -200. The next
+     * boot's LoadFromNvm failure on that same record takes the
+     * factory-default branch instead (app_freertos.c:916-919), which persists
+     * calVals = 0 and so skips the user-cal reload (app_freertos.c:1035-1039)
+     * -- landing on factory, which may not match what was live before the
+     * fault. That is still the safe direction; it is not the clean self-heal
+     * this paragraph used to claim. A rollback would be worse than the residual:
      * the runtime array is not a copy of any NVM bank (CONF:ADC:chanCALM /
      * chanCALB edit it in place), so re-loading the old bank would discard
      * uncommitted per-channel edits, and a faithful rollback would mean
