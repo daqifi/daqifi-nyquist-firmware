@@ -1504,6 +1504,18 @@ $(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
 # count) are compared to the expected block as a single whole-block string
 # equality -- not a per-line or substring containment match, so an insert,
 # delete, duplicate, or edit of any one line inside the block fails it.
+#
+# #888 split MSG2's literal in two without changing a single emitted byte:
+# SCPIADC.c's nine channel-resolve sites now share one AdcChannelResolve
+# helper, so the format lives on the helper's LOG_E ("%s: channel %d not
+# addressable%s") and CONFigure:ADC:CHANnel's own text is passed in as the
+# cmd and hint arguments. MSG2_FORMAT is still exactly what the device
+# emits -- that is what this suite measures -- but it is now assembled from
+# two places, so it takes TWO block checks. Both are needed and neither is
+# sufficient: want2a alone would not notice the hint being dropped from the
+# call, and want2b alone would not notice the helper's format changing
+# around it. The hint exists precisely because converging nine sites onto
+# one message must not silently delete the remedy #1039 sized for this one.
 	@check_log_block() { \
 	  f="$$1"; open_re="$$2"; n="$$3"; want="$$4"; label="$$5"; fmtname="$$6"; testfile="$$7"; \
 	  count=$$(grep -cE "$$open_re" "$$f"); \
@@ -1534,13 +1546,23 @@ $(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
 	  '^[[:space:]]*LOG_E\("Clock mismatch \(#716\): PBCLK3 %u Hz, built for %u Hz - "[[:space:]]*$$' \
 	  2 "$$want1" "the #716 clock-mismatch LOG_E" MSG1_FORMAT test_1039_log_message_ceiling.c \
 	  || exit 1; \
-	want2=$$(printf '%s\n%s\n%s' \
-	  'LOG_E("CONFigure:ADC:CHANnel: channel %d not addressable; "' \
-	  '"two-arg form is <channel>,<state>, one-arg form is a "' \
-	  '"<mask>.",'); \
+	want2a=$$(printf '%s\n%s' \
+	  'LOG_E("%s: channel %d not addressable%s", cmd, channel,' \
+	  '(hint != NULL) ? hint : "");'); \
 	check_log_block $(LOGCEIL_SRC2) \
-	  '^[[:space:]]*LOG_E\("CONFigure:ADC:CHANnel: channel %d not addressable; "[[:space:]]*$$' \
-	  3 "$$want2" "the not-addressable-channel LOG_E" MSG2_FORMAT test_1039_log_message_ceiling.c \
+	  '^[[:space:]]*LOG_E\("%s: channel %d not addressable%s", cmd, channel,[[:space:]]*$$' \
+	  2 "$$want2a" "AdcChannelResolve's shared not-addressable LOG_E" \
+	  "MSG2_FORMAT's format half" test_1039_log_message_ceiling.c \
+	  || exit 1; \
+	want2b=$$(printf '%s\n%s\n%s\n%s' \
+	  'if (!AdcChannelResolve(context, param1, "CONFigure:ADC:CHANnel",' \
+	  '"; two-arg form is <channel>,<state>, "' \
+	  '"one-arg form is a <mask>.",' \
+	  '&channelIndex)) {'); \
+	check_log_block $(LOGCEIL_SRC2) \
+	  '^[[:space:]]*if \(!AdcChannelResolve\(context, param1, "CONFigure:ADC:CHANnel",[[:space:]]*$$' \
+	  4 "$$want2b" "the CONFigure:ADC:CHANnel cmd+hint arguments" \
+	  "MSG2_FORMAT's substituted half" test_1039_log_message_ceiling.c \
 	  || exit 1
 	@grep -qF 'LOG_E("WiFi down and an SD card IS present on the shared bus - likely bus-incompatible; remove it (wiki: SD-Card-Compatibility)");' $(LOGCEIL_SRC3) \
 	  || { echo "ERROR: the SD-present LOG_E hint in $(LOGCEIL_SRC3) no longer matches"; \

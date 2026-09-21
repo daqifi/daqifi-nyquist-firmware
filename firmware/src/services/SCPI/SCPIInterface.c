@@ -3673,8 +3673,22 @@ static bool Iperf2_ParseClientArgs(scpi_t * context, char* ipBuf,
     size_t ipLen = 0;
     *port = IPERF2_DEFAULT_PORT;
     *duration_sec = 10;
+    // #888: no second SCPI_ErrorPush here. The -109 that used to sit here
+    // queued a second, usually wrong code on top of libscpi's: an unquoted
+    // host argument reported -104 followed by a spurious "Missing parameter"
+    // when the parameter was present. Safe to delete because SCPI_ParamCopyText
+    // queues on every reachable failure exit with mandatory=TRUE -- the
+    // !buffer/!copy_len -310 is unreachable (both are real addresses here),
+    // SCPI_Parameter queues on each of its own reachable exits (-109 absent,
+    // parser.c:713; -103 bad separator, :723; -150 unusable token, :746), and
+    // the one remaining arm, a token that is not a quoted string, pushes -104
+    // itself (:1267). See #885's fuller walk on ADCChanRangeSetClaimed
+    // (SCPIADC.c) for why this property is the precondition for removing a push.
+    //
+    // The two OPTIONAL parses below are a different class and deliberately
+    // untouched: they pass FALSE, where a present-but-malformed value queues an
+    // error AND is silently replaced by the default. That is #876.
     if (!SCPI_ParamCopyText(context, ipBuf, ipBufLen, &ipLen, TRUE)) {
-        SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
         return false;
     }
     if (!SCPI_ParamInt32(context, port, FALSE)) *port = IPERF2_DEFAULT_PORT;
@@ -6830,9 +6844,12 @@ static scpi_result_t SCPI_SetDeviceName(scpi_t * context) {
     size_t nameLen = 0;
     // maxLen excludes the NUL terminator so SCPI_ParamCopyText's write at
     // index nameLen stays inside nameBuf.
+    // #888: no second SCPI_ErrorPush here -- `SYST:DEVice:NAME BANANA` (an
+    // unquoted name) reported -104 and then a spurious -109 "Missing
+    // parameter". Same SCPI_ParamCopyText always-queues argument as the iperf2
+    // client-arg parser above.
     if (!SCPI_ParamCopyText(context, nameBuf, sizeof(nameBuf), &nameLen,
             TRUE)) {
-        SCPI_ErrorPush(context, SCPI_ERROR_MISSING_PARAMETER);
         return SCPI_RES_ERR;
     }
     // #625: reject control chars, non-ASCII, and the JSON-structural
