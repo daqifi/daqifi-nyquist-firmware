@@ -385,6 +385,15 @@ AOUTSAMPLE_SRC := ../../firmware/src/state/data/AOutSample.h
 # pre-power-loss voltage after a power cycle reset every physical output.
 DACREINIT_BIN := run_1034_tests
 
+# #1154: CONFigure:ADC:chanCALM / chanCALB accepted ANY double for the
+# calibration coefficient, including one that overflows to +-inf, and stored
+# it with no SCPI error (`CONF:ADC:chanCALB 0,1e400` -> `chanCALB? 0` reads
+# `inf`, SYST:ERR? reads clean -- measured on an NQ1, serial
+# 7E2837886201026A). See test_1154_adc_cal_coefficient_finite.c's header for
+# the fix's scope (setter-only; the magnitude/range question and #908's boot
+# re-stamping path are deliberately NOT this guard's job).
+CALFINITE_BIN := run_1154_tests
+
 # #1057 (#913's twin) folded dac7718_WaitStat's SPI2 busy-spins onto the same
 # bounded-spin-then-vTaskDelay(1) shape #913 gave UserSpi.c's spi_XferByte;
 # #1108 then finished what #1056 started and moved dac7718_WaitStat itself
@@ -851,6 +860,56 @@ $(DACREINIT_BIN): test_1034_dac_aout_invalidated_on_reinit.c test_framework.h $(
 	        echo "       the test against the new placement."; \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(DACREINIT_BIN) test_1034_dac_aout_invalidated_on_reinit.c
+
+# #1154: build-time guard that the real SCPIADC.c still rejects a non-finite
+# CONF:ADC:chanCALM/chanCALB coefficient -- see the comment above
+# $(CALFINITE_BIN)'s definition and test_1154_adc_cal_coefficient_finite.c's
+# header for what this fix is (and is deliberately not) in scope for.
+$(CALFINITE_BIN): test_1154_adc_cal_coefficient_finite.c test_framework.h $(SCPIADC_SRC) $(RECIPES)
+	@fbody=`sed -n '/^static bool AdcCalCoefficientFinite(/,/^}/p' $(SCPIADC_SRC) | tr -d '\r'`; \
+	 test -n "$$fbody" \
+	   || { echo "ERROR: AdcCalCoefficientFinite() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0 -- the guards below can see"; \
+	        echo "       nothing, and a guard that examines nothing must fail."; \
+	        exit 1; }; \
+	 printf '%s\n' "$$fbody" | grep -qF 'isfinite(value)' \
+	   && printf '%s\n' "$$fbody" | grep -qF 'SCPI_ERROR_DATA_OUT_OF_RANGE' \
+	   && printf '%s\n' "$$fbody" | grep -qE 'return[[:space:]]+false;' \
+	   && printf '%s\n' "$$fbody" | grep -qE 'return[[:space:]]+true;' \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC) no longer checks"; \
+	        echo "       isfinite(value), pushes SCPI_ERROR_DATA_OUT_OF_RANGE (-222) on"; \
+	        echo "       rejection, and returns true/false -- test_1154's SetCalCoefficient()"; \
+	        echo "       models exactly this shape and would pass regardless if it drifted."; \
+	        exit 1; }
+	@mbody=`sed -n '/^static scpi_result_t ADCChanCalmSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r'`; \
+	 test -n "$$mbody" \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0."; \
+	        exit 1; }; \
+	 c=`printf '%s\n' "$$mbody" | grep -n 'AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")' | cut -d: -f1`; \
+	 w=`printf '%s\n' "$$mbody" | grep -n '\.CalM = param2;' | cut -d: -f1`; \
+	 test -n "$$c" && test -n "$$w" && test "$$c" -lt "$$w" \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC) no longer calls"; \
+	        echo "       AdcCalCoefficientFinite() on param2 BEFORE writing CalM"; \
+	        echo "       (finite-check line='$$c' CalM-write line='$$w'; want both present,"; \
+	        echo "       check < write). A non-finite coefficient could reach the runtime"; \
+	        echo "       array again -- this IS the #1154 defect."; \
+	        exit 1; }
+	@bbody=`sed -n '/^static scpi_result_t ADCChanCalbSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r'`; \
+	 test -n "$$bbody" \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0."; \
+	        exit 1; }; \
+	 c=`printf '%s\n' "$$bbody" | grep -n 'AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")' | cut -d: -f1`; \
+	 w=`printf '%s\n' "$$bbody" | grep -n '\.CalB = param2;' | cut -d: -f1`; \
+	 test -n "$$c" && test -n "$$w" && test "$$c" -lt "$$w" \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC) no longer calls"; \
+	        echo "       AdcCalCoefficientFinite() on param2 BEFORE writing CalB"; \
+	        echo "       (finite-check line='$$c' CalB-write line='$$w'; want both present,"; \
+	        echo "       check < write). A non-finite coefficient could reach the runtime"; \
+	        echo "       array again -- this IS the #1154 defect."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(CALFINITE_BIN) test_1154_adc_cal_coefficient_finite.c
 
 # #988 added a FOURTH arm (the torn-down latch) between the live suspend reason
 # and the card advisory, so this guard now pins four markers, not three. The
@@ -1928,11 +1987,11 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # additive collision in this block -- resolved the same way as every earlier
 # one: keep each side's target rule INTACT and union only `run` and `clean`.
 #
-# Every suite, and every one of the NINETEEN binaries: the eighteen above plus
-# #1141's $(HEXWIN_BIN) -- the first bootloader coverage in this suite.
+# Every suite, and every one of the TWENTY binaries: the nineteen above plus
+# #1154's $(CALFINITE_BIN) -- CONF:ADC:chanCALM/chanCALB non-finite rejection.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN)
+     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1953,10 +2012,11 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(REPLYBUF_BIN)
 	./$(HEXWIN_BIN)
 	./$(DACREINIT_BIN)
+	./$(CALFINITE_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN)
+	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN)
 
 .PHONY: run clean
