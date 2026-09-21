@@ -51,6 +51,23 @@ name: host-tests
 # which the glob added in the same commit plainly matches. Caught by #941's
 # round-2 pre-merge audit.
 #
+#   - test_1056_wait_loop.c (#1056, was test_913_spi_wait_stat.c): compiles
+#     firmware/src/HAL/WaitLoop.h directly -- the ONE spin-then-yield wait loop
+#     UserSpi.c, UserUart.c and UserI2c.c now share. That header gets its own
+#     line below: it sits directly in firmware/src/HAL/, which no glob here
+#     matches (HAL/ADC/** and HAL/DAC7718/** are subdirectories), so without
+#     it a PR editing only the loop under test would queue no job at all --
+#     exactly the gap #941's audit found for AD7609Scale.h.
+#
+#     The three drivers stay listed as well. They are no longer grepped (#1056
+#     deleted those guards along with the copied constants they pinned), but
+#     they are the header's only consumers, so an edit to one is the change
+#     most likely to need this suite re-run. Only UserSpi.c was listed at
+#     first, so a PR touching only the uart or i2c twin matched no path and
+#     the suite did not run for the file it covered. A shape checker,
+#     tools/lint/wait_loop_shape.py, was listed here too and has been deleted;
+#     the block above $(WAITLOOP_BIN) in tests/host/Makefile records why, and
+#     why #1056 replaced it with a header the test can compile instead.
 #   - test_json_string_escape.c (#164): compiles
 #     firmware/src/services/JSON_StringEscape.h directly. Scoped to that one
 #     file PLUS firmware/src/services/JSON_Encoder.c (its sole consumer, and
@@ -61,6 +78,27 @@ name: host-tests
 #     "refactor escapes the trigger" gap without dragging in every unrelated
 #     services/ file (streaming.c, wifi_manager.c, sd_card_manager.c, the
 #     whole SCPI/ subdirectory, ...).
+#   - test_947_sysinfo_write_abort.c: greps SCPIInterface.c for three
+#     constants (the two shared SCPI_WriteWithRetry retry constants plus the
+#     new per-callback SCPI_SYSINFO_WRITE_BUDGET_MS) and fails the build if
+#     any drifts. Already covered by the existing 'firmware/src/services/SCPI/**'
+#     entry above. It ALSO greps firmware/src/config/default/FreeRTOSConfig.h
+#     for the 1000 Hz tick rate and 32-bit TickType_t width its millisecond
+#     arithmetic assumes (the same assumption test_943_bench_stall_bound.c
+#     already makes, undocumented in this file's trigger list until now) --
+#     that file is NOT matched by any entry above, so it gets its own line.
+#     Found by Qodo /agentic_review on the #947 PR: without this entry, a
+#     tick-config change could silently invalidate both host tests' timing
+#     model and CI would stay green.
+#   - test_980_dac7718_error_paths.c (#980): the Makefile target lists
+#     firmware/src/HAL/DAC7718/DAC7718.c as a build dependency (its grep
+#     guards pin identifiers/branch-counts in that file, and SCPIDAC.c) --
+#     but until this entry, only firmware/src/services/SCPI/** (SCPIDAC.c)
+#     was covered here, not the DAC7718/ directory itself. A PR touching
+#     ONLY DAC7718.c (no SCPIDAC.c change) matched no path and would not
+#     have run this suite, silently skipping the error-path checks on
+#     exactly the file whose control-flow shape they exist to mirror.
+#     Found by Qodo's #990 pre-merge review.
 #   - test_1000_sd_log_arm_budget.c (#1000): measures the #942 SD-log-arm
 #     refusal's LOG_E line against the ceiling Logger actually cuts at. Its
 #     fixture is GENERATED at build time from SCPIInterface.c and
@@ -86,6 +124,97 @@ name: host-tests
 #     in its own hunk further down each list. Whichever merges second should
 #     keep ONE copy of each path -- a duplicate is harmless to Actions but is
 #     noise, and the two comments explaining it are then redundant too.
+#   - test_1004_help_write_abort.c (#1004): the Makefile target's recipe greps
+#     firmware/src/config/default/FreeRTOSConfig.h for configTICK_RATE_HZ and
+#     configTICK_TYPE_WIDTH_IN_BITS -- the test derives its milliseconds<->tick
+#     assumptions from both -- but until this entry that file was not in
+#     either path list. A change touching only FreeRTOSConfig.h, exactly the
+#     change that would invalidate those assumptions, never re-ran the suite.
+#     Found by PR #976's adversarial audit (#1062) and filed rather than
+#     folded into that PR, which only added tools/lint/cdef.py to this
+#     workflow and picked this gap up from a merge with main.
+#   - test_1039_log_message_ceiling.c (#1039, PR #1116): hardcodes the four
+#     LOG_E messages #1039 shortened and measures them against Logger's real
+#     truncation, the same technique as test_1000_sd_log_arm_budget.c but
+#     deliberately WITHOUT that test's build-time extraction (see the
+#     LOGCEIL_BIN comment block in tests/host/Makefile for why -- it is
+#     independent of PR #1110's parked generator). The Makefile recipe greps
+#     each shipped format string's literal source lines back out of
+#     app_freertos.c, SCPIADC.c and wifi_manager.c and fails the build on
+#     drift, plus the same Logger.h/Logger.c ceiling lines the #1000 entry
+#     above already covers (no new lines needed for those two). SCPIADC.c is
+#     already matched by services/SCPI/** above; app_freertos.c and
+#     wifi_services/wifi_manager.c are not matched by any existing entry, so
+#     each gets its own line below -- otherwise a PR touching only one of
+#     them would queue no job that re-measures its message against the
+#     ceiling.
+#   - test_999_scpi_context_storage_isolation.c: proves USB and TCP SCPI
+#     contexts do not share storage. Its Makefile target ($(SCPI999_BIN))
+#     lists firmware/src/services/UsbCdc/UsbCdc.c and
+#     firmware/src/services/wifi_services/wifi_tcp_server.c as
+#     PREREQUISITES and grep-guards each transport's own CreateSCPIContext()
+#     call site against drift -- it does NOT compile or link either file
+#     into the binary; only $(LIBSCPI_SRCS) is actually linked (see the next
+#     bullet). But until this entry, NEITHER transport file was matched by
+#     any path here. A PR touching only one transport (the exact shape of
+#     change this test exists to catch) queued no job at all.
+#     Found and filed as #1118 by #1115's round-3 adversarial audit, which
+#     confirmed the mechanism against the workflow file and the Makefile
+#     dependency and dispositioned it defer_ticket: it predates that PR
+#     (run_999_tests has depended on both files since #999 shipped) and
+#     #1115's own diff is unaffected (it touches firmware/src/libraries/scpi/**,
+#     which already queues via the entry #1115 itself adds -- see the next
+#     bullet).
+#     The same audit's own new target ($(SCPI1003_BIN), for #1003/#1010)
+#     depends on the same two transport files the same way, so this entry
+#     covers it too, whichever of #1115/#1096 lands.
+#   - test_1121_start_streaming_arm_cascade.c (#1121): the sibling of
+#     test_953's cascade, in SCPIInterface.c rather than SCPIStorageSD.c. Its
+#     Makefile target grep-guards that file for the five arms' order, the
+#     in-loop torn-down latch and the post-loop reconciliation read, and fails
+#     the BUILD (not just the test) if any has been reordered, reworded or
+#     moved. SCPIInterface.c is ALREADY covered by the
+#     'firmware/src/services/SCPI/**' entry above -- same situation as
+#     test_947_sysinfo_write_abort.c -- so this bullet adds no new path, only
+#     the record of which source the target reads and why. It compiles and
+#     links nothing from firmware/: the cascade, the poll loop and the
+#     reconciliation are re-implemented on the host, for the reason
+#     test_999's bullet below establishes about this file.
+#   - Checked while in here, per #1118's own "worth checking" note: a full
+#     accounting of every $(*_BIN) target's Makefile prerequisites against
+#     this list turned up one more gap of the identical shape.
+#     $(SCPI999_BIN) also links LIBSCPI_SRCS/LIBSCPI_HDRS
+#     (firmware/src/libraries/scpi/libscpi/{src,inc/scpi}/*) -- not matched by
+#     any entry here either, so a libscpi-only change (parser.c, error.c, ...)
+#     also queued no job. Closed with the same 'firmware/src/libraries/scpi/**'
+#     entry #1115 independently adds for its own new #1003/#1010 target; per
+#     this file's own precedent (see the #1001/PR-#1017 note above), a
+#     duplicate entry from whichever of this PR / #1115 merges second is
+#     harmless and expected -- keep one copy.
+#     No other target's prerequisites were unmatched: every $(*_BIN) rule's
+#     firmware-side dependencies resolve to a path already listed above.
+#   - test_998_start_streaming_claimed_order.c (#998): models the SD-arm
+#     ordering inside SCPI_StartStreamingClaimed() and pins the real slice
+#     with a sha256 taken from firmware/src/services/SCPI/SCPIInterface.c,
+#     failing the BUILD (not just the test) on drift. NO NEW PATH ENTRY IS
+#     NEEDED: the firmware/src/services/SCPI/** glob added for #943 already
+#     matches SCPIInterface.c, and it is scoped to the directory for the same
+#     reason -- a future move of the arm to a sibling SCPI file still trips
+#     it. Listed here so the enumeration stays complete; an entry absent from
+#     this comment is how #941's audit found test_ad7609_scale.c was
+#     unreachable by CI.
+#   - test_1141_hex_record_upper_panel_error.c (#1141, issue #1142): the
+#     FIRST bootloader coverage in this suite. Its Makefile target
+#     ($(HEXWIN_BIN)) grep-guards and compiles against the bootloader's own
+#     nvm.c/nvm.h/system_config.h (BTL_SYSCFG_DIR in tests/host/Makefile --
+#     bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/), none of
+#     which lived under tests/host/** or any firmware/src/** entry above. So a
+#     PR touching only bootloader/** -- exactly the code this test guards --
+#     matched no path here and never queued the job; #1141 itself only ran it
+#     because that PR also touched tests/host/**. This is the same class of
+#     gap #941's audit found for AD7609Scale.h/test_ad7609_scale.c: a test
+#     wired into the suite (a $(*_BIN) target and a run/clean line) without a
+#     path entry pointing back at what it covers.
 
 on:
   pull_request:
@@ -101,9 +230,45 @@ on:
       - 'firmware/src/Util/Logger.h'
       - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
+      # #1039: test_1039_log_message_ceiling.c greps these two for the
+      # shipped format strings it hardcodes (SCPIADC.c is already covered by
+      # the entry above).
+      - 'firmware/src/app_freertos.c'
+      - 'firmware/src/services/wifi_services/wifi_manager.c'
       - 'firmware/src/HAL/ADC/**'
+      - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/config/default/FreeRTOSConfig.h'
+      # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its
+      # three consumers. WaitLoop.h sits directly in HAL/, which the HAL/ADC/**
+      # and HAL/DAC7718/** globs above do not match.
+      - 'firmware/src/HAL/WaitLoop.h'
+      - 'firmware/src/HAL/UserSpi/UserSpi.c'
+      - 'firmware/src/HAL/UserUart/UserUart.c'
+      - 'firmware/src/HAL/UserI2c/UserI2c.c'
+      # #1004: the ms<->tick assumptions test_1004_help_write_abort.c derives
+      # are grepped straight out of this file (configTICK_RATE_HZ,
+      # configTICK_TYPE_WIDTH_IN_BITS).
+      - 'firmware/src/config/default/FreeRTOSConfig.h'
+      # #1118: run_999_tests ($(SCPI999_BIN)) depends on both transports'
+      # own CreateSCPIContext() call sites (grep-guarded prerequisites, not
+      # compiled/linked in); neither was matched above, so a change confined
+      # to one transport queued no job.
+      - 'firmware/src/services/UsbCdc/UsbCdc.c'
+      - 'firmware/src/services/wifi_services/wifi_tcp_server.c'
+      # #1118: same target ($(SCPI999_BIN)) also links the vendored libscpi
+      # sources (LIBSCPI_SRCS/LIBSCPI_HDRS) that #1115 adds a second consumer
+      # of ($(SCPI1003_BIN)) -- #1115 adds this same entry for its own reason;
+      # keep one copy, whichever PR merges second (see the #1001/#1017 note
+      # above for the precedent).
+      - 'firmware/src/libraries/scpi/**'
+      # #1142: test_1141_hex_record_upper_panel_error.c's Makefile target
+      # depends on the bootloader's own nvm.c/nvm.h/system_config.h (see
+      # BTL_SYSCFG_DIR in tests/host/Makefile) -- none of which live under
+      # tests/host/** or any firmware/src/** entry above, so a bootloader-only
+      # change matched no path here at all.
+      - 'bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/**'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -118,9 +283,33 @@ on:
       - 'firmware/src/Util/Logger.h'
       - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
+      # #1039: test_1039_log_message_ceiling.c greps these two for the
+      # shipped format strings it hardcodes (SCPIADC.c is already covered by
+      # the entry above).
+      - 'firmware/src/app_freertos.c'
+      - 'firmware/src/services/wifi_services/wifi_manager.c'
       - 'firmware/src/HAL/ADC/**'
+      - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/config/default/FreeRTOSConfig.h'
+      # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its
+      # three consumers. WaitLoop.h sits directly in HAL/, which the HAL/ADC/**
+      # and HAL/DAC7718/** globs above do not match.
+      - 'firmware/src/HAL/WaitLoop.h'
+      - 'firmware/src/HAL/UserSpi/UserSpi.c'
+      - 'firmware/src/HAL/UserUart/UserUart.c'
+      - 'firmware/src/HAL/UserI2c/UserI2c.c'
+      # #1004: the ms<->tick assumptions test_1004_help_write_abort.c derives
+      # are grepped straight out of this file (configTICK_RATE_HZ,
+      # configTICK_TYPE_WIDTH_IN_BITS).
+      - 'firmware/src/config/default/FreeRTOSConfig.h'
+      # #1118: see the matching entries under pull_request above.
+      - 'firmware/src/services/UsbCdc/UsbCdc.c'
+      - 'firmware/src/services/wifi_services/wifi_tcp_server.c'
+      - 'firmware/src/libraries/scpi/**'
+      # #1142: see the matching entry under pull_request above.
+      - 'bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/**'
       - '.github/workflows/host-tests.yml'
 
 permissions:

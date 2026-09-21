@@ -98,7 +98,7 @@ DS60001320H.
 | File | Document | Notes |
 |---|---|---|
 | `PIC32MZ-Embedded-Connectivity-with-Floating-Point-Unit-Family-Data-Sheet-DS60001320H.pdf` | **DS60001320H** | **PIC32MZ-EF family device datasheet.** Chip-specific TRGSRC values for fields 4-31 (TMR1/3/5/OC mappings), package pinouts, electrical specs, peripheral counts (8 ADC modules, 6 SPI, 9 timers, etc.) |
-| `PIC32MZ-Embedded-Connectivity-with-Floating-Point-Unit-Family-Silicon-Errata-DS80000663.pdf` | **DS80000663** | Silicon errata. Already digested in CLAUDE.md "Known Silicon Errata" table. Re-read for any ADC-related entries when chasing #406. |
+| `PIC32MZ-Embedded-Connectivity-with-Floating-Point-Unit-Family-Silicon-Errata-DS80000663.pdf` | **DS80000663** | Silicon errata. Already digested in docs/MCU_REFERENCE.md "Known Silicon Errata" table. Re-read for any ADC-related entries when chasing #406. |
 | `PIC32-Flash-Programming-Specification-DS60001145.pdf` | DS60001145 | Programming protocol — used by IPE / PICkit. Mostly opaque to firmware engineers. |
 
 ### Application notes

@@ -1,3 +1,53 @@
+================================================================================
+BUILD RECIPE (added 2026-09-18, #909)
+================================================================================
+Project:   bootloader/firmware/usb_bootloader.X, configuration
+           "usbdevice_pic32mz_ef_sk"
+Toolchain: MPLAB X v6.30 + XC32 **v2.50**  (C:\Program Files\Microchip\xc32\v2.50)
+           The version is pinned in nbproject/configurations.xml. It is NOT the
+           v4.60 the application uses: this is Harmony 2.06 code and does not
+           compile under v4.60 (inline-function / const-qualifier errors). That
+           is what issue #65 was about -- read it before "upgrading" this.
+Flags:     -O1, warnings enabled, warnings-as-errors. A new warning fails it.
+
+HOW A BOOTLOADER CHANGE REACHES A DEVICE -- READ THIS BEFORE SCHEDULING ONE
+--------------------------------------------------------------------------
+The bootloader lives in boot flash (0x1FC00000-0x1FC0FFF3 in the shipped hex)
+and CANNOT UPDATE ITSELF. The in-app updater can only write program flash, and
+old_hv2_bootld.ld discards the application's own config words at link. So a
+change here reaches:
+
+  * newly manufactured units    -- immediately
+  * units already in the field  -- ONLY via PICkit or RMA
+
+A fix that must reach existing customers has to live in the application, even
+when the bootloader is where the bug is. #908 (application side) and #909
+(bootloader side) were split for exactly that reason.
+
+Two things this project therefore owns on every fielded device:
+
+1. DEVCFG3. Whatever src/system_config/usbdevice_pic32mz_ef_sk/system_init.c
+   sets is what the application runs under, permanently -- erratum 45
+   (DS80000663R, "Run-Time Self Programming of Configuration Words is not
+   functional", work around: None). IOL1WAY/PMDL1WAY are OFF there (#764
+   item 4) so the application may reconfigure PPS/PMD at runtime.
+
+2. The flash erase on update. APP_FlashErase (framework/bootloader/src/nvm.c)
+   erases only the LOWER program-flash panel, 0x1D000000-0x1D0FFFFF, instead of
+   the whole PFM, so that an in-app update PRESERVES the NVM settings pages at
+   0x9D1E0000 -- WiFi credentials, voltage precision and both ADC calibration
+   slots. Before #909 every customer update wiped them.
+
+   That is correct only while the APPLICATION FITS IN THE LOWER 1 MB PANEL. It
+   was at ~72% on a standalone build of main measured 2026-09-08 -- indicative
+   only; tools/release/cut_release.sh measures the ACTUAL release build and
+   fails the release if it reaches 0x100000. If the application ever genuinely outgrows the panel, the
+   documented fallback is the page-erase path (USE_PAGE_ERASE in
+   src/system_config/usbdevice_pic32mz_ef_sk/system_config.h), weighed against
+   #532 -- a bootloader watchdog / USB-servicing timeout during programming.
+
+================================================================================
+
 To enable bootloader:
 Build Dqifi firmware with bootloader option in MHC: USB_DEVICE, Build an Application Linker Script
 To force bootloader:
