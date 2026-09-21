@@ -1952,6 +1952,13 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 #
 # Every suite, and every one of the NINETEEN binaries: the eighteen above plus
 # #1141's $(HEXWIN_BIN) -- the first bootloader coverage in this suite.
+#
+# TWELFTH additive collision in this block -- resolved the same way as every
+# earlier one: keep each side's target rule INTACT and union only `run` and
+# `clean`.
+#
+# Every suite, and every one of the TWENTY binaries: the nineteen above plus
+# #1125's $(LOGONCE_BIN) -- the atomic, ISR-safe LOG_x_ONCE bit claim.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN)

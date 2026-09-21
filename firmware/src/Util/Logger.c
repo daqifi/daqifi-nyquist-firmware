@@ -210,9 +210,14 @@ bool Logger_OneShotClaim(uint32_t bit) {
      * in production -- so a caller inside an ISR needs the _FROM_ISR variant
      * instead. This is BoardData_Set's shape (BoardData.c), not
      * streaming.c's: streaming.c instead exposes SEPARATE named entry points
-     * (Streaming_AddProfileSample_DmaPending vs its _FromISR twin), chosen by
-     * the CALLER at each site, because its ISR and task callers are distinct
-     * call sites. This function, like BoardData_Set, has ONE entry reached
+     * chosen by the CALLER at each site -- Streaming_AddProfileSample_DmaCopy
+     * / _DmaIdle / _WriteBuf take a plain taskENTER_CRITICAL, while
+     * _DmaPending_FromISR takes the _FROM_ISR variant (streaming.c:3027,
+     * reached only from the CDC WRITE_COMPLETE handler at UsbCdc.c:732).
+     * There is deliberately NO task-context _DmaPending twin: that family
+     * splits by WHICH sample each context records, not into matched
+     * per-event pairs, which is exactly why it needs no runtime test.
+     * This function, like BoardData_Set, has ONE entry reached
      * from both -- LOG_E_ONCE/LOG_I_ONCE/LOG_D_ONCE are genuinely called from
      * both today (AdcThreshold_IsrTrip: true ISR context; the WiFi serial
      * bridge: task context) -- so runtime dispatch is what keeps them a
