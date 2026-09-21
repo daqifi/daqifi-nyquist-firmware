@@ -7981,20 +7981,61 @@ static scpi_result_t SCPI_CapabilitiesApiVersionGet(scpi_t * context) {
  *
  * Chunked to stay under the 192-byte scpi_printf buffer per call. */
 
-/* Render a double as a JSON number, bounded in width, or as JSON null when
- * it has no JSON spelling. See the #1144 note at the calibration emission
- * for why both halves are load-bearing. `out` is always NUL-terminated and
- * always holds valid JSON; 32 bytes is ample for %.6g (the widest result is
- * like "-1.23457e-308", 13 characters). */
+/* Render a double as a JSON number of bounded width, or as JSON null when it
+ * has no JSON spelling. See the #1144 note at the calibration emission for
+ * why both halves are load-bearing.
+ *
+ * %.17g, NOT %.6g. The precision here is a client-visible contract: these
+ * are calibration coefficients, and a client converts raw counts to volts
+ * with them. %.6g keeps six SIGNIFICANT digits, which is fine for a slope
+ * like 0.0012207 but silently degrades one like 123.456789 to 123.457 --
+ * strictly WORSE than the %.6f it replaced for any value >= 1. 17
+ * significant digits is the round-trip width of an IEEE-754 double, and it
+ * is still bounded: the widest %.17g result is like
+ * "-1.2345678901234567e-308", 24 characters.
+ *
+ * MEASURED, so the contract is not overstated: 123.456789, 0.0012207031 and
+ * 1.000123 all round-trip through this exactly. 1e300 does NOT -- it comes
+ * back 9.999999999999998e+299. That is the same conversion inaccuracy #1144
+ * documents for %f at extreme magnitudes, it is a property of the library
+ * rather than of the format specifier, and no precision here can fix it.
+ * The document stays VALID, which is what this function is for; a
+ * coefficient of 1e300 is not a calibration anyone is relying on.
+ *
+ * CAPJSON_DOUBLE_MIN is the smallest buffer that holds every output this
+ * function can produce. Below it the function still emits valid JSON while
+ * it can -- "null" needs five bytes -- and only below THAT is there nothing
+ * honest left to write. */
+#define CAPJSON_DOUBLE_MIN 25u
+#define CAPJSON_NULL_MIN    5u   /* strlen("null") + NUL */
+
 static void CapJsonDouble(char* out, size_t outLen, double v) {
-    int n = isfinite(v) ? snprintf(out, outLen, "%.6g", v) : -1;
+    if (out == NULL || outLen < CAPJSON_NULL_MIN) {
+        /* Not even "null" fits. Do NOT write a truncated token: a caller
+         * passing a 3-byte buffer would otherwise get "nu", which is the
+         * half-written literal this helper exists to prevent. Terminate if
+         * there is anywhere to put a terminator and write nothing else --
+         * the emission is then visibly missing a value rather than
+         * carrying a corrupt one. No assert: this is unreachable from both
+         * current callers (32 bytes each), and configASSERT is not
+         * __DEBUG-gated on this port, so asserting here would trade a
+         * caller's mistake for a field failure. */
+        if (out != NULL && outLen > 0u) {
+            out[0] = '\0';
+        }
+        return;
+    }
+
+    /* Below CAPJSON_DOUBLE_MIN a long number cannot fit, but "null" can, so
+     * the truncation check below turns it into null rather than garbage. */
+    int n = isfinite(v) ? snprintf(out, outLen, "%.17g", v) : -1;
 
     /* The conversion's return IS checked, rather than cast away, because a
      * half-written number is precisely the defect this function exists to
-     * prevent -- silently emitting one here would reintroduce #1144 inside
-     * its own fix. At 32 bytes with %.6g this cannot trigger (the widest
-     * result is ~13 characters), so it is a guard against a future caller
-     * shrinking the buffer, not a live path. Either way the answer is the
+     * prevent -- silently emitting one would reintroduce #1144 inside its
+     * own fix. With outLen >= CAPJSON_DOUBLE_MIN this cannot trigger for a
+     * finite value; it is the non-finite path and a guard against a future
+     * caller, not a live truncation path. Either way the answer is the
      * same: if no number was written in full, there is no number to print,
      * and "null" is valid JSON where a truncated literal is not. */
     if (n < 0 || (size_t)n >= outLen) {
@@ -8109,10 +8150,12 @@ static void EmitAinChannelJson(scpi_t* context,
      *   is not JSON at any width. This one needs no truncation at all; the
      *   blob comes back SHORTER than clean and still will not parse.
      *
-     * So bounding the width alone is not enough. %.6g caps it (1e+300 is 7
-     * characters, and it keeps MORE significant digits than %.6f for the
-     * small slopes this field actually carries -- 0.0012207 vs 0.001221),
-     * and a non-finite value emits JSON null: the field stays present for
+     * So bounding the width alone is not enough. %.17g caps it (1e+300 is
+     * 7 characters, 24 worst case) while preserving the full round-trip
+     * precision of a double -- see CapJsonDouble, where the choice of 17
+     * over 6 significant digits is a client-visible contract, not a
+     * formatting preference -- and a non-finite value emits JSON null: the
+     * field stays present for
      * clients that index it, and null is the honest spelling for "no
      * representable value here". Emitting a number we cannot spell, or
      * dropping the key, would both be worse.
@@ -8121,6 +8164,10 @@ static void EmitAinChannelJson(scpi_t* context,
      * config, not from any setter, so their width is fixed at build time.
      * If a range ever becomes client-settable it acquires this defect and
      * should use this same helper. */
+    /* 32 >= CAPJSON_DOUBLE_MIN (25). Two of these add 64 bytes to this
+     * frame; CONF:CAP:JSON? is reachable on app_WifiTask, whose measured
+     * peak is 780 of 1500 words, so 16 words of growth leaves the ~720-word
+     * margin essentially unchanged. */
     char slopeText[32];
     char interceptText[32];
     CapJsonDouble(slopeText, sizeof(slopeText), calM);
