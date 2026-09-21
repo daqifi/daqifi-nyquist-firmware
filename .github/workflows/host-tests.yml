@@ -215,6 +215,34 @@ name: host-tests
 #     gap #941's audit found for AD7609Scale.h/test_ad7609_scale.c: a test
 #     wired into the suite (a $(*_BIN) target and a run/clean line) without a
 #     path entry pointing back at what it covers.
+#   - test_1152_usecal_type_trust.c (PR #1152): CONF:ADC:USECal must not hand
+#     the STORED settings type to daqifi_settings_SaveToNvm. Its target
+#     ($(USECALTYPE_BIN)) reads THREE firmware areas, and only one of them was
+#     already matched here:
+#       * firmware/src/services/SCPI/SCPIADC.c -- grep-guarded for the
+#         normalization and its position. Covered by the services/SCPI/**
+#         entry above; no new line.
+#       * firmware/src/services/daqifi_settings.c and .h -- grep-guarded for
+#         the whole PREMISE: that both integrity checks span `.settings` and
+#         not the struct, that LoadFromNvm copies the whole record out, that
+#         SaveToNvm still dispatches on settings->type and rejects an unknown
+#         one before the erase, and that the type enum is still the four
+#         implicitly-numbered values the model maps onto NVM pages. NOT
+#         matched by anything above: services/** is not listed, only
+#         services/SCPI/** and four files by name. So a PR that widened the
+#         checksum to cover `type` -- the single change that makes this test's
+#         premise false and would make it pass green against a firmware that
+#         no longer has the defect it models -- queued no job at all.
+#       * firmware/src/Util/CRC32.c and .h -- COMPILED AND LINKED for real,
+#         not grepped. It is the only firmware code this binary actually runs,
+#         and it is what makes "the record validates and the type is still
+#         wrong" a demonstration rather than an assumption. Util/ is listed
+#         file by file here (CircularBuffer, FixedPointFmt, Logger), so these
+#         two get their own lines, matching that precedent rather than
+#         globbing a directory most of whose files no host test reads.
+#     Same class of gap as the four bullets above, caught the same way: by
+#     checking the new target's prerequisites against this list before
+#     claiming the test was wired in.
 
 on:
   pull_request:
@@ -269,6 +297,14 @@ on:
       # tests/host/** or any firmware/src/** entry above, so a bootloader-only
       # change matched no path here at all.
       - 'bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/**'
+      # PR #1152: run_1152_tests ($(USECALTYPE_BIN)) grep-guards the settings
+      # module for its entire premise -- that the integrity checksum spans the
+      # payload and NOT the `type` field -- and COMPILES AND LINKS the real
+      # Util/CRC32.c that computes it. Neither was matched above.
+      - 'firmware/src/services/daqifi_settings.c'
+      - 'firmware/src/services/daqifi_settings.h'
+      - 'firmware/src/Util/CRC32.c'
+      - 'firmware/src/Util/CRC32.h'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -310,6 +346,11 @@ on:
       - 'firmware/src/libraries/scpi/**'
       # #1142: see the matching entry under pull_request above.
       - 'bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/**'
+      # PR #1152: see the matching entries under pull_request above.
+      - 'firmware/src/services/daqifi_settings.c'
+      - 'firmware/src/services/daqifi_settings.h'
+      - 'firmware/src/Util/CRC32.c'
+      - 'firmware/src/Util/CRC32.h'
       - '.github/workflows/host-tests.yml'
 
 permissions:

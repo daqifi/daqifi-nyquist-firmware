@@ -1617,9 +1617,16 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      * succeeds and the SaveToNvm below then fails, the runtime array holds
      * the new, validated coefficients while the persisted selector still
      * names the old set. That is a flash fault in
-     * nvm_ErasePage/nvm_WriteRowtoAddr, reachable from no argument the caller
-     * can send -- unlike the reload failure, which any board with an unwritten
-     * User bank reproduces on every `USECal 1`. It also fails in the safe
+     * nvm_ErasePage/nvm_WriteRowtoAddr -- and ONLY that, now that
+     * tmpTopLevelSettings.type is normalized below right after the load (see
+     * the #1152 comment there): a corrupted stored `type` used to be a
+     * second, non-hardware way for this same SaveToNvm call to fail, and that
+     * one WAS reachable from no caller argument at all, on a record no
+     * different from any other valid save -- which is why it was outside this
+     * residual's scope rather than covered by it. With the type normalized,
+     * this residual is reachable from no argument the caller can send -- unlike
+     * the reload failure, which any board with an unwritten User bank
+     * reproduces on every `USECal 1`. It also fails in the safe
      * direction and heals itself: the command answers -200, `USECal?` keeps
      * reporting the set the NEXT BOOT will really load, and that boot
      * converges the array to it. A rollback would be worse than the residual:
@@ -1642,6 +1649,50 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
               "selection unchanged", param1);
         return SCPI_RES_ERR;
     }
+
+    /* #1152: the payload checksum (daqifi_settings.c LoadFromNvm / SaveToNvm)
+     * covers settings.settings.* ONLY -- settings.type sits outside it and is
+     * copied verbatim from whatever bytes are physically at the TOP_LEVEL
+     * address. A record can therefore carry an out-of-enum type with a
+     * payload that still validates. daqifi_settings_SaveToNvm below switches
+     * on settings->type and hits `default: return false` for a value it does
+     * not recognize -- and reached from tmpTopLevelSettings.type as LOADED,
+     * that failure would land AFTER daqifi_settings_LoadADCCalSettings below
+     * has already installed the new coefficients into the runtime array:
+     * -200 back to the caller with the new bank already live and USECal?
+     * still reporting the old selection. Silent wrong data, not the
+     * documented flash-I/O residual below.
+     *
+     * Trust the type WE asked for, not the type NVM claims to hold -- we
+     * requested DaqifiSettings_TopLevelSettings above, so that is what
+     * SaveToNvm's switch must see. This is not a new pattern: it is the same
+     * one SCPI_SaveAutoPowerOnUsb, SCPI_SaveDataPrecision and
+     * SCPI_SaveDeviceName (SCPIInterface.c) already follow whenever they
+     * reuse a LoadFromNvm'd struct for a save -- each sets `.type =
+     * DaqifiSettings_TopLevelSettings` right after the load. This call site
+     * had simply omitted it.
+     *
+     * A snapshot-and-restore of the runtime coefficients was considered
+     * instead (copying pRuntimeAInChannels onto this stack before the reload
+     * and putting it back if SaveToNvm still fails) and rejected -- but not
+     * for the reason the residual paragraph above gives against RE-LOADING the
+     * old bank. Those are two different proposals and only the second loses
+     * data: a stack copy restores exactly what was there, uncommitted
+     * CONF:ADC:chanCALM/chanCALB edits included, so the discard-the-edits
+     * objection does not reach it.
+     *
+     * What a rollback does not do is remove a cause. It makes a failed save
+     * leave no trace, which is correct behaviour and also permanent: a record
+     * carrying a corrupted stored type makes this SaveToNvm fail on EVERY
+     * USECal call against it, so the rollback fires every time and the command
+     * becomes a no-op that answers -200 forever, on a board whose payload is
+     * perfectly good. It is also exactly the "faithful rollback" that
+     * paragraph prices at Size*2 doubles of stack per call, successful ones
+     * included. Normalizing the type removes the cause instead: the save takes
+     * the TopLevelSettings branch, the command SUCCEEDS, and there is nothing
+     * to roll back. What is left is the flash-I/O fault -- the residual above,
+     * whose own argument against rolling back is untouched by this. */
+    tmpTopLevelSettings.type = DaqifiSettings_TopLevelSettings;
 
     DaqifiSettingsType calType;
     switch (param1) {

@@ -1826,6 +1826,173 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 	$(CC) $(CFLAGS) -I$(BTL_SYSCFG_DIR) -I$(BTL_SYSCFG_DIR)/framework/bootloader/src \
 	      -o $(HEXWIN_BIN) test_1141_hex_record_upper_panel_error.c
 
+# PR #1152 (the #1148 follow-up): CONF:ADC:USECal must not hand the STORED
+# settings type to daqifi_settings_SaveToNvm.
+#
+# DaqifiSettings is { checksum[16], type, settings } and both integrity
+# checks cover `.settings` only, so `type` is whatever bytes are physically
+# at the flash address. #1148 reordered ADCUseCalSetClaimed() to install the
+# new calibration coefficients BEFORE persisting the selector; a corrupted
+# stored type then makes the persist fail after the install, which is the
+# silent-wrong-data shape test_1152_usecal_type_trust.c reproduces.
+#
+# Same technique and same reason as $(SCAN1112_BIN) and $(SUSPENDREASON_BIN):
+# neither SCPIADC.c nor daqifi_settings.c is host-includable (Harmony's
+# configuration.h/definitions.h, the WINC driver headers, the board graph),
+# so the load/install/save shape is re-implemented against an in-memory NVM
+# and the pre-/post-fix shapes compared on identical fixtures.
+#
+# The CHECKSUM is not re-implemented. $(FW_UTIL)/CRC32.c includes only its
+# own header (stdint.h + stddef.h), so this target compiles and links the
+# REAL one -- which is what makes "the record validates and the type is still
+# wrong" a demonstration rather than an assumption. It needs no stub on the
+# include path at all, so this is -I$(FW_UTIL) and not $(INCLUDES).
+#
+# Three guard blocks, because the model rests on three claims it cannot check
+# for itself:
+#
+#   A. THE FIX IS STILL THERE, AND STILL IN ORDER. One normalization of
+#      tmpTopLevelSettings.type, sitting between the LoadFromNvm that produced
+#      the struct and the SaveToNvm that consumes it. The ordering is checked
+#      by line number rather than by presence alone: a normalization that
+#      drifted BELOW the install would still satisfy a bare grep while
+#      reopening the window the test models, and one below the save would do
+#      nothing at all.
+#   B. THE PREMISE IS STILL TRUE. Both of daqifi_settings.c's validators
+#      (CRC32 and the legacy MD5 fallback) still span `.settings` rather than
+#      the whole struct; LoadFromNvm still copies the WHOLE record out, which
+#      is what carries `type` to the caller; and SaveToNvm still dispatches on
+#      settings->type with a `default: return false` that precedes any flash
+#      I/O. If any of those changed, this file's entire premise would be gone
+#      and the build must say so rather than pass a stale model green.
+#   C. THE ENUM IS STILL WHAT THE MODEL ASSUMES. The test hardcodes 0..3 for
+#      the four types and sweeps "out of enum" against that bound, so the
+#      guard pins the four enumerators, their order, and that none of them
+#      carries an explicit value.
+#
+# Comment lines are stripped before any search in A and B, because the
+# firmware's own comments at both sites name these identifiers on purpose --
+# #1152's rationale block mentions daqifi_settings_SaveToNvm and
+# tmpTopLevelSettings.type in prose directly above the code that does them. A
+# comment restyled so its lines do not begin with `*` or `/` therefore fails
+# these guards, loudly, which is the right outcome for a guard whose job is to
+# notice edits to these functions. CRs are stripped too: every firmware source
+# in this repo is CRLF and this Makefile is not.
+USECALTYPE_BIN      := run_1152_tests
+DAQIFI_SETTINGS_SRC := $(FW_SVC)/daqifi_settings.c
+DAQIFI_SETTINGS_H   := $(FW_SVC)/daqifi_settings.h
+CRC32_SRC           := $(FW_UTIL)/CRC32.c
+CRC32_H             := $(FW_UTIL)/CRC32.h
+
+$(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
+                   $(SCPIADC_SRC) $(DAQIFI_SETTINGS_SRC) $(DAQIFI_SETTINGS_H) \
+                   $(CRC32_SRC) $(CRC32_H) $(RECIPES)
+	@body=`sed -n '/^static scpi_result_t ADCUseCalSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: ADCUseCalSetClaimed() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0 -- the guards below can see"; \
+	        echo "       nothing, and a guard that examines nothing must fail."; \
+	        exit 1; }; \
+	 nnorm=`printf '%s\n' "$$body" | grep -o 'tmpTopLevelSettings\.type = DaqifiSettings_TopLevelSettings;' | wc -l | tr -d ' '`; \
+	 test "$$nnorm" -eq 1 \
+	   || { echo "ERROR: ADCUseCalSetClaimed() in $(SCPIADC_SRC) no longer normalizes"; \
+	        echo "       the loaded settings type exactly once (found $$nnorm, want 1)."; \
+	        echo "       That one line IS #1152: without it the struct handed to"; \
+	        echo "       daqifi_settings_SaveToNvm carries whatever type byte NVM held,"; \
+	        echo "       which the payload checksum does not cover -- and the save then"; \
+	        echo "       fails, or writes another bank, AFTER the new coefficients are"; \
+	        echo "       already live. test_1152_usecal_type_trust.c models the"; \
+	        echo "       normalized shape, so it would pass regardless."; \
+	        exit 1; }; \
+	 l=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,' | cut -d: -f1`; \
+	 n=`printf '%s\n' "$$body" | grep -n 'tmpTopLevelSettings\.type = DaqifiSettings_TopLevelSettings;' | cut -d: -f1`; \
+	 i=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)' | cut -d: -f1`; \
+	 s=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_SaveToNvm(&tmpTopLevelSettings)' | cut -d: -f1`; \
+	 test -n "$$l" && test -n "$$i" && test -n "$$s" \
+	   && test "$$l" -lt "$$n" && test "$$n" -lt "$$i" && test "$$i" -lt "$$s" \
+	   || { echo "ERROR: ADCUseCalSetClaimed() in $(SCPIADC_SRC) no longer runs"; \
+	        echo "       load -> normalize -> install -> save in that order"; \
+	        echo "       (load='$$l' normalize='$$n' install='$$i' save='$$s')."; \
+	        echo "       Normalizing BELOW the save does nothing; normalizing below the"; \
+	        echo "       install leaves the window #1152 closes -- the coefficients go"; \
+	        echo "       live and then the persist fails. Both would still satisfy the"; \
+	        echo "       presence check above, which is why this one is positional."; \
+	        echo "       If the body was legitimately restructured, re-read it against"; \
+	        echo "       the model in test_1152_usecal_type_trust.c."; \
+	        exit 1; }
+	@grep -qF 'uint32_t crc = CRC32_Compute(&(tmpSettings.settings), dataSize);' $(DAQIFI_SETTINGS_SRC) \
+	  || { echo "ERROR: daqifi_settings_LoadFromNvm's CRC32 in $(DAQIFI_SETTINGS_SRC)"; \
+	       echo "       no longer spans '.settings' exactly. If the checksum now covers"; \
+	       echo "       the WHOLE DaqifiSettings struct, a corrupted 'type' can no"; \
+	       echo "       longer reach the caller and test_1152_usecal_type_trust.c's"; \
+	       echo "       premise is gone -- retire or rewrite it rather than relaxing"; \
+	       echo "       this guard."; \
+	       exit 1; }
+	@grep -qF 'uint32_t crc = CRC32_Compute(&(settings->settings), dataSize);' $(DAQIFI_SETTINGS_SRC) \
+	  || { echo "ERROR: daqifi_settings_SaveToNvm's CRC32 in $(DAQIFI_SETTINGS_SRC)"; \
+	       echo "       no longer spans '.settings' exactly -- see the message above."; \
+	       exit 1; }
+	@grep -qF 'CRYPT_MD5_DataAdd(&md5Ctx, (const uint8_t*) &(tmpSettings.settings), dataSize);' $(DAQIFI_SETTINGS_SRC) \
+	  || { echo "ERROR: the legacy MD5 fallback in $(DAQIFI_SETTINGS_SRC) no longer"; \
+	       echo "       spans '.settings' exactly. It is the SECOND validator on the"; \
+	       echo "       load path, so it has to exclude 'type' for the same reason the"; \
+	       echo "       CRC32 does; test_1152_usecal_type_trust.c models one span for"; \
+	       echo "       both (its FIDELITY 2) and that would no longer be true."; \
+	       exit 1; }
+	@grep -qF 'memcpy(settings, &tmpSettings, sizeof (DaqifiSettings));' $(DAQIFI_SETTINGS_SRC) \
+	  || { echo "ERROR: daqifi_settings_LoadFromNvm in $(DAQIFI_SETTINGS_SRC) no longer"; \
+	       echo "       copies the WHOLE record out on a valid checksum. That copy is"; \
+	       echo "       what carries the unchecked 'type' field to the caller -- it is"; \
+	       echo "       the defect's carrier, and the model assumes it."; \
+	       exit 1; }
+	@sbody=`sed -n '/^bool daqifi_settings_SaveToNvm(DaqifiSettings\* settings) {/,/^}/p' $(DAQIFI_SETTINGS_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$sbody" \
+	   || { echo "ERROR: daqifi_settings_SaveToNvm() was not found in"; \
+	        echo "       $(DAQIFI_SETTINGS_SRC), or no longer opens at column 0 --"; \
+	        echo "       the guard below can see nothing, so it must fail."; \
+	        exit 1; }; \
+	 printf '%s\n' "$$sbody" | grep -qF 'switch (settings->type) {' \
+	   || { echo "ERROR: daqifi_settings_SaveToNvm() in $(DAQIFI_SETTINGS_SRC) no"; \
+	        echo "       longer dispatches on settings->type. That dispatch is what"; \
+	        echo "       makes an unchecked type field reach flash addressing at all,"; \
+	        echo "       and the whole model is built on it."; \
+	        exit 1; }; \
+	 d=`printf '%s\n' "$$sbody" | grep -n '^[[:space:]]*default:' | head -1 | cut -d: -f1`; \
+	 c=`printf '%s\n' "$$sbody" | grep -n 'daqifi_settings_ClearNvm(settings->type)' | cut -d: -f1`; \
+	 nxt=`printf '%s\n' "$$sbody" | sed -n "$$((d+1))p" | tr -d '[:space:]'`; \
+	 test -n "$$d" && test -n "$$c" && test "$$d" -lt "$$c" \
+	   && test "$$nxt" = "returnfalse;" \
+	   || { echo "ERROR: daqifi_settings_SaveToNvm() in $(DAQIFI_SETTINGS_SRC) no"; \
+	        echo "       longer rejects an unknown type with 'return false' BEFORE the"; \
+	        echo "       first daqifi_settings_ClearNvm() call"; \
+	        echo "       (default:='$$d' next-line='$$nxt' ClearNvm='$$c')."; \
+	        echo "       test_1152_usecal_type_trust.c asserts that this failure erases"; \
+	        echo "       and writes NOTHING -- that is what distinguishes it from the"; \
+	        echo "       flash-I/O residual #1148 documents and accepts. If the"; \
+	        echo "       rejection moved below the erase, that distinction is gone and"; \
+	        echo "       the model, not this guard, is what needs fixing."; \
+	        exit 1; }
+	@ebody=`sed -n '/typedef enum eDaqifiSettingsType {/,/} DaqifiSettingsType;/p' $(DAQIFI_SETTINGS_H) | tr -d '\r'`; \
+	 test -n "$$ebody" \
+	   || { echo "ERROR: the eDaqifiSettingsType enum was not found in"; \
+	        echo "       $(DAQIFI_SETTINGS_H) -- the guard below can see nothing."; \
+	        exit 1; }; \
+	 got=`printf '%s\n' "$$ebody" | grep -o 'DaqifiSettings_[A-Za-z]*' | tr '\n' ','`; \
+	 want='DaqifiSettings_TopLevelSettings,DaqifiSettings_Wifi,DaqifiSettings_FactAInCalParams,DaqifiSettings_UserAInCalParams,'; \
+	 neq=`printf '%s\n' "$$ebody" | grep -c '=' || true`; \
+	 test "$$got" = "$$want" && test "$$neq" -eq 0 \
+	   || { echo "ERROR: eDaqifiSettingsType in $(DAQIFI_SETTINGS_H) is no longer the"; \
+	        echo "       four implicitly-numbered enumerators the model assumes."; \
+	        echo "         want $$want (and no explicit values)"; \
+	        echo "         got  $$got ($$neq lines carrying '=')"; \
+	        echo "       test_1152_usecal_type_trust.c hardcodes 0..3 for these and"; \
+	        echo "       sweeps 'out of enum' against that bound, and maps each type"; \
+	        echo "       onto its NVM page by that same value -- adding, renumbering"; \
+	        echo "       or reordering a type invalidates all three."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -I$(FW_UTIL) -o $(USECALTYPE_BIN) \
+	      test_1152_usecal_type_trust.c $(CRC32_SRC)
+
 # Every suite, and every one of the eleven binaries. SEVENTH additive
 # collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
 # fw#1000, fw#913 vs fw#980, and now fw#913 vs fw#985 -- every one of them
@@ -1872,9 +2039,16 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 #
 # Every suite, and every one of the NINETEEN binaries: the eighteen above plus
 # #1141's $(HEXWIN_BIN) -- the first bootloader coverage in this suite.
+#
+# Every suite, and every one of the TWENTY binaries: the nineteen above plus
+# #1152's $(USECALTYPE_BIN) (CONF:ADC:USECal must not hand the unchecked
+# STORED settings type to daqifi_settings_SaveToNvm). TWELFTH additive
+# collision in this block -- resolved the same way as every earlier one: keep
+# each side's target rule INTACT and union only `run` and `clean`. Dropping a
+# rule loses a suite silently; duplicating one silently shadows the other.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(REPLYBUF_BIN) $(HEXWIN_BIN)
+     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(USECALTYPE_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1894,10 +2068,11 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(START_BIN)
 	./$(REPLYBUF_BIN)
 	./$(HEXWIN_BIN)
+	./$(USECALTYPE_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-	      $(REPLYBUF_BIN) $(HEXWIN_BIN)
+	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(USECALTYPE_BIN)
 
 .PHONY: run clean
