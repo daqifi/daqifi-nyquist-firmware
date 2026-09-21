@@ -877,6 +877,44 @@ $(DACREINIT_BIN): test_1034_dac_aout_invalidated_on_reinit.c test_framework.h $(
 # return value is discarded. Mirrors $(SCAN1112_BIN)'s technique in this
 # SAME file: strip comment lines first, pin exact counts (not mere
 # presence), pin an explicit negative-form's absence, and pin ordering.
+#
+# Tightened AGAIN, same PR, adversarial audit round 2 (2026-09-21): presence
+# + count + ORDER still cannot see NESTING. Moving the closing brace of
+# `if (isfinite(value)) {` down to sit right before `return true;` --
+#     if (isfinite(value)) {
+#     }
+#     return true;             /* now unconditional */
+#     LOG_E(...); SCPI_ErrorPush(...); return false;   /* both dead */
+# -- keeps npos/nneg/nerr/nt/nf at 1/0/1/1/1 and keeps isfinite-line <
+# true-line < false-line, so it passed every check above outright and is
+# the #1154 defect again (accepts inf/NaN unconditionally). Setter-side
+# guards (mbody/bbody below) were ALREADY immune to this exact trick --
+# they pin that `return SCPI_RES_ERR;` is the line IMMEDIATELY after the
+# call, i.e. adjacency, not just ordering. This gives the accept arm the
+# same treatment: `if (isfinite(value)) {`, `return true;` and the closing
+# `}` must be three CONSECUTIVE lines, checked the same line-oriented way
+# (no parser) by indexing p+1/p+2 off the isfinite line already found above.
+#
+# That still isn't enough on its own: a `/* */` block comment or a
+# `#if 0`/`#endif` span, with the delimiters on their own lines, hides the
+# pinned text from a human and from the CPU while leaving it perfectly
+# intact for `grep -v '^[[:space:]]*[*/]'` to find (that filter only drops
+# lines that themselves OPEN with `*` or `/`, not a comment SPAN) -- so
+# `if (isfinite(value)) { return true; }` sitting dead inside either wrapper
+# still satisfies every check above, including the new adjacency one,
+# while the compiler never runs it. Rather than hand-roll a second
+# comment/preprocessor state machine (this project's own history is
+# explicit that a hand-rolled parser-substitute is the wrong tool -- build
+# the oracle from the reference implementation), this re-extracts the SAME
+# range through the real C preprocessor (`$(CC) -E -P -xc -`, no headers
+# included, so no macro surprises) and re-pins presence + the same
+# adjacency triple against ITS output. Comments and disabled `#if 0` spans
+# vanish under real preprocessing the way they vanish at actual compile
+# time; live code does not, so this is a strict tightening, not a
+# different check -- verified byte-identical to the plain-text extraction
+# on the real (unmutated) source. Scoped to fbody only: mbody/bbody below
+# keep their existing grep-only extraction unchanged, per "keep every
+# existing check that already works."
 $(CALFINITE_BIN): test_1154_adc_cal_coefficient_finite.c test_framework.h $(SCPIADC_SRC) $(RECIPES)
 	@fbody=`sed -n '/^static bool AdcCalCoefficientFinite(/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
 	 test -n "$$fbody" \
@@ -909,6 +947,51 @@ $(CALFINITE_BIN): test_1154_adc_cal_coefficient_finite.c test_framework.h $(SCPI
 	        echo "       true INSIDE the isfinite() branch and false afterward"; \
 	        echo "       (isfinite-line='$$p' return-true='$$t' return-false='$$f';"; \
 	        echo "       want isfinite < true < false)."; \
+	        exit 1; }; \
+	 tadj=`printf '%s\n' "$$fbody" | sed -n "$$((p+1))p"`; \
+	 badj=`printf '%s\n' "$$fbody" | sed -n "$$((p+2))p"`; \
+	 printf '%s\n' "$$tadj" | grep -qE '^[[:space:]]*return[[:space:]]+true;[[:space:]]*$$' \
+	   && printf '%s\n' "$$badj" | grep -qE '^[[:space:]]*}[[:space:]]*$$' \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC) no longer has"; \
+	        echo "       'return true;' and the closing brace as the two lines"; \
+	        echo "       IMMEDIATELY following 'if (isfinite(value)) {' (line"; \
+	        echo "       $$p+1 got '$$tadj', line $$p+2 got '$$badj'; want"; \
+	        echo "       'return true;' then '}')."; \
+	        echo "       The count and ordering checks above pin PRESENCE and"; \
+	        echo "       ORDER but not NESTING: moving the closing brace down to"; \
+	        echo "       sit just above an unconditional 'return true;' still"; \
+	        echo "       satisfies every one of them while turning the isfinite()"; \
+	        echo "       test into a no-op that accepts inf/NaN unconditionally --"; \
+	        echo "       this IS the #1154 defect, reinstated through the one"; \
+	        echo "       shape those checks cannot see."; \
+	        exit 1; }; \
+	 fbodycpp=`sed -n '/^static bool AdcCalCoefficientFinite(/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | $(CC) -E -P -xc - 2>/dev/null`; \
+	 pc=`printf '%s\n' "$$fbodycpp" | grep -cF 'if (isfinite(value)) {'`; \
+	 test "$$pc" -eq 1 \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC): the"; \
+	        echo "       'if (isfinite(value)) {' this guard pins survives the plain"; \
+	        echo "       comment-stripping grep above (npos=1) but DISAPPEARS when the"; \
+	        echo "       body is run through the real C preprocessor (occurrences=$$pc,"; \
+	        echo "       want 1) -- that only happens when it is dead text: inside a"; \
+	        echo "       /* block comment */ whose delimiters sit on their own lines, or"; \
+	        echo "       inside a '#if 0' / '#endif' span. Either shape still SHOWS the"; \
+	        echo "       check to every line-oriented grep above while the compiler"; \
+	        echo "       discards it -- so the check never runs and a non-finite"; \
+	        echo "       coefficient reaches the runtime array again. This IS the #1154"; \
+	        echo "       defect, reinstated by disabling the guard rather than editing it."; \
+	        exit 1; }; \
+	 pc1=`printf '%s\n' "$$fbodycpp" | grep -nF 'if (isfinite(value)) {' | cut -d: -f1`; \
+	 tadjc=`printf '%s\n' "$$fbodycpp" | sed -n "$$((pc1+1))p"`; \
+	 badjc=`printf '%s\n' "$$fbodycpp" | sed -n "$$((pc1+2))p"`; \
+	 printf '%s\n' "$$tadjc" | grep -qE '^[[:space:]]*return[[:space:]]+true;[[:space:]]*$$' \
+	   && printf '%s\n' "$$badjc" | grep -qE '^[[:space:]]*}[[:space:]]*$$' \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC): after real"; \
+	        echo "       preprocessing, 'return true;' and the closing brace are no"; \
+	        echo "       longer the two lines immediately following"; \
+	        echo "       'if (isfinite(value)) {' (line $$pc1+1 got '$$tadjc', line"; \
+	        echo "       $$pc1+2 got '$$badjc') -- same defect as the plain-text adjacency"; \
+	        echo "       check above, surviving because of an intervening comment or"; \
+	        echo "       preprocessor directive that this preprocessed copy strips."; \
 	        exit 1; }
 	@mbody=`sed -n '/^static scpi_result_t ADCChanCalmSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
 	 test -n "$$mbody" \
