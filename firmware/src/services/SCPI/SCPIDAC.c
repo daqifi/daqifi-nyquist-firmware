@@ -885,12 +885,13 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
         // #1034: Timestamp==0 means "not known" -- never commanded, or
         // invalidated by DAC_EnsureHardwareInitialized() on the DAC7718's
         // most recent reinit (a power cycle resets every physical output;
-        // see AOutSample.h). Mirrors MEAS:VOLT:DC?'s existing precedent for
-        // stale monitoring data (SCPIADC.c, OBDiag-disabled channels):
-        // error the single-channel form rather than answer with a voltage
-        // the pin may no longer hold. deferredError/goto cleanup because
-        // gDacCommandMutex may still be held here (see the lock discussion
-        // above) and SCPI_ErrorPush is a transport write.
+        // see AOutSample.h). Error rather than answer with a voltage the pin
+        // may no longer hold. The all-channel form below now applies the
+        // IDENTICAL check for the IDENTICAL reason -- see its own comment for
+        // why an earlier revision answered 0.0 instead, and why that was
+        // wrong. deferredError/goto cleanup because gDacCommandMutex may
+        // still be held here (see the lock discussion above) and
+        // SCPI_ErrorPush is a transport write.
         if ((pSample == NULL) || (pSample->Timestamp < 1)) {
             LOG_E("SOUR:VOLT:LEV?: channel %d not known (DAC reinitialised "
                   "since last commanded)", channel);
@@ -909,13 +910,44 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
         }
         for (size_t i = 0; i < nChannels; i++) {
             AOutSample* pSample = (AOutSample*)BoardData_Get(BOARDDATA_AOUT_LATEST, i);
-            // #1034: the all-channel form cannot error mid-reply (SCPI
-            // numeric list replies are positional, one value per channel) --
-            // same shape as MEAS:VOLT:DC?'s all-channel fallback for a
-            // disabled/stale AIN channel (SCPIADC.c). Report 0.0 rather than
-            // a voltage that may no longer describe the pin.
-            allVoltages[i] = ((pSample != NULL) && (pSample->Timestamp >= 1))
-                    ? pSample->Voltage : 0.0;
+            // #1034 audit correction (adversarial audit on PR #1147,
+            // disposition fix_now): a channel whose Timestamp is still 0
+            // ("not known" -- never commanded, or invalidated by
+            // DAC_EnsureHardwareInitialized() on the DAC7718's most recent
+            // reinit) must ERROR here, exactly like the single-channel form
+            // just above -- NOT answer 0.0. 0.0 is a value indistinguishable
+            // from a genuine 0V reading, so substituting it here reintroduces
+            // the fabricated-voltage class #1034 exists to remove, merely
+            // relocated from "the stale pre-reinit voltage" to "zero volts":
+            // CONF:DAC:UPDATE, then SOUR:VOLT:LEV 0,5, then SOUR:VOLT:LEV?
+            // would otherwise answer 5,0,0,0,0,0,0,0 -- presenting seven
+            // genuinely UNKNOWN physical outputs as a definite 0V.
+            //
+            // The comment this replaced claimed "the all-channel form cannot
+            // error mid-reply". That was wrong, and demonstrably so: every
+            // value here is buffered into allVoltages[] and nothing reaches
+            // the transport until `cleanup` below, which writes a result only
+            // when result == SCPI_RES_OK. An early return-with-error is fully
+            // achievable -- this is that early return, and it is the same
+            // shape SCPI_DACVoltageSet's own all-channel branch already uses
+            // (a per-channel failure aborts the reply via `goto cleanup`
+            // rather than fabricating a value for the failed channel).
+            //
+            // SCPIADC.c's MEAS:VOLT:DC? 0.0 substitution is NOT a precedent
+            // for this: that path covers a user-DISABLED or merely-stale AIN
+            // channel, and SCPIADC.c itself errors (does not substitute) on
+            // the equivalent never-known-yet case (SCPIADC.c:137-139) -- so
+            // the precedent it actually sets is "error when the value truly
+            // cannot be known", which is what this now does too.
+            if ((pSample == NULL) || (pSample->Timestamp < 1)) {
+                LOG_E("SOUR:VOLT:LEV?: channel %u not known (DAC reinitialised "
+                      "since last commanded)",
+                      (unsigned)pBoardConfigAOutChannels->Data[i].DaqifiDacChannelId);
+                deferredError = SCPI_ERROR_EXECUTION_ERROR;
+                result = SCPI_RES_ERR;
+                goto cleanup;
+            }
+            allVoltages[i] = pSample->Voltage;
         }
     }
 

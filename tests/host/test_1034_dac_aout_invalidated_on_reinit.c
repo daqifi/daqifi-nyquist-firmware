@@ -77,6 +77,30 @@
  * headline assertion has a "this is the bug #1034 reports" companion, the
  * way test_980 contrasts its old and new shapes.
  *
+ * AUDIT CORRECTION (adversarial audit on PR #1147, medium, wrong_output,
+ * disposition fix_now) -- part 2 above, as first shipped, was ASYMMETRIC:
+ * the all-channel form answered 0.0 for an unknown channel while the
+ * single-channel form errored on the IDENTICAL state. 0.0 is a value
+ * indistinguishable from a genuine 0V reading, so that substitution
+ * reintroduced the exact fabricated-voltage class #1034 exists to remove,
+ * merely relocated from "the stale pre-reinit voltage" to "zero volts":
+ * CONF:DAC:UPDATE, then SOUR:VOLT:LEV 0,5, then SOUR:VOLT:LEV? answered
+ * 5,0,0,0,0,0,0,0 -- presenting seven genuinely UNKNOWN physical outputs as
+ * a definite 0V. The comment that justified it ("the all-channel form
+ * cannot error mid-reply") was also factually wrong: every value is
+ * buffered into a local array and nothing reaches the transport until the
+ * function's cleanup path, gated on success -- an early return-with-error
+ * is fully achievable, and is what the corrected shape below does.
+ *
+ * THE FIX: the all-channel form now applies the IDENTICAL staleness check
+ * as the single-channel form (`Timestamp < 1` => error the whole reply, not
+ * just the one channel), matching the audit's requirement that the two
+ * paths be internally consistent. get_all_FIXED() below models this
+ * corrected shape (grep-guarded against SCPIDAC.c, same as the rest of this
+ * file); get_all_PRE_1147_FIX() models the shape PR #1147 shipped before
+ * the correction, kept ONLY to demonstrate the bug it produced (mirrors this
+ * file's existing OLD_BUGGY / FIXED contrast pattern for #1034 itself).
+ *
  * FIDELITY -- what this does NOT cover
  *
  * 1. No real FreeRTOS semaphore, no real critical section, no real
@@ -221,7 +245,29 @@ static bool get_single_FIXED(size_t index, double* outVoltage) {
     return true;
 }
 
-static void get_all_FIXED(double out[MOCK_MAX_AOUT_CHANNEL], size_t n) {
+/* #1147 audit correction: returns bool now, matching get_single_FIXED's own
+ * contract -- ANY unknown channel fails the WHOLE reply (mirrors:
+ * deferredError = SCPI_ERROR_EXECUTION_ERROR; goto cleanup;), rather than
+ * filling that one slot with a fabricated 0.0 and reporting success. Nothing
+ * is written to out[] past the failing index -- mirrors allVoltages[] never
+ * reaching SCPI_ResultVoltage on the error path (result != SCPI_RES_OK). */
+static bool get_all_FIXED(double out[MOCK_MAX_AOUT_CHANNEL], size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        MockAOutSample* pSample = &g_cache[i];
+        if (pSample->Timestamp < 1) {
+            return false;
+        }
+        out[i] = pSample->Voltage;
+    }
+    return true;
+}
+
+/* ---- PRE-#1147-fix shape: SCPI_DACVoltageGet's all-channel form exactly as
+ * PR #1147 first shipped it -- substitutes 0.0 for an unknown channel
+ * instead of erroring the whole reply. This is the audit-confirmed
+ * wrong_output finding (medium, disposition fix_now) that the shape above
+ * corrects; kept only to demonstrate what it would have answered. --------- */
+static void get_all_PRE_1147_FIX(double out[MOCK_MAX_AOUT_CHANNEL], size_t n) {
     for (size_t i = 0; i < n; i++) {
         MockAOutSample* pSample = &g_cache[i];
         out[i] = (pSample->Timestamp >= 1) ? pSample->Voltage : 0.0;
@@ -251,10 +297,15 @@ TEST(boot_state_every_channel_reports_unknown) {
     ASSERT_FALSE(get_single_FIXED(0, &v));
     ASSERT_EQ((long long)(v * 1000), 12345000); /* untouched */
 
+    /* #1147: at boot EVERY channel is unknown, so the all-channel form must
+     * error the whole reply too -- not answer eight fabricated 0.0V
+     * readings (see pre_1147_fix_shape_would_have_fabricated_a_zero_volt_
+     * reading below for what the unfixed shape actually produced). */
     double all[MOCK_MAX_AOUT_CHANNEL];
-    get_all_FIXED(all, MOCK_MAX_AOUT_CHANNEL);
+    for (size_t i = 0; i < MOCK_MAX_AOUT_CHANNEL; i++) all[i] = 12345.0; /* poisoned */
+    ASSERT_FALSE(get_all_FIXED(all, MOCK_MAX_AOUT_CHANNEL));
     for (size_t i = 0; i < MOCK_MAX_AOUT_CHANNEL; i++) {
-        ASSERT_TRUE(all[i] == 0.0);
+        ASSERT_EQ((long long)(all[i] * 1000), 12345000); /* untouched */
     }
 }
 
@@ -266,28 +317,80 @@ TEST(after_a_set_the_channel_reports_known_and_correct) {
     ASSERT_TRUE(get_single_FIXED(3, &v));
     ASSERT_TRUE(v == 4.25);
 
+    /* #1147: one known channel does not make the sweep answerable -- the
+     * other seven are still unknown, so the all-channel form must error. */
     double all[MOCK_MAX_AOUT_CHANNEL];
-    get_all_FIXED(all, MOCK_MAX_AOUT_CHANNEL);
-    ASSERT_TRUE(all[3] == 4.25);
-    /* every other channel is still unknown */
-    for (size_t i = 0; i < MOCK_MAX_AOUT_CHANNEL; i++) {
-        if (i == 3) continue;
-        ASSERT_TRUE(all[i] == 0.0);
-    }
+    ASSERT_FALSE(get_all_FIXED(all, MOCK_MAX_AOUT_CHANNEL));
 }
 
-TEST(all_channel_form_never_errors_even_with_a_mixed_cache) {
+TEST(all_channel_form_errors_on_a_mixed_cache) {
+    /* #1147 audit correction: this test used to be named
+     * "..._never_errors_even_with_a_mixed_cache" and asserted the OPPOSITE
+     * -- that two known channels among eight were enough to answer the
+     * whole sweep, fabricating 0.0 for the other six. That was the
+     * confirmed finding; this is the corrected contract. */
     cache_reset_to_boot_state();
     set_shape(0, 0, 1.0);
     set_shape(5, 5, -2.5);
     /* channels 1-4, 6, 7 never commanded */
 
     double all[MOCK_MAX_AOUT_CHANNEL];
-    get_all_FIXED(all, MOCK_MAX_AOUT_CHANNEL); /* must not be skippable/error */
-    ASSERT_TRUE(all[0] == 1.0);
-    ASSERT_TRUE(all[5] == -2.5);
-    ASSERT_TRUE(all[1] == 0.0);
-    ASSERT_TRUE(all[7] == 0.0);
+    ASSERT_FALSE(get_all_FIXED(all, MOCK_MAX_AOUT_CHANNEL));
+}
+
+TEST(all_channel_form_succeeds_only_once_every_channel_is_known) {
+    cache_reset_to_boot_state();
+    for (uint8_t ch = 0; ch < MOCK_MAX_AOUT_CHANNEL; ch++) {
+        set_shape(ch, ch, (double)ch);
+    }
+
+    double all[MOCK_MAX_AOUT_CHANNEL];
+    ASSERT_TRUE(get_all_FIXED(all, MOCK_MAX_AOUT_CHANNEL));
+    for (size_t i = 0; i < MOCK_MAX_AOUT_CHANNEL; i++) {
+        ASSERT_TRUE(all[i] == (double)i);
+    }
+}
+
+/* ========================================================================
+ * The #1147 audit finding itself: the all-channel form must not fabricate
+ * a 0V reading for an unknown channel, and the OLD (as-first-shipped) shape
+ * did exactly that.
+ * ======================================================================== */
+
+TEST(pre_1147_fix_shape_would_have_fabricated_a_zero_volt_reading) {
+    /* Literal repro from the audit finding: CONF:DAC:UPDATE reaches
+     * DAC_EnsureHardwareInitialized()'s reinit path (invalidating every
+     * channel), then SOUR:VOLT:LEV 0,5 makes channel 0 known again. The
+     * shape PR #1147 shipped before this correction answered
+     * SOUR:VOLT:LEV? as 5,0,0,0,0,0,0,0 -- presenting seven genuinely
+     * UNKNOWN physical outputs as a definite 0V. */
+    cache_reset_to_boot_state();
+    mock_dac_init_reset(true);
+    mock_lock_reset(true);
+    ASSERT_TRUE(reinit_shape()); /* CONF:DAC:UPDATE's reinit path */
+    set_shape(0, 0, 5.0);        /* SOUR:VOLT:LEV 0,5 */
+
+    double allPre[MOCK_MAX_AOUT_CHANNEL];
+    get_all_PRE_1147_FIX(allPre, MOCK_MAX_AOUT_CHANNEL);
+    ASSERT_TRUE(allPre[0] == 5.0);
+    for (size_t i = 1; i < MOCK_MAX_AOUT_CHANNEL; i++) {
+        ASSERT_TRUE(allPre[i] == 0.0); /* THE BUG: fabricated, not unknown */
+    }
+}
+
+TEST(fixed_all_channel_form_errors_on_the_identical_scenario) {
+    /* Same scenario as the test above, run against the CORRECTED shape --
+     * must error the whole reply instead of fabricating. This is the test
+     * that fails against the shape PR #1147 first shipped and passes
+     * against the fix (see the PR body for both captured outputs). */
+    cache_reset_to_boot_state();
+    mock_dac_init_reset(true);
+    mock_lock_reset(true);
+    ASSERT_TRUE(reinit_shape());
+    set_shape(0, 0, 5.0);
+
+    double all[MOCK_MAX_AOUT_CHANNEL];
+    ASSERT_FALSE(get_all_FIXED(all, MOCK_MAX_AOUT_CHANNEL));
 }
 
 /* ========================================================================
@@ -363,9 +466,10 @@ TEST(fixed_shape_closes_the_same_scenario_the_old_shape_missed) {
     double v;
     ASSERT_FALSE(get_single_FIXED(6, &v)); /* #1034: no longer confidently wrong */
 
+    /* #1147: after reinit EVERY channel is unknown, so the all-channel form
+     * must error too -- not answer eight fabricated 0.0V readings. */
     double allNew[MOCK_MAX_AOUT_CHANNEL];
-    get_all_FIXED(allNew, MOCK_MAX_AOUT_CHANNEL);
-    ASSERT_TRUE(allNew[6] == 0.0);
+    ASSERT_FALSE(get_all_FIXED(allNew, MOCK_MAX_AOUT_CHANNEL));
 }
 
 TEST(a_set_after_reinit_makes_that_one_channel_known_again) {
@@ -384,13 +488,10 @@ TEST(a_set_after_reinit_makes_that_one_channel_known_again) {
     ASSERT_TRUE(v == 8.25);
 
     /* every OTHER channel is still unknown -- the fresh set must not have
-     * resurrected the rest of the cache. */
+     * resurrected the rest of the cache. #1147: that also means the
+     * all-channel form must still error (channel 3 alone is not enough). */
     double all[MOCK_MAX_AOUT_CHANNEL];
-    get_all_FIXED(all, MOCK_MAX_AOUT_CHANNEL);
-    for (size_t i = 0; i < MOCK_MAX_AOUT_CHANNEL; i++) {
-        if (i == 3) continue;
-        ASSERT_TRUE(all[i] == 0.0);
-    }
+    ASSERT_FALSE(get_all_FIXED(all, MOCK_MAX_AOUT_CHANNEL));
 }
 
 /* ========================================================================
@@ -550,7 +651,10 @@ TEST(old_buggy_timestamp_shape_would_have_collided_at_tick_zero) {
 int main(void) {
     RUN(boot_state_every_channel_reports_unknown);
     RUN(after_a_set_the_channel_reports_known_and_correct);
-    RUN(all_channel_form_never_errors_even_with_a_mixed_cache);
+    RUN(all_channel_form_errors_on_a_mixed_cache);
+    RUN(all_channel_form_succeeds_only_once_every_channel_is_known);
+    RUN(pre_1147_fix_shape_would_have_fabricated_a_zero_volt_reading);
+    RUN(fixed_all_channel_form_errors_on_the_identical_scenario);
     RUN(reinit_invalidates_a_previously_known_channel);
     RUN(reinit_invalidates_every_channel_not_just_the_one_this_transport_set);
     RUN(old_buggy_shape_would_have_reported_the_stale_voltage_as_current);

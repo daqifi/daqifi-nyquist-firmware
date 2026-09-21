@@ -817,15 +817,16 @@ $(DACREINIT_BIN): test_1034_dac_aout_invalidated_on_reinit.c test_framework.h $(
 	  || { echo "ERROR: SCPIDAC_ValidTimestamp's tick-zero substitution is gone from $(SCPIDAC_SRC)."; \
 	       echo "       test_1034's set_shape() models this exact remap -- re-derive the test if it moved."; \
 	       exit 1; }
-	@grep -qF 'pSample->Timestamp < 1' $(SCPIDAC_SRC) \
-	  || { echo "ERROR: SCPI_DACVoltageGet's single-channel staleness check ('pSample->Timestamp < 1')"; \
-	       echo "       is gone from $(SCPIDAC_SRC). test_1034's get_single_FIXED() mirrors this exact"; \
-	       echo "       check -- re-derive the test if this moved."; \
-	       exit 1; }
-	@grep -qF 'pSample->Timestamp >= 1' $(SCPIDAC_SRC) \
-	  || { echo "ERROR: SCPI_DACVoltageGet's all-channel staleness check ('pSample->Timestamp >= 1')"; \
-	       echo "       is gone from $(SCPIDAC_SRC). test_1034's get_all_FIXED() mirrors this exact"; \
-	       echo "       check -- re-derive the test if this moved."; \
+	@test "$$(grep -c 'pSample->Timestamp < 1' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: 'pSample->Timestamp < 1' count in $(SCPIDAC_SRC) changed from 2."; \
+	       echo "       Audit correction on PR #1147 (disposition fix_now) made the all-channel"; \
+	       echo "       form of SCPI_DACVoltageGet use the IDENTICAL staleness check as the"; \
+	       echo "       single-channel form (both now error a channel whose Timestamp is still 0,"; \
+	       echo "       instead of the all-channel form substituting a fabricated 0.0V). test_1034's"; \
+	       echo "       get_single_FIXED() and get_all_FIXED() both mirror this exact check --"; \
+	       echo "       re-derive both if this moved, and re-derive the whole test file if only one"; \
+	       echo "       of the two branches still uses it (that would reopen the asymmetry #1147"; \
+	       echo "       exists to close)."; \
 	       exit 1; }
 	@grep -qF 'const AOutSample invalidatedSample = {0};' $(SCPIDAC_SRC) \
 	  || { echo "ERROR: DAC_EnsureHardwareInitialized's post-reinit invalidation local"; \
