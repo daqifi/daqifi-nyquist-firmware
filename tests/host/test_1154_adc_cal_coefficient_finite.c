@@ -68,13 +68,73 @@
  *      test_1112) this ticket does not touch.
  *
  *   2. The Makefile guard for $(CALFINITE_BIN) pins that the REAL SCPIADC.c
- *      source still has that shape: AdcCalCoefficientFinite exists, checks
- *      isfinite(), and pushes SCPI_ERROR_DATA_OUT_OF_RANGE on rejection; and
- *      both ADCChanCalmSetClaimed and ADCChanCalbSetClaimed call it BEFORE
- *      the CalM/CalB write, so a non-finite coefficient can never reach the
- *      runtime array. That guard is what makes this a regression test on
- *      the real firmware source rather than a test of this file's own
- *      restated logic.
+ *      source still TEXTUALLY contains a finite-check of a specific shape,
+ *      called before the write, live after preprocessing: it greps
+ *      AdcCalCoefficientFinite for exactly one `if (isfinite(value)) {`
+ *      (no negated form), a `return true;`/closing brace immediately
+ *      inside it, SCPI_ERROR_DATA_OUT_OF_RANGE on the rejection path, and
+ *      it greps both ADCChanCalmSetClaimed and ADCChanCalbSetClaimed for
+ *      exactly one call to it whose very next line is
+ *      `return SCPI_RES_ERR;`, strictly before the CalM/CalB write -- then
+ *      re-extracts all of that through the real C preprocessor
+ *      (`$(CC) -E -P -xc -`) and re-pins the same facts against ITS
+ *      output, so a comment or `#if 0`/`#endif` span that hides the text
+ *      from the compiler while leaving it intact for a plain-text grep is
+ *      also caught. That guard is what makes this a regression test on the
+ *      real firmware source rather than a test of this file's own
+ *      restated logic -- for everything a text/preprocessor scan CAN see.
+ *
+ *   3. What it CANNOT see, stated rather than implied: a text/preprocessor
+ *      scan has no model of runtime control flow, so any semantic bypass
+ *      that leaves the pinned text byte-for-byte intact defeats every
+ *      check above while the compiled firmware never runs it. The
+ *      concrete, confirmed instance is wrapping a setter's whole
+ *      `if (!AdcCalCoefficientFinite(...)) { return SCPI_RES_ERR; }` block
+ *      in a RUNTIME `if (0) { ... }` (not the preprocessor's `#if 0`,
+ *      which IS caught): the guarded text, its ordering and its adjacency
+ *      to the write are all unchanged, and `if (0)` is not a preprocessor
+ *      directive, so the preprocessor re-extraction in point 2 passes it
+ *      through unchanged too. Every check in this rule -- counts,
+ *      ordering, adjacency, and the preprocessor re-extraction -- passes;
+ *      the guard exits 0; this file's own tests still report
+ *      "6 tests run, 0 failed, 18 assertions checked" (they exercise only
+ *      this file's re-implemented model, never the real SCPIADC.c); and
+ *      the mutated setter accepts and stores a non-finite coefficient with
+ *      no SCPI error, reinstating the #1154 defect exactly. This is not
+ *      speculative: an adversarial audit round on this PR constructed the
+ *      mutation and reproduced all of the above against the real source.
+ *      There is no fourth text pattern added here to catch it -- arbitrary
+ *      C admits unboundedly many ways to make matched text ineffective,
+ *      and this guard is already ~190 Makefile lines pinning a 6-line
+ *      helper. It is left open and named, not silently accepted: tracked
+ *      as a known residual of the whole splice-and-grep strategy under
+ *      firmware issue #1033 (tests/host proves firmware contracts by
+ *      splicing and grepping, and three audit rounds each found a
+ *      different mutation it cannot catch --
+ *      https://github.com/daqifi/daqifi-nyquist-firmware/issues/1033),
+ *      which already documents this class and recommends replacing the
+ *      strategy rather than widening it further.
+ *
+ *   4. Because of point 3, THIS FILE AND ITS GUARD ARE NOT THE
+ *      AUTHORITATIVE PROOF that a non-finite coefficient is rejected on
+ *      real firmware -- they are a host-side, compiler-fast check that
+ *      the source has not visibly regressed in the specific shapes a text
+ *      scan can observe. The authoritative behavioural regression is
+ *      daqifi-python-test-suite PR #464
+ *      (https://github.com/daqifi/daqifi-python-test-suite/pull/464),
+ *      test_1154_adc_cal_coefficient_finite.py, which drives the real
+ *      BUILT firmware over SCPI on hardware and so catches every one of
+ *      the mutation classes above (a runtime `if (0)` bypass changes what
+ *      the device actually does, which that test observes directly).
+ *      Bench-verified 8 PASS / 0 FAIL at firmware crc32 `553E07E4`, built
+ *      from firmware commit `39d1381a8` on this same branch;
+ *      firmware/src/services/SCPI/SCPIADC.c is byte-identical from that
+ *      commit through the head this file ships in (`git diff --quiet
+ *      39d1381a8 -- firmware/src/services/SCPI/SCPIADC.c`), so that run
+ *      exercised precisely the firmware source being merged here. That
+ *      test is NOT run in CI -- it needs a physical board -- so in CI the
+ *      host guard above is the ONLY continuously-enforced check of this
+ *      behaviour, and per point 3 it is the weaker of the two.
  * ========================================================================== */
 
 #include "test_framework.h"

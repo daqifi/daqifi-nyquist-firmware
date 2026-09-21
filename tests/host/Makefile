@@ -932,6 +932,49 @@ $(DACREINIT_BIN): test_1034_dac_aout_invalidated_on_reinit.c test_framework.h $(
 # existing plain-text check on mbody/bbody is unchanged; this only adds a
 # second, stricter pass on top, per "keep every existing check that already
 # works."
+#
+# KNOWN, ACCEPTED RESIDUAL (adversarial audit round on PR #1157, 2026-09-21,
+# CONFIRMED and reproduced independently): every check below -- presence,
+# counts, ordering, adjacency, and the preprocessor re-extraction above -- is
+# a text/preprocessor scan, so none of it can observe RUNTIME control flow.
+# Wrapping a setter's WHOLE `if (!AdcCalCoefficientFinite(...)) { return
+# SCPI_RES_ERR; }` block in a runtime `if (0) { ... }` -- not the
+# preprocessor's `#if 0`, which the pass above DOES catch -- leaves the
+# guarded text, its ordering and its adjacency to the write completely
+# intact, so it satisfies every check in this rule outright while the
+# compiler never executes the block: the mutated setter accepts and stores a
+# non-finite coefficient with no SCPI error, reinstating #1154 exactly, and
+# this whole suite still reports green (`run_1154_tests` still passes 6
+# tests / 18 assertions, because that binary only ever exercises its own
+# re-implemented model, never this file). This is NOT a hypothetical --
+# reproduced against the real source at this PR's head.
+#
+# This is intentionally NOT closed with a fourth special-cased text pattern.
+# Arbitrary C admits unboundedly many ways to make matched text ineffective
+# (this is the third or fourth shape found in this rule alone), and this
+# guard is already ~190 Makefile lines pinning a 6-line helper -- the
+# durable fix is not another pattern here but to stop proving firmware
+# contracts by splicing and grepping, which is tracked project-wide as
+# firmware issue #1033
+# (https://github.com/daqifi/daqifi-nyquist-firmware/issues/1033) and is
+# where this residual is recorded, not silently.
+#
+# Because this guard cannot close that class, it is NOT the authoritative
+# proof that a non-finite coefficient is rejected on real firmware -- it is
+# a fast, host-side check that the source has not visibly regressed in the
+# shapes a text scan can see. The authoritative behavioural regression is
+# daqifi-python-test-suite PR #464
+# (https://github.com/daqifi/daqifi-python-test-suite/pull/464),
+# test_1154_adc_cal_coefficient_finite.py, which drives the real BUILT
+# firmware over SCPI on hardware and so catches every mutation class above,
+# the runtime `if (0)` bypass included, because it observes what the device
+# actually does rather than what its source text says. Bench-verified 8
+# PASS / 0 FAIL at firmware crc32 `553E07E4`, built from firmware commit
+# `39d1381a8` on this same branch; SCPIADC.c is byte-identical from that
+# commit through this rule's own PR head. That test-suite regression is NOT
+# run in CI (it needs a physical board), so in CI this Makefile guard is the
+# ONLY continuously-enforced check of this behaviour, and it is the weaker
+# of the two.
 $(CALFINITE_BIN): test_1154_adc_cal_coefficient_finite.c test_framework.h $(SCPIADC_SRC) $(RECIPES)
 	@fbody=`sed -n '/^static bool AdcCalCoefficientFinite(/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
 	 test -n "$$fbody" \
