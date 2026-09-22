@@ -1103,8 +1103,18 @@ static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
             memset(&st, 0, sizeof(st));
             if (SYS_FS_FileStat(gSDCardData.bucketPath, &st) != SYS_FS_RES_SUCCESS ||
                 (st.fattrib & SYS_FS_ATTR_DIR) == 0) {
-                LOG_E("[SD] #689 bucket name '%s' is taken by a non-directory - "
-                      "rename or remove it, or use a different directory",
+                /* #1029 (#1000's twin): this was "[SD] #689 bucket name '%s' is
+                 * taken by a non-directory - rename or remove it, or use a
+                 * different directory" -- 104 fixed bytes + bucketPath, whose
+                 * worst case is 45 (a 40-char SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX
+                 * directory + "/P" + 3 digits, sd_BuildBucketPath() above), for a
+                 * worst case of 149 against Logger's 125-byte effective ceiling
+                 * (LOG_MESSAGE_SIZE 128, minus vsnprintf's 2-byte and the clamp's
+                 * 3-byte reservation) -- the remedy half was cut once the
+                 * directory name was long. Shortened text below: 71 fixed bytes,
+                 * worst case 71+45=116, margin 9. */
+                LOG_E("[SD] #689 bucket '%s' not a dir - rename/remove it "
+                      "or use a different dir",
                       gSDCardData.bucketPath);
                 gSDCardData.writeRefuseReason = SD_REFUSE_BUCKET_NOT_DIR;
                 return false;
@@ -2153,14 +2163,57 @@ void sd_card_manager_ProcessState() {
                 // precise error rather than a silent wedge — mirrors the #503
                 // disk-full clean-stop pattern.
                 if (!bucketOk) {
-                    LOG_E("[SD] WRITE refused: no writable bucket under '%s' "
-                          "(active '%s', bucket %u, %u per bucket, max %u) - FatFs "
-                          "file-create wedges large directories (#689). Use a "
-                          "larger SD:MAXSize, a different directory, or clear the "
-                          "card.", gpSDCardSettings->directory,
-                          gSDCardData.bucketPath, (unsigned)gSDCardData.curBucket,
-                          (unsigned)SD_CARD_MANAGER_MAX_DIR_FILES,
-                          (unsigned)SD_CARD_MANAGER_MAX_BUCKET);
+                    /* #1029: this was a 5-substitution message (directory,
+                     * bucketPath, curBucket, MAX_DIR_FILES, MAX_BUCKET) whose
+                     * fixed text alone was already 207 bytes -- worst case
+                     * ~298 against Logger's 125-byte ceiling, cut every time,
+                     * always losing the remedy. `directory` was also
+                     * redundant with `bucketPath`: sd_BuildBucketPath() builds
+                     * the latter FROM the former, so it reads either
+                     * "<directory>" (bucket 0) or "<directory>/P<NNN>" and
+                     * carries the directory either way.
+                     *
+                     * An earlier draft of this comment justified that by
+                     * claiming the arm is reached only after the roll advanced
+                     * curBucket to SD_CARD_MANAGER_MAX_BUCKET. It is not --
+                     * that is one of four paths here; the others are the
+                     * initial sd_EnterBucket(dir, 0) above, the
+                     * reopen-existing re-enter, and the probe loop's
+                     * SD_REFUSE_BUCKET_UNREADABLE. On the first of those
+                     * bucketPath is the bare directory with no "/P<NNN>" at
+                     * all. The redundancy holds on all four paths; the
+                     * reachability claim did not, and neither the worst-case
+                     * length (the "/P<NNN>" form is the longer) nor this
+                     * message depends on it.
+                     *
+                     * The one case bucketPath carries nothing is after the
+                     * FORMAT reset further down, which clears it deliberately.
+                     * Fall back to `directory` there (Qodo /improve on this
+                     * PR, importance 8) rather than naming an empty string --
+                     * it does not cost budget: `directory` is bounded to
+                     * SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX (40), strictly
+                     * shorter than bucketPath's own 45-byte worst case, which
+                     * the budget below already accounts for.
+                     *
+                     * The three numeric
+                     * fields are compile-time constants (SD_CARD_MANAGER_
+                     * MAX_DIR_FILES == SD_CARD_MANAGER_MAX_BUCKET == 64) or a
+                     * bounded 2-digit counter -- diagnostic, not remedial;
+                     * a runtime SYST:DIAG query is the natural place for them
+                     * if ever needed (#1000's own follow-up, #1001, is the
+                     * nearest precedent for a dedicated diagnostic path).
+                     * Shortened text below: 77 fixed bytes + bucketPath's
+                     * 45-byte worst case = 122, margin 3. The remedy names the
+                     * REGISTERED path in its legal short form
+                     * (SYSTem:STORage:SD:MAXSize -> SYST:STOR:SD:MAXS): the
+                     * bare "SD:MAXSize" printed before is not a registered
+                     * command and answers -113, so the remedy was unusable.
+                     * "new dir" pays the 7 bytes the real path costs. */
+                    LOG_E("[SD] #689 bucket '%s' unusable - grow "
+                          "SYST:STOR:SD:MAXS, new dir, or clear card",
+                          gSDCardData.bucketPath[0] != '\0'
+                              ? gSDCardData.bucketPath
+                              : gpSDCardSettings->directory);
                     gSDCardData.startupDirFull = true;
                     gSDCardData.lastOperationSuccess = false;
                     if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
@@ -3926,9 +3979,14 @@ bool sd_card_manager_WaitForCompletion(uint32_t timeoutMs) {
         //       refuses before this point, so if you see this, check dir size.
         // #589: a genuinely SPI-mode-incompatible card (e.g. some A2/SDXC) whose
         //       writes hang from power-up regardless of directory size.
-        LOG_E("[SD] operations hanging while reads work - likely (a) target "
-              "directory too large (#689: larger SD:MAXSize / clear the card) "
-              "or (b) an SPI-mode-incompatible card (wiki: SD-Card-Compatibility)"
+        // #1029: the message below used to be 192 fixed bytes (no substitutions,
+        // so it truncated identically on every firing) against Logger's 125-byte
+        // effective ceiling -- both remedies (the #689 fix and the wiki pointer
+        // for #589) were cut. Shortened to 123 bytes total (margin 2), keeping
+        // both remedies; the narrative that used to live in the message text now
+        // lives only in the two comment lines above, which never reach the wire.
+        LOG_E("[SD] writes hang, reads OK - dir full (#689: grow "
+              "SYST:STOR:SD:MAXS/clear card) or bad card (wiki: SD-Card-Compatibility)"
               "\r\n");
         return false;  // Timeout
     }

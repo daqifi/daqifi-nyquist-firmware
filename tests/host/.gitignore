@@ -16,10 +16,16 @@ run_1039_log_ceiling_tests
 run_1112_tests
 run_1121_tests
 run_998_tests
+run_1029_tests
 run_1098_tests
 run_1141_tests
 run_1034_tests
 run_1154_tests
 CircularBuffer_uut.c
 gen_1000_log_budget.h
+# Generated at build time by gen_1029_log_budget.py from the real firmware
+# sources. Committing it would reintroduce exactly the stale-hand-copy failure
+# the generator exists to prevent.
+gen_1029_log_budget.h
+gen_1029_log_budget.h.tmp
 *.o

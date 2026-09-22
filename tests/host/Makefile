@@ -312,6 +312,37 @@ GEN_1000  := gen_1000_log_budget.h
 FW_LOG_H  := $(FW_UTIL)/Logger.h
 FW_LOG_C  := $(FW_UTIL)/Logger.c
 
+# #1029: the three sd_card_manager.c LOG_E messages whose tails -- and so
+# whose operator-facing remedies -- were cut by the SAME Util/Logger.c 128-byte
+# message frame #1000 (above) measures against. Same "not includable on the
+# host" situation (sd_card_manager.c pulls in Harmony's file system, FreeRTOS
+# and the board graph; Logger.c pulls in FreeRTOS), so this test also mirrors
+# LogMessageFormatImpl and measures the REAL message texts through it --
+# independently of $(SDLOG_BIN)/$(GEN_1000) above, which is #1000's own site.
+# Named SDLOG1029_BIN/SDLOG1029_GEN (not SDLOG_BIN/SDLOG_GEN) specifically to
+# avoid colliding with #1000's identically-shaped names when both PRs'
+# Makefile hunks landed in the same window (#1025 merged first).
+#
+# Everything it measures -- LOG_MESSAGE_SIZE, both of Logger.c's reservations,
+# the SD directory/bucket constants, sd_BuildBucketPath's format string and the
+# three live LOG_E format strings -- is EXTRACTED at build time by
+# gen_1029_log_budget.py rather than grepped-and-then-hand-copied. The greps
+# above pin a value the test duplicates; a concatenated multi-line C string
+# literal cannot be pinned that way (and a "does it still say X" grep on a
+# message is the wrong guard anyway -- rewording a message must re-measure it,
+# not fail the build). So the generator IS the guard: it anchors each LOG_E on
+# the statement that follows it, requires that anchor exactly once, decodes the
+# literal group, and round-trips it back into the source bytes -- exiting
+# non-zero with a named diagnostic on anything it cannot find, finds twice, or
+# cannot reproduce. Nothing is hand-copied except the three PRE-FIX message
+# texts, which are frozen in the test (the fix deleted them from the source, so
+# they cannot be extracted) and exist to prove the test can fail.
+SDLOG1029_BIN := run_1029_tests
+SDLOG1029_GEN := gen_1029_log_budget.h
+SD_MGR_SRC    := ../../firmware/src/services/sd_card_services/sd_card_manager.c
+SD_MGR_HDR    := ../../firmware/src/services/sd_card_services/sd_card_manager.h
+PYTHON        ?= python3
+
 # #1039 (PR #1116, split from the parked #1110): the four LOG_E messages
 # #1039 shortened, measured against the SAME ceiling $(SDLOG_BIN) measures --
 # Logger's real truncation, not an arithmetic estimate of it. Deliberately
@@ -2122,6 +2153,12 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(START_BIN) test_998_start_streaming_claimed_order.c
 
+$(SDLOG1029_GEN): gen_1029_log_budget.py $(SD_MGR_SRC) $(SD_MGR_HDR) $(FW_UTIL)/Logger.c $(FW_UTIL)/Logger.h $(RECIPES)
+	$(PYTHON) gen_1029_log_budget.py --out $(SDLOG1029_GEN)
+
+$(SDLOG1029_BIN): test_1029_sd_card_manager_log_budget.c test_framework.h $(SDLOG1029_GEN) $(RECIPES)
+	$(CC) $(CFLAGS) -o $(SDLOG1029_BIN) test_1029_sd_card_manager_log_budget.c
+
 # #1141 (fix/909-bootloader-lower-panel-erase): APP_ProgramHexRecord's
 # per-chunk address bounds test in the bootloader's nvm.c. The FIRST
 # bootloader coverage in this suite -- everything above tests firmware/src.
@@ -2243,9 +2280,18 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 #
 # Every suite, and every one of the TWENTY binaries: the nineteen above plus
 # #1154's $(CALFINITE_BIN) -- CONF:ADC:chanCALM/chanCALB non-finite rejection.
+#
+# Every suite, and every one of the TWENTY-ONE binaries: the twenty above plus
+# #1029's $(SDLOG1029_BIN) (three sd_card_manager.c LOG_E remedies measured
+# against Logger's 125-byte ceiling). PR #1038 collided here with fw#947,
+# fw#1056, fw#980, fw#985, fw#999, fw#1112, fw#1121, fw#998, fw#1039/#1116,
+# fw#1098 and fw#1154 on a base refresh, and was resolved the same way: each
+# side's target rule kept INTACT (#1029's two rules sit just above; its names
+# carry the 1029 suffix so they cannot shadow #1000's
+# $(SDLOG_BIN)/$(GEN_1000)), and only `run` and `clean` unioned.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN)
+     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -2267,10 +2313,12 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(HEXWIN_BIN)
 	./$(DACREINIT_BIN)
 	./$(CALFINITE_BIN)
+	./$(SDLOG1029_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN)
+	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) \
+	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp
 
 .PHONY: run clean
