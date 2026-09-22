@@ -919,6 +919,42 @@ void app_SystemInit() {
         daqifi_settings_SaveToNvm(&tmpTopLevelSettings);
     }
 
+    /* #909: the bootloader now preserves the settings pages across an in-app
+     * update (it erases only the lower flash panel), so a LOADED TopLevel page
+     * still carries the PREVIOUS build's revision strings. InitBoardConfig
+     * copies those straight into the live board config, and that is what
+     * CONF:CAPabilities:JSON?'s identity.firmware_rev reports -- so without
+     * this the device would report its old version forever after an update.
+     *
+     * Before #909 the revision advanced only as a SIDE EFFECT of the
+     * whole-flash erase destroying this page, which forced the factory-default
+     * branch above; that branch stamps the current revision itself, so on that
+     * path this call re-stamps the same values it already holds.
+     *
+     * IN MEMORY ONLY -- this deliberately does NOT write NVM.
+     *
+     * An earlier revision of this change persisted the refreshed revision here.
+     * That was wrong in the one way this PR must not be wrong:
+     * daqifi_settings_SaveToNvm ERASES the TopLevel page before writing the new
+     * row, so a failed row write leaves the page BLANK, and the next boot then
+     * takes the factory-default branch above and loses the user's voltage
+     * precision, calibration selection, friendly name and USB auto-power -- the
+     * exact loss #909 exists to prevent, introduced by #909's own fix, on the
+     * very boot that follows a firmware update.
+     *
+     * Nothing needs the write. boardFirmwareRev reaches the outside world only
+     * through InitBoardConfig -> boardConfig (BoardConfig.c), which is seeded
+     * from this in-memory struct on EVERY boot, so re-stamping here makes
+     * CONF:CAPabilities:JSON? report the running build's revision every time.
+     * The NVM copy simply lags until the next ordinary TopLevel save, and
+     * daqifi_settings_SaveToNvm re-stamps both revision strings itself on any
+     * such save, so it self-heals with no code here.
+     *
+     * Placed before InitBoardConfig so the live config is correct on the FIRST
+     * boot after an update rather than one boot later. */
+    daqifi_settings_RefreshTopLevelRevisions(
+            &tmpTopLevelSettings.settings.topLevelSettings);
+
     // Load board config structures with the correct board variant values
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
@@ -964,7 +1000,7 @@ void app_SystemInit() {
     daqifi_settings_SeedFriendlyName(
             tmpTopLevelSettings.settings.topLevelSettings.friendlyDeviceName);
 
-    // Try to load WiFiSettings from NVM - if this fails, store default 
+    // Try to load WiFiSettings from NVM - if this fails, store default
     // settings to NVM (first run after a program)
 
 
@@ -1051,11 +1087,24 @@ void app_SystemInit() {
      * running below its intended clock and will never reach the documented
      * ceilings until it is physically reprogrammed. */
     if (!TimerApi_ClockMatchesBuild()) {
-        LOG_E("Clock mismatch (#716): PBCLK3 is %u Hz, image built for %u Hz. "
-              "Device configuration words hold an older PLL and cannot be "
-              "updated by a firmware update - reprogram with a PICkit/IPE to "
-              "reach the intended clock. Rates are derived from the ACTUAL "
-              "clock, so streaming is accurate but ceilings are lower.",
+        /* #1039 (#1000 class): the old text was 295 fixed bytes plus two %u
+         * substitutions (10 each at the 32-bit worst case, "4294967295"), a
+         * 315-byte worst case against Logger's 125-byte effective ceiling
+         * (LOG_MESSAGE_SIZE 128, minus vsnprintf's 2-byte and the clamp's
+         * 3-byte reservation in LogMessageFormatImpl). It therefore lost more
+         * than half its text on EVERY firing -- including the remedy, which
+         * was the last clause. The text below is 99 fixed bytes, worst case
+         * 99+20 = 119, margin 6.
+         *
+         * What was cut is narrative, not remedy, and it lives in the block
+         * comment above: why a firmware update cannot move the PLL (DEVCFG2 +
+         * erratum 45), and that the clock-derived rates read the ACTUAL clock
+         * so streaming stays accurate while the ceilings sit lower. The
+         * emitted line keeps the two clock values, the issue tag, and the one
+         * thing the operator can act on -- reprogram the part with a
+         * PICkit/IPE, which a firmware update will not do for them. */
+        LOG_E("Clock mismatch (#716): PBCLK3 %u Hz, built for %u Hz - "
+              "reprogram via PICkit/IPE, not a firmware update.",
               (unsigned)TimerApi_PeripheralClockHz(),
               (unsigned)TIMER_CLOCK_FRQ_BUILT);
     }

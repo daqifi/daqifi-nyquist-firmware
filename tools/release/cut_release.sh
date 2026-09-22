@@ -172,6 +172,64 @@ say "Verifying bootloader-linked layout"
 grep -qiE 'kseg0_program_mem[[:space:]]+0x0*9d000480' "$MAP" \
   || die "kseg0_program_mem origin is NOT 0x9d000480 — this is a STANDALONE build, DO NOT SHIP. (.map: $(grep -i 'kseg0_program_mem 0x' "$MAP" | head -1))"
 echo "  .map kseg0_program_mem origin = 0x9d000480 OK"
+
+# --- #909: the application must fit inside the LOWER program-flash panel ---
+#
+# The bootloader now erases only the lower panel (0x1D000000-0x1D0FFFFF) instead
+# of the whole PFM, so that an in-app customer update stops destroying the four
+# NVM settings pages at 0x9D1E0000 (TopLevel, WiFi credentials, factory and user
+# ADC calibration) -- see nvm.c:APP_FlashErase and FRM DS60001193B Register 52-1.
+#
+# That fix is only correct while the application FITS in the lower panel. If the
+# app ever grows past 1 MB, the bootloader would erase only the part of it that
+# lives below 0x1D100000 and then program the rest into flash it never erased:
+# the update silently produces a corrupt image on a customer device. Nothing in
+# the build warns about it, which is exactly why it is gated here.
+#
+# Checked two independent ways, both fail-closed:
+#   (a) the .map's total kseg0_program_mem usage, and
+#   (b) the placement of the actual hex records (in the python block below),
+# because (a) alone would pass a build whose bytes merely ADD UP to under 1 MB
+# while a section sits high in the address space.
+#
+# The block between the two BEGIN/END markers is extracted verbatim and executed
+# by tools/release/selftest_release_map_size.py, so it can be proven to fire on
+# an oversized .map without cutting a release. Keep the markers.
+# >>>BEGIN #909 lower-panel size guard
+# `|| true` on both lookups is load-bearing, NOT defensive noise. The parent
+# script runs under `set -euo pipefail`, so `VAR="$(grep … | head -1)"` with no
+# match makes the pipeline exit 1 and bash aborts AT THE ASSIGNMENT -- the
+# explicit `die` below never runs and the operator gets a bare exit 1 with no
+# hint of why the release stopped. Verified by running it: the release still
+# fails closed, but the diagnostic that explains the failure is lost, which is
+# the entire value of these two lines.
+USED_LINE="$(grep -iE 'Total[[:space:]]+kseg0_program_mem[[:space:]]+used' "$MAP" | head -1 || true)"
+[ -n "$USED_LINE" ] || die "could not find 'Total kseg0_program_mem used' in $MAP — the #909 lower-panel size guard cannot run, so this build is UNVERIFIED. DO NOT SHIP. (A toolchain change may have renamed the line; fix this check, do not delete it.)"
+USED_HEX="$(printf '%s\n' "$USED_LINE" | grep -oiE '0x[0-9a-f]+' | head -1 || true)"
+[ -n "$USED_HEX" ] || die "could not parse a hex size out of the .map usage line — DO NOT SHIP. (line: $USED_LINE)"
+USED=$(( USED_HEX ))
+# The budget is NOT the full megabyte. A bootloader-linked image starts at the
+# linked origin 0x9D000480 -- asserted a few lines above, so this offset is a
+# fact about the build being packaged, not an assumption -- and the first
+# upper-panel address is 0x9D100000. The space below it is therefore
+# 0x100000 - 0x480 = 0xFFB80 bytes. Comparing against the full 0x100000 would
+# pass an image whose last 0x480 bytes already sit in the upper panel.
+#
+# `used` is a byte TOTAL, not a top address, so this is exact only while the
+# sections are contiguous from the origin. That is why it is not the only
+# check: the hex-record placement test below is the authoritative one, and it
+# reads actual addresses. This check earns its place by failing EARLY and by
+# naming a number a maintainer can watch trending.
+LOWER_PANEL_BYTES=$(( 0x100000 ))
+BL_ORIGIN_OFFSET=$(( 0x480 ))
+LOWER_PANEL_LIMIT=$(( LOWER_PANEL_BYTES - BL_ORIGIN_OFFSET ))
+if [ "$USED" -gt "$LOWER_PANEL_LIMIT" ]; then
+  die "application uses $USED bytes ($USED_HEX) of kseg0_program_mem, more than the $LOWER_PANEL_LIMIT bytes available below the upper flash panel (0x100000 panel minus the 0x480 bootloader-linked origin offset). The bootloader erases only the LOWER FLASH PANEL (#909), so an in-app update of this image would program unerased flash and brick the device. DO NOT SHIP. Either shrink the application or revisit the #909 erase strategy (page erase is the documented fallback). (.map line: $USED_LINE)"
+fi
+printf '  .map kseg0_program_mem used = %s (%d B) of %d available below the upper panel — fits the lower panel OK (%d%% used)\n' \
+  "$USED_HEX" "$USED" "$LOWER_PANEL_LIMIT" "$(( USED * 100 / LOWER_PANEL_LIMIT ))"
+# <<<END #909 lower-panel size guard
+
 python3 - "$HEX" <<'PY' || die "hex layout verification failed — DO NOT SHIP"
 import sys
 spans=[]; base=0; saw_eof=False   # spans: (start, end_exclusive)
@@ -234,6 +292,27 @@ if boot_records:
     boot_msg += ' -- found %d span(s), %d byte(s), first offending addr 0x%08X' % (
         len(boot_records), boot_bytes, max(boot_records[0][0], BOOT_FLASH_LO))
 chk(not boot_records, boot_msg)
+
+# #909: EVERY record must land in the LOWER program-flash panel.
+#
+# The bootloader erases only 0x1D000000-0x1D0FFFFF now, so that a customer
+# update stops wiping the NVM settings pages at 0x1D1E0000. Anything this hex
+# places at or above 0x1D100000 would therefore be programmed into flash the
+# bootloader never erased -- a silent corrupt-image update on a customer
+# device. It is also the address range the settings pages themselves live in.
+#
+# This is the placement half of the guard; the .map usage half is in
+# cut_release.sh above. A size check alone cannot catch a section that is small
+# but sits high, and an address check alone cannot explain WHY a build is too
+# big, so both run.
+UPPER_PANEL_LO=0x1D100000
+upper_records=[(a,b) for a,b in spans if b>UPPER_PANEL_LO]
+upper_msg='no records at/above 0x1D100000 (upper flash panel — #909 erases only the lower panel)'
+if upper_records:
+    upper_bytes=sum(b-max(a,UPPER_PANEL_LO) for a,b in upper_records)
+    upper_msg += ' -- found %d span(s), %d byte(s), first offending addr 0x%08X' % (
+        len(upper_records), upper_bytes, max(upper_records[0][0], UPPER_PANEL_LO))
+chk(not upper_records, upper_msg)
 sys.exit(0 if ok else 1)
 PY
 

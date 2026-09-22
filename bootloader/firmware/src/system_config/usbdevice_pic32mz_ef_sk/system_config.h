@@ -239,7 +239,62 @@ extern "C" {
     2)The base address and end address must align on boundaries according to the flash page size */
 #define APP_FLASH_BASE_ADDRESS          (0x9D000000)
 
-#define APP_FLASH_END_ADDRESS           (0x9D000000 + 0x200000 - 1)
+/* #909: the writable window ends at the LOWER flash panel, not at the end of
+ * program flash.
+ *
+ * APP_FlashErase now erases only the lower panel (0x9D000000-0x9D0FFFFF) so an
+ * in-app update stops destroying the NVM settings pages at 0x9D1E0000. That
+ * leaves a hazard this bound closes: a hand-built or third-party hex carrying
+ * records ABOVE the lower panel would be programmed into flash that was never
+ * erased, producing a corrupt image that the update still reports as
+ * successful. The release hex cannot contain such records (cut_release.sh
+ * fails the release on them), but the desktop app and every client library let
+ * a user pick an arbitrary .hex, so the release gate cannot be the only guard.
+ *
+ * APP_ProgramHexRecord (framework/.../nvm.c) already tests every record
+ * against [BASE, END] -- its original purpose was "make sure we are not
+ * writing boot area and device configuration bits" -- so narrowing END here
+ * makes out-of-panel records take the SAME path boot-flash records already
+ * take: skipped, not written. That is deliberately the existing behaviour
+ * rather than a new error return, because a standalone-linked hex is EXPECTED
+ * to have its config words dropped this way (#764), and changing the contract
+ * for one address range would change it for that one too. Dropping a record is
+ * not harmless -- the resulting image is incomplete -- but it is strictly
+ * better than programming unerased flash, and it is the failure the release
+ * guard and the size budget exist to keep anyone from reaching.
+ *
+ * Note this also puts the settings pages themselves outside anything the
+ * BOOTLOADER can write. The application reaches them through its own NVM
+ * driver (HAL/NVM), not through this window.
+ *
+ * NOT inert, unlike the superficially similar idea of shrinking these bounds
+ * to change the ERASE: that one does nothing, because the only code consuming
+ * them for erase is inside `#if (USE_PAGE_ERASE)` and USE_PAGE_ERASE is 0. The
+ * WRITE path consumes them unconditionally. */
+#define APP_FLASH_LOWER_PANEL_SIZE      (0x100000)
+
+#define APP_FLASH_END_ADDRESS           (APP_FLASH_BASE_ADDRESS + APP_FLASH_LOWER_PANEL_SIZE - 1)
+
+/* #1141: the audit on #909 confirmed the hazard this comment used to only
+ * document -- a record targeting the upper panel (above APP_FLASH_END_ADDRESS
+ * but still inside the application's 2 MB program-flash span) was silently
+ * DROPPED by APP_ProgramHexRecord's existing boot-area/config-word skip, and
+ * PROGRAM_FLASH still ACKed, so a client believed an incomplete image had
+ * flashed cleanly. This span gives nvm.c a second, disjoint bound so it can
+ * tell the two cases apart: an address in (APP_FLASH_END_ADDRESS,
+ * APP_FLASH_PFM_END_ADDRESS] is application code space that is simply
+ * unerased here and must FAIL the record (HEX_REC_PGM_ERROR, no ACK) rather
+ * than dropping it; a boot-area/config-word address lies entirely outside
+ * this span (physically 0x1FC0xxxx, i.e. KVA0 ~0x9FC0xxxx) and keeps the
+ * original skip-and-succeed behaviour from #764 unchanged either way.
+ *
+ * Numerically this is exactly the pre-#909 value of APP_FLASH_END_ADDRESS
+ * (0x9D000000 + 0x200000 - 1 = 0x9D1FFFFF) -- the full 2 MB PFM span cited in
+ * nvm.c's FRM DS60001193B comment -- kept as its own named constant instead of
+ * a bare literal so the two panel sizes it is built from stay visible. */
+#define APP_FLASH_UPPER_PANEL_SIZE      (0x100000)
+
+#define APP_FLASH_PFM_END_ADDRESS       (APP_FLASH_END_ADDRESS + APP_FLASH_UPPER_PANEL_SIZE)
 
 /* Address of  the Flash from where the application starts executing */
 /* Rule: Set APP_FLASH_BASE_ADDRESS to _RESET_ADDR value of application linker script*/

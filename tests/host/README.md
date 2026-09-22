@@ -509,6 +509,46 @@ FOLLOWS it and round-tripping every literal back into the source bytes. It
 **fails the build**, with a named diagnostic, on anything it cannot find, finds
 twice, or cannot reproduce byte-for-byte.
 
+`test_1141_hex_record_upper_panel_error.c` is the first **bootloader**
+coverage in this suite -- everything above tests `firmware/src`. It covers
+`APP_ProgramHexRecord`'s per-chunk address bounds test in
+`bootloader/.../framework/bootloader/src/nvm.c` (issue #909, PR #1141).
+`#909` narrowed the bootloader's erase to the lower program-flash panel only
+(so an in-app update stops destroying the NVM settings pages), but left
+`APP_ProgramHexRecord`'s existing "make sure we are not writing boot area and
+device configuration bits" bounds test as the only thing standing between a
+record and an unerased write: a record whose address was in the *upper*
+panel -- still application code space, just the half no longer erased -- took
+the exact same silent-skip path as a genuine boot-area/config-word record,
+and `PROGRAM_FLASH` still ACKed it, so an oversized or hand-built `.hex`
+could silently corrupt the image while reporting a clean update. Confirmed
+independently by two adversarial-audit hunters approaching from opposite
+directions (a required constant reading blank, a required function reading
+blank at boot).
+
+The fix adds a third branch: an address still inside the application's 2 MB
+program-flash span but above the erased window now fails the record
+(`HEX_REC_PGM_ERROR`, so `PROGRAM_FLASH` sends no ACK) instead of being
+silently dropped, while an address genuinely outside that span (boot flash /
+config words) keeps the original skip-and-succeed path unchanged (issue
+#764's contract, which this fix must not touch).
+
+Like `test_998`, `nvm.c` is not host-includable -- it pulls in
+`peripheral/nvm/plib_nvm.h`, `system/devcon/sys_devcon.h`,
+`peripheral/int/plib_int.h` and `<sys/kmem.h>`, none of which exist outside
+the MPLAB X / XC32 install -- so the address classification is modelled as a
+pure function. Unlike `test_998`, the boundary *constants* are not copied:
+`system_config.h` (same directory as `nvm.c`) has no hardware `#include`s at
+all, so this test includes it -- and the hardware-free `nvm.h` -- directly
+for the real `APP_FLASH_BASE_ADDRESS` / `APP_FLASH_END_ADDRESS` /
+`APP_FLASH_PFM_END_ADDRESS` and the real `HEX_RECORD_STATUS` enum. The
+Makefile guards pin that `nvm.c`'s real branch structure (the new `else if`
+condition, its `return HEX_REC_PGM_ERROR`, and that the original
+boot-area/config-word skip branch is still present exactly once) still
+matches what the model assumes, and that `system_config.h` still defines
+`APP_FLASH_PFM_END_ADDRESS` as `(APP_FLASH_END_ADDRESS +
+APP_FLASH_UPPER_PANEL_SIZE)`.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a

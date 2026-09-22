@@ -106,6 +106,23 @@ SUSPENDREASON_BIN := run_985_tests
 # THAT, in three parts mirroring SUSPEND_BIN's three.
 STARTARM_BIN := run_1121_tests
 
+# #1098: the shared-SCPI-response-buffer Take/Give pairing of the four reply
+# callbacks that used to format into a stack-local array --
+# SCPI_SysLogLevelSet / SysLogLevelGet / SysLogLevelAllSet (SCPIInterface.c)
+# and SCPI_StorageSDInfo (SCPIStorageSD.c).
+#
+# Same technique and same reason as SYSINFO_BIN and STARTARM_BIN: neither file
+# is includable on the host (SCPI999_BIN established that for SCPIInterface.c,
+# BENCH_BIN for SCPIStorageSD.c), so the control-flow shape of each callback is
+# re-implemented against a mock Take/Give/write and the pre-/post-fix shapes
+# compared.
+#
+# It copies ONE constant, SCPI_RESPONSE_BUF_SIZE, pinned by guard 1 below. It
+# deliberately does NOT copy LOG_MODULE_COUNT -- every loop assertion is swept
+# over counts 0..12 instead, so adding a log module cannot stale this file and
+# no grep guard is needed for it.
+REPLYBUF_BIN := run_1098_tests
+
 # #164: JSON_StringEscape.h is header-only and dependency-free for the same
 # reason AD7609Scale.h is -- the pure byte-escaping logic was split out of
 # JSON_Encoder.c, which is unusable on a host (it pulls in
@@ -326,6 +343,35 @@ SD_MGR_SRC    := ../../firmware/src/services/sd_card_services/sd_card_manager.c
 SD_MGR_HDR    := ../../firmware/src/services/sd_card_services/sd_card_manager.h
 PYTHON        ?= python3
 
+# #1039 (PR #1116, split from the parked #1110): the four LOG_E messages
+# #1039 shortened, measured against the SAME ceiling $(SDLOG_BIN) measures --
+# Logger's real truncation, not an arithmetic estimate of it. Deliberately
+# independent of PR #1110's parked tests/host/gen_1039_log_budget.py /
+# tools/lint/log_budget.py (13 confirmed defects across two audit rounds per
+# PR #1116's own description, while the four message edits themselves drew
+# zero findings in either round -- which is why #1116 exists as the
+# split-out PR). So unlike $(SDLOG_BIN) above, this target extracts NOTHING
+# at build time and generates no header: it hardcodes copies of the four
+# shipped format strings (and, as a frozen historical control proving the
+# harness has teeth, the four pre-#1039 originals) and reproduces
+# LogMessageFormatImpl's truncation against them directly -- the same
+# technique $(SDLOG_BIN) uses for its own strings, just without the
+# extraction step, which is proportionate to a 62-line message change.
+#
+# What COULD silently drift is therefore the four hardcoded copies, not a
+# generated ceiling -- so the recipe greps each shipped format string's
+# literal source lines back out of the three files #1039 touched and fails
+# the build if any no longer matches exactly, the same technique
+# $(SDLOG_BIN)'s own REASON_* guard above uses for SD_SuspendReasonText()'s
+# three return strings. The three Logger.h/.c ceiling lines get the same
+# plain grep treatment (restated here rather than shared with $(SDLOG_BIN)'s
+# sed extraction, since nothing downstream needs the numbers as a generated
+# header).
+LOGCEIL_BIN  := run_1039_log_ceiling_tests
+LOGCEIL_SRC1 := ../../firmware/src/app_freertos.c
+LOGCEIL_SRC2 := ../../firmware/src/services/SCPI/SCPIADC.c
+LOGCEIL_SRC3 := ../../firmware/src/services/wifi_services/wifi_manager.c
+
 # Every binary depends on this file as well as on its sources. Two of the
 # targets below carry GUARDS in their recipes -- greps that fail the build when
 # the firmware text they model has moved -- and a guard that is only re-run when
@@ -363,6 +409,21 @@ RECIPES := Makefile
 DAC980_BIN := run_980_tests
 DAC7718_SRC := ../../firmware/src/HAL/DAC7718/DAC7718.c
 SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
+AOUTSAMPLE_SRC := ../../firmware/src/state/data/AOutSample.h
+
+# #1034: DAC_EnsureHardwareInitialized's reinit path never reconciled
+# BOARDDATA_AOUT_LATEST, so SOUR:VOLT:LEV? kept confidently reporting a
+# pre-power-loss voltage after a power cycle reset every physical output.
+DACREINIT_BIN := run_1034_tests
+
+# #1154: CONFigure:ADC:chanCALM / chanCALB accepted ANY double for the
+# calibration coefficient, including one that overflows to +-inf, and stored
+# it with no SCPI error (`CONF:ADC:chanCALB 0,1e400` -> `chanCALB? 0` reads
+# `inf`, SYST:ERR? reads clean -- measured on an NQ1, serial
+# 7E2837886201026A). See test_1154_adc_cal_coefficient_finite.c's header for
+# the fix's scope (setter-only; the magnitude/range question and #908's boot
+# re-stamping path are deliberately NOT this guard's job).
+CALFINITE_BIN := run_1154_tests
 
 # #1057 (#913's twin) folded dac7718_WaitStat's SPI2 busy-spins onto the same
 # bounded-spin-then-vTaskDelay(1) shape #913 gave UserSpi.c's spi_XferByte;
@@ -779,6 +840,362 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
 
+$(DACREINIT_BIN): test_1034_dac_aout_invalidated_on_reinit.c test_framework.h $(SCPIDAC_SRC) $(AOUTSAMPLE_SRC) $(RECIPES)
+	@grep -qE '^[[:space:]]*uint32_t Timestamp;' $(AOUTSAMPLE_SRC) \
+	  || { echo "ERROR: AOutSample no longer has a 'uint32_t Timestamp;' field in $(AOUTSAMPLE_SRC)."; \
+	       echo "       test_1034's MockAOutSample mirrors this exact field -- re-derive the test."; \
+	       exit 1; }
+	@test "$$(grep -c '\.Timestamp = SCPIDAC_ValidTimestamp()' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: '.Timestamp = SCPIDAC_ValidTimestamp()' count in $(SCPIDAC_SRC) changed from 2."; \
+	       echo "       SCPI_DACVoltageSet's single-channel AND all-channel branches must both stamp"; \
+	       echo "       Timestamp on every successful publish -- test_1034's set_shape() models both."; \
+	       echo "       If this count changed, one branch may have stopped stamping, or reverted to a"; \
+	       echo "       bare xTaskGetTickCount() call (round-1 Qodo finding: tick 0 is a legitimate"; \
+	       echo "       return value and collides with the Timestamp==0 unknown sentinel) -- re-derive."; \
+	       exit 1; }
+	@grep -qF 'return (tick == 0) ? 1u : (uint32_t)tick;' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: SCPIDAC_ValidTimestamp's tick-zero substitution is gone from $(SCPIDAC_SRC)."; \
+	       echo "       test_1034's set_shape() models this exact remap -- re-derive the test if it moved."; \
+	       exit 1; }
+	@test "$$(grep -c 'pSample->Timestamp < 1' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: 'pSample->Timestamp < 1' count in $(SCPIDAC_SRC) changed from 2."; \
+	       echo "       Audit correction on PR #1147 (disposition fix_now) made the all-channel"; \
+	       echo "       form of SCPI_DACVoltageGet use the IDENTICAL staleness check as the"; \
+	       echo "       single-channel form (both now error a channel whose Timestamp is still 0,"; \
+	       echo "       instead of the all-channel form substituting a fabricated 0.0V). test_1034's"; \
+	       echo "       get_single_FIXED() and get_all_FIXED() both mirror this exact check --"; \
+	       echo "       re-derive both if this moved, and re-derive the whole test file if only one"; \
+	       echo "       of the two branches still uses it (that would reopen the asymmetry #1147"; \
+	       echo "       exists to close)."; \
+	       exit 1; }
+	@grep -qF 'const AOutSample invalidatedSample = {0};' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: DAC_EnsureHardwareInitialized's post-reinit invalidation local"; \
+	       echo "       ('invalidatedSample') is gone from $(SCPIDAC_SRC). test_1034's"; \
+	       echo "       reinit_invalidate_shape() mirrors this loop -- re-derive the test."; \
+	       exit 1; }
+	@i=`grep -nF 'bool initSucceeded = DAC7718_Init(dacInstanceId, 1);' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 v=`grep -nF 'const AOutSample invalidatedSample = {0};' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 f=`grep -nF 'if (!initSucceeded) {' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 p=`grep -nF 'dacHardwareInitialized = true;   // publish READY ...' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 test -n "$$i" && test -n "$$v" && test -n "$$f" && test -n "$$p" \
+	   && test "$$i" -lt "$$v" && test "$$v" -lt "$$f" && test "$$f" -lt "$$p" \
+	   || { echo "ERROR: #1034's invalidation step is no longer ordered AFTER DAC7718_Init() runs,"; \
+	        echo "       BEFORE the initSucceeded failure check, and BEFORE dacHardwareInitialized"; \
+	        echo "       is published true in $(SCPIDAC_SRC) (init='$$i' invalidate='$$v'"; \
+	        echo "       fail-check='$$f' publish='$$p')."; \
+	        echo "       Invalidating before the reset actually happens, or skipping invalidation"; \
+	        echo "       on a DAC7718_Init() FAILURE (round-2 Qodo finding, importance 10 --"; \
+	        echo "       DAC7718_Init()'s post-reset-pulse failure paths still leave the hardware"; \
+	        echo "       physically reset), or invalidating after READY is already published, all"; \
+	        echo "       reopen the confidently-wrong readback #1034 exists to close -- re-derive"; \
+	        echo "       the test against the new placement."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(DACREINIT_BIN) test_1034_dac_aout_invalidated_on_reinit.c
+
+# #1154: build-time guard that the real SCPIADC.c still rejects a non-finite
+# CONF:ADC:chanCALM/chanCALB coefficient -- see the comment above
+# $(CALFINITE_BIN)'s definition and test_1154_adc_cal_coefficient_finite.c's
+# header for what this fix is (and is deliberately not) in scope for.
+#
+# Tightened per PR #1157 review (worker pre-audit comment, 2026-09-21): the
+# original guard was presence-only (`grep -qF`, no counts, no negative-form
+# check, no comment-stripping), and TWO mutants of SCPIADC.c passed it AND
+# the host test outright: (A) `if (isfinite(value))` -> `if (!isfinite(value))`
+# -- accepts inf/NaN and rejects every finite value, worse than the #1154
+# defect -- and (B) `if (!AdcCalCoefficientFinite(...)) {` ->
+# `(void)AdcCalCoefficientFinite(...); if (0) {` -- reinstates the #1154
+# defect exactly, since the helper is still called (and still logs) but its
+# return value is discarded. Mirrors $(SCAN1112_BIN)'s technique in this
+# SAME file: strip comment lines first, pin exact counts (not mere
+# presence), pin an explicit negative-form's absence, and pin ordering.
+#
+# Tightened AGAIN, same PR, adversarial audit round 2 (2026-09-21): presence
+# + count + ORDER still cannot see NESTING. Moving the closing brace of
+# `if (isfinite(value)) {` down to sit right before `return true;` --
+#     if (isfinite(value)) {
+#     }
+#     return true;             /* now unconditional */
+#     LOG_E(...); SCPI_ErrorPush(...); return false;   /* both dead */
+# -- keeps npos/nneg/nerr/nt/nf at 1/0/1/1/1 and keeps isfinite-line <
+# true-line < false-line, so it passed every check above outright and is
+# the #1154 defect again (accepts inf/NaN unconditionally). Setter-side
+# guards (mbody/bbody below) were ALREADY immune to this exact trick --
+# they pin that `return SCPI_RES_ERR;` is the line IMMEDIATELY after the
+# call, i.e. adjacency, not just ordering. This gives the accept arm the
+# same treatment: `if (isfinite(value)) {`, `return true;` and the closing
+# `}` must be three CONSECUTIVE lines, checked the same line-oriented way
+# (no parser) by indexing p+1/p+2 off the isfinite line already found above.
+#
+# That still isn't enough on its own: a `/* */` block comment or a
+# `#if 0`/`#endif` span, with the delimiters on their own lines, hides the
+# pinned text from a human and from the CPU while leaving it perfectly
+# intact for `grep -v '^[[:space:]]*[*/]'` to find (that filter only drops
+# lines that themselves OPEN with `*` or `/`, not a comment SPAN) -- so
+# `if (isfinite(value)) { return true; }` sitting dead inside either wrapper
+# still satisfies every check above, including the new adjacency one,
+# while the compiler never runs it. Rather than hand-roll a second
+# comment/preprocessor state machine (this project's own history is
+# explicit that a hand-rolled parser-substitute is the wrong tool -- build
+# the oracle from the reference implementation), this re-extracts the SAME
+# range through the real C preprocessor (`$(CC) -E -P -xc -`, no headers
+# included, so no macro surprises) and re-pins presence + the same
+# adjacency triple against ITS output. Comments and disabled `#if 0` spans
+# vanish under real preprocessing the way they vanish at actual compile
+# time; live code does not, so this is a strict tightening, not a
+# different check -- verified byte-identical to the plain-text extraction
+# on the real (unmutated) source.
+#
+# Extended AGAIN, same PR (PR #1157 review comment
+# https://github.com/daqifi/daqifi-nyquist-firmware/pull/1157#issuecomment-5764273765):
+# the same comment/`#if 0` hiding trick reproduces against the CALM and CALB
+# SETTER guards (mbody/bbody below) exactly as it did against the helper --
+# `grep -v '^[[:space:]]*[*/]'` strips only the `/*`/`*/` delimiter lines
+# themselves, not the guarded call-shape text between them, so wrapping
+# either setter's `if (!AdcCalCoefficientFinite(...)) { return SCPI_RES_ERR;
+# }` in a block comment or `#if 0`/`#endif` still satisfies every plain-text
+# check below (presence, write-count, and check-before-write adjacency)
+# while the compiler discards it, reinstating #1154 on that channel's
+# setter. mbody/bbody now get the SAME preprocessor re-extraction and
+# re-pin (call-shape presence + immediate `return SCPI_RES_ERR;` adjacency)
+# against their own `$(CC) -E -P -xc -` output, right after each one's
+# existing plain-text checks -- same instrument, same technique, applied to
+# all three guarded bodies in this rule rather than fbody alone. Every
+# existing plain-text check on mbody/bbody is unchanged; this only adds a
+# second, stricter pass on top, per "keep every existing check that already
+# works."
+#
+# KNOWN, ACCEPTED RESIDUAL (adversarial audit round on PR #1157, 2026-09-21,
+# CONFIRMED and reproduced independently): every check below -- presence,
+# counts, ordering, adjacency, and the preprocessor re-extraction above -- is
+# a text/preprocessor scan, so none of it can observe RUNTIME control flow.
+# Wrapping a setter's WHOLE `if (!AdcCalCoefficientFinite(...)) { return
+# SCPI_RES_ERR; }` block in a runtime `if (0) { ... }` -- not the
+# preprocessor's `#if 0`, which the pass above DOES catch -- leaves the
+# guarded text, its ordering and its adjacency to the write completely
+# intact, so it satisfies every check in this rule outright while the
+# compiler never executes the block: the mutated setter accepts and stores a
+# non-finite coefficient with no SCPI error, reinstating #1154 exactly, and
+# this whole suite still reports green (`run_1154_tests` still passes 6
+# tests / 18 assertions, because that binary only ever exercises its own
+# re-implemented model, never this file). This is NOT a hypothetical --
+# reproduced against the real source at this PR's head.
+#
+# This is intentionally NOT closed with a fourth special-cased text pattern.
+# Arbitrary C admits unboundedly many ways to make matched text ineffective
+# (this is the third or fourth shape found in this rule alone), and this
+# guard is already ~190 Makefile lines pinning a 6-line helper -- the
+# durable fix is not another pattern here but to stop proving firmware
+# contracts by splicing and grepping, which is tracked project-wide as
+# firmware issue #1033
+# (https://github.com/daqifi/daqifi-nyquist-firmware/issues/1033) and is
+# where this residual is recorded, not silently.
+#
+# Because this guard cannot close that class, it is NOT the authoritative
+# proof that a non-finite coefficient is rejected on real firmware -- it is
+# a fast, host-side check that the source has not visibly regressed in the
+# shapes a text scan can see. The authoritative behavioural regression is
+# daqifi-python-test-suite PR #464
+# (https://github.com/daqifi/daqifi-python-test-suite/pull/464),
+# test_1154_adc_cal_coefficient_finite.py, which drives the real BUILT
+# firmware over SCPI on hardware and so catches every mutation class above,
+# the runtime `if (0)` bypass included, because it observes what the device
+# actually does rather than what its source text says. Bench-verified 8
+# PASS / 0 FAIL at firmware crc32 `553E07E4`, built from firmware commit
+# `39d1381a8` on this same branch; SCPIADC.c is byte-identical from that
+# commit through this rule's own PR head. That test-suite regression is NOT
+# run in CI (it needs a physical board), so in CI this Makefile guard is the
+# ONLY continuously-enforced check of this behaviour, and it is the weaker
+# of the two.
+$(CALFINITE_BIN): test_1154_adc_cal_coefficient_finite.c test_framework.h $(SCPIADC_SRC) $(RECIPES)
+	@fbody=`sed -n '/^static bool AdcCalCoefficientFinite(/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$fbody" \
+	   || { echo "ERROR: AdcCalCoefficientFinite() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0 -- the guards below can see"; \
+	        echo "       nothing, and a guard that examines nothing must fail."; \
+	        exit 1; }; \
+	 npos=`printf '%s\n' "$$fbody" | grep -cF 'if (isfinite(value)) {'`; \
+	 nneg=`printf '%s\n' "$$fbody" | grep -cF '!isfinite'`; \
+	 nerr=`printf '%s\n' "$$fbody" | grep -cF 'SCPI_ERROR_DATA_OUT_OF_RANGE'`; \
+	 nt=`printf '%s\n' "$$fbody" | grep -cE 'return[[:space:]]+true;'`; \
+	 nf=`printf '%s\n' "$$fbody" | grep -cE 'return[[:space:]]+false;'`; \
+	 test "$$npos" -eq 1 && test "$$nneg" -eq 0 && test "$$nerr" -eq 1 \
+	   && test "$$nt" -eq 1 && test "$$nf" -eq 1 \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC) no longer has"; \
+	        echo "       exactly the shape this guard pins (positive 'if (isfinite(value))"; \
+	        echo "       {' occurrences=$$npos, negated '!isfinite' occurrences=$$nneg,"; \
+	        echo "       SCPI_ERROR_DATA_OUT_OF_RANGE=$$nerr, return true=$$nt,"; \
+	        echo "       return false=$$nf; want 1 0 1 1 1). An inverted branch"; \
+	        echo "       (isfinite -> !isfinite) accepts inf/NaN and rejects every"; \
+	        echo "       finite value -- worse than the #1154 defect -- and it used to"; \
+	        echo "       pass this guard outright; test_1154's SetCalCoefficient()"; \
+	        echo "       models the correct polarity and would pass regardless."; \
+	        exit 1; }; \
+	 p=`printf '%s\n' "$$fbody" | grep -nF 'if (isfinite(value)) {' | cut -d: -f1`; \
+	 t=`printf '%s\n' "$$fbody" | grep -nE 'return[[:space:]]+true;' | cut -d: -f1`; \
+	 f=`printf '%s\n' "$$fbody" | grep -nE 'return[[:space:]]+false;' | cut -d: -f1`; \
+	 test "$$p" -lt "$$t" && test "$$t" -lt "$$f" \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC) no longer returns"; \
+	        echo "       true INSIDE the isfinite() branch and false afterward"; \
+	        echo "       (isfinite-line='$$p' return-true='$$t' return-false='$$f';"; \
+	        echo "       want isfinite < true < false)."; \
+	        exit 1; }; \
+	 tadj=`printf '%s\n' "$$fbody" | sed -n "$$((p+1))p"`; \
+	 badj=`printf '%s\n' "$$fbody" | sed -n "$$((p+2))p"`; \
+	 printf '%s\n' "$$tadj" | grep -qE '^[[:space:]]*return[[:space:]]+true;[[:space:]]*$$' \
+	   && printf '%s\n' "$$badj" | grep -qE '^[[:space:]]*}[[:space:]]*$$' \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC) no longer has"; \
+	        echo "       'return true;' and the closing brace as the two lines"; \
+	        echo "       IMMEDIATELY following 'if (isfinite(value)) {' (line"; \
+	        echo "       $$p+1 got '$$tadj', line $$p+2 got '$$badj'; want"; \
+	        echo "       'return true;' then '}')."; \
+	        echo "       The count and ordering checks above pin PRESENCE and"; \
+	        echo "       ORDER but not NESTING: moving the closing brace down to"; \
+	        echo "       sit just above an unconditional 'return true;' still"; \
+	        echo "       satisfies every one of them while turning the isfinite()"; \
+	        echo "       test into a no-op that accepts inf/NaN unconditionally --"; \
+	        echo "       this IS the #1154 defect, reinstated through the one"; \
+	        echo "       shape those checks cannot see."; \
+	        exit 1; }; \
+	 fbodycpp=`sed -n '/^static bool AdcCalCoefficientFinite(/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | $(CC) -E -P -xc - 2>/dev/null`; \
+	 pc=`printf '%s\n' "$$fbodycpp" | grep -cF 'if (isfinite(value)) {'`; \
+	 test "$$pc" -eq 1 \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC): the"; \
+	        echo "       'if (isfinite(value)) {' this guard pins survives the plain"; \
+	        echo "       comment-stripping grep above (npos=1) but DISAPPEARS when the"; \
+	        echo "       body is run through the real C preprocessor (occurrences=$$pc,"; \
+	        echo "       want 1) -- that only happens when it is dead text: inside a"; \
+	        echo "       /* block comment */ whose delimiters sit on their own lines, or"; \
+	        echo "       inside a '#if 0' / '#endif' span. Either shape still SHOWS the"; \
+	        echo "       check to every line-oriented grep above while the compiler"; \
+	        echo "       discards it -- so the check never runs and a non-finite"; \
+	        echo "       coefficient reaches the runtime array again. This IS the #1154"; \
+	        echo "       defect, reinstated by disabling the guard rather than editing it."; \
+	        exit 1; }; \
+	 pc1=`printf '%s\n' "$$fbodycpp" | grep -nF 'if (isfinite(value)) {' | cut -d: -f1`; \
+	 tadjc=`printf '%s\n' "$$fbodycpp" | sed -n "$$((pc1+1))p"`; \
+	 badjc=`printf '%s\n' "$$fbodycpp" | sed -n "$$((pc1+2))p"`; \
+	 printf '%s\n' "$$tadjc" | grep -qE '^[[:space:]]*return[[:space:]]+true;[[:space:]]*$$' \
+	   && printf '%s\n' "$$badjc" | grep -qE '^[[:space:]]*}[[:space:]]*$$' \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC): after real"; \
+	        echo "       preprocessing, 'return true;' and the closing brace are no"; \
+	        echo "       longer the two lines immediately following"; \
+	        echo "       'if (isfinite(value)) {' (line $$pc1+1 got '$$tadjc', line"; \
+	        echo "       $$pc1+2 got '$$badjc') -- same defect as the plain-text adjacency"; \
+	        echo "       check above, surviving because of an intervening comment or"; \
+	        echo "       preprocessor directive that this preprocessed copy strips."; \
+	        exit 1; }
+	@mbody=`sed -n '/^static scpi_result_t ADCChanCalmSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$mbody" \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0."; \
+	        exit 1; }; \
+	 nc=`printf '%s\n' "$$mbody" | grep -cF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {'`; \
+	 nw=`printf '%s\n' "$$mbody" | grep -cF '.CalM = param2;'`; \
+	 test "$$nc" -eq 1 && test "$$nw" -eq 1 \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC) no longer calls"; \
+	        echo "       AdcCalCoefficientFinite() in the exact guarded-call shape this"; \
+	        echo "       guard pins, or CalM is written more/fewer than once (call-shape"; \
+	        echo "       occurrences=$$nc, CalM writes=$$nw; want 1 1). Discarding the"; \
+	        echo "       call's return value (e.g. '(void)Adc...; if (0) {') still calls"; \
+	        echo "       the helper and still logs, but reinstates the #1154 defect"; \
+	        echo "       exactly -- a non-finite coefficient reaches the runtime array"; \
+	        echo "       again. A second, unguarded CalM write is the same defect by a"; \
+	        echo "       different door."; \
+	        exit 1; }; \
+	 c=`printf '%s\n' "$$mbody" | grep -nF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {' | cut -d: -f1`; \
+	 w=`printf '%s\n' "$$mbody" | grep -nF '.CalM = param2;' | cut -d: -f1`; \
+	 nextline=`printf '%s\n' "$$mbody" | sed -n "$$((c+1))p"`; \
+	 test "$$c" -lt "$$w" \
+	   && printf '%s\n' "$$nextline" | grep -qE 'return[[:space:]]+SCPI_RES_ERR;' \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC) no longer returns"; \
+	        echo "       SCPI_RES_ERR; as the line right after the finite-check, before"; \
+	        echo "       the CalM write (check='$$c' CalM-write='$$w', next line after"; \
+	        echo "       check='$$nextline'). An emptied-out if-block still shows the"; \
+	        echo "       call but falls through to the write on a non-finite value --"; \
+	        echo "       this IS the #1154 defect."; \
+	        exit 1; }
+	@mbodycpp=`sed -n '/^static scpi_result_t ADCChanCalmSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | $(CC) -E -P -xc - 2>/dev/null`; \
+	 ncc=`printf '%s\n' "$$mbodycpp" | grep -cF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {'`; \
+	 test "$$ncc" -eq 1 \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC): the guarded-call"; \
+	        echo "       shape this guard pins survives the plain comment-stripping grep"; \
+	        echo "       above (nc=1) but DISAPPEARS when the body is run through the real"; \
+	        echo "       C preprocessor (occurrences=$$ncc, want 1) -- that only happens"; \
+	        echo "       when it is dead text: inside a /* block comment */ whose"; \
+	        echo "       delimiters sit on their own lines, or inside a '#if 0' / '#endif'"; \
+	        echo "       span. Either shape still SHOWS the check to every line-oriented"; \
+	        echo "       grep above while the compiler discards it -- so the check never"; \
+	        echo "       runs and a non-finite CALM coefficient reaches the runtime array"; \
+	        echo "       again. This IS the #1154 defect, reinstated by disabling the"; \
+	        echo "       guard rather than editing it."; \
+	        exit 1; }; \
+	 cc=`printf '%s\n' "$$mbodycpp" | grep -nF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {' | cut -d: -f1`; \
+	 nextlinec=`printf '%s\n' "$$mbodycpp" | sed -n "$$((cc+1))p"`; \
+	 printf '%s\n' "$$nextlinec" | grep -qE 'return[[:space:]]+SCPI_RES_ERR;' \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC): after real"; \
+	        echo "       preprocessing, 'return SCPI_RES_ERR;' is no longer the line"; \
+	        echo "       immediately following the finite-check (line $$cc+1 got"; \
+	        echo "       '$$nextlinec') -- same defect as the plain-text adjacency check"; \
+	        echo "       above, surviving because of an intervening comment or"; \
+	        echo "       preprocessor directive that this preprocessed copy strips."; \
+	        exit 1; }
+	@bbody=`sed -n '/^static scpi_result_t ADCChanCalbSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$bbody" \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0."; \
+	        exit 1; }; \
+	 nc=`printf '%s\n' "$$bbody" | grep -cF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {'`; \
+	 nw=`printf '%s\n' "$$bbody" | grep -cF '.CalB = param2;'`; \
+	 test "$$nc" -eq 1 && test "$$nw" -eq 1 \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC) no longer calls"; \
+	        echo "       AdcCalCoefficientFinite() in the exact guarded-call shape this"; \
+	        echo "       guard pins, or CalB is written more/fewer than once (call-shape"; \
+	        echo "       occurrences=$$nc, CalB writes=$$nw; want 1 1). Discarding the"; \
+	        echo "       call's return value (e.g. '(void)Adc...; if (0) {') still calls"; \
+	        echo "       the helper and still logs, but reinstates the #1154 defect"; \
+	        echo "       exactly -- a non-finite coefficient reaches the runtime array"; \
+	        echo "       again. A second, unguarded CalB write is the same defect by a"; \
+	        echo "       different door."; \
+	        exit 1; }; \
+	 c=`printf '%s\n' "$$bbody" | grep -nF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {' | cut -d: -f1`; \
+	 w=`printf '%s\n' "$$bbody" | grep -nF '.CalB = param2;' | cut -d: -f1`; \
+	 nextline=`printf '%s\n' "$$bbody" | sed -n "$$((c+1))p"`; \
+	 test "$$c" -lt "$$w" \
+	   && printf '%s\n' "$$nextline" | grep -qE 'return[[:space:]]+SCPI_RES_ERR;' \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC) no longer returns"; \
+	        echo "       SCPI_RES_ERR; as the line right after the finite-check, before"; \
+	        echo "       the CalB write (check='$$c' CalB-write='$$w', next line after"; \
+	        echo "       check='$$nextline'). An emptied-out if-block still shows the"; \
+	        echo "       call but falls through to the write on a non-finite value --"; \
+	        echo "       this IS the #1154 defect."; \
+	        exit 1; }
+	@bbodycpp=`sed -n '/^static scpi_result_t ADCChanCalbSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | $(CC) -E -P -xc - 2>/dev/null`; \
+	 nccb=`printf '%s\n' "$$bbodycpp" | grep -cF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {'`; \
+	 test "$$nccb" -eq 1 \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC): the guarded-call"; \
+	        echo "       shape this guard pins survives the plain comment-stripping grep"; \
+	        echo "       above (nc=1) but DISAPPEARS when the body is run through the real"; \
+	        echo "       C preprocessor (occurrences=$$nccb, want 1) -- that only happens"; \
+	        echo "       when it is dead text: inside a /* block comment */ whose"; \
+	        echo "       delimiters sit on their own lines, or inside a '#if 0' / '#endif'"; \
+	        echo "       span. Either shape still SHOWS the check to every line-oriented"; \
+	        echo "       grep above while the compiler discards it -- so the check never"; \
+	        echo "       runs and a non-finite CALB coefficient reaches the runtime array"; \
+	        echo "       again. This IS the #1154 defect, reinstated by disabling the"; \
+	        echo "       guard rather than editing it."; \
+	        exit 1; }; \
+	 ccb=`printf '%s\n' "$$bbodycpp" | grep -nF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {' | cut -d: -f1`; \
+	 nextlinecb=`printf '%s\n' "$$bbodycpp" | sed -n "$$((ccb+1))p"`; \
+	 printf '%s\n' "$$nextlinecb" | grep -qE 'return[[:space:]]+SCPI_RES_ERR;' \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC): after real"; \
+	        echo "       preprocessing, 'return SCPI_RES_ERR;' is no longer the line"; \
+	        echo "       immediately following the finite-check (line $$ccb+1 got"; \
+	        echo "       '$$nextlinecb') -- same defect as the plain-text adjacency check"; \
+	        echo "       above, surviving because of an intervening comment or"; \
+	        echo "       preprocessor directive that this preprocessed copy strips."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(CALFINITE_BIN) test_1154_adc_cal_coefficient_finite.c
+
 # #988 added a FOURTH arm (the torn-down latch) between the live suspend reason
 # and the card advisory, so this guard now pins four markers, not three. The
 # order it pins IS the design decision the test asserts: dirFull -> suspend ->
@@ -945,6 +1362,213 @@ $(STARTARM_BIN): test_1121_start_streaming_arm_cascade.c test_framework.h \
 	        echo "       Re-read both before changing either."; \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(STARTARM_BIN) test_1121_start_streaming_arm_cascade.c
+
+# #1098 guard helper. Counts LITERAL occurrences of a pattern inside ONE
+# function body, bounded by the next column-0 `scpi_result_t` signature -- so
+# the counts below are per-callback and cannot be satisfied by one of the ~17
+# OTHER Take/Give sites elsewhere in the same file, which a whole-file
+# `grep -c` could not distinguish. index() is literal, so `()` and `;` in the
+# patterns need no regex escaping.
+#   $(1)=source file   $(2)=function name   $(3)=literal pattern
+CNT_IN_FN = awk -v fn="$(2)" -v pat='$(3)' \
+	'$$0 ~ "^(static )?scpi_result_t " fn "[(]" { f=1; next } \
+	 f && /^(static )?scpi_result_t /           { exit } \
+	 f && index($$0, pat)                       { n++ } \
+	 END { print n+0 }' $(1)
+
+# #1098 guard helper. Prints "<take line> <loop line> <give line>", relative to
+# the file, for one function body -- 0 for any marker not found.
+#   $(1)=source file   $(2)=function name
+ORDER_IN_FN = awk -v fn="$(2)" \
+	'$$0 ~ "^(static )?scpi_result_t " fn "[(]" { f=1; next } \
+	 f && /^(static )?scpi_result_t /                { exit } \
+	 f && index($$0, "SCPI_ResponseBuf_Take()")      { t=NR } \
+	 f && index($$0, "LOG_MODULE_COUNT; i++")        { l=NR } \
+	 f && index($$0, "SCPI_ResponseBuf_Give();")     { g=NR } \
+	 END { print t+0, l+0, g+0 }' $(1)
+
+# #1098: the Take/Give pairing of the four converted reply callbacks.
+#
+# GUARD 1 -- THE MIRRORED CONSTANT. test_1098 copies SCPI_RESPONSE_BUF_SIZE as
+# FW_RESPONSE_BUF_SIZE and drives SCPI_StorageSDInfo's `len >= capacity`
+# format-error branch off that exact value, so a stale copy would still build
+# and still pass while testing the wrong boundary.
+SCPI_BOUNDED_WRITE_H := ../../firmware/src/services/SCPI/ScpiBoundedWrite.h
+
+$(REPLYBUF_BIN): test_1098_scpi_reply_buffer_pairing.c test_framework.h \
+                $(SCPI_INTERFACE_SRC) $(SCPI_INTERFACE_H) $(SD_BENCH_SRC) \
+                $(SCPI_BOUNDED_WRITE_H) $(RECIPES)
+	@grep -qE '^[[:space:]]*#define[[:space:]]+SCPI_RESPONSE_BUF_SIZE[[:space:]]+2048U' \
+	     $(SCPI_INTERFACE_H) \
+	   || { echo "ERROR: SCPI_RESPONSE_BUF_SIZE is no longer 2048U in"; \
+	        echo "       $(SCPI_INTERFACE_H)."; \
+	        echo "       test_1098_scpi_reply_buffer_pairing.c mirrors it as"; \
+	        echo "       FW_RESPONSE_BUF_SIZE and drives SCPI_StorageSDInfo's"; \
+	        echo "       format-error boundary off that exact value -- a stale"; \
+	        echo "       copy tests the wrong boundary and still passes."; \
+	        exit 1; }
+# GUARD 2 -- EXACTLY ONE TAKE AND ONE GIVE PER LOG-LEVEL CALLBACK. This is the
+# whole contract (SCPIInterface.h:141-182) reduced to something grep can hold:
+# a second Give double-releases somebody else's hold, a missing one wedges
+# gScpiRespMutex for every SCPI callback on BOTH transports (they wait
+# portMAX_DELAY). Counted per function, so converting a NEIGHBOUR cannot
+# satisfy this for a callback that was reverted.
+	@for fn in SCPI_SysLogLevelSet SCPI_SysLogLevelGet SCPI_SysLogLevelAllSet; do \
+	   t=`$(call CNT_IN_FN,$(SCPI_INTERFACE_SRC),$$fn,SCPI_ResponseBuf_Take())`; \
+	   g=`$(call CNT_IN_FN,$(SCPI_INTERFACE_SRC),$$fn,SCPI_ResponseBuf_Give();)`; \
+	   test "$$t" = "1" && test "$$g" = "1" \
+	     || { echo "ERROR: $$fn in $(SCPI_INTERFACE_SRC) no longer holds the"; \
+	          echo "       shared SCPI response buffer exactly once"; \
+	          echo "       (found take=$$t give=$$g, both must be 1)."; \
+	          echo "       Either it was reverted to a stack-local reply buffer"; \
+	          echo "       (#1098, the bug) or its Take/Give no longer pair --"; \
+	          echo "       a missing Give wedges gScpiRespMutex for every SCPI"; \
+	          echo "       callback on both transports. test_1098 asserts the"; \
+	          echo "       1:1 pairing on every return path; re-read both."; \
+	          exit 1; }; \
+	 done
+# GUARD 3 -- ONE HOLD FOR THE WHOLE DUMP, in the two LOOP callbacks. Guard 2
+# alone does not pin this: a take/give moved INSIDE the loop still counts 1 and
+# 1 in the source while acquiring the mutex LOG_MODULE_COUNT times per query and
+# dropping the hold between lines, letting a peer callback interleave its reply.
+# Line order is what separates them -- take BEFORE the `for`, give AFTER it,
+# which is the SCPI_SysInfoTextGet shape the fix follows.
+# test_1098's per_iteration_syslog_get models the mutation this rejects.
+	@for fn in SCPI_SysLogLevelGet SCPI_SysLogLevelAllSet; do \
+	   set -- `$(call ORDER_IN_FN,$(SCPI_INTERFACE_SRC),$$fn)`; \
+	   test "$$1" -gt 0 && test "$$2" -gt 0 && test "$$3" -gt 0 \
+	     && test "$$1" -lt "$$2" && test "$$3" -gt "$$2" \
+	     || { echo "ERROR: $$fn in $(SCPI_INTERFACE_SRC) no longer takes the"; \
+	          echo "       shared buffer BEFORE its LOG_MODULE_COUNT loop and"; \
+	          echo "       gives it back AFTER (take='$$1' for='$$2' give='$$3';"; \
+	          echo "       0 means the marker is gone)."; \
+	          echo "       A take/give moved INSIDE the loop still pairs 1:1 --"; \
+	          echo "       guard 2 would not notice -- but blocks on the mutex"; \
+	          echo "       once per module and drops the hold between lines."; \
+	          echo "       test_1098 models that mutation"; \
+	          echo "       (per_iteration_syslog_get) and asserts against it."; \
+	          exit 1; }; \
+	 done
+# GUARD 4 -- SCPI_StorageSDInfo GIVES ON BOTH EXITS. The one site where the
+# port is not mechanical: pre-#1098 its `len < 0 || len >= sizeof(result)`
+# branch returned holding nothing, so it needed no release; post-fix it runs
+# under the hold and GAINS one. Hence ONE take and TWO gives -- a count of 1
+# means the error path leaks the mutex on every malformed CID.
+# test_1098's leaky_sd_info models exactly that omission.
+	@t=`$(call CNT_IN_FN,$(SD_BENCH_SRC),SCPI_StorageSDInfo,SCPI_ResponseBuf_Take())`; \
+	 g=`$(call CNT_IN_FN,$(SD_BENCH_SRC),SCPI_StorageSDInfo,SCPI_ResponseBuf_Give();)`; \
+	 test "$$t" = "1" && test "$$g" = "2" \
+	   || { echo "ERROR: SCPI_StorageSDInfo in $(SD_BENCH_SRC) is no longer one"; \
+	        echo "       take with a give on BOTH exits (found take=$$t give=$$g,"; \
+	        echo "       must be 1 and 2)."; \
+	        echo "       The second give is the format-error branch, which the"; \
+	        echo "       pre-#1098 code did not need because it held nothing"; \
+	        echo "       there. Drop it and a malformed CID wedges"; \
+	        echo "       gScpiRespMutex permanently. test_1098 models that"; \
+	        echo "       omission (leaky_sd_info) and asserts against it."; \
+	        exit 1; }
+# GUARD 5 -- THE THREE MIRRORED TIMING CONSTANTS. test_1098 copies
+# SCPI_LOGLEVEL_WRITE_BUDGET_MS as FW_LOGLEVEL_BUDGET_MS, and derives
+# MS_PER_STALLED_WRITE (1000) from SCPI_WRITE_MAX_RETRIES x
+# SCPI_WRITE_RETRY_DELAY_MS. Drift in any of them silently moves where the
+# guards fire while every assertion still passes -- guard2's "3 writes then
+# latch" arithmetic is exactly 2000 / 900.
+#
+# NOTE the trailing [[:space:]]*$$ rather than a bare $$: these sources have
+# CRLF line endings, so a `200$$` anchor never matches (the line ends "200\r").
+# [[:space:]] covers the CR. A bare $$ here fails CLOSED -- the guard reports
+# drift that has not happened -- which is the safe direction, but it would send
+# the next reader hunting a constant that never moved.
+	@grep -qE '^#define[[:space:]]+SCPI_LOGLEVEL_WRITE_BUDGET_MS[[:space:]]+2000U[[:space:]]*$$' \
+	     $(SCPI_INTERFACE_SRC) \
+	  && grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' \
+	     $(SCPI_INTERFACE_SRC) \
+	  && grep -qE '^#define[[:space:]]+SCPI_WRITE_RETRY_DELAY_MS[[:space:]]+5[[:space:]]*$$' \
+	     $(SCPI_INTERFACE_SRC) \
+	   || { echo "ERROR: one of SCPI_LOGLEVEL_WRITE_BUDGET_MS (2000U),"; \
+	        echo "       SCPI_WRITE_MAX_RETRIES (200) or"; \
+	        echo "       SCPI_WRITE_RETRY_DELAY_MS (5) has changed in"; \
+	        echo "       $(SCPI_INTERFACE_SRC)."; \
+	        echo "       test_1098 mirrors all three (FW_LOGLEVEL_BUDGET_MS and"; \
+	        echo "       MS_PER_STALLED_WRITE) and its guard-2 arithmetic depends"; \
+	        echo "       on the exact values. Update both together."; \
+	        exit 1; }
+# GUARD 5b -- THE TICK MODEL. ScpiBoundedWrite_Decide bounds the hold with
+# unsigned 32-bit subtraction and test_1098 asserts that across the wrap at
+# 0xFFFFFFFF; both are exact only while TickType_t is 32 bits and one tick is
+# one millisecond. Same two pins as test_947, against the same file.
+	@grep -qE '^#define[[:space:]]+configTICK_RATE_HZ[[:space:]]+\( \( TickType_t \) 1000 \)[[:space:]]*$$' \
+	     $(FREERTOS_CONFIG_SRC) \
+	  && grep -qE '^#define[[:space:]]+configTICK_TYPE_WIDTH_IN_BITS[[:space:]]+TICK_TYPE_WIDTH_32_BITS[[:space:]]*$$' \
+	     $(FREERTOS_CONFIG_SRC) \
+	   || { echo "ERROR: the tick model changed in $(FREERTOS_CONFIG_SRC)"; \
+	        echo "       (configTICK_RATE_HZ must be 1000 and"; \
+	        echo "       configTICK_TYPE_WIDTH_IN_BITS TICK_TYPE_WIDTH_32_BITS)."; \
+	        echo "       ScpiBoundedWrite_Decide's wrap arithmetic and"; \
+	        echo "       test_1098's wrap assertions both assume 32-bit"; \
+	        echo "       millisecond ticks; at another width the deadline is"; \
+	        echo "       wrong in a way no assertion here would show."; \
+	        exit 1; }
+# GUARD 6 -- THE DUMP LOOPS STAY BOUNDED. Guard 3 pins only WHERE the take and
+# give sit; it cannot see whether the writes between them are guarded. Both dump
+# callbacks must route every write through SysLogLevelWrite (which latches on a
+# short write and on the cumulative deadline) and must contain NO bare
+# context->interface->write, which would reintroduce the ~10 s hold #1098's own
+# fix created and this bound removes. test_1098 models the unbounded shape
+# (new_syslog_get_unbounded) and asserts it reaches ~10 s.
+	@for fn in SCPI_SysLogLevelGet SCPI_SysLogLevelAllSet; do \
+	   w=`$(call CNT_IN_FN,$(SCPI_INTERFACE_SRC),$$fn,SysLogLevelWrite)`; \
+	   b=`$(call CNT_IN_FN,$(SCPI_INTERFACE_SRC),$$fn,context->interface->write)`; \
+	   test "$$w" = "1" && test "$$b" = "0" \
+	     || { echo "ERROR: $$fn in $(SCPI_INTERFACE_SRC) no longer emits its"; \
+	          echo "       dump through the bounded SysLogLevelWrite helper"; \
+	          echo "       (found guarded=$$w bare-write=$$b; must be 1 and 0)."; \
+	          echo "       A bare context->interface->write inside the hold"; \
+	          echo "       restores the ~10 s worst-case stall that blocks every"; \
+	          echo "       SCPI callback on BOTH transports. test_1098 models"; \
+	          echo "       that unbounded shape and asserts against it."; \
+	          exit 1; }; \
+	 done
+# GUARD 7 -- THE PRODUCTION HELPER USES THE HOST-TESTED DECISION.
+#
+# This is the guard that makes guards 2-6 mean something. Guard 6 proves the
+# call sites NAME SysLogLevelWrite; it cannot see inside it. With the deadline
+# and the short-write latch written inline there, deleting the deadline check
+# was MEASURED to leave the entire host suite green -- the test was asserting
+# against its own re-implementation, so the production logic was unguarded by
+# construction (Qodo #1132 "Broken hold bounds can pass tests").
+#
+# The decision now lives in ScpiBoundedWrite.h, which the test compiles and
+# calls directly. So this guard pins the one thing that would silently reopen
+# the gap: SysLogLevelWrite reimplementing the decision inline instead of
+# delegating to it. Both predicates must appear in its body, and the test must
+# include the real header rather than a copy.
+#
+# Scoped by the helper's own signature -- it is `static void`, so the
+# scpi_result_t-anchored CNT_IN_FN cannot reach it; the body runs to the first
+# column-0 `}`.
+	@d=`awk '/^static void SysLogLevelWrite\(/{f=1} f&&index($$0,"ScpiBoundedWrite_Decide"){n++} f&&/^\}/{exit} END{print n+0}' $(SCPI_INTERFACE_SRC)`; \
+	 s=`awk '/^static void SysLogLevelWrite\(/{f=1} f&&index($$0,"ScpiBoundedWrite_IsShort"){n++} f&&/^\}/{exit} END{print n+0}' $(SCPI_INTERFACE_SRC)`; \
+	 test "$$d" = "1" && test "$$s" = "1" \
+	   || { echo "ERROR: SysLogLevelWrite in $(SCPI_INTERFACE_SRC) no longer"; \
+	        echo "       delegates to the host-tested predicates in"; \
+	        echo "       ScpiBoundedWrite.h (found Decide=$$d IsShort=$$s;"; \
+	        echo "       both must be 1)."; \
+	        echo "       Inlining that arithmetic again makes it untestable from"; \
+	        echo "       tests/host: SCPIInterface.c is not host-includable, so"; \
+	        echo "       the suite would silently go back to asserting against a"; \
+	        echo "       COPY of the algorithm. Deleting the real deadline check"; \
+	        echo "       was measured to leave the whole suite green that way."; \
+	        exit 1; }
+	@grep -q '#include "../../firmware/src/services/SCPI/ScpiBoundedWrite.h"' \
+	     test_1098_scpi_reply_buffer_pairing.c \
+	   || { echo "ERROR: test_1098_scpi_reply_buffer_pairing.c no longer includes"; \
+	        echo "       the REAL ScpiBoundedWrite.h. Its deadline and"; \
+	        echo "       short-write assertions would then be testing a local"; \
+	        echo "       re-implementation again, which is exactly the defect"; \
+	        echo "       the extraction closed."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(REPLYBUF_BIN) test_1098_scpi_reply_buffer_pairing.c
 
 SCPI999_WIRING_GUARD := check_999_createscpicontext_wiring.sh
 SCPI999_ARG_EXTRACTOR := extract_call_args.pl
@@ -1114,7 +1738,8 @@ $(SCPI999_BIN): test_999_scpi_context_storage_isolation.c test_framework.h \
 # deleted WAITLOOP_BIN's five guards along with the copy they pinned, so for
 # that one $(RECIPES) is now just ordinary recipe-change hygiene.)
 
-$(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(FW_RTOS_CFG) $(RECIPES)
+$(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) \
+             $(SCPI_BOUNDED_WRITE_H) $(FW_RTOS_CFG) $(RECIPES)
 	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_IFACE_SRC) \
 	  || { echo "ERROR: SCPI_WRITE_MAX_RETRIES is no longer '200' in $(SCPI_IFACE_SRC)."; \
 	       echo "       Update FW_WRITE_MAX_RETRIES in test_1004_help_write_abort.c and re-derive its numbers."; \
@@ -1133,6 +1758,46 @@ $(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(F
 	@grep -qE '^#define[[:space:]]+configTICK_TYPE_WIDTH_IN_BITS[[:space:]]+TICK_TYPE_WIDTH_32_BITS[[:space:]]*$$' $(FW_RTOS_CFG) \
 	  || { echo "ERROR: configTICK_TYPE_WIDTH_IN_BITS is no longer 32-bit in $(FW_RTOS_CFG) -- re-derive test_1004's wrap tests."; \
 	       exit 1; }
+	@# #1134 GUARD -- THE PRODUCTION HELPER USES THE HOST-TESTED DECISION.
+	@#
+	@# This is the guard that makes every OTHER assertion in test_1004 mean
+	@# something. The five greps above pin the CONSTANTS the test mirrors;
+	@# none of them can see inside ScpiHelpWrite. With the deadline and the
+	@# short-write latch written inline there -- which is how it shipped from
+	@# #1004 until #1134 -- the deadline check could be DELETED and this
+	@# binary still reported 8/8 passing, because mock_help_write carried its
+	@# own copy and was only ever checked against itself. That is not a
+	@# hypothesis: the identical deletion was MEASURED on SysLogLevelWrite and
+	@# left the ENTIRE host suite green (#1098, and the same guard there).
+	@#
+	@# So this pins the one thing that would silently reopen the gap:
+	@# ScpiHelpWrite reimplementing the decision inline instead of delegating
+	@# to ScpiBoundedWrite.h. Both predicates must appear in its body, exactly
+	@# once each, and the test must include the REAL header rather than a copy.
+	@#
+	@# Scoped by the helper's own signature -- it is `static void`, and its
+	@# body runs to the first column-0 `}`.
+	@d=`awk '/^static void ScpiHelpWrite\(/{f=1} f&&index($$0,"ScpiBoundedWrite_Decide"){n++} f&&/^\}/{exit} END{print n+0}' $(SCPI_IFACE_SRC)`; \
+	 s=`awk '/^static void ScpiHelpWrite\(/{f=1} f&&index($$0,"ScpiBoundedWrite_IsShort"){n++} f&&/^\}/{exit} END{print n+0}' $(SCPI_IFACE_SRC)`; \
+	 test "$$d" = "1" && test "$$s" = "1" \
+	   || { echo "ERROR: ScpiHelpWrite in $(SCPI_IFACE_SRC) no longer"; \
+	        echo "       delegates to the host-tested predicates in"; \
+	        echo "       ScpiBoundedWrite.h (found Decide=$$d IsShort=$$s;"; \
+	        echo "       both must be 1)."; \
+	        echo "       Inlining that arithmetic again makes it untestable from"; \
+	        echo "       tests/host: SCPIInterface.c is not host-includable, so"; \
+	        echo "       test_1004 would silently go back to asserting against a"; \
+	        echo "       COPY of the algorithm. Deleting the real deadline check"; \
+	        echo "       was measured to leave the whole suite green that way."; \
+	        exit 1; }
+	@grep -q '#include "../../firmware/src/services/SCPI/ScpiBoundedWrite.h"' \
+	     test_1004_help_write_abort.c \
+	   || { echo "ERROR: test_1004_help_write_abort.c no longer includes"; \
+	        echo "       the REAL ScpiBoundedWrite.h. Its deadline and"; \
+	        echo "       short-write assertions would then be testing a local"; \
+	        echo "       re-implementation again, which is exactly the defect"; \
+	        echo "       #1134 closed at this call site."; \
+	        exit 1; }
 	$(CC) $(CFLAGS) -o $(HELP_BIN) test_1004_help_write_abort.c
 
 $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $(SD_BENCH_SRC) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
@@ -1206,6 +1871,90 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 	 printf '#define FW_1000_NULL_FALLBACK    "%s"\n' "$$fallback" >> $(GEN_1000); \
 	 printf '#endif\n' >> $(GEN_1000)
 	$(CC) $(CFLAGS) -o $(SDLOG_BIN) test_1000_sd_log_arm_budget.c
+
+# #1039: see the LOGCEIL_BIN comment block above for what this proves and
+# why it is deliberately independent of the parked #1110 tooling.
+$(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
+                $(LOGCEIL_SRC1) $(LOGCEIL_SRC2) $(LOGCEIL_SRC3) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+LOG_MESSAGE_SIZE[[:space:]]+128[[:space:]]*$$' $(FW_LOG_H) \
+	  || { echo "ERROR: LOG_MESSAGE_SIZE is no longer '128' in $(FW_LOG_H)."; \
+	       echo "       Update FW_LOG_MESSAGE_SIZE in test_1039_log_message_ceiling.c and"; \
+	       echo "       re-derive LOG_BUDGET (and every asserted margin) before trusting it."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*size = vsnprintf\(buffer, LOG_MESSAGE_SIZE - 2, format, args\);[[:space:]]*$$' $(FW_LOG_C) \
+	  || { echo "ERROR: LogMessageFormatImpl's vsnprintf reserve is no longer"; \
+	       echo "       'LOG_MESSAGE_SIZE - 2' in $(FW_LOG_C). Update"; \
+	       echo "       FW_LOG_VSNPRINTF_RESERVE in test_1039_log_message_ceiling.c and"; \
+	       echo "       re-derive LOG_BUDGET before trusting it."; \
+	       exit 1; }
+	@grep -qE '^[[:space:]]*size = min\(\(LOG_MESSAGE_SIZE - 3\), size\);[[:space:]]*$$' $(FW_LOG_C) \
+	  || { echo "ERROR: LogMessageFormatImpl's clamp reserve is no longer"; \
+	       echo "       'LOG_MESSAGE_SIZE - 3' in $(FW_LOG_C) -- this is the reserve that"; \
+	       echo "       actually sets what survives. Update FW_LOG_CLAMP_RESERVE in"; \
+	       echo "       test_1039_log_message_ceiling.c and re-derive LOG_BUDGET (and every"; \
+	       echo "       asserted margin) before trusting it."; \
+	       exit 1; }
+# MSG1/MSG2's guards used to be two independent anchored grep pipelines
+# (opening->middle, middle->mask) not tied to the same line position --
+# audit wf_8f9d065d-2ef (CONFIRMED, medium) found that duplicating MSG2's
+# middle literal line immediately before its "<mask>." line passes both
+# pipelines (the duplicate itself satisfies the middle->mask pipeline)
+# while the shipped string grows past the 125-byte budget. check_log_block
+# below replaces both with ONE positional exact-block check per message:
+# the opening LOG_E(...) line must occur exactly once in the file, then
+# the N consecutive lines starting there (N = that message's literal line
+# count) are compared to the expected block as a single whole-block string
+# equality -- not a per-line or substring containment match, so an insert,
+# delete, duplicate, or edit of any one line inside the block fails it.
+	@check_log_block() { \
+	  f="$$1"; open_re="$$2"; n="$$3"; want="$$4"; label="$$5"; fmtname="$$6"; testfile="$$7"; \
+	  count=$$(grep -cE "$$open_re" "$$f"); \
+	  if [ "$$count" -ne 1 ]; then \
+	    echo "ERROR: $$label's opening LOG_E(...) line in $$f is expected exactly"; \
+	    echo "       once (anchored full-line match) but occurs $$count time(s)."; \
+	    echo "       A duplicate (or missing) opening line means the positional"; \
+	    echo "       block check below cannot trust where $$fmtname starts."; \
+	    return 1; \
+	  fi; \
+	  start=$$(grep -nE "$$open_re" "$$f" | head -1 | cut -d: -f1); \
+	  got=$$(sed -n "$${start},$$((start + n - 1))p" "$$f" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$$//'); \
+	  got=$$(printf '%s' "$$got" | tr '\n' '\001'); \
+	  wantnorm=$$(printf '%s' "$$want" | tr '\n' '\001'); \
+	  if [ "$$got" != "$$wantnorm" ]; then \
+	    echo "ERROR: $$label in $$f no longer matches $$fmtname in $$testfile exactly"; \
+	    echo "       (this compares the whole $$n-line block by position, not a"; \
+	    echo "       per-line or substring match -- an insert, delete, duplicate,"; \
+	    echo "       or edit of any one literal line trips it). Update the copy"; \
+	    echo "       and re-derive its length against LOG_BUDGET."; \
+	    return 1; \
+	  fi; \
+	}; \
+	want1=$$(printf '%s\n%s' \
+	  'LOG_E("Clock mismatch (#716): PBCLK3 %u Hz, built for %u Hz - "' \
+	  '"reprogram via PICkit/IPE, not a firmware update.",'); \
+	check_log_block $(LOGCEIL_SRC1) \
+	  '^[[:space:]]*LOG_E\("Clock mismatch \(#716\): PBCLK3 %u Hz, built for %u Hz - "[[:space:]]*$$' \
+	  2 "$$want1" "the #716 clock-mismatch LOG_E" MSG1_FORMAT test_1039_log_message_ceiling.c \
+	  || exit 1; \
+	want2=$$(printf '%s\n%s\n%s' \
+	  'LOG_E("CONFigure:ADC:CHANnel: channel %d not addressable; "' \
+	  '"two-arg form is <channel>,<state>, one-arg form is a "' \
+	  '"<mask>.",'); \
+	check_log_block $(LOGCEIL_SRC2) \
+	  '^[[:space:]]*LOG_E\("CONFigure:ADC:CHANnel: channel %d not addressable; "[[:space:]]*$$' \
+	  3 "$$want2" "the not-addressable-channel LOG_E" MSG2_FORMAT test_1039_log_message_ceiling.c \
+	  || exit 1
+	@grep -qF 'LOG_E("WiFi down and an SD card IS present on the shared bus - likely bus-incompatible; remove it (wiki: SD-Card-Compatibility)");' $(LOGCEIL_SRC3) \
+	  || { echo "ERROR: the SD-present LOG_E hint in $(LOGCEIL_SRC3) no longer matches"; \
+	       echo "       MSG3_TEXT in test_1039_log_message_ceiling.c. Update the copy and"; \
+	       echo "       re-derive its length against LOG_BUDGET."; \
+	       exit 1; }
+	@grep -qF 'LOG_E("WiFi down but SPI4 probes read CLEAR - remove any SD card; transfer-speed interference is not probe-visible");' $(LOGCEIL_SRC3) \
+	  || { echo "ERROR: the SPI4-clear LOG_E hint in $(LOGCEIL_SRC3) no longer matches"; \
+	       echo "       MSG4_TEXT in test_1039_log_message_ceiling.c. Update the copy and"; \
+	       echo "       re-derive its length against LOG_BUDGET."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(LOGCEIL_BIN) test_1039_log_message_ceiling.c
 
 # #985: build-time guard over SD_SuspendReasonText() -- see the merge-history
 # comment above `run:` below for how this target's registration in run/clean
@@ -1410,6 +2159,81 @@ $(SDLOG1029_GEN): gen_1029_log_budget.py $(SD_MGR_SRC) $(SD_MGR_HDR) $(FW_UTIL)/
 $(SDLOG1029_BIN): test_1029_sd_card_manager_log_budget.c test_framework.h $(SDLOG1029_GEN) $(RECIPES)
 	$(CC) $(CFLAGS) -o $(SDLOG1029_BIN) test_1029_sd_card_manager_log_budget.c
 
+# #1141 (fix/909-bootloader-lower-panel-erase): APP_ProgramHexRecord's
+# per-chunk address bounds test in the bootloader's nvm.c. The FIRST
+# bootloader coverage in this suite -- everything above tests firmware/src.
+#
+# nvm.c is not host-compilable: it #includes "peripheral/nvm/plib_nvm.h",
+# "system/devcon/sys_devcon.h", "peripheral/int/plib_int.h" and <sys/kmem.h>,
+# none of which exist outside the MPLAB X / XC32 install (confirmed
+# empirically -- `gcc -c` on it fails immediately on the first missing
+# header). So, like SCPIInterface.c and SCPIStorageSD.c above, this test
+# re-implements the address-classification SHAPE as a pure function and the
+# guards below pin that nvm.c's real branch structure still matches it.
+#
+# UNLIKE those, the two boundary CONSTANTS are not copied: system_config.h
+# (in the same directory) has no #includes at all and is hardware-free, so
+# test_1141_hex_record_upper_panel_error.c #includes it -- and nvm.h --
+# directly for the real APP_FLASH_BASE_ADDRESS / APP_FLASH_END_ADDRESS /
+# APP_FLASH_PFM_END_ADDRESS and the real HEX_RECORD_STATUS enum. Nothing
+# firmware-numeric is a copy here.
+#
+# #909 narrowed APP_FLASH_END_ADDRESS to the lower flash panel so an in-app
+# update stops erasing (and so destroying) the NVM settings pages, but left
+# APP_ProgramHexRecord's existing bounds test as the ONLY thing standing
+# between a record and an unerased write: an address in the upper panel
+# (still application code space, 0x9D100000-0x9D1FFFFF) took the exact same
+# "out of boundaries, skip it" path as a genuine boot-area/config-word
+# address, and PROGRAM_FLASH still ACKed the record. The adversarial audit on
+# PR #1141 confirmed this independently from two directions
+# (issuecomment-5736996706). The fix adds a THIRD branch, between the write
+# and the original skip, so an address still inside the application's 2 MB
+# PFM span but above the erased window fails the record
+# (HEX_REC_PGM_ERROR) instead of being silently dropped -- while an address
+# genuinely outside that span (boot flash / config words) keeps the original
+# skip-and-succeed path (#764's contract) untouched.
+HEXWIN_BIN := run_1141_tests
+BTL_SYSCFG_DIR := ../../bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk
+BTL_NVM_SRC := $(BTL_SYSCFG_DIR)/framework/bootloader/src/nvm.c
+BTL_NVM_H := $(BTL_SYSCFG_DIR)/framework/bootloader/src/nvm.h
+BTL_SYSCFG_H := $(BTL_SYSCFG_DIR)/system_config.h
+
+$(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
+               $(BTL_NVM_H) $(BTL_SYSCFG_H) $(BTL_NVM_SRC) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+APP_FLASH_PFM_END_ADDRESS[[:space:]]+\(APP_FLASH_END_ADDRESS \+ APP_FLASH_UPPER_PANEL_SIZE\)[[:space:]]*$$' $(BTL_SYSCFG_H) \
+	  || { echo "ERROR: APP_FLASH_PFM_END_ADDRESS is missing or no longer exactly"; \
+	       echo "       '(APP_FLASH_END_ADDRESS + APP_FLASH_UPPER_PANEL_SIZE)' in $(BTL_SYSCFG_H)."; \
+	       echo "       This is #1141's fix for #909's silent-drop hazard: without this"; \
+	       echo "       constant, nvm.c cannot tell an out-of-panel APPLICATION record from a"; \
+	       echo "       genuine boot-area/config-word one, and both were silently dropped while"; \
+	       echo "       PROGRAM_FLASH still ACKed. Re-derive"; \
+	       echo "       test_1141_hex_record_upper_panel_error.c against whatever replaced it."; \
+	       exit 1; }
+	@grep -qF 'else if((ProgAddress > (void *)APP_FLASH_END_ADDRESS) && (ProgAddress <= (void *)APP_FLASH_PFM_END_ADDRESS))' $(BTL_NVM_SRC) \
+	  || { echo "ERROR: $(BTL_NVM_SRC) no longer tests an out-of-panel application address"; \
+	       echo "       against APP_FLASH_PFM_END_ADDRESS before falling through to the"; \
+	       echo "       boot-area/config-word skip. This is #1141's fix; without this exact"; \
+	       echo "       branch a hand-built hex whose application code exceeds the lower panel"; \
+	       echo "       is silently dropped and PROGRAM_FLASH still ACKs it."; \
+	       exit 1; }
+	@awk '/else if\(\(ProgAddress > \(void \*\)APP_FLASH_END_ADDRESS\)/,/^[[:space:]]*\}/' $(BTL_NVM_SRC) \
+	     | grep -qF 'return HEX_REC_PGM_ERROR;' \
+	  || { echo "ERROR: #1141's new branch in $(BTL_NVM_SRC) no longer returns"; \
+	       echo "       HEX_REC_PGM_ERROR -- the whole point is that PROGRAM_FLASH must fail"; \
+	       echo "       the record (no ACK), not silently drop it."; \
+	       exit 1; }
+	@n=$$(grep -cF 'Out of boundaries' $(BTL_NVM_SRC)); \
+	 [ "$$n" = "1" ] \
+	  || { echo "ERROR: expected exactly 1 occurrence of 'Out of boundaries' in"; \
+	       echo "       $(BTL_NVM_SRC), found $$n. #1141 must leave the ORIGINAL"; \
+	       echo "       boot-area/config-word skip branch's behaviour completely unchanged"; \
+	       echo "       (#764's contract) -- if it moved, was duplicated, or was removed,"; \
+	       echo "       re-verify by hand that a standalone hex's config words are still"; \
+	       echo "       silently dropped, not this test."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -I$(BTL_SYSCFG_DIR) -I$(BTL_SYSCFG_DIR)/framework/bootloader/src \
+	      -o $(HEXWIN_BIN) test_1141_hex_record_upper_panel_error.c
+
 # Every suite, and every one of the eleven binaries. SEVENTH additive
 # collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
 # fw#1000, fw#913 vs fw#980, and now fw#913 vs fw#985 -- every one of them
@@ -1440,17 +2264,34 @@ $(SDLOG1029_BIN): test_1029_sd_card_manager_log_budget.c test_framework.h $(SDLO
 # and union only `run` and `clean`. #971's suite (run_971_tests, PR #976) is
 # still landing independently on another branch; when it meets this, same rule.
 #
-# Every suite, and every one of the SEVENTEEN binaries: main's sixteen plus
+# Every suite, and every one of the SEVENTEEN binaries: the sixteen above plus
+# #1039's $(LOGCEIL_BIN) (PR #1116, the host guard for the four LOG_E messages
+# shortened under Logger's 125-byte ceiling). TENTH additive collision in this
+# block -- #1039/#1116 collided here with fw#998, fw#1112 and fw#1121, all
+# three already on main by the time this branch refreshed its base -- resolved
+# the same way as every earlier collision: keep each side's target rule INTACT
+# and union only `run` and `clean`.
+#
+# Every suite, and every one of the EIGHTEEN binaries: the seventeen above plus
+# #1098's $(REPLYBUF_BIN) (the Take/Give pairing of the four SCPI reply
+# callbacks moved off the stack onto the shared response buffer). ELEVENTH
+# additive collision in this block -- resolved the same way as every earlier
+# one: keep each side's target rule INTACT and union only `run` and `clean`.
+#
+# Every suite, and every one of the TWENTY binaries: the nineteen above plus
+# #1154's $(CALFINITE_BIN) -- CONF:ADC:chanCALM/chanCALB non-finite rejection.
+#
+# Every suite, and every one of the TWENTY-ONE binaries: the twenty above plus
 # #1029's $(SDLOG1029_BIN) (three sd_card_manager.c LOG_E remedies measured
 # against Logger's 125-byte ceiling). PR #1038 collided here with fw#947,
-# fw#1056, fw#980, fw#985, fw#999, fw#1112, fw#1121 and fw#998 on a base
-# refresh, and was resolved the same way: each side's target rule kept INTACT
-# (#1029's two rules sit just above; its names carry the 1029 suffix so they
-# cannot shadow #1000's $(SDLOG_BIN)/$(GEN_1000)), and only `run` and `clean`
-# unioned.
+# fw#1056, fw#980, fw#985, fw#999, fw#1112, fw#1121, fw#998, fw#1039/#1116,
+# fw#1098 and fw#1154 on a base refresh, and was resolved the same way: each
+# side's target rule kept INTACT (#1029's two rules sit just above; its names
+# carry the 1029 suffix so they cannot shadow #1000's
+# $(SDLOG_BIN)/$(GEN_1000)), and only `run` and `clean` unioned.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(SDLOG1029_BIN)
+     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
+     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -1464,14 +2305,20 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(SDLOG_BIN)
 	./$(SCPI999_BIN)
 	./$(SUSPENDREASON_BIN)
+	./$(LOGCEIL_BIN)
 	./$(SCAN1112_BIN)
 	./$(STARTARM_BIN)
 	./$(START_BIN)
+	./$(REPLYBUF_BIN)
+	./$(HEXWIN_BIN)
+	./$(DACREINIT_BIN)
+	./$(CALFINITE_BIN)
 	./$(SDLOG1029_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(GEN_1000) \
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
+	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) \
 	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp
 
 .PHONY: run clean

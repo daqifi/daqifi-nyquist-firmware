@@ -135,6 +135,21 @@ name: host-tests
 #     Found by PR #976's adversarial audit (#1062) and filed rather than
 #     folded into that PR, which only added tools/lint/cdef.py to this
 #     workflow and picked this gap up from a merge with main.
+#   - test_1039_log_message_ceiling.c (#1039, PR #1116): hardcodes the four
+#     LOG_E messages #1039 shortened and measures them against Logger's real
+#     truncation, the same technique as test_1000_sd_log_arm_budget.c but
+#     deliberately WITHOUT that test's build-time extraction (see the
+#     LOGCEIL_BIN comment block in tests/host/Makefile for why -- it is
+#     independent of PR #1110's parked generator). The Makefile recipe greps
+#     each shipped format string's literal source lines back out of
+#     app_freertos.c, SCPIADC.c and wifi_manager.c and fails the build on
+#     drift, plus the same Logger.h/Logger.c ceiling lines the #1000 entry
+#     above already covers (no new lines needed for those two). SCPIADC.c is
+#     already matched by services/SCPI/** above; app_freertos.c and
+#     wifi_services/wifi_manager.c are not matched by any existing entry, so
+#     each gets its own line below -- otherwise a PR touching only one of
+#     them would queue no job that re-measures its message against the
+#     ceiling.
 #   - test_999_scpi_context_storage_isolation.c: proves USB and TCP SCPI
 #     contexts do not share storage. Its Makefile target ($(SCPI999_BIN))
 #     lists firmware/src/services/UsbCdc/UsbCdc.c and
@@ -205,6 +220,39 @@ name: host-tests
 #     not as a silently skipped job). Util/ is not globbed for the same reason
 #     the two CircularBuffer entries are not: it holds many files no host test
 #     reads.
+#   - test_1141_hex_record_upper_panel_error.c (#1141, issue #1142): the
+#     FIRST bootloader coverage in this suite. Its Makefile target
+#     ($(HEXWIN_BIN)) grep-guards and compiles against the bootloader's own
+#     nvm.c/nvm.h/system_config.h (BTL_SYSCFG_DIR in tests/host/Makefile --
+#     bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/), none of
+#     which lived under tests/host/** or any firmware/src/** entry above. So a
+#     PR touching only bootloader/** -- exactly the code this test guards --
+#     matched no path here and never queued the job; #1141 itself only ran it
+#     because that PR also touched tests/host/**. This is the same class of
+#     gap #941's audit found for AD7609Scale.h/test_ad7609_scale.c: a test
+#     wired into the suite (a $(*_BIN) target and a run/clean line) without a
+#     path entry pointing back at what it covers.
+#   - test_1034_dac_aout_invalidated_on_reinit.c (issue #1034, PR #1147): its
+#     Makefile target ($(DACREINIT_BIN)) grep-guards AOutSample.h for the
+#     'uint32_t Timestamp;' field #1034 adds (AOUTSAMPLE_SRC in
+#     tests/host/Makefile -- firmware/src/state/data/AOutSample.h), plus
+#     SCPIDAC.c for the reinit/invalidation shape ($(SCPIDAC_SRC), already
+#     matched by the 'firmware/src/services/SCPI/**' entry above). AOutSample.h
+#     is not: it sits in firmware/src/state/data/, which no entry above
+#     matches, so a PR editing only that header -- exactly the field this
+#     test exists to pin -- matched no path here and never queued the job.
+#     Same class of gap as #1142/test_1141 immediately above: a test wired
+#     into the suite without a path entry pointing back at what it reads.
+#     Scoped to the single file, not the state/data/ directory: that
+#     directory also holds AInSample.c/.h, BoardData.c/.h and DIOSample.c/.h,
+#     none of which this test reads, and (unlike HAL/ADC/'s AD7609Scale.h
+#     precedent) AOutSample.h has no sibling it could be folded into that
+#     would escape a file-scoped trigger.
+#     Confirmed unreachable before this entry: neither path list below
+#     matched 'state/data' or 'AOutSample.h' (verified 2026-09-21 by grepping
+#     this file at 72fba8c68c4dd28b6c6612ffdc7b28f1d64bd191, zero hits).
+#     Found by the #1147 pre-merge adversarial audit round 2 (disposition
+#     fix_now).
 
 on:
   pull_request:
@@ -220,6 +268,11 @@ on:
       - 'firmware/src/Util/Logger.h'
       - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
+      # #1039: test_1039_log_message_ceiling.c greps these two for the
+      # shipped format strings it hardcodes (SCPIADC.c is already covered by
+      # the entry above).
+      - 'firmware/src/app_freertos.c'
+      - 'firmware/src/services/wifi_services/wifi_manager.c'
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
@@ -250,6 +303,17 @@ on:
       - 'firmware/src/libraries/scpi/**'
       - 'firmware/src/services/sd_card_services/sd_card_manager.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
+      # #1142: test_1141_hex_record_upper_panel_error.c's Makefile target
+      # depends on the bootloader's own nvm.c/nvm.h/system_config.h (see
+      # BTL_SYSCFG_DIR in tests/host/Makefile) -- none of which live under
+      # tests/host/** or any firmware/src/** entry above, so a bootloader-only
+      # change matched no path here at all.
+      - 'bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/**'
+      # #1034: test_1034_dac_aout_invalidated_on_reinit.c's Makefile target
+      # grep-guards this header directly (AOUTSAMPLE_SRC in
+      # tests/host/Makefile) for the Timestamp field the fix adds; no entry
+      # above matches firmware/src/state/data/.
+      - 'firmware/src/state/data/AOutSample.h'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -264,6 +328,11 @@ on:
       - 'firmware/src/Util/Logger.h'
       - 'firmware/src/Util/Logger.c'
       - 'firmware/src/services/SCPI/**'
+      # #1039: test_1039_log_message_ceiling.c greps these two for the
+      # shipped format strings it hardcodes (SCPIADC.c is already covered by
+      # the entry above).
+      - 'firmware/src/app_freertos.c'
+      - 'firmware/src/services/wifi_services/wifi_manager.c'
       - 'firmware/src/HAL/ADC/**'
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
@@ -286,6 +355,10 @@ on:
       - 'firmware/src/libraries/scpi/**'
       - 'firmware/src/services/sd_card_services/sd_card_manager.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
+      # #1142: see the matching entry under pull_request above.
+      - 'bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/**'
+      # #1034: see the matching entry under pull_request above.
+      - 'firmware/src/state/data/AOutSample.h'
       - '.github/workflows/host-tests.yml'
 
 permissions:
