@@ -40,6 +40,12 @@ typedef enum {
     WIFI_MANAGER_EVENT_STA_DISCONNECTED,
     WIFI_MANAGER_EVENT_UDP_SOCKET_CONNECTED,
     WIFI_MANAGER_EVENT_ERROR,
+    // #1060: a station associated to OUR soft-AP, queued by ApEventCallback.
+    // Handled by the STA_CONNECTED code and sets the same flag; a separate
+    // event only so that handler knows which mode flag its producer checked.
+    // Appended, not inserted, so the numbers SendEvent's "event=%u" log lines
+    // print for the existing events do not change.
+    WIFI_MANAGER_EVENT_AP_CLIENT_CONNECTED,
 } wifi_manager_event_t;
 
 typedef struct {
@@ -541,7 +547,9 @@ static void ApEventCallback(DRV_HANDLE handle, WDRV_WINC_ASSOC_HANDLE assocHandl
 
     if (WDRV_WINC_CONN_STATE_CONNECTED == currentState) {
         LOG_D("AP mode: Station connected\r\n");
-        SendEvent(WIFI_MANAGER_EVENT_STA_CONNECTED);
+        // Its own event type, not STA_CONNECTED: the handler re-checks
+        // AP_STARTED -- the flag tested above -- when it consumes this (#1060).
+        SendEvent(WIFI_MANAGER_EVENT_AP_CLIENT_CONNECTED);
     } else if (WDRV_WINC_CONN_STATE_DISCONNECTED == currentState) {
         LOG_D("AP mode: Station disconnected\r\n");
         SendEvent(WIFI_MANAGER_EVENT_STA_DISCONNECTED);
@@ -1454,8 +1462,39 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                 }
             }
             break;
+        case WIFI_MANAGER_EVENT_AP_CLIENT_CONNECTED:
         case WIFI_MANAGER_EVENT_STA_CONNECTED:
             returnStatus = WIFI_MANAGER_STATE_MACHINE_RETURN_STATUS_HANDLED;
+            // #1060: re-check, when the event is CONSUMED, the flag its
+            // producer checked when it was QUEUED. ApEventCallback queues
+            // AP_CLIENT_CONNECTED only while AP_STARTED is set, and
+            // StaEventCallback queues STA_CONNECTED only while STA_STARTED is
+            // set, but the event runs later, on this task. A mode switch,
+            // disable or teardown handled in between clears that flag, and
+            // the association the event reports went with it: setting
+            // STA_CONNECTED from it would report a peer that is not there
+            // (#1060's failure, reached through the queue instead of through
+            // an uncleared flag), and the rest of this handler would release
+            // the APPLY gate before the new mode is up and open sockets for a
+            // mode that is gone. So drop it.
+            //
+            // Keyed on the producer's OWN flag rather than on "either mode is
+            // up": an AP-client event consumed after an AP->STA switch's INIT
+            // has set STA_STARTED would pass the looser test. A same-mode
+            // restart, which clears and re-sets the flag inside ONE handler,
+            // is invisible to any flag test -- see
+            // wifi_manager_GetLinkState() for the path that leaves open.
+            {
+                const uint16_t producerFlag =
+                    (WIFI_MANAGER_EVENT_AP_CLIENT_CONNECTED == event)
+                        ? WIFI_MANAGER_STATE_FLAG_AP_STARTED
+                        : WIFI_MANAGER_STATE_FLAG_STA_STARTED;
+                if (!GetEventFlagStatus(pInstance->eventFlags, producerFlag)) {
+                    LOG_I("WiFi: dropped stale association event %u, its mode is no longer up (#1060)",
+                          (unsigned)event);
+                    break;
+                }
+            }
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
             // Reached steady state — release APPLY gate (#425).  Reverse
             // store order (deadline first, flag second) — see AP_STARTED
@@ -1511,15 +1550,16 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     break;
                 }
                 // #475 step 3: anchor open-time ONLY when we actually open
-                // the socket.  This event fires both for STA-mode connect
-                // and for AP-mode client station connect (ApEventCallback);
-                // unconditional anchoring outside the if-block would reset
-                // the uptime every time an AP client associated.
+                // the socket.  This handler runs both for STA-mode connect
+                // and for AP-mode client station connect (ApEventCallback's
+                // AP_CLIENT_CONNECTED); unconditional anchoring outside the
+                // if-block would reset the uptime every time an AP client
+                // associated.
                 ANCHOR_LISTEN_SOCKET_OPEN_TICK();
             }
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_TCP_SOCKET_OPEN);
             SetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
-            /* #345: advertise via mDNS in STA mode only (this event also fires
+            /* #345: advertise via mDNS in STA mode only (this handler also runs
              * for AP-client associations — never advertise there). The DHCP
              * lease arrives later (DhcpEventCallback -> mdns_responder_UpdateIp),
              * so the A record stays silent until the station IP is known. */
@@ -1770,10 +1810,95 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                     wifi_tcp_server_CloseSocket();
                     RESET_TCP_SOCKET_OPEN(pInstance);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
-                    
+
+                    // #1060: clear the STA flags too, mirroring the STA->AP
+                    // branch above, and BEFORE APStop below -- not after --
+                    // so nothing in this branch can observe them set once
+                    // teardown has started. STA_CONNECTED is not STA-only: a
+                    // station associating to OUR soft-AP makes
+                    // ApEventCallback queue AP_CLIENT_CONNECTED, whose
+                    // handler (shared with STA_CONNECTED) sets this same
+                    // flag. Nothing else clears it here -- the client's own
+                    // disconnect callback arrives after AP_STARTED goes clear
+                    // below and ApEventCallback drops it -- so GetLinkState(),
+                    // which tests this flag before AP_STARTED, would report
+                    // CONNECTED through the 500 ms settle and the STA
+                    // bring-up that follows, with no link. An association
+                    // event already QUEUED when this runs is consumed only
+                    // after this handler returns, when AP_STARTED is clear,
+                    // so that handler's producer-flag check drops it rather
+                    // than setting the flag again.
+                    // STA_STARTED should already be clear here in the common
+                    // case (only the STA INIT and STA-reconfigure paths set
+                    // it, and AP mode is neither), so clearing it is
+                    // defensive rather than a behavior change: it keeps
+                    // MaybeReconcileStaConnected()'s Phase-1 repair, which is
+                    // gated on STA_STARTED but not on the APPLY-in-progress
+                    // gate, from re-setting STA_CONNECTED out from under this
+                    // switch. INIT below sets STA_STARTED again once it
+                    // reaches BSSConnect.
+                    //
+                    // Critical section: ResetEventFlag is a plain
+                    // read-modify-write of eventFlags.value, and not every
+                    // writer of that word runs on this task:
+                    // wifi_manager_RequestWifiFirmwareUpdate() sets
+                    // WIFI_FW_UPDATE_REQUESTED from whichever SCPI task took
+                    // SYST:COMM:LAN:FWUpdate -- USB SCPI, priority 7,
+                    // included -- which could preempt between this task's
+                    // load and store and lose its bit to the stale store.
+                    // Same wrap as MaybeReconcileStaConnected()'s
+                    // SetEventFlag. Limited to the two writes this change
+                    // added; the AP_STARTED clear below and the file's other
+                    // unwrapped writers are as they were.
+                    taskENTER_CRITICAL();
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_CONNECTED);
+                    ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_STA_STARTED);
+                    taskEXIT_CRITICAL();
+
                     WDRV_WINC_APStop(pInstance->wdrvHandle);
                     ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_AP_STARTED);
-                    
+
+                    // #1060: disconnect unconditionally, mirroring what the
+                    // STA->AP branch above and the WiFi-disable path both
+                    // already do after their own APStop/APStop-equivalent.
+                    // A soft-AP client association also sets the WINC
+                    // driver's own internal isConnected, which APStop does
+                    // not clear; before this fix, the (buggy) still-set
+                    // STA_CONNECTED flag routed a subsequent DHCP failure's
+                    // ERROR/REINIT retry into the STA-reconfigure path,
+                    // whose own BSSDisconnect happened to clear isConnected
+                    // and let the #467 DHCP-wedge retry recover. With the
+                    // flag now correctly clear, that retry would instead
+                    // take the fresh-init path, which does not touch
+                    // isConnected -- so without this disconnect, fixing the
+                    // status-reporting defect could reopen the #467 wedge
+                    // for exactly the client-was-attached case this ticket
+                    // is about. BSSDisconnect returns REQUEST_ERROR
+                    // harmlessly when isConnected is already false (the
+                    // common case), matching the STA->AP branch's own
+                    // comment on the identical call.
+                    //
+                    // Any OTHER status is only logged, as at the STA->AP,
+                    // disable and STA-reconfigure sites. DISCONNECT_FAIL (the
+                    // m2m_wifi_disconnect request failing) leaves isConnected
+                    // set, and the retry path does not clear it: with every
+                    // mode flag clear, ERROR -> REINIT takes the fresh-init
+                    // path, where WDRV_WINC_Initialize and WDRV_WINC_Open both
+                    // return early for an instance that is still initialised
+                    // and open (wdrv_winc.c), so wincResetCtrlDcpt never runs
+                    // and each INIT's IPUseDHCPSet is refused again. The three
+                    // older sites already had this log-only handling; closing
+                    // it for all four needs a recovery path (a DEINIT, whose
+                    // WDRV_WINC_Close clears isConnected, is one), not a
+                    // per-site patch.
+                    {
+                        const WDRV_WINC_STATUS discStatus = WDRV_WINC_BSSDisconnect(pInstance->wdrvHandle);
+                        if ((WDRV_WINC_STATUS_OK != discStatus) &&
+                            (WDRV_WINC_STATUS_REQUEST_ERROR != discStatus)) {
+                            LOG_E("WiFi: BSS disconnect failed on AP->STA (status=%d)", (int)discStatus);
+                        }
+                    }
+
                     // Don't deinitialize - the driver gets into a bad state (-1) after deinit
                     // Instead, just wait for AP to stop and then configure for STA mode
                     vTaskDelay(pdMS_TO_TICKS(500));  // Let AP fully stop
@@ -1952,15 +2077,21 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                         // Clear socket + STA state flags so callers that
                         // check status during the chip-reset window (~2 s)
                         // don't observe stale "connected" state.  No
-                        // critical section: every writer of
-                        // pInstance->eventFlags in this codebase is on
-                        // WifiTask (StaEventCallback / SocketEventCallback
-                        // only call SendEvent — no flag mutations) so the
-                        // RMW is single-threaded.  Per docs/MCU_REFERENCE.md
-                        // ("do not add unnecessary critical sections"), the
-                        // earlier speculative wrap was inappropriate.  Also
-                        // clear UDP_SOCKET_CONNECTED so it doesn't outlast
-                        // UDP_SOCKET_OPEN.
+                        // critical section here, but NOT because every
+                        // writer is on WifiTask — it isn't:
+                        // wifi_manager_RequestWifiFirmwareUpdate() sets
+                        // WIFI_FW_UPDATE_REQUESTED from whichever SCPI task
+                        // ran SYST:COMM:LAN:FWUpdate (USB SCPI, priority 7,
+                        // included), so pInstance->eventFlags does have a
+                        // cross-task writer (see the #1060 AP->STA branch's
+                        // critical-section comment, which cites this same
+                        // site). This particular sequence stays unwrapped
+                        // because a torn read against that one unrelated bit
+                        // is the only exposure and is judged benign here, not
+                        // because the word has a single writer — don't cite
+                        // "single-threaded" as the reason if this is copied
+                        // elsewhere.  Also clear UDP_SOCKET_CONNECTED so it
+                        // doesn't outlast UDP_SOCKET_OPEN.
                         RESET_TCP_SOCKET_OPEN(pInstance);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_OPEN);
                         ResetEventFlag(&pInstance->eventFlags, WIFI_MANAGER_STATE_FLAG_UDP_SOCKET_CONNECTED);
@@ -2432,10 +2563,11 @@ wifi_link_state_t wifi_manager_GetLinkState(void) {
             // A peer is attached. Despite the flag's name this is NOT
             // STA-only: ApEventCallback runs only in AP mode and, on a plain
             // station ASSOCIATION to our soft-AP, queues
-            // WIFI_MANAGER_EVENT_STA_CONNECTED, whose handler sets this flag
-            // with no AP/STA discrimination. So in AP mode an associated
-            // station reaches CONNECTED here, before the AP branch below, and
-            // AP_IDLE is unreachable while any station is associated.
+            // WIFI_MANAGER_EVENT_AP_CLIENT_CONNECTED, whose handler (shared
+            // with STA_CONNECTED) sets this same flag. So in AP mode an
+            // associated station reaches CONNECTED here, before the AP branch
+            // below, and AP_IDLE is unreachable while any station is
+            // associated.
             //
             // That is the CONTRACT, not an accident to be reordered around.
             // An adversarial audit of PR #1044 proposed testing AP_STARTED
@@ -2452,22 +2584,33 @@ wifi_link_state_t wifi_manager_GetLinkState(void) {
             // what these flags can support instead. Changing the flag itself
             // is a separate state-machine change with its own blast radius.
             //
-            // KNOWN RESIDUAL, #1060: this flag is EVENT-LATCHED, not a live
-            // measurement. The STA_CONNECTED handler sets it unconditionally,
-            // and that event is queued both for a STA link and for a soft-AP
-            // client association. The WINC callbacks queue events that this
-            // task consumes later, and ApEventCallback drops them while
-            // AP_STARTED is clear, so the flag can describe a state that has
-            // already ended. Nothing re-derives it from the chip in AP mode:
-            // the periodic reconciler only ever SETS it, and only while
-            // STA_STARTED is set. So around an AP stop or restart, or a mode
-            // switch, it can stay set with no peer attached -- in at least one
-            // path with no time bound. #1060 records the paths found so far.
+            // RESIDUAL, #1060: this flag is EVENT-LATCHED, not a live
+            // measurement. The WINC callbacks queue association events that
+            // this task consumes later, and ApEventCallback drops a client's
+            // DISCONNECT while AP_STARTED is clear, so the flag can describe
+            // a state that has already ended. Nothing re-derives it from the
+            // chip in AP mode: the periodic reconciler only ever SETS it, and
+            // only while STA_STARTED is set.
             //
-            // NOT fixed here because it is PRE-EXISTING: the legacy
-            // wifi_manager_GetWiFiStatus() on main at d71147e31 tests this flag
-            // first in exactly this order. This PR made the existing wrongness
-            // visible by publishing a contract about it; #1060 carries the fix.
+            // Two paths are closed. The AP->STA APPLY branch (#1060's repro)
+            // resets the flag before it stops the AP, mirroring the STA->AP
+            // branch. And an association event still queued from before a
+            // mode switch, a disable or a teardown no longer re-sets it: the
+            // handler drops an event whose producer's mode flag (AP_STARTED
+            // for a soft-AP client, STA_STARTED for a STA link) is clear by
+            // the time it is consumed.
+            //
+            // One path is still open, found by reading the code and not
+            // reproduced: a REINIT that restarts the soft-AP in place (an
+            // AP-mode APPLY, or the AP-mode ERROR retry) stops and restarts
+            // the AP inside ONE handler and never clears this flag. A station
+            // associated before the restart can have its disconnect dropped
+            // while AP_STARTED is clear -- the mechanism #1060 describes --
+            // so if it does not re-associate (for example because the APPLY
+            // changed the SSID) CONNECTED stays up with nobody attached, with
+            // no time bound. The consume-time check cannot see it, because
+            // AP_STARTED is set again before anything is consumed. This is
+            // the set found so far, not a proof that there are no others.
             if (0u != (flags & WIFI_MANAGER_STATE_FLAG_STA_CONNECTED)) {
                 return WIFI_LINK_STATE_CONNECTED;
             }
