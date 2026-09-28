@@ -440,7 +440,7 @@ void Iperf2_GetStats(Iperf2_Stats* out) {
     if (out == NULL) return;
     // bytes_transferred / bytes_confirmed are 64-bit and updated by the
     // socket-event task; reading them needs a critical section so we don't
-    // get torn 32-bit halves.  See PIC32MZ atomicity rules in CLAUDE.md.
+    // get torn 32-bit halves.  See PIC32MZ atomicity rules in docs/MCU_REFERENCE.md.
     taskENTER_CRITICAL();
     if (gCtx.mode != IPERF2_MODE_IDLE && gCtx.last_stats.active) {
         // Update on-the-fly so STATS? during a run shows progress

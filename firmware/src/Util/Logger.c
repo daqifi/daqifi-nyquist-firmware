@@ -159,6 +159,38 @@ void Logger_ResetSessionOneShots(void) {
     gSessionOneShot = 0;  /* 32-bit write is atomic on PIC32MZ */
 }
 
+bool Logger_SessionOneShotClaim(uint32_t bit) {
+    if (bit >= 32u) {
+        return false;
+    }
+    const uint32_t mask = 1u << bit;
+    bool won = false;
+
+    /* The whole test-and-set under one critical section, and nothing else in
+     * it. On PIC32MZ taskENTER_CRITICAL raises IPL to
+     * configMAX_SYSCALL_INTERRUPT_PRIORITY (4), which masks the streaming
+     * timer ISR (TIMER_5, priority 3) whose vTaskNotifyGiveFromISR +
+     * portEND_SWITCHING_ISR is what switches the priority-9
+     * _Streaming_Deferred_Interrupt_Task in on top of the priority-6
+     * streaming_Task -- and the tick, so no time-sliced equal-priority switch
+     * either. With no switch possible between the load and the store below, a
+     * bit another task sets can no longer be written back over, and a
+     * Logger_ResetSessionOneShots() store (a single 32-bit write) lands either
+     * wholly before this or wholly after it, never inside it, so it cannot be
+     * undone by a stale write-back either.
+     *
+     * The test is repeated here rather than trusted from the macro's fast
+     * exit: that read was taken outside this section, so between it and here
+     * another task may have claimed the same bit. Only this read decides. */
+    taskENTER_CRITICAL();
+    if ((gSessionOneShot & mask) == 0u) {
+        gSessionOneShot |= mask;
+        won = true;
+    }
+    taskEXIT_CRITICAL();
+    return won;
+}
+
 LogBuffer logBuffer;
 
 #if defined(ENABLE_ICSP_REALTIME_LOG) && (ENABLE_ICSP_REALTIME_LOG == 1) && !defined(__DEBUG)

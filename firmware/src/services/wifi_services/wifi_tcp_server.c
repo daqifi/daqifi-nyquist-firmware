@@ -101,7 +101,7 @@ bool wifi_tcp_server_ProcessReceivedBuff(void);
  * and clears any pending data in the client's buffers.
  */
 void wifi_tcp_server_CloseClientSocket(void);
-static bool TcpServerFlush() {
+static bool TcpServerFlush(void) {
     int16_t sockRet;
     bool funRet = false;
     if (gpServerData->client.clientSocket < 0) {
@@ -265,6 +265,11 @@ static scpi_interface_t scpi_interface = {
     .flush = SCPI_TCP_Flush,
 };
 
+/* #999: this transport's own SCPI parse buffer + error queue. Must NOT be
+ * shared with UsbCdc.c's -- see ScpiContextStorage in SCPIInterface.h for
+ * why sharing corrupts both transports' commands and errors. */
+static ScpiContextStorage gTcpScpiStorage;
+
 /**
  * Gets the TcpClientData associated with the microrl context
  * @param context The context to lookup
@@ -331,7 +336,7 @@ static int CircularBufferToTcpWrite(uint8_t* buf, uint32_t len) {
 
     // Return number of bytes written on success, negative on error
     // Circular buffer expects this API: return >= 0 (bytes written) or < 0 (error)
-    bool flushResult = TcpServerFlush(&gpServerData->client);
+    bool flushResult = TcpServerFlush();
     return flushResult ? (int)len : -1;
 }
 //==========================External Apis==========================
@@ -359,7 +364,9 @@ void wifi_tcp_server_Initialize(wifi_tcp_server_context_t *pServerData) {
         microrl_init(&gpServerData->client.console, microrl_echo);
         microrl_set_echo(&gpServerData->client.console, false);
         microrl_set_execute_callback(&gpServerData->client.console, microrl_commandComplete);
-        gpServerData->client.scpiContext = CreateSCPIContext(&scpi_interface, &gpServerData->client);
+        gpServerData->client.scpiContext = CreateSCPIContext(&scpi_interface,
+                                                             &gpServerData->client,
+                                                             &gTcpScpiStorage);
         {
             uint8_t* buf; uint32_t len;
             StreamingBufferPool_GetWifi(&buf, &len);

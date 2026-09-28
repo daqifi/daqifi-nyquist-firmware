@@ -37,8 +37,42 @@
  * zero and was never measured. The operative fact needs no such number:
  * ONE uint32_t did not fit, so any future static must come with its own
  * payment. Cost as above: ~7 more slots off a
- * partitioned capacity that is not the binding constraint. */
-#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U)
+ * partitioned capacity that is not the binding constraint.
+ *
+ * Trimmed a further 2048 B (#999) to pay for the two per-transport
+ * ScpiContextStorage instances -- UsbCdc.c's gUsbScpiStorage and
+ * wifi_tcp_server.c's gTcpScpiStorage, 546 B each -- that replace the single
+ * pair of SCPI parse/error-queue arrays USB and TCP used to share. Same
+ * mechanism as #824/#925, and measured the same way (E): in a SHA-pinned
+ * worktree, identical steps, base 1faf6758d links (rc=0, hex produced) and
+ * head 937528950 does not, failing with "Not enough memory for stack (8208
+ * bytes needed, 8176 bytes available)". Zero compile errors -- every
+ * translation unit builds; only the link fails. The 8208 is not a mystery
+ * number: it is the project's stack-size 8192 plus stackguard 16
+ * (configurations.xml), so the requirement is fixed and only "available"
+ * moves.
+ *
+ * Why 2048 and not another 512, when the shortfall is 32 bytes: because the
+ * two link reports together show the map is NOT "you lose what you add".
+ * Adding 546 B of .bss dropped available by 24 B (8200 -> 8176), the rest
+ * landing in slack elsewhere -- XC32 best-fit places .bss.* sections into
+ * holes, so the stack's candidate hole is not a running total of BSS. That
+ * cuts both ways (I): freeing N bytes here is not guaranteed to hand N bytes
+ * to that hole either. The only trim-direction evidence is #824, where 512 B
+ * recovered at least 392 (7816 -> >=8208); read pessimistically against this
+ * PR's own 24/546 figure instead, 512 B would recover ~23 and STILL FAIL, and
+ * 1024 B would clear 32 by ~13. 2048 B clears it under both readings. None of
+ * that is a measurement of the margin the trim actually buys, and no such
+ * measurement is claimed -- the link is the arbiter.
+ *
+ * Cost, on the same basis as above: 2048/74 = ~28 slots at 16 channels,
+ * taking the USB-only partitioned capacity 1586 -> 1558 against a usable
+ * depth of 1100 that the FreeRTOS sample queue, not the partition, sets
+ * (#828). Do NOT pay for a future static by shrinking SCPI_INPUT_BUFFER_LENGTH
+ * or SCPI_ERROR_QUEUE_SIZE instead: those sizes are what keep the two
+ * transports from corrupting each other's in-flight command text and error
+ * queues (#999), and 512 is already pinned by #100/#263. */
+#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U - 2048U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
 /* The overcommit fallback below carves these four minimums and expects the

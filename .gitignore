@@ -66,3 +66,8 @@ __pycache__/
 bq24297.*
 *.ps1
 .pr_agent*
+
+# Entire CLI local data (removed 2026-09-15). The tool was uninstalled, but a checkout that ran it
+# can still hold session checkpoints and transcripts under .entire/ (metadata/, logs/, tmp/,
+# settings.local.json). Keep all of it out of git -- a stray `git add -A` must not commit it.
+/.entire/

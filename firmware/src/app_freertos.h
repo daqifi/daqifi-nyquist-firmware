@@ -277,6 +277,20 @@ void APP_FREERTOS_Initialize ( void );
 bool app_SDCard_SpiOwnedByWifi(void);
 
 /**
+ * #985: the WiFi-STREAMING term of app_SDCard_SpiOwnedByWifi() above, on its
+ * own. Same liveness and same callable-from-any-task contract; it is one of
+ * the three conditions that function ORs together.
+ *
+ * For callers that must name WHICH owner has SPI4 rather than merely whether
+ * one does. Such a caller must NOT call the composite and then re-read its
+ * parts: the parts are independent and asynchronous, so the two reads can
+ * disagree and the cause reported is then one that no single instant showed
+ * (that was #985, in SD_SuspendReasonText). Read this and the other two flags
+ * once each, into locals, and decide from those.
+ */
+bool app_SDCard_WifiStreamActive(void);
+
+/**
  * #925: does the SD-card client currently hold the shared SPI4 bus's DRV_SPI
  * exclusive lock?
  *
@@ -299,6 +313,19 @@ bool app_SDCard_HoldsSpiBus(void);
  * and recovered, and is the signal to look for a leaking acquire.
  */
 uint32_t app_SDCard_BusRecoveryCount(void);
+
+/**
+ * #930: high-water mark, in milliseconds since boot, of how long the SD
+ * client has been seen holding the shared SPI4 exclusive lock with the SD
+ * manager idle (nothing armed) -- the span the #925 leak watchdog times
+ * against SD_BUS_LEAK_DWELL_MS, sampled at its SD_BUS_LEAK_POLL_MS cadence,
+ * so the value is good to about one poll. Unlike
+ * app_SDCard_BusRecoveryCount() above, non-zero is NORMAL: a healthy device
+ * with a card read 100 ms right after boot (bench, 2026-09-15). What matters
+ * is how close it comes to the dwell. Lets SD_BUS_LEAK_DWELL_MS be measured
+ * against a real observed hold instead of argued from worst-case arithmetic.
+ */
+uint32_t app_SDCard_BusHoldMaxMs(void);
 
 void APP_FREERTOS_Tasks ( void );
 void APP_FREERTOS_Initialize ( void );
