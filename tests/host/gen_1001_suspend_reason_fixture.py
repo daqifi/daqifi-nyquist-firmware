@@ -107,7 +107,7 @@ REASON_PTR = "why"          # the local the call sites interpolate
 # downstream budget table was derived against a different firmware than the one
 # being built, so the human is told to re-derive rather than handed a fixture
 # that measures a subset.
-EXPECTED_REASON_COUNT = 3
+EXPECTED_REASON_COUNT = 4
 EXPECTED_NULL_RETURNS = 1
 EXPECTED_SITE_COUNT = 4
 

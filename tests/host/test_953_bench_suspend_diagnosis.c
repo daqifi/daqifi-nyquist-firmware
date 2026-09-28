@@ -265,7 +265,9 @@
  * characters each -- so this file's budget already covers them. The third
  * cannot be covered by any reason string: SCPI_StartStreamingClaimed's
  * arm-raced refusal has an 88-character prefix plus CRLF, leaving 35, so all
- * three reasons are cut there, the shortest included. Shortening reasons
+ * four reasons are cut there, the shortest included (#985 added a fourth,
+ * 47-character reason after this note was written; it is also over the 35
+ * left here, so the claim still holds). Shortening reasons
  * cannot fix it; that prefix has to shorten. It is #1000, and it is left out
  * rather than folded in so that a budget nothing can satisfy does not sit in
  * this table looking actionable.
@@ -1420,8 +1422,8 @@ static const char *printable_format(const char *fmt, char *buf, size_t cap)
  * different counts must not be measured as though the reasoning still held. */
 TEST(generated_fixture_still_describes_the_function_it_was_written_for)
 {
-    /* SD_SuspendReasonText() returns three strings and one NULL. */
-    ASSERT_EQ(GEN_1001_REASON_COUNT, 3);
+    /* SD_SuspendReasonText() returns four strings and one NULL. */
+    ASSERT_EQ(GEN_1001_REASON_COUNT, 4);
     /* Four LOG_E sites in SCPIStorageSD.c interpolate them. */
     ASSERT_EQ(GEN_1001_SITE_COUNT, 4);
 
@@ -1551,10 +1553,10 @@ TEST(every_reason_fits_every_call_site_that_prints_it)
         }
     }
 
-    /* The cross product must have had something to check. 3 x 4 = 12 pairs;
+    /* The cross product must have had something to check. 4 x 4 = 16 pairs;
      * an empty fixture would leave worstHeadroom at the ceiling and every
      * assertion above unexecuted, which is exactly how a guard goes quiet. */
-    ASSERT_EQ(GEN_1001_SITE_COUNT * GEN_1001_REASON_COUNT, 12);
+    ASSERT_EQ(GEN_1001_SITE_COUNT * GEN_1001_REASON_COUNT, 16);
     ASSERT_TRUE(worstHeadroom < GEN_1001_LOG_SURVIVING_CHARS);
 
     /* Not asserted as an equality: headroom is expected to move whenever a
