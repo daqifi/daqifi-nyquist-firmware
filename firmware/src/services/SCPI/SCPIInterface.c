@@ -2,12 +2,14 @@
 #define LOG_MODULE LOG_MODULE_SCPI
 
 #include "SCPIInterface.h"
+#include "ScpiBoundedWrite.h"  /* #1098: pure bounded-write decision, host-tested */
 #include "semphr.h"  // #347: mutex for SysInfoGet static buffer
 
 
 //// General
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>   /* #1144: isfinite, for the capabilities JSON number helper */
 //
 //// Harmony
 //#include "system_config.h"
@@ -117,8 +119,33 @@
 static char gIdnModel[8]   = "Nq?";  // Filled from BoardConfig.BoardVariant
 static char gIdnSerial[17] = "0";    // 16 hex digits of uint64 + null
 
-// Declare force bootloader RAM flag location
-volatile uint32_t force_bootloader_flag __attribute__((persistent, coherent, address(FORCE_BOOTLOADER_FLAG_ADDR)));
+// Declare force bootloader RAM flag location. Reserves the WHOLE 16-byte
+// D-cache line for itself, not just its own 4 bytes: PIC32MZ's D-cache is
+// write-back and not hardware-coherent, so an ordinary cached (KSEG0)
+// global sharing this line (as gLogLevels formerly did, at
+// FORCE_BOOTLOADER_FLAG_ADDR + 4) could be written after the flag, and a
+// later write-back of that dirty line would silently restore the flag's
+// old value over the magic SCPI_ForceBootloader() just wrote -- turning a
+// bootloader-entry request back into a normal boot (#1083). Only word 0 is
+// read or written; words 1-3 are padding that must never be touched, so
+// nothing else can ever be link-placed into this line -- the same
+// construct as PowerApi.c's reboot-handoff block, one cache line below at
+// POWER_REBOOT_HANDOFF_ADDR.
+static volatile uint32_t sForceBootloaderLine[4]
+    __attribute__((persistent, coherent, address(FORCE_BOOTLOADER_FLAG_ADDR)));
+#define force_bootloader_flag sForceBootloaderLine[0]
+// Compile-time backstop for the size half of the same guarantee (belt to
+// tools/lint/force_bootloader_cacheline.py's braces): sizeof() cannot see
+// the `persistent`/`coherent` attributes, so the lint script still owns
+// that half; this only catches the array shrinking back down.
+_Static_assert(sizeof(sForceBootloaderLine) >= 16,
+    "sForceBootloaderLine must reserve the full 16-byte D-cache line (#1083)");
+// A correctly-SIZED 16-byte object at a MISALIGNED address still spans two
+// cache lines, leaving room for a cached object in the gap before the next
+// aligned boundary -- the identical hazard under a different cause. Both
+// asserts are needed; neither implies the other.
+_Static_assert(((FORCE_BOOTLOADER_FLAG_ADDR) & 0xFu) == 0,
+    "FORCE_BOOTLOADER_FLAG_ADDR must be 16-byte aligned to a D-cache line (#1083)");
 
 const NanopbFlagsArray fields_info = {
     .Size = 62,
@@ -1419,6 +1446,94 @@ static scpi_result_t SCPI_SysLogClear(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #1098: total budget the SYST:LOG:LEVel* dump loops may spend INSIDE their
+ * hold of the shared SCPI response buffer. Same value and same two-guard
+ * algebra as SCPI_SYSINFO_WRITE_BUDGET_MS (#947) and SCPI_HELP_WRITE_BUDGET_MS
+ * (#1004). */
+#define SCPI_LOGLEVEL_WRITE_BUDGET_MS   2000U
+
+/* #1098: one bounded transport write for the SYST:LOG:LEVel* dump replies.
+ *
+ * WHY THIS EXISTS. Moving these callbacks off their stack buffers onto the
+ * shared response buffer (#347) is what #1098 is for, but it also puts their
+ * writes INSIDE a hold of gScpiRespMutex that the stack-local versions never
+ * took. The two dump callbacks emit one line per module, so against a host that
+ * has stopped reading, each of LOG_MODULE_COUNT writes can spend
+ * SCPI_WRITE_MAX_RETRIES(200) x SCPI_WRITE_RETRY_DELAY_MS(5) ~= 1 s inside
+ * SCPI_WriteWithRetry -- ~10 s of held mutex, with every other SCPI callback on
+ * BOTH transports queued behind it (they wait portMAX_DELAY). That would be a
+ * regression INTRODUCED by the fix, so the fix carries its bound with it rather
+ * than leaving it for a follow-up.
+ *
+ * TWO guards, because neither alone bounds the hold -- the same algebra as #947
+ * and #1004:
+ *   (1) short write -> latch. SCPI_WriteWithRetry has no resend path, so a
+ *       short write means those bytes are already dropped and the remaining
+ *       budget buys nothing.
+ *   (2) cumulative deadline, checked BEFORE each write. Guard (1) never fires
+ *       for a transport draining at exactly the trickle rate that lets every
+ *       write finish just inside its own ~1 s budget, so guard (1) alone still
+ *       reaches ~10 s. One startTick sampled after the take bounds the hold at
+ *       BUDGET + one write budget (~3 s) regardless of drain pattern.
+ *
+ * Shape follows ScpiHelpWrite (#1004) rather than SysInfoText_Write (#947):
+ * the gating lives INSIDE the helper and latches through `ok`, so the call
+ * sites need no early return and no goto and cannot skip the single
+ * SCPI_ResponseBuf_Give() on the way out. Per #1004 this is deliberately a
+ * per-site helper rather than one shared generic one.
+ *
+ * Deliberately does NOT push a SCPI error itself: SCPI_ErrorPush emits through
+ * the same retry-bounded transport (SCPI_ErrorEmit), which would add another
+ * ~1 s to the very hold this exists to shrink. The callers return SCPI_RES_ERR
+ * after their Give and libscpi pushes SCPI_ERROR_EXECUTION_ERROR once the
+ * callback has returned -- i.e. outside the hold.
+ *
+ * SCPI_SysLogLevelSet does NOT use this: it emits a single line, so its hold is
+ * one write budget (~1 s), the same as every other single-write shared-buffer
+ * site (SCPI_SysInfoGet). The guards exist for the LOOPS.
+ *
+ * @param context   libscpi context (supplies the transport write fn)
+ * @param ok        in/out latch; false on entry short-circuits the write, and
+ *                  is cleared here on the first incomplete or over-budget write
+ * @param startTick tick sampled once by the caller right after the take
+ * @param data      bytes to write
+ * @param len       number of bytes
+ */
+static void SysLogLevelWrite(scpi_t * context, bool * ok, TickType_t startTick,
+                             const char * data, size_t len) {
+    /* #1098: the DECISION lives in ScpiBoundedWrite.h, which is pure and
+     * dependency-free, so tests/host compiles and calls THE REAL predicates
+     * instead of a parallel copy of them. That is not a style preference: with
+     * the deadline and the latch inline here, deleting the deadline check was
+     * measured to leave the ENTIRE host suite green, because the Makefile guard
+     * only proved the call sites NAME this helper and the test only proved its
+     * own re-implementation was self-consistent.
+     *
+     * What stays here is what a host cannot run: the transport write, the log
+     * wording, and this site's budget constant. */
+    switch (ScpiBoundedWrite_Decide(*ok, (uint32_t)xTaskGetTickCount(),
+                                    (uint32_t)startTick,
+                                    (uint32_t)pdMS_TO_TICKS(
+                                            SCPI_LOGLEVEL_WRITE_BUDGET_MS))) {
+        case SCPI_BOUNDED_WRITE_SKIP:
+            return;
+        case SCPI_BOUNDED_WRITE_EXPIRED:
+            *ok = false;
+            LOG_E("LOG:LEV: write budget %u ms exhausted - reply truncated",
+                  (unsigned)SCPI_LOGLEVEL_WRITE_BUDGET_MS);
+            return;
+        case SCPI_BOUNDED_WRITE_PROCEED:
+        default:
+            break;
+    }
+    size_t written = context->interface->write(context, data, len);
+    if (ScpiBoundedWrite_IsShort(written, len)) {
+        *ok = false;
+        LOG_E("LOG:LEV: transport dropped %u of %u bytes - reply truncated",
+              (unsigned)(len - written), (unsigned)len);
+    }
+}
+
 /**
  * Sets the runtime log level for a module.
  * Usage: SYST:LOG:LEVel <module_name>,<level>
@@ -1453,12 +1568,45 @@ static scpi_result_t SCPI_SysLogLevelSet(scpi_t * context) {
     Logger_SetLevel(module, (uint8_t)level);
     uint8_t actual = Logger_GetLevel(module);
 
-    char buf[80];
-    int len = snprintf(buf, sizeof(buf), "%s: %d (ceiling %d)\r\n",
+    /* #1098: format the confirmation into the shared SCPI response scratch
+     * buffer (#347) instead of a stack-local char[80]. Storage location only
+     * -- the same bytes go out, in the same order, with the same return value.
+     * The longest line this can produce is "GENERAL: 3 (ceiling 3)\r\n" (24 B),
+     * which fits both the old 80 B array and SCPI_RESPONSE_BUF_SIZE without
+     * truncation, so the clamp below never fires today; it is kept because the
+     * old code had it and it is the correct discipline either way.
+     *
+     * Take/Give contract (SCPIInterface.h): a non-NULL Take MUST be matched by
+     * exactly one Give on every exit path; a NULL Take by none. The take is
+     * deliberately here, after the Logger_SetLevel above, rather than at entry
+     * -- everything before it is parameter validation that needs no buffer, and
+     * #947 is about shrinking what happens inside the hold, not widening it.
+     *
+     * Consequence of that placement: on a NULL take the level HAS already been
+     * set but we return SCPI_RES_ERR, where the old code always returned OK.
+     * That is the right way round -- the setter's job is done, and the error
+     * reports only that we could not echo it. Take returns NULL solely when
+     * gScpiRespMutex does not exist, i.e. before CreateSCPIContext has run,
+     * which no SCPI callback can observe (SCPIInterface.h:145-148). */
+    char* buf = (char*)SCPI_ResponseBuf_Take();
+    if (buf == NULL) {
+        /* #1098: report, don't just return. Project rule (CLAUDE.md): every
+         * error goes through the log, and the client learns it via SYST:LOG?
+         * plus the SCPI error queue. Safe to push here precisely BECAUSE the
+         * take failed -- nothing is held, so SCPI_ErrorPush's own transport
+         * write cannot extend a hold (contrast SysLogLevelWrite above). */
+        LOG_E("LOG:LEV set: response buffer unavailable");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+    int len = snprintf(buf, SCPI_RESPONSE_BUF_SIZE, "%s: %d (ceiling %d)\r\n",
                        Logger_GetModuleName(module), actual, ceiling);
     if (len > 0) {
-        context->interface->write(context, buf, ((size_t)len < sizeof(buf) - 1) ? (size_t)len : sizeof(buf) - 1);
+        context->interface->write(context, buf,
+                ((size_t)len < SCPI_RESPONSE_BUF_SIZE - 1)
+                        ? (size_t)len : SCPI_RESPONSE_BUF_SIZE - 1);
     }
+    SCPI_ResponseBuf_Give();
 
     return SCPI_RES_OK;
 }
@@ -1480,16 +1628,60 @@ static scpi_result_t SCPI_SysLogLevelGet(scpi_t * context) {
         }
         SCPI_ResultInt32(context, Logger_GetLevel(module));
     } else {
-        /* No parameter — dump all modules */
-        char buf[48];
+        /* No parameter — dump all modules.
+         *
+         * #1098: one take BEFORE the loop, the same shared buffer reused for
+         * every line, one give AFTER it -- the SCPI_SysInfoTextGet shape, not a
+         * take/give per iteration. Per-iteration pairing would block on the
+         * mutex LOG_MODULE_COUNT times for one query and would let a peer
+         * callback interleave its own reply between our lines; the single hold
+         * is both cheaper and the only one that keeps the dump contiguous.
+         * ("Give, then write" is not a third option -- SCPI_WriteWithRetry
+         * re-reads its data across retries, so a peer could overwrite the
+         * shared buffer mid-write; see the REJECTED note on SysInfoText_Write.)
+         *
+         * COST, stated plainly: this hold now spans LOG_MODULE_COUNT (10)
+         * writes where the old stack buffer held no shared lock at all. Against
+         * a host that has stopped reading, each interface->write can spend
+         * SCPI_WRITE_MAX_RETRIES(200) x SCPI_WRITE_RETRY_DELAY_MS(5) ~= 1 s, so
+         * the worst-case hold is ~10 s. That is the inherent trade #347's
+         * shared buffer makes and every one of its ~17 call sites pays; it is
+         * an order of magnitude under the ~90 writes that made the same shape
+         * worth guarding in SCPI_SysInfoTextGet (#947), and #947 deliberately
+         * did not retrofit its short-write/deadline guards to the other sites.
+         * If that bound is ever tightened it should be tightened for all of
+         * them at once, not for this one callback. */
+        char* buf = (char*)SCPI_ResponseBuf_Take();
+        if (buf == NULL) {
+            /* #1098: see SCPI_SysLogLevelSet -- nothing held, so pushing the
+             * error here cannot extend a hold. */
+            LOG_E("LOG:LEV?: response buffer unavailable");
+            SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+            return SCPI_RES_ERR;
+        }
+        /* #1098: sampled AFTER the take, so the budget bounds the HOLD only --
+         * the unbounded (portMAX_DELAY) wait for the buffer is somebody else's
+         * hold and spends none of it. Same placement and reason as #947. */
+        TickType_t startTick = xTaskGetTickCount();
+        bool ok = true;
         for (int i = 0; i < LOG_MODULE_COUNT; i++) {
-            int len = snprintf(buf, sizeof(buf), "%s: %d (ceiling %d)\r\n",
+            int len = snprintf(buf, SCPI_RESPONSE_BUF_SIZE,
+                               "%s: %d (ceiling %d)\r\n",
                                Logger_GetModuleName((LogModule_t)i),
                                Logger_GetLevel((LogModule_t)i),
                                Logger_GetCeiling((LogModule_t)i));
             if (len > 0) {
-                context->interface->write(context, buf, ((size_t)len < sizeof(buf) - 1) ? (size_t)len : sizeof(buf) - 1);
+                SysLogLevelWrite(context, &ok, startTick, buf,
+                        ((size_t)len < SCPI_RESPONSE_BUF_SIZE - 1)
+                                ? (size_t)len : SCPI_RESPONSE_BUF_SIZE - 1);
             }
+        }
+        SCPI_ResponseBuf_Give();
+        if (!ok) {
+            /* Give FIRST, then report: libscpi pushes
+             * SCPI_ERROR_EXECUTION_ERROR for a SCPI_RES_ERR return after the
+             * callback returns, i.e. outside the hold. */
+            return SCPI_RES_ERR;
         }
     }
     return SCPI_RES_OK;
@@ -1513,17 +1705,36 @@ static scpi_result_t SCPI_SysLogLevelAllSet(scpi_t * context) {
 
     Logger_SetAllLevels((uint8_t)level);
 
-    /* Echo result showing actual levels (may differ due to ceilings) */
-    char buf[48];
+    /* Echo result showing actual levels (may differ due to ceilings).
+     *
+     * #1098: the SCPI_SysLogLevelGet dump shape exactly -- one take before the
+     * loop, the shared buffer reused per line, one give after. Same reasoning
+     * and the same ~10-write hold cost; see the comment there. As in
+     * SCPI_SysLogLevelSet, a NULL take returns SCPI_RES_ERR after the levels
+     * have already been applied -- the set succeeded, only the echo failed. */
+    char* buf = (char*)SCPI_ResponseBuf_Take();
+    if (buf == NULL) {
+        /* #1098: see SCPI_SysLogLevelSet -- nothing held, so pushing the error
+         * here cannot extend a hold. */
+        LOG_E("LOG:LEV:ALL: response buffer unavailable");
+        SCPI_ErrorPush(context, SCPI_ERROR_SYSTEM_ERROR);
+        return SCPI_RES_ERR;
+    }
+    /* #1098: sampled AFTER the take -- see SCPI_SysLogLevelGet. */
+    TickType_t startTick = xTaskGetTickCount();
+    bool ok = true;
     for (int i = 0; i < LOG_MODULE_COUNT; i++) {
-        int len = snprintf(buf, sizeof(buf), "%s: %d\r\n",
+        int len = snprintf(buf, SCPI_RESPONSE_BUF_SIZE, "%s: %d\r\n",
                            Logger_GetModuleName((LogModule_t)i),
                            Logger_GetLevel((LogModule_t)i));
         if (len > 0) {
-            context->interface->write(context, buf, ((size_t)len < sizeof(buf) - 1) ? (size_t)len : sizeof(buf) - 1);
+            SysLogLevelWrite(context, &ok, startTick, buf,
+                    ((size_t)len < SCPI_RESPONSE_BUF_SIZE - 1)
+                            ? (size_t)len : SCPI_RESPONSE_BUF_SIZE - 1);
         }
     }
-    return SCPI_RES_OK;
+    SCPI_ResponseBuf_Give();
+    return ok ? SCPI_RES_OK : SCPI_RES_ERR;
 }
 
 /**
@@ -4829,6 +5040,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
          * nothing. */
         if (app_SDCard_SpiOwnedByWifi() || SpiBusHealth_IsSdSuspended()) {
             const char *why = SD_SuspendReasonText();
+            /* log_budget: max=76 */
             LOG_E("Cannot start SD logging - SD suspended: %s\r\n",
                   why ? why : "SPI4 is owned elsewhere");
             SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -5148,6 +5360,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                 SCPI_UnpublishStartInterface(pRunTimeStreamConfig, ifaceForStart,
                                      ifaceAtDetect, ifaceGenPinned,
                                      ifaceSetsPinned);
+                /* log_budget: max=76 */
                 LOG_E("Cannot start SD logging - SD suspended: %s\r\n",
                       why ? why : "SPI4 is owned elsewhere");
                 SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
@@ -5371,6 +5584,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                      * already use (:4832, :5151) -- measured worst case 118
                      * bytes against Logger's 125-byte effective ceiling,
                      * unchanged by reuse here. */
+                    /* log_budget: max=76 */
                     LOG_E("Cannot start SD logging - SD suspended: %s\r\n", why);
                 } else if (armTornDown) {
                     /* #988 (ported by #1121): this request's arm was torn down
@@ -5394,6 +5608,7 @@ static scpi_result_t SCPI_StartStreamingClaimed(scpi_t * context,
                      * string sd_card_manager_GetStateName() and
                      * sd_card_manager_GetModeName() can return, not assumed)
                      * against the same 125-byte ceiling. */
+                    /* log_budget: max=8,8 */
                     LOG_E("[SD] STR:START refused: the write arm was torn down "
                           "before the file opened (SD now state=%s mode=%s) "
                           "- retry\r\n",
@@ -6776,6 +6991,59 @@ static scpi_result_t SCPI_GetStreamInterface(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #1007: the stored streaming rate has a setter (SYSTem:STReam:START <freq>)
+ * and no getter, so a client that changes it for one test cannot read the
+ * prior value back to restore it. This is the first query exposed for it.
+ * Returns the CURRENT stored rate. That is normally the last value START
+ * published -- never revoked by STOP (deliberately out of scope, #1007) --
+ * so before any START has ever run this reads the boot default, 1 Hz
+ * (COMMON_STREAMING_RUNTIME_DEFAULTS, CommonRuntimeDefaults.h: "the only
+ * rate legal in EVERY config").
+ *
+ * "CURRENT", not "last STARTed", because TWO callers borrow this field and
+ * put it back, and a read landing inside either window sees the borrowed
+ * value (pre-merge audit, #1014):
+ *   - SYSTem:STReam:THRoughput pokes it at :2481 and restores at :2518 /
+ *     :2560, with a vTaskDelay of up to 60 s (its duration argument) in
+ *     between.
+ *   - the WiFi finder pokes it at :2794 and restores at :3159.
+ * Neither is reachable from the same transport that is blocked running it,
+ * but SCPI over TCP is dispatched on app_WifiTask while USB SCPI runs on
+ * its own task, so a cross-transport query DOES land in the window.
+ * StreamFreq_Get's critical section gives atomicity, not ownership: it
+ * cannot tell a borrowed value from the stored one.
+ *
+ * Consequence for the snapshot/restore use #1007 exists for: a client that
+ * snapshots DURING a benchmark captures the benchmark's rate and, on
+ * restore, writes it back as the device's setting -- silently, since
+ * nothing here can detect it. Snapshot before starting a benchmark, not
+ * during one. Making the getter refuse or flag benchmark-owned state would
+ * mean giving this field real ownership semantics, which is #977's
+ * territory (the session-start and config-change claims do not interlock)
+ * and is deliberately not attempted in a getter this small.
+ *
+ * Reuses StreamFreq_Get() (above, ~line 2253) rather than re-deriving its
+ * critical section: that helper already exists for exactly this field, and
+ * SCPI_StartStreaming's no-arg-START path / WIFI:FINd? / SYST:STR:THRoughput
+ * all go through it for their own save/restore. Frequency is uint64_t; the
+ * critical section inside StreamFreq_Get is required per CLAUDE.md (64-bit
+ * reads on PIC32MZ are not atomic and need one against a concurrent
+ * SCPI-task writer).
+ *
+ * SCPI_ResultUInt64, not Int32 + a clamp: this getter's whole purpose is a
+ * faithful read-back for snapshot/restore, and a clamp that silently
+ * reported INT32_MAX in place of an out-of-range stored value would defeat
+ * that (opus pre-merge review, #1007) -- unlike the no-arg-START internal
+ * read, which clamps because it is about to retry the value as a bounded
+ * int32 frequency argument, not report it verbatim. */
+static scpi_result_t SCPI_GetStreamRate(scpi_t * context) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    SCPI_ResultUInt64(context, StreamFreq_Get(pRunTimeStreamConfig));
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_GetEcho(scpi_t * context) {
     microrl_t* console;
     console = SCPI_GetMicroRLClient(context);
@@ -7766,6 +8034,68 @@ static scpi_result_t SCPI_CapabilitiesApiVersionGet(scpi_t * context) {
  *
  * Chunked to stay under the 192-byte scpi_printf buffer per call. */
 
+/* Render a double as a JSON number of bounded width, or as JSON null when it
+ * has no JSON spelling. See the #1144 note at the calibration emission for
+ * why both halves are load-bearing.
+ *
+ * %.17g, NOT %.6g. The precision here is a client-visible contract: these
+ * are calibration coefficients, and a client converts raw counts to volts
+ * with them. %.6g keeps six SIGNIFICANT digits, which is fine for a slope
+ * like 0.0012207 but silently degrades one like 123.456789 to 123.457 --
+ * strictly WORSE than the %.6f it replaced for any value >= 1. 17
+ * significant digits is the round-trip width of an IEEE-754 double, and it
+ * is still bounded: the widest %.17g result is like
+ * "-1.2345678901234567e-308", 24 characters.
+ *
+ * MEASURED, so the contract is not overstated: 123.456789, 0.0012207031 and
+ * 1.000123 all round-trip through this exactly. 1e300 does NOT -- it comes
+ * back 9.999999999999998e+299. That is the same conversion inaccuracy #1144
+ * documents for %f at extreme magnitudes, it is a property of the library
+ * rather than of the format specifier, and no precision here can fix it.
+ * The document stays VALID, which is what this function is for; a
+ * coefficient of 1e300 is not a calibration anyone is relying on.
+ *
+ * CAPJSON_DOUBLE_MIN is the smallest buffer that holds every output this
+ * function can produce. Below it the function still emits valid JSON while
+ * it can -- "null" needs five bytes -- and only below THAT is there nothing
+ * honest left to write. */
+#define CAPJSON_DOUBLE_MIN 25u
+#define CAPJSON_NULL_MIN    5u   /* strlen("null") + NUL */
+
+static void CapJsonDouble(char* out, size_t outLen, double v) {
+    if (out == NULL || outLen < CAPJSON_NULL_MIN) {
+        /* Not even "null" fits. Do NOT write a truncated token: a caller
+         * passing a 3-byte buffer would otherwise get "nu", which is the
+         * half-written literal this helper exists to prevent. Terminate if
+         * there is anywhere to put a terminator and write nothing else --
+         * the emission is then visibly missing a value rather than
+         * carrying a corrupt one. No assert: this is unreachable from both
+         * current callers (32 bytes each), and configASSERT is not
+         * __DEBUG-gated on this port, so asserting here would trade a
+         * caller's mistake for a field failure. */
+        if (out != NULL && outLen > 0u) {
+            out[0] = '\0';
+        }
+        return;
+    }
+
+    /* Below CAPJSON_DOUBLE_MIN a long number cannot fit, but "null" can, so
+     * the truncation check below turns it into null rather than garbage. */
+    int n = isfinite(v) ? snprintf(out, outLen, "%.17g", v) : -1;
+
+    /* The conversion's return IS checked, rather than cast away, because a
+     * half-written number is precisely the defect this function exists to
+     * prevent -- silently emitting one would reintroduce #1144 inside its
+     * own fix. With outLen >= CAPJSON_DOUBLE_MIN this cannot trigger for a
+     * finite value; it is the non-finite path and a guard against a future
+     * caller, not a live truncation path. Either way the answer is the
+     * same: if no number was written in full, there is no number to print,
+     * and "null" is valid JSON where a truncated literal is not. */
+    if (n < 0 || (size_t)n >= outLen) {
+        (void)snprintf(out, outLen, "null");
+    }
+}
+
 static void EmitAinChannelJson(scpi_t* context,
                                const AInChannel* ch,
                                const AInRuntimeConfig* rt,
@@ -7856,12 +8186,52 @@ static void EmitAinChannelJson(scpi_t* context,
     double calB = rt->CalB;
     taskEXIT_CRITICAL();
 
+    /* #1144: these two are the only client-settable doubles in the blob
+     * (CONFigure:ADC:chanCALM / chanCALB take any double), and %.6f is
+     * unbounded, so their width is client-controlled. Two independent ways
+     * that broke the document, both measured on an NQ1:
+     *
+     *   finite but huge -- chanCALB 0,1e300 made this one call need 233 of
+     *   scpi_printf's 192 bytes (SCPIInterface.h:228). On overflow it writes
+     *   the first 191 anyway, so the trailing "}" and "extensions":{}} never
+     *   reach the wire: the object is left open and the next channel's "{"
+     *   arrives after a comma. json.loads then fails at the NEXT object,
+     *   pointing nowhere near the real cause.
+     *
+     *   non-finite -- chanCALB 0,1e400 is ACCEPTED and stored as inf (the
+     *   getter reads back "inf"), and printf spells that "inf"/"nan", which
+     *   is not JSON at any width. This one needs no truncation at all; the
+     *   blob comes back SHORTER than clean and still will not parse.
+     *
+     * So bounding the width alone is not enough. %.17g caps it (1e+300 is
+     * 7 characters, 24 worst case) while preserving the full round-trip
+     * precision of a double -- see CapJsonDouble, where the choice of 17
+     * over 6 significant digits is a client-visible contract, not a
+     * formatting preference -- and a non-finite value emits JSON null: the
+     * field stays present for
+     * clients that index it, and null is the honest spelling for "no
+     * representable value here". Emitting a number we cannot spell, or
+     * dropping the key, would both be worse.
+     *
+     * The %.3f "ranges" above are NOT this bug: those come from board
+     * config, not from any setter, so their width is fixed at build time.
+     * If a range ever becomes client-settable it acquires this defect and
+     * should use this same helper. */
+    /* 32 >= CAPJSON_DOUBLE_MIN (25). Two of these add 64 bytes to this
+     * frame; CONF:CAP:JSON? is reachable on app_WifiTask, whose measured
+     * peak is 780 of 1500 words, so 16 words of growth leaves the ~720-word
+     * margin essentially unchanged. */
+    char slopeText[32];
+    char interceptText[32];
+    CapJsonDouble(slopeText, sizeof(slopeText), calM);
+    CapJsonDouble(interceptText, sizeof(interceptText), calB);
+
     scpi_printf(context,
         "\"calibration\":{\"model\":\"linear\","
         "\"user_override_supported\":true,"
-        "\"slope\":%.6f,\"intercept\":%.6f},"
+        "\"slope\":%s,\"intercept\":%s},"
         "\"extensions\":{}}",
-        calM, calB);
+        slopeText, interceptText);
 }
 
 static void EmitAoutChannelJson(scpi_t* context,
@@ -8925,10 +9295,28 @@ static const scpi_command_t scpi_commands[] = {
      * Capabilities.h for the schema and evolution rules. */
     {.pattern = "CONFigure:CAPabilities:APIVersion?", .callback = SCPI_CapabilitiesApiVersionGet,},
     {.pattern = "CONFigure:CAPabilities:JSON?", .callback = SCPI_CapabilitiesJsonGet,},
-    {.pattern = "CONFigure:ADC:chanCALM", .callback = SCPI_ADCChanCalmSet,},
-    {.pattern = "CONFigure:ADC:chanCALB", .callback = SCPI_ADCChanCalbSet,},
-    {.pattern = "CONFigure:ADC:chanCALM?", .callback = SCPI_ADCChanCalmGet,},
-    {.pattern = "CONFigure:ADC:chanCALB?", .callback = SCPI_ADCChanCalbGet,},
+    // #907: respelled all-caps -- the node started lowercase, so it had an
+    // EMPTY short form. An empty short form does NOT mean "only the full
+    // spelling is ever legal": it means the node ALSO matches the EMPTY
+    // string, because `compareStr` (utils.c:347) compares equal lengths and
+    // 0 == 0. So before this respelling the DEGENERATE header `CONF:ADC:`
+    // -- a trailing colon with nothing after it -- matched this node's
+    // empty short arm and dispatched HERE, silently writing a channel's
+    // calibration slope. All-caps honestly declares "exactly one legal
+    // spelling" per the SCPI Abbreviation Rule. The old FULL spelling
+    // `CONFigure:ADC:chanCALM` still works unchanged, same letters and
+    // `compareStr` is case-insensitive; what stops working is that
+    // degenerate empty-node header, which now answers -113. That is a
+    // deliberate, wire-visible narrowing closing a latent hazard -- NOT the
+    // "zero behaviour change" an earlier revision of this comment claimed,
+    // and daqifi-python-test-suite's test_907 check J puts it on the wire.
+    // See #907 for the proof that no letter-preserving respelling can give
+    // this pair a distinct working short form (they differ only in their
+    // last character, and a short form is always a prefix).
+    {.pattern = "CONFigure:ADC:CHANCALM", .callback = SCPI_ADCChanCalmSet,},
+    {.pattern = "CONFigure:ADC:CHANCALB", .callback = SCPI_ADCChanCalbSet,},
+    {.pattern = "CONFigure:ADC:CHANCALM?", .callback = SCPI_ADCChanCalmGet,},
+    {.pattern = "CONFigure:ADC:CHANCALB?", .callback = SCPI_ADCChanCalbGet,},
     {.pattern = "CONFigure:ADC:SAVEcal", .callback = SCPI_ADCCalSave,},
     {.pattern = "CONFigure:ADC:SAVEFcal", .callback = SCPI_ADCCalFSave,},
     {.pattern = "CONFigure:ADC:LOADcal", .callback = SCPI_ADCCalLoad,},
@@ -8963,10 +9351,18 @@ static const scpi_command_t scpi_commands[] = {
     // DAC7718 is NQ3-only hardware, not available to validate an implementation.
     // Patterns stay registered (SCPI_Help still lists them) but route to the
     // shared not-implemented stub instead of lying about success.
-    {.pattern = "CONFigure:DAC:chanCALM", .callback = SCPI_NotImplemented,},
-    {.pattern = "CONFigure:DAC:chanCALB", .callback = SCPI_NotImplemented,},
-    {.pattern = "CONFigure:DAC:chanCALM?", .callback = SCPI_NotImplemented,},
-    {.pattern = "CONFigure:DAC:chanCALB?", .callback = SCPI_NotImplemented,},
+    // #907: respelled all-caps, same reason as the ADC pair above -- the
+    // old FULL spelling `CONFigure:DAC:chanCALM` still resolves here (case-
+    // insensitive match), so it still answers -200 (not implemented)
+    // rather than regressing to -113 (undefined header). The degenerate
+    // header `CONF:DAC:` is the half that DOES change: it used to reach
+    // this stub through the empty short arm and answered -200; it now
+    // answers -113. Same deliberate narrowing described above, and the
+    // reason that description is written out there rather than here.
+    {.pattern = "CONFigure:DAC:CHANCALM", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:CHANCALB", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:CHANCALM?", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:CHANCALB?", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:SAVEcal", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:SAVEFcal", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:LOADcal", .callback = SCPI_NotImplemented,},
@@ -8988,6 +9384,7 @@ static const scpi_command_t scpi_commands[] = {
     // SYSTem:Start/Stop/StreamData aliases kept for back-compat with existing
     // client libraries and user scripts (#311 round 3).
     {.pattern = "SYSTem:STReam:START", .callback = SCPI_StartStreaming,},
+    {.pattern = "SYSTem:STReam:START?", .callback = SCPI_GetStreamRate,}, // #1007: readback for the stored rate; STOP does not revert it (deliberately, see the callback)
     {.pattern = "SYSTem:STReam:STOP", .callback = SCPI_StopStreaming,},
     {.pattern = "SYSTem:STReam:DATA?", .callback = SCPI_IsStreaming,},
     {.pattern = "SYSTem:StartStreamData", .callback = SCPI_StartStreaming,},
@@ -9106,12 +9503,13 @@ static const scpi_command_t scpi_commands[] = {
  * With every return value discarded (the pre-#1004 shape), a host that
  * stopped reading made EVERY one of those ~5-7 calls burn its own full ~1 s
  * budget -- ~5-7 s of held mutex, blocking every other SCPI callback on BOTH
- * transports for the same span. Two sibling callbacks carry the same defect:
- * SCPI_SysInfoTextGet (#947, PR #992) and SCPI_GetCommandHistory (#995,
- * PR #1008). BOTH OF THOSE PRs ARE STILL OPEN as of this commit, so both of
- * those holds are LIVE in this tree -- do not read this comment as saying
- * the class is closed. #1004 records why each site carries its own small
- * helper instead of one shared generic one.
+ * transports for the same span. Two sibling callbacks carried the same defect:
+ * SCPI_SysInfoTextGet (#947) and SCPI_GetCommandHistory (#995). #947's fix
+ * LANDED (PR #992 merged -- SysInfoText_Write above now carries the same two
+ * guards), but #995's PR #1008 IS STILL OPEN as of this commit, so
+ * SCPI_GetCommandHistory's ~11 s hold is LIVE in this tree -- do not read this
+ * comment as saying the class is closed. #1004 records why each site carries
+ * its own small helper instead of one shared generic one.
  *
  * TWO guards, because neither alone bounds the hold (the same two-guard
  * algebra #995 proposes for CmdHistoryWrite on PR #1008; that helper does
@@ -9145,21 +9543,38 @@ static const scpi_command_t scpi_commands[] = {
  */
 static void ScpiHelpWrite(scpi_t * context, bool * ok, TickType_t startTick,
                           const char * data, size_t len) {
-    if (!*ok) {
-        return;
-    }
-    /* Unsigned tick subtraction: correct across the 32-bit xTaskGetTickCount
-     * wrap (~49.7 days at configTICK_RATE_HZ 1000). */
-    if ((TickType_t)(xTaskGetTickCount() - startTick) >=
-            pdMS_TO_TICKS(SCPI_HELP_WRITE_BUDGET_MS)) {
-        *ok = false;
-        LOG_E("HELP: transport write budget (%u ms) exhausted "
-              "(host not reading) - reply truncated",
-              (unsigned)SCPI_HELP_WRITE_BUDGET_MS);
-        return;
+    /* #1134: the DECISION now lives in ScpiBoundedWrite.h, which is pure and
+     * dependency-free, so tests/host compiles and calls THE REAL predicates
+     * rather than a parallel copy of them. This is a behaviour-preserving
+     * substitution -- the latch-then-deadline order, the `>=` boundary, the
+     * unsigned tick subtraction and the `written != len` test are unchanged,
+     * one for one -- but it is not cosmetic: written inline here, the deadline
+     * check could be DELETED and the entire host suite still passed, because
+     * SCPIInterface.c is not host-includable and test_1004 could only assert
+     * against its own re-implementation (#1098's measurement, #1134's ticket).
+     *
+     * What stays here is what a host cannot run: the transport write, this
+     * site's own LOG_E wording, and this site's own budget constant. Per #1004
+     * each site keeps its own I/O-performing wrapper; only the arithmetic
+     * underneath is shared. */
+    switch (ScpiBoundedWrite_Decide(*ok, (uint32_t)xTaskGetTickCount(),
+                                    (uint32_t)startTick,
+                                    (uint32_t)pdMS_TO_TICKS(
+                                            SCPI_HELP_WRITE_BUDGET_MS))) {
+        case SCPI_BOUNDED_WRITE_SKIP:
+            return;
+        case SCPI_BOUNDED_WRITE_EXPIRED:
+            *ok = false;
+            LOG_E("HELP: transport write budget (%u ms) exhausted "
+                  "(host not reading) - reply truncated",
+                  (unsigned)SCPI_HELP_WRITE_BUDGET_MS);
+            return;
+        case SCPI_BOUNDED_WRITE_PROCEED:
+        default:
+            break;
     }
     size_t written = context->interface->write(context, data, len);
-    if (written != len) {
+    if (ScpiBoundedWrite_IsShort(written, len)) {
         *ok = false;
         LOG_E("HELP: transport write dropped %u of %u bytes "
               "(host not reading) - reply truncated",
