@@ -416,11 +416,22 @@ static bool SD_ValidatePathParam(const char *p, size_t len)
 
 /* #747: SYST:STOR:SD:LISt? prints every entry as "<directory>/<name>", but the
  * operand sites below prepend the configured directory themselves — so handing
- * back the exact string the device just printed builds "DAQiFi/DAQiFi/<name>",
- * the open fails, and for SD:GET the host receives a bare __END_OF_FILE__ with
- * SYST:ERR? still reading "No error". That is indistinguishable from an empty
- * file, which is what made #747 read as a device fault rather than a rejected
- * path.
+ * back the exact string the device just printed builds "DAQiFi/DAQiFi/<name>"
+ * and the open fails. Before #914, ANY open failure on this path answered
+ * SD:GET with a bare __END_OF_FILE__ and left SYST:ERR? reading "No error" —
+ * indistinguishable from an empty file, which is what made #747 read as a
+ * device fault rather than a rejected path. Since #914 the TERMINATOR is
+ * unchanged — still a bare __END_OF_FILE__, the marker every shipped client
+ * recognises, so the reply still ends promptly — but the failure is no longer
+ * silent: the SD task latches -256 "File name not found" and the owning
+ * transport announces it at its next command boundary (also readable via
+ * SYST:ERR?; SYST:LOG? names the underlying filesystem error) — loud, but
+ * still a failure. This function is what makes the double-prefixed case above
+ * actually OPEN instead: it strips the redundant "<directory>/" so the
+ * round-trip succeeds outright. An operand this function does NOT recognize
+ * (e.g. SD:LISt? "OTHER" then SD:GET "OTHER/f.csv", where OTHER is not the
+ * configured directory) still hits the #914 loud-failure path, not this one —
+ * restoring that round-trip is #914 Part B, tracked separately.
  *
  * Accept the round-trip form by dropping ONE leading "<directory>/". Traversal
  * stays impossible: the prefix must match the device's own configured
