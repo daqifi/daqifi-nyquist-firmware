@@ -9,6 +9,7 @@
 //// General
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>   /* #1144: isfinite, for the capabilities JSON number helper */
 //
 //// Harmony
 //#include "system_config.h"
@@ -6990,6 +6991,59 @@ static scpi_result_t SCPI_GetStreamInterface(scpi_t * context) {
     return SCPI_RES_OK;
 }
 
+/* #1007: the stored streaming rate has a setter (SYSTem:STReam:START <freq>)
+ * and no getter, so a client that changes it for one test cannot read the
+ * prior value back to restore it. This is the first query exposed for it.
+ * Returns the CURRENT stored rate. That is normally the last value START
+ * published -- never revoked by STOP (deliberately out of scope, #1007) --
+ * so before any START has ever run this reads the boot default, 1 Hz
+ * (COMMON_STREAMING_RUNTIME_DEFAULTS, CommonRuntimeDefaults.h: "the only
+ * rate legal in EVERY config").
+ *
+ * "CURRENT", not "last STARTed", because TWO callers borrow this field and
+ * put it back, and a read landing inside either window sees the borrowed
+ * value (pre-merge audit, #1014):
+ *   - SYSTem:STReam:THRoughput pokes it at :2481 and restores at :2518 /
+ *     :2560, with a vTaskDelay of up to 60 s (its duration argument) in
+ *     between.
+ *   - the WiFi finder pokes it at :2794 and restores at :3159.
+ * Neither is reachable from the same transport that is blocked running it,
+ * but SCPI over TCP is dispatched on app_WifiTask while USB SCPI runs on
+ * its own task, so a cross-transport query DOES land in the window.
+ * StreamFreq_Get's critical section gives atomicity, not ownership: it
+ * cannot tell a borrowed value from the stored one.
+ *
+ * Consequence for the snapshot/restore use #1007 exists for: a client that
+ * snapshots DURING a benchmark captures the benchmark's rate and, on
+ * restore, writes it back as the device's setting -- silently, since
+ * nothing here can detect it. Snapshot before starting a benchmark, not
+ * during one. Making the getter refuse or flag benchmark-owned state would
+ * mean giving this field real ownership semantics, which is #977's
+ * territory (the session-start and config-change claims do not interlock)
+ * and is deliberately not attempted in a getter this small.
+ *
+ * Reuses StreamFreq_Get() (above, ~line 2253) rather than re-deriving its
+ * critical section: that helper already exists for exactly this field, and
+ * SCPI_StartStreaming's no-arg-START path / WIFI:FINd? / SYST:STR:THRoughput
+ * all go through it for their own save/restore. Frequency is uint64_t; the
+ * critical section inside StreamFreq_Get is required per CLAUDE.md (64-bit
+ * reads on PIC32MZ are not atomic and need one against a concurrent
+ * SCPI-task writer).
+ *
+ * SCPI_ResultUInt64, not Int32 + a clamp: this getter's whole purpose is a
+ * faithful read-back for snapshot/restore, and a clamp that silently
+ * reported INT32_MAX in place of an out-of-range stored value would defeat
+ * that (opus pre-merge review, #1007) -- unlike the no-arg-START internal
+ * read, which clamps because it is about to retry the value as a bounded
+ * int32 frequency argument, not report it verbatim. */
+static scpi_result_t SCPI_GetStreamRate(scpi_t * context) {
+    StreamingRuntimeConfig * pRunTimeStreamConfig = BoardRunTimeConfig_Get(
+            BOARDRUNTIME_STREAMING_CONFIGURATION);
+
+    SCPI_ResultUInt64(context, StreamFreq_Get(pRunTimeStreamConfig));
+    return SCPI_RES_OK;
+}
+
 static scpi_result_t SCPI_GetEcho(scpi_t * context) {
     microrl_t* console;
     console = SCPI_GetMicroRLClient(context);
@@ -7980,6 +8034,68 @@ static scpi_result_t SCPI_CapabilitiesApiVersionGet(scpi_t * context) {
  *
  * Chunked to stay under the 192-byte scpi_printf buffer per call. */
 
+/* Render a double as a JSON number of bounded width, or as JSON null when it
+ * has no JSON spelling. See the #1144 note at the calibration emission for
+ * why both halves are load-bearing.
+ *
+ * %.17g, NOT %.6g. The precision here is a client-visible contract: these
+ * are calibration coefficients, and a client converts raw counts to volts
+ * with them. %.6g keeps six SIGNIFICANT digits, which is fine for a slope
+ * like 0.0012207 but silently degrades one like 123.456789 to 123.457 --
+ * strictly WORSE than the %.6f it replaced for any value >= 1. 17
+ * significant digits is the round-trip width of an IEEE-754 double, and it
+ * is still bounded: the widest %.17g result is like
+ * "-1.2345678901234567e-308", 24 characters.
+ *
+ * MEASURED, so the contract is not overstated: 123.456789, 0.0012207031 and
+ * 1.000123 all round-trip through this exactly. 1e300 does NOT -- it comes
+ * back 9.999999999999998e+299. That is the same conversion inaccuracy #1144
+ * documents for %f at extreme magnitudes, it is a property of the library
+ * rather than of the format specifier, and no precision here can fix it.
+ * The document stays VALID, which is what this function is for; a
+ * coefficient of 1e300 is not a calibration anyone is relying on.
+ *
+ * CAPJSON_DOUBLE_MIN is the smallest buffer that holds every output this
+ * function can produce. Below it the function still emits valid JSON while
+ * it can -- "null" needs five bytes -- and only below THAT is there nothing
+ * honest left to write. */
+#define CAPJSON_DOUBLE_MIN 25u
+#define CAPJSON_NULL_MIN    5u   /* strlen("null") + NUL */
+
+static void CapJsonDouble(char* out, size_t outLen, double v) {
+    if (out == NULL || outLen < CAPJSON_NULL_MIN) {
+        /* Not even "null" fits. Do NOT write a truncated token: a caller
+         * passing a 3-byte buffer would otherwise get "nu", which is the
+         * half-written literal this helper exists to prevent. Terminate if
+         * there is anywhere to put a terminator and write nothing else --
+         * the emission is then visibly missing a value rather than
+         * carrying a corrupt one. No assert: this is unreachable from both
+         * current callers (32 bytes each), and configASSERT is not
+         * __DEBUG-gated on this port, so asserting here would trade a
+         * caller's mistake for a field failure. */
+        if (out != NULL && outLen > 0u) {
+            out[0] = '\0';
+        }
+        return;
+    }
+
+    /* Below CAPJSON_DOUBLE_MIN a long number cannot fit, but "null" can, so
+     * the truncation check below turns it into null rather than garbage. */
+    int n = isfinite(v) ? snprintf(out, outLen, "%.17g", v) : -1;
+
+    /* The conversion's return IS checked, rather than cast away, because a
+     * half-written number is precisely the defect this function exists to
+     * prevent -- silently emitting one would reintroduce #1144 inside its
+     * own fix. With outLen >= CAPJSON_DOUBLE_MIN this cannot trigger for a
+     * finite value; it is the non-finite path and a guard against a future
+     * caller, not a live truncation path. Either way the answer is the
+     * same: if no number was written in full, there is no number to print,
+     * and "null" is valid JSON where a truncated literal is not. */
+    if (n < 0 || (size_t)n >= outLen) {
+        (void)snprintf(out, outLen, "null");
+    }
+}
+
 static void EmitAinChannelJson(scpi_t* context,
                                const AInChannel* ch,
                                const AInRuntimeConfig* rt,
@@ -8070,12 +8186,52 @@ static void EmitAinChannelJson(scpi_t* context,
     double calB = rt->CalB;
     taskEXIT_CRITICAL();
 
+    /* #1144: these two are the only client-settable doubles in the blob
+     * (CONFigure:ADC:chanCALM / chanCALB take any double), and %.6f is
+     * unbounded, so their width is client-controlled. Two independent ways
+     * that broke the document, both measured on an NQ1:
+     *
+     *   finite but huge -- chanCALB 0,1e300 made this one call need 233 of
+     *   scpi_printf's 192 bytes (SCPIInterface.h:228). On overflow it writes
+     *   the first 191 anyway, so the trailing "}" and "extensions":{}} never
+     *   reach the wire: the object is left open and the next channel's "{"
+     *   arrives after a comma. json.loads then fails at the NEXT object,
+     *   pointing nowhere near the real cause.
+     *
+     *   non-finite -- chanCALB 0,1e400 is ACCEPTED and stored as inf (the
+     *   getter reads back "inf"), and printf spells that "inf"/"nan", which
+     *   is not JSON at any width. This one needs no truncation at all; the
+     *   blob comes back SHORTER than clean and still will not parse.
+     *
+     * So bounding the width alone is not enough. %.17g caps it (1e+300 is
+     * 7 characters, 24 worst case) while preserving the full round-trip
+     * precision of a double -- see CapJsonDouble, where the choice of 17
+     * over 6 significant digits is a client-visible contract, not a
+     * formatting preference -- and a non-finite value emits JSON null: the
+     * field stays present for
+     * clients that index it, and null is the honest spelling for "no
+     * representable value here". Emitting a number we cannot spell, or
+     * dropping the key, would both be worse.
+     *
+     * The %.3f "ranges" above are NOT this bug: those come from board
+     * config, not from any setter, so their width is fixed at build time.
+     * If a range ever becomes client-settable it acquires this defect and
+     * should use this same helper. */
+    /* 32 >= CAPJSON_DOUBLE_MIN (25). Two of these add 64 bytes to this
+     * frame; CONF:CAP:JSON? is reachable on app_WifiTask, whose measured
+     * peak is 780 of 1500 words, so 16 words of growth leaves the ~720-word
+     * margin essentially unchanged. */
+    char slopeText[32];
+    char interceptText[32];
+    CapJsonDouble(slopeText, sizeof(slopeText), calM);
+    CapJsonDouble(interceptText, sizeof(interceptText), calB);
+
     scpi_printf(context,
         "\"calibration\":{\"model\":\"linear\","
         "\"user_override_supported\":true,"
-        "\"slope\":%.6f,\"intercept\":%.6f},"
+        "\"slope\":%s,\"intercept\":%s},"
         "\"extensions\":{}}",
-        calM, calB);
+        slopeText, interceptText);
 }
 
 static void EmitAoutChannelJson(scpi_t* context,
@@ -9139,10 +9295,28 @@ static const scpi_command_t scpi_commands[] = {
      * Capabilities.h for the schema and evolution rules. */
     {.pattern = "CONFigure:CAPabilities:APIVersion?", .callback = SCPI_CapabilitiesApiVersionGet,},
     {.pattern = "CONFigure:CAPabilities:JSON?", .callback = SCPI_CapabilitiesJsonGet,},
-    {.pattern = "CONFigure:ADC:chanCALM", .callback = SCPI_ADCChanCalmSet,},
-    {.pattern = "CONFigure:ADC:chanCALB", .callback = SCPI_ADCChanCalbSet,},
-    {.pattern = "CONFigure:ADC:chanCALM?", .callback = SCPI_ADCChanCalmGet,},
-    {.pattern = "CONFigure:ADC:chanCALB?", .callback = SCPI_ADCChanCalbGet,},
+    // #907: respelled all-caps -- the node started lowercase, so it had an
+    // EMPTY short form. An empty short form does NOT mean "only the full
+    // spelling is ever legal": it means the node ALSO matches the EMPTY
+    // string, because `compareStr` (utils.c:347) compares equal lengths and
+    // 0 == 0. So before this respelling the DEGENERATE header `CONF:ADC:`
+    // -- a trailing colon with nothing after it -- matched this node's
+    // empty short arm and dispatched HERE, silently writing a channel's
+    // calibration slope. All-caps honestly declares "exactly one legal
+    // spelling" per the SCPI Abbreviation Rule. The old FULL spelling
+    // `CONFigure:ADC:chanCALM` still works unchanged, same letters and
+    // `compareStr` is case-insensitive; what stops working is that
+    // degenerate empty-node header, which now answers -113. That is a
+    // deliberate, wire-visible narrowing closing a latent hazard -- NOT the
+    // "zero behaviour change" an earlier revision of this comment claimed,
+    // and daqifi-python-test-suite's test_907 check J puts it on the wire.
+    // See #907 for the proof that no letter-preserving respelling can give
+    // this pair a distinct working short form (they differ only in their
+    // last character, and a short form is always a prefix).
+    {.pattern = "CONFigure:ADC:CHANCALM", .callback = SCPI_ADCChanCalmSet,},
+    {.pattern = "CONFigure:ADC:CHANCALB", .callback = SCPI_ADCChanCalbSet,},
+    {.pattern = "CONFigure:ADC:CHANCALM?", .callback = SCPI_ADCChanCalmGet,},
+    {.pattern = "CONFigure:ADC:CHANCALB?", .callback = SCPI_ADCChanCalbGet,},
     {.pattern = "CONFigure:ADC:SAVEcal", .callback = SCPI_ADCCalSave,},
     {.pattern = "CONFigure:ADC:SAVEFcal", .callback = SCPI_ADCCalFSave,},
     {.pattern = "CONFigure:ADC:LOADcal", .callback = SCPI_ADCCalLoad,},
@@ -9177,10 +9351,18 @@ static const scpi_command_t scpi_commands[] = {
     // DAC7718 is NQ3-only hardware, not available to validate an implementation.
     // Patterns stay registered (SCPI_Help still lists them) but route to the
     // shared not-implemented stub instead of lying about success.
-    {.pattern = "CONFigure:DAC:chanCALM", .callback = SCPI_NotImplemented,},
-    {.pattern = "CONFigure:DAC:chanCALB", .callback = SCPI_NotImplemented,},
-    {.pattern = "CONFigure:DAC:chanCALM?", .callback = SCPI_NotImplemented,},
-    {.pattern = "CONFigure:DAC:chanCALB?", .callback = SCPI_NotImplemented,},
+    // #907: respelled all-caps, same reason as the ADC pair above -- the
+    // old FULL spelling `CONFigure:DAC:chanCALM` still resolves here (case-
+    // insensitive match), so it still answers -200 (not implemented)
+    // rather than regressing to -113 (undefined header). The degenerate
+    // header `CONF:DAC:` is the half that DOES change: it used to reach
+    // this stub through the empty short arm and answered -200; it now
+    // answers -113. Same deliberate narrowing described above, and the
+    // reason that description is written out there rather than here.
+    {.pattern = "CONFigure:DAC:CHANCALM", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:CHANCALB", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:CHANCALM?", .callback = SCPI_NotImplemented,},
+    {.pattern = "CONFigure:DAC:CHANCALB?", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:SAVEcal", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:SAVEFcal", .callback = SCPI_NotImplemented,},
     {.pattern = "CONFigure:DAC:LOADcal", .callback = SCPI_NotImplemented,},
@@ -9202,6 +9384,7 @@ static const scpi_command_t scpi_commands[] = {
     // SYSTem:Start/Stop/StreamData aliases kept for back-compat with existing
     // client libraries and user scripts (#311 round 3).
     {.pattern = "SYSTem:STReam:START", .callback = SCPI_StartStreaming,},
+    {.pattern = "SYSTem:STReam:START?", .callback = SCPI_GetStreamRate,}, // #1007: readback for the stored rate; STOP does not revert it (deliberately, see the callback)
     {.pattern = "SYSTem:STReam:STOP", .callback = SCPI_StopStreaming,},
     {.pattern = "SYSTem:STReam:DATA?", .callback = SCPI_IsStreaming,},
     {.pattern = "SYSTem:StartStreamData", .callback = SCPI_StartStreaming,},
