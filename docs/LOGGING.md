@@ -33,7 +33,7 @@ SYST:LOG:LEVel:ALL <level>        # Set all modules at once
 | `LOG_E_ONCE(bit, ...)` | `gLogOneShot` | `SYST:LOG?` / `SYST:LOG:CLEAR` | ISR context (8-entry deferred queue) |
 | `LOG_E_SESSION(bit, ...)` | `gSessionOneShot` | `Streaming_ClearStats()` at stream start | Streaming engine per-sample errors |
 
-Both use `volatile uint32_t` bitmasks (up to 32 call sites each). Bit indices defined in `LogOnceBit_t` and `LogSessionBit_t` enums in `Logger.h`. The `|=` is not critical-section-protected — worst case is one extra duplicate message per priority-crossing race. Also available: `LOG_I_ONCE`, `LOG_D_ONCE`, `LOG_I_SESSION`, `LOG_D_SESSION`.
+Both use `volatile uint32_t` bitmasks (up to 32 call sites each). Bit indices defined in `LogOnceBit_t` and `LogSessionBit_t` enums in `Logger.h`. **`gLogOneShot`'s bit is claimed by `Logger_OneShotClaim()` (#1125)**, an atomic test-and-set under `taskENTER_CRITICAL`/`taskENTER_CRITICAL_FROM_ISR` (picked at runtime by `uxInterruptNesting`, since this family — unlike `LOG_x_SESSION` — is documented ISR-callable): a preemption between an unguarded `|=`'s load and store can no longer erase another context's bit. **`gSessionOneShot`'s `|=` is still unguarded** as of this writing — a preemption there can still lose a bit, re-arming that session's one-shot for a second fire (task-context only, so a `taskENTER_CRITICAL`-only fix applies; tracked in #1028, not yet merged). Also available: `LOG_I_ONCE`, `LOG_D_ONCE`, `LOG_I_SESSION`, `LOG_D_SESSION`.
 
 **Module Mapping:**
 
