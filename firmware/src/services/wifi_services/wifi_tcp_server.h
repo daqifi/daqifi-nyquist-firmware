@@ -38,7 +38,14 @@ extern "C" {
  */
 typedef struct s_tcpClientContext
 {
-    SOCKET clientSocket;
+    // Qodo (PR #1101 round 4, finding 6 / rule 244846): shared across
+    // task contexts without a mutex -- WifiTask, streaming_Task (via
+    // wifi_tcp_server_WriteBuffer/HasActiveClient) and the WINC driver
+    // task (SocketEventCallback) all read or write this field directly.
+    // Its siblings below (tcpInFlight, pendingBufferReset, connGeneration,
+    // lastActivityTick) are already volatile for the identical reason;
+    // this field was the one outlier.
+    volatile SOCKET clientSocket;
     /** Client read buffer */
     uint8_t readBuffer[WIFI_RBUFFER_SIZE+1];
 
@@ -187,6 +194,40 @@ typedef struct s_tcpClientContext
      *  the single slot can never receive it. */
     volatile uint32_t connGeneration;
 
+    /** #1073: a client-slot close is OWED on the connection whose generation is
+     *  pendingCloseGen, but the site that discovered the need could not perform
+     *  it there and then.  Two reasons, both real:
+     *    - the discovering site runs on the WINC driver task (SocketEventCallback
+     *      -- the accept-time recv-arm failure, the post-batch re-arm failure,
+     *      AND (round 5) the ordinary peer close/RST path, SOCKET_MSG_RECV with
+     *      s16BufferSize <= 0), which #437 forbids from blocking, and a close
+     *      that is SAFE against a concurrent send() has to be able to wait on
+     *      wMutex;
+     *    - a WiFi stream is live, and tearing its transport down mid-session
+     *      would be worse than the deaf socket it replaces (a deaf socket can
+     *      still TRANSMIT -- only recv is latched broken, socket.c's
+     *      bIsRecvPending).
+     *  So the need is RECORDED here and a single consumer on app_WifiTask
+     *  (wifi_tcp_server_ServicePendingClientClose) performs it once the policy
+     *  allows, within one ProcessState iteration (~5 ms) of that moment rather
+     *  than at the 300 s idle watchdog.
+     *
+     *  GENERATION-BOUND, and it has to be: the slot can also be released by a
+     *  path that knows nothing about this record (the #663 idle watchdog,
+     *  wifi_tcp_server_CloseSocket).  A bare boolean would then close the NEXT,
+     *  healthy client.
+     *
+     *  WRITERS, all in wifi_tcp_server.c: wifi_tcp_server_RequestClientClose
+     *  (any context, including the WINC driver task), the close body once the
+     *  close it describes has completed, the consumer's stale-record drop, and
+     *  wifi_tcp_server_Initialize at boot.  Every one of the first three writes
+     *  the pair inside a single taskENTER_CRITICAL region, so no other task and
+     *  no ISR can observe a half-written record; the only unsynchronized read is
+     *  wifi_tcp_server_ClientCloseIsPending's single-bool "is it worth running
+     *  the consumer", which the consumer then re-tests under lock. */
+    volatile bool pendingClose;
+    volatile uint32_t pendingCloseGen;
+
     /** #663: tick of the last RX or TX activity on this connection. Stamped at
      *  ACCEPT, on every SOCKET_MSG_RECV, and on every successful send(). The
      *  console idle-timeout watchdog (wifi_manager) closes a client that has
@@ -264,6 +305,27 @@ uint32_t wifi_tcp_server_GetConnGeneration(void);
  *  different client has taken the slot.  Backpressure (buffer full while the
  *  same client stays connected) does NOT flip this false. */
 bool wifi_tcp_server_ConnIsCurrent(uint32_t generation);
+
+/** #1073: record that the single TCP client slot must be released, bound to the
+ *  connection that currently owns it.  NEVER blocks and issues no HIF traffic,
+ *  so it is safe from the WINC driver task (#437) and from an ISR-deferred
+ *  callback.  A no-op when no client is connected.  The close itself is
+ *  performed later by wifi_tcp_server_ServicePendingClientClose(). */
+void wifi_tcp_server_RequestClientClose(void);
+
+/** #1073: true while a close is owed (for whichever connection owes it).  A
+ *  single volatile bool read -- atomic on PIC32MZ. */
+bool wifi_tcp_server_ClientCloseIsPending(void);
+
+/** #1073: perform an owed close if one is still valid for the connection that
+ *  currently holds the slot.  MAY BLOCK (bounded) on wMutex, so it must be
+ *  called only from app_WifiTask -- it is the SINGLE consumer of the owed-close
+ *  record, and the caller owns the policy decision about whether a close is
+ *  wanted right now.  Drops the record instead when the connection it was owed
+ *  for is already gone.  Returns true only when a close was actually performed;
+ *  a false return (nothing owed, record stale, or wMutex unavailable) leaves
+ *  any still-valid record in place for the next iteration. */
+bool wifi_tcp_server_ServicePendingClientClose(void);
 
 /**
  * Swap the WiFi TCP circular write buffer to pool-managed memory.

@@ -717,14 +717,106 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 // brand-new client. Stamping first makes a live socket always
                 // carry a fresh tick.
                 gStateMachineContext.pTcpServerContext->client.lastActivityTick = xTaskGetTickCount();
-                gStateMachineContext.pTcpServerContext->client.clientSocket = pAcceptMessage->sock;
-                // #599: this connection now owns the single TCP slot.  Bump the
-                // generation so any still-in-flight async SD GET/LIST reply that
-                // was bound to the previous connection stops writing to us.
-                // Single-writer (this callback only) -> plain ++ is safe.
+                // Qodo (PR #1101 round 5, finding 7): bump connGeneration BEFORE
+                // publishing clientSocket, not after. This callback runs on the
+                // WINC driver task (priority 1) with no critical section across
+                // these two stores, so app_WifiTask's #1073 owed-close consumer
+                // (priority 2) can preempt between them. The consumer's own read
+                // of clientSocket and connGeneration together IS atomic (one
+                // taskENTER_CRITICAL region in wifi_tcp_server_ServicePendingClient
+                // Close), so the only place an inconsistent pair can be OBSERVED is
+                // a preemption landing inside this writer's two-statement window.
+                // Under the old order (clientSocket published, then generation
+                // bumped), a consumer preempting in that window saw a live,
+                // brand-new socket still paired with the OLD generation -- which
+                // is exactly the pendingCloseGen a record left over from the PRIOR
+                // connection (e.g. one wifi_tcp_server_CloseSocket() left standing,
+                // per its own comment, for the consumer's staleness test to drop)
+                // would match, authorizing a close of the healthy replacement.
+                // With generation bumped first, every window a preemption can land
+                // in is safe: before either store, clientSocket is still the old
+                // value (-1 or already torn down) so the consumer's own
+                // clientSocket>=0 test fails; after both stores, connGeneration
+                // already reflects the new connection so no stale pendingCloseGen
+                // can match it; the only new window (between the two stores here)
+                // has connGeneration already current but clientSocket not yet
+                // published, which the consumer's clientSocket>=0 test also
+                // rejects. #599's own comment below documents the same variable;
+                // the fix is a two-line reorder, not new synchronization.
                 gStateMachineContext.pTcpServerContext->client.connGeneration++;
+                // #599: this connection now owns the single TCP slot.  The
+                // generation bump above is also what stops any still-in-flight
+                // async SD GET/LIST reply that was bound to the previous
+                // connection from writing to us.  Single-writer (this callback
+                // only) -> plain ++ is safe.
+                gStateMachineContext.pTcpServerContext->client.clientSocket = pAcceptMessage->sock;
                 LOG_D("Connection from %s:%d\r\n", inet_ntop(AF_INET, &pAcceptMessage->strAddr.sin_addr.s_addr, s, sizeof (s)), pAcceptMessage->strAddr.sin_port);
-                recv(gStateMachineContext.pTcpServerContext->client.clientSocket, gStateMachineContext.pTcpServerContext->client.readBuffer, WIFI_RBUFFER_SIZE, 0);
+                // #1073: the arm is NOT fire-and-forget.  This recv() is what
+                // makes the socket able to report anything at all -- inbound
+                // data AND the peer-close notification, which the WINC delivers
+                // only as the reply to an outstanding SOCKET_CMD_RECV (see the
+                // re-arm site in wifi_manager_ProcessStateImpl for the full
+                // mechanism and the driver citations).  If the arm fails, the
+                // driver has already latched bIsRecvPending = 1 and never clears
+                // it, so the socket is deaf for the rest of its life while still
+                // holding the single client slot -- every later connect refused
+                // until the 300 s idle watchdog reclaims it.  Give the slot back
+                // instead -- but NOT from here.
+                //
+                // THIS SITE HAS THE SAME RACE AS THE POST-BATCH RE-ARM SITE, AND
+                // A WIDER WINDOW (Qodo PR #1101 round 4, findings 4 + 5).  This
+                // socket is NOT in the position of the refused-2nd-client
+                // shutdown() above: that one is safe precisely because its fd is
+                // never published, whereas clientSocket was published a few lines
+                // up.  WDRV_WINC_Tasks runs at pri 1 (configuration.h
+                // DRV_WIFI_WINC_RTOS_TASK_PRIORITY) -- below every other task
+                // involved -- so streaming_Task (pri 6) can preempt between that
+                // store and here and reach send() on this very socket via
+                // wifi_manager_WriteToBuffer -> wifi_tcp_server_WriteBuffer
+                // (which gates only on clientSocket >= 0) -> TcpServerFlush.  A
+                // synchronous shutdown() racing that send() is the #452 HIF
+                // re-entrancy that corrupts chip state and wedges all TCP I/O
+                // until SYST:COMM:LAN:HRESet.  Sampling
+                // Streaming_IsActiveOnWifiInterface() and then closing could not
+                // exclude it: the two statements are not atomic, and a WiFi
+                // stream armed in between (any transport can arm one) is served
+                // by a task that preempts this one.
+                //
+                // So: RECORD that the slot is owed a close and return.  The
+                // record is bound to this connection's generation, and a single
+                // consumer on app_WifiTask performs the close under wMutex --
+                // which is the lock every send() on this socket already holds,
+                // and therefore the only thing that actually excludes the pair.
+                // wifi_tcp_server_RequestClientClose() is one critical section
+                // with no HIF traffic and no wait, so #437's "never block the
+                // WINC driver task" invariant is not merely preserved here, it
+                // is strengthened: the shutdown() HIF transaction this callback
+                // used to issue inline is gone from this task entirely.
+                //
+                // It also fixes the streaming case rather than abandoning it: a
+                // client that connects while a WiFi stream is live and fails its
+                // arm keeps the (still TX-capable) socket for the life of the
+                // stream, then has the slot released within one ProcessState
+                // iteration of the stream stopping -- not at the 300 s watchdog.
+                if (recv(gStateMachineContext.pTcpServerContext->client.clientSocket,
+                         gStateMachineContext.pTcpServerContext->client.readBuffer,
+                         WIFI_RBUFFER_SIZE, 0) != SOCK_ERR_NO_ERROR) {
+                    // Filed before the log, matching the re-arm site: the record
+                    // binds to whoever holds the slot when it runs, and LOG_E
+                    // can block.  (Here a replacement client is impossible
+                    // either way -- SOCKET_MSG_ACCEPT is delivered from this
+                    // very callback, which is not re-entrant -- but keeping the
+                    // two sites identical is what stops the next edit from
+                    // reintroducing the gap at only one of them.)
+                    wifi_tcp_server_RequestClientClose();
+                    // Qodo (PR #1101 round 4, finding 7 / rule 244853): this runs
+                    // on the WINC deferred-driver task, so the log must be a
+                    // single static literal with no format arguments -- the
+                    // socket number is dropped deliberately.  The connection is
+                    // identifiable from the "Connection from ..." line logged
+                    // immediately above it.
+                    LOG_E("TCP: recv() arm failed at accept - releasing client slot (#1073)");
+                }
 
             } else {
                 // #475: accept() arriving with a NULL message indicates a
@@ -757,8 +849,46 @@ static void SocketEventCallback(SOCKET socket, uint8_t messageType, void *pMessa
                 gTcpRxPending = true;
 
             } else {
-                LOG_E("[%s:%d]Error Socket MSG Recv", __FILE__, __LINE__);
-                wifi_tcp_server_CloseClientSocket();
+                // #1073 (PR #1101 round 5): this is the THIRD site that used to
+                // call wifi_tcp_server_CloseClientSocket() directly, and it is
+                // the one a real peer RST/FIN actually takes -- socket.c's
+                // SOCKET_CMD_RECV reply is the ONLY close/abort notification
+                // channel (verified against winc/drv/socket/socket.c, cited in
+                // #1073's original commit e3f1bd1a4), and s16BufferSize <= 0
+                // here IS that reply. It runs on the WINC driver task, same as
+                // the accept-time recv-arm-failure site a few lines up.
+                //
+                // wifi_tcp_server_CloseClientSocket() -> CloseClientSocketBody(
+                // false) issues shutdown() UNCONDITIONALLY: the best-effort,
+                // non-blocking xSemaphoreTake(wMutex, 0) in that function only
+                // gates whether the LOCAL BUFFER reset runs now or is deferred
+                // via pendingBufferReset -- the shutdown() HIF call itself is
+                // not gated on it at all. A peer RST arriving mid-batch (this
+                // ticket's own scenario: streaming_Task or a TCP SCPI reply
+                // holding wMutex inside send()) therefore hits precisely the
+                // #452 shutdown()-races-send() HIF re-entrancy that CloseClient
+                // SocketBody's own header comment documents as wedging all TCP
+                // I/O until SYST:COMM:LAN:HRESet -- the same hazard round 4
+                // fixed at the OTHER two call sites (findings 4 + 5), just left
+                // standing at this one. Bench evidence (PR #1101 comment
+                // 5694263577): AcceptRefused climbed 0 -> 1 on the very next
+                // reconnect attempt, which only happens while clientSocket is
+                // still seen as held -- proof the close never completed, not
+                // merely that it was slow.
+                //
+                // Fix: record the close instead of performing it here, exactly
+                // like the other two sites. wifi_tcp_server_RequestClientClose()
+                // does no HIF traffic and cannot block, so it is safe from this
+                // task; the generation-bound record is drained by app_WifiTask's
+                // single consumer (wifi_manager_ServicePendingClientClose), which
+                // waits on wMutex before ever calling shutdown() -- the same
+                // lock every send() on this socket already holds, making the
+                // close and a send mutually exclusive regardless of which task
+                // is sending. Filed before the log, matching both sibling sites:
+                // the record binds to whoever holds the slot when it runs, and
+                // LOG_E can block.
+                wifi_tcp_server_RequestClientClose();
+                LOG_E("TCP: recv() reported close/RST - releasing client slot (#1073)");
             }
             break;
         }
@@ -3146,6 +3276,84 @@ static void wifi_manager_ServiceConsoleIdleTimeout(void)
     }
 }
 
+// #1073: the SINGLE consumer of the owed-close record that all three
+// SocketEventCallback filers use -- the accept-time and post-batch recv-arm
+// failures, and (round 5) the ordinary peer close/RST path.  Runs once per
+// normal WifiTask ProcessState iteration (~5 ms), under gProcessStateMutex,
+// on the drainTcpRx path only.
+//
+// SPLIT OF RESPONSIBILITY, stated because getting it backwards is what the
+// original code did.  wifi_tcp_server_ServicePendingClientClose() owns SAFETY:
+// it performs the close holding wMutex, which every send() on the client
+// socket already holds, so shutdown() and send() cannot overlap no matter which
+// task is producing.  This function owns POLICY: whether a close is WANTED
+// right now.  A policy read that is one instruction stale is harmless -- the
+// worst case is a close deferred by one 5 ms iteration, or a close performed on
+// a socket a stream started using microseconds ago (which was deaf anyway, and
+// whose slot the listener immediately re-offers).  A SAFETY decision could not
+// be made that way, which is why it is not made here.
+//
+// The policy: never tear down the transport of a live WiFi stream.  A socket
+// whose recv arm failed is deaf, not mute -- socket.c latches bIsRecvPending,
+// which breaks RX and peer-close detection while send() keeps working -- so a
+// streaming client is better served by keeping it than by losing the session.
+//
+// Streaming_BeginConfigChange() is taken on top of that, not instead of it, and
+// it is what answers "can the predicate flip under us".  The claim is refused
+// while IsEnabled || Running, and ALL THREE sites that publish IsEnabled
+// (SCPI_StartStreaming's arm, SYST:STR:THRoughput, the WiFi finder's per-step
+// arm) read Streaming_ConfigChangeInProgress() in the SAME critical section as
+// that publish (#847) -- so while we hold it, no session can arm.  Holding it
+// across the close therefore makes the common case (nothing streaming at all)
+// an interlock rather than a sample, with no change to SCPIInterface.c.
+//
+// When the claim is refused because a NON-WiFi session is armed or running we
+// close anyway, deliberately.  Deferring there would hold a deaf socket -- and
+// refuse every reconnect -- for the whole of a USB or SD session, which can run
+// for hours; that is the #1073 defect, not a fix for it.  wMutex, not the
+// claim, is what makes that close safe, and it is held either way.
+//
+// COST OF HOLDING IT: the claim spans the consumer's bounded wMutex wait as
+// well as the close, so a guarded config setter racing us can be refused with
+// -200 for up to WIFI_TCP_CLOSE_MUTEX_WAIT_MS + one shutdown().  Accepted: on
+// the OK path the claim itself has just proved nothing is armed or running, so
+// the only remaining wMutex contenders are a TCP SCPI reply and the
+// SOCKET_MSG_SEND re-arm chain and the wait is ~0; and a refused config setter
+// is a retry, which is the behaviour that claim already ships (#847).
+static void wifi_manager_ServicePendingClientClose(void)
+{
+    if (!wifi_tcp_server_ClientCloseIsPending()) {
+        return;                                  // nothing owed -- common case
+    }
+    if (Streaming_IsActiveOnWifiInterface()) {
+        return;                                  // policy: leave a live stream alone
+    }
+
+    StreamingCfgClaim claim = Streaming_BeginConfigChange();
+    if (claim == STREAM_CFG_CLAIM_BUSY) {
+        // A guarded config setter holds it. Short by construction; retry on the
+        // next iteration rather than racing it.
+        return;
+    }
+    if (claim == STREAM_CFG_CLAIM_STREAMING &&
+        Streaming_IsActiveOnWifiInterface()) {
+        // A WiFi session armed between the policy read above and the claim.
+        // Re-reading here narrows that window to the claim call itself; the
+        // policy defers, and the record survives for the next iteration.
+        return;
+    }
+
+    (void)wifi_tcp_server_ServicePendingClientClose();
+
+    // Released on exactly the path that took it. The claim is advisory and
+    // refuses every streaming command while held, so a leak would wedge
+    // streaming until reboot -- hence one take, one release, no branches
+    // between them that can return.
+    if (claim == STREAM_CFG_CLAIM_OK) {
+        Streaming_EndConfigChange();
+    }
+}
+
 // #663: runtime setter/getter for the console idle timeout (seconds; 0=off).
 void wifi_manager_SetConsoleIdleTimeout(uint32_t seconds)
 {
@@ -3273,9 +3481,86 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
         if (gStateMachineContext.pTcpServerContext != NULL &&
             gStateMachineContext.pTcpServerContext->client.clientSocket >= 0) {
             wifi_tcp_server_ProcessReceivedBuff();
-            recv(gStateMachineContext.pTcpServerContext->client.clientSocket,
-                 gStateMachineContext.pTcpServerContext->client.readBuffer,
-                 WIFI_RBUFFER_SIZE, 0);
+            // #1073: re-read the fd AFTER the dispatch above.  ProcessReceivedBuff
+            // runs the whole microrl + libscpi handler chain, and a handler can
+            // close the client (LAN:POWer, a WiFi REINIT, an SCPI teardown), so
+            // the fd the guard above tested may already be stale.
+            SOCKET clientSock =
+                    gStateMachineContext.pTcpServerContext->client.clientSocket;
+            if (clientSock >= 0 &&
+                recv(clientSock,
+                     gStateMachineContext.pTcpServerContext->client.readBuffer,
+                     WIFI_RBUFFER_SIZE, 0) != SOCK_ERR_NO_ERROR) {
+                // #1073: this is the close-detection gap, so the arm's result
+                // must be acted on rather than discarded.
+                //
+                // A peer close/RST reaches us ONLY as SOCKET_MSG_RECV with
+                // s16BufferSize <= 0, and the WINC sends that only as the reply
+                // to an outstanding SOCKET_CMD_RECV: socket.c's recv() issues a
+                // request only while bIsRecvPending == 0, and the reply handler
+                // is the only thing that clears that flag.  This is the single
+                // site that re-arms it after the #353 deferral, and the entire
+                // batch dispatch above runs with nothing armed -- seconds, for a
+                // burst whose replies drain through wCirbuf under backpressure.
+                //
+                // A failed arm here is unrecoverable inside the driver: it sets
+                // bIsRecvPending = 1 BEFORE issuing the HIF request and does NOT
+                // clear it when SOCKET_REQUEST fails, so every later recv() on
+                // this socket returns SOCK_ERR_NO_ERROR while queueing nothing.
+                // The socket is then permanently deaf -- no data and no close
+                // notification, ever again -- which is precisely the #1073
+                // symptom: the slot is held and every reconnect refused until the
+                // 300 s idle watchdog fires.  A large queued reply burst is what
+                // congests the HIF enough for the arm to fail right here.
+                //
+                // Only shutdown() clears that latch (it memsets the driver's
+                // socket entry), so releasing the slot IS the recovery -- a retry
+                // would silently no-op.
+                //
+                // Qodo (PR #1101 round 4, findings 4 + 5): this used to sample
+                // Streaming_IsActiveOnWifiInterface() and then call
+                // wifi_tcp_server_CloseClientSocket() -- two unsynchronized
+                // statements.  A WiFi stream armed in between (SCPI on either
+                // transport publishes IsEnabled, and streaming_Task at pri 6
+                // preempts this pri-2 task) put a synchronous send() alongside
+                // our synchronous shutdown() on the same fd: the #452 HIF
+                // re-entrancy.  And when the sample came back TRUE the site did
+                // nothing at all, leaving a permanently deaf socket holding the
+                // single slot -- every reconnect refused -- until the 300 s idle
+                // watchdog, which itself refuses to touch a live stream.
+                //
+                // Both are the same defect: the site was trying to make a
+                // safety decision with a predicate that is neither atomic with
+                // the close nor a complete list of the tasks that can call
+                // send() (TCP SCPI replies, an async SD GET/LIST reply (#599)
+                // and the SOCKET_MSG_SEND re-arm chain all do, with no stream
+                // running).  Record the owed close instead; the single consumer
+                // at the tail of this function performs it under wMutex -- the
+                // lock every send() on this socket already holds -- and applies
+                // the "don't tear down a live stream's transport" POLICY, where
+                // a stale read costs at most one 5 ms iteration.  The close
+                // therefore still happens in THIS iteration when nothing is
+                // streaming, and within one iteration of the stream stopping
+                // when something is.
+                //
+                // FILED BEFORE THE LOG, and that ordering is load-bearing.
+                // wifi_tcp_server_RequestClientClose binds the record to
+                // whichever connection holds the slot WHEN IT RUNS, so nothing
+                // that can hand the slot to a different client may execute
+                // between the failed arm and it.  LOG_E can block on the logger
+                // mutex, and a blocked WifiTask (pri 2) lets the WINC driver
+                // task (pri 1) run -- and SOCKET_MSG_ACCEPT, the only thing
+                // that can install a replacement client, is delivered from
+                // there.  With the request first, no blocking call sits in that
+                // gap, so the WINC task cannot run and the record can only name
+                // this connection.  (A teardown from a HIGHER-priority task --
+                // LAN:POWer on USB SCPI at pri 7 -- can still land there, but it
+                // only clears clientSocket, and the request is then a no-op by
+                // its own clientSocket >= 0 test.)
+                wifi_tcp_server_RequestClientClose();
+                LOG_E("TCP: recv() re-arm failed (sock=%d) - socket is deaf (#1073)",
+                      (int)clientSock);
+            }
         }
     }
 
@@ -3299,6 +3584,11 @@ static void wifi_manager_ProcessStateImpl(bool drainTcpRx) {
     if (drainTcpRx) {
         ApplyPowerSavePolicy(&gStateMachineContext);
         wifi_manager_ServiceConsoleIdleTimeout();  // #663: connect-and-never-send guard
+        // #1073: AFTER the idle watchdog, so an owed close filed by the recv
+        // re-arm site earlier in THIS iteration is serviced in this iteration
+        // rather than the next one -- the non-racing common case keeps the
+        // pre-#1073 "closed immediately" behaviour.
+        wifi_manager_ServicePendingClientClose();
         mdns_responder_ServiceHealth();            // #58: re-open a deaf mDNS socket
     }
 
