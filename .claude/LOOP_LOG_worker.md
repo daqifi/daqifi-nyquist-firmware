@@ -5752,3 +5752,52 @@ lines that previously carried the rate — *correct it where it is read*, not in
 **STANDING READING ORDER (adopted, stronger than mine):** provenance before any finding **AND before
 any health field** — the health block cannot tell you it is describing the wrong document. My class-B
 artifact is the proof: every field true, nothing defaulted, nothing distinguishable from a clean run.
+
+## 2026-09-30 17:34 MDT — sk#230 gate-repair audit LAUNCHED (`wf_81434adb-625`); and r4's split-brain is now MEASURED
+
+**⭐ ts#349 r4 byte cross-check, shell `wc -c` (not the Python text-mode artifact):**
+```
+covered_bytes claimed             369515
+vs ts#349 PR diff (RIGHT subject)  73435   delta +296080   403.19%   DISAGREES
+vs my nq-b ledger commit          369515   delta      +0     0.00%   AGREES EXACTLY
+```
+The **disagreement** is the load-bearing half (403%, not a band question); the exact 0-byte agreement
+additionally **names** the wrong object. Ordering stated honestly: for r4 **`files[]` was already the
+proof** — the codex leg listed `.claude/LOOP_LOG_worker.md` and my two evidence files — so this
+**corroborates** rather than establishes. Half-independent check, independent half agreeing with a
+proof already held.
+
+**Pre-registered to disk BEFORE launch** (`.claude/evidence/sk230-PREREG-26bd04ab0.md`), with all four
+of the coordinator's corrections applied: shell `wc -c` only; **percentage band ~1% of 19621
+(19425-19817), not a byte threshold**; ⛔ **`covered_bytes == 0` REJECTED as "no claim"** —
+`adversarial-audit.js:798` is `r.covered_bytes || 0`, the same fail-open-to-clean default as
+`arbiterMissing` sitting inside its own remedy; and **one-directional**: disagreement is signal,
+agreement is consistent-with not proof, `files[]` is the only subject proof, and none of it shows the
+hunt was CAPABLE.
+
+**THE BASE TRAP, measured before launching (three-dot diffs):**
+```
+base = sk#199's branch  merge-base b98e8acd6    4 files    19621 B   +220/-12   <- AUDITED
+base = origin/main      merge-base 682caaba3  269 files  4912792 B   +93052/-973
+```
+**250x burial by bytes.** GitHub's own `baseRef` is `fix/gate-refuse-when-pr-absent-from-session-repo`,
+so the API corroborates the stacking claim independently. Head `26bd04ab05256664a442e087c3b704eeea407245`
+verified against `ls-remote` by FULL SHA; pinned clean at `/mnt/c/daqifi/wt/audit-sk230-nqb` (0
+porcelain); skill copy re-hashed against installed before reuse — both files match.
+
+⛔ **THE PER-ROW BASELINE SPLIT CANNOT BE BRIEFED**, and I flagged that BEFORE the artifact rather than
+reporting it as done: there is no brief parameter and the only two free-text args are SUPPRESSION
+channels. **The audit sees ONE base.** Live-versus-proposal is reader-side discipline I apply at
+artifact-reading time. Passed **no `fixed` and no `dispositions`** deliberately — `fixed` means "hunt
+BEYOND these", and the PR's claim is that the three live rows are closed, so putting that in `fixed`
+would suppress the hunt on exactly what this audit exists to check.
+
+**Args passed as an actual JSON OBJECT this time**, not a JSON-encoded string — the one documented
+difference from the ts#349 r4 invocation whose args were wholly ignored. **Cause still not asserted**;
+the acceptance checks above are what will catch a repeat regardless of cause.
+
+Also noted from conv-fw's disclosure: the review marker `/tmp/.code-review-done-<branch>` is created
+ONLY by `review.sh --mark-done`, documented as *"skip the review and just unblock the PR gate"* — **no
+separate "review passed" recorder exists, so the marker's evidence is identical whether a review
+happened or was bypassed.** Treat the marker as NO evidence; the two defects fixed in `26bd04a` are
+the evidence.
