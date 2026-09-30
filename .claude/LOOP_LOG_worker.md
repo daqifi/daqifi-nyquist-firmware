@@ -5218,3 +5218,234 @@ test) and all three are DUPLICATED COMPLETENESS RULES — `io_bytes`, `query_byt
 test_728's `_listing_terminator`, five local drainers. :1028 says it in the source:
 "a THIRD copy of a rule that has already needed the identical fix twice,
 independently, in this same file/PR pair." Tonight is the fourth instance.
+
+## 2026-09-29 23:50 MDT — ts#349 round 4 LAUNCHED (verdict pending)
+
+Pin: `/mnt/c/daqifi/wt/audit-ts349-r4` detached at `46aebf10f4606f81bdbb9ec0fa8205c255b08fc8`,
+0 porcelain lines, re-verified against the live PR head immediately before launch.
+Base `05eb7f72f5f2e15102dc9ff7f61d1da767515bfc`, range non-empty (3 files, +1428) —
+checked explicitly because the ts#464 ERROR was an empty range reading as full coverage.
+Run `wf_73770fec-5c6`. codex / effort high / blindLeg true / finalGate true. Skill COPIED
+to `.claude/runs/qodo-cycle-ts349r4` and run from the copy; `codexScript` points at the copy.
+
+**Declared bias, INVERTED from the coordinator's seal and they accepted it.** My lane
+audited ts#349 at `8c2070fd8a` and I later RETRACTED the HIGH I reported there to
+0 high / 4 medium / 1 low. So my interest runs toward the RETRACTION having been right —
+a fresh HIGH in the SD-recording / filename-reuse family runs AGAINST my interest and is
+therefore the half to TRUST, not discount. The coordinator had it backwards and told me to
+discount the informative half. That my interest is ambiguous between the two readings is
+itself the best evidence the conflict is weak.
+
+**Caught before launch: "4 of 5", not 5.** The brief said to mark round 3's five findings
+`fixed`. The closure commit says **4 of 5** — `:429`'s coverage gap was **arbiter-DECLINED**,
+not fixed, and the code there is unchanged. Marking it `fixed` would have suppressed a live
+item on a false description. `fixed` carries the four real closures and states `:429` as
+declined-judge-on-the-code. Same class as the fixed-list defect below; second instance.
+
+**Answered from the tool, not assumed: `fixed` never reaches the blind leg.**
+`codex-audit.sh:958-961` owns `BLIND_FIXED_TXT`/`BLIND_DISPO_TXT` internally
+("(nothing stated - hunt the entire diff)") and builds the blind prompt from those; the
+driver never builds or transmits blind text at all (`adversarial-audit.js:404-414`,
+`:570-582`) — since #130 item 2 there is NO argument on the wire through which steered
+text could reach the blind pass. Pre-#130 the driver computed the blind text, but it was
+neutral by design; #130 made it structural rather than conventional. **So the blind-leg
+dominance measurement stands AS MEASURED** — those six runs were not suppressed on the
+fixed items. My amendment was right in principle and REDUNDANT in practice; recording the
+redundancy rather than keeping the credit.
+
+**Deliberately passed NO `dispositions`** (the default stands) to minimise suppression on a
+row where I carry a declared bias. And the two standing clauses (enumerate every site;
+prefer switching primitives) **cannot ride in this tool's args** — there is no brief
+parameter, and `dispositions` is a SUPPRESSION channel whose own header forbids claims
+about the diff. I apply them myself when reading the artifact; I will not claim the brief
+carried them.
+
+## 2026-09-29 23:54 MDT — CHANNEL SCOPE: there is no `brief` arg, and both free-text args are SUPPRESSION channels
+
+Settled from source while ts#349 round 4 runs, answering the coordinator's question directly.
+
+**Enumerated, not sampled.** `adversarial-audit.js`'s whole caller surface is 25 `A.<field>` names.
+**No `brief`, no `attack`, no `notes`.** Every `brief` token in the driver is internal. The only
+caller free-text channels are `fixed` and `dispositions`, and both are labelled as suppression:
+`codex-audit.sh:913` "ALREADY FIXED (hunt BEYOND these)" and `:915` "PROJECT STANDING NON-BUGS
+(do not re-report)".
+
+**Prose, not filter.** No code path drops, scores or matches a finding against either text
+(`FIXED` occurs only at parse, base64, hunter prompt, arbiter prompt, 2 comments; same for
+`DISPOSITIONS`). **A misrouted clause cannot DELETE a finding.**
+
+⛔ **But the arbiter is the third consumer of `fixed`** (`:1829` "CONTEXT — already fixed
+elsewhere"), and the arbiter may decline a CONFIRMED in-scope finding when "a standing disposition
+above covers it." **So the suppression path is at DISPOSITION time, not hunt time** — either
+channel can furnish a decline rationale for a confirmed finding.
+
+**Consequence worth more than the finding:** the damage is **auditable from artifacts already
+saved** — grep for an arbiter `decline` whose rationale cites a standing disposition and read it
+against the clause text. Beats interrogating lanes: it is the artifact, not a recollection, and it
+catches a lane that routed a clause and does not remember.
+
+**This killed a filed negative result** (not mine): nq-a's phase checklist was recorded as
+"schema HIT / detection UNEVIDENCED" because the leg that read the phases produced nothing —
+**no leg read them.** Untested, not disproven. General form: **a remedy that lives reader-side
+cannot be scored by an instrument that only reads the tool's inputs.**
+
+Filed as a THIRD bound (CHANNEL, before SCHEMA and SUBJECT) on
+`feedback_a_brief_can_only_ask_for_what_the_result_schema_can_carry`; reachability confirmed via
+`index_audit_and_dispositions.md`. ⚠ My reachability grep's `-v` filter did not match `grep -rln`'s
+output format, so the file's self-hit passed the filter — the conclusion survives only because a
+genuine second link exists. Same shape as the earlier grep that returned 0 on my own heading:
+**my exclusion patterns keep failing against my own output format.**
+
+## 2026-09-30 00:02 MDT — ts#349 r4: SEALED my independent read BEFORE the artifact (audit still running)
+
+Evidence: `.claude/evidence/ts349-r4-sealed-read-46aebf10f.md`. Sealed so the audit's output
+cannot be read as agreement with a view I had not formed. Read from the object DB via an idle
+checkout — the r4 tree the audit owns was never touched.
+
+**(b) conditional `--expect-serial`: DECISION CORRECT, RATIONALE HAS A FALSE PREMISE.**
+⛔ [V] The bench device-guard cannot be the "first layer" the comment claims, for two independent
+reasons: (i) it is a **PreToolUse hook on `tool_name == Bash`** and exits for any other tool, so it
+never fires on the per-test `subprocess.run` invocations `release_gate.py:317` creates — the exact
+caller that motivated the weakening; (ii) it matches **the port name in the command TEXT** against
+the registry and cannot know which board is on that port. **The guard checks the name you typed;
+`--expect-serial` checks the board that answered.** They fail together on a re-cabled bench — the
+failure CLAUDE.md records a 30-minute false bisect for.
+
+⛔ [I over 2 V facts] **"An env route does not survive" was NEVER TESTED.** `:1241` is
+`default=os.environ.get('DAQIFI_EXPECT_SERIAL')` and `release_gate.py:317` calls `subprocess.run`
+with **no `env=`**, so the child inherits the gate's environment; `extra_args` is irrelevant to that
+path. I do NOT claim the route works (WSLENV semantics unestablished, and `WSLENV=` in
+`HOW_WE_TEST.md:102` is deliberate) — I claim the weakening rests on an untested premise and the
+experiment is one line nobody ran.
+
+**MEASURED, and it cuts nq-c's way:** of ~93 manifest-registered tests, **14 implement any
+`--expect-serial` check, 79 have NONE**, and all 13 others use the conditional form. So their file
+genuinely was the outlier, "conditional when present" is the convention 13/13, and this change
+brought it INTO LINE. **Fleet property, not a ts#349 regression** — no basis to block this PR on it.
+The row is "79 gate tests have no wrong-board check," and it is not this PR's.
+
+**(a) `_configure_common`'s unverified disable: JUDGEMENT SUPPORTED, WORD WRONG.**
+[V] `SCPIStorageSD.c:506` writes `mode = MODE_NONE` **after the if/else, on BOTH branches**, so a
+later `SD:ENAble 1` does re-establish the state — I verified this in firmware rather than accepting
+the test file's own comment (N-class -> V-class). But the disable is refused **precisely when
+`IsBusy()`** (`:490`, returning before `:506`) and the recovery stores `mode` with no IsBusy check
+and no claim held. Counter-argument that may void it: the enable path looks deliberately unguarded
+(`#589` quarantine escape hatch; `SCPIInterface.c:5027` "the one escape hatch"). **Predicted
+disposition: not a ts#349 defect**; pre-existing firmware, needs #589's author.
+
+⚠ **TWO SELF-CORRECTIONS (26th, 27th).** (1) I first read `SCPIStorageSD.c:275` as a general claim
+that writing MODE_NONE kills a live operation; it is specifically **#955's unowned cross-transport
+store**, a window since closed. The read-the-enclosing-function rule caught it; my conclusion
+survives weaker, the citation did not. (2) My `test_861` grep returned zero because **I invented
+the filename** (`test_861_sd_space_after_delete.py`; it is `test_861_stop_races_start_prearm.py`).
+My error, not an absence — **third search pattern of mine to fail against reality this session**,
+after the reachability `-v` filter and the heading grep. The pattern is mine, not the world's.
+
+**SEALED PREDICTION:** the audit finds NEITHER. Both are claims about rationale and about tooling
+outside `base..head`; a hunter cannot reach `device-guard.sh`, `release_gate.py` or
+`SCPIStorageSD.c`. **Silence on both is the subject-scope bound, NOT agreement.**
+
+## 2026-09-30 00:04 MDT — new rule filed; and a housekeeping task I remembered from a STALE index
+
+**Filed:** "ASK WHICH EXECUTION PATH YOUR EVIDENCE CAME FROM BEFORE CALLING A LAYER PRESENT," onto
+`feedback_a_check_that_returns_the_right_verdict_can_be_in_the_wrong_place` (same guard-placement
+family, already the merged home for these). The coordinator's evidence for the surviving layer was
+a **live, measured refusal** — on an **agent Bash call**, while the path being weakened is
+`release_gate.py:317`'s `subprocess.run` spawn, which `device-guard.sh:31`
+(`[ "$tool" = Bash ] || exit 0`) never sees. **Present where measured, absent where credited.**
+Two stacked errors kept separate: wrong PATH, and wrong HAZARD (port NAME vs board identity).
+**Two guards that share a blind spot are one guard.** Also recorded that the POPULATION, not the
+citation, is what should carry such a decision — 14 of ~93, 13/13 conditional.
+
+⚠ **And a stale-snapshot catch on myself.** I went to do the "DUPLICATE PAIR — merge on next touch"
+housekeeping my memory index flagged. **It was already done** — the merge happened 2026-09-29, the
+surviving file records it, and the re-read MEMORY.md no longer carries the flag or the dead link.
+The task existed only in my **pre-compaction snapshot** of MEMORY.md.
+`feedback_my_loaded_claude_md_is_a_snapshot_and_main_moves_under_it` applied to MEMORY.md itself.
+**I verified before editing instead of trusting the remembered flag** — had I trusted it I would
+have "merged" an already-merged pair or re-created a dead link.
+
+ts#349 r4 (`wf_73770fec-5c6`) still running. Not polling it, not guessing at it.
+
+## 2026-09-30 00:10 MDT — ts#349 r4: SPLIT-BRAIN RUN. Artifact VOID for attestation; its BLOCK stands. NOT merged, NOT marked.
+
+**LEDGERED AS ERROR** (the rule is every run, PASS/BLOCK/ERROR — a missing line reads as "no audit ran").
+Artifact: `.claude/evidence/audit-ts349-r4-VOID-splitbrain-46aebf10f.json`. Run `wf_73770fec-5c6`,
+4 agents, 475k tokens, 17m.
+
+⛔ **The two legs audited DIFFERENT REPOSITORIES.** From `journal.jsonl`, not from the summary:
+
+| leg | what it actually read |
+|---|---|
+| `audit:HEAD:codex` (line 4) | `repo: ORG/REPO`, `fd4274518..608a82092`, files = **`.claude/LOOP_LOG_worker.md` + my two ts448 evidence files** — i.e. **MY OWN LEDGER COMMIT**. `findings: []`, `blind_findings: []`, `covered_bytes == total_bytes` |
+| `audit:HEAD:sonnet` (line 5) | the CORRECT head — `test_1018_982_loss_summary.py` at `46aebf10f`, 2 findings |
+| skeptic (line 7) | correct: "Traced at audited commit 46aebf1 … plus firmware at /mnt/c/daqifi/wt/nq-b" |
+
+**NONE of my args took**: `repo` fell back to the `ORG/REPO` placeholder (which passes its own slug
+validator — the defect I confirmed earlier tonight), `auditEngine:"codex"` became `engine:"both"`
+with chain `[codex,sonnet,fable]`, and `repoPath` defaulted to `.` = the firmware lane cwd, which is
+exactly how the codex leg came to audit my ledger. **I am NOT stating a cause.** This is the SECOND
+time tonight this symptom appeared (ts#464 run 1) and last time I asserted a cause and had to
+retract it because the script parses my string fine. Unisolated, and it stays unisolated in writing.
+
+⛔ **A codex leg over the wrong range returns `findings: []` at 100% coverage — indistinguishable
+from a codex leg that looked and found nothing.** Worse than a codex failure, because a failure sets
+`codexFellBack` and this did not. **And there is therefore NO BLIND LEG for ts#349:**
+`blind_findings: []` belongs to the leg that read my ledger, so every steering-suppression reading
+from this run is void — `steeringSuppressed` is evidence only when the blind leg ran on the subject.
+
+⛔⛔ **AND THE WRONG PROVENANCE CORRUPTED THE ARBITER'S SCOPE JUDGEMENT.** The arbiter declined both
+findings `defer_ticket` / `in_scope_of_this_diff=false`, calling them *"pre-existing test-harness
+measurement bug"* and *"test-suite scaffolding, not code this diff modifies."* **VERIFIED FALSE:**
+`test_1018_982_loss_summary.py` **does not exist on merge-base `05eb7f72`** (+1418 lines, a NEW
+file), and `git show 46aebf10f -- <file> | grep '^+def'` matches **both** `_sd_finalize_seconds`
+and `_delete_own_sd_files` — the commit under audit ADDED them.
+
+**[I over verified facts]** The arbiter's `files` list was the codex leg's — `.claude/LOOP_LOG_worker.md`
+and two evidence files, containing no test file at all — so "not in this diff" is what that provenance
+would truthfully imply. **The wrong-range leg did not merely waste itself; it converted two in-scope
+blockers into deferred tickets and produced `verdict: ready_to_merge`.**
+
+**DISPOSITION — the rule that applies is "a conflicted audit's BLOCK is a floor, its CLEAN is
+worthless":**
+- **ACT ON:** 2 CONFIRMED findings, IN SCOPE, on code this PR introduces —
+  `agreed_severity` **high** (`_sd_finalize_seconds` times from the wrong epoch: `t0` is set when the
+  helper is called, not when `SYST:STR:STOP` was written, and `ReliableSCPI.command` is
+  fire-and-forget, so ~2–7 s is silently excluded — reintroducing the very false-failure class round 3
+  claimed to close) and **medium** (`_delete_own_sd_files`' bare `try/except` around a fire-and-forget
+  `command()` cannot observe a refused `SD:DELete`, so it reports `deleted=N, failures=[]` with the
+  file still on the card).
+- **DISCARD ENTIRELY:** `ready_to_merge`, both `defer_ticket` dispositions, `covered_bytes`, the
+  provenance block, and the absence of any finding on the areas I sealed.
+- **ts#349 is BLOCKED.** Not merged. `mark-audited.sh` NOT run — the artifact's `head_sha` is
+  `608a82092` (my lane commit), so an attestation from it would name the wrong SHA, and
+  `pre-merge-gate.sh:138` accepts a truncated sha and might not catch it.
+
+**MY SEALED PREDICTION HELD, and for a stronger reason than I sealed.** I predicted the audit would
+find neither of my two items and that silence would be the subject-scope bound, not agreement. True —
+and the codex leg was not even reading the right repository, so the silence is doubly uninformative.
+**Without the seal I would have read "the audit raised nothing about the device-guard" as agreement.**
+
+## 2026-09-30 00:14 MDT — ts#349 STOOD DOWN by the coordinator; round 5 goes to another lane
+
+Their reasoning, which I accept: I have now audited this row twice and the second run was corrupt,
+so a third from this lane buys less than a fresh one. Fix-first with nq-c, who authored it.
+ts#349 relabelled `blocked:audit-findings`. **I did not run `mark-audited.sh` and did not merge.**
+
+**Filed the transferable rule** the incident record did not carry:
+`feedback_correct_reasoning_over_false_provenance_launders_the_error` — *neither component is wrong
+on its own terms, so reviewing either half CLEARS it; the defect lives in the JOIN, which nothing
+owns.* Linked in from the project record and from `index_how_checks_fail` (which MEMORY.md points
+at), so it is reachable rather than written-but-unfiled.
+
+⚠ **Flagged a near-duplicate I created**: the coordinator had already filed the execution-path rule
+first-person as `feedback_my_MEASURED_first_layer_was_measured_on_the_wrong_execution_path`, and I
+had appended the generalised form to the guard-placement file an hour earlier. Both now exist.
+I did NOT merge them — one is someone else's first-person record of their own error, which is not
+mine to rewrite — but I marked the pair in the index to be resolved on next touch, the same way the
+last duplicate pair was flagged and then actually merged.
+
+**Open with the operator / coordinator, not me:** ts#448's shared-file `io_bytes` row; ts#349's two
+confirmed findings; "79 of ~93 gate tests have no wrong-board check"; the claude-skills bundle, now
+at SEVEN members with tonight's wrong-range leg as the sharpest — it is the first that does not
+merely fail silently but **emits a positive merge recommendation.**

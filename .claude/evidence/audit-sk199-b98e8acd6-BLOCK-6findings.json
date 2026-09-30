@@ -1,0 +1,312 @@
+{
+  "repo": "cptkoolbeenz/claude-skills",
+  "base_sha": "aa8fd6d36757d75b526e113ee4a8011c1be90047",
+  "head_sha": "b98e8acd6dac5176629dca2869a37c23c4a64517",
+  "producer_sha": "7c541130ed829d03d3b1fc784586160378f02b21",
+  "truncated": false,
+  "covered_bytes": 37852,
+  "total_bytes": 37852,
+  "provenance": {
+    "199": {
+      "repo": "cptkoolbeenz/claude-skills",
+      "base_sha": "aa8fd6d36757d75b526e113ee4a8011c1be90047",
+      "head_sha": "b98e8acd6dac5176629dca2869a37c23c4a64517",
+      "producer_sha": "7c541130ed829d03d3b1fc784586160378f02b21",
+      "truncated": false,
+      "covered_bytes": 37852,
+      "total_bytes": 37852
+    }
+  },
+  "engine": "codex",
+  "auditChain": [
+    "codex"
+  ],
+  "targetsAudited": 1,
+  "arbiter": {
+    "verdict": "keep_fixing",
+    "summary": "All 6 findings are CONFIRMED by the skeptic, in-scope, and reproduced end-to-end. Every one of them fails in the dangerous direction defined by the hook contract: a silent, unaudited merge going through with EXIT=0 (or a non-2 exit that the contract itself says is equivalent to allow). None is a \"human sees extra work\" failure — all are \"human sees nothing and the merge lands anyway\" failures, which is the worst-case direction for a merge gate. None qualifies for decline under rule 2: none is pre-existing on the base commit (this diff is what added the quote-refusal check and the capture-failure handling these findings break), no standing disposition in the provided context covers audit-gate bypasses in this file, and no module comment documents any of these as an accepted residual — on the contrary, the :270-280 comment in the capture-failure code explicitly claims to have closed exactly the class of bug findings #2/#4 reopen. Two pairs of findings (0/3 and 1/5) share a single root defect each, seen through two different reproduction vectors; I've kept them as separate line items (per the hunter's split) but flagged the duplication so the fix addresses the root cause once rather than patching per-symptom. Given prior probable-cause note (b) — three earlier \"can only fail restrictive\" claims in this same file all turned out fail-open — none of these should be waved through on directional reasoning; all are measured, reproduced bypasses. No refutations were supplied to check, so unsound_refutations is empty (there is nothing here that could produce a false-clean gate via a bad refutation — the danger this run is guarding against simply doesn't arise on an empty refutation list). Verdict is keep_fixing: six live, reproduced silent-bypass paths in a merge gate cannot ship.",
+    "dispositions": [
+      {
+        "index": 0,
+        "disposition": "fix_now",
+        "agreed_severity": "high",
+        "rationale": "CONFIRMED with a full end-to-end reproduction (unaudited PR 99 merged, EXIT=0). The new quote-refusal check inspects $RESTS only after merge-target-keys.sh's sed has already turned backticks into segment breaks, so exactly the character class the check exists to catch is invisible to it by the time it runs. Fails silently (EXIT=0, marker consumed) — the worst direction per the hook contract. Not pre-existing (this diff added the check), not covered by any documented residual. Root-cause-identical to #3; fix once by validating the RAW command before the shared parser sanitizes it, or by rejecting any of `` ` $ ( ) { } `` etc. pre-split rather than post-split."
+      },
+      {
+        "index": 1,
+        "disposition": "fix_now",
+        "agreed_severity": "high",
+        "rationale": "CONFIRMED and reproduced (EXIT=127 on a normal, in-scope failure mode — missing/stubbed `tr`). IS_MERGE is only ever set to 1 on the parser's error path; a successful classification never arms it, so the entire post-classification body, including the new quote check and staleness checks, runs outside the fail-closed EXIT trap. Per the hook contract this converts any ordinary tool hiccup after that point into a silent allow. Root cause shared with #5. Fix: set IS_MERGE=1 immediately after the parser sources successfully, mirroring pre-merge-checks-gate.sh:82, not only on its internal error branch."
+      },
+      {
+        "index": 2,
+        "disposition": "fix_now",
+        "agreed_severity": "high",
+        "rationale": "CONFIRMED, reproduced via umask alone (attacker fully controls their own umask when invoking their own merge, so this is trivially reachable, not an edge case). A capture redirection failure (permission denied) is indistinguishable from 'gh produced no error and no output' to the silent-empty guard, so a stale marker for a moved PR head is cleared with zero validation and the merge proceeds. This is the exact bypass class the :270-280 comment claims to have closed, so it cannot be declined as an accepted residual of that same fix. Fix: treat any nonzero GHRC or any GHERR content (not just the empty case) as CAPFAIL."
+      },
+      {
+        "index": 3,
+        "disposition": "fix_now",
+        "agreed_severity": "high",
+        "rationale": "Same defect site and mechanism as #0 (quote check operates on already-parser-stripped $RESTS), demonstrated here with backtick and brace variants together plus a positive control proving the check is otherwise live. CONFIRMED, in-scope, fails silently toward an unaudited merge. Dispositioned identically to #0 — flagging the duplication here so the fix isn't applied twice independently and drift between the two patches."
+      },
+      {
+        "index": 4,
+        "disposition": "fix_now",
+        "agreed_severity": "medium",
+        "rationale": "CONFIRMED and reproduced, but I agree with the skeptic's downgrade from the hunter's 'high': exploitation requires either an engineered truncated write coinciding with a matching stale-SHA hex prefix, or the narrower rc=124 timeout variant — both real and reachable (single-byte-limit + ignored SIGXFSZ is a constructible environment) but a materially narrower attack surface than #2's outright permission-denied full bypass. Still a genuine fail-open in the contract's dangerous direction (stale marker consumed, merge allowed), so it must be fixed, not deferred — the fix should reject any GHRC that reflects an incomplete/failed write and length-check LIVE as a full SHA, not just hex-charset it."
+      },
+      {
+        "index": 5,
+        "disposition": "fix_now",
+        "agreed_severity": "high",
+        "rationale": "Same root defect as #1 (IS_MERGE never armed after successful parser classification), reproduced here via a different broken command (head, under inherited errexit) yielding EXIT=127. I disagree with the skeptic's 'medium' correction here specifically because the skeptic itself rated the identical underlying defect 'high' in #1 — the severity of an architectural gap (the caller, not the parser, is responsible for arming the fail-closed trap, and never does on the success path) does not change based on which downstream command happens to be missing. Surfacing this disagreement per rule 5 rather than averaging it away. Fix once, alongside #1: arm IS_MERGE right after the parser sources successfully."
+      }
+    ],
+    "unsound_refutations": [],
+    "treadmill": false,
+    "decline_comment_markdown": "## Pre-merge audit disposition\n\nNo findings from this round are being declined or deferred — all six confirmed findings describe genuine silent fail-open paths in `qodo-cycle/pre-merge-gate.sh` and are being fixed before merge:\n\n1. **Quote-refusal check runs on parser-stripped input** (#0, #3 — same root cause, two reproduction vectors: backticks and braces) — the check at `pre-merge-gate.sh:194-203` inspects `$RESTS` *after* `merge-target-keys.sh`'s sed has already turned backticks/braces into segment breaks, so exactly the characters it's meant to catch are invisible to it. Fix: validate the raw command before the shared parser sanitizes it.\n2. **`IS_MERGE` never armed on a successful classification** (#1, #5 — same root cause, two different triggering commands: `tr` and `head`) — the fail-closed EXIT trap only converts a non-0/2 exit to a block when `IS_MERGE=1`, but that flag is only ever set on the parser's *error* path, never after a normal successful classification. Fix: set `IS_MERGE=1` immediately after sourcing the parser succeeds, matching `pre-merge-checks-gate.sh:82`.\n3. **Capture failure clears a stale marker with no validation** (#2) — a redirection failure (e.g., an unwritable capture file under a restrictive umask) leaves both `LIVE` and `GHERR` looking like \"gh ran and found nothing,\" so the silent-empty guard doesn't fire and a stale marker for a moved PR head is consumed. Fix: treat any nonzero capture-related error as `CAPFAIL`, not just the literal empty/empty case.\n4. **Truncated capture accepted as a SHA match** (#4) — a partial write can produce a `LIVE` value short enough to match any stale marker head sharing that prefix, or the `rc=124` carve-out can hide a partial write's failure. Fix: reject writes that produce a less-than-full-length SHA, and don't treat rc=124 as automatically safe.\n\nNone of these qualify as pre-existing, covered by a standing disposition, or documented as an accepted residual — item #2 is the same bypass class the current diff's own `:270-280` comment claims to have already closed. All four fixes will be re-run through the adversarial audit before the gate is considered ready."
+  },
+  "arbiterModel": "sonnet",
+  "rawFindings": 6,
+  "refuted": 0,
+  "unverified": [],
+  "confirmed": [
+    {
+      "title": "Quote refusal misses backticks removed by the parser",
+      "file": "qodo-cycle/pre-merge-gate.sh",
+      "line": 195,
+      "severity": "high",
+      "category": "security",
+      "failure_scenario": "On branch main, provide a valid .adversarial-done-main marker but no marker for PR 99. Submit `gh pr merge --body `printf hello` 99`. The parser splits at backticks, leaving RESTS=' --body ' and KEYS=main. The new check sees no backtick, consumes main's marker, and exits 0. Bash actually passes `--body hello 99` to gh, merging unaudited PR 99. This disproves the claim that backticks in merge segments are refused.",
+      "breaks_feature": true,
+      "engine": "codex",
+      "__source": "steered",
+      "engines": [
+        "codex"
+      ],
+      "contributions": [
+        {
+          "engine": "codex",
+          "title": "Quote refusal misses backticks removed by the parser",
+          "category": "security",
+          "failure_scenario": "On branch main, provide a valid .adversarial-done-main marker but no marker for PR 99. Submit `gh pr merge --body `printf hello` 99`. The parser splits at backticks, leaving RESTS=' --body ' and KEYS=main. The new check sees no backtick, consumes main's marker, and exits 0. Bash actually passes `--body hello 99` to gh, merging unaudited PR 99. This disproves the claim that backticks in merge segments are refused."
+        }
+      ],
+      "relatedTo": [],
+      "target": 199,
+      "verdict": "CONFIRMED",
+      "reasoning": "Traced and reproduced at commit b98e8ac. merge-target-keys.sh:240 splits segments with `sed -e 's/&&/\\n/g; s/||/\\n/g; s/[;|&(){}`]/\\n/g'` — backticks become newlines, so `gh pr merge --body `printf hello` 99` yields segments `gh pr merge --body `, `printf hello`, ` 99`. Only the first classifies MERGE (_mtk_classify, merge-target-keys.sh:226-227); the trailing ` 99` classifies NO (cmd=`99` falls to the `*) echo NO` arm at :201). So CMD_M holds only the first segment and RESTS (merge-target-keys.sh:300) = ` --body ` — measured: `RESTS=[ --body ] KEYS=[<branch>]`. The new quote refusal at pre-merge-gate.sh:194-203 tests only $RESTS, which now contains no backtick, `$`, quote or brace, so it does not fire. The key walk (merge-target-keys.sh:309-321) sees `--body` in VALUE_FLAGS, sets skip_next, finds no positional, and falls to __CURRENT_BRANCH__ (:332), resolved to `main` at :364-366. End-to-end run in a scratch repo on branch main with only `.adversarial-done-main` present: gate EXIT=0 and main's marker consumed (pre-merge-gate.sh:336-338), while bash actually passes `--body hello 99` to gh, merging unaudited PR 99. Positive control confirms the check is otherwise live: the same command with a double-quoted body blocks with EXIT=2.",
+      "corrected_severity": "high",
+      "__inScope": true
+    },
+    {
+      "title": "Successful classification never arms the EXIT trap",
+      "file": "qodo-cycle/pre-merge-gate.sh",
+      "line": 41,
+      "severity": "high",
+      "category": "fail-open",
+      "failure_scenario": "Launch the hook with inherited errexit and pipefail (set -eo pipefail; export SHELLOPTS), make tr unavailable or stub it to return 127, and submit `gh pr merge 99` without a marker. The positive control passes, but constructing KEY_LIST later fails with status 127. The parser sets IS_MERGE=1 only when grep errors, so successful classification leaves it at 0 and the EXIT trap preserves 127, allowing the unaudited merge. Setting IS_MERGE=1 after successful sourcing changes this reproduction to blocking status 2.",
+      "breaks_feature": true,
+      "engine": "codex",
+      "__source": "steered",
+      "engines": [
+        "codex"
+      ],
+      "contributions": [
+        {
+          "engine": "codex",
+          "title": "Successful classification never arms the EXIT trap",
+          "category": "fail-open",
+          "failure_scenario": "Launch the hook with inherited errexit and pipefail (set -eo pipefail; export SHELLOPTS), make tr unavailable or stub it to return 127, and submit `gh pr merge 99` without a marker. The positive control passes, but constructing KEY_LIST later fails with status 127. The parser sets IS_MERGE=1 only when grep errors, so successful classification leaves it at 0 and the EXIT trap preserves 127, allowing the unaudited merge. Setting IS_MERGE=1 after successful sourcing changes this reproduction to blocking status 2."
+        }
+      ],
+      "relatedTo": [],
+      "target": 199,
+      "verdict": "CONFIRMED",
+      "reasoning": "Traced and reproduced at commit b98e8ac. pre-merge-gate.sh:40-45 arms the EXIT trap but converts a nonzero status to a block only when `IS_MERGE = 1`. IS_MERGE is set to 1 in exactly one place — merge-target-keys.sh:254, inside the `_grep_rc -gt 1` \"cannot decide\" branch. On a SUCCESSFUL merge classification the parser falls through :258 without ever setting it, so the caller's IS_MERGE stays 0 and the whole post-classification body (pre-merge-gate.sh:205-430) runs outside the fail-closed trap. Measured A/B, only the environment changed: baseline `gh pr merge 99` with no marker -> EXIT=2; with `set -eo pipefail; export SHELLOPTS` (child confirmed to see `errexit:...:pipefail`, `$- = ehBc`) and `tr` stubbed to exit 127, the KEY_LIST pipeline at pre-merge-gate.sh:344 fails, the trap declines to convert, and the gate exits 127 with EMPTY stderr. Per this file's own header (:14-21) any status other than 0 and 2 is a non-blocking hook error, so the unaudited merge of PR 99 proceeds silently. The hole is broader than `tr`: any nonzero exit after merge-target-keys.sh:258 is a silent allow, since the only explicit blocking exits are the `exit 2` statements. Environment prerequisite (inherited errexit plus a broken binary) is contrived, which is why I hold severity at high rather than critical, but the structural defect — the trap never arms on the path it exists to cover — is real and the fix is the one line the scenario names.",
+      "corrected_severity": "high",
+      "__inScope": true
+    },
+    {
+      "title": "A capture redirection error still clears a stale marker",
+      "file": "qodo-cycle/pre-merge-gate.sh",
+      "line": 297,
+      "severity": "high",
+      "category": "fail-open",
+      "failure_scenario": "Run the hook as a non-root user with umask 0200, an existing marker for PR 14 at an outdated head, and input `gh pr merge 14`. GNU mktemp succeeds but creates its capture file with mode 0400. Opening it for stdout fails with Permission denied, so gh never executes; cat nevertheless successfully reads the empty file. Because GHERR is nonempty, the silent-empty check does not set CAPFAIL. The permission error does not match NOTHERE either, so the gate consumes the stale marker and exits 0. This disproves the claim that capture failures are refused.",
+      "breaks_feature": true,
+      "engine": "codex",
+      "__source": "steered",
+      "engines": [
+        "codex"
+      ],
+      "contributions": [
+        {
+          "engine": "codex",
+          "title": "A capture redirection error still clears a stale marker",
+          "category": "fail-open",
+          "failure_scenario": "Run the hook as a non-root user with umask 0200, an existing marker for PR 14 at an outdated head, and input `gh pr merge 14`. GNU mktemp succeeds but creates its capture file with mode 0400. Opening it for stdout fails with Permission denied, so gh never executes; cat nevertheless successfully reads the empty file. Because GHERR is nonempty, the silent-empty check does not set CAPFAIL. The permission error does not match NOTHERE either, so the gate consumes the stale marker and exits 0. This disproves the claim that capture failures are refused."
+        }
+      ],
+      "relatedTo": [],
+      "target": 199,
+      "verdict": "CONFIRMED",
+      "reasoning": "Traced and reproduced at commit b98e8ac. Isolated measurement: with `umask 0200`, GNU mktemp creates the capture file mode `-r--------`; the `2>&1 1>\"$GHOUT\"` redirection at pre-merge-gate.sh:284 then fails, gh never executes, and bash's own redirection error is captured into the substitution — measured `GHRC=1`, `GHERR=[...: Permission denied]`, and `cat \"$GHOUT\"` succeeds returning empty (LIVE=\"\", CAPFAIL unset at :285). The silent-empty guard at :297 requires `-z \"$GHERR\"`, so a nonempty error message defeats it; GHERR does not match `Could not resolve to a PullRequest` (:314-316) so NOTHERE stays empty; LIVE empty with no NOTHERE reaches the `else` at :330-331, printing \"cleared on the marker's own provenance\", then `MARKERS+=(\"$m\")` at :333. Clean A/B with a stub `gh` returning a head that differs from the marker's, umask the only variable: umask 0022 -> EXIT=2 (STALE, correctly blocked); umask 0200 -> EXIT=0 and the stale `.adversarial-done-14` deleted (verified with `ls -a`, the dir is empty). So a capture failure an unprivileged caller can induce via umask clears a merge whose head moved after the audit, which is exactly the bypass the :270-280 comment claims to have closed.",
+      "corrected_severity": "high",
+      "__inScope": true
+    },
+    {
+      "title": "Check shell syntax before the parser removes backticks and braces",
+      "file": "qodo-cycle/pre-merge-gate.sh",
+      "line": 194,
+      "severity": "high",
+      "category": "audit-gate bypass",
+      "failure_scenario": "On branch main, with a valid .adversarial-done-main marker and no marker for PR 99, submit `gh pr merge --body `printf reviewed` 99 --squash`. The shared parser splits at backticks, leaving RESTS=' --body ' and KEYS=main. The new quote check sees no forbidden characters, validates and consumes main's marker, and returns 0, although Bash merges unaudited PR 99. `gh pr merge --squash --body {reviewed,99}` produces the same bypass. This disproves the claim that the new check refuses backticks and braces in merge segments.",
+      "breaks_feature": true,
+      "engine": "codex-blind",
+      "__source": "blind",
+      "engines": [
+        "codex-blind"
+      ],
+      "contributions": [
+        {
+          "engine": "codex-blind",
+          "title": "Check shell syntax before the parser removes backticks and braces",
+          "category": "audit-gate bypass",
+          "failure_scenario": "On branch main, with a valid .adversarial-done-main marker and no marker for PR 99, submit `gh pr merge --body `printf reviewed` 99 --squash`. The shared parser splits at backticks, leaving RESTS=' --body ' and KEYS=main. The new quote check sees no forbidden characters, validates and consumes main's marker, and returns 0, although Bash merges unaudited PR 99. `gh pr merge --squash --body {reviewed,99}` produces the same bypass. This disproves the claim that the new check refuses backticks and braces in merge segments."
+        }
+      ],
+      "relatedTo": [],
+      "target": 199,
+      "verdict": "CONFIRMED",
+      "reasoning": "Same defect site as index 0 (the $RESTS-only quote check at pre-merge-gate.sh:194-203); both listed scenarios were ruled IN, not out, at commit b98e8ac. Backtick form `gh pr merge --body `printf reviewed` 99 --squash`: merge-target-keys.sh:240 turns backticks into segment breaks, so RESTS=` --body `, the check sees no forbidden character, and the key falls to __CURRENT_BRANCH__ (merge-target-keys.sh:329-332). Brace form `gh pr merge --squash --body {reviewed,99}`: the same sed at :240 also breaks on `{` and `}`, leaving RESTS=` --squash --body ` — `--squash` is skipped as a non-value flag and `--body` consumes nothing, again keying to the current branch. Measured end-to-end in a scratch repo on branch main holding only `.adversarial-done-main`: both commands returned EXIT=0 and consumed main's marker, while bash expands them to `--body reviewed 99 --squash` and `--body reviewed 99` respectively, merging unaudited PR 99. Control (double-quoted body, same target) blocks with EXIT=2, so the check is live and simply cannot see characters the shared parser has already removed.",
+      "corrected_severity": "high",
+      "__inScope": true
+    },
+    {
+      "title": "Reject truncated or failed live-head captures",
+      "file": "qodo-cycle/pre-merge-gate.sh",
+      "line": 297,
+      "severity": "high",
+      "category": "capture corruption / fail-open",
+      "failure_scenario": "Give PR 99 a stale marker whose recorded SHA shares its first hex character with the live SHA. Run `gh pr merge 99 --squash` with a one-byte file-size limit and SIGXFSZ ignored. The new regular-file capture retains only that first character; the writer reports an error, but CAPFAIL remains unset because LIVE is nonempty. The downstream prefix comparison accepts that single character as matching the stale marker, consumes it, and returns 0. Reproduced with an in-memory capture: unrestricted output blocked as stale, while one-byte output cleared. The new capture guard must reject write failures and incomplete SHAs.",
+      "breaks_feature": true,
+      "engine": "codex-blind",
+      "__source": "blind",
+      "engines": [
+        "codex-blind"
+      ],
+      "contributions": [
+        {
+          "engine": "codex-blind",
+          "title": "Reject truncated or failed live-head captures",
+          "category": "capture corruption / fail-open",
+          "failure_scenario": "Give PR 99 a stale marker whose recorded SHA shares its first hex character with the live SHA. Run `gh pr merge 99 --squash` with a one-byte file-size limit and SIGXFSZ ignored. The new regular-file capture retains only that first character; the writer reports an error, but CAPFAIL remains unset because LIVE is nonempty. The downstream prefix comparison accepts that single character as matching the stale marker, consumes it, and returns 0. Reproduced with an in-memory capture: unrestricted output blocked as stale, while one-byte output cleared. The new capture guard must reject write failures and incomplete SHAs."
+        }
+      ],
+      "relatedTo": [],
+      "target": 199,
+      "verdict": "CONFIRMED",
+      "reasoning": "Traced and reproduced at commit b98e8acd. The new capture guard (qodo-cycle/pre-merge-gate.sh:297: `if [ -z \"$LIVE\" ] && [ -z \"$GHERR\" ] && [ \"$GHRC\" != 124 ]`) sets CAPFAIL only for a SILENT EMPTY result. A partial/failed write leaves LIVE non-empty, so CAPFAIL stays unset: GHRC is captured at :284/:287 but discarded for every value except 124, and LIVE is only sanity-checked for hex characters (:319 `case \"$LIVE\" in *[!0-9a-f]*|\"\") LIVE=\"\"`), never for length. The staleness comparison at :321-327 is BIDIRECTIONAL (`case \"$LIVE\" in \"$MHEAD\"*)` else `case \"$MHEAD\" in \"$LIVE\"*)`), so a one-character LIVE is accepted as matching any 40-char stale MHEAD beginning with that character; the marker is then consumed at :335 and the gate exits 0. Reproduced with the real script in a temp dir: stale marker head=a111...(40), a `gh` stub emitting one hex char on stdout plus a write error on stderr -> rc=0 and the marker consumed. Instrument proven in both directions: the same stale marker with an untruncated differing head -> rc=2. A second reachable variant needs no stderr at all: partial output plus rc=124 (the timeout carve-out) also cleared -> rc=0. Reachability is an abnormal write failure (full /tmp after the marker was already created, or timeout killing gh mid-write) plus a prefix collision on the truncated bytes, hence medium rather than high, but the fail-open is real and is in code added by this PR.",
+      "corrected_severity": "medium",
+      "__inScope": true
+    },
+    {
+      "title": "Set IS_MERGE after successful parser classification",
+      "file": "qodo-cycle/pre-merge-gate.sh",
+      "line": 41,
+      "severity": "high",
+      "category": "fail-open error handling",
+      "failure_scenario": "Run the hook with errexit enabled (for example, inherited through exported SHELLOPTS), a stale marker for PR 99, and an unavailable head executable. Submit `gh pr merge 99 --squash`. The numeric canary succeeds because it never invokes head. Reading MHEAD then exits 127 under errexit. The shared parser sets IS_MERGE only on its grep-error path, so normal classification leaves it at 0 and the new EXIT trap does not convert 127 to blocking status 2. The hook therefore permits the merge without checking staleness. Reproduced exit status: 127. The sibling CI gate explicitly sets IS_MERGE=1 after sourcing; this gate omits that step.",
+      "breaks_feature": true,
+      "engine": "codex-blind",
+      "__source": "blind",
+      "engines": [
+        "codex-blind"
+      ],
+      "contributions": [
+        {
+          "engine": "codex-blind",
+          "title": "Set IS_MERGE after successful parser classification",
+          "category": "fail-open error handling",
+          "failure_scenario": "Run the hook with errexit enabled (for example, inherited through exported SHELLOPTS), a stale marker for PR 99, and an unavailable head executable. Submit `gh pr merge 99 --squash`. The numeric canary succeeds because it never invokes head. Reading MHEAD then exits 127 under errexit. The shared parser sets IS_MERGE only on its grep-error path, so normal classification leaves it at 0 and the new EXIT trap does not convert 127 to blocking status 2. The hook therefore permits the merge without checking staleness. Reproduced exit status: 127. The sibling CI gate explicitly sets IS_MERGE=1 after sourcing; this gate omits that step."
+        }
+      ],
+      "relatedTo": [],
+      "target": 199,
+      "verdict": "CONFIRMED",
+      "reasoning": "Traced and reproduced at commit b98e8acd. IS_MERGE is initialised to 0 at qodo-cycle/pre-merge-gate.sh:40 and the EXIT trap at :41 converts a non-0/2 status to a block only when IS_MERGE=1. `git grep IS_MERGE` at the audited commit shows the only assignment to 1 is merge-target-keys.sh:254, inside the `_grep_rc -gt 1` (grep-could-not-run) branch; normal classification (grep rc=0 at :251, then :258) leaves it 0, and pre-merge-gate.sh never sets it after sourcing. The sibling pre-merge-checks-gate.sh:82 does exactly that (`IS_MERGE=1` immediately after `. merge-target-keys.sh`), so the omission is specific to this gate, and the comment at :31 (\"IS_MERGE is set by the shared parser\") is wrong for the normal path. Reproduced: marker for PR 99 with a stale head, a `head` stub exiting 127, and errexit imported via an exported SHELLOPTS -> `MHEAD=$(sed -n 's/^head=//p' \"$m\" | head -1)` (:232) kills the script, the trap does not convert, exit status 127. Per this file's own header (:14-21) any status other than 0 or 2 is a non-blocking hook error, so the merge proceeds without the staleness check. Instrument proven in both directions: same broken `head` WITHOUT errexit -> rc=2 (MHEAD empty -> HEADLESS -> block), and errexit with a working `head` -> rc=2. Severity medium because it needs errexit in the hook's shell environment (exported SHELLOPTS or a BASH_ENV that sets -e), which is not the default, but when present the added trap is inert on precisely the path it was added to cover.",
+      "corrected_severity": "medium",
+      "__inScope": true
+    }
+  ],
+  "plausible": [],
+  "outOfScope": [],
+  "auditorLegsOk": 1,
+  "auditorLegsAttempted": 1,
+  "blindLegRan": true,
+  "finalGate": true,
+  "adversaryDiversity": 1,
+  "verifyBatch": 4,
+  "blindLegMissingFor": [],
+  "blindLegRanFor": [
+    199
+  ],
+  "blindLegRequested": true,
+  "blindLegExplicitOff": false,
+  "steeringSuppressed": [
+    {
+      "title": "Check shell syntax before the parser removes backticks and braces",
+      "file": "qodo-cycle/pre-merge-gate.sh",
+      "line": 194,
+      "severity": "high",
+      "category": "audit-gate bypass",
+      "failure_scenario": "On branch main, with a valid .adversarial-done-main marker and no marker for PR 99, submit `gh pr merge --body `printf reviewed` 99 --squash`. The shared parser splits at backticks, leaving RESTS=' --body ' and KEYS=main. The new quote check sees no forbidden characters, validates and consumes main's marker, and returns 0, although Bash merges unaudited PR 99. `gh pr merge --squash --body {reviewed,99}` produces the same bypass. This disproves the claim that the new check refuses backticks and braces in merge segments.",
+      "breaks_feature": true,
+      "engine": "codex-blind",
+      "target": 199,
+      "relatedToSteered": false
+    },
+    {
+      "title": "Reject truncated or failed live-head captures",
+      "file": "qodo-cycle/pre-merge-gate.sh",
+      "line": 297,
+      "severity": "high",
+      "category": "capture corruption / fail-open",
+      "failure_scenario": "Give PR 99 a stale marker whose recorded SHA shares its first hex character with the live SHA. Run `gh pr merge 99 --squash` with a one-byte file-size limit and SIGXFSZ ignored. The new regular-file capture retains only that first character; the writer reports an error, but CAPFAIL remains unset because LIVE is nonempty. The downstream prefix comparison accepts that single character as matching the stale marker, consumes it, and returns 0. Reproduced with an in-memory capture: unrestricted output blocked as stale, while one-byte output cleared. The new capture guard must reject write failures and incomplete SHAs.",
+      "breaks_feature": true,
+      "engine": "codex-blind",
+      "target": 199,
+      "relatedToSteered": false
+    },
+    {
+      "title": "Set IS_MERGE after successful parser classification",
+      "file": "qodo-cycle/pre-merge-gate.sh",
+      "line": 41,
+      "severity": "high",
+      "category": "fail-open error handling",
+      "failure_scenario": "Run the hook with errexit enabled (for example, inherited through exported SHELLOPTS), a stale marker for PR 99, and an unavailable head executable. Submit `gh pr merge 99 --squash`. The numeric canary succeeds because it never invokes head. Reading MHEAD then exits 127 under errexit. The shared parser sets IS_MERGE only on its grep-error path, so normal classification leaves it at 0 and the new EXIT trap does not convert 127 to blocking status 2. The hook therefore permits the merge without checking staleness. Reproduced exit status: 127. The sibling CI gate explicitly sets IS_MERGE=1 after sourcing; this gate omits that step.",
+      "breaks_feature": true,
+      "engine": "codex-blind",
+      "target": 199,
+      "relatedToSteered": false
+    }
+  ],
+  "codexErrors": [],
+  "codexFellBack": false,
+  "gate": "BLOCK",
+  "noProvenance": false,
+  "hunterLegsIncomplete": false,
+  "perTargetShortfall": [],
+  "adversaryDiversityContradiction": false,
+  "arbiterMissing": false,
+  "arbiterDegraded": false,
+  "unsoundRefutationsBlock": false,
+  "codexScript": "~/.claude/skills/qodo-cycle/codex-audit.sh",
+  "codexProducerRan": true,
+  "codexScriptOverridden": false,
+  "anyArgumentError": false,
+  "argumentErrorDetail": [],
+  "gateReason": "6 finding(s) survived refutation"
+}

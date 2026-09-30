@@ -1,0 +1,279 @@
+{
+  "repo": "daqifi/daqifi-python-test-suite",
+  "base_sha": "05eb7f72f5f2e15102dc9ff7f61d1da767515bfc",
+  "head_sha": "8c2070fd8a56b372e68b2b8ee6cedb41b6a0c9c1",
+  "producer_sha": "7c541130ed829d03d3b1fc784586160378f02b21",
+  "truncated": false,
+  "covered_bytes": 40292,
+  "total_bytes": 40292,
+  "provenance": {
+    "349": {
+      "repo": "daqifi/daqifi-python-test-suite",
+      "base_sha": "05eb7f72f5f2e15102dc9ff7f61d1da767515bfc",
+      "head_sha": "8c2070fd8a56b372e68b2b8ee6cedb41b6a0c9c1",
+      "producer_sha": "7c541130ed829d03d3b1fc784586160378f02b21",
+      "truncated": false,
+      "covered_bytes": 40292,
+      "total_bytes": 40292
+    }
+  },
+  "engine": "codex",
+  "auditChain": [
+    "codex"
+  ],
+  "targetsAudited": 1,
+  "arbiter": {
+    "verdict": "keep_fixing",
+    "summary": "Four of five findings are CONFIRMED (or PLAUSIBLE) real defects in the new release-gate test, all in scope of this purely-additive diff, none pre-existing on the base commit (the file is new) and none covered by a standing disposition or documented-residual note. Direction of failure matters: #0 (missing manifest requires) and #3 (no power-up) fail LOUD — they hard-block a healthy release with a misleading diagnosis, which is bad but visible and won't ship a bug silently. #2 (SD file overwrite) fails toward silent data loss of a bench artifact on the operator's machine — lower blast radius than corrupting release judgment, but still real and cheap to fix (set a dedicated filename). #4 is the most serious in kind, even though 'medium': it demonstrates via a device-free mock that the test's own four checks, which the docstring calls 'FULLY discriminating' for #1018, can all pass while the exact arithmetic defect they were written to catch survives — that undermines the test's reason for existing. #1 is the weakest: skeptic downgraded it to PLAUSIBLE/low because it needs an out-of-band, non-persisted, same-power-cycle operator action (SYST:LOG:LEVel STREAM,0) that nothing in the suite currently sets — a real gap but low probability in normal use; still a one-line fix (assert STREAM logging is enabled in setup) so no reason to defer it. No refutations were supplied to sanity-check, so nothing goes in unsound_refutations. Given #0, #2, #3 are CONFIRMED functional/data-loss defects in a script whose whole purpose is gating releases, and #4 shows the test's core claim (fully discriminating) doesn't hold, this is not ready to merge as-is.",
+    "treadmill": false,
+    "dispositions": [
+      {
+        "index": 0,
+        "disposition": "fix_now",
+        "agreed_severity": "medium",
+        "rationale": "CONFIRMED by skeptic with precise line citations (regression_gate.py MANIFEST lookup, discover() defaults, release_gate.py classify() path). In scope (new test file + selftest registration is the whole diff). No standing disposition or module doc covers this — it simply has no MANIFEST entry. Fails LOUD: blocks a healthy NQ2 or an NQ1-missing-SD release with a wrong verdict, which is bad for velocity but not silent. Cheap, mechanical fix: add requires={'nq1','sd'} to MANIFEST following the established convention the skeptic points at (regression_gate.py:286,315)."
+      },
+      {
+        "index": 1,
+        "disposition": "fix_now",
+        "agreed_severity": "low",
+        "rationale": "Skeptic returned PLAUSIBLE not CONFIRMED, downgraded to low — the precondition (STREAM logging manually silenced in the same power cycle, RAM-only, not persisted, not set by any other script in the suite) is real but operator-reachable only, not a default or gate-inherited state. Per rule 1 this is a verified (not unverified) finding, so decline is available in principle, but nothing here qualifies it under rule 2 (not pre-existing — the file is new; no standing disposition; no module doc labels this an accepted residual). Failure direction is loud (exit 1, false firmware failure) not silent, and the fix is a one-line defensive SYST:LOG:LEVel STREAM,1 in setup, so fixing is cheaper than writing the decline paragraph."
+      },
+      {
+        "index": 2,
+        "disposition": "fix_now",
+        "agreed_severity": "medium",
+        "rationale": "CONFIRMED, skeptic corrected claimed-severity high down to medium (real data loss, but of a bench artifact, and the mitigating file-open mode is explicitly a firmware comment/design choice, not something this test controls). In scope. 20+ sibling SD tests already set a dedicated filename (test_567_sd_wedge.py:97 cited), so this is a convention gap in the new file, not a novel problem needing design work — fix is to add SYST:STOR:SD:FILE with a unique test name before any SD:ENAble 1. Fails toward silent overwrite of a human's prior recording, which is the more dangerous direction per rule 4, so despite 'medium' it should not be waved through as a nit."
+      },
+      {
+        "index": 3,
+        "disposition": "fix_now",
+        "agreed_severity": "medium",
+        "rationale": "CONFIRMED with an exact firmware-side citation (SCPIInterface.c:4250-4254 rejecting STR:START when not powered up) and confirmation that neither device_reset nor _configure_common powers the board, unlike ensure_stream_ready elsewhere in the harness. STANDBY is an explicitly documented supported initial bench state per this repo's own CLAUDE.md, so this isn't an edge case being invented by the finding — it's a state the project itself tells operators is fine to leave a board in between tests. Fails loud (misleading 'raise the rate' message on an otherwise-correct firmware) blocking release; fix is to call the existing power-up primitive before Check1."
+      },
+      {
+        "index": 4,
+        "disposition": "fix_now",
+        "agreed_severity": "medium",
+        "rationale": "CONFIRMED via a device-free mock reproduction that the four checks billed as 'fully discriminating' for #1018 can all pass under a firmware that still contains the exact defect they target (raw counter leaking into the total when raw != steady), because the only checkpoint where raw and steady diverge (Check1, GRACe 60) gates its total-assertion behind `if losses:`, and the script's own comment sanctions the no-summary-line pass as satisfying 'total==0'. This is in scope, not pre-existing (new file), and not documented anywhere as an accepted residual — the docstring's own claim is what's being falsified. Directionally this is the worst of the five: it fails toward silence, i.e. a real regression in #1018 arithmetic could ship past this gate believing it's covered. Not the exit-code/mutation-harness issue already disclosed as fixed — this is a design gap in the checks' assertion placement, independent of that."
+      }
+    ],
+    "unsound_refutations": [],
+    "decline_comment_markdown": "No findings from this audit are being declined or deferred — all five (findings #0–#4) are being fixed in this PR before merge:\n\n- **#0 — missing MANIFEST `requires` for the new test**: adding `requires={'nq1','sd'}` in `regression_gate.py`'s MANIFEST, matching the existing convention for NQ1/SD-gated tests.\n- **#1 — STREAM log level not guaranteed enabled**: adding a defensive `SYST:LOG:LEVel STREAM,1` in setup ahead of Check1/Check2, since nothing in the current harness restores it and it is RAM-only / not persisted across power cycles.\n- **#2 — SD checks can overwrite a prior recording**: adding a dedicated `SYST:STOR:SD:FILE \"<unique-test-name>\"` before any SD session in this script, matching the convention already used by ~20 sibling SD tests.\n- **#3 — hardware checks assume the board is already powered up**: adding an explicit power-up step (matching `ensure_stream_ready`'s `SYST:POW:STAT 1` handling) ahead of Check1, since STANDBY is a documented, supported initial bench state.\n- **#4 — the four checks billed as \"fully discriminating\" for #1018 are not**: reworking Check1's total-assertion so it is not gated behind `if losses:`, so a firmware that still leaks the raw counter into the total when raw≠steady cannot pass silently.\n\nNone of these were pre-existing on the base commit (the diff is a new file) and none are covered by a standing project disposition or documented as an accepted residual in the module itself, so none qualify for decline under this repo's audit policy."
+  },
+  "arbiterModel": "sonnet",
+  "rawFindings": 5,
+  "refuted": 0,
+  "unverified": [],
+  "confirmed": [
+    {
+      "title": "Declare NQ1 and SD requirements in the release-gate manifest",
+      "file": "test_1018_982_loss_summary.py",
+      "line": 743,
+      "severity": "medium",
+      "category": "integration",
+      "failure_scenario": "Run release_gate.py with DAQIFI_EXPECT_SERIAL correctly set on a healthy NQ2, or on an NQ1 bench with --missing sd. The new filename is automatically discovered, but without a MANIFEST override it receives requires=frozenset(). Consequently neither configuration skips this test: NQ2 fails the hard-coded identity assertion, and missing SD fails the SD checks. Both incorrectly block the release despite explicitly supported capability handling. Register requires={'nq1','sd'}.",
+      "breaks_feature": true,
+      "engine": "codex",
+      "__source": "steered",
+      "engines": [
+        "codex"
+      ],
+      "contributions": [
+        {
+          "engine": "codex",
+          "title": "Declare NQ1 and SD requirements in the release-gate manifest",
+          "category": "integration",
+          "failure_scenario": "Run release_gate.py with DAQIFI_EXPECT_SERIAL correctly set on a healthy NQ2, or on an NQ1 bench with --missing sd. The new filename is automatically discovered, but without a MANIFEST override it receives requires=frozenset(). Consequently neither configuration skips this test: NQ2 fails the hard-coded identity assertion, and missing SD fails the SD checks. Both incorrectly block the release despite explicitly supported capability handling. Register requires={'nq1','sd'}."
+        }
+      ],
+      "relatedTo": [],
+      "target": 349,
+      "verdict": "CONFIRMED",
+      "reasoning": "Traced at audited commit 8c2070fd. The diff is only test_1018_982_loss_summary.py + tools/lint/harness_policy_selftests.txt:110 (`git diff --stat 3dad277..8c2070fd`), so regression_gate.py's MANIFEST has NO entry for the new file (`git grep -n test_1018 8c2070fd -- regression_gate.py` returns nothing). discover() (regression_gate.py:1822-1836) glob-includes every test_<issue>_*.py and applies `MANIFEST.get(p.name, {})`, so this test gets GateTest defaults: requires=frozenset() (regression_gate.py:89). The script hard-fails on a non-NQ1 board (`_check(parts[1]=='Nq1', ...)` -> _fail -> sys.exit(1)) and checks 5-7 require SD (SYST:STOR:SD:ENAble 1, line ~338). In release_gate.py, `acked = t.requires & effective_missing(...)` (line 289) is empty, so neither the pre-run SKIP(missing-cap) branch (lines 290-306) nor classify()'s acked_missing branches (lines 170-182, 189-193) apply; rc=1 scores \"FAIL exit=1\" (release_gate.py:162-163) and blocks the release. With requires={'nq1','sd'} both cases would classify as SKIP(missing-cap)/PASS(ack-skip). This is the established convention for such tests (e.g. regression_gate.py:286, 315 use frozenset({'nq1','sd'})).",
+      "corrected_severity": "medium",
+      "__inScope": true
+    },
+    {
+      "title": "SD checks overwrite the previously configured recording",
+      "file": "test_1018_982_loss_summary.py",
+      "line": 338,
+      "severity": "high",
+      "category": "data_loss",
+      "failure_scenario": "Configure SYST:STOR:SD:FILE \"experiment.bin\", record an SD session, stop it, then run this script on the same powered board. Neither device_reset nor these checks changes the SD filename. Check5 starts SD logging against the inherited experiment.bin; firmware opens that path with SYS_FS_FILE_OPEN_WRITE_PLUS, truncating the existing recording. Checks6–7 overwrite it again. Select a dedicated test filename before starting any SD session.",
+      "breaks_feature": true,
+      "engine": "codex-blind",
+      "__source": "blind",
+      "engines": [
+        "codex-blind"
+      ],
+      "contributions": [
+        {
+          "engine": "codex-blind",
+          "title": "SD checks overwrite the previously configured recording",
+          "category": "data_loss",
+          "failure_scenario": "Configure SYST:STOR:SD:FILE \"experiment.bin\", record an SD session, stop it, then run this script on the same powered board. Neither device_reset nor these checks changes the SD filename. Check5 starts SD logging against the inherited experiment.bin; firmware opens that path with SYS_FS_FILE_OPEN_WRITE_PLUS, truncating the existing recording. Checks6–7 overwrite it again. Select a dedicated test filename before starting any SD session."
+        }
+      ],
+      "relatedTo": [],
+      "target": 349,
+      "verdict": "CONFIRMED",
+      "reasoning": "At the audited commit the script never sets a filename: `git grep -n 'SD:FILE' 8c2070fd -- test_1018_982_loss_summary.py` returns nothing, while 20+ sibling SD tests do (e.g. test_567_sd_wedge.py:97 `SYST:STOR:SD:FILE \"{fname}\"`). check_982_ordering (line ~338) does SYST:STOR:SD:ENAble 1 then STR:INT 2 and streams; device_reset only sends SD:ENAble 0 (test_harness.py:1818) and SYST:MEM:RESet, neither of which clears pSDCardRuntimeConfig->file. Firmware composes the session's first file from the inherited configured name — generateFilename() with counter==0 gives `\"%s/%s\", directory, originalFilename` (sd_card_manager.c:1177-1181) — and opens it as `SYS_FS_FileOpen(gSDCardData.filePath, SYS_FS_FILE_OPEN_WRITE_PLUS)` with the in-code comment \"Use WRITE_PLUS to create/truncate file (overwrite mode)\" (sd_card_manager.c:2251-2253). So a prior session's experiment.bin on the same powered board is truncated, and checks 6-7 (lines ~475, ~535) re-open and overwrite it again. Real data loss of a bench recording; mitigated only by it being a bench artifact, hence medium.",
+      "corrected_severity": "medium",
+      "__inScope": true
+    },
+    {
+      "title": "Power up the board before attempting the hardware checks",
+      "file": "test_1018_982_loss_summary.py",
+      "line": 752,
+      "severity": "medium",
+      "category": "incorrect_test_result",
+      "failure_scenario": "Leave the expected Nq1 board in STANDBY using SYST:POW:STAT 0, then invoke the documented command. Identity checks pass, but connect(), device_reset(), and _configure_common() never power it up. Firmware rejects STR:START unless powered up, so Check1 exits with ScanStaleDropped=0 and misleadingly recommends increasing the rate. Correct firmware cannot complete the test from this supported initial state.",
+      "breaks_feature": true,
+      "engine": "codex-blind",
+      "__source": "blind",
+      "engines": [
+        "codex-blind"
+      ],
+      "contributions": [
+        {
+          "engine": "codex-blind",
+          "title": "Power up the board before attempting the hardware checks",
+          "category": "incorrect_test_result",
+          "failure_scenario": "Leave the expected Nq1 board in STANDBY using SYST:POW:STAT 0, then invoke the documented command. Identity checks pass, but connect(), device_reset(), and _configure_common() never power it up. Firmware rejects STR:START unless powered up, so Check1 exits with ScanStaleDropped=0 and misleadingly recommends increasing the rate. Correct firmware cannot complete the test from this supported initial state."
+        }
+      ],
+      "relatedTo": [],
+      "target": 349,
+      "verdict": "CONFIRMED",
+      "reasoning": "Traced. The audited file sends no power command at all (`git grep -n POW 8c2070fd -- test_1018_982_loss_summary.py` returns nothing); device_reset does not power up (test_harness.py:1795-1830 — POW:STAT 1 lives only in ensure_stream_ready, test_harness.py:1882, which this script never calls), and _configure_common does not either. Firmware refuses the start: `if (pPowerState->powerState != POWERED_UP && pPowerState->powerState != POWERED_UP_EXT_DOWN) { LOG_E(\"Streaming command rejected: Device must be powered up (SYST:POW:STAT 1)\"); SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR); return SCPI_RES_ERR; }` (firmware/src/services/SCPI/SCPIInterface.c:4250-4254, on the shared START path). So from STANDBY, *IDN? identity passes, then check_1018_grace60's START is rejected and `_check(scan_stale > 0, ...)` fires with the misdirecting text \"the NOCAP overrate at {rate} Hz did not produce a scan freeze; raise the rate\" and exit 1 — correct firmware scored FAIL by release_gate (release_gate.py:162-163). STANDBY is a supported, documented initial state (CLAUDE.md: power states 0=STANDBY, \"Before tests: known state (SYST:POW:STAT 0/1 cycle if needed)\"), and 137 of this suite's scripts explicitly send SYST:POW:STAT 1, so the omission is against convention, not covered by it.",
+      "corrected_severity": "medium",
+      "__inScope": true
+    },
+    {
+      "title": "Exercise unequal raw and steady counters in an emitted summary",
+      "file": "test_1018_982_loss_summary.py",
+      "line": 257,
+      "severity": "medium",
+      "category": "silent_test_drop",
+      "failure_scenario": "Firmware adds the steady counter and correct print gate but accidentally retains raw ScanStaleDropped in the total. With GRACe 60, raw=100, steady=0, all other steady counters=0 and eosOverruns=0, no summary prints and Check1 passes. With GRACe 0, raw=steady=100 and a printed total of 100 passes Check2; Check4 also passes. This was reproduced with a device-free SCPI mock. The same firmware still reports 101 instead of 1 when 100 scan freezes occur inside grace followed by one post-grace queue drop. Thus the claimed fully discriminating checks can all pass while the targeted arithmetic defect remains.",
+      "breaks_feature": true,
+      "engine": "codex-blind",
+      "__source": "blind",
+      "engines": [
+        "codex-blind"
+      ],
+      "contributions": [
+        {
+          "engine": "codex-blind",
+          "title": "Exercise unequal raw and steady counters in an emitted summary",
+          "category": "silent_test_drop",
+          "failure_scenario": "Firmware adds the steady counter and correct print gate but accidentally retains raw ScanStaleDropped in the total. With GRACe 60, raw=100, steady=0, all other steady counters=0 and eosOverruns=0, no summary prints and Check1 passes. With GRACe 0, raw=steady=100 and a printed total of 100 passes Check2; Check4 also passes. This was reproduced with a device-free SCPI mock. The same firmware still reports 101 instead of 1 when 100 scan freezes occur inside grace followed by one post-grace queue drop. Thus the claimed fully discriminating checks can all pass while the targeted arithmetic defect remains."
+        }
+      ],
+      "relatedTo": [],
+      "target": 349,
+      "verdict": "CONFIRMED",
+      "reasoning": "Traced at the audited commit 8c2070fd8a56b372e68b2b8ee6cedb41b6a0c9c1 in test_1018_982_loss_summary.py. The four checks the docstring calls \"FULLY discriminating\" for #1018 (lines 55-68) never bind the printed total to the *Steady* term when raw and steady differ, so a firmware that fixes the print gate but leaves raw gScanStaleDropped in the total survives all of them:\n\n- Check 1 (line 229-270) is the only arm where raw != steady (GRACe 60; asserts ScanStaleDropped>0 at 240 and ScanStaleDroppedSteady==0 at 244, plus the other three *Steady counters ==0 at 248-254). Its total assertion is inside `if losses:` (line 257-262) — a purely conditional check. With a steady-based hadDrops gate and eosOverruns==0, no summary line is emitted, the `if` body never runs, and the check passes. The script's own comment at lines 264-267 explicitly blesses that path: \"no summary line at all also satisfies 'total==0' ... this doesn't require eosOverruns to be nonzero to pass.\" So the pass is sanctioned by design, not accidental.\n- Check 2 (line 273-309) pins GRACe 0 and *asserts* scan_stale_steady == scan_stale (line 288). expected_total (293-297) is therefore numerically identical whether the firmware sums the steady or the raw scan-stale term, so the `total == expected_total` assertion at 304 cannot distinguish the two.\n- Checks 3/4 (313-325) only assert the presence of the two STATS? keys.\n- Checks 5, 6, 7 (344, 402, 488) all run with LOSS:GRACe 0 (raw==steady) or with no forced loss, so none of them exercises the difference either.\n\nA grep of every GRACe setting in the file confirms only 60 and 0 are used, and only the GRACe-60 arm has raw != steady — and there the total assertion is conditional. Consequence: the arithmetic identity the companion test exists to pin (in-grace scan freezes must NOT enter the summary total) is not actually pinned for any run that prints a summary; a firmware/regression that reports 101 instead of 1 for 100 in-grace freezes plus one post-grace queue drop passes with '4 PASS'. This is a test-completeness/vacuous-pass gap, not a product defect, hence medium rather than high; the genuine pre-fix firmware (raw in both gate and total) is still caught by Check 1, so only partial-fix and future-regression mutants slip through.",
+      "corrected_severity": "medium",
+      "__inScope": true
+    }
+  ],
+  "plausible": [
+    {
+      "title": "Enable STREAM logging before running the #1018 checks",
+      "file": "test_1018_982_loss_summary.py",
+      "line": 198,
+      "severity": "medium",
+      "category": "incorrect test verdict",
+      "failure_scenario": "On correctly fixed NQ1 firmware, execute SYST:LOG:LEVel STREAM,0 before launching this script with the correct serial. Neither device_reset nor _configure_common restores the STREAM log level. Check1 accepts the absent summary, but Check2 exits 1 because the correctly computed summary is suppressed by the runtime logging filter. The script only enables STREAM logging later, inside check_982_ordering, which is never reached. This reproducibly reports a firmware failure for a supported device configuration; initialize the required log level before Check1.",
+      "breaks_feature": true,
+      "engine": "codex",
+      "__source": "steered",
+      "engines": [
+        "codex"
+      ],
+      "contributions": [
+        {
+          "engine": "codex",
+          "title": "Enable STREAM logging before running the #1018 checks",
+          "category": "incorrect test verdict",
+          "failure_scenario": "On correctly fixed NQ1 firmware, execute SYST:LOG:LEVel STREAM,0 before launching this script with the correct serial. Neither device_reset nor _configure_common restores the STREAM log level. Check1 accepts the absent summary, but Check2 exits 1 because the correctly computed summary is suppressed by the runtime logging filter. The script only enables STREAM logging later, inside check_982_ordering, which is never reached. This reproducibly reports a firmware failure for a supported device configuration; initialize the required log level before Check1."
+        }
+      ],
+      "relatedTo": [],
+      "target": 349,
+      "verdict": "PLAUSIBLE",
+      "reasoning": "Mechanism fully traced, precondition only operator-reachable. The summary is LOG_E in streaming.c:2430 with `#define LOG_MODULE LOG_MODULE_STREAM` (streaming.c:2), and LOG_E is runtime-gated: `if (gLogLevels[LOG_MODULE] >= LOG_LEVEL_ERROR)` (firmware/src/Util/Logger.h:399-400), so SYST:LOG:LEVel STREAM,0 (LOG_LEVEL_NONE=0, Logger.h:83) suppresses it. Neither device_reset (test_harness.py:1795-1830) nor _configure_common (test file lines ~198-215) touches any log level, and the script only sets STREAM,1 later in check_982_ordering (line 348). check_1018_grace60 tolerates a missing line (`if losses:`), but check_1018_grace0 hard-asserts `len(losses) >= 1` and _fail/exit(1) -> a false firmware failure. What keeps this from CONFIRMED: gLogLevels is RAM-only, initialised to LOG_LEVEL_ERROR (Logger.c:58) and not persisted to NVM (no gLogLevels reference in daqifi_settings.c), and no script in the suite ever lowers STREAM (`grep -rn 'LOG:LEV' *.py` shows only STREAM,1 here and LEV:ALL 1 elsewhere), so the precondition needs an out-of-band manual command in the same power cycle rather than any default or gate-inherited state.",
+      "corrected_severity": "low",
+      "__inScope": true
+    }
+  ],
+  "outOfScope": [],
+  "auditorLegsOk": 1,
+  "auditorLegsAttempted": 1,
+  "blindLegRan": true,
+  "finalGate": true,
+  "adversaryDiversity": 1,
+  "verifyBatch": 4,
+  "blindLegMissingFor": [],
+  "blindLegRanFor": [
+    349
+  ],
+  "blindLegRequested": true,
+  "blindLegExplicitOff": false,
+  "steeringSuppressed": [
+    {
+      "title": "SD checks overwrite the previously configured recording",
+      "file": "test_1018_982_loss_summary.py",
+      "line": 338,
+      "severity": "high",
+      "category": "data_loss",
+      "failure_scenario": "Configure SYST:STOR:SD:FILE \"experiment.bin\", record an SD session, stop it, then run this script on the same powered board. Neither device_reset nor these checks changes the SD filename. Check5 starts SD logging against the inherited experiment.bin; firmware opens that path with SYS_FS_FILE_OPEN_WRITE_PLUS, truncating the existing recording. Checks6–7 overwrite it again. Select a dedicated test filename before starting any SD session.",
+      "breaks_feature": true,
+      "engine": "codex-blind",
+      "target": 349,
+      "relatedToSteered": false
+    },
+    {
+      "title": "Power up the board before attempting the hardware checks",
+      "file": "test_1018_982_loss_summary.py",
+      "line": 752,
+      "severity": "medium",
+      "category": "incorrect_test_result",
+      "failure_scenario": "Leave the expected Nq1 board in STANDBY using SYST:POW:STAT 0, then invoke the documented command. Identity checks pass, but connect(), device_reset(), and _configure_common() never power it up. Firmware rejects STR:START unless powered up, so Check1 exits with ScanStaleDropped=0 and misleadingly recommends increasing the rate. Correct firmware cannot complete the test from this supported initial state.",
+      "breaks_feature": true,
+      "engine": "codex-blind",
+      "target": 349,
+      "relatedToSteered": false
+    },
+    {
+      "title": "Exercise unequal raw and steady counters in an emitted summary",
+      "file": "test_1018_982_loss_summary.py",
+      "line": 257,
+      "severity": "medium",
+      "category": "silent_test_drop",
+      "failure_scenario": "Firmware adds the steady counter and correct print gate but accidentally retains raw ScanStaleDropped in the total. With GRACe 60, raw=100, steady=0, all other steady counters=0 and eosOverruns=0, no summary prints and Check1 passes. With GRACe 0, raw=steady=100 and a printed total of 100 passes Check2; Check4 also passes. This was reproduced with a device-free SCPI mock. The same firmware still reports 101 instead of 1 when 100 scan freezes occur inside grace followed by one post-grace queue drop. Thus the claimed fully discriminating checks can all pass while the targeted arithmetic defect remains.",
+      "breaks_feature": true,
+      "engine": "codex-blind",
+      "target": 349,
+      "relatedToSteered": false
+    }
+  ],
+  "codexErrors": [],
+  "codexFellBack": false,
+  "gate": "BLOCK",
+  "noProvenance": false,
+  "hunterLegsIncomplete": false,
+  "perTargetShortfall": [],
+  "adversaryDiversityContradiction": false,
+  "arbiterMissing": false,
+  "arbiterDegraded": false,
+  "unsoundRefutationsBlock": false,
+  "codexScript": "~/.claude/skills/qodo-cycle/codex-audit.sh",
+  "codexProducerRan": true,
+  "codexScriptOverridden": false,
+  "anyArgumentError": false,
+  "argumentErrorDetail": [],
+  "gateReason": "5 finding(s) survived refutation"
+}

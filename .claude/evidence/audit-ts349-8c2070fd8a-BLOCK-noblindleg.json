@@ -1,0 +1,62 @@
+{
+  "repo": "daqifi/daqifi-python-test-suite",
+  "base_sha": "05eb7f72f5f2e15102dc9ff7f61d1da767515bfc",
+  "head_sha": "8c2070fd8a56b372e68b2b8ee6cedb41b6a0c9c1",
+  "producer_sha": "7c541130ed829d03d3b1fc784586160378f02b21",
+  "truncated": false,
+  "covered_bytes": 40292,
+  "total_bytes": 40292,
+  "provenance": {
+    "349": {
+      "repo": "daqifi/daqifi-python-test-suite",
+      "base_sha": "05eb7f72f5f2e15102dc9ff7f61d1da767515bfc",
+      "head_sha": "8c2070fd8a56b372e68b2b8ee6cedb41b6a0c9c1",
+      "producer_sha": "7c541130ed829d03d3b1fc784586160378f02b21",
+      "truncated": false,
+      "covered_bytes": 40292,
+      "total_bytes": 40292
+    }
+  },
+  "engine": "codex",
+  "auditChain": [
+    "codex"
+  ],
+  "targetsAudited": 1,
+  "arbiter": null,
+  "arbiterModel": null,
+  "rawFindings": 0,
+  "refuted": 0,
+  "unverified": [],
+  "confirmed": [],
+  "plausible": [],
+  "outOfScope": [],
+  "auditorLegsOk": 1,
+  "auditorLegsAttempted": 1,
+  "blindLegRan": false,
+  "finalGate": true,
+  "adversaryDiversity": 1,
+  "verifyBatch": 4,
+  "blindLegMissingFor": [
+    349
+  ],
+  "blindLegRanFor": [],
+  "blindLegRequested": true,
+  "blindLegExplicitOff": false,
+  "steeringSuppressed": [],
+  "codexErrors": [],
+  "codexFellBack": false,
+  "gate": "BLOCK",
+  "noProvenance": false,
+  "hunterLegsIncomplete": false,
+  "perTargetShortfall": [],
+  "adversaryDiversityContradiction": false,
+  "arbiterMissing": false,
+  "arbiterDegraded": false,
+  "unsoundRefutationsBlock": false,
+  "codexScript": "~/.claude/skills/qodo-cycle/codex-audit.sh",
+  "codexProducerRan": true,
+  "codexScriptOverridden": false,
+  "anyArgumentError": false,
+  "argumentErrorDetail": [],
+  "gateReason": "the blind (un-steered) leg was requested and did not run, so this round has no measurement of what the steering cost — and that leg has raised the round's most serious finding four times in this cycle. Re-run; do not read this as clean."
+}
