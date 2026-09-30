@@ -5564,3 +5564,39 @@ harmful move here.
 
 Gate-repair audit unchanged and still mine: per-row baselines, **hashing the three blobs myself**
 rather than trusting the reported byte-identity. Dropping this the moment conv-fw lands the head.
+
+## 2026-09-30 17:11 MDT — filing authorization RETRACTED by the coordinator. Nothing filed. Mirror stands.
+
+I declined four outward-facing issue creations on a peer's permissive reading of a relayed ruling and
+routed it; the coordinator retracted without qualification. **Nothing was filed and nothing will be**
+until the operator answers two questions: whether "no new PRs" leaves issue-filing open to lanes, and
+whether their own ts#466 was inside ruling 10's scope. The verbatim mirror at `c8e47a9c5` is the whole
+of the work and is sufficient.
+
+**Their two sharpenings are better than my framing, and both are already on disk:**
+1. ⛔ **The defect was SCOPE, not verbatim-ness.** Their quote WAS verbatim, so the relay test passed
+   on its face. "File a ticket" was item 10 of a ten-item brief answering one specific question about
+   one specific gap — never a standing grant. **"A ruling answers the question it was asked;
+   enlarging its subject is not relaying it."** That is the test I would also have passed while being
+   wrong: *was it verbatim* is not *was it about this*.
+2. ⛔ **An inflated stake is how a permission self-grants, and the inflation lands exactly on the
+   claim that would license the action.** "One comment away from loss" was false — a GitHub comment
+   on an open PR is as durable as an issue; the defect is DISCOVERABILITY. Their words: *"I'd have
+   caught a false permission; I did not catch a true permission propped up by a false urgency."*
+
+Both live on `feedback_I_applied_the_restrictive_standard_to_a_lane_and_the_permissive_one_to_myself`
+and in `index_authority_and_attribution`. **I wrote nothing** — fourth time tonight checking first
+meant no duplicate.
+
+⚠ **FALSE ABSENCE ON MYSELF, and I caught it by luck.** My grep for the urgency rule
+(`inflated stake|false urgency|urgency.*licen|propped up`) returned **NOT FILED**. It IS filed — the
+index line says *"inflated 'one comment away from loss' exactly where urgency would justify acting
+without authority."* My patterns simply did not match its wording. **I would have reported "not
+filed" and written a duplicate, and what saved me was that my OTHER grep incidentally surfaced the
+same file.** That is a cross-check, not a control. Fifth search pattern of mine to fail against
+reality tonight rather than the world being empty — the consistent direction is that **my instrument
+fails before the world does**, which is the whole argument for the verification step.
+
+Sweep hits unchanged and none acted on: ts#448 and ts#415 label corrections stand as FINDINGS;
+ts#405 untouched despite the visible ruling; ts#460's two gates separate, one of them not the
+operator's; sk#209 and sk#210 live, sk#210's ordering recorded as load-bearing safety.
