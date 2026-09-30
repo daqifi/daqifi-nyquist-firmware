@@ -5801,3 +5801,26 @@ ONLY by `review.sh --mark-done`, documented as *"skip the review and just unbloc
 separate "review passed" recorder exists, so the marker's evidence is identical whether a review
 happened or was bypassed.** Treat the marker as NO evidence; the two defects fixed in `26bd04a` are
 the evidence.
+
+## 2026-09-30 17:36 MDT — a 401 landed INSIDE a verification I was about to rely on
+
+`git push` + the full-SHA check printed `[401 Unauthorized]` from **bws** mid-run, and yet the success
+branch still printed. **An error printed during a compound verification can leave that verification's
+own output intact and untrustworthy** — the `&&` chain reported success, and I could not tell from the
+output whether `ls-remote` had returned a real SHA or the comparison had passed some other way.
+**Re-ran it standalone rather than accepting it.**
+
+Resolved, and the distinction matters for the LIVE audit:
+```
+push        CONFIRMED independently: local == ls-remote == 3b6b0d6ca0c892f5d20df266744c95243f267714
+gh auth     HEALTHY -- account cptkoolbeenz via GH_TOKEN, scopes repo/workflow; live API probe
+            returned the correct sk#230 head 26bd04ab...
+the 401     was in the GIT CREDENTIAL-HELPER chain (bws), NOT in gh's path
+```
+So `wf_81434adb-625`'s codex leg — which shells `gh` — is unaffected, because `gh` reads `GH_TOKEN`
+directly and never touches the secret path that failed. Recorded because the two auth paths are
+easy to conflate and a 401 on one reads as an outage of both.
+
+**Lesson kept:** when an error appears anywhere inside a compound command whose exit status I am about
+to trust, **re-run the check alone.** A `&&`-chained verification cannot tell me which of its steps
+produced the output I am reading.
