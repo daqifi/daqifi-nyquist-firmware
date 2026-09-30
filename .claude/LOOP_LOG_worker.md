@@ -5634,3 +5634,40 @@ instrument as the finding-level key count already on record (six keys = summary,
 reduced.**
 
 Seven sweep rows unchanged, nothing filed, mirror unchanged, both filing questions with the operator.
+
+## 2026-09-30 17:21 MDT — PRE-VERIFIED the gate-repair identity claim myself (read-only). Holds, with 2 refinements.
+
+Done BEFORE the repair head because the claim is load-bearing for the fix conv-fw is writing **now** —
+testing it afterwards costs them a rebuild. Nothing under `~/.claude/skills` was edited; read+hash only.
+
+```
+surface                              git blob        bytes  lines  splitter?
+installed on-disk (sha256 388e171b)  --              19343   367    YES
+autopush/office-390bc12dcdf8 (HEAD)  1b8265400b...   19343   367    YES
+sk#199  b98e8acd6                    1b8265400b...   19343   367    YES  <- IDENTICAL BLOB
+origin/main                          9721588af4...   15895   290    NO
+```
+
+✅ **Stronger than "byte-identical": autopush and sk#199 are the SAME GIT BLOB**
+(`1b8265400b49984d0425416ec97c8c47e58bb841`) — identity by content hash, not an empty diff.
+
+⚠ **REFINEMENT 1 — "three surfaces" is really TWO, coupled by checkout.** `~/.claude/skills` **IS**
+the claude-skills repo, on branch `autopush/office-390bc12dcdf8` @ `6c6d16f4`, and its working tree is
+clean for this file (on-disk sha256 == HEAD blob sha256). So "installed tree" and "autopush branch"
+are ONE object. Good for the fix (landing on the branch updates the installed tree by definition, no
+sync step); bad for the headline count that makes the port sound cheap. **And not structural** — the
+skills repo auto-commits a dirty tree, so installed==branch is true NOW, not guaranteed.
+
+✅ **REFINEMENT 2a — main IS a valid reference.** The predicate, not the address:
+`sed -e 's/&&/\n/g; s/||/\n/g; s/[;|&(){}\`]/\n/g'` — present x1 on HEAD/sk#199, **x0 on origin/main.**
+That character class is what eats backtick, `{`, `}` before any quote check reads them.
+
+⚠ **REFINEMENT 2b — "splitter-free" is NOT "sed-free."** `origin/main` still has **12 `sed`
+occurrences** (HEAD 15; the 3-use delta is this splitter plus two comment mentions). **A porter
+confirming by grepping `sed` finds twelve hits and is misled.** The checkable predicate is the
+character class `[;|&(){}\`]` -> newline. That string belongs in the PR body and the audit brief —
+not a line number, and not the word "splitter."
+
+**Effect on my audit:** the identity half is settled in advance, so the per-row baselines only have to
+carry the live-vs-proposal split. It settles NOTHING about the three live rows being closed — that is
+still the audit's job, against the installed gate as baseline.
