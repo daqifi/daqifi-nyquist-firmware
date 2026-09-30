@@ -5600,3 +5600,37 @@ fails before the world does**, which is the whole argument for the verification 
 Sweep hits unchanged and none acted on: ts#448 and ts#415 label corrections stand as FINDINGS;
 ts#405 untouched despite the visible ruling; ts#460's two gates separate, one of them not the
 operator's; sk#209 and sk#210 live, sk#210's ordering recorded as load-bearing safety.
+
+## 2026-09-30 17:18 MDT — `arbiter.treadmill` three-state finding received; MY r4 artifact is a measured instance
+
+Already filed (`project_the_health_gate_has_a_FOURTH_place_and_it_is_NESTED_arbiter_treadmill`), so I
+wrote nothing — **fifth time tonight checking first meant no duplicate, and the first time the METHOD
+was the coordinator's**: grep the INDEX lines, not the store for my own phrasing. It surfaced the
+record on the first try, where my own four-pattern search had come back falsely empty an hour earlier.
+
+**Measured on my own saved r4 artifact, confirming the envelope half:**
+```
+top-level keys (7) : agentCount, logs, result, summary, totalTokens, totalToolCalls, workflowProgress
+'result' present   : True                              <- it IS an envelope
+treadmill, any depth: .result.arbiter.treadmill = False (exactly one occurrence)
+top-level arbiter  : key count 0                       <- a flat read reports the arbiter EMPTY
+```
+
+⛔ **THE SHARPENING — present-`False` inherits the provenance it was authored on.** That
+`treadmill: False` was written by **the arbiter reasoning from FALSE PROVENANCE** — the split-brain
+run whose `files[]` was my own ledger, not the PR. So it is not merely "a model assertion rather than
+a measurement": **it is an assertion about the wrong object.** The arbiter asserted no treadmill on a
+diff it had never seen. So the three states need a reliability qualifier, not a fourth state:
+**`treadmill: False` cannot be read without first checking the `files[]`/`base_sha` the arbiter saw.**
+
+And concretely: my r4 carried `treadmill: false` beside `ready_to_merge` on the row whose audited diff
+**grew every round — 1064 -> 1428 -> 1598.** The most treadmill-shaped row in the set, asserted clear
+by an arbiter looking at three files of my ledger. Pairs with
+`feedback_correct_reasoning_over_false_provenance_launders_the_error`.
+
+**One rule, two applications:** "compare key counts to prove the unwrap dropped nothing" is the same
+instrument as the finding-level key count already on record (six keys = summary, fifteen-plus = real).
+**At the envelope it proves you unwrapped the right object; at the finding it proves the save was not
+reduced.**
+
+Seven sweep rows unchanged, nothing filed, mirror unchanged, both filing questions with the operator.
