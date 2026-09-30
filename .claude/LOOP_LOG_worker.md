@@ -5671,3 +5671,44 @@ not a line number, and not the word "splitter."
 **Effect on my audit:** the identity half is settled in advance, so the per-row baselines only have to
 carry the live-vs-proposal split. It settles NOTHING about the three live rows being closed — that is
 still the audit's job, against the installed gate as baseline.
+
+## 2026-09-30 17:24 MDT — MY r4 artifact: NOT ONE HEALTH FIELD LIES, and the run is still void
+
+Measured against the four fields conv-ts flagged, plus four more:
+```
+arbiterMissing  = False    arbiter block IS present (6 keys)  -> truthful
+arbiterDegraded = False    arbiterModel = 'sonnet'            -> truthful, an arbiter DID run
+finalGate       = True     codexFellBack = False              -> truthful
+blindLegRan     = True     blindLegRequested = True           -> ⛔ truthful about EXECUTION,
+                                                                  FALSE about SUBJECT
+rawFindings     = 2        treadmill = False (present)
+```
+
+⛔⛔ **There is no default and no lie in this artifact. Every health field is correct, and the run is
+worthless anyway** — because all of it happened to the wrong object. So conv-ts's remedy ("gate on
+`arbiterModel`, never on `arbiterMissing`") closes the **lying-default** class and does **nothing** for
+mine. **The only thing in the artifact that catches my run is the provenance block** — `repo`,
+`base_sha`, `files[]`.
+
+**Two distinct fail-opens needing different gates:**
+```
+theirs  a field ASSERTS something false          -> gate on the field that cannot be defaulted
+mine    every field is TRUE about the WRONG RUN  -> gate on PROVENANCE; no field can help
+```
+
+⚠ **REFINEMENT OF MY OWN EARLIER CLAIM.** I told the coordinator *"there is no blind leg for ts#349."*
+The artifact says `blindLegRan: True`. **Both are right — the blind leg RAN, over my ledger.** My
+statement was about the subject; the field is about execution, and the field is what gets read. Precise
+form: **`blindLegRan: True` is not a claim about what was swept.** Stated before the field could read
+as contradicting me in someone else's notes.
+
+✅ **Confirmed conv-ts's corrected rule on a 10th artifact:** `ABSENT <=> rawFindings == 0` holds here —
+`rawFindings=2`, treadmill present. Their retraction of the "erratic absence" reading stands on a datum
+neither lane had.
+
+⚠ **Reported, not edited: the RETRACTED "44%" is still asserted without its retraction in two places** —
+`index_audit_and_dispositions.md:202` and `feedback_a_model_authored_field_is_not_a_measurement.md:127`.
+The retraction sits in the NEIGHBOURING index entry (`:203`) and in `project_arbiterMissing...:47,61`,
+so **a reader of :202 never sees it.** Same discoverability shape as the stale duplicate flag: the
+correction exists and does not reach the place that needs it. Not edited — the coordinator is actively
+writing those files and a concurrent edit risks clobbering.
