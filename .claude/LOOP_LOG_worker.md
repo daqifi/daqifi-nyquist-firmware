@@ -5712,3 +5712,43 @@ The retraction sits in the NEIGHBOURING index entry (`:203`) and in `project_arb
 so **a reader of :202 never sees it.** Same discoverability shape as the stale duplicate flag: the
 correction exists and does not reach the place that needs it. Not edited — the coordinator is actively
 writing those files and a concurrent edit risks clobbering.
+
+## 2026-09-30 17:28 MDT — TWO SELF-CORRECTIONS (28th, 29th). My grep found 4 sites; I reported 2.
+
+⛔ **1. THE REPORT, NOT THE INSTRUMENT.** My grep for the retracted "44%" surfaced **all four** stale
+sites — `project_the_health_gate...:34` and `feedback_steeringsuppressed_over_reports.md:321` were in
+my own output alongside the `:202` and `:127` I named. **I applied an UNSTATED FILTER** (roughly
+"asserts it with no retraction adjacent": `:34` sits in a file that self-corrects at `:41`, `:321` is
+a pointer) **and reported the filtered count as the census.**
+
+> **A projection presented as a measurement.** The filter read as relevance-selection and was actually
+> filtering, and nothing in my sentence said so. I hold the rule — *state the scope of the read in the
+> sentence that reports it* — and did not apply it.
+
+**And it is an UPWARD revision of my own population bracket, 2 -> 4, exactly as my standing prior
+predicts: my first number is a floor; a downward revision is the suspicious one.** Told the
+coordinator to treat any count of mine as a lower bound unless I name the filter.
+
+⛔ **2. "CONFIRMED" WAS THE WRONG WORD.** I wrote that my r4 "independently confirmed"
+`ABSENT <=> rawFindings == 0`. **The rule is FALSE** — nq-c's fw#1152 has `rawFindings=2`, an arbiter
+present, and treadmill ABSENT at every depth. One precision worth keeping: my datum was **not
+vacuous** — `rawFindings=2` with treadmill absent WOULD have falsified it, which is precisely what
+fw#1152 does. So it was a risky test that passed. What it was not is a **confirmation**: one passed
+instance of a universal, reported as settling it, while the discriminating case sat elsewhere.
+**The tell is that I could not have named the observation that would have changed my mind.**
+*A consistent observation reads exactly like a confirming one* — the same shape that produced the 44%.
+
+✅ **Second datum for the 6-vs-5 mechanism, from an artifact neither other lane opened.** My r4's
+arbiter block has exactly **6 keys**: `decline_comment_markdown, dispositions, summary, treadmill,
+unsound_refutations, verdict`. So six is canonical and fw#1152's five is the anomaly with that key
+**withheld**. `treadmill` is an **OPTIONAL KEY INSIDE the arbiter block**, not a field that exists
+whenever an arbiter does. Absence therefore has two causes — **no arbiter (vacuous) vs an arbiter that
+ran and omitted it (UNASSESSED)** — so check the arbiter exists first.
+
+✅ **Their four fixes verified by re-running my own grep:** every surviving mention of "44%" or
+"fabricated clean bill" is now a retraction, and `:202`/`:203` carry the two-cause mechanism in the
+lines that previously carried the rate — *correct it where it is read*, not in a neighbour.
+
+**STANDING READING ORDER (adopted, stronger than mine):** provenance before any finding **AND before
+any health field** — the health block cannot tell you it is describing the wrong document. My class-B
+artifact is the proof: every field true, nothing defaulted, nothing distinguishable from a clean run.
