@@ -5508,3 +5508,59 @@ weaken a leg: it reaches the arbiter, which reasons validly to `in_scope_of_this
 **emits a merge recommendation.** So this audit must state the per-row baseline explicitly, or the
 arbiter will apply one baseline to both halves and the proposal rows will come back "pre-existing" —
 which for those two rows is **trivially true and completely uninformative.**
+
+## 2026-09-30 17:05 MDT — CONDITION-SATISFIED SWEEP, 7 non-firmware rows. READ-ONLY. 2 met, 1 inconsistency, 4 live.
+
+All labels re-read LIVE before starting (their list was dated; ts#349 had moved to `8fbf62f9b`).
+No pushes, label changes, comments, audits or merges — acting on any hit needs typed operator text.
+
+**⛔ MET — ts#448** `blocked:audit-findings` @ `da1a6e267`. The 09-29 comment cleared `parked`,
+verified the decline, and filed the residual as **ts#465** (confirmed **OPEN**), closing *"That gap is
+closed, and it was the only thing holding this row."* So the findings condition is discharged FOR
+THIS PR. **Live gate is the absence of a clean audit at this head** = `needs-audit`, a different
+label and action.
+
+**⛔ MET — ts#415** `blocked:audit-findings` @ `e7058c5ab`. Newest comment: all three round-2
+`fix_now` findings **closed** at the current head, one file, +111/-1. Live gate is a round-3 audit.
+I did NOT re-verify the `ec50af5` held-push claim — taken as given, so that part stands.
+
+**⚠️ MET ONLY ON A REFUSED BASIS — ts#405** `blocked:operator-decision`. An operator ruling IS on
+the page: 2026-09-24 *"yes. accepted."*; live blocker is tooling (needs a test-suite-rooted session).
+**But that is the identical shape ts#460 reasoned through and DECLINED** — relayed/agent-recorded is
+not operator-typed, and clearing a block label on a transcription is a permissive act on secondhand
+authority. **Either both clear or neither.** Two rows, same evidence class, opposite handling — the
+one actionable inconsistency in the set.
+
+**LIVE — ts#460.** Correctly held and the precedent for the above: relayed-not-typed AND no live
+audit artifact, so it needs a re-audit independently of the label. Two gates, one operator's.
+
+**LIVE — ts#349** `parked` + `blocked:audit-findings` @ `8fbf62f9b`. NOT superseded — park anchored
+to the live head, no commits after. Cap reached, 4 `fix_now` none declined, and the audited diff GREW
+every round: **1064 -> 1428 -> 1598** (non-converging). Cap lift is the operator's.
+⛔ **Finding about the findings — the INVERSE of closure-does-not-discharge:** the park says the four
+defects were *"filed rather than fixed"* but **names no ticket IDs**, and exactly ONE test-suite issue
+exists in the window (**#466**, a different adjacent gap). Window completeness proven by control
+(oldest of 40 fetched = 09-12, so the cap does not truncate 09-30). **The four residue defects appear
+tracked nowhere but on a parked PR's comment** — which the park's own last line worries about
+(*"belongs on the operator's list, not buried here"*). **ts#448 the same night did it correctly by
+naming ts#465.** Same fleet, same night, one filed with an identifier and one did not.
+
+**LIVE — sk#209** @ `4e37a40ae`: park at the current head with an explicit do-not-merge — round 5
+BLOCK, 6 confirmed -> 3 roots, branch *"introduces a silent gate bypass."*
+**LIVE — sk#210** @ `a6be5ea59`: unpark condition is #211 landing; **#211 is OPEN and unassigned,
+deliberately.** The ordering is a SAFETY ordering — landing the wiring before the head pinning takes
+a latent defect live across every audit the fleet buys. "Clear a parked row by merging it" is the
+harmful move here.
+
+**METHOD, against the three failure modes I was warned about:**
+1. **Both instruments controlled before trusting any zero.** Comment extractor: 50 hits, non-zero on
+   all 7 rows. Issue window: completeness proven by its oldest record predating the window.
+2. **Read oldest-forward, and it decided two rows.** For ts#415 and ts#448 the **newest comment IS
+   the discharge** — reading newest-first would have called both blocked. That is the inversion that
+   flipped fw#1077.
+3. **Two of my own patterns returned NO MATCH and I re-ran rather than reporting absence**; my ts#405
+   pattern first matched a 40k-char Qodo comment — the same over-broad-match failure the coordinator
+   hit. Neither zero was reportable.
+
+Gate-repair audit unchanged and still mine: per-row baselines, **hashing the three blobs myself**
+rather than trusting the reported byte-identity. Dropping this the moment conv-fw lands the head.
