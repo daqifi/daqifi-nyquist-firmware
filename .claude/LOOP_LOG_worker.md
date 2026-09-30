@@ -5449,3 +5449,62 @@ last duplicate pair was flagged and then actually merged.
 confirmed findings; "79 of ~93 gate tests have no wrong-board check"; the claude-skills bundle, now
 at SEVEN members with tonight's wrong-range leg as the sharpest — it is the first that does not
 merely fail silently but **emits a positive merge recommendation.**
+
+## 2026-09-30 16:43 MDT — cron census CALLED OFF on my objection; gate-repair audit scope received in advance
+
+**CronList returned `No scheduled jobs.`** Reported raw. ⛔ **But the tool lists jobs "scheduled via
+CronCreate IN THIS SESSION,"** so a cron created by another session is invisible to it whether alive,
+expired or never created. **It cannot distinguish "expired" from "belongs to another session."** The
+coordinator was two messages from reporting "all four lanes expired on 09-28" to the operator — four
+session-scoped queries would have produced **four uninformative agreements read as four
+confirmations.** Census called off; the operator gets "inspect the cron store from outside any single
+session" as the one action that settles it.
+
+**Same shape as tonight's split-brain audit: full, confident output about the WRONG SCOPE.** Third
+instance today of a bound on what an instrument can see being read as a fact about the world.
+
+**What I offered instead, which does not depend on the tool:** not one turn of this session has been
+driven by a dispatcher cron fire — every turn was a peer message or a task notification. Transcript
+evidence. So **dispatch is dead for nq-b (high confidence); "expired on 09-28" is NOT established.**
+Nothing re-armed — also because re-arming destroys the evidence of what the expiry looked like.
+
+**Filed the four pre-registered CRITERION files** (`96b42fc071227fa10fd5145521d791627f2cdec4`), which
+had lived only in the ephemeral scratchpad. Their TIMING is the whole evidential claim — written
+before any sampled file was opened — so **a criterion that dies with the session cannot be cited to
+defend the survey it governed.** The scratchpad is worse than someone else's worktree: a borrowed
+artifact sits where a person might notice it; the scratchpad is invisible, so nobody sweeps it and it
+takes the artifact silently. Now adopted fleet-wide and already filed by the coordinator onto
+`feedback_writing_a_memory_is_not_filing_it` as a third axis alongside reachability/recallability.
+
+---
+
+## GATE-REPAIR AUDIT — advance scope, and what I must NOT take on trust
+
+**Relayed measurement (conv-fw via the coordinator — THEIR claim, not mine):** the five HIGHs are
+**not one class** — 3 are live on the installed gate, **2 exist only inside sk#199** (defects in a
+proposed fix, not the running gate); `origin/main` carries none of the five; the repair branches from
+`b98e8acd6`, the only tree where all five coexist; the PR will separate the 3 live rows from the 2
+proposal rows. `merge-target-keys.sh` is said to be **byte-identical** across installed tree, autopush
+branch and sk#199, so one change closes the splitter route on three surfaces, with `origin/main`'s
+splitter-free version as a port reference.
+
+⚠ **Two of those I verify myself before auditing, because both are claim-shapes that failed tonight:**
+1. **"byte-identical across three surfaces"** — a byte-identity claim. Tonight's rule is that a
+   refresh makes such a claim **false, not stale**, and my own record has the INSTALLED gate as
+   **DIVERGENT** from main (102 behind, 185 ahead). Hash all three myself.
+2. **"`origin/main` carries none of the five"** — a **three-reference** statement (main ≠ installed ≠
+   PR head), the exact axis where "pre-existing" is meaningless without "pre-existing WHERE."
+
+⛔ **THE AUDIT-DESIGN POINT, and it is the one tonight's failure predicts:** the two halves have
+**DIFFERENT BASELINES**, so "pre-existing" means something different per row —
+
+| half | baseline | standard it must meet |
+|---|---|---|
+| the 3 live rows | the **installed** gate | shown **CLOSED** |
+| the 2 proposal rows | **sk#199's own head** | shown to have **INTRODUCED nothing new** |
+
+**One `base..head` cannot express two baselines.** And tonight proved a wrong baseline does not merely
+weaken a leg: it reaches the arbiter, which reasons validly to `in_scope_of_this_diff=false` and
+**emits a merge recommendation.** So this audit must state the per-row baseline explicitly, or the
+arbiter will apply one baseline to both halves and the proposal rows will come back "pre-existing" —
+which for those two rows is **trivially true and completely uninformative.**
