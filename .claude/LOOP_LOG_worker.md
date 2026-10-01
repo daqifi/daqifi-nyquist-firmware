@@ -7229,3 +7229,62 @@ not a proven one. What IS measured is the two gap magnitudes and that they clust
 **sk#231 static 278 min (4h38m); sk#230 static 421 min (7h01m).** Both still by any reasonable
 threshold, so the moving-target risk the coordinator named has decayed. Reporting the numbers; the
 ask is theirs to carry and the Qodo trigger plus attestation POST remain ask-first regardless.
+
+## 2026-10-01 01:30 MDT — THE MEMORY INDEX ITSELF WAS OVER ITS READ LIMIT. Two memories were invisible to every session.
+
+**Found by making it worse.** I appended a long hook to `MEMORY.md` and a PostToolUse hook refused:
+*"24.6KB, over its 24.4KB read limit … everything past the limit is silently dropped each time the
+index is loaded — entries at the end are already invisible to readers."*
+
+**⛔ It was ALREADY over before I touched it** — ~25.4KB. My edit added ~900 B to a file that had
+been silently truncating for some time. Measured which entries fell past the cut:
+
+```
+L89  feedback_a_fake_that_accepts_any_string_hides_every_syntax_defect.md   INVISIBLE
+L90  feedback_two_lanes_agreeing_without_contact_share_a_prior.md           INVISIBLE
+```
+
+**Two real memories, reachable by NO route from a loaded index.** This is
+[[feedback_writing_a_memory_is_not_filing_it]] with a mechanism nobody had: *the index line exists,
+is correctly formatted, and is past the cut.* **Reachability is not a property of the link — it is a
+property of the link's BYTE OFFSET.** Nothing in the file says which lines are live.
+
+**And it is the night's own shape, in the instrument we rely on most:** the index is the one
+artifact loaded every session to tell us what we know. **A truncated index does not report that it
+truncated.** It presents a complete-looking list whose tail is gone — the same class as
+`mergeStateStatus: CLEAN`, as the warranty flag keyed to its subject's vocabulary, and as a PASS
+naming a different head. **Fourth instance tonight of a signal that reads as present while absent.**
+
+**FIXED THE HARM:** 25.6KB → 23.9KB by hand-compressing 11 of the longest prose hooks. All **91
+links intact**, verified by set-difference before and after. Both entries are back inside the cut.
+
+## ⛔ AND I MADE A SECOND MISTAKE WORTH MORE THAN THE FIRST: I AUTOMATED THE COMPACTION AND IT ATE THE REMEDIES
+
+To reach the recommended 17.1 KB I wrote a length-based truncator — preserve every link, cut each
+prose tail to ~150 chars at a word boundary. It asserted zero links lost and saved 986 B. **I
+reverted it immediately, because of WHAT it cut:**
+
+```
+before  ...the 40-zero fallback was dead code. A charset check accepted it; only a LENGTH check refuses it
+after   ...the 40-zero fallback
+before  ...so you CANNOT subtract a step. **Report only .arbiter.dispositions[].agreed_severity, joined on RATIONALE CONTENT.**
+after   ...so you CANNOT subtract a step.
+```
+
+> **A hook's LAST clause is almost always the how-to-apply. So truncating by LENGTH
+> preferentially destroys the actionable half and keeps the narrative half.** It cut
+> *"only a LENGTH check refuses it"* and *"report only `agreed_severity`"* — two standing
+> instructions — while keeping the anecdotes that motivate them.
+
+**My link-count assertion passed and was the wrong invariant.** 91 → 91, zero lost, and the index
+was materially worse. **I verified the thing that was easy to count rather than the thing that
+mattered**, and the green assertion is what nearly let it stand. Reverted from a backup taken before
+the script, then confirmed both remedy clauses present by grep rather than by assuming the restore
+worked.
+
+**STATE: 23.9 KB, under the 24.4 KB limit, nothing dropped, ~500 B headroom.** The remaining gap to
+17.1 KB needs **hand curation of 91 hooks that other lanes wrote**, which (a) cannot be automated
+for the reason above, (b) changes recall quality for every lane, and (c) is a shared-resource
+decision. **Routing it rather than doing it.** ⚠ And the file grew ~900 B from other sessions while
+I worked on it, so the headroom will be gone within the hour — this is a recurring bill, not a
+one-off.
