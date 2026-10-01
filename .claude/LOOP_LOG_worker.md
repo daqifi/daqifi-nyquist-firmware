@@ -5907,3 +5907,69 @@ the literal placeholders out of my own sentence, which resolve to nothing.
   merge, and this blockage is the same classifier FALSELY FINDING one in prose. **Both directions are
   live at the same head** — it under-detects executable nesting and over-detects inert text, which is
   what a text-matcher standing in for a parser looks like from each side.
+
+## 2026-09-30 18:00 MDT — ts#326 SOURCE-SIDE READ (artifact still in flight). Class A FALSIFIED at one site.
+
+Took the independent read per the authorship split: nq-c authored the head, so their own read of a
+clean result would establish nothing. **Artifact does NOT exist yet** — their run `wf_6f4b3e59-697` is
+in flight, so I did **not** start a round. Did the source work instead, which needs no artifact and is
+better done before one (it becomes a sealed prediction the artifact can be scored against).
+
+Head verified live: `a5f2ce826a8857408729425c03e1075aea2d732c`, MERGEABLE/CLEAN, no labels, 3 files
++970/-0. Their pin agrees with live — but per their own caution, **the pin agreeing does not prove the
+ARTIFACT used it.** Lineage: 5 commits, and `a5f2ce8` cites findings 1-8 plus a cross-repo one, so at
+least EIGHT findings. "Round 1" was wrong and the correction understated it.
+
+**⛔ THE UNIVERSAL CLAIM IS FALSE AT ONE SITE, AND THE MISS DISABLES THE FILE'S STRONGEST GUARD.**
+`a5f2ce8`'s title is *"four classes at every call site, not seven point fixes"* — universal, so one
+site falsifies it.
+```
+:463  drain_errors(scpi)                        <- discarded return, and SYST:ERR? POPS
+:465  channels = discover_channels(scpi)
+:275    pre_clean, _ = drain_confirmed(scpi)    <- sees an ALREADY-EMPTIED queue
+:276    if not pre_clean: raise Failure(...)    <- can no longer fire
+```
+nq-c offered `:463` as "plausibly covered downstream by `discover_channels()`'s own
+`drain_confirmed()`." **It is the reverse:** `:463` pops and discards, so the downstream confirmation
+is **manufactured by the discard above it**. And the file's own comment at `:265-270` — theirs —
+states the violated principle verbatim: *"The PRE-probe drain's result is load-bearing, not
+housekeeping... an error left queued by a failed probe is then consumed by a LATER command, which is
+reported REFUSED although it succeeded."* **A trap cannot recover what the pipeline already
+destroyed**, and here the trap is one their own fix installed. The generalisation closed N sites and
+left an N+1th — and the survivor voids the guard.
+
+**⚠ `:461` UNSETTLED FROM SOURCE, and their own falsifier may not fire.** They predicted a down rail
+empties `discover_channels()` and raises at `:466`, making the unobserved `POW:STAT 1` an unreachable
+precondition. But `:294` counts a channel on `v is not None and post == DRAIN_CLEAN`, so it turns on
+whether a DAC readback parses with the 10 V rail down — a **BENCH** question, not a source one. If it
+parses, channels are found, nothing raises, and the run proceeds on a down rail, charging firmware for
+a bench fault. Reported unsettled rather than guessed. ⭐ And `read_power_state()` already exists and
+is called at `:460`, so verification is ONE LINE and is not done, while `:462`'s own comment asserts
+the rail matters.
+
+**✅ The `5e441e1` findings ARE closed — verified at source, my citations:** (1)
+`power_cycle_reinit.py:133` `query_timed('SYST:LOG?', timeout=15.0, quiet=1.5)`; (2) `drain_confirmed`
+in use, 4 + 3 sites; (4) `restore_bench` captures/restores `prior_power` at `:188` with **per-command**
+`try/except`; (3) closed by restructuring, pinned by the self-test at `:347` asserting a real code
+outranks the `ERR_UNREADABLE` sentinel.
+
+⭐ **CROSS-ROW DIVIDEND, running in ts#326's favour:** its `restore_bench` guards EACH command
+individually — the **correct** version of the helper whose ts#349 sibling carries an open MEDIUM for
+*"unguarded exceptions... leaving the bench armed."* **The remedy for that residue already exists
+here, written by the same lane.** Lift, do not re-derive.
+
+**Bursty class: no falsifier found, and completeness is not READABLE.** All six surviving bare
+`scpi.query(` calls read single scalars (`*IDN?` x2, `POW:STAT?` x2, `VOLT:LEV? <ch>` x2); the only
+bursty reply in these files is `SYST:LOG?` and it is the converted one. ⚠ But **no site documents why
+a bare query is safe there** — grepped for a stated criterion at each, got nothing. Real on my reading,
+unreadable at the sites: the same "a docstring is not enforcement" gap ts#349's residue names.
+
+⚠ **SELF-CORRECTION (30th): my first pass grepped the WRONG FILE.** `grep 980 | head -1` selected the
+latch file, so finding 1 came back EMPTY and I nearly reported it unclosed. It lives in the
+power-cycle file. **A file-selection error presenting as a substantive absence** — caught before it
+reached a report. Sixth search/selection failure of mine today, same direction every time.
+
+**Adopted from nq-c:** there is no `properties` parameter either — their boundary-anchored `A.<field>`
+scan with a 7-arg positive control found 0 real hits; a plain regex was matching the tail of
+`FINDINGS_SCHEMA.properties`. So the caller surface is `fixed` and `dispositions` only, both
+suppressive.
