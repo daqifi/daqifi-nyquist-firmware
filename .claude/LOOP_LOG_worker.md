@@ -6152,3 +6152,50 @@ carry a `line` their own prose never mentions.** Clearest: finding 3's `line: 57
 (`verdict='PASS'` then `return 0`), the actual mechanism. Neither is wrong; they are opposite ends of
 one defect. **So "the line field is populated" is not the check — the check is whether the object's
 address and its prose's address AGREE**, and where they don't, cite the predicate.
+
+## 2026-09-30 18:51 MDT — ts#326 FIX PUSHED and VERIFIED BY MY OWN HAND. Fire's disclosed residual REFUTED.
+
+**Head `afd7dbe2a6c9b0e7cd00fa97e1eca0bf9bbd9ef8`** on `test/980-dac7718-power-cycle-reinit`, confirmed
+by `ls-remote` as a FULL SHA. All 5 reported SHAs exist, are commits, and are ancestors of that head.
+Diff = 3 permitted files, +823/-65. **`test_harness.py`: 0 changes.** `:201` is now
+`SOURce:VOLTage:LEVel {ch},0.0`.
+
+**I RAN EVERYTHING MYSELF rather than accepting the report** (fresh pin at the head):
+latch **24/24 exit 0**, power_cycle **5/5 exit 0**, `harness_policy_lint.py` OK.
+
+⭐ **AND I MUTATION-TESTED THE VALIDATOR MYSELF**, because its entire purpose is rejecting the old
+string and a fire's word is not evidence for that. Reverted `:201` to the malformed form in my own
+tree: **MUTANT 20 PASS / 4 FAIL; CONTROL 24 PASS / 0 FAIL, porcelain 0.** The rejection message is the
+load-bearing part — the double refuses it as *"unparseable all-channel voltage (and no comma to make it
+a pair) -- the firmware parser refuses this shape rather than applying it (SCPI_ERROR_INVALID_SEPARATOR
+/ SCPI_OPT_BAD)."* **It rejects because it PARSES the command the way firmware does, not because a
+literal failed to match.** The non-tautological property, demonstrated.
+
+**⛔ THE FIRE'S DISCLOSED RESIDUAL IS REFUTED.** It claimed a configured-but-never-commanded channel
+returns a CONFIRMED SCPI error via a `Timestamp < 1` gate, cited `SCPIDAC.c`'s `SCPI_DACVoltageGet`,
+and concluded the finding's own named example still falls in the silently-excluded bucket.
+```
+grep Timestamp SCPIDAC.c                -> ZERO   (control: the pattern finds it widely elsewhere)
+the real Timestamp < 1 -> SCPIADC.c:171  pAInLatest->Timestamp   <- the ADC INPUT staleness gate
+SCPIDAC.c:765-766  singleVoltage = (pSample != NULL) ? pSample->Voltage : 0.0;   <- NO gate at all
+```
+**Grep-hit misattribution: a TRUE predicate from the WRONG SUBSYSTEM.** The DAC getter returns the
+stored voltage or a clean `0.0`, so `read_channel` gets a parseable value, the drain is clean, and
+**the channel IS discovered. There is no gap.**
+
+⭐ **THE RULE PAID OFF IN THE OPPOSITE DIRECTION FROM ITS FRAMING.** "A residual a fire discloses is an
+untested finding" exists because fires **understate** residuals ("requires unrealistic input"). This
+one **INVENTED** one. Had I accepted it on the fire's word, a phantom open item would have entered
+round-2's scope and the coordinator would have queued work against it. **Try the example in EITHER
+direction — the rule is direction-agnostic.**
+
+**What the fire did right, worth keeping:** it verified my relayed firmware citations against source
+instead of trusting them — which is how it found the line numbers had drifted while the predicates
+held — and it replaced the recording double with one tracking **semantic state** (`channel_voltage`,
+`power_state`), so assertions check device-observable state rather than a string copy of the author's
+own belief. It also added a comma-present-but-order-swapped mutation case a literal check would miss.
+
+**Scope held:** double kept LOCAL, ts#349's identical vacuous twin NAMED in commit 1 as a separate
+row, no merge, no labels, no new PR. Round-2 read rotates away from me (I authored the fix, nq-c
+authored the row); my handover note for it: **the new double is now the thing everything else is
+asserted through, so it is what a fresh pair of eyes should look at first.**
