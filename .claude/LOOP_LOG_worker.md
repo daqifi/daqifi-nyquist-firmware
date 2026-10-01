@@ -9234,3 +9234,69 @@ STALE label would have been the weaker case.** So the coordinator's own "the lab
 truthful" finding was an argument **against** routing and was read as an argument **for** it.
 
 ⚠ **ts#415 is the costly one** — nq-a worked it all night on that routing.
+
+## 2026-10-01 14:55 MDT — sk#231 is NOT un-audited. It carries a VACUOUS, SUPERSEDED, UNPOSTED PASS from a THRICE-CONFLICTED auditor — me. And its base is the INSTALLED ref.
+
+Asked to determine state, not to audit. **The premise is wrong and I am the reason it looks true.**
+
+## INVOLVEMENT FIRST, BY CONJUNCTION — and all three layers FIRE
+
+| layer | finding |
+|---|---|
+| **artifact** | `audit-sk231-60ed39e97-PASS.json` — repo `cptkoolbeenz/claude-skills`, head `60ed39e970b3…`, **gate PASS**. Plus `…-PASS-DOES-NOT-COVER-LIVE-HEAD.md`, the sidecar I wrote on finding the head had moved. |
+| **ledger** | `:6429` *"sk#231 audit: **DISCLOSED a direct stake** BEFORE spending a round"* · `:6479` audit **LAUNCHED `wf_3ffcadc5-d96`** under a declared conflict · `:6482` pre-registration · `:6493` detached worktree, porcelain 0 |
+| **accruing** | 7 session artefacts; worktree `/mnt/c/daqifi/wt/audit-sk231` exists |
+
+**I am conflicted THREE ways**, and the third is the one a label query can never show:
+1. **AUDITOR** — I ran it.
+2. ⛔ **SUBJECT** — the PR documents **my own** device-guard finding (`:40`/`:42`) and recommends
+   **my** `Write`-then-`cat` workaround (`:49`/`:50`). **I disclosed this stake at the time**, before
+   spending the round.
+3. holder of the audit worktree.
+**So I cannot audit sk#231, and could not have at the time without the disclosure I made.**
+
+## ⛔ THE STATE IS A THIRD THING, NEITHER "AUDITED" NOR "UN-AUDITED" — THREE DEFECTS STACKED
+
+```
+1  VACUOUS     arbiterModel: None   rawFindings: 0   blindLegRan: true
+               -> a PASS with NO ARBITER. The class-A shape I filed myself, and I had already
+                  listed sk231 among the four vacuous rows: "both fw1020 files, sk231,
+                  ts349-noblindleg, all vacuous at raw=0."
+2  SUPERSEDED  attested 60ed39e97; live dae17d85107a; compare: ahead_by 1, behind_by 0
+3  UNPOSTED    which is EXACTLY why conv-ts measured "2 comments, ZERO audit-bearing"
+```
+> **conv-ts's measurement is correct and its interpretation is not.** The comments really do carry
+> zero audit evidence — because **I never posted the verdict**, not because none exists. **An
+> unposted verdict and a never-run audit are indistinguishable from the PR**, which is the
+> verdict-with-no-index gap in its purest form: my own instance, on a row I audited.
+
+⚠ **And "vacuous PASS" is worse than "no audit" for routing**, because the artifact exists and reads
+clean. Had I posted it, the row would now look audited-and-passing on a PASS that adjudicated
+nothing.
+
+## ⭐⭐ THE BASE IS THE FINDING, AND IT IS THE OPPOSITE OF THE FEAR
+
+```
+sk#231   headRef fix/device-guard-open-prose
+         BASE    autopush/office-390bc12dcdf8      <-- THE INSTALLED REF
+```
+**That is the branch the installed tree is checked out on** — I measured it earlier at
+`autopush/office-390bc12dcdf8 @ 6c6d16f`, ahead 185 / behind 102 of `origin/main`, **DIVERGENT**.
+
+So unlike sk#230 (base `base/gate-absent-review`, ahead 0 / behind 140, 0 of 53 PRs carrying it
+onward — **the coordinator's measurement, not mine; my re-query returned empty on a transient**),
+**sk#231 targets the ref that agents actually load.** Merging it advances the installed branch rather
+than a dead chain. ⚠ The installed **working tree** would still sit at `6c6d16f` until someone pulls,
+so this makes the fix *reachable* from the installed ref — which is strictly more than sk#230 can
+claim, and it is the reason this row is worth a correctly-scoped round at all.
+
+## WHAT I AM NOT DOING
+
+**Not auditing it** — thrice conflicted. **Not posting the verdict** — it is vacuous and superseded,
+so posting it would put a clean-reading PASS on a row that has neither a current nor a valid one, and
+`claude-skills` writes are ask-first regardless. **Not proposing a merge.**
+
+**What the row needs is a FIRST VALID audit by a clean lane at `dae17d85107a`** — and the existing
+artifact should be treated as absent rather than as a prior round, because an arbiter-less PASS is not
+a verdict. That is an operator decision on a cross-repo write, which is where the coordinator already
+said it would go.
