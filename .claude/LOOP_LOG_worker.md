@@ -6862,3 +6862,61 @@ running **while you still do not know the answer** is worth more than the same c
 afterwards, because afterwards you only run it when you already doubt the result. The count agreed
 with my conclusion; the only thing that made me open the body was a pre-commitment made before the
 count existed.
+
+## 2026-10-01 00:39 MDT — took the EXECUTE role on conv-fw's predicate; corpus FIXED before the spec exists
+
+Split as the coordinator framed it: **conv-fw specifies, I execute and report raw counts with no
+verdict, they interpret.** My stake contaminates design and interpretation; it does not contaminate
+running someone else's predicate over an existing corpus.
+
+**⛔ BUT THE SPLIT LEFT ONE ROUTE OPEN THAT NEITHER OF US NAMED: I hold the corpus, so corpus
+SELECTION was mine.** That is a scoping decision — and scoping is where I found the most leverage all
+night (the sk#136 base choice found more than my reading did). **A predicate run over a population I
+chose AFTER seeing the predicate is not someone else's measurement.** So I enumerated the population
+**exhaustively, before the spec exists**, every `.json` in the evidence dir, no filtering:
+
+```
+artifact                                        raw  conf  plaus  oos  disp  refut gate
+audit-fw1020-69fc022ed-PASS.envelope.json         0     0      0    0     0      0 PASS
+audit-fw1020-69fc022ed-PASS.json                  0     0      0    0     0      0 PASS
+audit-sk136-6b8231535-BLOCK-2defects.json         4     4      0    0     4      0 BLOCK
+audit-sk199-b98e8acd6-BLOCK-6findings.json        6     6      0    0     6      0 BLOCK
+audit-sk230-26bd04ab0-BLOCK-2high.json            2     2      0    0     2      0 BLOCK
+audit-sk231-60ed39e97-PASS.json                   0     0      0    0     0      0 PASS
+audit-ts326-a5f2ce826a-BLOCK-4findings.json       8     8      0    0     4      0 BLOCK
+audit-ts349-8c2070fd8a-BLOCK-5findings.json       5     4      1    0     5      0 BLOCK
+audit-ts349-8c2070fd8a-BLOCK-noblindleg.json      0     0      0    0     0      0 BLOCK
+audit-ts349-r4-VOID-splitbrain-46aebf10f.json     2     0      0    2     2      0 PASS
+```
+**No verdicts attached.** Four distinguishable numeric patterns exist in the table; stated as
+arithmetic, with no claim about what any of them implies.
+
+⚠ **A call I am deliberately NOT making: ten FILES, possibly NINE distinct runs.** The two
+`fw1020-PASS` entries are one run in envelope and payload form. **Whether that is one artifact or two
+changes any denominator** — and I have been saying "nine" all night while the exhaustive count is
+ten. Collapsing them is a judgement about what counts as an artifact, so it is conv-fw's.
+
+**⛔⛔ MY CANDIDATE IS DEAD ON EVIDENCE I HOLD.** conv-fw's kill — a misled arbiter that wrongly
+*merges* findings leaves no numeric trace — reproduces in my corpus on ts#326:
+```
+rawFindings=8   confirmed=8   dispositions=4
+rationales: "Duplicate of index 4" / "...5" / "...6" / "...7"
+```
+**Eight raw merged into four distinct defects entirely in PROSE, both counts at 8.** A
+`rawFindings != confirmed` comparison sees 8 == 8 and no anomaly. **Independent confirmation of their
+kill, from an artifact they do not hold** — not a concession to it.
+
+One column moved where another did not on that row (disposition count 4 vs raw 8) and **I reported it
+as data and explicitly NOT as a replacement proposal.** Turning a column into a predicate is design
+and design is the forbidden direction for me here.
+
+**Stated in advance:** if the spec arrives needing a call — "survivors" still naming no field, or a
+clause requiring me to decide what counts — **I refuse and name the underspecified field rather than
+deciding.** A judgement made during execution is indistinguishable in the output from a measurement,
+which is the whole reason the split exists.
+
+⭐ **And the coordinator's finding against themselves generalises mine:** *"a found defect makes its
+own neighbourhood feel searched — the line was retired from a second pass by having yielded a first
+one."* That is exactly `:397-400`: **I found the hardcoded-base assumption there, and having produced
+a finding from those four lines is what stopped me reading them again.** Mine was the instance;
+theirs is the mechanism.
