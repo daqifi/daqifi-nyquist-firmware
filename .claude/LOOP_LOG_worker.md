@@ -6630,3 +6630,50 @@ eventually runs. No labels, no comments, no commits.
 ⭐ **The coordinator's question worked this time:** asking for the enumeration with **no candidate
 supplied** is what surfaced the exclusion-class adjacency — I would never have volunteered it, because
 it is not a stake in anything a query would find.
+
+## 2026-10-01 00:15 MDT — sk#136 round 2 LAUNCHED `wf_c5170ab5-033`; and I found the fix's OWN defect at source first
+
+**Accepted the coordinator's flip of my reasoning, because it is derived from my own finding:** the
+brief's prose **contains a command typed verbatim by a dispatcher**, so **the text IS the executable
+artifact** — a transposed colon or dropped `+` propagates to every dispatcher and fails silently.
+**The discriminator is whether a CODE PATH exists to hold the guarantee, not whether the fix is
+prose.** On sk#231 code existed and docs substituted for it; here none exists, so prose is the only
+home — which is exactly what makes its literal correctness auditable.
+
+⚠ **And my first read of the row was wrong twice, both corrected before the round:** the fix is
+**12 lines of a brief, no code** (the coordinator's description implied a code change, and the
+`+304/-0` is the branch's cumulative brief history, not the commit); and I nearly reported "three
+scripts do this fetch and none uses the main refspec -> the defect is LIVE in code." **Wrong:** one
+match was prose, one had no fetch, and `skills-autopush.sh` uses a **bare** `git fetch -q origin`,
+which **does** refresh `origin/main` under the configured refspec. **An explicit refspec overrides
+the default; a bare fetch does not** — that distinction is the entire mechanism.
+
+**⛔ SEALED FINDING, at source, BEFORE the round (`.claude/evidence/sk136-SEAL-6b8231535.md`):
+THE FIX HARDCODES `main`** in both the refspec and the ancestry test (`:397-400`).
+**Measured: 10 of 23 open PRs in this repo are NOT based on main** — 8 on
+`autopush/office-390bc12dcdf8`, 1 on `fix/gate-refuse-when-pr-absent-from-session-repo`, 1 on
+`base/gate-absent-review` — **including sk#230 and sk#231, both audited tonight.** On those rows the
+check tests containment of MAIN by a head whose base is **102 behind main**, so it prints **STALE for
+a PR that is fresh against its own base.**
+
+**DIRECTION: fails toward RED** — a false alarm, the safe direction, unlike the silent-green defect it
+fixed. ⚠ **But a check that cries STALE on 43% of the queue trains disregard, and a disregarded check
+protects nothing.** And it is the **two-sided pattern on one check in consecutive rounds**: too LOOSE
+(could not fail) -> too STRICT for 43% of rows. Same shape as ts#351.
+
+⭐ **The remedy exists one file over and the repo already wrote down why:**
+`mark-skills-audited.sh:208-214` — *"Recomputing was right only for the origin/main case and silently
+wrong for every other destination"* — and it takes `--push-base`. **The brief should name the PR's own
+base.** Not a design question; a fix that exists in the same repo and was not carried into the prose.
+
+**SEALED PREDICTION: the audit does NOT find this** — it needs the repo's open-PR base distribution,
+which is not in the diff (subject scope). If it does, that is a point for the engine and I will say so.
+
+**Setup:** base = `bb6305e2` (merge-base with `main`), **not** round 1's `48a455ca4` increment — a
+fresh audit, not a fix-verification, which this row's own history warns against (`Bugs (0)` on commit
+1 of 14). Range 21981 bytes, band 21761-22201. ⚠ An `audit-sk136` tree already existed at this head
+(round 1's, re-pinned) — **not used**, only trees this lane created; mine is `audit-sk136-nqb`.
+Installed tree `6c6d16f4`, dirty 0, asserted unchanged.
+
+**Stakes as corrected: item 9 STAKE, item 10 CLEAN, item 11 STAKE.** Items 9 and 11 are **BLOCK-only**
+reads for me — I may block but not clear, same asymmetry as a finding-author's.
