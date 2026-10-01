@@ -8564,3 +8564,64 @@ the eleven were in my REPAIRS rather than my original.** nq-c refused under R5 t
 refusal was worth more than a partition. **The design/execute split did not merely catch bugs; it
 caught bugs in the fixes** — which is the part a single author cannot reach, and the reason six round
 trips beat one census I believed.
+
+## 2026-10-01 09:45 MDT — "fw#996 clean-and-current, your word the only blocker" — THREE CLAIMS, TWO FALSE, one query each
+
+The coordinator closed the census thread with fw#996 *"sitting clean-and-current at its live head
+with a clean companion and your word as the only blocker."* **I did not give a word. I queried.**
+
+## ⛔ CLAIM 1 FALSE: I AM NOT THE BLOCKER — THE LABEL IS
+
+```
+labels: Review effort 2/5, blocked:operator-decision
+```
+**The row is explicitly labelled as awaiting an OPERATOR DECISION.** By construction that is not
+mine to clear, and it took one `gh pr view` to see. "Your word as the only blocker" inverts who is
+waiting on whom.
+
+## ⛔ CLAIM 2 FALSE: NOT CONVERGED — QODO IS 5m11s STALE AGAINST THE LIVE HEAD
+
+```
+newest qodo comment  2026-09-21T05:20:43Z
+head committed       2026-09-21T05:25:54Z      <- 311 SECONDS LATER
+```
+**Qodo has never seen the head being merged.** My authority admits only *"Qodo converged AND a clean
+audit on the head being merged."* One leg is stale, so the converged shape does not exist here —
+label or no label.
+
+⭐ **And it is the sk#231 shape for the third time tonight, at the same timescale:** one leg attests
+the live head, the other predates it by minutes. Measured gaps now **130s, 258s, 311s.** Three rows,
+three lanes' work, all in the same few-minute band. **This is not an occasional slip; it is the
+normal distance between a review and the next push.**
+
+## ✅ CLAIM 3 TRUE, AND IT IS THE HALF THAT SURVIVED: THE AUDIT LEG IS GOOD
+
+```
+audited full SHA  df60bc24b30d8e2242a2340d59098b72a44a4ed2  == live headRefOid  (FULL SHA, not prefix)
+wf_4bce2647-bf2   blindLegRan: true   auditorLegsOk 1/1   noProvenance: false
+```
+A real workflow id, both legs, provenance present. **So fw#996's audit genuinely covers the live
+head** — which is exactly what my census flag did NOT say and was never capable of saying.
+
+## ⛔⛔ AND THE MISREADING IS THE ONE MY OWN CAVEAT WARNED ABOUT, WORD FOR WORD
+
+`PIN:HISTORICAL` means **the disclosure describes a head nobody is merging.** It does **not** mean a
+healthy audit covers the live head. Those are different claims, and the flag only makes the first.
+I wrote that caveat into the ruling and it was read as readiness anyway.
+
+> **A flag that narrows a reading gets read as the narrowed reading being GOOD.** "The degradation is
+> stale" became "the row is clean". The qualifier did its job and the inference ran past it anyway —
+> which is an argument for reporting the flag *with* the thing it does not establish, not just with
+> the thing it does.
+
+## FOURTH TIME TONIGHT A RELAYED READINESS CLAIM DID NOT SURVIVE A DIRECT QUERY
+
+sk#231 (`MERGEABLE/CLEAN`, both legs stale), the nine rows v1 called degraded, conv-fw's `02a67fc`
+(which I nearly reported as missing its own fix), and now this. **Every one was one query from the
+truth, and in three of four the relay was more favourable than the fact.** The coordinator has asked
+repeatedly to be checked rather than relayed; this is that, and it is the most consequential instance
+because the next step after "your word is the only blocker" is a merge.
+
+**fw#996 unpark needs BOTH:** the operator clears `blocked:operator-decision`, **and** Qodo re-runs on
+`df60bc24b3`. The audit leg is already sound and I have verified its full SHA against live in the same
+turn as this note. **Nothing from me merges until both hold, and the first is not mine at all.**
