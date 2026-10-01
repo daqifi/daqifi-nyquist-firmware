@@ -6425,3 +6425,53 @@ command, so I am not calling it a defect.
 
 My row's self-finding routed to conv-ts's pending fresh audit rather than pre-empted with a fourth
 commit.
+
+## 2026-09-30 20:03 MDT — sk#231 audit: DISCLOSED a direct stake BEFORE spending a round. Awaiting a decision.
+
+**✅ The two claims I was told to verify myself, both confirmed:**
+```
+bench-lib.sh @ PR head 60ed39e    7af0ec6a180323832e837ace5a648d5675a59a9f
+bench-lib.sh @ installed          7af0ec6a180323832e837ace5a648d5675a59a9f  -> IDENTICAL
+```
+So conv-fw's worktree-hook-against-installed-lib validation is sound on exactly the stated basis, and
+they were right to flag it for checking rather than assert it. Diff is `bench/SKILL.md` alone,
+**+57/-0**, docs-only confirmed.
+
+**HAZARD HANDLED:** installed-tree baseline recorded BEFORE any read — HEAD `6c6d16f4`, branch
+`autopush/office-390bc12dcdf8`, **dirty 0** — and asserted unchanged after. **No worktree created at
+all**; every read went through the object DB (`git show` / `rev-parse`), which is cheaper than a
+detached worktree and touches nothing.
+
+**AUTHORSHIP HALF ONE: no commit of mine.** One commit `60ed39e` under the shared identity, so
+`git log` cannot distinguish lanes — answered from my own record, not the log.
+
+**⛔⛔ HALF TWO: a DIRECT derivative stake, two separate pieces of my own work**, in the section the
+coordinator called load-bearing:
+```
+:40  "### The guard matches command TEXT, so writing *about* a device is refused"
+:49  "compose the text with the `Write` tool and `cat` the file in"
+```
+The first is **my finding** (`device-guard.sh:31` is `[ "$tool" = Bash ] || exit 0`, matching the port
+name in the command text; my formulation *"the guard checks the name you typed; --expect-serial checks
+the board that answered"*). The second is **my workaround**, used and reported when that same guard
+blocked my own sk#230 write-up hours earlier.
+
+> **Auditing that section would be me confirming my own claim** — the mechanised form of *agreement
+> with your own claim is not corroboration*. My interest runs toward the text being correct and
+> sufficient, so **a CLEAN from me there is worth ~nothing; a BLOCK would run against my interest and
+> be a floor.**
+
+⚠ **And the adjacency I was warned about was the WRONG one.** `#877` is a DAC channel-range guard,
+unrelated to bench identity. **The real stake is the one nobody named.** Third time today a named
+conflict was the wrong one and the real one came from checking rather than recalling.
+
+**PROPOSED SPLIT (their sk#326 split, inverted), routed for decision rather than assumed:** the engine
+is independent of me and I would pass neither `fixed` nor `dispositions`, so **I can run it**; I
+**cannot** scope the hunter away from the tainted section (no brief channel; both free-text args are
+suppression channels); so **what is conflicted is my READ of findings landing in that section** — those
+get the artifact's own words and someone else adjudicates. Everything else — step-zero ordering,
+registry-as-authority, `bench whoami`, substitution-vs-evasion, and **the ts#432 reachability
+question** — my read is clean. **Offered the alternative too**: hand the whole row to a lane with no
+stake, which is cleaner, and said I would not argue for keeping it.
+
+**Nothing launched. Nothing merged. No labels. Installed tree untouched.**
