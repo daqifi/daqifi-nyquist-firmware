@@ -1,0 +1,48 @@
+=== 1. CENSUS ===
+  files seen      : 10
+  artifacts parsed: 10
+  skipped/noted   : 6
+      audit-fw1020-69fc022ed-PASS.envelope.json NOTE (still measured): unwrapped .result envelope
+      audit-sk136-6b8231535-BLOCK-2defects.json NOTE (still measured): unwrapped .result envelope
+      audit-sk230-26bd04ab0-BLOCK-2high.json   NOTE (still measured): unwrapped .result envelope
+      audit-sk231-60ed39e97-PASS.json          NOTE (still measured): unwrapped .result envelope
+      audit-ts326-a5f2ce826a-BLOCK-4findings.json NOTE (still measured): unwrapped .result envelope
+      audit-ts349-r4-VOID-splitbrain-46aebf10f.json NOTE (still measured): unwrapped .result envelope
+
+=== 2. ROWS (TSV) ===
+file	gate	finalGate	rawFindings	nConfirmed	nPlausible	refuted	nUnverified	nOutOfScope	nDispositions	arbiterPresent	nArbiterKeys	arbiterModel	arbiterMissing	blindLegRan	nSteeringSuppressed	coveredBytes	totalBytes	dispCounts	sevCounts	P1_rawNeConfirmed	P2_rawNePartition	P3_rawGt0AndPass	P4_rawNeDisp	P5_hasDistinctField	nBackRefs	nFwdRefs	nOtherMergeLang	derivedDistinct
+audit-fw1020-69fc022ed-PASS.envelope.j	PASS	true	0	0	0	0	0	0	0	0	0	null	false	true	0	4181	4181	-	-	0	0	0	0	0	0	0	0	0
+audit-fw1020-69fc022ed-PASS.json	PASS	true	0	0	0	0	0	0	0	0	0	null	false	true	0	4181	4181	-	-	0	0	0	0	0	0	0	0	0
+audit-sk136-6b8231535-BLOCK-2defects.j	BLOCK	true	4	4	0	0	0	0	4	1	6	sonnet	false	true	2	21983	21983	fix_now=4	high=2;medium=2	0	0	0	0	0	0	0	0	4
+audit-sk199-b98e8acd6-BLOCK-6findings.	BLOCK	true	6	6	0	0	0	0	6	1	6	sonnet	false	true	3	37852	37852	fix_now=6	high=5;medium=1	0	0	0	0	0	0	0	1	6
+audit-sk230-26bd04ab0-BLOCK-2high.json	BLOCK	true	2	2	0	0	0	0	2	1	6	sonnet	false	true	1	19629	19629	fix_now=2	high=2	0	0	0	0	0	0	0	0	2
+audit-sk231-60ed39e97-PASS.json	PASS	true	0	0	0	0	0	0	0	0	0	null	false	true	0	4058	4058	-	-	0	0	0	0	0	0	0	0	0
+audit-ts326-a5f2ce826a-BLOCK-4findings	BLOCK	true	8	8	0	0	0	0	4	1	6	sonnet	false	true	4	49232	49232	fix_now=4	high=2;medium=2	0	0	0	1	0	0	0	4	4
+audit-ts349-8c2070fd8a-BLOCK-5findings	BLOCK	true	5	4	1	0	0	0	5	1	6	sonnet	false	true	3	40292	40292	fix_now=5	low=1;medium=4	1	0	0	0	0	0	0	0	5
+audit-ts349-8c2070fd8a-BLOCK-noblindle	BLOCK	true	0	0	0	0	0	0	0	0	0	null	false	false	0	40292	40292	-	-	0	0	0	0	0	0	0	0	0
+audit-ts349-r4-VOID-splitbrain-46aebf1	PASS	true	2	0	0	0	0	2	2	1	6	sonnet	false	true	0	369515	369515	defer_ticket=2	high=1;medium=1	1	0	1	0	0	0	0	0	2
+
+=== 3. DISPOSITION RATIONALES, VERBATIM, UNCLASSIFIED ===
+  audit-sk136-6b8231535-BLOCK- [0] CONFIRMED, in-scope, reproduces at 6b82315 herd/briefs/tsofficeagent.md:397-400 (fetch and
+  audit-sk136-6b8231535-BLOCK- [1] CONFIRMED, in-scope, high severity affirmed by both hunter and skeptic. The inertness test
+  audit-sk136-6b8231535-BLOCK- [2] Same underlying race as index 1, independently traced for the review-notification variant 
+  audit-sk136-6b8231535-BLOCK- [3] Same code site and mechanism as index 0, framed as the remedy instruction rather than the 
+  audit-sk199-b98e8acd6-BLOCK- [0] CONFIRMED with a full end-to-end reproduction (unaudited PR 99 merged, EXIT=0). The new qu
+  audit-sk199-b98e8acd6-BLOCK- [1] CONFIRMED and reproduced (EXIT=127 on a normal, in-scope failure mode — missing/stubbed `t
+  audit-sk199-b98e8acd6-BLOCK- [2] CONFIRMED, reproduced via umask alone (attacker fully controls their own umask when invoki
+  audit-sk199-b98e8acd6-BLOCK- [3] Same defect site and mechanism as #0 (quote check operates on already-parser-stripped $RES
+  audit-sk199-b98e8acd6-BLOCK- [4] CONFIRMED and reproduced, but I agree with the skeptic's downgrade from the hunter's 'high
+  audit-sk199-b98e8acd6-BLOCK- [5] Same root defect as #1 (IS_MERGE never armed after successful parser classification), repr
+  audit-sk230-26bd04ab0-BLOCK- [0] Skeptic CONFIRMED with a direct code trace (merge-target-keys.sh lines 184-232, 255, 266, 
+  audit-sk230-26bd04ab0-BLOCK- [1] Same underlying defect as index 0 (same file and line, same mechanism, same two repro shap
+  audit-ts326-a5f2ce826a-BLOCK [0] Duplicate of index 4 (same file/line). Skeptic confirmed the mechanism (malformed SCPI nev
+  audit-ts326-a5f2ce826a-BLOCK [1] Duplicate of index 5 (same file/line). Reconciling this entry's 'medium' against index 5's
+  audit-ts326-a5f2ce826a-BLOCK [2] Duplicate of index 6, same mechanism, both skeptic passes and both hunters agree on medium
+  audit-ts326-a5f2ce826a-BLOCK [3] Duplicate of index 7, same mechanism (ordering bug: voltage-restore write happens before p
+  audit-ts349-8c2070fd8a-BLOCK [0] CONFIRMED by skeptic with precise line citations (regression_gate.py MANIFEST lookup, disc
+  audit-ts349-8c2070fd8a-BLOCK [1] Skeptic returned PLAUSIBLE not CONFIRMED, downgraded to low — the precondition (STREAM log
+  audit-ts349-8c2070fd8a-BLOCK [2] CONFIRMED, skeptic corrected claimed-severity high down to medium (real data loss, but of 
+  audit-ts349-8c2070fd8a-BLOCK [3] CONFIRMED with an exact firmware-side citation (SCPIInterface.c:4250-4254 rejecting STR:ST
+  audit-ts349-8c2070fd8a-BLOCK [4] CONFIRMED via a device-free mock reproduction that the four checks billed as 'fully discri
+  audit-ts349-r4-VOID-splitbra [0] Skeptic CONFIRMED at high severity (agrees with hunter's claimed severity -- no reconcilia
+  audit-ts349-r4-VOID-splitbra [1] Skeptic CONFIRMED at medium (matches hunter's claimed severity). in_scope_of_this_diff=fal

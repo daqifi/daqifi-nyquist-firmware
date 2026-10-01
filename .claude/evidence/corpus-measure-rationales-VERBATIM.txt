@@ -1,0 +1,121 @@
+DISPOSITION RATIONALES, VERBATIM AND UNCLASSIFIED
+nq-b corpus, 10 pre-registered artifacts, 2026-10-01.
+Extracted directly from the artifacts because conv-fw's section 3 truncates at ~92 chars.
+No classification, no grouping, no commentary. Order is file order, then disposition index.
+==============================================================================
+
+### audit-fw1020-69fc022ed-PASS.envelope.json   dispositions=0
+  <none>
+
+### audit-fw1020-69fc022ed-PASS.json   dispositions=0
+  <none>
+
+### audit-sk136-6b8231535-BLOCK-2defects.json   dispositions=4
+
+  [0] agreed_severity='medium' disposition='fix_now' index=0
+  rationale:
+  CONFIRMED, in-scope, reproduces at 6b82315 herd/briefs/tsofficeagent.md:397-400 (fetch and merge-base unchained, no set -e). Fails toward silence (false HEAD CONTAINS MAIN against untested remote head) but stderr from the failed fetch is not suppressed by -q, giving a real though unenforced operator signal -- reconciling hunter's high down to skeptic's medium. Same root cause and fix as index 3.
+
+  [1] agreed_severity='high' disposition='fix_now' index=1
+  rationale:
+  CONFIRMED, in-scope, high severity affirmed by both hunter and skeptic. The inertness test is provably satisfiable by a live, resumable agent, and the brief permits spawning a replacement onto the same ticket while it runs. Fails toward silence -- two agents can push to the same branch with no cancellation or ownership handoff, and backlog-loop/SKILL.md:813-821 documents this already produced a merge that was never actually audited. Same race as index 2; one fix resolves both.
+
+  [2] agreed_severity='high' disposition='fix_now' index=2
+  rationale:
+  Same underlying race as index 1, independently traced for the review-notification variant with the same documented precedent. Keep as fix_now/high; one fix should close both 1 and 2.
+
+  [3] agreed_severity='medium' disposition='fix_now' index=3
+  rationale:
+  Same code site and mechanism as index 0, framed as the remedy instruction rather than the report. Not a separate defect -- disposed by the same fix as index 0.
+
+### audit-sk199-b98e8acd6-BLOCK-6findings.json   dispositions=6
+
+  [0] agreed_severity='high' disposition='fix_now' index=0
+  rationale:
+  CONFIRMED with a full end-to-end reproduction (unaudited PR 99 merged, EXIT=0). The new quote-refusal check inspects $RESTS only after merge-target-keys.sh's sed has already turned backticks into segment breaks, so exactly the character class the check exists to catch is invisible to it by the time it runs. Fails silently (EXIT=0, marker consumed) — the worst direction per the hook contract. Not pre-existing (this diff added the check), not covered by any documented residual. Root-cause-identical to #3; fix once by validating the RAW command before the shared parser sanitizes it, or by rejecting any of `` ` $ ( ) { } `` etc. pre-split rather than post-split.
+
+  [1] agreed_severity='high' disposition='fix_now' index=1
+  rationale:
+  CONFIRMED and reproduced (EXIT=127 on a normal, in-scope failure mode — missing/stubbed `tr`). IS_MERGE is only ever set to 1 on the parser's error path; a successful classification never arms it, so the entire post-classification body, including the new quote check and staleness checks, runs outside the fail-closed EXIT trap. Per the hook contract this converts any ordinary tool hiccup after that point into a silent allow. Root cause shared with #5. Fix: set IS_MERGE=1 immediately after the parser sources successfully, mirroring pre-merge-checks-gate.sh:82, not only on its internal error branch.
+
+  [2] agreed_severity='high' disposition='fix_now' index=2
+  rationale:
+  CONFIRMED, reproduced via umask alone (attacker fully controls their own umask when invoking their own merge, so this is trivially reachable, not an edge case). A capture redirection failure (permission denied) is indistinguishable from 'gh produced no error and no output' to the silent-empty guard, so a stale marker for a moved PR head is cleared with zero validation and the merge proceeds. This is the exact bypass class the :270-280 comment claims to have closed, so it cannot be declined as an accepted residual of that same fix. Fix: treat any nonzero GHRC or any GHERR content (not just the empty case) as CAPFAIL.
+
+  [3] agreed_severity='high' disposition='fix_now' index=3
+  rationale:
+  Same defect site and mechanism as #0 (quote check operates on already-parser-stripped $RESTS), demonstrated here with backtick and brace variants together plus a positive control proving the check is otherwise live. CONFIRMED, in-scope, fails silently toward an unaudited merge. Dispositioned identically to #0 — flagging the duplication here so the fix isn't applied twice independently and drift between the two patches.
+
+  [4] agreed_severity='medium' disposition='fix_now' index=4
+  rationale:
+  CONFIRMED and reproduced, but I agree with the skeptic's downgrade from the hunter's 'high': exploitation requires either an engineered truncated write coinciding with a matching stale-SHA hex prefix, or the narrower rc=124 timeout variant — both real and reachable (single-byte-limit + ignored SIGXFSZ is a constructible environment) but a materially narrower attack surface than #2's outright permission-denied full bypass. Still a genuine fail-open in the contract's dangerous direction (stale marker consumed, merge allowed), so it must be fixed, not deferred — the fix should reject any GHRC that reflects an incomplete/failed write and length-check LIVE as a full SHA, not just hex-charset it.
+
+  [5] agreed_severity='high' disposition='fix_now' index=5
+  rationale:
+  Same root defect as #1 (IS_MERGE never armed after successful parser classification), reproduced here via a different broken command (head, under inherited errexit) yielding EXIT=127. I disagree with the skeptic's 'medium' correction here specifically because the skeptic itself rated the identical underlying defect 'high' in #1 — the severity of an architectural gap (the caller, not the parser, is responsible for arming the fail-closed trap, and never does on the success path) does not change based on which downstream command happens to be missing. Surfacing this disagreement per rule 5 rather than averaging it away. Fix once, alongside #1: arm IS_MERGE right after the parser sources successfully.
+
+### audit-sk230-26bd04ab0-BLOCK-2high.json   dispositions=2
+
+  [0] agreed_severity='high' disposition='fix_now' index=0
+  rationale:
+  Skeptic CONFIRMED with a direct code trace (merge-target-keys.sh lines 184-232, 255, 266, 273) and cites the exact base commit b98e8acd6dac5176629dca2869a37c23c4a64517 line 240 showing the delimiter set was wider before this diff, so this is newly introduced by the PR, not pre-existing. No standing rule covers shell-metacharacter gate bypasses and nothing documents this as an accepted residual. Fails toward silence (unaudited or failing-CI merge proceeds with no error surfaced), the worse failure direction. Fix: restore backtick and both braces to the sed cut set at line 255.
+
+  [1] agreed_severity='high' disposition='fix_now' index=1
+  rationale:
+  Same underlying defect as index 0 (same file and line, same mechanism, same two repro shapes tested against a different PR number), independently re-traced and re-measured by the skeptic with explicit exit codes: base rc=2 versus HEAD rc=0 on both gates for both attack strings, while the unobfuscated control command still returns rc=2 on both. Confirmed, in-scope, not pre-existing, not covered by any standing rule. Same fix as index 0 resolves both since they share one root cause at line 255; verify against both of this finding's repro commands as well as index 0's before closing either.
+
+### audit-sk231-60ed39e97-PASS.json   dispositions=0
+  <none>
+
+### audit-ts326-a5f2ce826a-BLOCK-4findings.json   dispositions=4
+
+  [0] agreed_severity='high' disposition='fix_now' index=0
+  rationale:
+  Duplicate of index 4 (same file/line). Skeptic confirmed the mechanism (malformed SCPI never reaches the callback, ReliableSCPI never checks SYST:ERR?). Reconciling against index 4's skeptic-corrected 'high': agreeing HIGH, not this entry's 'medium' — leaving all 8 DAC channels latched at 6V after a reported-PASS teardown is a bench-safety issue (fails toward silence: operator trusts the PASS and walks away from an energized rail), not a cosmetic test nit. Not pre-existing-and-accepted: no module doc claims this teardown is best-effort. Fix: make the restore command syntax `<channel>,<voltage>` and have teardown check SYST:ERR? (or use a checked-command helper) before declaring success.
+
+  [1] agreed_severity='high' disposition='fix_now' index=1
+  rationale:
+  Duplicate of index 5 (same file/line). Reconciling this entry's 'medium' against index 5's 'high': agreeing HIGH — the partial-discovery case (test silently covers only previously-commanded channels while printing 'all N channels') is a silent coverage gap that would let a regression on channels 1-7 pass clean, which is the worst-direction failure mode for a regression suite whose whole purpose is catching exactly that. The fresh-board false-FAIL case is comparatively benign (loud failure, not silence) but the silent-subset case dominates the severity call. Fix: discover configured channels from board capability/config rather than from a successful voltage readback, or explicitly command a known value first before using readback as a discovery signal.
+
+  [2] agreed_severity='medium' disposition='fix_now' index=2
+  rationale:
+  Duplicate of index 6, same mechanism, both skeptic passes and both hunters agree on medium. Classic Python try/finally return-value gotcha: `return 0` is bound before `finally` reassigns the local `verdict` string, so exit status never reflects a teardown failure. Fails toward silence for exit-status-driven automation even though the printed verdict is correct for a human reading output. Fix: track success/fail via the function's actual return path (restructure to compute verdict before returning, or make finally set a flag main() returns).
+
+  [3] agreed_severity='medium' disposition='fix_now' index=3
+  rationale:
+  Duplicate of index 7, same mechanism (ordering bug: voltage-restore write happens before power is re-enabled on failure exit paths; firmware's power gate correctly rejects it with -200; ReliableSCPI swallows the error so cleanup falsely logs success). Both skeptic passes and both hunters agree medium — narrower than the all-channel-latch bugs since it only triggers on specific failure-path exits in this one test, but still a failed-cleanup/false-report bug. Fix: reorder teardown to restore power before attempting the voltage write, and check SYST:ERR? after the write.
+
+### audit-ts349-8c2070fd8a-BLOCK-5findings.json   dispositions=5
+
+  [0] agreed_severity='medium' disposition='fix_now' index=0
+  rationale:
+  CONFIRMED by skeptic with precise line citations (regression_gate.py MANIFEST lookup, discover() defaults, release_gate.py classify() path). In scope (new test file + selftest registration is the whole diff). No standing disposition or module doc covers this — it simply has no MANIFEST entry. Fails LOUD: blocks a healthy NQ2 or an NQ1-missing-SD release with a wrong verdict, which is bad for velocity but not silent. Cheap, mechanical fix: add requires={'nq1','sd'} to MANIFEST following the established convention the skeptic points at (regression_gate.py:286,315).
+
+  [1] agreed_severity='low' disposition='fix_now' index=1
+  rationale:
+  Skeptic returned PLAUSIBLE not CONFIRMED, downgraded to low — the precondition (STREAM logging manually silenced in the same power cycle, RAM-only, not persisted, not set by any other script in the suite) is real but operator-reachable only, not a default or gate-inherited state. Per rule 1 this is a verified (not unverified) finding, so decline is available in principle, but nothing here qualifies it under rule 2 (not pre-existing — the file is new; no standing disposition; no module doc labels this an accepted residual). Failure direction is loud (exit 1, false firmware failure) not silent, and the fix is a one-line defensive SYST:LOG:LEVel STREAM,1 in setup, so fixing is cheaper than writing the decline paragraph.
+
+  [2] agreed_severity='medium' disposition='fix_now' index=2
+  rationale:
+  CONFIRMED, skeptic corrected claimed-severity high down to medium (real data loss, but of a bench artifact, and the mitigating file-open mode is explicitly a firmware comment/design choice, not something this test controls). In scope. 20+ sibling SD tests already set a dedicated filename (test_567_sd_wedge.py:97 cited), so this is a convention gap in the new file, not a novel problem needing design work — fix is to add SYST:STOR:SD:FILE with a unique test name before any SD:ENAble 1. Fails toward silent overwrite of a human's prior recording, which is the more dangerous direction per rule 4, so despite 'medium' it should not be waved through as a nit.
+
+  [3] agreed_severity='medium' disposition='fix_now' index=3
+  rationale:
+  CONFIRMED with an exact firmware-side citation (SCPIInterface.c:4250-4254 rejecting STR:START when not powered up) and confirmation that neither device_reset nor _configure_common powers the board, unlike ensure_stream_ready elsewhere in the harness. STANDBY is an explicitly documented supported initial bench state per this repo's own CLAUDE.md, so this isn't an edge case being invented by the finding — it's a state the project itself tells operators is fine to leave a board in between tests. Fails loud (misleading 'raise the rate' message on an otherwise-correct firmware) blocking release; fix is to call the existing power-up primitive before Check1.
+
+  [4] agreed_severity='medium' disposition='fix_now' index=4
+  rationale:
+  CONFIRMED via a device-free mock reproduction that the four checks billed as 'fully discriminating' for #1018 can all pass under a firmware that still contains the exact defect they target (raw counter leaking into the total when raw != steady), because the only checkpoint where raw and steady diverge (Check1, GRACe 60) gates its total-assertion behind `if losses:`, and the script's own comment sanctions the no-summary-line pass as satisfying 'total==0'. This is in scope, not pre-existing (new file), and not documented anywhere as an accepted residual — the docstring's own claim is what's being falsified. Directionally this is the worst of the five: it fails toward silence, i.e. a real regression in #1018 arithmetic could ship past this gate believing it's covered. Not the exit-code/mutation-harness issue already disclosed as fixed — this is a design gap in the checks' assertion placement, independent of that.
+
+### audit-ts349-8c2070fd8a-BLOCK-noblindleg.json   dispositions=0
+  <none>
+
+### audit-ts349-r4-VOID-splitbrain-46aebf10f.json   dispositions=2
+
+  [0] agreed_severity='high' disposition='defer_ticket' index=0
+  rationale:
+  Skeptic CONFIRMED at high severity (agrees with hunter's claimed severity -- no reconciliation delta). in_scope_of_this_diff=false: this is a pre-existing test-harness measurement bug (_sd_finalize_seconds epoch, test_1018_982_loss_summary.py:634 / test_harness.py ReliableSCPI.command fire-and-forget), not something introduced by the code this diff changes. Per rule 3, out-of-scope confirmed findings are real work for another ticket, not a reason to hold this PR. Failure direction: fails toward a human seeing extra work (spurious 'fails good firmware' result), not toward silent data corruption -- still worth fixing promptly given it reintroduces a bug round 3 claimed to have closed, but that closure claim itself belongs in a ticket for daqifi-python-test-suite, not this gate.
+
+  [1] agreed_severity='medium' disposition='defer_ticket' index=1
+  rationale:
+  Skeptic CONFIRMED at medium (matches hunter's claimed severity). in_scope_of_this_diff=false: _delete_own_sd_files is test-suite scaffolding, not code this diff modifies for behavior. Per rule 3, defer to a ticket rather than decline outright, since the defect is real (bare try/except around a fire-and-forget command() call can't observe a firmware-level SD:DELete refusal, matching the sibling helpers' own documented lesson that they were written specifically to avoid). Failure direction is toward silence (deleted=N, failures=[] while a stale SD_TEST_FILE remains), which is the more dangerous direction and should be prioritized in the follow-up ticket over finding 0.
