@@ -17,6 +17,7 @@
 #include "HAL/DioProbe.h"
 #include "HAL/UserEdge/UserEdge.h"
 #include "HAL/DAC7718/DAC7718.h"
+#include "services/SCPI/SCPIDAC.h"
 #include "Util/Logger.h"
 #include "Util/CoherentPool.h"
 #include "Util/StreamingBufferPool.h"
@@ -497,22 +498,68 @@ uint32_t app_SDCard_BusRecoveryCount(void) {
     return gSdBusRecoveries;
 }
 
+/* #930: high-water mark of the observed hold duration, so SD_BUS_LEAK_DWELL_MS
+ * can be measured against real holds instead of argued from worst-case
+ * arithmetic. Same #409 .bss-not-zeroed reasoning and reset site as
+ * gSdBusRecoveries above, same single-writer/no-critical-section reasoning
+ * (app_SDCardTask is the only writer; a 32-bit aligned load/store is atomic on
+ * PIC32MZ, and volatile only stops the compiler caching it across the SCPI
+ * read and this task's write). Updated at the same SD_BUS_LEAK_POLL_MS
+ * sampling cadence the dwell decision itself uses, so this is exactly as
+ * fine-grained as the value it is meant to inform, no finer. */
+static volatile uint32_t gSdBusHoldMaxMs = 0;
+
+uint32_t app_SDCard_BusHoldMaxMs(void) {
+    return gSdBusHoldMaxMs;
+}
+
+/* #930: record elapsedTicks (an already-computed nowTicks - busHoldSince) into
+ * gSdBusHoldMaxMs if it is a new high-water mark. Factored out because the
+ * leak watchdog below has THREE sample points -- "the hold just ended",
+ * "about to unwind (dwell reached)", and "still holding, still under the
+ * dwell threshold" -- and all three need the exact same update. */
+static void SdBusHoldMax_Sample(TickType_t elapsedTicks) {
+    const uint32_t elapsedMs = (uint32_t)elapsedTicks * portTICK_PERIOD_MS;
+    if (elapsedMs > gSdBusHoldMaxMs) {
+        gSdBusHoldMaxMs = elapsedMs;
+    }
+}
+
 bool app_SDCard_HoldsSpiBus(void) {
     return DRV_SDSPI_HoldsBus(sysObj.drvSDSPI0);
+}
+
+/**
+ * #985: is a WiFi STREAMING session -- specifically that, not either of the
+ * other two SPI4 owners -- active right now?
+ *
+ * Split out of app_SDCard_SpiOwnedByWifi() below, which ORs this term with a
+ * WiFi firmware update and the jam quarantine. SD_SuspendReasonText()
+ * (SCPIStorageSD.c) has to name WHICH owner it is, and it cannot get that
+ * from the composite: calling the composite and then separately re-reading
+ * its parts IS the #985 defect -- the parts move between the two reads, so
+ * the cause named can be one no single instant ever showed. It needs this
+ * term on its own, sampled once alongside the other two.
+ *
+ * Exposed here rather than re-derived in SCPIStorageSD.c so "WiFi is
+ * streaming" keeps one definition in the tree: the Interface_All caveat below
+ * is exactly the kind of detail a second copy loses.
+ */
+bool app_SDCard_WifiStreamActive(void) {
+    StreamingRuntimeConfig* pStreamConfig =
+        BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
+    /* Interface_All is USB+SD — WiFi is NOT used in that mode. Only
+     * explicit Interface_WiFi puts WiFi on the SPI bus. */
+    return pStreamConfig->IsEnabled &&
+           pStreamConfig->ActiveInterface == StreamingInterface_WiFi;
 }
 
 /**
  * Check if WiFi needs the SPI bus (streaming to WiFi or firmware update).
  */
 bool app_SDCard_SpiOwnedByWifi(void) {
-    StreamingRuntimeConfig* pStreamConfig =
-        BoardRunTimeConfig_Get(BOARDRUNTIME_STREAMING_CONFIGURATION);
-    bool isStreaming = pStreamConfig->IsEnabled;
-    /* Interface_All is USB+SD — WiFi is NOT used in that mode. Only
-     * explicit Interface_WiFi puts WiFi on the SPI bus. */
-    bool isWifiStreaming = isStreaming &&
-                          pStreamConfig->ActiveInterface == StreamingInterface_WiFi;
-    return isWifiStreaming || wifi_manager_IsWifiFirmwareUpdateActive() ||
+    return app_SDCard_WifiStreamActive() ||
+           wifi_manager_IsWifiFirmwareUpdateActive() ||
            SpiBusHealth_IsSdQuarantined();  // #589: jammed-bus quarantine
 }
 
@@ -535,6 +582,7 @@ static void app_SDCardTask(void* p_arg) {
     /* #409: before anything else in the task, so the window in which an SCPI
      * read could see an unzeroed .bss value is as short as task creation. */
     gSdBusRecoveries = 0;
+    gSdBusHoldMaxMs = 0;
 
     sd_card_manager_Init(&gpBoardRuntimeConfig->sdCardConfig);
     const tPowerData* pPowerState = BoardData_Get(BOARDDATA_POWER_DATA, 0);
@@ -669,12 +717,24 @@ static void app_SDCardTask(void* p_arg) {
                     busPolledAt = nowTicks;
                     if (!sd_card_manager_IsIdle() ||
                         !app_SDCard_HoldsSpiBus()) {
+                        /* #930: the hold just ended (or was never a hold) --
+                         * take the final sample before the timer resets, so
+                         * the high-water mark reflects the last real dwell
+                         * rather than only the poll before it. A no-op when
+                         * busHoldTiming was already false (busHoldSince is
+                         * stale in that case, which is why this is gated). */
+                        if (busHoldTiming) {
+                            SdBusHoldMax_Sample((TickType_t)(nowTicks - busHoldSince));
+                        }
                         busHoldTiming = false;
                     } else if (!busHoldTiming) {
                         busHoldTiming = true;
                         busHoldSince = nowTicks;
                     } else if ((TickType_t)(nowTicks - busHoldSince) >=
                                pdMS_TO_TICKS(SD_BUS_LEAK_DWELL_MS)) {
+                        /* #930: about to unwind (or already past the dwell) --
+                         * sample before anything else in this branch. */
+                        SdBusHoldMax_Sample((TickType_t)(nowTicks - busHoldSince));
                         /* Hold the manager's #829 claim across the unwind.
                          *
                          * "Idle" was established by a check that ran earlier
@@ -759,6 +819,13 @@ static void app_SDCardTask(void* p_arg) {
                             sd_card_manager_ReleaseClaim();
                         }
                         busHoldTiming = false;
+                    } else {
+                        /* #930: still holding, still under the dwell
+                         * threshold -- sample here too, so a legitimate hold
+                         * that never reaches SD_BUS_LEAK_DWELL_MS (media init,
+                         * ~13 s worst case per the comment above) still gets
+                         * measured at the same 100 ms cadence. */
+                        SdBusHoldMax_Sample((TickType_t)(nowTicks - busHoldSince));
                     }
                 }
 
@@ -852,6 +919,42 @@ void app_SystemInit() {
         daqifi_settings_SaveToNvm(&tmpTopLevelSettings);
     }
 
+    /* #909: the bootloader now preserves the settings pages across an in-app
+     * update (it erases only the lower flash panel), so a LOADED TopLevel page
+     * still carries the PREVIOUS build's revision strings. InitBoardConfig
+     * copies those straight into the live board config, and that is what
+     * CONF:CAPabilities:JSON?'s identity.firmware_rev reports -- so without
+     * this the device would report its old version forever after an update.
+     *
+     * Before #909 the revision advanced only as a SIDE EFFECT of the
+     * whole-flash erase destroying this page, which forced the factory-default
+     * branch above; that branch stamps the current revision itself, so on that
+     * path this call re-stamps the same values it already holds.
+     *
+     * IN MEMORY ONLY -- this deliberately does NOT write NVM.
+     *
+     * An earlier revision of this change persisted the refreshed revision here.
+     * That was wrong in the one way this PR must not be wrong:
+     * daqifi_settings_SaveToNvm ERASES the TopLevel page before writing the new
+     * row, so a failed row write leaves the page BLANK, and the next boot then
+     * takes the factory-default branch above and loses the user's voltage
+     * precision, calibration selection, friendly name and USB auto-power -- the
+     * exact loss #909 exists to prevent, introduced by #909's own fix, on the
+     * very boot that follows a firmware update.
+     *
+     * Nothing needs the write. boardFirmwareRev reaches the outside world only
+     * through InitBoardConfig -> boardConfig (BoardConfig.c), which is seeded
+     * from this in-memory struct on EVERY boot, so re-stamping here makes
+     * CONF:CAPabilities:JSON? report the running build's revision every time.
+     * The NVM copy simply lags until the next ordinary TopLevel save, and
+     * daqifi_settings_SaveToNvm re-stamps both revision strings itself on any
+     * such save, so it self-heals with no code here.
+     *
+     * Placed before InitBoardConfig so the live config is correct on the FIRST
+     * boot after an update rather than one boot later. */
+    daqifi_settings_RefreshTopLevelRevisions(
+            &tmpTopLevelSettings.settings.topLevelSettings);
+
     // Load board config structures with the correct board variant values
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
@@ -897,7 +1000,7 @@ void app_SystemInit() {
     daqifi_settings_SeedFriendlyName(
             tmpTopLevelSettings.settings.topLevelSettings.friendlyDeviceName);
 
-    // Try to load WiFiSettings from NVM - if this fails, store default 
+    // Try to load WiFiSettings from NVM - if this fails, store default
     // settings to NVM (first run after a program)
 
 
@@ -984,11 +1087,24 @@ void app_SystemInit() {
      * running below its intended clock and will never reach the documented
      * ceilings until it is physically reprogrammed. */
     if (!TimerApi_ClockMatchesBuild()) {
-        LOG_E("Clock mismatch (#716): PBCLK3 is %u Hz, image built for %u Hz. "
-              "Device configuration words hold an older PLL and cannot be "
-              "updated by a firmware update - reprogram with a PICkit/IPE to "
-              "reach the intended clock. Rates are derived from the ACTUAL "
-              "clock, so streaming is accurate but ceilings are lower.",
+        /* #1039 (#1000 class): the old text was 295 fixed bytes plus two %u
+         * substitutions (10 each at the 32-bit worst case, "4294967295"), a
+         * 315-byte worst case against Logger's 125-byte effective ceiling
+         * (LOG_MESSAGE_SIZE 128, minus vsnprintf's 2-byte and the clamp's
+         * 3-byte reservation in LogMessageFormatImpl). It therefore lost more
+         * than half its text on EVERY firing -- including the remedy, which
+         * was the last clause. The text below is 99 fixed bytes, worst case
+         * 99+20 = 119, margin 6.
+         *
+         * What was cut is narrative, not remedy, and it lives in the block
+         * comment above: why a firmware update cannot move the PLL (DEVCFG2 +
+         * erratum 45), and that the clock-derived rates read the ACTUAL clock
+         * so streaming stays accurate while the ceilings sit lower. The
+         * emitted line keeps the two clock values, the issue tag, and the one
+         * thing the operator can act on -- reprogram the part with a
+         * PICkit/IPE, which a firmware update will not do for them. */
+        LOG_E("Clock mismatch (#716): PBCLK3 %u Hz, built for %u Hz - "
+              "reprogram via PICkit/IPE, not a firmware update.",
               (unsigned)TimerApi_PeripheralClockHz(),
               (unsigned)TIMER_CLOCK_FRQ_BUILT);
     }
@@ -1005,6 +1121,7 @@ void app_SystemInit() {
     // Initialize DAC7718 global structures (NQ3 only)
     if (gpBoardConfig->BoardVariant == 3) {
         DAC7718_InitGlobal();
+        SCPIDAC_InitGlobal(); // #990 Finding 0: command-serialization mutex
         LOG_D("DAC7718 global structures initialized - hardware init deferred until power up");
         LOG_D("Board config AOut modules: Size=%d", gpBoardConfig->AOutModules.Size);
     }

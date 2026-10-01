@@ -168,6 +168,18 @@ scpi_result_t SCPI_LANPasskeyGet(scpi_t * context);
 scpi_result_t SCPI_LANBssidGet(scpi_t * context);
 
 /**
+ * SCPI Callback: Reports the WiFi link state that the 3-value wifi_status_t
+ * flattens (#951), as a bare mnemonic -- one of INIT, INITFAULT, NOLINK,
+ * APIDLE, CONNECTED. Compare it WHOLE (INIT and INITFAULT share a prefix and
+ * mean opposite things). WiFi disabled / deinitialised is refused with -200 by
+ * the shared LAN-getter ready gate rather than reported as a value. The full
+ * per-value contract is on the function in SCPILAN.c and in the wiki
+ * (01-SCPI-Interface.md, "CONnected? Response Values").
+ * @return SCPI_RES_OK on success SCPI_RES_ERR on error
+ */
+scpi_result_t SCPI_LANConnectedGet(scpi_t * context);
+
+/**
  * SCPI Callback: Applies wifi settings of the device (optionally saving them)
  * @return SCPI_RES_OK on success SCPI_RES_ERR on error
  */
