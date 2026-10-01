@@ -7949,3 +7949,77 @@ automatically and could not have failed**, which is a stronger statement than an
 **refuted one of my own class's headline instances** and left four unreachable. **The honest count is
 2 verified, not 9** — and the pre-commitment to look for legitimate non-travel is what produced that,
 the same way rule 3 took the 33-row count from 11 to 1.
+
+## 2026-10-01 05:10 MDT — FLAG/BRIEF CROSS-CHECK: direction B is 1 confirmed of 17 raw, and my instrument is only valid in ONE direction
+
+Pre-registered at `.claude/evidence/PREREG-flag-brief-crosscheck.md`, including **my error
+direction**: I wanted direction B non-empty, and the crude thing that produces it is a failed grep
+against shell arg-parsing. **Pre-committed to prove every B hit by reading the parser, and to
+distrust a non-empty B.** It inflated exactly as predicted.
+
+**POPULATION, named:** the **INSTALLED** tree `~/.claude/skills @ 6c6d16f`, dirty 0 — chosen because
+the question is whether an agent following a brief **today** hits a flag the script **it runs**
+rejects. 70 `.sh` + 134 `.py`; instructions = 3 `herd/briefs/*.md` + 50 `*/SKILL.md` = 53 documents.
+27 other `.md` excluded as notes, not instructions.
+
+```
+ACCEPTED   (script,flag) pairs 195   distinct flags 129
+INSTRUCTED (script,flag) pairs  75   distinct scripts named with flags 29
+```
+
+## ⭐ DIRECTION B — 17 raw, 1 CONFIRMED, and the attrition is the story
+
+```
+17  raw (instructed, not in my accepted set)
+ 5  NOT IN TREE          config.sh x3, idf.py, mod.py -- external tools / doc examples,
+                         never local scripts, so no brief is instructing one
+10  MY EXTRACTOR MISSED  add_slide --after, ask.sh --list, bws-box --apply, fire-progress --stats,
+                         poll.sh --short, prior-art --mark-done, soffice x2, validate.py x2
+                         -- all present in the script; arg handling written in styles my
+                         line-filter did not match
+ 1  UNDETERMINED         accept_changes.py --track-changes -- forwards args (4 sites), so the
+                         flag may be accepted downstream. NOT folded into B.
+ 1  *** CONFIRMED
+```
+
+**THE ONE: `poll.sh --state`, instructed at `qodo-cycle/SKILL.md:1280`.**
+```
+poll.sh:54-69  accepts --repo --pr --sha --pass --phase --baseline --interval --max-iters --soak
+poll.sh:69-70  *)  echo "unknown argument: $1" >&2 ;  exit 2
+fetch.sh:82    --state)  STATE_MODE=1;  shift 1 ;;          <- the flag belongs HERE
+SKILL.md:1280  "...poll the comment bodies (use `poll.sh --state`)"
+SKILL.md:991   "Use `fetch.sh --state` / `poll.sh`"          <- correct
+SKILL.md:2060  "`poll.sh` timeout is not authoritative. `fetch.sh --state` is."  <- correct
+```
+> **It is not a nonexistent flag — it is the RIGHT flag on the WRONG SIBLING SCRIPT, in a document
+> that gets the pairing right twice and wrong once.** And `:1280` is the line that says *"The ONLY
+> way to know it's done is to poll the comment bodies"* — so it misdirects at the exact moment an
+> agent needs the completion signal.
+
+**Severity capped by direction of failure: LOUD.** `exit 2` plus stderr, so an agent sees it fail and
+improvises rather than proceeding on a false result. Per the silent-vs-loud rule this is a nuisance,
+**not** the dangerous class — unless a wrapper swallows the status, which is the thing to check before
+rating it higher. **Reported as a count and a site; the disposition is not mine.**
+
+## ⛔⛔ AND THE METHODOLOGICAL FINDING, WHICH MATTERS MORE THAN THE ONE HIT
+
+**DIRECTION A raw = 137 pairs (accepted, never instructed). I am NOT reporting that as a finding,
+because my own instrument's measured error rate forbids it.**
+
+Of the 12 direction-B candidates I hand-checked, **10 were flags the script DOES accept** — an
+**83% false-positive rate on B**, which is the same thing as an **83% miss rate on my ACCEPTED set**
+for the styles involved.
+
+> **An incomplete ACCEPTED set makes direction A look LARGER and direction B look larger too — but
+> only B gets per-hit verification, so only B survives.** Direction A's 137 is inflated by exactly
+> the misses I measured, and nothing in my method would catch them: there is no per-hit proof step
+> on the A side, because "this capability is never documented" has no failing command to point at.
+
+**So the same instrument is adequate in one direction and inadequate in the other, and the
+discriminator is not the data — it is whether the direction admits a per-hit proof.** B does (run
+the parser, read the arm). A does not. **I report B as 1 and A as UNMEASURABLE BY THIS METHOD**, not
+as 137.
+
+⭐ **That generalises past this task:** before reporting a two-sided cross-check, ask which side has
+a verification step. A side without one inherits the full error rate of the extractor, and the
+extractor's error rate is usually only measurable on the side that has one.
