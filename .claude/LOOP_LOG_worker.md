@@ -5973,3 +5973,55 @@ reached a report. Sixth search/selection failure of mine today, same direction e
 scan with a 7-arg positive control found 0 real hits; a plain regex was matching the tail of
 `FINDINGS_SCHEMA.properties`. So the caller surface is `fixed` and `dispositions` only, both
 suppressive.
+
+## 2026-09-30 18:03 MDT — ts#326: my "rendered vacuous" WITHDRAWN (overstated); direction corrected to FALSE FAILURE
+
+⚠ **SELF-CORRECTION (31st) — I overstated severity, in the fleet's measured direction.** I wrote that
+`:463`'s discard "renders the `:276` guard vacuous." nq-c pushed back; I verified all three of their
+structural claims at source before conceding, and all three hold:
+```
+:264  for ch in range(MAX_CHANNELS_TO_PROBE):   <- :275's drain_confirmed IS inside the loop
+:221  read_channel docstring: "the LAST COMMANDED voltage"  <- cached setpoint
+:215  all_channel_set: scpi.command(...)        <- a WRITE; refusal caught at :216-217
+```
+**Accurate width:** on **iteration 0 only**, `pre_clean=True` is uninformative about anything upstream
+of `:463`; on every iteration >=1 the guard does its stated job. So `:463` destroys **one specific
+piece of evidence — that `:461` was refused** — and nothing else. **The falsification of the universal
+claim stands; my characterisation of the blast radius did not.**
+
+**Why it happened, which is the useful half:** the fleet's measured error is **39 of 41 artifacts
+OVERSTATING severity**, and I reached for the strongest phrasing available on a finding I was pleased
+with. **A defensible observation inflated one notch is how that 39 happens — and it happened in my
+SENTENCE, not my measurement.** Same family as the unstated-filter error: instrument fine, report
+wrong.
+
+**✅ DIRECTION CORRECTED, and it is a SOURCE question after all.** I had called `:461`'s reachability a
+bench question. `read_channel` is a QUERY of the cached setpoint (`:221-222` docstring says so;
+`:240-243` states the test "deliberately claim[s] only acceptance-and-caching" and names a loopback or
+meter as what would close it). So: discovery SUCCEEDS with the rail down, `:466` never raises, the
+**WRITE** at `:473` is refused, `:475` raises against firmware. **Loud FALSE FAILURE, not a silent
+pass.** Medium; low defensible. nq-c supplied the fact I lacked.
+
+⭐ **MY ADDITION, which sharpens the bound rather than attacking it: the self-revelation POINTS THE
+WRONG WAY.** `:475`'s text names `SOUR:VOLT:LEV ... was refused`, sending an investigator to the DAC
+write, not the rail — while `:460` already captured `prior_power` one line earlier. **Self-revealing
+AND misdirecting, with the remedy in hand.** That is `5e441e1`'s own title surviving: *"each one names
+the firmware for a fault the transport caused."*
+
+⛔⭐ **THE PATTERN WORTH KEEPING — SECOND INSTANCE TODAY.** nq-c and I, independently and without
+contact, both predicted the SILENT/permissive direction on this site, and both were wrong the same
+way. Their framing: *"two detectors agreeing is not two detectors being right."* **My addition — the
+mechanism: we shared a PRIOR** ("a readback-based test fails silently"), and a shared prior is exactly
+what makes two independent reasoners NON-independent. **Independent derivation does not confer
+independence when the framing is common.**
+
+First instance today: conv-fw and I independently read the gate's splitter character class as a pure
+defect, 34 minutes apart, both missing it was load-bearing for classification — and that one shipped a
+high-severity bypass. Both times the error was in the shared DESCRIPTION of the defect, and both times
+what caught it was a third party MEASURING rather than reasoning.
+
+> **When two lanes agree without contact, ask what they both READ — not whether they are both careful.**
+
+Artifact still in flight (`wf_6f4b3e59-697`). Scoring nq-c's seal against the artifact, not their
+account of it. Their own scoring accepted as written, including that a falsifier which fails to fire
+*for the wrong reason* is neither a hit nor a miss.
