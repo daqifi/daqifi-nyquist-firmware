@@ -6677,3 +6677,42 @@ Installed tree `6c6d16f4`, dirty 0, asserted unchanged.
 
 **Stakes as corrected: item 9 STAKE, item 10 CLEAN, item 11 STAKE.** Items 9 and 11 are **BLOCK-only**
 reads for me — I may block but not clear, same asymmetry as a finding-author's.
+
+## 2026-10-01 00:18 MDT — ITEM 9 (BLOCK-only): not already done, AND the recommendation fails the one case that mattered
+
+**⛔ BLOCK 1 — the inference is wrong.** Remote `mark-audited.sh:152` is still
+`GATE=$(jq -r '.gate // empty' "$AUDIT" 2>/dev/null); GATE_RC=$?` — **still a TOP-LEVEL `.gate`
+read.** `6e37108` + `bce62e0` *harden* it (rc capture, `GATE_TYPE` check at `:155`, refusal at `:160`
+on a non-string, symlink-safe marker) but **do not redirect it to `.arbiter.verdict` or
+`agreed_severity`.** Adjacent fixes, not item 9. So item 9 is open — stated as a floor, not as a
+clearance.
+
+**⛔⛔ BLOCK 2 — and this is the finding. I swept my nine saved artifacts:**
+```
+8 of 9   gate and arbiter.verdict AGREE (BLOCK/keep_fixing, or PASS/no arbiter)
+1 of 9   ts#349 r4 (split-brain):  gate=PASS   arbiter.verdict=ready_to_merge
+                                   confirmed=0  BUT agreed_severity=['high','medium']
+                                   rawFindings=2  outOfScope=2
+```
+**On the one artifact where it mattered, the GATE said PASS too.** The two confirmed in-scope highs
+were dispositioned `defer_ticket` / `in_scope_of_this_diff=false`, which moved them out of
+`confirmed`, **so the survivor count went to zero by the same false scope premise that produced the
+verdict.**
+> **`gate` and `arbiter.verdict` are NOT INDEPENDENT. The arbiter's dispositions DETERMINE the
+> survivor set, so "count survivors" and "read the verdict" share ONE point of failure.** Item 9 is
+> choosing between two reads of the same judgement, and both cleared ts#349 r4.
+
+⭐ **The signature that DOES survive a misled arbiter is `rawFindings` vs the survivor count** — 2
+versus 0 on that row, checkable without trusting the arbiter's reasoning at all. **NAMED, explicitly
+NOT CLEARED:** I hold a stake on item 9 (16 ledger hits), so a design proposal from me is the
+forbidden direction. Someone clean evaluates it.
+
+**And the strongest argument against "fix the read," which is what was asked for:** the remote file's
+own header (`:9-14`) records *"two merged at heads NEWER than their last recorded verdict, and in both
+cases that verdict had been `keep_fixing`"* — **the file already reasons in ARBITER-VERDICT terms**,
+so reading top-level `.gate` is a considered choice by authors who knew about `keep_fixing`, not an
+omission.
+
+⚠ **Arithmetic flagged rather than assumed:** the coordinator's "nine held rows" is **eleven** by my
+count — 23 open PRs, 11 carrying `parked`/`blocked:operator-decision`. Nine if sk#136 (under audit)
+and sk#32 (four other labels) are excluded, which is probably the filter; asked rather than assumed.
