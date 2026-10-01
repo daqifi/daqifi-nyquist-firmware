@@ -7039,3 +7039,80 @@ their argument, and the bare-integer case shows the limit is not at the sample's
 pre-registered list by grepping the RUN REPORT and got **7 of 10** — the report is a projection of
 the population, so recovering a population from it under-reports silently. The disk enumeration is
 the actual pre-registration predicate ("every `.json`, no filtering") and gives 10/10.
+
+## 2026-10-01 01:05 MDT — sk#231 IS NOT CONVERGED. My PASS was valid for 130 SECONDS.
+
+**I went looking for something to land under CONVERGE AND MERGE ONLY and nearly landed this.**
+sk#231 reads `mergeable: MERGEABLE`, `mergeStateStatus: CLEAN`, and a file literally named
+`audit-sk231-60ed39e97-PASS.json` sits in my evidence dir. **The head has moved.**
+
+```
+artifact attests head_sha  60ed39e970b3e7d7facdd08d36e50a61cc2d2d87
+live headRefOid            dae17d85107ab64f04bf95843b5f2fd111baca63   (1 ahead, 0 behind)
+```
+
+**⛔ "I audited a stale head" is the WRONG diagnosis, and the real one is worse.** Timeline:
+```
+01:22:10Z  60ed39e97 committed
+01:46:39Z  Qodo's last comment        <- ran against 60ed39e97
+02:09:44Z  MY ARTIFACT WRITTEN        <- PASS on 60ed39e97, CORRECT AND CURRENT
+02:11:54Z  dae17d851 committed        <- 2 minutes 10 seconds later
+06:45:23Z  now                        <- both legs 4h33m stale
+```
+**The attestation's useful life was two minutes ten seconds.** Not a procedural slip — I pinned the
+right head, audited it, and it was superseded while the artifact was still being written. There is
+no version of "be more careful at pin time" that catches this; the only thing that catches it is
+**re-reading `headRefOid` immediately before the merge**, which is exactly what
+[[feedback_remark_immediately_before_every_merge]] says and what I was one step from skipping
+because a PASS file with the PR's name on it was sitting right there.
+
+**⛔⛔ THE NEW VARIANT, AND IT IS SHARPER THAN THE KNOWN ROW.** The filed row is *CLEAN +
+UNLABELLED = UN-AUDITED*: looks nearly-landed because no verdict exists to be clean. **This is
+CLEAN + A GENUINE PASS ARTIFACT THAT NAMES A DIFFERENT HEAD.**
+
+> **An absent verdict INVITES the audit. A real PASS filed under the PR's name FORECLOSES it.**
+
+Same shape as tonight's warranty finding one hour earlier — a signal that retires the question is
+more expensive than a signal that is merely missing. Second instance of that shape tonight, found
+in my own evidence directory rather than someone else's script.
+
+**⚠ And `mergeStateStatus: CLEAN` carries none of what a reader takes from it.** It means *no merge
+conflict*. `statusCheckRollup` is **`[]`** — this repo runs no CI on PRs. So CLEAN is not a review
+signal, not an audit signal, not a test signal: **three absent legs presenting as one green word.**
+Qodo's own leg is stale too (01:46:39Z, **25 minutes BEFORE** the live commit), so *both*
+independent legs attest the superseded head.
+
+**STATE: parked, NOT merged.** Merge order step 1 — `headRefOid` == audited FULL SHA — fails, and
+short-SHA comparison is not permitted. To unpark: Qodo on `dae17d851` (`/agentic_review` alone,
+`/improve` already ran once) plus a fresh audit on `dae17d851`. **Both are cross-repo writes to
+`cptkoolbeenz/claude-skills` = ask-first, so neither is mine to start unasked.** Sidecar filed at
+`.claude/evidence/audit-sk231-60ed39e97-PASS-DOES-NOT-COVER-LIVE-HEAD.md` so the next reader of
+that PASS cannot repeat my near-miss.
+
+## ✅ And I verified the new commit's SCPI claim rather than assuming it
+
+`dae17d851` is *"step zero must establish the BUILD, not only the board"*, `+36/-6` — a substantive
+answer to my own ts#432 point (board ≠ build), reproducing the crc32-provenance lesson nearly
+verbatim. **The `-6` REWROTE content that existed at my audited head** (the second failure-table row
+and the closing paragraph), so this is not an append a PASS could stretch over.
+
+It prescribes a SCPI command in prose, so the mandatory verification protocol applies — and so does
+the reversal I accepted on this very PR, that **a command typed verbatim makes the text the
+executable artifact**:
+
+| claim | check | result |
+|---|---|---|
+| `CONF:CAP:JSON?` | registered `CONFigure:CAPabilities:JSON?` (`SCPIInterface.c:8497-8498`) | ✅ legal per node rule |
+| response carries `firmware_crc32` | `SCPIInterface.c:7748` → `"firmware_crc32":"%08lX"` | ✅ real, uppercase 8-hex |
+
+**Both hold.** Recording a verification that CONFIRMED, deliberately: an unrecorded pass is one the
+next reader pays for again, and I have been treating only the failures as worth writing down.
+
+## Direction authority clarified by the operator
+
+Operator, this turn: **"you can trust the coordinator to direct you."** So coordinator direction on
+queue order and interpretation is authoritative from here, which retires the ambiguity I had been
+resolving conservatively (treating every relay as peer-only). **It does not repeal the operator's own
+ask-first list** — force-push, branch deletion, force-merge, repo creation, cross-repo writes beyond
+the companion test, anything destructive to hardware — nor the permission-laundering rule, which a
+peer cannot grant past by construction. So sk#231's Qodo trigger still routes to the operator.
