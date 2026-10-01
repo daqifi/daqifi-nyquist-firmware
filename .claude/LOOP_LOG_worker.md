@@ -9127,3 +9127,50 @@ was printed.
 checks built to catch it.** The memory did not stop any of them. What stopped the fourth was a
 peer's invariant I had adopted sixty seconds earlier — **a law, not a recollection**, which is the
 whole difference and the same reason their field-grep beat my held rule.
+
+## 2026-10-01 14:00 MDT — ts#430 INVOLVEMENT, stated POSITIVELY before starting the fix round
+
+Coordinator asked for a positive statement rather than a self-clear — *"so the eventual audit
+assignment is not made the way both of mine were."* Checked four layers, reporting what each SHOWS.
+
+| layer | finding |
+|---|---|
+| **ledger** | **2 entries, both READ-ONLY.** `:4691` a sweep table row recording **another lane's** verdict — comment `5702187311`, *"Audit round 2: BLOCK at `63ac3cd1e1…` — PARKING this PR"*. `:7669-7672` the parks census, where ts#430 was one of two rows that **read all-zeros from failed fetches** and I re-verified it to `gate:BLOCK=2`, classifying it an invisible park. |
+| **worktrees** | **none** naming 430. ⚠ I DO hold `nq-b-ts333` on `test/333-read-int-strict-completeness` — that is **PR #410's** branch, a different row. |
+| **audit artifacts** | **none** for ts#430. My seven are fw1020, sk136, sk199, sk230, sk231, ts326, ts349. |
+| **session artefacts** | 5 task outputs, 77 subagent dirs, **38 naming the branch** `test/321-reliablescpi-write-resync` — resolved below. |
+
+## ⛔ THE LAYER-4 SIGNAL WAS REAL AND NEEDED RESOLVING, NOT REPORTING
+
+Five artefacts carry **my lane's own definition-of-done phrasing** — *"branch
+test/321-reliablescpi-write-resync, pushed and full-SHA-verified"*. **That reads exactly like my lane
+claiming a push**, which would make me conflicted on the fix round, and my ledger records no such
+push. **That is the nq-a case pointed at myself**, so I ran it down rather than reporting a count.
+
+**RESOLVED by the branch's own timeline, which needs nothing from me:**
+```
+ts#430's NINE commits   ALL dated 2026-09-16, latest 17:47:47Z
+                        63ac3cd1e (the audited head) is the LAST of the nine
+no commit on that branch after 2026-09-16 -> no recent push by anyone landed there
+```
+So the phrasing is my lane reporting **about** the row's existing state in a sweep, not claiming its
+own push. ⭐ **And the discriminator is a DIFFERENT PRODUCER than the artefact text** — the branch's
+commit dates, which my own reporting cannot influence.
+
+⚠ **AND MY FIRST ATTEMPT AT THAT CHECK WAS MALFORMED.** I tried to bound it with my session's work
+window via `git log origin/lane/nq-b | tail -1`, which returned the repo's **2018 root commit** — the
+earliest commit ever, not my lane's first. **A window test that returns the beginning of history
+cannot exclude anything.** Discarded it and used the branch timeline instead, which needs no window
+at all.
+
+## POSITIVE STATEMENT
+
+**On ts#430 I have: read-only involvement only.** Two ledger entries tabulating another lane's
+verdict and one census re-verification; no commit, no push, no audit artifact, no worktree, and no
+prior written view on whether the row should close. **The 38 branch-naming artefacts are sweep
+output, bounded by a commit timeline that excludes any recent push.**
+
+⚠ **Stated with its limits, per my own falsified instruments:** this is
+**best-available-with-limits**, and the limits are nameable — work predating my session's artefacts,
+and commit-level authorship inside a branch my lane merely enumerated. **The one thing that would
+upgrade it is a commit on that branch attributable to my lane, and none exists after 2026-09-16.**
