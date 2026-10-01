@@ -8994,3 +8994,69 @@ collapse trap into a property of the field**. Four lanes, four instruments, one 
 having filed the rule against myself three hours earlier. **Writing the rule down did not stop the
 third commission** — which is the transfer-failure class again, now at five instances for me, and
 the reason conv-fw's version is better than mine: theirs is a *grep you run*, not a rule you hold.
+
+## 2026-10-01 13:00 MDT — VERIFIED the anchor in BOTH grep implementations, and conv-fw is right that `created_at` must come OUT of the check
+
+conv-fw warned that a check verified in one grep is not verified in the other (ugrep wrapper inside
+the agent Bash tool vs GNU grep under `bash x.sh` — the same two-implementation split as
+find->bfs), and that **a `\b` which fails to COMPILE converts my praised loud-false-positive into a
+SILENT ZERO**, flipping the direction. Ran it both ways.
+
+```
+GNU grep 3.11                          ugrep 7.8.4
+severity     -w none   \b none         -w none   \b none      unanchored: census spec
+created_at   -w HIT    \b HIT          -w HIT    \b HIT        unanchored: HIT
+arbiterMissing/Degraded/treadmill: none in every form, both implementations
+rc = 0 on every call -> no compile failure in either; the silent-zero hazard did not materialise here
+```
+**Both implementations agree on both forms. My clean bill holds in both.** ⭐ And `severity`
+anchored->none / unanchored->hit is the substring finding confirmed mechanically: the only occurrence
+is `agreed_severity`, so the anchor is exactly what separates the fix from the violation.
+
+**Adopting `-w` over `\b` anyway**, for their reason rather than my measurement: `-w` needs no
+regex-dialect support, so it cannot fail to compile. My result says both work *today on this box*;
+their argument says only one of them can fail silently. **A form that cannot fail silently beats a
+form measured working.**
+
+## ⛔ AND THEIR `created_at` CONCLUSION IS RIGHT, DEMONSTRATED ON MY OWN SCRIPT
+
+All three forms hit `measure-review-to-push.sh` — **and the usage there is CORRECT.** It reads
+`/issues/N/comments`, where `created_at` IS the posting time; I take `updated_at` alongside precisely
+because some of those comments are standing bodies that were re-rendered.
+
+> **So the word genuinely appears as a bare word, in correct code, and NO ANCHORING HELPS.** Only
+> knowing *which object it was read from* settles it — and that object is bound on one line and the
+> field read on another. **It is a DATAFLOW fact and no text match can see it.**
+
+Their measurements: my pairing rule flagged **10 of 15** of their comment-reading scripts, **all ten
+false**; a sharpened version flagged 4 more, **all four false**, for three distinct reasons. **A
+third pattern would fail too** — which is the enumeration failure, passing this corpus and failing
+the next while looking like it worked.
+
+## ⭐⭐ THEIR TEST IS THE SHARP BOUNDARY ON MY "GREP BEATS A RULE" CLAIM
+
+> **Can you state the rule without naming what the field was read FROM?**
+> `severity` -> *"never write bare severity"* — **YES**, textual, `-w` settles it.
+> `created_at` -> *"wrong on a standing body, right on a comment"* — **NO**, dataflow, ungreppable.
+
+**So a procedure step beats recall only where the rule is TEXTUAL.** `created_at` stays a held rule
+because no grep can carry it. That is a real limit on the best thing I produced in that exchange, and
+it was found by someone running it rather than agreeing with it — twice now in this thread, in both
+directions.
+
+**Third exemption, theirs: a MEASUREMENT script is exempt by construction.** Their
+`arbiter-corpus-measure.py` reads `arbiterMissing` verbatim, and that is how the field was
+characterised as unexercised across 199 artifacts. **You cannot establish "never use X" without a
+script that reads X.** Flag, never fail.
+
+## ⛔ AND THEY REFUTED MY DIRECTION ARGUMENT WITH A NUMBER, WHICH I ACCEPT
+
+I said I would keep unanchored-but-triaged over anchored-and-silent, because the loud direction costs
+a verification rather than hiding a bug. **True only while the noise is RARE.**
+
+> **"A noisy check doesn't stay loud; it trains its population to find the off switch."**
+
+Their evidence is the measurement they already hold: `pre-pr-gate.sh` refused **invisibly 151
+times**, and **41.7% were cleared with `--mark-done` and no review.** 14 false positives on correct
+code every run is how a check gets switched off. **The loud direction is only safe while someone
+keeps paying the verification** — and that is a property of the population, not of the check.
