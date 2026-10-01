@@ -6199,3 +6199,59 @@ own belief. It also added a comma-present-but-order-swapped mutation case a lite
 row, no merge, no labels, no new PR. Round-2 read rotates away from me (I authored the fix, nq-c
 authored the row); my handover note for it: **the new double is now the thing everything else is
 asserted through, so it is what a fresh pair of eyes should look at first.**
+
+## 2026-09-30 19:07 MDT — ts#326 ROUND-2 FIX pushed `48f45e46a66386fcf9bd3c173a8f35af6249acd2`. 3 applied, 1 REFUTED.
+
+Full-SHA verified against `ls-remote`, porcelain 0, **29/29 and 5/5 green at the pushed head**, lint OK.
+
+**✅ FINDING 1 (case) CONFIRMED — V-class verified by me:** `libscpi/src/utils.c:352`, inside
+`compareStr` which `matchPattern` calls, is `SCPIDEFINE_strncasecmp`. **The abbreviation rule
+constrains TRUNCATION, not case.** Headers now case-folded. **FINDING 2 (unread bucket) fixed** and
+asserted both directions. That pair is what made leaving the validated set silent.
+
+**⛔ FINDING 3 REFUTED — and applying it would have been HARMFUL.** Claim: `int(float(parts[0]))` is
+more permissive than firmware because libscpi's integer parse refuses `2.7`. On the **setter** path it
+does not — `SCPIDAC.c:381-384`: *"the channel arrives here as a **DOUBLE** ... narrowed TWICE before
+the lookup: double -> int -> uint8_t."* So `2.7,1.0` really does reach channel 2, and the double
+**mirrors** firmware. Tightening it would make the double **reject a command the firmware ACCEPTS AND
+ACTS ON** — a false-failure generator, and **the third time on this row a fix would have reintroduced
+the class it was closing.** Comment added at the site so the next reader does not "fix" it.
+
+⭐ **CRITERION AMENDED, two-sided.** nq-a: *"the double exists to be at least as strict; anywhere it's
+looser is a hole by construction."* True but one-directional: **anywhere it is STRICTER is a
+false-failure generator**, and this row's whole history is false failures. **The double must MATCH
+firmware's acceptance set, not bound it from one side.** Their proposed per-parse sweep is still
+worth running — with the two-sided criterion, or it generates exactly this change.
+
+**MUTATION PROOFS — and my first attempt OVER-PROVED, disclosed:**
+```
+fixed                                                29 checks, 0 failures
+reverting only `low = cmd.lower()`                   20 pass, 9 FAIL   <- OVER-PROVES
+   (lowercase literals + no fold match NOTHING, so it breaks all matching, not just case)
+the REAL pre-fix predicate (mixed-case literals, no fold)   25 pass, 4 fail
+   <- exactly the 4 case checks; BUCKET and ARITY correctly SURVIVE it
+CONF:DAC:UPDATE arity check removed                  28 pass, 1 fail   <- exactly 1
+control restored                                     29 checks, 0 failures
+```
+Re-ran targeted rather than quoting the 9. **A mutation that breaks more than the property under test
+proves the LINE matters, not that the PROPERTY is guarded.**
+
+**Scope held:** the same case-sensitive `startswith` shape exists in this file's narrower query fakes.
+**Not changed** — not what assertions route through, and widening scope on a round-2 fix is how this
+row keeps getting worse. Named in the commit for the next round.
+
+⚠ **PROCESS CATCH (33rd self-correction).** The security gate blocked my first push, and being a
+PreToolUse hook it blocked the **whole compound command** — checkout, add and commit never ran. The
+verification I reflexively ran next, `git show --stat HEAD`, was showing **the FIRE's commit**, and I
+read it as mine until the filenames looked wrong. **Same wrong-object shape as the split-brain
+provenance error, at small scale.** Two rules out of it:
+1. **After a gate block, VERIFY STATE before assuming anything ran or did not.**
+2. **A gate and the action it gates belong in SEPARATE calls** — a rule I already hold, and the gate
+   itself had to remind me. Re-sequenced branch -> commit -> mark-passed -> push, since `mark-passed`
+   computes its marker from the CURRENT branch.
+
+**Gate SATISFIED, not bypassed:** scans clean except 5 documentation placeholders (`YourPassword`,
+`YourNetworkPassword`) in a README and a `.template` — pre-existing and outside my diff; repo
+confirmed `isPrivate: true`; remote confirmed `daqifi/daqifi-python-test-suite`.
+
+nq-a re-reads (they found it; clean on both authorship halves).
