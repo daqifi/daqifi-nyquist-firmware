@@ -1853,3 +1853,60 @@ answer is no and never ask.
 
 **So: obey it by default, and if it blocks real work, escalate it as an open question.** Compare the
 rules above it that DO carry a typed attribution; those are settled and this one is not.
+
+---
+
+## ⛔⛔ A GITIGNORED DIRECTORY MAKES THE REMOVABILITY CHECK BLIND — `bench-*` TREES ARE THE CASE
+
+**Measured 2026-10-01 on `/mnt/c/daqifi/wt/bench-996` (lane nq-c's; read-only, not touched).**
+
+`git status --porcelain` on that tree is **EMPTY**. The tree holds **15 MB in 7 unique hex
+images** under `ab/`, and `git check-ignore -v ab` returns `!! ab/` — **gitignored, therefore
+invisible to the cleanliness check by design.**
+
+Among them: `base_d1bf07c66.hex` and `fix_df60bc24b.hex` — *the exact A/B pair nq-c's
+DISPATCHER.md cites as the evidence for #996's bench validation* (`baseline 59E02848 FAIL /
+fix 1D6176FF PASS`). They are on no remote. Rebuilding them needs the toolchain plus the exact
+commits plus a flash cycle.
+
+> **The sanctioned removability check passes on this tree, and a sweep would destroy the only
+> copy of a validated bench result.**
+
+**Why the existing check cannot catch it, and why that is not a bug in the check.** The rule
+asks *"is anything UNSAVED?"* and answers it with `status --porcelain` plus an `ls-remote`
+containment test. Both are about **tracked content**. Gitignored build output is excluded
+deliberately — for a LANE tree that is right, because `firmware/daqifi.X/build/` is noise. For a
+**BENCH** tree the build output **is the artifact**: the hex is what was flashed, and the claim
+in the record is about those bytes.
+
+**So the axis is the TREE'S PURPOSE, not its cleanliness** — and purpose is not readable from
+any field the check consults. Same shape as a park living in a comment while the label says
+nothing.
+
+### The rule
+
+- **Never sweep a `bench-*` tree on a clean `status --porcelain`.** Before removing one, run
+  `git status --porcelain --ignored` and account for every `!!` entry, or `ls` the staging
+  directory by name.
+- **An image file with no copy elsewhere blocks removal**, exactly as unsaved tracked work does.
+  Preserve it (copy out, or record its provenance) before the tree goes.
+- Generalise beyond `bench-*`: **ask what this tree was FOR before asking whether it is clean.**
+  A tree whose purpose was to produce non-git artifacts is never fully described by git state.
+
+⚠ **THE CANONICAL HOME FOR THIS RULE IS THE `backlog-loop` SKILL, WHICH I MUST NOT EDIT.** The
+sweep discipline lives in `~/.claude/skills/backlog-loop/SKILL.md`; `porcelain` appears **zero**
+times in this file and 0 in `DISPATCHER_PROMPT.txt` (verified with a positive control — 27 hits
+on `branch` in this same file, so the zero is real and not a dead grep). Recording it here plus
+routing it to the operator is the best I can do from a lane. **Same structure as the
+`devices.conf` provenance gap: the omission is real AND the place it belongs has nowhere to put
+it, which is why nothing caught it.**
+
+### What bench-996 also demonstrated, worth carrying separately
+
+**The tree was REPURPOSED, not drifted.** Its reflog: created at #996's head, 82 seconds there,
+then checked out to `fix/1144-capjson-bounded-calibration` with three commits authored in it,
+finally parked on `3e8b1b479` (main, #1157). A census comparing tree HEAD against the row named
+in the tree's NAME reports FOREIGN — correctly, but the cause is deliberate reuse, not decay.
+**A tree's name is a claim about its past, not its present**, and the reflog is the only place
+that distinguishes the two. Check `$GIT_COMMON_DIR/worktrees/<name>/logs/HEAD` before
+interpreting a foreign head.

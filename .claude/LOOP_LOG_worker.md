@@ -9341,3 +9341,45 @@ minutes (`\xc2\x85` is VALID UTF-8). `file` names the EXOTIC property, not the B
 one. Remedy corrected fleet-wide from "grep -a everywhere" to "never byte-truncate
 UTF-8; select in jq". Memory updated; the wrong remedy had already been relayed to two
 sessions and was withdrawn.
+
+## 2026-10-01 — bench-996 attribution (read-only; tree NOT touched, `--no-optional-locks` throughout)
+
+**OWNER: lane nq-c.** Three independent layers agree:
+1. nq-c's `LOOP_LOG.md` has 6 hits on 1144 with first-person records (`:4518` audit run on
+   fw#1149 = #1144, `:4580` "#1144 -> PR #1149", `:4588` "#996's A/B completed and VALIDATED,
+   baseline 59E02848 FAIL / fix 1D6176FF PASS"). conv-fw, conv-ts, nq-a: 0.
+2. nq-c's `DISPATCHER.md` names the tree by path: "Both images staged at C:\daqifi\wt\bench-996\ab\".
+3. `ab/` contents match the reflog exactly: base_d1bf07c66.hex + fix_df60bc24b.hex (the #996
+   A/B pair), fix1144{,b,c,d}.hex (four #1144 builds), main3e8b1b4.hex.
+
+**THE PREMISE WAS WRONG: REPURPOSED, NOT DRIFTED.** Reflog: created at #996's head 23:37:46,
+82 seconds there, -> merge-base, -> `fix/1144-capjson-bounded-calibration` 23:53:49 with THREE
+commits authored in it, -> `3e8b1b479` (main, #1157) at 12:03:54. A tree's NAME is a claim about
+its past, not its present; only the reflog distinguishes reuse from decay.
+
+**NO AUDIT PINNED INTO IT -> hazard, not incident.** The sole workflow naming bench-996
+(wf_3fbfab70-ccf, nq-c's session) has repoPath=/mnt/c/daqifi/wt/nq-c. bench-996 is a mentioned
+path there, never the audited tree.
+
+⛔ NEW SWEEP GAP (now in FIRE_STANDARDS, md5 8ec9b11d4e5d): `ab/` is GITIGNORED, so
+`status --porcelain` is EMPTY while the tree holds 15MB/7 hex images including the only copies of
+#996's A/B evidence. The sanctioned removability check PASSES and a sweep would destroy it. The
+axis is the tree's PURPOSE, which no field the check consults can express. Canonical home is the
+backlog-loop SKILL, which I must not edit -- routed to the operator instead.
+
+THREE AGAINST MYSELF:
+  - My ledger is the ONLY one in the fleet naming 3e8b1b479 (4x, :2919/:4301/:4340/:4342), from
+    investigating the non-finite-CALM bench hazard. An accrual instrument keyed on commit
+    references would have attributed this tree to ME on the fleet's strongest-looking evidence.
+    Naming a commit is not creating a worktree at it.
+  - My investigation CONTAMINATED the layer it used: nq-b session tool-results now name
+    bench-996 three times purely because I searched for it. The measurement writes to the record
+    it measures -- relevant to anyone re-running attribution over anything I touched tonight.
+  - Scoping error, caught: my first "no ledger names bench-996" came from a glob matching only
+    LOOP_LOG_worker.md, which ONLY nq-b has. A fleet-wide absence from a one-lane sample. Re-run
+    over the real set (6 ledger files across 5 lanes) the conclusion held -- 0 hits everywhere --
+    but it survived by luck, not method.
+
+Fifth instance of the pipeline-status defect, inside a check written while being careful:
+`find ... | sed` then `$?` read sed's status for a recency test. Unpiped: find rc=0, empty,
+nothing touched in 48h, zero holders by /proc/*/cwd scan. Tree is idle.
