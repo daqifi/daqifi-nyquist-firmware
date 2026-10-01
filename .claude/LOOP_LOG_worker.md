@@ -7387,3 +7387,88 @@ push.** I did **not** run `mark-passed` — that would clear a first-push gate f
 making, and leave a consumed-on-use marker behind. Split the command instead and it went clean.
 Confirmed nothing before the block had run (`git log -1` unchanged, file still untracked): **a
 PreToolUse gate blocks the whole compound command.**
+
+## 2026-10-01 02:05 MDT — ts#349 ARTIFACT CENSUS: 3 artifacts, 2 distinct heads, ZERO run ids, and the VOID one audited the WRONG REPOSITORY
+
+Coordinator ask: counts only, **no verdict**, and explicitly **do not rule on whether a VOID round
+consumes cap budget** — that disposition goes to the operator with my numbers.
+
+## THE COUNT, WITH THE FILTER NAMED
+
+**3 ts#349 audit artifacts.** Filter: files matching `audit-ts349-*.json` in this lane's
+`.claude/evidence/`.
+
+⚠ **An exhaustive pattern sweep (`*349*` / `*1018*`, `.json`/`.output`, across my evidence dir,
+scratchpad and session dirs) returned EIGHT hits. Five are not audit artifacts:**
+```
+agent-a6b99a3927d22a349.meta.json        <- "349" inside a random agent hex id
+agent-a6c68861018e2e423.meta.json        <- "1018" inside a random agent hex id
+agent-a6bfcc226e71018e5.meta.json        <- "1018" inside a random agent hex id
+sweep/ts349_comments.json                <- GitHub API data I fetched, not an audit
+sweep/ts349_commits.json                 <- same
+```
+**My own unanchored glob matched hex substrings** — the inverse-grep failure again, and reporting
+"8" would have inflated the round count by 167% in the direction that keeps ts#349 blocked.
+
+## THE THREE, AS FACTS
+
+```
+                                  head_sha      gate   arbiterModel  raw/disp  engine        coveredB   prov key   envelope
+1 audit-ts349-8c2070fd8a-BLOCK-5findings   8c2070fd8a   BLOCK  sonnet        5/5      codex         40292      '349'      unwrapped
+2 audit-ts349-8c2070fd8a-BLOCK-noblindleg  8c2070fd8a   BLOCK  None          0/0      codex         40292      '349'      unwrapped
+3 audit-ts349-r4-VOID-splitbrain-46aebf10f 608a82092c   PASS   sonnet        2/2      both(3-chain) 369515     'HEAD'     WRAPPED
+```
+mtimes: #2 `02:52:45Z` → #1 `03:04:40Z` (12 min later) → #3 `06:10:19Z`.
+Base: #1 and #2 share `05eb7f72f5`; #3 is `fd42745181`.
+`__source` legs: #1 `[blind, steered]` · #2 none · #3 `[steered]` only.
+
+- **Distinct heads: 2. Distinct (base, head) pairs: 2. Artifacts: 3.**
+- **#1 and #2 name the SAME base, SAME head and IDENTICAL byte coverage (40292/40292).** They
+  differ only in arbiter presence and findings. Whether that is one round or two is a
+  **definitional question I am not answering.**
+- **All three are stale against ts#349's live head `8fbf62f9b003fe036cffd36e7cd447c0fa0e8159`.**
+
+## ⛔⛔ THE FINDING: ARTIFACT #3 AUDITED A DIFFERENT REPOSITORY, AND RETURNED **PASS**
+
+Both of its SHAs resolve in **`daqifi/daqifi-nyquist-firmware`**, not the test-suite:
+```
+head  608a82092c  "docs(lane): ts#448 derivation + probe -- scope answer is the shared io_bytes row"  2026-09-29  <- MY OWN lane commit
+base  fd42745181  "docs(claude): re-sync the bench inventory with the live lane registry (#1070)"     2026-09-12
+```
+`gh api repos/daqifi/daqifi-python-test-suite/commits/608a8209…` → **HTTP 422, "No commit found"**.
+**That fully explains the 369,515 bytes: it diffed 17 days of my own lane documentation** instead of
+ts#349's 40,292-byte test range. ⛔ **And its gate is `PASS`** — the one verdict that licenses a
+merge, produced over a repository the PR has nothing to do with.
+
+### THE MECHANISM, and it is a live defect in the installed audit tool
+
+`adversarial-audit.js:77` — `const REPO = A.repo || 'ORG/REPO'`
+`:84` — `if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(REPO)) throw`
+
+> **The placeholder `ORG/REPO` MATCHES that regex — it is correctly `owner/name` shaped.** So the
+> guard does its stated job (reject shell syntax interpolated into agent prompts) and **cannot
+> distinguish "repo was never passed" from a real repository.** `repoPath` (default `'.'`, `:114`)
+> then decides which repo is actually diffed, and the run proceeds to a confident artifact.
+
+**A guard validating FORM where the failure is PROVENANCE** — the night's recurring class, this time
+inside the instrument every other finding was measured with. ⚠ And note **what caught it was the
+wrapper shape, not the provenance**: `mark-audited.sh` reads a top-level `.gate` and #3 is
+wrapped, so the gate read came back empty and it refused. **Safe direction, wrong reason** — exactly
+[[feedback_a_disposition_excusing_an_instrument_excuses_what_it_cannot_see]]. Nothing in the pipeline
+compared `repo` against the PR.
+
+## ⭐ AND THE CAP IS UNVERIFIABLE FROM THE ARTIFACTS, NOT JUST FROM THE COMMENTS
+
+**ZERO workflow/run identifiers in any of the three** (regex `wf_[A-Za-z0-9_-]+` over the whole
+document: none). The coordinator measured zero distinct audit workflow ids across all 13 PR comments;
+**the artifacts carry none either.** So the absence is not a reporting omission in the comments —
+**the artifact schema records no run identity at all.** The only fields that distinguish one run from
+another are `(base, head)`, engine config, byte coverage and file mtime.
+
+> **There is no field anywhere in the pipeline whose purpose is to count rounds.** A "5-round cap"
+> is being enforced against a quantity nothing measures.
+
+Reported as counts. **The disposition — whether a wrong-repo PASS consumes a round — is the
+operator's, and I am not ruling on it.** ⚠ One number I will flag without interpreting: `#2` carries
+`gate=BLOCK` with `rawFindings=0` and `arbiterModel=None` while `arbiterMissing=False`, the class-A
+fail-open shape again, on a third independent artifact.
