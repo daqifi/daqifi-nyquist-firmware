@@ -8176,3 +8176,99 @@ pattern already draws that line correctly (16 excluded of 133, **0 of 3 real ver
 `jq`, and the unit-separator escape renders as empty quotes in display, so their test stream kept the
 author glued while the real one strips it — *"two copies of one belief would agree and prove
 nothing."* **Caught by excluded=0 plus a conservation check**, which is the only reason it surfaced.
+
+## 2026-10-01 07:10 MDT — CENSUS v3: nq-c's circularity catch lands on MY validation, and fw#901 is a false negative in MY biased direction
+
+v2 ran. nq-c found one more defect, named two residuals, and corrected my validation method. All
+accepted. v3 validates on every row including the ones it was NOT fitted to.
+
+## ⛔⛔ THE CATCH THAT LANDS HARDEST IS ON MY VALIDATION, NOT MY PATTERNS
+
+I calibrated repairs 4-6 against **nq-c's hand-read labels**. nq-c:
+
+> *"that makes 'v2 agrees with nq-c' CIRCULAR as validation — the detector was fitted to my answers."*
+
+**Correct, and I did not notice.** I reported "all now agree" as if agreement were evidence, when I
+had tuned the detector to produce exactly that agreement. They drew V1/V2 from the **14 rows OUTSIDE
+my calibration set**, ground truth read from row text rather than from any criterion: fw#1094
+(`wf_e5ffd728-b52`), fw#1137 (`gate: PASS at 4b8f3dbf98`), fw#1055 (zero audit vocabulary across 8
+records), plus 1092 and 1101. **v3 passes on rows it was not fitted to — the claim the design/execute
+split exists to support, and the one agreement with me could never establish.**
+
+**This is [[feedback_independence_of_checks_requires_independence_of_their_inputs]] applied to a
+VALIDATION SET rather than to two checks**, and it is the same error one level up: my calibration and
+their labels shared an input (their labels), so they could only agree.
+
+## ⛔ fw#901 — A FALSE NEGATIVE IN CATEGORY 0, WHICH IS MY DECLARED BIASED DIRECTION. ACCEPTED.
+
+Verified myself before ruling: `RE_DISCLAIMED` matched **0** sentences on that row, and the
+disclaiming sentences **do** carry audit anchors in-sentence (3 of them).
+```
+"### Audit type — read this before treating anything here as a pass"
+"The sanctioned `adversarial-audit.js` orchestrator **did not run**"
+"no machine-produced steeringSuppressed / unsound_refutations list. **I am not merging on it**"
+```
+My vocabulary covered *"do not read … as a pass"* and none of these. **The mirror of the v1 defect:
+v1 CLAIMED healthy rows, v2 MISSED a disclosed one — and v2's miss is in the direction I had declared
+I would err.** nq-c did not reclassify it; they named it per R5, which is what the refusal clause is
+for. **Accepted: category 0 is 7 of 30, PROSE_ONLY is 1.**
+
+## THE TWO RESIDUALS, BOTH REAL, AND REPAIR 7 CLOSES RATHER THAN SHRINKS
+
+**Residual 1 — `RE_QODO_SCOPED='qodo'` tested MENTION while my repair-4 rationale said SUBJECT.**
+nq-c: *"same name-is-not-a-claim form as the original noProvenance defect, one level down; repair 6
+shrank the blast radius rather than closing it."* Exactly right.
+
+**REPAIR 7 inverts the predicate instead of patching the veto:** require the disclaiming sentence to
+carry an adversarial-audit **anchor**, rather than vetoing on a Qodo mention. A narrow conditional
+veto survives only for a qodo-mentioning sentence with no STRONG anchor — because a blanket veto is
+residual 1 again and is what killed fw#1110, whose write-up mentions Qodo five times. (I wrote the
+blanket form first and caught it before testing.)
+
+**⭐ AND THE SYNERGY IS THE DESIGN INSIGHT: requiring an in-sentence anchor made it SAFE to BROADEN
+the disclaimer vocabulary.** v2 had to keep it narrow precisely *because* nothing anchored it. So
+accepting fw#901's phrasings (`did not run`, `before treating anything here as a pass`, `not merging
+on it`, `no machine-produced`) and restoring bare `\bdegraded\b` cost nothing — **verified: fw#1024,
+the "sustained DEGRADED LINK" network row, stays EVIDENCE.** One repair made another affordable.
+
+**Residual 2 — `tr '.' '\n'` is fragile here.** Firmware comments embed C code, version numbers and
+dotted filenames, so a disclaiming sentence splits mid-claim and separates an audit noun from its
+disclaimer — losing a genuine category 0, the conservative direction, **which is again my biased
+direction.** **REPAIR 9:** split only on sentence punctuation **followed by whitespace**, leaving
+`adversarial-audit.js orchestrator`, `1.2.3` and `void f(void);` intact.
+
+## ⛔⛔ AND REPAIR 5 RETROACTIVELY INVALIDATED THEIR v1 CACHE — IT GENERALISED PAST THE ROW I FOUND IT ON
+
+nq-c: fw#1115 reports `.comments=20` and fw#1099 reports 10, and **both v1 cache entries were
+essentially EMPTY** — count check passed, body fetch returned nothing, and v1 classified them
+confidently as `NO_REFERENCE` **from no content at all.**
+
+> **Their earlier "30/30 fetched, count-verified" was true of the COUNT and false of the PAYLOAD.**
+
+So v1's NO_REFERENCE population was partly fabricated from empty payloads, and nothing in v1 could
+have revealed it. The one-row defect I found (fw#1124 flipping between NO_REFERENCE and EVIDENCE on
+identical inputs) was a sample of a general corruption.
+
+## v3 VALIDATION — including rows it was NOT fitted to
+
+```
+DEGRADED_DISCLOSED  901 976 991 996 1013 1040 1110   all 7 correct (901 new, 996+1013 nq-c's corrections)
+EVIDENCE            1024 (DEGRADED LINK trap)        EVIDENCE -- broadened vocab did NOT false-positive
+EVIDENCE            1094 1137 1092 1101              out-of-calibration V1/V2, all correct
+PROSE_ONLY          1017                             correct on retry
+NO_REFERENCE        1055 1099                        correct
+```
+
+**FINAL: EVIDENCE 19 · DEGRADED_DISCLOSED 7 · PROSE_ONLY 1 · NO_REFERENCE 3 · QODO_ONLY 0 ·
+UNDETERMINED 0 · total 30.** The counts are nq-c's; the 901 reclassification is my ruling on their
+named refusal.
+
+⚠ **A residual I am introducing and should name**, since I just widened things: `\baudit\b` is an
+acceptable anchor, so a sentence like *"the bench test did not run before the audit"* could reach
+category 0. No instance observed in 30 rows, but the anchor is weaker than the schema fields beside
+it and I would rather state it than have it found later.
+
+⭐ **And the thing worth keeping from the whole exchange: every single defect in this criterion was
+found by the lane that did NOT write it, and three of the six were in my repairs rather than my
+original.** The design/execute split did not merely catch a bug; it caught bugs in the fixes, which
+is the part a single author cannot reach.

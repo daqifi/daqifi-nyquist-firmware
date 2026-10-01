@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# SPEC v2 — prose-versus-verdict census, 30 open firmware rows
+# SPEC v3 — prose-versus-verdict census, 30 open firmware rows
 # DESIGNED BY nq-b. EXECUTED BY nq-c.
 #
 # ⛔ v1 FAILED V1 VALIDATION AND nq-c STOPPED RATHER THAN PUBLISHING A CENSUS.
@@ -52,14 +52,35 @@ RE_PROSE_REF='adversarial|pre-merge audit|audit round|re-audit|audited|blocked:a
 #   fw#1024 firing on "the rate under a sustained DEGRADED LINK is not measured" —
 #   a NETWORK LINK. Bare `degraded` and bare `re-run` are REMOVED; both survive
 #   only adjacent to an audit noun.
-RE_DISCLAIMED='noProvenance[^A-Za-z]{0,6}true|hunterLegsIncomplete[^A-Za-z]{0,6}true|codex_exit[^0-9]{0,6}[1-9]|auditorLegsOk[^0-9]{0,8}0([^0-9]|$)|truncated[^A-Za-z]{0,6}true|NOT an audit verdict|not an adversarial verdict|remains UN-?AUDITED|row is un-?audited|\bvoid run\b|run was void|audit was void|must not be counted as a round|do not read (its|this|the)[^.]{0,30}(as a|for a)? ?(pass|clean|verdict)|degraded[[:space:]]+(audit|round|run|leg|artifact|verdict)|(audit|round|run)[^.]{0,25}\bdegraded\b|re-?run the( adversarial)? audit|audit (must|needs to) be re-?run'
+# ⛔ REPAIR 7 (nq-c residual 1, and it CLOSES repair 4 rather than shrinking it).
+# Their catch: RE_QODO_SCOPED='qodo' tested MENTION while my repair-4 rationale
+# said SUBJECT — "the same name-is-not-a-claim form as the original noProvenance
+# defect, one level down." Correct. Repair 6 (sentence scope) shrank the blast
+# radius; it did not fix the predicate.
+#
+# THE FIX INVERTS IT: instead of VETOING on a Qodo mention, REQUIRE the disclaiming
+# sentence to carry an adversarial-audit ANCHOR. That approximates subject directly
+# and drops the qodo dependency for the common case.
+#   "Do not read the clean QODO state as a clean gate"  -> no anchor  -> excluded
+#   "The adversarial-audit.js orchestrator did not run"  -> anchor    -> included
+#   "noProvenance: true"                                 -> self-anchoring schema
+# A narrow qodo guard survives for the one case the anchor cannot settle: a
+# sentence that says "audit" but means Qodo's.
+RE_AUDIT_ANCHOR='adversarial|\badversarial-audit\b|auditorLegsOk|noProvenance|gateReason|covered_bytes|rawFindings|blindLegRan|hunterLegsIncomplete|codex_exit|\baudit\b'
+RE_QODO_DOMINANT='qodo'
+RE_STRONG_ANCHOR='adversarial|auditorLegsOk|noProvenance|gateReason|covered_bytes|rawFindings|blindLegRan|hunterLegsIncomplete|codex_exit|gate[[:space:]]*[:=]'
 
-# REPAIR 4 (from nq-c's hand-read) — A QODO-SCOPED DISCLAIMER IS NOT AN AUDIT
-# DISCLAIMER. fw#1013 fired on "Do not read the clean QODO state as a clean gate",
-# i.e. adversarial-audit state classified from a Qodo caveat — against this spec's
-# own never-fold rule, violated by my own pattern. A disclaimer whose SUBJECT is
-# Qodo is vetoed.
-RE_QODO_SCOPED='qodo'
+# ⭐ AND THE SYNERGY THAT MATTERS: because an in-sentence anchor is now REQUIRED,
+# the disclaimer vocabulary can be BROAD without false positives. v2 had to keep it
+# narrow precisely because nothing anchored it. So REPAIR 8 (nq-c's missed category
+# 0, fw#901) is safe to add:
+#   "The sanctioned adversarial-audit.js orchestrator **did not run**"
+#   "read this before treating anything here as a pass"
+#   "**I am not merging on it**"   "no machine-produced steeringSuppressed"
+# RE_DISCLAIMED matched ZERO sentences on that row — a FALSE NEGATIVE in category 0,
+# i.e. MY BIASED DIRECTION, and the mirror of the v1 defect: v1 claimed healthy rows,
+# v2 missed a disclosed one. Accepted: fw#901 is category 0 -> 7 of 30, PROSE_ONLY 1.
+RE_DISCLAIMED='noProvenance[^A-Za-z]{0,6}true|hunterLegsIncomplete[^A-Za-z]{0,6}true|codex_exit[^0-9]{0,6}[1-9]|auditorLegsOk[^0-9]{0,8}0([^0-9]|$)|truncated[^A-Za-z]{0,6}true|NOT an audit verdict|not an adversarial verdict|remains UN-?AUDITED|row is un-?audited|\bvoid run\b|run was void|was voided|must not be counted as a round|do not read[^.]{0,40}(pass|clean|verdict)|before treating anything[^.]{0,30}as a pass|not merging on it|no machine-produced|did not run|did not come|both legs died|\bdegraded\b'
 
 RE_LANE_NOTE="${RE_LANE_NOTE:-__UNSET__}"
 QODO_AUTHOR='^qodo-code-review'
@@ -138,12 +159,30 @@ run_row() {   # $1=pr
 	# the same breath. **I committed object conflation inside the repair for object
 	# conflation** — the veto must ask what the DISCLAIMER is about, not what the
 	# comment mentions.
+	# ⛔ REPAIR 9 (nq-c residual 2): `tr '.' '\n'` is FRAGILE HERE. Firmware comments
+	# embed C code, version numbers and dotted filenames, so a disclaiming sentence
+	# splits mid-claim and separates an audit noun from its disclaimer — losing a
+	# genuine category 0, which is the CONSERVATIVE direction and therefore MY biased
+	# direction. Split only on sentence punctuation FOLLOWED BY WHITESPACE, which
+	# leaves `adversarial-audit.js orchestrator`, `1.2.3` and `void f(void);` intact.
 	local sent
 	for body in ${HUMAN+"${HUMAN[@]}"}; do
 		printf '%s' "$body" | grep -qiE "$RE_EVIDENCE|$RE_PROSE_REF" || continue
-		# sentence-level: a disclaiming sentence that is NOT about Qodo
-		sent=$(printf '%s' "$body" | tr '.' '\n' \
-			| grep -iE "$RE_DISCLAIMED" | grep -viE "$RE_QODO_SCOPED" | head -2)
+		# sentence-level: disclaimer AND an in-sentence audit anchor (repair 7),
+		# minus the narrow qodo-dominant case the anchor cannot settle
+		# A blanket qodo veto is residual 1 again -- it is what killed fw#1110, whose
+		# audit write-up mentions Qodo five times. So the veto is CONDITIONAL: drop a
+		# qodo-mentioning sentence ONLY when it carries no STRONG adversarial anchor.
+		# That is the subject test, as close as text allows.
+		sent=""
+		while IFS= read -r s; do
+			[ -z "$s" ] && continue
+			printf '%s' "$s" | grep -qiE "$RE_DISCLAIMED"   || continue
+			printf '%s' "$s" | grep -qiE "$RE_AUDIT_ANCHOR" || continue
+			if printf '%s' "$s" | grep -qiE "$RE_QODO_DOMINANT" \
+			   && ! printf '%s' "$s" | grep -qiE "$RE_STRONG_ANCHOR"; then continue; fi
+			sent="$s"; break
+		done <<< "$(printf '%s' "$body" | sed 's/\([.!?]\)[[:space:]]\+/\1\n/g')"
 		[ -z "$sent" ] && continue
 		hits=$(printf '%s\n' "$sent" | grep -oiE "$RE_DISCLAIMED" | sort -u | head -2 | tr '\n' ',')
 		printf '%s\tDEGRADED_DISCLOSED\t%s\texcluded=%s\n' "$1" "${hits%,}" "$nex"; return
