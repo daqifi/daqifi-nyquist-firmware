@@ -7472,3 +7472,109 @@ Reported as counts. **The disposition — whether a wrong-repo PASS consumes a r
 operator's, and I am not ruling on it.** ⚠ One number I will flag without interpreting: `#2` carries
 `gate=BLOCK` with `rawFindings=0` and `arbiterModel=None` while `arbiterMissing=False`, the class-A
 fail-open shape again, on a third independent artifact.
+
+## 2026-10-01 02:35 MDT — sk#230 r2 VERDICT: artifact VOID (MY range error), but the blind leg found a HIGH I had missed and I WIDENED it 1 -> 4
+
+**LEDGERED BECAUSE EVERY RUN IS LEDGERED, INCLUDING AN ERROR** — a missing line reads as "no audit
+ran", and this one did run and produced something that matters.
+
+## ⛔⛔ THE ARTIFACT IS VOID, AND THE CAUSE IS MINE
+
+```
+gate        BLOCK
+gateReason  "no adversary model in the fallback chain was available -- audit did not run
+             ALSO BLOCKING (2 more): hunter leg shortfall 0/1 (unavailable: codex);
+             10 finding(s) survived refutation."
+provenance  {}            noProvenance: true
+auditorLegsOk 0 / attempted 1      hunterLegsIncomplete: true
+codexErrors  codex_exit 124 (TIMEOUT), unavailable: true, "produced no output file"
+truncated   true     covered_bytes 600000 / total_bytes 4913643   = 12.2% COVERAGE
+```
+
+**I gave it the wrong range.** I set `base` = merge-base with main (`682caaba3`) to make it a *fresh*
+audit, applying the sk#136 lesson that the RANGE decision outfound the reading decision. Measured
+after the fact:
+
+```
+range I gave      682caaba3..09b532acf   176 commits, 269 files, +93,068   (4.9 MB)
+sk#230's real diff                        3 files,  +50/-34
+```
+
+> ⛔ **I applied a rule that was right on one row without measuring the range it produces on
+> another.** sk#136's branch was close to main, so merge-base gave a fresh-but-small range. sk#230's
+> branch is **176 commits divergent**, so the same choice produced a 4.9 MB whole-branch diff — which
+> timed codex out at exit 124 after 12.2%, leaving `auditorLegsOk: 0`. **The steered leg produced
+> nothing at all; every finding below is blind-leg-only.**
+
+**One hour after diagnosing someone else's VOID artifact for a provenance error, I produced my own
+for a range error.** And the tool did not stop me, which is the generalisable part:
+
+> **`adversarial-audit.js` accepts `base` and `head` and never checks that the range corresponds to
+> the PR.** Same class as `repo || 'ORG/REPO'` passing a shape regex — the caller's scoping is
+> trusted. ⚠ **And my own sweep spec shares the gap: it validates that `head_sha` resolves in the
+> repo, and a correct head with a WRONG BASE still yields a confident wrong-scope audit.** The sweep
+> needs a range check beside the head check, and I will say so when I hand it over.
+
+**Artifact saved as VOID. `mark-audited.sh` NOT run.** Nothing about this run attests sk#230.
+
+## ⭐⭐ BUT THE BLIND LEG FOUND A HIGH IN sk#230's OWN FILE, AND MY r1 REMEDY DOES NOT TOUCH IT
+
+Finding 0, `merge-target-keys.sh:201`, skeptic-CONFIRMED with a measured repro (rc=0 from BOTH
+gates): *"Compound shell commands bypass both merge gates"* — `if true; then <verb> 424242; fi`.
+
+**I verified it myself and it is WIDER than reported.** Probed on the RESTORED cut set:
+```
+control  plain                              detected
+if/then      if true; then V 99; fi         *** BYPASS
+for/do       for i in 1; do V 99; done      *** BYPASS
+while/do     while true; do V 99; done      *** BYPASS
+if/else      if false; then :; else V 99; fi *** BYPASS
+brace group  { V 99; }                      detected   <- r1 case, correctly closed
+backtick     `V 99`                         detected   <- r1 case, correctly closed
+```
+**Blind leg reported ONE shape; there are at least FOUR.**
+
+**Mechanism:** the cut set splits on `;`, so the segment is ` then <verb> 99`. `_mtk_classify` does
+`set -- $1`, first word `then` — not an env assignment (`[A-Za-z_]*=*` needs an `=`), not in the
+wrapper list at `:190` (`env|sudo|nohup|time|timeout|nice|command|builtin|exec|eval|xargs|doas`),
+not in the runner list — so `*) echo NO` fires at `:201`. The segment never reaches `$CMD_M`, and an
+empty `$CMD_M` exits 0.
+
+> ⛔⭐ **THE ANSWER TO THE INVERTED BRIEF, AND IT IS NOT "WHAT THE REVERT REINTRODUCES".** The revert
+> closes two spellings and **leaves a whole class open that has nothing to do with the cut set.**
+> `_mtk_classify`'s first-word test fails for any segment beginning with a shell keyword, on BOTH the
+> narrowed and restored sets. **My r1 BLOCK framed the defect as a character class and my prescribed
+> remedy was a character-class edit** — so the fix I asked for, and conv-fw correctly implemented,
+> could never have reached this.
+
+**Remedy, precise:** treat shell keywords as TRANSPARENT PREFIXES the way env assignments already
+are — `then|do|else|elif|in` should `shift; continue` at `:189`, not fall through to `*) echo NO`.
+That is one arm in an existing loop.
+
+⭐ **This is [[feedback_SAME_TOKEN_weaker_consequence_extracted]] committed by me on `_mtk_classify`:**
+I read that function closely enough to trace the cut-set consequence and **stopped at the consequence
+I was looking for.** The blind leg asked a different question of the same code. *Audited closely* beat
+nothing; *audited with a second question* beat me.
+
+## ⚠ AND MY OWN PROBE HARNESS FAILED SILENTLY — third instance tonight of a failure rendering as absence
+
+My first keyword probe printed the control row and then **stopped**, with no error. Cause:
+`merge-target-keys.sh` calls `exit`, and **sourcing it ran that `exit` in my harness's own shell**,
+killing the script mid-loop. The remaining six rows simply never appeared — and "no BYPASS rows
+printed" reads exactly like "no bypasses found." The earlier probes survived only because they
+sourced inside `$( )` command substitution, i.e. a subshell, by accident of how I wrote them.
+Fixed by isolating every probe in an explicit subshell. **Had I run only the bypass cases, the silent
+truncation would have produced a clean bill.**
+
+## STATE
+
+**sk#230 remains BLOCKED and is NOT merge-eligible.** Three distinct open items now:
+1. the three dead refusal arms — disclosed by conv-fw, tested exact by me, unfixable on that line;
+2. the re-narrowing guard billed as 4 cases and binding on 2, with no output signal distinguishing them;
+3. ⛔ **NEW: the shell-keyword bypass class, 4 shapes measured, HIGH, live on the current head, and
+   untouched by the revert.**
+
+Round count: r1 (BLOCK, valid) + r2 (VOID, my range error). **Whether a VOID round consumes cap
+budget is the operator's call, not mine** — the same question the ts#349 census raised, now with an
+instance I caused. A correctly-ranged r2 still needs running; the 4-shape finding above does not
+depend on it.
