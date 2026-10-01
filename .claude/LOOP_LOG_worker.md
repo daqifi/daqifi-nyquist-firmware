@@ -6517,3 +6517,59 @@ document's EFFECT, not of my sentence.
 > checking rather than recalling. **Ask for the enumeration; supply no candidates.**
 > And the clause missing entirely from every stake model so far: **"or TEXT."** A row whose PROSE
 > restates your own finding is a stake with **no artifact anywhere a query would look.**
+
+## 2026-09-30 20:09 MDT — sk#231 AUDIT: gate PASS, 0 findings, ZERO in my conflicted range. But the answer is NO.
+
+Artifact `.claude/evidence/audit-sk231-60ed39e97-PASS.json`. Run `wf_3ffcadc5-d96`, 1 agent, 79k
+tokens, 110s.
+
+**✅ PROVENANCE — every pre-registered check passed:** repo/base/head exact; **covered_bytes 4058 vs
+my shell `wc -c` 4056 = +2 (0.049%)**, band 4015-4097; engine codex, chain `['codex']`;
+`anyArgumentError: false`; `codexScriptOverridden: true` (my copy ran). `files[]` ABSENT -> the byte
+check substituted.
+**HEALTH:** gated on `arbiterModel` = **None**; with `rawFindings: 0` that absence is **VACUOUS**
+(nothing to disposition), not withheld. ⚠ `arbiterMissing: false` / `arbiterDegraded: false` asserted
+beside a `null` arbiter — **FOURTH instance of that default fail-open**, recorded as a datum not a
+finding against this row. `blindLegRan: true` for [231], `blindLegMissingFor: []`, so
+`steeringSuppressed: []` is MEANINGFUL. `gateReason` as prose: **`"clean"`**, not "clean in-scope".
+
+**⛔ THE PRE-REGISTERED HAND-OFF RETURNS ZERO.** No finding landed at :40/:42/:49/:50, so nothing goes
+to nq-c and they can stand down. **Pre-registering the rule BEFORE the result is what makes "zero"
+checkable rather than convenient** — and that is the whole value of having written the range down.
+
+**⛔⛔ MY CLEAN READ — the ts#432 reachability answer is NO, and the PASS never addressed it.**
+The doc claims at `:28-31` that it makes *"a board left on a firmware PR's build rather than on main"*
+unreachable by accident. Traced against its own recipe (`bench whoami` -> `bench ports` -> registry ->
+"confirm it on the device itself"):
+> **Step zero establishes WHICH BOARD. ts#432's state is WHICH BUILD. Nothing in the 57 lines asks
+> what firmware the board is running.** A reader following every step perfectly still reaches ts#432's
+> state: identity verified, provenance never asked.
+
+**And the document carries its own counter-evidence:** its `*IDN?` serial `0` row says that means
+*"this firmware does not read DEVSN"* — **an IMAGE property presenting as an identity failure.** The
+doc proves identity and build are coupled, then builds a step zero that asks only identity.
+
+**Bounded by two checks so the zero means something:** `## Stable device identity` (`:194`) is about
+surviving a replug — identity persistence, not build provenance — and the `#stable-device-identity`
+anchor **DOES resolve**, so that candidate finding is **void** and reported as checked rather than
+omitted.
+
+**The hedge is doing real work**, which is why this is not a flat error: *"unreachable by accident"* is
+true of the wrong-BOARD failure and false of the wrong-IMAGE one. The ordering is right; **the sentence
+names a state the ordering does not reach.** A false reason under a correct conclusion.
+
+**Remedy, in the doc's idiom and already in-tree:** step zero should establish the IMAGE too
+(post-flash `crc32`, or `CONF:CAP:JSON?`) — **two-part**, because *a crc32 without a source commit is
+an identifier with no referent*, which is how nq-a's board came to run an image traceable to nothing.
+Severity **low-to-medium**: nothing is worse than today, but a reader relying on step zero would
+believe they had verified more than they had — on a document that now carries ALL the protection
+because the guard's opening was refused upward.
+
+**⚠ AND THE GENERAL POINT: a 0-finding PASS on a 57-line docs diff means no hunter found a TEXTUAL
+defect. It does not mean the document achieves its purpose.** Subject scope again — **the audit and
+the question were never the same question**, which is exactly why the reachability half was worth
+splitting out.
+
+**HAZARD CLOSED:** installed tree HEAD `6c6d16f4` / dirty 0, **unchanged before and after**; detached
+worktree only, porcelain 0, nothing left dirty. Tree recorded in `FIRE_TREES.txt` rather than
+bare-git removed (that leaves an orca registration behind).

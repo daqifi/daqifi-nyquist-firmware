@@ -1,0 +1,114 @@
+{
+  "summary": "Independent bug-hunt over the full PR diff + refute-skeptic verification (qodo-cycle 3.5)",
+  "agentCount": 1,
+  "logs": [
+    "Adversarial pre-merge audit over 1 target(s) in cptkoolbeenz/claude-skills — chain=[codex], diversity=1, skeptic=opus, blindLeg=true",
+    "✓ adversary codex audited #231",
+    "✓ blind leg agrees with the steered pass on #231 (no suppression detected)",
+    "Done: 0 raw findings, 0 survived refutation; 1/1 adversary legs ran (chain [codex])"
+  ],
+  "result": {
+    "repo": "cptkoolbeenz/claude-skills",
+    "base_sha": "72a199a4a4e9530f8d178c6c44bfa49ab8f35387",
+    "head_sha": "60ed39e970b3e7d7facdd08d36e50a61cc2d2d87",
+    "producer_sha": "7c541130ed829d03d3b1fc784586160378f02b21",
+    "truncated": false,
+    "covered_bytes": 4058,
+    "total_bytes": 4058,
+    "provenance": {
+      "231": {
+        "repo": "cptkoolbeenz/claude-skills",
+        "base_sha": "72a199a4a4e9530f8d178c6c44bfa49ab8f35387",
+        "head_sha": "60ed39e970b3e7d7facdd08d36e50a61cc2d2d87",
+        "producer_sha": "7c541130ed829d03d3b1fc784586160378f02b21",
+        "truncated": false,
+        "covered_bytes": 4058,
+        "total_bytes": 4058
+      }
+    },
+    "engine": "codex",
+    "auditChain": [
+      "codex"
+    ],
+    "targetsAudited": 1,
+    "arbiter": null,
+    "arbiterModel": null,
+    "rawFindings": 0,
+    "refuted": 0,
+    "unverified": [],
+    "confirmed": [],
+    "plausible": [],
+    "outOfScope": [],
+    "auditorLegsOk": 1,
+    "auditorLegsAttempted": 1,
+    "blindLegRan": true,
+    "finalGate": true,
+    "adversaryDiversity": 1,
+    "verifyBatch": 4,
+    "blindLegMissingFor": [],
+    "blindLegRanFor": [
+      231
+    ],
+    "blindLegRequested": true,
+    "blindLegExplicitOff": false,
+    "steeringSuppressed": [],
+    "codexErrors": [],
+    "codexFellBack": false,
+    "gate": "PASS",
+    "noProvenance": false,
+    "hunterLegsIncomplete": false,
+    "perTargetShortfall": [],
+    "adversaryDiversityContradiction": false,
+    "arbiterMissing": false,
+    "arbiterDegraded": false,
+    "unsoundRefutationsBlock": false,
+    "codexScript": "/mnt/c/daqifi/wt/nq-b/.claude/runs/qodo-cycle-ts349r4/codex-audit.sh",
+    "codexProducerRan": true,
+    "codexScriptOverridden": true,
+    "anyArgumentError": false,
+    "argumentErrorDetail": [],
+    "gateReason": "clean"
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Audit"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Verify"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Arbitrate"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "audit:#231:codex",
+      "phaseIndex": 1,
+      "phaseTitle": "Audit",
+      "agentId": "ac5840b5690921298",
+      "agentType": "general-purpose",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1790820286145,
+      "queuedAt": 1790820286128,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "cptkoolbeenz/claude-skills",
+      "promptPreview": "You are an EXECUTOR, not a reviewer. Run this EXACT command with the Bash tool (it may take several minutes — Codex is doing an adversarial audit) and return its stdout, a single JSON object, as your structured output. Copy the command CHARACTER FOR CHARACTER; do NOT edit, split, re-quote, or add flags. Do NOT analyze the diff yourself and do NOT add, drop, or reword any finding — pass the JSON th…",
+      "promptFramed": true,
+      "lastProgressAt": 1790820394195,
+      "tokens": 79208,
+      "toolCalls": 2,
+      "durationMs": 108049,
+      "resultPreview": "{\"findings\":[],\"repo\":\"cptkoolbeenz/claude-skills\",\"base_sha\":\"72a199a4a4e9530f8d178c6c44bfa49ab8f35387\",\"head_sha\":\"60ed39e970b3e7d7facdd08d36e50a61cc2d2d87\",\"producer_sha\":\"7c541130ed829d03d3b1fc784586160378f02b21\",\"files\":[\"bench/SKILL.md\"],\"covered_bytes\":4058,\"total_bytes\":4058,\"truncated\":false,\"blind_findings\":[]}"
+    }
+  ],
+  "totalTokens": 79208,
+  "totalToolCalls": 2
+}
