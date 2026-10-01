@@ -53,7 +53,7 @@ RE_PROSE_REF='adversarial|pre-merge audit|audit round|re-audit|audited|blocked:a
 #   a NETWORK LINK. Bare `degraded` and bare `re-run` are REMOVED; both survive
 #   only adjacent to an audit noun.
 # ⛔ REPAIR 7 (nq-c residual 1, and it CLOSES repair 4 rather than shrinking it).
-# Their catch: RE_QODO_SCOPED='qodo' tested MENTION while my repair-4 rationale
+# Their catch: RE_QODO_DOMINANT='qodo' tested MENTION while my repair-4 rationale
 # said SUBJECT — "the same name-is-not-a-claim form as the original noProvenance
 # defect, one level down." Correct. Repair 6 (sentence scope) shrank the blast
 # radius; it did not fix the predicate.
@@ -69,6 +69,7 @@ RE_PROSE_REF='adversarial|pre-merge audit|audit round|re-audit|audited|blocked:a
 RE_AUDIT_ANCHOR='adversarial|\badversarial-audit\b|auditorLegsOk|noProvenance|gateReason|covered_bytes|rawFindings|blindLegRan|hunterLegsIncomplete|codex_exit|\baudit\b'
 RE_QODO_DOMINANT='qodo'
 RE_STRONG_ANCHOR='adversarial|auditorLegsOk|noProvenance|gateReason|covered_bytes|rawFindings|blindLegRan|hunterLegsIncomplete|codex_exit|gate[[:space:]]*[:=]'
+RE_RANNESS='both legs died|was voided|auditorLegsOk|codex_exit|noProvenance|truncated[^A-Za-z]{0,6}true|\bhunter|\bskeptic|no machine-produced|did run'
 
 # ⭐ AND THE SYNERGY THAT MATTERS: because an in-sentence anchor is now REQUIRED,
 # the disclaimer vocabulary can be BROAD without false positives. v2 had to keep it
@@ -185,7 +186,37 @@ run_row() {   # $1=pr
 		done <<< "$(printf '%s' "$body" | sed 's/\([.!?]\)[[:space:]]\+/\1\n/g')"
 		[ -z "$sent" ] && continue
 		hits=$(printf '%s\n' "$sent" | grep -oiE "$RE_DISCLAIMED" | sort -u | head -2 | tr '\n' ',')
-		printf '%s\tDEGRADED_DISCLOSED\t%s\texcluded=%s\n' "$1" "${hits%,}" "$nex"; return
+		# ⛔ RULING (a) ON nq-c's NAMED DEFINITIONAL GAP — A SIXTH CATEGORY.
+		# fw#1027: "### Gates I did NOT run" / "**No adversarial audit.** Codex
+		# high-effort is at capacity pool-wide" — NOTHING RAN, deliberately, with a
+		# stated reason. Category 0 is defined as "an audit RAN, produced nothing
+		# usable, and the row KNOWS it", so 1027 is a DIFFERENT STATE.
+		#
+		# nq-c's argument is decisive, and it is my own design rule turned back on me:
+		# for the ruling this category feeds, the two states point OPPOSITE ways. A
+		# round that never ran plainly does not consume the round budget; whether a
+		# DEGRADED round consumes it is the open question. Folding them corrupts
+		# exactly the decision the category exists to inform.
+		#
+		# REJECTED (c) fold-and-subdivide-later: that IS the corruption.
+		# REJECTED (b) require a ran-ness token and let bare "did not run" fall
+		#   through: a regex fix for a definitional problem, and it fails in the
+		#   DANGEROUS direction — 1027 would fall through to EVIDENCE, reading as
+		#   "carries checkable audit evidence" when the row says the opposite. That is
+		#   the ts#351 error again. nq-c noted (b) happens to split 901 from 1027 by
+		#   accident of phrasing; relying on an accident is not a discriminator.
+		#
+		# DISCRIMINATOR: RAN-NESS, verified by me to split the two rows.
+		#   fw#901  "cross-vendor codex hunter (four times, on four different heads),
+		#            an independent opus hunter, and two skeptics briefed to refute"
+		#           -> machinery RAN (unsanctioned), output exists, declared NOT a
+		#              verdict -> category 0. Checked at source, not taken from nq-c.
+		#   fw#1027 nothing ran at all -> category 0b.
+		# Ran-ness is tested FIRST, so a row disclosing BOTH (901) lands in 0.
+		if printf '%s' "$body" | grep -qiE "$RE_RANNESS"; then
+			printf '%s\tDEGRADED_DISCLOSED\t%s\texcluded=%s\n' "$1" "${hits%,}" "$nex"; return
+		fi
+		printf '%s\tDISCLOSED_NOT_RUN\t%s\texcluded=%s\n' "$1" "${hits%,}" "$nex"; return
 	done
 
 	local all; all=$(printf '%s\n' ${HUMAN+"${HUMAN[@]}"})
@@ -239,11 +270,11 @@ case "$MODE" in
 		for s in 'the rate under a sustained DEGRADED LINK is not measured' 'the adversarial audit was degraded'; do
 			printf '  %-56s disclaimed=%s\n' "$(printf '%.52s' "$s")" "$(printf '%s\n' "$s" | grep -ciE "$RE_DISCLAIMED")"
 		done
-		echo "  (expect 0,1)"
+		echo "  (expect 1,1 -- bare degraded is INTENTIONAL now; the in-sentence ANCHOR does the work, not the vocabulary. 1024 stays EVIDENCE.)"
 		echo "=== REPAIR 4: Qodo-scoped veto"
 		s='Do not read the clean QODO state as a clean gate'
 		printf '  disclaimed=%s  qodo-scoped=%s -> vetoed\n' \
-			"$(printf '%s\n' "$s" | grep -ciE "$RE_DISCLAIMED")" "$(printf '%s\n' "$s" | grep -ciE "$RE_QODO_SCOPED")"
+			"$(printf '%s\n' "$s" | grep -ciE "$RE_DISCLAIMED")" "$(printf '%s\n' "$s" | grep -ciE "$RE_QODO_DOMINANT")"
 		echo
 		echo "V1/V2 still need REAL rows you independently know. I cannot supply them."
 		echo "RE_LANE_NOTE: $RE_LANE_NOTE"

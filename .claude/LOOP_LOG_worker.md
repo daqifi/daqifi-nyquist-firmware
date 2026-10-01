@@ -8343,3 +8343,79 @@ survived intact.
 
 ⚠ **I did NOT split the brief, reorder the reads, or touch the cron.** The measurement says the split
 buys me nothing and the reorder is not mine to make.
+
+## 2026-10-01 08:10 MDT — RULED on nq-c's definitional gap: a SIXTH category, and my \baudit\b residual prediction was WRONG
+
+nq-c ran v3, confirmed repair 8 (fw#901 now classifies by the criterion rather than only by my
+reading), and named a definitional gap per R5 rather than partitioning it.
+
+## THE GAP, AND THE RULING IS (a): A SIXTH CATEGORY
+
+fw#1027 moved EVIDENCE -> DEGRADED_DISCLOSED on *"### Gates I did NOT run"* / *"**No adversarial
+audit.** Codex high-effort is at capacity pool-wide"*. **Nothing ran, deliberately, with a stated
+reason.** My category 0 is defined as *"an audit RAN, produced nothing usable, and the row KNOWS
+it"* — so 1027 is a different state.
+
+**nq-c's argument is decisive and it is my own design rule turned back on me:** for the ruling this
+category feeds, the two states point **opposite ways**. A round that never ran plainly does not
+consume the round budget; whether a DEGRADED round consumes it is the open question. Folding them
+corrupts exactly the decision the category exists to inform.
+
+- **REJECTED (c)** fold-and-subdivide-later — that IS the corruption.
+- **REJECTED (b)** require a ran-ness token and let bare "did not run" fall through — a regex fix for
+  a definitional problem, and it **fails in the dangerous direction**: 1027 would fall through to
+  EVIDENCE, reading as *"carries checkable audit evidence"* when the row says the opposite. **That is
+  the ts#351 error again.** nq-c noted (b) happens to split 901 from 1027 by accident of phrasing;
+  **an accident is not a discriminator.**
+- **ADOPTED (a)** sixth category `DISCLOSED_NOT_RUN`, discriminated by **RAN-NESS**, tested first so
+  a row disclosing both lands in 0.
+
+**I verified the discriminator at source rather than taking nq-c's read:** fw#901 says *"cross-vendor
+codex hunter (four times, on four different heads), an independent opus hunter, and two skeptics
+briefed to refute"* — machinery RAN, output exists, declared not a verdict -> category 0. fw#1027:
+nothing ran -> 0b. Measured:
+```
+901   DEGRADED_DISCLOSED   before treating anything here as a pass, did not run
+1027  DISCLOSED_NOT_RUN    did NOT run
+976 991 996 1013 1110      DEGRADED_DISCLOSED (ran-ness present)
+1040                       UNDETERMINED -- transient; refused rather than guessed, as designed
+```
+**FINAL: EVIDENCE 18 · DEGRADED_DISCLOSED 7 · DISCLOSED_NOT_RUN 1 · PROSE_ONLY 1 · NO_REFERENCE 3 ·
+total 30.**
+
+## ⛔ MY RESIDUAL PREDICTION WAS WRONG, AND THEY TESTED IT
+
+I declared the `\baudit\b` weak anchor as a residual and wrote *"no instance observed in 30 rows."*
+**nq-c tested it against the corpus: there IS one, and it is fw#1027** — the very row that forced the
+new category. I stated a residual and asserted its emptiness **without testing it**, in the same
+message where I was careful about everything else. **A named residual with an untested bound is a
+disclosed residual, which is an untested finding** — my own rule, applied to me by the lane executing
+my spec.
+
+## ⭐ AND THE SYNERGY CUTS BOTH WAYS, which nq-c stated better than I did
+
+I recorded that requiring an in-sentence anchor made it **safe to broaden** the vocabulary. nq-c:
+it simultaneously made a **weak anchor load-bearing** — 1027's qualifying sentence leans on exactly
+the token I flagged as weak. **One repair made another affordable and a third one riskier.** I had
+only noticed the affordable half, which is the half that flattered the design.
+
+## TWO DEFECTS IN MY OWN --validate BLOCK, both fixed, and the first is on-theme to the point of parody
+
+1. ⛔ **A CHECK THAT CANNOT FAIL.** Line 245 still referenced `RE_QODO_SCOPED`, which v3 renamed to
+   `RE_QODO_DOMINANT`. Under `set -u` it errored inside the command substitution, printed an empty
+   value, and **then printed "-> vetoed" unconditionally.** So repair 4's self-check was **inert and
+   reported a pass every time** — in the validate block for the repair whose entire point was that a
+   predicate tested the wrong thing. Fixed by renaming all references.
+2. **A stale expect line.** Repair 3's check now prints `1,1` against a printed `(expect 0,1)`,
+   because I restored bare `\bdegraded\b` and moved the protection to the in-sentence anchor. The
+   behaviour is right and the expectation was stale — **a reader seeing 1,1 vs expect 0,1 reads a
+   pass as a failure.** Updated to state what it now tests.
+
+## AND conv-ts CORRECTED ME ON THE RULE I ADOPTED FROM THEM — recorded in FIRE_STANDARDS.md
+
+Their branch-ownership push rule's basis is an **ABSENCE OF PERMISSION**, not a typed prohibition —
+they checked their own two lines and their `NO NEW PRs` rule carries *"(operator, typed 2026-09-21)"*
+while the push rule carries nothing. **Adopting it needed no authority (narrowing own behaviour), but
+inheriting it as "the operator forbade this" would make a future fire assume the answer is no and
+never ask.** Appended the basis to the rule: obey by default, **escalate as an open question** if it
+blocks real work. Line arithmetic 1838 + 17 = 1855, reconciles; md5 re-recorded.

@@ -1836,3 +1836,20 @@ above and is why those are written down rather than assumed.
 
 ⚠ **Force-push remains separately on the operator's always-ask list (`:54`), including on a branch
 this lane does own.** This rule narrows WHERE you may push; it does not loosen HOW.
+
+### The BASIS of the rule above, which is not what it looks like
+
+**This rule's basis is an ABSENCE OF PERMISSION, not a typed operator prohibition.** conv-ts, who
+I adopted it from, checked their own two lines before telling me: their `NO NEW PRs` rule carries
+an explicit attribution — *"(operator, typed 2026-09-21, still standing)"* — and their
+branch-ownership push rule carries none. Its only stated ground is that pushing to a shared branch
+**has never been granted**.
+
+**Why the distinction is written down here rather than left out:** narrowing your own behaviour needs
+no authority, so adopting the rule was correct on sight. But **if this lane ever genuinely needs to
+push to a shared branch, that is a question to ASK the operator — not a ban to work around, and not
+a question already answered.** A fire inheriting this as *"the operator forbade it"* would assume the
+answer is no and never ask.
+
+**So: obey it by default, and if it blocks real work, escalate it as an open question.** Compare the
+rules above it that DO carry a typed attribution; those are settled and this one is not.
