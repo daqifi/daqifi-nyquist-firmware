@@ -7116,3 +7116,116 @@ resolving conservatively (treating every relay as peer-only). **It does not repe
 ask-first list** — force-push, branch deletion, force-merge, repo creation, cross-repo writes beyond
 the companion test, anything destructive to hardware — nor the permission-laundering rule, which a
 peer cannot grant past by construction. So sk#231's Qodo trigger still routes to the operator.
+
+## 2026-10-01 01:14 MDT — HEAD-DRIFT SWEEP, all 10 artifacts: 4 of 7 rows drifted. Only ONE is dangerous, and the count alone would have misdirected everyone.
+
+Read-only, no permission needed, prompted by sk#231. **The bare number is 4 of 7 drifted. Reporting
+that number alone would have been alarmist AND pointed at the wrong rows**, because the verdict the
+artifact carries decides which direction the drift fails in.
+
+```
+PR    attested head   live head      verdict  drift cause
+1020  69fc022ed       69fc022ed      PASS     match
+136   6b8231535       6b8231535      BLOCK    match
+199   b98e8acd6        b98e8acd6     BLOCK    match
+230   26bd04ab0       09b532acf      BLOCK    ⛔ someone else's commit -- MY FINDING, ADOPTED
+231   60ed39e97       dae17d851      PASS     ⛔ someone else's commit -- THE HAZARD
+326   a5f2ce826       1ab8edc17      BLOCK    my own round-3 push (known)
+349   8c2070fd8a      8fbf62f9b      BLOCK    my own round-5 residue push (known, parked at cap)
+```
+
+## ⭐⭐ THE RULE THE SWEEP PRODUCED: DRIFT ON A BLOCK IS SELF-PROTECTING; DRIFT ON A PASS IS THE HAZARD
+
+> **A stale BLOCK can only over-restrict** — it refuses a head it never audited, which costs a
+> round and nothing else. **A stale PASS licenses a merge of code no audit has seen.** Same drift,
+> opposite direction, decided entirely by the verdict riding on it.
+
+So of 4 drifted rows, **exactly one needs urgent action (sk#231)**, two are my own recorded pushes
+on rows already in the right state, and one is good news. **"4 of 7 drifted" is a true number that
+sends the reader to the wrong three rows** — the same failure as reporting a count without naming
+the filter, one level up: I had the right measurement and the wrong summary statistic.
+
+## ✅ sk#230 — MY FINDING WAS ADOPTED AND THE FIX IS PUSHED
+
+`09b532acf`, 2026-09-30T23:49:15Z: **"revert(qodo-cycle): the cut-set narrowing was a detection
+bypass, not a fix"** — `+24/-15 merge-target-keys.sh`, `+21/-14 test-pre-merge-gate.sh`. That is my
+BLOCK's conclusion in the commit subject, and my recommended remedy (restore the backtick and both
+braces to the sed cut set). **Not authored by me.** So the row moved from BLOCK to fix-pushed while
+I was elsewhere, and my stale BLOCK is stale in the harmless direction.
+
+**Round-2 candidate, not a merge candidate.** Auditing `09b532acf` is a READ of their repo plus an
+artifact in my own lane, so it is within authority; the attestation POST and `mark-audited` are the
+writes and those are ask-first. Holding for direction rather than spending the round unasked —
+someone wrote that fix and may already be auditing it, and a duplicate round is the one cost I can
+avoid by asking.
+
+## ⛔ AND THE SWEEP ONLY WORKED BECAUSE I DID NOT BELIEVE MY FIRST EXTRACTOR
+
+My batch reader pulled `provenance.repo` / `provenance.head_sha` and returned **empty on all ten
+artifacts**. I had read those exact fields out of the sk#231 artifact minutes earlier, so "ten
+artifacts have no provenance" was not credible and I inspected the structure instead of reporting
+it. **The fields live at `result.<key>`; `result.provenance` is a dict keyed by PR NUMBER (`{'231':
+{...}}`)**, so `provenance.get('repo')` is legitimately empty and a reader who trusted it would
+have concluded the artifacts carry no provenance at all.
+
+**The thing that saved it was a prior successful read of the same field, not care.** Had the sweep
+been my first contact with the schema, the empty column would have looked like the finding —
+[[feedback_a_failed_grep_is_not_evidence_of_absence]], with the aggravation that the failure was
+**uniform across all ten**, and uniformity reads as a property of the corpus rather than of the
+query. ⚠ **A zero that is suspiciously TIDY deserves the same scrutiny as a zero that is
+surprising.**
+
+## ⭐ A free corroboration of the ts#349-r4 VOID call, from a field I was not looking at
+
+`audit-ts349-r4-VOID-splitbrain-46aebf10f.json` carries **`repo: "ORG/REPO"`** — a literal unfilled
+template placeholder — and `head_sha: 608a82092c...`, which is **the ts#448 evidence commit**, not
+the `46aebf10f` in its own filename. **Third independent corroboration of the split-brain
+diagnosis** (the first two were byte-identity and the sealed read), arriving from provenance fields
+I pulled for an unrelated purpose. The artifact stays VOID; `mark-audited.sh` still correctly never
+ran on it.
+
+> **`ORG/REPO` is the strongest possible provenance signal and it is not a SHA mismatch at all** —
+> it is the template never having been populated. A reader checking only whether the SHAs *agree*
+> would compare two values and miss that one of them is not an identifier.
+
+## ⛔⭐⭐ THE GAP MEASUREMENT, WHICH THE COORDINATOR ASKED FOR AND WHICH SETTLES THE DIAGNOSIS
+
+Gap = (live head committed) − (my artifact written). Quiescence measured at 06:50:39Z.
+
+```
+PR   artifact written      live head committed   GAP        quiescent   drift cause
+230  2026-09-30T23:44:57Z  2026-09-30T23:49:15Z  +258s      421 min     other author
+231  2026-10-01T02:09:44Z  2026-10-01T02:11:54Z  +130s      278 min     other author
+326  2026-10-01T00:06:53Z  2026-10-01T01:21:13Z  +4460s     329 min     my own push
+349  2026-09-30T03:04:40Z  2026-09-30T06:19:10Z  +11670s    1471 min    my own push
+```
+
+> **THE DRIFT I CAUSED TOOK 74 AND 195 MINUTES. THE DRIFT SOMEONE ELSE CAUSED TOOK 2 AND 4
+> MINUTES.** n=2 each, both other-author rows on claude-skills, mean 194 s.
+
+**⛔ PROMPTNESS CANNOT FIX THIS, AND THAT IS NOT AN INFERENCE — IT IS THE MEASUREMENT.** The
+instinct after sk#231 was *"merge faster after the audit."* A 130-second window beats any human or
+agent round-trip that includes reading the artifact, checking the gate, and composing an
+attestation. **Both other-author gaps are shorter than the merge procedure itself.**
+
+**And the mechanism the two-sided split exposes:** my own pushes are slow because I work the row
+serially — audit, read, fix, push. **A concurrent agent pushes within minutes of an audit
+completing**, because the artifact landing is what unblocks them, or because they were already
+mid-edit when it did. So the gap length is a **signature of who caused it**: a sub-5-minute gap
+means someone else was working while I audited; an hour-plus gap means it was me.
+
+**What this makes load-bearing rather than ceremonial:**
+[[feedback_remark_immediately_before_every_merge]] **would have fired on 2 of 2 other-author rows
+and on 0 of 2 of my own.** I have treated re-reading `headRefOid` at merge time as belt-and-braces
+on top of a pin I trusted. It is the *only* check that catches this class, the pin is worth nothing
+against it, and the one time I nearly skipped it was the one time it mattered.
+
+⚠ **The honest limit on this result:** n=2 per side, one repo for the dangerous side, and I cannot
+identify the other author (shared identity), so "a concurrent agent" is the plausible mechanism and
+not a proven one. What IS measured is the two gap magnitudes and that they cluster by cause.
+
+## QUIESCENCE, for the coordinator's combined ask
+
+**sk#231 static 278 min (4h38m); sk#230 static 421 min (7h01m).** Both still by any reasonable
+threshold, so the moving-target risk the coordinator named has decayed. Reporting the numbers; the
+ask is theirs to carry and the Qodo trigger plus attestation POST remain ask-first regardless.
