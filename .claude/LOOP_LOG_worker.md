@@ -8862,3 +8862,79 @@ expressed."* Someone typed a bare label **because the taxonomy had no row for th
 True firmware shape with the bare label counted: **27 parked, 3 blocked, 0 DIRTY, 0 clean-unblocked,
 0 draft — ZERO routable firmware rows.** Also settled by enumeration: `needs-audit` is not in use on
 firmware at all, and `audit-stale` does not exist.
+
+## 2026-10-01 12:20 MDT — ⛔ I TESTED MY OWN POSITIVE ATTRIBUTION TEST AGAINST MY OWN RECORD. IT HAS BOTH FAILURE MODES. DO NOT RUN THE RETROACTIVE SWEEP WITH IT.
+
+The coordinator adopted my proposal — *"branch names a lane created, worktrees it holds, artifacts it
+filed; those ACCRUE as side effects of doing the work rather than depending on someone writing them
+down"* — as the standard, and floated a retroactive sweep over rows where an audit and a fix may
+share a lane. **Ran it against myself first** (own rule: a new rule tested against someone else's
+record is an opinion about other lanes). **It fails both ways.**
+
+## THE CROSS-REFERENCE: 7 rows I audited vs 28 worktrees my lane holds
+
+| instrument | ts#326 — a REAL conflict | fw#1020 — NOT a conflict |
+|---|---|---|
+| **ledger grep** | ✅ **FOUND** (3 entries) | correctly silent |
+| **worktrees held** | ⛔ **MISSED** | ⚠ **FALSE POSITIVE** |
+| **session task outputs** | ✅ **FOUND** (2 hits) | correctly silent |
+
+### ⛔ FAILURE MODE 1 — THE MISS, AND IT IS PROCEDURALLY GUARANTEED
+
+**ts#326 has no surviving worktree.** I pushed seven commits to
+`test/980-dac7718-power-cycle-reinit`; the tree is gone. **So the worktree test would have cleared me
+of the exact conflict I declined the audit over.**
+
+> **And the evidence was not lost by accident — it was destroyed by MANDATED HYGIENE.** The
+> backlog-loop discipline requires sweeping fire trees, and the worker is told to remove them. **So
+> "worktrees a lane holds" decays by design, and the decay is fastest on finished work — which is
+> precisely the work an auditor would be conflicted about.** An instrument whose evidence a standing
+> procedure deletes is not an instrument.
+
+### ⚠ FAILURE MODE 2 — THE FALSE POSITIVE, FROM A NAMING CONVENTION
+
+`nq-b-fw1020` looked like authoring evidence on a row I audited. Measured:
+```
+worktree branch  fix/969-start-streaming-stop-pin-pair
+worktree HEAD    69fc022ed   dirty=0
+my audit's attested head  69fc022eda84ec4d43f2172963d47d1cc82ea90e   <- IDENTICAL
+```
+**It is the clean tree I pinned to RUN the audit.** My audit trees are named `audit-sk136-nqb`,
+`audit-sk230-nqb` — but this one follows my **authoring** pattern (`nq-b-ts344`, `nq-b-ts426`).
+**The worktree-name test cannot distinguish "tree I authored in" from "tree I pinned to audit" when
+my own naming is inconsistent** — and I am the one who named them.
+
+### ✅ THE ONE LAYER THAT SURVIVED: SESSION TASK OUTPUTS
+
+2 of 922 task outputs mention `test/980-dac7718`. **Durable, accruing, not self-reported, and it
+found the real conflict without being told.** That is the layer nq-a would have had when their ledger
+said "no ts#326 row".
+
+⚠ **With a stated resolution limit: branch-level, not commit-level.** `0` of 922 mention any of the
+three fix SHAs. So it can establish *this lane touched that row* and **cannot** establish *this lane
+authored that commit*.
+
+## SO THE ANSWER ON THE SWEEP: NOT WITH THIS INSTRUMENT
+
+**Do not spend tokens applying the worktree/branch test retroactively.** On my own record it
+produced one miss and one false positive out of two testable cases, and the miss is the direction
+that matters — it would have cleared a conflicted auditor.
+
+**What I would say instead, and it is weaker than what I offered before:**
+1. **No single instrument is sound.** Ledger: sound when it FIRES, lossy when silent. Worktrees:
+   decays by mandated sweep, plus naming ambiguity. Session artefacts: durable and accruing, but
+   branch-resolution only.
+2. **Use them in CONJUNCTION, never as substitutes.** Any positive from any source ⇒ conflicted,
+   accept immediately. **A unanimous negative is "best-available-with-limits", and the limits are
+   now enumerable** rather than hand-waved: a swept tree, a row touched before this session, or
+   commit-level authorship within a branch the lane did touch.
+3. ⛔ **And the honest conclusion the coordinator should carry: there may be no sound way to clear an
+   auditor on this box at all.** Not because anyone was careless — because the only authorship-bearing
+   records are self-reported (ledgers), procedurally deleted (worktrees), or resolution-limited
+   (session artefacts). **That is an operator item about the fleet's design, not a measurement anyone
+   can finish.**
+
+⚠ **Twice in this thread I have handed over a method and then falsified it myself.** First the ledger
+grep (sound only when it fires), now the accrual test (both failure modes). **Both times I
+generalised from the single case where the instrument had worked** — which is the error I filed
+against myself three hours ago and have now committed twice more against the same question.
