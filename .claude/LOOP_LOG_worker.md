@@ -6255,3 +6255,51 @@ provenance error, at small scale.** Two rules out of it:
 confirmed `isPrivate: true`; remote confirmed `daqifi/daqifi-python-test-suite`.
 
 nq-a re-reads (they found it; clean on both authorship halves).
+
+## 2026-09-30 19:12 MDT — I tested MY OWN scope hold. Right conclusion, FALSE stated reason. Two corrections.
+
+Tested it rather than waiting for nq-a's round-3 to test it, since the coordinator had asked them to
+verify my reasoning rather than accept it.
+
+⚠ **SELF-CORRECTION (34th) — the reason in my PUSHED COMMIT MESSAGE is false, in two ways.** I wrote
+*"the same case-sensitive shape exists in this file's narrower QUERY FAKES ... they are not what the
+assertions route through."*
+- `_FakeHappyPathScpi` is a **`command()` double**, not a query fake, and it **tracks semantic state**
+  (`power_state`, `channel_voltage`) — the same shape nq-a flagged in the main double.
+- It is **exactly** what assertions route through: `:924`, `:937`, `:953`, `:966` — including the
+  proofs for **my own** findings 5 and 6. `_FakePowerNeverUpScpi` / `_FakePowerUpRefusedScpi` inherit
+  from it.
+
+**✅ THE HOLD STANDS, on measured ground neither I nor nq-a stated — THE DIRECTION OF FAILURE:**
+```
+mutation APPLIED: 3 site(s) re-cased   ->  26 PASS, 3 FAIL
+control restored                       ->  29 PASS, 0 FAIL
+```
+It fails toward **RED**, loudly, and names the right thing (*"finding 5: a real error code ... must be
+OBSERVED, not silently discarded"*).
+> **The opposite of the main double, where a miss landed in an UNASSERTED bucket and was SILENT.**
+> **A silent miss is the defect; a loud one is a maintenance nuisance.** Same shape, opposite
+> consequence — which is exactly why finding 1 mattered and this does not.
+
+**NOT amending the commit:** the false statement is in the MESSAGE, not the code, and correcting it
+needs a force-push — which I ask before doing, always, and which is not worth it here. Correction
+routed to the coordinator for round-3's brief instead. ⚠ If nq-a tests the hold against what I
+actually wrote, they will correctly find it false and may widen round-3 scope for a nuisance.
+
+⚠ **SELF-CORRECTION (35th) — MY FIRST MUTATION DID NOT APPLY, and it printed GREEN.** The replacement
+string had the wrong indentation; the probe printed `mutated: False` beside a clean `29 PASS, 0 FAIL`,
+and **I nearly read that as evidence the hold was safe.** A VOID run, not a pass. Caught only because
+I printed the applied-flag — **a requirement I wrote into the fire's brief an hour earlier and then
+failed to apply to my own probe.**
+> **Assert the mutation APPLIED, or a green run is indistinguishable from a mutant that was never
+> built. A non-applying mutation is the strongest-LOOKING evidence available and is worth nothing.**
+
+Second time this evening that rule has had to work in both directions: once relayed to the fire as a
+hard requirement, once failed by me.
+
+**Two-sided criterion accepted as landing on the coordinator too, in their own general form:** the
+double is a MODEL, and a model wrong in either direction is wrong — **looser hides defects, stricter
+manufactures them.**
+
+Queue clear. nq-a has round 3; I am out of that read as the fix's author. Corpus sweep stays queued
+with the two-sided criterion attached.
