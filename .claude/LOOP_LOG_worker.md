@@ -8708,3 +8708,87 @@ script **printed a hardcoded interpretation line contradicting the numbers it ha
 **Identical to my stale `(expect 0,1)` line.** A pre-written expectation makes output get read
 against the sentence beside it rather than on its own. They caught it only because the ratio was too
 lopsided to match the words.
+
+## 2026-10-01 11:10 MDT — fw#1048: all three answers, and it cannot land — for a HARDWARE reason my lane structurally cannot satisfy
+
+**⛔ FIRST, THE PREMISE IS WRONG AND IT TOOK ONE CALL.** The coordinator described fw#1048 as *"the
+only firmware row that is mergeable, CLEAN, and carries no label at all."* It carries:
+```
+Review effort 1/5, blocked, needs-bench
+```
+**Not unlabelled. Explicitly `blocked`, plus `needs-bench`.** So the CLEAN+UNLABELLED=UN-AUDITED
+question does not arise — and this is the **fifth** relayed readiness claim tonight that a single
+`gh pr view` contradicted.
+
+## Q1 — IS THERE A POSTED VERDICT? **YES, AND IT IS A REAL ONE.**
+
+First time in four checks tonight that the answer is yes.
+```
+comment  cptkoolbeenz  created 2026-09-21T04:56:58Z (not edited)   cites the live head: TRUE
+fields   wf_de64e336-e8f · gateReason · auditorLegsOk 1/1 · blindLegRan: true · noProvenance: false
+```
+A workflow id, both legs, provenance present, **and it names `ea3f0e7a40`**. Not the un-audited case.
+
+## Q2 — WHICH LEG COVERS THE LIVE HEAD? **BOTH DO.**
+
+```
+live head ea3f0e7a40  committed  2026-09-21T04:43:06Z
+Qodo  "Code Review by Qodo"  created 09-11T20:53:32Z  UPDATED 2026-09-21T04:46:33Z   -> +3m27s
+audit  verdict comment                                created 2026-09-21T04:56:58Z   -> +13m52s
+```
+**⭐ AND THIS IS THE CASE WHERE nq-c's 27.8% FINDING DECIDED A LIVE QUESTION, NOT A STATISTIC.** The
+Qodo comment is an **edited-in-place** body — `created_at` is 09-11, **ten days before the head
+existed.** Using `created_at` I would have reported the Qodo leg as ten days stale and the row as not
+converged. `updated_at` shows it **re-rendered 3m27s after the head was committed.**
+
+> **The bound I wrongly declared refuted two hours ago is the thing that got this answer right.**
+> conv-fw localised it to exactly this comment type, and `updated_at` as "last re-render" is the
+> usable signal on it. Had I kept my one-row refutation, I would have gotten fw#1048 backwards.
+
+## Q3 — COMPANION TEST? **IT EXISTS AND IS REFERENCED — BUT ITS NEW ARMS HAVE NEVER BEEN RUN.**
+
+From the PR body:
+```
+## Companion test
+`daqifi-python-test-suite` branch `test/904-adc-cal-getter-torn-read`
+Extends `test_847_cap_input_setter_atomic.py` with two new BENCH arms
+Test: test_847_cap_input_setter_atomic.py <port> --race <TCP_HOST>
+```
+That is **ts#348** (OPEN) — *"test(scpi): #904 companion — calibration getters, a torn read, and a
+FAIL-only hammer."* So the standing policy is satisfied on the letter: a companion is committed and
+referenced. ⚠ **But a comment on the row states it plainly:**
+```
+| hardware | **not run** — this lane is bench-free |
+```
+**The two new arms are BENCH arms and were never executed.** That is what `needs-bench` means, and
+it is the real blocker.
+
+## ⛔⛔ AND I CANNOT SATISFY IT — NOT "SHOULD NOT", CANNOT
+
+The change is `CONF:ADC:chanCALM?/chanCALB?` — **a 64-bit read of CALIBRATION COEFFICIENTS**
+(`SCPIADC.c`, `daqifi_settings.c`).
+
+1. **nq-b's board is UNCALIBRATED.** `CLAUDE.md`'s inventory: *"Factory cal is identity, i.e. this
+   board is UNCALIBRATED — do not use it for accuracy work."* A lane whose coefficients are identity
+   cannot meaningfully validate a coefficient read: the torn-read arm needs two distinguishable
+   halves, and identity gives it nothing to tear.
+2. ⛔ **And the standing bench hazard sits exactly here:**
+   [[project_the_release_gate_can_corrupt_a_calibrated_board]] — the non-finite CalM/CalB probe
+   corrupts precisely the boards it would report on. **This PR is in that register.** Even a
+   calibrated lane should not reach for it casually, and mine has nothing to lose and nothing to
+   prove.
+
+**So fw#1048 does not land tonight, and the reason is neither audit freshness nor the labels.** Both
+legs cover the live head; the verdict is real and healthy; the companion exists. **The gap is a bench
+arm that has never run, on hardware my lane cannot provide and should not simulate.**
+
+⚠ **ROUTED, NOT DECIDED:** whether another lane's calibrated board may run ts#348's bench arms is an
+operator call about hardware, which is on the always-ask list. I am not proposing it and I am not
+asking a peer to do it for me — that would be the same permission route by a different door.
+
+## ⚠ AND I HIT conv-ts's HEREDOC WARNING MYSELF, THIRD LANE TONIGHT
+
+I wrote `` `blocked` `` inside a double-quoted `echo` and the shell **executed the backticks**:
+`blocked: command not found`. Loud this time, so harmless. conv-ts warned about it, nq-c hit it
+twice, and I hit it within the hour of reading both reports. **The damage is prose-shaped when a
+substitution silently returns empty** — this one errored visibly only by luck of the token.
