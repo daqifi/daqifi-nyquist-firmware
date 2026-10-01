@@ -66,7 +66,14 @@ RE_PROSE_REF='adversarial|pre-merge audit|audit round|re-audit|audited|blocked:a
 #   "noProvenance: true"                                 -> self-anchoring schema
 # A narrow qodo guard survives for the one case the anchor cannot settle: a
 # sentence that says "audit" but means Qodo's.
-RE_AUDIT_ANCHOR='adversarial|\badversarial-audit\b|auditorLegsOk|noProvenance|gateReason|covered_bytes|rawFindings|blindLegRan|hunterLegsIncomplete|codex_exit|\baudit\b'
+# ⚠ `\baudit` deliberately has NO trailing boundary. My own two-sided test caught the
+# miss: `\baudit\b` does not match "auditED" or "auditOR", so "audited head <sha>
+# matches" and "the auditor leg confirmed head <sha> equals live" were both REJECTED
+# — false negatives in my biased direction, and visible only because I tested a form
+# I expected to PASS rather than only forms I expected to fail. (conv-ts's
+# exemplary-set rule, applied at the pattern level.) Within a conjunction that also
+# requires a 40-hex SHA and an equality token, the looser form is safe.
+RE_AUDIT_ANCHOR='adversarial|auditorLegsOk|noProvenance|gateReason|covered_bytes|rawFindings|blindLegRan|hunterLegsIncomplete|codex_exit|\baudit'
 RE_QODO_DOMINANT='qodo'
 RE_STRONG_ANCHOR='adversarial|auditorLegsOk|noProvenance|gateReason|covered_bytes|rawFindings|blindLegRan|hunterLegsIncomplete|codex_exit|gate[[:space:]]*[:=]'
 RE_RANNESS='both legs died|was voided|auditorLegsOk|codex_exit|noProvenance|truncated[^A-Za-z]{0,6}true|\bhunter|\bskeptic|no machine-produced|did run'
@@ -213,18 +220,82 @@ run_row() {   # $1=pr
 		#              verdict -> category 0. Checked at source, not taken from nq-c.
 		#   fw#1027 nothing ran at all -> category 0b.
 		# Ran-ness is tested FIRST, so a row disclosing BOTH (901) lands in 0.
+		# ⛔ RULING ON nq-c's SUPERSEDED-DISCLOSURE FINDING: A PER-ROW FLAG, NOT A
+		# SEVENTH CATEGORY. Their discriminator is better than a timestamp and I
+		# verified it: fw#996's disclosing comment cites `d6ded5c16` and `495836d57`,
+		# neither of which prefixes the live head `df60bc24b3`, and a later comment
+		# carries an Audit PASS at the head that IS live. Head-pinning settles it with
+		# no ordering comparison, so it is immune to the 54-second resolution problem
+		# that made their timestamp test unusable on 1027.
+		#
+		# WHY A FLAG AND NOT A CATEGORY — it CROSS-CUTS, and a row has only one category:
+		#   * An EVIDENCE row can equally carry a PASS at a stale head.
+		#   * The BUDGET ruling is a HISTORICAL ACCOUNTING question — a degraded round
+		#     ran and either did or did not consume a round, whether or not a later head
+		#     superseded it. A category would erase that.
+		#   * The CURRENT-STATE reading ("which rows are blocked now") needs exactly this
+		#     qualifier. One bucket cannot serve both; a category forces a false choice
+		#     between two orthogonal facts.
+		# So: category unchanged, flag appended. 2 of 8 superseded is a caveat the
+		# operator needs attached to the number, not a re-partition of it.
+		#
+		# ⚠ THREE-WAY, because absence has kinds: a disclosure citing NO head cannot be
+		# settled mechanically and must NOT be defaulted to CURRENT.
+		local flag="PIN:none" lh cs
+		lh=$(gh pr view "$1" --repo "$REPO" --json headRefOid --jq .headRefOid 2>/dev/null)
+		cs=$(printf '%s' "$body" | grep -oE '\b[0-9a-f]{9,40}\b' | sort -u)
+		if [ -n "$cs" ] && [ -n "$lh" ]; then
+			flag="PIN:HISTORICAL"
+			while IFS= read -r s; do [ -z "$s" ] && continue
+				case "$lh" in "$s"*) flag="PIN:CURRENT"; break;; esac
+			done <<< "$cs"
+		elif [ -z "$lh" ]; then flag="PIN:UNDETERMINED"; fi
 		if printf '%s' "$body" | grep -qiE "$RE_RANNESS"; then
-			printf '%s\tDEGRADED_DISCLOSED\t%s\texcluded=%s\n' "$1" "${hits%,}" "$nex"; return
+			printf '%s\tDEGRADED_DISCLOSED\t%s\texcluded=%s %s\n' "$1" "${hits%,}" "$nex" "$flag"; return
 		fi
-		printf '%s\tDISCLOSED_NOT_RUN\t%s\texcluded=%s\n' "$1" "${hits%,}" "$nex"; return
+		printf '%s\tDISCLOSED_NOT_RUN\t%s\texcluded=%s %s\n' "$1" "${hits%,}" "$nex" "$flag"; return
 	done
 
 	local all; all=$(printf '%s\n' ${HUMAN+"${HUMAN[@]}"})
 	# 1 EVIDENCE
 	hits=$(printf '%s\n' "$all" | grep -oiE "$RE_EVIDENCE" | sort -u | head -3 | tr '\n' ',')
 	[ -n "$hits" ] && { printf '%s\tEVIDENCE\t%s\texcluded=%s\n' "$1" "${hits%,}" "$nex"; return; }
-	if printf '%s\n' "$all" | grep -qE "$RE_HEAD_ANCHORED" && printf '%s\n' "$all" | grep -qE "$RE_EQUALITY"; then
-		printf '%s\tEVIDENCE\thead-anchored\texcluded=%s\n' "$1" "$nex"; return; fi
+	# ⛔⛔ REPAIR 10 (nq-c) — THE HEAD-ANCHORED ARM REQUIRED ZERO AUDIT VOCABULARY.
+	# Repair 7 made category 0 require an in-sentence audit anchor. This arm, which I
+	# described as "unchanged from v1, which validated clean", required none: just a
+	# 40-hex SHA AND an equality word, anywhere in the row. MEASURED:
+	#   "confirm crc32 equals A7823538 at head <40hex>"  sha=1 eq=1 anchor=0 -> EVIDENCE
+	#   "the bench image matches <40hex>"                sha=1 eq=1 anchor=0 -> EVIDENCE
+	# And it is NOT synthetic: fw#1092's co-located trigger is bench hardware text —
+	# `firmware_crc32  A7823538  <- equals the RECORDED value` — in a comment carrying
+	# another lane's board serial. **A BENCH CRC32 CHECK SATISFIED MY STRONGEST-NAMED
+	# EVIDENCE FORM.** That is the five-objects trap inside the EVIDENCE arm, and
+	# "validated clean in v1" meant validated on synthetic schema strings, never
+	# against a corpus where commit SHAs and the word "equals" are everywhere.
+	#
+	# THIRD TIME IN THIS SPEC I HARDENED ONE ARM AND LEFT ITS NEIGHBOUR: gate
+	# value-bearing / noProvenance not; category 0 anchored / this arm not.
+	#
+	# FIX: same predicate, same scope as repair 7 — SHA, equality AND an audit anchor
+	# in ONE SENTENCE. This also makes the MATCHED column self-justifying, which is
+	# nq-c's real point: that column is the audit trail for the classification, so a
+	# token drawn from a bench check makes even a correct answer unverifiable.
+	#
+	# ⚠ AND IT MOVES ROWS IN MY BIASED DIRECTION. A row whose only evidence was an
+	# unanchored head claim now falls to PROSE_ONLY — the bucket my declared bias
+	# inflates. Per the standing rule that is the result to DISTRUST: every PROSE_ONLY
+	# row must be hand-read before any count is reported, and that now matters more
+	# than it did when PROSE_ONLY was 1.
+	local hs=0
+	while IFS= read -r s; do
+		[ -z "$s" ] && continue
+		printf '%s' "$s" | grep -qE "$RE_HEAD_ANCHORED"  || continue
+		printf '%s' "$s" | grep -qiE "$RE_EQUALITY"      || continue
+		printf '%s' "$s" | grep -qiE "$RE_AUDIT_ANCHOR"  || continue
+		hs=1; break
+	done <<< "$(printf '%s\n' "$all" | sed 's/\([.!?]\)[[:space:]]\+/\1\n/g')"
+	if [ "$hs" = 1 ]; then
+		printf '%s\tEVIDENCE\thead-anchored+audit-anchor\texcluded=%s\n' "$1" "$nex"; return; fi
 	printf '%s\n' "$all" | grep -qE "$RE_WORKFLOW" && { printf '%s\tEVIDENCE\tworkflow-id\texcluded=%s\n' "$1" "$nex"; return; }
 	# 2 QODO_ONLY
 	if printf '%s\n' ${QODO+"${QODO[@]}"} | grep -qiE "$RE_EVIDENCE|$RE_PROSE_REF"; then

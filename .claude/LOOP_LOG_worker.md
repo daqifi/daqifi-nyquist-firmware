@@ -8419,3 +8419,72 @@ while the push rule carries nothing. **Adopting it needed no authority (narrowin
 inheriting it as "the operator forbade this" would make a future fire assume the answer is no and
 never ask.** Appended the basis to the rule: obey by default, **escalate as an open question** if it
 blocks real work. Line arithmetic 1838 + 17 = 1855, reconciles; md5 re-recorded.
+
+## 2026-10-01 08:50 MDT — v5: repair 10 (the EVIDENCE arm needed no audit vocabulary) and a head-pin FLAG, not a seventh category
+
+nq-c found a defect in the one arm I had called *"unchanged from v1, which validated clean"* — and
+corrected their own first diagnosis of it by measurement before sending, which is why I trusted the
+second version immediately.
+
+## ⛔ REPAIR 10 — THE HEAD-ANCHORED EVIDENCE ARM REQUIRED ZERO AUDIT VOCABULARY
+
+Repair 7 made category 0 require an in-sentence audit anchor. **The strongest-named EVIDENCE form
+required none** — just a 40-hex SHA plus an equality word, anywhere in the row. Verified:
+```
+"confirm crc32 equals A7823538 at head <40hex>"   sha=1 eq=1 anchor=0 -> EVIDENCE
+"the bench image matches <40hex>"                 sha=1 eq=1 anchor=0 -> EVIDENCE
+```
+**Not synthetic.** fw#1092's real trigger is `firmware_crc32  A7823538  <- equals the RECORDED
+value`, in a comment carrying another lane's board serial. **A BENCH CRC32 CHECK SATISFIED MY
+STRONGEST EVIDENCE FORM** — the five-objects trap inside the EVIDENCE arm. And *"validated clean in
+v1"* meant validated on synthetic schema strings, never against a corpus where commit SHAs and the
+word "equals" are everywhere.
+
+> **THIRD TIME IN THIS SPEC I HARDENED ONE ARM AND LEFT ITS NEIGHBOUR.** `gate` value-bearing /
+> `noProvenance` not; category 0 anchored / this arm not. The fix was one variable away each time.
+
+nq-c's real point is sharper than the miscount: **the MATCHED column is the audit trail for the
+classification**, so a token drawn from a bench check makes even a *correct* answer unverifiable.
+⚠ And the fix moves rows toward PROSE_ONLY — **my biased direction** — so the hand-read requirement
+now matters more than when PROSE_ONLY was 1.
+
+**⚠ My own two-sided test caught a miss in the fix:** `\baudit\b` does not match "auditED" or
+"auditOR", so *"audited head <sha> matches"* and *"the auditor leg confirmed head <sha> equals live"*
+were both REJECTED — false negatives, again in my biased direction, **visible only because I tested a
+form I expected to PASS.** conv-ts's exemplary-set rule, at the pattern level. Dropped the trailing
+boundary.
+
+## RULING ON SUPERSEDED DISCLOSURES: A PER-ROW FLAG, NOT A SEVENTH CATEGORY
+
+nq-c's discriminator beats a timestamp and I verified it: fw#996's disclosing comment cites
+`d6ded5c16` / `495836d57`, **neither prefixing the live head `df60bc24b3`**, while a later comment
+carries an Audit PASS at the head that IS live. Head-pinning settles it with no ordering comparison —
+immune to the 54-second resolution problem that made their timestamp test unusable on 1027, which
+they correctly declined to claim.
+
+**WHY A FLAG: superseded-ness CROSS-CUTS, and a row has only one category.**
+- An EVIDENCE row can equally carry a PASS at a stale head.
+- The **budget ruling is historical accounting** — a degraded round ran and either did or did not
+  consume a round, regardless of a later head. A category would erase that.
+- The **current-state reading** needs exactly this qualifier.
+**One bucket cannot serve both; a category forces a false choice between orthogonal facts.**
+
+⚠ **Three-way, because absence has kinds:** `PIN:HISTORICAL` / `PIN:CURRENT` / `PIN:none` — a
+disclosure citing NO head cannot be settled mechanically and **must not default to CURRENT.**
+
+**Measured:** `996 PIN:HISTORICAL` (derived from it) · `901 PIN:none` (cites no head) ·
+**`1110 PIN:HISTORICAL` — which nobody had examined.** Verified independently: three full SHAs cited,
+none matching live `723d5ab742`. So the flag found a second superseded row on its first run.
+
+## ⚠ AND MY OWN VERIFICATION COMMAND LACKED THE VERIFICATION I BUILT INTO THE SPEC
+
+Checking 1110, the **first** identical query returned **empty** and the second returned three SHAs.
+An empty read there means *"cites no head"* -> `PIN:none` — **the opposite conclusion.** I wrote
+repair 5 to stop exactly this and then wrote an ad-hoc verification command without it. **Fourth
+instance of that transfer failure in one session**, and the first where it would have corrupted a
+ruling rather than a count.
+
+**nq-c also refuted my 1040 pagination hypothesis** (`.comments = 33`, nowhere near the 100 boundary)
+and named the likelier cause from conv-ts: a **bws 503 stripping `GH_TOKEN` and returning ZERO
+comments** on fw#991 before a retry returned 41. That is repair 5's exact failure mode occurring in
+the wild, which is the strongest argument for it so far.
