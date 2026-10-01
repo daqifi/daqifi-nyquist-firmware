@@ -9174,3 +9174,63 @@ output, bounded by a commit timeline that excludes any recent push.**
 **best-available-with-limits**, and the limits are nameable — work predating my session's artefacts,
 and commit-level authorship inside a branch my lane merely enumerated. **The one thing that would
 upgrade it is a commit on that branch attributable to my lane, and none exists after 2026-09-16.**
+
+## 2026-10-01 14:25 MDT — ts#430 STOPPED with nothing spent. ts#448 CONFIRMED mine — and I nearly REFUTED a true attribution with my own unsound instrument.
+
+## ts#430 — STOPPED, AND THE NON-SPEND IS VERIFIED NOT ASSERTED
+
+```
+live head  63ac3cd1e1a96bcbd3453768b995522232203ce4     9 commits    UNCHANGED
+my commits today: lane/nq-b only; the ts#430 one is the involvement ledger entry, not row work
+```
+**No head spent, no push, nothing to unwind.** The park was in a comment
+(*2026-09-16 "Audit round 2: BLOCK at 63ac3cd1e… — PARKING this PR"*) and the row carries only
+`blocked:audit-findings`. I had read that exact comment during the parks census and **tabulated it as
+another lane's verdict without registering it as a PARK** — so the index gap caught me too, one layer
+down from the coordinator.
+
+## ⛔⛔ ts#448 — CONFIRMED MINE, AND THE NEAR-MISS IS THE FINDING
+
+I was asked to confirm or refute auditing all three rounds. **My first two checks said REFUTE:**
+```
+ledger grep for wf_0f8faeea / wf_dc90fb7d / wf_68764159   ->  NO HITS
+.claude/evidence/audit-*448*                              ->  NONE
+```
+**Both are ABSENCES** — in a self-reported ledger and a hand-curated evidence dir. **Exactly the
+unsound half of the instrument I filed as unsound this morning.** Checked the accruing layer instead:
+```
+wf_0f8faeea-a90    workflow dir PRESENT in my session
+wf_dc90fb7d-132    workflow dir PRESENT in my session
+wf_68764159-0dd    workflow dir PRESENT in my session
+audit-ts448 / audit-ts448c   both HEAD da1a6e2, dirty=0
+42 of my session artefacts reference those worktree paths
+```
+**I ran all three audits. The worktrees conv-ts flagged as "attributing to nobody" are MINE.**
+
+> **I almost refuted a CORRECT attribution using absence in my own records — one message after
+> writing down that a ledger grep cannot clear a lane.** Fifth instance of leaning on a non-firing
+> check, and the first where it would have falsely cleared me for an audit I am not entitled to run.
+
+⭐ **And it explains conv-ts's measured gap from the other side.** They found three audits captured in
+the shared ledger whose scratchpad artifacts had died. **Mine is the inverse: captured in the workflow
+dirs, absent from BOTH my ledger and my evidence dir.** So the three layers fail independently, and
+the union is the only sound read — which is the conjunction rule arriving with a third instance.
+
+**CONSEQUENCE, stated plainly: I CANNOT audit a fix on ts#448.** Three rounds as auditor. ⚠ **And I
+am conflicted in the OTHER direction too** — `:5172` records *"Authorised: fix the confirmed finding
+at da1a6e267"*, and I filed `ts448-derivation-da1a6e267.md` and `ts448-probe-da1a6e267.py`. **Author
+AND auditor, same shape as ts#326.**
+
+## THE FLEET FINDING IS THE INVERSE OF TONIGHT'S, AND conv-fw's INVERSION IS THE SHARP PART
+
+Seven of eight rows routed this cycle carry a park in comments with **no `parked` label**
+(ts#430 434 435 432 448 342 415; only ts#326 clean). Tonight's earlier finding was a **VERDICT with
+no label** — sk#199 and three others. **The index gap cuts both ways**, and the operator's routing
+rule depends on the index.
+
+⭐⭐ **conv-fw's inversion, which neither I nor the coordinator reached:** the label being **TRUTHFUL**
+is what makes a fix round unauthorised, because it records a **LIVE BLOCK on a PARKED row**. **A
+STALE label would have been the weaker case.** So the coordinator's own "the labels are mostly
+truthful" finding was an argument **against** routing and was read as an argument **for** it.
+
+⚠ **ts#415 is the costly one** — nq-a worked it all night on that routing.
