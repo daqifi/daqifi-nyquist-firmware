@@ -549,6 +549,79 @@ matches what the model assumes, and that `system_config.h` still defines
 `APP_FLASH_PFM_END_ADDRESS` as `(APP_FLASH_END_ADDRESS +
 APP_FLASH_UPPER_PANEL_SIZE)`.
 
+`test_981_sd_failnext_hook.c` covers the one-shot arm/consume contract behind
+`SYSTem:STORage:SD:FAILNext` (issue #981) — a bench/test-only hook that forces
+ONE real SD write, issued during the next teardown drain, to fail once, so the
+write-failure accounting paths fixed by #825/#838/#915/#979 can be
+regression-tested without running the bench card out of space.
+`sd_card_manager.c` is not includable on the host (FreeRTOS + Harmony's
+`SYS_FS` + the whole SD state machine), so — same technique as
+`test_943`/`test_953` — this re-implements just the flag/consume shape against
+a mock and the Makefile greps the real source for four properties the model
+depends on: the flag's declaration, the POSITION (not just presence) of the
+critical-sectioned test-and-clear and its `currentProcessState ==
+UNMOUNT_DISK` safety gate at the consume site, the `#409` reset-scrub landing
+immediately before the `isInitDone` guard, and the setter being a plain store
+with no critical section of its own (the atomicity argument the firmware PR's
+design review settled). Any of the four moving fails the **build**, not just
+the test. Covers: starts disarmed, arm-then-consume is one-shot,
+disarm-without-consuming leaves the next write clean, re-arming after a
+consume works again, and disarming an already-idle hook is a no-op.
+
+The consume-site guard checks POSITION rather than four independent
+presence-only greps because an adversarial audit on PR #1013 found the
+presence-only version could not fail on two real mutations of the source:
+moving `taskEXIT_CRITICAL()` to before the armed test (every token still
+present, atomicity destroyed), and flipping the real
+`injectWriteFailure = true;` to `= false;` (a token the old guard never even
+looked for). `test_981_sd_failnext_real_consume.head.c` / `.tail.c` close the
+remaining gap a textual check — however positional — cannot: the Makefile
+splices **all of `SDCardWrite()`**, signature through closing brace, verbatim
+out of the real source and into a tiny compiled-and-RUN harness (no-op
+critical-section and `LOG_E` stand-ins, the five `gSDCardData` fields the
+function touches, and a **mock `SYS_FS_FileWrite` that counts its calls** and
+returns a byte count that is never `-1`). Nothing about the function is
+hand-typed there.
+
+It asserts the EFFECT, on two observables: **fired** → the function's real
+`int` return is `-1` **and zero calls reached the filesystem**; **not fired**
+→ the return is the mock's byte count **and exactly one call** did. Its first
+case is a control that asserts the write *is* reachable, so the "zero writes"
+assertions cannot pass vacuously. Covers: the `injectWriteFailure` mutation
+above, the `UNMOUNT_DISK` gate itself (armed-but-elsewhere must not fire, and
+the write must go through untouched), one-shot consumption, and an arm that
+survives a refused attempt firing at its next opportunity.
+
+That whole-function splice is round **three** of the same defect. Round two
+extracted only as far as `taskEXIT_CRITICAL();` and let the tail close the
+fragment with a hand-written `return injectWriteFailure;` — so the payload
+(`if (injectWriteFailure) { LOG_E(…); writeLen = -1; goto __exit; }`, the real
+write it must skip, and `__exit: return writeLen;`) was never compiled or run,
+and the assertion was on a **local bool**: the same proxy-not-effect shape the
+first two rounds were spent on. Deleting **only** the `goto __exit;` from the
+real source left all eight binaries green while, on hardware, the hook cleared
+its arm, logged "consumed", set `writeLen = -1`, then fell through into the
+real write, which succeeded and overwrote it — fault injection entirely dead,
+a "failed" write silently succeeding, nothing red anywhere. That mutation now
+fails this binary with the return value and the write count in the message.
+Its build-time sanity check on the extraction is deliberately a loose bound
+(a plausible line count, last line `}`) rather than an exact one, because an
+exact count would fail the *build* on the very mutations this binary exists to
+catch by *running* the code — turning a precise behavioural verdict back into
+a text-shape one.
+
+It still does not attempt the ordering mutation — a single-threaded host run
+cannot observe a concurrency property — which stays the positional grep's job.
+
+None of this exercises the real device or hardware timing. Only two of
+`SDCardWrite()`'s five call sites may consume a given arm in practice — the
+two that run inside a teardown already in progress — by design (the other
+three can trigger the pre-existing `ERROR → UNMOUNT_DISK → INIT →
+OPEN_FILE(WRITE_PLUS)` remount, which truncates the log file; see
+`gFailNextWrite`'s block comment in `sd_card_manager.c`). Real-hardware
+validation of the SCPI-to-drain path is `test_981_sd_failnext_hook.py`
+(daqifi-python-test-suite)'s job.
+
 ## Framework
 
 `test_framework.h` is a ~90-line header-only harness — `TEST()` to define a
