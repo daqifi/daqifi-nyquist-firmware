@@ -7288,3 +7288,102 @@ for the reason above, (b) changes recall quality for every lane, and (c) is a sh
 decision. **Routing it rather than doing it.** ⚠ And the file grew ~900 B from other sessions while
 I worked on it, so the headroom will be gone within the hour — this is a recurring bill, not a
 one-off.
+
+## 2026-10-01 01:52 MDT — sk#230 r2 PRE-AUDIT: the disclosed residual is EXACT, the guard BINDS, and 2 of its 4 cases cannot fire
+
+Coordinator direction, and the brief is **inverted on purpose**: I wrote r1's BLOCK *and prescribed
+this exact remedy*, so asking "is the bypass closed?" would be grading my own prescription — the
+fix-verification shape the rule exists to prevent. **So: what does the revert REINTRODUCE?** That
+runs against my prior, which makes my stake an asset rather than contamination.
+
+Pinned `audit-sk230-nqb` clean at `09b532acf`; base = merge-base `682caaba3` (fresh audit, per the
+sk#136 lesson that the RANGE decision outfound the reading decision). Audit launched
+`wf_729bd363-bee`, codex/high, `blindLeg:true`, `finalGate:true`, **no `fixed`, no `dispositions`**.
+
+## ⛔ I COMMITTED THE sk#136 `:397-400` DEFECT IN MY OWN SHELL, ONE HOUR AFTER AUDITING IT
+
+My first setup ran `git fetch … ; git merge-base --is-ancestor origin/main HEAD` **unchained**. The
+fetch failed (BWS 503) and **the ancestry test ran anyway against stale cached refs and printed a
+confident "HEAD does NOT contain main (stale base)".** That is verbatim the defect I reported on
+sk#136: *fetch and the ancestry test are unchained, so on a fetch failure the test answers from
+stale refs.* I caught it only because I had just written it up.
+
+Re-ran with the test **chained to a confirmed-successful fetch**. The conclusion survived — the base
+IS stale (`merge-base 682caaba3` vs `origin/main bc1ec42a4`) — **but it was an unearned answer the
+first time, and a right answer from a broken instrument is still a broken instrument.**
+
+## ✅ THE DISCLOSED RESIDUAL — TESTED, NOT ACCEPTED, AND EXACT
+
+conv-fw's revert *documents what it reintroduces* (`merge-target-keys.sh:240-263`): the two
+requirements pull opposite ways, restoring gives working detection plus **three dead refusal arms**,
+"real and still open". **A disclosed residual is an UNTESTED FINDING**, so I tested it: sourced the
+keying script with `$INPUT` set and read the `$RESTS` it computes, placing each refused character
+AFTER the verb. No candidate command executed, gate merge path never invoked.
+
+Ground truth taken from `pre-merge-gate.sh:194` itself, **not from the comment summarising it**:
+```
+REFUSED CHAR    RESTS                  ARM
+dquote   (")    < 99 --body X"Y>       REACHABLE
+squote   (')    < 99 --body X'Y>       REACHABLE
+backslash (\)   < 99 --body X\Y>       REACHABLE
+dollar   ($)    < 99 --body X$Y>       REACHABLE
+backtick (`)    < 99 --body X>         *** UNREACHABLE
+obrace   ({)    < 99 --body X>         *** UNREACHABLE
+cbrace   (})    < 99 --body X>         *** UNREACHABLE
+```
+**Exactly three, and precisely those three.** ✅ And **requirement 1 verified as a free side
+effect**: backtick-wrapped and brace-grouped verbs both yield non-empty `RESTS`, so the segment does
+reach `$CMD_M` and detection fires. ✅ Their five stated suite results reproduce exactly, run by me:
+`109/0 · 27/0 · 56/0 · 7/0 · 135/0`, plus `test-twin-check 154/0` they did not claim.
+
+## ⛔⭐ MY SHARPENING WAS WRONG, AND HOW IT WAS WRONG IS THE LESSON
+
+I predicted the disclosure **understated** itself at five arms: the cut set `[;|&(){}`]` contains
+**both parens**, so `(` and `)` are stripped from `$RESTS` too. **The parens ARE stripped — and no
+arm tests them.** I had inferred the seven characters from the comment's phrase *"seven characters
+including backtick, `{` and `}`"* and guessed parens; the real four are `" ' \ $`.
+
+> **A correct measurement joined to a wrong assumption about what the check tests would have
+> produced a confident "five dead arms, the author undercounted."** The only thing that stopped it
+> was opening the `case` statement instead of trusting the comment that summarises it. Same shape as
+> [[feedback_grep_hit_misattribution_the_quote_is_right_and_belongs_to_other_code]] — the quote was
+> right and belonged to different code. **I went hunting for an understatement and found the
+> disclosure exact; recording that, because a seal that only records confirmed suspicions is a
+> suppression channel.**
+
+## ⭐⭐ THE FINDING: THE RE-NARROWING GUARD IS 2 CASES, BILLED AS 4, AND THE OUTPUT CANNOT TELL THEM APART
+
+Mutation-tested the four new regression cases pre-audit — re-narrowed the cut set to `[;|&()]` in a
+scratch copy, **asserted the mutation applied by `diff` before trusting any result** (a
+non-applying mutant prints green and is worth nothing):
+```
+control 109/0  ->  mutant 107/2
+  FAIL detection survives: `gh pr merge 99`      want=2 got=0
+  FAIL detection survives: { gh pr merge 99; }   want=2 got=0
+```
+**The guard BINDS** — with the exact bypass signature. **But only 2 of the 4 cases fire.** The four
+shapes are `` `V 99` ``, `{ V 99; }`, `( V 99 )`, `$(V 99)`, and **conv-fw's own measurement table
+records the last two as rc=2 under BOTH cut sets** — so by the author's own data they cannot
+distinguish the restored set from the narrowed one.
+
+> ⭐ **The defect is the CAMOUFLAGE, not the count. All four print identically as passing
+> "detection survives" cases.** Nothing in the suite output separates the two that carry the
+> guarantee from the two that cannot. The commit bills all four as "a guard against re-narrowing";
+> its real strength is two. A future editor pruning "redundant" cases, or re-narrowing while keeping
+> the suite green, gets no signal — **and the precedent is in this very file, where three dead arms
+> went unnoticed for weeks because the suite exercised the quoted form.**
+
+Cheap remedy: split the loop so the two narrowing-sensitive shapes are named as the guard ("these go
+rc=2→rc=0 under `[;|&()]`") and the other two are marked coverage-only. **Severity LOW** — not a live
+bypass, the guard does bind. Reported as a precision defect in a protection claim, not as an opening.
+
+## ⚠ AND THE SECURITY GATE MIS-RESOLVED THE REPO ON MY OWN PUSH
+
+Pushing from `nq-b`, the gate blocked with *"Security gate not satisfied for 'audit-sk230-nqb' on
+'HEAD'"*. **I was not pushing that repo** — its path appeared later in the same compound command, and
+the gate resolved the repo from command text. Plus the marker keyed on the literal branch **`HEAD`**,
+the detached-worktree case already filed. **Two filed findings firing together, live, on an ordinary
+push.** I did **not** run `mark-passed` — that would clear a first-push gate for a push I am not
+making, and leave a consumed-on-use marker behind. Split the command instead and it went clean.
+Confirmed nothing before the block had run (`git log -1` unchanged, file still untracked): **a
+PreToolUse gate blocks the whole compound command.**
