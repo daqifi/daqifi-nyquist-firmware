@@ -71,12 +71,41 @@ esac
 # ---- CALIBRATION: prove BOTH directions before trusting any row ------------
 # A pass/fail instrument that has only been seen passing is not an instrument.
 # Known-positive: the stated repo's default-branch head MUST resolve -> expect 200.
-http_status() {   # $1=repo $2=sha -> prints the numeric HTTP status, or nothing
+http_status_once() {   # $1=repo $2=sha -> prints the numeric HTTP status, or nothing
 	local out
 	out=$(gh api -i "repos/$1/commits/$2" 2>&1)
 	# NOTE: deliberately not `|| echo`, and no `$?` after a pipeline -- both of those
 	# turn "could not run" into a verdict. An empty status means NO ANSWER.
 	printf '%s\n' "$out" | sed -n '1s@^HTTP/[0-9.]* \([0-9][0-9][0-9]\).*@\1@p' | head -1
+}
+
+# ⛔⛔ ONE CALL CANNOT BOOK A WRONG_REPO, AND THIS IS A MEASURED CORRECTION.
+# A genuine wrong-repo returns 422 on every attempt. The FLAKE is an intermittent
+# EMPTY status (no HTTP line at all) -- measured by conv-fw at 20% on one row with
+# rate_limit showing 5000/5000, and by nq-a at 40% across five. A single sample
+# therefore cannot distinguish "not in this repo" from "the call did not land", and
+# the dangerous direction is booking a FALSE FINDING against a sound artifact.
+# (That happened: a lane booked a wrong-repo on one sample, then constructed an
+# explanation for it with contradicting evidence in the same output.)
+#
+# So: sample until CONSENSUS. Need N_AGREE identical non-empty statuses; empties are
+# retried, never counted as a verdict. Disagreement is UNDETERMINED, not a vote.
+N_AGREE=3
+N_TRIES=6
+http_status() {   # $1=repo $2=sha -> prints "<status> <agree>/<nonempty>" or " 0/<n>"
+	local s i empty=0 nonempty=0
+	declare -A seen=()
+	for ((i=0; i<N_TRIES; i++)); do
+		s=$(http_status_once "$1" "$2")
+		if [ -z "$s" ]; then empty=$((empty+1)); sleep 1; continue; fi
+		nonempty=$((nonempty+1))
+		seen[$s]=$(( ${seen[$s]:-0} + 1 ))
+		[ "${seen[$s]}" -ge "$N_AGREE" ] && { printf '%s %s/%s' "$s" "${seen[$s]}" "$nonempty"; return; }
+	done
+	# no status reached consensus
+	local best='' bestn=0 k
+	for k in "${!seen[@]}"; do [ "${seen[$k]}" -gt "$bestn" ] && { best=$k; bestn=${seen[$k]}; }; done
+	printf '%s %s/%s' "${best:-}" "$bestn" "$nonempty"
 }
 
 KNOWN_GOOD=$(gh api "repos/$REPO" --jq '.default_branch' 2>/dev/null)
@@ -85,15 +114,41 @@ if [ -z "$KNOWN_GOOD" ]; then
 	echo "Fix access/network first. Reporting nothing rather than a sweep of unknowns." >&2
 	exit 3
 fi
-POS=$(http_status "$REPO" "$KNOWN_GOOD")
-NEG=$(http_status "$REPO" "0000000000000000000000000000000000000000")
-printf 'CALIBRATION  known-good(%s)=%s   known-bad(40 zeros)=%s\n' "$KNOWN_GOOD" "${POS:-NO_ANSWER}" "${NEG:-NO_ANSWER}"
-if [ "$POS" != "200" ] || [ "$NEG" = "200" ]; then
-	echo "CALIBRATION FAILED: the instrument does not distinguish present from absent. STOPPING." >&2
+read -r POS POSA <<<"$(http_status "$REPO" "$KNOWN_GOOD")"
+read -r NEG NEGA <<<"$(http_status "$REPO" "0000000000000000000000000000000000000000")"
+printf 'CALIBRATION  known-good(%s)=%s [%s]   known-bad(40 zeros)=%s [%s]   consensus=%s\n' \
+	"$KNOWN_GOOD" "${POS:-NO_ANSWER}" "$POSA" "${NEG:-NO_ANSWER}" "$NEGA" "$N_AGREE"
+if [ "${POS:-}" != "200" ] || [ "${NEG:-}" = "200" ] || [ -z "${NEG:-}" ]; then
+	echo "CALIBRATION FAILED: the instrument does not distinguish present from absent," >&2
+	echo "or could not reach consensus. STOPPING rather than sweeping unknowns." >&2
 	exit 3
 fi
-echo "CALIBRATION OK -- both directions proven. Proceeding."
+echo "CALIBRATION OK -- both directions proven at consensus $N_AGREE. Proceeding."
 echo
+
+# ---- optional RANGE test -----------------------------------------------------
+# ⛔ THE BYTE TOLERANCE IS WITHDRAWN. Two tolerances were fitted and both falsified:
+# a percentage band turned out to measure diff size, and a |delta| <= 16 B
+# replacement failed on a real corpus (+48, +14, -40 on SOUND artifacts -- both
+# signs, not fixed, not per-file). The residual is UNMODELLED: nobody has yet
+# identified what the audit counts that `git diff | wc -c` does not. A tolerance
+# fitted to agreeing samples without a mechanism is a guess wearing a number.
+#
+# What survives is an ORDER-OF-MAGNITUDE RATIO test, which stays correct whatever
+# the residual turns out to be: observed signal ~9x (and 242x in the worst case),
+# observed noise ~0.1%. Bounds [0.5, 2.0] -- a factor of two either way is still
+# "same order", and nothing legitimate has come close to leaving it.
+RATIO_LO=0.5
+RATIO_HI=2.0
+PR_BYTES=""
+if [ "${1:-}" = "--pr" ] && [ -n "${2:-}" ]; then
+	PRN="$2"; shift 2
+	PR_BYTES=$(gh pr diff "$PRN" --repo "$REPO" 2>/dev/null | wc -c)
+	[ "${PR_BYTES:-0}" -gt 0 ] \
+		&& echo "RANGE REFERENCE  gh pr diff $PRN | wc -c = $PR_BYTES bytes; flagging total_bytes outside [${RATIO_LO}x, ${RATIO_HI}x]" \
+		|| { echo "RANGE REFERENCE unavailable for PR $PRN -- range column reported, NOT judged." >&2; PR_BYTES=""; }
+	echo
+fi
 
 # ---- the sweep -------------------------------------------------------------
 rc=0
@@ -108,14 +163,21 @@ EOF
 		printf '%-46s %-12s %-11s %-6s %s\n' "$(basename "$f")" "${BASE:0:12}" "${TOT:--}" "${GATE:--}" "UNDETERMINED (no head_sha)"
 		rc=1; continue
 	fi
-	S=$(http_status "$REPO" "$HEAD")
+	read -r S AGREE <<<"$(http_status "$REPO" "$HEAD")"
 	case "${S:-}" in
-		200) V="OK" ;;
-		422) V="*** WRONG_REPO -- head_sha is not in $REPO" ; rc=1 ;;
-		404) V="UNDETERMINED (404: repo missing or no access)" ; rc=1 ;;
-		"")  V="UNDETERMINED (no HTTP status: network/auth/rate-limit)" ; rc=1 ;;
-		*)   V="UNDETERMINED (HTTP $S)" ; rc=1 ;;
+		200) V="OK [$AGREE]" ;;
+		422) V="*** WRONG_REPO -- head_sha is not in $REPO [$AGREE consistent]" ; rc=1 ;;
+		404) V="UNDETERMINED (404: repo missing or no access) [$AGREE]" ; rc=1 ;;
+		"")  V="UNDETERMINED (no consensus in $N_TRIES tries: network/auth/rate-limit)" ; rc=1 ;;
+		*)   V="UNDETERMINED (HTTP $S) [$AGREE]" ; rc=1 ;;
 	esac
+	# RANGE test, only when a reference exists. Order of magnitude, not a tolerance.
+	if [ -n "$PR_BYTES" ] && [ "$TOT" != "-" ] && [ "$TOT" != "null" ] && [ -n "$TOT" ]; then
+		R=$(awk -v a="$TOT" -v b="$PR_BYTES" 'BEGIN{ if (b>0) printf "%.3f", a/b; else print "na" }')
+		OUT=$(awk -v r="$R" -v lo="$RATIO_LO" -v hi="$RATIO_HI" 'BEGIN{ print (r+0<lo || r+0>hi) ? "1" : "0" }')
+		[ "$OUT" = "1" ] && { V="$V  *** RANGE ${R}x of the PR diff -- base is wrong"; rc=1; } \
+		                 || V="$V  range ${R}x"
+	fi
 	printf '%-46s %-12s %-11s %-6s %s\n' "$(basename "$f")" "${BASE:0:12}" "$TOT" "$GATE" "$V"
 done
 echo
