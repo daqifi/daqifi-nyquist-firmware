@@ -8272,3 +8272,74 @@ it and I would rather state it than have it found later.
 found by the lane that did NOT write it, and three of the six were in my repairs rather than my
 original.** The design/execute split did not merely catch a bug; it caught bugs in the fixes, which
 is the part a single author cannot reach.
+
+## 2026-10-01 07:40 MDT — MEASURED MY OWN BRIEF: conv-ts's fix does not apply, and the measurement found a MISSING SAFETY RULE
+
+conv-ts relayed a quiet-tick cost fix with an explicit caveat: *"measure your own brief before
+adopting, because if yours is already short there is no win here."* **Measured. There is no win, and
+the honest answer is a different mechanism.**
+
+## THEIR MECHANISM DOES NOT APPLY: MY DISPATCHER PASSES A PATH, NOT CONTENTS
+
+Theirs re-sends a 29.5 KB brief as the fire's PROMPT through ~11 tool rounds. Mine does not:
+`DISPATCHER_PROMPT.txt:50` tells the fire to **read** the files.
+```
+STANDARD FIRE PROMPT (what is re-sent per round):  4 lines, 1,393 B, ~348 tokens
+  -> prompt x rounds  ~=  3.8k tokens.  NEGLIGIBLE. Their split would save me almost nothing.
+```
+
+## BUT I HAVE A BIGGER COST BY A DIFFERENT MECHANISM, AND IT IS NOT FIXABLE WHERE THEIRS WAS
+
+```
+FIRE_STANDARDS.md   103,397 B  ~25,849 tokens   read "IN FULL"
+FIRE_TASK.md         20,993 B   ~5,248 tokens
+TOTAL per fire      124,390 B  ~31,097 tokens   BEFORE any delta probe exists
+```
+**~31k tokens every fire, including a quiet one, before it can know whether there is work** — and
+`FIRE_TASK.md` contains **no delta/no-op probe at all**. One-time read, so it does not multiply the
+way theirs does, but comparable in magnitude to their 75k.
+
+⛔ **And the fix is not where theirs was.** The read ORDER is set inside the fire prompt at
+`DISPATCHER_PROMPT.txt:50`, and `:2` of that file states *"this prompt is fixed when the cron is
+created."* **So no amount of editing the briefs reorders it** — probe-before-heavy-read requires
+re-creating the cron, which is the operator's, not mine. Adopting their file split would have been
+cargo-culting a remedy for a mechanism I do not have.
+
+## ⭐⭐ THE ACTUAL PAYOFF: MEASURING FOR TOKENS SURFACED A MISSING SAFETY RULE
+
+Running conv-ts's check 1 (grep each hard rule and confirm it survives) against **my** rule set,
+because they said mine would differ and my board makes device rules load-bearing:
+```
+SERIAL / 7E2873046200E891      8      device-guard|bench          32
+flash                         15      no new PRs|CONVERGE         28
+NVM                            3      do not merge|NOT merge       2
+push to a branch not owned     0  <-- ZERO
+lane/nq-b                      0  <-- ZERO in FIRE_STANDARDS.md AND FIRE_TASK.md
+```
+**The only push restriction anywhere in the brief set was force-push (`:54`).** My standards enforce
+ownership for **hardware** (`:715-716` "refuses identifiers this lane does not own"; `:616` "hardware
+you do not own") and **not for branches.**
+
+> **This rule was never present — which is worse than one lost in a split, because nothing had ever
+> recorded its absence.** conv-ts's warning was that a dropped rule is invisible on a quiet tick; a
+> rule that never existed is invisible on every tick.
+
+**ADDED** to `FIRE_STANDARDS.md` (restrictive, so safe to adopt, and effective because that file IS
+read at runtime unlike the frozen cron prompt): push only to a branch this lane created or owns;
+never to another lane's branch even if the ticket looks unclaimed; `git ls-remote` before the first
+push to any branch this fire did not create; and the note that **the selection lock does not cover
+this** — it serialises ticket CLAIM, not the push target, so a correctly-claimed ticket can still be
+pushed to the wrong branch. **Two different guards and only one existed.**
+
+**Both of conv-ts's checks applied to my OWN edit:**
+```
+check 2  line arithmetic   1806 + 32 = 1838   actual 1838   RECONCILES
+check 1  rule greppable    lane/nq-b now 2, existence-check 2
+bonus    md5 recorded      .claude/FIRE_STANDARDS.md5  (verify by hash, not by re-reading)
+```
+And I sidestepped their heredoc hazard entirely by composing with `Write` and `cat`-ing it in, rather
+than trusting a quoted delimiter — verified the literal `git ls-remote origin refs/heads/<branch>`
+survived intact.
+
+⚠ **I did NOT split the brief, reorder the reads, or touch the cron.** The measurement says the split
+buys me nothing and the reorder is not mine to make.
