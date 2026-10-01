@@ -11,6 +11,7 @@
 # The copy is regenerated on every build, so it always tracks the real source.
 
 CC       ?= gcc
+PYTHON   ?= python3
 CFLAGS   ?= -std=c11 -Wall -Wextra -O0 -g
 FW_UTIL  := ../../firmware/src/Util
 FW_ADC   := ../../firmware/src/HAL/ADC
@@ -60,6 +61,52 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # reordered, reworded or moved, each of which invalidates the test's premise
 # and should be looked at rather than skipped.
 SUSPEND_BIN := run_953_tests
+
+# #1001: the lengths of the strings SD_SuspendReasonText() returns, measured
+# against the real LOG_E prefixes that interpolate them. Logger cuts a
+# formatted line at LOG_MESSAGE_SIZE - 3, and #986 was a reason that did not
+# fit -- the line lost the command that clears a quarantine.
+#
+# THIS ONE HAS NO GREP GUARD, AND THAT IS THE POINT. Deliberately unlike
+# BENCH_BIN (which copies two timeout constants and greps them) and unlike
+# SUSPEND_BIN's own guard above (which copies an arm ORDERING and checks it):
+# this target copies NOTHING, so there is nothing to check a copy against. The
+# strings, the four format strings they are interpolated into, the longest
+# command mnemonic that can reach each one, and LOG_MESSAGE_SIZE together with
+# both of Logger.c's reservations are all EXTRACTED at build time into
+# $(GEN_1001) and included by the test.
+#
+# That is not a style preference, it is the ticket. Three guards were tried in
+# PR #983 and each was defeated in review: a grep for the reason's own words
+# (which matched the longer string it replaced), a hash of the function (whose
+# pipeline collapsed whitespace inside the literals), and copies in the test
+# measured against a -D limit (which drift). All three pinned something ABOUT
+# the strings; a grep added here would be a fourth of the same kind.
+#
+# What replaces the guard is the generator's own refusal to guess: it exits
+# non-zero and writes NOTHING if SD_SuspendReasonText() cannot be found, if a
+# `return` in it is neither NULL nor string literals, if the literal or
+# call-site COUNTS have changed, if a format carries a conversion it cannot
+# bound, if a command mnemonic cannot be traced, or if either Logger constant
+# will not parse. Each of those fails the build with a message naming what a
+# human has to re-derive -- so the vacuous pass (a guard that runs and checks
+# nothing) has no route in.
+#
+# The prerequisites matter as much as the recipe: Logger.h and Logger.c are
+# listed because the character ceiling comes from them, and
+# tools/lint/check_log_ascii.py because the generator imports its
+# string-literal scanner. An edit to any prerequisite regenerates the header
+# rather than leaving a stale one behind. NOTE for CI: the host-tests
+# workflow must list those same three files in its `paths:` triggers for the
+# same reason -- a PR that lowers the ceiling, or edits the scanner, and
+# touches nothing else has to queue this job rather than leave the generator
+# to run for the first time on some later, unrelated PR. They are listed
+# there; that comment and this one are two halves of one invariant.
+GEN_1001        := gen_1001_suspend_reasons.h
+GEN_1001_SCRIPT := gen_1001_suspend_reason_fixture.py
+FW_LOGGER_H     := $(FW_UTIL)/Logger.h
+FW_LOGGER_C     := $(FW_UTIL)/Logger.c
+LINT_SCANNER    := ../../tools/lint/check_log_ascii.py
 
 # #985: SD_SuspendReasonText() itself -- the function the cascade above calls.
 # Third target on SCPIStorageSD.c and, for the same reason as the two above,
@@ -601,6 +648,10 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	       echo "       Update FW_STALL_POLL_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
+
+$(GEN_1001): $(GEN_1001_SCRIPT) $(SD_BENCH_SRC) $(FW_LOGGER_H) $(FW_LOGGER_C) \
+             $(LINT_SCANNER) $(RECIPES)
+	$(PYTHON) $(GEN_1001_SCRIPT) --out $(GEN_1001)
 
 $(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE_SRC) $(FREERTOS_CONFIG_SRC)
 	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_INTERFACE_SRC) \
@@ -1218,7 +1269,8 @@ $(CALFINITE_BIN): test_1154_adc_cal_coefficient_finite.c test_framework.h $(SCPI
 # early-exit is a legitimate `break` two lines above, so the check would have to
 # know which one it was looking at, which is parsing C -- the thing #1032 exists
 # to get this repo out of.)
-$(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
+$(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_SRC) \
+                $(GEN_1001) $(RECIPES)
 	@a=`grep -nF 'SD:BENCH refused' $(SD_BENCH_SRC) | cut -d: -f1`; \
 	 b=`grep -nF '} else if (why != NULL) {' $(SD_BENCH_SRC) | cut -d: -f1`; \
 	 d=`grep -nF '} else if (armTornDown) {' $(SD_BENCH_SRC) | cut -d: -f1`; \
@@ -2406,6 +2458,6 @@ clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
 	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) \
-	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp
+	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp $(GEN_1001)
 
 .PHONY: run clean
