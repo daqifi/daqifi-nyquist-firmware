@@ -7714,3 +7714,67 @@ lexical filter can honestly report.
 could not carry it even if someone wanted to. Excluding it in that repo filters nothing. Also
 asymmetric: `needs-audit` is test-suite-only, `blocks-autonomy` is skills-only. **Reported as a fact
 about the label sets, not as a proposal to create anything.**
+
+## 2026-10-01 03:35 MDT — ⛔⛔ VERIFIED ON THE INSTALLED GATE: ALL NINE SHAPES BYPASS, AND MERGING CANNOT CLOSE THEM
+
+conv-fw reproduced my four shapes, found **five more**, and fixed all nine at `02a67fc` on
+`fix/gate-five-fail-opens`. **I verified their operational claim MYSELF rather than relaying it** —
+they had just reported booking a false wrong-repo finding off one sample, so their characterisations
+are exactly the category to re-derive.
+
+**Tested the INSTALLED parser directly** (`~/.claude/skills/qodo-cycle/merge-target-keys.sh` — I may
+READ it, never write it). Probe sources it in a subshell and reads `$CMD_M`; **no candidate command
+is executed and the merge path is never invoked.**
+
+```
+control   gh pr <V> 99                                    detected  <- parser is LIVE
+MINE      if true; then <V> 99; fi                        *** BYPASS
+MINE      for i in 1; do <V> 99; done                     *** BYPASS
+MINE      while true; do <V> 99; done                     *** BYPASS
+MINE      if false; then :; else <V> 99; fi               *** BYPASS
+CONV-FW   if <V> 99; then :; fi                           *** BYPASS
+CONV-FW   while <V> 99; do :; done                        *** BYPASS
+CONV-FW   until <V> 99; do :; done                        *** BYPASS
+CONV-FW   ! <V> 99                                        *** BYPASS   <- FOUR PREPENDED CHARACTERS
+CONV-FW   if false; then :; elif <V> 99; then :; fi        *** BYPASS
+r1 cases  { <V> 99; } and `<V> 99`                        detected  <- restored cut set works
+```
+**Nine bypasses on the gate every agent on this box loads right now.** The control and the two r1
+shapes are detected, so this is not a broken harness — the parser works and these are genuine misses.
+
+⭐ **Their token-set reasoning is better than my proposal and I withdraw mine.** I suggested
+`then|do|else|elif|in`. The correct axis is **"does a command word legally follow this token in its
+own segment"**: `if while until then else elif do !` are transparent; `fi done esac for case select
+in function` must stay NO, because a terminator classifying NO is *correct* — there is no command
+after `fi` — and making it transparent walks past the terminator. **`in` is doubly wrong**: it is
+unreachable as a first word and transparency would read a `case` pattern list as a command. I flagged
+`in` as uncertain rather than guessing, which was right, but the rule I offered was still wrong.
+
+⭐ **And their five are structurally cheaper than my four.** Mine all need a `;` to put the keyword at
+a segment start. `if`, `while`, `until` and `!` take a command as their **direct next word**, so they
+need no separator at all. **I found the shapes reachable from the mechanism I was already looking at
+(segment starts) and missed the ones that need no segment boundary** — the same narrowing as
+extracting one consequence from a token and stopping.
+
+## ⛔ THE PART THAT IS NOT CLOSEABLE BY MERGING, VERIFIED READ-ONLY
+
+```
+installed  autopush/office-390bc12dcdf8 @ 6c6d16f   dirty 0
+  vs origin/main                 ahead 185  behind 102   DIVERGENT
+  vs fix/gate-five-fail-opens    ahead  19  behind  11   DIVERGENT
+keyword arm in the installed parser: ABSENT (grep: no match)
+installed cut set :240 = [;|&(){}`]  -- already the WIDE/restored set
+```
+> **The installed ref is downstream of NEITHER main NOR the fix branch.** So merging sk#230, or
+> merging conv-fw's fix, **changes nothing about the gate that is actually running.** Only a sync of
+> `~/.claude/skills` closes these nine, and that is the operator's: I do not write to the installed
+> tree under any circumstance, and I confirmed it at `6c6d16f`, dirty 0, before and after.
+
+**This is the live-exposure half of [[project_the_INSTALLED_merge_gate_is_not_any_reviewed_state]],
+now with nine measured shapes instead of two.** Escalating to the operator as the session's most
+operationally significant finding: **between now and that sync, the merge gate does not stop any of
+the nine, and `! <verb> N` costs four characters.**
+
+⚠ **Stated plainly for my own conduct:** this does not change what I may do. I still may not merge
+anything, and the existence of a bypass is not permission to use one — it is the reason the operator
+needs to know.
