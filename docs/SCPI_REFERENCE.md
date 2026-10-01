@@ -26,8 +26,9 @@ New code, docs, and the wiki should use the canonical forms. Existing client lib
 #### `SYSTem:MEMory:*` claim-path gate
 
 `tools/lint/scpi_claim_path.py` (CI: `.github/workflows/scpi-claim-path.yml`)
-asserts **four** things, each of which the other three pass without (#863, #864).
-Queries (trailing `?`) are exempt — they read and cannot corrupt a partition.
+asserts **five** things, each of which the other four pass without (#863, #864,
+#977). Queries (trailing `?`) are exempt — they read and cannot corrupt a
+partition.
 
 | # | asserted | what passes it if the others are the only checks |
 |---|---|---|
@@ -35,6 +36,7 @@ Queries (trailing `?`) are exempt — they read and cannot corrupt a partition.
 | 2 | the helper **calls** `Streaming_BeginConfigChange` / `EndConfigChange`, and **looks at Begin's verdict** — neither discarding it nor storing it unread | a gutted helper — all seven still "go through the claim path", none claims anything; `(void)Begin();`, which refuses nothing; or `claim = Begin();` with the rejection arm deleted, which dispatches after a BUSY verdict |
 | 3 | the helper **holds** the claim across its dispatch — the call through its function-pointer parameter falls inside the single Begin…End pair | a helper reordered to Begin → End → body: both calls present, nothing held |
 | 4 | in `streaming.c`, `Begin` **sets** the claim flag inside a single critical section that also **reads** it (a test-and-set, not a plain set) and `End` **clears** it | a `Begin` that returns `STREAM_CFG_CLAIM_OK` having set nothing — 1–3 all read `SCPIInterface.c` only |
+| 5 | the two claims **interlock** (#977): `Streaming_BeginConfigChange` reads the *session-start* flag inside its critical section, `Streaming_BeginSessionStart` reads the *config-change* flag inside its own, and the session-start claim is itself a test-and-set with a release | the whole **pre-#977 tree** — every one of rows 1–4 passes on it. The two claims each guarded their own flag only, while both families reach `PrepareStreamingBuffers`, which re-carves the one streaming pool |
 
 4 is why the CI trigger includes `firmware/src/services/streaming.*`. That
 trigger landed in #863 and, until #864, fired on a file the checker asserted
@@ -81,6 +83,14 @@ checker is textual: it has no control flow and no reachability, and that limits
 - A dead branch satisfies rows 3 and 4 as readily as row 1: an `End` whose only
   clear sits in `if (0)`, or a `Begin` that sets then immediately clears, both
   pass.
+- Row 5 inherits row 4's limit exactly: it shows each `Begin` **mentions** the
+  other claim's flag inside its critical section, not that the mention refuses
+  anything — `(void)gSessionStartBusy;` there satisfies it. It also says nothing
+  about there being only two claims: a *third* path to
+  `PrepareStreamingBuffers` taking neither is invisible, because the checker
+  reads the primitives, not the callers. What it does catch is the honest
+  regression — the cross-test deleted, or hoisted above `taskENTER_CRITICAL`
+  (which is the TOCTOU the interlock exists to close).
 
 These are **#896**, filed rather than fixed: closing them means real
 reachability analysis, which is a different tool. Recorded here so a green gate

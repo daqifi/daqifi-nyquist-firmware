@@ -1,6 +1,20 @@
-/* USB event handlers run in ISR context. LOG_E/LOG_I/LOG_D are ISR-aware
- * and automatically defer to a queue — safe to use here. Format args are
- * ignored in ISR context (use static strings). See issue #191. */
+/* Execution context of this file's USB callbacks. Not uniform. Re-traced for
+ * #185 on this build's interrupt-mode USBHS driver
+ * (DRV_USBHS_INTERRUPT_MODE == true, configuration.h):
+ *   - CDC WRITE_COMPLETE (-> UsbCdc_FinalizeWrite) and the RESET / SUSPEND /
+ *     RESUME bus events: the USB ISR (vector 132, IPL1 set in plib_evic.c),
+ *     via DRV_USBHS_Tasks_ISR. The driver's polled task does NOT run that
+ *     path in interrupt mode (M_DRV_USBHS_Tasks_ISR expands to nothing).
+ *   - CDC READ_COMPLETE: the ISR, OR synchronously inside USB_DEVICE_CDC_Read
+ *     on the calling task when data is already waiting in the FIFO.
+ *   - POWER_DETECTED / POWER_REMOVED: TASK context only. VBUS raises no
+ *     interrupt, so the driver polls it in DRV_USBHS_Tasks (F_DRV_USBHS_Tasks),
+ *     or reports it inside USB_DEVICE_EventHandlerSet on app_USBDeviceTask if
+ *     VBUS is already valid. That is why those cases may vTaskDelay.
+ * Other events were not individually traced; assume they may be the ISR.
+ * LOG_E/LOG_I/LOG_D detect ISR context (uxInterruptNesting) and defer to a
+ * queue there, so they are safe in all of these; format args are ignored in
+ * ISR context (use static strings). See issue #191. */
 #define LOG_LVL LOG_LEVEL_USB
 #define LOG_MODULE LOG_MODULE_USB
 #include "UsbCdc.h"
@@ -69,6 +83,86 @@ static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client);
  * We deliberately do NOT cancel/close the transfer: cancelling disrupts the
  * host's open connection (observed as ClearCommError + reconnect). */
 #define USBCDC_WRITE_STALL_MS 1000U
+
+/* #185: early wake-up for the write waits.
+ *
+ * UsbCdc_FinalizeWrite gives app_USBDeviceTask a direct-to-task notification
+ * AFTER it clears writeTransferHandle. UsbCdc_WaitForWrite and the inner wait
+ * of UsbCdc_FlushWriteBuffer block on it where they used to vTaskDelay. The
+ * notification ONLY ends a wait step early:
+ *   - writeTransferHandle stays the source of truth. Every wake re-checks it,
+ *     then the state, then the #525 deadline, in the same order as before.
+ *   - Each step is still capped at the old poll interval (5 ms / 10 ms). A
+ *     wake that never comes (DTR drop, a teardown path that clears the handle
+ *     without FinalizeWrite, a waiter that is not this task) therefore
+ *     behaves exactly like the old vTaskDelay poll: never later.
+ *   - The #525 timeouts and the writeStalled latch are untouched.
+ * Do NOT swap this for a binary semaphore (tried and reverted 2026-04-08): a
+ * give that lands before the take gets consumed by the wrong iteration. A
+ * notification is a count latched in the waiter's TCB, and a take blocks only
+ * while that count is zero, so a completion racing ahead of the take is not
+ * lost. The handle re-check makes a stale one harmless.
+ *
+ * Slot: index 0 of app_USBDeviceTask, the only index
+ * (configTASK_NOTIFICATION_ARRAY_ENTRIES == 1). Nothing else in firmware/src
+ * notifies or waits on this task (audited for #185). Keep it that way.
+ *
+ * Written once by UsbCdc_Initialize on app_USBDeviceTask, before any write
+ * can be submitted. After that it is only read, and an aligned 32-bit load
+ * is atomic on PIC32MZ, so the ISR reader needs no lock. */
+static TaskHandle_t gUsbCdcTaskHandle = NULL;
+
+/* #185: wake the USB app task if it is in a write wait. Called from
+ * UsbCdc_FinalizeWrite, which on this build runs in the USB ISR (see the
+ * context note at the top of this file). The task branch is defence in
+ * depth: no task-context path to WRITE_COMPLETE was found, but a task API
+ * called from an ISR corrupts the kernel, and a Harmony regeneration could
+ * add such a path. This port has no xPortIsInsideInterrupt(), so use
+ * uxInterruptNesting (raised by portSAVE_CONTEXT), as Logger.c and
+ * streaming.c do. */
+static void UsbCdc_NotifyWriteComplete(void) {
+    TaskHandle_t waiter = gUsbCdcTaskHandle;
+    if (waiter == NULL) {
+        return;
+    }
+    if (uxInterruptNesting != 0u) {
+        BaseType_t higherPriorityTaskWoken = pdFALSE;
+        vTaskNotifyGiveFromISR(waiter, &higherPriorityTaskWoken);
+        portEND_SWITCHING_ISR(higherPriorityTaskWoken);
+    } else {
+        (void)xTaskNotifyGive(waiter);
+    }
+}
+
+/* #185: call once at the top of a write wait, BEFORE the first
+ * writeTransferHandle check. Returns true if the caller is the task that
+ * UsbCdc_FinalizeWrite notifies, after discarding any give left by an
+ * earlier transfer that nobody waited on. The discard can never drop a real
+ * completion: FinalizeWrite clears the handle BEFORE it gives, so any
+ * completion discarded here reads as an INVALID handle at the next check.
+ *
+ * ulTaskNotifyValueClear, not xTaskNotifyStateClear. The latter resets only
+ * the notify state and leaves the count, and ulTaskNotifyTake tests the
+ * count, so a stale give would still end the next wait at once. */
+static bool UsbCdc_WriteWaitBegin(void) {
+    if (gUsbCdcTaskHandle == NULL ||
+        xTaskGetCurrentTaskHandle() != gUsbCdcTaskHandle) {
+        return false;   // e.g. SYST:STR:STOP over TCP flushes on app_WifiTask
+    }
+    (void)ulTaskNotifyValueClear(NULL, UINT32_MAX);
+    return true;
+}
+
+/* #185: one step of a write wait, replacing the old vTaskDelay(pollTicks).
+ * Returns when FinalizeWrite gives, or after pollTicks exactly as the old
+ * poll did. A caller that is not the notified task keeps the plain delay. */
+static void UsbCdc_WriteWaitStep(bool notified, TickType_t pollTicks) {
+    if (notified) {
+        (void)ulTaskNotifyTake(pdTRUE, pollTicks);
+    } else {
+        vTaskDelay(pollTicks);
+    }
+}
 
 /**
  * Filters input characters to reject potentially dangerous control characters
@@ -334,8 +428,9 @@ void UsbCdc_EventHandler(USB_DEVICE_EVENT event, void * eventData, uintptr_t con
 
         case USB_DEVICE_EVENT_POWER_DETECTED:
 
-            /* VBUS was detected. This callback runs in the USB device task context,
-             * so vTaskDelay yields CPU to other tasks (does not block the system).
+            /* VBUS was detected. This event arrives in task context only, never the
+             * USB ISR (VBUS is polled; see the note at the top of this file), so
+             * vTaskDelay yields CPU to other tasks (does not block the system).
              *
              * 100ms delay: lets the RC low-pass filter on the VBUS sense line
              * settle before we attach. Previously 1000ms to wait for BQ24297
@@ -592,6 +687,10 @@ static bool UsbCdc_WaitForWrite(UsbCdcData_t* client) {
         return false;
     }
 
+    // #185: arm the write-complete wake-up BEFORE the first handle check
+    // (see UsbCdc_WriteWaitBegin for why that order matters).
+    bool notified = UsbCdc_WriteWaitBegin();
+
     TickType_t start = xTaskGetTickCount();
     while (client->writeTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
         if (client->state != USB_CDC_STATE_PROCESS) {
@@ -610,7 +709,9 @@ static bool UsbCdc_WaitForWrite(UsbCdcData_t* client) {
                        "USB write stalled (host not reading) - dropping until drained");
             return false;
         }
-        vTaskDelay(pdMS_TO_TICKS(5));
+        // #185: was vTaskDelay(pdMS_TO_TICKS(5)). Same 5 ms cap, but returns
+        // as soon as UsbCdc_FinalizeWrite reports the transfer done.
+        UsbCdc_WriteWaitStep(notified, pdMS_TO_TICKS(5));
     }
 
     return true;
@@ -639,6 +740,14 @@ static bool UsbCdc_FinalizeWrite(UsbCdcData_t* client) {
     // endpoint — clear the stall latch so the next write proceeds normally
     // instead of being dropped by the early-bail in WaitForWrite.
     client->writeStalled = false;
+    /* #185: wake a write wait early. MUST stay after the stores above:
+     * UsbCdc_WriteWaitBegin may discard a give, and that is safe only because
+     * the handle already reads INVALID by the time the give can be seen. The
+     * barrier stops the compiler sinking the non-volatile handle store past
+     * the notify. LTO is off today, so the out-of-line kernel call alone
+     * would do, but that is not a property of this file. */
+    __asm__ __volatile__ ("" ::: "memory");
+    UsbCdc_NotifyWriteComplete();
     return true;
 }
 
@@ -691,25 +800,6 @@ static bool UsbCdc_BeginRead(UsbCdcData_t* client) {
 
     return true;
 
-}
-
-/**
- * Waits for a read operation to complete
- */
-static bool UsbCdc_WaitForRead(UsbCdcData_t* client) {
-    if (client->state != USB_CDC_STATE_PROCESS) {
-        return false;
-    }
-
-    while (client->readTransferHandle != USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID) {
-        if (client->state != USB_CDC_STATE_PROCESS) {
-            return false;
-        }
-
-        vTaskDelay(100);
-    }
-
-    return true;
 }
 
 /**
@@ -1033,6 +1123,12 @@ bool UsbCdc_FlushWriteBuffer(void) {
         return false;
     }
 
+    // #185: arm once for the whole flush, BEFORE the first handle check (see
+    // UsbCdc_WriteWaitBegin). If a chunk's DMA finishes before its inner wait
+    // is reached, its give is left for the next chunk's first take. That only
+    // ends one 10 ms step early, and the handle re-check absorbs it.
+    bool notified = UsbCdc_WriteWaitBegin();
+
     TickType_t start = xTaskGetTickCount();
 
     while (true) {
@@ -1050,7 +1146,8 @@ bool UsbCdc_FlushWriteBuffer(void) {
                            "USB flush: host not reading - deferring");
                 return false;
             }
-            vTaskDelay(pdMS_TO_TICKS(10));
+            // #185: was vTaskDelay(pdMS_TO_TICKS(10)). Same cap, early wake.
+            UsbCdc_WriteWaitStep(notified, pdMS_TO_TICKS(10));
         }
 
         // No in-flight DMA — start the next write chunk from the circular buffer.
@@ -1237,6 +1334,12 @@ UsbCdcData_t* UsbCdc_GetSettings() {
 
 void UsbCdc_Initialize() {
 
+    /* #185: this runs on app_USBDeviceTask (app_freertos.c), the task that
+     * hosts UsbCdc_ProcessState and therefore every SCPI-over-USB flush.
+     * Record it as the write-complete notification target (see
+     * gUsbCdcTaskHandle). No write can be submitted before this returns. */
+    gUsbCdcTaskHandle = xTaskGetCurrentTaskHandle();
+
     gRunTimeUsbSttings.state = USB_CDC_STATE_INIT;
 
     gRunTimeUsbSttings.deviceHandle = USB_DEVICE_HANDLE_INVALID;
@@ -1331,8 +1434,6 @@ void UsbCdc_PumpWrite(void) {
 }
 
 void UsbCdc_ProcessState() {
-
-    UNUSED(UsbCdc_WaitForRead); // We dont want to block on the read so this is currently not used
 
     switch (gRunTimeUsbSttings.state) {
         case USB_CDC_STATE_INIT:

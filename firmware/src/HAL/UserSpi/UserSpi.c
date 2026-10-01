@@ -19,6 +19,7 @@
 #include "task.h"
 #include "clock_config.h"
 #include "HAL/DIO.h"
+#include "HAL/WaitLoop.h"
 #include "Util/Logger.h"
 
 /* SPI1 source clock = PBCLK2, taken from the project's single-source clock
@@ -328,6 +329,12 @@ static void spi_Spi1Init(void) {
  * start charging every byte in the common 20-40 kHz SPI range a full tick
  * sleep for no benefit.
  *
+ * THE LOOP ITSELF LIVES IN HAL/WaitLoop.h (#1056), shared with uart_WaitSta
+ * and i2c_WaitMif instead of written out three times. What stays here is what
+ * is specific to SPI1: the status read, the tick budget, and the 8000 sized
+ * above. tests/host/test_1056_wait_loop.c compiles that header for real, so
+ * the ordering described below is exercised rather than modelled.
+ *
  * Note the ordering: the bit is tested before the deadline is consulted on
  * every pass, so a byte that completed while this task was preempted is
  * reported as success however late it is observed -- EXCEPT right at the
@@ -342,23 +349,35 @@ static void spi_Spi1Init(void) {
  * latency and sizeable against wire time alone. (uart_WaitSta / i2c_WaitMif
  * carried this identical narrow window pre-#913; ported here to both in the
  * same PR -- see UserUart.c / UserI2c.c.) */
+typedef struct {
+    uint32_t   mask;
+    bool       want;
+    TickType_t start;
+    TickType_t timeoutTicks;
+} SpiWaitCtx_t;
+
+static bool spi_WaitBitMet(void* ctx) {
+    const SpiWaitCtx_t* w = (const SpiWaitCtx_t*)ctx;
+    return ((SPI1STAT & w->mask) != 0u) == w->want;
+}
+
+static bool spi_WaitBudgetSpent(void* ctx) {
+    const SpiWaitCtx_t* w = (const SpiWaitCtx_t*)ctx;
+    /* Rollover-safe: unsigned (now - start) is the true elapsed count even
+     * across a tick-counter wrap, unlike an absolute-deadline compare. */
+    return (TickType_t)(xTaskGetTickCount() - w->start) >= w->timeoutTicks;
+}
+
+static void spi_WaitYield(void* ctx) {
+    (void)ctx;
+    vTaskDelay(1);
+}
+
 static bool spi_WaitStat(uint32_t mask, bool want,
                          TickType_t start, TickType_t timeoutTicks) {
-    for (;;) {
-        for (uint32_t s = 0; s < 8000u; ++s) {
-            if (((SPI1STAT & mask) != 0u) == want) { return true; }
-        }
-        if (((SPI1STAT & mask) != 0u) == want) { return true; }
-        /* Rollover-safe: unsigned (now - start) is the true elapsed count even
-         * across a tick-counter wrap, unlike an absolute-deadline compare. */
-        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) {
-            /* Fresh read, not a reuse of the pre-check above: this task can be
-             * preempted between that check and this one, and a bit that set
-             * during the preemption must still count as success. */
-            return (((SPI1STAT & mask) != 0u) == want);
-        }
-        vTaskDelay(1);
-    }
+    SpiWaitCtx_t w = { mask, want, start, timeoutTicks };
+    return WaitLoop_SpinThenYield(spi_WaitBitMet, spi_WaitBudgetSpent,
+                                  spi_WaitYield, &w, 8000u);
 }
 
 static bool spi_XferByte(uint8_t txByte, uint8_t* rxByte) {
