@@ -89,7 +89,35 @@ RE_RANNESS='both legs died|was voided|auditorLegsOk|codex_exit|noProvenance|trun
 # RE_DISCLAIMED matched ZERO sentences on that row — a FALSE NEGATIVE in category 0,
 # i.e. MY BIASED DIRECTION, and the mirror of the v1 defect: v1 claimed healthy rows,
 # v2 missed a disclosed one. Accepted: fw#901 is category 0 -> 7 of 30, PROSE_ONLY 1.
-RE_DISCLAIMED='noProvenance[^A-Za-z]{0,6}true|hunterLegsIncomplete[^A-Za-z]{0,6}true|codex_exit[^0-9]{0,6}[1-9]|auditorLegsOk[^0-9]{0,8}0([^0-9]|$)|truncated[^A-Za-z]{0,6}true|NOT an audit verdict|not an adversarial verdict|remains UN-?AUDITED|row is un-?audited|\bvoid run\b|run was void|was voided|must not be counted as a round|do not read[^.]{0,40}(pass|clean|verdict)|before treating anything[^.]{0,30}as a pass|not merging on it|no machine-produced|did not run|did not come|both legs died|\bdegraded\b'
+# ⛔ REPAIR 11 (2026-10-01) — THE TWO `[^.]` SPANS ARE REPLACED BY `.`, BECAUSE A
+# BOUNDED NEGATED CLASS CANNOT CROSS A DOT AND AUDIT PROSE IS ABOUT FILES WITH DOTS
+# IN THEIR NAMES. Reproduced by conv-ts on its own tooling, then here:
+#     "Do not read this as a pass"                           [^.]{0,40} -> 1 HIT
+#     "Do not read the regression_gate.py result as a pass"  [^.]{0,40} -> 0 MISS
+#     same string, dot-tolerant  .{0,40}                                -> 1 HIT
+# This is a STRUCTURAL exclusion, not a tuning problem: widening {0,40} can never
+# fix it, because the span cannot pass the dot at any width.
+#
+# ⭐ AND THE SECOND BOUND WAS ALREADY THERE AND CORRECT. `[^.]` was trying to keep
+# the span inside one sentence — but the splitter at :194/:326
+# (`sed 's/\([.!?]\)[[:space:]]\+/\1\n/g'`) ALREADY does that, and does it RIGHT: it
+# splits on a period followed by WHITESPACE, so `regression_gate.py result` stays in
+# one sentence while `…as a pass. Next…` splits. So `[^.]` added a second, wrong
+# bound on top of a correct one and only ever subtracted matches.
+#
+# ⚠ FIXED THOUGH THE DIFFERENTIAL IS CLEAN. nq-c ran all 30 census rows: ZERO
+# affected, counts unchanged (EVIDENCE 18 · DEGRADED_DISCLOSED 7 · PROSE_ONLY 1 ·
+# NO_REFERENCE 3). It is inert at this head only because no disclaimer-shaped
+# sentence happens to put a dot inside the span. **A defect that did not bite is not
+# a defect that cannot** — the clean differential is a property of the CORPUS, not of
+# the PATTERN, and "Do not read the regression_gate.py output as a pass" is a sentence
+# someone here will write.
+#
+# The `[^A-Za-z]` and `[^0-9]` spans are NOT this bug and are deliberately kept: they
+# implement "require the FIELD FORM (key + separator + value)", and a dot is neither
+# a letter nor a digit, so they cross one freely. Changing them would re-open the
+# bare-`noProvenance` false positive that matched `noProvenance: false`.
+RE_DISCLAIMED='noProvenance[^A-Za-z]{0,6}true|hunterLegsIncomplete[^A-Za-z]{0,6}true|codex_exit[^0-9]{0,6}[1-9]|auditorLegsOk[^0-9]{0,8}0([^0-9]|$)|truncated[^A-Za-z]{0,6}true|NOT an audit verdict|not an adversarial verdict|remains UN-?AUDITED|row is un-?audited|\bvoid run\b|run was void|was voided|must not be counted as a round|do not read.{0,40}(pass|clean|verdict)|before treating anything.{0,30}as a pass|not merging on it|no machine-produced|did not run|did not come|both legs died|\bdegraded\b'
 
 RE_LANE_NOTE="${RE_LANE_NOTE:-__UNSET__}"
 QODO_AUTHOR='^qodo-code-review'
