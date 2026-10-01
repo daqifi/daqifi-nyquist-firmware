@@ -7630,3 +7630,87 @@ finding's `target` field would have resolved a plausible head out of an artifact
 an identifier found in a place that is not a provenance assertion. `:136` keys on `head_sha`
 specifically, so it is safe here. **A future edit broadening that descent to `target` or
 `blindLegRanFor` would open it.**
+
+## 2026-10-01 03:20 MDT — INVISIBLE PARKS: 12 rows measured, 1 UNKNOWN, and claude-skills has a SECOND layer
+
+Filter pre-registered at `.claude/evidence/PREREG-invisible-parks-filter.md` **before** the query ran.
+Counts and row numbers only, **no verdict**, **no labels applied** (both repos ask-first).
+
+## THE FUNNEL
+
+```
+                        open   MERGEABLE+CLEAN   unlabelled   INVISIBLE PARK   UNKNOWN
+test-suite                74          52             15            11            1
+claude-skills             24          15              7             1            0
+                         ---         ---            ---           ---           ---
+                          98          67             22            12            1
+```
+⚠ **`gh pr list` defaults to 30.** A default query returns 60 of 98 and looks complete.
+
+**INVISIBLE PARK = MERGEABLE/CLEAN + none of `parked`/`blocked:operator-decision`/`blocked:audit-findings`
++ (a posted `gate: BLOCK` OR a park header).**
+
+```
+test-suite   434 432 430 421 408 371 352 342 341 323 312      (11)
+skills       199                                               (1)
+UNKNOWN      351  -- comment fetch failed; reported UNKNOWN, NOT clean
+not flagged  435 384 334 | 232 231 230 222 221 211             (9)
+```
+ts#312 and sk#199 — the coordinator's two examples — both confirmed.
+
+## ⛔ MY OWN INSTRUMENT FAILED THREE TIMES AND EACH FAILURE RENDERED AS A CLEAN RESULT
+
+1. **`gh pr list` on the test-suite returned a 0-BYTE FILE.** jq on empty printed blank fields, so
+   the funnel read `open= MERGEABLE+CLEAN=` — **indistinguishable from "no candidates."** Retry gave
+   74 rows on the first attempt.
+2. **The snippet extractor errored on EVERY row.** `ugrep` rejected my bounded-context pattern
+   (`.{0,45}…{0,55}`) as *"exceeds complexity limits"*, so every snippet printed `<none>` — which
+   reads as *"no matching text."* The counts beside them were real. Line-based matching fixed it.
+3. ⛔ **Two rows read all-zeros from FAILED FETCHES.** ts#430 and ts#435 scored `gate:BLOCK=0` while
+   an earlier, wider pass had found verdict text. I tested the pattern against a known-positive line
+   (`gate: BLOCK` → match, 1) and **the pattern was fine** — so the zeros were dead `gh api` calls.
+   **Re-ran with every fetch VERIFIED against the issue's own `.comments` count: ts#430 is
+   `gate:BLOCK=2` and IS an invisible park.** I would have reported it clean.
+
+> **I built consensus-and-retry logic into the sweep script for exactly this failure, in this same
+> session, and then did not apply it to my own second instrument.** Writing the remedy is not
+> applying it — [[feedback_a_rule_held_is_not_a_rule_run]], committed by me within the hour.
+
+## ⚠ AND I NEARLY INFLATED THE COUNT WITH A PATTERN THAT MATCHES ORDINARY PROSE
+
+My first pattern was `gate.{0,6}BLOCK`. **It matches "the gate blocks…"** case-insensitively. sk#199
+scored `AUDIT_BLOCK=4` on that pattern and **0** on the field-shaped one — all four hits were prose
+about gates blocking things. Replaced with `gate[[:space:]]*[:=][[:space:]]*.?BLOCK`, which requires
+the field form, and reported `gate:PASS` separately so a posted PASS is not counted as a BLOCK
+(sk#221 has 2).
+
+## ⛔⛔ THE SECOND LAYER, AND IT IS MINE: THE VERDICTS WERE NEVER POSTED
+
+claude-skills shows **0 posted `gate: BLOCK` on 6 of 7 candidates** — and **I hold audits for two of
+them:**
+
+| row | my artifact | posted on the PR? |
+|---|---|---|
+| sk#230 | BLOCK at `26bd04ab0` | ⛔ **no** — 3 comments, `gate:BLOCK=0`, no park header |
+| sk#231 | PASS at `60ed39e97` | ⛔ **no** — 2 comments, `gate:BLOCK=0`, no park header |
+| sk#199 | BLOCK at `b98e8acd6` == live head | ⛔ **no verdict posted**; park header present |
+
+> **So a comment-based measurement CANNOT see these, and that is not the measurement's limitation —
+> it is [[feedback_the_verdict_must_be_posted_not_just_reached]] violated by me on three rows.** The
+> only record of three audit verdicts is a private evidence directory in one lane's worktree.
+> **A reader of sk#230 sees MERGEABLE, CLEAN, no label, and no verdict.**
+
+**So the count has two honest forms:** **12** detectable from the PRs themselves, **14** if a lane's
+private artifact store counts as evidence. The gap between those two numbers is the finding.
+
+⚠ **And the count is a LOWER BOUND in both forms** — a row parked in language neither pattern covers
+is invisible to this filter, which after tonight's 16-phrasings result is the only direction a
+lexical filter can honestly report.
+
+## ⭐ A STRUCTURAL ASYMMETRY FOUND BY NAMING THE FILTER FIRST
+
+`blocked:audit-findings` **does not exist in `cptkoolbeenz/claude-skills`** — only in the test-suite.
+**The fleet's marker for an audit-blocked row cannot be applied there at all**, so sk#199/230/231
+could not carry it even if someone wanted to. Excluding it in that repo filters nothing. Also
+asymmetric: `needs-audit` is test-suite-only, `blocks-autonomy` is skills-only. **Reported as a fact
+about the label sets, not as a proposal to create anything.**
