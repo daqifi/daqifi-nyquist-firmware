@@ -6475,3 +6475,45 @@ question** — my read is clean. **Offered the alternative too**: hand the whole
 stake, which is cleaner, and said I would not argue for keeping it.
 
 **Nothing launched. Nothing merged. No labels. Installed tree untouched.**
+
+## 2026-09-30 20:05 MDT — sk#231 audit LAUNCHED `wf_3ffcadc5-d96` under a declared conflict + verbatim hand-off rule
+
+Split accepted by the coordinator; launched on that basis. Pre-registration filed BEFORE launch:
+`.claude/evidence/sk231-PREREG-60ed39e97.md`.
+
+```
+repo cptkoolbeenz/claude-skills · prs [231]
+base 72a199a4a4e9530f8d178c6c44bfa49ab8f35387   (merge-base of autopush/office-390bc12dcdf8)
+head 60ed39e970b3e7d7facdd08d36e50a61cc2d2d87   (== ls-remote, full SHA)
+diff 1 file, +57/-0, 4056 bytes shell `wc -c`   -> acceptance band 4015-4097
+codex · effort high · blindLeg true · finalGate true · NO `fixed`, NO `dispositions`
+```
+
+**HAZARD HANDLED.** Installed baseline BEFORE: HEAD `6c6d16f4af4b1fb839e05b43ac0d74f767be2787`,
+dirty **0**. **Detached worktree only** at `/mnt/c/daqifi/wt/audit-sk231`, porcelain 0, HEAD matching
+the target by full SHA. Installed tree asserted **UNCHANGED** after the pin. Will re-assert after the
+run and leave nothing dirty — that tree auto-commits under the operator's name within minutes.
+
+**⛔ MY CONFLICT, declared before the round rather than attached to a verdict.** Direct derivative
+stake in the added text at **:40, :42, :49, :50** — `:40`/`:42` restate **my** finding that
+`device-guard.sh` matches command TEXT; `:49`/`:50` recommend **my** workaround (compose with `Write`,
+`cat` it in). So my read of any finding in that range is conflicted; **adjudication goes to nq-c.**
+
+> **HAND-OFF RULE, pre-registered: EVERY finding in that range goes over VERBATIM with its FULL key
+> set — not a selection. The residual risk is not misquoting, it is CHOOSING WHICH TO QUOTE** —
+> projection-is-a-predicate applied to a hand-off. **Zero land there -> I say zero. Three -> all three
+> go whole.**
+
+My read is clean and mine to give for: step-zero ordering · registry-as-authority · `bench whoami` ·
+substitution-vs-evasion · **and the ts#432 reachability question** (can a reader following the recipes
+IN ORDER still reach an unauthorised reflash leaving a board on a firmware PR's build) — a test of the
+document's EFFECT, not of my sentence.
+
+**⭐ THE METHOD LESSON, and it is the coordinator's against themselves, worth keeping:**
+> **A NAMED CANDIDATE CONVERTS AN ENUMERATION INTO A YES/NO.** They asked for the stake enumeration
+> and then volunteered a guess (`#877`-adjacent). **A lane that clears the named item has answered
+> correctly and still not searched** — had the guess been plausible enough, I would have cleared it
+> and stopped. Third time today a named conflict was the wrong one and the real one came from
+> checking rather than recalling. **Ask for the enumeration; supply no candidates.**
+> And the clause missing entirely from every stake model so far: **"or TEXT."** A row whose PROSE
+> restates your own finding is a stake with **no artifact anywhere a query would look.**
