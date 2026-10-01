@@ -202,6 +202,39 @@ extern "C" {
     bool daqifi_settings_SaveToNvm(DaqifiSettings* settings);
 
     /**
+     * #909: Re-stamp a loaded TopLevelSettings image with THIS build's
+     * revision strings.
+     *
+     * Until #909 the bootloader erased the whole program flash on every
+     * in-app update, so the TopLevel page never survived one: boot always
+     * took the "load failed -> factory defaults" branch, and those defaults
+     * stamp FIRMWARE_REVISION. The reported revision therefore advanced as a
+     * SIDE EFFECT of the settings being destroyed. Now that the page
+     * survives, a loaded image still carries the PREVIOUS build's strings,
+     * and InitBoardConfig copies them straight into the live board config --
+     * which is what CONF:CAPabilities:JSON?'s identity.firmware_rev reports.
+     * Without this the device would report its old version forever after an
+     * update.
+     *
+     * Lives here rather than in the caller so that FIRMWARE_REVISION /
+     * HARDWARE_REVISION stay knowledge of this module, which is the only
+     * place that stamps them today.
+     *
+     * IN MEMORY ONLY -- this writes no NVM, deliberately, and the caller must
+     * not add a save on its behalf. daqifi_settings_SaveToNvm erases the
+     * TopLevel page before writing it, so a save here would put a window on
+     * the post-update boot in which a failed write leaves the page blank and
+     * the next boot falls back to factory defaults -- losing exactly the
+     * settings #909 exists to preserve. Nothing needs the write: boot re-stamps
+     * on every startup, and SaveToNvm already re-stamps both revision strings
+     * on any ordinary TopLevel save, so the persisted copy self-heals.
+     *
+     * @param pTopLevelSettings The loaded image to refresh; NULL is a no-op
+     */
+    void daqifi_settings_RefreshTopLevelRevisions(
+            TopLevelSettings* pTopLevelSettings);
+
+    /**
      * Clears the provided settings type from NVM
      * @param type The type of settings to clear
      * @return True on success, false otherwise

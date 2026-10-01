@@ -152,6 +152,11 @@ extern "C" {
     UsbCdcData_t* UsbCdc_GetSettings();
     /**
      * Initialization of the USB Process
+     *
+     * #185: call only from app_USBDeviceTask, the task that then runs
+     * UsbCdc_ProcessState. It records the calling task as the target of the
+     * write-complete task notification, which claims that task's (only)
+     * notification slot: nothing else may notify or wait on that task.
      */
     void UsbCdc_Initialize();
 

@@ -159,11 +159,15 @@ void __attribute__((used)) TIMER_7_Handler (void)
     TIMER_7_InterruptHandler();
 }
 
-// Type 1 (dedicated) ADC channels: results read by MC12bADC_EosInterruptTask
-// (task priority 8) after #292. The old batch-read ISR (ADC_DATA3_Handler,
-// #277) was eliminated because the ~5μs ISR entry/exit overhead was the T1
-// throughput bottleneck. CH3 result interrupt is disabled at peripheral level;
-// these handlers are safety stubs that only ack the PLIB flag.
+// Type 1 (dedicated) ADC channels: results are read in task context, not in
+// these handlers. While streaming, _Streaming_Deferred_Interrupt_Task (task
+// priority 9, streaming.c) reads ADCDATAx directly, gated on the per-input
+// ARDY flag (#541); while idle, MC12bADC_EosInterruptTask (task priority 9,
+// HAL/ADC.c) reads them so the LATEST cache stays live (#292). The old
+// batch-read ISR (ADC_DATA3_Handler, #277) was eliminated because the ~5μs
+// ISR entry/exit overhead was the T1 throughput bottleneck. CH3 result
+// interrupt is disabled at peripheral level; these handlers are safety stubs
+// that only ack the PLIB flag.
 
 void __attribute__((used)) ADC_DATA0_Handler(void) {
     // Interrupt disabled for batching — stub clears IFS only (safety)
@@ -179,9 +183,10 @@ void __attribute__((used)) ADC_DATA2_Handler(void) {
 }
 
 void __attribute__((used)) ADC_DATA3_Handler(void) {
-    // #292: T1 result reads moved to MC12bADC_EosInterruptTask (task pri 8).
-    // CH3 result interrupt is disabled at peripheral level; this stub is a
-    // safety net — just acks the PLIB flag.
+    // #292 moved T1 result reads out of this ISR, and #541 moved the
+    // streaming-time ones into _Streaming_Deferred_Interrupt_Task (task
+    // pri 9) -- see the block comment above. CH3 result interrupt is disabled
+    // at peripheral level; this stub is a safety net — just acks the PLIB flag.
     ADC_DATA3_InterruptHandler();
 }
 

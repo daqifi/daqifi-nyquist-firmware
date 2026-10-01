@@ -19,8 +19,8 @@ void Capabilities_GetAinSummary(CapabilitiesAinSummary* out) {
     if (out == NULL) return;
     memset(out, 0, sizeof(*out));
 
-    /* Per CLAUDE.md, BoardConfig_Get indexes a static array populated at
-     * boot and never returns NULL. No guard. */
+    /* Per docs/MCU_REFERENCE.md, BoardConfig_Get indexes a static array
+     * populated at boot and never returns NULL. No guard. */
     const tBoardConfig* cfg = BoardConfig_Get(BOARDCONFIG_ALL_CONFIG, 0);
 
     uint8_t resolution = 0;

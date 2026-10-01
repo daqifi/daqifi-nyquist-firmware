@@ -18,6 +18,8 @@
 #include "state/board/BoardConfig.h"
 #include "HAL/DIO.h"
 #include "services/streaming.h"   /* #730: timebase helpers */
+#include "FreeRTOS.h"
+#include "task.h"                 /* #1054: taskENTER_CRITICAL for the CalM/CalB reads */
 #ifndef min
 #define min(x,y) ((x) <= (y) ? (x) : (y))
 #endif // min
@@ -684,6 +686,48 @@ size_t Nanopb_Encode(tBoardData* state,
                         sizeof (message.analog_in_port_enabled.bytes));
                 break;
             }
+            /* #1086 (the Range half of #904/#1054): the three range cases
+             * below each read a module's Range, a 64-bit double -- two 32-bit
+             * loads on PIC32MZ (CLAUDE.md atomicity rules) -- and the
+             * CONF:ADC:RANGe setter on the other SCPI transport can land
+             * between them. That setter's store is atomic (#1086), which does
+             * not stop a reader straddling a completed store, so each read
+             * takes its own minimal critical section. Only the AD7609 slot
+             * has a runtime writer; the MC12b reads take the section anyway,
+             * so the rule holds per field rather than per today's writers.
+             *
+             * Unlike the calibration cases below (#1054), the CONVERSION into
+             * the message stays INSIDE the section rather than being done on
+             * a snapshot afterwards. The reason is the FPU, not atomicity:
+             * this function is reached on the UDP discovery path from
+             * lWDRV_WINC_Tasks (tasks.c:169 -> WDRV_WINC_Tasks ->
+             * m2m_wifi_handle_events -> hif_isr -> m2m_ip_cb ->
+             * SocketEventCallback's SOCKET_MSG_RECVFROM, wifi_manager.c:778
+             * -> wifi_manager_FormUdpAnnouncePacketCB, app_freertos.c:172),
+             * and that task never calls portTASK_USES_FLOATING_POINT(), so
+             * the port does not save/restore its FPU registers across a
+             * context switch (ISR_Support.h:138-152). These message fields
+             * are float, so the assignment is an ldc1 + cvt.s.d + swc1
+             * sequence; holding the value in an FP register (XC32 v4.60 -O2
+             * picks callee-saved $f20) while interrupts are on lets a
+             * preempting FPU task leave garbage behind it -- the PR #369
+             * failure mode. Keeping the store inside the section retires all
+             * three instructions with interrupts masked; because
+             * taskEXIT_CRITICAL() is an opaque call and `message` escapes to
+             * pb_encode(), the store is ordered before it by the language,
+             * not by instruction scheduling. Cost checked in the generated
+             * asm (XC32 v4.60 -O2): the section is 4 instructions for the
+             * av_range case and 8 for a loop iteration (the extra ones are
+             * the element-address arithmetic) -- straight-line, no loop, no
+             * I/O, so still O(1) per mcu-hygiene section 7.
+             *
+             * That makes every range ENTRY untorn. It does not make one
+             * message's entries a coherent SET: each channel re-reads its
+             * module's Range, so a store landing mid-loop can leave two
+             * AD7609 channels advertising different ranges in one message.
+             * That was already true before this change and is not introduced
+             * here; closing it would mean holding one section across the
+             * whole channel loop. */
             case DaqifiOutMessage_analog_in_port_av_range_tag:
             {
                 /**
@@ -692,8 +736,12 @@ size_t Nanopb_Encode(tBoardData* state,
                  * This tag stores the supported voltage ranges for each analog input module,
                  * indicating the possible ranges a module can operate within (e.g., 0-5V, +/-10V).
                  */
+                // #1086: untorn 64-bit read, and no FP value live outside the
+                // section -- see the note above this case.
+                taskENTER_CRITICAL();
                 message.analog_in_port_av_range[0] =
-                        pRuntimeAInModules->Data[AIn_MC12bADC].Range;
+                        (float) pRuntimeAInModules->Data[AIn_MC12bADC].Range;
+                taskEXIT_CRITICAL();
                 message.analog_in_port_av_range_count = 1;
                 message.analog_in_port_range_count = 0;
                 break;
@@ -717,10 +765,17 @@ size_t Nanopb_Encode(tBoardData* state,
                 for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
                     if (AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x]) && chan < max_range_count) {
                         // Get range from appropriate module
+                        // #1086: each branch's read is untorn -- see the note above analog_in_port_av_range_tag.
                         if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC) {
-                            message.analog_in_port_range[chan++] = pRuntimeAInModules->Data[AIn_MC12bADC].Range;
+                            taskENTER_CRITICAL();
+                            message.analog_in_port_range[chan++] =
+                                    (float) pRuntimeAInModules->Data[AIn_MC12bADC].Range;
+                            taskEXIT_CRITICAL();
                         } else if (pBoardConfig->AInChannels.Data[x].Type == AIn_AD7609) {
-                            message.analog_in_port_range[chan++] = pRuntimeAInModules->Data[AIn_AD7609].Range;
+                            taskENTER_CRITICAL();
+                            message.analog_in_port_range[chan++] =
+                                    (float) pRuntimeAInModules->Data[AIn_AD7609].Range;
+                            taskEXIT_CRITICAL();
                         }
                     }
                 }
@@ -743,10 +798,17 @@ size_t Nanopb_Encode(tBoardData* state,
                 for (uint32_t x = 0; x < pBoardConfig->AInChannels.Size; x++) {
                     if (!AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x]) && chan < max_range_count) {
                         // Get range from appropriate module
+                        // #1086: each branch's read is untorn -- see the note above analog_in_port_av_range_tag.
                         if (pBoardConfig->AInChannels.Data[x].Type == AIn_MC12bADC) {
-                            message.analog_in_port_range_priv[chan++] = pRuntimeAInModules->Data[AIn_MC12bADC].Range;
+                            taskENTER_CRITICAL();
+                            message.analog_in_port_range_priv[chan++] =
+                                    (float) pRuntimeAInModules->Data[AIn_MC12bADC].Range;
+                            taskEXIT_CRITICAL();
                         } else if (pBoardConfig->AInChannels.Data[x].Type == AIn_AD7609) {
-                            message.analog_in_port_range_priv[chan++] = pRuntimeAInModules->Data[AIn_AD7609].Range;
+                            taskENTER_CRITICAL();
+                            message.analog_in_port_range_priv[chan++] =
+                                    (float) pRuntimeAInModules->Data[AIn_AD7609].Range;
+                            taskEXIT_CRITICAL();
                         }
                     }
                 }
@@ -859,6 +921,22 @@ size_t Nanopb_Encode(tBoardData* state,
 
                 break;
             }
+            /* #1054 (the read half of #904): the four calibration cases below
+             * each read one 64-bit double per channel -- two 32-bit loads on
+             * PIC32MZ (CLAUDE.md atomicity rules) -- and a calibration writer
+             * on another task (CONF:ADC:chanCALM/chanCALB, LOADcal/USECal) can
+             * land between them. #1048 makes the writes atomic, which does not
+             * stop a reader straddling a completed write, so each read copies
+             * its value under its own minimal critical section and the store
+             * into the message happens outside it.
+             *
+             * That makes every cal_m[] and cal_b[] ENTRY untorn. It does not
+             * make cal_m[i] and cal_b[i] a coherent PAIR: they are separate
+             * tags filled by separate loops, so a writer can still land
+             * between the two. That was already true before this change and
+             * follows from the wire reporting slope and offset as independent
+             * fields; it is not introduced here, and closing it would mean
+             * holding the whole channel array across both loops. */
             case DaqifiOutMessage_analog_in_cal_m_tag:
 
             {
@@ -874,7 +952,11 @@ size_t Nanopb_Encode(tBoardData* state,
                     // CalM applies to all public channels regardless of type
                     if (AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
                         if (message.analog_in_cal_m_count < sizeof (message.analog_in_cal_m) / sizeof (message.analog_in_cal_m[0])) {
-                            message.analog_in_cal_m[message.analog_in_cal_m_count++] = pRuntimeAInChannels->Data[x].CalM;
+                            // #1054: untorn 64-bit read -- see the note above analog_in_cal_m_tag.
+                            taskENTER_CRITICAL();
+                            double calM = pRuntimeAInChannels->Data[x].CalM;
+                            taskEXIT_CRITICAL();
+                            message.analog_in_cal_m[message.analog_in_cal_m_count++] = calM;
                         }
                     }
                 }
@@ -895,7 +977,11 @@ size_t Nanopb_Encode(tBoardData* state,
                     // CalB applies to all public channels regardless of type
                     if (AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
                         if (message.analog_in_cal_b_count < sizeof (message.analog_in_cal_b) / sizeof (message.analog_in_cal_b[0])) {
-                            message.analog_in_cal_b[message.analog_in_cal_b_count++] = pRuntimeAInChannels->Data[x].CalB;
+                            // #1054: untorn 64-bit read -- see the note above analog_in_cal_m_tag.
+                            taskENTER_CRITICAL();
+                            double calB = pRuntimeAInChannels->Data[x].CalB;
+                            taskEXIT_CRITICAL();
+                            message.analog_in_cal_b[message.analog_in_cal_b_count++] = calB;
                         }
                     }
                 }
@@ -916,7 +1002,11 @@ size_t Nanopb_Encode(tBoardData* state,
                     // CalM applies to all private channels regardless of type
                     if (!AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
                         if (message.analog_in_cal_m_priv_count < sizeof (message.analog_in_cal_m_priv) / sizeof (message.analog_in_cal_m_priv[0])) {
-                            message.analog_in_cal_m_priv[message.analog_in_cal_m_priv_count++] = pRuntimeAInChannels->Data[x].CalM;
+                            // #1054: untorn 64-bit read -- see the note above analog_in_cal_m_tag.
+                            taskENTER_CRITICAL();
+                            double calM = pRuntimeAInChannels->Data[x].CalM;
+                            taskEXIT_CRITICAL();
+                            message.analog_in_cal_m_priv[message.analog_in_cal_m_priv_count++] = calM;
                         }
                     }
                 }
@@ -937,7 +1027,11 @@ size_t Nanopb_Encode(tBoardData* state,
                     // CalB applies to all private channels regardless of type
                     if (!AInChannel_IsPublic(&pBoardConfig->AInChannels.Data[x])) {
                         if (message.analog_in_cal_b_priv_count < sizeof (message.analog_in_cal_b_priv) / sizeof (message.analog_in_cal_b_priv[0])) {
-                            message.analog_in_cal_b_priv[message.analog_in_cal_b_priv_count++] = pRuntimeAInChannels->Data[x].CalB;
+                            // #1054: untorn 64-bit read -- see the note above analog_in_cal_m_tag.
+                            taskENTER_CRITICAL();
+                            double calB = pRuntimeAInChannels->Data[x].CalB;
+                            taskEXIT_CRITICAL();
+                            message.analog_in_cal_b_priv[message.analog_in_cal_b_priv_count++] = calB;
                         }
                     }
                 }

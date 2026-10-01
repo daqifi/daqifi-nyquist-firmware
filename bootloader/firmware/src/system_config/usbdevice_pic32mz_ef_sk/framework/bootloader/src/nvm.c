@@ -119,7 +119,80 @@ void APP_FlashErase( void )
     #if defined(BOOTLOADER_LIVE_UPDATE_STATE_SAVE)
     APP_NVMOperation(UPPER_FLASH_REGION_ERASE_OPERATION);
     #else
-    APP_NVMOperation(FLASH_ERASE_OPERATION);
+    /* #909: erase ONLY the lower program-flash panel, never the whole PFM.
+     *
+     * This used to be FLASH_ERASE_OPERATION (NVMOP = 0b0111, "erase all of
+     * program Flash memory"). That wiped 0x1D000000-0x1D1FFFFF, and the
+     * application keeps its four 16 KB NVM settings pages -- TopLevel, WiFi
+     * credentials, factory ADC calibration and user ADC calibration -- at
+     * 0x9D1E0000-0x9D1EFFFF (firmware/src/services/daqifi_settings.h:
+     * RESERVED_SETTINGS_ADDR = KSEG0_PROGRAM_MEM_BASE_END - 128 KB). So every
+     * in-app customer update destroyed the device's settings and calibration;
+     * that is the root cause of #908 and of the "my WiFi credentials /
+     * precision reset after updating" reports.
+     *
+     * NVMOP = 0b0101 erases only the LOWER mapped region of program Flash,
+     * 0x1D000000-0x1D0FFFFF on this 2 MB part, leaving the upper region --
+     * and therefore the settings pages -- untouched.
+     * [X] FRM DS60001193B "Flash Memory with Support for Live Update",
+     *     Register 52-1 (NVMCON) bits 3-0:
+     *       0111 = "erase all of program Flash memory"
+     *       0110 = "erases only the upper mapped region of program Flash"
+     *       0101 = "erases only the lower mapped region of program Flash"
+     *     and Figure 52-3, which gives the 2 MB geometry: lower mapped region
+     *     0x1D000000-0x1D0FFFFF, upper mapped region 0x1D100000-0x1D1FFFFF.
+     *
+     * Three preconditions, all satisfied here:
+     *
+     *  1. Execution location. DS60001193B section 52.11.2: "When erasing the
+     *     entire PFM area, code must be executing from BFM. When erasing a
+     *     single upper or lower PFM bank, code must either be executing from
+     *     BFM or from the PFM bank that is not being erased." This bootloader
+     *     links entirely into boot flash (btl_mz.ld puts kseg1_boot_mem at
+     *     0xBFC00000 and its kseg0_program_mem at 0x9FC01000; the shipped
+     *     usb_bootloader.X.production.hex occupies only 0x1FC00000-0x1FC0FFF3
+     *     and nothing in PFM), so it runs from BFM and satisfies the stricter
+     *     whole-PFM rule as well. The panel erase cannot erase the bootloader.
+     *
+     *  2. Write protection. The same section: a region erase "will only
+     *     succeed if no pages are write-protected in the bank being erased",
+     *     which is strictly WEAKER than the whole-PFM erase's "PFM write
+     *     protection must be completely disabled". NVMPWP is 0 out of reset
+     *     and neither image ever writes it, so nothing changes here.
+     *
+     *  3. The application must fit in the lower panel. It does, with room to
+     *     spare -- but do not trust the figure in this comment, trust the
+     *     gate. For scale only: a STANDALONE build of main measured 2026-09-08
+     *     reported Total kseg0_program_mem used = 0xB8BBC (756,668 B), 72% of
+     *     the 1 MB panel. A bootloader-linked build differs slightly (it
+     *     starts 0x480 higher), and any figure written down here goes stale
+     *     the moment someone adds a feature. So this is ENFORCED rather than
+     *     asserted: tools/release/cut_release.sh measures the ACTUAL release
+     *     build and fails the release if its .map's kseg0_program_mem usage
+     *     reaches 0x100000, or if any record in the release hex lands at or
+     *     above 0x1D100000.
+     *
+     * Panel swapping does not change any of this. The erase targets the
+     * MAPPED region, i.e. the address range above, whichever physical bank
+     * NVMCON.PFSWAP has mapped there; and in any case nothing in either image
+     * ever writes PFSWAP (NVM_ProgramFlashSwapBank is never called), so it
+     * stays at its power-on default.
+     *
+     * Regression test: test_909_nvm_survives_inapp_update.py in
+     * daqifi-python-test-suite drives a real update over
+     * FirmwareUpdateService and asserts precision, both calibration
+     * coefficients and the WiFi credentials survive it, with firmware_crc32
+     * required to CHANGE so a no-op update cannot pass. It reflashes the
+     * board, so it is excluded from the release gate and run deliberately.
+     *
+     * Deliberately NOT using the USE_PAGE_ERASE path as the fix: that loop is
+     * O(pages) with a blank check per page, and #532 was a bootloader
+     * watchdog/USB-servicing timeout during programming. The panel erase keeps
+     * this a single bulk operation and so does not reopen that risk. Page
+     * erase remains the documented fallback if the panel erase ever proves
+     * wrong on silicon.
+     */
+    APP_NVMOperation(LOWER_FLASH_REGION_ERASE_OPERATION);
     #endif
 #endif
 }
@@ -305,7 +378,29 @@ char APP_ProgramHexRecord(uint8_t* HexRecord, int32_t totalLen)
                                 // Assert on error. This must be caught during debug phase.
     //                            ASSERT(Result==0);
                         }
-                        else    // Out of boundaries. Adjust and move on.
+                        else if((ProgAddress > (void *)APP_FLASH_END_ADDRESS) && (ProgAddress <= (void *)APP_FLASH_PFM_END_ADDRESS))
+                        {
+                            /* #1141: this address is still application code
+                             * space (the upper panel #909 stopped erasing),
+                             * not a boot-area/config-word address -- those
+                             * are outside APP_FLASH_PFM_END_ADDRESS entirely
+                             * and take the skip branch below unchanged.
+                             * Writing here would program flash
+                             * that was never erased and silently corrupt the
+                             * image while PROGRAM_FLASH still ACKs, so fail
+                             * the record instead of dropping it: no ACK is
+                             * sent for this command (datastream.c's
+                             * PROGRAM_FLASH case only advances to
+                             * BOOTLOADER_SEND_RESPONSE on HEX_REC_NORMAL), so
+                             * the host sees a failure instead of believing an
+                             * incomplete image flashed cleanly. No NVM
+                             * operation was attempted for this chunk, so
+                             * there is no controller error state to clear
+                             * (unlike the PLIB_NVM_WriteOperationHasTerminated
+                             * case above). */
+                            return HEX_REC_PGM_ERROR;
+                        }
+                        else    // Out of boundaries (boot area / device configuration bits). Adjust and move on.
                         {
                             // Increment the address.
                             HexRecordSt.Address += 4;
