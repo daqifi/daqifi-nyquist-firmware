@@ -6970,3 +6970,72 @@ column; concluded nothing about their reference detection.
 
 **No call was required anywhere, so I made none** — the spec was tight enough to run without
 judgement, which is the first time tonight a spec has been.
+
+## 2026-10-01 01:04 MDT — PHRASING VARIETY measured. Their canonical regex is 0/23, and their UNSOUNDNESS FLAG fails the same way.
+
+**First: I checked before relaying, and the check stopped me.** I was about to send conv-fw a
+refinement — *"the inert term is inert on 10/10, not just ts#326, so the corpus tests the
+subtraction term not at all"* — and read their script first. **They had already got there and gone
+further:** the field is renamed `derivedDistinct_UNSOUND`, marked ⛔ DO NOT USE, annotated *"MEASURED
+DEAD … nBackRefs was 0 on EVERY row"*, with the ts#326 right-for-the-wrong-reason case written out.
+**Relaying it would have been stale news delivered as a finding.** Same shape as
+[[feedback_grep_the_parked_rows_before_measuring]] — the record said it first, and the only reason I
+didn't repeat it is that I read the record instead of my own summary of it.
+
+**So I measured the thing their NEW argument rests on instead.** They concluded the count must come
+from the **producer as a field**, because *"the merge relation is stated in at least FIVE phrasings …
+widening the regex to the five now known is fitting it to the sample; the next artifact invents a
+sixth."* **I hold the 23 verbatim rationales, so that prediction is testable rather than plausible.**
+
+**⛔ RESULT — their canonical regex scores ZERO.** Copied their `:204` and `:209` verbatim, did not
+"improve" them:
+```
+rationales total                            23
+matched RE_INDEXED (the back/fwd measure)    0      <-- neither canonical phrasing occurs ONCE
+fell through to RE_OTHER                     5
+matched neither                             18
+cite a finding ordinal (mechanical rule)    14 on 4 of 10 rows
+their nOtherMergeLang unsoundness flag       2 of 10 rows
+```
+**`nBackRefs = 0` across ten rows does not mean the arbiter did not merge — it merged in at least
+14 rationales.** The two phrasings the measurement tests for appear *zero* times here.
+
+**⛔⛔ AND THE FINDING I DID NOT EXPECT: THE UNSOUNDNESS FLAG IS NOT INDEPENDENT OF THE NUMBER IT
+WARRANTIES.** `nOtherMergeLang > 0` is conv-fw's own marker for *"the derivation is UNSOUND for this
+artifact."* It fires on 2 rows; ordinal cites appear on 4. It misses **sk#136 (5 cites, flag 0)** and
+**sk#230 (3 cites, flag 0)** — because both the number and its warranty are keyed to the **same
+two-phrase vocabulary**, so they are one lexical assumption wearing two hats.
+
+> **A guard that declares the measurement invalid fails in the same direction, by the same mechanism,
+> as the measurement it guards.** It reads "sound" on exactly the rows its sibling regex cannot see.
+> Belongs in [[index_how_checks_fail]] beside the guards-worse-than-none rows: this one is worse than
+> absent, because an absent flag invites checking and a clean flag retires the question.
+
+**⭐ SIXTEEN phrasings, not six — and a THIRD reference syntax that kills the whole approach.**
+Verbatim table in `.claude/evidence/corpus-phrasing-variety-nqb-10artifacts.md`. The one that
+settles it is **sk#136[2]: _"one fix should close both 1 and 2"_ — BARE INTEGERS, no `index`, no `#`,
+no marker at all.** Invisible to both their regexes **and to my own net**. Any rule that caught it
+would have to match every integer in every rationale. **conv-fw's producer-field conclusion is right
+and this is much stronger support for it than "a sixth exists."**
+
+**⚠ MY OWN NET OVER-MATCHED AND I NAMED THE SITE RATHER THAN REPORTING THE NUMBER.** The rule
+`(?:index|#)\s*\d+` returned **15 on 5 rows**; `ts349[4]`'s **`#1018` is the GitHub ISSUE the test
+targets, not a finding ordinal** — a ticket and an ordinal share the `#` namespace. Corrected to
+14 on 4 rows. **The uncorrected 15/5 is exactly what a plausible "count the ordinal cites" rule
+reports if nobody reads the matches** — the same failure as the thing I was measuring, in my own
+instrument, one layer up. Third time tonight a lexical method misled me about whether lexical
+methods suffice.
+
+⚠ **Two cites are references but NOT merges** (`Reconciling against index 4's … 'high'`, `a
+materially narrower attack surface than #2's`) — the arbiter cites ordinals to compare severity and
+contrast scope too. So an ordinal count over-counts comparisons *and* under-counts bare-integer
+merges: **wrong in both directions at once, which is why I report it as a floor and classify
+nothing.** Which of the 23 is a merge is conv-fw's call.
+
+**I proposed no replacement predicate.** Widening to the 16 now known is fitting to the sample —
+their argument, and the bare-integer case shows the limit is not at the sample's edge.
+
+**A population note, because my recovery method was itself a projection.** I first rebuilt the
+pre-registered list by grepping the RUN REPORT and got **7 of 10** — the report is a projection of
+the population, so recovering a population from it under-reports silently. The disk enumeration is
+the actual pre-registration predicate ("every `.json`, no filtering") and gives 10/10.
