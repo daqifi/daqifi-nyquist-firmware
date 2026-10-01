@@ -8938,3 +8938,59 @@ that matters — it would have cleared a conflicted auditor.
 grep (sound only when it fires), now the accrual test (both failure modes). **Both times I
 generalised from the single case where the instrument had worked** — which is the error I filed
 against myself three hours ago and have now committed twice more against the same question.
+
+## 2026-10-01 12:40 MDT — APPLIED conv-fw's remedy to my own scripts rather than agreeing with it. Clean on all five — and the remedy needs ANCHORING.
+
+conv-fw's rule: *"when a memory names a field NOT to use, grep your own script for that field before
+reporting."* The most mechanical version of the four-lane pattern, so I ran it on my own shipped
+scripts instead of endorsing it.
+
+```
+severity          hit -> SPEC-firmware-prose-vs-verdict-census.sh
+arbiterMissing    clean
+arbiterDegraded   clean
+treadmill         clean
+created_at        hit -> measure-review-to-push.sh
+```
+
+**Both hits are FALSE POSITIVES, verified rather than reported:**
+1. `severity` resolves to **`agreed_severity`** at `:43` inside `RE_EVIDENCE` — the *correct* field,
+   used as an evidence marker.
+2. `created_at` appears 5x beside `updated_at` 3x under the deliberate **"BOTH TIMESTAMPS"** comment,
+   because the two bias in opposite directions and I report the divergence rather than picking one.
+
+## ⭐ THE SHARPENING, AND IT CAME FROM RUNNING IT RATHER THAN AGREEING WITH IT
+
+> **The remedy's grep must be ANCHORED, because a forbidden field name is usually a SUBSTRING of its
+> own replacement.** `severity` ⊂ `agreed_severity`. The replacement is *named after the thing it
+> replaces* — that is what makes it discoverable, and it is what makes the unanchored check fire on
+> correct code.
+
+**And a second, different exemption: using a forbidden field ALONGSIDE its replacement can be the
+correct handling** when neither is unambiguously right. My `created_at`/`updated_at` pair is that
+case — the rule says *prefer* `updated_at` for Qodo, and the honest treatment of an ambiguous bound
+is to measure both and report the divergence.
+
+**So the remedy is sound and needs two refinements to be mechanical:**
+1. **Anchor the pattern** — `\bseverity\b` not `severity`, or the check fires on the fix.
+2. **Exempt a co-occurrence** — a forbidden field within N lines of its replacement, under a comment,
+   is a documented choice rather than a violation. Flag it for a human read, never as a defect.
+
+⚠ **Note the direction of the unanchored failure: it reports a DEFECT in correct code.** That is the
+loud direction, so it costs a verification rather than hiding a bug — which makes it the right way
+for this particular check to be wrong, and worth saying so rather than only listing the flaw.
+
+## ⭐⭐ AND THE FOUR-LANE PATTERN, which is the night's most-replicated finding
+
+The coordinator's tally: **I falsified two instruments I had offered** (the ledger grep, the accrual
+test); **conv-fw used `f["severity"]` while holding a filed rule against it**; **conv-ts misread
+three of their own careful artifacts in later summaries**; **the coordinator over-extended my round-1
+collapse trap into a property of the field**. Four lanes, four instruments, one shape:
+
+> **The moment an instrument succeeds is the moment it feels general and is least tested.** Its
+> success is the evidence that makes generalising feel safe, and the success was on one case.
+
+**Mine is the clearest instance because I did it TWICE against the same question within one hour**,
+having filed the rule against myself three hours earlier. **Writing the rule down did not stop the
+third commission** — which is the transfer-failure class again, now at five instances for me, and
+the reason conv-fw's version is better than mine: theirs is a *grep you run*, not a rule you hold.
