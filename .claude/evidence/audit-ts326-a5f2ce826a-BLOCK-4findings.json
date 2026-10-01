@@ -1,0 +1,487 @@
+{
+  "summary": "Independent bug-hunt over the full PR diff + refute-skeptic verification (qodo-cycle 3.5)",
+  "agentCount": 4,
+  "logs": [
+    "Adversarial pre-merge audit over 1 target(s) in daqifi/daqifi-python-test-suite — chain=[codex], diversity=1, skeptic=opus, blindLeg=true",
+    "✓ adversary codex audited #326",
+    "⚠ blind leg raised 4 finding(s) the steered pass did not — routed to verify (they can now block)",
+    "Done: 8 raw findings, 8 survived refutation; 1/1 adversary legs ran (chain [codex])",
+    "⚖ arbiter: keep_fixing — 8 reported findings collapse to 4 distinct bugs in the new test_980_dac7718_* scripts (indices 0/4, 1/5, 2/6, 3/7 are each the same defect reported twice, with "
+  ],
+  "result": {
+    "repo": "daqifi/daqifi-python-test-suite",
+    "base_sha": "05eb7f72f5f2e15102dc9ff7f61d1da767515bfc",
+    "head_sha": "a5f2ce826a8857408729425c03e1075aea2d732c",
+    "producer_sha": "7c541130ed829d03d3b1fc784586160378f02b21",
+    "truncated": false,
+    "covered_bytes": 49232,
+    "total_bytes": 49232,
+    "provenance": {
+      "326": {
+        "repo": "daqifi/daqifi-python-test-suite",
+        "base_sha": "05eb7f72f5f2e15102dc9ff7f61d1da767515bfc",
+        "head_sha": "a5f2ce826a8857408729425c03e1075aea2d732c",
+        "producer_sha": "7c541130ed829d03d3b1fc784586160378f02b21",
+        "truncated": false,
+        "covered_bytes": 49232,
+        "total_bytes": 49232
+      }
+    },
+    "engine": "codex",
+    "auditChain": [
+      "codex"
+    ],
+    "targetsAudited": 1,
+    "arbiter": {
+      "verdict": "keep_fixing",
+      "summary": "8 reported findings collapse to 4 distinct bugs in the new test_980_dac7718_* scripts (indices 0/4, 1/5, 2/6, 3/7 are each the same defect reported twice, with the skeptic giving inconsistent corrected severities across the duplicate pair in two cases). All four are skeptic-CONFIRMED, in-scope, traced to specific file:line with cited firmware/libscpi source, and none is covered by a standing project disposition — so all are fix_now. (1) Malformed teardown voltage command (`SOURce:VOLTage:LEVel 0.0 {ch}`, space-separated/wrong order) is rejected by libscpi before reaching the callback; ReliableSCPI.command never reads SYST:ERR?, so cleanup silently no-ops and the test reports PASS while leaving all 8 DAC channels commanded at 6V — fails toward silence AND leaves hardware energized incorrectly after a 'passing' run; agreed severity HIGH (the hunter's original call, not the skeptic's downgrade — a stuck-at-6V bench hazard on exit is not a cosmetic issue). (2) discover_channels() treats a timestamp-gated read failure as 'not configured', so a freshly-booted board (timestamp=0 on every channel) either false-FAILs entirely or, worse, silently discovers only previously-commanded channels and the test prints 'all N channels' while covering a strict subset — fails toward silent coverage loss on regressions; agreed severity HIGH per the second hunter's call, overriding the first hunter/skeptic's 'medium' since the partial-discovery case is a silent test-integrity issue, not just a false-fail nuisance. (3) `return 0` is evaluated before Python runs `finally`, so a teardown failure prints 'verdict=FAIL' but the process still exits 0 — automation keyed on exit status sees green on a run that left the bench hot; agreed severity MEDIUM, both hunters and skeptic agree. (4) Power-cycle teardown writes the voltage-restore command before re-enabling power on certain failure exit paths, hits the firmware's own power gate (-200), and ReliableSCPI's silent error-swallowing makes cleanup print a false 'restored' message; agreed severity MEDIUM, both hunters and skeptic agree — narrower blast radius since it only triggers on a failure-path exit, but still leaves stale state for the next test. No refutations were submitted to review (empty list), so unsound_refutations is empty — this is not a finding of soundness, there was simply nothing in that list to check. None of these are treadmill nits: they are correctness-of-test-infrastructure bugs that would let real firmware regressions (DAC teardown, discovery gaps, power-gate behavior) pass silently, which is precisely what a regression-test PR must not do.",
+      "dispositions": [
+        {
+          "index": 0,
+          "disposition": "fix_now",
+          "agreed_severity": "high",
+          "rationale": "Duplicate of index 4 (same file/line). Skeptic confirmed the mechanism (malformed SCPI never reaches the callback, ReliableSCPI never checks SYST:ERR?). Reconciling against index 4's skeptic-corrected 'high': agreeing HIGH, not this entry's 'medium' — leaving all 8 DAC channels latched at 6V after a reported-PASS teardown is a bench-safety issue (fails toward silence: operator trusts the PASS and walks away from an energized rail), not a cosmetic test nit. Not pre-existing-and-accepted: no module doc claims this teardown is best-effort. Fix: make the restore command syntax `<channel>,<voltage>` and have teardown check SYST:ERR? (or use a checked-command helper) before declaring success."
+        },
+        {
+          "index": 1,
+          "disposition": "fix_now",
+          "agreed_severity": "high",
+          "rationale": "Duplicate of index 5 (same file/line). Reconciling this entry's 'medium' against index 5's 'high': agreeing HIGH — the partial-discovery case (test silently covers only previously-commanded channels while printing 'all N channels') is a silent coverage gap that would let a regression on channels 1-7 pass clean, which is the worst-direction failure mode for a regression suite whose whole purpose is catching exactly that. The fresh-board false-FAIL case is comparatively benign (loud failure, not silence) but the silent-subset case dominates the severity call. Fix: discover configured channels from board capability/config rather than from a successful voltage readback, or explicitly command a known value first before using readback as a discovery signal."
+        },
+        {
+          "index": 2,
+          "disposition": "fix_now",
+          "agreed_severity": "medium",
+          "rationale": "Duplicate of index 6, same mechanism, both skeptic passes and both hunters agree on medium. Classic Python try/finally return-value gotcha: `return 0` is bound before `finally` reassigns the local `verdict` string, so exit status never reflects a teardown failure. Fails toward silence for exit-status-driven automation even though the printed verdict is correct for a human reading output. Fix: track success/fail via the function's actual return path (restructure to compute verdict before returning, or make finally set a flag main() returns)."
+        },
+        {
+          "index": 3,
+          "disposition": "fix_now",
+          "agreed_severity": "medium",
+          "rationale": "Duplicate of index 7, same mechanism (ordering bug: voltage-restore write happens before power is re-enabled on failure exit paths; firmware's power gate correctly rejects it with -200; ReliableSCPI swallows the error so cleanup falsely logs success). Both skeptic passes and both hunters agree medium — narrower than the all-channel-latch bugs since it only triggers on specific failure-path exits in this one test, but still a failed-cleanup/false-report bug. Fix: reorder teardown to restore power before attempting the voltage write, and check SYST:ERR? after the write."
+        }
+      ],
+      "unsound_refutations": [],
+      "treadmill": false,
+      "decline_comment_markdown": "No findings in this round are being declined or deferred — all four distinct defects (reported as 8 entries, each duplicated by two hunters) are confirmed, in-scope, and require fixes before merge:\n\n1. **Malformed teardown voltage command** (`test_980_dac7718_all_channel_latch.py:182`) — leaves all 8 DAC channels latched at 6V after a falsely-reported PASS. **High.**\n2. **Channel discovery excludes unconfigured-looking channels** (`test_980_dac7718_all_channel_latch.py:294`) — can silently test only a subset of channels while claiming full coverage. **High.**\n3. **`finally`-block verdict change doesn't affect the already-evaluated return code** (`test_980_dac7718_all_channel_latch.py:579`) — exit status can read 0 (success) even when the printed verdict says FAIL. **Medium.**\n4. **Power-cycle teardown attempts a voltage restore before power is back up** (`test_980_dac7718_power_cycle_reinit.py:349`) — firmware's power gate correctly rejects it, but the test falsely logs the restore as successful. **Medium.**\n\nNo refutations were submitted for arbiter review this round (the REFUTATIONS list was empty), so there is nothing here to flag as unsound or to reinstate."
+    },
+    "arbiterModel": "sonnet",
+    "rawFindings": 8,
+    "refuted": 0,
+    "unverified": [],
+    "confirmed": [
+      {
+        "title": "Teardown sends invalid per-channel voltage commands",
+        "file": "test_980_dac7718_all_channel_latch.py",
+        "line": 182,
+        "severity": "high",
+        "category": "incorrect command / failed cleanup",
+        "failure_scenario": "Start with an NQ3 powered up and all eight channel setpoints readable. The test successfully sets every channel to 6 V, then teardown sends commands such as `SOURce:VOLTage:LEVel 0.0 3`. Firmware requires `<channel>,<voltage>`; libscpi rejects the missing comma. ReliableSCPI.command only transmits bytes and does not raise for SCPI errors, so restore_bench returns no failures and the test exits PASS with all eight outputs still commanded to 6 V. This disproves the claim that teardown returns the channels to zero.",
+        "breaks_feature": true,
+        "engine": "codex",
+        "__source": "steered",
+        "engines": [
+          "codex"
+        ],
+        "contributions": [
+          {
+            "engine": "codex",
+            "title": "Teardown sends invalid per-channel voltage commands",
+            "category": "incorrect command / failed cleanup",
+            "failure_scenario": "Start with an NQ3 powered up and all eight channel setpoints readable. The test successfully sets every channel to 6 V, then teardown sends commands such as `SOURce:VOLTage:LEVel 0.0 3`. Firmware requires `<channel>,<voltage>`; libscpi rejects the missing comma. ReliableSCPI.command only transmits bytes and does not raise for SCPI errors, so restore_bench returns no failures and the test exits PASS with all eight outputs still commanded to 6 V. This disproves the claim that teardown returns the channels to zero."
+          }
+        ],
+        "relatedTo": [],
+        "target": 326,
+        "verdict": "CONFIRMED",
+        "reasoning": "Traced at a5f2ce8. test_980_dac7718_all_channel_latch.py:182 sends `SOURce:VOLTage:LEVel 0.0 {ch}` — space-separated, and with the arguments in the wrong order. Firmware's two-parameter form is <channel>,<voltage>: SCPIDAC.c SCPI_DACVoltageSet parses the FIRST param as `voltage` then, when a second param is PRESENT, does `channel = (int)voltage; voltage = voltage2;` (SCPIDAC.c:503-505). Worse, the command never reaches the callback at all: libscpi's scpiParser_detectProgramMessageUnit (parser.c:1498-1531) lexes the header, then scpiParser_parseAllProgramData consumes `0.0` and loops only on scpiLex_Comma (lexer.c:838-850, which does NOT skip whitespace); with `3` remaining, scpiLex_NewLine (lexer.c:918) and scpiLex_Semicolon both fail and `!scpiLex_IsEos` sets programHeader.type = SCPI_TOKEN_INVALID, so SCPI_Parse pushes SCPI_ERROR_INVALID_CHARACTER (parser.c:212-214) and processCommand is never called. ReliableSCPI.command (test_harness.py:669-693) only writes bytes and sleeps — it never reads SYST:ERR? — so restore_bench returns an empty `failures` list, main prints no WARNING, verdict stays PASS, and every channel is left commanded at VOLTAGE_B = 6 V with the rail up. The docstring's claim that 'Channels are returned to 0 V, which is a DEFINED state' is false. The self-test even pins the malformed string as a NEGATIVE control (line 372), so the bug is locked in by its own test. Impact is bench state / false cleanup report, not firmware: medium.",
+        "corrected_severity": "medium",
+        "__inScope": true
+      },
+      {
+        "title": "Discovery excludes configured channels whose setpoints are unknown",
+        "file": "test_980_dac7718_all_channel_latch.py",
+        "line": 294,
+        "severity": "high",
+        "category": "false failure / silent test-drop",
+        "failure_scenario": "Run against a freshly booted NQ3 before any DAC voltage command. SCPI_DACVoltageGet rejects channels whose BoardData timestamp is zero, so all eight configured channels are excluded and main fails before exercising any all-channel write. If only channel 0 was previously commanded, discovery instead returns [0]; subsequent writes affect all eight channels, but verification and cleanup cover only channel 0. A regression that skips channels 1-7 can therefore pass. Readable prior setpoints are not a channel inventory.",
+        "breaks_feature": true,
+        "engine": "codex",
+        "__source": "steered",
+        "engines": [
+          "codex"
+        ],
+        "contributions": [
+          {
+            "engine": "codex",
+            "title": "Discovery excludes configured channels whose setpoints are unknown",
+            "category": "false failure / silent test-drop",
+            "failure_scenario": "Run against a freshly booted NQ3 before any DAC voltage command. SCPI_DACVoltageGet rejects channels whose BoardData timestamp is zero, so all eight configured channels are excluded and main fails before exercising any all-channel write. If only channel 0 was previously commanded, discovery instead returns [0]; subsequent writes affect all eight channels, but verification and cleanup cover only channel 0. A regression that skips channels 1-7 can therefore pass. Readable prior setpoints are not a channel inventory."
+          }
+        ],
+        "relatedTo": [],
+        "target": 326,
+        "verdict": "CONFIRMED",
+        "reasoning": "Traced at a5f2ce8. discover_channels() (lines ~262-296) treats a parseable `SOUR:VOLT:LEV? <ch>` reply plus a clean error queue as 'this channel is configured'. Firmware refuses that query for any channel whose BoardData timestamp is zero: SCPI_DACVoltageGet single-channel branch does `if ((pSample == NULL) || (pSample->Timestamp < 1)) { ... deferredError = SCPI_ERROR_EXECUTION_ERROR; result = SCPI_RES_ERR; }` (SCPIDAC.c, 'channel %d not known (DAC reinitialised since last commanded)'). Timestamp is 0 both on a fresh boot (never commanded) and after DAC_EnsureHardwareInitialized()'s post-power-cycle invalidation loop (same file, #1034 block). So on a freshly booted NQ3 — the first board this queued test will run on — read_channel returns None and classify_drain sees a real -200 for all 8 channels, found == [], and main raises Failure 'discover_channels() found no readable AOut channels' at line 467, returning 1: a false FAIL against correct firmware, the identical class the commit message says it fixed in the sibling file. The partial case also holds: if only channel 0 had ever been commanded, discovery yields [0] while `SOUR:VOLT:LEV 3.0` writes all eight, so steps 1-3 verify and restore only channel 0 and a regression affecting channels 1-7 passes. Readable prior setpoints are not a channel inventory (BOARDCONFIG_AOUT_CHANNELS / Size is). Medium: false failure plus silent coverage loss, no firmware impact.",
+        "corrected_severity": "medium",
+        "__inScope": true
+      },
+      {
+        "title": "Changing the verdict in finally leaves the successful exit code intact",
+        "file": "test_980_dac7718_all_channel_latch.py",
+        "line": 579,
+        "severity": "medium",
+        "category": "incorrect exit status",
+        "failure_scenario": "Let all three test steps succeed, then make the serial transport raise OSError during a teardown command. restore_bench reports the failure and finally changes verdict to FAIL, but Python has already evaluated `return 0` at line 552. main still returns 0 and sys.exit reports success to automation. This reproduces with a fake transport that raises only during restore and contradicts the stated requirement not to pass a run with failed cleanup.",
+        "breaks_feature": true,
+        "engine": "codex",
+        "__source": "steered",
+        "engines": [
+          "codex"
+        ],
+        "contributions": [
+          {
+            "engine": "codex",
+            "title": "Changing the verdict in finally leaves the successful exit code intact",
+            "category": "incorrect exit status",
+            "failure_scenario": "Let all three test steps succeed, then make the serial transport raise OSError during a teardown command. restore_bench reports the failure and finally changes verdict to FAIL, but Python has already evaluated `return 0` at line 552. main still returns 0 and sys.exit reports success to automation. This reproduces with a fake transport that raises only during restore and contradicts the stated requirement not to pass a run with failed cleanup."
+          }
+        ],
+        "relatedTo": [],
+        "target": 326,
+        "verdict": "CONFIRMED",
+        "reasoning": "Traced at a5f2ce8. main() sets `verdict = 'PASS'` (line 551) and `return 0` (line 552) inside the try. The finally block calls restore_bench and, on reported failures, prints the WARNING and does `if verdict == 'PASS': verdict = 'FAIL'` (lines 574-580) — but `verdict` is a local used only in the final print at line ~589; the finally block contains no `return`, so Python keeps the already-evaluated return value 0 and `sys.exit(main())` reports success. Reachable exactly as described: restore_bench's per-step try/except (lines 180-191) catches a transport exception (e.g. pyserial OSError/SerialException during the teardown writes) and returns it in `failures`, which is the only way `restore_failures` is non-empty. The file's own comment 'Do not silently pass a run that left the bench hot' is therefore unimplemented. Medium: automation sees green on a run whose cleanup failed.",
+        "corrected_severity": "medium",
+        "__inScope": true
+      },
+      {
+        "title": "Power-cycle cleanup attempts voltage restoration while the rail is down",
+        "file": "test_980_dac7718_power_cycle_reinit.py",
+        "line": 349,
+        "severity": "medium",
+        "category": "failed cleanup / incorrect restoration report",
+        "failure_scenario": "Begin powered up with channel 0 at 2 V. Step 1 sets it to 5 V; step 2 powers down and correctly refuses the DAC write. Make the subsequent SYST:LOG? read raise a transient OSError. finally then sends `SOURce:VOLTage:LEVel 0,2.0` while power remains zero, so the firmware power gate rejects it with -200. ReliableSCPI.command does not check that refusal, and cleanup prints that 2 V was restored before powering the board back up. The prior voltage was never restored; reproducing this sequence leaves the cache at 5 V and a queued -200. The comment claiming the restore lands while the rail is up is false on this exit path.",
+        "breaks_feature": true,
+        "engine": "codex",
+        "__source": "steered",
+        "engines": [
+          "codex"
+        ],
+        "contributions": [
+          {
+            "engine": "codex",
+            "title": "Power-cycle cleanup attempts voltage restoration while the rail is down",
+            "category": "failed cleanup / incorrect restoration report",
+            "failure_scenario": "Begin powered up with channel 0 at 2 V. Step 1 sets it to 5 V; step 2 powers down and correctly refuses the DAC write. Make the subsequent SYST:LOG? read raise a transient OSError. finally then sends `SOURce:VOLTage:LEVel 0,2.0` while power remains zero, so the firmware power gate rejects it with -200. ReliableSCPI.command does not check that refusal, and cleanup prints that 2 V was restored before powering the board back up. The prior voltage was never restored; reproducing this sequence leaves the cache at 5 V and a queued -200. The comment claiming the restore lands while the rail is up is false on this exit path."
+          }
+        ],
+        "relatedTo": [],
+        "target": 326,
+        "verdict": "CONFIRMED",
+        "reasoning": "Traced at a5f2ce8. test_980_dac7718_power_cycle_reinit.py finally block, lines 343-352: the comment says the setpoint write is ordered first 'so the write lands while the rail this run may be about to drop is still up', but power is only restored AFTER it (lines 355-359) and nothing re-raises the rail first. Every exit path out of step 2 leaves the board at SYST:POW:STAT 0 — set_power(scpi, 0) at the top of step 2, then any of: the OSError the claim injects in _log_text()/query_timed (line 155, raw serial I/O, uncaught inside try_dac_write), the `raise Failure('SOUR:VOLT:LEV was ACCEPTED after SYST:POW:STAT 0 ...')`, the unreadable-probe Failure, or the not-attributed Failure. finally then sends `SOURce:VOLTage:LEVel 0,2.0` with the rail down, where firmware refuses it: SCPI_DACVoltageSet calls DAC_EnsureHardwareInitialized() and on false does SCPI_ExecutionError(context, \"SOUR:VOLT:LEV: DAC not initialized (device powered up?)\") → -200 (SCPIDAC.c:456-459) — the very refusal step 2 asserts. ReliableSCPI.command (test_harness.py:669) never reads SYST:ERR?, so no exception is raised and line 350 prints 'teardown: restored channel 0 to 2.0 V' falsely, leaving a queued -200 for the next run's drain. One detail of the claim is imprecise but not load-bearing: after power is restored, DAC_EnsureHardwareInitialized()'s invalidation loop zeroes the cached setpoints rather than leaving 5 V standing — either way the prior voltage is not restored and the report is false. Medium: false cleanup report plus a leaked queued error.",
+        "corrected_severity": "medium",
+        "__inScope": true
+      },
+      {
+        "title": "Malformed restore commands leave every DAC output at 6 V",
+        "file": "test_980_dac7718_all_channel_latch.py",
+        "line": 182,
+        "severity": "high",
+        "category": "incorrect hardware restoration",
+        "failure_scenario": "Start with an NQ3 powered up and all eight channels previously commanded, then complete the test successfully. Teardown sends commands such as 'SOURce:VOLTage:LEVel 0.0 3', but libscpi requires a comma and SCPI_DACVoltageSet expects channel,voltage. The firmware rejects these commands instead of restoring outputs. ReliableSCPI.command only writes bytes and does not raise for queued SCPI errors, so restore_bench reports no failures and the script exits PASS with all eight outputs still at 6 V. Use '<channel>,0.0' and verify firmware acceptance.",
+        "breaks_feature": true,
+        "engine": "codex-blind",
+        "__source": "blind",
+        "engines": [
+          "codex-blind"
+        ],
+        "contributions": [
+          {
+            "engine": "codex-blind",
+            "title": "Malformed restore commands leave every DAC output at 6 V",
+            "category": "incorrect hardware restoration",
+            "failure_scenario": "Start with an NQ3 powered up and all eight channels previously commanded, then complete the test successfully. Teardown sends commands such as 'SOURce:VOLTage:LEVel 0.0 3', but libscpi requires a comma and SCPI_DACVoltageSet expects channel,voltage. The firmware rejects these commands instead of restoring outputs. ReliableSCPI.command only writes bytes and does not raise for queued SCPI errors, so restore_bench reports no failures and the script exits PASS with all eight outputs still at 6 V. Use '<channel>,0.0' and verify firmware acceptance."
+          }
+        ],
+        "relatedTo": [],
+        "target": 326,
+        "verdict": "CONFIRMED",
+        "reasoning": "At a5f2ce8, test_980_dac7718_all_channel_latch.py:182 sends `SOURce:VOLTage:LEVel 0.0 {ch}` — space-separated and in the wrong order. Firmware's two-parameter form is channel,voltage (SCPIDAC.c:503-516: first param parsed as double, treated as CHANNEL when a second param is present). With no comma, libscpi rejects outright: SCPI_Parameter (libscpi/src/parser.c:719-726) requires a COMMA token once input_count!=0 and otherwise pushes SCPI_ERROR_INVALID_SEPARATOR, so SCPI_OptionalParamDouble (SCPIInterface.h:473-476) returns SCPI_OPT_BAD and SCPI_DACVoltageSet returns SCPI_RES_ERR before any register write (and if the lexer instead absorbed ' 3' as a suffix, SCPI_ParamDouble rejects with -131 — both arms reject). ReliableSCPI.command (test_harness.py:669-693) only writes bytes and sleeps; it never queries SYST:ERR?, so restore_bench appends no failure, `failures` is empty, no WARNING prints, verdict stays PASS (f1:551) and the finally block (f1:567) reports a restore that never happened — all discovered channels left at VOLTAGE_B = 6.0 V (f1:108). Self-test only asserts the literal string was sent (f1:372-374), so it cannot catch the malformed syntax.",
+        "corrected_severity": "high",
+        "__inScope": true
+      },
+      {
+        "title": "Channel discovery excludes configured outputs without prior setpoints",
+        "file": "test_980_dac7718_all_channel_latch.py",
+        "line": 294,
+        "severity": "high",
+        "category": "false failure and silent test omission",
+        "failure_scenario": "Run on a freshly booted NQ3 whose DAC channels have never been commanded. SCPI_DACVoltageGet rejects each configured channel because its cached sample Timestamp is zero. Discovery therefore returns [] and the script fails before issuing any all-channel write, despite correct firmware and eight configured outputs. If only channel 0 was previously commanded, discovery returns [0]; subsequent assertions silently omit channels 1-7, allowing failures affecting those channels to pass. This contradicts the claim that discovery identifies every configured output; a readable prior setpoint is not evidence of channel configuration.",
+        "breaks_feature": true,
+        "engine": "codex-blind",
+        "__source": "blind",
+        "engines": [
+          "codex-blind"
+        ],
+        "contributions": [
+          {
+            "engine": "codex-blind",
+            "title": "Channel discovery excludes configured outputs without prior setpoints",
+            "category": "false failure and silent test omission",
+            "failure_scenario": "Run on a freshly booted NQ3 whose DAC channels have never been commanded. SCPI_DACVoltageGet rejects each configured channel because its cached sample Timestamp is zero. Discovery therefore returns [] and the script fails before issuing any all-channel write, despite correct firmware and eight configured outputs. If only channel 0 was previously commanded, discovery returns [0]; subsequent assertions silently omit channels 1-7, allowing failures affecting those channels to pass. This contradicts the claim that discovery identifies every configured output; a readable prior setpoint is not evidence of channel configuration."
+          }
+        ],
+        "relatedTo": [],
+        "target": 326,
+        "verdict": "CONFIRMED",
+        "reasoning": "discover_channels (f1:258-296) classifies a channel as configured only if SOURce:VOLTage:LEVel? <ch> parses AND the queue drains clean. Firmware SCPI_DACVoltageGet rejects a never-commanded channel: SCPIDAC.c (single-channel arm) `if ((pSample == NULL) || (pSample->Timestamp < 1))` → deferredError = SCPI_ERROR_EXECUTION_ERROR, result = SCPI_RES_ERR, no value written. Timestamp is zero on a fresh board and is explicitly zeroed on every reinit: DAC_EnsureHardwareInitialized writes `const AOutSample invalidatedSample = {0};` to all MAX_AOUT_CHANNEL slots (SCPIDAC.c ~line 290). main() powers up (f1:461) and then immediately discovers without commanding any channel, so every probe errors → found == [] → Failure 'discover_channels() found no readable AOut channels' (f1:467-469) → verdict FAIL against correct firmware on exactly the fresh NQ3 this test targets. The partial case is the same mechanism: if only channel 0 had a live setpoint, channels is [0] and steps 1-3 assert nothing about 1-7 while still printing 'all N channels'. Readable prior setpoint is not evidence of configuration — the docstring at f1:259-262 claims otherwise.",
+        "corrected_severity": "high",
+        "__inScope": true
+      },
+      {
+        "title": "Cleanup failure does not change the successful process exit status",
+        "file": "test_980_dac7718_all_channel_latch.py",
+        "line": 579,
+        "severity": "medium",
+        "category": "false success exit status",
+        "failure_scenario": "Let all three test steps succeed, then have the serial transport raise OSError during teardown, for example after unplugging the device immediately after the final readback. restore_bench records the failure and finally changes verdict to FAIL, but main's return 0 was already evaluated before finally ran. main still returns 0 and sys.exit reports success to automation. A device-free reproduction produces 'verdict=FAIL' with return value 0, disproving the comment that this downgrades a passing run.",
+        "breaks_feature": true,
+        "engine": "codex-blind",
+        "__source": "blind",
+        "engines": [
+          "codex-blind"
+        ],
+        "contributions": [
+          {
+            "engine": "codex-blind",
+            "title": "Cleanup failure does not change the successful process exit status",
+            "category": "false success exit status",
+            "failure_scenario": "Let all three test steps succeed, then have the serial transport raise OSError during teardown, for example after unplugging the device immediately after the final readback. restore_bench records the failure and finally changes verdict to FAIL, but main's return 0 was already evaluated before finally ran. main still returns 0 and sys.exit reports success to automation. A device-free reproduction produces 'verdict=FAIL' with return value 0, disproving the comment that this downgrades a passing run."
+          }
+        ],
+        "relatedTo": [],
+        "target": 326,
+        "verdict": "CONFIRMED",
+        "reasoning": "main() returns 0 at f1:552 inside try; the finally block at f1:562-587 sets `verdict = 'FAIL'` at f1:579-580 when restore_failures is non-empty. Python evaluates the return value before finally runs, and finally contains no return/raise, so the already-computed 0 is what propagates to `sys.exit(main())` (f1:595). The printed line reads `verdict=FAIL` (f1:587) while the process exits 0, so automation keyed on exit status records success. The comment at f1:577-578 ('Do not silently pass a run that left the bench hot… Only downgrade a PASS') is therefore inert. Reachable: restore_bench appends a failure whenever scpi.command raises, e.g. an OSError/SerialException from the pyserial write on a device unplugged after the final readback (f1:183-184, 189-191).",
+        "corrected_severity": "medium",
+        "__inScope": true
+      },
+      {
+        "title": "Power-cycle failure path restores voltage while the DAC rail is off",
+        "file": "test_980_dac7718_power_cycle_reinit.py",
+        "line": 349,
+        "severity": "medium",
+        "category": "incorrect hardware restoration",
+        "failure_scenario": "Start powered up with channel 0 at 2 V. Step 1 writes 5 V; step 2 powers down and receives the expected -200, but its SYST:LOG? response is lost, causing attribution to fail before step 3. Finally sends 'SOURce:VOLTage:LEVel 0,2.0' while power is still 0, so correct firmware rejects restoration through the very power gate under test. ReliableSCPI.command does not inspect that error, and teardown falsely prints that 2 V was restored, then powers the board back up without retrying the setpoint. The prior channel state is therefore not restored. Teardown must establish powered-up operation before restoring voltage and verify acceptance.",
+        "breaks_feature": true,
+        "engine": "codex-blind",
+        "__source": "blind",
+        "engines": [
+          "codex-blind"
+        ],
+        "contributions": [
+          {
+            "engine": "codex-blind",
+            "title": "Power-cycle failure path restores voltage while the DAC rail is off",
+            "category": "incorrect hardware restoration",
+            "failure_scenario": "Start powered up with channel 0 at 2 V. Step 1 writes 5 V; step 2 powers down and receives the expected -200, but its SYST:LOG? response is lost, causing attribution to fail before step 3. Finally sends 'SOURce:VOLTage:LEVel 0,2.0' while power is still 0, so correct firmware rejects restoration through the very power gate under test. ReliableSCPI.command does not inspect that error, and teardown falsely prints that 2 V was restored, then powers the board back up without retrying the setpoint. The prior channel state is therefore not restored. Teardown must establish powered-up operation before restoring voltage and verify acceptance."
+          }
+        ],
+        "relatedTo": [],
+        "target": 326,
+        "verdict": "CONFIRMED",
+        "reasoning": "test_980_dac7718_power_cycle_reinit.py:349 issues `SOURce:VOLTage:LEVel {CHANNEL},{prior_volts}` in finally, before the power state is restored at :359. Any Failure raised between set_power(scpi, 0) (:280) and set_power(scpi, 1) (:318) reaches finally with power still 0 — and the file itself raises there in three places: the unreadable-probe arm (:305-308) and the unattributed-refusal arm (:310-315), which is exactly the 'SYST:LOG? response lost' case. With power at 0 the write is refused by the very gate step 2 asserts (DAC_EnsureHardwareInitialized → SCPI_ExecutionError 'DAC not initialized (device powered up?)', SCPIDAC.c:456-458). ReliableSCPI.command (test_harness.py:669-693) never inspects SYST:ERR?, so the except clause is not entered and :350 prints 'teardown: restored channel 0 to 2.0 V' falsely; power is then returned to 1 (:359-361) with no retry of the setpoint, so the prior channel state is not restored. The teardown's own ordering rationale (:343-346) holds only on the step-3 path, not on the power-down failure path.",
+        "corrected_severity": "medium",
+        "__inScope": true
+      }
+    ],
+    "plausible": [],
+    "outOfScope": [],
+    "auditorLegsOk": 1,
+    "auditorLegsAttempted": 1,
+    "blindLegRan": true,
+    "finalGate": true,
+    "adversaryDiversity": 1,
+    "verifyBatch": 4,
+    "blindLegMissingFor": [],
+    "blindLegRanFor": [
+      326
+    ],
+    "blindLegRequested": true,
+    "blindLegExplicitOff": false,
+    "steeringSuppressed": [
+      {
+        "title": "Malformed restore commands leave every DAC output at 6 V",
+        "file": "test_980_dac7718_all_channel_latch.py",
+        "line": 182,
+        "severity": "high",
+        "category": "incorrect hardware restoration",
+        "failure_scenario": "Start with an NQ3 powered up and all eight channels previously commanded, then complete the test successfully. Teardown sends commands such as 'SOURce:VOLTage:LEVel 0.0 3', but libscpi requires a comma and SCPI_DACVoltageSet expects channel,voltage. The firmware rejects these commands instead of restoring outputs. ReliableSCPI.command only writes bytes and does not raise for queued SCPI errors, so restore_bench reports no failures and the script exits PASS with all eight outputs still at 6 V. Use '<channel>,0.0' and verify firmware acceptance.",
+        "breaks_feature": true,
+        "engine": "codex-blind",
+        "target": 326,
+        "relatedToSteered": false
+      },
+      {
+        "title": "Channel discovery excludes configured outputs without prior setpoints",
+        "file": "test_980_dac7718_all_channel_latch.py",
+        "line": 294,
+        "severity": "high",
+        "category": "false failure and silent test omission",
+        "failure_scenario": "Run on a freshly booted NQ3 whose DAC channels have never been commanded. SCPI_DACVoltageGet rejects each configured channel because its cached sample Timestamp is zero. Discovery therefore returns [] and the script fails before issuing any all-channel write, despite correct firmware and eight configured outputs. If only channel 0 was previously commanded, discovery returns [0]; subsequent assertions silently omit channels 1-7, allowing failures affecting those channels to pass. This contradicts the claim that discovery identifies every configured output; a readable prior setpoint is not evidence of channel configuration.",
+        "breaks_feature": true,
+        "engine": "codex-blind",
+        "target": 326,
+        "relatedToSteered": false
+      },
+      {
+        "title": "Cleanup failure does not change the successful process exit status",
+        "file": "test_980_dac7718_all_channel_latch.py",
+        "line": 579,
+        "severity": "medium",
+        "category": "false success exit status",
+        "failure_scenario": "Let all three test steps succeed, then have the serial transport raise OSError during teardown, for example after unplugging the device immediately after the final readback. restore_bench records the failure and finally changes verdict to FAIL, but main's return 0 was already evaluated before finally ran. main still returns 0 and sys.exit reports success to automation. A device-free reproduction produces 'verdict=FAIL' with return value 0, disproving the comment that this downgrades a passing run.",
+        "breaks_feature": true,
+        "engine": "codex-blind",
+        "target": 326,
+        "relatedToSteered": false
+      },
+      {
+        "title": "Power-cycle failure path restores voltage while the DAC rail is off",
+        "file": "test_980_dac7718_power_cycle_reinit.py",
+        "line": 349,
+        "severity": "medium",
+        "category": "incorrect hardware restoration",
+        "failure_scenario": "Start powered up with channel 0 at 2 V. Step 1 writes 5 V; step 2 powers down and receives the expected -200, but its SYST:LOG? response is lost, causing attribution to fail before step 3. Finally sends 'SOURce:VOLTage:LEVel 0,2.0' while power is still 0, so correct firmware rejects restoration through the very power gate under test. ReliableSCPI.command does not inspect that error, and teardown falsely prints that 2 V was restored, then powers the board back up without retrying the setpoint. The prior channel state is therefore not restored. Teardown must establish powered-up operation before restoring voltage and verify acceptance.",
+        "breaks_feature": true,
+        "engine": "codex-blind",
+        "target": 326,
+        "relatedToSteered": false
+      }
+    ],
+    "codexErrors": [],
+    "codexFellBack": false,
+    "gate": "BLOCK",
+    "noProvenance": false,
+    "hunterLegsIncomplete": false,
+    "perTargetShortfall": [],
+    "adversaryDiversityContradiction": false,
+    "arbiterMissing": false,
+    "arbiterDegraded": false,
+    "unsoundRefutationsBlock": false,
+    "codexScript": "~/.claude/skills/qodo-cycle/codex-audit.sh",
+    "codexProducerRan": true,
+    "codexScriptOverridden": false,
+    "anyArgumentError": false,
+    "argumentErrorDetail": [],
+    "gateReason": "8 finding(s) survived refutation"
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Audit"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Verify"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Arbitrate"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "audit:#326:codex",
+      "phaseIndex": 1,
+      "phaseTitle": "Audit",
+      "agentId": "a3bccf5ed83d6ea0e",
+      "agentType": "general-purpose",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1790812534368,
+      "queuedAt": 1790812534346,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "daqifi/daqifi-python-test-suite",
+      "promptPreview": "You are an EXECUTOR, not a reviewer. Run this EXACT command with the Bash tool (it may take several minutes — Codex is doing an adversarial audit) and return its stdout, a single JSON object, as your structured output. Copy the command CHARACTER FOR CHARACTER; do NOT edit, split, re-quote, or add flags. Do NOT analyze the diff yourself and do NOT add, drop, or reword any finding — pass the JSON th…",
+      "promptFramed": true,
+      "lastProgressAt": 1790812784826,
+      "tokens": 82816,
+      "toolCalls": 2,
+      "durationMs": 250457,
+      "resultPreview": "{\"findings\":[{\"title\":\"Teardown sends invalid per-channel voltage commands\",\"file\":\"test_980_dac7718_all_channel_latch.py\",\"line\":182,\"severity\":\"high\",\"category\":\"incorrect command / failed cleanup\",\"failure_scenario\":\"Start with an NQ3 powered up and all eight channel setpoints readable. The test successfully sets every channel to 6 V, then teardown sends commands such as `SOURce:VOLTage:LEVel 0…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "verify:#326:batch1/2(4)",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "ae98876b5a7c55349",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5",
+      "state": "done",
+      "startedAt": 1790812786457,
+      "queuedAt": 1790812786437,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "You are a SKEPTICAL verifier. A prior adversary claims the 4 defect(s) below in PR #326 of daqifi/daqifi-python-test-suite. Try to REFUTE each one, but the safe default when the evidence is inconclusive either way is UNVERIFIED, not REFUTED -- reach REFUTED only when the code positively proves the claim cannot reproduce, and CONFIRMED only when you trace a real reproduction. Cite the evidence for …",
+      "promptFramed": true,
+      "lastProgressAt": 1790812982004,
+      "tokens": 129064,
+      "toolCalls": 21,
+      "durationMs": 195546,
+      "resultPreview": "{\"verdicts\":[{\"index\":0,\"verdict\":\"CONFIRMED\",\"corrected_severity\":\"medium\",\"reasoning\":\"Traced at a5f2ce8. test_980_dac7718_all_channel_latch.py:182 sends `SOURce:VOLTage:LEVel 0.0 {ch}` — space-separated, and with the arguments in the wrong order. Firmware's two-parameter form is <channel>,<voltage>: SCPIDAC.c SCPI_DACVoltageSet parses the FIRST param as `voltage` then, when a second param is PR…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "verify:#326:batch2/2(4)",
+      "phaseIndex": 2,
+      "phaseTitle": "Verify",
+      "agentId": "ae1bd193f3bc10a27",
+      "agentType": "general-purpose",
+      "model": "claude-opus-5",
+      "state": "done",
+      "startedAt": 1790812786458,
+      "queuedAt": 1790812786437,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "You are a SKEPTICAL verifier. A prior adversary claims the 4 defect(s) below in PR #326 of daqifi/daqifi-python-test-suite. Try to REFUTE each one, but the safe default when the evidence is inconclusive either way is UNVERIFIED, not REFUTED -- reach REFUTED only when the code positively proves the claim cannot reproduce, and CONFIRMED only when you trace a real reproduction. Cite the evidence for …",
+      "promptFramed": true,
+      "lastProgressAt": 1790812923894,
+      "tokens": 118984,
+      "toolCalls": 16,
+      "durationMs": 133084,
+      "resultPreview": "{\"verdicts\":[{\"index\":0,\"verdict\":\"CONFIRMED\",\"corrected_severity\":\"high\",\"reasoning\":\"At a5f2ce8, test_980_dac7718_all_channel_latch.py:182 sends `SOURce:VOLTage:LEVel 0.0 {ch}` — space-separated and in the wrong order. Firmware's two-parameter form is channel,voltage (SCPIDAC.c:503-516: first param parsed as double, treated as CHANNEL when a second param is present). With no comma, libscpi rejec…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "arbiter",
+      "phaseIndex": 3,
+      "phaseTitle": "Arbitrate",
+      "agentId": "a6a859e3fca99fcfd",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "startedAt": 1790812984072,
+      "queuedAt": 1790812984056,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "keep_fixing",
+      "promptPreview": "You are the ARBITER on a pre-merge audit of daqifi/daqifi-python-test-suite. Hunters found these; a skeptic already tried to refute each. Your job is JUDGMENT, not hunting: decide what to DO about each, and whether this change is ready.\n\nYou have NO authority to CLEAR anything — the merge gate's surviving findings block regardless of what you say. You DO have authority to BLOCK: if you list a refu…",
+      "promptFramed": true,
+      "lastProgressAt": 1790813029552,
+      "tokens": 83911,
+      "toolCalls": 1,
+      "durationMs": 45479,
+      "resultPreview": "{\"verdict\":\"keep_fixing\",\"summary\":\"8 reported findings collapse to 4 distinct bugs in the new test_980_dac7718_* scripts (indices 0/4, 1/5, 2/6, 3/7 are each the same defect reported twice, with the skeptic giving inconsistent corrected severities across the duplicate pair in two cases). All four are skeptic-CONFIRMED, in-scope, traced to specific file:line with cited firmware/libscpi source, and…"
+    }
+  ],
+  "totalTokens": 414775,
+  "totalToolCalls": 40
+}

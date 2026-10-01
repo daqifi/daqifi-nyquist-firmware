@@ -6025,3 +6025,67 @@ what caught it was a third party MEASURING rather than reasoning.
 Artifact still in flight (`wf_6f4b3e59-697`). Scoring nq-c's seal against the artifact, not their
 account of it. Their own scoring accepted as written, including that a falsifier which fails to fire
 *for the wrong reason* is neither a hit nor a miss.
+
+## 2026-09-30 18:12 MDT — ts#326 ARTIFACT READ (independent). BLOCK, 4 distinct / 2 HIGH. Fix routed to me; fire launched.
+
+Artifact copied into my lane (a borrowed artifact is not filed):
+`.claude/evidence/audit-ts326-a5f2ce826a-BLOCK-4findings.json`. **Read in pre-registered order and I
+did NOT take nq-c's account of any of it.**
+
+**✅ PROVENANCE, FIRST — all PASS; the ts#349-r4 failure did NOT recur.** repo echoed (not the
+placeholder), base `05eb7f72...`/head `a5f2ce826a...` exact and head matches live, `engine: codex` with
+chain `['codex']` (not "both"), `truncated: false`. `files[]` **ABSENT** -> byte check substituted:
+**my own shell `wc -c` = 49226 vs artifact 49232, delta +6 = 0.012%**, inside the band.
+**HEALTH, only then:** arbiter **6/6** canonical keys, `arbiterModel: sonnet`, `blindLegRan: true`,
+`codexFellBack: false`, `refuted: 0`, `unverified: []`, **all 8 findings at 17 keys** (real records).
+`treadmill: false` present and model-authored — provenance clean, so weak assertion, not misinformed.
+
+**4 DISTINCT defects, 8 raw (each found TWICE). `agreed_severity`: high, high, medium, medium.**
+
+⭐ **SEVERITY-INSTRUMENT VARIANCE, measured:** the skeptic disagreed with ITSELF across the duplicate
+pair on identical defects — `confirmed[0] :182` corrected to **medium** while `confirmed[4] :182`
+held **high**; same for `:294` at [1] vs [5]. So the arbiter's "override of the skeptic's downgrade"
+is really a **reconciliation of two skeptic passes that disagreed on the same input.** Relevant to the
+39-of-41 record: **that spread is not all bias — some of it is noise.**
+
+**✅ LATENCY CONFIRMED (nq-c asked for a second pair of eyes; bench safety).** `:449` model gate ->
+`:453 verdict='SKIPPED'` -> `:454 return 0`, **before** `:458 bench_cleared = True`; `restore_bench` is
+gated on `cleared` and the self-test at `:362` proves `cleared=False` sends nothing. **Mitigation is
+HARDWARE ABSENCE, not design.** ⚠ And unguarded two ways neither of us named: the latency rests on the
+**ordering of two lines**, protected only by the comment at `:456-457`; and `:362` tests **the gate**
+while nothing tests that the SKIP path **reaches** it with False — **the composition is untested.**
+
+**⛔ FINDING 1: CONSEQUENCE CONFIRMED, MECHANISM REFUTED — and the distinction FLIPS the hazard.**
+nq-c wrote *"no comma, so there is no second parameter at all."* Had that been true, `SCPI_OPT_ABSENT`
+selects the one-parameter all-channel form and the teardown would have driven every output to **0.0 V**
+— harmless. Traced instead:
+```
+libscpi parser.c:721-723    a later parameter requires a COMMA; else push SCPI_ERROR_INVALID_SEPARATOR
+SCPIInterface.h:460-462     return ParamErrorOccurred ? SCPI_OPT_BAD : SCPI_OPT_ABSENT
+SCPIDAC.c:362-363           if (voltOpt == SCPI_OPT_BAD) return SCPI_RES_ERR;   <- BEFORE LockCommand
+```
+**Missing comma -> FAILED fetch with an error pushed -> `BAD`, not `ABSENT` -> early return before any
+DAC write. Outputs stay at 6 V.** The finding's consequence is right; the stated mechanism implied the
+opposite outcome. Correct form per `SCPIDAC.c:379`: `SOURce:VOLTage:LEVel {ch},0.0`.
+
+⭐ And `SCPIDAC.c:354-359` explains why: **#874 hardened this path** because `SOUR:VOLT:LEV 5,BANANA`
+*"used to queue -104 and then drive EVERY analog output to 5 V."* **So the FIRMWARE's hardening is what
+converts the test's bug from a wrong-value write into a silent no-op** — the teardown is protected by
+firmware rather than by itself.
+
+**SEAL SCORED FROM THE ARTIFACT, not from their account:** verdict BLOCK **hit**, bytes **hit**,
+provenance/health **hit**, *"medium, no high"* **MISS**, predicted class **MISS** (0 of 4). Their
+too-low falsifier fired on both clauses and they scored it themselves first. **My addition: the seal
+was right about the file and wrong about every judgement that sets priority** — location and class are
+the cheap half.
+
+**`:463`/`:461` STAND ON THEIR OWN MERITS AND ARE NOT AUDIT-BACKED.** No hunter leg and no blind leg
+found either. nq-c refused to let our two-lane agreement acquire the audit's authority; correct, and
+the fire's brief says to cite them as a source reading.
+
+**FIRE LAUNCHED** (sonnet pinned, isolation worktree) with the CORRECTED mechanism in the brief so
+`:182` is not fixed against the wrong one, plus the root cause: `_RecordingSCPI.command()` validates
+nothing, so 13 checks and 5 mutants were green on a command the device rejects — **the controls prove
+ROUTING, never PAYLOAD, while the rising count reads as rigour.** Brief requires the new validator be
+mutation-tested in BOTH directions, holds `test_harness.py` out of scope (152 importers; stop and
+report), and requires per-item FULL SHAs on the remote. I verify every SHA myself.
