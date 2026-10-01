@@ -35,6 +35,28 @@
 #
 # ⚠ UNDETERMINED IS NOT A PASS. It means the instrument did not answer. Re-run it;
 # do not record it as clean. This script exits 0 only when every row is OK.
+#
+# ⛔⛔ KNOWN GAP, STATED BECAUSE I HIT IT MYSELF WITHIN THE HOUR:
+#
+#   THIS CHECKS THE HEAD. IT DOES NOT CHECK THE RANGE.
+#
+# A correct `head_sha` in the correct repo with a WRONG `base_sha` still produces a
+# confident audit of the wrong scope. On 2026-10-01 I ran an audit with base set to
+# the merge-base of a branch that was 176 commits divergent: the range was 269 files
+# and +93,068 lines where the PR's own diff was 3 files and +50. Every field this
+# script inspects was correct. The audit timed out at 12.2% coverage and returned
+# a BLOCK whose reason was "audit did not run".
+#
+# So read the two extra columns below and apply judgement they cannot apply for you:
+#   TOTAL_BYTES  -- compare against the PR's real diff size: `gh pr diff <N> | wc -c`.
+#                   An order-of-magnitude gap means the range is wrong even when the
+#                   head is right. (4,913,643 vs ~3,000 was the case above.)
+#   BASE_SHA     -- should be the PR's base or its merge-base, NOT an ancestor far
+#                   behind it. `git rev-list --count <base>..<head>` should be the
+#                   PR's commit count, not the branch's whole divergence.
+#
+# Nothing in adversarial-audit.js validates that base..head is the PR's range — the
+# caller's scoping is trusted, the same way `repo` is. The head check closes one axis.
 
 set -u
 
@@ -75,15 +97,15 @@ echo
 
 # ---- the sweep -------------------------------------------------------------
 rc=0
-printf '%-52s %-42s %-6s %s\n' ARTIFACT HEAD_SHA GATE VERDICT
+printf '%-46s %-12s %-11s %-6s %s\n' ARTIFACT BASE_SHA TOTAL_BYTES GATE VERDICT
 for f in "$@"; do
-	[ -f "$f" ] || { printf '%-52s %-42s %-6s %s\n' "$(basename "$f")" - - "UNDETERMINED (not a file)"; rc=1; continue; }
+	[ -f "$f" ] || { printf '%-46s %-12s %-11s %-6s %s\n' "$(basename "$f")" - - - "UNDETERMINED (not a file)"; rc=1; continue; }
 	# handle BOTH envelope shapes: workflow-wrapped (.result) and unwrapped
-	read -r HEAD GATE <<EOF
-$(jq -r '(.result // .) | ((.head_sha // "-") + " " + (.gate // "-"))' "$f" 2>/dev/null)
+	read -r HEAD GATE BASE TOT <<EOF
+$(jq -r '(.result // .) | ((.head_sha // "-") + " " + (.gate // "-") + " " + (.base_sha // "-") + " " + ((.total_bytes // "-")|tostring))' "$f" 2>/dev/null)
 EOF
 	if [ -z "${HEAD:-}" ] || [ "$HEAD" = "-" ] || [ "$HEAD" = "null" ]; then
-		printf '%-52s %-42s %-6s %s\n' "$(basename "$f")" "-" "${GATE:--}" "UNDETERMINED (no head_sha)"
+		printf '%-46s %-12s %-11s %-6s %s\n' "$(basename "$f")" "${BASE:0:12}" "${TOT:--}" "${GATE:--}" "UNDETERMINED (no head_sha)"
 		rc=1; continue
 	fi
 	S=$(http_status "$REPO" "$HEAD")
@@ -94,7 +116,7 @@ EOF
 		"")  V="UNDETERMINED (no HTTP status: network/auth/rate-limit)" ; rc=1 ;;
 		*)   V="UNDETERMINED (HTTP $S)" ; rc=1 ;;
 	esac
-	printf '%-52s %-42s %-6s %s\n' "$(basename "$f")" "$HEAD" "$GATE" "$V"
+	printf '%-46s %-12s %-11s %-6s %s\n' "$(basename "$f")" "${BASE:0:12}" "$TOT" "$GATE" "$V"
 done
 echo
 echo "A WRONG_REPO row on a PASS artifact is a merge license produced over the wrong"

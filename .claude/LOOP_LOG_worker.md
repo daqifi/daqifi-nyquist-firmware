@@ -7578,3 +7578,55 @@ Round count: r1 (BLOCK, valid) + r2 (VOID, my range error). **Whether a VOID rou
 budget is the operator's call, not mine** — the same question the ts#349 census raised, now with an
 instance I caused. A correctly-ranged r2 still needs running; the 4-shape finding above does not
 depend on it.
+
+### ⚠ CORRECTION, same session: my TOTAL_BYTES claim was too strong
+
+I wrote that the `TOTAL_BYTES` column I added to the sweep "would have caught" this range error.
+**It would not.** Measured on the artifact:
+```
+.result.base_sha      null
+.result.head_sha      null
+.result.total_bytes   null
+.result.covered_bytes null
+.result.truncated     null
+.result.noProvenance  true
+.result.auditorLegsOk 0
+```
+**When the hunter leg fails, the artifact carries NO provenance at all.** The real values
+(`base_sha 682caaba3`, `head_sha 09b532acf`, `total_bytes 4913643`, `covered_bytes 600000`) exist
+only inside the failed agent's `resultPreview` **as a STRING** in `workflowProgress`, never as the
+artifact's own claim.
+
+**So there are TWO failure modes with TWO different catches, and I conflated them:**
+
+| failure | what the artifact says | what catches it |
+|---|---|---|
+| hunter leg FAILED | provenance all `null`, `noProvenance: true` | my sweep's **UNDETERMINED** — correct, and not a pass |
+| hunter leg SUCCEEDED, range WRONG | provenance present and self-consistent | **only** the `TOTAL_BYTES` vs `gh pr diff \| wc -c` comparison |
+
+**The column closes the second, which my own run was not.** Stating it because the stronger claim
+would have had a reader believe one column covers both, and the first mode is the one that produces
+a *silent* artifact.
+
+⭐ **And a retroactive corroboration the column DOES deliver:** sk#230 **r1** reports
+`total_bytes 19629` against the PR's real diff of **20,314 bytes** (`gh pr diff 230 | wc -c`) — a
+3.4% match, so **r1's range was right.** My r2's 4,913,643 against 20,314 is **242x**. The check
+works; it just needs an artifact that states its own scope.
+
+**✅ And `mark-audited.sh` would refuse this artifact TWICE, the head check for the RIGHT reason.**
+Ran both of its reads verbatim:
+```
+:136  A_HEAD=$(jq -r '[.. | objects | .head_sha? // empty] | ... | first // empty')  ->  ''
+:110  .gate at top level                                                            ->  empty (wrapped)
+```
+`A_HEAD` is empty because **no nested object carries a `head_sha` key** — the 35 nested occurrences
+of the SHA are under `blindLegRanFor`, `codexErrors[].target` and `confirmed[].target`, i.e. keys
+that are not `head_sha`, plus log strings. **Recursive descent found nothing to mistake for
+provenance.** That is materially better than ts#349 r4, where only the wrapper-shape mismatch saved
+it and the provenance was never compared at all.
+
+⚠ **The residual hazard I checked for and did NOT find:** a descent that picked up the SHA from a
+finding's `target` field would have resolved a plausible head out of an artifact with no provenance —
+an identifier found in a place that is not a provenance assertion. `:136` keys on `head_sha`
+specifically, so it is safe here. **A future edit broadening that descent to `target` or
+`blindLegRanFor` would open it.**
