@@ -8792,3 +8792,73 @@ I wrote `` `blocked` `` inside a double-quoted `echo` and the shell **executed t
 `blocked: command not found`. Loud this time, so harmless. conv-ts warned about it, nq-c hit it
 twice, and I hit it within the hour of reading both reports. **The damage is prose-shaped when a
 substitution silently returns empty** — this one errored visibly only by luck of the token.
+
+## 2026-10-01 11:35 MDT — ⛔ DECLINING the ts#326 round-5 auditor role: I am conflicted in BOTH directions, and the baseline head is MY OWN COMMIT
+
+The coordinator assigned me as verifying auditor on the grounds that I am *"the only lane clean on
+ts#326 in both directions."* **That is exactly backwards, and my own ledger says so in my own
+words:**
+```
+6156  ts#326 FIX PUSHED and VERIFIED BY MY OWN HAND
+6203  ts#326 ROUND-2 FIX pushed 48f45e46a66386fcf9bd3c173a8f35af6249acd2
+6307  ts#326 ROUND-3 FIX pushed 1ab8edc170e48b6aa361e0d13ed893b05c282ef3
+      and I hold audit-ts326-a5f2ce826a-BLOCK-4findings.json  -> I was the ROUND-1 AUDITOR
+```
+**I am the AUTHOR of rounds 2 and 3 AND the round-1 auditor.** Both directions, not neither.
+
+⛔⛔ **And the specific trap: `1ab8edc17` — the pre-fix baseline nq-c is reproducing
+`release_gate.py` ERROR against — IS MY ROUND-3 COMMIT.** So even the baseline step is me checking
+my own work, before any fix is audited.
+
+## WHY THIS MATTERS MORE THAN A ROLE SWAP
+
+My own standing rule, which I have applied to other lanes' work all night:
+> **A conflicted audit's BLOCK is a FLOOR; its CLEAN is WORTHLESS.**
+
+A round-5 audit exists to produce a usable verdict. **Mine could only produce a BLOCK worth acting on
+and a CLEAN worth nothing** — and the likely outcome of auditing a fix stacked on my own commit is a
+CLEAN. So the assignment would spend a round to buy an unusable result, while *looking* like the
+independent check the row needs. **That is strictly worse than no audit**, because the artifact would
+read as independent to anyone who did not know the authorship.
+
+## ⭐ AND THE MECHANISM IS THE ONE I HAVE WRITTEN DOWN TWICE TONIGHT
+
+> **Authorship is invisible to git — sole shared identity — so it must be ASKED, never inferred.**
+
+**The coordinator asserted it.** Every commit on every row reads `Chris Lange`, so "who authored
+ts#326's rounds" is not answerable from the repository at all; it lives only in lane ledgers. **I am
+the only party who could have corrected this, which is precisely why the rule says ask the lane.**
+Had I accepted on their read, nothing downstream would have caught it: the artifact would have
+carried my lane name as auditor with no record that the same lane wrote the code under it.
+
+## WHO IS ACTUALLY CLEAN — STATED AS CANDIDATES, NOT AS A FINDING
+
+From the coordinator's own framing: **nq-c** authors the round-5 fix and ran round 1 on a head they
+had fixed themselves; **conv-ts** raised the six root causes; **I** wrote rounds 2-3 and audited
+round 1. That leaves **conv-fw** and **nq-a** as the lanes not named in this thread.
+
+⚠ **I am NOT asserting they are clean** — I would be making the same inference-instead-of-asking
+error in the other direction. **Ask them.** A lane can answer its own conflict status in one grep of
+its own ledger, which is what I just did.
+
+## ACCEPTED IN FULL: the coordinator's own defect localisation on fw#1048, which is excellent
+
+Their triage jq tested `startswith("blocked:")`; fw#1048 carries the **bare** label `blocked`. A
+namespace-prefix test cannot see an un-namespaced label.
+
+⭐⭐ **And the part worth keeping is theirs, not mine:** that bare label was added by a comment whose
+own text says *"classified COMMENT-ONLY HOLD — two holds stated in this thread that no label
+expressed."* Someone typed a bare label **because the taxonomy had no row for the hold.**
+
+> **So a prefix test on a namespace is biased against exactly the labels created by JUDGMENT rather
+> than CONVENTION** — namespaced labels come from the convention, bare ones from someone deciding the
+> convention was insufficient. **Their classifier produced precisely the reading the label was
+> created to prevent.**
+
+**And the asymmetry they drew is the sharpest version of a thing I have been circling all night:**
+> **A classifier defect that INVENTS work gets spent on immediately; one that HIDES work just goes
+> quiet.** Theirs invented the single routable row in the set.
+
+True firmware shape with the bare label counted: **27 parked, 3 blocked, 0 DIRTY, 0 clean-unblocked,
+0 draft — ZERO routable firmware rows.** Also settled by enumeration: `needs-audit` is not in use on
+firmware at all, and `audit-stale` does not exist.
