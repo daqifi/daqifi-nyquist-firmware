@@ -206,6 +206,36 @@ bool daqifi_settings_LoadFactoryDeafult(DaqifiSettingsType type, DaqifiSettings*
     return true;
 }
 
+/* #909: see the contract on the declaration in daqifi_settings.h.
+ *
+ * Bounded string ops, unlike the two strcpy() stamps below: those copy a
+ * compile-time literal into a field the compiler can see is big enough,
+ * whereas this operates on a 16-byte array that came out of FLASH and may not
+ * be NUL-terminated at all. memset-then-strncpy leaves the field fully
+ * defined and terminated whatever the stored bytes were. */
+void daqifi_settings_RefreshTopLevelRevisions(
+        TopLevelSettings* pTopLevelSettings) {
+    if (pTopLevelSettings == NULL) {
+        return;
+    }
+
+    /* Unconditional: this touches RAM only, so there is nothing to save by
+     * comparing first. An earlier revision returned "did it change" so the
+     * caller could persist on that basis; the persist is gone (see the header),
+     * and with it the only reason to branch. */
+    memset(pTopLevelSettings->boardFirmwareRev, 0,
+            sizeof (pTopLevelSettings->boardFirmwareRev));
+    strncpy(pTopLevelSettings->boardFirmwareRev,
+            FIRMWARE_REVISION,
+            sizeof (pTopLevelSettings->boardFirmwareRev) - 1);
+
+    memset(pTopLevelSettings->boardHardwareRev, 0,
+            sizeof (pTopLevelSettings->boardHardwareRev));
+    strncpy(pTopLevelSettings->boardHardwareRev,
+            HARDWARE_REVISION,
+            sizeof (pTopLevelSettings->boardHardwareRev) - 1);
+}
+
 bool daqifi_settings_SaveToNvm(DaqifiSettings* settings) {
     uint32_t address = 0;
     uint32_t dataSize = 0;

@@ -190,6 +190,26 @@ SYSTem:STReam:STATS:CLEar  # Reset all counters
 - `QueueDroppedSamples > 0` → sample pool exhausted (encoder/output too slow for the rate the timer is firing)
 - `UsbDroppedBytes / SdDroppedBytes > 0` → encoder is fine but transport can't keep up
 
+**One byte-drop cause is NOT back-pressure (#1021).** A `*DroppedBytes` rise
+whose `SYST:LOG?` carries `packet <n> B exceeds smallest active ring <m> B`
+means the encoded packet was **larger than the ring's total capacity**, not that
+the ring was momentarily full: the transport writes are all-or-nothing against
+`CircularBuf_NumBytesFree()`, whose maximum is the ring's `buf_size`, so such a
+write fails identically on an empty ring and there is no rate at which it starts
+succeeding. It is reachable because all three encoders fill whatever room they
+are handed and the first encode of a wake is handed the **whole** encoder buffer
+(that is deliberate — it is what lets `JSON_Encoder.c` recognise a sample that
+fits no buffer at all, #164/#961), while the smallest *legal* ring is smaller
+than the default encoder buffer: `STREAMING_WIFI_MIN` 1,400 and
+`STREAMING_SD_CIRCULAR_MIN` 4,096 against 8,192. So it needs a queue backlog
+plus a hand-set `SYSTem:MEMory:{WIFI,SD}:BUFfer` near its floor, not an exotic
+channel count. Before #1021 each such packet also cost the full
+`STREAM_WRITE_TIMEOUT_MS` (10 s) of retrying with the encoder task blocked, so
+the queue behind it overflowed and the visible loss was mostly
+`QueueDroppedSamples` from the stall rather than the packet itself; the packet
+is now dropped immediately and the counters reflect only it. **Remedy:** raise
+the named interface's buffer, or lower `SYSTem:MEMory:ENCoder:BUFfer` below it.
+
 **Thread safety:** `TotalSamplesStreamed`, `TotalBytesStreamed`, and `TimerISRCalls` are 64-bit counters (safe for million-year sessions). The first two are protected by `taskENTER_CRITICAL`/`taskEXIT_CRITICAL` on each increment and during snapshot reads. Drop counters remain 32-bit (atomic on PIC32MZ). `TimerISRCalls` lives in a separate `static volatile uint64_t gTimerISRCalls` global, incremented in true ISR context (TIMER_5 — the 32-bit TMR4/5 streaming-timer pair's vector, priority 3, ≤ max-syscall 4) by a single writer (no critical section needed because same-source can't preempt itself); the snapshot read uses `taskENTER_CRITICAL` which raises the syscall priority above the kernel-managed ISR threshold and blocks the timer, making the non-atomic 64-bit read coherent.
 
 **Session-end logging:** When streaming stops, if any data was lost during the session, a `LOG_E` summary is automatically written with sample counts, per-buffer byte drops, and loss percentage. Retrieve via `SYST:LOG?`.
@@ -265,11 +285,36 @@ The firmware computes a maximum safe streaming frequency as a `min()` of an **AD
 The last two additive arguments are **#832** and both exist to keep a raise
 inside the conditions it was measured under. `isJson` excludes JSON from the
 pure-T1 CSV refit — it shares that branch and is *additive-bound* at USB 1ch,
-so a CSV-measured raise would silently lift JSON's cap; it keeps the #563 law
-until it has a precision-4 basis of its own (#529 follow-up).
-`voltagePrecision` gates the refit to `<= 4`: 0 is `int_to_str` and 1..4 emit
-fewer or equal characters than the precision-4 basis, while 5..10 emit **more**
-and were never measured, so they fall through to the #563 law.
+so a CSV-measured raise would silently lift JSON's cap. JSON now has its own
+precision-4 basis (**#920**, 2026-09-15): two JSON-only branches sit ahead of
+the shared `else` — pure-T1 at 1 channel (8602 Hz, was 10589, set at 93% of a
+measured-clean ceiling), and **armed/OBDiag-off at ANY channel count**
+(7442 down to 1416 Hz). That second branch originally covered 11–16 channels
+only (2335 down to 1440 Hz); a same-day **T2-ramp refit** widened it to every
+armed count after the initial grid's follow-up run found 3×T2/5×T2/8×T2/11×T2
+also over ceiling — a T2 (MODULE7 scan) channel costs more CPU per tick than a
+T1 channel. The shared `#563` law already prices them differently (4550 ns/T1
+vs 15190 ns/T2 in its armed form) but not differently ENOUGH at precision 4;
+the `#529` transport curve `32000/(2+n)` is channel-type-**blind** (same cost
+per channel regardless of type) and is wrong for the opposite reason. Both
+under-priced T2 at precision 4 on `main` even where this PR's own original
+branch didn't reach. The refit law
+(`period_ns = 73576 + 27921·nT1 + 31975·nT2user`) is applied as
+`max(this, the shared `else` period)` so it can only lower a config's cap,
+never raise one — load-bearing at 1×T2, where the raw law alone would have
+raised 7442→7579 Hz. It lands at or under 93% of every measured-clean ceiling,
+tighter (~93%) at the two points that bind (3×T2, 11×T2) and looser (~80–92%)
+elsewhere, including a clean-but-never-failed point (5T1+5T2, 2666→2144 Hz)
+that only bounds the fit from above. Both branches are NOT gated by
+`voltagePrecision` — see the streaming.h comment for why a cap that only
+*lowers* JSON's rate cannot be less safe at any precision than the law it
+replaces. Every other JSON config (2–5 pure-T1 channels, any OBDiag-on
+config) still keeps the #563 law via the shared `else`, unmeasured at
+precision 4 and tracked as follow-ups; so is JSON at precisions 5–10, and
+JSON on NQ2/NQ3.
+`voltagePrecision` gates the **CSV** refit to `<= 4`: 0 is `int_to_str` and
+1..4 emit fewer or equal characters than the precision-4 basis, while 5..10
+emit **more** and were never measured, so they fall through to the #563 law.
 `CONFigure:VOLTage:PRECision` and `CONFigure:VOLTage:LOAD` are both
 rejected while streaming
 (same idiom as the `CONF:ADC:CHANnel` #116 guard) so a session cannot move onto

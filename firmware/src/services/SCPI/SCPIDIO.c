@@ -961,8 +961,16 @@ scpi_result_t SCPI_DioMeasFrequency(scpi_t * context) {
     if (!SCPI_ParamInt32(context, &dio, TRUE)) {
         return SCPI_RES_ERR;
     }
-    (void)SCPI_ParamInt32(context, &gate, FALSE);   /* optional gate window (ms) */
-    if (SCPI_ParamErrorOccurred(context)) {         /* present-but-malformed gate */
+    /* #876: SCPI_ParamErrorOccurred() alone is not a documented contract for
+     * "was the token present-but-unparseable" -- it happens to work today
+     * only because ParamSignToUInt32's DaqifiIntTokenFullyConsumed (#880)
+     * pushes an error for every not-fully-consumed decimal token. Use the
+     * explicit ABSENT/PRESENT/BAD helper instead so this site does not rely
+     * on that converter-internal behavior, matching every other optional-arg
+     * site in this file (SCPI_GPIODirectionSet et al.). See
+     * SCPI_OptionalParamInt32's own doc comment (SCPIInterface.h). */
+    SCPI_OptionalParam gateOpt = SCPI_OptionalParamInt32(context, &gate);
+    if (gateOpt == SCPI_OPT_BAD) {
         return SCPI_RES_ERR;
     }
     if (dio < 0 || dio > 15) {
@@ -1007,8 +1015,11 @@ scpi_result_t SCPI_DioMeasPulseWidth(scpi_t * context) {
     if (!SCPI_ParamInt32(context, &dio, TRUE)) {
         return SCPI_RES_ERR;
     }
-    (void)SCPI_ParamInt32(context, &pol, FALSE);    /* optional polarity */
-    if (SCPI_ParamErrorOccurred(context)) {         /* present-but-malformed pol */
+    /* #876: same rationale as SCPI_DioMeasFrequency above -- see its
+     * comment. Uses the explicit helper instead of relying on
+     * SCPI_ParamErrorOccurred() happening to catch a malformed `pol`. */
+    SCPI_OptionalParam polOpt = SCPI_OptionalParamInt32(context, &pol);
+    if (polOpt == SCPI_OPT_BAD) {
         return SCPI_RES_ERR;
     }
     if (dio < 0 || dio > 15) {
