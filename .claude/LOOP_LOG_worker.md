@@ -6089,3 +6089,66 @@ nothing, so 13 checks and 5 mutants were green on a command the device rejects �
 ROUTING, never PAYLOAD, while the rising count reads as rigour.** Brief requires the new validator be
 mutation-tested in BOTH directions, holds `test_harness.py` out of scope (152 importers; stop and
 report), and requires per-item FULL SHAs on the remote. I verify every SHA myself.
+
+## 2026-09-30 18:22 MDT — ts#326: my variance claim REFUTED by a field I omitted; scope expansion DECLINED
+
+⚠ **SELF-CORRECTION (32nd), and the worst-shaped one today.** I claimed "the skeptic disagreed with
+itself on identical input." **Refuted — and the refuting field was in the artifact I had already read:**
+```
+confirmed[0-3]  __source=steered  engine=codex
+confirmed[4-7]  __source=blind    engine=codex-blind
+```
+`rawFindings=8` is **2 LEGS x 4 defects**, not one hunter reporting twice. The skeptic saw two
+*different descriptions* of each defect — different prompts by construction, since the blind leg gets
+no brief. **My print statement selected hunter severity / skeptic severity / verdict / file:line and
+omitted `__source` — a field I had SEEN on the sk#230 artifact two hours earlier.**
+
+> **My field selection determined my conclusion, and I did not state the selection.** Same root as the
+> unstated-filter error: **a projection is a predicate.** I invoked that exact rule against someone
+> else's work this evening and then failed it on my own.
+
+Seventh instrument/selection failure of mine today. Coordinator's proper measurement stands:
+**n=103 pairs, 82% agree, 10% steered-higher, 9% blind-higher — symmetric, no directional bias**, and
+an 18% symmetric within-pair spread **cannot** explain a 79% systematic hunter-vs-arbiter gap. My
+"bias plus variance" amendment is **withdrawn**; the original severity record is unchanged.
+
+⚠ Also noted: my structural point ("the duplication is our only replication") **overstated** —
+measured, only **38%** of findings are paired at all; **338 of 441 are SOLO**. The real remedy is not
+"don't dedup" but **surface `__source` in reports**, since 62% of findings anyone acted on tonight were
+unreplicated and unmarked as such. Which is the same omission I just made, at fleet scale.
+
+**⭐ THE FIX IS SMALLER THAN THE ROOT-CAUSE STORY — the correct form is in the SIBLING FILE of the same
+commit.** Verified by reading the addresses rather than citing the artifact's:
+```
+all_channel_latch.py:182     SOURce:VOLTage:LEVel 0.0 {ch}                  <- reversed, NO comma
+power_cycle_reinit.py:349    SOURce:VOLTage:LEVel {CHANNEL},{prior_volts}   <- CORRECT, same commit
+```
+**Two files in one PR disagree on one command's syntax.** So "no correct two-parameter precedent to
+copy from" is true of that file and **false of the PR** — and a **cross-file consistency check** would
+have caught it with no firmware knowledge at all. Cheaper detector than pattern-table validation.
+
+**⭐ THE TAUTOLOGY DIAGNOSIS (coordinator's, better than mine).** The latch self-test **already asserts
+the literal**: its NEGATIVE control requires `'SOURce:VOLTage:LEVel 0.0 0'` — **the exact malformed
+string the code sends.** With a verbatim-recording double, positive, negative and mutation controls all
+confirm that **two copies of one authored belief agree.**
+> **The hazard is a TAUTOLOGICAL literal assertion, not a missing one. Asserting a literal is
+> necessary and nowhere near sufficient — it must be checked against an authority OUTSIDE the test.**
+Working pattern to lift (not re-derive): `test_889::_FakeBoard` on `pr/287` — `args.split(',')` raises
+on a missing comma (encodes the GRAMMAR, not the string), unrecognised commands bucket into
+`self.unexpected`, and the test asserts that bucket **empty**. Its author already hit the SCPI
+abbreviation trap and moved from `startswith` to a substring test.
+
+**⛔ SCOPE EXPANSION DECLINED.** It was suggested the double land as a **shared primitive**, which would
+also fix ts#349's byte-identical vacuous `_RecordingSCPI` — "two dividends from one fix." It would, and
+it is a **`test_harness.py` change: 152 importers, its own row, its own audit.** Same ruling as
+ts#448's `io_bytes`, where the stronger argument was that the PR's own parity case would have gone
+vacuously green. The fire keeps the double **local** and **names** ts#349's twin in the commit message.
+**Naming it is this row's deliverable; doing it is not.**
+
+**ADDRESS-CITATION CHECK (run before the fire quotes addresses into commits that outlive the
+artifact).** Null-line detector: **0 of 8 — clean.** But the adjacent variant is not: **4 of 8 findings
+carry a `line` their own prose never mentions.** Clearest: finding 3's `line: 579` is
+`if verdict == 'PASS':` — where the verdict is **read** — while its prose narrates `:551-552`
+(`verdict='PASS'` then `return 0`), the actual mechanism. Neither is wrong; they are opposite ends of
+one defect. **So "the line field is populated" is not the check — the check is whether the object's
+address and its prose's address AGREE**, and where they don't, cite the predicate.
