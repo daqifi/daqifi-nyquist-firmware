@@ -1869,8 +1869,41 @@ DISPATCHER.md cites as the evidence for #996's bench validation* (`baseline 59E0
 fix 1D6176FF PASS`). They are on no remote. Rebuilding them needs the toolchain plus the exact
 commits plus a flash cycle.
 
-> **The sanctioned removability check passes on this tree, and a sweep would destroy the only
-> copy of a validated bench result.**
+> ⛔ **THE SENTENCE THAT WAS HERE WAS WRONG AND I ESCALATED IT TO THE OPERATOR.** It read: *"the
+> sanctioned removability check passes on this tree, and a sweep would destroy the only copy of a
+> validated bench result."* **The second half is false.** Retained verbatim because the retraction
+> is the lesson.
+
+**WHAT THE MEASUREMENT ACTUALLY SHOWED** (fleet-wide, keyed on payload rather than on the
+`bench-*` name — there is exactly ONE such tree, so the name key answers itself):
+
+| | |
+|---|---|
+| hex/bin files fleet-wide | **104** |
+| standard build output (`firmware/daqifi.X/{dist,build}`) | 86 |
+| `usb_bootloader.X.production.hex` — **TRACKED** (`ls-files` rc=0), in 12 trees | 12 |
+| **staged images outside build paths — bench-996's `ab/` ONLY** | **7** (15.13 MB) |
+
+- **All seven name their source commit and all seven commits resolve.** `d1bf07c66` (13 remote
+  branches), `df60bc24b` (1), `3e8b1b479` (11), and the `fix1144{,b,c,d}` set from
+  `0ff5dab8d`/`fda27a5b6`/`1c5e057b5`.
+- **The `fix1144` commits are NOT orphaned.** I had a developing claim that they were reflog-only
+  and that removal would destroy them. Refuted before it left the lane:
+  `refs/heads/fix/1144-capjson-bounded-calibration` exists locally at `1c5e057b5`, **and PR #1149
+  is MERGED** with `headRefOid` equal to that tip. Content is on main; the branch is an ordinary
+  post-merge remnant.
+- **So both sanctioned checks passing is the CORRECT answer, not a false pass.** There is no
+  unsaved tracked work in bench-996.
+
+> **THE EVIDENCE IS THE RECORDED RESULT, NOT THE HEX FILES.** nq-c's DISPATCHER.md records
+> *"baseline `59E02848` FAIL / fix `1D6176FF` PASS (613 streamed), control PASS on BOTH"*. **That
+> record survives the tree.** The images are reproducible INPUTS to a conclusion already written
+> down elsewhere. Conflating the input with the evidence is what produced the false severity.
+
+**SO THE COST OF A SWEEP HERE IS BENCH TIME, NOT DATA** — rebuilding seven images and re-running
+a flash-based A/B on the fleet's scarcest resource, re-spending a validation already signed off.
+Real, bounded, and **a cost rather than a loss. That does not justify a second check in the sweep
+discipline.**
 
 **Why the existing check cannot catch it, and why that is not a bug in the check.** The rule
 asks *"is anything UNSAVED?"* and answers it with `status --porcelain` plus an `ls-remote`
@@ -1883,15 +1916,35 @@ in the record is about those bytes.
 any field the check consults. Same shape as a park living in a comment while the label says
 nothing.
 
-### The rule
+### The rule, at the size the measurement supports
 
-- **Never sweep a `bench-*` tree on a clean `status --porcelain`.** Before removing one, run
-  `git status --porcelain --ignored` and account for every `!!` entry, or `ls` the staging
-  directory by name.
-- **An image file with no copy elsewhere blocks removal**, exactly as unsaved tracked work does.
-  Preserve it (copy out, or record its provenance) before the tree goes.
-- Generalise beyond `bench-*`: **ask what this tree was FOR before asking whether it is clean.**
-  A tree whose purpose was to produce non-git artifacts is never fully described by git state.
+- **Before removing a tree whose purpose was to produce non-git artifacts, run
+  `git status --porcelain --ignored` and confirm each staged artifact names a RESOLVABLE SOURCE
+  COMMIT.** On bench-996 it does, seven times out of seven, so the tree is removable. An artifact
+  whose source commit does NOT resolve is the case that would block removal — none exists today.
+- **`status --porcelain` is genuinely blind to gitignored payload.** That mechanism is unchanged
+  and it is deliberate: ignoring build output is correct for a LANE tree. What does not follow is
+  that the blindness has a consequence — on the one tree where it applies, it costs rebuild time.
+- Still worth keeping: **ask what this tree was FOR before asking whether it is clean.** A tree
+  whose purpose was to produce non-git artifacts is not fully described by git state — but "not
+  fully described" is not the same as "holds something irreplaceable", and I treated it as if it
+  were.
+
+### ⛔ HOW THE FALSE SEVERITY HAPPENED — this is the transferable part
+
+**One tree had a vivid property and I reported the property as a class without measuring the
+population.** Identical in shape to *"I reported a lane's own classification pass as discovered
+state"* and to a peer's *"the harmful count is zero"* — and I had written the line that catches
+it, *a zero over a population you did not verify is not a zero over the population you named*,
+hours earlier.
+
+> **AN UNVERIFIED POPULATION INFLATES AS EASILY AS IT ZEROES — and the direction is not random.
+> I inflated toward making my own finding important.**
+
+That asymmetry is the thing to watch: the unverified-population error is usually filed as a
+permissive hazard (a zero that licenses action). Here it ran the other way and manufactured an
+urgent operator item out of one reconstructible directory. **Check the population before assigning
+a severity, not only before asserting an absence.**
 
 ⚠ **THE CANONICAL HOME FOR THIS RULE IS THE `backlog-loop` SKILL, WHICH I MUST NOT EDIT.** The
 sweep discipline lives in `~/.claude/skills/backlog-loop/SKILL.md`; `porcelain` appears **zero**

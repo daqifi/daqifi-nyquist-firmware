@@ -9383,3 +9383,47 @@ THREE AGAINST MYSELF:
 Fifth instance of the pipeline-status defect, inside a check written while being careful:
 `find ... | sed` then `$?` read sed's status for a recency test. Unpiped: find rc=0, empty,
 nothing touched in 48h, zero holders by /proc/*/cwd scan. Tree is idle.
+
+## 2026-10-01 — ignored-payload inventory: RETRACTED my own severity. n=1, reconstructible.
+
+Keyed on PAYLOAD not on the `bench-*` name, because there is exactly ONE bench-* tree and that
+key answers itself -- and because the finding this came from is that a tree's NAME is a claim
+about its purpose while the payload is the fact.
+
+MEASURED fleet-wide: 104 hex/bin files; 86 standard build output; 12 are the TRACKED
+usb_bootloader.X.production.hex (ls-files rc=0); 7 are bench-996's ab/ (15.13 MB) and NOTHING
+ELSE in the fleet holds a staged image. Not build-1055, not the seven nq-c-fw*, not the six
+audit-*. There is no class.
+
+ALL SEVEN RECONSTRUCTIBLE: every image names its source commit and every commit resolves --
+d1bf07c66 (13 remote branches), df60bc24b (1), 3e8b1b479 (11), and the fix1144{,b,c,d} set from
+0ff5dab8d/fda27a5b6/1c5e057b5.
+
+⛔ I NEARLY REPORTED THE fix1144 COMMITS AS ORPHANED. Developing claim: reflog-only, destroyed by
+removal. REFUTED before sending -- refs/heads/fix/1144-capjson-bounded-calibration exists locally
+at 1c5e057b5 AND PR #1149 is MERGED with headRefOid equal to that exact tip. Content is on main;
+the branch is an ordinary post-merge remnant; the commits survive removal twice over.
+
+⛔ SO I RETRACTED THE SEVERITY I HAD ESCALATED. I told the coordinator a sweep "would destroy the
+only copy of a validated bench result". FALSE. The evidence is the RECORDED RESULT -- nq-c's
+DISPATCHER holds "baseline 59E02848 FAIL / fix 1D6176FF PASS (613 streamed)" -- not the hex
+files, which are reproducible INPUTS to a conclusion already written down. Conflating the input
+with the evidence produced the false severity. Both sanctioned checks passing on bench-996 is the
+CORRECT answer, not a false pass. Cost of a sweep is BENCH TIME, not data. Operator item
+downgraded; FIRE_STANDARDS amended to the measurement, md5 recorded.
+
+THE TRANSFERABLE ERROR: one tree had a vivid property and I reported the property as a CLASS
+without measuring the population -- same shape as "I reported a lane's own classification pass as
+discovered state" and a peer's "harmful count is zero", and I had written the catching line
+myself hours earlier. AN UNVERIFIED POPULATION INFLATES AS EASILY AS IT ZEROES, and the direction
+was not random: I inflated toward making my own finding important. Check the population before
+assigning a SEVERITY, not only before asserting an ABSENCE.
+
+Also sent: repoPath cannot answer "was it misread?" because a path is a mutable ADDRESS and 69%
+of them are already deleted -- unanswerable in principle, not merely hard. The field that would
+work is provenance.tree_head_sha, `git rev-parse HEAD` read FROM repoPath at audit time, with the
+invariant that it must equal the caller's asserted head_sha. fw#1094 is exactly the artifact
+where they would have differed, and it passes the decoration test: you cannot derive the measured
+tree head from the asserted head without touching the tree. Prospective only, cannot be
+backfilled, and lives in ~/.claude/skills which I must not edit -- stated as a design, routed as
+an operator item, edit not attempted.
