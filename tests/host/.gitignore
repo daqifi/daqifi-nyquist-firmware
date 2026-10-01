@@ -22,6 +22,7 @@ run_1125_tests
 run_1141_tests
 run_1034_tests
 run_1154_tests
+run_970_tests
 CircularBuffer_uut.c
 gen_1000_log_budget.h
 # Generated at build time by gen_1029_log_budget.py from the real firmware

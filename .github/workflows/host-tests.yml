@@ -253,6 +253,14 @@ name: host-tests
 #     this file at 72fba8c68c4dd28b6c6612ffdc7b28f1d64bd191, zero hits).
 #     Found by the #1147 pre-merge adversarial audit round 2 (disposition
 #     fix_now).
+#   - test_970_encoder_consume_accounting.c (#970): re-implements two loop
+#     shapes (streaming.c's `encoded == 0` booking arm, and JSON_Encoder.c's
+#     DIO element commit loop) against mocks, and its Makefile target greps
+#     both real sources for the guarantees that re-implementation depends on
+#     (see tests/host/Makefile). Scoped to the two individual files by name,
+#     same reasoning as the JSON_StringEscape.h entry above -- not the whole
+#     services/ directory. JSON_Encoder.c is already listed; this adds
+#     streaming.c and streaming.h, which were not previously triggers here.
 
 on:
   pull_request:
@@ -314,6 +322,9 @@ on:
       # tests/host/Makefile) for the Timestamp field the fix adds; no entry
       # above matches firmware/src/state/data/.
       - 'firmware/src/state/data/AOutSample.h'
+      - 'firmware/src/services/streaming.c'
+      - 'firmware/src/services/DaqifiPB/NanoPB_Encoder.c'
+      - 'firmware/src/services/streaming.h'
       - '.github/workflows/host-tests.yml'
   push:
     branches: [main]
@@ -359,6 +370,9 @@ on:
       - 'bootloader/firmware/src/system_config/usbdevice_pic32mz_ef_sk/**'
       # #1034: see the matching entry under pull_request above.
       - 'firmware/src/state/data/AOutSample.h'
+      - 'firmware/src/services/streaming.c'
+      - 'firmware/src/services/DaqifiPB/NanoPB_Encoder.c'
+      - 'firmware/src/services/streaming.h'
       - '.github/workflows/host-tests.yml'
 
 permissions:

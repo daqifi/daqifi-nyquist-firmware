@@ -381,6 +381,57 @@ LOGCEIL_SRC3 := ../../firmware/src/services/wifi_services/wifi_manager.c
 # an edited recipe is exactly how a guard goes quiet. Qodo, PR #983.
 RECIPES := Makefile
 
+# #970: encoder consume-accounting. Like BENCH_BIN, streaming.c and
+# JSON_Encoder.c are not host-test candidates (FreeRTOS/libscpi/the whole
+# board graph), so this test re-implements the two relevant loop SHAPES
+# (streaming.c's `encoded == 0` booking arm, and JSON_Encoder.c's DIO
+# element commit loop) against injected mocks. The greps below pin the
+# three guarantees that re-implementation depends on, and fail the build
+# (not just the test) if any has drifted:
+#   1. streaming.c's arm no longer increments encoderDroppedSamples --
+#      that increment was the #970 defect (a zero-byte return does not
+#      imply exactly one lost sample for every encoder). If this grep
+#      fails, the arm has regressed back to the pre-fix shape.
+#   2. streaming.h declares Streaming_ReportEncoderSampleLoss -- the entry
+#      point an encoder uses to book a loss IT knows about, instead of the
+#      caller guessing.
+#   3. JSON_Encoder.c's DIO loop pops before committing (the exact guard
+#      text), i.e. the twin of the #164 ADC-loop fix this PR gives the DIO
+#      loop.
+#   4. JSON_Encoder.c and NanoPB_Encoder.c actually CALL that entry point.
+#      Pins 1-3 establish that the caller stopped guessing and that the
+#      entry point EXISTS -- none of them establishes that any producer
+#      reaches it. Deleting the production call would leave every host
+#      assertion and all of pins 1-3 green while real destroyed samples
+#      stopped being counted, so the test's whole subject would be
+#      unguarded. Pin the CALL, per-file, for both encoders that book.
+#      The pin asks the COMPILER to strip comments (`$(CC) -fpreprocessed
+#      -dD -E`, which removes them without resolving any include) and then
+#      flattens newlines before matching, so it owns neither a comment
+#      heuristic nor a line-shape heuristic. That is deliberate: the two
+#      hand-rolled versions before it were both defeated, and by opposite
+#      failures.
+#        v1, a plain symbol grep, was a PROXY -- the symbol also appears
+#        twice in JSON_Encoder.c's own prose, so deleting the real call and
+#        leaving the comments kept the guard GREEN.
+#        v2 matched a call statement through its `);` and dropped lines
+#        whose prefix looked like a comment. That was wrong in BOTH
+#        directions: a legitimate call reformatted across two lines RED a
+#        correct tree, and a call inside a STARLESS block comment still
+#        passed -- the per-line prefix test cannot see comment state.
+#      A third regex would have been the third patch to one mechanism, so
+#      the mechanism was replaced instead. `cc` already has an exact
+#      comment parser; the pin uses it rather than approximating one.
+#      It counts call sites per file rather than testing existence:
+#      NanoPB_Encoder.c has TWO paths that destroy a sample, and an
+#      existence check stayed green when either one was deleted because the
+#      other still matched. Mutation-proven in six directions -- see the
+#      table in the commit.
+BIN970 := run_970_tests
+STREAMING_SRC := ../../firmware/src/services/streaming.c
+STREAMING_HDR := ../../firmware/src/services/streaming.h
+JSON_ENC_SRC  := ../../firmware/src/services/JSON_Encoder.c
+NANOPB_ENC_SRC := ../../firmware/src/services/DaqifiPB/NanoPB_Encoder.c
 # #980: DAC7718 error-path honesty (lock ownership in DAC7718_ReadWriteReg,
 # init-failure propagation + slot retention in DAC_EnsureHardwareInitialized).
 # Like BENCH_BIN, neither DAC7718.c (Harmony GPIO/SPI/coretimer + FreeRTOS
@@ -601,6 +652,62 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	       echo "       Update FW_STALL_POLL_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
+
+$(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SRC) $(STREAMING_HDR) $(JSON_ENC_SRC) $(NANOPB_ENC_SRC) $(RECIPES)
+	@for fld in encoderDroppedSamples encoderDroppedSamplesSteady; do \
+	   n=`grep -oE "gStreamStats\.$$fld[[:space:]]*(\+\+|\+=|-=|=[^=])" $(STREAMING_SRC) | wc -l`; \
+	   [ "$$n" -eq 1 ] \
+	     || { echo "ERROR: $(STREAMING_SRC) has $$n write sites on gStreamStats.$$fld, expected exactly 1."; \
+	          echo "       The #970 fix left ONE writer -- Streaming_ReportEncoderSampleLoss --"; \
+	          echo "       and removed the increment the encoded==0 arm used to do on a"; \
+	          echo "       zero-BYTE return. A second writer means that inference is back."; \
+	          echo "       This counts ANY write operator, not the literal '++' it used to"; \
+	          echo "       grep: a regression reintroduced as '+= 1' matched nothing and the"; \
+	          echo "       pin stayed green (audit finding, executed both directions)."; \
+	          exit 1; }; \
+	 done
+	@grep -qE 'void[[:space:]]+Streaming_ReportEncoderSampleLoss\(uint32_t samples\);' $(STREAMING_HDR) \
+	  || { echo "ERROR: Streaming_ReportEncoderSampleLoss is no longer declared in $(STREAMING_HDR)."; \
+	       echo "       This is the #970 entry point encoders use to book a loss they"; \
+	       echo "       caused -- test_970_encoder_consume_accounting.c models it directly."; \
+	       exit 1; }
+	@grep -qF 'if (!DIOSampleList_PopFront(&state->DIOSamples, &data)) {' $(JSON_ENC_SRC) \
+	  || { echo "ERROR: $(JSON_ENC_SRC)'s DIO loop no longer gates the commit on"; \
+	       echo "       DIOSampleList_PopFront's return (the #970 fix, mirroring #164's"; \
+	       echo "       ADC-loop treatment). Update the guard or re-derive the DIO half of"; \
+	       echo "       test_970_encoder_consume_accounting.c."; \
+	       exit 1; }
+	@set -- "$(JSON_ENC_SRC)" 1 "$(NANOPB_ENC_SRC)" 2; \
+	 while [ $$# -gt 0 ]; do \
+	   f=$$1; want=$$2; shift 2; \
+	   grep -qE '^[[:space:]]*#[[:space:]]*if[[:space:]]+0([[:space:]]|$$)' "$$f" \
+	     && { echo "ERROR: $$f contains a '#if 0' region, and this pin cannot see it."; \
+	          echo "       The count below comes from \$$(CC) -fpreprocessed, which strips"; \
+	          echo "       COMMENTS but does NOT evaluate preprocessor conditionals -- a call"; \
+	          echo "       inside '#if 0' is still counted (verified: it counts as 1). So the"; \
+	          echo "       pin would vouch for a reporter call that never compiles."; \
+	          echo "       Resolve by hand: delete the dead region, or re-derive this pin."; \
+	          exit 1; } || true; \
+	   got=`$(CC) -fpreprocessed -dD -E "$$f" 2>/dev/null | tr '\n' ' ' \
+	        | grep -oE 'Streaming_ReportEncoderSampleLoss[[:space:]]*\(' | wc -l`; \
+	   [ "$$got" -ge "$$want" ] \
+	     || { echo "ERROR: $$f has $$got call(s) to Streaming_ReportEncoderSampleLoss, expected >= $$want."; \
+	          echo "       #970 moved loss booking from the caller's zero-return guess"; \
+	          echo "       to the encoder that destroyed the sample. Each count below is"; \
+	          echo "       the number of distinct paths in that file that DESTROY a"; \
+	          echo "       sample: JSON_Encoder.c 1 (the oversize-sample drop arm),"; \
+	          echo "       NanoPB_Encoder.c 2 (the AIN-message encode failure and the"; \
+	          echo "       standalone-DIO fallback). A per-file EXISTENCE check could not"; \
+	          echo "       see one of two sites vanish -- the surviving call kept it"; \
+	          echo "       green -- so either PB loss path could stop reaching the"; \
+	          echo "       counter silently. The host test models the reporter; it never"; \
+	          echo "       executes Nanopb_EncodeStreamingFast, so nothing else here"; \
+	          echo "       observes these call sites."; \
+	          echo "       ADDING a path is fine and raises the count; this only reds"; \
+	          echo "       when a site DISAPPEARS, which is the regression it is for."; \
+	          exit 1; }; \
+	 done
+	$(CC) $(CFLAGS) -o $(BIN970) test_970_encoder_consume_accounting.c
 
 $(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE_SRC) $(FREERTOS_CONFIG_SRC)
 	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_INTERFACE_SRC) \
@@ -1283,6 +1390,15 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
+# Every suite, and every one of the TWENTY-FOUR binaries: main's twenty-three
+# plus this PR's own #970/#991 $(BIN970). Resolved the way this block always is --
+# every side's target rule kept INTACT, only `run` and `clean` unioned, because a
+# duplicated rule here would silently shadow one of them. This branch's comment
+# said "now seven binaries", true when written and false now; corrected rather
+# than carried, since a stale count is simply false to the next reader. All five
+# of this branch's own variables -- BIN970, STREAMING_SRC, STREAMING_HDR,
+# JSON_ENC_SRC, NANOPB_ENC_SRC -- were checked to be branch-OWN additions and not
+# names main has since renamed or retired, which is the trap fw#976 hit.
 # #1121: the same three guards as $(SUSPEND_BIN), against the OTHER file.
 #
 # GUARD 1 -- THE FIVE-ARM ORDER. This site's cascade is
@@ -2377,7 +2493,7 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # $(SDLOG_BIN)/$(GEN_1000).
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN)
+     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(BIN970)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -2401,11 +2517,12 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(DACREINIT_BIN)
 	./$(CALFINITE_BIN)
 	./$(SDLOG1029_BIN)
+	./$(BIN970)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
 	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) \
-	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp
+	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp $(BIN970)
 
 .PHONY: run clean
