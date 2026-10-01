@@ -9300,3 +9300,44 @@ so posting it would put a clean-reading PASS on a row that has neither a current
 artifact should be treated as absent rather than as a prior round, because an arbiter-less PASS is not
 a verdict. That is an operator decision on a cross-repo write, which is where the coordinator already
 said it would go.
+
+## 2026-10-01 — unpark-condition enumeration, 14 firmware rows (read-only, no board writes)
+
+Artifact `.claude/evidence/UNPARK-CONDITIONS-nq-b-14-firmware-rows.md`, pushed at
+`e0a103bd6d01c456b0aaae7799e279a5c878ce40` (verified: `git ls-remote origin
+refs/heads/lane/nq-b` == local HEAD, full SHAs).
+
+Rows: fw#1137 1130 1129 1124 1115 1110 1106 1101 1099 1096 1094 1092 1078 1077.
+Conflicts declared BEFORE reporting: 1124 AUTHORING (I pushed its live head), 1115
+audit-adjacent (I hold the audit tree, cannot establish its auditor), 1099
+authoring-adjacent (I posted a wrong correction there and retracted it in 78s).
+
+ZERO vanished firmware SHAs. My first resolver claimed 8+. All false: 5 companion
+heads in daqifi-python-test-suite, 1 wiki commit (UNDETERMINED, wikis are not on the
+commits API), 3 md5s of built hex images. A 12-hex md5 prefix and a 12-hex short SHA
+are INDISTINGUISHABLE BY SHAPE -- only the adjacent word disambiguates, so this is
+unfixable by pattern. The API can only say "not in the repo I asked"; the citation
+CONTEXT is what identified each token.
+
+Three resolver versions, each caught by its own output:
+  v0 `--jq '.sha'` on an error body is empty, so every failure mapped to "absent" --
+     printed b083336c95a5...(40) ABSENT and b083336c9 (same commit) RESOLVES, adjacent.
+  v1 `tr -dc '0-9' | cut -c1-3` on "HTTP/2.0 200 OK" -> "202", no arm matched, so all
+     UNDETERMINED. Wrong, but refused to answer rather than answering falsely.
+  v2 asked one repo -- sound about the wrong question.
+Negative control added (deadbeef*40 -> ABSENT 3/3). I rebuilt the exact bug
+SWEEP-audit-provenance-check.sh was written to prevent, having written that script.
+
+Also measured and corrected to the coordinator: "a condition naming a head is
+unsatisfiable on a DIRTY row" is 2 of 7, not 7 of 7. The axis is artifact-at-a-head
+(fw#1137 audit PASS + bench md5; fw#1129 ordering) vs operator DECISION, which a
+refresh does not touch. fw#1129's superseded 15:37Z comment is the ONLY correct
+statement of the refresh/audit ordering rule in all 14 rows.
+
+Earlier the same session: ugrep silently skipped a 33KB comment dump as binary (rc=1,
+identical to no-match) because MY OWN `cut -c1-320` sliced a 4-byte emoji, leaving a
+lone `f0`. I first blamed NEL because `file` named it; the coordinator refuted that in
+minutes (`\xc2\x85` is VALID UTF-8). `file` names the EXOTIC property, not the BROKEN
+one. Remedy corrected fleet-wide from "grep -a everywhere" to "never byte-truncate
+UTF-8; select in jq". Memory updated; the wrong remedy had already been relayed to two
+sessions and was withdrawn.
