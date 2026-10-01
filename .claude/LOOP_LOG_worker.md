@@ -6303,3 +6303,60 @@ manufactures them.**
 
 Queue clear. nq-a has round 3; I am out of that read as the fix's author. Corpus sweep stays queued
 with the two-sided criterion attached.
+
+## 2026-09-30 19:23 MDT — ts#326 ROUND-3 FIX pushed `1ab8edc170e48b6aa361e0d13ed893b05c282ef3`. Graded mutation proof.
+
+Full-SHA verified, porcelain 0, **31/31 and 5/5 green**, lint OK. The finding (two-sided sweep, nq-a)
+was real: the double accepted `256,5` and `-1,5` which the device refuses — at **the one site in the
+truncation family that moves real hardware.**
+
+**⭐ GUARD VERIFIED AT SOURCE and richer than reported.** `SCPIDAC.c:406` is
+`if (!(voltage >= 0.0 && voltage <= 255.0))` — a **POSITIVE CLOSED range on the DOUBLE, BEFORE
+narrowing** — and three consequences are load-bearing:
+1. **NaN refused**, because it compares false against everything; a negative test would ADMIT it.
+2. **`-0.5` refused, not truncated to channel 0.** ⛔ **A range test applied AFTER `int()` admits it,
+   since `int(-0.5) == 0`** — the negative-channel alias the guard exists to stop. **Check the int and
+   you reintroduce the defect while appearing to fix it.**
+3. **A fraction INSIDE the range keeps truncate-toward-zero** (`3.7` -> 3) and the guard must not
+   tighten that, because the device accepts it.
+Mirrored as the PROPERTY with all three reasons at the site — per the lesson that the `test_889` lift
+was partial because it pointed at an EXEMPLAR.
+
+**⭐ GRADED MUTATION PROOF — each mutant admits exactly the subset it should:**
+```
+control                                     31 checks, 0 failures
+A  guard removed                            26 pass, 5 fail   all five admitted
+B  range-checked AFTER narrowing            28 pass, 3 fail   -0.5, 255.5, nan
+C  bounds widened to open (-1.0, 256.0)     29 pass, 2 fail   -0.5, 255.5
+```
+**Mutation C is literally the wider interval the device's own comment says it deliberately did NOT
+use**, and the test catches that specific weakening. Accept-direction asserted too (0, 255, 3.7 must
+still apply), because a STRICTER double manufactures false failures.
+
+⛔ **AND I FIXED A DEFECT IN MY OWN TEST, found only because I STOPPED FILTERING MY PROBE OUTPUT.**
+My first mutation run returned a grep showing nothing and I nearly recorded "no result." Reading the
+raw output instead: **both mutants were CRASHING** — `ValueError: cannot convert float NaN to integer`,
+exit 1 — because my reject-loop caught only `OSError`, so a mutant that removed the guard **ABORTED
+the suite instead of failing a check.**
+> **"The suite died" is a much weaker signal than "these checks failed"** — and it would have made
+> every future mutation of this guard uninformative. A crash is now its own reported failure: *the
+> guard must REJECT the value, not blow up on it.*
+
+**Third time today a grep of mine returned a misleading zero and the fix was to read the PRIMARY
+OUTPUT.** Treating that as a standing habit, not an incident.
+
+**✅ CONVERGENCE MEASURED — and it decides the sequencing:**
+```
+a5f2ce826 (last audited) -> head   979 insertions
+afd7dbe2a                -> head   166
+48f45e46a                -> head    86
+```
+**Shrinking every round; the last audit is THREE fixes stale.** The row **cannot land on the existing
+artifact** however green the self-tests are. Needs a fresh adversarial audit at `1ab8edc1` — **not me**
+(three rounds of fixes authored), **not nq-c** (authored the row), and **nq-a is now conflicted as a
+READER too** (they read rounds 2 and 3). Wants a fourth party or conv-ts.
+
+**Residual carried, not fixed** (nq-a's, agreed): the two `'GARBLED'` fixtures would pass for the wrong
+reason after a re-spell. General form worth keeping: **a fixture asserting a FAILURE outcome cannot
+detect a change that produces that outcome for a DIFFERENT reason** — its protection is always
+external to it. Belongs in the fresh audit's scope, not a fourth fix round.
