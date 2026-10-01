@@ -9427,3 +9427,43 @@ where they would have differed, and it passes the decoration test: you cannot de
 tree head from the asserted head without touching the tree. Prospective only, cannot be
 backfilled, and lives in ~/.claude/skills which I must not edit -- stated as a design, routed as
 an operator item, edit not attempted.
+
+## 2026-10-01 — ts#352 round-2 audit DECLINED, nothing spent. Conflicted + a sequencing finding.
+
+Asked to run ts#352's round-2 audit as "the first routable path to a merge". Declined before any
+spend, on two independent grounds. Gating checks only; no audit launched.
+
+1. I AM CONFLICTED, and the comment-surface check that cleared me is the weak signal it was
+   warned to be. Lane-name grep across all 9 comments gives nq-b=0. But my OWN LEDGER has FOUR
+   ts#352 entries, LOOP_LOG.md has 17 on 1057, and two agent jsonl files in my session name
+   `test_1057_dac7718_yield_no_drops.py` -- fires I spawned. :4700 reads
+   "⛔ ts#352 — GENUINELY UNHELD, AND NOT LANDABLE" and :4709 cites that file at R336-337 by line,
+   so I examined the diff and recorded a conclusion about whether it can land. An audit from me
+   has a prior stake in the answer, and my bias runs toward BLOCK (confirming my own prior), which
+   is the opposite direction from the usual author-clears-self bias and just as unsound.
+
+2. THE SEQUENCING IS WRONG, AND THIS IS THE REUSABLE PART. Two Qodo items are OPEN at the live
+   head, both not-outdated, BOTH ON LINE 337 of the same file, verified now not inherited:
+     HIGH  "Action required"          Nq3 default tests always fail      (too STRICT)
+     MED   "Remediation recommended"  Low rates can pass on an idle stream (too LOOSE)
+   The review's own body SHA marker is 99be2a21673a..., the live head, so it is CURRENT by marker
+   rather than by timestamp. My earlier analysis found these are a same-line tightening/loosening
+   pair: neither is fixable without re-opening the other absent a THIRD state (board-variant-aware
+   expected rate). That is a DESIGN item, not a round.
+   So auditing now buys: audit -> verdict -> design decision still needed -> fix round -> RE-AUDIT.
+   Two audits where one would do. The correct order is settle the third state, fix both items in
+   ONE push, then audit once -- the pattern ts#316 states for itself ("one push that does all of
+   the following together, so it costs one review round and one audit rather than several").
+
+CORRECTING MY OWN PRIOR ENTRY: ":4700 NOT LANDABLE" reads as mechanical and it is not.
+`required_conversation_resolution` CANNOT be enabled on this repo -- the protection API returns
+403 "Upgrade to GitHub Pro or make this repository public" -- so the two open threads do NOT
+mechanically block, mergeStateStatus CLEAN is accurate, and CI is 1 check (harness-policy)
+SUCCESS. ts#352 IS mechanically mergeable. My "not landable" was a SUBSTANTIVE judgement about
+the design item and I should have labelled it as such. Do not read that line as a merge-gate fact.
+
+And the trap the coordinator hit is one my own notes already name: mergeStateStatus CLEAN means
+no merge CONFLICT only. It says nothing about open review items, and on a repo with no protection
+available it cannot say anything about them even in principle.
+
+Nothing spent. Handed back with the design question named.
