@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# SPEC v3 — prose-versus-verdict census, 30 open firmware rows
+# SPEC v6 — prose-versus-verdict census, 30 open firmware rows
 # DESIGNED BY nq-b. EXECUTED BY nq-c.
 #
 # ⛔ v1 FAILED V1 VALIDATION AND nq-c STOPPED RATHER THAN PUBLISHING A CENSUS.
@@ -33,6 +33,7 @@ set -u
 REPO="daqifi/daqifi-nyquist-firmware"
 MODE="${1:---validate}"
 RETRIES=4
+LANE_TREE="${LANE_TREE:-/mnt/c/daqifi/wt/nq-b}"   # this lane IS the firmware repo; used to VALIDATE candidate SHAs locally
 
 # -----------------------------------------------------------------------------
 # A. EVIDENCE — unchanged from v1, which validated clean. FIELD FORM ONLY.
@@ -241,9 +242,38 @@ run_row() {   # $1=pr
 		#
 		# ⚠ THREE-WAY, because absence has kinds: a disclosure citing NO head cannot be
 		# settled mechanically and must NOT be defaulted to CURRENT.
-		local flag="PIN:none" lh cs
-		lh=$(gh pr view "$1" --repo "$REPO" --json headRefOid --jq .headRefOid 2>/dev/null)
-		cs=$(printf '%s' "$body" | grep -oE '\b[0-9a-f]{9,40}\b' | sort -u)
+		# ⛔ FLAG FIX 1 (nq-c) — `\b[0-9a-f]{9,40}\b` EXTRACTS NON-SHA TOKENS.
+		# Measured on fw#1110: 11 tokens of length 9, 5 of length 10, 1 of length 12,
+		# INCLUDING all-digit GitHub comment IDs (5697736359, 5697832981, 5698039550,
+		# 5698980187) — every digit is valid hex. A spurious candidate can only flip
+		# HISTORICAL -> CURRENT, so the corpus was safe, but **bounded by luck rather
+		# than by construction**, which is their phrase and the right objection.
+		#
+		# ⚠ AND THE OBVIOUS FIX IS WRONG: excluding all-digit tokens would drop a
+		# genuinely all-digit short SHA, losing a candidate that could have matched ->
+		# HISTORICAL, which for a current-state reading is the PERMISSIVE direction
+		# ("the degradation is stale, ignore it"). So guessing by shape errs the wrong
+		# way. VALIDATE INSTEAD: this lane's tree IS the firmware repo, so ask git
+		# whether each candidate is a real commit. Exact, local, no network.
+		#
+		# FLAG FIX 2 (nq-c) — the live-head call had NO RETRY, which is why fw#991
+		# returned PIN:UNDETERMINED on their sweep (recomputed with retries:
+		# PIN:HISTORICAL). It failed safe, but a refusal that a retry would resolve is
+		# a refusal the sweep should not be reporting.
+		local flag="PIN:none" lh cs raw_cs i
+		for ((i=0;i<RETRIES;i++)); do
+			lh=$(gh pr view "$1" --repo "$REPO" --json headRefOid --jq .headRefOid 2>/dev/null)
+			[ -n "$lh" ] && break
+			sleep 3
+		done
+		raw_cs=$(printf '%s' "$body" | grep -oE '\b[0-9a-f]{7,40}\b' | sort -u)
+		cs=""
+		while IFS= read -r c; do
+			[ -z "$c" ] && continue
+			# a candidate counts only if THIS repo knows it as a commit
+			[ "$(git -C "$LANE_TREE" cat-file -t "$c" 2>/dev/null)" = "commit" ] && cs="$cs$c"$'\n'
+		done <<< "$raw_cs"
+		cs=$(printf '%s' "$cs" | sed '/^$/d')
 		if [ -n "$cs" ] && [ -n "$lh" ]; then
 			flag="PIN:HISTORICAL"
 			while IFS= read -r s; do [ -z "$s" ] && continue

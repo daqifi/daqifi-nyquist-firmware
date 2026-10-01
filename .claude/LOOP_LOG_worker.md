@@ -8488,3 +8488,79 @@ ruling rather than a count.
 and named the likelier cause from conv-ts: a **bws 503 stripping `GH_TOKEN` and returning ZERO
 comments** on fw#991 before a retry returned 41. That is repair 5's exact failure mode occurring in
 the wild, which is the strongest argument for it so far.
+
+## 2026-10-01 09:20 MDT — CENSUS CLOSED. v6 fixes the flag's two bounded-by-luck defects; nq-c disproved my own over-correction worry.
+
+**FINAL (nq-c's run, v5, zero UNDETERMINED, all six PROSE_ONLY hand-read):**
+```
+EVIDENCE           12   965 1008 1020 1048 1092 1094 1106 1115 1124 1130 1137 1152
+PROSE_ONLY          6   1017 1024 1077 1078 1096 1129   (all hand-read)
+DEGRADED_DISCLOSED  6   901 976 991 996 1013 1110
+DISCLOSED_NOT_RUN   2   1027 1040
+NO_REFERENCE        4   704 1055 1099 1101
+total              30
+```
+**⛔ HEADLINE FOR A CURRENT-STATE READING: 6 OF 8 DISCLOSURES ARE HEAD-HISTORICAL.**
+`HISTORICAL 976 991 996 1013 1027 1110 · CURRENT 1040 · none 901`.
+
+## ⭐ nq-c RAISED THE OVER-CORRECTION CONCERN AND THEN DISPROVED IT — against their own interest
+
+PROSE_ONLY went 1 -> 6, **into my declared-bias bucket**, and five of the six differ from EVIDENCE
+only by sentence boundary. That looked like a punctuation-level decision moving five rows. **They
+measured and it is not:** the COMMENT-level co-location was itself spurious.
+```
+1096  SHA sentence = "**What is done and worth keeping**, at head `75b366509f`"   status prose, 0 anchor
+1129  SHA sentence = "## Follow-up fire: triage of 4 rollup-only findings ... at `7219ce4f16`"
+1077  SHA sentence carries equality ONLY, no anchor      1078  same
+```
+**The same loose conjunction repair 10 exists to stop, one scope up** — a long comment mentioning a
+head, an equality word and an audit *somewhere*. And all six carry **zero schema fields**, so
+head-anchoring was their only route to EVIDENCE and they do not earn it. **Repair 10 is not
+over-correcting, established by the lane that flagged the risk.**
+
+## ⭐⭐ THEIR NEAR-MISS VALIDATES THE SCOPE CHOICE, AND IT WAS MY SCOPE THAT SAVED IT
+
+They re-checked my fw#1110 claim **against the whole row** and found it DOES cite live `723d5ab742`
+— which would have made it `PIN:CURRENT` and refuted me. **Wrong:** the only comment citing live is
+a **QODO CODE REVIEW**; the adversarial audits sit at `ca3b4254f8` and `d04fb59b2d`, both superseded.
+**I had scoped the pin to the DISCLOSING COMMENT and that is what makes it right.** Their row-level
+check was the loose one, and they said so.
+
+## THE TWO FLAG DEFECTS, FIXED — both "bounded by luck, not by construction" (their phrase, correct)
+
+**1. The hex class extracted NON-SHA tokens.** On fw#1110: 11 tokens of length 9, 5 of 10, 1 of 12,
+**including all-digit GitHub comment IDs** `5697736359 5697832981 5698039550 5698980187` — every
+digit is valid hex. A spurious candidate can only flip HISTORICAL -> CURRENT, so the corpus was safe
+by luck.
+
+⚠ **The obvious fix is wrong and I nearly shipped it.** Excluding all-digit tokens would drop a
+genuinely all-digit short SHA, losing a candidate that might have matched -> HISTORICAL — and
+HISTORICAL is the **permissive** direction for a current-state reading ("the degradation is stale,
+ignore it"). **Guessing by shape errs the wrong way.** So: VALIDATE instead. This lane's tree *is*
+the firmware repo, so ask git. Measured:
+```
+5697736359 -> REJECTED (not an object)      ca3b4254f8 -> commit
+5697832981 -> REJECTED (not an object)      723d5ab742 -> commit
+```
+Exact, local, no network, and no shape heuristic to be wrong about.
+
+**2. The live-head call had NO RETRY**, which is why fw#991 returned `PIN:UNDETERMINED` on their
+sweep. Added the retry loop; **991 now reads `PIN:HISTORICAL`**, matching their hand recomputation.
+
+## ⚠ AND THEY CORRECTED MY OWN SELF-CRITICISM, WHICH I ACCEPT AS A CORRECTION
+
+I had told them to treat `PIN:none` as suspect because an empty read would produce it. **That was
+wrong about the spec:** the flag derives cited SHAs from `$body`, which has **already passed
+`fetch_verified`'s payload check**; its only network call is the live head, which correctly falls to
+`PIN:UNDETERMINED` on empty. **It was my ad-hoc verification command that lacked the verification,
+not the spec.** So the fourth transfer failure I named is real but its blast radius was my own check,
+not the ruling — **over-claiming a defect is also an error**, and I had widened mine past its
+evidence.
+
+## THE CLOSING LEDGER ON THIS SPEC
+
+Six versions, **eleven defects, every one found by the lane that did not write it**, and **four of
+the eleven were in my REPAIRS rather than my original.** nq-c refused under R5 three times and each
+refusal was worth more than a partition. **The design/execute split did not merely catch bugs; it
+caught bugs in the fixes** — which is the part a single author cannot reach, and the reason six round
+trips beat one census I believed.
