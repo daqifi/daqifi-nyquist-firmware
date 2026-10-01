@@ -6920,3 +6920,53 @@ own neighbourhood feel searched — the line was retired from a second pass by h
 one."* That is exactly `:397-400`: **I found the hardcoded-base assumption there, and having produced
 a finding from those four lines is what stopped me reading them again.** Mine was the instance;
 theirs is the mechanism.
+
+## 2026-10-01 00:33 MDT — EXECUTED conv-fw's corpus predicate. 10/10 parsed. No verdict attached. No call required.
+
+**Verified the script MYSELF rather than relaying the coordinator's check** — I was about to execute
+code I did not write over my own corpus. One `open()`, read mode; imports `json/os/sys/Counter/re`;
+write/exec/network grep **empty**. Read-only, independently confirmed.
+
+**⛔ argv built FROM the pre-registered list, not a glob and not the directory.** A directory argument
+hands selection back to the script's `*.json`/`*.output` extension filter — **reopening exactly the
+contamination route the pre-registration closed.** Also checked drift: pre-registered 10, present 10,
+`diff` clean. **argv literally IS the pre-registration.**
+
+**§1 census: 10 seen, 10 parsed, 6 noted** (all `unwrapped .result envelope`, still measured). Shape
+resembles conv-fw's dogfood baseline — PASS rows raw=0/conf=0/disp=0 with all predicates 0, BLOCK rows
+non-zero. Instrument healthy.
+
+**§2 rows** at `.claude/evidence/corpus-measure-run-nqb-10artifacts.txt`. The columns that moved:
+```
+file                  raw conf disp derived P4 back fwd other
+sk136                   4    4    4       4  0    0   0     0
+sk199                   6    6    6       6  0    0   0     1
+sk230                   2    2    2       2  0    0   0     0
+ts326                   8    8    4       4  1    0   0     4
+ts349 (5findings)       5    4    5       5  0    0   0     0
+ts349-r4 splitbrain     2    0    2       2  0    0   0     0
+```
+**P4 fires on exactly one row (ts#326); `derivedDistinct`=4 against raw=8 there.** Reported as
+columns. **The predicate is theirs and so is what it means.**
+
+**⚠ §3 — THE ONE THAT MATTERS: their own section 3 TRUNCATES at ~92 chars.** They said section 3
+matters most *because the reduction lived entirely in prose and they needed to READ it rather than be
+told what it says* — **and the tool specified for that purpose emits a projection of it.** Relaying
+that would have handed them a truncation of the thing they asked not to be told about. Extracted all
+**23 rationales verbatim**, unclassified and ungrouped, to
+`.claude/evidence/corpus-measure-rationales-VERBATIM.txt` (16,528 B, pushed). **A path, not a paste** —
+any reformatting by me is another projection.
+
+**✅ TWO DOGFOOD FINDINGS CORROBORATED on a second corpus, independently:**
+1. **`P5_hasDistinctField` = 0 on all ten** — no distinct-defect count emitted anywhere. Their
+   "producer change is unblocked rather than debatable" holds here too.
+2. **`arbiterMissing=false` with `arbiterPresent=0` and `arbiterModel=null` on 4 of 10** (both fw1020
+   files, sk231, ts349-noblindleg), all vacuous at raw=0. **Class-A fail-open: 4/10 here vs 3/4 there.**
+
+**⚠ One difference from their baseline, reported as a NUMBER and not a diagnosis:** their ts349 row
+scored `back=3 fwd=3`. **Every row of mine is `back=0 fwd=0`** — including ts#326, whose rationales
+open *"Duplicate of index 4/5/6/7"*; that language landed in `nOtherMergeLang=4` instead. Flagged the
+column; concluded nothing about their reference detection.
+
+**No call was required anywhere, so I made none** — the spec was tight enough to run without
+judgement, which is the first time tonight a spec has been.
