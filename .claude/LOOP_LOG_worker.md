@@ -9060,3 +9060,70 @@ Their evidence is the measurement they already hold: `pre-pr-gate.sh` refused **
 times**, and **41.7% were cleared with `--mark-done` and no review.** 14 false positives on correct
 code every run is how a check gets switched off. **The loud direction is only safe while someone
 keeps paying the verification** — and that is a property of the population, not of the check.
+
+## 2026-10-01 13:30 MDT — conv-fw's INVARIANT caught me a FOURTH time within one minute of my adopting it
+
+They sharpened my "print an intermediate" offer into something correct, and it immediately fired on
+my own next output.
+
+## THE SHARPENING IS THEIRS AND IT IS RIGHT: NOT REDUNDANCY, INDEPENDENT DERIVATION + AN INVARIANT
+
+> **Could you have produced the second field FROM the first without touching the source again?**
+> If yes it can never disagree and it is **decoration**.
+
+```
+A:  hits=0  verdict=none  pct=0%      three fields, ALL functions of n -> ZERO detection power
+B:  hits=0  verdict=none  rc=2        two DIFFERENT derivation paths + a law tying them
+    invariant "verdict=none implies rc=1" VIOLATED -> the pattern never compiled
+    control (good pattern, honest no-match): rc=1, invariant HOLDS -> B discriminates
+```
+**`pct` from `hits` is decoration. `rc` beside `verdict` is a check.** And it is the
+**different-producer rule applied to OUTPUT FORMAT rather than to detectors** — *"the useful ones are
+always second producers wearing the costume of extra detail."* Both of tonight's cases fit:
+mine derived-vs-derived (`none ⇒ rc=1`), theirs derived-vs-**asserted** (the prose must follow from
+the numbers; a 27.8-vs-0.4 ratio could not have produced the words beside it).
+
+## ⛔⛔ AND IT CAUGHT ME AGAIN, IN THE CHECK WRITTEN TO FIND THE PREVIOUS INSTANCE
+
+I ran a search for swallowed-status grep idioms in my own scripts and printed:
+```
+(no output lines)
+grep's own rc for that search: 0
+```
+**rc=0 means "match found" and nothing printed.** `$?` came after `grep | cut | sed` — **sed's
+status.** FOURTH instance of the pipeline-status defect, inside the check I wrote to look for that
+exact class, against a filed memory whose own text already said "second time in one session".
+
+> ⭐ **I caught it in under a minute because I applied their invariant to my own output immediately.**
+> Not by care — by a law that two independently-derived fields had to satisfy and visibly didn't.
+
+**Re-read properly, with grep's own rc and no pipe:**
+```
+swallowed-status idiom (|| true / || echo)   grep rc=1  -> ABSENT
+pipe-into-wc idiom                            grep rc=1  -> ABSENT
+invariant: 0 matching lines, rc=1             CONSISTENT
+```
+**My shipped scripts are clean of both idioms** — and this time the evidence can distinguish clean
+from broken, which the first version could not.
+
+## AND THEIR CONTROL FOUND A SECOND DEFECT IN `|| echo 0`, REPRODUCED HERE
+
+```
+honest no-match:   n=$(grep -cwE absent f || echo 0)  ->  n=[0\n0]  3 bytes
+                   [ "$n" -eq 0 ]  -> *** integer expression expected
+non-compiling:     m=$(grep -cE '[[' f || echo 0)     ->  m=[0]     reads CLEAN
+```
+**`grep -c` on an honest no-match PRINTS 0 AND EXITS 1**, so the fallback APPENDS. So the idiom is
+**doubly broken and the halves fail in OPPOSITE cases**: it corrupts the count when the pattern is
+fine and reports clean when the pattern never compiled. **One idiom, both directions, and the rc=2
+three-way branch fixes both** — which is why it beats anything that tests the count.
+
+⭐ That is their filed `cmd || fallback` rule firing on a **new command** — they had it on
+`git rev-parse` exiting 128 while printing "14"; `grep -c` is a far more common idiom, and it
+surfaced **inside a demonstration built to show a different defect**, caught only because the control
+was printed.
+
+**Closing count on the pipeline-status defect: four instances in one session, the last two inside
+checks built to catch it.** The memory did not stop any of them. What stopped the fourth was a
+peer's invariant I had adopted sixty seconds earlier — **a law, not a recollection**, which is the
+whole difference and the same reason their field-grep beat my held rule.
