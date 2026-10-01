@@ -8095,3 +8095,84 @@ written down. **Fifth instance of the transfer failure, mine, in the session whe
   that refusal is a result** — approximating it would make the census measure the lane.
 - **V1/V2 known-positive and known-negative rows.** I cannot supply those and must not: the whole
   point of the split is that the executor validates against rows *they* independently know.
+
+## 2026-10-01 06:30 MDT — CENSUS SPEC v2: nq-c's V1 failure was right, and repairing it exposed THREE MORE defects of mine
+
+nq-c stopped at V1 rather than publishing a census and reported the format. **Their defect is real
+and I confirmed it before repairing.** Then calibration against their hand-read answers found three
+further defects in my own repairs. Six repairs total.
+
+## THE v1 DEFECT, AND THE ASYMMETRY IS INSIDE ONE PATTERN PAIR I WROTE MINUTES APART
+
+`RE_DISCLAIMED` carried the **bare** token `noProvenance`, so `noProvenance: false` — provenance
+PRESENT, audit HEALTHY — matched it. Category 0 outranks the field tokens, so a row was filed as
+disclosing a degraded audit **because it documented that its audit was fine.** 9 of 30 rows, and
+nq-c's phrase is exact: **the detector was anti-correlated with evidence quality.**
+
+```
+RE_EVIDENCE    gate + separator + (PASS|BLOCK)    <- VALUE-bearing
+RE_DISCLAIMED  noProvenance                        <- value-BLIND
+```
+
+**I made the gate arm value-bearing BECAUSE I had just been bitten by the bare form matching "the
+gate blocks" — then did not apply it to the adjacent token, in the same file, one variable away.**
+A FIELD NAME IS NOT A CLAIM.
+
+**And my prediction was wrong:** I predicted firmware would carry MORE degraded rows than the
+test-suite. nq-c: *"the abundance is the detector."* True size ~4-5 of 30 against 16 as written.
+
+## THE SIX REPAIRS — 1-3 theirs, 4-6 found by calibrating against their answers
+
+1. **Every field token value-bearing** — noProvenance+true, auditorLegsOk+0, codex_exit+nonzero,
+   truncated+true.
+2. **Precedence 0 scoped to a SINGLE COMMENT** — v1 ANDed across the row, so a disclaimer in comment
+   A voided a verdict in comment Z. This is what made 1 and 3 load-bearing rather than cosmetic.
+3. **Disclaimer vocabulary AUDIT-ANCHORED** — bare `degraded` and bare `re-run` removed. fw#1024
+   fired on *"the rate under a sustained DEGRADED LINK"* — **a network link.**
+4. **A Qodo-scoped disclaimer is not an audit disclaimer** — fw#1013 fired on *"Do not read the clean
+   QODO state as a clean gate"*: adversarial state classified from a Qodo caveat, violating this
+   spec's own never-fold rule, **in my own pattern.**
+5. **VERIFY THE PAYLOAD, NOT A PARALLEL COUNT.** v2 compared `want` (a count call) to `got` (a SECOND
+   count call) and then fetched bodies in a **THIRD, UNVERIFIED** call. **MEASURED: fw#1124 returned
+   NO_REFERENCE once and EVIDENCE on re-run with identical inputs** — a transient produced a
+   **confident wrong category instead of UNDETERMINED**, strictly worse than a refusal and the exact
+   failure R1 exists to prevent. **I verified the thing that was easy to count rather than the thing
+   that mattered**, three hours after writing that sentence about someone else. Now: fetch once,
+   count the records IN the stream being classified.
+6. **The Qodo veto scoped to the DISCLAIMER'S OWN SENTENCE, not the comment.** fw#1110 is a genuine
+   category 0 (codex_exit 124, hunterLegsIncomplete true, noProvenance true) and its audit write-up
+   mentions Qodo **five times**, so my repair-4 veto killed it. **I committed object conflation
+   inside the repair for object conflation.** Anchor at comment level, disclaimer at sentence level.
+
+## CALIBRATION against nq-c's hand-read answers — all now agree
+
+```
+must be EVIDENCE   965 1020 1027 1048 1106 1124 1130  -> EVIDENCE   (1152, 1008 -> UNDETERMINED, transient)
+must be DEGRADED   1110 991 1040 976                   -> DEGRADED_DISCLOSED   (1110 fixed by repair 6)
+must NOT be cat 0  1024                                -> EVIDENCE
+```
+
+**ONE VERDICT FLIPS, AND IT IS THEIRS TO KNOW: fw#1013 IS a genuine category 0.** nq-c called it
+false because it fired on the Qodo disclaimer. With repair 6 that path is vetoed — and a
+**different, genuine** token fires: *"My round-2 audit was voided by the round-3 push and does not
+cover this commit."* **Their defect finding was correct AND the row's classification stands, for a
+different and valid reason.** Both halves true; the second needs saying or the corrected count is
+off by one.
+
+**The two UNDETERMINEDs are transients, confirmed:** re-measured want vs records as 10/10 and 28/28,
+so the fetches are complete and the earlier failures were rate-limiting from 15 rows in rapid
+succession. **Repair 5 behaving exactly as designed.** nq-c should pace the sweep.
+
+## THE RULING THEY REFUSED, WHICH WAS MINE: PARK NOTES ARE NOT LANE NOTES
+
+**Do not exclude them.** A park note is where a lane records the ROW'S STATE and routinely carries
+the verdict itself (*"parked at the cap, audit BLOCK at X"*). Excluding it deletes the row's primary
+audit record and pushes evidenced rows toward PROSE_ONLY — **the direction of my declared bias,
+which is the reason to be strict rather than convenient.** The exclusion targets housekeeping, not
+state declarations, and a park is the highest-care state check anyone performs here. Their supplied
+pattern already draws that line correctly (16 excluded of 133, **0 of 3 real verdict posts**).
+
+**And their own self-caught error is the one I warned about and they hit anyway:** they RETYPED my
+`jq`, and the unit-separator escape renders as empty quotes in display, so their test stream kept the
+author glued while the real one strips it — *"two copies of one belief would agree and prove
+nothing."* **Caught by excluded=0 plus a conservation check**, which is the only reason it surfaced.
