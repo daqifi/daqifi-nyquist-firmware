@@ -7778,3 +7778,74 @@ the nine, and `! <verb> N` costs four characters.**
 ⚠ **Stated plainly for my own conduct:** this does not change what I may do. I still may not merge
 anything, and the existence of a bypass is not permission to use one — it is the reason the operator
 needs to know.
+
+## 2026-10-01 04:05 MDT — THE 33 NEWLY BLOCKED, re-derived independently: conv-fw's 32/1 is EXACTLY RIGHT
+
+Criterion pre-registered at `.claude/evidence/PREREG-newlyblocked-33-criterion.md` **before reading
+`newblocked.txt`**. Read-only; `bash -n` parses and never executes; no corpus line was ever run.
+
+**Why this claim and not the rest:** the A/B is model-free (old-rc vs new-rc on one fixture), but
+*"32 of 33 are harvest artifacts"* is a judgement about the corpus, and it is the one claim that
+turns a **3.0% false-block rate into a rounding error**. conv-fw had noticed all five of their own
+instrument corrections moved toward *"fail-closed is cheap"* — **this classification moves the same
+way**, which is the structural reason to re-derive it, not an accusation.
+
+## ⭐ POPULATION — and `wc -l` lied about it by one
+
+```
+newblocked.txt   wc -l = 32   grep -c '' = 33   <- last byte is 0x32 ('2'), NOT a newline
+push_decoded.txt 1097 both ways                 <- stated population confirmed
+push_uniq.txt    1148 lines                     <- MORE than 1097; uniq'd != population, unused
+```
+**Reporting `wc -l`'s 32 against a claim of 33 would have manufactured a discrepancy out of a
+missing trailing newline.** Caught it by cross-checking two counters before comparing to anyone's
+number.
+
+## THE RESULT
+
+```
+mechanical, TEST 1 (bash -n parse)        17  HARVEST_ARTIFACT (fragment / unterminated heredoc)
+mechanical, TEST 2 (quote-strip)           5  HARVEST_ARTIFACT (push exists only inside quotes)
+passed both                               11
+  -> hand re-read (PRE-COMMITTED, rule 3) 10  carry a LITERAL \n  = harvested FRAGMENT
+                                           1  complete, unmangled command line
+FINAL                                     32  artifact   /   1  genuine
+```
+**Identical to conv-fw's 32/1, reached by a different route.**
+
+## ⛔ MY MECHANICAL TEST FALSE-NEGATIVED, AND THE REASON IS WORTH KEEPING
+
+My first pass reported **11 genuine** — 11x conv-fw's number. **`bash -n` accepts a literal `\n`,
+because in shell `\n` is an escaped `n`**, so `git push origin X 2>&1\necho \` parses cleanly with
+`necho` as an argument. Demonstrated:
+```
+harvested :  git push origin X 2>&1\necho X      -> one token: 2>&1\necho    parses OK
+real      :  git push origin X 2>&1 <newline> echo X                        parses OK
+cmp       :  *** DIFFERENT -- and the gate matches on TEXT
+```
+> **The harvest mangling is SYNTACTICALLY VALID, so a syntax check cannot see it.** The discriminator
+> is the literal two-character `\n` — a **harvest signature, not a shell property.** A parse test
+> answers "could this have been executed?" and the question needed is "was this the text the hook
+> received?"
+
+⭐ **The pre-registration is what produced the right answer.** Rule 3 committed me in advance:
+*"a result of more-genuine-than-they-said is the one I must distrust and re-read by hand."* The
+mechanical pass said 11; the hand re-read it obliged reduced it to 1. **Had I not written that rule
+before seeing the data, 11 is a defensible-looking number I would have reported** — and it would have
+inflated the false-block rate 11-fold against a peer whose number was right.
+
+## THE ONE GENUINE ROW, VERBATIM — and it is NOT a first push
+
+```
+timeout 180 git push origin fix/877-uint8-channel-truncation-twins 2>&1 | tail -2; cd /mnt/c/daqifi/ts-877 && timeout 180 git push origin test/877-uint8-channel-truncation-twins 2>&1 | tail -2
+```
+- **Complete and valid**, no literal escapes, two real pushes.
+- **No `-u`, no `--set-upstream`, no `HEAD:refs/heads/`** → both push **existing** branches. So it is
+  **NOT the first-push case the gate exists to catch** — it is a genuine over-block of ordinary work.
+- ⭐ It is wrapped in **`timeout`**, the exact wrapper conv-fw found missing from the enumeration
+  (~20 real cases), and it is a **`;`-separated compound** — so it sits at the intersection of the two
+  omissions the corpus keeps surfacing.
+
+**So the honest statement of the false-block rate is 1 of 1,097 = 0.09%, not 3.0%** — and the single
+instance is an ordinary push to tracked branches, which is the kind the gate is not meant to touch.
+The disposition is conv-fw's and the coordinator's; the count is 1.
