@@ -8023,3 +8023,75 @@ as 137.
 ⭐ **That generalises past this task:** before reporting a two-sided cross-check, ask which side has
 a verification step. A side without one inherits the full error rate of the extractor, and the
 extractor's error rate is usually only measurable on the side that has one.
+
+## 2026-10-01 05:45 MDT — CENSUS CRITERION DESIGNED, and the exemplary-set check FAILED IT IN BOTH DIRECTIONS before passing
+
+Design-only; **nq-c executes.** Spec at `.claude/evidence/SPEC-firmware-prose-vs-verdict-census.sh`.
+
+**⛔ DESIGNER'S BIAS DECLARED IN THE SPEC ITSELF.** The stated prize is finding rows that wait on an
+audit nobody ran, which would **shrink** the operator's queue. **I want that**, so a criterion I wrote
+would naturally make PROSE_ONLY the easy bucket. Built the opposite in: ambiguity resolves toward
+EVIDENCE, PROSE_ONLY requires proof of absence, the count is a **FLOOR**, and **every PROSE_ONLY row
+must be hand-read before any number is reported.**
+
+## ⭐⭐ THE DESIGN CHECK THAT EARNED ITS KEEP: RUN IT AGAINST THE ROWS YOU THINK ARE EXEMPLARY
+
+conv-ts's rule, better than the three traps I was given: *"run the criterion against the rows you
+believe are EXEMPLARY, not only the ones you suspect. If it fails them, it is measuring conformity
+rather than quality."* **I tested it on real text rather than assuming, and my criterion failed both
+exemplars in OPPOSITE directions:**
+
+```
+ts#330  "| adversarial audit | degraded -- do not read its PASS as a pass. One of three
+         auditor legs completed; the other two died on a session limit"
+        measured evidence=0 prose=7   -> my v1 said PROSE_ONLY.  WRONG: highly specific
+        checkable content, written as a SENTENCE so no `gate:` field form exists.
+
+ts#351  "This is NOT an audit verdict and this row remains UN-AUDITED ... noProvenance true,
+         base_sha/head_sha/covered_bytes/total_bytes/truncated all absent ... a void run
+         that must not be counted as a round"
+        measured evidence=5 prose=4   -> my v1 said EVIDENCE.  WRONG the other way: the row
+        states in terms that it is NOT a verdict and NOT audited.
+```
+
+> **Field tokens cannot decide this.** What both rows share is an explicit **AUTHOR DISCLAIMER OF
+> USABILITY** — they instruct the reader not to treat the result as a verdict. Author-supplied,
+> directly observable, and better than any inference I could draw from health fields.
+
+**⭐ So the disclaimer OUTRANKS the field tokens, at precedence 0.** A row saying *"do not read this
+as a pass"* is making a claim **about its own evidence** that overrides what the fields look like.
+Fifth category **`DEGRADED_DISCLOSED`**, evaluated first.
+
+**⭐⭐ And it is not a cosmetic fifth bucket — it is the one the census is FOR.** A degraded/void-
+disclosed row is *an audit RAN, produced nothing usable, and the row KNOWS it* — exactly the
+population bearing on the open ruling **"does a degraded or void round consume the round budget"**,
+which has four instances (ts#344 explicitly, ts#351's void run, **my own sk#230 r2**, ts#349 r4).
+**A census whose categories cannot distinguish that state cannot feed the ruling it exists to
+inform. Make the category structure match the decisions it feeds.**
+
+## VALIDATION, both directions, against the SHIPPED patterns (eval'd from the file, not retyped)
+
+```
+ts#330                                        -> DEGRADED_DISCLOSED   (was PROSE_ONLY)
+ts#351                                        -> DEGRADED_DISCLOSED   (was EVIDENCE)
+"the gate blocks prose about merging"         -> NO_REFERENCE         prose trap defeated
+"the bench run never happened on this board"  -> NO_REFERENCE         object trap defeated
+"gate: BLOCK, gateReason: 2 survived, auditorLegsOk 1/1" -> EVIDENCE  positive control
+```
+**Patterns were `eval`'d out of the spec file** rather than retyped into the test — two copies of one
+belief would agree with each other and prove nothing.
+
+⚠ **AND I REUSED A BROKEN PATTERN I HAD ALREADY DOCUMENTED TONIGHT.** My first exemplar fetch used a
+bounded-context regex; `ugrep` rejected it as *"exceeds complexity limits"* and printed nothing —
+the identical failure I filed hours earlier, with the identical remedy (line-based matching) already
+written down. **Fifth instance of the transfer failure, mine, in the session where I named the class.**
+
+## WHAT I DELIBERATELY DID NOT SPECIFY
+
+- **`RE_LANE_NOTE` is left `__UNSET__` and the script REFUSES without it.** nq-c knows the marker
+  their ten firmware refresh notes carry; I do not. Required of them: record the pattern verbatim,
+  report the excluded count per row, and if a row's only audit-bearing comment is an excluded lane
+  note, say so explicitly. **If they cannot write a pattern matching their notes and nothing else,
+  that refusal is a result** — approximating it would make the census measure the lane.
+- **V1/V2 known-positive and known-negative rows.** I cannot supply those and must not: the whole
+  point of the split is that the executor validates against rows *they* independently know.
