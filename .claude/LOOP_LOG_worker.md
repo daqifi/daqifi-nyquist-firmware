@@ -7849,3 +7849,103 @@ timeout 180 git push origin fix/877-uint8-channel-truncation-twins 2>&1 | tail -
 **So the honest statement of the false-block rate is 1 of 1,097 = 0.09%, not 3.0%** — and the single
 instance is an ordinary push to tracked branches, which is the kind the gate is not meant to touch.
 The disposition is conv-fw's and the coordinator's; the count is 1.
+
+## 2026-10-01 04:40 MDT — TRANSFER-FAILURE CENSUS: 9 claimed → 2 VERIFIED, 1 REFUTED, 4 unverifiable here, 2 partial
+
+Criterion pre-registered at `.claude/evidence/PREREG-transfer-failure-census.md` **before measuring**,
+including **the direction of my own likely error**: I named this class and own two instances, so my
+bias is to confirm too readily. **Pre-committed: for each row, search first for the reason it was
+RIGHT not to travel, and book a failure only when that search fails.** Counts and mechanisms; the
+structural remedy is the operator's to fund.
+
+## ⭐⭐ THE STRUCTURAL THESIS IS CONFIRMED — AND ROW 1 IS ITS POSITIVE CONTROL, NOT AN INSTANCE
+
+conv-fw's independent finding was *"the protections that travelled are behind a shared callee; the
+ones that didn't are where a second file reinvented instead of calling."* Measured in
+`fix/gate-five-fail-opens @ 02a67fc`:
+
+```
+file                          own-parse   calls merge-target-keys   got the keyword fix?
+merge-target-keys.sh              7              (is the callee)     YES -- fix written here
+pre-merge-gate.sh                 0                   8              YES, for free
+pre-merge-checks-gate.sh          0                   3              YES, for free
+skills-prepush-gate.sh            0                   0              n/a -- no command parser at all
+```
+
+> **Both merge gates got the fix automatically because they CALL one parser.** There is exactly one
+> command classifier in the tree, so the fix could not fail to travel between them.
+
+**So row 1 — "the keyword fix was never carried into this gate" — is REFUTED as a transfer failure.**
+The gate it names, `skills-prepush-gate.sh`, is a **git pre-push hook that reads refs and SHAs on
+stdin** and has no command parser (`own-parse=0`). It is not a site that needed the remedy; the
+shapes it misses are a different contract. **My pre-committed search for "the reason it was right not
+to travel" succeeded, so I do not book it** — and it is the cleanest available evidence FOR the
+shared-callee thesis.
+
+⚠ **And I nearly reported the opposite.** My first greps ran against the WORKING TREE and found no
+keyword arm, so I was one step from telling the coordinator that `02a67fc` did not contain what
+conv-fw said it did. **The fix is committed (+31/+63) and pushed.** What stopped me was reading the
+commit's diff instead of trusting a failed grep — [[feedback_a_failed_grep_is_not_evidence_of_absence]]
+aimed at a peer's work, which is the worst direction to make it in.
+
+**Cause of the discrepancy, and it is a live hazard I routed to them:** the worktree has a
+**mutation STAGED** that reverts the fix exactly (`-31/-63`) — their 121/0 → 112/9 arm-removal test,
+left in the index. A commit from that tree reverts their own fix, and any reader who looks at FILES
+rather than a SHA sees the unfixed classifier.
+
+## ✅ VERIFIED TRANSFER FAILURES: 2
+
+| | written | needed & absent | author | distance | mechanical catch? | class |
+|---|---|---|---|---|---|---|
+| **2** | `SWEEP-audit-provenance-check.sh` — consensus-and-retry, 9 sites | my park-measurement loop — **0 sites**, added only after it failed 3× | **same (me)** | **same session, ~40 min** | yes — a shared `http_get_verified` helper | **SHARED-CALLEE-PREVENTABLE** |
+| **7** | `--push-base` in 4 code files (`mark-skills-audited.sh`, `skills-prepush-gate.sh`, 2 tests) | **absent from `herd/briefs/` entirely** (4 briefs present) | unknown (shared identity) | code → **prose**, same repo | **no** — prose cannot call a function | **NEEDS SOMETHING ELSE** |
+
+**Row 2 is the sharpest instance in the census and it is mine**: same author, same session, forty
+minutes, and the remedy was *already written in code I had just tested*. No belief gap, no staleness,
+no handoff. **Pure non-propagation**, and it is shared-callee-preventable, which is the thesis holding
+on the one row where I have complete evidence of both sites.
+
+## ⛔ UNVERIFIABLE IN THE TREES I CAN READ: 4 — reported as UNVERIFIED, not as zero
+
+```
+3  CAPFAIL -> prior-art-gate      prior-art-gate.sh NOT PRESENT on fix/gate-five-fail-opens.
+                                  CAPFAIL exists in pre-merge-gate.sh only; the files carrying the
+                                  GHERR/GHRC capture shape are pre-merge-gate.sh + its test. So no
+                                  comparable site is visible here.
+5  run_sequence verdict pattern   0 hits in the tree.
+6  mask_literals routing          0 hits in the tree.
+8  EXIT_INCONCLUSIVE 1-in-~150    0 hits across 70 .sh files. The claim may hold on another ref.
+```
+⚠ **These are the coordinator's characterisations and I could not reach their sites.** Marking them
+UNVERIFIED rather than filling the row — **a nine-row table with four unverified rows is a projection
+wearing a census's clothes.** Four of nine is also enough that the headline "nine instances" should
+not be quoted as nine.
+
+## PARTIAL: 2 — a real ratio, but not the named instance
+
+```
+4  summary-print tally   8 of 15 qodo-cycle/test-*.sh carry a `passed=/failed=` summary.
+                         The adoption ratio is MEASURED; the specific "sibling but not its two
+                         neighbours" trio was not named, so I cannot confirm that instance.
+9  #880 patch table      The precedent EXISTS and is verified: docs/BUILD_AND_TOOLCHAIN.md:50
+                         carries the re-check instruction ("try removing source patches 1 and 3 ...
+                         if the build passes clean, the patches can be deleted"). The site where it
+                         was NEEDED and absent was not named, so a failure to travel is unconfirmed.
+```
+
+## ⭐ WHAT THE ANSWERABLE ROWS SAY ABOUT THE REMEDY
+
+**Of the 2 verified: 1 shared-callee-preventable, 1 not.** And the not-preventable one is the
+instructive half — **`--push-base` is a flag in code and the brief is PROSE.** No callee can be
+shared between a shell script and a markdown instruction, so that gap needs a **cross-artifact
+check** (does every flag a script accepts appear in the brief that tells an agent to use it?), which
+is a different mechanism from deduplication.
+
+**So the two classes are not substitutes**, and the row counts are too small to weight them. What the
+census can support: **the one site where a shared callee existed carried the fix to both consumers
+automatically and could not have failed**, which is a stronger statement than any count of failures.
+
+⚠ **My stake, restated against the result:** I predicted I would over-confirm, and the measurement
+**refuted one of my own class's headline instances** and left four unreachable. **The honest count is
+2 verified, not 9** — and the pre-commitment to look for legitimate non-travel is what produced that,
+the same way rule 3 took the 33-row count from 11 to 1.
