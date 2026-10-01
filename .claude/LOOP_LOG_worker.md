@@ -6573,3 +6573,60 @@ splitting out.
 **HAZARD CLOSED:** installed tree HEAD `6c6d16f4` / dirty 0, **unchanged before and after**; detached
 worktree only, porcelain 0, nothing left dirty. Tree recorded in `FIRE_TREES.txt` rather than
 bare-git removed (that leaves an orca registration behind).
+
+## 2026-09-30 20:16 MDT — ts#351 read: hardware-blocked AND DEFECTIVE. The implied fix makes it worse BOTH ways.
+
+**ENUMERATION searched, not recalled — EMPTY.** Grepped **my own ledger** for `ts#351` /
+`_REPLY_SHAPE` / `1030`: **0 hits.** No commit on the branch (4 commits, all the shared identity,
+none mine), **no comment of mine — so the 09-29 in-thread confirmation is ANOTHER lane's**, no
+ticket, no text. Corpus sweep did not cover this file.
+
+⚠ **Two adjacencies named because I enumerated rather than cleared a supplied candidate:**
+1. I cited `SCPI_DACVoltageGet` — the same firmware getter — 3h earlier when **refuting** the fire's
+   residual. Different path (channel index, not reply shape), and a refutation. Adjacency, not stake.
+2. ⭐ **The directional one:** `_REPLY_SHAPE` is a reply parser with **no `command()` handler** — the
+   exact class my corpus sweep **DECLARED EXCLUDED** (19 of 51 files). **So my interest mildly favours
+   the High being REAL**, because a live defect inside my declared exclusion vindicates naming it.
+   **"The High is real" from me runs WITH my interest and should be discounted.** Stated so the
+   coordinator reads my confirmation at its real weight.
+
+**✅ THE HIGH IS CORRECT at head `a7d8ca394`** — `:227 _REPLY_SHAPE = re.compile(r'[-+0-9][-+0-9.,]*')`,
+gated via `.search()` at `:374`, `:382`, `:559`. Verified by **my own execution**, not from prose.
+
+**⛔⛔ BUT ANCHORING DOES NOT FIX IT — the finding's framing points at the WRONG PROPERTY:**
+```
+input                    search  match  FULLMATCH
+'-5.0'                   True    True   True      LEGAL negative voltage
+'-200'                   True    True   True   <- FULLMATCHES
+'0,"No error"'           True    True   False     the CLEAN drain reply (also accepted via search)
+'1.2e-3'                 True    True   False     legal scientific notation
+```
+**`-200` FULLMATCHES.** `.search()`-vs-`.match()` and "unanchored" name a real looseness that is **not
+the one that matters**: `-200` is a well-formed signed number, and no syntactic tightening rejects it
+without also rejecting the legal `-5.0`.
+
+**⭐ AND THE TWO-SIDED CHECK FINDS THE OPPOSITE DIVERGENCE, which nobody named: anchoring would newly
+REJECT `1.2e-3`.** So **the obvious remedy is ineffective in one direction and a false-failure
+generator in the other, at the same time** — the two-sided criterion applied to a PROPOSED FIX rather
+than to existing code.
+
+**The working discriminator is SEMANTIC, not syntactic:** the device bounds outputs by software clamps
+(`AOutConfig.h:48-49` `MinVoltage`/`MaxVoltage`). **A range check separates `-200` from `-5.0`, which
+no regex can** — the same shape as ts#326's `#877` fix.
+
+**SCOPED HONESTLY:** I verified the **predicate** by execution and read its three call sites. I did
+**NOT** trace the full call graph to prove the mutex assertion passes end-to-end on an error reply —
+that is the 09-29 comment's claim and **I am not restating it as mine.** What I establish is that the
+discriminator cannot distinguish an error code from a voltage, which is necessary for the described
+failure and checkable without hardware.
+
+**DISPOSITION for the operator:** scheduling the fw#554 NQ3 trip is not agreeing to "wait for a
+board" — it is agreeing that **"when the board arrives, this test can report a pass without having
+observed a real DAC value, and the fix its own finding implies will not fix it."**
+
+**Not fixed, as instructed.** Hardware-blocked either way; a commit now resets whatever audit
+eventually runs. No labels, no comments, no commits.
+
+⭐ **The coordinator's question worked this time:** asking for the enumeration with **no candidate
+supplied** is what surfaced the exclusion-class adjacency — I would never have volunteered it, because
+it is not a stake in anything a query would find.
