@@ -6360,3 +6360,68 @@ READER too** (they read rounds 2 and 3). Wants a fourth party or conv-ts.
 reason after a re-spell. General form worth keeping: **a fixture asserting a FAILURE outcome cannot
 detect a change that produces that outcome for a DIFFERENT reason** — its protection is always
 external to it. Belongs in the fresh audit's scope, not a fourth fix round.
+
+## 2026-09-30 19:48 MDT — CORPUS SWEEP: 0 of 29 doubles reach an AUTHORITY. 21 are AUTHOR-class. One is MINE.
+
+Read-only. Criterion pre-registered to disk BEFORE enumerating
+(`.claude/evidence/CRITERION_double_validity_source.md`). The question was reframed first: *"does any
+control assert a literal?"* is answered YES by a confirmed defective case, so it is useless — **the
+literal in the test and the literal in the code were ONE AUTHORED BELIEF WRITTEN TWICE.** The real
+question is **does the double's notion of valid come from somewhere the test author did not write.**
+
+**POPULATION — and main-only would have been a FALSE CLEAN, now quantified:**
+```
+open PRs                     74   (limit 200 -> below the bound, COMPLETE not a bound-hit)
+candidate FILES              51
+  PR-ONLY, invisible to main 32   = 63%
+TRUE doubles w/ command()    29
+  AUTHOR 21 · GRAMMAR 8 · AUTHORITY 0
+false positives excluded      6   (production command(), no double class)
+```
+**CALIBRATED: the sweep independently found BOTH known positives** (#326's latch file, #349's
+`_RecordingSCPI`), so the zeros are meaningful.
+
+**⛔ AUTHORITY = 0 of 29.** 82 files CITE `SCPIInterface` in prose; **nothing checks against it.** The
+strong form does not exist in the corpus.
+
+⚠ **SELF-CORRECTION (36th): my first number was 23 and it was a GREP, not a measurement.** The
+mechanical pass matched `def command(self, cmd` in **production** code — including `test_harness.py`'s
+real `ReliableSCPI.command`. Adjudicated by requiring the handler inside a double CLASS; excluded 6.
+**My own pre-registration says "a file is only scored after being read," and my first pass scored by
+grep.** 21 is adjudicated; 23 was a candidate list wearing a measurement's clothes.
+
+**⛔⛔ SELF-FINDING — `#326 :: test_980_dac7718_power_cycle_reinit.py :: _FakePowerGatedSCPI` is
+AUTHOR-class and RECORDS FIRST:**
+```python
+def command(self, cmd, delay=0, *_a, **_k):
+    self.sent.append(cmd)                  # UNCONDITIONAL, before any match
+    if 'SYSTem:POWer:STATe' in cmd:        # case-sensitive
+    if 'SOURce:VOLTage:LEVel' in cmd:      # case-sensitive
+```
+**Added by the SAME fix series in which I hardened the sibling file's double.** So my row ships one
+validating double and one permissive one in one commit series — **the exact "four classes at every
+call site" failure I FALSIFIED in nq-c's work, reproduced in mine.** Not covered by my earlier scope
+hold: that hold was about the LATCH file's narrower fakes; this is a different file.
+
+**⭐ THE GENERALISATION THE SWEEP IS WORTH: doubles are permissive PER DOUBLE, NOT PER FILE.**
+```
+#326 latch file   5 doubles:  2 GRAMMAR · 3 AUTHOR
+#287 test_889     _FakeBoard GRAMMAR · _FakeScpi AUTHOR   (same file)
+```
+**Even the exemplar held up as the good example contains an AUTHOR-class double beside the good one.**
+So "this file has a validating double" is not a property of the file, and a per-FILE sweep would have
+cleared both #287 and #326. Same per-site-vs-per-class trap this row keeps producing, one level up.
+
+**NOT proposing 21 fixes** — converge-and-merge-only, and 21 doubles across 15 open PRs is a
+programme, not a row. The one structural item for the operator: **nothing in the suite can derive
+validity from the pattern table, and `tools/lint/scpi_wiki_sync.py` already implements the
+abbreviation rule in the FIRMWARE repo** — so the strong form is one shared helper away, and that
+helper is a `test_harness.py`-class change with its own row.
+
+**NOT COVERED, stated rather than implied:** doubles with no `command()` handler (query-only fakes) are
+outside this axis — 19 of 51 candidate files fell out that way. Only 1 of 29 has a range check (mine),
+so the `#877` axis is **uncovered elsewhere, not clean**; most of these doubles never send that
+command, so I am not calling it a defect.
+
+My row's self-finding routed to conv-ts's pending fresh audit rather than pre-empted with a fourth
+commit.
