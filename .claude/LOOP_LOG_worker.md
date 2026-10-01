@@ -8625,3 +8625,86 @@ because the next step after "your word is the only blocker" is a merge.
 **fw#996 unpark needs BOTH:** the operator clears `blocked:operator-decision`, **and** Qodo re-runs on
 `df60bc24b3`. The audit leg is already sound and I have verified its full SHA against live in the same
 turn as this note. **Nothing from me merges until both hold, and the first is not mine at all.**
+
+## 2026-10-01 10:40 MDT — ⛔ RETRACTED: my "pipeline property" framing. The measurement I proposed to test it refutes it.
+
+I framed the 130/258/311s cluster as **a property of the pipeline rather than three incidents**, the
+coordinator was carrying it to the operator in those terms, and **the distribution does not support
+it.** Retracted before it landed.
+
+## TWO INDEPENDENT FETCHES, SAME FROZEN POPULATION, CONVERGING — AND AGAINST ME
+
+```
+                 n      median     <=600s     100-350s band
+mine            175     2,086s     19%        8.0%
+nq-c            292     2,633s     18%        7.5%
+```
+Same 30 rows (nq-c's seal `cc215630cb7afdd4`), different code, independent fetches. **Median ~35-44
+MINUTES, not ~4.** My cluster sits at **~8% of the sample, in the left tail.** Reporting it as
+characteristic would report 8% of a sample as its shape.
+
+n differs (175 vs 292) because I required a **40-hex** citation while they also resolved **short
+7-12 char** citations against the commit set. Broader capture, and they noted a broader pairing
+DILUTES a genuine cluster — yet their short-interval fraction is the *same*, which strengthens the
+refutation rather than explaining it away.
+
+## AND THE STALENESS PREVALENCE KILLS THE STRONG FORM ON A SECOND, INDEPENDENT AXIS
+
+```
+STALE 6 / 30 · current 24 / 30 · NO_ATTESTATION 0 · UNDETERMINED 0
+```
+**80% of rows currently name their live head.** So *"any attestation is expected to be stale"* is
+wrong on BOTH numbers: the interval median is ~40 minutes **and** only 20% of rows are stale.
+
+⛔ **WHICH CHANGES THE INSTRUCTION, NOT JUST THE DESCRIPTION.** The coordinator was going to convert
+a per-merge **check** into a per-merge **action** ("always re-run the leg") on my framing. Against a
+20% base rate that is over-engineering. **The honest version is narrower: check both legs against the
+live head before every merge, and re-run only the leg that fails.** That is exactly what sk#231,
+sk#230 and fw#996 each needed.
+
+## ⛔ AND MY BOUND-1 CLAIM WAS THE FAILED-GREP ERROR WITH THE SIGN FLIPPED
+
+I claimed from **fw#996 alone** that the edited-in-place Qodo warning *"did not reproduce"*. Across
+30 rows: **Qodo 59/212 = 27.8% edited in place, human 2/480 = 0.4% — a 67x ratio, on 29 OF 30
+ROWS.** fw#996 was the unrepresentative row. conv-fw independently localised it to two comment types
+(`Code Review by Qodo` and `PR Code Suggestions` are edited in place — one fw#1055 body created
+09-11 and updated 10-01, **re-rendered across twenty days**; `PR Reviewer Guide` and the stubs are
+not).
+
+> **I generalised a NEGATIVE from a single row.** I had even written to nq-c that *"one row isn't a
+> refutation of a general bound"* — and then acted as though mine was. The thing it failed to refute
+> was true.
+
+## TWO RESULTS I SHOULD TAKE AS GOOD NEWS
+
+- **The selection effect cost nothing here:** 30 in the denominator, **29** contributing an interval,
+  1 dropping out. Right to pre-commit to two numbers; the conditional simply was not severe.
+- **The cross-check converging within a point on two of three statistics is the best methodological
+  result in this measurement — and it exists only because nq-c REFUSED to hand me their cache.**
+  They declined on two grounds (it carried neither timestamp, and 2 of 30 rows were known-corrupt
+  from the v1 payload defect) and fetched fresh over the same seal instead. **A refusal produced
+  better evidence than compliance would have.**
+
+## ⛔ A PROCESS FAILURE NQ-C CAUGHT: MY PRE-REGISTRATION WAS NEVER PUSHED
+
+I declared a bias and a selection effect, **invited anyone to check the method**, and left the
+binding instrument in my session only. Seven other PREREG files were on the branch, so an omission
+rather than a policy. **Same shape as a park pointing at a dead head: the record that makes a claim
+checkable, existing where nobody can reach it.** Pushed at `00f3e446d` and verified present on
+origin. ⚠ **An unpushed pre-registration is not a pre-registration** — it is a private intention, and
+its whole function is to be readable by someone who doubts me afterwards.
+
+## ⭐ AND ONE QUESTION I CAN SETTLE FOR conv-fw
+
+They asked whether a 3-point cluster might just be three pushes by one agent in one session — a
+property of **who was driving** rather than of the pipeline. **It is not:** sk#231 `2026-10-01
+02:09`, sk#230 `2026-09-30 23:44`, fw#996 `2026-09-21 05:20`. **Three days, three authors, two
+repos.** So the three are genuine and independent — they are simply **not typical**, which is the
+entire correction.
+
+⚠ **And nq-c's own error is the same shape as mine and worth recording beside it:** their analysis
+script **printed a hardcoded interpretation line contradicting the numbers it had just computed**
+("the bound does not hold fleet-wide") — the conclusion survived the measurement that refuted it.
+**Identical to my stale `(expect 0,1)` line.** A pre-written expectation makes output get read
+against the sentence beside it rather than on its own. They caught it only because the ratio was too
+lopsided to match the words.
