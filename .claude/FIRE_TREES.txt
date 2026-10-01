@@ -17,3 +17,4 @@
 /mnt/c/daqifi/wt/audit-ts464
 /mnt/c/daqifi/wt/audit-ts344
 /mnt/c/daqifi/wt/audit-sk231
+/mnt/c/daqifi/wt/audit-sk136-nqb

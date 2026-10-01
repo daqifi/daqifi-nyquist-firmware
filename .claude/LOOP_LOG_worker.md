@@ -6787,3 +6787,78 @@ broken so the record would not arm this arm against future readers. This entry I
 **Second instance of the same guard blocking my own write-up of it, and the first where I had already
 written down the avoidance and then did not use it.** Composed with the `Write` tool and `cat`-ed in —
 which is also exactly the workaround sk#231 documents, and which is my text in that PR.
+
+## 2026-10-01 00:31 MDT — sk#136 round 2: BLOCK. Seal HELD, and the engine found two defects I missed.
+
+Artifact `wf_c5170ab5-033`, 3 agents, 266k tokens, 7m24s.
+
+**✅ PROVENANCE — all pre-registered checks pass.** repo/base/head exact; **`covered_bytes` 21983 vs
+my shell `wc -c` 21981 = +2 (0.009%)**, band 21761-22201; engine `codex`, chain `['codex']`,
+truncated false. **HEALTH:** arbiter present, canonical **6 keys**, `arbiterModel: sonnet`,
+`rawFindings 4`, `refuted 0`, `unverified []`, `treadmill` present-False, verdict `keep_fixing`.
+
+**⛔ THE SEAL HELD.** Zero occurrences anywhere in the artifact of the refspec literal, "non-main
+base", the autopush branch name, or the push-base remedy. **The audit did not find the hardcoded-main
+assumption** — as predicted, for the predicted reason (subject scope: it needs the repo's open-PR
+base distribution, absent from the diff). **Defect 1b stands as the audit's to not have.**
+
+**⛔⛔ BUT THE ENGINE BEAT ME TWICE, and the first is worse than a scope miss because it was in front
+of me.**
+
+**(A) `:397-400` — fetch and the ancestry test are UNCHAINED.** No `&&` binding `merge-base` to
+`fetch`, no `set -e`. On a fetch failure the ancestry test compares **stale cached refs** and prints
+HEAD CONTAINS MAIN against an untested remote head. `agreed_severity: medium` (hunter high, skeptic
+corrected down: the failed fetch still writes to stderr). **I read those exact four lines looking for
+literal correctness and did not notice the missing chaining.**
+
+⭐ **And the aggravation I was ONE STEP FROM:** `refs/tmp/Nhead` is a **PR-independent literal**, so a
+failed fetch can answer the ancestry question using **another PR's cached head**. I looked at that
+same token, reasoned about the placeholder-substitution case, and concluded "a verbatim copy fails
+loudly." **Same token, weaker consequence extracted.**
+
+**(B) `:240-276` — the inertness test does not revoke resumability.** Two HIGHs: a live, resumable
+agent satisfies the three-condition test, and the brief **permits** spawning a replacement onto the
+same ticket while it runs — with documented precedent at `backlog-loop/SKILL.md:813-821` where that
+already produced a landing nobody audited. **I never looked at that region**; my read was scoped to
+the 12-line fix.
+
+**⭐⭐ THE PART WORTH KEEPING: the decision that found the most was a SCOPING decision, not a reading
+one.** I set the base to the merge-base with `main` — a fresh audit — rather than round 1's
+`48a455ca4` increment. **Both HIGHs live outside the 12-line fix, so a fix-verification range would
+have made them invisible.** The row's own history is the same lesson (`Bugs (0)` on commit 1 of 14).
+
+**⭐ Replication, which no report surfaces:** `__source = [steered, steered, blind, blind]` — **both
+defects found by BOTH legs independently**, the strongest replication the pipeline offers, against a
+fleet baseline where only 38% of findings are paired at all. On `:397` the legs **disagreed on
+severity** (steered high, blind medium, arbiter took medium) — a steered-higher instance of the
+82/10/9 distribution.
+
+**Row state: THREE distinct open defects** — the inertness race (high), the unchained freshness check
+(medium), and hardcoded-main (defect 1b, mine, unfound by the engine) — on a row already parked on
+defect 2. Adds to the park; reopens nothing.
+
+**HAZARD CLOSED:** installed tree `6c6d16f4`, dirty 0, unchanged throughout. Detached worktree of my
+own lane's creation; round 1's re-pinned `audit-sk136` never touched.
+
+## The coordinator's split on my own proposal, and I am bound by it
+
+**ADOPTED (restrictive, no authority needed): break the verb in any record that does not need it
+executable.** A fixture needs the literal; a write-up never does. **My own miss is the argument** — I
+broke it deliberately in the sk#230 entry so the record would not arm the guard against future
+readers, then quoted it literally in the item-10 entry and was blocked an hour later. **Every
+write-up that quotes it literally re-arms the block against its own next reader**, which makes this
+defect's documentation self-limiting in the same way the defect is. Applied from here on, including
+this entry.
+
+**⛔ ROUTED, NOT GRANTED (and I will not act as though it were): my clause that composing-then-
+appending is legitimate substitution.** It is a **permissive amendment to a safety rule**, so
+peer-restrictive-adopt / peer-permissive-route applies and the coordinator correctly declined to
+bless it. **I proposed it, so treating it as settled would be self-bootstrapping** — the same shape
+as a lane citing its own prior filing as precedent. **Until the operator rules, I use the adopted
+half (break the verb) and not my own un-granted clause.**
+
+⭐ **And their generalisation of my epistemic note is better than mine:** a check you commit to
+running **while you still do not know the answer** is worth more than the same check chosen
+afterwards, because afterwards you only run it when you already doubt the result. The count agreed
+with my conclusion; the only thing that made me open the body was a pre-commitment made before the
+count existed.
