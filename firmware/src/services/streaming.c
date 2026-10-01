@@ -2960,6 +2960,48 @@ void Streaming_ClearStats(void) {
         return;
     }
 
+    /* #982 (Qodo PR #1055): flush an OWED summary before wiping the counters it
+     * would be computed from. This fix deferred the stop-path emit to AFTER
+     * SCPI_PerformStreamingStop's bounded sd_card_manager_IsIdle() wait, which
+     * is the point -- but that wait is `vTaskDelay`, so it YIELDS, with
+     * IsEnabled and Running already false and gSessionSummaryPending already
+     * true. Any transport reaching this function inside that window used to
+     * memset gStreamStats underneath the pending summary, and the stop then
+     * printed a summary of zeros. The window is one this fix created: before
+     * it, Streaming_Stop() computed and printed inline, with nothing owed.
+     *
+     * HERE rather than at the call sites, because the caller set is three SCPI
+     * commands and one internal path, and a per-caller guard would have to be
+     * right in all four and stay right:
+     *   SYSTem:STReam:THRoughput    (SCPI_RunThroughputBenchClaimed)
+     *   SYSTem:STReam:WIFI:FINd?    (its per-cycle measurement helper)
+     *   SYSTem:STReam:STATS:CLEar   (SCPI_ClearStreamStats)
+     *   Streaming_Start()           (already calls the emit explicitly)
+     * Only the first two take Streaming_BeginSessionStart(), and that claim
+     * tests gSessionStartBusy alone -- never Running, IsEnabled or the stop's
+     * own gStreamStopsActive -- so neither is excluded by it. The third takes
+     * no claim at all and is DOCUMENTED as legal mid-session (see the comment
+     * directly below), so refusing it was not available as a fix.
+     *
+     * Exactly-once still holds: Streaming_EmitSessionSummary() test-and-clears
+     * gSessionSummaryPending, so with nothing owed -- every mid-session clear,
+     * which is the common case -- this is a bool read and a return. The
+     * explicit call in Streaming_Start() is deliberately KEPT rather than left
+     * to this one: it documents the ordering requirement at the site that has
+     * it, and removing it would make that site's correctness depend on an
+     * invisible side effect here.
+     *
+     * Before the critical section below, not inside it: the emit takes its own
+     * (short) critical section and ends in LOG_E.
+     *
+     * The tradeoff, stated rather than hidden: flushing here can print BEFORE
+     * the SD teardown has reported via Streaming_ReportSdDiscard(), so a
+     * summary rescued this way may undercount SD loss. That is the pre-#982
+     * behaviour and the same bound the Streaming_Start() backstop already
+     * accepts -- strictly better than the zeroed summary it replaces, and the
+     * drop counters it missed are still live for SYST:STR:STATS?. */
+    Streaming_EmitSessionSummary();
+
     // Mid-session clearing is intentionally allowed: callers may want to
     // measure throughput over a sub-window without restarting the stream
     // (e.g., wait for steady state, clear, measure for N seconds, query).
