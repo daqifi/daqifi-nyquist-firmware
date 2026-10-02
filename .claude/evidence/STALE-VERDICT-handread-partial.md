@@ -207,3 +207,101 @@ decidable from the text alone, so the row is **AMBIGUOUS** and I am not forcing 
 
 **Covered: 11 rows. NOT covered: 44 of the 55.** No stale PASS found yet — every stale row so far is
 a BLOCK, which is the self-protecting direction.
+
+---
+
+# ROUND 3 — the stale-PASS-capable rows, prioritised as briefed
+
+## ⛔⛔ FIRST: MY OWN ts#352 REPORT WENT STALE WITHIN THE HOUR
+
+I measured ts#352's live head at `99be2a21673a0c2e1a8ba6e669205fe61b3d5eee` and reported to the
+coordinator that it was mechanically mergeable there. **It is now `1fb9c01c142131f40fc5f65d45a3881d07d80b7e`.**
+nq-a's cached figure was right and my fresher measurement is the stale one.
+
+**So the failure this entire task is about happened to my own output, on the row I was asked to
+audit, inside one hour.** Two consequences, both load-bearing:
+
+1. **It retroactively validates declining that audit.** Had I run it, the verdict would have been
+   pinned to `99be2a21` and **void before I could post it** — the 130s/258s drift class, not the
+   74/195-minute one.
+2. **The two open Qodo threads I found at `99be2a21` are unverified at `1fb9c01c`.** I am not
+   carrying that finding forward without a re-read.
+
+> **A staleness report is itself a timestamped artifact and decays at the same rate as what it
+> measures.** Every head in this document is "as at the moment of classification" and nothing else.
+
+## The dangerous class, hand-read — and it is NOT where the staleness is
+
+| row | newest PASS-bearing verdict | verdict head | live head | class |
+|---|---|---|---|---|
+| **ts#447** | *"conv-ts — adversarial audit **PASS** at `d82d37e6…`, staged at READY TO LAND (not landed)"* | `d82d37e6e2bd…` | **same** | **CURRENT PASS** |
+| **ts#436** | *"a clean audit PASS, a met condition, no blocking label"* | **none on any gate line** | `cfbb428b8536…` | **UNREADABLE** |
+| **ts#449** | *"`gate: PASS`, clean"* | **none on any gate line** | `a749b24a7f0e…` | **UNREADABLE** |
+| **fw#1137** | round-2 PASS | `4b8f3dbf98…` | **same** | **CURRENT PASS** |
+| **ts#316** | — see below, **NOT a PASS** | | | **STALE BLOCK** |
+| ts#464 | nq-a's flagged false positive | — | — | not a verdict |
+
+**0 confirmed stale PASS. 2 current PASS. 2 PASS-claiming rows whose citation cannot be read.**
+
+### ⭐⭐ AND THE DANGEROUS CLASS IS CONCENTRATED IN THE UNREADABLE BUCKET
+
+**The only two rows claiming a clean PASS without a readable head are exactly the two in nq-a's
+genuinely-unreadable 17.** ts#436 states the hazard about itself, verbatim:
+
+> *"**This is the worst state a PR can be in:** a clean audit PASS, a met condition, no blocking
+> label"*
+
+So the rows where a stale PASS would do the most damage are the rows whose verdict head **cannot be
+compared at all** — the same anti-correlation as the bare-`noProvenance` detector, which failed
+hardest where the evidence was best. **An unreadable citation is not merely an inconvenience here;
+it is concentrated on the class that licenses an unaudited merge.**
+
+## ts#316 — nq-a's stale call CONFIRMED, its kind CORRECTED, and the row diagnosed itself
+
+Newest real verdict (2026-09-11T06:13:30Z): *"**PARKED at the round cap — one verified blocking
+finding, filed as #340**"* → **BLOCK-side, not PASS.** cited `1620a06369ff…` → live
+`eccc3aa07b2a…`. **STALE BLOCK → `audit-stale`.**
+
+⭐ And three weeks before any sweep, the row said it itself:
+> *"**Worker gate: this is NOT converged — the clean verdict covers the PREVIOUS head**"*
+> (2026-09-11T04:28:05Z)
+
+**A row that detected its own stale verdict, stated it plainly, and was still counted as
+unassessable by two detectors and one hand reader.**
+
+## ⚠ MY KIND-TRIAGE INSTRUMENT FAILED TWICE, BOTH TOWARD THE DANGEROUS CLASS
+
+**Failure 1 — a gate word needs the same binding as a SHA, and I only bound SHAs.** My first pass
+called ts#316 a PASS because it matched **`SHAPE_HALF_MUTE_PASS`** — a Python test constant. `PASS`
+inside an identifier is not a gate outcome. I wrote trap 3 ("bind every SHA to the adjacent word")
+into my own pre-registration and **did not apply the same rule to the verdict word.**
+
+**Failure 2 — and binding does not fix it: a ROW-LEVEL COUNT CANNOT ANSWER A NEWEST-COMMENT
+QUESTION.** With the gate word properly bound, ts#316 still reads "PASS-bearing": 2 bound PASS **and**
+3 bound BLOCK, because it genuinely went PASS at an earlier head and BLOCK at the cap. **Aggregating
+over a row flattens the chronology** — nq-a's "grepping a thread flattens runs into one namespace",
+arrived at from the opposite direction.
+
+> **There is no cheap kind-triage. The kind must be read from the newest verdict comment, per row.**
+> Three of my instruments failed on this task and all three are one family: **answering a
+> per-comment, chronology-sensitive question with a row-level pattern.**
+
+Both failures over-reported PASS — **the class I was told to prioritise**, so the error inflated the
+apparent size of the dangerous bucket rather than hiding it. That is the safe direction for triage
+and the wrong direction for a count.
+
+## Running totals — 16 rows hand-read, 39 of 55 not covered
+
+| class | n | rows |
+|---|---|---|
+| **CURRENT** | 7 | ts#430 · ts#432 · ts#434 · ts#435 · ts#441 · **ts#447 (PASS)** · fw#1137 (PASS) |
+| **STALE BLOCK** → `audit-stale` | 4 | ts#312 · ts#316 · fw#976 · fw#1013 |
+| **STALE PASS** → `needs-audit` | **0** | — |
+| **UNREADABLE, PASS-claiming** | 2 | **ts#436 · ts#449** ← the dangerous bucket |
+| **carry-forward, range expired** | 1 | fw#991 |
+| **AMBIGUOUS** | 1 | fw#991 |
+| **CONFLICTED, declared not classified** | 2 | fw#1124 · ts#371 |
+
+**Every stale row found by hand is a BLOCK — the self-protecting direction.** PASS is ~10% of
+verdict-bearing rows across 91 payloads, which is consistent with a structural reason: **a PASS row
+gets merged, so it does not sit long enough to go stale.** Stated as a tendency, not a universal.
