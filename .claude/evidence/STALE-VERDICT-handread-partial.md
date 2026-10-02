@@ -110,3 +110,100 @@ footnote.**
 
 nq-a flags a 39-character hex inside the 55 and warns a non-match there is **corruption, not
 staleness**. **Not encountered in the 7 rows I covered.** Still outstanding in the uncovered 47.
+
+---
+
+# ROUND 2 — hand-verifying nq-a's 13 stale CANDIDATES (detector output, not hand-verified)
+
+Covered this round: **ts#312, fw#976, fw#991, fw#1013**. Live heads re-read at classification time.
+
+## ✅ ts#312 — **STALE BLOCK** → `audit-stale`
+
+Meets the pre-registered standard: both heads **and** the sentence that makes it a verdict.
+
+> *"Final audit at `e1a53c6` — `gate: BLOCK`, and the PR stays parked"* (2026-09-10T20:28:55Z)
+
+cited `e1a53c6` · live `88161000dbc50c89384c7281d1867b6b9f0e2a40`. **Supersession checked forward:**
+six later comments, **none a verdict** — two hardware A/B results, a self-correction about a
+frequency claim, a repeat-runs report, and the conv-ts label notice.
+
+⚠ **A 7-HEX PREFIX COMPARE IS SOUND HERE AND WOULD NOT BE FOR THE OPPOSITE CALL.** 7 hex = 28 bits.
+Differing prefixes **prove** the full SHAs differ, so STALE is sound. Equal prefixes do **not** prove
+equality. **So every STALE call on a short SHA is sound and every CURRENT call on one is not** —
+which means short-SHA CURRENT verdicts anywhere in this sweep are weaker than their STALE siblings,
+and that asymmetry is invisible in a table that prints both the same way.
+
+## ✅ fw#1013 — **STALE BLOCK** → `audit-stale`. nq-a's cited head is CORRECT.
+
+Newest of three verdicts: `7ae8f0547946b3554364bfddd3d2650b2d8e4f34` BLOCK (2026-09-11T14:36:32Z);
+live `93eaf7cf469878fecafbf4dbd78a510d0936cffa`. Independent read agrees with the candidate.
+
+## ⛔ fw#976 — **STALE BLOCK**, but nq-a's CITED HEAD IS WRONG
+
+**Verdict stands, citation corrected.** nq-a's own suspicion was right and the row says so outright:
+
+> *"**What changed after that audit:** one commit, `578f32be8850dc603d57631229e2dfc083f277fa`
+> **(the current head, == `headRefOid`)**"*
+
+`578f32be8850` is the commit that landed **AFTER** the audit — self-labelled as such. It was bound
+as the audited head only because "audit" sits in the sentence. **Mention-vs-act, seventh instance.**
+
+**The real newest verdict** (2026-09-15T07:26:10Z): `1824ab15f26946868904d97b213bb32bbf6c3816`
+BLOCK. Live: `d31f63c7a55f1b3d2f7f1225d8cd94bd597103c1`. → **STALE.**
+
+⚠ **And nq-a's two messages disagree with each other about this row:** their citation-format sample
+listed fw#976 as *"**Attestation:** head `1824ab15f269…`"* — **the right head** — while their
+stale-candidate list cited `578f32be8850`. Same lane, same hour, same row, two SHAs. **A wrong
+cited head in a stale report is worse than no report: it sends the reader to a commit that is not
+the audit's, and the lookup succeeds.**
+
+## ⚠ fw#991 — **AMBIGUOUS**, and it resists all four classes for two independent reasons
+
+My proximity pattern found **zero** verdicts here — because the citation is in a **table cell** and a
+proximity window cannot cross `|`. **nq-a warned me of exactly this and I built a proximity pattern
+anyway.** Hand read:
+
+```
+| Audited head | 580e07140475161b5599b4d83cb353deaae451fb |
+| Audited head | 590ecfd814295c448268223659ef9b07e4874b8c | = the live head |   <- nq-a's cite
+live head NOW   a66aadb2baedf74fa98797600e154b652a102a70                        <- neither
+```
+
+**1. A CARRY-FORWARD PROOF IS PINNED TO A COMMIT *PAIR*, AND THIS ONE NO LONGER REACHES THE HEAD.**
+The row makes the exemption argument properly and checkably:
+
+> *"| Delta since the audited head | **docs only, and checkable:**
+> `git diff 580e0714..2dd6e26220d0… --name-only -- '*.c' '*.h' '*.mk' Makefile 'tests/**'
+> '.github/**'` returns **empty**"* … *"since the audited SHA touches no executable line, the prior
+> audit still covers"*
+
+**But the proof covers `580e0714..2dd6e262`, and the live head is a THIRD commit, `a66aadb2`.** So
+the gap proven inert is **not the current gap.**
+
+> ⭐ **A carry-forward exemption goes stale exactly the way a verdict does — and less visibly,
+> because it LOOKS like compliance.** `--carry-forward-from` is EXEMPT only while the proven range
+> ends at the live head; re-derive the range, never inherit the exemption.
+
+**2. The row carries a PASS attestation and a "did not run" BLOCK simultaneously:**
+```
+| Adversarial audit verdict | **PASS**, `gateReason: clean`, 0 findings, provenance present, …
+### The gate says BLOCK. Read this before merging.
+gate: BLOCK  gateReason: "no adversary model in the fallback chain was available — audit did not run"
+```
+**An arbiter-less PASS is ABSENT, not a prior round.** Which of these is "the newest verdict" is not
+decidable from the text alone, so the row is **AMBIGUOUS** and I am not forcing it into a class.
+
+## Running totals over everything I have hand-read
+
+| class | n | rows |
+|---|---|---|
+| **CURRENT** | 5 | ts#430 · ts#432 · ts#434 · ts#435 · ts#441 |
+| **STALE BLOCK** → `audit-stale` | 3 | ts#312 · fw#976 · fw#1013 |
+| **STALE PASS** → `needs-audit` | 0 | — |
+| **names no SHA at all** | 0 | the NO-HEX bucket was an artifact |
+| **CARRY-FORWARD (claimed, range expired)** | 1 | fw#991 |
+| **AMBIGUOUS — could not conclude by hand** | 1 | fw#991 (same row, both reasons) |
+| **CONFLICTED, declared not classified** | 2 | fw#1124 (I authored its live head) · ts#371 (my lane parked it) |
+
+**Covered: 11 rows. NOT covered: 44 of the 55.** No stale PASS found yet — every stale row so far is
+a BLOCK, which is the self-protecting direction.
