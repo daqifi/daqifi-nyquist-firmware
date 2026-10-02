@@ -305,3 +305,99 @@ and the wrong direction for a count.
 **Every stale row found by hand is a BLOCK — the self-protecting direction.** PASS is ~10% of
 verdict-bearing rows across 91 payloads, which is consistent with a structural reason: **a PASS row
 gets merged, so it does not sit long enough to go stale.** Stated as a tendency, not a universal.
+
+---
+
+# ROUND 4 — the "genuinely unreadable 17", read first per the adopted inversion
+
+## ⛔⛔ THIS BUCKET IS ALSO LARGELY AN ARTIFACT — OF A 40-HEX-ONLY CRITERION
+
+nq-a's bucket is defined as *"no audit line carrying a 40-hex anywhere."* **That is not the same
+predicate as "unreadable."** Of the 10 rows in it I could classify:
+
+| row | citation found, bound to an audit word | len | live | class |
+|---|---|---|---|---|
+| **fw#1040** | `\| head \| 77b658dfe512bdce8944bdfb5d050363aadb8265` | **40** | same | **CURRENT (exact)** |
+| **ts#429** | *"PARKED at `7c8401765431829ec15e0383479aa7fd9892881f`"* | **40** | same | **CURRENT (exact)** |
+| fw#965 | *"anchored at the current head `5fffcb140`"* | 9 | `5fffcb140a5e…` | CURRENT? prefix only |
+| sk#166 | *"Adversarial audit round 3 at `48017b5`"* | 7 | `48017b5a8641…` | CURRENT? prefix only |
+| sk#167 | *"Adversarial audit round 4 at `52958ffe` — BLOCK"* | 8 | `52958ffef241…` | CURRENT? prefix only |
+| sk#93 | `\| head \| 351f8a9` | 7 | `351f8a9f34aa…` | CURRENT? prefix only |
+| ts#341 | *"Re-audit at `9a039b0` … PARKED at the cap"* | 7 | `9a039b004641…` | CURRENT? prefix only |
+| **fw#704** | **none at any length** | — | `…` | **NAMES NO SHA** |
+| **sk#131** | **none at any length** | — | `…` | **NAMES NO SHA** |
+| **ts#437** | **none at any length** | — | `1b7f6f100111…` | **NAMES NO SHA** |
+
+**7 readable · 3 genuinely nameless · ZERO STALE.**
+
+**And two of the seven carry a FULL 40-hex — both in TABLE ROWS**, which is the blind spot nq-a
+predicted in the same message that mis-bucketed them: *"the citation lives in a TABLE as often as in
+prose, which is why a proximity-window regex fails."* **The warning and the error shipped together.**
+
+> **"No 40-hex anywhere" is a property of the SEARCH, not of the row.** Five of these rows cite a
+> head at 7-9 hex, bound to an audit word, perfectly readable. The bucket measured hex length and
+> was reported as readability.
+
+⚠ **AND I WILL NOT UPGRADE THE FIVE PREFIX MATCHES.** Per my own finding earlier in this document: a
+prefix compare **proves inequality** and **cannot prove equality**. 7 hex = 28 bits. So these five
+are **CURRENT-consistent, not CURRENT-proven**, and the asymmetry is the whole point — had any
+differed I could have called STALE soundly. **Every short-SHA CURRENT in this sweep, mine included,
+carries that caveat.**
+
+## Two rows that are not audit-staleness cases at all
+
+- **fw#704** — newest record is *"Parked — needs a DS18B20 + 4.7 kΩ pull-up on a DIO channel"*. A
+  **hardware-procurement** park with no audit in it. Pairs with ts#97's identical condition, so this
+  is a companion pair whose hold is a part nobody has. **An `audit-stale` label would misdescribe
+  it.**
+- **sk#131** — newest is *"Audit provenance, stated because a clean result is only clean if the
+  auditor ran. The first codex invocation returned `findings: []` with `codex_exi[t]`…"* — a
+  **degraded/void** run. **A void run has no head to be stale about**, which is a different absence
+  again.
+
+**So "names no SHA" is at least three distinct states**: never-audited (fw#704), audit-void
+(sk#131), and verdict-without-citation (ts#437). The taxonomy's worst bucket is itself unpartitioned.
+
+## ⛔ I AM CONFLICTED ON 7 OF THE 17 — INCLUDING THE ONE THAT MATTERS MOST
+
+Graded, not counted. Involvement sweep with the **repo prefix required**, because a bare `#NNNN`
+convicts across repos:
+
+**CONFLICTED, declared, NOT classified:** fw#1115 (I hold its audit worktree) · sk#136 (19 prefixed
+hits; a defect committed in my own shell) · ts#344 (34) · ts#436 (27) · ts#371 (my lane parked it) ·
+ts#352 (prior written conclusion) · fw#901 (my own census formed a conclusion about its state).
+
+> ⛔ **ts#436 is the single row in this bucket claiming a clean PASS — *"This is the worst state a PR
+> can be in: a clean audit PASS, a met condition, no blocking label"* — and it is one I cannot
+> classify.** The pool-exhaustion mechanism lands exactly on the highest-risk row in the
+> highest-risk bucket. **That is not bad luck; it is the mechanism working as described.**
+
+### ⚠ And a COUNT scored a DISCLAIMER as involvement
+
+My first involvement pass flagged **11 of 17**. Grading the markers cut it to 7. The clearest case:
+**fw#965's only prefixed mention is *"ownership query: fw#965 is NOT this lane's; released to
+nq-c"*** — an explicit disclaimer of ownership, **counted as evidence of involvement.**
+
+> **A lane-name count cannot distinguish a claim from a disclaimer, and a disclaimer is evidence of
+> NON-involvement.** So counting over-convicts in a specific, knowable direction — and the fix is to
+> grade the marker (CLAIM / AUDIT / CENSUS / DECLINED), never to count it.
+
+## CUMULATIVE — 26 rows hand-read
+
+| class | n | rows |
+|---|---|---|
+| **CURRENT (exact 40-hex)** | 9 | ts#430 · ts#432 · ts#434 · ts#435 · ts#441 · ts#447 (PASS) · fw#1137 (PASS) · fw#1040 · ts#429 |
+| **CURRENT-consistent (prefix only, NOT proven)** | 5 | fw#965 · sk#166 · sk#167 · sk#93 · ts#341 |
+| **STALE BLOCK** → `audit-stale` | **4** | ts#312 · ts#316 · fw#976 · fw#1013 |
+| **STALE PASS** → `needs-audit` | **0** | — |
+| **NAMES NO SHA** (≥3 distinct states) | 3 | fw#704 · sk#131 · ts#437 |
+| **UNREADABLE, PASS-claiming** | 2 | ts#436 (conflicted) · ts#449 |
+| **carry-forward, range expired / AMBIGUOUS** | 1 | fw#991 |
+| **CONFLICTED, declared not classified** | **8** | fw#1115 · fw#901 · fw#1124 · sk#136 · ts#344 · ts#352 · ts#371 · ts#436 |
+
+**Could not conclude even by hand: 3** (fw#991 ambiguous · ts#436 and ts#449 unreadable-PASS).
+**Conflicted-out: 8.** **Still uncovered: ~21.**
+
+**Zero stale PASS across 26 hand-read rows.** Every stale row is a BLOCK — the self-protecting
+direction — and the only PASS-shaped risk in the fleet reduces to two rows whose heads cannot be
+read, one of which my lane cannot assess.
