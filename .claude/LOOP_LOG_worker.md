@@ -9515,3 +9515,60 @@ entry the test was NEVER RUN -- "not run -- no hardware in this fire, and this l
 bench has no NQ3 regardless (#554)" -- which bears directly on finding 3 and its SKIP.
 
 Nothing spent. Declined before reading the file.
+
+## 2026-10-03 — ts#421: fixed the one live thread. I MOVED THE HEAD and am now conflicted on this row.
+
+ELIGIBILITY, re-run after the coordinator corrected the key from the row number to the
+PARENT firmware number. My own first companion check was defective in a different way:
+I used `fw#1104\b|#1104\b|fw 1104\b`, which REQUIRES a `#` or `fw ` prefix and therefore
+could never match `test_1104_*` -- the filename form, which is how a companion test is
+actually named. It returned 0 and I ran it WITHOUT A CONTROL.
+Corrected with controls that fire (ts#352 -> 11, 1057 -> 19): `(^|[^0-9])1104([^0-9]|$)`
+gives 2 hits, both census -- "#427 -- targets test_1104_tcpserverflush_signature.py,
+owned by open PR" and a cross-reference listing. Plus 4 subagent transcripts naming
+test_1104, all survey output (backlog tables, offline-tests list, gh issue view).
+CAUSALLY CLEAN; disclosed that my ledger CATALOGUES issue #427, which is this very
+finding, so I came to it with a prior record of its existence.
+⭐ THE LESSON IS THE DELIMITER, NOT THE KEY: `#1104` encodes a FORMAT assumption -- that
+the number appears as a PR/issue reference -- and structurally excludes the filename
+form, which for a companion row is the most likely form of all.
+
+STEP 0 -- PROSE HOLD: park stated 09-16 ("PARKED at the 5-round review cap"), then
+09-29 19:28 "the BENCH evidence does not travel with it", 19:48 "`parked` cleared -- the
+bench evidence carries", 19:49 "Correction to my previous comment -- one paragraph
+describes the sibling PR". The correction STRENGTHENS the clearance: the false paragraph
+was a globals()-reassignment idiom belonging to the sibling, and "this PR has NO dynamic
+dispatch at all, so the tracer's seed set is complete by construction ... the
+reachability verdict on this PR is STRONGER, not weaker", with "26 harness definitions
+reached, CHANGED: NONE" computed for this row. NO LIVE HOLD.
+⚠ I was primed by sk#221's "Merging now"-false-for-two-days case to treat a correction as
+deflating and nearly stopped on its mere existence. A correction's existence is not
+evidence that it deflates.
+
+THE FIX: _classify_p5 read WifiTcpBytesSent only in its docstring, never as a value,
+while _wait_for_quiescence computes `converged` FROM it. Sent absent + the other two
+readable -> guard silent -> converged False -> settled run falls through to FAIL. A loss
+verdict scored off a comparison never made -- the exact mistake the guard's own comment
+names for the other two counters. Sent now joins that guard, appears in `detail`, and the
+docstring/comment/SKIP message all say three counters instead of two.
+
+VERIFIED BOTH DIRECTIONS, offline, no device. The IMPORT CHECK FIRED AND SAVED THE RUN:
+ModuleNotFoundError: No module named 'daqifi' -- without checking imports first, all six
+cases would have "failed" for the wrong reason, which is the trap the coordinator warned
+of. AST-proved _classify_p5/_require_int/_fmt reference none of daqifi/NyquistDevice/
+test_harness, so the import stub cannot reach the path under test.
+  pre-fix  1 mismatch  (Sent absent -> FAIL)
+  post-fix 0 mismatches (Sent absent -> SKIP), five controls unchanged
+  MUTATION: reverting only the guard line returns it to FAIL -- the guard is load-bearing
+  py_compile clean; harness_policy_lint rc=0, no new violations
+Also fixed the inline comment that still described a TWO-counter guard above a
+three-counter guard -- the comment-states-what-the-code-no-longer-does class being hunted
+on the sibling row, which I would otherwise have created in my own edit.
+
+⛔ I MOVED THE HEAD: ee337ea1b6e7cab50680da8fadc23f3b7e93474a -> 680dd1648de90e6359b51f206fa61cf93956a245
+(pushed to test/1104-tcpserverflush-signature, ls-remote == local). So the round-1
+adversarial audit BLOCK at the old head is now STALE, and I am NOW CONFLICTED on ts#421
+for every future assessment of it. I am not assessing the result; the verdict and the
+merge are someone else's. This is the mechanism I documented -- the lane doing the work
+creates the staleness it would otherwise assess -- applied deliberately this time rather
+than discovered afterwards.
