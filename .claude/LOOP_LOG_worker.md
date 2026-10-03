@@ -9467,3 +9467,51 @@ no merge CONFLICT only. It says nothing about open review items, and on a repo w
 available it cannot say anything about them even in principle.
 
 Nothing spent. Handed back with the design question named.
+
+## 2026-10-03 — ts#352 COLD PASS DECLINED: I AUTHORED THE FILE. Nothing spent.
+
+Asked for an exhaustive cold pass over test_1057_dac7718_yield_no_drops.py, with
+eligibility to be answered causally: "does ts#352 contain, respond to, or rest on
+anything you produced?" The coordinator disclosed believing my only involvement was a
+staleness report, which it read as assessment not causation.
+
+⛔ THE ANSWER IS AUTHORSHIP. LOOP_LOG.md:8887 -- "Companion regression test
+(daqifi-python-test-suite): opened PR #352 -- a DAC-write perturbation test mirroring
+test_913_spi_yield_no_drops.py, hard gates on no-SCPI-errors/correct-readback/the ISR
+accounting invariant, QueueDroppedSamples reported but not gated ... documented in the
+script's own module docstring." And :8899 lists under my model's own work:
+"companion-test authoring (both repos)".
+
+CORROBORATED THREE WAYS before answering, not asserted from the ledger alone:
+  created 2026-09-12T08:12:50Z        vs my fire record dated 2026-09-12
+  title "...perturbation + informational loss check"  vs ledger "DAC-write
+      perturbation test" + "QueueDroppedSamples reported but not gated"
+  live docstring "WHY THIS TEST CANNOT BE #913'S TEST WITH THE NOUNS CHANGED ...
+      forces a LARGE, unambiguous busy-spin window"  vs ledger "SPI2's fixed fast baud
+      means this script can't force a large busy-spin window the way #913's low-baud
+      SPI test can -- documented in the script's own module docstring"
+A near-verbatim match between my ledger's description of what I wrote and the file.
+
+WHY THE ELIGIBILITY TEST COULD NOT HAVE CAUGHT IT, which is the transferable part. The
+row-side comment grep gives nq-b=0. The PR author is the shared identity
+cptkoolbeenz. The ONLY record is one line in my own LOOP_LOG, inside a "Fire" entry
+from three weeks ago. So even the widened causal question is unanswerable BY THE ASKER
+-- and I could only answer it by reading my own ledger, which I nearly did not do.
+Third instance of the ledger-convicts-while-the-row-clears asymmetry, and the largest.
+
+THE SPECIFIC TRAP: the brief asks me to flag "any place where a comment, docstring or
+printed message states something the code no longer does". I WROTE THAT DOCSTRING. I
+am the reader least able to see drift in it, because I would read my own intent into
+it. And the --self-test guard at :461-478 checks that every heading the file cites
+exists in __doc__ and that no line re-asserts a retracted claim -- so verifying the
+guard that protects my own docstring is a closed loop.
+
+HANDED OVER INSTEAD, as DATA and not a verdict: the design intent, which a drift audit
+needs as its baseline and which exists nowhere else. Designed to HARD GATE
+no-SCPI-errors, correct readback, and the ISR accounting invariant; QueueDroppedSamples
+deliberately REPORTED AND NOT GATED because SPI2's fixed fast baud cannot force a
+large busy-spin window the way #913's low-baud SPI test can. And per the same ledger
+entry the test was NEVER RUN -- "not run -- no hardware in this fire, and this lane's
+bench has no NQ3 regardless (#554)" -- which bears directly on finding 3 and its SKIP.
+
+Nothing spent. Declined before reading the file.
