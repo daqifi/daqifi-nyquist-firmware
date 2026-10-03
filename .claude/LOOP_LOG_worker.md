@@ -9572,3 +9572,45 @@ for every future assessment of it. I am not assessing the result; the verdict an
 merge are someone else's. This is the mechanism I documented -- the lane doing the work
 creates the staleness it would otherwise assess -- applied deliberately this time rather
 than discovered afterwards.
+
+## 2026-10-03 — ⛔ ts#421 ELIGIBILITY CLAIM WITHDRAWN. My ledger corpus is HALF DEAD.
+
+Disclosure posted on the row: issuecomment-5972186780. The fix stands on its own
+verification; the eligibility claim does not stand at all.
+
+⛔ DEFECT 1 -- MY CORPUS IS TRUNCATED AND I CERTIFIED IT WITH PRE-TRUNCATION CONTROLS.
+  LOOP_LOG.md         mtime 2026-09-28 02:41  latest stamp 2026-09-28   TRUNCATED
+  LOOP_LOG_worker.md  mtime 2026-10-03 12:22  latest stamp 2026-10-03   current
+Post-09-28 controls absent from LOOP_LOG.md: bench-996=0, tree_head_sha=0,
+UNPARK-CONDITIONS=0, sk#165=0, 680dd164=0 -- all non-zero in the worker log. And FIRE
+RECORDS LIVE IN LOOP_LOG.md ("Fire: PR #1068", "Fire 49"), so any fire activity after
+09-28 is recorded in neither file.
+A WORKING PATTERN OVER A DEAD CORPUS STILL RETURNS ZERO. My controls were ts#352 (11)
+and 1057 (19) -- BOTH PRE-TRUNCATION, so they fired from the live portion and certified
+a corpus that ends after them. That is a control validating the wrong SEGMENT, and it
+fails in the exonerating direction, which nobody re-checks.
+⭐ THE RULE: a corpus-liveness control must be dated AFTER the newest thing it is being
+used to clear. A control chosen for "I know this is present" is systematically chosen
+from old work, because old work is what you remember.
+
+⛔ DEFECT 2 -- THE KEY IS NOT ALWAYS A NUMBER. Searching the SYMBOLS found what no number
+form did: TcpServerFlush=5, WifiTcpBytesSent=6, WifiTcpBytesConfirmed=5 in LOOP_LOG.md.
+My number keys (1104, test_1104) gave 2 census hits. So the key progression for a
+companion row is: row number -> PARENT number -> FILENAME form -> SYMBOL UNDER TEST.
+Three of those four I got wrong across two days.
+
+GRADED, THE SYMBOL HITS ARE AUTHORSHIP ON THIS ROW'S SUBJECT:
+  :47 / :2757  I published "TcpServerFlush zeroes writeBufferLength ... a short send is
+               NEVER RETRIED", OVERSTATED it, and corrected it myself
+  :12120       I measured WifiTcpBytesSent=246422 == WifiTcpBytesConfirmed=246422
+  :12400       finding: two paths "zero WifiTcpBytesSent/Confirmed without draining"
+  :19186       TcpServerFlush analysis cited at this lane's own HEAD fd4274518
+  :12771       Fire 21 did "ring observed empty + stability before any verdict" on
+               test-suite #382 -- the same concept as _wait_for_quiescence
+My fix is about whether WifiTcpBytesSent's readability may gate a verdict. That is the
+centre of my own prior published analysis. I had MORE involvement than conv-fw, which
+declined on a weaker version of the same thing -- and I pushed.
+
+WHAT I AM NOT DOING: not reverting (the fix is verified on its merits and a correct fix
+from a conflicted lane is still correct), not assessing the row, not offering a verdict.
+ts#421 has no identified eligible assessor; that is the blocker, not the fix.
