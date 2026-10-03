@@ -9614,3 +9614,47 @@ declined on a weaker version of the same thing -- and I pushed.
 WHAT I AM NOT DOING: not reverting (the fix is verified on its merits and a correct fix
 from a conflicted lane is still correct), not assessing the row, not offering a verdict.
 ts#421 has no identified eligible assessor; that is the blocker, not the fix.
+
+## 2026-10-03 — ts#408 DECLINED. I published on issue #1003, same disqualifier as conv-fw.
+
+CORPUS LIVENESS ESTABLISHED FIRST, and the gap is BOUNDED rather than assumed:
+  LOOP_LOG.md covers to 09-28 -> covers ts#408's window (last update 09-16)
+  LOOP_LOG_worker.md current to today; post-dated controls fire (bench-996=9,
+    UNPARK-CONDITIONS=2, 680dd164=2)
+  THE 09-28 -> NOW FIRE-RECORD GAP: subagent transcripts cover 09-28 -> 10-01, and
+    ZERO transcripts are dated 2026-10-02 or later, so I spawned no fires after 10-01.
+    Gap covered by a different corpus plus a positive bound, not waved away.
+⚠ Stating the coordinator's point explicitly rather than assuming it: the dead corpus
+happens to COVER this row, because the row's window precedes the cutoff. That is a claim
+and it is now checked.
+
+FULL KEY SET, row number LAST. ts#408's parents are fw#1115
+(fix/1003-1010-minimal-compound-error-line) and fw#1096
+(fix/1003-1010-compound-error-line), identical titles.
+
+⛔ GRADED, I AM DISQUALIFIED FOUR WAYS:
+  :26722  "Declined with citation; left a note on #1003"       PUBLISHED on the parent issue
+  :26757  "disposition comment. Posted a note on issue #1003." confirmed, second record
+  :8393   "SCPI_ErrorPush -> SCPI_ErrorEmit -> interface->error" with :744 cited --
+          a technical analysis of the error-emission chain, which IS this row's subject
+  :25648/:25803  "fw#1010 already has draft PR #1115 (5 Qodo rounds spent, supersedes
+          #1096)" -- I authored the parent topology
+  plus I hold /mnt/c/daqifi/wt/audit-1115, and fw#1115 is the parent PR
+(:9534's "1003" is ambiguous -- plausibly a line number -- so it is NOT counted.)
+
+⭐ THE STRUCTURAL FINDING: THE PARENT KEY GENERALISES PAST PRs TO ISSUES. ts#408's parent
+is not only fw#1115/fw#1096 (PRs) but ISSUE #1003/#1010. Publication on an ISSUE is a
+channel that neither the row number nor the parent-PR number finds. My earlier 0 on
+ts#408 was row-keyed and established nothing, exactly as the coordinator said.
+So the key progression is now FIVE deep: row number -> parent PR -> parent ISSUE ->
+filename form -> symbol under test.
+
+⚠ AND TWO LANES ARE DISQUALIFIED BY THE SAME PARENT ISSUE. conv-fw declined on having
+published on #1003; I decline on the same ground, found independently. That suggests
+#1003 is a heavily-trafficked issue and anyone who worked the compound-error line is
+conflicted -- so ts#408's assessor problem is not bad luck in lane selection, it is a
+property of the issue. The pool is exhausted by SUBJECT, not by row.
+
+Read-only as routed: no push, no comment, no label on ts#408. Three reads NOT performed,
+because an ineligible lane's routability read is the same conflicted judgement as a
+verdict.
