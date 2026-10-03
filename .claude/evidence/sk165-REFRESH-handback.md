@@ -100,3 +100,41 @@ vs main 4,917). **Two independent sources, different units, same conclusion.**
 
 The passthrough reaches **plain numeric targets and not URL-derived ones**, so the **URL re-keying
 bypass survives sk#165 unchanged** (tracked on sk#201). A green suite here does not close it.
+
+---
+
+## ⚠ CORRECTION — the previous commit's message is CORRUPTED, and by the defect it describes
+
+Commit `18b1f713874bbf616f628a6981a42c4294ede66e` was made with `git commit -m "…"` containing
+**backticks inside a double-quoted string**. Bash command-substituted them. Three code examples
+were executed and replaced by their (empty) output, leaving:
+
+> *"The base's new test is NOT the pipeline-status defect.  then reads the pipeline's status…"*
+> *"the defect is not the shape ,"*
+
+`mk: command not found` · `check: command not found` · `syntax error near unexpected token '|'`.
+**Zero backticks survive in that message.**
+
+**The sentence explaining a shell-quoting defect was destroyed by a shell-quoting defect.** I have
+used `-F -` with a quoted heredoc all session, which does not interpolate, and reached for `-m` once.
+
+⛔ **NOT amended, deliberately.** Force-push is unconditionally ask-first on this lane, and a
+corrupted commit message is not a reason to spend that. The record is corrected forward; the broken
+message stays as evidence.
+
+### The content that was eaten, stated here instead
+
+**The base's new test case is NOT the pipeline-status defect.** The construct is:
+
+```
+mk "$G $P $M 99999" | bash "$AUDIT" >/dev/null 2>&1
+check "a PR number that does not resolve here is refused despite a marker" 2 $?
+```
+
+`$?` is read on the next line, so it is the **pipeline's** status — whose last command is
+`bash "$AUDIT"`, **the thing under test.** Correct usage.
+
+> ⭐ **Which refines my own most-repeated rule: the defect is not the SHAPE `| … $?`. It is a
+> MISMATCH between the pipeline's last command and the intended subject.** Treating the shape as
+> the defect over-flags — this is the first false alarm in six encounters with that rule, and I
+> raised it before checking it.
