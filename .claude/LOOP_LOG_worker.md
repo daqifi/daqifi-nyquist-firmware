@@ -9658,3 +9658,41 @@ property of the issue. The pool is exhausted by SUBJECT, not by row.
 Read-only as routed: no push, no comment, no label on ts#408. Three reads NOT performed,
 because an ineligible lane's routability read is the same conflicted judgement as a
 verdict.
+
+## 2026-10-06 — sk#165 AUDIT: DECLINED at eligibility. Substantive, and the coordinator already said so.
+
+Dated method (newest hit + marker, paths not counts). ALL hits pre-date today's routing
+message (file stamps 09-28 and 10-03), so none is planted by the question.
+
+FIRES, graded:
+  sk165-REFRESH-handback.md -- MY OWN evidence file, appearing under SEVEN of nine keys:
+    mark-audited.sh, merge-target-keys.sh, pre-merge-gate.sh, test-merge-gates.sh,
+    test-repo-passthrough.sh, nine-shape, sk#165. That file IS my published analysis of
+    the two conflicted sites now being audited.
+  _mtk_classify -> audit-sk199-b98e8acd6-BLOCK-6findings.json,
+    audit-sk230-26bd04ab0-BLOCK-2high.json, audit-sk230-r2-VOID-wrongrange-09b532acf.json
+    -- I RAN AUDITS on sk#199 and sk#230, both of which touch these gate files.
+  repoPath -- 18 hits in the live worker log, plus SWEEP-audit-provenance-check.sh (I
+    wrote it, about repo-resolution provenance = sk#165's subject) and
+    ts326-PROVENANCE-for-round5-auditor.md (I wrote it; it cites
+    adversarial-audit.js:77 defaulting repo to ORG/REPO).
+  pre-merge-gate.sh -- 14 + 25 + 2 across all three ledgers.
+  nine-shape -- my reproduction of the keyword bypass against the INSTALLED parser.
+
+⛔ AND THE COORDINATOR ALREADY RULED ON THIS. Routing sk#165's REFRESH to me they wrote:
+"you independently reproduced the nine-shape keyword bypass against the installed
+parser, so you already hold a position on this code and are NOT A CLEAN AUDITOR FOR IT.
+I am spending that rather than nq-c's, who stays unconflicted to audit the result."
+They spent my eligibility deliberately on the premise that nq-c would audit. Asking me
+now contradicts that premise rather than superseding it.
+
+DATUM THEY MAY NOT HAVE: I hold audit-sk199-b98e8acd6-BLOCK-6findings.json, so sk#199
+already has a BLOCK verdict with 6 findings -- from ME. That makes me doubly out and
+also means sk#199's status is not unknown.
+
+ALSO: my handback called mark-audited.sh's hunk "two independent security fixes"; the
+coordinator now reports it was "two generations of one file". So my published analysis of
+the audited site is not only present, it was WRONG -- which strengthens the conflict
+rather than excusing it.
+
+Stopped at eligibility as instructed. No audit run, nothing spent.
