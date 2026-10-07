@@ -174,10 +174,65 @@ int main(void) {
         return 9;
     }
 
+    /* CASE 6 -- THE HANDLE CHECK MUST PRECEDE THE CONSUME. sd_card_manager.c
+     * states this invariant at the consume site ("Placed AFTER the handle
+     * check on purpose ... consuming the arm there would burn it on a write
+     * that never was"), and until now nothing tested it: every case above
+     * keeps fileHandle valid by design, which is what makes "-1, zero writes"
+     * attributable to the hook -- and is also exactly why those cases cannot
+     * reach this one.
+     *
+     * THE RETURN VALUE CANNOT DISCRIMINATE HERE. An invalid-handle early-out
+     * and a fired hook both return -1 with zero filesystem writes, so an
+     * assertion on (ret, writes) alone passes either way. The only observable
+     * that separates them is WHETHER THE ARM SURVIVED. If the consume block
+     * were moved above the handle check, a write that never happened would
+     * burn the arm and this is the assertion that would catch it. */
+    gFailNextWrite = true;
+    gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;
+    ret = RunWrite(&writes);
+    if (ret != -1 || writes != 0u) {
+        fprintf(stderr,
+            "FAIL (harness): an invalid-handle call did not take the early "
+            "return (ret=%d expected=-1, writes=%u expected=0). CASE 6's real "
+            "assertion below is vacuous until this holds.\n",
+            ret, writes);
+        return 10;
+    }
+    if (!gFailNextWrite) {
+        fprintf(stderr,
+            "FAIL: the arm was CONSUMED by a call with no open file -- the "
+            "one-shot test-and-clear now runs BEFORE the "
+            "SYS_FS_HANDLE_INVALID early return. The injected failure is then "
+            "spent on a write that never reached the filesystem, and a test "
+            "arming while the log is between files gets no injected failure "
+            "at all. Both calls return -1 with zero writes, so nothing else "
+            "in this suite can see the difference. Restore the ordering at "
+            "the consume site in sd_card_manager.c.\n");
+        return 11;
+    }
+
+    /* CASE 7 -- and the arm that correctly survived CASE 6 must still fire.
+     * Same shape as CASE 5: proves CASE 6 preserved a USABLE arm rather than
+     * leaving some half-state that no longer injects. */
+    gSDCardData.fileHandle = (SYS_FS_HANDLE)1;
+    ret = RunWrite(&writes);
+    if (ret != -1 || writes != 0u) {
+        fprintf(stderr,
+            "FAIL: an arm that survived an invalid-handle call did not inject "
+            "once a valid handle was restored (ret=%d expected=-1, writes=%u "
+            "expected=0) -- the arm survived as a flag but not as a working "
+            "arm.\n",
+            ret, writes);
+        return 12;
+    }
+
     printf("PASS: the REAL (not modeled) SDCardWrite() -- whole function, "
            "spliced verbatim -- injects -1 with ZERO filesystem writes when "
            "armed in UNMOUNT_DISK, performs the write and returns its byte "
-           "count in every other case, is one-shot, and survives a refused "
-           "attempt to fire at its next opportunity.\n");
+           "count in every other case, is one-shot, survives a refused "
+           "attempt to fire at its next opportunity, and does NOT burn the "
+           "arm on a call with no open file.\n");
     return 0;
 }
