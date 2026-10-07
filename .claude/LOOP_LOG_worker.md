@@ -9786,3 +9786,32 @@ round, moves no head, and is useful under either resolution. ⚠ I could not ext
 HIGH's body via the GraphQL <pre> path and am NOT characterising it from its title.
 
 Nothing spent. No fix pushed, no audit run, no label touched.
+
+## 2026-10-07 — fw#1110 eligibility DECLINED, then reproduction re-run as a free read
+
+- **ELIGIBILITY: fw#1110 (firmware) DECLINED.** `06e4033f05aaf5d0e0e802a328a0d122fe5a421e`,
+  `.claude/evidence/ELIGIBILITY-fw1110-DECLINE.md`. Four involvement kinds; both channels agreed so
+  no judgement call. Own records are primary (coordinator's correction): I posted `/agentic_review`
+  on **fw#1110** (comment 5697771838, dated on the row at 2026-09-16T12:55:07Z), posted the PR-B
+  framing enumerating all 13 defects (id 5699998630, 15:24:46Z, 4,968 B), briefed a fire on it, and
+  **published the row's three-arm unpark condition** — arm (b) being the audit grant now pending.
+  Row read used only for DATING; it added what my records lacked — **TEN `/agentic_review`
+  invocations inside 2h03m against a cap of FIVE**, of which my record names the first as mine.
+  Direction test disclosed: finding-authorship biases me against `PREMISE-FALSE`, but the two
+  decisive disqualifiers (spent a capped round; authored the disposition) are not direction-shaped.
+- **FREE READ: fw#1110 reproduction re-run.** `82202bd3cc23c2947ebadd65e33f045f2cb6c568`,
+  `.claude/evidence/fw1110-REPRODUCTION-rerun-free-read.md`. Re-ran rather than cited.
+  **FIXED is CORRECT** — verified by predicate at `7b1443084`: SCPIADC.c 0→1 and sd_card_manager.c
+  0→2 annotations, and all three live `SCPIInterface.c` sites (`:5044`, `:5364`, `:5588`) carry
+  `/* log_budget: max=76 */`; negative control 0. ⛔ **But all three cited address legs are inert** —
+  at the broken parent `fada72a5f` they hold identical unrelated content, so each reports "absent" in
+  both states. ⛔ **NEW: the baseline carries STALE SUPPRESSIONS** — 2 of 5 retired lines name
+  `SCPIInterface.c`, which the commit never modified (4→4 annotations); and two retired lines are
+  byte-identical, **5 raw / 4 distinct**.
+- **Still HELD, unchanged:** fw#1110's audit spend pending the operator confirming the cap grant IS
+  park arm (b); **fw#976**'s fix/audit round on the same authorisation-scope question (free read
+  already delivered at `c82b49cc7`).
+- **Pool on fw#1110: 4 of 5 out** — conv-fw (claimant), nq-c (fixer), nq-a (auditor-of-record),
+  nq-b (this decline). conv-ts mid-flight on sk#165. No eligible assessor; that is the honest state.
+- Memory filed: `feedback_RUN_A_REPRODUCTION_AGAINST_THE_BROKEN_HEAD_or_its_legs_may_be_inert.md`
+  + `index_how_checks_fail.md` section + MEMORY.md pointer.
