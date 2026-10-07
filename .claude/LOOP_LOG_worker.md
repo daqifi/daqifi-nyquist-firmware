@@ -9696,3 +9696,45 @@ the audited site is not only present, it was WRONG -- which strengthens the conf
 rather than excusing it.
 
 Stopped at eligibility as instructed. No audit run, nothing spent.
+
+## 2026-10-06 — fw#996 audit-and-land DECLINED. The ROW NUMBER was the signal, not the symbols.
+
+Full method, dated. Corpus: LOOP_LOG.md stops 09-28; LOOP_LOG_worker.md is current and is
+where every decisive hit lives, so the live corpus carries this answer.
+
+CLEAN on the code: csv_Encode and Streaming_ClearStats hit ONLY
+reference_my_publication_footprint_conv_fw.md -- conv-fw's file, not mine. And
+reference_zero_rows_with_a_nonzero_drop_count_is_the_fix_working.md is nq-c's
+(originSessionId 6123145b..., measured by nq-a), not mine.
+
+⛔ FIRES ON `fw#996` ITSELF -- 9 entries in the LIVE log, graded as ASSESSMENT OF THE
+ROW'S READINESS, which is precisely the judgement an audit-and-land task re-makes:
+  :8603  "A real workflow id, both legs, provenance present. So fw#996's audit genuinely
+         covers the live head" -- I ASSESSED ITS EXISTING AUDIT'S COVERAGE
+  :8625  "fw#996 unpark needs BOTH: the operator clears blocked:operator-decision, AND
+         Qodo re-runs on..." -- I PUBLISHED ITS UNPARK CONDITION
+  :8568  "'fw#996 clean-and-current, your word the only blocker' -- THREE CLAIMS, TWO
+         FALSE, one query each" -- I REFUTED the coordinator's readiness claim on this row
+  :8459  "I verified it: fw#996's disclosing comment cites..."
+  :8667  "I claimed from fw#996 alone that the edited-in-place Qodo warning 'did not
+         reproduce' ... fw#996 was the unrepresentative row" -- claimed FROM it, refuted
+Also mine: df60bc24b (5 hits + 2 evidence files), 1D6176FF and 59E02848 (the A/B crc32s,
+2 each), ts#330 (2 + my UNPARK-CONDITIONS enumeration).
+
+⭐ THE METHODOLOGICAL FINDING: the six-key order puts symbols first and the ROW NUMBER
+LAST as expected-noise. Here the symbols are CLEAN and the row number is the ONLY key
+that fires -- because my involvement is with the row's DISPOSITION, not its CODE. A
+symbol-first method is structurally blind to DISPOSITION-AUTHORSHIP: assessing whether a
+row is ready, publishing its unpark condition, or rating its audit's coverage leaves no
+trace in any symbol or file key. That is a seventh involvement kind.
+
+TWO THINGS FOR THE COORDINATOR FROM MY OWN PRIOR RECORD, offered as record not judgement:
+ 1. :8603 says fw#996's existing audit genuinely covered its live head. If the head has
+    not moved since, A NEW AUDIT MAY BE UNNECESSARY -- check before spending a round.
+ 2. :8625 says the unpark needed BOTH the label cleared AND a Qodo re-run. The operator
+    has now cleared the label, so HALF of my stated condition is met and the Qodo half
+    may not be. That is my prior record, not a fresh verdict.
+⚠ Also: gh reports updatedAt 2026-10-07T05:04:04Z, which is AHEAD of this box's date
+(2026-10-06). Flagging rather than resolving.
+
+Stopped at eligibility. No audit run, nothing spent, no merge attempted.
