@@ -535,6 +535,27 @@ typedef struct {
  * the claim still takes a critical section (#736). */
 static volatile SDBenchmarkResults_t gSDBenchmarkResults = {0};
 
+/* #958: what actually makes the benchmark's scratch filename unique within
+ * one boot. The FreeRTOS tick alone cannot -- it is 32-bit and wraps after
+ * 49.7 days of uptime -- so the name carries a counter that is never reset
+ * while the board is up.
+ *
+ * Not volatile, and not shared: every read and write happens on whichever
+ * SCPI task holds the `testInProgress` claim, and that claim admits one
+ * runner at a time. It is incremented under a critical section regardless,
+ * because an increment is a read-modify-write and CLAUDE.md's atomicity
+ * rule prescribes one for those. The alternative is a reachability argument
+ * -- 'only the claim holder can reach this line' -- and reachability
+ * arguments have a poor record in this repo (see #896). One critical
+ * section per benchmark command is not a cost worth reasoning about.
+ *
+ * PAID FOR: StreamingBufferPool.c's STATIC_POOL_SIZE was trimmed 512 B for
+ * these four bytes, the third payment in that comment's list after #824
+ * and #925. Note the link SUCCEEDED without it -- 504 bytes of stack slack
+ * on this branch base -- and the payment was made anyway, for the reason
+ * stated there. */
+static uint32_t gBenchNameSeq = 0;
+
 scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
     /* #747: NULL, not indeterminate. SCPI_ParamCharacters(..., mandatory=false)
      * leaves pBuff untouched when the argument is omitted, and the operand
@@ -1111,6 +1132,7 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     char savedLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1];
     char benchLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX + 1] = {0};
     bool logFileClobbered = false;
+    uint32_t benchNameSeq = 0;    /* #958: this run's name discriminator */
     bool ownsBenchFlag = false;   /* #736: did THIS call claim testInProgress? */
     /* Size MUST match the struct field, which is [LEN_MAX + 1] — LEN_MAX (40)
      * is the longest ACCEPTED name and the field carries a 41st byte for the
@@ -1294,9 +1316,111 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
      * accepted. The exit compare would then match and silently revert the
      * user's accepted target. Seeding from our own string instead makes the
      * sentinel un-poisonable, and makes this the fourth symmetric `file` site
-     * (#736 audit round 6). */
+     * (#736 audit round 6).
+     *
+     * #958: the tick is used WHOLE. It used to be masked to 16 bits, so the
+     * name repeated every 65536 ticks -- 65.5 s at the 1 kHz tick -- and the
+     * open this name is about to be armed against TRUNCATES
+     * (SYS_FS_FILE_OPEN_WRITE_PLUS, sd_card_manager.c OPEN_FILE). Two
+     * benchmarks 65.5 s apart on one board therefore targeted the same file
+     * and the second destroyed the first's, with no error, no log line and
+     * nothing a client could have done about it. The three python tests that
+     * snapshot `benchmark_*.dat` before a run and delete only the set
+     * difference (test_728 / test_851 / test_943) cannot defend against that:
+     * their protection is about which files they REMOVE, and this loss happens
+     * inside the open.
+     *
+     * WITHIN ONE BOOT THE NAME CANNOT REPEAT, and what guarantees that is the
+     * SEQUENCE field, not the tick. gBenchNameSeq is incremented once per
+     * named run and never reset while the board is up, so two runs of one boot
+     * cannot produce the same name however long that boot has lasted.
+     *
+     * The tick alone does NOT give that, and the first revision of this
+     * comment claimed it did. TickType_t is 32-bit here
+     * (configTICK_TYPE_WIDTH_IN_BITS is TICK_TYPE_WIDTH_32_BITS,
+     * FreeRTOSConfig.h:125), so it wraps after 49.7 days of uptime and two
+     * runs exactly one wrap apart would share a value. What that first
+     * revision actually established is narrower and still true: CONSECUTIVE
+     * runs cannot share a tick, because this callback cannot run to completion
+     * in under a tick. Its LAST step is the drain-and-close wait below
+     * (`while (!sd_card_manager_IsIdle() && idleWait < 500) vTaskDelay(10)`),
+     * and the close it waits for happens in the SD task. The loop cannot exit
+     * without entering: the `mode = MODE_NONE` +
+     * sd_card_manager_UpdateSettings() immediately above it forces
+     * currentProcessState = DEINIT, and sd_card_manager_IsIdle() is IDLE-or-
+     * INIT only (sd_card_manager.c:3801), so the first test is false and the
+     * body runs -- one vTaskDelay(10) is ten ticks. The re-entrancy interlock
+     * (`testInProgress`, claimed above) means the next run's name is not built
+     * until this one has returned, so two names built on the SUCCESS PATH are
+     * >= 10 ticks apart, whichever transport calls it -- USB SCPI at priority 7
+     * or WiFi SCPI at 2 -- because it comes from the wait, not from who
+     * preempts whom.
+     *
+     * SUCCESS PATH is the operative qualifier, and an earlier revision of this
+     * comment left it out. The name is published a few lines below, and six
+     * `goto __exit_point` paths between there and the drain wait return without
+     * ever reaching it -- the claim failure, the #854 arm-time re-check, the
+     * SD_ArmOrRefuse failure, a suspend during the arm, and both
+     * response-buffer failures. Each of those has already published a name and
+     * pays none of the ten ticks, so two runs a few ticks apart is reachable.
+     * The pre-merge audit on #1027 found this stated as a flat guarantee.
+     *
+     * It no longer matters for uniqueness -- that is the sequence's job, and the
+     * sequence advances on every one of those paths too, because it advances
+     * before the name is built. It is corrected because a comment that
+     * overstates a guarantee is what the next reader relies on instead of the
+     * code. None of it says anything about two runs a WRAP apart, which is the
+     * gap Qodo found on this PR's first review.
+     *
+     * The tick stays as the LEADING field because it is the half a human and
+     * the companion test can read: test_958_benchmark_scratch_name_unique.py
+     * asserts it advances by roughly the elapsed wall clock, and that is the
+     * arm which actually discriminates pre-#958 firmware from post. The
+     * sequence makes the name unique; the tick makes it legible.
+     *
+     * WHAT THIS DOES NOT FIX, and it is the other half of #958: a reboot
+     * restarts the sequence at 1 (it is pre-incremented, so 0 is never
+     * produced) and the tick at 0, so NEITHER field distinguishes one boot
+     * from another, and a run after a reboot can land on the name of a file
+     * left on the card before it and truncate it silently.
+     *
+     * Precisely when, because the first revision of this paragraph was not
+     * precise: it is NOT that every boot's first run shares one name. The
+     * tick above is sampled HERE, at naming time, not at boot -- so two
+     * first-runs collide only when they arrive at the same post-boot offset,
+     * and benchmark_5000_1.dat and benchmark_10000_1.dat are different names.
+     * A coincidence nothing prevents rather than a certainty, which is all the
+     * defect needs. No counter kept in RAM can fix that half; only asking the
+     * card can. The
+     * issue's preferred shape -- stat the candidate, advance a discriminator
+     * when it exists, refuse after a bounded number of attempts -- is the fix
+     * for that and it CANNOT be implemented at this site: the FAT volume is
+     * not mounted here. The SD task mounts it only inside a session
+     * (sd_card_manager.c:1457, reached only when `mode != MODE_NONE`, :1398)
+     * and unmounts it at the end of one (:1715); SYS_FS_AUTOMOUNT_ENABLE is
+     * false (configuration.h:98). A SYS_FS_FileStat() from this callback --
+     * which runs with the manager IDLE, i.e. unmounted -- therefore fails.
+     * `directory` (default "DAQiFi", CommonRuntimeDefaults.h:160) carries no
+     * "/mnt/" prefix, so SYS_FS_GetDisk() takes its "assume the default
+     * volume" branch (sys_fs.c:196-206) rather than its named-mount-point
+     * branch, and finds `gSYSFSCurrentMountPoint.inUse == false` --
+     * SYS_FS_ERROR_NO_FILESYSTEM (sys_fs.c:205), not NO_PATH / NO_FILE. That
+     * error is also what a `directory` written WITH a "/mnt/" prefix would
+     * get here, by the sibling branch (sys_fs.c:191, SYS_FS_ERROR_INVALID_NAME
+     * for a `/mnt/` path matching no in-use volume) -- same conclusion either
+     * way: neither is the "genuinely absent" NO_PATH / NO_FILE that
+     * sd_BucketDirExists() treats as free. Failing safe on it (the required
+     * convention) would refuse EVERY benchmark; reading it as "name is free"
+     * would be a probe that answers nothing. The existence question can only
+     * be asked where the volume is mounted, which is the SD task -- see the
+     * follow-up on #958 for the shape that does it there, at the point the
+     * final path is resolved, without touching the shared truncating open. */
+    taskENTER_CRITICAL();
+    benchNameSeq = ++gBenchNameSeq;
+    taskEXIT_CRITICAL();
     snprintf(benchLogFile, SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX,
-             "benchmark_%d.dat", (int)(xTaskGetTickCount() & 0xFFFF));
+             "benchmark_%lu_%lu.dat", (unsigned long)xTaskGetTickCount(),
+             (unsigned long)benchNameSeq);
     benchLogFile[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
     taskENTER_CRITICAL();
     memcpy(pSDCardRuntimeConfig->file, benchLogFile, sizeof(benchLogFile));
