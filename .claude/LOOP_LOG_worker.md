@@ -10117,3 +10117,35 @@ Nothing spent. No fix pushed, no audit run, no label touched.
   stricter than CI so it can only produce a false FAIL, never a false PASS · ⛔ **I did not read the 6
   passes' assertion bodies** — this establishes *"safe to run in CI"*, **not** *"the checks are good"*.
 - Scratchpad cleaned: 12 extracted trees removed.
+
+## 2026-10-07 (cont.) — gate-check-codex review DECLINED; and my own memory store nearly convicted me FALSELY
+
+- ⛔ **DECLINED both files** (`0a96cb076e2a210b7dc584d36a3db19211005235`). nq-c takes them.
+- **The ground that fires is sharper than the predicted one.** `audit-fw976-b960c9245.json` has
+  `head_sha b960c9245` — **a commit I authored and pushed** — and its **sole finding in BOTH legs** is
+  `scpi_sd_arm_path.py:1134`, **my own `:801` fix**. Health clean + findings non-empty ⇒ it lands
+  exactly on **arm 4: healthy + findings → exit 3 UNREPRESENTABLE**. ⛔⛔ So **design choice 2 decides
+  whether my own fix can ever clear** (conv-fw called it *"works for the spelling it targets"* — the
+  scoped/strictly-better shape choice 2 declares unrepresentable). **My stake → reject
+  unrepresentable → permissiveness; a reviewer's costly error IS permissiveness. Matching direction.**
+- ⚠⚠ **A SECOND GROUND RETRACTED, and it is the more useful half.** I nearly declined on having
+  *authored* the principle the instrument implements. The file says
+  **`authored_by: conv-fw`, `originSessionId: 43cc33e5-…`** — not mine. I read it in **my own**
+  `MEMORY.md` index and inferred authorship. **This very ledger-rule file is another instance**
+  (`6123145b-…`), cited all day as if mine.
+- ⭐⭐ **MEASURED SCALE: 778 memory files; only 33 (4.2%) establishably this session's.** So **a hit in
+  the memory store shows a fact is AVAILABLE to me, not that I PRODUCED it.** `MEMORY.md`'s index has
+  **no attribution**; the only authority is `authored_by`/`originSessionId`.
+- ⭐ **Three channels, three attribution bases — conflating them is the defect:** lane git → by
+  **branch/worktree** (sound for conviction) · the row → by **body-text signing** only (convicts, never
+  clears) · the memory store → `originSessionId` on 4.2% of files (⛔ **neither** without that check).
+  ⚠ **`git log --format='%an'` is `Claude Code` for every commit** — the git author field distinguishes
+  no lane, same single-identity problem as GitHub. Lane-git works because of the BRANCH.
+- ✅ **Re-audited today's four declines: ALL HOLD.** fw#1110 (ledger + own evidence) · fw#991 (the row's
+  own signed park) · ts#446 (ledger quote) · fw#1152 (ledger PRIMARY; its secondary memory claim
+  verified `f5691ce5`, genuinely mine).
+- ⛔ **OVER-DECLINING IS NOT FREE.** Three lanes were already out; a fourth decline on a fabricated
+  ground would have left one and made the pool look structurally impossible — with a confident
+  citation. **A decline's grounds need verifying to the same standard as a clearance's.**
+- **Offered, not done unasked:** the `blind_findings` present-but-empty test — mechanical, synthetic
+  inputs, no design judgement — but adjacent to a file I just declined, so the coordinator's call.
