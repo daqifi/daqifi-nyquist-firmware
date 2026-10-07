@@ -1,0 +1,56 @@
+name: log-budget
+
+# #1039: Util/Logger.c truncates a formatted message at its effective ceiling
+# (LOG_MESSAGE_SIZE minus the vsnprintf and clamp reservations) with no error,
+# no return code, and no marker. Because a remedy is written last, the remedy
+# is what disappears, leaving a diagnostic that reads as complete. #1029 fixed
+# three such messages by hand and a sweep immediately found more, which is the
+# argument for a gate rather than another sweep.
+#
+# Trigger scope mirrors cppcheck.yml: the firmware sources that are measured,
+# the tool + its baseline + its suppression file, and this workflow itself.
+# Nothing else can change a verdict here.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'firmware/src/**'
+      - 'tools/lint/log_budget.py'
+      - 'tools/lint/log_budget-baseline.txt'
+      - 'tools/lint/log_budget-suppress.txt'
+      - '.github/workflows/log-budget.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'firmware/src/**'
+      - 'tools/lint/log_budget.py'
+      - 'tools/lint/log_budget-baseline.txt'
+      - 'tools/lint/log_budget-suppress.txt'
+      - '.github/workflows/log-budget.yml'
+
+permissions:
+  contents: read   # only checking out + running a local tool, no writes
+
+jobs:
+  log-budget:
+    name: LOG_E message budget
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Pure Python, no toolchain, no device, well under a second. It runs
+      # first so a broken extractor reports as a broken extractor rather than
+      # as a tree full of new findings — and the tool re-runs it internally
+      # before trusting any verdict, so this step is the visible half of a
+      # guard that holds either way.
+      - name: Self-test the checker
+        run: python3 tools/lint/log_budget.py --self-test
+
+      # Exit 0 = every finding is already in the committed baseline.
+      # Exit 1 = new findings, printed with ::error file=,line=:: annotations.
+      # Exit 2 = the tool could not run (Logger.c reshaped so the ceiling
+      #          cannot be derived, or a suppression entry with no reason).
+      #          Never silently green.
+      - name: Check LOG_E messages against the ceiling
+        run: python3 tools/lint/log_budget.py

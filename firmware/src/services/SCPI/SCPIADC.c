@@ -130,6 +130,17 @@ static bool AdcCalCoefficientFinite(scpi_t * context, double value, const char *
     if (isfinite(value)) {
         return true;
     }
+    /* log_budget: max=40 -- `cmd` is a string literal naming the command
+     * that refused. Both call sites pass "CONF:ADC:chanCALM" / "chanCALB"
+     * (17 bytes); the longest it could become is the full registered
+     * spelling CONFigure:ADC:CHANCALM (22, SCPIInterface.c:9316), so 40
+     * carries both -- 46 fixed + 40 = 86, margin 39.
+     *
+     * BOUNDED, NOT SHORTENED, deliberately. The message's whole value is
+     * naming WHICH coefficient was refused, so trading that for bytes
+     * would swap one observability defect for another; at margin 39 there
+     * is nothing to buy. Annotating also leaves the emitted message
+     * byte-identical, which keeps this a comment-only change. */
     LOG_E("%s: coefficient is not finite (NaN/inf rejected)", cmd);
     SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
     return false;

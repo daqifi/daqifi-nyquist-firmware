@@ -95,6 +95,43 @@ cppcheck 2.13.0, the CI version.) The suppression file documents the
 DioProbe.c array-bounds false positive and the FreeRTOS portmacro
 FPU-guard `#error` (chip-specific macro that cppcheck doesn't see).
 
+### LOG_E budget (log_budget)
+
+`Util/Logger.c` truncates a formatted message at **125 bytes**
+(`LOG_MESSAGE_SIZE` 128 minus `LogMessageFormatImpl`'s vsnprintf and
+clamp reservations) with no error and no marker — and since a remedy
+is written last, the remedy is what is lost. `tools/lint/log_budget.py`
+measures every `LOG_E` / `LOG_E_ONCE` / `LOG_E_SESSION` format string
+in `firmware/src/` (same third-party exclusions as cppcheck) against
+that ceiling, reading the ceiling **from Logger.h/Logger.c** rather
+than hardcoding it. A site is a finding when its worst case is over,
+**or when the worst case cannot be bounded** — an unannotated `%s`, a
+`*` width, a specifier with no safe width (`%p`, `%f`), or a
+non-literal format argument. Bound a `%s` with `/* log_budget: max=N */`
+on or above the call, or with a precision (`%.40s`).
+
+```bash
+python3 tools/lint/log_budget.py --self-test      # prove the checker works
+python3 tools/lint/log_budget.py                  # the gate
+python3 tools/lint/log_budget.py --list           # every current finding
+python3 tools/lint/log_budget.py --write-baseline # after fixing one
+```
+
+Same baseline/suppress pattern as cppcheck, **including that drift fails
+in both directions**: `tools/lint/log_budget-baseline.txt` is generated,
+and CI fails on findings **not** in it *and* on entries in it that are
+no longer reported. A record is matched by text, so one left behind
+after its finding was fixed silently re-blesses that exact message if it
+comes back — fixing a site and regenerating the baseline are one commit,
+not two. `tools/lint/log_budget-suppress.txt` holds permanent waivers
+and **requires a reason comment above each entry**, enforced per entry
+(one comment authorizes exactly one waiver). Unlike the cppcheck
+baseline, records are keyed on file + reason + message text, **not line
+number**, so editing anything above a `LOG_E` does not turn the gate
+red. CI gate: `.github/workflows/log-budget.yml` (job **LOG_E message
+budget**), same trigger scoping as cppcheck. Baseline at introduction:
+105 findings, 96 of them unannotated `%s`.
+
 ### Programming with PICkit 4 (ipecmd)
 
 Preferred wrapper on this dev station: `bash ~/.claude/skills/flash/flash.sh [--build]` (user-local helper, not repo-tracked) — builds (optional), flashes, reattaches usbipd, verifies a `/dev/ttyACM*` node appears (node presence only — board *identity* still needs the device verification protocol below). Without the wrapper, use the direct invocation, which works anywhere:

@@ -1112,7 +1112,14 @@ static bool sd_EnterBucket(const char* dir, uint32_t bucket) {
                  * (LOG_MESSAGE_SIZE 128, minus vsnprintf's 2-byte and the clamp's
                  * 3-byte reservation) -- the remedy half was cut once the
                  * directory name was long. Shortened text below: 71 fixed bytes,
-                 * worst case 71+45=116, margin 9. */
+                 * worst case 71+45=116, margin 9.
+                 *
+                 * log_budget: max=45 -- the same 45 this comment already
+                 * derived, made machine-readable so log_budget.py charges
+                 * the bound instead of reporting the %s unbounded. It holds
+                 * because SD_CARD_MANAGER_MAX_BUCKET is 64, so the "%03u"
+                 * in sd_BuildBucketPath() emits exactly 3 digits -- that
+                 * clamp, not the format, is what makes 45 a bound. */
                 LOG_E("[SD] #689 bucket '%s' not a dir - rename/remove it "
                       "or use a different dir",
                       gSDCardData.bucketPath);
@@ -2208,7 +2215,21 @@ void sd_card_manager_ProcessState() {
                      * (SYSTem:STORage:SD:MAXSize -> SYST:STOR:SD:MAXS): the
                      * bare "SD:MAXSize" printed before is not a registered
                      * command and answers -113, so the remedy was unusable.
-                     * "new dir" pays the 7 bytes the real path costs. */
+                     * "new dir" pays the 7 bytes the real path costs.
+                     *
+                     * log_budget: max=45 -- as at the not-a-dir refusal
+                     * above, and it covers BOTH arms of the ternary below:
+                     * bucketPath's worst case is 45, and the fallback
+                     * gpSDCardSettings->directory is at most
+                     * SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX (40).
+                     *
+                     * THIS IS THE TIGHTEST OF THE THREE -- 77+45=122,
+                     * margin 3 -- and the margin is held up by
+                     * SD_CARD_MANAGER_MAX_BUCKET. "%03u" is a MINIMUM
+                     * width: an unbounded uint32 bucket prints 10 digits,
+                     * i.e. a 52-byte path and a 129-byte message, 4 OVER
+                     * the ceiling. Raising MAX_BUCKET past 999999 re-opens
+                     * exactly the truncation #1029 closed here. */
                     LOG_E("[SD] #689 bucket '%s' unusable - grow "
                           "SYST:STOR:SD:MAXS, new dir, or clear card",
                           gSDCardData.bucketPath[0] != '\0'
