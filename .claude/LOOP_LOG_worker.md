@@ -9885,3 +9885,41 @@ Nothing spent. No fix pushed, no audit run, no label touched.
   channel; got **41**, the known-good figure. A zero would have manufactured a clean row against a
   gate whose `isResolved` **fails OPEN**.
 - **No assignable row left:** fw#1110 declined, fw#976 declined past the fix round, fw#991 declined.
+
+## 2026-10-07 (cont.) — fw#1152 DECLINED; lane SATURATED on firmware; two fleet hazards filed
+
+- ⛔ **fw#1152 DECLINED** (`8a2ecf2bfcd2fcb1d489f0eaef0bed170f5af1d5`). Head `174324e7e`,
+  MERGEABLE/CLEAN, not parked. **Decisive: I invented the exclusion class *"Refresh would PRE-EMPT
+  the pending decision"* and placed fw#1152 in it**, publishing that its park offers the operator
+  *authorise the merge path* OR *one audit round on a refreshed head*, and that **refreshing
+  forecloses the first**. conv-fw has since refreshed it. **So I hold a published prejudgment of the
+  audit's PRECONDITION**, not a bias inside it — an auditor must be able to treat *"is this the right
+  head to audit"* as open. Plus a memory that I **"walked into"** the park-lives-in-a-comment defect
+  **on this row** (an action, not a reading).
+- **fw#996 was already declined** this session (`b123fa810`), so **BOTH offered rows fire.** Told the
+  coordinator to stop routing firmware rows here, per their own standing instruction.
+- ⭐⭐ **THE STRUCTURAL CAUSE — the census lane burns its own eligibility.** fw#996 ← unpark survey ·
+  fw#1110 ← 14-row unpark survey · fw#991 ← round-cap park decisions · fw#1152 ← refresh census.
+  **Every census that CLASSIFIES rows creates disposition-authorship on each row classified.** The
+  footprint I built to ROUTE work (124 numbers, 137 symbols) is also **a map of where I can no longer
+  be used**. Actionable split: **LISTING** park arms verbatim is a READING and costs nothing;
+  **RANKING** rows into classes is a JUDGEMENT and burns the lane.
+- ⚠ **I CORRECTED MY OWN SHA-PAIRING METHOD.** It FAILED on `audit-fw1152-r3`: four trees share
+  `b97d92fd1` but the three partners are harness `agent-*` trees with **no lane name**, so pairing
+  identified the BRANCH not the LANE. Stays **UNDETERMINED**. **Pairing resolves ownership only when
+  a partner is lane-named** — not general, and I had recommended it as general an hour earlier.
+- ⭐ **Grade hits, never count them.** fw#1152 returned **71** hits; the decisive one was a single
+  judgement and the **weakest was a DISCLAIMER** (*"nq-c's fw#1152"* — evidence of NON-involvement).
+  A raw count convicts for the wrong reason; a threshold would have convicted on artifact-health
+  tables, which measure the row's **artifact**, not authorship on the row.
+- ⛔⛔ **FLEET HAZARD: `/tmp/temp.sh` IS SHARED and handed me ANOTHER LANE'S OUTPUT** mid-read
+  (*"ELIGIBILITY, five kinds"*, a `jq` error, 2026-09-11 round-cap verdicts, a foreign
+  `head MISMATCH … given=ff08f5ce9`). CLAUDE.md directs **every** lane to that one filename while ~5
+  run concurrently, so a script is replaced between `cat >` and `bash`. **Plausible, same-format,
+  boundary UNMARKED** — I nearly read a foreign mismatch as a finding about my row. Remedy: session
+  **scratchpad** + a `### MARKER-<lane>` first line and an END marker. Filed to memory.
+- **fw#976's audit came back BLOCK** (conv-fw): my `:801` fix works for the spelling it targets and is
+  escaped by `(f)(args)`, the canonical idiom for calling past a function-like macro. **Both grant
+  rounds are spent; I am not touching it.** For the next round: key the predicate on the **call
+  expression**, not identifier text, and **mutation-test the parenthesised form specifically**.
+- **No assignable firmware row.** Parked, correctly.
