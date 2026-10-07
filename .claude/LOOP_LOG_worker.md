@@ -10025,3 +10025,38 @@ Nothing spent. No fix pushed, no audit run, no label touched.
 - **No eligible row in either repo:** firmware saturated by census-driven disposition-authorship;
   ts#446 out on precedent + a live cross-PR stake. Available for readings, mechanical verification,
   and tooling — none of which adds a position to a row.
+
+## 2026-10-07 (cont.) — authoritative self-test manifest count: 11 rows / 12 files (not 21/24)
+
+- **Mechanical verification, no position added** (`3f1451ba2aad8e106b42280d154291834d28883a`). Oracle =
+  `harness_policy_lint.py` at `origin/main` `bd4c5b370`, **imported and called** (`has_self_test_flag`,
+  `_parse_selftest_excluded`). **No lint run inside any branch.**
+- **TRUE: 12 files / 11 rows**, plus **1 PRE-EXISTING on main** —
+  `test_658_spi_diag_guard.py`, the only one of main's **151** root test scripts in neither form.
+  Positively identifies the `test_658` already known to fail on unrelated rows, and confirms it as a
+  **main** defect, not a row's.
+- ⭐⭐ **EXTERNAL CONTROL — CI's own output agrees on two numbers.** ts#306's `harness-policy` prints
+  *"18 listed for CI, 3 unmentioned"*; my independent main-ACTIVE count is **18**, and
+  **1 (main) + 2 (ts#306) = 3**. An instrument I did not build cannot share my mistake.
+- ⛔ **THE GAP IS NOT THE GREP**, which was the stated reason to check: grep says 32 declare, oracle
+  says **31** — **one** file over-reported (ts#338 `test_streamrate_readback_repro.py`). The
+  commented-EXCLUSION form was **3**. Main-vs-branch manifest would give **31/29**, *overshooting* 24.
+  **No mechanism I tested yields 21/24; did not reproduce it, did not guess.** conv-ts's *"upper
+  bound"* label was accurate and honestly given.
+- ⛔⛔ **MY OWN FIRST PASS WAS INFLATED BY 3, AND MY METHOD WAS WRONG THE SAME WAY I WAS CORRECTING.**
+  (1) parsed ACTIVE entries only, so 3 deliberately-documented exclusions read as violations — caught
+  by reading what the lint **accepts**; (2) then **approximated `_parse_selftest_excluded` with a
+  regex** in a task whose premise is *"the oracle, not a grep"*. They agreed, **so the number was
+  right and the method was wrong** — the worst combination, since nothing in the output signals it.
+  **Rule: when replacing a heuristic with an oracle, check EVERY predicate in the pipeline, not the
+  headline one.**
+- **Validation:** 72 PRs (`--limit 200`; `gh pr list` caps at 30) — **matches conv-ts exactly**, so the
+  disagreement is purely in the predicate. 66 added top-level `test_*.py` / 59 PRs, **0 fetch
+  failures**. Oracle controls **7/7 both directions** (argparse · `sys.argv` · local var ·
+  docstring-only · comment-only · help-string-only · none). 0 oracle-TRUE-but-grep-FALSE. 0 subdir
+  additions. 0 malformed manifest entries.
+- ⭐ **The manifest is outpaced ~1.7× by work in flight** — main registers 18, in-flight declares 31.
+  Strengthens rather than weakens the no-sweep ruling: a sweep would chase a moving target.
+- ⛔ **ts#306's `harness-policy` is FAILING and 2 of the 12 are ITS files** — disclosed against my own
+  work, as its fixer. Outside the authorised round (confirmed findings were the budget and
+  SKIP-as-PASS), so the fix round correctly did not touch it — **but the row cannot merge red.**
