@@ -6,6 +6,7 @@
 // General
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>   /* #1154: isfinite, for AdcCalCoefficientFinite below */
 
 // Harmony
 #include "configuration.h"
@@ -83,6 +84,53 @@ static bool AdcChannelArgInRange(scpi_t * context, int channel, const char * cmd
         return true;
     }
     LOG_E("%s: channel %d out of range (max 255)", cmd, channel);
+    SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+    return false;
+}
+
+// #1154: CONFigure:ADC:chanCALM / chanCALB took ANY double for the
+// calibration coefficient, including one that overflows to +-inf --
+// `CONF:ADC:chanCALB 0,1e400` stored `inf` and SYST:ERR? read
+// 0,"No error" (measured on an NQ1, serial 7E2837886201026A). volts =
+// m*counts + b is then not computable and nothing tells the client.
+//
+// SCOPE: #1154 is a decision ticket and deliberately declines to set a
+// magnitude bound -- what the legitimate coefficient range is, and whether
+// USECal 2 (raw) or the factory-vs-user split narrows it further, is left
+// open for a future ticket. This guard answers only the one question the
+// ticket itself already settles: "at minimum, non-finite should be
+// rejected -- there is no calibration workflow that wants inf, and it is
+// the case with no defensible reading." A finite value, however large, is
+// accepted exactly as before this fix.
+//
+// -222 (SCPI_ERROR_DATA_OUT_OF_RANGE) matches AdcChannelArgInRange above,
+// the other bounded-argument guard this pair of setters already has.
+//
+// SETTER-SIDE ONLY, on purpose: daqifi_settings_LoadADCCalSettings
+// (daqifi_settings.c) copies NVM straight into the runtime array with a
+// plain field assignment and never calls this helper or
+// ADCChanCalmSetClaimed/ADCChanCalbSetClaimed -- so a board that already
+// has inf stored (from before this fix, or from #908's boot re-stamping
+// path, tracked as its own ticket/PR at #1077) keeps LOADing it exactly as
+// before. Checked by reading daqifi_settings.c, not assumed: neither
+// LoadADCCalSettings nor SaveADCCalSettings references this function or
+// either ...Claimed callback. A setter-side-only guard therefore cannot
+// make an already-stored out-of-range value unloadable, which answers
+// #1154's third open question (does rejecting break SAVEcal/LOADcal
+// round-trip?) -- no, because the load path never runs through here.
+//
+// Deliberately NOT the same fix as #1149/#1144's CapJsonDouble
+// (SCPIInterface.c), which spells a non-finite calibration double as JSON
+// null in CONF:CAP:JSON? rather than refusing it -- that emitter-side fix
+// is not made redundant by this one, since #908's boot re-stamping path can
+// still put inf into CalM/CalB with no setter call at all, so the emitter
+// still has to stay robust regardless of this guard.
+static bool AdcCalCoefficientFinite(scpi_t * context, double value, const char * cmd)
+{
+    if (isfinite(value)) {
+        return true;
+    }
+    LOG_E("%s: coefficient is not finite (NaN/inf rejected)", cmd);
     SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
     return false;
 }
@@ -1223,7 +1271,7 @@ scpi_result_t SCPI_ADCChanCalmSet(scpi_t * context) {
     if (claim != STREAM_CFG_CLAIM_OK) {
         return SCPI_RejectCfgClaim(context,
                                    claim == STREAM_CFG_CLAIM_BUSY,
-                                   "CONF:ADC:chanCALM");
+                                   "CONF:ADC:CHANCALM");
     }
     scpi_result_t result = ADCChanCalmSetClaimed(context);
     Streaming_EndConfigChange();
@@ -1249,9 +1297,15 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // #1154: reject a non-finite coefficient before it reaches the runtime
+    // array -- see AdcCalCoefficientFinite.
+    if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {
+        return SCPI_RES_ERR;
+    }
+
     // #877: reject before the (uint8_t) narrowing -- see
     // AdcChannelArgInRange.
-    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALM")) {
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:CHANCALM")) {
         return SCPI_RES_ERR;
     }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
@@ -1273,7 +1327,7 @@ scpi_result_t SCPI_ADCChanCalbSet(scpi_t * context) {
     if (claim != STREAM_CFG_CLAIM_OK) {
         return SCPI_RejectCfgClaim(context,
                                    claim == STREAM_CFG_CLAIM_BUSY,
-                                   "CONF:ADC:chanCALB");
+                                   "CONF:ADC:CHANCALB");
     }
     scpi_result_t result = ADCChanCalbSetClaimed(context);
     Streaming_EndConfigChange();
@@ -1297,9 +1351,15 @@ static scpi_result_t ADCChanCalbSetClaimed(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // #1154: reject a non-finite coefficient before it reaches the runtime
+    // array -- see AdcCalCoefficientFinite.
+    if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {
+        return SCPI_RES_ERR;
+    }
+
     // #877: reject before the (uint8_t) narrowing -- see
     // AdcChannelArgInRange.
-    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALB")) {
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:CHANCALB")) {
         return SCPI_RES_ERR;
     }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
@@ -1324,7 +1384,7 @@ scpi_result_t SCPI_ADCChanCalmGet(scpi_t * context) {
 
     // #877: reject before the (uint8_t) narrowing -- see
     // AdcChannelArgInRange.
-    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALM?")) {
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:CHANCALM?")) {
         return SCPI_RES_ERR;
     }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
@@ -1349,7 +1409,7 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
 
     // #877: reject before the (uint8_t) narrowing -- see
     // AdcChannelArgInRange.
-    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALB?")) {
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:CHANCALB?")) {
         return SCPI_RES_ERR;
     }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
