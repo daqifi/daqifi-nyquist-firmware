@@ -10090,3 +10090,30 @@ Nothing spent. No fix pushed, no audit run, no label touched.
   fails in a way that would make someone else wrong, suspect the RIG. Positive controls from the
   branch tree validated the rig *for branch files* and said nothing about a file whose authority is
   main's.
+
+## 2026-10-07 (cont.) — all 12 self-tests vetted: 6 ACTIVE-eligible, 7 EXCLUDED, 207 checks unrun
+
+- **Completed the vetting** (`26fb939a98e138ae3a7f1e476a7518bdb33d5cae`). Rig = the manifest's own
+  standard: `git archive` per PR head into a dir with **no `daqifi-python-core` sibling**,
+  `python3 -B -S`, 70 s timeout, 3.12.3 vs CI's 3.12/ubuntu-24.04 with **no `pip install`** anywhere.
+- **Controls both directions on ALL 10 trees** — positive `test_795` → exit 0 on 10/10, negative
+  `test_921` → exit 1 on 10/10. Per-tree controls, applying my own same-tree lesson.
+- ✅ **ACTIVE-ELIGIBLE (6):** `test_658` 7/7 · ts#312 **76 checks** · ts#374 **26/26** · ts#384
+  **0 of 33 failed** · ts#411 **52 checks** · ts#454 **20/20**. **Non-vacuity checked explicitly** —
+  exit 0 with zero checks would be the runtime-SKIP-as-PASS shape; all six report a real count and
+  none attempts a device connection. ⭐⭐ **207 device-free checks that run NOWHERE today.**
+- ⛔ **EXCLUDED (7), TWO causes** — `daqifi` ×5 (ts#287:84, ts#306:382, ts#306:227, ts#400:1657,
+  ts#429:109) and **`serial`/pyserial ×2** (ts#342:129, ts#408:198). **I had not expected the second
+  mechanism**; a reason written only about `daqifi` would be wrong for those two. Both have house
+  precedent on main (`test_728` / `test_907` wording).
+- ⭐ **This makes option (C) complete rather than partial.** As pitched it was "register the 12 as
+  EXCLUDED"; the split is **6 ACTIVE + 7 EXCLUDED**, which clears 11 rows' red checks **and** wires
+  207 unrun checks into CI. ⛔ All-EXCLUDED would have traded a visible red for **a green gate over
+  logic nothing executes** — the exact defect #409 exists to prevent. **Paths still unranked.**
+- ⚠ **Two outputs a log-scanning reader would flag:** ts#374 prints `FAIL teardown: … idn='STILL,WRONG'`
+  and ts#312 prints `ABORT … none conclusive`, **both synthetic fixtures** exercising the failure path
+  while exiting 0 (26/26, 76 OK). Resolved by **reading**, not by trusting the exit code or the string.
+- **Bounds:** n=1 per file · vetted at each PR's **current head**, so a head move re-opens it · `-S` is
+  stricter than CI so it can only produce a false FAIL, never a false PASS · ⛔ **I did not read the 6
+  passes' assertion bodies** — this establishes *"safe to run in CI"*, **not** *"the checks are good"*.
+- Scratchpad cleaned: 12 extracted trees removed.
