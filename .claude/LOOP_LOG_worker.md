@@ -10060,3 +10060,33 @@ Nothing spent. No fix pushed, no audit run, no label touched.
 - ⛔ **ts#306's `harness-policy` is FAILING and 2 of the 12 are ITS files** — disclosed against my own
   work, as its fixer. Outside the authorised round (confirmed findings were the budget and
   SKIP-as-PASS), so the fix round correctly did not touch it — **but the row cannot merge red.**
+
+## 2026-10-07 (cont.) — ts#306 self-tests VETTED; registration NOT executable; all 11 rows predate the policy
+
+- ✅ **VETTED at the manifest's documented standard** (`305f7370bd0ede97d78cedebdb6dd08751b20d80`).
+  Rig: `git archive` into a dir with **no `daqifi-python-core` sibling**, `python3 -B -S`, 3.12.3
+  (CI = 3.12/ubuntu-24.04, and the workflow has **no `pip install`** — read, not assumed).
+  Positive controls `test_795` and `test_846` → **exit 0**. Both ts#306 files → **exit 1**,
+  `ModuleNotFoundError: 'daqifi'` at **382** / **227**, from an unconditional module-scope
+  `from daqifi import NyquistDevice`. **Both are `EXCLUDED:`, not ACTIVE** — same mechanism main
+  already excludes for `test_728`/`test_921`/`test_overnight_characterization`.
+- ⛔⛔ **REGISTRATION IS NOT EXECUTABLE ON THE BRANCH.** Branch has no manifests; **absent at the merge
+  base `fdd601ad6`**; added to main by `0fe603a` (#409/#414) **after** the branch forked. Branch-side
+  creation = **ADD/ADD CONFLICT**. And the refresh that would bring it carries **+597/-52 on
+  `test_harness.py`** — a file ts#306 modifies and ts#446 is editing. **"Two manifest lines" is really
+  a 44-commit base refresh.** Did not do it on my own judgement.
+- ⭐⭐ **ALL 11 VIOLATING ROWS PREDATE THE POLICY** — ts#287/306/312/342/374/384/400/408/411/429/454,
+  **11 of 11 with no manifest on the branch.** So the 12 violations are **not** lanes forgetting to
+  register; they are **pre-policy branches whose merge tree applies a policy the branch never saw.**
+  The red check is a **staleness** consequence. ⛔ Strengthens the no-sweep ruling on a NEW ground: a
+  sweep **cannot run** on those branches at all.
+- **Three paths recorded UNRANKED** (I assess none of these rows): refresh-then-register · register
+  during normal convergence · **pre-register the 12 on main as EXCLUDED — one commit clearing 11 rows'
+  red checks, touching no branch** (operator-level, new change to main).
+- ⚠⛔ **MY OWN NEAR-MISS, the sharpest of the session.** My rig's run of the cited template script
+  **FAILED**, and I was one step from reporting a peer's evidence as invalid. **My error:** I had
+  extracted the **branch** tree (blob `821b917d4`) while the authority is **main's** (`fadf239c2`),
+  where it exits **0 / 7/7** exactly as cited. **A failing control feels like a finding** — when one
+  fails in a way that would make someone else wrong, suspect the RIG. Positive controls from the
+  branch tree validated the rig *for branch files* and said nothing about a file whose authority is
+  main's.
