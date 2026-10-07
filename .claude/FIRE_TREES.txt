@@ -18,3 +18,15 @@
 /mnt/c/daqifi/wt/audit-ts344
 /mnt/c/daqifi/wt/audit-sk231
 /mnt/c/daqifi/wt/audit-sk136-nqb
+
+/mnt/c/Users/User/Documents/GitHub/daqifi-nyquist-firmware/.claude/worktrees/agent-a0f05824999e0e24c
+  created-by : nq-b, fire a0f05824999e0e24c (fw#976 authorised fix round)
+  recorded   : 2026-10-07
+  state      : NOT REMOVABLE YET -- clean (0 porcelain lines), HEAD 2ef26a3010fb3c5ff797b400d3e245787d6d6753
+               contained by origin/lint/971-sd-arm-refusal-ordering, 0 /proc holders,
+               but RECENCY FIRES (.claude/FIRE_976.md written <60min). Any signal blocks.
+  caution    : lives under the OPERATOR'S PRIMARY CHECKOUT's .claude/worktrees/. It is this lane's
+               by creation, but resolve that before removing -- the standing rule forbids touching
+               the operator's primary checkout, and the harness may clean it itself.
+  next step  : re-run the four checks at next loop start; remove with the orchestrator's own
+               command (not bare git) only if ALL four pass.

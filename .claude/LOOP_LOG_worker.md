@@ -9815,3 +9815,34 @@ Nothing spent. No fix pushed, no audit run, no label touched.
   nq-b (this decline). conv-ts mid-flight on sk#165. No eligible assessor; that is the honest state.
 - Memory filed: `feedback_RUN_A_REPRODUCTION_AGAINST_THE_BROKEN_HEAD_or_its_legs_may_be_inert.md`
   + `index_how_checks_fail.md` section + MEMORY.md pointer.
+
+## 2026-10-07 (cont.) — fw#976 authorised fix round COMPLETE, and it refuted my own free read
+
+- **Grant verified AT SOURCE, not from the relay.** `issues/comments/6043971947` on issue 976,
+  2026-10-07T18:12:21Z, quotes the question enumerating `976` and the answer *"1. yes."* ⛔ But it is
+  authored `cptkoolbeenz` with a Claude Code footer, and `gh api user` = `cptkoolbeenz` type **User**
+  — so the row carries a lane's TRANSCRIPTION of an instruction. Ruling texts: **0 hits in any local
+  file.** Proceeded on reversibility, not on belief: **an unverifiable authorisation is actionable in
+  proportion to the reversibility of what it authorises.** No merge.
+- **SHAs verified by me against `ls-remote`, full 40s, all ancestors of the live head:**
+  `d55d5dbd8b8b842a9ca72d0e7aae6d7e68865a6d` (stale path fix) ·
+  `efba54c1f56e24147bb3ad53497850e18bfbae4b` (#801 fix) ·
+  `2ef26a3010fb3c5ff797b400d3e245787d6d6753` (report) **= PR #976's live head.**
+  Branch `lint/971-sd-arm-refusal-ordering`, MERGEABLE / BLOCKED (7 threads deliberately unresolved).
+- ⛔⛔ **MY fw#976 FREE READ WAS WRONG** (`c9baceb55eca0a2386498a03d3e2bffd58d04f23` supersedes
+  `c82b49cc7`). "Six of seven are out of scope" assumed the host test COVERS them. **It does not** —
+  verified by me, not taken from the fire: `SD_ClaimOrRefuse` 0 occurrences, `SD_RefuseIfSuspended` 0,
+  line 111 *"deliberately absent"*, both `SD_ArmOrRefuse` mentions are docstring PROSE. The move was
+  real but covers only the **helper's internal ordering**; the caller-side consequence properties are
+  **HOMELESS**. **I verified the test existed, was sized and was built — and never read it. A presence
+  check standing in for a consequence check, which is the defect those seven threads report.**
+- ⚠ **Fire's conclusion right, two supports wrong** (2nd instance today): *"never models … at all"* is
+  false (2 prose mentions), one quotation non-verbatim, and a bare `-F` count of 5 was the
+  **substring trap** (`SD_ArmOrRefuseWithCleanup` ⊃ `SD_ArmOrRefuse`) = 3+2.
+- ⭐ **:801 was REAL AND LIVE** — the one thread I had declined to disposition. 9 call sites, 1 inside
+  the helper; a realistic mutation passed **identically** to baseline pre-fix. Fixed fail-closed;
+  both directions proven by neutralising it (112/113 → 113/113), repo run clean.
+- **Open with NO home: :920, :1122, :842, :1043** — needs a DECISION, not a disposition. I am the
+  fixer now, so that call and the audit both go elsewhere.
+- **Fire tree recorded in `.claude/FIRE_TREES.txt` as NOT REMOVABLE** — clean, on the remote, 0
+  holders, but recency fires. Any signal blocks.
