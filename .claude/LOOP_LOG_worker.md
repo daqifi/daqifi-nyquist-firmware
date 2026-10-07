@@ -9949,3 +9949,46 @@ Nothing spent. No fix pushed, no audit run, no label touched.
   0 mismatches**, checker proven live by a corrupted-copy negative control. **"Verbatim" asserted by
   the transcriber is worth nothing**; in a quote-transmitting document the reader has no independent
   copy, so the error is unfalsifiable at the point of use.
+
+## 2026-10-07 (cont.) — ts#306 arm 1 FIX + BENCH complete
+
+- **Operator authorised arm 1** (relayed: *"can't you just direct it toward the bench? codex should be
+  available"*). ⭐ **Codex probe PASSED** — `codex exec` → exit 0, `READY`, 0 "at capacity" hits.
+  Honest limit stated: that is a TRIVIAL prompt at default settings, while the audit runs
+  `codexEffort: "high"`, so the blind leg is **probable, not guaranteed** — auditor must check
+  `blindLegRan`.
+- **SHAs verified by me** (`ls-remote` + `gh`, both ancestors of the live head):
+  `c240e5cf5276401270ec1e6169e84aa1d7481c69` (defect 1, truncation gate) ·
+  `80c63d476792a3514f2c98fa0674bf3215ebb794` (defect 2, SKIP-as-PASS) **= PR #306's live head.**
+  `--self-test` **13 PASS / 0 FAIL**, run by me.
+- ⭐ **THE UNITS TRAP I nearly published as a refutation.** `expected = blocks * channel_count`
+  (`:474`, `CHANNEL_COUNT=16`), so a 3,900-**block** run is **62,400 readings** and
+  `max(32, 0.005×62400) = 312` — **the audit's number is exactly right**; my `0.005×3900=19.5` was a
+  units error. **Crossover: blocks > 400.** So a mutation proof at ≤400 blocks passes before AND
+  after and proves nothing. Sent the fire that constraint before it built its proof.
+- **BENCH, 3 trials, all PASS** (`8d12e7feeac0ab37473c1b37a65abb495a3f36d4`):
+  `3900/62400/missing 0` · `3976/63616/missing 0` · `3898/62368/missing 0`, budget 32.
+  **The audit's ~3,900-block figure reproduced exactly.**
+- ✅ **Tightening cannot false-fail on observed hardware.** ⛔ **But THE BUDGET WAS NEVER EXERCISED —
+  0 of 32, three times.** A zero-truncation run cannot distinguish *"32 is adequate"* from *"0 would
+  be"*. **Same 0/0 shape as the inert legs**, and stopping at "3/3 PASS" would have been exactly that
+  error. What IS established is stronger: **real window-edge truncation does not occur on this
+  firmware/config** (`readings == blocks×16` exactly, every trial).
+- **The test PRINTS the purpose-vs-action finding at runtime** — *"leaked still cannot see the gap
+  this test exists to cover"*. fw#991 item 1 is satisfied **as worded** and misses its **stated
+  reason**. Fire confirmed against firmware source (`streaming.c:3514` → the `if (encoded == 0)` block
+  at `:3537-3550`; increments only on whole-call failure, never a non-zero partial encode = #164).
+- ⛔ **BLOCKER: the suite cannot run on this box's DEFAULT python.** 3.14.7 raises
+  `badly formed help string` at `add_argument` time — bare `%` in `"13% overshoot"`. **PRE-EXISTING**
+  at `bb1e518c5:633`. Used 3.12 (installed). **Extent UNKNOWN** — my sweep's "0 files" is
+  uninformative because the `%` is on a *continuation* line a single-line pattern cannot see.
+- ⚠ **RETRACTED MY OWN CLAIM:** I said no firmware-version command exists (`SYSTem:VERSion?` →
+  `1999.0`, the SCPI year) and proposed **capability dating** as a substitute. **`CONF:CAP:JSON?`
+  carries `firmware_rev` AND `firmware_crc32`.** Concluding an absence from one probe and then
+  building a workaround is **worse** than the probe error — a workaround makes the gap look settled.
+  Memory corrected.
+- ⚠ **`CLAUDE.md` says this board is crc32 `9CF57ADD`; the device reports `553E07E4`** at the same rev
+  3.8.0. Flagged, not edited.
+- **Passed through unassessed** (judgement, and I am the fixer): the defect-2 fix makes
+  `release_gate.classify()` **hard-FAIL** a runtime SKIP, not merely distinguish it. Wants operator
+  eyes before the next nightly.
