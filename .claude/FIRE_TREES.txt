@@ -30,3 +30,18 @@
                the operator's primary checkout, and the harness may clean it itself.
   next step  : re-run the four checks at next loop start; remove with the orchestrator's own
                command (not bare git) only if ALL four pass.
+
+--- re-swept 2026-10-07 (later) ---
+/mnt/c/Users/User/Documents/GitHub/daqifi-nyquist-firmware/.claude/worktrees/agent-a0f05824999e0e24c
+  state NOW : ALL FOUR CHECKS PASS -- clean (0 porcelain), HEAD 2ef26a3010fb contained by 1 origin
+              branch, nothing written in 60min, 0 /proc holders. Recency no longer blocks.
+  ⛔ HELD ANYWAY, on a RULE TENSION I am not resolving unilaterally:
+     - "only remove trees THIS lane created" -> this is mine (fire a0f05824999e0e24c)
+     - "never touch the operator's primary checkout" -> it LIVES inside it
+     Removing it would write to the operator's repo's worktree registry. Two standing rules point
+     opposite ways on the same object, so this is an escalation, not a judgement call.
+  ⭐ AND THE HARNESS APPEARS TO MANAGE THESE ITSELF: the sibling tree from the ts#306 fire
+     (agent-a846f8745eb2cb4d0) is ALREADY GONE without my touching it. So the likely correct action
+     is NONE -- leave it and let the harness reclaim it, as it did the sibling.
+  work safety: not at risk either way. All three of that fire's commits are on
+     origin/lint/971-sd-arm-refusal-ordering and verified by ls-remote.
