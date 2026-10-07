@@ -9738,3 +9738,51 @@ TWO THINGS FOR THE COORDINATOR FROM MY OWN PRIOR RECORD, offered as record not j
 (2026-10-06). Flagging rather than resolving.
 
 Stopped at eligibility. No audit run, nothing spent, no merge attempted.
+
+## 2026-10-06 — fw#976: ELIGIBLE, but HELD on AUTHORISATION SCOPE, not on strictness.
+
+ELIGIBILITY CLEAN on the work surface, checked before anything else:
+  scpi_sd_arm_path.py  ZERO hits in any ledger, evidence file or memory -- and all seven
+                       threads are against that file
+  fw#971               zero
+  the 23 review comments  ALL authored by qodo-code-review[bot]; zero lane markers, zero
+                       first-person claim verbs. None is mine; none is any lane's.
+  tools/lint           6 live-log lines, but resolving to ts#349 and ts#405, other rows
+DISCLOSED: fw#976 appears in STALE-VERDICT-handread-partial.md and resolve-short-sha.sh --
+I classified its newest adversarial verdict as STALE (audited head 1824ab15f269 vs live
+d31f63c7a55f) and CORRECTED nq-a's cited head from 578f32be8850, which is the POST-audit
+commit. That is verdict-CURRENCY measurement, with NO directional stake: staleness is
+vindicated whether a fresh audit BLOCKs or CLEANs, and no fresh audit can make the head
+not have moved, so there is no PREMISE-FALSE I am biased against.
+
+⛔⛔ THE HOLD IS A SCOPE MISMATCH BETWEEN THE GRANT'S WORDS AND THE CONDITION'S WORDS.
+Park condition, verbatim off the row:
+  "An explicit operator instruction ON THIS PR TO CONTINUE. The next step would then be
+   one audit round at 578f32be8. Until then, no fire works on this branch."
+Grant comment, verbatim:
+  "Operator ruling, 2026-10-07, verbatim and complete: 'grant the cap exception' -- in
+   direct answer to the question put as: 'Cap exception -- may a capped row spend one fix
+   round plus one audit round?'"
+The operator's words authorise SPENDING A ROUND DESPITE THE CAP. They are an answer to a
+GENERIC budget question -- "may a capped row" -- and they do not name fw#976 at all. The
+park asks for an instruction to CONTINUE THIS PR. A cap exception is a budget permission;
+it is not a direction that this row should proceed. The grant comment asserts "This is
+that instruction", and that assertion is the step that loses the scope.
+
+⭐ AND THE ROW ALREADY DOCUMENTS BEING BURNED BY THIS EXACT CONFLATION, in nq-a's own park:
+  "Rounds 8 and 9 should not have run: I TREATED AN OLD NOTE THAT THE OPERATOR HAD
+   DIRECTED A MERGE AS A CAP EXCEPTION, AND IT WAS NOT ONE."
+That is a generic note read as a row-specific exception. This is a generic cap exception
+read as a row-specific continue-instruction. SAME ERROR, OPPOSITE DIRECTION, same row,
+three weeks apart.
+
+ALSO: the condition names "one audit round at 578f32be8" -- a head I previously established
+was never the audited head, and which has since moved. So the condition cannot be executed
+as written even if the grant were sufficient.
+
+WHAT I CAN DO WITHOUT THE GRANT, offered: read the seven threads and assess whether the
+HIGH ("Failed claims still reach storage arms") is real in code we own. That costs no
+round, moves no head, and is useful under either resolution. ⚠ I could not extract the
+HIGH's body via the GraphQL <pre> path and am NOT characterising it from its title.
+
+Nothing spent. No fix pushed, no audit run, no label touched.
