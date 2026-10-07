@@ -442,7 +442,31 @@ Three sanctioned paths, in order of preference:
    ```
    Never for streaming or multi-step tests: its `-x` timeout is idle-based (a stream never goes idle → hangs forever); killing it mid-stream corrupts WSL serial state (recovery: `pkill -9 picocom; fuser -k /dev/ttyACM0; rm -f /var/lock/LCK..ttyACM0`, else physical replug); rapid open/close toggles DTR/RTS and can crash the device's CDC (Windows Code 43 → reprogram). Never use `2>&1` with picocom. Allow long drain time between large-response commands (`LISt?`, `LOG?`, `SD:GET` — `sleep 5+`) or the next query captures stale data.
 
-For ad-hoc multi-command bench scripts, write to **`/tmp/temp.sh`** (the filename is allowlisted in `.claude/settings.local.json` — the untracked per-machine Claude Code override; add the entry there if your station doesn't have it), `chmod +x`, `dos2unix` if needed.
+For ad-hoc multi-command bench scripts, write to **your session's scratchpad directory** (the
+agent harness names it in the environment preamble; it is keyed by session id, so it is isolated
+by construction and needs no allowlist entry — verified 2026-10-07). `chmod +x`, `dos2unix` if
+needed.
+
+⚠ **Do NOT use a shared fixed path such as `/tmp/temp.sh` — several agents run concurrently and
+it silently feeds one agent another's script or output.** Measured 2026-10-07: one lane's
+eligibility script executed inside another lane's run, and the receiving lane nearly read a
+foreign `head MISMATCH` as a finding about its own PR. The leaked text was plausible,
+same-format and **unmarked**, so it is not detectable by reading the output. At the time
+`/tmp/claude-1000/` held **511 loose files** dating back four weeks, including names any lane
+would pick (`st.out`, `gate.out`, `f.txt`). The parent directory is shared too, so moving to a
+different fixed filename under it does not help.
+
+**Mark every ad-hoc script's output**, because a marker is the only cheap detector and one added
+*after* you see odd output is too late — you cannot retroactively establish which lines were
+yours:
+
+```bash
+echo "### MARKER-<lane> BEGIN <what>"   # ... the script ...
+echo "### MARKER-<lane> END <what>"
+```
+
+(Older `/tmp/temp.sh` entries remain in `.claude/settings.local.json` for compatibility; nothing
+needs to be added there for the scratchpad.)
 
 **Device state basics:** power states `0`=STANDBY, `1`=POWERED_UP (full power — required for WiFi and the DAC's 10 V rail), `2`=POWERED_UP_EXT_DOWN (low-battery). Before tests: known state (`SYST:POW:STAT 0/1` cycle if needed), drain the error queue (`SYST:ERR?` until `0,"No error"`), `ABOR` any pending operation. Don't guess SCPI syntax — see the verification protocol above (e.g. it's `SSIDSTR?`, `NETTYPE?`, `ADDR?` — not `SSID:STR`/`MODE`/`IP`).
 
@@ -501,7 +525,7 @@ All **durable regression tests** — firmware regression, MCP integration, clien
 4. **Every run logs its complete recipe + version triplet** to a sidecar `<script>_<timestamp>.meta.json`: firmware `*IDN?` + firmware version + test-suite git SHA (`test_harness.collect_run_metadata`). Two runs with the same triplet should produce comparable CSVs; that's the **repeatability key**.
 5. **Every benchmark emits the canonical CSV shape** documented in [`docs/CSV_SCHEMA.md`](https://github.com/daqifi/daqifi-python-test-suite/blob/main/docs/CSV_SCHEMA.md). New `SYST:STR:STATS?` firmware fields flow through automatically — no script changes needed.
 
-**Carve-out for ad-hoc bench exploration.** Quick interactive commands — `picocom` one-liners, single SCPI queries, a throwaway `/tmp/temp.sh` to validate a hunch before writing the real test — are fine and have their own conventions documented in the "Bench Testing & Device Access" section above. The policy here applies when the question is "will this break if I change X next month?" — that answer lives in a versioned script in `daqifi-python-test-suite`, not in your shell history.
+**Carve-out for ad-hoc bench exploration.** Quick interactive commands — `picocom` one-liners, single SCPI queries, a throwaway script in your session scratchpad to validate a hunch before writing the real test — are fine and have their own conventions documented in the "Bench Testing & Device Access" section above. The policy here applies when the question is "will this break if I change X next month?" — that answer lives in a versioned script in `daqifi-python-test-suite`, not in your shell history.
 
 When you're touching the firmware in a way that needs a regression check, your first move is to find or write a script in `daqifi-python-test-suite` that exercises it. Don't put **regression** bench-validation logic in the firmware repo (the carve-out above is for one-off exploration only, not for tests that should keep running). Don't reproduce harness primitives.
 
