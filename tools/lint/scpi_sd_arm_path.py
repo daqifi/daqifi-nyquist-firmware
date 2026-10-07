@@ -274,8 +274,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # THE definition rule, in one place. This file used to carry three matchers of
-# its own (`_DEF`, `function_body`, `signature_params`) and `hash_function.py`
-# carried a fourth, with a fifth grep in `tests/host/Makefile`. Six audit
+# its own (`_DEF`, `function_body`, `signature_params`) and
+# `tests/host/hash_function.py` carried a fourth, with a fifth grep in
+# `tests/host/Makefile`. Six audit
 # findings across three rounds were all the same thing: two of those five
 # disagreeing about what a definition looks like. `cdef` is that rule and its
 # own self-test; see its module docstring for the six.
@@ -2077,7 +2078,7 @@ static scpi_result_t decoy(scpi_t * c) {
         # the HELPER -- is not this file's to catch: it no longer reads the
         # helper's control flow at all (see "What moved to a host test"),
         # and a plain early return reads clean here too. The sha256 pin
-        # catches it; `hash_function.py --self-test` pins that.)
+        # catches it; `tests/host/hash_function.py --self-test` pins that.)
 
         # 26-28. #976 audit round 8: the SPACe claim replaced by an
         #     occurrence that is NOT an evaluated call -- `sizeof`'s operand
