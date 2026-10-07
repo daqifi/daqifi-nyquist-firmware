@@ -127,6 +127,12 @@ REC_START_LINEAR_ADDR = 0x05
 ADDR_MODE_LINEAR = "linear"    # type 04: address = (LBA + DRLO + DRI) MOD 4G
 ADDR_MODE_SEGMENT = "segment"  # type 02: address = SBA + ((DRLO + DRI) MOD 64K)
 
+# Intel HEX resolves every record address MOD 4G (ADDR_MODE_LINEAR above, and
+# the spec default before any extension record), so 1<<32 is a hard ceiling on
+# any address a record can name -- not a convention. A requested region at or
+# above it, or running past it, is unreachable by construction.
+ADDRESS_SPACE = 1 << 32
+
 
 class HexFormatError(ValueError):
     """Raised on a malformed or unsupported Intel HEX record.
@@ -231,6 +237,20 @@ def compute_image_crc32(lines, region_base, region_length,
     if region_length <= 0:
         raise ValueError(
             "region_length must be positive, got %d" % region_length)
+    # #1133: --base had no range validation while --length did, so a base at
+    # or above ADDRESS_SPACE assembled an all-fill image and returned its CRC
+    # -- a believable 8-digit number, exit 0, and the SAME value for every
+    # out-of-range base (0x100000000 and 0xFFFFFFFFFF both gave 4D3F7C33),
+    # because it is just the checksum of an image no record could reach.
+    # Checked HERE, beside region_length, rather than only in main(): every
+    # caller -- compute_file_crc32(), self_test(), any importer -- must
+    # inherit it, and argparse is not the only entry point.
+    if region_base < 0 or region_base + region_length > ADDRESS_SPACE:
+        raise ValueError(
+            "region [0x%X, 0x%X) is outside the 32-bit Intel HEX address "
+            "space [0, 0x%X): no record can address it, so the result would "
+            "be the unprogrammed-fill CRC and not a reading of this image"
+            % (region_base, region_base + region_length, ADDRESS_SPACE))
 
     # bytearray multiplication (not [fill] * region_length then bytearray())
     # so a real ~2 MB region never builds an intermediate Python list.
@@ -942,6 +962,53 @@ def self_test():
         _raises([":020000021000EC",
                  _EOF_RECORD]), False)
 
+    # --- 9 (#1133): an out-of-range --base must be REFUSED, not answered
+    # with the unprogrammed-fill CRC. Before this guard, --base=0x100000000
+    # returned 4D3F7C33 exit 0 -- and so did 0xFFFFFFFFFF, because the value
+    # is just the checksum of an image no record could reach. A believable
+    # wrong answer, which is the direction this tool exists to prevent.
+    #
+    # HexFormatError SUBCLASSES ValueError, so a bare `except ValueError`
+    # here would also swallow a malformed-input failure and score it as this
+    # guard firing. The input below is valid, but the helper separates the
+    # two anyway rather than relying on that.
+    good_lines = [
+        _ext_linear_record(0x1D00),
+        _data_record(0x0010, [0xAA, 0xBB]),
+        _EOF_RECORD,
+    ]
+
+    def _region_refused(rbase, rlength):
+        try:
+            compute_image_crc32(good_lines, rbase, rlength)
+            return "accepted"
+        except HexFormatError:
+            return "WRONG-ERROR: input rejected, not the region"
+        except ValueError:
+            return "refused"
+
+    _ck("a --base at the top of the address space is refused (#1133)",
+        _region_refused(ADDRESS_SPACE, 0x40), "refused")
+    _ck("a --base far above the address space is refused (#1133)",
+        _region_refused(0xFFFFFFFFFF, 0x40), "refused")
+    _ck("a negative --base is refused",
+        _region_refused(-1, 0x40), "refused")
+    _ck("a region whose TAIL runs past the address space is refused "
+        "(the --base/--length pair, which an argparse type= cannot see)",
+        _region_refused(ADDRESS_SPACE - 0x10, 0x40), "refused")
+
+    # The discriminating negatives: the guard must not simply reject
+    # everything. Without these, `return "refused"` unconditionally would
+    # pass all four checks above.
+    _ck("the real standalone region is still accepted",
+        _region_refused(STANDALONE_PHYS_BASE, STANDALONE_AUDIT_LENGTH),
+        "accepted")
+    _ck("a --base of 0 is still accepted",
+        _region_refused(0, 0x40), "accepted")
+    _ck("a region ending EXACTLY at the address-space ceiling is still "
+        "accepted (the bound is exclusive on the end, not off by one)",
+        _region_refused(ADDRESS_SPACE - 0x40, 0x40), "accepted")
+
     bad = _CHECKS.count(False)
     print("self-test: %d/%d checks passed" % (_CHECKS.count(True), len(_CHECKS)))
     return 1 if bad else 0
@@ -958,13 +1025,31 @@ def _positive_int(s):
     return v
 
 
+def _region_base(s):
+    """argparse type= for --base (#1133): an out-of-range base made
+    compute_image_crc32() assemble an all-fill image and report its CRC as
+    though it had read the firmware -- believable, exit 0, and identical for
+    every out-of-range value. compute_image_crc32() refuses this too; this
+    exists so the CLI fails with a clean message before opening any file.
+
+    Only the single-value bound is checkable here: whether base + length
+    overflows ADDRESS_SPACE depends on --length, which an argparse type=
+    function cannot see. main() checks the pair after parsing."""
+    v = int(s, 0)
+    if v < 0 or v >= ADDRESS_SPACE:
+        raise argparse.ArgumentTypeError(
+            "must be inside the 32-bit Intel HEX address space "
+            "[0, 0x%X), got %r" % (ADDRESS_SPACE, s))
+    return v
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__.split("\n")[0],
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("hexfiles", nargs="*",
                      help="Intel HEX file(s) to compute firmware_crc32 for")
-    ap.add_argument("--base", type=lambda s: int(s, 0),
+    ap.add_argument("--base", type=_region_base,
                      default=STANDALONE_PHYS_BASE,
                      help="audited region physical base address "
                           "(default: 0x%X, standalone build)"
@@ -984,6 +1069,18 @@ def main():
 
     if not args.hexfiles:
         ap.error("at least one HEX file is required (or pass --self-test)")
+
+    # --base and --length are each individually valid above, but the PAIR can
+    # still name a region running off the top of the address space, whose tail
+    # no record can reach. An argparse type= function sees only its own value,
+    # so the combination is checked here -- before any file is opened, and as
+    # an argument error (exit 2) rather than a per-file failure.
+    if args.base + args.length > ADDRESS_SPACE:
+        ap.error("--base 0x%X with --length 0x%X names the region "
+                 "[0x%X, 0x%X), which runs past the 32-bit Intel HEX address "
+                 "space [0, 0x%X); no record can address the tail"
+                 % (args.base, args.length, args.base,
+                    args.base + args.length, ADDRESS_SPACE))
 
     rc = 0
     for path in args.hexfiles:
