@@ -6,6 +6,9 @@
 #include "state/board/NQ3BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/CRC32.h"   /* #306: settings integrity checksum (severs wolfSSL) */
+/* #904: taskENTER_CRITICAL around the 64-bit cal stores below. */
+#include "FreeRTOS.h"
+#include "task.h"
 
 uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16)));
 
@@ -360,10 +363,32 @@ bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
     
     if(!status) return status;    
     
+    /* #904: CalM and CalB are doubles, so each assignment is two 32-bit
+     * stores on PIC32MZ and a writer preempted between them leaves a torn
+     * coefficient that a concurrent reader reads back faithfully -- the
+     * reader's own critical section cannot undo it. This is the LOADcal /
+     * LOADFcal / USECal half of that fix; the SCPI chanCALM / chanCALB
+     * setters carry the same section (SCPIADC.c), and the getters' sections
+     * close the opposite direction.
+     *
+     * Per channel rather than around the whole loop: one channel's pair is
+     * the unit every reader consumes (the getters read one index, and
+     * MC12b_ConvertToVoltage reads one channel's CalM and CalB per
+     * conversion), so it is what has to be atomic. A section spanning all 48
+     * channels would additionally make the load atomic as a SET, which
+     * nothing here needs, at the cost of a much longer interrupt-off window.
+     *
+     * Task context only: the SCPI callbacks, and the boot-time call from
+     * app_SystemInit, which runs inside the priority-1 APP_FREERTOS_Tasks
+     * task (tasks.c creates it with xTaskCreate) rather than before the
+     * scheduler starts -- taskEXIT_CRITICAL would not re-enable interrupts
+     * if it ran pre-scheduler. */
     for(x=0;x<channelRuntimeConfig->Size;x++)
     {
+        taskENTER_CRITICAL();
         channelRuntimeConfig->Data[x].CalM = calArray->Data[x].CalM;
         channelRuntimeConfig->Data[x].CalB = calArray->Data[x].CalB;
+        taskEXIT_CRITICAL();
     }
     
     return status;
@@ -397,10 +422,40 @@ bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
     
     if(!status) return status;    
     
+    /* #904 write side, the twin of the section in LoadADCCalSettings above:
+     * this loop READS the live runtime pair, and a 64-bit read is two 32-bit
+     * loads on PIC32MZ (docs/MCU_REFERENCE.md), so a writer landing between
+     * them yields a torn coefficient that is then persisted by the
+     * SaveToNvm() below -- a bad NVM image rather than a garbled reply.
+     *
+     * The streaming claim CalSaveCommon holds (SCPIADC.c) does NOT cover
+     * this, and that file says so in both directions: it records that
+     * "because CalM/CalB are 64-bit, a single channel's value can itself be
+     * torn", and that "Boot's first-run factory save (app_freertos.c) calls
+     * daqifi_settings_SaveADCCalSettings directly, never through these
+     * callbacks, so it cannot meet the claim." A claim excludes other
+     * claim-TAKERS; it does not make a 64-bit access atomic, and one caller
+     * takes no claim at all. The claim and this section answer different
+     * questions about the same two lines.
+     *
+     * Per channel, not around the whole loop, for the reason the load side
+     * gives: one channel's pair is the unit every reader consumes, and a
+     * section spanning all 48 would additionally make the copy atomic as a
+     * SET -- which nothing here needs -- for a much longer interrupts-off
+     * window.
+     *
+     * Task context only, same as the load side: the SCPI callbacks, and the
+     * boot-time call from app_SystemInit, which runs inside the priority-1
+     * APP_FREERTOS_Tasks task (app_freertos.c states this at its own
+     * "we're inside priority-1 APP_FREERTOS_Tasks" note) rather than before
+     * the scheduler starts -- taskEXIT_CRITICAL would not re-enable
+     * interrupts if it ran pre-scheduler. */
     for(x=0;x<channelRuntimeConfig->Size;x++)
     {
+        taskENTER_CRITICAL();
         calArray->Data[x].CalM = channelRuntimeConfig->Data[x].CalM;
         calArray->Data[x].CalB = channelRuntimeConfig->Data[x].CalB;
+        taskEXIT_CRITICAL();
     }
     status = daqifi_settings_SaveToNvm(&tmpSettings);
     return status;
