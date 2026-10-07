@@ -130,12 +130,68 @@
  * and only then calls SCPI_ResultVoltage on the local copies. No behavior
  * change to the returned data (same values, same error semantics on an
  * invalid channel) -- only WHEN the lock is released relative to the writes.
+ *
+ * PART F -- SCPI_DACVoltageSet / SCPI_DACUpdate must not hold
+ * gDacCommandMutex across a transport write either (#1065, the follow-up
+ * PR #1063's own pre-merge adversarial audit filed for these two functions
+ * -- out of scope for #1063 itself because its diff never touched them).
+ * Six sites: five in SCPI_DACVoltageSet (a channel-range SCPI_ErrorPush, and
+ * four SCPI_ExecutionError calls -- register-write failure and latch failure
+ * in the single-channel branch, latch failure and the some-channels-failed
+ * summary in the all-channel branch) and one in SCPI_DACUpdate (latch
+ * failure). Both SCPI_ErrorPush and SCPI_ExecutionError reach the transport
+ * (SCPI_ErrorEmit -> interface->error -> SCPI_WriteWithRetry's ~1s-per-call
+ * retry budget), so emitting either while the lock is held delays a
+ * concurrent DAC command on the OTHER transport by up to that budget. The
+ * fix mirrors PR #1063's exact pattern: two locals declared before the lock
+ * is ever taken (`deferredErrorCode` for the one raw SCPI_ErrorPush site,
+ * `deferredErrorMessage` for the four/one SCPI_ExecutionError sites), each
+ * site records into its local and `goto cleanup` (or, for SCPI_DACUpdate,
+ * simply falls through) instead of emitting inline, and the epilogue emits
+ * whichever local was set -- AFTER SCPIDAC_UnlockCommand. The three
+ * `if (!SCPIDAC_LockCommand())` failure arms (one per function, plus the
+ * getter's own, out of scope here) are UNCHANGED: the lock was never taken,
+ * so there is nothing to defer.
+ *
+ * Two independent checks, the same two-layer shape #1030/PR #1063 used for
+ * Part E/E2 (a behavioral mock proving the SHAPE is sound, plus a guard
+ * pinned to the REAL source so a regression in production code -- not just
+ * in this file's mocks -- is caught):
+ *
+ * PART F1 -- a decoupled mock (SCPIDAC.c is not host-includable; see the
+ * file-level note above Part A) proves the general defer-then-unlock-then-
+ * emit idiom is ordered correctly, contrasted against the pre-fix idiom
+ * (emit while still holding the lock) using the same step-counter technique
+ * as Part E's voltage_get_all_channels_writes_after_unlock_new_shape_...
+ * test.
+ *
+ * PART F2 -- reads the ACTUAL firmware/src/services/SCPI/SCPIDAC.c off disk
+ * at test run time and checks, textually, that none of the six original
+ * inline emit calls remain, that each site's deferred-local assignment is
+ * present exactly once, and that the byte offset of each function's
+ * SCPIDAC_UnlockCommand(true) call precedes the byte offset of its deferred
+ * emission call(s). This is the part that is actually mutation-tested
+ * against production code: moving one emit back above its function's unlock
+ * call turns this red. It is the in-file equivalent of PR #1063's Part E2
+ * Makefile grep guard, relocated into this .c file rather than into
+ * tests/host/Makefile -- edited-by-collision on 10 other open PRs the day
+ * this fix landed, so a NEW recipe line there was avoided (worker/coordinator
+ * may still want a Makefile-level pin later; this closes the same gap from
+ * inside the test binary in the meantime).
+ * WHAT F2 DOES NOT COVER, stated per Part E2's own convention: a purely
+ * textual scan has no notion of the lock region -- it cannot prove some
+ * future arm has not added a fresh, differently-worded SCPI_ErrorPush or
+ * SCPI_ExecutionError call under the lock that happens not to collide with
+ * any pattern searched for here. F1 covers the ORDERING idiom in the
+ * abstract; F2 covers that idiom's presence, verbatim, in the shipped file;
+ * neither can see a brand new call this file never anticipated.
  * ========================================================================== */
 
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "test_framework.h"
 
 /* ==========================================================================
@@ -1264,6 +1320,385 @@ TEST(voltage_get_on_non_nq3_never_locks_and_still_writes_the_value)
     ASSERT_TRUE(env.writtenVoltages[0] == 7.0);
 }
 
+/* ==========================================================================
+ * PART F -- SCPI_DACVoltageSet / SCPI_DACUpdate must not emit a SCPI error
+ * while gDacCommandMutex is held (#1065)
+ * ========================================================================== */
+
+/* ---- F1: behavioral mock of the defer-then-unlock-then-emit idiom ---- */
+
+typedef struct {
+    int lockCalls;
+    int unlockCalls;
+    int step;            /* monotonic event counter, 1-based */
+    int unlockStep;      /* step Unlock fired at (0 = never) */
+    int errorPushStep;   /* step the deferred SCPI_ErrorPush fired (0 = never) */
+    int execErrorStep;   /* step the deferred SCPI_ExecutionError fired (0 = never) */
+} DacEmitMockEnv;
+
+static void dac_emit_mock_init(DacEmitMockEnv *env)
+{
+    memset(env, 0, sizeof(*env));
+}
+
+/* Mirrors SCPIDAC_LockCommand() succeeding -- this Part is about the
+ * ORDERING of an emit relative to the unlock, not about lock-acquire
+ * failure (Parts A/D already cover that state space). */
+static void mock_lock_command_f(DacEmitMockEnv *env)
+{
+    env->step++;
+    env->lockCalls++;
+}
+
+/* Mirrors SCPIDAC_UnlockCommand(true) (both real functions this Part covers
+ * always pass a literal `true` -- neither ever skips the lock the way the
+ * getter's dacWriterPossible gate can, see Part D). */
+static void mock_unlock_command_f(DacEmitMockEnv *env)
+{
+    env->step++;
+    env->unlockCalls++;
+    if (env->unlockStep == 0) {
+        env->unlockStep = env->step;
+    }
+}
+
+/* Mirrors the transport write inside SCPI_ErrorPush (SCPI_ErrorEmit ->
+ * interface->error -> SCPI_WriteWithRetry). */
+static void mock_error_push_f(DacEmitMockEnv *env)
+{
+    env->step++;
+    if (env->errorPushStep == 0) {
+        env->errorPushStep = env->step;
+    }
+}
+
+/* Mirrors the transport write inside SCPI_ExecutionError (same call chain). */
+static void mock_exec_error_f(DacEmitMockEnv *env)
+{
+    env->step++;
+    if (env->execErrorStep == 0) {
+        env->execErrorStep = env->step;
+    }
+}
+
+/* NEW (post-#1065) shape -- mirrors SCPI_DACVoltageSet's single-channel
+ * branch: the channel-range check (the raw SCPI_ErrorPush site) and the
+ * register-write check (an SCPI_ExecutionError site) each record into a
+ * deferred local and jump to the cleanup epilogue, which unlocks FIRST and
+ * emits whichever local was set only afterward. Represents every one of
+ * the six sites' shape identically -- SCPI_DACUpdate's single site and the
+ * all-channel branch's two sites are the same idiom with a different
+ * predicate, not a different shape (confirmed against the real source by
+ * Part F2 below). */
+static void dac_emit_new_shape(DacEmitMockEnv *env, bool rangeFails, bool writeFails)
+{
+    int  deferredErrorCode = 0;     /* mirrors deferredErrorCode, 0 == none */
+    bool deferredMessage = false;   /* mirrors deferredErrorMessage != NULL */
+
+    mock_lock_command_f(env);
+
+    if (rangeFails) {
+        deferredErrorCode = 1;      /* stands in for SCPI_ERROR_DATA_OUT_OF_RANGE */
+        goto cleanup;
+    }
+
+    if (writeFails) {
+        deferredMessage = true;     /* stands in for a deferred ExecutionError message */
+        goto cleanup;
+    }
+
+cleanup:
+    mock_unlock_command_f(env);
+
+    if (deferredErrorCode != 0) {
+        mock_error_push_f(env);
+    } else if (deferredMessage) {
+        mock_exec_error_f(env);
+    }
+}
+
+/* OLD (pre-#1065) shape -- today's real SCPIDAC.c: both sites emit
+ * IMMEDIATELY, inline, before Unlock is ever reached -- the defect. */
+static void dac_emit_old_shape(DacEmitMockEnv *env, bool rangeFails, bool writeFails)
+{
+    mock_lock_command_f(env);
+
+    if (rangeFails) {
+        mock_error_push_f(env);   /* <-- still holding the lock */
+        mock_unlock_command_f(env);
+        return;
+    }
+
+    if (writeFails) {
+        mock_exec_error_f(env);   /* <-- still holding the lock */
+        mock_unlock_command_f(env);
+        return;
+    }
+
+    mock_unlock_command_f(env);
+}
+
+/* THE differential test for the raw-ErrorPush site: same mock inputs, fixed
+ * shape vs pre-fix shape, same convention as Part E's
+ * voltage_get_all_channels_writes_after_unlock_new_shape_but_before_old_shape. */
+TEST(dac_channel_out_of_range_defers_error_push_past_the_unlock)
+{
+    DacEmitMockEnv env, old;
+
+    dac_emit_mock_init(&env);
+    dac_emit_new_shape(&env, true, false);
+    ASSERT_EQ(env.lockCalls, 1);
+    ASSERT_EQ(env.unlockCalls, 1);
+    ASSERT_TRUE(env.unlockStep > 0);
+    ASSERT_TRUE(env.errorPushStep > 0);
+    ASSERT_EQ(env.execErrorStep, 0);
+    ASSERT_TRUE(env.unlockStep < env.errorPushStep);   /* the #1065 fix */
+
+    dac_emit_mock_init(&old);
+    dac_emit_old_shape(&old, true, false);
+    ASSERT_TRUE(old.errorPushStep > 0);
+    ASSERT_TRUE(old.errorPushStep < old.unlockStep);   /* the #1065 defect */
+}
+
+/* Same differential, for an SCPI_ExecutionError site (covers the other five
+ * of the six -- one raw ErrorPush plus five ExecutionError call sites --
+ * since an ExecutionError site's deferred shape is identical regardless of
+ * which of the five messages it carries). */
+TEST(dac_register_write_failure_defers_execution_error_past_the_unlock)
+{
+    DacEmitMockEnv env, old;
+
+    dac_emit_mock_init(&env);
+    dac_emit_new_shape(&env, false, true);
+    ASSERT_EQ(env.lockCalls, 1);
+    ASSERT_EQ(env.unlockCalls, 1);
+    ASSERT_EQ(env.errorPushStep, 0);
+    ASSERT_TRUE(env.execErrorStep > 0);
+    ASSERT_TRUE(env.unlockStep < env.execErrorStep);   /* the #1065 fix */
+
+    dac_emit_mock_init(&old);
+    dac_emit_old_shape(&old, false, true);
+    ASSERT_TRUE(old.execErrorStep > 0);
+    ASSERT_TRUE(old.execErrorStep < old.unlockStep);   /* the #1065 defect */
+}
+
+/* Success path: lock, no failure, unlock -- neither deferred local was ever
+ * set, so nothing is emitted at all. Guards the mutation "always emit
+ * whichever local happens to be in scope", which the two tests above alone
+ * would not catch (both only exercise a failure path). */
+TEST(dac_emit_success_path_emits_nothing)
+{
+    DacEmitMockEnv env;
+
+    dac_emit_mock_init(&env);
+    dac_emit_new_shape(&env, false, false);
+    ASSERT_EQ(env.lockCalls, 1);
+    ASSERT_EQ(env.unlockCalls, 1);
+    ASSERT_EQ(env.errorPushStep, 0);
+    ASSERT_EQ(env.execErrorStep, 0);
+}
+
+/* ---- F2: pin the ordering in the REAL, shipped SCPIDAC.c ---- */
+
+#define SCPIDAC_REAL_SRC_PATH "../../firmware/src/services/SCPI/SCPIDAC.c"
+
+/* Reads the whole file at `path` into a freshly malloc'd, NUL-terminated
+ * buffer. Returns NULL (without asserting -- the caller does that, so a
+ * missing/unreadable file produces one clear ASSERT_TRUE failure rather than
+ * a crash) if the file cannot be opened or read. `*outLen` receives the
+ * number of bytes actually read (excludes the trailing NUL this adds). */
+static char *read_source_file(const char *path, size_t *outLen)
+{
+    FILE *f = fopen(path, "rb");
+    long size;
+    char *buf;
+    size_t got;
+
+    if (f == NULL) {
+        return NULL;
+    }
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return NULL;
+    }
+    size = ftell(f);
+    if (size < 0) {
+        fclose(f);
+        return NULL;
+    }
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return NULL;
+    }
+
+    buf = (char *)malloc((size_t)size + 1);
+    if (buf == NULL) {
+        fclose(f);
+        return NULL;
+    }
+
+    got = fread(buf, 1, (size_t)size, f);
+    fclose(f);
+    buf[got] = '\0';
+    if (outLen != NULL) {
+        *outLen = got;
+    }
+    return buf;
+}
+
+/* Bounded substring search: the first occurrence of `needle` within the
+ * byte range [hay, hayEnd), or NULL if absent. A plain strstr() cannot be
+ * used here because the whole file lives in ONE buffer and a per-function
+ * slice has no NUL of its own to stop a search from running into the next
+ * function's body (or off the end of the allocation, for SCPI_DACUpdate,
+ * the last function in the file). */
+static const char *bounded_find(const char *hay, const char *hayEnd, const char *needle)
+{
+    size_t needleLen = strlen(needle);
+    const char *p;
+
+    if (needleLen == 0 || hayEnd < hay) {
+        return NULL;
+    }
+    /* Compare remaining bytes rather than forming `p + needleLen` first: near
+     * hayEnd that sum can point past the one-past-the-end of the allocation,
+     * which is undefined behaviour to even form (C99 6.5.6p8) regardless of
+     * whether memcmp is reached. hayEnd - p stays >= 0 for every p the loop
+     * body runs with (the loop only advances p while hayEnd - p >= needleLen
+     * >= 1, so p <= hayEnd - 1 before the increment and p <= hayEnd after),
+     * so the size_t cast never wraps. */
+    for (p = hay; (size_t)(hayEnd - p) >= needleLen; p++) {
+        if (memcmp(p, needle, needleLen) == 0) {
+            return p;
+        }
+    }
+    return NULL;
+}
+
+/* Counts non-overlapping occurrences of `needle` within [hay, hayEnd). */
+static int bounded_count(const char *hay, const char *hayEnd, const char *needle)
+{
+    int n = 0;
+    const char *p = hay;
+    const char *hit;
+
+    while ((hit = bounded_find(p, hayEnd, needle)) != NULL) {
+        n++;
+        p = hit + 1;
+    }
+    return n;
+}
+
+/* Reads the real SCPI_DACVoltageSet body and checks all five of its sites:
+ * none of the five ORIGINAL inline emit calls remain, each has recorded into
+ * its deferred local exactly once, and the function's single
+ * SCPIDAC_UnlockCommand(true) call precedes both possible deferred-emission
+ * call sites. This is the test that goes red if a future edit moves one
+ * emit back above the unlock -- the exact mutation #1065 exists to prevent. */
+TEST(real_source_scpi_dac_voltageset_defers_all_five_sites_past_unlock)
+{
+    size_t len = 0;
+    char *buf = read_source_file(SCPIDAC_REAL_SRC_PATH, &len);
+
+    ASSERT_TRUE(buf != NULL);
+    if (buf == NULL) {
+        return; /* nothing else is checkable without the file */
+    }
+
+    const char *fileEnd = buf + len;
+    const char *setStart = bounded_find(buf, fileEnd,
+        "scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {");
+    ASSERT_TRUE(setStart != NULL);
+    const char *setEnd = (setStart != NULL)
+        ? bounded_find(setStart, fileEnd, "scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {")
+        : NULL;
+    ASSERT_TRUE(setEnd != NULL);
+    if (setStart == NULL || setEnd == NULL) {
+        free(buf);
+        return;
+    }
+
+    /* The five original, still-under-the-lock call forms must be GONE. */
+    ASSERT_EQ(bounded_count(setStart, setEnd,
+        "SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);"), 0);
+    ASSERT_EQ(bounded_count(setStart, setEnd,
+        "SCPI_ExecutionError(context, \"SOUR:VOLT:LEV: Failed to write DAC register\");"), 0);
+    ASSERT_EQ(bounded_count(setStart, setEnd,
+        "SCPI_ExecutionError(context, \"SOUR:VOLT:LEV: Failed to update DAC latch\");"), 0);
+    ASSERT_EQ(bounded_count(setStart, setEnd,
+        "SCPI_ExecutionError(context, \"SOUR:VOLT:LEV: Failed to update DAC latches\");"), 0);
+    ASSERT_EQ(bounded_count(setStart, setEnd,
+        "SCPI_ExecutionError(context, \"SOUR:VOLT:LEV: Failed to write DAC register (some channels not set)\");"), 0);
+
+    /* Each site instead records into a deferred local -- exactly once. */
+    ASSERT_EQ(bounded_count(setStart, setEnd,
+        "deferredErrorCode = SCPI_ERROR_DATA_OUT_OF_RANGE;"), 1);
+    ASSERT_EQ(bounded_count(setStart, setEnd,
+        "deferredErrorMessage = \"SOUR:VOLT:LEV: Failed to write DAC register\";"), 1);
+    ASSERT_EQ(bounded_count(setStart, setEnd,
+        "deferredErrorMessage = \"SOUR:VOLT:LEV: Failed to update DAC latch\";"), 1);
+    ASSERT_EQ(bounded_count(setStart, setEnd,
+        "deferredErrorMessage = \"SOUR:VOLT:LEV: Failed to update DAC latches\";"), 1);
+    ASSERT_EQ(bounded_count(setStart, setEnd,
+        "deferredErrorMessage = \"SOUR:VOLT:LEV: Failed to write DAC register (some channels not set)\";"), 1);
+
+    /* The lock is given back, and ONLY THEN can either deferred value reach
+     * the transport. */
+    const char *unlockCall  = bounded_find(setStart, setEnd, "SCPIDAC_UnlockCommand(true);");
+    const char *errPushCall = bounded_find(setStart, setEnd, "SCPI_ErrorPush(context, deferredErrorCode);");
+    const char *execErrCall = bounded_find(setStart, setEnd, "SCPI_ExecutionError(context, deferredErrorMessage);");
+
+    ASSERT_TRUE(unlockCall != NULL);
+    ASSERT_TRUE(errPushCall != NULL);
+    ASSERT_TRUE(execErrCall != NULL);
+    if (unlockCall != NULL && errPushCall != NULL && execErrCall != NULL) {
+        ASSERT_TRUE(unlockCall < errPushCall);
+        ASSERT_TRUE(unlockCall < execErrCall);
+    }
+
+    free(buf);
+}
+
+/* Same check for SCPI_DACUpdate's one site. SCPI_DACUpdate is the last
+ * function in the file, so its slice runs to the end of the buffer rather
+ * than to a following function's signature. */
+TEST(real_source_scpi_dac_update_defers_its_one_site_past_unlock)
+{
+    size_t len = 0;
+    char *buf = read_source_file(SCPIDAC_REAL_SRC_PATH, &len);
+
+    ASSERT_TRUE(buf != NULL);
+    if (buf == NULL) {
+        return;
+    }
+
+    const char *fileEnd = buf + len;
+    const char *updStart = bounded_find(buf, fileEnd,
+        "scpi_result_t SCPI_DACUpdate(scpi_t * context) {");
+    ASSERT_TRUE(updStart != NULL);
+    if (updStart == NULL) {
+        free(buf);
+        return;
+    }
+    const char *updEnd = fileEnd;
+
+    ASSERT_EQ(bounded_count(updStart, updEnd,
+        "SCPI_ExecutionError(context, \"CONF:DAC:UPDATE: Failed to update DAC latches\");"), 0);
+    ASSERT_EQ(bounded_count(updStart, updEnd,
+        "deferredErrorMessage = \"CONF:DAC:UPDATE: Failed to update DAC latches\";"), 1);
+
+    const char *unlockCall  = bounded_find(updStart, updEnd, "SCPIDAC_UnlockCommand(true);");
+    const char *execErrCall = bounded_find(updStart, updEnd, "SCPI_ExecutionError(context, deferredErrorMessage);");
+
+    ASSERT_TRUE(unlockCall != NULL);
+    ASSERT_TRUE(execErrCall != NULL);
+    if (unlockCall != NULL && execErrCall != NULL) {
+        ASSERT_TRUE(unlockCall < execErrCall);
+    }
+
+    free(buf);
+}
+
 int main(void)
 {
     printf("#980 -- DAC7718 error-path honesty (extracted control-flow shapes)\n");
@@ -1300,6 +1735,13 @@ int main(void)
     RUN(voltage_get_single_channel_writes_after_unlock);
     RUN(voltage_get_single_channel_invalid_index_writes_nothing);
     RUN(voltage_get_on_non_nq3_never_locks_and_still_writes_the_value);
+
+    /* Part F */
+    RUN(dac_channel_out_of_range_defers_error_push_past_the_unlock);
+    RUN(dac_register_write_failure_defers_execution_error_past_the_unlock);
+    RUN(dac_emit_success_path_emits_nothing);
+    RUN(real_source_scpi_dac_voltageset_defers_all_five_sites_past_unlock);
+    RUN(real_source_scpi_dac_update_defers_its_one_site_past_unlock);
 
     return TEST_SUMMARY();
 }
