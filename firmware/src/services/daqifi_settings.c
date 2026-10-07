@@ -422,10 +422,40 @@ bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
     
     if(!status) return status;    
     
+    /* #904 write side, the twin of the section in LoadADCCalSettings above:
+     * this loop READS the live runtime pair, and a 64-bit read is two 32-bit
+     * loads on PIC32MZ (docs/MCU_REFERENCE.md), so a writer landing between
+     * them yields a torn coefficient that is then persisted by the
+     * SaveToNvm() below -- a bad NVM image rather than a garbled reply.
+     *
+     * The streaming claim CalSaveCommon holds (SCPIADC.c) does NOT cover
+     * this, and that file says so in both directions: it records that
+     * "because CalM/CalB are 64-bit, a single channel's value can itself be
+     * torn", and that "Boot's first-run factory save (app_freertos.c) calls
+     * daqifi_settings_SaveADCCalSettings directly, never through these
+     * callbacks, so it cannot meet the claim." A claim excludes other
+     * claim-TAKERS; it does not make a 64-bit access atomic, and one caller
+     * takes no claim at all. The claim and this section answer different
+     * questions about the same two lines.
+     *
+     * Per channel, not around the whole loop, for the reason the load side
+     * gives: one channel's pair is the unit every reader consumes, and a
+     * section spanning all 48 would additionally make the copy atomic as a
+     * SET -- which nothing here needs -- for a much longer interrupts-off
+     * window.
+     *
+     * Task context only, same as the load side: the SCPI callbacks, and the
+     * boot-time call from app_SystemInit, which runs inside the priority-1
+     * APP_FREERTOS_Tasks task (app_freertos.c states this at its own
+     * "we're inside priority-1 APP_FREERTOS_Tasks" note) rather than before
+     * the scheduler starts -- taskEXIT_CRITICAL would not re-enable
+     * interrupts if it ran pre-scheduler. */
     for(x=0;x<channelRuntimeConfig->Size;x++)
     {
+        taskENTER_CRITICAL();
         calArray->Data[x].CalM = channelRuntimeConfig->Data[x].CalM;
         calArray->Data[x].CalB = channelRuntimeConfig->Data[x].CalB;
+        taskEXIT_CRITICAL();
     }
     status = daqifi_settings_SaveToNvm(&tmpSettings);
     return status;
