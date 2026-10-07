@@ -316,6 +316,11 @@ FORMAT_PUBLISH = "sd_card_manager_SetFormatPending"
 # checks WHERE either helper clears it (see the module docstring).
 MODE_FIELD = "mode"
 MODE_NONE = "SD_CARD_MANAGER_MODE_NONE"
+# The manager primitive ARM_HELPER itself calls (#976 audit round 6 / review
+# comment on #801): the census above discovers arm sites only by the WRAPPER
+# and HELPER names, so a direct call to this one -- bypassing both -- is
+# invisible to every property above. See `_direct_update_problems`.
+MANAGER_UPDATE_CALL = "sd_card_manager_UpdateSettings"
 
 # ---- the second site: the streaming-log arm in SCPIInterface.c (#942/#974) --
 # `static`, one caller (SCPI_StartStreaming), and the arm is a ~130-line slice
@@ -932,6 +937,62 @@ def _census_problems(text, spans):
     return problems, sites
 
 
+# A direct call to MANAGER_UPDATE_CALL, immediately preceded by a plain
+# `<expr>.mode = MODE_NONE;` or `<expr>->mode = MODE_NONE;` write -- the
+# teardown shape all six of today's non-helper callers use (a timeout or a
+# disable resetting the operand, never arming one). Textual and narrow on
+# purpose: see `_direct_update_problems`'s docstring for why this does not
+# try to be a general reader of what precedes the call.
+_TEARDOWN_RE = re.compile(
+    r"\b[A-Za-z_][A-Za-z0-9_]*\s*(?:->|\.)\s*%s\s*=\s*%s\s*;\s*$"
+    % (re.escape(MODE_FIELD), re.escape(MODE_NONE)))
+
+
+def _direct_update_problems(text, spans):
+    """#801 (#976 review): `_census_problems` discovers arm sites only by
+    name -- calls to `ARM_WRAPPER` or `ARM_HELPER` -- so a direct call to
+    the manager primitive they both eventually reach, `MANAGER_UPDATE_CALL`,
+    is invisible to every property `_census_problems` checks: no
+    claim-before-arm, no arm-count, nothing. `ARM_HELPER`'s own one call to
+    it (its recognized body) is excluded here -- that is the site the rest
+    of this file already reasons about.
+
+    Every OTHER call is checked against the one shape today's non-helper
+    callers in `SCPIStorageSD.c` all use it for: a TEARDOWN, clearing
+    `MODE_FIELD` to `MODE_NONE` immediately beforehand on a timeout or a
+    disable, never arming a real operand (#953's comment at the first of
+    these sites explains why `MODE_NONE` is deliberately exempt from the
+    suspend refusal this checker's other properties depend on). A call
+    that does not fit that one textual shape is refused rather than read:
+    this cannot tell a safe direct arm from a dangerous one, and growing it
+    into a general control-flow reader is exactly the treadmill the
+    fifteen-variants lesson (module docstring) warns against. Failing
+    closed on an unrecognized shape costs a false alarm on a new direct
+    caller; failing open costs a silent gap -- which is what this function
+    exists to close."""
+    problems = []
+    seen_fns = set()
+    for pos in _call_positions(text, MANAGER_UPDATE_CALL):
+        fn = enclosing_function(spans, pos)
+        if fn is None or fn == ARM_HELPER or fn in seen_fns:
+            continue
+        window = text[max(0, pos - 200):pos]
+        if _TEARDOWN_RE.search(window) is None:
+            seen_fns.add(fn)
+            problems.append(
+                "%s() calls %s() directly, bypassing both %s() and %s(). "
+                "This checker's arm-site discovery only recognises those "
+                "two names, so a direct call here has no claim-before-arm "
+                "check, no arm-count check, and no verdict-consumption "
+                "check at all -- unless it is immediately preceded by "
+                "`<expr>.%s = %s;` (the teardown shape every existing "
+                "direct caller uses, which this one is not), this call is "
+                "unexamined by every property above (#801, #976 review)."
+                % (fn, MANAGER_UPDATE_CALL, ARM_WRAPPER, ARM_HELPER,
+                   MODE_FIELD, MODE_NONE))
+    return problems
+
+
 def _stream_arm_problems(text):
     """Properties 1 and 4, in `SCPIInterface.c`: the claim precedes the arm,
     and the streaming-log arm's verdict is consumed. -> (problems, sites
@@ -1190,6 +1251,7 @@ def check(source_text):
         problems.extend(fmt_problems)
         census, sites = _census_problems(text, spans)
         problems.extend(census)
+        problems.extend(_direct_update_problems(text, spans))
         problems.extend(_accounting_problems(source_text, text, spans,
                                              SD_ACCOUNTED))
         if retraction:
@@ -1656,6 +1718,45 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("a claim taken AFTER the arm is caught",
             any("arms before it calls SD_ClaimOrRefuse()" in p
                 for p in probs), True)
+
+        # ---- #801 (#976 review): a direct call to the manager primitive,
+        #     bypassing both ARM_WRAPPER and ARM_HELPER, is invisible to
+        #     every property above -- this fixture adds one and expects
+        #     _direct_update_problems to be what catches it.
+        sneaky_arm = _GOOD + (
+            "\nscpi_result_t SCPI_StorageSDSneakyArm(scpi_t * context) {\n"
+            "    sd_card_manager_settings_t* pCfg = "
+            "BoardRunTimeConfig_Get(BOARDRUNTIME_SD);\n"
+            "    pCfg->mode = SD_CARD_MANAGER_MODE_WRITE;\n"
+            "    sd_card_manager_UpdateSettings(pCfg);\n"
+            "    return SCPI_RES_OK;\n"
+            "}\n")
+        assert sneaky_arm != _GOOD
+        probs, _ = check(sneaky_arm)
+        _ck("a direct call that ARMS a real operand, bypassing both the "
+            "wrapper and the helper, is caught",
+            any("SCPI_StorageSDSneakyArm() calls "
+                "sd_card_manager_UpdateSettings() directly" in p
+                for p in probs), True)
+
+        # The one shape every EXISTING non-helper direct caller uses --
+        # `mode = MODE_NONE` immediately before the call, a teardown, not
+        # an arm -- must NOT be flagged. Without this, the check above
+        # would red all of today's six real callers (#953's comment at the
+        # first explains why MODE_NONE is deliberately exempt).
+        legit_teardown = _GOOD + (
+            "\nscpi_result_t SCPI_StorageSDLegitTeardown(scpi_t * context) {\n"
+            "    sd_card_manager_settings_t* pCfg = "
+            "BoardRunTimeConfig_Get(BOARDRUNTIME_SD);\n"
+            "    pCfg->mode = SD_CARD_MANAGER_MODE_NONE;\n"
+            "    sd_card_manager_UpdateSettings(pCfg);\n"
+            "    return SCPI_RES_OK;\n"
+            "}\n")
+        assert legit_teardown != _GOOD
+        probs, _ = check(legit_teardown)
+        _ck("the recognized teardown shape (mode cleared to NONE "
+            "immediately before the direct call) is NOT flagged",
+            any("SCPI_StorageSDLegitTeardown" in p for p in probs), False)
 
         # ---- property 2: the publish that makes the retraction necessary ---
         nopub = _GOOD.replace("    sd_card_manager_SetFormatPending();\n", "")
