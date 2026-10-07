@@ -289,6 +289,14 @@ on:
       # are grepped straight out of this file (configTICK_RATE_HZ,
       # configTICK_TYPE_WIDTH_IN_BITS).
       - 'firmware/src/config/default/FreeRTOSConfig.h'
+      # #1003/#1010: run_1003_tests links the real vendored libscpi sources
+      # (parser.c, error.c, ...) the same way run_999_tests already does, but
+      # run_999_tests's own LIBSCPI_SRCS dependency was never matched by any
+      # path here -- a libscpi-only PR (the fix for these two tickets) queued
+      # no host-tests job at all. The Makefile already tracks the dependency
+      # for local incremental builds (LIBSCPI_SRCS/LIBSCPI_HDRS); this entry
+      # is what makes CI actually invalidate on it too.
+      - 'firmware/src/libraries/scpi/**'
       # #1118: run_999_tests ($(SCPI999_BIN)) depends on both transports'
       # own CreateSCPIContext() call sites (grep-guarded prerequisites, not
       # compiled/linked in); neither was matched above, so a change confined
@@ -300,7 +308,6 @@ on:
       # of ($(SCPI1003_BIN)) -- #1115 adds this same entry for its own reason;
       # keep one copy, whichever PR merges second (see the #1001/#1017 note
       # above for the precedent).
-      - 'firmware/src/libraries/scpi/**'
       - 'firmware/src/services/sd_card_services/sd_card_manager.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       # #1142: test_1141_hex_record_upper_panel_error.c's Makefile target
@@ -349,10 +356,11 @@ on:
       # are grepped straight out of this file (configTICK_RATE_HZ,
       # configTICK_TYPE_WIDTH_IN_BITS).
       - 'firmware/src/config/default/FreeRTOSConfig.h'
+      # #1003/#1010: see the matching entry under pull_request above.
+      - 'firmware/src/libraries/scpi/**'
       # #1118: see the matching entries under pull_request above.
       - 'firmware/src/services/UsbCdc/UsbCdc.c'
       - 'firmware/src/services/wifi_services/wifi_tcp_server.c'
-      - 'firmware/src/libraries/scpi/**'
       - 'firmware/src/services/sd_card_services/sd_card_manager.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       # #1142: see the matching entry under pull_request above.

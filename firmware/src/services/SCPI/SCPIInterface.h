@@ -196,6 +196,71 @@ extern "C" {
     size_t SCPI_WriteWithRetry(ScpiTransportWriteFn writeFn,
                                const char* data, size_t len);
 
+    /*!
+     * #1003/#1010: flush libscpi's compound-message separator if one is
+     * pending. processCommand() (parser.c) arms context->pending_delimiter
+     * ahead of a query unit that follows an already-written result in the
+     * same compound message, but does not write it -- writing it before
+     * knowing whether the unit's own callback succeeds is exactly how an
+     * error line used to end up preceded by a stray ';'. Both transports'
+     * interface->write() implementations call this first, so a pending ';'
+     * lands ahead of the unit's own first byte regardless of whether that
+     * byte comes from SCPI_ResultXxx() or a callback writing straight to
+     * interface->write() (SYST:LOG? and most of the other ~20 direct-write
+     * query callbacks). #1115: SYSTem:STORage:SD:LISt? is the one exception
+     * -- its payload is delivered asynchronously by the SD task
+     * (sd_card_manager_DataReadyCB(), app_freertos.c), which has no scpi_t*
+     * and cannot reach interface->write() at all, so SCPI_StorageSDListDir()
+     * (SCPIStorageSD.c) calls this funnel itself, explicitly, before arming
+     * that transfer. A unit whose callback fails before writing anything
+     * never reaches here; SCPI_ErrorEmit() (error.c)
+     * discards the armed flag instead.
+     * @param context SCPI context (its pending_delimiter field is consumed)
+     * @param writeFn Transport write function (USB or WiFi buffer write)
+     * @param nextWriteLen Length of the write this call is guarding.
+     *                     #1115: no longer gates whether the flush happens --
+     *                     it did until parser.c's writeData() started making
+     *                     a deliberate zero-length call for an empty-but-
+     *                     successful query result, specifically so THAT case
+     *                     also gets to flush and consume this flag. See the
+     *                     implementation's own comment for why this is safe
+     *                     for every other (real-length) caller too.
+     * @return bytes written for the separator itself (0 or 1)
+     */
+    size_t SCPI_FlushPendingDelimiter(scpi_t * context, ScpiTransportWriteFn writeFn,
+                                       size_t nextWriteLen);
+
+    /*!
+     * #1003/#1010 round 1 (Qodo /agentic_review, "Storage failures still
+     * add blank lines"): track whether the wire currently ends in
+     * SCPI_LINE_ENDING, for SCPI_ErrorEmit() (error.c) to read as
+     * context->line_open. Both transports' interface->write()
+     * implementations call this AFTER their real payload write, passing
+     * whether SCPI_FlushPendingDelimiter() (just before it) actually wrote
+     * a separator this same call. Checked against the caller's own `data`/
+     * `len`, not SCPI_WriteWithRetry()'s return count: a persistent short
+     * write is an existing, untracked failure mode elsewhere in this file
+     * (SCPI_USB_Error/SCPI_TCP_Error tolerate it the same way) and is not
+     * this function's job to newly detect.
+     * #1115 round 3 (finding 1/3, "A flushed empty-result separator is not
+     * tracked as open output"): `len == 0` is a no-op ONLY when
+     * `delimiterFlushed` is also false. A flushed ';' with no payload
+     * write following it in the SAME call (an empty-but-successful query
+     * result, e.g. SYSTem:COMMunicate:UART:READ? with a 0-byte count) is
+     * itself a non-terminator byte now on the wire and must open the line
+     * -- see the implementation's own comment. The previous unconditional
+     * "len == 0 changes nothing" rule left line_open stale in exactly that
+     * case, so a following error skipped its own leading CRLF and glued
+     * onto the separator.
+     * @param context SCPI context (its line_open field is written)
+     * @param data The bytes just written (same pointer passed to write())
+     * @param len Length of data; 0 with delimiterFlushed false is a no-op
+     * @param delimiterFlushed Whether SCPI_FlushPendingDelimiter() wrote a
+     *                         ';' ahead of this same write
+     */
+    void SCPI_TrackLineOpen(scpi_t * context, const char * data, size_t len,
+                             scpi_bool_t delimiterFlushed);
+
     /**
      * Printf-style helper for writing formatted text to a SCPI response.
      * Uses an internal 192-byte buffer; each call is one write.
