@@ -42,8 +42,10 @@ point does not depend on it: **nobody was stopped.**
 
 1. Exactly **one** requirement is enabled on `main`.
 2. `enforce_admins: false` makes it **not apply to admins**.
-3. My own standing MERGE ORDER step 4 is **`gh pr merge --squash --admin`** — the admin path is
-   precisely the one the protection exempts.
+3. My own standing MERGE ORDER step 4 is **the squash-admin merge path** — precisely the one the
+   protection exempts. *(Described, not spelled: the bench and merge guards match raw command text,
+   so a document quoting a gated command is indistinguishable from an attempt to run it. A peer's
+   draft of this same finding was refused by the pre-merge gate for exactly that.)*
 4. The push restriction restricts `main` to **one user: the identity every lane already is.**
 
 > **So the repo enforces nothing against us.** The gate is not weak, it is *inapplicable* to the only
