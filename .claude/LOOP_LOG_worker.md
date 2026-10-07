@@ -9923,3 +9923,29 @@ Nothing spent. No fix pushed, no audit run, no label touched.
   rounds are spent; I am not touching it.** For the next round: key the predicate on the **call
   expression**, not identifier text, and **mutation-test the parenthesised form specifically**.
 - **No assignable firmware row.** Parked, correctly.
+
+## 2026-10-07 (cont.) — ts#306 arm-choice packet delivered (reading, not ranking)
+
+- **PACKET: `d3f4d372f688acf537538d84e237160ebb5bbd5a`**,
+  `.claude/evidence/PACKET-ts306-arm-choice-for-operator.md`. Terminus of the fw#991 chain. Both arms
+  verbatim, **no ranking and no recommendation** by instruction and by eligibility — I wrote BOTH
+  ts#306's and fw#991's parks, disclosed at the top.
+- ⭐⭐ **fw#991 item 1's WORK ALREADY EXISTS, UNMERGED:** `077c694bd` on ts#306's branch adds
+  `EncoderDroppedSamples` to `StreamingMeasurement.leaked` (`test_harness.py` +37/-1, new 133-line
+  `verify_306_leak_predicate.py`). **The chain is a merge held by a DECISION, not work waiting.**
+- ⛔ **Item 1's stated PURPOSE may not be achieved by its stated ACTION** — visible only by reading
+  fw#991's item 1 and ts#306's patch text *together*. The predicate now includes the counter, while
+  the patch says the firmware increments it only in the `encoded == 0` branch so *"leaked still
+  cannot see the gap"*. **Flagged, not reconciled.**
+- **ts#306's live head IS the park-cited audited SHA `bb1e518c5`** — the BLOCK is **LIVE, not stale**.
+  It stacks **three independent reasons**: no blind leg, `noProvenance: true`, 3 confirmed / 0
+  refuted. ⛔ **Arm 1's precondition** (*"codex capacity back so the blind leg runs"*) **IS the
+  condition that caused one of those three** (`codexErrors: "Selected model is at capacity"`), and is
+  only testable by spending the round arm 1 would authorise.
+- **fw#991 item 2 (wiki table) is UNVERIFIED by anyone.** Blocks merge independently of the audit.
+- ⛔⭐ **THIRD CONTROL FAILURE OF THE DAY, AND IT WAS MINE, INSIDE THE TRANSCRIPTION PACKET.** I
+  claimed "verbatim", then script-checked it: **first draft failed TWICE in 1,074 bytes** — dropped
+  the word *"is"*, and omitted a whole sentence. Both leave fluent plausible prose. Fixed → **7/7,
+  0 mismatches**, checker proven live by a corrupted-copy negative control. **"Verbatim" asserted by
+  the transcriber is worth nothing**; in a quote-transmitting document the reader has no independent
+  copy, so the error is unfalsifiable at the point of use.
