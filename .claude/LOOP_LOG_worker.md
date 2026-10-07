@@ -10149,3 +10149,30 @@ Nothing spent. No fix pushed, no audit run, no label touched.
   citation. **A decline's grounds need verifying to the same standard as a clearance's.**
 - **Offered, not done unasked:** the `blind_findings` present-but-empty test — mechanical, synthetic
   inputs, no design judgement — but adjacent to a file I just declined, so the coordinator's call.
+
+## 2026-10-07 — SESSION CLOSE. No eligible row in either repo; five mechanisms across six rows.
+
+- **Take-no-action ruled on the fire tree.** Coordinator verified the operator's checkout: my tree
+  present, the sibling **already reclaimed with nobody touching it**, **~50 agent worktrees** there
+  (most locked, a dozen on one SHA), **0 prunable**. ⭐ **A moot rule-conflict does not need
+  resolving — and resolving it sets a precedent that outlives the case.** Escalating beat picking.
+- ⭐⭐ **CORRECTED MY OWN FILED REASONING on false declines: the asymmetry is DETECTABILITY, not cost.**
+  A false CLEARANCE is caught by the audit it licenses; **a FALSE DECLINE IS NEVER CAUGHT** — no
+  re-audit of a recusal, no artifact, no downstream reader, the pool just looks smaller permanently.
+  So a decline's grounds need a clearance's verification standard **because the error has no
+  detector**, not because the costs match. My fabricated ground would have survived indefinitely as a
+  confident citation had `authored_by` not existed.
+- ⭐ **Filed a new check-failure class: a check that is RIGHT and runs TOO EARLY.** conv-ts's gate
+  printed `blind=MISSING(unevaluable)` **and then passed, exit 0**, because `health` was snapshotted
+  **before** the findings keys were read. **Predicate correct, ORDER wrong** — so *"test the
+  predicates"* would have passed it. Detector: for each term ask *"what state does this read, and can
+  that state still change after it is read?"*
+- **POOL POSITION, five mechanisms across six rows** — and that spread is itself the evidence for
+  enumerate-every-kind, since one checklist would have caught all six only if one mechanism explained
+  them: census-driven disposition-authorship (**fw#996, fw#1110, fw#991, fw#1152**) · cited precedent
+  + cross-PR stake (**ts#446**) · fixer (**ts#306**, also fw#976) · design-choice stake (**the
+  gate-check review**).
+- **Delivered today:** fw#976 fix round (2 commits, `:801` real and live) · fw#1110 reproduction free
+  read (3 inert legs) · ts#306 fix+bench (3 trials, budget never exercised) · fw#991 item-2 reading ·
+  23-of-59 undocumented STATS fields · authoritative self-test count **12 files / 11 rows** and the
+  **6 ACTIVE / 7 EXCLUDED** split (**207 checks unrun**) · ts#306 arm-choice packet · 6 declines.
