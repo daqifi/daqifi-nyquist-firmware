@@ -50,10 +50,10 @@ The firmware uses four distinct memory regions, each with different properties:
 | FreeRTOS Heap | 74,000 | Static BSS |
 | Coherent Pool | 126,976 | Static coherent (KSEG1) |
 | USB coherent struct | ~2,000 | Static coherent |
-| Other BSS/data (globals) | ~30,546 | Static BSS — includes #999's **net +546 B**: two 546 B `ScpiContextStorage` instances replacing one shared 546 B pair |
+| Other BSS/data (globals) | ~30,563 | Static BSS — includes #999's **net +546 B**: two 546 B `ScpiContextStorage` instances replacing one shared 546 B pair; and #1094's **net +17 B** (≤24 B once the `uint64_t` forces alignment padding): `detectForceReq`/`detectForceAck`/`detectForceAt`/`detectForceEver` added to `DRV_SDSPI_OBJ`, and `DRV_SDSPI_INSTANCES_NUMBER` is `1U`, so the struct growth is counted once |
 | ISR stack | 8,192 | Linker-allocated |
-| **Total used** | **~437,298** | |
-| **Free (linker headroom)** | **~86,502** | |
+| **Total used** | **~437,315** | |
+| **Free (linker headroom)** | **~86,485** | |
 
 > The `~` rows are approximations, so the column does **not** add up to `Total
 > used` exactly and never has — adding the rows as printed gives ~436,274. What
