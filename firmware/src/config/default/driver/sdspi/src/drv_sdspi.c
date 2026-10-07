@@ -1726,21 +1726,90 @@ static void lDRV_SDSPI_AttachDetachTasks
         }
 
         case DRV_SDSPI_TASK_WAIT_POLLING_TIMER_EXPIRE:
-            if (dObj->cardPollingTimerExpired == true)
+        {
+            /* #756: a FORCED expiry (DRV_SDSPI_DetectPollExpireNow, called
+             * from whichever task dispatched an SCPI command) is honoured
+             * here alongside the cadence timer's own expiry. This is the one
+             * state that decides to leave the wait, and -- the load-bearing
+             * part -- this switch runs holding dObj->transferMutex, the same
+             * lock the ARM path (TASK_START_POLLING_TIMER ->
+             * DRV_SDSPI_CardDetectPollingTimerStart) already runs under. Both
+             * halves of what used to be a cross-context sequence (cancel the
+             * in-flight timer, then release the FSM) therefore happen inside
+             * that lock, mutually excluded from the arm. The old code's
+             * destroy ran OUTSIDE it, on the calling SCPI task, which is
+             * exactly why it raced. See the comment above
+             * DRV_SDSPI_DetectPollExpireNow for the race this replaces.
+             *
+             * detectForceReq is read ONCE and exactly that value is
+             * acknowledged: a request published between the read and the ack
+             * leaves req != ack, so it is served on the next pass rather than
+             * being swallowed. Erring toward one extra poll is the safe
+             * direction, and the rate limiter in the publisher bounds it. */
+            const uint32_t forceReq = dObj->detectForceReq;
+            const bool forced = (forceReq != dObj->detectForceAck);
+
+            if (forced)
+            {
+                /* Cancel the cadence timer still in flight. NOT optional:
+                 * SYS_TIME_MAX_TIMERS is 5, this driver is the only SYS_TIME
+                 * client in the firmware, and media init can have 4 armed at
+                 * once -- one spare slot. An un-cancelled poll timer occupies
+                 * that spare straight through TASK_CHECK_DEVICE and
+                 * TASK_MEDIA_INIT, and a failed DRV_SDSPI_TimerStart during
+                 * the ACMD41 wait sets DRV_SDSPI_INIT_ERROR, i.e. the card
+                 * fails to initialise -- the opposite of what #756 wants. It
+                 * would also fire later and force one unintended extra poll.
+                 *
+                 * Destroying an already-expired/self-destroyed handle is a
+                 * safe no-op: SYS_TIME_TimerDestroy's token+inUse check
+                 * rejects it (sys_time.c SYS_TIME_GetTimerObject). The handle
+                 * is then invalidated so that a stale value cannot alias a
+                 * live timer after SYS_TIME's 16-bit token wraps.
+                 *
+                 * Lock-order note: SYS_TIME_TimerDestroy takes the SYS_TIME
+                 * mutex with OSAL_WAIT_FOREVER (SYS_TIME_ResourceLock), and
+                 * this switch runs holding dObj->transferMutex. That
+                 * transferMutex -> timerMutex nesting is already the stock
+                 * driver's -- TASK_MEDIA_INIT -> lDRV_SDSPI_MediaInitialize ->
+                 * DRV_SDSPI_CmdResponseTimerStart takes the same mutex from
+                 * inside this same switch -- and nothing in SYS_TIME ever
+                 * takes transferMutex, so the order cannot invert. */
+                (void) SYS_TIME_TimerDestroy(dObj->cardPollingTmrHandle);
+                dObj->cardPollingTmrHandle = SYS_TIME_HANDLE_INVALID;
+                dObj->detectForceAck = forceReq;
+            }
+
+            if (forced || (dObj->cardPollingTimerExpired == true))
             {
                 dObj->cardPollingTimerExpired = false;
                 /* #605 (shape per Qodo #606): count the poll HERE - exactly
                  * once per timer expiry by construction. CHECK_DEVICE can't
                  * count reliably: it spins at task rate while sdState != IDLE,
                  * and the detect verdict emerges from a multi-pass async
-                 * sequence, so no single CHECK_DEVICE pass is "the poll". */
-                if (dObj->detachedPollCount < 0xFFFFU)
+                 * sequence, so no single CHECK_DEVICE pass is "the poll".
+                 *
+                 * #756: under a critical section because this is a
+                 * read-modify-write and DRV_SDSPI_DetectPollKick's `= 0` runs
+                 * on an SCPI task -- the USB one at priority 7, which preempts
+                 * this task (priority 5) at any instruction. Without it a kick
+                 * landing mid-increment is discarded, and the backoff the kick
+                 * exists to clear stays engaged: the FSM re-arms at 5000 ms
+                 * instead of 1000 ms, which is precisely the staleness #756 is
+                 * about. O(1), nothing that can block (mcu-hygiene 3 and 7). */
                 {
-                    dObj->detachedPollCount++;
+                    OSAL_CRITSECT_DATA_TYPE pollCountCrit =
+                        OSAL_CRIT_Enter(OSAL_CRIT_TYPE_HIGH);
+                    if (dObj->detachedPollCount < 0xFFFFU)
+                    {
+                        dObj->detachedPollCount++;
+                    }
+                    OSAL_CRIT_Leave(OSAL_CRIT_TYPE_HIGH, pollCountCrit);
                 }
                 dObj->taskState = DRV_SDSPI_TASK_CHECK_DEVICE;
             }
             break;
+        }
 
         case DRV_SDSPI_TASK_CHECK_DEVICE:
             /* Check for device attach */
@@ -2523,6 +2592,17 @@ SYS_MODULE_OBJ DRV_SDSPI_Initialize
     dObj->sdcardSpeedHz         = sdSPIInit->sdcardSpeedHz;
     dObj->pollingIntervalMs     = sdSPIInit->pollingIntervalMs;
     dObj->detachedPollCount     = 0U;
+    /* #756: forced-detect-poll request/ack pair and its rate limiter. Reset
+     * explicitly here rather than left to a file-scope initializer, because
+     * gDrvSDSPIObj lives in .bss and crt0 does NOT zero it on an MCLR / IPE
+     * flash reset (#409). An unzeroed detectForceEver would make the first
+     * force of a session depend on a garbage timestamp, and an unzeroed
+     * req/ack pair would either fire a phantom poll at boot or swallow the
+     * first real one. */
+    dObj->detectForceReq        = 0U;
+    dObj->detectForceAck        = 0U;
+    dObj->detectForceAt         = 0U;
+    dObj->detectForceEver       = false;
     dObj->sdspiTokenCount       = 1;
 
     /* Reset the SDSPI attach/detach variables */
@@ -3040,7 +3120,18 @@ bool DRV_SDSPI_IsCardAttached(SYS_MODULE_OBJ object)
 }
 
 /* #589 P1: reset the detect-poll backoff so an expected insertion (user just
-   enabled SD / requested an operation) is noticed at the fast cadence. */
+   enabled SD / requested an operation) is noticed at the fast cadence.
+   UNCHANGED by #756: this is the function `sd_card_manager.c`'s
+   `sd_UpdateSettingsImpl` already calls unconditionally, including on the
+   teardown path (`app_SDCard_GracefulShutdown`) right before the bus is
+   handed to WiFi -- forcing the detect FSM into TASK_CHECK_DEVICE there
+   would make it re-grab the SPI4 exclusive lock for "a gratuitous card
+   remount for no benefit" (see the ratchet comment in app_freertos.c). A
+   caller that needs the FSM to actually move NOW, not just reset the
+   backoff counter for its next natural cycle, wants
+   DRV_SDSPI_DetectPollExpireNow below instead -- kept as a SEPARATE
+   function precisely so this one's existing callers and semantics don't
+   change. */
 void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object)
 {
     if (object < DRV_SDSPI_INSTANCES_NUMBER)
@@ -3048,6 +3139,194 @@ void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object)
         LOG_D("SDSPI detect-poll kick (count was %u)",
               (unsigned)gDrvSDSPIObj[object].detachedPollCount);
         gDrvSDSPIObj[object].detachedPollCount = 0U;
+    }
+}
+
+/* #756: DetectPollKick's urgent sibling, for a caller that must know NOW
+ * (SCPI_CheckSDCardPresent's re-probe) rather than merely arming the FSM's
+ * own next natural cycle. Zeroing detachedPollCount (what the plain kick
+ * above does) only changes the interval TASK_START_POLLING_TIMER computes
+ * the NEXT time it runs -- it does nothing to a timer ALREADY in flight,
+ * which after the backoff engaged can be DRV_SDSPI_DETECT_BACKOFF_INTERVAL_MS
+ * (5 s) out. This publishes a forced-expiry REQUEST that the FSM's
+ * TASK_WAIT_POLLING_TIMER_EXPIRE state serves on the very next
+ * DRV_SDSPI_Tasks() pass (the SD task runs it at a 1 ms cadence -- see
+ * SD_CARD_MANAGER_TASK_DELAY_MS), cancelling the in-flight cadence timer as
+ * it goes. A request raised while the FSM is in any other state stays
+ * pending -- not lost -- until the FSM next reaches that state.
+ *
+ * WHAT THIS FUNCTION NO LONGER DOES, AND WHY (round-2 review, finding 5).
+ *
+ * It does not touch cardPollingTmrHandle or cardPollingTimerExpired. It used
+ * to do both -- destroy the in-flight timer, then force the flag -- and that
+ * three-step sequence raced the detect FSM's own three-step arm
+ * (DRV_SDSPI_CardDetectPollingTimerStart in drv_sdspi_driver_interface.c:
+ * clear the flag, register a new timer, publish its handle). Neither side
+ * took a lock and nothing ordered them:
+ *
+ *   V  This runs on whichever task dispatched the SCPI command: the USB task
+ *      at priority 7 (app_USBDeviceTask is created at 2 and self-boosts,
+ *      app_freertos.c:316) or the WiFi task at priority 2 (app_WifiTask,
+ *      never boosted). The arm runs wherever DRV_SDSPI_Tasks() is pumped,
+ *      which today is only app_SDCardTask at priority 5.
+ *   V  Scheduling is preemptive with time slicing (FreeRTOSConfig.h
+ *      configUSE_PREEMPTION / configUSE_TIME_SLICING), so the SD task
+ *      preempts a WiFi-context caller at any instruction AND a USB-context
+ *      caller preempts the SD task at any instruction. The race is reachable
+ *      from BOTH transports, in opposite directions -- not, as first
+ *      supposed, only over TCP.
+ *   V  It is reachable even without preemption: SYS_TIME_TimerDestroy and
+ *      SYS_TIME_CallbackRegisterMS both enter SYS_TIME_ResourceLock, which
+ *      takes a FreeRTOS mutex with OSAL_WAIT_FOREVER, so either side can
+ *      BLOCK mid-sequence while the other runs.
+ *
+ * Three distinct losses followed. The comment that used to sit here argued
+ * against none of them: it argued only that a `bool` store cannot TEAR,
+ * which was true and beside the point. Lost updates across interleaved
+ * multi-step sequences are a different failure than a torn access.
+ *
+ *   1. LOST FORCE. The arm's first step is an unconditional
+ *      `cardPollingTimerExpired = false`. With the FSM spinning in
+ *      TASK_CHECK_DEVICE (sdState != TASK_STATE_IDLE) when the force landed,
+ *      it reaches TASK_START_POLLING_TIMER without ever having looked at the
+ *      flag, and that store discards the force; the FSM then waits out a
+ *      whole fresh interval. SD_PRESENCE_RECHECK_BOUND_MS is 500 ms and the
+ *      FASTEST interval is 1000 ms, so the caller's bounded re-check is
+ *      guaranteed to expire and a card that IS present is refused -- exactly
+ *      the #756 symptom this change exists to remove.
+ *   2. ORPHANED TIMER / LOST SLOT. The handle was read here and written
+ *      there. A caller that loaded the handle before the SD task published a
+ *      replacement destroyed the OLD value (already self-destroyed at its own
+ *      expiry, so a no-op) and left the NEW timer armed with nothing tracking
+ *      it. That timer then held one of the five SYS_TIME slots -- the single
+ *      spare media init needs -- across TASK_CHECK_DEVICE and
+ *      TASK_MEDIA_INIT, and later fired one unintended poll.
+ *   3. STALLED FSM. Mirror image: a caller that destroyed the LIVE handle and
+ *      was descheduled before forcing the flag left the FSM in
+ *      TASK_WAIT_POLLING_TIMER_EXPIRE with no armed timer and nothing
+ *      pending, so card insertion and removal both went unnoticed.
+ *      Self-healing once the caller resumes, but for a priority-2 WiFi caller
+ *      under streaming load that window is not bounded by anything.
+ *
+ * THE FIX. The force is published as an EDGE on a dedicated counter pair
+ * (detectForceReq / detectForceAck, see drv_sdspi_local.h) that no other code
+ * path resets, and BOTH timer operations -- cancel and arm -- now happen
+ * inside lDRV_SDSPI_AttachDetachTasks' switch, in
+ * TASK_WAIT_POLLING_TIMER_EXPIRE and TASK_START_POLLING_TIMER respectively.
+ * That switch runs holding dObj->transferMutex for its whole body, so the two
+ * are mutually excluded by a lock the arm path ALREADY takes -- no new lock,
+ * and no reliance on which task happens to pump DRV_SDSPI_Tasks(). Every
+ * access to cardPollingTmrHandle is now inside that mutex, so (2) and (3)
+ * cannot be constructed at all, and (1) cannot happen because nothing but the
+ * FSM's own acknowledgement retires a request. The slot-occupancy argument
+ * the old TimerDestroy existed for is preserved and strengthened: the cancel
+ * now happens at the exact moment the FSM decides to leave the wait for
+ * TASK_CHECK_DEVICE, so no poll timer can still be armed when
+ * TASK_MEDIA_INIT needs the spare slot. Latency is unchanged -- a pending
+ * request is served on the next 1 ms SD pass, as the destroy-and-force pair
+ * was.
+ *
+ * A critical section, not a mutex, is the right primitive for the publish:
+ * the payload is one 32-bit increment plus the rate-limiter compare, i.e.
+ * O(1) with no loop, no allocation and nothing that can block (mcu-hygiene
+ * section 7). The reverse shape -- wrapping the SYS_TIME calls themselves --
+ * is NOT available: both block on a FreeRTOS mutex (see above), which inside
+ * taskENTER_CRITICAL is a deadlock rather than a heavy critical section.
+ *
+ * RATE LIMIT (round-2 review, finding 4). SCPI_CheckSDCardPresent calls this
+ * on EVERY negative presence read, and a TCP caller never enters its blocking
+ * re-check loop, so back-to-back absent-card commands would otherwise drive
+ * card detection at command throughput -- each forced poll costing the shared
+ * SPI4 bus a CMD exchange that interrupts the WiFi module, which is the exact
+ * cost #589 P1's backoff was added to remove.
+ *
+ * The floor is dObj->pollingIntervalMs: the instance's own FAST detect
+ * cadence (DRV_SDSPI_POLLING_INTERVAL_MS_IDX0, 1000 ms -- the value
+ * TASK_START_POLLING_TIMER uses as pollMs whenever the backoff is not
+ * engaged). That is the principled line rather than a number picked in
+ * isolation. At or above it, forcing can never drive detection faster than
+ * this driver polls unprompted whenever a card IS attached, a rate the system
+ * already sustains continuously; below it, forcing asks the shared bus for
+ * something the driver never does on its own. The backoff interval
+ * (DRV_SDSPI_DETECT_BACKOFF_INTERVAL_MS, 5000 ms) would be wrong in the other
+ * direction -- it would refuse a force that only asks for a poll the FSM was
+ * about to perform anyway.
+ *
+ * Only the FORCE is gated. DRV_SDSPI_DetectPollKick still runs on every call,
+ * so a caller whose force is rate-limited away still pins the FSM to the fast
+ * 1 s cadence instead of the 5 s backoff. Its answer can therefore be up to
+ * one fast interval stale where a forced poll would have been fresh; that is
+ * accepted deliberately, because it applies only to a SECOND absent-card
+ * command inside the same second, whose predecessor already forced a poll and
+ * was told the card was absent.
+ *
+ * The rate-limiter state shares the publish's critical section rather than
+ * being left best-effort. The section is mandatory for detectForceReq (a lost
+ * increment is a lost request, i.e. failure (1) again), so covering the
+ * timestamp compare-and-commit costs nothing extra and makes the limiter
+ * exact instead of letting two concurrent callers both pass it. detectForceAt
+ * is 64-bit, which is never an atomic access on PIC32MZ (mcu-hygiene section
+ * 3), so it would have needed the section regardless.
+ *
+ * HAND-EDITED. This file sits under config/default/, i.e. MCC/Harmony
+ * territory: a regeneration would remove this function entirely with NO
+ * build error (nothing stock calls it). Team direction (2026-06-10, see
+ * FreeRTOSConfig.h) is that MCC/Harmony regeneration will not be used on
+ * this codebase again, so this is a documentation hazard rather than a
+ * live one -- but if a regen ever does happen, this whole function must be
+ * restored (#756). */
+void DRV_SDSPI_DetectPollExpireNow(SYS_MODULE_OBJ object)
+{
+    if (object < DRV_SDSPI_INSTANCES_NUMBER)
+    {
+        DRV_SDSPI_OBJ* const dObj = &gDrvSDSPIObj[object];
+        OSAL_CRITSECT_DATA_TYPE critState;
+
+        /* Unconditional, never rate-limited: the cheap half. Resetting
+         * detachedPollCount only changes the interval the FSM's own next
+         * TASK_START_POLLING_TIMER pass computes, so it costs the shared bus
+         * nothing now and keeps the cadence fast for a caller whose force is
+         * gated below. */
+        DRV_SDSPI_DetectPollKick(object);
+
+        /* Both operands are computed OUTSIDE the critical section.
+         * SYS_TIME_Counter64Get masks the hardware timer interrupt and walks
+         * the counter, and SYS_TIME_MSToCount is a 64-bit multiply and
+         * divide; neither belongs inside one (mcu-hygiene section 7). What
+         * remains under the lock is a compare and three stores.
+         *
+         * SYS_TIME_MSToCount divides by the SYS_TIME counter frequency, which
+         * is only non-zero after SYS_TIME_Initialize. That is not a live
+         * hazard here: the sole caller is an SCPI handler, so this cannot run
+         * before SYS_Initialize has completed and the scheduler has started
+         * -- and the driver's own poll arm already calls the same helper on
+         * the same precondition. */
+        const uint64_t nowCount = SYS_TIME_Counter64Get();
+        const uint64_t minCount = (uint64_t)SYS_TIME_MSToCount(dObj->pollingIntervalMs);
+
+        critState = OSAL_CRIT_Enter(OSAL_CRIT_TYPE_HIGH);
+        /* detectForceEver is the explicit first-call case: at boot the
+         * counter is near zero, so "now - 0" would be a small number and an
+         * unqualified compare would suppress the first force of a session.
+         * After that the subtraction needs no wraparound reasoning -- the
+         * 64-bit counter is monotonic and cannot wrap in any service life.
+         * Were it ever to run backwards, the unsigned difference would be
+         * enormous and the force would be ALLOWED, which is the safe
+         * direction for a gate whose failure mode is refusing a present
+         * card. */
+        if ((dObj->detectForceEver == false) ||
+            ((nowCount - dObj->detectForceAt) >= minCount))
+        {
+            dObj->detectForceAt   = nowCount;
+            dObj->detectForceEver = true;
+            /* The publish. Read-modify-write, and both SCPI tasks can reach
+             * it, so it must be indivisible: a lost increment is a lost
+             * request, which is the same wrongly-refused-card outcome as
+             * failure (1) above. The FSM never writes this field, only reads
+             * it, so one writer-side lock is sufficient. */
+            dObj->detectForceReq++;
+        }
+        OSAL_CRIT_Leave(OSAL_CRIT_TYPE_HIGH, critState);
     }
 }
 
