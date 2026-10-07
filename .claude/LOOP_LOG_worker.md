@@ -9846,3 +9846,42 @@ Nothing spent. No fix pushed, no audit run, no label touched.
   fixer now, so that call and the audit both go elsewhere.
 - **Fire tree recorded in `.claude/FIRE_TREES.txt` as NOT REMOVABLE** — clean, on the remote, 0
   holders, but recency fires. Any signal blocks.
+
+## 2026-10-07 (cont.) — fw#976 report moved off the PR branch; fw#991 DECLINED
+
+- **MOVED `FIRE_976.md` off PR #976's branch.** The fire had committed its report there, where an
+  auditor diffing the tree reads **nq-b's position on six threads as content**. Removal-only
+  fast-forward `2ef26a301` → **`b960c92452130385dba3e2028e7c1d0bbe49a7c9`**, 1 file / 190 deletions,
+  no force-push, built via a separate `GIT_INDEX_FILE` so this worktree's index was untouched.
+  **Re-read the remote head immediately before pushing — no drift.** Verified after: file GONE, both
+  fix commits still ancestors. Content preserved at `9aa6edc06`. conv-fw released against
+  `b960c9245`. ⛔ This was the **eighth involvement kind** (routing text inside the audited artifact)
+  and I walked into it by letting a fire commit its report to the PR branch instead of my lane.
+- ⛔⛔ **fw#991 DECLINED** (`36d747b8699c2c26940d87768db6c286ab619e29`) — and it **reverses** my own
+  mid-read report that eligibility was "clean". **I parked fw#991 myself** (id 5630562778,
+  2026-09-11), declined finding #3, confirmed #5, briefed the fire — **and parked its blocker ts#306**
+  (*"lane nq-b, 2026-09-14"*).
+- ⭐⭐ **METHOD CORRECTION, the session's biggest:** my records gave **ZERO** authorship hits on 991;
+  **the ROW convicted me.** On fw#1110 it was the exact opposite. So **neither channel can CLEAR,
+  both can CONVICT, and which is decisive is a property of the ROW, not the method.** Adopting
+  fw#1110's correct lesson as a *ranking* of channels nearly produced a false clear. Cause of the
+  miss: my bare `#NNN` ledger writes — **a zero from a corpus with a known indexing defect is an
+  unmeasured question, not a zero.**
+- **Park chain, re-derived at source:** item 1 BLOCKED on ts#306 (OPEN *and parked*) · item 2 (wiki)
+  **UNVERIFIED by anyone** · item 3 ✅ done by nq-c's refresh `590ecfd81`→`a66aadb2b` · item 4 audit
+  NOT done. ts#306's arm 1 needs **a bench run on `7E2873046200E891` — nq-b's own board** — gated on
+  an operator arm choice. **Chain terminus is a decision, not a lane.**
+- **fw#991 is in NONE of the three rulings' enumerated scopes** (checked verbatim). Same scope
+  discipline that *validated* fw#976's grant says fw#991 has **no grant**.
+- **Half-documented dependency (new direction):** ts#306 names 991 once in 33 comments and **not in
+  its park** — discoverable from firmware, invisible from the suite. Second instance after
+  ts#330↔fw#996, which was documented from *neither* end.
+- **`590ecfd81` is NOT dangling** — it is fw#991's previous head. **Stale, not dangling**, and stale
+  is worse because it looks like compliance. **`audit-991n` resolved to nq-c's by SHA pairing**
+  against `nq-c-991` (identical detached SHA, ~2 h apart, third nq-c tree on the row). All three
+  idle; **touched none**.
+- **503 guard fired and was needed:** conv-ts's finding (held in my own records) that a bws 503
+  strips `GH_TOKEN` and returns **ZERO** comments on *this row*. Guarded with retry + a second
+  channel; got **41**, the known-good figure. A zero would have manufactured a clean row against a
+  gate whose `isResolved` **fails OPEN**.
+- **No assignable row left:** fw#1110 declined, fw#976 declined past the fix round, fw#991 declined.
