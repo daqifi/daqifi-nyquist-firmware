@@ -37,6 +37,21 @@ scpi_result_t SCPI_StorageSDCrcGet(scpi_t * context);     /* #306 */
 scpi_result_t SCPI_StorageSDEnableSet(scpi_t * context);
 scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context);
 
+/* #981: SYSTem:STORage:SD:FAILNext <0|1> / ? -- BENCH/TEST-ONLY.
+ *
+ * Arms a one-shot that forces ONE real SD write -- issued during the NEXT
+ * teardown drain, not just "the next write" -- to fail, so the SD
+ * write-failure accounting paths can be regression-tested without filling the
+ * card. The consume site gates on the manager already being in UNMOUNT_DISK,
+ * so an ordinary write or a rotation-drain write can never take the arm (both
+ * can otherwise start a pre-existing remount that truncates the log file).
+ * Same "ships in the release binary, documented bench-use-only" category
+ * as SYSTem:STReam:BENCHmark and SYSTem:STORage:SD:BENCHmark. No production
+ * client should ever send this. See sd_card_manager.h's
+ * sd_card_manager_SetFailNextWrite for the rails and the full rationale. */
+scpi_result_t SCPI_StorageSDFailNextSet(scpi_t * context);
+scpi_result_t SCPI_StorageSDFailNextGet(scpi_t * context);
+
 // SD Card Benchmarking Commands
 scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context);
 scpi_result_t SCPI_StorageSDBenchmarkQuery(scpi_t * context);
