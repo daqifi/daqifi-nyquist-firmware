@@ -24,8 +24,6 @@ firmware/src/app_freertos.c :: unresolvable: %s with no /* log_budget: max=N */ 
 firmware/src/services/SCPI/SCPIADC.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: %s: channel %d out of range (max 255)
 firmware/src/services/SCPI/SCPIDAC.c :: no conservative width for '%.2f' (conversion '%f') -- add it to WIDTHS in tools/lint/log_budget.py or annotate the site :: DAC_VoltageToCounts: Invalid hardwareFullScale (%.2f), returning 0
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: %s refused (#850/#977): another session start or config change is in flight. Retry.
-firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: Cannot start SD logging - SD suspended: %s\r\n
-firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: Cannot start SD logging - SD suspended: %s\r\n
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SCPI: '%s' is registered but not implemented
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD log arm refused (#942): %s\r\n
 firmware/src/services/SCPI/SCPIInterface.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: SD start refused (#689): %s
@@ -64,7 +62,6 @@ firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s wit
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [%s:%d]Zero-byte write to SD Card
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] #689 bucket '%s' unreadable - refusing rather than rolling
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] #689 bucket mkdir '%s' failed err=%d
-firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] #689 bucket name '%s' is taken by a non-directory - rename or remove it, or use a different directory
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] #689 bucket stat '%s' failed err=%d - failing safe rather than reading it as absent
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] #689 part stat '%s' failed err=%d - failing safe rather than reading it as absent
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] CRC read error before EOF on '%s'
@@ -83,11 +80,9 @@ firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s wit
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] ListFiles: entry does not fit, omitting '%s'
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] ListFiles: max depth %d reached at '%s', listing truncated
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] Unmount unrecoverable (card %s, %u attempts) - forcing state clear
-firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] WRITE refused: no writable bucket under '%s' (active '%s', bucket %u, %u per bucket, max %u) - FatFs file-create wedges large directories (#689). Use a larger SD:MAXSize, a different directory, or clear the card.
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] header write short: expected=%u written=%d ('%s')
 firmware/src/services/sd_card_services/sd_card_manager.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: [SD] rotation open abandoned (%s): discarded %u buffered byte(s)
 firmware/src/services/sd_card_services/sd_card_manager.c :: worst case 137 bytes > ceiling 125 :: [SD] aborted after %u bytes - no terminator sent (a plain EOF would look like a complete file; #725 tracks a distinguishable one)
-firmware/src/services/sd_card_services/sd_card_manager.c :: worst case 192 bytes > ceiling 125 :: [SD] operations hanging while reads work - likely (a) target directory too large (#689: larger SD:MAXSize / clear the card) or (b) an SPI-mode-incompatible card (wiki: SD-Card-Compatibility)\r\n
 firmware/src/services/streaming.c :: worst case 212 bytes > ceiling 125 :: Stream end: lost %u/%llu samples (%u%%), USB=%u WiFi=%u SD=%u bytes, encFail=%u encDrop=%u dioDrop=%u eos=%u (all post-grace)
 firmware/src/services/wifi_services/iperf2/iperf2.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: iperf2: %s refused - WINC not started
 firmware/src/services/wifi_services/iperf2/iperf2.c :: unresolvable: %s with no /* log_budget: max=N */ annotation :: iperf2: %s refused - WINC not started
