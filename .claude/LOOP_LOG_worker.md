@@ -9992,3 +9992,36 @@ Nothing spent. No fix pushed, no audit run, no label touched.
 - **Passed through unassessed** (judgement, and I am the fixer): the defect-2 fix makes
   `release_gate.classify()` **hard-FAIL** a runtime SKIP, not merely distinguish it. Wants operator
   eyes before the next nightly.
+
+## 2026-10-07 (cont.) — ts#446 round 4 DECLINED, on mechanisms the firmware pattern did not predict
+
+- ⛔ **ts#446 DECLINED** (`b0f65f38c1a4b17e927de52b06f8616ff4d60f4c`). Two independent grounds,
+  **neither** the firmware mechanism. Substance **not graded**.
+- **Ground 1 — CITED PRECEDENT** (6th key). My ledger briefs a fire: *"if extended, **additively, per
+  ts#446's ruling on `ReliableSCPI.query()`**… a behaviour change to a shared primitive is a
+  fleet-wide blast radius."* I used this row's ruling as governing fleet authority and propagated it
+  into another row's work — and this round's `test_harness.py` hunks are `@@ -702 query()`,
+  `@@ -736`/`@@ -746 _query_raw()`. **The exact function.**
+- **Ground 2 — LIVE CROSS-PR STAKE, hours old.** I am fixer on ts#306, whose defect-2 fix cites
+  `test_877:485` as the suite convention. Verified it myself:
+  `'===== %s: %d PASS, %d FAIL, %d SKIPPED ====='`. ts#446's hunk `@@ -476,39 +502,209` covers
+  original 476-514, so **485 is inside the rewritten region** (39 lines → 209).
+- ✅ **Checked and found NOT disqualifying, recorded so the decline is not inflated:**
+  `test_harness.py` has **no line-range overlap** (ts#446 ~700-800/~3539 vs ts#306's
+  `StreamingMeasurement` ~1001-1700). ⭐ **And `leaked` is a HOMONYM** — a *reading* escaping a guard
+  (ts#446) vs the *sample-loss flag* (ts#306). Six grep hits, zero real overlap. **Grade the hits,
+  never count them** — 4th instance today, and the first where the false positive would have
+  manufactured a ground I did not have.
+- ⭐⭐ **METHOD, one level above this morning's channel-reversal: WHICH KIND of entanglement
+  disqualifies also varies per row.** Four firmware rows were all disposition-authorship from
+  censuses; **running "the census test" on ts#446 would have returned CLEAN.** Enumerate every kind
+  every time; the previous row's decisive key must not become the checklist. With an eighth kind found
+  today, **an enumeration is a floor, not a ceiling.** The warning came from the *requester* — a
+  candidate's recent experience is exactly what biases its own checklist.
+- **Handover, read not graded:** 7 files, **85,445-byte** patch; `test_877` rewritten across 8 hunks
+  in a file 34+ tests depend on. ⚠ **Both harness-policy manifests AND `regression_gate.py` are in
+  this diff** — exactly the configuration where *a registered self-test is not a running self-test*
+  hides. Auditor should verify the registration **takes effect**, not that a line was added.
+- **No eligible row in either repo:** firmware saturated by census-driven disposition-authorship;
+  ts#446 out on precedent + a live cross-PR stake. Available for readings, mechanical verification,
+  and tooling — none of which adds a position to a row.
