@@ -319,7 +319,23 @@ MODE_NONE = "SD_CARD_MANAGER_MODE_NONE"
 # The manager primitive ARM_HELPER itself calls (#976 audit round 6 / review
 # comment on #801): the census above discovers arm sites only by the WRAPPER
 # and HELPER names, so a direct call to this one -- bypassing both -- is
-# invisible to every property above. See `_direct_update_problems`.
+# invisible to every property above. See `_direct_update_problems`, which
+# still discovers its sites by NAME (`_call_positions`, a regex) and reasons
+# about the textual TEARDOWN shape at each one it finds -- but a bypass
+# written `(sd_card_manager_UpdateSettings)(args)` is call-shaped text that
+# regex cannot see at all (the `(` follows a `)`, not the name), so it was
+# examined by NOTHING, not merely misjudged (#976 round-2 fix). This name is
+# now also in `SD_ACCOUNTED`, so the occurrence PARTITION
+# (`cdef.classify_occurrences`/`account_occurrences`) independently reports
+# any occurrence of it that is not a definition, a prototype or a call
+# meeting cdef's call contract -- a parenthesized callee included, since the
+# contract refuses wrapped callees outright (#976 audit round 9) -- exactly
+# the mechanism that already closed this same shape for `ARM_WRAPPER`,
+# `ARM_HELPER`, `CLAIM_TAKER`, `STREAM_ARM_CALL` and `STREAM_CLAIM_TAKER`.
+# This does not replace `_direct_update_problems`'s teardown-shape reasoning
+# for calls the regex DOES find; it closes the gap for occurrences the regex
+# cannot see in the first place, the same division of labor `_accounting_problems`
+# already performs for every other tracked name.
 MANAGER_UPDATE_CALL = "sd_card_manager_UpdateSettings"
 
 # ---- the second site: the streaming-log arm in SCPIInterface.c (#942/#974) --
@@ -1127,12 +1143,18 @@ def _stream_arm_escape_problems(source_text):
             if o.kind == "call" and o.function != STREAM_FN]
 
 
-# Every name each entry point's properties are computed from. Each one's
-# occurrences are ACCOUNTED FOR (see `_accounting_problems`): a spelling of
-# one of these that no recogniser explains fails the gate instead of silently
-# dropping out of a count.
+# Every name each entry point's properties are computed from, PLUS
+# MANAGER_UPDATE_CALL -- not a property's own name, but the one
+# `_direct_update_problems` still discovers by regex (`_call_positions`)
+# rather than through the partition, so it needs the same net the others
+# already have. Each one's occurrences are ACCOUNTED FOR (see
+# `_accounting_problems`): a spelling of one of these that no recogniser
+# explains fails the gate instead of silently dropping out of a count --
+# a parenthesized callee included, which is how a direct arm bypassing both
+# ARM_WRAPPER and ARM_HELPER escaped `_direct_update_problems`'s own
+# name-based discovery entirely (#976 round-2 fix).
 SD_ACCOUNTED = (ARM_HELPER, ARM_WRAPPER, CLAIM_TAKER, FORMAT_FN,
-                FORMAT_PUBLISH)
+                FORMAT_PUBLISH, MANAGER_UPDATE_CALL)
 STREAM_ACCOUNTED = (STREAM_FN, STREAM_ARM_CALL, STREAM_CLAIM_TAKER)
 
 
@@ -1757,6 +1779,69 @@ static scpi_result_t decoy(scpi_t * c) {
         _ck("the recognized teardown shape (mode cleared to NONE "
             "immediately before the direct call) is NOT flagged",
             any("SCPI_StorageSDLegitTeardown" in p for p in probs), False)
+
+        # #976 round-2 fix: `_direct_update_problems` still finds its sites by
+        # regex (`_call_positions`), which requires the name immediately
+        # followed by `(` -- so a bypass spelled `(F)(args)` (the `(`
+        # follows a `)`, not the name) was examined by NOTHING, the exact
+        # audited finding (confirmed mutation-proof: byte-identical output to
+        # the unmutated file). MANAGER_UPDATE_CALL joining `SD_ACCOUNTED`
+        # closes it: the occurrence PARTITION sees the call-shaped text even
+        # though the regex cannot, and the call contract refuses a
+        # parenthesized callee outright (#976 audit round 9), so it reds as
+        # an unaccounted occurrence -- the same mechanism already proven for
+        # ARM_WRAPPER, ARM_HELPER, CLAIM_TAKER and the streaming-log site.
+        paren_arm = _GOOD.replace(
+            "    return SCPI_RES_OK;\n}\n\nscpi_result_t SCPI_StorageSDFormat",
+            "    (sd_card_manager_UpdateSettings)(pCfg);\n"
+            "    return SCPI_RES_OK;\n}\n\nscpi_result_t SCPI_StorageSDFormat", 1)
+        assert paren_arm != _GOOD
+        _ck("a direct arm spelled (sd_card_manager_UpdateSettings)(args) -- "
+            "invisible to _direct_update_problems's own regex discovery -- "
+            "is caught via occurrence accounting, not silently examined by "
+            "nothing",
+            any("no recogniser accounts for" in p and "PARENTHESIZED" in p
+                and "sd_card_manager_UpdateSettings" in p
+                for p in check(paren_arm)[0]), True)
+
+        # An alias and a function-pointer indirection reach the same manager
+        # primitive without ever spelling it where `_call_positions` looks;
+        # occurrence accounting is what has to catch these too, since
+        # `_direct_update_problems` cannot discover a call it cannot read.
+        alias_update = _GOOD.replace(
+            "    return SCPI_RES_OK;\n}\n\nscpi_result_t SCPI_StorageSDFormat",
+            "#define SNEAKY_UPDATE sd_card_manager_UpdateSettings\n"
+            "    SNEAKY_UPDATE(pCfg);\n"
+            "    return SCPI_RES_OK;\n}\n\nscpi_result_t SCPI_StorageSDFormat", 1)
+        assert alias_update != _GOOD
+        _ck("a direct arm reached through a #define alias of "
+            "sd_card_manager_UpdateSettings is an unaccounted occurrence",
+            any("no recogniser accounts for" in p and "preprocessor directive" in p
+                and "sd_card_manager_UpdateSettings" in p
+                for p in check(alias_update)[0]), True)
+
+        # KNOWN, DOCUMENTED-ELSEWHERE GAP, pinned here rather than left an
+        # untested claim: macro TOKEN PASTING assembles the name at
+        # preprocessing time, so the raw text never contains the identifier
+        # `sd_card_manager_UpdateSettings` at all -- `classify_occurrences`
+        # walks IDENTIFIER TOKENS in the as-spliced, comment/literal-masked
+        # text (`cdef.raw_occurrences`), which is translation phases 2-3, not
+        # phase 4's macro expansion, so this is out of reach BY CONSTRUCTION,
+        # not a recogniser gap. Already named generically in this file's
+        # module docstring ("Out of reach, by construction: ... macro token
+        # pasting") and in `cdef`'s (`CAT(SD_ArmOrRefuse, WithCleanup)`); this
+        # row pins the SAME limitation for `MANAGER_UPDATE_CALL` rather than
+        # letting the new coverage silently imply it is closed too.
+        pasted_update = _GOOD.replace(
+            "    return SCPI_RES_OK;\n}\n\nscpi_result_t SCPI_StorageSDFormat",
+            "#define SD_CAT_(a, b) a##b\n"
+            "#define SD_CAT(a, b) SD_CAT_(a, b)\n"
+            "    SD_CAT(sd_card_manager_, UpdateSettings)(pCfg);\n"
+            "    return SCPI_RES_OK;\n}\n\nscpi_result_t SCPI_StorageSDFormat", 1)
+        assert pasted_update != _GOOD
+        _ck("a direct arm reached through macro TOKEN PASTING is OUT OF "
+            "REACH by construction -- not caught, and not claimed to be",
+            check(pasted_update), ([], 2))
 
         # ---- property 2: the publish that makes the retraction necessary ---
         nopub = _GOOD.replace("    sd_card_manager_SetFormatPending();\n", "")
