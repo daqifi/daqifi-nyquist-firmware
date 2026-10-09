@@ -10176,3 +10176,41 @@ Nothing spent. No fix pushed, no audit run, no label touched.
   read (3 inert legs) · ts#306 fix+bench (3 trials, budget never exercised) · fw#991 item-2 reading ·
   23-of-59 undocumented STATS fields · authoritative self-test count **12 files / 11 rows** and the
   **6 ACTIVE / 7 EXCLUDED** split (**207 checks unrun**) · ts#306 arm-choice packet · 6 declines.
+
+## 2026-10-09 — fw#976 granted extra fix round COMPLETE. The fire corrected BOTH its briefers.
+
+- **Grant re-verified at source before acting** — I was 2 days stale and nearly refused authorised
+  work. `issuecomment-6045150709`, 2026-10-07T19:21:55Z, *"grant the extra round on 976 and keep
+  going"*, constraint **inside** the question: *"key on the CALL EXPRESSION, not another spelling."*
+  ⭐ **A grant's status is as perishable as a head SHA, and it decays toward REFUSAL — the direction
+  with no downstream detector.**
+- **PUSHED `9dfc09d75706f5231abb2d856a57f2f9c0a0645d`**, verified by me against `gh` AND `ls-remote`.
+  Parent `b960c9245`, one commit, no force-push.
+- ⭐⭐ **THE 10-SITE EXPOSURE WAS WRONG — actual exposure 1 of 1.** Verified at the parent:
+  `SD_ACCOUNTED` held 5 names, `STREAM_ACCOUNTED` 3, and **`MANAGER_UPDATE_CALL` was in NEITHER.**
+  The weak `_call_positions` is used for **nine** names; **eight were already enrolled** in tuples
+  `account_occurrences` is applied to (`:1278`/`:1302`), whose call contract already refuses
+  `(F)(args)` from round 9. **A weak discovery at a site whose NAME is independently cross-checked is
+  not an exposure.** Confirmed empirically too: `(F)(x)` at 780/781/907/1023/1036 was **already
+  caught before** the change.
+- ⭐ **The fire REFUSED the helper rewrite I had authorised, with evidence** — the lower-regression
+  path, justified rather than assumed. **Fix is ONE TUPLE ENTRY.** The `+91/-6` is honest overhead:
+  16 doc / 6 enrollment / 63 self-test. The "9 names" message is **derived** at `:2637` from
+  `len(SD_ACCOUNTED)+len(STREAM_ACCOUNTED)`, so it cannot drift.
+- **Proofs:** MUTANT A rc=0→**rc=1** ("PARENTHESIZED callee") · MUTANT B rc=1 both (control intact) ·
+  clean run exit 0 both, **zero false positives** on 8 teardown sites · self-test **113→116**, revert
+  the one line → **114/116** with exactly the 2 new assertions failing · 4 second-site injections
+  already caught · **bonus:** `#define` alias and `&name`-then-called now caught too.
+- ⛔ **MUTANT D macro token-pasting NOT caught — a real open limitation, mechanism precise.** The
+  pasted identifier does not exist as a token until **phase-4 expansion**; `compiler_view` splices and
+  masks (phases 2-3) but does **not** expand `##`. So no occurrence primitive here can see it **by
+  construction**. **Pinned as an explicit self-test row** rather than left implied, and **not**
+  special-cased. Closing it needs a preprocessed view.
+- ⛔⛔ **MY DETECTOR WAS WRONG TWICE; third version filed.** unused-import → returns **0** (every name
+  IS used) · call-site ratio 10:1 → counts **usage, not coverage**, overstating 10× · ✅ correct form:
+  **the SET DIFFERENCE between {names the weak primitive serves} and {names enrolled in the
+  cross-check}** = exactly `{MANAGER_UPDATE_CALL}`. **Coverage is a property of the NAME.** I twice
+  proposed a detector without running it against its own motivating case.
+- **Round SPENT.** Verification is the coordinator's to route; I am the fixer on this row twice over
+  and not the auditor. New fire tree under the operator's checkout — same rule tension, same answer
+  (leave it; the harness reclaims them).
