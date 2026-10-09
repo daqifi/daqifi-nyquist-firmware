@@ -10214,3 +10214,36 @@ Nothing spent. No fix pushed, no audit run, no label touched.
 - **Round SPENT.** Verification is the coordinator's to route; I am the fixer on this row twice over
   and not the auditor. New fire tree under the operator's checkout — same rule tension, same answer
   (leave it; the harness reclaims them).
+
+## 2026-10-09 (cont.) — 13 PR-less branches triaged. Only ONE fully superseded.
+
+- **All 13 done** (`a71adf22a` + `26b4ff5bf`). Population confirmed independently: 59 remote / 399
+  PR-head / 19 PR-less − main − 4 salvage = **13**, matching the coordinator exactly.
+- ⭐⭐ **5 of 5 open-issue branches are DISCOVERABLE from their issue** — four via a comment added at
+  preservation time, #675 via its body **and title**. I expected the half-documented-dependency shape
+  and found the opposite: **the preserve-and-say-on-the-ticket discipline WORKED.** Paired with **7 of
+  13 self-labelling not-ready in the commit subject**: *the preservation half of the loop is healthy;
+  the gap is that nobody has since DECIDED anything.*
+- **Only `perf/757` is fully superseded** (both removed memsets **0 on main**, controls clean). The
+  other twelve each hold content absent from main, or are the wrong shape for the question.
+- ⛔ **`fix/1053`: #1053 CLOSED while main carries the WRONG claim in 5 files** (UserEdge.c ×3,
+  UserEdge.h, UserI2c.c/.h, DAC7718.c) and the corrected one in 3. The issue names both files;
+  SCPIInterface was fixed, UserEdge was not.
+- ⭐⭐ **`wip/913`: the FIX is live on main and its 339-line HOST TEST is ORPHANED.** UserSpi.c yield
+  sites 3 on both; `tests/host/test_913_spi_wait_stat.c` **ABSENT** from main. 17 absent identifiers,
+  almost all test names. **Closed issue, shipped fix, untested** — against the standing
+  every-change-ships-a-test rule.
+- `fix/560` and `preserve/824` each landed **half** (counters yes / `ReapDeadClient` no;
+  `Streaming_{Generate,Reset}SdFileHeader` absent).
+- ⛔⛔ **METHOD — the instrument must match the KIND OF CHANGE, not the artifact.** The identifier
+  set-difference check, just proven and endorsed, was **wrong for 2 of 5 with confident numbers**: a
+  **prose** correction's identifiers are the symbols *discussed* (false "superseded"), and an
+  **added**-identifier diff is blind to a **deletion** (right answer, wrong instrument).
+  ⭐ **My guard caught the EMPTY case and missed the WRONG-KIND case** — the prose branch added 15
+  identifiers, so the guard passed. **A non-empty result is not evidence the instrument fits.** I had
+  been testing whether the instrument RUNS, not whether it ANSWERS THE QUESTION.
+- **Two of my own errors, both caught:** grepped `HAL/spi.c` when the branch touches
+  `HAL/UserSpi/UserSpi.c` and nearly inferred "the fix did not land" — wrong, and **overstating** the
+  residue (third wrong-revision/wrong-path instance in two days); and `git grep -c <rev> -- <path>`
+  prints `rev:path:count`, so `cut -d: -f2` returned the path.
+- **No deletions recommended, including `perf/757`** — one measurement is not a disposition.
