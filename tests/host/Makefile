@@ -48,6 +48,42 @@ AD7609_BIN := run_ad7609_tests
 BENCH_BIN := run_943_tests
 SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 
+# #971: the under-claim settle order of a REFUSED SD arm. Same file, same
+# reason as #943 -- SCPIStorageSD.c is not host-includable -- so this is also
+# a model rather than the real code, and it also needs a way to fail loudly
+# when what it models moves underneath it.
+#
+# The guard here is a CONTENT HASH of the modelled function, not a grep for
+# the property. That is deliberate. PR #976 spent three review rounds finding
+# fifteen ways an honest refactor slips past a textual assertion about this
+# exact function, and `tools/lint/scpi_sd_arm_path.py` is being narrowed for
+# over-claiming on the strength of it; a second, cruder copy of that
+# assertion here would give false comfort. A hash claims only "this text is
+# unchanged", which is all a build recipe can honestly know, and no refactor
+# can slip past it. When it fires, re-read ~8 lines of C against the model in
+# test_971_sd_arm_refusal_order.c and update the hash -- it is a tripwire
+# asking for a review, not a verdict on whether the code is right.
+#
+# Hashed: the function from its `static bool <name>(` line to its closing
+# brace, with comments removed BY TOKEN and whitespace collapsed. So rewording
+# a comment does not fire, and any change to the code does.
+#
+# BY TOKEN, not by line shape, and that distinction is the whole point (#976
+# pre-merge audit). The first version deleted any line STARTING with `/*`, `*`
+# or `//`. `*(&cfg->mode) = SD_CARD_MANAGER_MODE_NONE;` is an ordinary C
+# pointer-deref assignment that starts with `*`, so it was silently deleted
+# before hashing -- adding one left the pin byte-identical. Measured, not
+# argued: a probe function containing that line hashed the same with and
+# without it. A guard whose whole claim is "any edit to this code forces a
+# review" must not have a spelling of edit that it cannot see.
+#
+# The strip is regex-based and NOT string-aware, so the recipe refuses outright
+# if the function ever contains a string literal rather than hashing text it
+# might have mangled. It contains none today (pure control flow).
+ARM_BIN := run_971_tests
+SD_ARM_HELPER := SD_ArmOrRefuseWithCleanup
+SD_ARM_HELPER_SHA := 48fc182fdf552b9a5cb860d7dc16821212874f734d9504d68fd110c75c97ee9f
+
 # #953: SD:BENCHmark's "file never opened" diagnosis. Same file as BENCH_BIN
 # and, for the same reason, the same technique -- no UUT copy, no stubs, the
 # decision cascade re-implemented against injected values.
@@ -601,6 +637,48 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	       echo "       Update FW_STALL_POLL_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
+
+# Two separate failures with two separate messages: the function is GONE
+# (renamed/moved -- the model has lost its subject) vs the function is there
+# and its CODE CHANGED (the model may have gone stale). Collapsing them would
+# report "hash mismatch" for a rename, sending the reader to diff a function
+# that is no longer in the file.
+# $(RECIPES) is a prerequisite because SD_ARM_HELPER and SD_ARM_HELPER_SHA live
+# in the Makefile and CONTROL this target's guard: without it, editing either
+# pin left an already-built binary up to date and make ran the stale one
+# without the revised validation (#976 audit). Uses the shared RECIPES
+# variable (#983) rather than a literal "Makefile", same as every other
+# target below.
+# `$(CDEF)` is a prerequisite because the definition RULE lives there now,
+# not in hash_function.py: without it an edit to the rule would leave this
+# binary up to date and the guard would run the previous rule, which is the
+# same defect `$(RECIPES)` was added for one level down (#976).
+CDEF := ../../tools/lint/cdef.py
+$(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) hash_function.py $(CDEF) $(RECIPES)
+	@python3 hash_function.py --find $(SD_BENCH_SRC) $(SD_ARM_HELPER) >/dev/null 2>&1 \
+	  || { python3 hash_function.py --find $(SD_BENCH_SRC) $(SD_ARM_HELPER); \
+	       echo "ERROR: $(SD_ARM_HELPER)() is not a single definition in $(SD_BENCH_SRC)."; \
+	       echo "       test_971_sd_arm_refusal_order.c models that function, and the"; \
+	       echo "       hash below extracts it from that line to its closing brace. If"; \
+	       echo "       it was renamed, moved, or its signature reformatted, re-read it"; \
+	       echo "       against the model and update SD_ARM_HELPER / SD_ARM_HELPER_SHA."; \
+	       exit 1; }
+	@python3 hash_function.py --self-test >/dev/null \
+	  || { echo "ERROR: hash_function.py's own self-test fails, so the drift pin"; \
+	       echo "       below cannot be trusted to see an edit. Fix the hasher"; \
+	       echo "       before reading its verdict."; \
+	       python3 hash_function.py --self-test; exit 1; }
+	@got=$$(python3 hash_function.py $(SD_BENCH_SRC) 'static bool $(SD_ARM_HELPER)(') || exit 1; \
+	 [ "$$got" = "$(SD_ARM_HELPER_SHA)" ] \
+	  || { echo "ERROR: the CODE of $(SD_ARM_HELPER)() in $(SD_BENCH_SRC) has changed."; \
+	       echo "         expected sha256 $(SD_ARM_HELPER_SHA)"; \
+	       echo "         got      sha256 $$got"; \
+	       echo "       This is a tripwire, not a verdict: the change may be perfectly"; \
+	       echo "       correct. Re-read that function against the model in"; \
+	       echo "       test_971_sd_arm_refusal_order.c -- if the model still describes"; \
+	       echo "       it, update SD_ARM_HELPER_SHA; if it does not, fix the model."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(ARM_BIN) test_971_sd_arm_refusal_order.c
 
 $(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE_SRC) $(FREERTOS_CONFIG_SRC)
 	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_INTERFACE_SRC) \
@@ -1283,6 +1361,15 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
+# $(RECIPES) is main's (#983) fix and applies to SPI913_BIN too, because it
+# carries grep guards: a guard re-run only when its SOURCE changes is not
+# re-run when the GUARD changes.
+#
+# This used to open with a count of the binaries and a merge ordinal, both of
+# which went stale the moment the next branch landed -- it still said "seven"
+# and "Third merge" while the list above `run` had reached twelve and the
+# eighth. A count belongs in exactly one place, and that place is the banner
+# over `run`, which is the line a resolution actually has to touch.
 # #1121: the same three guards as $(SUSPEND_BIN), against the OTHER file.
 #
 # GUARD 1 -- THE FIVE-ARM ORDER. This site's cascade is
@@ -2314,26 +2401,33 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 	$(CC) $(CFLAGS) -I$(BTL_SYSCFG_DIR) -I$(BTL_SYSCFG_DIR)/framework/bootloader/src \
 	      -o $(HEXWIN_BIN) test_1141_hex_record_upper_panel_error.c
 
-# Every suite, and every one of the eleven binaries. SEVENTH additive
-# collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
-# fw#1000, fw#913 vs fw#980, and now fw#913 vs fw#985 -- every one of them
-# two branches appending a line to these same two lists. Resolved the same
-# way every time: keep each side's target rule INTACT and union only `run`
-# and `clean`. Dropping a rule loses a suite silently; duplicating one
-# silently shadows the other.
-
-# Every suite, and every one of the THIRTEEN binaries. NINTH additive collision
-# in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs fw#1000,
-# fw#913 vs fw#980, fw#913 vs fw#985, fw#999 vs fw#985, and now fw#999 vs
-# fw#1057 -- every one of them two branches appending a line to these same two
-# lists. Resolved the same way every time: keep each side's target rule INTACT
-# and union only `run` and `clean`. Dropping a rule loses a suite silently;
-# duplicating one silently shadows the other.
+# Every suite, and every one of the FIFTEEN binaries. Additive collisions in
+# this block so far: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs fw#1000,
+# fw#913 vs fw#980, fw#913 vs fw#985, fw#999 vs fw#985, fw#999 vs fw#1057, and
+# fw#971's own ARM_BIN colliding with fw#913/fw#980/fw#1000/fw#985 and then
+# fw#999/fw#1057 as each landed on main, and now fw#971 vs fw#947 (SYSINFO_BIN,
+# main's independent branch) as this PR re-merges main a second time -- every
+# one of them two branches appending a line to these same two lists. The
+# lineage replaces an ordinal
+# because each branch numbered its own collisions and the ordinals disagreed
+# (#971 said EIGHTH, main said NINTH), and three stale copies of this banner
+# with three different counts had accumulated here. Resolved the same way every
+# time: keep each side's target rule INTACT and union only `run` and `clean`.
+# Dropping a rule loses a suite silently; duplicating one silently shadows the
+# other. Update the count above whenever a resolution touches `run`.
 #
 # #1026 is the ticket to stop this, and PR #1040 implements it by moving each
 # target into tests/host/tests/<issue>-<slug>.mk so a new suite appends to an
 # accumulator instead of editing a shared line. Whichever lands first, the rest
 # re-express their target as a fragment -- a mechanical move of one recipe,
+# NOT A PLAIN UNION, and the exception is the point. This branch's `run`/`clean`
+# lists are 40 commits stale and name two binaries that NO LONGER EXIST on main:
+#   $(SPI913_BIN)  -- RENAMED to $(WAITLOOP_BIN) by fw#1056.
+#   $(DAC1057_BIN) -- RETIRED by fw#1108 together with run_1057_tests and
+#                     test_1057_dac7718_wait_stat.c, both deleted on main.
+# Unioning them in would reference two undefined variables and resurrect a
+# deleted test. So main's list is taken whole and only this branch's OWN
+# addition is added to it: $(ARM_BIN) := run_971_tests. TWENTY-FOUR binaries.
 # which is strictly cheaper than this resolution has been nine times running.
 #
 # Every suite, and every one of the SIXTEEN binaries: main's fifteen plus
@@ -2377,11 +2471,12 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # $(SDLOG_BIN)/$(GEN_1000).
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN)
+     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(ARM_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
+	./$(ARM_BIN)
 	./$(JSONESC_BIN)
 	./$(SYSINFO_BIN)
 	./$(SUSPEND_BIN)
@@ -2406,6 +2501,6 @@ clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
 	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) \
-	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp
+	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp $(ARM_BIN)
 
 .PHONY: run clean
