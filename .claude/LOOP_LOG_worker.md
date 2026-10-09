@@ -10247,3 +10247,31 @@ Nothing spent. No fix pushed, no audit run, no label touched.
   residue (third wrong-revision/wrong-path instance in two days); and `git grep -c <rev> -- <path>`
   prints `rev:path:count`, so `cut -d: -f2` returned the path.
 - **No deletions recommended, including `perf/757`** — one measurement is not a disposition.
+
+## 2026-10-09 (cont.) — triage CLOSED: 2 of my 4 findings refuted, by me and by the coordinator
+
+- **Corrections filed** (`f3197d5d0`). Final state of the 13: **3 fully superseded** (`fix/1053`,
+  `perf/757`, `preserve/824`) · **1 partial confirmed by main's own declaration** (`fix/560`) ·
+  **1 shipped-fix-with-orphaned-test** (`wip/913`) · **5 live, all discoverable from their issues** ·
+  **2 the wrong shape for the question.** **No deletions recommended.**
+- ⭐⭐ **THE PATTERN IS THE RESULT: both surviving findings rested on POSITIVE evidence; both refuted
+  ones rested on ABSENCES.** → **Prefer a source that ASSERTS the gap over a search that FAILS TO FIND
+  the fill.** Main's `/* 0 until Opt 1 */` beats any number of empty greps.
+- ⛔ **Two mechanisms refuted the absence-based findings:** a **RENAME PRESENTS IDENTICALLY TO A
+  REMOVAL** (`Streaming_{Generate,Reset}` → `{Build,Get}SdFileHeader`), and a **PHRASE GREP MEASURES
+  DICTION, NOT ASSERTION** (*"pre-scheduler"* on main 5× **about other functions**; subject-scoped 0).
+- ⛔⛔ **The worse failure: I stated the rename caveat for `fix/689` and did not run it on
+  `preserve/824` two paragraphs later.** **A stated-but-unapplied caveat converts an oversight into an
+  apparent judgement** — a reader sees it present elsewhere and infers the omission was considered.
+  **Writing the rule down made failing to run it MORE misleading.**
+- ⭐ **SILENT ≠ WRONG.** I called the identifier check's `0 absent` on a prose branch a *false*
+  superseded; it was **uninformative by construction**. Conflating the two **discredited the one
+  instrument that was behaving correctly.** Scoreboard: **2 TRUE · 1 FALSE · 2 SILENT**.
+- ⭐⭐ **`WifiClientForceClosed` goes up as an operator item** — **emitted** (`SCPIInterface.c:4199`),
+  **undocumented** (0 wiki hits, one of my 23), and **structurally always zero** (`/* 0 until Opt 1 */`).
+  A reader infers *"no clients needed force-closing"*; the truth is *"the feature does not exist."*
+  **Assertions-that-cannot-fail in the telemetry dimension, and no gate can catch it** —
+  `scpi_wiki_sync` compares commands, not response fields. **Two investigations, two days, one field.**
+- **Closing position, on record:** *less confident than two hours earlier that identifier evidence
+  alone should ever license a deletion.* Work that ends in reduced confidence about its own instrument
+  is a result, not a failure.
