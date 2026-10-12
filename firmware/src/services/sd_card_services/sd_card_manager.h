@@ -93,20 +93,11 @@ extern "C" {
         // and rejects with SCPI -200 if the card has fewer than this
         // many bytes free.  0 = no pre-start check (legacy behavior).
         uint64_t minFreeBytes;
-        /* #958: this WRITE target is a SCRATCH name that must not land on
-         * an existing file. The open is SYS_FS_FILE_OPEN_WRITE_PLUS, which
-         * TRUNCATES, so a collision destroys whatever was there.
-         *
-         * Why a flag rather than a rule for every WRITE: for ordinary
-         * logging, opening an existing target is DELIBERATE -- the #689
-         * pre-walk hunts for the part on purpose, so a split session
-         * reopens its own part in place instead of creating a duplicate in
-         * a later bucket. Refusing every collision would break that. The
-         * two uses genuinely differ, so the caller states which it is.
-         *
-         * Set by SD:BENCHmark alongside the scratch name it installs, and
-         * cleared on the same path that restores the logging target.
-         * Default false, so every existing caller keeps today's behaviour. */
+        /* #958: the WRITE target is SD:BENCHmark's scratch name. Prefer a name
+         * no file already uses, instead of truncating whatever is there.
+         * Not a rule for every WRITE: ordinary logging opens an existing
+         * target DELIBERATELY (the #689 pre-walk reopens a split part in
+         * place). Default false. */
         bool uniqueTarget;
     } sd_card_manager_settings_t;
 
@@ -328,7 +319,6 @@ extern "C" {
         SD_REFUSE_BUCKET_MKDIR,      /* the bucket directory could not be created */
         SD_REFUSE_BUCKET_UNREADABLE, /* a bucket could not be counted OR stat'd (FS fault) */
         SD_REFUSE_BUCKET_NOT_DIR,    /* a non-directory occupies the bucket name */
-        SD_REFUSE_TARGET_NOT_UNIQUE, /* #958: no free scratch name within the bound */
     } SdWriteRefuseReason;
 
     SdWriteRefuseReason sd_card_manager_WriteRefuseReason(void);
