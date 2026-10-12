@@ -2274,14 +2274,16 @@ void sd_card_manager_ProcessState() {
                  * last candidate and say so in the log -- i.e. exactly today's
                  * behaviour, reached only in the case the walk cannot improve. */
                 if (uniqueTargetAtOpen) {
-                    for (uint32_t probes = 0u;
-                         probes < SD_CARD_MANAGER_UNIQUE_TARGET_MAX
+                    bool scratchNameFree = false;
+                    uint32_t probes = 0u;
+                    for (; probes < SD_CARD_MANAGER_UNIQUE_TARGET_MAX
                              && gSDCardData.filePath[0] != '\0';
                          probes++) {
                         SYS_FS_FSTAT st;
                         memset(&st, 0, sizeof(st));
                         if (SYS_FS_FileStat(gSDCardData.filePath, &st)
                                 != SYS_FS_RES_SUCCESS) {
+                            scratchNameFree = true;
                             break;      /* absent, or unanswerable: take it */
                         }
                         gSDCardData.fileCounter++;
@@ -2291,6 +2293,23 @@ void sd_card_manager_ProcessState() {
                                        gSDCardData.bucketPath,
                                        gSDCardData.baseFilename,
                                        gpSDCardSettings->file);
+                    }
+                    /* NOT silent. The fallback still opens a name something
+                     * else holds, and the open truncates -- so the one thing
+                     * this path must not do is take that decision without
+                     * saying so. The bytes are a stale benchmark scratch file
+                     * and losing them is accepted (see the block above), but
+                     * "accepted" and "unobservable" are different, and
+                     * SYST:LOG? is where this project puts device health.
+                     * %.40s keeps it inside Logger's 125-byte ceiling (#1029):
+                     * 64 literal + 40 name + 2 digits = 106, margin 19.
+                     * Measured, not estimated -- the first draft of this line
+                     * came to 126, one byte over, while this comment claimed
+                     * 110. */
+                    if (!scratchNameFree) {
+                        LOG_E("[SD] #958 scratch '%.40s' taken after %u tries"
+                              " - reusing, old file lost",
+                              gpSDCardSettings->file, (unsigned)probes);
                     }
                 }
                 // Count the attempt, not the success: a failed create still costs
