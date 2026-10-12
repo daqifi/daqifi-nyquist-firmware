@@ -2370,6 +2370,25 @@ void sd_card_manager_ProcessState() {
                          * path is why this refusal needs no teardown of its
                          * own -- and why the bucket refusal above is not the
                          * one to copy: its waiter has no cleanup pending. */
+                        /* Round 3 added the mode clear, and both legs found
+                         * its absence independently ("terminate the WRITE arm"
+                         * / "can restart the benchmark after discarding
+                         * accepted data"). ERROR routes to UNMOUNT_DISK, which
+                         * does NOT clear `mode` -- and IDLE re-enters a
+                         * session whenever `mode != MODE_NONE`, so leaving the
+                         * arm set sends the manager straight back into
+                         * OPEN_FILE to retry a name that will fail for the
+                         * same reason, after the teardown has already
+                         * discarded the data. Clearing `mode` is what makes
+                         * this refusal terminal.
+                         *
+                         * Clearing it is NOT what round 2 objected to: that
+                         * was setting IDLE and giving opCompleteSemaphore
+                         * here, ahead of the benchmark callback's cleanup. The
+                         * arm clear and the release ORDER are separate
+                         * decisions, and this needs the first without the
+                         * second. */
+                        gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                         sd_AbandonRotationWindow("no unique scratch name");
                         gSDCardData.currentProcessState =
                                 SD_CARD_MANAGER_PROCESS_STATE_ERROR;
