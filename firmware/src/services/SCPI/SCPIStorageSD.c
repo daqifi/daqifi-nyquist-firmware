@@ -1425,6 +1425,12 @@ scpi_result_t SCPI_StorageSDBenchmark(scpi_t * context) {
     taskENTER_CRITICAL();
     memcpy(pSDCardRuntimeConfig->file, benchLogFile, sizeof(benchLogFile));
     pSDCardRuntimeConfig->file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
+    /* #958: set in the SAME critical section as the name it qualifies. The
+     * SD task reads the pair when it resolves the path; if the flag could be
+     * seen without the name, or the name without the flag, a benchmark run
+     * would either refuse the user's logging target or truncate-open its own
+     * scratch name -- which is the defect this closes. */
+    pSDCardRuntimeConfig->uniqueTarget = true;
     taskEXIT_CRITICAL();
     logFileClobbered = true;   /* #728: restore the logging target on exit */
 
@@ -2333,6 +2339,15 @@ __exit_point:
             memcpy(pSDCardRuntimeConfig->file, savedLogFile, sizeof(savedLogFile));
             pSDCardRuntimeConfig->file[SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX] = '\0';
         }
+        /* #958: cleared UNCONDITIONALLY, outside the name compare above.
+         * That compare deliberately leaves a target someone else set on the
+         * other transport -- but the uniqueness rule belongs to the scratch
+         * name, not to whatever replaced it. Leaving it set because the name
+         * changed would make the NEXT ordinary logging session refuse a
+         * target that already exists, i.e. turn a benchmark into a silent
+         * change in logging behaviour. Clearing it when it is already false
+         * costs one store. */
+        pSDCardRuntimeConfig->uniqueTarget = false;
         taskEXIT_CRITICAL();
         /* Deliberately NOT sd_card_manager_UpdateSettings(): it unconditionally
          * forces currentProcessState = DEINIT, so publishing here would kick the

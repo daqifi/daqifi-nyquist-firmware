@@ -108,6 +108,18 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  * more than the time it saves (see the fileCounter==0 branch for the three
  * ways the stale one went wrong). */
 #define SD_CARD_MANAGER_BUCKET_ADVANCE_MAX (SD_CARD_MANAGER_MAX_BUCKET + 1u)
+/* #958: how many names the unique-scratch walk will try before refusing.
+ *
+ * Bounded for the same reason the bucket roll is: an unbounded search on a
+ * card holding a pathological set of names would sit in OPEN_FILE stat'ing
+ * forever while the encoder fills a buffer nothing drains. 16 is chosen
+ * against what the collision actually is -- two runs arriving at the same
+ * post-boot tick offset AND the same sequence number -- which needs a
+ * coincidence to happen once; needing it sixteen times consecutively, each
+ * on a DIFFERENT name, is not a case worth spending unbounded I/O on. A
+ * refusal here is loud (LOG_E plus SD_REFUSE_TARGET_NOT_UNIQUE) and costs a
+ * benchmark run, where guessing costs somebody's data file. */
+#define SD_CARD_MANAGER_UNIQUE_TARGET_MAX  16u
 /* #780: how long the pumped wait blocks between USB write pumps. Small enough
  * that a filling circular buffer is serviced promptly, large enough that the
  * wait is not a busy-spin against the SD task.
@@ -2074,7 +2086,20 @@ void sd_card_manager_ProcessState() {
                  * both shapes with one mechanism; a newly created bucket is
                  * empty, so nothing the roll creates can hold the part. */
                 bool reopenExisting = false;
-                if (bucketOk) {
+                /* #958: a scratch target must never reopen. The pre-walk
+                 * below exists to FIND an existing part and reopen it in
+                 * place, which is right for a split logging session and is
+                 * exactly the defect for a benchmark name: it would hand the
+                 * truncating WRITE_PLUS open a file somebody else's run left
+                 * on the card. Skipping the walk is not enough on its own --
+                 * the uniqueness loop after generateFilename is what finds a
+                 * free name -- but entering it would set reopenExisting and
+                 * suppress that loop's accounting. */
+                bool uniqueTargetAtOpen;
+                taskENTER_CRITICAL();
+                uniqueTargetAtOpen = gpSDCardSettings->uniqueTarget;
+                taskEXIT_CRITICAL();
+                if (bucketOk && !uniqueTargetAtOpen) {
                     uint32_t reuseBucket = gSDCardData.curBucket;
                     char probePath[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
                     for (uint32_t probe = gSDCardData.curBucket;
@@ -2237,6 +2262,102 @@ void sd_card_manager_ProcessState() {
                 generateFilename(gSDCardData.filePath, sizeof(gSDCardData.filePath),
                                gSDCardData.fileCounter, gSDCardData.bucketPath,
                                gSDCardData.baseFilename, gpSDCardSettings->file);
+
+                /* #958, the other half: the name above can already exist on
+                 * the card, and the open below is SYS_FS_FILE_OPEN_WRITE_PLUS,
+                 * which TRUNCATES. For a benchmark scratch name neither field
+                 * in it distinguishes one boot from another -- the tick
+                 * restarts at 0 and the sequence at 1 -- so a run after a
+                 * reboot can land on a file an earlier run left behind and
+                 * destroy it silently.
+                 *
+                 * This is the shape #958 asked for -- stat the candidate,
+                 * advance a discriminator when it exists, refuse after a
+                 * bounded number of attempts -- and this is the only place it
+                 * can be done: the FAT volume is mounted only inside a session
+                 * (SYS_FS_AUTOMOUNT_ENABLE is false), so the SCPI callback that
+                 * builds the name runs with nothing mounted and every
+                 * SYS_FS_FileStat() there fails SYS_FS_ERROR_NO_FILESYSTEM --
+                 * indistinguishable, from the callback, between "free" and
+                 * "cannot tell".
+                 *
+                 * The discriminator is generateFilename's existing counter
+                 * suffix ("base-N.ext"), not a new naming scheme, so the names
+                 * this produces are the ones the split path already produces
+                 * and every length check above still applies.
+                 *
+                 * Failure is a REFUSAL, never a truncation. A stat that fails
+                 * for a reason other than "not there" is NOT read as free --
+                 * the same convention sd_BucketDirExists, CountDirEntries and
+                 * sd_TargetExistsInBucketPath all follow, for the same reason:
+                 * reading a fault as absence destroys the file the check
+                 * exists to protect, on a card that is telling us it is
+                 * unwell. */
+                if (uniqueTargetAtOpen && gSDCardData.filePath[0] != '\0') {
+                    uint32_t probes = 0u;
+                    bool haveFreeName = false;
+                    bool scratchFsError = false;
+                    while (probes < SD_CARD_MANAGER_UNIQUE_TARGET_MAX) {
+                        SYS_FS_FSTAT st;
+                        memset(&st, 0, sizeof(st));
+                        if (SYS_FS_FileStat(gSDCardData.filePath, &st)
+                                != SYS_FS_RES_SUCCESS) {
+                            SYS_FS_ERROR e = SYS_FS_Error();
+                            if (e == SYS_FS_ERROR_NO_PATH
+                                    || e == SYS_FS_ERROR_NO_FILE) {
+                                haveFreeName = true;
+                            } else {
+                                /* %.40s and the SCRATCH NAME, not the full
+                                 * path: Logger truncates at 125 bytes (#1029,
+                                 * and three messages in this file lost their
+                                 * remedy clause to exactly that). A worst-case
+                                 * filePath is 89 bytes -- 45 of bucket path, 40
+                                 * of name, 3 of counter suffix -- which with
+                                 * this literal measured 163, i.e. 38 OVER, and
+                                 * the part cut is the remedy at the end. The
+                                 * scratch name is bounded by
+                                 * SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX (40)
+                                 * and is the half a reader needs; the bucket is
+                                 * already in the refusal that follows. */
+                                LOG_E("[SD] #958 scratch '%.40s' stat err=%d"
+                                      " - refusing, not truncating",
+                                      gpSDCardSettings->file, (int)e);
+                                scratchFsError = true;
+                            }
+                            break;
+                        }
+                        /* Taken. Advance the discriminator and rebuild. */
+                        probes++;
+                        gSDCardData.fileCounter++;
+                        generateFilename(gSDCardData.filePath,
+                                       sizeof(gSDCardData.filePath),
+                                       gSDCardData.fileCounter,
+                                       gSDCardData.bucketPath,
+                                       gSDCardData.baseFilename,
+                                       gpSDCardSettings->file);
+                        if (gSDCardData.filePath[0] == '\0') {
+                            break;      /* name no longer fits; refuse below */
+                        }
+                    }
+                    if (!haveFreeName) {
+                        gSDCardData.writeRefuseReason = scratchFsError
+                                ? SD_REFUSE_BUCKET_UNREADABLE
+                                : SD_REFUSE_TARGET_NOT_UNIQUE;
+                        LOG_E("[SD] #958 no free scratch name after %u probe(s)"
+                              " - refusing the session", (unsigned)probes);
+                        gSDCardData.lastOperationSuccess = false;
+                        if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
+                            (void)SYS_FS_FileClose(gSDCardData.fileHandle);
+                            gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                        }
+                        gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                        gSDCardData.currentProcessState =
+                                SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                        sd_AbandonRotationWindow("no unique scratch name");
+                        xSemaphoreGive(gSDCardData.opCompleteSemaphore);
+                        break;
+                    }
+                }
                 // Count the attempt, not the success: a failed create still costs
                 // a directory entry scan, and over-counting only rolls us to a
                 // fresh bucket sooner, which is the safe direction.
