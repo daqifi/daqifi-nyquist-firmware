@@ -1354,11 +1354,45 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
-$(FAILNEXT_BIN): test_981_sd_failnext_hook.c test_framework.h $(SD_MANAGER_SRC) $(RECIPES)
+$(FAILNEXT_BIN): test_981_sd_failnext_hook.c test_framework.h $(SD_MANAGER_SRC) $(SD_BENCH_SRC) $(RECIPES)
 	@grep -qF 'static volatile bool gFailNextWrite = false;' $(SD_MANAGER_SRC) \
 	  || { echo "ERROR: gFailNextWrite is no longer declared in $(SD_MANAGER_SRC)."; \
 	       echo "       test_981_sd_failnext_hook.c models its one-shot semantics; re-read both."; \
 	       exit 1; }
+	@# #1013: the ARM is USB-ONLY. This hook exists to make an SD write fail,
+	@# and SCPI over TCP has no authentication, so arming must cost physical
+	@# presence at the bench. Nothing else in the host suite can see this: the
+	@# C tests above drive sd_card_manager's arm/consume contract directly and
+	@# never go through the SCPI handler, so removing the gate leaves every one
+	@# of them green. Checked as a SHAPE inside the setter's own body rather
+	@# than anywhere in the file -- a ContextIsTcp call in some other handler
+	@# (there are two, for #598) must not satisfy this.
+	@sed -n '/^scpi_result_t SCPI_StorageSDFailNextSet(/,/^}/p' $(SD_BENCH_SRC) \
+	  | grep -qF 'wifi_tcp_server_ContextIsTcp(context)' \
+	  || { echo "ERROR: SCPI_StorageSDFailNextSet no longer refuses the TCP transport."; \
+	       echo "       #1013 gated this ARM to USB because the command's purpose is to"; \
+	       echo "       cause a write failure and TCP SCPI is unauthenticated. If this is"; \
+	       echo "       deliberate, the wiki row and that decision need updating together."; \
+	       exit 1; }
+	@# ... and that the refusal PRECEDES the parameter read, so a refused
+	@# command does no work and leaves no state behind.
+	@sed -n '/^scpi_result_t SCPI_StorageSDFailNextSet(/,/^}/p' $(SD_BENCH_SRC) \
+	  | grep -nE 'ContextIsTcp|SCPI_ParamInt32' | head -2 \
+	  | awk -F: 'NR==1 && $$2 !~ /ContextIsTcp/ { exit 1 }' \
+	  || { echo "ERROR: the #1013 TCP refusal no longer precedes SCPI_ParamInt32 in"; \
+	       echo "       SCPI_StorageSDFailNextSet. A command that will not be honoured"; \
+	       echo "       must not consume its argument first."; \
+	       exit 1; }
+	@# The QUERY is deliberately NOT gated (health visibility). If a future
+	@# edit gates it too, that is a decision about hiding an armed hazard from
+	@# a remote operator and belongs in review, not in a silent diff.
+	@sed -n '/^scpi_result_t SCPI_StorageSDFailNextGet(/,/^}/p' $(SD_BENCH_SRC) \
+	  | grep -qF 'wifi_tcp_server_ContextIsTcp' \
+	  && { echo "ERROR: SCPI_StorageSDFailNextGet is now transport-gated."; \
+	       echo "       #1013 left the QUERY reachable on purpose: it answers 'is a fault"; \
+	       echo "       injector armed on this device', which is health visibility a remote"; \
+	       echo "       operator should have. Gating it hides the hazard instead of the arm."; \
+	       exit 1; } || true
 	@# #981 post-audit (PR #1013 BLOCKING finding 2): the four independent
 	@# `grep -qF ... || ok=0` checks this replaced only proved every TOKEN was
 	@# present somewhere in the block -- not that they occurred in the right

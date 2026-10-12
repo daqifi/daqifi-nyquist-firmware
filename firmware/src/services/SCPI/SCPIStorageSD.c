@@ -573,6 +573,40 @@ scpi_result_t SCPI_StorageSDEnableGet(scpi_t * context){
 scpi_result_t SCPI_StorageSDFailNextSet(scpi_t * context) {
     int32_t param1;
 
+    /* #1013: ARMING is USB-ONLY. SCPI over TCP has no authentication for any
+     * command, so this is not a new hole in an otherwise-closed surface --
+     * what is new is a command whose entire PURPOSE is to make a write fail.
+     * Every other SCPI command over TCP asks the device to do its job; this
+     * one asks it to break. Anyone who can reach the soft AP could arm a
+     * silent SD write failure on a logging device, and the only trace is a
+     * LOG_E nobody reads until the data is already missing. Requiring
+     * physical USB makes arming cost presence at the bench, which is where
+     * the hook is meant to be used and is a property no password would add.
+     *
+     * Reuses #598's transport predicate -- already used twice in this file,
+     * at SCPI_StorageSDGetData and the LISt handler -- rather than inventing
+     * a gate. A compile-time gate was the alternative and is not available:
+     * there is no release/bench build-variant distinction in this project to
+     * hook into, which is exactly why this hook ships in the release binary
+     * in the first place.
+     *
+     * BEFORE the parameter is read, deliberately: a command that will not be
+     * honoured should do no work and leave no state. libscpi discards the
+     * rest of the command line once the handler returns an error.
+     *
+     * The QUERY (SCPI_StorageSDFailNextGet) is deliberately NOT gated. It is
+     * read-only, and it answers "is a fault injector armed on this device?"
+     * -- health visibility that a remote operator has every reason to want.
+     * Hiding it would satisfy the letter of a transport restriction while
+     * concealing the hazard, which inverts this project's stated SCPI rule:
+     * error on config problems, inform on state. */
+    if (wifi_tcp_server_ContextIsTcp(context)) {
+        LOG_E("[SD] SYST:STOR:SD:FAILNext refused over TCP - USB only. "
+              "Arming a write failure requires bench presence.");
+        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+        return SCPI_RES_ERR;
+    }
+
     if (!SCPI_ParamInt32(context, &param1, TRUE)) {
         return SCPI_RES_ERR;
     }
