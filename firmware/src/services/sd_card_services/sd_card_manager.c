@@ -2345,16 +2345,34 @@ void sd_card_manager_ProcessState() {
                                 : SD_REFUSE_TARGET_NOT_UNIQUE;
                         LOG_E("[SD] #958 no free scratch name after %u probe(s)"
                               " - refusing the session", (unsigned)probes);
-                        gSDCardData.lastOperationSuccess = false;
-                        if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
-                            (void)SYS_FS_FileClose(gSDCardData.fileHandle);
-                            gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
-                        }
-                        gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-                        gSDCardData.currentProcessState =
-                                SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                        /* ERROR, and NOT a teardown written out here. An
+                         * earlier revision of this block cleared `mode`, set
+                         * IDLE and gave opCompleteSemaphore itself, copying
+                         * the no-writable-bucket refusal above. Both legs of
+                         * the round-2 audit found the same race in it: the
+                         * waiter on that semaphore is the SD:BENCHmark
+                         * callback, which still has its own cleanup to run
+                         * (#728 logging-target restore, clearing
+                         * `uniqueTarget`, releasing the #829 claim). Going
+                         * IDLE before that cleanup exposes a manager that
+                         * looks free, so another SD command can be accepted
+                         * and armed -- and then cancelled by the benchmark's
+                         * teardown landing on top of it.
+                         *
+                         * The file-open failure a few lines below is the same
+                         * situation (the target could not be opened) and has
+                         * always handled it correctly: abandon the rotation
+                         * window, go to ERROR, touch nothing else. ERROR then
+                         * sets lastOperationSuccess, gives the semaphore and
+                         * routes to UNMOUNT_DISK, so the release happens
+                         * AFTER the ordered teardown rather than ahead of it,
+                         * and UNMOUNT_DISK closes the handle. Reusing that
+                         * path is why this refusal needs no teardown of its
+                         * own -- and why the bucket refusal above is not the
+                         * one to copy: its waiter has no cleanup pending. */
                         sd_AbandonRotationWindow("no unique scratch name");
-                        xSemaphoreGive(gSDCardData.opCompleteSemaphore);
+                        gSDCardData.currentProcessState =
+                                SD_CARD_MANAGER_PROCESS_STATE_ERROR;
                         break;
                     }
                 }
