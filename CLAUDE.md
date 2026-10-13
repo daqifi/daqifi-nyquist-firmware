@@ -461,8 +461,11 @@ different fixed filename under it does not help.
 yours:
 
 ```bash
-# SESSION-scoped, not path-derived. Reads $ORCA_WORKTREE_ID, so it is correct
-# in a task worktree too -- verified identical from the main checkout and /tmp.
+# Keyed on the SESSION, not the cwd -- so the value does not change when you
+# cd into a task tree. It is still PATH-DERIVED at bottom (bench_lane_id()
+# prefers $BENCH_AGENT, then $HERDR_WORKSPACE_LABEL, then falls back to the
+# basename of $ORCA_WORKTREE_ID's path), so it resolves nothing against the
+# registry -- which is why the check below is not optional.
 LANE=$(bash ~/.claude/skills/bench/bench.sh whoami | awk '/^lane:/{print $2}')
 [ -n "$LANE" ] || { echo 'FATAL: cannot establish lane identity' >&2; exit 1; }
 grep -qE "^[[:space:]]*$LANE[[:space:]]" ~/.claude/bench/devices.conf \
@@ -472,10 +475,10 @@ echo "### MARKER-$LANE BEGIN <what>"   # ... the script ...
 echo "### MARKER-$LANE END <what>"
 ```
 
-⚠ **VALIDATE the lane; never DERIVE it from the path.** Three ways to get this wrong, all measured
+⚠ **VALIDATE the lane; never TRUST a derivation unchecked.** Three ways to get this wrong, all measured
 on this station:
 
-- `basename $(git rev-parse --show-toplevel)` yields a registry lane name in **3 of 81**
+- `basename $(git rev-parse --show-toplevel)` — the **cwd** — yields a registry lane name in **3 of 81**
   worktrees. The other 78 are the main checkout, a lane's own *task* trees (`nq-c-fw1013`),
   purpose-named trees (`audit-965`, `build-1055`) and 49 `agent-*` subagent trees. So lane `nq-c`
   working in its own task tree would emit `MARKER-nq-c-fw1013` — not another lane's name, so no
@@ -483,6 +486,13 @@ on this station:
 - `bench` is **not on `PATH`**; only `~/.claude/skills/bench/bench.sh` exists.
 - `$ORCA_WORKTREE_ID` is a compound — `<uuid>::C:\path\to\worktree` — so verbatim use yields a
   60-character marker containing `::` and backslashes.
+
+**Why the `whoami` form is still the primary**, stated without overclaiming: it runs the same
+basename operation, but on the **session root** rather than the cwd — and a session root is far
+more often a registered lane than an arbitrary working directory, and the value **does not
+change** when you `cd` into a task tree. That cwd-stability is the real advantage. It is *not* a
+registry lookup, so a session rooted at `nq-c-fw1013` or `audit-965` reports exactly that, and
+the NOTE in the snippet is what catches it.
 
 ⛔ **And prefer the loud failure.** `bench: not found` was impossible to miss; `basename` never
 fails and always returns a *plausible* string. Swapping one for the other trades a self-announcing
