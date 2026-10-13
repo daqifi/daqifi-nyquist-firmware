@@ -1120,6 +1120,7 @@ def _stream_arm_problems(text):
     arm = arms[0]
 
     # ---- property 1: the claim precedes the arm ------------------------------
+    ifs = _if_statements(body)
     takers = _call_positions(body, STREAM_CLAIM_TAKER)
     if len(takers) != 1:
         problems.append(
@@ -1133,9 +1134,64 @@ def _stream_arm_problems(text):
             "%s() arms before it calls %s(): every write to the shared "
             "operands, `%s` included, must follow the claim (#829/#836)."
             % (STREAM_FN, STREAM_CLAIM_TAKER, MODE_FIELD))
+    else:
+        # ---- property 1b: the claim's VERDICT CONTROLS FLOW -----------------
+        #
+        # The SECOND half of audit finding 1, which names both functions:
+        # "_census_problems() AND _stream_arm_problems() accept exactly one
+        # claim call before an arm without checking that its false result
+        # terminates the handler." #976's first pass patched the census side
+        # only, and the streaming site still reproduced: replacing the whole
+        # `if (!TryClaim()) { ... }` block with `TryClaim();` or
+        # `(void)TryClaim();` left this file's output BYTE-IDENTICAL, rc=0,
+        # at 52e37f11f.
+        #
+        # ONE DIFFERENCE FROM THE CENSUS SITE, worth keeping straight. The
+        # census sentence attests the handlers "take the claim before
+        # arming", and a discarded refusal does not TAKE a claim -- that
+        # sentence misleads. This site's sentence attests only that "the
+        # claim precedes the arm", which stays literally TRUE under the same
+        # mutation: the call does still precede. So the census half was a
+        # false attestation and this half is a silent gap. Both are worth
+        # closing; only the first was ever worse than saying nothing.
+        #
+        # Same accepted set as properties 1b (census) and 4: `captured` and
+        # `inline`. SO THE SAME GAP IS INHERITED HERE -- `_arm_verdict`
+        # decides `captured` from the assignment shape alone and returns a
+        # `pattern` nobody tests, so `bool ok = TryClaim();` with `ok` never
+        # read passes this check. That is open audit finding 9 against
+        # property 4, now true at a third site; it is NOT closed here, and
+        # the module docstring's note that property 4 "does NOT establish it
+        # is ever tested again" covers this line too.
+        kind, _cvar, _cpat = _arm_verdict(
+            body, takers[0], STREAM_CLAIM_TAKER, ifs)
+        if kind == "bare":
+            problems.append(
+                "%s() DISCARDS %s()'s return -- the call stands alone as a "
+                "statement. A lost claim then falls through to the arm and "
+                "the start proceeds without ownership (#829/#836)."
+                % (STREAM_FN, STREAM_CLAIM_TAKER))
+        elif kind == "void":
+            problems.append(
+                "%s() casts %s()'s return to `(void)`. A deliberate discard "
+                "is still a discard: a refused claim reaches the arm with "
+                "the refusal thrown away (#829/#836)."
+                % (STREAM_FN, STREAM_CLAIM_TAKER))
+        elif kind == "captured_transformed":
+            problems.append(
+                "%s() captures %s()'s return through a TRANSFORMATION, so "
+                "what the variable holds is not the verdict. `== false` "
+                "inverts it, and an inverted claim enters the refusal branch "
+                "on SUCCESS and arms on refusal (audit finding 1)."
+                % (STREAM_FN, STREAM_CLAIM_TAKER))
+        elif kind == "other":
+            problems.append(
+                "%s() consumes %s()'s return in a form this checker cannot "
+                "recognise. A form it cannot read is a form it cannot report "
+                "on, so this refuses rather than passes (#829/#836)."
+                % (STREAM_FN, STREAM_CLAIM_TAKER))
 
     # ---- property 4: the verdict is consumed --------------------------------
-    ifs = _if_statements(body)
     kind, _var, pattern = _arm_verdict(body, arm, STREAM_ARM_CALL, ifs)
     if kind == "bare":
         problems.append(
@@ -2482,6 +2538,48 @@ static scpi_result_t decoy(scpi_t * c) {
     _ck("a claim taken AFTER the arm is caught",
         any("arms before it calls sd_card_manager_TryClaim()" in p
             for p in check_stream(lateclaim)[0]), True)
+
+    # ---- property 1b: the claim's verdict must control flow ----------------
+    # The second half of audit finding 1. Each case replaces the WHOLE guard,
+    # not its first line: dropping only `if (!...) {` orphans the body and
+    # the next `}`, and what the checker then reports is a brace-structure
+    # complaint that says nothing about the verdict (measured -- the first
+    # attempt at this proof failed exactly that way).
+    _CLAIM_GUARD = (
+        "    if (!sd_card_manager_TryClaim()) {\n"
+        "        LOG_E(\"Cannot start SD logging - SD card busy\\r\\n\");\n"
+        "        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);\n"
+        "        return SCPI_RES_ERR;\n"
+        "    }\n")
+    assert _CLAIM_GUARD in _GOOD_STREAM
+    for label, rep, needle in (
+            ("a bare claim call at the streaming site is caught",
+             "    sd_card_manager_TryClaim();\n", "DISCARDS"),
+            ("a `(void)` claim cast at the streaming site is caught",
+             "    (void)sd_card_manager_TryClaim();\n", "`(void)`"),
+            ("a TRANSFORMED streaming claim verdict is caught",
+             "    bool got = sd_card_manager_TryClaim() == false;\n"
+             "    if (got) {\n        return SCPI_RES_ERR;\n    }\n",
+             "TRANSFORMATION")):
+        src = _GOOD_STREAM.replace(_CLAIM_GUARD, rep, 1)
+        assert src != _GOOD_STREAM
+        _ck(label, any(needle in p and "sd_card_manager_TryClaim" in p
+                       for p in check_stream(src)[0]), True)
+
+    # NEGATIVE CONTROL. Capture-and-branch is the accepted shape, so this must
+    # stay clean -- without it, a property that refused every form would pass
+    # all three cases above. It also PINS THE INHERITED GAP: `got` here IS
+    # tested, but nothing above checks that it is, so the same fixture with
+    # the `if (!got)` removed would also pass. That is open finding 9 against
+    # property 4, true at this site too, and deliberately not closed here.
+    captured_ok = _GOOD_STREAM.replace(
+        _CLAIM_GUARD,
+        "    bool got = sd_card_manager_TryClaim();\n"
+        "    if (!got) {\n        return SCPI_RES_ERR;\n    }\n", 1)
+    assert captured_ok != _GOOD_STREAM
+    _ck("...and a captured-and-branched streaming claim stays clean",
+        [p for p in check_stream(captured_ok)[0]
+         if "sd_card_manager_TryClaim" in p], [])
 
     # ---- property 4: the verdict must go somewhere -------------------------
     # The #942 shape itself, verbatim: the call as a bare statement and no
