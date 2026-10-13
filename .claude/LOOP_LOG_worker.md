@@ -10480,3 +10480,40 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   before. **Not a lane's call for four lanes.** No bulk commit of the other 97 (unreclaimable bloat;
   **`git gc` HELD**), though 11 are already git-tracked because `.git/info/exclude` only affects
   UNTRACKED files.
+
+### Same item, CLOSED — and two of the three corrections came from a peer being more careful than me
+
+- ⭐⭐ **THE RETENTION ITEM NEEDS NO OPERATOR DECISION.** `191 "at risk" → ~25 load-bearing → ~4 SOLE
+  record`, and **all four are now ledgered** (3 mine, 1 nq-c's). **Each stage was a cheaper check than
+  the action it averted.** The bulk framing was never wrong about the count, only about what it meant.
+  Told the coordinator to pull the decision item.
+- ⛔ **THE CHECK I SKIPPED: I tested only my 15 load-bearing against the ledger, never the 36
+  stale-open.** nq-c tested theirs, found 6 of 13 already durable, and that made my *"the stale-open are
+  a second retention case"* claim **unmeasured.** On mine: **23 of 36 LEDGERED at their own head**, 10 at
+  another head, **3 with no row at all — all ts#306.** Per row ts#407 is **5/5**; **ts#306 was 0/2 despite
+  my auditing it twice** — the *"a missing line reads as no audit ran"* case. Backfilled its two rounds.
+  **My round-history gap is 13 artifacts across FOUR rows, not 36 across fourteen.**
+- ⛔⛔ **I PUT ONE MEASUREMENT UNDER ANOTHER'S NAME.** My backfill wrote the envelope's `totalTokens`
+  into the **`subagent_tokens`** column. nq-c hit the same fork and **refused**, naming it — *a field's
+  NAME is not its SPECIFICATION.* **The convention proves them right: `unknown` was already the value in
+  5 rows, including ALL FOUR of conv-fw's own pointer rows.** A correct value existed and I invented one.
+  Corrected to `unknown` with the number preserved **labelled** in the notes; verified by byte-comparison
+  (**275 other lines sha256-identical**, exactly 3 changed, count unchanged).
+  ⭐ **A PLAUSIBLE FILL IS WORSE THAN A BLANK** — a blank is visibly unknown, a fill is silently wrong.
+  **And I had applied that discipline to `round=?` ONE COLUMN OVER, in the same row.** Third
+  stated-but-unapplied instance today.
+- ⛔ **MY FIRST POINTER WAS A LITERAL `~/.claude/.../` PLACEHOLDER** — for artifacts that, unlike the
+  other ten, had **never been copied out of my worktree.** **A dangling pointer is worse than none: it
+  asserts a recoverability that does not exist.** Copied (cmp-verified, originals in place), repaired,
+  **0 placeholders remain.** Then verified **every** pointer in the ledger, not just mine:
+  **10 of 278 rows carry one (3.6%), 3 of 6 lanes, ALL TEN RESOLVE**, with a bogus-pointer control
+  returning False to prove the test can fail. ⚠ **The convention works and half the fleet does not use
+  it** — nq-a 0/58, conv-ts 0/33, operator 0/35. **Adoption, not policy.**
+- ⭐ **TWO ARTIFACTS CAN BE ONE ROUND:** ts#306's `de8a512` exists as a wrapped full run (6 agents,
+  980,303 tok) **and** a bare extraction written **3 h later** — identical head/producer/gate/counts —
+  and **the extraction LOST `agentCount` and `totalTokens`.** **Extraction is lossy; prefer the
+  envelope.** Passed to the coordinator for the validator, with ts#306 as a second concrete envelope case.
+- ⚠ **Limit on my own fallback, from nq-c:** the filename-SHA trick does **not** rescue `-ERROR`
+  artifacts (no head in payload, no SHA in filename) — correctly, since an errored run carries no verdict.
+  **My 24→8 recovery does not generalise.**
+- **Nothing routed; nothing outstanding on my side.** Idle with an enumeration.
