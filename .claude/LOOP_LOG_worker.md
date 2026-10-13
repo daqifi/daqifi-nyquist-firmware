@@ -10543,3 +10543,37 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   the commit whose thesis was scope*; a filename-SHA fallback **planned and not implemented**; and
   `round=?` discipline held in one cell and **dropped one column over in the same row**. ⭐ **The
   pattern is not ignorance of the rules — it is that writing one down feels like running it.**
+
+- ⛔ **nq-c's "absent pointer" case APPLIED TO ME AND MY OWN CENSUS COULD NOT SEE IT.** My census read
+  nq-c at 1/43 and me at 5/91 — but I had **copied 10 load-bearing artifacts into `lanes/` while only
+  5 of my rows carried a pointer.** The other **7 had a durable verdict AND a durable copy AND no link
+  between them** — not a dangling pointer, an **absent** one. Linked all 7 (#371, #382, #386, #430,
+  #432, #434, #448) using nq-c's tightened guards: **only `lane==nq-b` rows, only where I hold a
+  matching durable copy, refuse if a pointer exists, refuse if the copy is missing, append an 11th
+  field only.** Verified: **280→280 lines, exactly 7 differ, fields 1-10 identical on all 7,
+  NON-NQ-B LINES ALTERED = 0**, untouched block sha256-identical. **Pointers 10→21 of 278 (7.6%) —
+  conv-fw 4 · nq-b 12 · nq-c 5. 22 paths named, 0 dangling, bogus-pointer control returns False.**
+- ⛔⛔ **KEY COUNT INVERTS ON THE TWO FORMS — reproduced on my own pair.** `audit-ts306-de8a512.json`
+  (extracted) has **37 top-level keys and NO `agentCount`/`totalTokens`**; the WRAPPED form has **7
+  keys but `agentCount=6`, `totalTokens=980303`**. **The extraction has MORE keys and strictly LESS
+  information**, because those fields live on the envelope. ⭐ **So any "which file is richer"
+  heuristic keyed on key count or subset reasoning picks the LOSSY one** — and nq-c's naming trap is
+  worse: `*.artifact.json` **reads as canonical while being diminished.**
+- ⭐ **nq-c's DISCRIMINATOR reproduced, and it found a pair I had missed.** Across my **11** same-(row,
+  head) groups only **2** are the two-forms shape — `#306 de8a512` and **`#464 13ca020a`, which I had
+  counted as two separate artifacts.** `#417` is `[WRAPPED, WRAPPED, bare]` → correctly excluded; 8
+  more are `[bare, bare]` → genuine distinct runs. **Same-head alone is weak evidence: 2 of 11.**
+  ⛔ **Consequence: a raw artifact count OVER-COUNTS ROUNDS** — my "108" contains at least 2 rounds
+  recorded twice.
+- ⭐⭐ **THE DIVISION-OF-LABOUR CLAIM, sharpened and filed fleet-wide with my wording:** nq-c caught
+  two of my three errors **not by reviewing me but by doing the same work and deciding differently at
+  the same fork.** The coordinator's addition is the load-bearing half: **REVIEW INHERITS THE AUTHOR'S
+  FRAMING** — four instances today of a corrector committing the error being corrected — while
+  **independent execution meets the fork cold.** *A protection that does not require anyone to be more
+  careful is the only kind that survives a long session.*
+- ⚠ **`feedback_WRITING_A_RULE_DOWN_FEELS_LIKE_RUNNING_IT.md` now exists fleet-wide: 7 instances, 4
+  agents, one day**, three of them mine. Corollary added by the coordinator: **being the AUTHOR of a
+  rule is a RISK FACTOR for that rule, not a qualification — authorship supplies the feeling of having
+  applied it.**
+- ⚠ **MEMORY.md is at ~4.9 KB headroom / 83 pointers**, condensed twice tonight, with bytes arriving
+  mid-write from other writers twice. **Not touching it again**; detail goes in the files.
