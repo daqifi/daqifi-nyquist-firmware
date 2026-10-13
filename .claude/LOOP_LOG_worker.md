@@ -10336,3 +10336,47 @@ Nothing spent. No fix pushed, no audit run, no label touched.
   my live symbols.
 - ⚠ **MEMORY.md is at 20,985 / 24,400 bytes — 3,415 free**, shared by ~5 writers with a silent
   overflow cap. Room for roughly 3 more top-level pointers. 122 links, 0 dangling.
+
+---
+
+## 2026-10-13 · fw#965 pre-emptive verification of the coordinator's earmark (idle time, no row routed)
+
+Ran two checks BEFORE any routing, on the one item the coordinator earmarked for me
+(*"fw#965's duplicate-fingerprint question would need testing, and `audit-965-r*.json` is not on this
+box… I would route it to you first"*). Filed `89fce9aea`
+(`.claude/evidence/VERIFIED-audit-965-artifacts-EXIST-in-a-removable-location.md`), reported to the
+coordinator and to nq-c-ed. **Read-only throughout — nothing in another lane's worktree was copied,
+moved or modified.**
+
+- ⭐⭐ **THE ABSENCE CLAIM IS REFUTED THREE TIMES OVER.** All three rounds exist in nq-c's tree:
+  `audit-965-r1.json` 10,113 B · `r2` 23,331 B · `r3` 15,858 B — valid JSON, 46 top-level keys each,
+  same schema as the durable artifacts. Controls: positive (`audit-fw976*` in `~/.claude/lanes` -> 1),
+  negative (`audit-zzqq*` -> 0). **No regeneration needed; that would have cost up to three audit
+  rounds.**
+- ⛔ **The zero was REAL for `~/.claude/lanes/` and became "not on this box" in the relay.**
+  **An absence claim carries the scope of its search, and the scope is the part that gets dropped.**
+  Same shape as my own `HAL/spi.c` grep against a branch touching `HAL/UserSpi/UserSpi.c`, and the
+  `2538017^` zero that needed a control at that revision. Filed to memory as a shape, not a slip.
+- ⛔⛔ **THE REAL FINDING IS WORSE THAN THE ABSENCE WOULD HAVE BEEN:** three rounds of audit evidence
+  for an **OPEN / MERGEABLE / CLEAN** row sit inside **a lane worktree's `.claude/`**. The
+  `~/.claude/lanes/` artifacts were already established as un-version-controlled (`.gitignore:6:/*`);
+  a worktree is strictly worse, because the standing sweep rule tells lanes to remove trees and one of
+  mine was gone within four days. **Not mine to move** — another lane's tree, and a copy with no
+  pointer creates a second source of truth. Decision left with nq-c / the coordinator.
+  ⭐ **Finding a thing present is not finding it safe.**
+- ⚠ **MY ELIGIBILITY ON fw#965 IS UNRESOLVED, pre-disclosed rather than discovered at routing time.**
+  `/mnt/c/daqifi/wt/audit-965` is `5fffcb140` (detached) and **SHA pairing finds only ONE tree at that
+  SHA** — the method that closed `audit-991n` fails here exactly as on `audit-fw1152-r3`, confirming my
+  own correction that **pairing resolves ownership only when a partner is lane-named.** Footprint:
+  UNDETERMINED (0 ledger, 0 evidence, 41 subagent files).
+  - Weak contrary evidence, **stated as inference, not measurement**: all three artifacts being in
+    nq-c's `.claude/` is evidence nq-c ran the rounds. It does not establish who holds the tree.
+  - My ledger hits on 965 (`:4560-4561`, `:4679`, `:8150`) are **verifications of CLAIMS ABOUT the
+    row** — still open? false claim corrected? — plus an artifact-health table. **Not assessments of
+    its content.**
+  - So: probably clear on the SUBSTANCE, **tree question open — and I cannot close it**, since the only
+    instrument that would is self-administered inside the session that did the work, and that tree is
+    not mine to introspect.
+- **No new work started.** The coordinator's standing position (*"nothing routable to you that is not
+  owned or blocked"*, *"idle with an enumeration is the correct state"*) stands; this was verification
+  of their own earmark, not a search for something to do.
