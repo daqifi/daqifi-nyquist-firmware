@@ -10432,3 +10432,51 @@ moved or modified.**
   instance.** The catch came from the rc contradicting the absent HIT line, not from a check.
 - **NOTHING ROUTED, and nothing to take on fw#965** (*"Nothing to take… the validator work is mine,
   since it is my code"*). Back to idle with an enumeration.
+
+### 2026-10-13 · triaged my own 108 artifacts — and the retention question I escalated was already answered
+
+Ran nq-c's head-currency discriminator on my own pile at their explicit request (*"worth you running
+the same split on your 108 rather than taking my ratio"*). Filed `df8298946`. All actions append-only,
+all on my own records; nothing in another lane's tree touched, nothing deleted.
+
+- **THE SPLIT:** 15 load-bearing (10 non-error) · 36 stale-open · 0 unanchorable · 57 history (sampled
+  **6/6 MERGED**, incl. all five bare-numbered). **10/108 = 9.3% vs nq-c's 3/47 = 6.4%** — same order,
+  independently derived, so the fleet-wide set across the 191 really is a dozen-ish.
+- ⭐⭐ **THE FINDING THAT ANSWERS IT: `~/.claude/lanes/audit-ledger.tsv` is a 272-row durable registry**
+  back to 2026-09-15 — `utc/lane/repo#pr/round/head/run_id/agents/tokens/gate/c-p-r`; **nq-b 86 · nq-a
+  58 · nq-c 42 · operator 35 · conv-ts 33 · conv-fw 18.** A row carries the **anchored verdict** and
+  lives **outside every worktree**, so *"only record of an open row's current verdict"* is **false
+  wherever a row sits at that head — 7 of my 15 were already there.** **What dies with a worktree is
+  the DETAIL, not the verdict.** Genuinely-only-record set: **THREE** (ts#338, #339, #344).
+  - ⚠ **The real systemic gap is narrower: the `artifact=`+`sha256=` pointer is on 4 of 272 rows, ALL
+    conv-fw's.** 265 verdicts with no path to their reasoning. **An adoption problem, not a policy one.**
+- **ACTIONS:** 10 load-bearing artifacts copied to `~/.claude/lanes/*-nq-b.json`, `cmp`-verified,
+  **originals in place (10/10)**. The 3 unledgered BLOCKs **backfilled** — *measured values only*:
+  round 6 **quoted from ts#338's own `arbiter.summary`**, the other two carry **`round=?`** rather than
+  a guess, `utc`=file-mtime **and the row says so**, each tagged `BACKFILLED-…-by-nq-b` with head
+  provenance. Verified **273→276 lines**, 11 fields each, **no other lane's count changed.** Adopted
+  conv-fw's pointer convention (4→7 rows).
+- ⛔⛔ **AND THE "THIRD SCHEMA" WASN'T ONE — 12 of 108 are the standard artifact NESTED in the Workflow
+  envelope** (`agentCount/logs/result/summary/…` on top; the whole object inside **`.result`**),
+  **recoverable 12/12**, 8 of 12 with the filename head **corroborated in the payload**. ⭐ **Two
+  independent axes — schema × envelope — so `unwrap .result BEFORE dispatching on schema`.** Passed to
+  the coordinator: their validator refuses fw#965's `confirmed[]` artifact on the *schema* axis, and the
+  envelope is a **second** reason 12 of mine would refuse **for nothing to do with their contents.**
+- ⛔ **THREE READER DEFECTS OF MINE IN ONE TRIAGE, every one a shape already in my own notes:**
+  1. **A planned filename-SHA fallback I did not implement** → 24 artifacts bucketed *"unanchorable"*,
+     which **read as a finding about the artifacts and was a defect in my reader.** Implementing it moved
+     **8 into load-bearing — the unimplemented version undercounted the set it existed to protect by more
+     than half**, in the **UNDER-preserving** direction.
+  2. **Searched the ledger by MY filename form** — `ts464` → **0**, on a row I audited **7 times**; its
+     form is `…test-suite#464` → **4**.
+  3. ⛔ **A short-vs-full SHA compare** — the ledger's head is **7 chars in 265 of 272 rows** and I used
+     full 9-char heads with `grep -F`, getting structural zeros. **The exact thing my definition-of-done
+     forbids.** Fixed by prefix-matching **both** directions.
+  ⭐ **And the classification briefly rested on labels I wrote myself** — three artifacts called
+  load-bearing on a head and gate **read out of their filename.** Unwrapping corroborated 2 of 3.
+  **The conclusion survived; the method did not.**
+- ⚠ **Disclosed and NOT decided:** the 36 stale-open are **round HISTORIES for live rows** (ts#464 has
+  5) and are a **second retention case with a different value** — round COUNT has been load-bearing here
+  before. **Not a lane's call for four lanes.** No bulk commit of the other 97 (unreclaimable bloat;
+  **`git gc` HELD**), though 11 are already git-tracked because `.git/info/exclude` only affects
+  UNTRACKED files.
