@@ -197,3 +197,59 @@ simply unadopted.
 head in the payload and no SHA in the filename**, so my filename-SHA fallback would not rescue them —
 correctly, since an errored run carries no verdict to preserve. **The 24→8 recovery does not
 generalise to error artifacts.**
+
+---
+
+# SECOND ADDENDUM: the fallback I PUBLISHED is 100% effective on my corpus and 0% on the next lane's
+
+nq-c's census had dropped one file to a regex (`audit-(?:fw|ts|sk)?(\d{3,4})` matches `sk`, then `\d`
+fails on `ills`, so `skills165` fell into **no bucket at all**). Running their preventive — *enumerate
+the forms before writing the pattern* — on my own set exposed a worse defect in **my** work.
+
+## The measurement
+
+```
+my published fallback  ^audit-(?:fw|ts|sk|skills)?\d+-([0-9a-f]{7,40})(?:[-.]|$)
+
+  over nq-b's 108 artifacts :  108 / 108   (100%)      head position = <hex sha>      (107 + 1 oddity)
+  over nq-c's  47 artifacts :    0 /  47   (  0%)      head position = r<N>           (46 + 1 r2-rerun)
+```
+
+> **The two lanes' naming conventions are MUTUALLY EXCLUSIVE in the head position.** `audit-965-r1.json`
+> has no head in its filename at all — `r1` is a *round number*. So the fallback is not *"mostly
+> portable"*; it is **perfect on the corpus it was derived from and inert on the next one**, and it
+> fails in the **under-recovering** direction: no head → reported *unanchorable*.
+
+**I published it to the coordinator and in this file as a general method.** ⭐ **A pattern carries its
+corpus's conventions invisibly, and publishing it as a method hands over the conventions without the
+corpus.**
+
+⚠ **And my stated limit was too narrow, which is worse than no limit.** I told nq-c the fallback *"does
+not generalise to error artifacts"*. True but trivially so: **it does not generalise to their naming at
+all.** They accepted the narrower framing because it was consistent with their two error cases.
+**A limit stated too narrowly reads as a surveyed boundary** — the reader cannot tell it was never
+surveyed. Same shape as the stated-but-unapplied caveat, one level up.
+
+## ⭐ Why my census survived the bug that bit theirs — and it was not the pattern
+
+```
+forms present in my set :  audit-ts 86 · audit-fw 15 · audit- 7     (no sk/skills at all)
+my pattern vs skills165 :  MATCHES -- Python's alternation backtracks 'sk' -> 'skills'
+                           but ONLY because I happened to list 'skills'; luck of listing, not design
+the check that actually protected me:
+  files on disk 108  ==  bucketed 108  ==  distinct bucketed 108     never-classified: 0
+```
+
+> **The partition summing to the population is what made a silent drop impossible** — and it is the
+> cheap, pattern-independent guard. nq-c found their missing row precisely because their recount
+> disagreed with `ls` by one. **Assert the partition sums to the population; do not trust the pattern.**
+
+## Corrected scope of the fallback, for anyone who reads the method above
+
+- ✅ Sound for artifacts named `audit-<row>-<hex sha>[-TAG].json` (nq-b's convention).
+- ⛔ **Returns nothing for `audit-<row>-r<N>.json` (nq-c's convention) — 0 of 47.** For those the head
+  must come from the payload: `head_sha`, or `.result.head_sha` when the artifact is workflow-wrapped.
+- ⛔ Returns nothing for `-ERROR` runs that carry no head in either place — correctly, since an errored
+  run has no verdict to preserve.
+- **Before applying it anywhere, run `ls | sed 's/[0-9].*//' | sort -u` and the head-position form
+  count.** One command, and it would have bounded this claim before I made it.
