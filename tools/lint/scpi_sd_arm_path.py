@@ -950,6 +950,77 @@ def _census_problems(text, spans):
                 "%s() arms before it calls %s(): every write to the shared "
                 "operands, `%s` included, must follow the claim (#829)."
                 % (fn, CLAIM_TAKER, MODE_FIELD))
+        else:
+            # Property 1b: the claim's VERDICT CONTROLS FLOW.
+            #
+            # Everything above establishes the claim is CALLED, once, before
+            # the arm. None of it asks what happens to what the claim
+            # RETURNS. `(void)SD_ClaimOrRefuse(context, "LISt");` satisfies
+            # every one of them: present, singular, positioned -- and a
+            # refused claim then falls straight through to the arm. The
+            # mutation is one token and this file printed
+            # "6 arm site(s) ... take the claim before arming" over it
+            # (#976 round 11). A check that names the property it is not
+            # testing is worse than one that stays silent, because the
+            # sentence is the thing a reader goes looking for.
+            #
+            # Reuses `_arm_verdict`, which property 4 has applied to the
+            # streaming-log arm since #942 -- the ONE part of this module
+            # that reasons about consumption rather than shape. Nothing new
+            # is inferred here; an existing classification is applied to a
+            # second call. The accepted set is property 4's: `captured` and
+            # `inline`. `captured_transformed` and `other` are refused for
+            # the reasons `_arm_verdict` records against them (audit
+            # findings 0 and 1: `== false` inverted the verdict, and a
+            # compound guard retracted on a SUCCESSFUL arm).
+            #
+            # AND THIS IS A SHAPE TEST, NOT DATAFLOW -- the same limit
+            # property 4 states about itself. `if ((claim(ctx), false))`
+            # discards the verdict and reads as consumed here. That is not a
+            # hole to patch: patching it invites the next spelling, which is
+            # what fifteen rewrites of this file's branch-gated half already
+            # established. Read a green run as "the obvious discards are
+            # absent", never as "the claim's refusal is honoured".
+            kind, _cvar, _cpat = _arm_verdict(
+                body, takers[0], CLAIM_TAKER, _if_statements(body))
+            if kind == "bare":
+                problems.append(
+                    "%s() DISCARDS %s()'s return -- the call stands alone as "
+                    "a statement, so a REFUSED claim does not stop the arm "
+                    "that follows it. The arm then runs holding nothing, "
+                    "which is the ownership handover in #829 inverted: the "
+                    "caller proceeds exactly as if the claim had been "
+                    "granted. Test it inline (`if (!%s(...)) { ... }`) or "
+                    "capture it and branch (#976)."
+                    % (fn, CLAIM_TAKER, CLAIM_TAKER))
+            elif kind == "void":
+                problems.append(
+                    "%s() casts %s()'s return to `(void)` -- a DELIBERATE "
+                    "discard, named separately from a bare statement so the "
+                    "message says which one happened. The effect is the "
+                    "same: a refused claim does not stop the arm. If the "
+                    "refusal genuinely cannot matter here, that is a claim "
+                    "about ownership and belongs in a comment on the line, "
+                    "argued -- not in a cast (#976)."
+                    % (fn, CLAIM_TAKER))
+            elif kind == "captured_transformed":
+                problems.append(
+                    "%s() captures %s()'s return through a TRANSFORMATION, "
+                    "so this checker cannot say the variable still holds the "
+                    "verdict rather than its negation. `== false` reads "
+                    "fine and inverts every branch below it; that exact "
+                    "shape was audit finding 1 against the arm. Assign the "
+                    "call and nothing else (#976)."
+                    % (fn, CLAIM_TAKER))
+            elif kind == "other":
+                problems.append(
+                    "%s() consumes %s()'s return in a form this checker "
+                    "cannot recognise, so it cannot report on it. That is a "
+                    "REFUSAL, not a pass -- an unrecognised consumer is "
+                    "exactly where a compound guard hid before (audit "
+                    "finding 0). Use one of the forms the call contract "
+                    "names, or widen the contract deliberately (#976)."
+                    % (fn, CLAIM_TAKER))
     return problems, sites
 
 
@@ -1475,6 +1546,54 @@ def self_test():
             "    return true;", 1)
         _ck("a second arm inside the wrapper is refused",
             any("expected exactly once" in x for x in check(retry)[0]), True)
+
+        # PROPERTY 1b: the claim's VERDICT CONTROLS FLOW (#976 round 11).
+        #
+        # One mutation per discard spelling, at BOTH fixture sites, because
+        # the checker walks sites and a case at one site cannot show the
+        # second is walked. On the real file this is six sites x two
+        # spellings; the harness that proved all twelve is in the PR body.
+        # A CAPTURED form is asserted CLEAN at the end -- without it a
+        # checker that refused every shape would pass every case above.
+        space_bare = _GOOD.replace(
+            '    if (!SD_ClaimOrRefuse(context, "SPACe")) {\n        return SCPI_RES_ERR;\n    }\n', '    SD_ClaimOrRefuse(context, "SPACe");\n', 1)
+        _ck("a BARE claim call is refused (SPACe)",
+            any("DISCARDS" in x for x in check(space_bare)[0]), True)
+
+        space_void = _GOOD.replace(
+            '    if (!SD_ClaimOrRefuse(context, "SPACe")) {\n        return SCPI_RES_ERR;\n    }\n', '    (void)SD_ClaimOrRefuse(context, "SPACe");\n', 1)
+        _ck("a (void)-cast claim is refused, and named as deliberate",
+            any("(void)" in x and "DELIBERATE" in x
+                for x in check(space_void)[0]), True)
+
+        fmt_bare = _GOOD.replace(
+            '    if (!SD_ClaimOrRefuse(context, "FORmat")) {\n        return SCPI_RES_ERR;\n    }\n', '    SD_ClaimOrRefuse(context, "FORmat");\n', 1)
+        _ck("a BARE claim call is refused at the SECOND site (FORmat)",
+            any("DISCARDS" in x for x in check(fmt_bare)[0]), True)
+
+        # `== false` reads fine and inverts every branch below it -- the
+        # shape audit finding 1 caught against the arm, here against the
+        # claim.
+        space_neg = _GOOD.replace(
+            '    if (!SD_ClaimOrRefuse(context, "SPACe")) {\n        return SCPI_RES_ERR;\n    }\n',
+            '    bool claimed = SD_ClaimOrRefuse(context, "SPACe") == false;\n'
+            '    if (claimed) {\n'
+            '        return SCPI_RES_ERR;\n'
+            '    }\n', 1)
+        _ck("a TRANSFORMED capture of the claim is refused",
+            any("TRANSFORMATION" in x for x in check(space_neg)[0]), True)
+
+        # NEGATIVE CONTROL. Capturing and branching is a correct restructure
+        # and must stay clean, or this property would forbid the shape
+        # `SD_ArmOrRefuse`'s own callers are free to use.
+        space_cap = _GOOD.replace(
+            '    if (!SD_ClaimOrRefuse(context, "SPACe")) {\n        return SCPI_RES_ERR;\n    }\n',
+            '    bool claimed = SD_ClaimOrRefuse(context, "SPACe");\n'
+            '    if (!claimed) {\n'
+            '        return SCPI_RES_ERR;\n'
+            '    }\n', 1)
+        _ck("a CAPTURED-and-branched claim stays clean (negative control)",
+            check(space_cap)[0], [])
 
         # 2. A definition with its return type on its own line was invisible
         #    to the definition scanner, so its body was no span, every call
