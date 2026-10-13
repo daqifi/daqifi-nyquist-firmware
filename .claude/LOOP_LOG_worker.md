@@ -10577,3 +10577,35 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   applied it.**
 - ⚠ **MEMORY.md is at ~4.9 KB headroom / 83 pointers**, condensed twice tonight, with bytes arriving
   mid-write from other writers twice. **Not touching it again**; detail goes in the files.
+
+- ⛔⛔ **THE METHOD I PUBLISHED IS 100% ON MY CORPUS AND 0% ON THE NEXT LANE'S.** nq-c lost one artifact
+  to a regex (`sk` matches, `\d` fails on `ills`, so `skills165` fell into **no bucket**); running their
+  preventive on my own set found worse in mine:
+  ```
+  my filename-SHA fallback   over nq-b's 108 :  108/108 (100%)   head position = <hex sha>
+                             over nq-c's  47 :    0/47  (  0%)   head position = r<N>
+  ```
+  **Our conventions are MUTUALLY EXCLUSIVE in that position** — `audit-965-r1.json` carries no head at
+  all; `r1` is a round number. Not *"mostly portable"*: **perfect where derived, inert next door**, and
+  failing **UNDER** (no head → *unanchorable*). ⭐ **A pattern carries its corpus's conventions
+  invisibly, and publishing it as a method hands over the conventions without the corpus.**
+  ⚠ **And the limit I gave nq-c was TOO NARROW** — *"does not generalise to error artifacts"*, true but
+  trivial. **A limit stated too narrowly reads as a SURVEYED boundary**; the reader cannot tell it was
+  never surveyed. They accepted it because it fit their two error cases. Corrected scope now in the file.
+- ⭐⭐ **WHAT ACTUALLY PROTECTED MY CENSUS WAS NOT THE PATTERN — IT WAS A TOTAL.**
+  `files on disk 108 == bucketed 108 == distinct 108 == never-classified 0`. My set contains **no
+  `sk`/`skills` form at all**, and my pattern matches `skills165` only because I happened to **list**
+  it (Python backtracks `sk`→`skills`) — **luck of listing, not design.**
+  > **ASSERT THE PARTITION SUMS TO THE POPULATION.** Pattern-independent, one line, catches the class.
+  > nq-c's missing row surfaced the same way: their recount disagreed with `ls` by one.
+  **nq-c's form enumeration (`ls | sed 's/[0-9].*//' | sort -u`) is the PREVENTIVE; the total is the
+  DETECTOR. Keep both.**
+- ⛔ **INSTANCE 8, filed fleet-wide with nq-c's diagnosis: I was 7 pointers short WHILE TELLING TWO
+  PEERS that an unlinked verdict cannot be re-examined.** ⭐ **So the risk factor is not AUTHORSHIP — it
+  is any act producing the SENSATION of having applied the rule. Writing it, teaching it, and
+  CORRECTING SOMEONE ELSE WITH IT all qualify, and the third is the most convincing.** Corollary added:
+  *after explaining a rule to another agent, run it on your own artifacts before the conversation ends —
+  the explanation is the trigger, not the discharge.*
+- **Neither lane's headline was a ROUND count:** nq-c 47 files / 26 rows / 45 rounds (not 25); mine 108
+  files containing **≥2 rounds recorded twice** (#306 `de8a512`, #464 `13ca020a`).
+- **Nothing routed. Idle with an enumeration.**
