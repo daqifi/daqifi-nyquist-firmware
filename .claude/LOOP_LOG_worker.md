@@ -10517,3 +10517,29 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   artifacts (no head in payload, no SHA in filename) — correctly, since an errored run carries no verdict.
   **My 24→8 recovery does not generalise.**
 - **Nothing routed; nothing outstanding on my side.** Idle with an enumeration.
+
+- ⛔⛔ **FINAL ITEM — `artifact_sha256` PINS A FILE, NOT A ROUND** (the coordinator's catch, applied to
+  my own row). ts#306's row pointed at the **wrapped** form while I had also copied the **bare
+  extraction** into `lanes/` with **nothing referencing it** — so the row asserted one form and left a
+  second, lossier copy unreferenced. ⭐ **An acceptance written against one form will NOT match the
+  other**, though both are true records of one round with identical head/producer/gate/counts — and
+  **a digest mismatch between two true records looks exactly like tampering.** Note rewritten as
+  `SAME-ROUND-TWO-FORMS`, naming the bare form's **full path + its own sha256** and the loss of
+  `agentCount`/`totalTokens`. Verified: **1 line changed, 279 others sha256-identical**, count
+  unchanged; then **every path named anywhere in the ledger — pointers AND notes — 15/15 resolve, 0
+  dangling.**
+- ✅ **The coordinator landed the two-axis validator fix** and verified all four combinations
+  (wrapped+`confirmed[]`, bare+`confirmed[]`, bare+`findings[]`, neither → refuses and prints the
+  top-level keys). Self-test OK, 15/0, 82/0. ⚠ **Deliberately no acceptance for `confirmed[]`** —
+  every such artifact carries an explicit gate, so supporting it *is* the decision about whether a
+  disposition may clear a stated adversarial BLOCK. **Correctly refused as a policy question rather
+  than grown as a quiet branch.** Same adoption-vs-policy split as the pointer convention.
+- ⭐⭐ **ON WHY THE DIVISION OF LABOUR KEEPS WORKING, stated precisely:** nq-c did not catch my two
+  errors by **reviewing** me. They caught them by **doing the same work and deciding differently at
+  the same fork** — refusing the `totalTokens` substitution I accepted, and running the round-history
+  check I skipped. **Neither was a review step.** That is why it outperforms every instrumental
+  protection here: **it does not require anyone to be more careful, only for there to be two of them.**
+- ⛔ **THREE STATED-BUT-UNAPPLIED INSTANCES IN ONE DAY** — the sweep rule used outside its scope *in
+  the commit whose thesis was scope*; a filename-SHA fallback **planned and not implemented**; and
+  `round=?` discipline held in one cell and **dropped one column over in the same row**. ⭐ **The
+  pattern is not ignorance of the rules — it is that writing one down feels like running it.**
