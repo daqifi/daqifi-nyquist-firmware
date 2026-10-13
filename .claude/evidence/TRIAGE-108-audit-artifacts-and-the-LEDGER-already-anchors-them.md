@@ -113,3 +113,87 @@ that has nothing to do with their contents. Shapes seen so far:
   when a row's own most-explicit figure read *"1 of 5"* and was stale by three rounds. **Two retention
   cases with different values — the anchored verdict and the round history — and bulk framing hides
   the difference.** Not mine to decide for four lanes.
+
+---
+
+# ADDENDUM: the check I did NOT run, and a defect in my own backfill that a peer's care exposed
+
+## 1. ⛔ I tested only the 15 LOAD-BEARING against the ledger. nq-c tested their round history too.
+
+Their result (6 of 13 stale-open already durable, because the ledger held **all three rounds** for
+#965 and #384) said my *"the 36 stale-open are a second retention case"* claim was **unmeasured.**
+Run on my 36, unwrapping `.result` per the envelope finding:
+
+```
+23  LEDGERED at this head          <- already durable; my claim was wrong for two thirds of them
+10  row ledgered, but NOT at this head
+ 3  ⛔ NO LEDGER ROW AT ALL        <- all three are ts#306
+```
+
+**Per-row round-history coverage:** fw#1110 2/2 · ts#407 **5/5** · ts#448 3/3 · ts#386, #430, #432,
+#436, #442 all complete — while **ts#338 1/5 · ts#344 1/3 · ts#464 3/6 · ts#306 0/2.**
+
+> **So the retention gap in my round history is 13 artifacts across FOUR rows, not 36 across
+> fourteen** — and the only row with **no audit record whatsoever** was **ts#306**, which I had
+> audited twice. That is precisely the case my own dispatcher names: *a missing line reads as "no
+> audit ran".*
+
+**Backfilled ts#306's two rounds** — and **two of its three artifacts are ONE round in two forms**:
+`de8a512` appears as a wrapped full run (6 agents, 980,303 tok) *and* as a bare extraction written
+**3 h later**, with identical head, producer, gate and counts. ⭐ **The bare extraction has LOST
+`agentCount` and `totalTokens`** — so extraction is lossy relative to the envelope, which is an
+argument for keeping the wrapped form. Recorded in the row rather than filed as two rounds.
+
+## 2. ⛔⛔ MY BACKFILL PUT ONE MEASUREMENT UNDER ANOTHER'S NAME — nq-c declined to and said why
+
+I wrote the envelope's `totalTokens` (368,274 / 272,389 / 434,502) into the **`subagent_tokens`**
+column. nq-c hit the same choice and refused it: *"the envelope carries `totalTokens`, which is NOT
+`subagent_tokens`; substituting it would put one measurement under another's name."*
+
+**They were right and the convention proves it:** `unknown` is the established value in that column —
+**5 rows already use it, including all four of conv-fw's own `artifact=` rows.** So a correct value
+was available and I invented one instead.
+
+**Corrected:** field 8 → `unknown` in all three rows, with the real number preserved **honestly
+labelled** in the notes as `totalTokens=<n>(workflow-envelope-total,NOT-subagent_tokens)`. Verified by
+byte-comparison: **275 other lines sha256-identical, exactly 3 lines changed, line count unchanged.**
+
+> ⭐ **A plausible fill is worse than a blank, because a blank is visibly unknown and a fill is
+> silently wrong.** The same discipline I applied to `round=?` I failed to apply one column over —
+> *in the same row.* Cf. the stated-but-unapplied-caveat shape from earlier today.
+
+## 3. ⛔ And my first pointer was a PLACEHOLDER that resolved to nothing
+
+I wrote `artifact=~/.claude/.../audit-ts306-…json` — a literal `...` — for artifacts that, unlike the
+other ten, **had never been copied out of my worktree.** A dangling pointer is worse than no pointer:
+it asserts recoverability that does not exist. Copied the three ts#306 artifacts (`cmp`-verified,
+originals in place) and repaired both rows; **0 placeholders remain.**
+
+**Then verified every pointer in the whole ledger, not just mine:**
+
+```
+10 of 278 rows carry a pointer (3.6%)      resolving: 10/10      DANGLING: 0
+   conv-fw 4/18 · nq-b 5/91 · nq-c 1/43 · nq-a 0/58 · conv-ts 0/33 · operator 0/35
+CONTROL: a deliberately bogus pointer reports False -> the test can fail
+```
+
+**Three of six lanes, 3.6% of rows — but every existing pointer is live.** The convention works; it is
+simply unadopted.
+
+## 4. ⭐⭐ Three successive triages, each ~10× and each cheaper than the action it averted
+
+```
+191  artifacts "at risk"        <- the framing that would have motivated a retention POLICY
+ ~25  load-bearing              <- 10/108 and 3/47, independently derived in two lanes
+  ~4  SOLE record               <- 1 nq-c, 3 nq-b ... and all four are now ledgered
+```
+
+> **The bulk framing was never wrong about the COUNT, only about what the count MEANT.** At no point
+> was a policy needed. The answer was **a handful of rows in a TSV that already existed** — and the
+> decisive move each time was *opening the thing we were reasoning about*. nq-c: *"I assumed, and I
+> assumed because I had never opened it."*
+
+⚠ **One limit on my method, from nq-c:** their two unanchorable artifacts are `-ERROR` runs with **no
+head in the payload and no SHA in the filename**, so my filename-SHA fallback would not rescue them —
+correctly, since an errored run carries no verdict to preserve. **The 24→8 recovery does not
+generalise to error artifacts.**
