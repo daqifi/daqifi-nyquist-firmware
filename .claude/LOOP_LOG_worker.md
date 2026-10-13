@@ -10275,3 +10275,32 @@ Nothing spent. No fix pushed, no audit run, no label touched.
 - **Closing position, on record:** *less confident than two hours earlier that identifier evidence
   alone should ever license a deletion.* Work that ends in reduced confidence about its own instrument
   is a result, not a failure.
+
+## 2026-10-13 — fw#991: finding 8 was MINE and wrong both ways. Decline DEEPENED (5th ground).
+
+- ⚠ **Four days stale** (last work 10-07); re-read rather than relied on memory.
+- **The 10-07 decline STANDS** (`36d747b86`). ⭐ **A row changing removes a blocker from the ROW; it
+  removes nothing from my INVOLVEMENT.** Item 2 being satisfied cannot un-park a row I parked.
+- ⛔⛔ **FIFTH GROUND: the four-item unpark condition is MINE** — comment `5644810065`,
+  2026-09-12T08:43:04Z, by its own first person (*"I am parking it here"*, *"I had already applied a
+  fix … and reverted that fix"*, *"I would fix first"*). **So I wrote item 2, item 2 cites finding 8,
+  and finding 8 is in that same comment.**
+- **Finding 8 REFUTED in both halves, verified by me with a same-revision control**
+  (`4d87bd5b3`): `EncoderDroppedSamples` rows at `2538017^` = **0**, at `2538017` = **1**, positive
+  control `ScanStaleDropped` = **2** at that same parent, negative = 0. Timestamps agree to the second
+  (`2026-09-11T00:33:51-06:00` ≡ `…T06:33:51Z`, ~26.2 h before the item). So it **asked for an
+  artefact that already existed** AND **described a prior state that never existed** — the field was
+  **undocumented**, not mis-documented. **The row carried a false independent merge-blocker for a
+  month, from my finding.**
+- ⭐⭐ **THE PROCESS RESULT: a conflict disclosed at the granularity you can SEE can still understate
+  itself.** On 10-07 I disclosed the **item** was mine; the **finding** was mine too and I could not
+  know, because not having read it was the stated reason for withholding. **I withheld on grounds
+  stronger than I had.** ⛔ **The remedy is not more caution** — diligence would have produced the
+  same disclosure. **It is the division of labour: surface the fact, withhold the judgement, hand it
+  to a reader without the stake.** Structure over conscientiousness.
+- **Still blocking (recorded, not assessed):** item 1 open and its amendment marks it **CONTENDED**,
+  with the predicate's stated purpose possibly unachievable (*"leaked still cannot see the gap this
+  test exists to cover"*) · item 3 refreshed 10-01 · item 4's audit **void**, head moved under BLOCK ·
+  `needs-bench` with **falsifiers 5 and 6 unreached**. **Not mine on five grounds.**
+- ⚠ Board/tooling caveats carried forward **explicitly unverified by me**, including `batch.sh`'s
+  `WSLENV` and `CMD? arg` fixes at claude-skills `2c11ba7`. **No bytes sent since 10-07.**
