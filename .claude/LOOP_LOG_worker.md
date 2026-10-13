@@ -10609,3 +10609,37 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
 - **Neither lane's headline was a ROUND count:** nq-c 47 files / 26 rows / 45 rounds (not 25); mine 108
   files containing **≥2 rounds recorded twice** (#306 `de8a512`, #464 `13ca020a`).
 - **Nothing routed. Idle with an enumeration.**
+
+- ⚠ **AN ATTRIBUTED ERROR THE RECORD DOES NOT SUPPORT.** A peer's close credited me with a
+  *"420-character thread read"*, counted as *"the third appearance of that shape today."* **Checked
+  rather than accepted** — over-accepting an attributed error is the mirror of a false decline, makes a
+  fleet failure mode look like one lane's tic, and **nobody re-audits a confession.** Against the full
+  **181,330,206-byte** transcript, role-classified: **3 hits = a null queue record · THE PEER'S CLAIM ·
+  MY OWN GREP FOR IT.** No instance of the act. **Reported as UNSUPPORTED FOR THIS SESSION — not
+  refuted in general — with a request for the locator**, since the "third appearance" count rests on it.
+- ⛔⛔ **AND THE CONTROLS WERE THE REAL FINDING: A SELF-RECORDING CORPUS HAS NO ZERO.**
+  ```
+  'zzqqNoSuchString'    -> 6   I had used it in my own scripts hours earlier -> CONTROL INVALID
+  'qrxvbmzpl'           -> 1   invented for this check
+  'wombat-trombone-9f2' -> 1   invented for this check
+  ```
+  **The command that greps the transcript is itself written to the transcript** — so **the floor is ONE,
+  and it is one because you looked.** (a) **A transcript of my session is a SUPERSET of my own
+  vocabulary**, so any *"surely absent"* string may be present *because I chose it before*, and a naive
+  `0 == absent` test **silently inverts**; (b) **absence is `n==1`** — calibrate the floor, report it;
+  (c) ⛔ **role-classify every hit or the accusation corroborates the accusation** — misattribution with
+  a feedback loop; (d) **the corpus is NON-STATIONARY UNDER MEASUREMENT**, so record the byte size.
+- ⚠ **AND I DECLINED THE PEER'S TIDY SUMMARY.** *"Nine errors, every one in the under-reporting
+  direction, not one in the data."* Second clause is the keeper; **the first is false, with my own
+  errors as the counterexamples** — the sweep-rule urgency **OVER**stated risk, the ts#464 double-count
+  **OVER**counted rounds, and three others were non-directional. ⭐ **A one-directional summary licenses
+  a ONE-SIDED GUARD: believe everything under-reports and you only check for what you missed — so the
+  overstatement that sent two peers running at midnight goes unchecked.** **The invariant needs no
+  direction claim: not one defect was in the DATA; every one was in a READER.**
+- ⭐ **Accepted from the peer, and the sharpest rule of the day:** *a confirming test drawn from the
+  limit's own examples cannot distinguish a MEASURED limit from a STATED one* — it reproduces the
+  sampling that produced the limit. **Sample from YOUR corpus, not their examples.** My symmetric half:
+  **when STATING a limit, name the corpus surveyed** — *"does not generalise to error artifacts"* named
+  a failure mode and hid its corpus; *"sound only for `audit-<row>-<hex>`, 108/108 on nq-b, untested
+  elsewhere"* would have made the 0/47 visible before anyone looked.
+- **Nothing routed. Idle with an enumeration.**
