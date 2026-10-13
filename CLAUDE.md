@@ -461,19 +461,41 @@ different fixed filename under it does not help.
 yours:
 
 ```bash
-LANE=$(basename "$(git rev-parse --show-toplevel)")   # nq-a, conv-fw, …
+# SESSION-scoped, not path-derived. Reads $ORCA_WORKTREE_ID, so it is correct
+# in a task worktree too -- verified identical from the main checkout and /tmp.
+LANE=$(bash ~/.claude/skills/bench/bench.sh whoami | awk '/^lane:/{print $2}')
+[ -n "$LANE" ] || { echo 'FATAL: cannot establish lane identity' >&2; exit 1; }
+grep -qE "^[[:space:]]*$LANE[[:space:]]" ~/.claude/bench/devices.conf \
+  || echo "NOTE: '$LANE' is not a registered lane (fine for the coordinator or" \
+          "the main checkout; suspicious for a bench lane)" >&2
 echo "### MARKER-$LANE BEGIN <what>"   # ... the script ...
 echo "### MARKER-$LANE END <what>"
 ```
 
-⚠ **Derive `$LANE`; do not type it and do not take either source raw.** The worktree basename
-*is* the lane name and matches the registry. The two obvious alternatives both fail as written:
-`bench` is **not on `PATH`** (only `~/.claude/skills/bench/bench.sh` exists), and
-`$ORCA_WORKTREE_ID` is a compound — `<uuid>::C:\path\to\worktree` — so using it verbatim yields a
-60-character marker containing `::` and backslashes. To cross-check against the registry:
-`bash ~/.claude/skills/bench/bench.sh whoami | awk '/^lane:/{print $2}'`.
+⚠ **VALIDATE the lane; never DERIVE it from the path.** Three ways to get this wrong, all measured
+on this station:
+
+- `basename $(git rev-parse --show-toplevel)` yields a registry lane name in **3 of 81**
+  worktrees. The other 78 are the main checkout, a lane's own *task* trees (`nq-c-fw1013`),
+  purpose-named trees (`audit-965`, `build-1055`) and 49 `agent-*` subagent trees. So lane `nq-c`
+  working in its own task tree would emit `MARKER-nq-c-fw1013` — not another lane's name, so no
+  false attribution, but it does not resolve against the registry either.
+- `bench` is **not on `PATH`**; only `~/.claude/skills/bench/bench.sh` exists.
+- `$ORCA_WORKTREE_ID` is a compound — `<uuid>::C:\path\to\worktree` — so verbatim use yields a
+  60-character marker containing `::` and backslashes.
+
+⛔ **And prefer the loud failure.** `bench: not found` was impossible to miss; `basename` never
+fails and always returns a *plausible* string. Swapping one for the other trades a self-announcing
+error for a silent wrong value — in the one convention whose entire purpose is catching silent
+wrong values. The `[ -n ... ] || exit` and the registry check above exist to keep it loud. The
+registry check is a NOTE rather than a hard failure on purpose: not every session is a registered
+lane (this file's own coordinator session is not), so absence means "unregistered", while a name
+that is present but *wrong* is the case the marker cannot detect and you must not create.
+
 **A wrong lane name is worse than no marker:** it stamps a name on output, and a wrong one
 falsely authenticates one lane's text as another's — the exact confusion the marker prevents.
+An `agent-*` subagent tree cannot name its lane from the path at all (git records no owner), so a
+subagent should **inherit `$LANE` from the session that spawned it** rather than derive it.
 
 ⭐ **What the marker buys, in both directions.** It is an **authenticator you give others** and a
 **detector you keep for yourself**:
