@@ -10304,3 +10304,35 @@ Nothing spent. No fix pushed, no audit run, no label touched.
   `needs-bench` with **falsifiers 5 and 6 unreached**. **Not mine on five grounds.**
 - ⚠ Board/tooling caveats carried forward **explicitly unverified by me**, including `batch.sh`'s
   `WSLENV` and `CMD? arg` fixes at claude-skills `2c11ba7`. **No bytes sent since 10-07.**
+
+## 2026-10-13 — fw#1048 diagnosed (gate never ran); and the reflog check FALSE-CLEARS me
+
+- ⭐ **fw#1048 Static analysis: NONE of the three offered causes.** Run `37667782081` conclusion
+  **`cancelled`**, step 3 *Install cppcheck* **CANCELLED** at the 6-hour limit, steps 5 *Run cppcheck*
+  and 6 *Compare against baseline* **SKIPPED**. Failed-log 0 bytes. Controls: median runtime
+  **22/23/28 s** vs **6h0m32s** (~960×), **12/12** recent runs green incl. one **23 min after** this
+  began hanging, and **never re-run**. **A one-off apt stall.** Coordinator verified and re-ran it:
+  **GREEN in 17s**, zero code changed, nothing suppressed, baseline untouched.
+- ⭐⭐ **AN OPTION SET IS A CLAIM.** All three hypotheses presupposed the gate produced a verdict.
+  *"I routed you a diagnosis with its answer excluded from the option set."* **The refuting fact was
+  in the same line as the premise** — `Static analysis  fail  6h0m29s`. Detector filed: read
+  `conclusion`, compare duration to the median, confirm the verdict-producing step **ran**.
+- ⛔⛔ **THE REFLOG CHECK RETURNS A FALSE CLEAR ON MY OWN fw#976 EXCLUSION.** 141 entries,
+  2026-09-08→10-13, **control hits**, and **0 of 4** on the commits the exclusion rests on — all four
+  confirmed ancestors of the live head. Found instead in the **fires'** reflogs:
+  `agent-a0f05824999e0e24c` (efba54c1f, d55d5dbd8 as `commit:`), `agent-a6cab3e0bc1d9c1d5`
+  (9dfc09d75 `commit:`, **b960c9245 as `checkout:`**), and `agent-a846f8745eb2cb4d0` **already GONE**.
+  - **DELEGATION is structural**: the reflog records the worktree that moved the ref, and the loop's
+    design is that **the lane does not move the ref — the fire does.** Blind by construction.
+  - **REF-LESS PLUMBING + MISATTRIBUTION**: `b960c9245` I built here via `commit-tree` with a separate
+    index; it appears in **another** worktree as a **`checkout:`**. **The reflog credits the consumer,
+    not the creator.**
+  - ⚠ **`checkout:` is not authorship** — only `commit:`/`merge`/`rebase` are. A conviction resting on
+    a `checkout:` line convicts the wrong worktree.
+- ⭐⭐ **THE INVERSION, and it counterweights this whole week:** **my narrative self-report was MORE
+  accurate than the mechanical measurement.** → **"Prefer the measurement over the self-report" has a
+  PRECONDITION: its coverage must include the MECHANISM by which the thing happened.** A **hit**
+  convicts; a **zero is worth nothing.** My exclusion stands on `git log` + ls-remote-verified SHAs +
+  my live symbols.
+- ⚠ **MEMORY.md is at 20,985 / 24,400 bytes — 3,415 free**, shared by ~5 writers with a silent
+  overflow cap. Room for roughly 3 more top-level pointers. 122 links, 0 dangling.
