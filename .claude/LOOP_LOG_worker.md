@@ -10380,3 +10380,55 @@ moved or modified.**
 - **No new work started.** The coordinator's standing position (*"nothing routable to you that is not
   owned or blocked"*, *"idle with an enumeration is the correct state"*) stands; this was verification
   of their own earmark, not a search for something to do.
+
+### Same item, resolved within the hour — three corrections, two of them MINE
+
+- ✅ **DURABILITY GAP CLOSED, and my zero retro-validated.** nq-c copied all three rounds to
+  `~/.claude/lanes/audit-965-r{1,2,3}-nq-c.json` within ~4 min — sha256-identical, originals untouched,
+  pointer filed. The coordinator independently copied them to `~/.claude/audits/`. **Three deliberate
+  copies, worktree original authoritative on divergence.** Their mtimes (`20:56:52Z`) POSTDATE my
+  search, and the four long-standing `lanes/` artifacts are 2026-10-07, so *"0 in `~/.claude/lanes/`"*
+  was true when measured. ⭐ **A measurement a later fix invalidates was not wrong.**
+- ⛔⛔ **MY URGENCY FRAMING WAS FALSE, and it propagated to two peers before I caught it.** I called the
+  location *"removable by the standing sweep rule."* Census (scope stated; `audit*.json`):
+  **191 in worktrees — nq-b 108 · nq-c 47 · conv-ts 33 · conv-fw 3 — ALL LANE TREES. 0 in sweepable
+  `agent-*`/`audit-*` fire trees**, with a live control (57 such dirs exist, 6 have `.claude/`, holding
+  6 `.json`) so the zero is a finding, not a vacuum. My own dispatcher forbids removing another lane's
+  tree, so **no sweep reaches these files.** Real exposure = **lane RETIREMENT** +
+  `.git/info/exclude:21`. **Retention, not imminent deletion. Direction: OVERSTATED** — same direction
+  as my `HAL/spi.c` miss. Corrected in my evidence file, to both peers, **and in the shared memory file
+  my claim had propagated into.**
+  - ⭐ **The shape is the same commit's own thesis.** I wrote *"an absence claim carries the scope of its
+    search, and the scope is the part that gets dropped"* and applied the sweep rule outside its scope
+    two paragraphs later. Coordinator caught the identical shape in itself the same hour: **editing the
+    text that states a rule does not load the rule.**
+  - **11 of my artifacts ARE git-tracked** despite the exclude rule → a durable path exists. **Did NOT
+    bulk-commit the other 97**: ~1.5 MB onto a `/mnt/c` repo whose **`git gc` is HELD** is unreclaimable
+    bloat, and a four-lane retention policy is not a lane's call. **Now an operator decision item.**
+- ✅ **ELIGIBILITY RESOLVED — `audit-965` is nq-c's.** Reproduced their **head-sequence correlation**
+  rather than accepting it: three reflog heads matching r1/r2/r3's `head_sha` in order on 2026-09-17,
+  plus my session id absent from the tree (`rc=1`, 0 files) with a **live positive control** (`rc=0`,
+  1 file) and passing negative. ⭐ **Strictly weaker requirement than SHA pairing** — one artifact per
+  head in any reachable lane's tree, no lane-named partner — which is why it worked where pairing failed
+  on both `audit-965` and `audit-fw1152-r3`. **It cleared me only because it attributed the tree to
+  another lane AND an independent fingerprint check came back empty with live controls.**
+- ⚠ **A HEURISTIC RETIRED, confirmed by me in the reflog:** a **`revert:` and a `commit:` were authored
+  inside a tree named `audit-965`.** *"Audit tree, therefore read-only, therefore not fixer-side"* is
+  **false.** Check the reflog's **VERBS**, not the directory's name. Coordinator is carrying it to the
+  operator — **3 of 4 no-eligible-party results turned on fixer-side grounds**, so that assumption would
+  have cleared someone it should not.
+- ⛔ **AND THE ARTIFACT I RECOVERED CONTAINS THE ROW'S REAL BLOCKER.** The coordinator read it and
+  answered the duplicate-fingerprint question itself — **NO COLLISION**, two distinct findings, so
+  nq-a's F5 warning closes. Underneath: `gate: BLOCK` / *"2 finding(s) survived refutation"* while
+  **`arbiter.verdict: "ready_to_merge"`** with both round-3 changes verified sound on matched-crc32
+  hardware A/B. **A reasoned ready-to-merge verdict that a mechanical count overrode — in the file that
+  had been declared absent and earmarked for regeneration.** It also has **no `findings` key**
+  (`confirmed[]`/`plausible[]`, the `adversarial-audit.js` schema), so the validator refuses it and
+  fw#965 is unprocessable under **either** operator option until the validator learns that schema —
+  which **kills the "refuse a disposition wherever an adversary CONFIRMED" option**, since only that
+  schema has the notion and the rule would be vacuous for codex artifacts.
+- ⛔ **`$?` AFTER A PIPELINE, AGAIN** — I captured `rc` after `| sed` on a fingerprint grep and printed
+  a meaningless `0`. Caught it in my own output and re-ran unpiped with both controls. **Sixth
+  instance.** The catch came from the rc contradicting the absent HIT line, not from a check.
+- **NOTHING ROUTED, and nothing to take on fw#965** (*"Nothing to take… the validator work is mine,
+  since it is my code"*). Back to idle with an enumeration.
