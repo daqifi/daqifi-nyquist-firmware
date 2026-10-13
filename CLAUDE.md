@@ -456,14 +456,32 @@ same-format and **unmarked**, so it is not detectable by reading the output. At 
 would pick (`st.out`, `gate.out`, `f.txt`). The parent directory is shared too, so moving to a
 different fixed filename under it does not help.
 
-**Mark every ad-hoc script's output**, because a marker is the only cheap detector and one added
+**Mark every ad-hoc script's output.** A marker is the only cheap detector, and one added
 *after* you see odd output is too late — you cannot retroactively establish which lines were
 yours:
 
 ```bash
-echo "### MARKER-<lane> BEGIN <what>"   # ... the script ...
-echo "### MARKER-<lane> END <what>"
+echo "### MARKER-$LANE BEGIN <what>"   # ... the script ...
+echo "### MARKER-$LANE END <what>"
 ```
+
+⚠ **Get `$LANE` from the registry, never from memory** — `bench whoami`, or `$ORCA_WORKTREE_ID`.
+**A guessed lane name is worse than no marker at all:** it stamps a name on output, and if the
+name is wrong it falsely authenticates one lane's text as another's, which is the exact confusion
+the marker exists to prevent.
+
+⚠ **And be clear what the marker protects. It is a defence you GIVE, not one you GET.**
+
+| mechanism | protects | works |
+|---|---|---|
+| session scratchpad | **you** | unilaterally, alone, immediately |
+| `MARKER-$LANE` | **other lanes** | only once the *leaking* lane adopted it |
+
+Marking your own output does not make it trustworthy to you — it makes *your* output
+identifiable to everyone else. In the incident that prompted this section the receiving lane was
+saved by *noticing*, not by its own markers: the foreign text was "plausible, same-format and
+**unmarked**". So mark anyway, for the herd — but what protects **your** transcript is the
+scratchpad above, not the marker.
 
 (Older `/tmp/temp.sh` entries remain in `.claude/settings.local.json` for compatibility; nothing
 needs to be added there for the scratchpad.)
