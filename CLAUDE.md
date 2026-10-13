@@ -461,27 +461,43 @@ different fixed filename under it does not help.
 yours:
 
 ```bash
+LANE=$(basename "$(git rev-parse --show-toplevel)")   # nq-a, conv-fw, …
 echo "### MARKER-$LANE BEGIN <what>"   # ... the script ...
 echo "### MARKER-$LANE END <what>"
 ```
 
-⚠ **Get `$LANE` from the registry, never from memory** — `bench whoami`, or `$ORCA_WORKTREE_ID`.
-**A guessed lane name is worse than no marker at all:** it stamps a name on output, and if the
-name is wrong it falsely authenticates one lane's text as another's, which is the exact confusion
-the marker exists to prevent.
+⚠ **Derive `$LANE`; do not type it and do not take either source raw.** The worktree basename
+*is* the lane name and matches the registry. The two obvious alternatives both fail as written:
+`bench` is **not on `PATH`** (only `~/.claude/skills/bench/bench.sh` exists), and
+`$ORCA_WORKTREE_ID` is a compound — `<uuid>::C:\path\to\worktree` — so using it verbatim yields a
+60-character marker containing `::` and backslashes. To cross-check against the registry:
+`bash ~/.claude/skills/bench/bench.sh whoami | awk '/^lane:/{print $2}'`.
+**A wrong lane name is worse than no marker:** it stamps a name on output, and a wrong one
+falsely authenticates one lane's text as another's — the exact confusion the marker prevents.
 
-⚠ **And be clear what the marker protects. It is a defence you GIVE, not one you GET.**
+⭐ **What the marker buys, in both directions.** It is an **authenticator you give others** and a
+**detector you keep for yourself**:
 
-| mechanism | protects | works |
+| | mechanism | effect |
 |---|---|---|
-| session scratchpad | **you** | unilaterally, alone, immediately |
-| `MARKER-$LANE` | **other lanes** | only once the *leaking* lane adopted it |
+| protects **you** | session scratchpad | isolation — unilateral, immediate, works alone |
+| protects **you** | marking *everything* you emit | foreign text arrives **unmarked**, and the gap is a structural check |
+| protects **others** | `MARKER-$LANE` on your output | lets them attribute your lines — needs *them* to be marking too |
 
-Marking your own output does not make it trustworthy to you — it makes *your* output
-identifiable to everyone else. In the incident that prompted this section the receiving lane was
-saved by *noticing*, not by its own markers: the foreign text was "plausible, same-format and
-**unmarked**". So mark anyway, for the herd — but what protects **your** transcript is the
-scratchpad above, not the marker.
+The second row is the one that is easy to miss: consistent self-marking protects you **by
+absence**. In the incident this section exists for, the receiving lane *was saved by noticing* and
+the foreign text was "plausible, same-format and **unmarked**" — so marking your own output is
+precisely what converts that lucky noticing into a test that cannot be missed. What it does **not**
+do is make your own output trustworthy to you; and *attributing* someone else's leak still needs
+them to have marked it.
+
+⚠ **The station hook currently argues the other way, and it is stale.**
+`~/.claude/hooks/tmp-script-guard.sh` recommends `/tmp/temp.sh` (`:71`) and exempts it from its own
+nag (`:53`) — so the shared path is frictionless while the path this section prescribes is the noisy
+one. Ignore the recommendation; the scratchpad is correct. It also **misfires**: its match pattern
+(`:42`) has no end anchor, so `foo.json` matches as `foo.js`, `bar.csv` as `bar.c` and `x.html` as
+`x.h` — all three extensions are on the hook's own exempt list, so it nags about data files it is
+documented not to care about. Both are outside this repo and tracked separately.
 
 (Older `/tmp/temp.sh` entries remain in `.claude/settings.local.json` for compatibility; nothing
 needs to be added there for the scratchpad.)
