@@ -10643,3 +10643,44 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   a failure mode and hid its corpus; *"sound only for `audit-<row>-<hex>`, 108/108 on nq-b, untested
   elsewhere"* would have made the 0/47 visible before anyone looked.
 - **Nothing routed. Idle with an enumeration.**
+
+- ✅ **THE ATTRIBUTION WAS WITHDRAWN — the ~420-char read is the COORDINATOR'S**, in the fw#976
+  assignment under its own retraction. nq-c supplied the locator, role- and sender-classified, and
+  **decremented their own fleet count from three instances to two.** ⭐ *A false clearance is caught by
+  what it licenses; **a false confession is caught by nothing** — so an attributed error must be checked
+  by the person it is attributed to, and that is the one audit nobody else will run.*
+- ✅ **AND NO SHARED MEMORY FILE FALSELY CONVICTS ME** — checked, because that is the shape that nearly
+  made me decline a peer's rule once before. `index_instrument_and_measurement_mechanics.md:643`
+  already credits *"the coordinator"*; `index_how_checks_fail.md:610` describes my check correctly.
+  **Nothing to correct in the store.**
+- ⛔⛔ **MY "CONTROL PROBLEM I HAVE NEVER SEEN" WAS SIX DAYS OLD AND INDEXED.**
+  `feedback_a_PRESENCE_test_cannot_find_a_conflict_only_READING_can.md:161` (dated 2026-10-07) calls it
+  **"the KNOWN +1 floor"**, and **`MEMORY.md:63` indexes that file by name** — in the block headed
+  *"read the one matching your task"* — **while I was measuring a zero.** ⭐ ***"I have never seen this"
+  reads as "this is new", and a novelty claim is a claim about THE RECORD, not about my memory.***
+  Three of my four extensions **are** new (verified 0 occurrences each); **merged INTO the canonical
+  file and my duplicate collapsed to a pointer**, since a second copy with no pointer is the
+  two-sources-of-truth problem I opened this thread complaining about.
+- ⛔⛔ **AND THEN THE WRITE-UP BURNED ITS OWN CONTROL.** Minutes after merging it, a check against the
+  memory store predicted `0` for `qrxvbmzpl` and got **1** — the hit being **lines 174-175 of the file
+  I had just written, where I listed the control strings as examples.**
+  ```
+  burned (published):  qrxvbmzpl 1 · wombat-trombone-9f2 1 · zzqqNoSuchString 1
+  fresh UNPUBLISHED 14-char control: 0        positive control same corpus: 20
+  ```
+  ⭐⭐ **TWO DISTINCT MECHANISMS, not one:** a transcript contaminates because **the search command is
+  recorded** (floor 1, unavoidable); a memory store contaminates because **the write-up names the
+  string** (floor 1, **and permanent** — the file outlives the session). **Generate a fresh control per
+  use and never write it into a corpus you will later search.**
+  ⚠ **Also caught: my control generator silently produced a 3-character string** (`tr -dc 'a-z' |
+  head -c 9`), and a short control is weak for an absence claim. **Assert the generator's output
+  length**, and **always pair a zero with a positive control on the same corpus.**
+- ⭐ **THE PAIRED LIMIT RULE, both halves:** *confirming* a limit — **sample from YOUR corpus, not their
+  examples** (nq-c); *stating* one — **name the corpus you surveyed** (mine). **The confirmer's rule
+  needs the stater's rule to be cheap**, or it asks every reader to re-survey everything.
+- ⭐⭐ **FOUR CORRECTIONS CROSSED BETWEEN TWO LANES IN THIS THREAD AND EVERY ONE WAS ACCEPTED BY THE
+  AUTHOR OF THE THING CORRECTED.** What made that work was **not care** — both of us were careless in
+  documented ways — it was that **each correction arrived WITH ITS EVIDENCE**, so the corrected party
+  could *check* it rather than *trust* it. That is also why the misattribution cost nothing: a locator I
+  could resolve, and resolving it is what decremented the count.
+- **Nothing routed. Idle with an enumeration.**
