@@ -10801,3 +10801,28 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   WEARING AN AUDIT'S LABEL** — worth re-checking the other "needs an audit" parks for the same.
 - ⚠ **And the router self-reported the same failure I logged twice today** — routing without checking
   the issue store, one message after thanking me for naming it. **Three agents, one day, same shape.**
+
+- ⭐⭐ **FILED THE TRANSFERABLE LESSON, after checking the store first** (`rc=1`/0 files for *"declared
+  bias"*, *"predict which way"*, *"against your own position"*; floor-0 control on a 14-char unpublished
+  string, 27-file positive control). Merged into the standing-limitation file's *"what actually protects
+  eligibility"* list as **item 5**, now the **second** protection with a proven save:
+  > **A DECLARED BIAS WITH NO SAFEGUARD IS A DISCLOSURE; A DECLARED BIAS WITH A SAFEGUARD IS AN
+  > INSTRUMENT.** Name *which way* the bias points, then build the control that catches that direction.
+  > *"I may be biased"* admits everything and constrains nothing. **If no counter exists, decline
+  > rather than disclose harder.**
+  ⭐ **It is the inverse of the night's dominant failure** — an "assert 17 tries" leg that passed at the
+  broken head, a census pattern inferred from expected forms, a control string poisoned by its own
+  write-up. **Predicting the direction of your own error is the one move that does not require being
+  more careful.**
+- ⭐ **And item 7, from the router's own handling:** being the fixer on a row needing an audit, it ran
+  the adversary with **no `--fixed` and no `--dispositions`** — the only two channels its involvement
+  could travel through, both documented suppression channels. **Where the channels are enumerable,
+  closing all of them beats declaring the conflict:** a disclosure asks the reader to compensate; an
+  unused channel needs no compensation.
+- **fw#965 closed on my side.** Coordinator retracted both premises to the operator (the one-defect
+  reading and *"a ruling already on record"*), and will not post an acceptance in the operator's name on
+  facts since found wrong. **Operator ruled codex is the adversary** where the lane pool is exhausted;
+  running on fw#1027 at `0c63704c2`. ⭐ **And my process note paid off immediately: fw#976 turned out to
+  be blocked on SIX UNRESOLVED THREADS, not an audit** — `required_conversation_resolution` is `main`'s
+  only live protection — so the *"parked on a decision wearing an audit's label"* check is now being run
+  across the remaining rows instead of the label being trusted.
