@@ -1,0 +1,29 @@
+# Restore the WiFi STA configuration wiped by a flash.
+# Sequence per CLAUDE.md: power on -> ENAbled 0 -> set fields -> ENAbled 1
+# -> APPLY (all-caps; APPL is -113) -> settle -> ADDRess? -> SAVE.
+# NETType 1 = STA, SECurity 3 = WPA with passphrase.
+#
+# VERIFY SYNTAX IS A *LEADING* '?' (batch.sh:33). This file previously used the
+# old 'CMD? expected' form, which batch.sh now sends WHOLE as a parameterised
+# query -- 'SYSTem:POWer:STATe? 1' returned -108 and aborted the restore at
+# line 7 on 2026-10-14. A trailing '?' is part of the mnemonic, never a verify.
+#
+# AND THE SAVE WAS MISSING: this file's own header described 'settle -> verify
+# -> SAVE' while the body stopped at APPLY, so nothing persisted and a reboot
+# reverted the restore. Header documented a sequence the body did not implement.
+SYSTem:POWer:STATe 1
+?SYSTem:POWer:STATe? 1
+SYSTem:COMMunicate:LAN:ENAbled 0
+SYSTem:COMMunicate:LAN:NETType 1
+?SYSTem:COMMunicate:LAN:NETType? 1
+SYSTem:COMMunicate:LAN:SECurity 3
+?SYSTem:COMMunicate:LAN:SECurity? 3
+SYSTem:COMMunicate:LAN:SSID "${WIFI_SSID}"
+SYSTem:COMMunicate:LAN:PASs "${WIFI_PASS}"
+SYSTem:COMMunicate:LAN:ENAbled 1
+?SYSTem:COMMunicate:LAN:ENAbled? 1
+SYSTem:COMMunicate:LAN:APPLY
+@wait 25
+SYSTem:COMMunicate:LAN:CONnected?
+SYSTem:COMMunicate:LAN:ADDRess?
+SYSTem:COMMunicate:LAN:SAVE

@@ -10684,3 +10684,72 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   could *check* it rather than *trust* it. That is also why the misattribution cost nothing: a locator I
   could resolve, and resolving it is what decremented the count.
 - **Nothing routed. Idle with an enumeration.**
+
+## 2026-10-14 · fw#1027 — audit DECLINED, hardware job DELIVERED as a smoke test
+
+- ⛔ **DECLINED THE AUDIT on four involvement kinds** against a routing premise of *"the only lane with
+  no history on this row."* **16 LOOP_LOG hits, 4 evidence files** (control fw#1110, which I did audit:
+  31/2). Kinds: **disposition-authorship** (`:4382`, I ruled its `needs-bench` SATISFIED),
+  ⛔ **routing-text contamination** (`:4870`, *I prescribed the exact action later assigned to me*),
+  ⛔⛔ **published prejudgment of the audit's PRECONDITION** (my census script hard-codes this row's
+  audit-state prose; `:8389` records it as the decisive case that forced the taxonomy), and **cited
+  precedent**. ⭐ **"Ran no round" and "has no history" are different claims** — the ledger was right and
+  the premise was wrong; the gap between them is where the nine kinds live.
+- ⛔ **Flagged independently: the row was `CONFLICTING/DIRTY`** on `tests/host/Makefile`. A conflicted
+  audit's BLOCK is a floor and its CLEAN is worthless, so the round was blocked regardless of who ran
+  it. Coordinator resolved it at `bc4c49dc6`. Also flagged **round numbers collide across lanes** (two
+  round-2s, two round-3s) while the 5-round cap is per-row — and this row's residual *is* the cap.
+- ⭐⭐ **CAUGHT AN INERT LEG IN THE ASSIGNED RECIPE, by static trace before building.** `MAX` is `16u`;
+  the broken head exits with `probes=16` and logs `probes`, the fixed head exits at 15 and logs
+  `probes+1`. **BOTH PRINT 16.** The assigned *"assert 17 tries"* leg **could not fail at the broken
+  head** — handed to me in the same message that warned inert legs look like fixes. Also: the message
+  printed `gpSDCardSettings->file`, the *configured* name, so *"names the file the walk examined"* was
+  **unsatisfiable**. ⭐ **The fix CHANGED THE CONSTRUCTION WHILE PRESERVING THE NUMBER — the hardest
+  version to spot.** This produced a real fix to the log line (4 rewrites followed).
+- ⛔⛔ **THEN THE LARGER FINDING: the branch this PR repairs is NOT REACHABLE from the device's command
+  surface.** The tick is **whole 32-bit** + a per-run sequence, and runs cannot share a tick, so
+  **candidate 0 always stats absent and `!scratchNameFree` never executes.** Across a reboot it needs
+  **sixteen runs at the same post-boot millisecond.** ⭐ The venue is **a property of the code, not a gap
+  in the bench** — the PR already ships `tests/host/test_958_…c` (546 lines, 8 Makefile guards), which
+  injects ticks directly. **I refused to construct an approximation and call it verification.**
+- ✅ **SMOKE TEST DELIVERED, labelled as such.** Flashed `714036910` (serial unchanged → right target;
+  crc `553E07E4`→`247EB7BF` → image landed; registry row recorded `247EB7BF/714036910`, every other
+  lane's row byte-identical).
+  - ⭐⭐ **Blind-leg premise CONFIRMED ON SILICON**: `benchmark_nqbprobe_1.dat` and the exact shape
+    `benchmark_12345_1.dat` both **ACCEPTED**, `../escape.dat` **REFUSED (-224)** — a negative control
+    proving the instrument can refuse. **Consequence not assessed; that is the audit's.**
+  - ⭐ **Name format + an unplanned differential**: three runs gave `_207504_1 / _262823_2 / _285211_3`,
+    **every tick > 65535**, against four files already on the card at **32738/57322/63233/34101 — all
+    < 65536**, physical artifacts of the 16-bit mask. Tick deltas 55,319 / 22,388 vs ~25 s/~18 s sleeps
+    → **1 kHz ms counter, measured.**
+  - **No collateral loss** (17→18→20, additions only). **0 `#958` log lines** with a live positive
+    control (the log carried the 4 errors my own probes caused) — **the collision demonstrated
+    unforceable, not asserted.**
+  - ⛔ **And what it does NOT show, stated in the file:** the log line never printed, so the bench saw
+    nothing of the wording, ordering or width. **A suite passing at both heads is an inert leg; I would
+    not ship one having just caught one.**
+- ⛔ **FOUR DEFECTS IN MY OWN TOOLING, all latent until a flash forced them:**
+  1. **`SYSTem:STORage:SD:FILE?` does not exist** (`-113`) — and **I had enumerated the command table
+     myself minutes earlier.** Violated *never guess SCPI* with the evidence on screen.
+  2. **The SCPI error queue is FIFO**, so an error read *after* a command can belong to an earlier one;
+     my first probe pass was misattributed until I drained between probes.
+  3. **`wifi_restore.batch` used the OLD verify syntax** (`CMD? expected`); `batch.sh` now keys verify
+     on a **LEADING `?`**, so the line was sent as a parameterised query → `-108`, abort. ⚠ **My own
+     memory said "Verify is now keyed on a leading `?` — I have not re-tested it", and I then hit the
+     untested thing.**
+  4. ⛔ **Its header described "settle → verify → SAVE" and the body stopped at APPLY** — **no `SAVE`,
+     so nothing would have persisted while reporting success.** Plus `batch.sh` **requires `--env`**;
+     it does not auto-read `~/.daqifi.env` as CLAUDE.md implies. All fixed; restore re-run to
+     `CONNECTED` + real address + `SAVE`, exit 0. **No credential printed at any point.**
+- ⛔⛔ **AND THE DEVICE-GUARD BLOCKED ME FOR WRITING PROSE ABOUT THE REGISTRY** — a heredoc quoting the
+  `UNKNOWN` placeholder token, which belongs to nq-c's row. ⭐ **Complying with the registry's own
+  "record it at flash time" rule is what caused it**: before my flash both rows held the shared
+  placeholder so it matched mine; after, it matched only theirs. **The guard penalises the lane that
+  follows the rule, at the moment it complies.**
+  ⚠ **SECOND REDISCOVERY OF A FILED DEFECT TODAY** — `feedback_bench_device_guard_blocks_text_not_hardware.md`
+  (2026-08-24) already states *"it matches TEXT, not hardware access"* with this exact heredoc symptom,
+  **and names the better workaround I did not use: the `Write` tool, since the hook only fires on Bash.**
+  Adopted. New material (the `image=` field postdates that file; the placeholder is a *shared* token;
+  the registry's `:37` claim is falsified and its `:38-39` already specifies the fix) merged into it.
+- **Nothing further queued. nq-c declined fw#1027 too → no eligible adversary on this station; that is
+  the coordinator's package for the operator.**

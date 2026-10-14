@@ -45,3 +45,9 @@
      is NONE -- leave it and let the harness reclaim it, as it did the sibling.
   work safety: not at risk either way. All three of that fire's commits are on
      origin/lint/971-sd-arm-refusal-ordering and verified by ls-remote.
+/mnt/c/daqifi/wt/bench-1027  nq-b  2026-10-14  NOT REMOVABLE WHILE IN USE
+  Purpose: fw#1027 two-direction hardware A/B. Detached build tree, checked out at
+  5b371e2b3b34caa46c459ee647373c795bd6cca6 then de5ad7bda. Holds generated makefiles
+  (gitignored, expensive to regenerate) and build/dist output. Created by nq-b; only
+  nq-b may remove it. Removable once the A/B is reported AND the two image= rows are
+  recorded in ~/.claude/bench/devices.conf.
