@@ -650,9 +650,18 @@ static int SDCardWrite() {
     }
     taskEXIT_CRITICAL();
     if (injectWriteFailure) {
-        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext consumed - forcing this "
-              "teardown-drain write of %u bytes to FAIL. This is NOT a card "
-              "fault; the session was already tearing down.",
+        /* Worst case 118 bytes (108 literal + 10 for an unbounded %u), 7 under
+         * Logger's 125-byte ceiling. Was 174 worst case and truncated MID-WORD
+         * at "This is NOT a card fau", destroying exactly the clause the wiki
+         * row promises -- that SYST:LOG? never reads as a genuine card fault.
+         * "teardown-drain" now carries what "the session was already tearing
+         * down" spelled out, so the remedy survives in full. No max= bound is
+         * asserted on the %u: writeBufferLength is bounded by
+         * SD_CARD_MANAGER_CONF_WBUFFER_SIZE (65536, 5 digits), but the message
+         * fits the unbounded 10-digit worst case anyway, so the fit does not
+         * rest on a bound that would have to be proved and re-proved. */
+        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext consumed - %u-byte "
+              "teardown-drain write forced to FAIL. NOT a card fault.",
               (unsigned)gSDCardData.writeBufferLength);
         writeLen = -1;
         goto __exit;

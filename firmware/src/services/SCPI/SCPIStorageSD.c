@@ -624,9 +624,13 @@ scpi_result_t SCPI_StorageSDFailNextSet(scpi_t * context) {
      * act on. LOG_E (not LOG_E_ONCE/LOG_E_SESSION) on purpose: this appearing
      * in a field log at all is the signal, and must never be deduplicated. */
     if (param1 != 0) {
-        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext ARMED - one SD write "
-              "issued during the next teardown drain will be forced to fail. "
-              "Bench use only.");
+        /* 121 bytes, 4 under Logger's 125-byte ceiling. Was 135 and therefore
+         * truncated with no error and no marker, losing "use only." -- the
+         * bench-only caveat, i.e. the remedy. Kept short per #1025/#1039:
+         * the full SCPI spelling stays (it is the grep token) and so does
+         * "NOT a card fault"'s counterpart "Bench use only". */
+        LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext ARMED - one write in the "
+              "next teardown drain will be forced to fail. Bench use only.");
     } else {
         LOG_E("[SD] TEST HOOK SYST:STOR:SD:FAILNext DISARMED - no write "
               "failure is pending.");
