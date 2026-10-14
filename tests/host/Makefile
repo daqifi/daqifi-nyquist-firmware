@@ -2107,18 +2107,25 @@ $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BE
 	        echo "       pre-merge audit reproduced exactly that, passing all seven"; \
 	        echo "       other guards and the whole host suite."; \
 	        exit 1; }
-	@grep -qE 'probes[[:space:]]*\+[[:space:]]*1u[[:space:]]*>=[[:space:]]*SD_CARD_MANAGER_UNIQUE_TARGET_MAX' $(SD_MANAGER_SRC) \
-	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer guards the uniqueness walk"; \
-	       echo "       against advancing past its last STAT'ED candidate."; \
-	       echo "       Without that guard the final iteration generates candidate"; \
-	       echo "       MAX and falls out of the loop, so the WRITE_PLUS open"; \
-	       echo "       TRUNCATES a name nothing ever examined -- while the log"; \
-	       echo "       reports a try count for names it did examine."; \
-	       echo "       test_958 CASES 7-9 model BOTH forms of this walk, so they"; \
-	       echo "       pass whatever the firmware does: a host model cannot see"; \
-	       echo "       which form shipped. THIS PIN is what ties the model to the"; \
-	       echo "       source. If you are changing the walk deliberately, update"; \
-	       echo "       uniqueness_walk() and re-read CASE 7 first."; \
+	@grep -qE 'probes[[:space:]]*>=[[:space:]]*SD_CARD_MANAGER_UNIQUE_TARGET_MAX' $(SD_MANAGER_SRC) \
+	  && tr -d '\r' < $(SD_MANAGER_SRC) | tr '\n' ' ' \
+	     | grep -qE 'e == SYS_FS_ERROR_NO_FILE[[:space:]]*[|][|][[:space:]]*e == SYS_FS_ERROR_NO_PATH[^{]*[{][[:space:]]*scratchNameFree = true' \
+	  && grep -qE '(^|[^A-Za-z0-9_])statFault([^A-Za-z0-9_]|$$)' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC)'s uniqueness walk no longer carries"; \
+	       echo "       BOTH properties a codex audit established it needs:"; \
+	       echo "       (a) a budget of MAX ADVANCES, i.e. MAX+1 candidates"; \
+	       echo "           EXAMINED, so it never stops while an unexamined"; \
+	       echo "           candidate is still in budget. An earlier guard"; \
+	       echo "           stopped one short and TRUNCATED an occupied name"; \
+	       echo "           while the next candidate was FREE -- a regression"; \
+	       echo "           against the code it replaced."; \
+	       echo "       (b) NO_FILE/NO_PATH treated as absence and every other"; \
+	       echo "           stat error treated as a FAULT (statFault), because"; \
+	       echo "           one transient DISK_ERR read as absent let the open"; \
+	       echo "           truncate silently, with the fallback log skipped."; \
+	       echo "       test_958 CASES 7-10 model BOTH walks, so they pass"; \
+	       echo "       whatever the firmware does: a host model cannot see which"; \
+	       echo "       form shipped. THIS PIN ties the model to the source."; \
 	       exit 1; }
 	@grep -qE 'SD_CARD_MANAGER_UNIQUE_TARGET_MAX[[:space:]]+16u' $(SD_MANAGER_SRC) \
 	  || { echo "ERROR: SD_CARD_MANAGER_UNIQUE_TARGET_MAX is no longer 16u in"; \

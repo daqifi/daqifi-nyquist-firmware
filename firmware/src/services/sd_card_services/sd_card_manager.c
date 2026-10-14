@@ -2521,30 +2521,59 @@ void sd_card_manager_ProcessState() {
                  * last candidate and say so in the log -- i.e. exactly today's
                  * behaviour, reached only in the case the walk cannot improve. */
                 if (uniqueTargetAtOpen) {
+                    /* WALK THE CANDIDATES. A codex audit found TWO defects here
+                     * -- in BOTH legs independently, the blind one running with
+                     * no brief at all -- after an earlier version of this guard
+                     * shipped them:
+                     *
+                     * 1. It stopped at the last candidate it had STAT'ED, so
+                     *    with candidates 0..MAX-1 occupied it truncated MAX-1
+                     *    **while candidate MAX was free**. The code it replaced
+                     *    advanced to MAX and CREATED it -- no loss at all. So
+                     *    that guard REGRESSED the MAX-occupied case and merely
+                     *    tied in the MAX+1 case: worse in one, better in none.
+                     * 2. ANY stat failure set scratchNameFree, so one transient
+                     *    SYS_FS_ERROR_DISK_ERR on a directory-sector read read
+                     *    as "absent" and the WRITE_PLUS open then truncated a
+                     *    file that does exist -- silently, because the fallback
+                     *    log is skipped whenever the name reads free.
+                     *
+                     * THE INVARIANT, which #1 got backwards: never open a
+                     * candidate this loop did not examine, AND never stop while
+                     * an unexamined candidate is still within budget. So the
+                     * budget is MAX advances = MAX+1 candidates EXAMINED, and
+                     * the loop leaves only on a genuine absence or after
+                     * examining the last one.
+                     *
+                     * Absence vs fault follows sd_TargetExistsInBucketPath's
+                     * existing idiom above: only NO_FILE / NO_PATH mean absent.
+                     * Anything else is the card failing to ANSWER, which is not
+                     * permission to truncate -- it falls through to the logged
+                     * fallback instead of being read as free. */
                     bool scratchNameFree = false;
-                    uint32_t probes = 0u;
-                    for (; probes < SD_CARD_MANAGER_UNIQUE_TARGET_MAX
-                             && gSDCardData.filePath[0] != '\0';
-                         probes++) {
+                    bool statFault = false;
+                    uint32_t probes = 0u;  /* advances; EXAMINED = probes + 1 */
+                    for (;;) {
                         SYS_FS_FSTAT st;
                         memset(&st, 0, sizeof(st));
                         if (SYS_FS_FileStat(gSDCardData.filePath, &st)
                                 != SYS_FS_RES_SUCCESS) {
-                            scratchNameFree = true;
-                            break;      /* absent, or unanswerable: take it */
-                        }
-                        /* Do NOT advance past the last candidate this loop will
-                         * actually stat. Without this guard the final iteration
-                         * generated candidate MAX and then fell out of the loop,
-                         * so the open below truncated a name that was never
-                         * checked -- while the log claimed "taken after N
-                         * tries". Leaving filePath on the last STAT'ED
-                         * candidate makes the fallback reuse a name we verified
-                         * is occupied, which is the accepted behaviour, instead
-                         * of gambling on an unexamined one. */
-                        if (probes + 1u >= SD_CARD_MANAGER_UNIQUE_TARGET_MAX) {
+                            SYS_FS_ERROR e = SYS_FS_Error();
+                            if (e == SYS_FS_ERROR_NO_FILE
+                                    || e == SYS_FS_ERROR_NO_PATH) {
+                                scratchNameFree = true;   /* genuinely absent */
+                            } else {
+                                statFault = true;         /* could not answer */
+                            }
                             break;
                         }
+                        /* Occupied. Stop only once every candidate we are
+                         * willing to open has been examined, the last
+                         * included. */
+                        if (probes >= SD_CARD_MANAGER_UNIQUE_TARGET_MAX) {
+                            break;
+                        }
+                        probes++;
                         gSDCardData.fileCounter++;
                         generateFilename(gSDCardData.filePath,
                                        sizeof(gSDCardData.filePath),
@@ -2552,70 +2581,35 @@ void sd_card_manager_ProcessState() {
                                        gSDCardData.bucketPath,
                                        gSDCardData.baseFilename,
                                        gpSDCardSettings->file);
+                        if (gSDCardData.filePath[0] == '\0') {
+                            break;   /* name unbuildable; NOT free */
+                        }
                     }
-                    /* NOT silent. The fallback still opens a name something
-                     * else holds, and the open truncates -- so the one thing
-                     * this path must not do is take that decision without
-                     * saying so. The bytes are a stale benchmark scratch file
-                     * and losing them is accepted (see the block above), but
-                     * "accepted" and "unobservable" are different, and
-                     * SYST:LOG? is where this project puts device health.
-                     * %.40s keeps it inside Logger's 125-byte ceiling (#1029):
-                     * 64 literal + 40 name + 2 digits = 106, margin 19.
-                     * Measured, not estimated -- the first draft of this line
-                     * came to 126, one byte over, while this comment claimed
-                     * 110. */
+                    /* NOT silent, and logged SEPARATELY because the remedies
+                     * differ: one means the card is full of these names, the
+                     * other means the card did not answer. Collapsing them was
+                     * how defect 2 above stayed invisible.
+                     *
+                     * The LEAF goes first in both, at a fixed low offset, so a
+                     * long bucket path cannot push the one identifying field
+                     * past Logger's tail-truncating vsnprintf (Logger.c:398).
+                     * The leaf is bounded by CONF_FILE_NAME_LEN_MAX (40) + '-'
+                     * + 10 digits = 51, so %.51s cannot truncate it. Worst
+                     * cases MEASURED: 111 and 107 bytes against the 125-byte
+                     * ceiling (margins 14 and 18). */
                     if (!scratchNameFree) {
-                        /* NAMES THE FILE IT DESTROYED. The original printed
-                         * `gpSDCardSettings->file`, the CONFIGURED base name,
-                         * while the bytes lost belong to a SUFFIXED candidate,
-                         * so the one question SYST:LOG? exists to answer here
-                         * -- which file did I lose? -- was the one it could not.
-                         *
-                         * THE LEAF, NOT THE PATH, and FIRST. Two corrections to
-                         * my own previous attempt, both owed to nq-c:
-                         *
-                         *  - It ordered the counters first and the path last on
-                         *    the theory that "the numbers cannot truncate where
-                         *    they are". That applies the rule BACKWARDS. The
-                         *    rule is that the field whose absence changes the
-                         *    reader's action belongs where truncation cannot
-                         *    reach it -- and that field is the NAME. Ordering
-                         *    put the answer in the truncation zone and
-                         *    protected the part a reader can live without.
-                         *  - `%.30s` did not merely RISK truncating; it
-                         *    GUARANTEED it. filePath is a bucket-subdirectory
-                         *    path (#689), so 30 characters is spent on
-                         *    `/mnt/.../P0nn/` and the discriminating suffix --
-                         *    the whole point of the line -- is always what falls
-                         *    off the end.
-                         *
-                         * So: print the LEAF (after the last '/'), positioned at
-                         * byte 16 where nothing can reach it, and let the trailing
-                         * try-count be the expendable field instead.
-                         *
-                         * BOUND DERIVED, not sampled. generateFilename composes
-                         * the leaf as "%s-%u%s" = baseFilename + '-' + counter +
-                         * ext, and baseFilename+ext together come from the
-                         * configured name, capped at
-                         * SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX (40,
-                         * sd_card_manager.h:19). uint32 counter is <= 10 digits.
-                         * So the leaf is at most 40 + 1 + 10 = 51, and %.51s
-                         * cannot truncate it at all.
-                         * Worst case: 51 literal + 51 leaf + 2 count = 104
-                         * against Logger's 125 ceiling (LOG_MESSAGE_SIZE 128
-                         * less vsnprintf's 2 and the clamp's 1). Margin 21.
-                         *
-                         * probes+1 is NOT a user-visible change: the old code's
-                         * `probes` ran one iteration further and printed the
-                         * same 16. The value was right by accident; it is now
-                         * right by construction. */
                         const char *lostLeaf = strrchr(gSDCardData.filePath, '/');
                         lostLeaf = (lostLeaf != NULL) ? (lostLeaf + 1)
                                                       : gSDCardData.filePath;
-                        LOG_E("[SD] #958 lost '%.51s'"
-                              " - scratch name reused after %u tries",
-                              lostLeaf, (unsigned)probes + 1u);
+                        if (statFault) {
+                            LOG_E("[SD] #958 cannot verify '%.51s'"
+                                  " - opening it anyway, may truncate",
+                                  lostLeaf);
+                        } else {
+                            LOG_E("[SD] #958 lost '%.51s'"
+                                  " - all %u candidate names taken",
+                                  lostLeaf, (unsigned)probes + 1u);
+                        }
                     }
                 }
                 // Count the attempt, not the success: a failed create still costs

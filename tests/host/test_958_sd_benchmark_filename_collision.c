@@ -562,124 +562,149 @@ TEST(the_counter_is_advanced_before_the_name_is_formatted)
  * ========================================================================== */
 #define FW_UNIQUE_TARGET_MAX 16u   /* mirrors sd_card_manager.c's #define */
 
+/* A stat outcome, because "could not answer" is NOT "absent" -- conflating
+ * them was the second of the two defects a codex audit found here. */
+typedef enum { STAT_PRESENT, STAT_ABSENT, STAT_FAULT } StatOutcome;
+
 typedef struct {
-    uint32_t chosen;        /* the candidate the open would use */
-    uint32_t probes;        /* the loop counter at exit -- what the log prints */
-    bool     foundFree;     /* scratchNameFree */
-    bool     chosenWasStatted;  /* was the chosen candidate ever examined? */
+    uint32_t chosen;            /* candidate the open would use */
+    uint32_t probes;            /* advances made; EXAMINED = probes + 1 */
+    bool     foundFree;         /* a GENUINE absence was seen */
+    bool     statFault;         /* the card failed to answer */
+    bool     chosenWasExamined; /* was the chosen candidate stat'ed? */
+    bool     truncates;         /* does the open destroy existing data? */
 } WalkResult;
 
-/* `fixed` selects the post- or pre-guard form. Candidates 0..occupiedThrough
- * are occupied; everything above is absent.
- *
- * occupiedThrough is SIGNED, and -1 means "nothing is occupied". An unsigned
- * parameter cannot express that: 0 already means "candidate 0 is taken", so
- * the no-collision case -- the one the device actually takes on every run --
- * would have been unrepresentable and silently untested. The first draft of
- * this file used uint32_t and its own case 9 caught it. */
-static WalkResult uniqueness_walk(bool fixed, int32_t occupiedThrough)
+/* `occupiedThrough`: candidates 0..occupiedThrough exist (-1 = none exist).
+ * `faultAt`: candidate index whose stat returns a FAULT (-1 = never).
+ * `legacy` selects the pre-audit walk, kept so every case is a differential. */
+static WalkResult uniqueness_walk(bool legacy, int32_t occupiedThrough,
+                                  int32_t faultAt)
 {
     WalkResult r;
-    uint32_t counter = 0u;
-    uint32_t probes = 0u;
-    bool foundFree = false;
-    bool anyStatted = false;
-    uint32_t highestStatted = 0u;
+    uint32_t counter = 0u, probes = 0u;
+    bool free_ = false, fault = false;
+    int32_t highestExamined = -1;
 
-    for (; probes < FW_UNIQUE_TARGET_MAX; probes++) {
-        anyStatted = true;
-        highestStatted = counter;
-        if ((int32_t)counter > occupiedThrough) {  /* stat says absent */
-            foundFree = true;
+    for (;;) {
+        StatOutcome o;
+        highestExamined = (int32_t)counter;
+        if ((int32_t)counter == faultAt)            o = STAT_FAULT;
+        else if ((int32_t)counter > occupiedThrough) o = STAT_ABSENT;
+        else                                         o = STAT_PRESENT;
+
+        if (o != STAT_PRESENT) {
+            if (legacy) {
+                /* the shipped defect: ANY non-success read as absent */
+                free_ = true;
+            } else if (o == STAT_ABSENT) {
+                free_ = true;
+            } else {
+                fault = true;
+            }
             break;
         }
-        /* THE GUARD. Without it the final iteration advances to a candidate the
-         * loop will never stat, and the open below truncates it unexamined. */
-        if (fixed && (probes + 1u >= FW_UNIQUE_TARGET_MAX)) {
-            break;
+        if (legacy) {
+            if (probes + 1u >= FW_UNIQUE_TARGET_MAX) break;  /* stopped EARLY */
+        } else {
+            if (probes >= FW_UNIQUE_TARGET_MAX) break;       /* examined all */
         }
+        probes++;
         counter++;
     }
 
     r.chosen = counter;
     r.probes = probes;
-    r.foundFree = foundFree;
-    r.chosenWasStatted = anyStatted && (counter <= highestStatted);
+    r.foundFree = free_;
+    r.statFault = fault;
+    r.chosenWasExamined = ((int32_t)counter <= highestExamined);
+    /* the open truncates iff the chosen candidate actually exists */
+    r.truncates = ((int32_t)counter <= occupiedThrough);
     return r;
 }
 
-/* CASE 7: on exhaustion the broken form opens a candidate it never examined.
- * This is the differential the bench cannot produce. */
-TEST(exhaustion_never_opens_an_unexamined_candidate)
-{
-    /* SEVENTEEN occupied names: 0..16. See the POPULATION note above. */
-    WalkResult broken = uniqueness_walk(false, (int32_t)FW_UNIQUE_TARGET_MAX);
-    WalkResult fixed  = uniqueness_walk(true,  (int32_t)FW_UNIQUE_TARGET_MAX);
-
-    /* Neither finds a free name -- that is what "exhausted" means. */
-    ASSERT_TRUE(!broken.foundFree);
-    ASSERT_TRUE(!fixed.foundFree);
-
-    /* PRE-FIX: lands on candidate 16, which the loop stats 0..15 never saw. */
-    ASSERT_EQ(broken.chosen, FW_UNIQUE_TARGET_MAX);
-    ASSERT_TRUE(!broken.chosenWasStatted);
-
-    /* POST-FIX: lands on the last candidate it DID stat, and that candidate is
-     * known-occupied -- so reusing it is a decision taken on evidence rather
-     * than a gamble on an unexamined name. */
-    ASSERT_EQ(fixed.chosen, FW_UNIQUE_TARGET_MAX - 1u);
-    ASSERT_TRUE(fixed.chosenWasStatted);
-}
-
-/* CASE 8: the LOG COUNT does not discriminate, and must never be asserted on.
+/* CASE 7 -- THE REGRESSION. codex, both legs, 2026-10-14.
  *
- * Lane nq-b caught this while calibrating the hardware A/B: the broken form's
- * `probes` runs one iteration further and prints the same number the fixed form
- * reaches by adding one. A reproduction asserting "the log says N tries" is
- * INERT -- it cannot fail at the broken head. Pinned here so the next reader
- * cannot re-derive that assertion believing it discriminates. */
-TEST(the_logged_try_count_is_identical_on_both_forms)
+ * With candidates 0..MAX-1 occupied and candidate MAX FREE, the earlier guard
+ * stopped at MAX-1 and TRUNCATED IT, while the code it replaced advanced to MAX
+ * and created it losslessly. The "fix" was worse in this population and merely
+ * equal in the next one.
+ *
+ * ⛔ My own first version of this case used occupiedThrough = MAX -- the one
+ * population where the two forms TIE -- so it passed while shipping a
+ * regression. A differential is only as good as the population it is run on. */
+TEST(exhaustion_must_not_truncate_while_a_free_candidate_remains)
 {
-    WalkResult broken = uniqueness_walk(false, (int32_t)FW_UNIQUE_TARGET_MAX);
-    WalkResult fixed  = uniqueness_walk(true,  (int32_t)FW_UNIQUE_TARGET_MAX);
+    WalkResult legacy = uniqueness_walk(true,  (int32_t)FW_UNIQUE_TARGET_MAX - 1, -1);
+    WalkResult now    = uniqueness_walk(false, (int32_t)FW_UNIQUE_TARGET_MAX - 1, -1);
 
-    ASSERT_EQ(broken.probes, FW_UNIQUE_TARGET_MAX);          /* logs `probes`   */
-    ASSERT_EQ(fixed.probes + 1u, FW_UNIQUE_TARGET_MAX);      /* logs `probes+1` */
-    ASSERT_EQ(broken.probes, fixed.probes + 1u);             /* ... same value  */
+    /* the free candidate is MAX; the current walk must reach and take it */
+    ASSERT_TRUE(now.foundFree);
+    ASSERT_EQ(now.chosen, FW_UNIQUE_TARGET_MAX);
+    ASSERT_TRUE(!now.truncates);
+
+    /* and the regression is captured: the earlier guard destroyed data here */
+    ASSERT_TRUE(!legacy.foundFree);
+    ASSERT_TRUE(legacy.truncates);
+    ASSERT_EQ(legacy.chosen, FW_UNIQUE_TARGET_MAX - 1u);
 }
 
-/* CASE 9: the guard must not disturb the ordinary path. The walk is entered on
- * every benchmark open, and exhaustion is the rare case -- so a guard that
- * changed the common outcome would be a far worse defect than the one it fixes.
- * This is the compliant-input negative: both forms must agree whenever a free
- * candidate exists. */
-TEST(the_guard_does_not_change_the_ordinary_path)
+/* CASE 8: genuine exhaustion -- every candidate in budget occupied. The open
+ * still truncates (no refusal path exists; adding one reopens the `mode`
+ * double-duty teardown race), but it must truncate a candidate it EXAMINED,
+ * and it must say so. */
+TEST(genuine_exhaustion_truncates_only_an_examined_candidate)
+{
+    WalkResult now = uniqueness_walk(false, (int32_t)FW_UNIQUE_TARGET_MAX, -1);
+
+    ASSERT_TRUE(!now.foundFree);
+    ASSERT_TRUE(!now.statFault);
+    ASSERT_TRUE(now.truncates);
+    ASSERT_TRUE(now.chosenWasExamined);
+    ASSERT_EQ(now.chosen, FW_UNIQUE_TARGET_MAX);
+    ASSERT_EQ(now.probes + 1u, FW_UNIQUE_TARGET_MAX + 1u);  /* 17 examined */
+}
+
+/* CASE 9 -- THE SECOND DEFECT. A stat that FAILS is not a stat that says
+ * absent. The shipped code set scratchNameFree on any non-success, so one
+ * transient SYS_FS_ERROR_DISK_ERR let the WRITE_PLUS open truncate an existing
+ * file with the fallback log SKIPPED, because the name read free. */
+TEST(a_stat_fault_is_not_an_absence)
+{
+    /* candidate 0 exists, and its stat faults */
+    WalkResult legacy = uniqueness_walk(true,  0, 0);
+    WalkResult now    = uniqueness_walk(false, 0, 0);
+
+    /* shipped: read as free -> no diagnostic -> silent truncation */
+    ASSERT_TRUE(legacy.foundFree);
+    ASSERT_TRUE(!legacy.statFault);
+    ASSERT_TRUE(legacy.truncates);
+
+    /* now: NOT free, so the fallback log fires and names the file */
+    ASSERT_TRUE(!now.foundFree);
+    ASSERT_TRUE(now.statFault);
+}
+
+/* CASE 10: the ordinary path, which is the only one the device actually takes
+ * (nq-b measured three benchmarks in one boot, candidate 0 free every time).
+ * The compliant-input negative: a guard that changed this would be a worse
+ * defect than either it fixes. */
+TEST(the_walk_does_not_disturb_the_ordinary_path)
 {
     int32_t occupied;
 
-    /* -1 is the case the device takes on EVERY real run: nq-b measured three
-     * benchmarks in one boot and candidate 0 was free every time. If the guard
-     * disturbed this, it would break the only path that actually executes. */
-    {
-        WalkResult broken = uniqueness_walk(false, -1);
-        WalkResult fixed  = uniqueness_walk(true,  -1);
-        ASSERT_TRUE(broken.foundFree);
-        ASSERT_TRUE(fixed.foundFree);
-        ASSERT_EQ(fixed.chosen, 0u);
-        ASSERT_EQ(broken.chosen, fixed.chosen);
-        ASSERT_EQ(fixed.probes, 0u);
+    {   /* nothing on the card */
+        WalkResult now = uniqueness_walk(false, -1, -1);
+        ASSERT_TRUE(now.foundFree);
+        ASSERT_EQ(now.chosen, 0u);
+        ASSERT_EQ(now.probes, 0u);
+        ASSERT_TRUE(!now.truncates);
     }
-
-    for (occupied = 0; occupied + 1 < (int32_t)FW_UNIQUE_TARGET_MAX; occupied++) {
-        WalkResult broken = uniqueness_walk(false, occupied);
-        WalkResult fixed  = uniqueness_walk(true,  occupied);
-
-        ASSERT_TRUE(broken.foundFree);
-        ASSERT_TRUE(fixed.foundFree);
-        ASSERT_EQ(broken.chosen, fixed.chosen);
-        ASSERT_EQ(broken.probes, fixed.probes);
-        ASSERT_EQ(fixed.chosen, (uint32_t)occupied + 1u);
-        ASSERT_TRUE(fixed.chosenWasStatted);
+    for (occupied = 0; occupied < (int32_t)FW_UNIQUE_TARGET_MAX; occupied++) {
+        WalkResult now = uniqueness_walk(false, occupied, -1);
+        ASSERT_TRUE(now.foundFree);
+        ASSERT_TRUE(!now.truncates);
+        ASSERT_EQ(now.chosen, (uint32_t)occupied + 1u);
     }
 }
 
@@ -693,8 +718,9 @@ int main(void)
     RUN(longest_name_fits_the_field_without_truncation);
     RUN(same_tick_one_wrap_apart_still_gives_distinct_names);
     RUN(the_counter_is_advanced_before_the_name_is_formatted);
-    RUN(exhaustion_never_opens_an_unexamined_candidate);
-    RUN(the_logged_try_count_is_identical_on_both_forms);
-    RUN(the_guard_does_not_change_the_ordinary_path);
+    RUN(exhaustion_must_not_truncate_while_a_free_candidate_remains);
+    RUN(genuine_exhaustion_truncates_only_an_examined_candidate);
+    RUN(a_stat_fault_is_not_an_absence);
+    RUN(the_walk_does_not_disturb_the_ordinary_path);
     return TEST_SUMMARY();
 }
