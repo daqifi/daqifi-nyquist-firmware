@@ -479,7 +479,97 @@ Three sanctioned paths, in order of preference:
    ```
    Never for streaming or multi-step tests: its `-x` timeout is idle-based (a stream never goes idle → hangs forever); killing it mid-stream corrupts WSL serial state (recovery: `pkill -9 picocom; fuser -k /dev/ttyACM0; rm -f /var/lock/LCK..ttyACM0`, else physical replug); rapid open/close toggles DTR/RTS and can crash the device's CDC (Windows Code 43 → reprogram). Never use `2>&1` with picocom. Allow long drain time between large-response commands (`LISt?`, `LOG?`, `SD:GET` — `sleep 5+`) or the next query captures stale data.
 
-For ad-hoc multi-command bench scripts, write to **`/tmp/temp.sh`** (the filename is allowlisted in `.claude/settings.local.json` — the untracked per-machine Claude Code override; add the entry there if your station doesn't have it), `chmod +x`, `dos2unix` if needed.
+For ad-hoc multi-command bench scripts, write to **your session's scratchpad directory** (the
+agent harness names it in the environment preamble; it is keyed by session id, so it is isolated
+by construction and needs no allowlist entry — verified 2026-10-07). `chmod +x`, `dos2unix` if
+needed.
+
+⚠ **Do NOT use a shared fixed path such as `/tmp/temp.sh` — several agents run concurrently and
+it silently feeds one agent another's script or output.** Measured 2026-10-07: one lane's
+eligibility script executed inside another lane's run, and the receiving lane nearly read a
+foreign `head MISMATCH` as a finding about its own PR. The leaked text was plausible,
+same-format and **unmarked**, so it is not detectable by reading the output. At the time
+`/tmp/claude-1000/` held **511 loose files** dating back four weeks, including names any lane
+would pick (`st.out`, `gate.out`, `f.txt`). The parent directory is shared too, so moving to a
+different fixed filename under it does not help.
+
+**Mark every ad-hoc script's output.** A marker is the only cheap detector, and one added
+*after* you see odd output is too late — you cannot retroactively establish which lines were
+yours:
+
+```bash
+# Keyed on the SESSION, not the cwd -- so the value does not change when you
+# cd into a task tree. It is still PATH-DERIVED at bottom (bench_lane_id()
+# prefers $BENCH_AGENT, then $HERDR_WORKSPACE_LABEL, then falls back to the
+# basename of $ORCA_WORKTREE_ID's path), so it resolves nothing against the
+# registry -- which is why the check below is not optional.
+LANE=$(bash ~/.claude/skills/bench/bench.sh whoami | awk '/^lane:/{print $2}')
+[ -n "$LANE" ] || { echo 'FATAL: cannot establish lane identity' >&2; exit 1; }
+grep -qE "^[[:space:]]*$LANE[[:space:]]" ~/.claude/bench/devices.conf \
+  || echo "NOTE: '$LANE' is not a registered lane (fine for the coordinator or" \
+          "the main checkout; suspicious for a bench lane)" >&2
+echo "### MARKER-$LANE BEGIN <what>"   # ... the script ...
+echo "### MARKER-$LANE END <what>"
+```
+
+⚠ **VALIDATE the lane; never TRUST a derivation unchecked.** Three ways to get this wrong, all measured
+on this station:
+
+- `basename $(git rev-parse --show-toplevel)` — the **cwd** — yields a registry lane name in **3 of 81**
+  worktrees. The other 78 are the main checkout, a lane's own *task* trees (`nq-c-fw1013`),
+  purpose-named trees (`audit-965`, `build-1055`) and 49 `agent-*` subagent trees. So lane `nq-c`
+  working in its own task tree would emit `MARKER-nq-c-fw1013` — not another lane's name, so no
+  false attribution, but it does not resolve against the registry either.
+- `bench` is **not on `PATH`**; only `~/.claude/skills/bench/bench.sh` exists.
+- `$ORCA_WORKTREE_ID` is a compound — `<uuid>::C:\path\to\worktree` — so verbatim use yields a
+  60-character marker containing `::` and backslashes.
+
+**Why the `whoami` form is still the primary**, stated without overclaiming: it runs the same
+basename operation, but on the **session root** rather than the cwd — and a session root is far
+more often a registered lane than an arbitrary working directory, and the value **does not
+change** when you `cd` into a task tree. That cwd-stability is the real advantage. It is *not* a
+registry lookup, so a session rooted at `nq-c-fw1013` or `audit-965` reports exactly that, and
+the NOTE in the snippet is what catches it.
+
+⛔ **And prefer the loud failure.** `bench: not found` was impossible to miss; `basename` never
+fails and always returns a *plausible* string. Swapping one for the other trades a self-announcing
+error for a silent wrong value — in the one convention whose entire purpose is catching silent
+wrong values. The `[ -n ... ] || exit` and the registry check above exist to keep it loud. The
+registry check is a NOTE rather than a hard failure on purpose: not every session is a registered
+lane (this file's own coordinator session is not), so absence means "unregistered", while a name
+that is present but *wrong* is the case the marker cannot detect and you must not create.
+
+**A wrong lane name is worse than no marker:** it stamps a name on output, and a wrong one
+falsely authenticates one lane's text as another's — the exact confusion the marker prevents.
+An `agent-*` subagent tree cannot name its lane from the path at all (git records no owner), so a
+subagent should **inherit `$LANE` from the session that spawned it** rather than derive it.
+
+⭐ **What the marker buys, in both directions.** It is an **authenticator you give others** and a
+**detector you keep for yourself**:
+
+| | mechanism | effect |
+|---|---|---|
+| protects **you** | session scratchpad | isolation — unilateral, immediate, works alone |
+| protects **you** | marking *everything* you emit | foreign text arrives **unmarked**, and the gap is a structural check |
+| protects **others** | `MARKER-$LANE` on your output | lets them attribute your lines — needs *them* to be marking too |
+
+The second row is the one that is easy to miss: consistent self-marking protects you **by
+absence**. In the incident this section exists for, the receiving lane *was saved by noticing* and
+the foreign text was "plausible, same-format and **unmarked**" — so marking your own output is
+precisely what converts that lucky noticing into a test that cannot be missed. What it does **not**
+do is make your own output trustworthy to you; and *attributing* someone else's leak still needs
+them to have marked it.
+
+⚠ **The station hook currently argues the other way, and it is stale.**
+`~/.claude/hooks/tmp-script-guard.sh` recommends `/tmp/temp.sh` (`:71`) and exempts it from its own
+nag (`:53`) — so the shared path is frictionless while the path this section prescribes is the noisy
+one. Ignore the recommendation; the scratchpad is correct. It also **misfires**: its match pattern
+(`:42`) has no end anchor, so `foo.json` matches as `foo.js`, `bar.csv` as `bar.c` and `x.html` as
+`x.h` — all three extensions are on the hook's own exempt list, so it nags about data files it is
+documented not to care about. Both are outside this repo and tracked separately.
+
+(Older `/tmp/temp.sh` entries remain in `.claude/settings.local.json` for compatibility; nothing
+needs to be added there for the scratchpad.)
 
 **Device state basics:** power states `0`=STANDBY, `1`=POWERED_UP (full power — required for WiFi and the DAC's 10 V rail), `2`=POWERED_UP_EXT_DOWN (low-battery). Before tests: known state (`SYST:POW:STAT 0/1` cycle if needed), drain the error queue (`SYST:ERR?` until `0,"No error"`), `ABOR` any pending operation. Don't guess SCPI syntax — see the verification protocol above (e.g. it's `SSIDSTR?`, `NETTYPE?`, `ADDR?` — not `SSID:STR`/`MODE`/`IP`).
 
@@ -538,7 +628,7 @@ All **durable regression tests** — firmware regression, MCP integration, clien
 4. **Every run logs its complete recipe + version triplet** to a sidecar `<script>_<timestamp>.meta.json`: firmware `*IDN?` + firmware version + test-suite git SHA (`test_harness.collect_run_metadata`). Two runs with the same triplet should produce comparable CSVs; that's the **repeatability key**.
 5. **Every benchmark emits the canonical CSV shape** documented in [`docs/CSV_SCHEMA.md`](https://github.com/daqifi/daqifi-python-test-suite/blob/main/docs/CSV_SCHEMA.md). New `SYST:STR:STATS?` firmware fields flow through automatically — no script changes needed.
 
-**Carve-out for ad-hoc bench exploration.** Quick interactive commands — `picocom` one-liners, single SCPI queries, a throwaway `/tmp/temp.sh` to validate a hunch before writing the real test — are fine and have their own conventions documented in the "Bench Testing & Device Access" section above. The policy here applies when the question is "will this break if I change X next month?" — that answer lives in a versioned script in `daqifi-python-test-suite`, not in your shell history.
+**Carve-out for ad-hoc bench exploration.** Quick interactive commands — `picocom` one-liners, single SCPI queries, a throwaway script in your session scratchpad to validate a hunch before writing the real test — are fine and have their own conventions documented in the "Bench Testing & Device Access" section above. The policy here applies when the question is "will this break if I change X next month?" — that answer lives in a versioned script in `daqifi-python-test-suite`, not in your shell history.
 
 When you're touching the firmware in a way that needs a regression check, your first move is to find or write a script in `daqifi-python-test-suite` that exercises it. Don't put **regression** bench-validation logic in the firmware repo (the carve-out above is for one-off exploration only, not for tests that should keep running). Don't reproduce harness primitives.
 
