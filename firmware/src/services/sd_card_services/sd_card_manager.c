@@ -2286,6 +2286,18 @@ void sd_card_manager_ProcessState() {
                             scratchNameFree = true;
                             break;      /* absent, or unanswerable: take it */
                         }
+                        /* Do NOT advance past the last candidate this loop will
+                         * actually stat. Without this guard the final iteration
+                         * generated candidate MAX and then fell out of the loop,
+                         * so the open below truncated a name that was never
+                         * checked -- while the log claimed "taken after N
+                         * tries". Leaving filePath on the last STAT'ED
+                         * candidate makes the fallback reuse a name we verified
+                         * is occupied, which is the accepted behaviour, instead
+                         * of gambling on an unexamined one. */
+                        if (probes + 1u >= SD_CARD_MANAGER_UNIQUE_TARGET_MAX) {
+                            break;
+                        }
                         gSDCardData.fileCounter++;
                         generateFilename(gSDCardData.filePath,
                                        sizeof(gSDCardData.filePath),
@@ -2307,9 +2319,14 @@ void sd_card_manager_ProcessState() {
                      * came to 126, one byte over, while this comment claimed
                      * 110. */
                     if (!scratchNameFree) {
+                        /* probes+1: the loop breaks AT the last candidate it
+                         * stats rather than past it, so `probes` is one less
+                         * than the number of names examined. Still 2 digits
+                         * (MAX is 16), so the 106-byte measurement above
+                         * stands. */
                         LOG_E("[SD] #958 scratch '%.40s' taken after %u tries"
                               " - reusing, old file lost",
-                              gpSDCardSettings->file, (unsigned)probes);
+                              gpSDCardSettings->file, (unsigned)probes + 1u);
                     }
                 }
                 // Count the attempt, not the success: a failed create still costs
