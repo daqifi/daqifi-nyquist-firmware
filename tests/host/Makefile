@@ -2048,7 +2048,7 @@ $(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(HELP_BIN) test_1004_help_write_abort.c
 
-$(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BENCH_SRC) $(SD_MGR_HDR) $(RECIPES)
+$(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BENCH_SRC) $(SD_MANAGER_SRC) $(SD_MGR_HDR) $(RECIPES)
 	@tr -d '\r' < $(SD_BENCH_SRC) | tr '\n' ' ' \
 	  | grep -qE '"benchmark_%lu_%lu\.dat",[[:space:]]*\(unsigned long\)xTaskGetTickCount\(\),[[:space:]]*\(unsigned long\)benchNameSeq' \
 	  || { echo "ERROR: the SD:BENCHmark scratch name in $(SD_BENCH_SRC) is no"; \
@@ -2107,6 +2107,27 @@ $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BE
 	        echo "       pre-merge audit reproduced exactly that, passing all seven"; \
 	        echo "       other guards and the whole host suite."; \
 	        exit 1; }
+	@grep -qE 'probes[[:space:]]*\+[[:space:]]*1u[[:space:]]*>=[[:space:]]*SD_CARD_MANAGER_UNIQUE_TARGET_MAX' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer guards the uniqueness walk"; \
+	       echo "       against advancing past its last STAT'ED candidate."; \
+	       echo "       Without that guard the final iteration generates candidate"; \
+	       echo "       MAX and falls out of the loop, so the WRITE_PLUS open"; \
+	       echo "       TRUNCATES a name nothing ever examined -- while the log"; \
+	       echo "       reports a try count for names it did examine."; \
+	       echo "       test_958 CASES 7-9 model BOTH forms of this walk, so they"; \
+	       echo "       pass whatever the firmware does: a host model cannot see"; \
+	       echo "       which form shipped. THIS PIN is what ties the model to the"; \
+	       echo "       source. If you are changing the walk deliberately, update"; \
+	       echo "       uniqueness_walk() and re-read CASE 7 first."; \
+	       exit 1; }
+	@grep -qE 'SD_CARD_MANAGER_UNIQUE_TARGET_MAX[[:space:]]+16u' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: SD_CARD_MANAGER_UNIQUE_TARGET_MAX is no longer 16u in"; \
+	       echo "       $(SD_MANAGER_SRC). test_958 mirrors it as"; \
+	       echo "       FW_UNIQUE_TARGET_MAX and its POPULATION argument -- the"; \
+	       echo "       seventeenth file is what makes the defect reproduce -- is"; \
+	       echo "       derived from that number. Update the mirror together with"; \
+	       echo "       the constant or CASE 7 silently stops testing exhaustion."; \
+	       exit 1; }
 	@if grep -qF '"benchmark_%lu.dat"' $(SD_BENCH_SRC); then \
 	       echo "ERROR: the tick-ONLY benchmark filename is back in $(SD_BENCH_SRC)."; \
 	       echo "       TickType_t is 32-bit here, so that name repeats after 49.7"; \

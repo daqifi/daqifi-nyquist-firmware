@@ -532,6 +532,157 @@ TEST(the_counter_is_advanced_before_the_name_is_formatted)
     }
 }
 
+
+/* ==========================================================================
+ * THE UNIQUENESS WALK -- the second half of #958, and until now UNTESTED
+ *
+ * Everything above models the scratch NAME. This models what the SD task does
+ * with it: before the truncating open, it stats successive candidates looking
+ * for a free one (sd_card_manager.c, the `uniqueTargetAtOpen` block).
+ *
+ * WHY THIS LIVES IN A HOST TEST AND NOT ON THE BENCH. Lane nq-b established
+ * on silicon that the exhaustion branch is UNREACHABLE from the device command
+ * surface: the name carries the WHOLE 32-bit tick plus a per-boot sequence and
+ * two runs cannot share a tick, so candidate 0 always stats absent and the walk
+ * breaks immediately. Three runs in one boot produced no #958 log line at all,
+ * against a positive control proving the log was live. Reaching exhaustion
+ * needs sixteen runs landing on the same post-boot tick across sixteen reboots.
+ * So a board cannot discriminate the fixed walk from the broken one -- every
+ * available hardware assertion passes identically at both heads -- and this
+ * model is the ONLY venue that can. That is a property of the code, not a gap
+ * in the bench.
+ *
+ * ⛔ POPULATION: `occupiedThrough` must be at least FW_UNIQUE_TARGET_MAX --
+ * that is the base name PLUS -1 … -16, SEVENTEEN files, with the victim in
+ * -16. DO NOT TRIM IT. Trimming to -1 … -15 makes the broken form's candidate
+ * 16 not exist, so its open CREATES instead of TRUNCATING: the test still
+ * runs, still passes, and no longer tests anything. The seventeenth file is
+ * the only reason the defect reproduces. (Derived by nq-b while calibrating a
+ * hardware A/B that could not have discriminated without it.)
+ * ========================================================================== */
+#define FW_UNIQUE_TARGET_MAX 16u   /* mirrors sd_card_manager.c's #define */
+
+typedef struct {
+    uint32_t chosen;        /* the candidate the open would use */
+    uint32_t probes;        /* the loop counter at exit -- what the log prints */
+    bool     foundFree;     /* scratchNameFree */
+    bool     chosenWasStatted;  /* was the chosen candidate ever examined? */
+} WalkResult;
+
+/* `fixed` selects the post- or pre-guard form. Candidates 0..occupiedThrough
+ * are occupied; everything above is absent.
+ *
+ * occupiedThrough is SIGNED, and -1 means "nothing is occupied". An unsigned
+ * parameter cannot express that: 0 already means "candidate 0 is taken", so
+ * the no-collision case -- the one the device actually takes on every run --
+ * would have been unrepresentable and silently untested. The first draft of
+ * this file used uint32_t and its own case 9 caught it. */
+static WalkResult uniqueness_walk(bool fixed, int32_t occupiedThrough)
+{
+    WalkResult r;
+    uint32_t counter = 0u;
+    uint32_t probes = 0u;
+    bool foundFree = false;
+    bool anyStatted = false;
+    uint32_t highestStatted = 0u;
+
+    for (; probes < FW_UNIQUE_TARGET_MAX; probes++) {
+        anyStatted = true;
+        highestStatted = counter;
+        if ((int32_t)counter > occupiedThrough) {  /* stat says absent */
+            foundFree = true;
+            break;
+        }
+        /* THE GUARD. Without it the final iteration advances to a candidate the
+         * loop will never stat, and the open below truncates it unexamined. */
+        if (fixed && (probes + 1u >= FW_UNIQUE_TARGET_MAX)) {
+            break;
+        }
+        counter++;
+    }
+
+    r.chosen = counter;
+    r.probes = probes;
+    r.foundFree = foundFree;
+    r.chosenWasStatted = anyStatted && (counter <= highestStatted);
+    return r;
+}
+
+/* CASE 7: on exhaustion the broken form opens a candidate it never examined.
+ * This is the differential the bench cannot produce. */
+TEST(exhaustion_never_opens_an_unexamined_candidate)
+{
+    /* SEVENTEEN occupied names: 0..16. See the POPULATION note above. */
+    WalkResult broken = uniqueness_walk(false, (int32_t)FW_UNIQUE_TARGET_MAX);
+    WalkResult fixed  = uniqueness_walk(true,  (int32_t)FW_UNIQUE_TARGET_MAX);
+
+    /* Neither finds a free name -- that is what "exhausted" means. */
+    ASSERT_TRUE(!broken.foundFree);
+    ASSERT_TRUE(!fixed.foundFree);
+
+    /* PRE-FIX: lands on candidate 16, which the loop stats 0..15 never saw. */
+    ASSERT_EQ(broken.chosen, FW_UNIQUE_TARGET_MAX);
+    ASSERT_TRUE(!broken.chosenWasStatted);
+
+    /* POST-FIX: lands on the last candidate it DID stat, and that candidate is
+     * known-occupied -- so reusing it is a decision taken on evidence rather
+     * than a gamble on an unexamined name. */
+    ASSERT_EQ(fixed.chosen, FW_UNIQUE_TARGET_MAX - 1u);
+    ASSERT_TRUE(fixed.chosenWasStatted);
+}
+
+/* CASE 8: the LOG COUNT does not discriminate, and must never be asserted on.
+ *
+ * Lane nq-b caught this while calibrating the hardware A/B: the broken form's
+ * `probes` runs one iteration further and prints the same number the fixed form
+ * reaches by adding one. A reproduction asserting "the log says N tries" is
+ * INERT -- it cannot fail at the broken head. Pinned here so the next reader
+ * cannot re-derive that assertion believing it discriminates. */
+TEST(the_logged_try_count_is_identical_on_both_forms)
+{
+    WalkResult broken = uniqueness_walk(false, (int32_t)FW_UNIQUE_TARGET_MAX);
+    WalkResult fixed  = uniqueness_walk(true,  (int32_t)FW_UNIQUE_TARGET_MAX);
+
+    ASSERT_EQ(broken.probes, FW_UNIQUE_TARGET_MAX);          /* logs `probes`   */
+    ASSERT_EQ(fixed.probes + 1u, FW_UNIQUE_TARGET_MAX);      /* logs `probes+1` */
+    ASSERT_EQ(broken.probes, fixed.probes + 1u);             /* ... same value  */
+}
+
+/* CASE 9: the guard must not disturb the ordinary path. The walk is entered on
+ * every benchmark open, and exhaustion is the rare case -- so a guard that
+ * changed the common outcome would be a far worse defect than the one it fixes.
+ * This is the compliant-input negative: both forms must agree whenever a free
+ * candidate exists. */
+TEST(the_guard_does_not_change_the_ordinary_path)
+{
+    int32_t occupied;
+
+    /* -1 is the case the device takes on EVERY real run: nq-b measured three
+     * benchmarks in one boot and candidate 0 was free every time. If the guard
+     * disturbed this, it would break the only path that actually executes. */
+    {
+        WalkResult broken = uniqueness_walk(false, -1);
+        WalkResult fixed  = uniqueness_walk(true,  -1);
+        ASSERT_TRUE(broken.foundFree);
+        ASSERT_TRUE(fixed.foundFree);
+        ASSERT_EQ(fixed.chosen, 0u);
+        ASSERT_EQ(broken.chosen, fixed.chosen);
+        ASSERT_EQ(fixed.probes, 0u);
+    }
+
+    for (occupied = 0; occupied + 1 < (int32_t)FW_UNIQUE_TARGET_MAX; occupied++) {
+        WalkResult broken = uniqueness_walk(false, occupied);
+        WalkResult fixed  = uniqueness_walk(true,  occupied);
+
+        ASSERT_TRUE(broken.foundFree);
+        ASSERT_TRUE(fixed.foundFree);
+        ASSERT_EQ(broken.chosen, fixed.chosen);
+        ASSERT_EQ(broken.probes, fixed.probes);
+        ASSERT_EQ(fixed.chosen, (uint32_t)occupied + 1u);
+        ASSERT_TRUE(fixed.chosenWasStatted);
+    }
+}
+
 int main(void)
 {
     printf("#958 -- SD:BENCHmark scratch filename (extracted name generation)\n");
@@ -542,5 +693,8 @@ int main(void)
     RUN(longest_name_fits_the_field_without_truncation);
     RUN(same_tick_one_wrap_apart_still_gives_distinct_names);
     RUN(the_counter_is_advanced_before_the_name_is_formatted);
+    RUN(exhaustion_never_opens_an_unexamined_candidate);
+    RUN(the_logged_try_count_is_identical_on_both_forms);
+    RUN(the_guard_does_not_change_the_ordinary_path);
     return TEST_SUMMARY();
 }
