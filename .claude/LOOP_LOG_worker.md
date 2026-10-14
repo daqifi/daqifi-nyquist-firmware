@@ -10753,3 +10753,51 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   the registry's `:37` claim is falsified and its `:38-39` already specifies the fix) merged into it.
 - **Nothing further queued. nq-c declined fw#1027 too → no eligible adversary on this station; that is
   the coordinator's package for the operator.**
+
+## 2026-10-14 · fw#965 — took the FIX offer, found there is no fix; then the bounded reachability read
+
+- **ELIGIBILITY declared and taken.** Ledger **3/3 nq-c**, no nq-b row; `audit-965` tree is nq-c's by
+  the head-sequence correlation I reproduced; my 20 ledger hits are **verifications of other lanes'
+  claims about** the row plus artifact-custody work. ⚠ **Declared a bias**: I am on record that this
+  row's BLOCK sits atop `arbiter.verdict: ready_to_merge` and that `2` is a raw count, which biases me
+  toward **UNDER**-fixing. Safeguard: treat both reports as independent.
+  - ⭐⭐ **THE SAFEGUARD PAID IMMEDIATELY AND CORRECTED THE ROUTER.** The two findings are **not one
+    defect**: `[1]` clobbers the pin **VALUES** (the winner reads the loser's stop observation, sampled
+    at a different instant) and `[2]` clobbers the **OWNER**. **A fix addressing only the owner — where
+    "it's one defect, scope the owner per-transport" leads — leaves `[1]` LIVE.**
+- ⚠ **The artifact's findings are TITLE-ONLY** (title/file/line/severity/category, no description or
+  evidence), so the mechanism came from the routing prose and had to be re-derived from source. **It
+  checks out.**
+- ⛔⛔ **THERE IS NO FIX TO DESIGN — both candidate designs are rejected IN-TREE with reasoning.**
+  Compare-and-set *"is not a rarer trigger than the one it replaces"* (it exchanges the transports'
+  roles, and USB preempts WiFi but not the reverse); moving the pin after the claim *"reopens #973
+  itself"* because the claim is an observable effect. **The correct fix is Route 2, scoped to issue
+  #1120 — verified OPEN with the right subject, against a control proving the lookup can fail.**
+  Implementing it here absorbs a Size-M refactor into a Size-S row.
+- ⛔⛔ **AND THE ROW FAILS THE RULING ITS OWN BODY CITES.** It calls itself a candidate for *"a
+  PLAUSIBLE finding the arbiter DEFERS no longer blocks"*; that ruling states **"a CONFIRMED finding
+  still blocks absolutely"**, and the artifact is **`confirmed: 2 / plausible: 0` at MEDIUM**.
+  **2 of 5 conditions fail, one being the ruling's scope rather than a parameter.** ⭐ `ready_to_merge`
+  satisfies a *different* condition of the same rule, which is what lets the mis-citation survive a
+  quick read. **So "a ruling already on record" does not hold: the decision must be MADE, not applied.**
+- ✅ **THEN THE BOUNDED READ, source-only, no board — and both answers are decisive.**
+  - **Blast radius is ONE command.** The shared runner has two callers; `SCPI_RunThroughputBench` is a
+    **bare passthrough** writing nothing pre-claim, and its body reads only params/`Running`/power —
+    **no mailbox, nothing to clobber.** A third arm `:6168` does not use the runner at all. ⭐ **The
+    hazard is a property of writing a mailbox before taking the claim, and exactly one command does
+    that** — so #1120's "open for every other command" is **prospective**, population 1.
+  - ⛔⛔ **The window is STRUCTURALLY reachable and PRACTICALLY unreachable.** Window ≈ **microseconds**
+    (`:3811`→`:3355`, spanning `Streaming_BeginSessionStart`); attempt cost **≥120 s** from the
+    finder's own constants (`FIND_SOAK_MS 60000` × `CLEAN_STREAK 2`, plus dwells and a −2% walk-down
+    that **resets the streak**). Host arrival precision ~ms → **~10³ attempts → tens of hours**, on a
+    row whose body records a bench run that **WEDGED THE BOARD**.
+  - ⭐⭐ **This is WORSE than #1027's unreachability, not better.** #1027's was impossible and so
+    honestly reportable in a line; **this one is reachable, so a test can run for days, miss, and
+    report nothing while looking like diligence.** Needs a **HIT-DETECTOR**, because `-200` is returned
+    by the winner, the loser, *and* an unpowered WiFi module. And **Route 2 deletes the mailbox, the
+    owner stamp and the refusal path — i.e. the test's subject.**
+- ⭐ **Process note sent to the router:** they never offered this row because they *"kept framing the
+  remaining work as audits"*, the one category eligibility blocks. **The row was parked on a DECISION
+  WEARING AN AUDIT'S LABEL** — worth re-checking the other "needs an audit" parks for the same.
+- ⚠ **And the router self-reported the same failure I logged twice today** — routing without checking
+  the issue store, one message after thanking me for naming it. **Three agents, one day, same shape.**
