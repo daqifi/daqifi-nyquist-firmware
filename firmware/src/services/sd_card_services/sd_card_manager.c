@@ -2566,37 +2566,56 @@ void sd_card_manager_ProcessState() {
                      * came to 126, one byte over, while this comment claimed
                      * 110. */
                     if (!scratchNameFree) {
-                        /* NAMES THE FILE IT DESTROYED, which the first version
-                         * of this line did not: it printed
+                        /* NAMES THE FILE IT DESTROYED. The original printed
                          * `gpSDCardSettings->file`, the CONFIGURED base name,
-                         * while the bytes actually lost belong to a SUFFIXED
-                         * candidate. So the one question SYST:LOG? had to
-                         * answer -- which file did I lose? -- was the one it
-                         * could not. gSDCardData.filePath is the candidate this
-                         * open is about to truncate.
+                         * while the bytes lost belong to a SUFFIXED candidate,
+                         * so the one question SYST:LOG? exists to answer here
+                         * -- which file did I lose? -- was the one it could not.
                          *
-                         * ORDER IS DELIBERATE: both counters come FIRST and the
-                         * path last. vsnprintf drops the TAIL (Logger.c:398),
-                         * silently, so whatever is written last is what a long
-                         * bucket path deletes. The numbers cannot truncate
-                         * where they are; a path can, and a truncated path is
-                         * still more use than a wrong one.
+                         * THE LEAF, NOT THE PATH, and FIRST. Two corrections to
+                         * my own previous attempt, both owed to nq-c:
                          *
-                         * probes+1: the loop breaks AT the last candidate it
-                         * stats rather than past it, so `probes` is one less
-                         * than the number of names examined. NOTE this is NOT
-                         * a user-visible change -- the old code's `probes` ran
-                         * one further and printed the same 16. The value was
-                         * right by accident; now it is right by construction.
+                         *  - It ordered the counters first and the path last on
+                         *    the theory that "the numbers cannot truncate where
+                         *    they are". That applies the rule BACKWARDS. The
+                         *    rule is that the field whose absence changes the
+                         *    reader's action belongs where truncation cannot
+                         *    reach it -- and that field is the NAME. Ordering
+                         *    put the answer in the truncation zone and
+                         *    protected the part a reader can live without.
+                         *  - `%.30s` did not merely RISK truncating; it
+                         *    GUARANTEED it. filePath is a bucket-subdirectory
+                         *    path (#689), so 30 characters is spent on
+                         *    `/mnt/.../P0nn/` and the discriminating suffix --
+                         *    the whole point of the line -- is always what falls
+                         *    off the end.
                          *
-                         * Worst case 94 bytes against Logger's 125 (margin
-                         * 31): 52 literal + 2 count + 10 counter + 30 path.
-                         * Measured, not estimated. */
-                        LOG_E("[SD] #958 scratch: tried %u, reused #%u,"
-                              " data lost in '%.30s'",
-                              (unsigned)probes + 1u,
-                              (unsigned)gSDCardData.fileCounter,
-                              gSDCardData.filePath);
+                         * So: print the LEAF (after the last '/'), positioned at
+                         * byte 16 where nothing can reach it, and let the trailing
+                         * try-count be the expendable field instead.
+                         *
+                         * BOUND DERIVED, not sampled. generateFilename composes
+                         * the leaf as "%s-%u%s" = baseFilename + '-' + counter +
+                         * ext, and baseFilename+ext together come from the
+                         * configured name, capped at
+                         * SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX (40,
+                         * sd_card_manager.h:19). uint32 counter is <= 10 digits.
+                         * So the leaf is at most 40 + 1 + 10 = 51, and %.51s
+                         * cannot truncate it at all.
+                         * Worst case: 51 literal + 51 leaf + 2 count = 104
+                         * against Logger's 125 ceiling (LOG_MESSAGE_SIZE 128
+                         * less vsnprintf's 2 and the clamp's 1). Margin 21.
+                         *
+                         * probes+1 is NOT a user-visible change: the old code's
+                         * `probes` ran one iteration further and printed the
+                         * same 16. The value was right by accident; it is now
+                         * right by construction. */
+                        const char *lostLeaf = strrchr(gSDCardData.filePath, '/');
+                        lostLeaf = (lostLeaf != NULL) ? (lostLeaf + 1)
+                                                      : gSDCardData.filePath;
+                        LOG_E("[SD] #958 lost '%.51s'"
+                              " - scratch name reused after %u tries",
+                              lostLeaf, (unsigned)probes + 1u);
                     }
                 }
                 // Count the attempt, not the success: a failed create still costs
