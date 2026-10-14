@@ -2566,14 +2566,37 @@ void sd_card_manager_ProcessState() {
                      * came to 126, one byte over, while this comment claimed
                      * 110. */
                     if (!scratchNameFree) {
-                        /* probes+1: the loop breaks AT the last candidate it
+                        /* NAMES THE FILE IT DESTROYED, which the first version
+                         * of this line did not: it printed
+                         * `gpSDCardSettings->file`, the CONFIGURED base name,
+                         * while the bytes actually lost belong to a SUFFIXED
+                         * candidate. So the one question SYST:LOG? had to
+                         * answer -- which file did I lose? -- was the one it
+                         * could not. gSDCardData.filePath is the candidate this
+                         * open is about to truncate.
+                         *
+                         * ORDER IS DELIBERATE: both counters come FIRST and the
+                         * path last. vsnprintf drops the TAIL (Logger.c:398),
+                         * silently, so whatever is written last is what a long
+                         * bucket path deletes. The numbers cannot truncate
+                         * where they are; a path can, and a truncated path is
+                         * still more use than a wrong one.
+                         *
+                         * probes+1: the loop breaks AT the last candidate it
                          * stats rather than past it, so `probes` is one less
-                         * than the number of names examined. Still 2 digits
-                         * (MAX is 16), so the 106-byte measurement above
-                         * stands. */
-                        LOG_E("[SD] #958 scratch '%.40s' taken after %u tries"
-                              " - reusing, old file lost",
-                              gpSDCardSettings->file, (unsigned)probes + 1u);
+                         * than the number of names examined. NOTE this is NOT
+                         * a user-visible change -- the old code's `probes` ran
+                         * one further and printed the same 16. The value was
+                         * right by accident; now it is right by construction.
+                         *
+                         * Worst case 94 bytes against Logger's 125 (margin
+                         * 31): 52 literal + 2 count + 10 counter + 30 path.
+                         * Measured, not estimated. */
+                        LOG_E("[SD] #958 scratch: tried %u, reused #%u,"
+                              " data lost in '%.30s'",
+                              (unsigned)probes + 1u,
+                              (unsigned)gSDCardData.fileCounter,
+                              gSDCardData.filePath);
                     }
                 }
                 // Count the attempt, not the success: a failed create still costs
