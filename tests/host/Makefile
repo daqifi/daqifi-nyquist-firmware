@@ -61,6 +61,77 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # and should be looked at rather than skipped.
 SUSPEND_BIN := run_953_tests
 
+# #981: SYSTem:STORage:SD:FAILNext's one-shot arm/consume contract.
+# `sd_card_manager.c` is not includable on the host (FreeRTOS + Harmony's
+# SYS_FS + the whole SD state machine), so this re-implements only the
+# one-shot flag/consume shape against a mock, same technique as BENCH_BIN and
+# SUSPEND_BIN above. Four properties of the real source make the model valid;
+# the guard greps for all four and refuses to build if any has moved:
+#   1. the flag `gFailNextWrite` still exists;
+#   2. its consume site is, IN THIS ORDER, taskENTER_CRITICAL() ->
+#      `if (gFailNextWrite && ...UNMOUNT_DISK) { gFailNextWrite = false;
+#      injectWriteFailure = true; }` -> taskEXIT_CRITICAL() -- a positional
+#      check (line numbers within the bounded block), not four independent
+#      "is this token present anywhere" checks. An adversarial audit on PR
+#      #1013 found that the four-independent-greps version could not fail on
+#      two real mutations: moving taskEXIT_CRITICAL() before the armed test
+#      (every token still present, atomicity destroyed), and flipping the
+#      real `injectWriteFailure = true;` to `= false;` (the old guard never
+#      even looked for that token);
+#   3. `sd_card_manager_Init()` still scrubs it to false (the #409 rail: a
+#      reset must always clear an outstanding arm);
+#   4. `sd_card_manager_SetFailNextWrite()`'s body is still a PLAIN store
+#      with no critical section of its own (the atomicity argument for #981:
+#      a store that reads nothing first is not an RMW).
+#
+# That fixes the STRUCTURAL/textual side, but a textual check -- however
+# positional -- is still a PROXY: it proves the shape of the source, not that
+# running it does the right thing. $(FAILNEXT_REAL_BIN) below is the other
+# half: it compiles and RUNS the whole real SDCardWrite(), verbatim (no
+# hand-typed model), and asserts on its actual return value and on whether
+# the filesystem write was reached -- which is what catches the
+# `injectWriteFailure = true/false` mutation, and the deletion of the payload
+# block's `goto __exit;`, BEHAVIOURALLY rather than by noticing a token went
+# missing.
+FAILNEXT_BIN := run_981_tests
+SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
+
+# #981 (post-audit): compiles and RUNS the ENTIRE real SDCardWrite() --
+# signature through closing brace, extracted verbatim from $(SD_MANAGER_SRC)
+# at build time, never hand-typed -- against host stand-ins in
+# test_981_sd_failnext_real_consume.head.c (no-op critical-section macros and
+# LOG_E, `gFailNextWrite`, the five `gSDCardData` fields the function touches,
+# and a MOCK SYS_FS_FileWrite that counts its calls and returns a byte count
+# that is never -1). This is a BEHAVIOURAL check, not a textual one:
+# $(FAILNEXT_BIN) above proves the source has the right SHAPE, this proves
+# that shape, when actually executed, produces the right EFFECT.
+#
+# It extracts the whole function because extracting less did not work. The
+# first revision of this target stopped the extraction at
+# `taskEXIT_CRITICAL();` and let the tail file close the spliced fragment with
+# a hand-written `return injectWriteFailure;` -- so the payload
+# (`if (injectWriteFailure) { LOG_E(...); writeLen = -1; goto __exit; }`, the
+# real SYS_FS_FileWrite() it must skip, and the `__exit: return writeLen;`)
+# was never compiled or run, and the assertion was on a LOCAL BOOL. Deleting
+# ONLY the `goto __exit;` from the real source left all eight binaries green
+# while, on hardware, the hook consumed the arm, logged, set writeLen = -1 and
+# then fell through into the real write, which succeeded and overwrote it --
+# fault injection dead, nothing red. Nothing short of compiling the function's
+# actual return path can see that, so now nothing short of it is compiled.
+#
+# The two observables the tail asserts are the function's real int return and
+# the mock's call counter: fired => -1 with ZERO filesystem writes; not fired
+# => the mock's byte count with exactly one. Its first case is a CONTROL that
+# asserts the write IS reachable, so "zero writes" cannot pass vacuously.
+#
+# The stand-ins no longer need per-symbol grep guards the way the old bounded
+# snippet did: with the whole function spliced in, any symbol it gains that is
+# not stubbed is a compile error in the generated file. See the head file for
+# the stubs' fidelity notes (one is load-bearing: the mock must never return
+# -1), and for why the ORDERING mutation is deliberately NOT this file's job
+# (a single-threaded host run cannot observe a concurrency property; that
+# stays $(FAILNEXT_BIN)'s).
+FAILNEXT_REAL_BIN := run_981_real_consume
 # #985: SD_SuspendReasonText() itself -- the function the cascade above calls.
 # Third target on SCPIStorageSD.c and, for the same reason as the two above,
 # the same technique: no UUT copy, no stubs, both decision SHAPES (pre-fix and
@@ -1317,6 +1388,149 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
+$(FAILNEXT_BIN): test_981_sd_failnext_hook.c test_framework.h $(SD_MANAGER_SRC) $(SD_BENCH_SRC) $(RECIPES)
+	@grep -qF 'static volatile bool gFailNextWrite = false;' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: gFailNextWrite is no longer declared in $(SD_MANAGER_SRC)."; \
+	       echo "       test_981_sd_failnext_hook.c models its one-shot semantics; re-read both."; \
+	       exit 1; }
+	@# #1013: the ARM is USB-ONLY. This hook exists to make an SD write fail,
+	@# and SCPI over TCP has no authentication, so arming must cost physical
+	@# presence at the bench. Nothing else in the host suite can see this: the
+	@# C tests above drive sd_card_manager's arm/consume contract directly and
+	@# never go through the SCPI handler, so removing the gate leaves every one
+	@# of them green. Checked as a SHAPE inside the setter's own body rather
+	@# than anywhere in the file -- a ContextIsTcp call in some other handler
+	@# (there are two, for #598) must not satisfy this.
+	@sed -n '/^scpi_result_t SCPI_StorageSDFailNextSet(/,/^}/p' $(SD_BENCH_SRC) \
+	  | grep -qF 'wifi_tcp_server_ContextIsTcp(context)' \
+	  || { echo "ERROR: SCPI_StorageSDFailNextSet no longer refuses the TCP transport."; \
+	       echo "       #1013 gated this ARM to USB because the command's purpose is to"; \
+	       echo "       cause a write failure and TCP SCPI is unauthenticated. If this is"; \
+	       echo "       deliberate, the wiki row and that decision need updating together."; \
+	       exit 1; }
+	@# ... and that the refusal PRECEDES the parameter read, so a refused
+	@# command does no work and leaves no state behind.
+	@sed -n '/^scpi_result_t SCPI_StorageSDFailNextSet(/,/^}/p' $(SD_BENCH_SRC) \
+	  | grep -nE 'ContextIsTcp|SCPI_ParamInt32' | head -2 \
+	  | awk -F: 'NR==1 && $$2 !~ /ContextIsTcp/ { exit 1 }' \
+	  || { echo "ERROR: the #1013 TCP refusal no longer precedes SCPI_ParamInt32 in"; \
+	       echo "       SCPI_StorageSDFailNextSet. A command that will not be honoured"; \
+	       echo "       must not consume its argument first."; \
+	       exit 1; }
+	@# The QUERY is deliberately NOT gated (health visibility). If a future
+	@# edit gates it too, that is a decision about hiding an armed hazard from
+	@# a remote operator and belongs in review, not in a silent diff.
+	@sed -n '/^scpi_result_t SCPI_StorageSDFailNextGet(/,/^}/p' $(SD_BENCH_SRC) \
+	  | grep -qF 'wifi_tcp_server_ContextIsTcp' \
+	  && { echo "ERROR: SCPI_StorageSDFailNextGet is now transport-gated."; \
+	       echo "       #1013 left the QUERY reachable on purpose: it answers 'is a fault"; \
+	       echo "       injector armed on this device', which is health visibility a remote"; \
+	       echo "       operator should have. Gating it hides the hazard instead of the arm."; \
+	       exit 1; } || true
+	@# #981 post-audit (PR #1013 BLOCKING finding 2): the four independent
+	@# `grep -qF ... || ok=0` checks this replaced only proved every TOKEN was
+	@# present somewhere in the block -- not that they occurred in the right
+	@# ORDER or that the arm actually gets consumed. An audit mutated the real
+	@# source in memory (moving taskEXIT_CRITICAL() before the armed test, and
+	@# separately flipping the real `injectWriteFailure = true;` to `= false;`)
+	@# and every one of the four old checks kept passing. This is a POSITIONAL
+	@# check (line numbers within the bounded block, strictly increasing) and
+	@# it now also checks for `injectWriteFailure = true;`, which the old
+	@# version never looked for at all -- that omission is exactly what let
+	@# the second mutation above through silently. Positional, not just
+	@# present, also means the UNMOUNT_DISK gate token below cannot be
+	@# reordered to after the clear/inject without failing this too.
+	@sed -n '/bool injectWriteFailure = false;/,/if (injectWriteFailure) {/p' $(SD_MANAGER_SRC) > /tmp/.fw981_block.$$$$; \
+	 enter=`grep -nF 'taskENTER_CRITICAL();' /tmp/.fw981_block.$$$$ | head -1 | cut -d: -f1`; \
+	 gatestart=`grep -nF 'if (gFailNextWrite &&' /tmp/.fw981_block.$$$$ | head -1 | cut -d: -f1`; \
+	 gatestate=`grep -nF 'SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK) {' /tmp/.fw981_block.$$$$ | head -1 | cut -d: -f1`; \
+	 clear=`grep -nF 'gFailNextWrite = false;' /tmp/.fw981_block.$$$$ | head -1 | cut -d: -f1`; \
+	 inject=`grep -nF 'injectWriteFailure = true;' /tmp/.fw981_block.$$$$ | head -1 | cut -d: -f1`; \
+	 exitc=`grep -nF 'taskEXIT_CRITICAL();' /tmp/.fw981_block.$$$$ | head -1 | cut -d: -f1`; \
+	 rm -f /tmp/.fw981_block.$$$$; \
+	 test -n "$$enter" && test -n "$$gatestart" && test -n "$$gatestate" \
+	   && test -n "$$clear" && test -n "$$inject" && test -n "$$exitc" \
+	   && test "$$enter" -lt "$$gatestart" && test "$$gatestart" -lt "$$gatestate" \
+	   && test "$$gatestate" -lt "$$clear" && test "$$clear" -lt "$$inject" \
+	   && test "$$inject" -lt "$$exitc" \
+	  || { echo "ERROR: the FAILNext consume site in $(SD_MANAGER_SRC) is no"; \
+	       echo "       longer, IN THIS ORDER: taskENTER_CRITICAL() ->"; \
+	       echo "       if(gFailNextWrite && ...UNMOUNT_DISK){ clear;"; \
+	       echo "       inject=true } -> taskEXIT_CRITICAL(). Token PRESENCE"; \
+	       echo "       alone is not enough -- moving taskEXIT_CRITICAL before"; \
+	       echo "       the test still has every token present but destroys the"; \
+	       echo "       read-modify-write atomicity, and dropping the"; \
+	       echo "       UNMOUNT_DISK gate re-opens the truncation this hook was"; \
+	       echo "       corrected to close (enter=$$enter gatestart=$$gatestart"; \
+	       echo "       gatestate=$$gatestate clear=$$clear inject=$$inject"; \
+	       echo "       exit=$$exitc)."; \
+	       echo "       test_981_sd_failnext_hook.c models exactly this shape;"; \
+	       echo "       re-read both before changing either."; \
+	       exit 1; }
+	@a=`grep -nF 'gFailNextWrite = false;' $(SD_MANAGER_SRC) | tail -1 | cut -d: -f1`; \
+	 b=`grep -nF 'static bool isInitDone = false;' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 test -n "$$a" && test -n "$$b" && test "$$a" -lt "$$b" && test $$(($$b - $$a)) -lt 10 \
+	  || { echo "ERROR: the #409 reset-scrub of gFailNextWrite in"; \
+	       echo "       sd_card_manager_Init() is no longer immediately before the"; \
+	       echo "       isInitDone guard in $(SD_MANAGER_SRC) (a='$$a' b='$$b') --"; \
+	       echo "       a reboot may no longer clear an outstanding arm."; \
+	       exit 1; }
+	@sed -n '/void sd_card_manager_SetFailNextWrite(bool arm) {/,/bool sd_card_manager_FailNextWriteArmed(void) {/p' $(SD_MANAGER_SRC) > /tmp/.fw981_setter.$$$$; \
+	 ok=1; \
+	 grep -qF 'gFailNextWrite = arm;' /tmp/.fw981_setter.$$$$ || ok=0; \
+	 grep -qF 'taskENTER_CRITICAL();' /tmp/.fw981_setter.$$$$ && ok=0; \
+	 rm -f /tmp/.fw981_setter.$$$$; \
+	 test "$$ok" = 1 \
+	  || { echo "ERROR: sd_card_manager_SetFailNextWrite() in $(SD_MANAGER_SRC) is"; \
+	       echo "       no longer a plain store (either the store moved, or a critical"; \
+	       echo "       section was added) -- the #981 atomicity argument depends on"; \
+	       echo "       this being a plain store; re-verify it before changing either."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(FAILNEXT_BIN) test_981_sd_failnext_hook.c
+
+# #981 (post-audit): the BEHAVIOURAL half -- see FAILNEXT_REAL_BIN's comment
+# above. Extracts the whole real SDCardWrite() verbatim, splices it between
+# the checked-in head/tail scaffolding, compiles the result, and RUNS it; a
+# non-zero exit fails the build exactly like any other test binary here.
+# `$(SD_MANAGER_SRC)` is a prerequisite so an edit to the real snippet
+# re-triggers this; the head/tail files are prerequisites so an edit to the
+# assertions does too.
+$(FAILNEXT_REAL_BIN): test_981_sd_failnext_real_consume.head.c test_981_sd_failnext_real_consume.tail.c $(SD_MANAGER_SRC) $(RECIPES)
+	@sed -n '/static int SDCardWrite() {/,/^}/p' $(SD_MANAGER_SRC) > /tmp/.fw981_real_body.$$$$; \
+	 lines=`wc -l < /tmp/.fw981_real_body.$$$$ | tr -d ' '`; \
+	 last=`tail -1 /tmp/.fw981_real_body.$$$$ | tr -d '[:space:]'`; \
+	 test "$$lines" -ge 20 && test "$$lines" -le 300 && test "$$last" = "}" \
+	  || { echo "ERROR: could not extract SDCardWrite() from $(SD_MANAGER_SRC)."; \
+	       echo "       The range is 'static int SDCardWrite() {' through the"; \
+	       echo "       next line starting in column 0 with '}', i.e. the WHOLE"; \
+	       echo "       function; got $$lines lines ending in '$$last'. Either"; \
+	       echo "       the signature was reworded (0 lines), or the closing"; \
+	       echo "       brace is no longer in column 0 so the range ran to EOF."; \
+	       echo "       DELIBERATELY a loose sanity bound, not an exact count:"; \
+	       echo "       a tight count would fail the BUILD on the very source"; \
+	       echo "       mutations this binary is supposed to catch by RUNNING"; \
+	       echo "       the code, turning a precise behavioural verdict back"; \
+	       echo "       into a text-shape one. See the head file's round-2/3"; \
+	       echo "       history for why that distinction cost two rounds."; \
+	       rm -f /tmp/.fw981_real_body.$$$$; \
+	       exit 1; }; \
+	 cat test_981_sd_failnext_real_consume.head.c /tmp/.fw981_real_body.$$$$ test_981_sd_failnext_real_consume.tail.c > /tmp/.fw981_real_gen.$$$$.c; \
+	 rm -f /tmp/.fw981_real_body.$$$$; \
+	 $(CC) $(CFLAGS) -o $(FAILNEXT_REAL_BIN) /tmp/.fw981_real_gen.$$$$.c; \
+	 status=$$?; \
+	 rm -f /tmp/.fw981_real_gen.$$$$.c; \
+	 exit $$status
+
+# Every suite, and every one of the eight binaries. Merge conflict (fw#961
+# JSONESC_BIN vs fw#983 SUSPEND_BIN, both merging around the same time)
+# resolved by keeping each side's target intact and merging only `run` and
+# `clean` -- a duplicated rule here would silently shadow one of them.
+# Every suite, and every one of the TWENTY-FIVE binaries: main's twenty-three plus
+# this PR's own #981 $(FAILNEXT_BIN) and $(FAILNEXT_REAL_BIN). Resolved as this block
+# always is -- every side's target rule kept INTACT, only `run` and `clean` unioned.
+# All three of this branch's own variables (FAILNEXT_BIN, FAILNEXT_REAL_BIN,
+# SD_MANAGER_SRC) were verified defined on this head and absent from main, i.e.
+# genuine additions rather than names main has renamed or retired -- the fw#976 trap.
 # #1121: the same three guards as $(SUSPEND_BIN), against the OTHER file.
 #
 # GUARD 1 -- THE FIVE-ARM ORDER. This site's cascade is
@@ -2521,7 +2735,7 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 #
 # BOTH SIDES' COUNTS WERE STALE FOR THE RESULT -- ours said TWENTY-ONE, main's
 # said TWENTY-TWO, and each was right about its own side. The union is
-# TWENTY-THREE. Corrected here rather than carried, for the reason the
+# TWENTY-SIX. Corrected here rather than carried, for the reason the
 # thirteenth collision already recorded: a stale count in a comment is simply
 # false to the next reader.
 #
@@ -2530,7 +2744,7 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
      $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) \
      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
-     $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN)
+     $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -2555,12 +2769,15 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(DACREINIT_BIN)
 	./$(CALFINITE_BIN)
 	./$(SDLOG1029_BIN)
+	./$(FAILNEXT_BIN)
+	./$(FAILNEXT_REAL_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) \
-	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
-	      $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN) \
-	      $(NAME_BIN)
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) \
+	      $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) \
+	      $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) \
+	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(NAME_BIN) $(SDLOG1029_GEN).tmp $(FAILNEXT_BIN) \
+	      $(FAILNEXT_REAL_BIN)
 
 .PHONY: run clean
