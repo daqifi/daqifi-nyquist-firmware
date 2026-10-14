@@ -309,6 +309,29 @@ CLAIM_TAKER = "SD_ClaimOrRefuse"
 # there the discovery is what keeps a rename from silently disarming property
 # 2. A rename of either name below reds the gate loudly instead, which is the
 # safe direction: it costs one line here and cannot be mistaken for a pass.
+# The #589 suspension refusal. Registered here because the census verified only
+# that the CLAIM precedes each arm and never that this was consulted at all --
+# so removing the suspension branch from a handler left its claim and its arm
+# unchanged and the gate green, while that command could proceed against a
+# suspended SD task (#976 review thread 5). The proof needed no mutation: the
+# name appeared nowhere in this checker and nowhere in `_GOOD`, and `_GOOD` was
+# clean.
+#
+# ⚠ ITS POLARITY IS INVERTED relative to CLAIM_TAKER, and copying the claim's
+# check by imitation would register the name and then pass on code that ignores
+# it. `SD_ClaimOrRefuse()` returns TRUE on success, so the compliant guard is
+# `if (!SD_ClaimOrRefuse(...))`. This one returns TRUE when it HAS REFUSED, so
+# the compliant guard is `if (SD_RefuseIfSuspended(...))` with NO `!`. Nothing
+# below asserts a `!`: the requirement is that the verdict is CONSUMED (not
+# dropped, not cast away) and that the call precedes the arm, which is what the
+# thread asked for and what all seven production handlers satisfy.
+#
+# ⚠ And the ORDER is not uniform in production, so this does NOT require the
+# suspension check to precede the CLAIM: SCPI_StorageSDCrcStart takes the claim
+# FIRST and releases it inside the suspension branch (`#829 release`), while the
+# other six check suspension first. Requiring "before the claim" would redden a
+# compliant file; "before the ARM" holds for all seven.
+SUSPEND_GUARD = "SD_RefuseIfSuspended"
 FORMAT_FN = "SCPI_StorageSDFormat"
 FORMAT_PUBLISH = "sd_card_manager_SetFormatPending"
 # The refusal-path clear, named here only for the messages the caller-side
@@ -721,6 +744,56 @@ def _format_problems(text):
             % (FORMAT_FN, retraction or "nothing", ARM_HELPER, cb))
         return problems, None
 
+    # The retraction must be a FUNCTION, not an object that happens to be
+    # spelled like one (#976 review thread 10).
+    #
+    # The check above establishes only that the argument is an identifier and
+    # is not the literal `NULL`. A pointer variable holding NULL satisfies
+    # both, and then the helper skips the retraction and leaves format-pending
+    # state published after a refusal -- the exact state #829 publishes the
+    # callback to retract.
+    #
+    # ⚠ SCOPE, because the thread's remedy as written is not reachable from
+    # here. "Resolve to the concrete retraction function" cannot mean "defined
+    # in this file": the real retraction is declared in sd_card_manager.h and
+    # defined in sd_card_manager.c, so requiring a local definition would
+    # redden compliant code. This file reads ONE translation unit, and it
+    # already says so about this class -- "names that are not in the text (a
+    # header alias) ... are out of reach".
+    #
+    # So this takes the thread's OTHER half -- "fail closed on callback
+    # aliases whose value cannot be established" -- in the one form a single
+    # file can establish: a function name is never ASSIGNED, and an object is.
+    # Any assignment to the retraction identifier anywhere in this file means
+    # the argument names storage whose value this checker cannot know, and
+    # that is refused rather than read.
+    #
+    # ⛔ WHAT THIS STILL DOES NOT CATCH, and must not be read as catching: an
+    # identifier that is defined NOWHERE -- `NotAThing` passes, and has for as
+    # long as this check has existed. Within one translation unit a name
+    # defined in another file and a name defined in no file are the same
+    # thing: absent. Closing that needs the link step or a cross-TU index,
+    # neither of which this file has (#976 thread 10).
+    # TWO spellings, because the first version of this check matched only the
+    # first and so caught nothing: in `void (*cb)(void) = NULL;` the identifier
+    # is followed by `)(void) =`, not by `=`, so a plain assignment pattern
+    # misses the very declaration the finding is about. The declarator form is
+    # the one that matters; the assignment form catches a later store.
+    _obj_decl = re.search(r"\(\s*\*\s*%s\s*\)" % re.escape(retraction),
+                          _blank(text))
+    _assigned = re.search(r"\b%s\s*=(?!=)" % re.escape(retraction),
+                          _blank(text))
+    if _obj_decl or _assigned:
+        problems.append(
+            "%s() passes `%s` as %s()'s %s argument, and `%s` is ASSIGNED "
+            "somewhere in this file -- so it names storage, not a function. A "
+            "pointer holding NULL satisfies the identifier check above, and "
+            "then the refusal path skips the retraction and leaves "
+            "format-pending state published after the arm was refused. Pass "
+            "the retraction function itself (#976 thread 10)."
+            % (FORMAT_FN, retraction, ARM_HELPER, cb, retraction))
+        return problems, None
+
     # THE shape #964 removed: retracting at the call site, after the helper has
     # already released. Both spellings pass property 3 and the helper checks.
     mentions = len(identifier_re(retraction).findall(body))
@@ -869,6 +942,113 @@ def _census_problems(text, spans):
             "one does -- and the arm census cannot see it, because the "
             "wrapper's own call is the one site it is meant to excuse (#971)."
             % (ARM_WRAPPER, ARM_HELPER, len(wrapper_helper_calls)))
+
+    # Property 1c: the wrapper's delegation must be UNCONDITIONAL (#976 review
+    # thread 11, and two shapes it did not name).
+    #
+    # The count check above asks how many times the delegation is WRITTEN. It
+    # cannot ask whether the delegation is REACHED, and three ordinary C shapes
+    # keep the count at exactly one while the arm never runs:
+    #
+    #     if (cfg->mode == SD_CARD_MANAGER_MODE_NONE) { return true; }
+    #     if (gArmed) { return true; }              /* a cached fast path */
+    #     return true;  <delegating call>           /* the call left dead */
+    #
+    # Each passes the count check (one written call), passes the argument check
+    # (full argument list, NULL in the retraction slot), and leaves every plain
+    # storage command reporting its normal success path with the manager never
+    # armed. Measured on this fixture: zero problems reported for all three.
+    #
+    # Enumerating the bypass shapes is the losing half of this: the space is
+    # open, and a checker that recognises the three above still passes the
+    # fourth. So this asserts the POSITIVE property instead -- the compliant
+    # wrapper has exactly ONE return and it IS the delegation -- and fails
+    # closed on everything else.
+    #
+    # DELIBERATELY NOT a reachability analysis, and it must not be read as one.
+    # It is a shape check: it establishes that nothing in this wrapper can
+    # return before the delegation, which is weaker than proving the delegation
+    # runs. The dataflow case this file names at the recursion check above --
+    # "taught to count reachable arms rather than written ones" -- stays open.
+    # Fail-closed-until-covered is the policy this row set for itself in the
+    # same review (thread 9: "if a robust source-level check cannot support
+    # alternate control-flow forms, fail closed for those forms until a host
+    # test covers them").
+    wrapper_body = function_body(text, ARM_WRAPPER)
+    if wrapper_body is not None:
+        blanked = _blank(wrapper_body)
+        deleg = _call_positions(wrapper_body, ARM_HELPER)
+        returns = [m.start() for m in re.finditer(r"\breturn\b", blanked)]
+        # The delegation must BE the returned expression. Asserting only "one
+        # return" and "the return precedes the call" is NOT enough, and the
+        # weaker form was wrong here first: it accepts
+        #     return true;
+        #     SD_ArmOrRefuseWithCleanup(context, cmd, cfg, NULL);
+        # -- one return, positioned before a BARE call, delegation dead. Found
+        # by a cross-vendor enumeration against this check while it was being
+        # written; the self-test that was supposed to cover it kept the
+        # `return` keyword on the second line and so exercised the count
+        # branch instead (#976).
+        returns_the_call = re.search(
+            r"\breturn\s+%s\s*\(" % re.escape(ARM_HELPER), blanked)
+        if not deleg:
+            problems.append(
+                "%s() does not call %s() at all, so the five plain storage "
+                "commands route through a wrapper that never arms the card "
+                "manager while reporting their normal success path. The count "
+                "check above only reports MORE than one call (#976 thread 11)."
+                % (ARM_WRAPPER, ARM_HELPER))
+        elif len(returns) != 1 or not returns_the_call:
+            problems.append(
+                "%s() has %d return statement(s) and %s return the "
+                "delegation to %s() directly; expected exactly one return, "
+                "whose expression IS that call. Any other shape -- an early "
+                "return, a bare call whose result is dropped, a delegation "
+                "left unreachable -- leaves the arm unrun while this checker "
+                "still counts one written call and reads a full argument "
+                "list, so the five plain commands report success with the "
+                "card manager never armed. This is a SHAPE check, NOT a "
+                "reachability analysis: it refuses unverifiable forms rather "
+                "than proving the delegation executes, and general dataflow "
+                "reachability (a `goto` over the arm, a zero-trip loop, a "
+                "`#if 0`) remains OUT OF REACH -- see the recursion note "
+                "above. Fail-closed-until-covered is this row's own policy "
+                "(#976 thread 9)."
+                % (ARM_WRAPPER, len(returns),
+                   "does not" if not returns_the_call else "does", ARM_HELPER))
+        else:
+            # The delegation runs. Two ways to neuter it anyway, both at this
+            # same site and both passing every count/arity check: hand the
+            # manager a TEARDOWN request, or hand it a DIFFERENT object.
+            params = signature_params(text, ARM_WRAPPER) or []
+            # `signature_params` yields whole DECLARATIONS
+            # ("sd_card_manager_settings_t *cfg"), not names. Comparing a
+            # declaration against a call ARGUMENT ("cfg") is never equal, so
+            # the first version of this check fired on the compliant wrapper
+            # and reddened the real file -- caught by the discriminating
+            # negative below, which is the only reason it did not ship.
+            cfg_decl = params[2] if len(params) > 2 else None
+            ident = re.findall(r"[A-Za-z_]\w*", cfg_decl) if cfg_decl else []
+            cfg_name = ident[-1] if ident else None
+            if re.search(r"->\s*%s\s*=" % re.escape(MODE_FIELD),
+                         blanked[:min(deleg)]):
+                problems.append(
+                    "%s() writes `->%s` before delegating to %s(). The "
+                    "manager treats %s as a teardown request and can return "
+                    "SUCCESS for it, so the command reports its normal "
+                    "success path with the requested operation never armed "
+                    "(#976)." % (ARM_WRAPPER, MODE_FIELD, ARM_HELPER,
+                                 MODE_NONE))
+            if cfg_name:
+                one = (call_arguments(wrapper_body, ARM_HELPER) or [None])[0]
+                if one is not None and len(one) > 2 and one[2] != cfg_name:
+                    problems.append(
+                        "%s() delegates to %s() with `%s` in the settings "
+                        "slot rather than its own `%s` parameter. The arity "
+                        "and retraction checks below pass either way, so a "
+                        "copy or a substituted object arms something other "
+                        "than what the caller asked for (#976)."
+                        % (ARM_WRAPPER, ARM_HELPER, one[2], cfg_name))
 
     # The wrapper must pass NULL, or the five inherit something else.
     wrapper = function_body(text, ARM_WRAPPER)
@@ -1021,6 +1201,63 @@ def _census_problems(text, spans):
                     "finding 0). Use one of the forms the call contract "
                     "names, or widen the contract deliberately (#976)."
                     % (fn, CLAIM_TAKER))
+
+        # Property 1d: the #589 SUSPENSION REFUSAL is consulted before the arm
+        # (#976 review thread 5). Until this existed the census checked only
+        # that the CLAIM preceded each arm, so deleting a handler's suspension
+        # branch left its claim and its arm untouched and the gate green --
+        # while that command could proceed against a suspended SD task.
+        #
+        # Three requirements, and deliberately not a fourth: the guard is
+        # CALLED, its verdict is CONSUMED, and the call precedes the arm.
+        # There is NO requirement about where it sits relative to the claim,
+        # because production is not uniform -- see the SUSPEND_GUARD note for
+        # why "before the claim" would redden a compliant file.
+        #
+        # The accepted consumption set is the claim's ("inline", "captured"),
+        # applied to a second call exactly as the claim's own check applies
+        # property 4's classification. Polarity is NOT asserted: this guard
+        # returns true when it has REFUSED, the inverse of the claim, so
+        # demanding a `!` here would refuse every compliant handler.
+        guards = _call_positions(body, SUSPEND_GUARD)
+        if not guards:
+            problems.append(
+                "%s() arms without calling %s() -- the #589 suspension "
+                "refusal is never consulted, so this command can proceed "
+                "against a suspended SD task while the claim and the arm this "
+                "checker does examine stay unchanged. All seven arming "
+                "handlers call it today; a handler that stops is what this "
+                "reports (#976 thread 5)." % (fn, SUSPEND_GUARD))
+        else:
+            if arms and min(guards) > min(arms):
+                problems.append(
+                    "%s() calls %s() only AFTER it arms, so the operation is "
+                    "already requested by the time suspension is checked "
+                    "(#976 thread 5)." % (fn, SUSPEND_GUARD))
+            skind, _svar, _spat = _arm_verdict(
+                body, min(guards), SUSPEND_GUARD, _if_statements(body))
+            if skind == "bare":
+                problems.append(
+                    "%s() DISCARDS %s()'s return -- the call stands alone as "
+                    "a statement, so a REFUSED suspension check does not stop "
+                    "the arm that follows. Note the polarity: this guard "
+                    "returns TRUE when it has refused, so the consuming form "
+                    "is `if (%s(...)) { ... return ...; }` with no `!` "
+                    "(#976 thread 5)."
+                    % (fn, SUSPEND_GUARD, SUSPEND_GUARD))
+            elif skind == "void":
+                problems.append(
+                    "%s() casts %s()'s return to `(void)` -- a DELIBERATE "
+                    "discard of the #589 suspension refusal. The effect is "
+                    "the same as dropping it: the arm proceeds against a "
+                    "suspended task (#976 thread 5)."
+                    % (fn, SUSPEND_GUARD))
+            elif skind in ("captured_transformed", "other"):
+                problems.append(
+                    "%s() consumes %s()'s return in a form this checker "
+                    "cannot recognise (%s), so it cannot report on it. That "
+                    "is a REFUSAL, not a pass (#976 thread 5)."
+                    % (fn, SUSPEND_GUARD, skind))
     return problems, sites
 
 
@@ -1475,6 +1712,9 @@ static bool SD_ClaimOrRefuse(scpi_t *context, const char *cmd)
 
 scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
     sd_card_manager_settings_t* pCfg = BoardRunTimeConfig_Get(BOARDRUNTIME_SD);
+    if (SD_RefuseIfSuspended(context, "SPACe")) {
+        return SCPI_RES_ERR;
+    }
     if (!SD_ClaimOrRefuse(context, "SPACe")) {
         return SCPI_RES_ERR;
     }
@@ -1487,6 +1727,9 @@ scpi_result_t SCPI_StorageSDSpaceGet(scpi_t * context) {
 
 scpi_result_t SCPI_StorageSDFormat(scpi_t * context) {
     sd_card_manager_settings_t* pCfg = BoardRunTimeConfig_Get(BOARDRUNTIME_SD);
+    if (SD_RefuseIfSuspended(context, "FORmat")) {
+        return SCPI_RES_ERR;
+    }
     if (!SD_ClaimOrRefuse(context, "FORmat")) {
         return SCPI_RES_ERR;
     }
@@ -1602,6 +1845,171 @@ def self_test():
             "    return true;", 1)
         _ck("a second arm inside the wrapper is refused",
             any("expected exactly once" in x for x in check(retry)[0]), True)
+
+        # PROPERTY 1c: the wrapper's delegation is UNCONDITIONAL (#976 thread
+        # 11, plus two shapes the thread did not name).
+        #
+        # Thread 11 reported that a wrapper with ZERO delegations is accepted.
+        # Measured at af3b987d6, that is NOT what happens: `return true;` in
+        # place of the delegation goes RED -- caught by the argument-list check
+        # below, whose message ("could not read the retraction slot") names the
+        # wrong defect. The predicate `> 1` genuinely does accept zero, so the
+        # finding is right about the code and wrong about what the code costs.
+        #
+        # The shapes that DID pass silently keep the count at exactly one, so
+        # neither `> 1` nor `!= 1` can see them. All four cases below returned
+        # ZERO problems before this property existed.
+        _DEL = "    return SD_ArmOrRefuseWithCleanup(context, cmd, cfg, NULL);"
+
+        # The thread's own attack. Now named correctly rather than as an
+        # unreadable argument list.
+        nodeleg = _GOOD.replace(_DEL, "    return true;", 1)
+        _ck("a wrapper that never delegates is named as never arming",
+            any("does not call" in x and "never arms" in x
+                for x in check(nodeleg)[0]), True)
+
+        # A conditional early return. Ordinary C, compiles clean, no
+        # unreachable-code warning -- and the arm is skipped for some inputs
+        # while every plain command still reports success.
+        early = _GOOD.replace(
+            _DEL,
+            "    if (cfg->mode == SD_CARD_MANAGER_MODE_NONE) {\n"
+            "        return true;\n"
+            "    }\n" + _DEL, 1)
+        _ck("a conditional early return before the delegation is refused",
+            any("return statement(s)" in x for x in check(early)[0]), True)
+
+        # The same shape as a cached fast path, which is the most plausible way
+        # for this to arrive by accident rather than by sabotage.
+        fast = _GOOD.replace(
+            _DEL, "    if (gArmed) {\n        return true;\n    }\n" + _DEL, 1)
+        _ck("a cached fast path before the delegation is refused",
+            any("return statement(s)" in x for x in check(fast)[0]), True)
+
+        # The delegation left as dead code after an unconditional return.
+        dead = _GOOD.replace(_DEL, "    return true;\n" + _DEL, 1)
+        _ck("a delegation left dead after an early return is refused",
+            any("return statement(s)" in x or "dead code" in x
+                for x in check(dead)[0]), True)
+
+        # A BARE call after an unconditional return: ONE return, positioned
+        # before the call, delegation dead. This is the shape that defeated the
+        # first version of this check -- which asserted only "one return" and
+        # "the return precedes the call" -- and the `dead` case above did NOT
+        # cover it, because keeping the `return` keyword on the second line
+        # exercised the count branch instead. A cross-vendor enumeration found
+        # it against the half-written check.
+        bare_after = _GOOD.replace(
+            _DEL,
+            "    return true;\n"
+            "    SD_ArmOrRefuseWithCleanup(context, cmd, cfg, NULL);", 1)
+        _ck("an unconditional return before a BARE delegation is refused",
+            any("IS that call" in x for x in check(bare_after)[0]), True)
+
+        # The delegation RUNS in both of the next two, and is neutered anyway.
+        # Neither is an early return, so the return-shape check above cannot
+        # see them; both pass every count and arity check.
+        teardown = _GOOD.replace(
+            _DEL,
+            "    cfg->mode = SD_CARD_MANAGER_MODE_NONE;\n" + _DEL, 1)
+        _ck("clearing ->mode before delegating is refused",
+            any("teardown request" in x for x in check(teardown)[0]), True)
+
+        swapped = _GOOD.replace(
+            _DEL,
+            "    sd_card_manager_settings_t saved = *cfg;\n"
+            "    return SD_ArmOrRefuseWithCleanup(context, cmd, &saved, NULL);",
+            1)
+        _ck("delegating with a substituted settings object is refused",
+            any("settings slot" in x for x in check(swapped)[0]), True)
+
+        # DISCRIMINATING NEGATIVE. Without this, a guard that refused every
+        # wrapper shape would pass every case above. The compliant wrapper --
+        # one return, whose expression IS the delegation, passing its own
+        # settings parameter, with no mode write before it -- must stay clean.
+        _ck("the compliant single-return wrapper is still accepted",
+            check(_GOOD)[0], [])
+
+        # PROPERTY 1d: the #589 SUSPENSION REFUSAL is consulted (#976 thread 5).
+        #
+        # This finding needed no mutation to demonstrate: before this property
+        # existed, `SUSPEND_GUARD` appeared nowhere in this checker and nowhere
+        # in `_GOOD`, and `_GOOD` was clean -- the clean fixture WAS the proof
+        # that nothing required it. Adding the call to the fixture changed
+        # nothing, which is the same proof from the other side.
+        _SUSP = ('    if (SD_RefuseIfSuspended(context, "SPACe")) {\n'
+                 '        return SCPI_RES_ERR;\n'
+                 '    }\n')
+
+        gone = _GOOD.replace(_SUSP, "", 1)
+        _ck("a handler that arms without the suspension guard is refused",
+            any("never consulted" in x for x in check(gone)[0]), True)
+
+        # Dropped and cast-away are named separately, as they are for the
+        # claim, so the message says which one happened.
+        susp_bare = _GOOD.replace(
+            _SUSP, '    SD_RefuseIfSuspended(context, "SPACe");\n', 1)
+        _ck("a DISCARDED suspension verdict is refused",
+            any("DISCARDS" in x and "SD_RefuseIfSuspended" in x
+                for x in check(susp_bare)[0]), True)
+
+        susp_void = _GOOD.replace(
+            _SUSP, '    (void)SD_RefuseIfSuspended(context, "SPACe");\n', 1)
+        _ck("a (void)-cast suspension verdict is refused as DELIBERATE",
+            any("(void)" in x and "SD_RefuseIfSuspended" in x
+                for x in check(susp_void)[0]), True)
+
+        # DISCRIMINATING NEGATIVE for 1d: without it, a property that refused
+        # every handler would pass all three cases above.
+        _ck("the compliant handler with its suspension guard stays clean",
+            check(_GOOD)[0], [])
+
+        # THE RETRACTION IS A FUNCTION, NOT AN OBJECT (#976 thread 10).
+        #
+        # A local `void (*cb)(void) = NULL` was already refused, but only
+        # INCIDENTALLY -- by the mention-count check, which saw the declaration
+        # as a second mention of the name. Move the declaration to file scope
+        # and the identifier appears exactly once in FORmat's body, the count
+        # check is satisfied, and a NULL retraction passed.
+        null_cb = _GOOD.replace(
+            "static bool SD_ArmOrRefuseWithCleanup(",
+            "static void (*gClearFmt)(void) = NULL;\n\n"
+            "static bool SD_ArmOrRefuseWithCleanup(", 1
+        ).replace(
+            "                                   sd_card_manager_ClearFormatStatus)) {",
+            "                                   gClearFmt)) {", 1)
+        _ck("a file-scope NULL callback pointer is refused as storage",
+            any("names storage, not a function" in x
+                for x in check(null_cb)[0]), True)
+
+        # The other spelling: the name IS the function, and something stores to
+        # it. One pattern cannot see both -- in `void (*cb)(void) = NULL;` the
+        # identifier is followed by `)(void) =`, not `=`, which is why the
+        # first version of this check matched nothing at all.
+        reassigned = _GOOD.replace(
+            "    sd_card_manager_SetFormatPending();",
+            "    sd_card_manager_ClearFormatStatus = NULL;\n"
+            "    sd_card_manager_SetFormatPending();", 1)
+        _ck("a retraction ASSIGNED elsewhere in the file is refused",
+            any("names storage, not a function" in x
+                for x in check(reassigned)[0]), True)
+
+        # DISCRIMINATING NEGATIVE: the compliant retraction is an ordinary
+        # external function and must stay accepted.
+        _ck("the compliant function retraction is still accepted",
+            check(_GOOD)[0], [])
+
+        # ⛔ THE DOCUMENTED LIMIT, asserted so a later reader cannot mistake the
+        # check above for "the retraction is known to be callable". A name
+        # defined in NO file is indistinguishable here from one defined in
+        # another translation unit, because this checker reads one file. If
+        # this case ever starts FAILING, the scope grew and the comment on the
+        # check needs rewriting with it.
+        bogus_cb = _GOOD.replace(
+            "                                   sd_card_manager_ClearFormatStatus)) {",
+            "                                   NotAThing)) {", 1)
+        _ck("a nonexistent retraction identifier is STILL accepted (out of reach)",
+            check(bogus_cb)[0], [])
 
         # PROPERTY 1b: the claim's VERDICT CONTROLS FLOW (#976 round 11).
         #
