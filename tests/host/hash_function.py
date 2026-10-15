@@ -73,6 +73,47 @@ def signature_name(signature):
     return head.split()[-1] if head.split() else ""
 
 
+_ATTR_KEYWORDS = ("__attribute__", "__declspec")
+
+
+def _attrs_before(masked, start):
+    """-> the offset of the first attribute specifier in the unbroken run of
+    them immediately preceding `start`, or `start` if there is none.
+
+    Walks backwards so a nested specifier is matched whole:
+    `__attribute__((format(printf, 1, 2)))` ends in three `)`, and a
+    non-greedy forward regex stops at the first `))` and splits it.
+    `masked` must be the offset-preserving mask, so a specifier written
+    inside a comment or a string cannot extend the region.
+    """
+    i = start
+    while True:
+        j = i - 1
+        while j >= 0 and masked[j].isspace():
+            j -= 1
+        if j < 0 or masked[j] != ")":
+            return i
+        depth, k = 0, j
+        while k >= 0:                      # match the parens backwards
+            if masked[k] == ")":
+                depth += 1
+            elif masked[k] == "(":
+                depth -= 1
+                if depth == 0:
+                    break
+            k -= 1
+        if k < 0:
+            return i                       # unbalanced: change nothing
+        m = k - 1
+        while m >= 0 and masked[m].isspace():
+            m -= 1
+        kw = next((w for w in _ATTR_KEYWORDS
+                   if masked[:m + 1].endswith(w)), None)
+        if kw is None:
+            return i                        # a `)` that is not an attribute
+        i = m + 1 - len(kw)                 # keep walking: attributes stack
+
+
 def extract(text, signature):
     """The function's full body, by BALANCED BRACES over masked text.
 
@@ -101,6 +142,30 @@ def extract(text, signature):
         return None
     masked = mask(text)
     start, open_at = match.start(), match.end() - 1
+    # LEADING ATTRIBUTES ARE PART OF THE DEFINITION, so they must be part of
+    # the pin (#976 codex audit, blind leg).
+    #
+    # `cdef.one_definition` matches from the declaration specifiers -- here
+    # `static bool` -- so anything written BEFORE them fell outside this
+    # extraction and could not move the digest. Reproduced on the real file:
+    # inserting `__attribute__((noreturn))` on its own line immediately above
+    # the helper left the digest byte-identical to the Makefile's
+    # SD_ARM_HELPER_SHA, and the lint still returned ([], 6).
+    #
+    # That is the pin failing at the one job the module docstring gives it --
+    # "an edit to the real ordering either fails the model or is caught
+    # retyping the pin" -- and it is load-bearing beyond itself: this hash is
+    # what `scpi_sd_arm_path.py` relies on when it DECLINES to check the
+    # helper's internal ordering. A silent hole here is a silent hole in
+    # everything that deferred to it. `noreturn` is not cosmetic either: GCC
+    # drops the caller's continuation after the call, so the refusal path the
+    # host test models stops existing while the pin says nothing changed.
+    #
+    # Scanned on `masked` so an `__attribute__` inside a comment or a string
+    # cannot extend the region, and matched by walking the parens BACKWARDS
+    # rather than with a non-greedy regex, which would stop at the first `))`
+    # and mis-split a nested form like `__attribute__((format(printf, 1, 2)))`.
+    start = _attrs_before(masked, start)
     depth, i, n = 0, open_at, len(text)
     while i < n:
         ch = masked[i]
@@ -288,6 +353,40 @@ _SELF_TEST_CASES = (
      "static bool F(void)\n{\n#define Q 'x\\\\\n\n"
      "    c = '\"'; t = \"/*\"; early(); u = \"*/\";\n    return 1;\n}\n",
      "static bool F(", "early()", None),
+
+    # LEADING ATTRIBUTES (#976 codex audit, blind leg). `cdef.one_definition`
+    # matches from the declaration specifiers, so anything written before them
+    # fell outside the extraction and could not move the digest. Reproduced on
+    # the real file: `__attribute__((noreturn))` above the helper left the
+    # digest byte-identical to the Makefile's SD_ARM_HELPER_SHA while the lint
+    # still returned ([], 6) -- the pin silently failing at its one job, and
+    # `scpi_sd_arm_path.py` leans on this pin whenever it DECLINES to check the
+    # helper's internals. `noreturn` is not cosmetic: GCC drops the caller's
+    # continuation, so the refusal path the host test models stops existing.
+    ("a LEADING attribute is part of the definition and is hashed with it",
+     "__attribute__((noreturn))\nstatic bool F(void)\n{\n    return 1;\n}\n",
+     "static bool F(", "__attribute__((noreturn))", None),
+
+    # Matched by walking the parens BACKWARDS: a non-greedy forward regex
+    # stops at the first `))` and splits this one, keeping a ragged prefix.
+    ("an attribute with NESTED parens is kept whole",
+     "__attribute__((format(printf, 1, 2)))\n"
+     "static bool F(void)\n{\n    return 1;\n}\n",
+     "static bool F(", "__attribute__((format(printf, 1, 2)))", None),
+
+    ("attributes STACK, and the whole run is taken",
+     "__attribute__((noreturn))\n__attribute__((cold))\n"
+     "static bool F(void)\n{\n    return 1;\n}\n",
+     "static bool F(", "__attribute__((cold))", None),
+
+    # DISCRIMINATING NEGATIVE. Without it, a backwards walk that swallowed
+    # whatever preceded the definition would pass all three cases above -- the
+    # attribute would be present because EVERYTHING would be. A `)` that is
+    # not an attribute's closing paren must stop the walk.
+    ("a preceding unrelated function is NOT dragged into the extraction",
+     "static int unrelated(void) { return 0; }\n"
+     "static bool F(void)\n{\n    return 1;\n}\n",
+     "static bool F(", "return 1;", "unrelated"),
 )
 
 

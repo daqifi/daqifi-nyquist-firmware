@@ -774,16 +774,41 @@ def _format_problems(text):
     # defined in another file and a name defined in no file are the same
     # thing: absent. Closing that needs the link step or a cross-TU index,
     # neither of which this file has (#976 thread 10).
-    # TWO spellings, because the first version of this check matched only the
-    # first and so caught nothing: in `void (*cb)(void) = NULL;` the identifier
-    # is followed by `)(void) =`, not by `=`, so a plain assignment pattern
-    # misses the very declaration the finding is about. The declarator form is
-    # the one that matters; the assignment form catches a later store.
-    _obj_decl = re.search(r"\(\s*\*\s*%s\s*\)" % re.escape(retraction),
-                          _blank(text))
-    _assigned = re.search(r"\b%s\s*=(?!=)" % re.escape(retraction),
-                          _blank(text))
-    if _obj_decl or _assigned:
+    # ⭐ THE CONTRACT IS THE PRINCIPLE; THE PATTERNS BELOW ARE ITS CURRENT
+    # APPROXIMATION. The principle is "a function name is never declared as an
+    # object in this file, and is never assigned". Each pattern is one spelling
+    # of that, and the set has been incomplete twice -- so a NEW hole here is
+    # an incomplete implementation to extend, not a policy question to reopen.
+    #
+    # THREE spellings now:
+    #
+    #  (a) a function-pointer declarator, with any qualifiers BETWEEN the `*`
+    #      and the name. The first version was `\(\s*\*\s*NAME\s*\)` and missed
+    #      `static void (*const missingUndo)(void) = NULL;` -- `const` sits
+    #      exactly where that pattern required the name (#976 codex audit,
+    #      blind leg).
+    #  (b) a TYPED declaration with no pointer syntax at all:
+    #      `static format_cleanup_t absent_cleanup;` behind
+    #      `typedef void (*format_cleanup_t)(void);` is zero-initialised to
+    #      NULL, has no `(*…)` for (a) and no `=` for (c), and passed
+    #      everything (#976 codex audit, steered leg).
+    #  (c) a later store to the name.
+    #
+    # ⚠ (b) must not fire on the compliant retraction, which in the real file
+    # appears TWICE -- as FORmat's argument and as an ordinary call at another
+    # handler -- so a flat occurrence count is NOT the test here and was
+    # rejected for that reason. (b) requires an identifier (the type) before
+    # the name and a declarator terminator after it, which neither `…,\n NAME)`
+    # nor `NAME();` matches.
+    _blanked_all = _blank(text)
+    _esc = re.escape(retraction)
+    _obj_decl = re.search(
+        r"\(\s*\*\s*(?:(?:const|volatile|restrict)\s+)*%s\s*\)" % _esc,
+        _blanked_all)
+    _typed_decl = re.search(r"\b[A-Za-z_]\w*\s+%s\s*[;=\[]" % _esc,
+                            _blanked_all)
+    _assigned = re.search(r"\b%s\s*=(?!=)" % _esc, _blanked_all)
+    if _obj_decl or _typed_decl or _assigned:
         problems.append(
             "%s() passes `%s` as %s()'s %s argument, and `%s` is ASSIGNED "
             "somewhere in this file -- so it names storage, not a function. A "
@@ -1267,8 +1292,35 @@ def _census_problems(text, spans):
 # disable resetting the operand, never arming one). Textual and narrow on
 # purpose: see `_direct_update_problems`'s docstring for why this does not
 # try to be a general reader of what precedes the call.
+def _first_argument(text, pos):
+    """-> the first argument of the call whose name starts at `pos`, or None.
+
+    Read from `text` directly because the caller has an offset, not a body.
+    Parens are balanced so a nested call in the first slot is not split, and
+    the scan runs on `_blank()`ed text so a comma inside a literal cannot
+    end an argument.
+    """
+    b = _blank(text)
+    i = b.find("(", pos)
+    if i < 0:
+        return None
+    depth, j = 0, i
+    while j < len(b):
+        if b[j] == "(":
+            depth += 1
+        elif b[j] == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        j += 1
+    if j >= len(b):
+        return None
+    args = _split_top_level(text[i + 1:j])
+    return args[0].strip() if args and args[0].strip() else None
+
+
 _TEARDOWN_RE = re.compile(
-    r"\b[A-Za-z_][A-Za-z0-9_]*\s*(?:->|\.)\s*%s\s*=\s*%s\s*;\s*$"
+    r"\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:->|\.)\s*%s\s*=\s*%s\s*;\s*$"
     % (re.escape(MODE_FIELD), re.escape(MODE_NONE)))
 
 
@@ -1301,7 +1353,43 @@ def _direct_update_problems(text, spans):
         if fn is None or fn == ARM_HELPER or fn in seen_fns:
             continue
         window = text[max(0, pos - 200):pos]
-        if _TEARDOWN_RE.search(window) is None:
+        teardown = _TEARDOWN_RE.search(window)
+        # THE EXEMPTION MUST NAME THE OBJECT IT EXEMPTS (#976 codex audit,
+        # blind leg). The pattern above matched an identifier and never
+        # CAPTURED it, so `search(window)` answered "SOME object's mode went
+        # to NONE just before this call" -- a relationship claim with its
+        # subject left free. Reproduced: with
+        #
+        #     sd_card_manager_settings_t spare = {0};
+        #     pSDCardRuntimeConfig->mode = SD_CARD_MANAGER_MODE_FORMAT;
+        #     spare.mode = SD_CARD_MANAGER_MODE_NONE;
+        #     sd_card_manager_UpdateSettings(pSDCardRuntimeConfig);
+        #
+        # the window ends in `spare.mode = NONE;`, the exemption fires, and a
+        # FORMAT is armed on the real config without ownership while `check()`
+        # returns ([], 6).
+        #
+        # Binding the two is NOT the general control-flow reader the docstring
+        # refuses: the exemption already asserts a relationship between two
+        # adjacent statements, and this makes the existing claim precise rather
+        # than adding a new kind of reasoning. Same mechanism as the wrapper's
+        # settings-slot check above. Measured first: all five exempt callers in
+        # the real file write `mode` on the very object they pass.
+        if teardown is not None:
+            arg = _first_argument(text, pos)
+            if arg is not None and arg != teardown.group(1):
+                seen_fns.add(fn)
+                problems.append(
+                    "%s() calls %s(%s) directly, and the `%s = %s;` that "
+                    "would exempt it writes to `%s` -- a DIFFERENT object. "
+                    "The teardown exemption recognises one textual shape and "
+                    "must name the object it exempts, or a cleared spare "
+                    "licenses an unowned arm on the real settings while this "
+                    "gate reports clean (#976)."
+                    % (fn, MANAGER_UPDATE_CALL, arg, MODE_FIELD, MODE_NONE,
+                       teardown.group(1)))
+                continue
+        if teardown is None:
             seen_fns.add(fn)
             problems.append(
                 "%s() calls %s() directly, bypassing both %s() and %s(). "
@@ -1517,8 +1605,29 @@ def _stream_arm_escape_problems(source_text):
 # a parenthesized callee included, which is how a direct arm bypassing both
 # ARM_WRAPPER and ARM_HELPER escaped `_direct_update_problems`'s own
 # name-based discovery entirely (#976 round-2 fix).
+# SUSPEND_GUARD joined this list in the same change that started CHECKING it,
+# and not a moment earlier -- registering a tracked name without accounting its
+# occurrences is what left the suspension property defeatable by an
+# UNEVALUATED call (#976 codex audit, both legs independently):
+#
+#     if (!sizeof SD_RefuseIfSuspended(context, "SPACe"))
+#     if (sizeof(SD_RefuseIfSuspended(context, "SPACe")) == 0)
+#
+# `sizeof` does not evaluate its operand, so neither call runs -- and both
+# satisfy the property's presence, before-the-arm ordering and inline-
+# consumption checks, because all three read TEXT. Measured: `check()` returned
+# `([], 6)` on the real file for both. Accounting is what rejects them, and the
+# mechanism already existed: this file's own comment on MANAGER_UPDATE_CALL
+# says a spelling "no recogniser explains fails the gate instead of silently
+# dropping out of a count". The pointer was there and the new name was not
+# wired into it.
+#
+# ⭐ The general rule, since this will recur with the next tracked name:
+# TEXTUAL PRESENCE IS NOT EVALUATION. A property built from `_call_positions`
+# plus an ordering comparison cannot tell a call that runs from one the
+# compiler discards, so every name such a property depends on belongs here.
 SD_ACCOUNTED = (ARM_HELPER, ARM_WRAPPER, CLAIM_TAKER, FORMAT_FN,
-                FORMAT_PUBLISH, MANAGER_UPDATE_CALL)
+                FORMAT_PUBLISH, MANAGER_UPDATE_CALL, SUSPEND_GUARD)
 STREAM_ACCOUNTED = (STREAM_FN, STREAM_ARM_CALL, STREAM_CLAIM_TAKER)
 
 
@@ -1964,6 +2073,33 @@ def self_test():
         _ck("the compliant handler with its suspension guard stays clean",
             check(_GOOD)[0], [])
 
+        # ⛔ AN UNEVALUATED CALL SATISFIES EVERY TEXTUAL CHECK (#976 codex
+        # audit, found independently by BOTH legs).
+        #
+        # Property 1d above reads text three ways -- presence, ordering,
+        # consumption kind -- and `sizeof` does not evaluate its operand. So
+        # the guard never runs while all three checks pass. Measured before
+        # the fix: `check()` returned `([], 6)` on the real file for both
+        # spellings. What rejects them is OCCURRENCE ACCOUNTING, which needed
+        # `SUSPEND_GUARD` in `SD_ACCOUNTED` -- a mechanism this file already
+        # had and that the new name was not wired into.
+        for _lbl, _cond in (
+                ("`!sizeof` before the call",
+                 '    if (!sizeof SD_RefuseIfSuspended(context, "SPACe")) {'),
+                ("`sizeof(call) == 0`",
+                 '    if (sizeof(SD_RefuseIfSuspended(context, "SPACe")) == 0) {')):
+            _unevaluated = _GOOD.replace(
+                '    if (SD_RefuseIfSuspended(context, "SPACe")) {', _cond, 1)
+            _ck("an UNEVALUATED suspension call is refused: %s" % _lbl,
+                any("no recogniser accounts for" in x
+                    for x in check(_unevaluated)[0]), True)
+
+        # DISCRIMINATING NEGATIVE: the ordinary evaluated call must stay
+        # accounted. Without this, accounting that rejected every occurrence
+        # would pass both cases above.
+        _ck("the ordinary evaluated suspension call stays accounted",
+            check(_GOOD)[0], [])
+
         # THE RETRACTION IS A FUNCTION, NOT AN OBJECT (#976 thread 10).
         #
         # A local `void (*cb)(void) = NULL` was already refused, but only
@@ -1994,10 +2130,65 @@ def self_test():
             any("names storage, not a function" in x
                 for x in check(reassigned)[0]), True)
 
+        # The two shapes the first version of this check missed (#976 codex
+        # audit, one per leg). Both are ordinary C and both passed everything.
+        qual_cb = _GOOD.replace(
+            "static bool SD_ArmOrRefuseWithCleanup(",
+            "static void (*const missingUndo)(void) = NULL;\n\n"
+            "static bool SD_ArmOrRefuseWithCleanup(", 1
+        ).replace(
+            "                                   sd_card_manager_ClearFormatStatus)) {",
+            "                                   missingUndo)) {", 1)
+        _ck("a CONST-qualified null callback pointer is refused",
+            any("names storage, not a function" in x
+                for x in check(qual_cb)[0]), True)
+
+        # No `(*…)` and no `=` anywhere: a typedef'd pointer type, zero-
+        # initialised by static storage duration. This is the one that shows a
+        # flat occurrence count could not have been the test -- the compliant
+        # retraction appears TWICE in the real file (FORmat's argument plus an
+        # ordinary call in another handler).
+        typedef_cb = _GOOD.replace(
+            "static bool SD_ArmOrRefuseWithCleanup(",
+            "typedef void (*format_cleanup_t)(void);\n"
+            "static format_cleanup_t absent_cleanup;\n\n"
+            "static bool SD_ArmOrRefuseWithCleanup(", 1
+        ).replace(
+            "                                   sd_card_manager_ClearFormatStatus)) {",
+            "                                   absent_cleanup)) {", 1)
+        _ck("a TYPEDEF'd zero-initialised callback is refused",
+            any("names storage, not a function" in x
+                for x in check(typedef_cb)[0]), True)
+
         # DISCRIMINATING NEGATIVE: the compliant retraction is an ordinary
         # external function and must stay accepted.
         _ck("the compliant function retraction is still accepted",
             check(_GOOD)[0], [])
+
+        # THE TEARDOWN EXEMPTION MUST NAME THE OBJECT IT EXEMPTS (#976 codex
+        # audit, blind leg). `_TEARDOWN_RE` matched an identifier and never
+        # captured it, so a cleared SPARE licensed a direct arm on the REAL
+        # settings: `check()` returned ([], 6) for the shape below.
+        _CLAIM = '    if (!SD_ClaimOrRefuse(context, "SPACe")) {'
+        spare = _GOOD.replace(
+            _CLAIM,
+            "    sd_card_manager_settings_t spare = {0};\n"
+            "    pCfg->mode = SD_CARD_MANAGER_MODE_FORMAT;\n"
+            "    spare.mode = SD_CARD_MANAGER_MODE_NONE;\n"
+            "    sd_card_manager_UpdateSettings(pCfg);\n" + _CLAIM, 1)
+        _ck("a teardown write on a DIFFERENT object does not exempt the call",
+            any("a DIFFERENT object" in x for x in check(spare)[0]), True)
+
+        # DISCRIMINATING NEGATIVE, and the one that matters most here: the
+        # compliant same-object teardown must stay EXEMPT. Without it, binding
+        # the operand too tightly would redden every existing direct caller --
+        # all five in the real file write `mode` on the object they pass, and
+        # that was measured BEFORE this check was written rather than after.
+        same_obj = _GOOD.replace(
+            _CLAIM,
+            "    pCfg->mode = SD_CARD_MANAGER_MODE_NONE;\n"
+            "    sd_card_manager_UpdateSettings(pCfg);\n" + _CLAIM, 1)
+        _ck("the SAME-object teardown is still exempt", check(same_obj)[0], [])
 
         # ⛔ THE DOCUMENTED LIMIT, asserted so a later reader cannot mistake the
         # check above for "the retraction is known to be callable". A name
