@@ -2111,6 +2111,7 @@ $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BE
 	  && tr -d '\r' < $(SD_MANAGER_SRC) | tr '\n' ' ' \
 	     | grep -qE 'e == SYS_FS_ERROR_NO_FILE[[:space:]]*[|][|][[:space:]]*e == SYS_FS_ERROR_NO_PATH[^{]*[{][[:space:]]*scratchNameFree = true' \
 	  && grep -qE '(^|[^A-Za-z0-9_])statFault([^A-Za-z0-9_]|$$)' $(SD_MANAGER_SRC) \
+	  && grep -qF 'sd_AbandonRotationWindow("scratch stat unanswerable")' $(SD_MANAGER_SRC) \
 	  || { echo "ERROR: $(SD_MANAGER_SRC)'s uniqueness walk no longer carries"; \
 	       echo "       BOTH properties a codex audit established it needs:"; \
 	       echo "       (a) a budget of MAX ADVANCES, i.e. MAX+1 candidates"; \

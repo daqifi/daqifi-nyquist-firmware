@@ -2591,8 +2591,11 @@ void sd_card_manager_ProcessState() {
                      * Absence vs fault follows sd_TargetExistsInBucketPath's
                      * existing idiom above: only NO_FILE / NO_PATH mean absent.
                      * Anything else is the card failing to ANSWER, which is not
-                     * permission to truncate -- it falls through to the logged
-                     * fallback instead of being read as free. */
+                     * permission to truncate -- it REFUSES the operation, via
+                     * the same idiom this case already uses for an unusable
+                     * bucket. An earlier revision only logged and opened
+                     * anyway; the comment claimed the refusal and the code did
+                     * not have it. */
                     bool scratchNameFree = false;
                     bool statFault = false;
                     uint32_t probes = 0u;  /* advances; EXAMINED = probes + 1 */
@@ -2640,19 +2643,69 @@ void sd_card_manager_ProcessState() {
                      * + 10 digits = 51, so %.51s cannot truncate it. Worst
                      * cases MEASURED: 111 and 107 bytes against the 125-byte
                      * ceiling (margins 14 and 18). */
-                    if (!scratchNameFree) {
-                        const char *lostLeaf = strrchr(gSDCardData.filePath, '/');
-                        lostLeaf = (lostLeaf != NULL) ? (lostLeaf + 1)
-                                                      : gSDCardData.filePath;
-                        if (statFault) {
-                            LOG_E("[SD] #958 cannot verify '%.51s'"
-                                  " - opening it anyway, may truncate",
-                                  lostLeaf);
-                        } else {
-                            LOG_E("[SD] #958 lost '%.51s'"
-                                  " - all %u candidate names taken",
-                                  lostLeaf, (unsigned)probes + 1u);
+                    const char *lostLeaf = strrchr(gSDCardData.filePath, '/');
+                    lostLeaf = (lostLeaf != NULL) ? (lostLeaf + 1)
+                                                  : gSDCardData.filePath;
+                    if (statFault) {
+                        /* REFUSE. The card could not tell us whether this name
+                         * is occupied, so opening it WRITE_PLUS would truncate
+                         * on a guess. An earlier revision of this block logged
+                         * that and opened anyway, while the comment above
+                         * claimed an unanswered stat "is not permission to
+                         * truncate" -- the comment described a behaviour the
+                         * code did not have, and a codex audit caught it in
+                         * both legs.
+                         *
+                         * This is NOT the refusal three earlier designs died
+                         * on. That argument was about refusing in the SCPI
+                         * callback, where `mode` means both "armed" and "busy"
+                         * so a terminal refusal cannot say one without the
+                         * other. Here we are in the SD task at OPEN_FILE, and
+                         * this case ALREADY has a complete refusal idiom for a
+                         * filesystem it cannot use -- the #689 "bucket
+                         * unusable" exit a few lines above. This mirrors it
+                         * step for step, including the pieces that are easy to
+                         * miss: the handle close, clearing `mode` so the arm is
+                         * released, the #757 rotation-window abandon (we exit
+                         * without ever reaching the open, so the encoder would
+                         * otherwise keep filling a buffer nothing drains), and
+                         * giving the completion semaphore so a waiter is not
+                         * stranded.
+                         *
+                         * The in-tree principle this follows is stated at the
+                         * bucket-count call: "An FS error must NOT be read as
+                         * 'this bucket is full' ... Refuse instead -- the
+                         * caller's clean stop is the right answer for a broken
+                         * card." A stat that cannot answer is the same class of
+                         * condition. */
+                        /* 113 B worst case, margin 12 -- measured, and the
+                         * first draft of THIS comment said 118/7, which was a
+                         * caption contradicting its own measurement. The leaf
+                         * sits at byte 11, so what truncation eats is the
+                         * reason, never the name. */
+                        LOG_E("[SD] #958 '%.51s' unverifiable"
+                              " - refused rather than truncate blind", lostLeaf);
+                        gSDCardData.lastOperationSuccess = false;
+                        if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
+                            (void)SYS_FS_FileClose(gSDCardData.fileHandle);
+                            gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                         }
+                        gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                        gSDCardData.currentProcessState =
+                            SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                        sd_AbandonRotationWindow("scratch stat unanswerable");
+                        xSemaphoreGive(gSDCardData.opCompleteSemaphore);
+                        break;
+                    }
+                    if (!scratchNameFree) {
+                        /* Exhaustion, not a fault: every candidate within the
+                         * bound was EXAMINED and found occupied. Reusing one is
+                         * a decision taken on evidence, and the bound is now
+                         * the bucket ceiling, so this needs 65 same-stem files
+                         * rather than 17. */
+                        LOG_E("[SD] #958 lost '%.51s'"
+                              " - all %u candidate names taken",
+                              lostLeaf, (unsigned)probes + 1u);
                     }
                 }
                 // Count the attempt, not the success: a failed create still costs

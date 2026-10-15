@@ -584,6 +584,7 @@ typedef struct {
     bool     foundFree;         /* a GENUINE absence was seen */
     bool     statFault;         /* the card failed to answer */
     bool     chosenWasExamined; /* was the chosen candidate stat'ed? */
+    bool     refuses;           /* does the walk REFUSE, skipping the open? */
     bool     truncates;         /* does the open destroy existing data? */
 } WalkResult;
 
@@ -630,8 +631,13 @@ static WalkResult uniqueness_walk(bool legacy, int32_t occupiedThrough,
     r.foundFree = free_;
     r.statFault = fault;
     r.chosenWasExamined = ((int32_t)counter <= highestExamined);
-    /* the open truncates iff the chosen candidate actually exists */
-    r.truncates = ((int32_t)counter <= occupiedThrough);
+    /* A stat the card could not answer REFUSES: the current firmware mirrors
+     * the #689 "bucket unusable" exit (close handle, clear mode, IDLE, abandon
+     * the rotation window, give the semaphore, break) rather than opening on a
+     * guess. The legacy form only logged and opened anyway. */
+    r.refuses = (!legacy) && fault;
+    /* the open truncates iff it HAPPENS and the chosen candidate exists */
+    r.truncates = (!r.refuses) && ((int32_t)counter <= occupiedThrough);
     return r;
 }
 
@@ -691,10 +697,16 @@ TEST(a_stat_fault_is_not_an_absence)
     ASSERT_TRUE(legacy.foundFree);
     ASSERT_TRUE(!legacy.statFault);
     ASSERT_TRUE(legacy.truncates);
+    ASSERT_TRUE(!legacy.refuses);
 
-    /* now: NOT free, so the fallback log fires and names the file */
+    /* now: NOT free, and the operation is REFUSED rather than opened on a
+     * guess -- so nothing is truncated. Logging the loss was never enough:
+     * an earlier revision logged it and opened anyway while its own comment
+     * claimed otherwise, which a codex audit caught in both legs. */
     ASSERT_TRUE(!now.foundFree);
     ASSERT_TRUE(now.statFault);
+    ASSERT_TRUE(now.refuses);
+    ASSERT_TRUE(!now.truncates);
 }
 
 /* CASE 10: the ordinary path, which is the only one the device actually takes
