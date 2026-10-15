@@ -2119,6 +2119,12 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 
 $(LOG1039_GEN): gen_1039_log_budget.py $(FW_APP_SRC) $(FW_ADC_SCPI) \
                 $(FW_WIFI_SRC) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
+	# The generator's own invariants run FIRST, so a defect in the
+	# extractor fails the build rather than producing a fixture that
+	# measures a different string than the firmware ships (codex audit on
+	# #1110: UTF-8 shrank the literal; a prefix match mis-read the ceiling;
+	# backslash-newline was spliced after escapes instead of before).
+	$(PYTHON) gen_1039_log_budget.py --self-test
 	$(PYTHON) gen_1039_log_budget.py --out $(LOG1039_GEN)
 
 $(LOG1039_BIN): test_1039_log_message_budget.c test_framework.h \

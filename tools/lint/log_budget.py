@@ -217,6 +217,51 @@ class ToolError(Exception):
     """The tool cannot produce a trustworthy verdict. Always exit 2, never 0."""
 
 
+RESERVE_TERM_RE = re.compile(r"\s*-\s*(\d+)")
+
+
+def reserved_total(expr, where):
+    r"""Sum EVERY constant subtracted from LOG_MESSAGE_SIZE in `expr`.
+
+    A PREFIX MATCH IS THE DEFECT THIS EXISTS TO REPLACE (codex audit on
+    #1110). The previous form captured `LOG_MESSAGE_SIZE\s*-\s*(\d+)` and so
+    read `LOG_MESSAGE_SIZE - 2 - 10` as a reservation of 2, deriving a ceiling
+    of 125 where the truth is 115 -- and then every message in the tree was
+    measured against the wrong number while the gate exited 0. The ceiling is
+    the quantity all the other checks are expressed in, so a silent error here
+    is not one wrong answer, it is every answer being about the wrong thing.
+
+    So this consumes the WHOLE expression and REFUSES anything it cannot
+    account for, rather than taking what it recognises and discarding the
+    rest. `expr` is the text between `LOG_MESSAGE_SIZE` and the end of its
+    argument, which the caller's `[^,)]*` cannot read past.
+    """
+    pos = 0
+    terms = []
+    while pos < len(expr):
+        m = RESERVE_TERM_RE.match(expr, pos)
+        if not m:
+            break
+        terms.append(int(m.group(1)))
+        pos = m.end()
+    rest = expr[pos:].strip()
+    if rest:
+        raise ToolError(
+            f"cannot account for {rest!r} in {where} "
+            f"(`LOG_MESSAGE_SIZE{expr}`). This tool only understands a "
+            f"subtraction of integer constants; anything else -- a macro, a "
+            f"`+`, a multiplication, a parenthesised sub-expression -- has to "
+            f"be read by a human, because guessing here mis-sets the ceiling "
+            f"every other check is measured against. Re-derive it and update "
+            f"read_ceiling().")
+    if not terms:
+        raise ToolError(
+            f"{where} subtracts nothing from LOG_MESSAGE_SIZE "
+            f"(`LOG_MESSAGE_SIZE{expr}`) -- the reservation is read from "
+            f"source and must not be assumed")
+    return sum(terms)
+
+
 def read_ceiling(logger_h_text, logger_c_text):
     """Derive the effective ceiling from Logger.h and Logger.c.
 
@@ -250,21 +295,22 @@ def read_ceiling(logger_h_text, logger_c_text):
             "the buffer reservations are read from it and must not be assumed")
     impl = body.group(1)
 
-    m1 = re.search(r"vsnprintf\s*\(\s*\w+\s*,\s*LOG_MESSAGE_SIZE\s*-\s*(\d+)",
-                   impl)
+    m1 = re.search(
+        r"vsnprintf\s*\(\s*\w+\s*,\s*LOG_MESSAGE_SIZE([^,)]*)", impl)
     if not m1:
         raise ToolError(
             "LogMessageFormatImpl no longer calls "
             "vsnprintf(buf, LOG_MESSAGE_SIZE - N, ...) -- re-derive the "
             "ceiling by hand and update read_ceiling()")
-    m2 = re.search(r"min\s*\(\s*\(?\s*LOG_MESSAGE_SIZE\s*-\s*(\d+)", impl)
+    m2 = re.search(r"min\s*\(\s*\(?\s*LOG_MESSAGE_SIZE([^,)]*)", impl)
     if not m2:
         raise ToolError(
             "LogMessageFormatImpl no longer clamps with "
             "min((LOG_MESSAGE_SIZE - N), ...) -- re-derive the ceiling by hand "
             "and update read_ceiling()")
 
-    vsn_reserve, clamp_reserve = int(m1.group(1)), int(m2.group(1))
+    vsn_reserve = reserved_total(m1.group(1), "vsnprintf's size argument")
+    clamp_reserve = reserved_total(m2.group(1), "the min() clamp")
     ceiling = min(size - vsn_reserve - 1, size - clamp_reserve)
     if ceiling <= 0:
         raise ToolError(
@@ -624,46 +670,74 @@ def unescape(body):
     return "".join(out)
 
 
-def is_comment_only_line(line):
-    """True when `line` carries comment text and NO code.
+def comment_only_map(src_lines):
+    """Per line: True iff it carries comment text and NO code.
 
-    This is the predicate find_annotation()'s upward walk stops on, and getting
-    it wrong let a bound LEAK FORWARD -- the codex audit's finding on #1110.
-    Both of these are code lines that the old test accepted as comment-only,
-    so the annotation written for THIS call was applied to the NEXT one as
-    well, silencing a message that could truncate:
+    COMMENT-ONLY-NESS IS NOT DECIDABLE LINE BY LINE, and two rounds of trying
+    produced two rounds of near-misses (codex audit on #1110, reopened). The
+    same leading `*` means opposite things depending on state:
 
-        LOG_E("short %s", "x"); /* log_budget: max=1 */   <- ends with "*/"
-        /* log_budget: max=1 */ LOG_E("a %s", s);         <- starts with "/*"
+        in a block comment:      * explaining the bound        -> comment
+        NOT in a block comment:  *ptr = value;                 -> CODE
+        closing a block:        */ LOG_E("short %s", "x");     -> CODE after it
 
-    A bound that leaks forward is worse than no bound, because the next call is
-    then reported as clean and the unchanged baseline records that silence as
+    The first fix special-cased the block-interior forms by shape, so it
+    accepted BOTH of the latter two as comment-only -- which let a bound leak
+    past a call again, and additionally read a pointer dereference as a
+    comment. A bound that leaks forward is worse than no bound: the next call
+    reads clean and the unchanged baseline then records that silence as
     accepted.
 
-    The separation is whether any code survives removing the line's complete
-    comments. The two block-interior forms are special-cased first because they
-    have no complete span to remove: a continuation (`* text`) and the closing
-    line (`text */`), which cannot carry code before it since the block was
-    opened earlier -- so it must NOT contain an opener of its own.
+    So this scans FORWARD over the whole file, tracking block state, and keeps
+    the one property that was right all along: *does any code survive removing
+    this line's comments*. String and character literals are skipped so a `/*`
+    inside a message cannot open a phantom block -- no shipping LOG_E contains
+    one today, but the previous two attempts were also correct on today's
+    corpus.
 
-    Annotations on the macro's OWN line keep working regardless: find_annotation
-    reads that line directly rather than through this walk.
+    Annotations on the macro's OWN line never depend on this: find_annotation
+    reads that line directly rather than through the walk.
     """
-    t = line.strip()
-    if t.startswith("//"):
-        return True
-    if t.startswith("/*") and "*/" not in t:
-        return True                       # block opener, rest of line is comment
-    if t.startswith("*"):
-        return True                       # block continuation
-    if t.endswith("*/") and "/*" not in t:
-        return True                       # block closer, no opener => no code
-    stripped = re.sub(r"/\*.*?\*/", "", line, flags=re.S)
-    stripped = re.sub(r"//.*$", "", stripped)
-    return not stripped.strip()
+    out = []
+    in_block = False
+    for raw in src_lines:
+        code = []
+        i = 0
+        n = len(raw)
+        while i < n:
+            if in_block:
+                j = raw.find("*/", i)
+                if j < 0:
+                    break                      # rest of the line is comment
+                in_block = False
+                i = j + 2
+                continue
+            if raw.startswith("//", i):
+                break                          # rest of the line is comment
+            if raw.startswith("/*", i):
+                in_block = True
+                i += 2
+                continue
+            ch = raw[i]
+            if ch in "\"'":
+                code.append(ch)                # a literal IS code
+                i += 1
+                while i < n:
+                    if raw[i] == "\\":
+                        i += 2
+                        continue
+                    if raw[i] == ch:
+                        i += 1
+                        break
+                    i += 1
+                continue
+            code.append(ch)
+            i += 1
+        out.append(not "".join(code).strip())
+    return out
 
 
-def find_annotation(src_lines, line):
+def find_annotation(src_lines, line, cmap=None):
     """Return the widths declared by a /* log_budget: max=N[,N...] */ marker.
 
     Searched on the macro's own line and across the contiguous run of comment
@@ -671,15 +745,14 @@ def find_annotation(src_lines, line):
     puts a multi-line block comment there and an annotation naturally belongs
     inside it.
     """
+    if cmap is None:
+        cmap = comment_only_map(src_lines)
     idx = line - 1
     texts = [src_lines[idx]] if 0 <= idx < len(src_lines) else []
     k = idx - 1
-    while k >= 0:
-        if is_comment_only_line(src_lines[k]):
-            texts.append(src_lines[k])
-            k -= 1
-            continue
-        break
+    while k >= 0 and cmap[k]:
+        texts.append(src_lines[k])
+        k -= 1
     for text in texts:
         m = ANNOTATION_RE.search(text)
         if m:
@@ -831,6 +904,11 @@ def scan_file(path, rel, macros, ceiling):
     spliced, orig_pos = splice_continuations(src)
     masked = mask_comments(spliced)
     found = []
+    # Computed ONCE per file: comment_only_map() is a forward scan from the top
+    # (block state cannot be recovered from a line in isolation), so letting
+    # find_annotation() derive it per call site would be quadratic in a file
+    # with many LOG_E sites.
+    cmap = comment_only_map(src_lines)
     for macro, pos, args, _call in find_calls(masked, macros):
         line = pos_to_line(src, orig_pos, pos)
         fmt_index = macros[macro]
@@ -845,7 +923,7 @@ def scan_file(path, rel, macros, ceiling):
                 f"unresolvable: {macro}'s format argument is not a string "
                 f"literal", ""))
             continue
-        worst, reason = measure(fmt, find_annotation(src_lines, line))
+        worst, reason = measure(fmt, find_annotation(src_lines, line, cmap))
         if reason is not None:
             found.append(Finding(rel, line, reason, escape_for_record(fmt)))
         elif worst > ceiling:
@@ -855,9 +933,31 @@ def scan_file(path, rel, macros, ceiling):
     return found
 
 
+#: What scan() actually visits. DECLARED rather than implied, because the gate
+#: reports "clean" and a reader reasonably hears "no LOG_E in this tree can
+#: truncate" -- which is not what is measured.
+#:
+#: ⛔ KNOWN COVERAGE GAP, measured 2026-10-15 (codex audit on #1110, found by
+#: the BLIND leg): LOG_E calls in HEADERS are never visited. There is one such
+#: file today, `services/SCPI/SCPIInterface.h`, with five calls in inline
+#: functions that compile into every translation unit including it -- and one
+#: of them, `scpi_printf`'s truncation diagnostic at :238, measures 165 bytes
+#: against this ceiling of 125. So the gap is hiding a real finding.
+#:
+#: It is NOT closed by adding "*.h" to the glob, which is why this is a
+#: declaration and not a fix: measured, that surfaces seven findings and THREE
+#: are `Util/Logger.h`'s own macro DEFINITIONS (`LOG_E`, `LOG_E_ONCE`,
+#: `LOG_E_SESSION`), where the format argument is a macro parameter rather than
+#: a literal. Scanning a definition is meaningless, so header coverage needs a
+#: way to skip definitions while scanning uses -- a design decision, plus
+#: baseline entries for three unannotated `%s`, plus a real fix for the
+#: 165-byte message. Filed separately rather than grown onto this row.
+SCANNED_SUFFIXES = ("*.c",)
+
+
 def scan(root, macros, ceiling):
     findings, scanned = [], 0
-    for path in sorted(root.rglob("*.c")):
+    for path in sorted(p for s in SCANNED_SUFFIXES for p in root.rglob(s)):
         rel_in_root = path.relative_to(root).as_posix()
         if any(rel_in_root.startswith(p) for p in EXCLUDED_PREFIXES):
             continue
@@ -1610,6 +1710,81 @@ SELF_TEST_ANNOTATION_CASES = [
     ("no annotation anywhere returns None",
      ['LOG_E("%s", s);'], 1, None,
      "the base case: absence must read as absence, not as an empty bound"),
+
+    # --- round 2 of the same finding. The first fix special-cased the
+    # block-interior forms BY SHAPE, which re-opened the leak through the
+    # `startswith('*')` arm and additionally read a pointer dereference as a
+    # comment. Both are here because a shape test cannot tell them apart --
+    # only block STATE can, which is why comment_only_map() scans forward.
+    ("code AFTER a block close does not leak forward",
+     ['/* log_budget: max=1',
+      ' */ LOG_E("short %s", "x");',
+      'LOG_E("%s", big);'], 3, None,
+     "REOPENED FINDING: ' */ LOG_E(...)' closes the block and then carries "
+     "code, so it must stop the walk. The shape-based fix accepted it solely "
+     "because it starts with '*', and both calls got max=1 while the second "
+     "truncated"),
+    ("the call on the block-closing line keeps its own bound",
+     ['/* log_budget: max=1',
+      ' */ LOG_E("short %s", "x");'], 2, [1],
+     "the other half of the same shape: that call's annotation IS the block "
+     "above it, so binding must still happen -- the fix must not simply "
+     "refuse every line containing '*/'"),
+    ("a pointer dereference does not pass a bound through",
+     ['/* log_budget: max=1 */',
+      '*ptr = value;',
+      'LOG_E("%s", big);'], 3, None,
+     "a second hole in the same arm, which the audit did not name: outside a "
+     "block comment a leading '*' is a dereference or multiplication. The "
+     "shape test read it as a continuation and walked straight THROUGH it to "
+     "the annotation above. The intervening code line must stop the walk -- "
+     "measured: this case passes on the shape predicate without the "
+     "annotation above it, so the annotation is what makes it discriminate"),
+    # (the phantom-block case lives in SELF_TEST_COMMENT_MAP_CASES below:
+    #  measured, it cannot leak a bound through find_annotation, because the
+    #  line carrying the string is itself code and therefore always stops an
+    #  upward walk. Asserting it here would have passed for a reason other
+    #  than the one claimed.)
+    ("a block spanning several lines above still binds",
+     ['/* opening',
+      ' * middle',
+      ' * log_budget: max=12',
+      ' */',
+      'LOG_E("%s", s);'], 5, [12],
+     "the common real shape, with the closer on its own line"),
+]
+
+# comment_only_map() is a named predicate in its own right, so its contract is
+# pinned directly rather than only through find_annotation(). These cases exist
+# because two of find_annotation()'s cases turned out to pass for reasons other
+# than the ones claimed -- a map that is wrong is wrong whether or not today's
+# single caller happens to expose it.
+# Each case is (name, src_lines, expected map, why).
+SELF_TEST_COMMENT_MAP_CASES = [
+    ("a '/*' inside a string does not open a block",
+     ['LOG_E("a /* b");', 'int x = 1;'], [False, False],
+     "without skipping string literals the '/*' in the message opens a block "
+     "that never closes, and the NEXT line -- ordinary code -- is then "
+     "classified as comment text. find_annotation cannot expose this (the "
+     "line holding the string is itself code, so it always stops an upward "
+     "walk) which is exactly why it is pinned here instead"),
+    ("a character literal holding a quote does not open a string",
+     ["char q = '\"'; int y = 2;"], [False],
+     "the quote inside a char literal must not start a string that swallows "
+     "the rest of the line"),
+    ("state carries across lines",
+     ['/* a', 'b', 'c */', 'code();'], [True, True, True, False],
+     "the interior lines carry no markers at all and are comment only by "
+     "STATE -- the property a per-line shape test cannot have"),
+    ("code before and after an inline block",
+     ['f(); /* x */ g();'], [False],
+     "both halves are code; removing the complete span must not empty it"),
+    ("a line comment after code",
+     ['f(); // note'], [False],
+     "the trailing // does not make the line a comment"),
+    ("a bare closer is comment",
+     ['/* a', ' */'], [True, True],
+     "the closer carries nothing else"),
 ]
 
 
@@ -1670,6 +1845,48 @@ def self_test():
             print(f"  FAIL [ceiling]: '{label}' did not raise -- the tool would "
                   f"gate against an assumed ceiling")
 
+        # MULTI-TERM reservations. The codex audit on #1110 found the old
+        # regexes captured only the FIRST integer, so `LOG_MESSAGE_SIZE - 2 -
+        # 10` read as a reservation of 2 and derived 125 where the truth is
+        # 115 -- the gate then exited 0 while a 120-byte message truncated.
+        # The ceiling is the quantity every other check is expressed in, so
+        # this is not one wrong answer, it is every answer being about the
+        # wrong thing.
+        multi_c = ("static int LogMessageFormatImpl(const char* format, va_lis"
+                   "t args)\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE "
+                   "- 2 - 10, format, args);\n    size = min((LOG_MESSAGE_SIZE"
+                   " - 3 - 10), size);\n}\n")
+        got, _, r_vsn, r_clamp = read_ceiling(h, multi_c)
+        if (got, r_vsn, r_clamp) != (115, 12, 13):
+            failures += 1
+            print(f"  FAIL [ceiling: multi-term]: derived ceiling {got} with "
+                  f"reservations {r_vsn}/{r_clamp}, expected 115 with 12/13. "
+                  f"A prefix match reads '- 2 - 10' as 2 and mis-sets the "
+                  f"number every other measurement is made against")
+
+        # ... and an expression this tool cannot account for must RAISE, not
+        # contribute whatever part of it happens to be recognisable.
+        for label, expr_c in (
+                ("a macro term",
+                 "    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - PAD, f, a);"
+                 "\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n"),
+                ("an addition",
+                 "    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2 + 1, f, a)"
+                 ";\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n"),
+                ("a multiplication",
+                 "    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2*2, f, a);"
+                 "\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n")):
+            bad = ("static int LogMessageFormatImpl(const char* f, va_list a)"
+                   "\n{\n" + expr_c + "}\n")
+            try:
+                read_ceiling(h, bad)
+            except ToolError:
+                continue
+            failures += 1
+            print(f"  FAIL [ceiling: {label}]: did not raise -- an expression "
+                  f"the tool cannot read must stop it, not be silently "
+                  f"truncated to the part it recognises")
+
         # The suppression file is checked through load_suppressions() itself,
         # on a real file on disk, so these cases run the same code path the
         # gate does rather than a re-implementation of it.
@@ -1709,6 +1926,14 @@ def self_test():
             failures += 1
             print(f"  FAIL [waiver: {name}]: kept {len(kept)}/suppressed "
                   f"{suppressed}, expected {want_kept}/{want_suppressed} "
+                  f"-- {why}")
+
+    # comment_only_map(): the predicate find_annotation's walk rests on.
+    for name, src, expected, why in SELF_TEST_COMMENT_MAP_CASES:
+        got = comment_only_map(src)
+        if got != expected:
+            failures += 1
+            print(f"  FAIL [comment-map: {name}]: {got}, expected {expected} "
                   f"-- {why}")
 
     # find_annotation(): a bound binds to its own call and to no other.
@@ -1772,13 +1997,15 @@ def self_test():
         print(f"\n::error::log_budget: {failures} self-test(s) failed")
         return 1
     print(f"log_budget self-test: {len(SELF_TEST_CASES)}/"
-          f"{len(SELF_TEST_CASES)} extraction cases + 4/4 ceiling cases + "
+          f"{len(SELF_TEST_CASES)} extraction cases + 8/8 ceiling cases + "
           f"{len(SELF_TEST_SUPPRESSION_CASES)}/"
           f"{len(SELF_TEST_SUPPRESSION_CASES)} suppression cases + "
           f"{len(SELF_TEST_WAIVER_CASES)}/{len(SELF_TEST_WAIVER_CASES)} "
           f"waiver cases + "
           f"{len(SELF_TEST_GATE_CASES)}/{len(SELF_TEST_GATE_CASES)} gate "
-          f"cases + {len(SELF_TEST_ANNOTATION_CASES)}/"
+          f"cases + {len(SELF_TEST_COMMENT_MAP_CASES)}/"
+          f"{len(SELF_TEST_COMMENT_MAP_CASES)} comment-map cases + "
+          f"{len(SELF_TEST_ANNOTATION_CASES)}/"
           f"{len(SELF_TEST_ANNOTATION_CASES)} annotation-binding cases + "
           f"1/1 IO-error case pass")
     return 0
@@ -1907,8 +2134,13 @@ def main(argv=None):
     new, fixed, status = compare_to_baseline(current, baseline)
 
     if status == 0:
+        # The SCOPE rides with the verdict. "clean" otherwise reads as "no
+        # LOG_E in this tree can truncate", which is not what was measured --
+        # headers are not visited, and one of them holds a 165-byte message.
         print(f"log_budget: clean - {len(kept)} finding(s) in {scanned} "
-              f"file(s), all in the baseline ({suppressed} suppressed)")
+              f"file(s), all in the baseline ({suppressed} suppressed); "
+              f"scope: {' '.join(SCANNED_SUFFIXES)} only -- LOG_E in headers "
+              f"is NOT measured (see SCANNED_SUFFIXES)")
         return 0
 
     by_record = {}

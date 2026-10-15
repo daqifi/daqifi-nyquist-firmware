@@ -326,6 +326,45 @@ def read_literal_group(masked, start, where):
     return "".join(pieces), i
 
 
+def _reserved(expr, where):
+    r"""Sum every constant subtracted from LOG_MESSAGE_SIZE, or refuse.
+
+    Mirrors log_budget.py's reserved_total(). Kept as a small local copy
+    rather than an import because this generator is run standalone from the
+    Makefile recipe with no package context -- but the two must agree, and
+    they are tested against the same expressions.
+    """
+    pos, terms = 0, []
+    while pos < len(expr):
+        m = re.compile(r"\s*-\s*(\d+)").match(expr, pos)
+        if not m:
+            break
+        terms.append(int(m.group(1)))
+        pos = m.end()
+    rest = expr[pos:].strip()
+    if rest:
+        raise GenError(
+            f"cannot account for {rest!r} in {where} "
+            f"(`LOG_MESSAGE_SIZE{expr}`). Only a subtraction of integer "
+            f"constants is understood; guessing here measures the fixture "
+            f"against the wrong ceiling. Re-derive it by hand.")
+    if not terms:
+        raise GenError(
+            f"{where} subtracts nothing from LOG_MESSAGE_SIZE "
+            f"(`LOG_MESSAGE_SIZE{expr}`) -- read from source, never assumed")
+    return sum(terms)
+
+
+def splice_continuations(src):
+    r"""Delete every backslash-newline, as C translation phase 2 does.
+
+    No position mapping is kept, unlike the gate's namesake in log_budget.py:
+    this module reports sites by anchor text rather than by line number, so
+    nothing downstream needs to map an offset back to the original source.
+    """
+    return re.sub(r"\\\r?\n", "", src)
+
+
 def extract_site(site):
     path = site["path"]
     where = f"{path}: {site['what']}"
@@ -333,6 +372,18 @@ def extract_site(site):
         src = path.read_text(encoding="utf-8", errors="surrogateescape")
     except OSError as e:
         raise GenError(f"{where}: cannot read the source: {e}") from e
+    # PHASE ORDER, and it is C's order, not a convenience. Translation phase 2
+    # deletes every backslash-newline BEFORE phase 3 forms tokens, so the
+    # compiler sees a spliced string where this reader saw two lines. Masking
+    # or decoding first makes the two disagree: the audit's case is
+    # "\x2\<newline>5.200u", which C splices to "\x25.200u" -- the conversion
+    # %.200u, 240 formatted bytes -- while reading unspliced yields 0x02
+    # followed by a literal "5.200u" and accepts the OLD two-conversion
+    # signature. The sibling gate already gets this right
+    # (log_budget.py's splice_continuations, called before its own masking),
+    # and hash_function.py got the same ordering right for comments; this is
+    # the one place that had it backwards.
+    src = splice_continuations(src)
     masked = mask_comments(src)
 
     first = site["anchors"][0]
@@ -412,16 +463,21 @@ def read_ceiling():
                        "test_1039_log_message_budget.c models that function, "
                        "so a reshape must be re-read by hand, not assumed")
     impl = body.group(1)
-    m1 = re.search(r"vsnprintf\s*\(\s*\w+\s*,\s*LOG_MESSAGE_SIZE\s*-\s*(\d+)",
-                   impl)
-    m2 = re.search(r"min\s*\(\s*\(?\s*LOG_MESSAGE_SIZE\s*-\s*(\d+)", impl)
+    m1 = re.search(r"vsnprintf\s*\(\s*\w+\s*,\s*LOG_MESSAGE_SIZE([^,)]*)", impl)
+    m2 = re.search(r"min\s*\(\s*\(?\s*LOG_MESSAGE_SIZE([^,)]*)", impl)
     if not m1 or not m2:
         raise GenError(
             "LogMessageFormatImpl no longer bounds vsnprintf at "
             "LOG_MESSAGE_SIZE - N and clamps with min((LOG_MESSAGE_SIZE - N), "
             "...). The mirror models both; re-derive it before re-enabling "
             "this test.")
-    return size, int(m1.group(1)), int(m2.group(1))
+    # Consume the WHOLE expression, not its first integer. The same prefix
+    # defect the gate had: `LOG_MESSAGE_SIZE - 2 - 10` read as 2, so the
+    # fixture would have been measured against a ceiling 10 bytes too
+    # generous. Refuses anything it cannot account for rather than
+    # contributing the recognisable part.
+    return size, _reserved(m1.group(1), "vsnprintf's size argument"), \
+        _reserved(m2.group(1), "the min() clamp")
 
 
 def c_literal_byte_len(literal):
@@ -531,10 +587,93 @@ def c_literal(text):
     return literal
 
 
+GEN_SELF_TESTS = [
+    # (name, callable, expected, why) -- expected may be the exception class.
+    ("splice: phase 2 runs before escapes are read",
+     lambda: splice_continuations('x = "\\x2\\\n5.200u";'),
+     'x = "\\x25.200u";',
+     "C deletes backslash-newline in translation phase 2, BEFORE tokens are "
+     "formed, so the compiler sees %.200u (240 formatted bytes) where an "
+     "unspliced read sees 0x02 then a literal '5.200u' and accepts the old "
+     "two-conversion signature"),
+    ("splice: CRLF continuations too",
+     lambda: splice_continuations('a\\\r\nb'), 'ab',
+     "a CRLF source must splice the same way, or the check is "
+     "platform-dependent"),
+    ("splice: a lone backslash is untouched",
+     lambda: splice_continuations('"a\\\\b"'), '"a\\\\b"',
+     "an escaped backslash is not a continuation"),
+    ("reserved: every term is summed",
+     lambda: _reserved(" - 2 - 10", "t"), 12,
+     "the prefix defect: '- 2 - 10' read as 2 measured the fixture against a "
+     "ceiling 10 bytes too generous"),
+    ("reserved: a single term still works",
+     lambda: _reserved(" - 3", "t"), 3,
+     "the shape that actually ships"),
+    ("reserved: a macro term refuses",
+     lambda: _reserved(" - PAD", "t"), GenError,
+     "an expression this reader cannot account for must stop the build, not "
+     "contribute the part it recognises"),
+    ("reserved: an addition refuses",
+     lambda: _reserved(" - 2 + 1", "t"), GenError, "same, other direction"),
+    ("reserved: nothing subtracted refuses",
+     lambda: _reserved("", "t"), GenError,
+     "a reservation of zero is a reading, not a default"),
+    ("c_literal: UTF-8 keeps its byte length",
+     lambda: c_literal("\u00e9"), '"\\303\\251"',
+     "e-acute is TWO bytes in a UTF-8 source; one octal escape made the "
+     "fixture shorter than the shipping message"),
+    ("c_literal: a round-tripped raw byte stays ONE byte",
+     lambda: c_literal(chr(0xDCC3)), '"\\303"',
+     "the surrogateescape path must not be re-encoded as two bytes"),
+]
+
+
+def self_test():
+    """Pin the extraction invariants. Run from the Makefile recipe."""
+    failures = 0
+    for name, fn, expected, why in GEN_SELF_TESTS:
+        if isinstance(expected, type) and issubclass(expected, Exception):
+            try:
+                got = fn()
+            except expected:
+                continue
+            except Exception as e:            # the wrong exception is a failure
+                failures += 1
+                print(f"  FAIL [{name}]: raised {type(e).__name__}, expected "
+                      f"{expected.__name__} -- {why}")
+                continue
+            failures += 1
+            print(f"  FAIL [{name}]: returned {got!r}, expected "
+                  f"{expected.__name__} -- {why}")
+            continue
+        try:
+            got = fn()
+        except Exception as e:
+            failures += 1
+            print(f"  FAIL [{name}]: raised {type(e).__name__}: {e} -- {why}")
+            continue
+        if got != expected:
+            failures += 1
+            print(f"  FAIL [{name}]: {got!r}, expected {expected!r} -- {why}")
+    if failures:
+        print(f"ERROR: gen_1039_log_budget.py: {failures} self-test(s) failed",
+              file=sys.stderr)
+        return 1
+    print(f"gen_1039_log_budget.py self-test: {len(GEN_SELF_TESTS)}/"
+          f"{len(GEN_SELF_TESTS)} extraction-invariant cases pass")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--out", type=Path, default=Path("gen_1039_log_budget.h"))
+    ap.add_argument("--self-test", action="store_true",
+                    help="check the extraction invariants and exit")
     args = ap.parse_args()
+
+    if args.self_test:
+        return self_test()
 
     try:
         size, vsn, clamp = read_ceiling()
