@@ -624,6 +624,45 @@ def unescape(body):
     return "".join(out)
 
 
+def is_comment_only_line(line):
+    """True when `line` carries comment text and NO code.
+
+    This is the predicate find_annotation()'s upward walk stops on, and getting
+    it wrong let a bound LEAK FORWARD -- the codex audit's finding on #1110.
+    Both of these are code lines that the old test accepted as comment-only,
+    so the annotation written for THIS call was applied to the NEXT one as
+    well, silencing a message that could truncate:
+
+        LOG_E("short %s", "x"); /* log_budget: max=1 */   <- ends with "*/"
+        /* log_budget: max=1 */ LOG_E("a %s", s);         <- starts with "/*"
+
+    A bound that leaks forward is worse than no bound, because the next call is
+    then reported as clean and the unchanged baseline records that silence as
+    accepted.
+
+    The separation is whether any code survives removing the line's complete
+    comments. The two block-interior forms are special-cased first because they
+    have no complete span to remove: a continuation (`* text`) and the closing
+    line (`text */`), which cannot carry code before it since the block was
+    opened earlier -- so it must NOT contain an opener of its own.
+
+    Annotations on the macro's OWN line keep working regardless: find_annotation
+    reads that line directly rather than through this walk.
+    """
+    t = line.strip()
+    if t.startswith("//"):
+        return True
+    if t.startswith("/*") and "*/" not in t:
+        return True                       # block opener, rest of line is comment
+    if t.startswith("*"):
+        return True                       # block continuation
+    if t.endswith("*/") and "/*" not in t:
+        return True                       # block closer, no opener => no code
+    stripped = re.sub(r"/\*.*?\*/", "", line, flags=re.S)
+    stripped = re.sub(r"//.*$", "", stripped)
+    return not stripped.strip()
+
+
 def find_annotation(src_lines, line):
     """Return the widths declared by a /* log_budget: max=N[,N...] */ marker.
 
@@ -636,9 +675,7 @@ def find_annotation(src_lines, line):
     texts = [src_lines[idx]] if 0 <= idx < len(src_lines) else []
     k = idx - 1
     while k >= 0:
-        stripped = src_lines[k].strip()
-        if (stripped.startswith("//") or stripped.startswith("/*")
-                or stripped.startswith("*") or stripped.endswith("*/")):
+        if is_comment_only_line(src_lines[k]):
             texts.append(src_lines[k])
             k -= 1
             continue
@@ -1506,6 +1543,75 @@ SELF_TEST_GATE_CASES = [
      "the same in the other direction"),
 ]
 
+# find_annotation() must bind an annotation to ITS OWN call and to no other.
+# The codex audit on #1110 found it leaking forward: a code line carrying a
+# trailing block comment also ends with "*/", so the walk upward from the NEXT
+# call accepted it as comment-only and applied the previous call's bound.
+#
+# BOTH DIRECTIONS ARE TESTED ON PURPOSE. The leak cases are the defect; the
+# "must still bind" cases are the regression that a careless fix causes, and
+# they are the ones that matter here -- every one of the eight annotations
+# shipping in firmware/src/ today is a `/* ... */` or `* ...` comment line, so
+# a fix that stopped those binding would silently un-bound every real %s in
+# the tree while looking like it had tightened the gate.
+#
+# Each case is (name, src_lines, line, expected, why).
+SELF_TEST_ANNOTATION_CASES = [
+    # --- the defect: a bound must NOT reach the following call
+    ("trailing comment does not leak forward",
+     ['LOG_E("short %s", "x"); /* log_budget: max=1 */',
+      'LOG_E("%s", big);'], 2, None,
+     "the audit's case: line 1 ends with */ but carries code, so its bound is "
+     "line 1's alone. Leaking it reported line 2 as clean while it truncates"),
+    ("leading comment on a code line does not leak forward",
+     ['/* log_budget: max=1 */ LOG_E("a %s", s);',
+      'LOG_E("%s", big);'], 2, None,
+     "the blind leg's case, same defect through the startswith('/*') arm"),
+    ("a bound two calls back does not reach either",
+     ['LOG_E("a %s", s); /* log_budget: max=1 */',
+      'LOG_E("b %s", s);',
+      'LOG_E("%s", big);'], 3, None,
+     "a walk-termination guard, NOT a leak test -- measured: it passes on the "
+     "pre-fix predicate too, because the walk already stopped at line 2's "
+     "code and never reached the annotation. Kept because it pins that "
+     "termination, but it discriminates nothing and must not be counted as "
+     "coverage of the leak"),
+    # --- the regression a careless fix causes: these MUST keep binding
+    ("comment-only line above still binds",
+     ['/* log_budget: max=1 */',
+      'LOG_E("%s", s);'], 2, [1],
+     "six of the eight annotations in firmware/src/ have this exact shape"),
+    ("block-comment continuation still binds",
+     ['/* a block comment',
+      ' * explaining the bound',
+      ' * log_budget: max=40 */',
+      'LOG_E("%s", s);'], 4, [40],
+     "the other two (sd_card_manager.c) have this shape"),
+    ("a block closer carrying no opener still binds",
+     ['/* a block comment',
+      '   log_budget: max=7 */',
+      'LOG_E("%s", s);'], 3, [7],
+     "a continuation line without a leading '*' ends with */ and has no "
+     "opener, so it cannot carry code -- this is what the endswith('*/') arm "
+     "was for, and the fix must keep it"),
+    ("a // line above still binds",
+     ['// log_budget: max=3',
+      'LOG_E("%s", s);'], 2, [3],
+     "the line-comment form"),
+    ("an annotation on the macro's OWN line still binds",
+     ['LOG_E("%s", s); /* log_budget: max=5 */'], 1, [5],
+     "read directly from the macro's line, never through the upward walk, so "
+     "the fix must not disturb it -- and this is the same text shape as the "
+     "first leak case, which is why the two must be tested together"),
+    ("multi-width annotations survive",
+     ['/* log_budget: max=4,9 */',
+      'LOG_E("%s %s", a, b);'], 2, [4, 9],
+     "the comma form is parsed by ANNOTATION_RE, not by this walk"),
+    ("no annotation anywhere returns None",
+     ['LOG_E("%s", s);'], 1, None,
+     "the base case: absence must read as absence, not as an empty bound"),
+]
+
 
 def self_test():
     """Check extraction and measurement against synthetic fixtures.
@@ -1605,6 +1711,14 @@ def self_test():
                   f"{suppressed}, expected {want_kept}/{want_suppressed} "
                   f"-- {why}")
 
+    # find_annotation(): a bound binds to its own call and to no other.
+    for name, src, line, expected, why in SELF_TEST_ANNOTATION_CASES:
+        got = find_annotation(src, line)
+        if got != expected:
+            failures += 1
+            print(f"  FAIL [annotation: {name}]: find_annotation -> {got}, "
+                  f"expected {expected} -- {why}")
+
     # The gate's verdict, pinned on the same function main() takes its exit
     # code from.
     for name, cur, base, expected, why in SELF_TEST_GATE_CASES:
@@ -1664,7 +1778,9 @@ def self_test():
           f"{len(SELF_TEST_WAIVER_CASES)}/{len(SELF_TEST_WAIVER_CASES)} "
           f"waiver cases + "
           f"{len(SELF_TEST_GATE_CASES)}/{len(SELF_TEST_GATE_CASES)} gate "
-          f"cases + 1/1 IO-error case pass")
+          f"cases + {len(SELF_TEST_ANNOTATION_CASES)}/"
+          f"{len(SELF_TEST_ANNOTATION_CASES)} annotation-binding cases + "
+          f"1/1 IO-error case pass")
     return 0
 
 

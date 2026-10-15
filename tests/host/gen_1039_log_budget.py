@@ -424,6 +424,33 @@ def read_ceiling():
     return size, int(m1.group(1)), int(m2.group(1))
 
 
+def c_literal_byte_len(literal):
+    """Bytes a C string literal (quotes included) encodes at compile time.
+
+    Deliberately counts BYTES, not characters -- it exists to check c_literal()
+    against Logger's byte ceiling, and the defect it guards was precisely a
+    character count standing in for a byte count. An octal escape is at most
+    three digits (C99 6.4.4.4) and always one byte; the simple escapes are one
+    byte each; anything else contributes its own UTF-8 length.
+    """
+    body = literal[1:-1] if literal.startswith('"') else literal
+    n = 0
+    i = 0
+    while i < len(body):
+        if body[i] == "\\" and i + 1 < len(body):
+            m = re.match(r"\\([0-7]{1,3})", body[i:])
+            if m:
+                n += 1
+                i += len(m.group(0))
+                continue
+            n += 1          # \\ \" \r \n \t -- one byte each
+            i += 2
+            continue
+        n += len(body[i].encode("utf-8"))
+        i += 1
+    return n
+
+
 def c_literal(text):
     """Re-emit a decoded message as a C string literal.
 
@@ -460,16 +487,48 @@ def c_literal(text):
             # a raw byte >= 0x80, round-tripped through unescape()'s
             # surrogateescape convention -- re-emit its real byte value.
             out.append(f"\\{cp - 0xDC00:03o}")
-        elif cp < 0x100:
+        elif cp < 0x80:
             # a narrow control byte (from an octal/hex escape, or a literal
             # control character) that isn't printable ASCII.
             out.append(f"\\{cp:03o}")
+        elif cp < 0x100:
+            # U+0080..U+00FF decoded as a CHARACTER -- not a raw byte
+            # round-tripped through surrogateescape, which the branch above
+            # already took. The codex audit on #1110 found this emitting ONE
+            # octal escape here, which conflates "the codepoint fits in a byte"
+            # with "the character IS one byte". It is not: the firmware source
+            # is UTF-8, so XC32 compiles 'e'-acute from the TWO bytes
+            # \303\251, while \351 is one. The fixture was therefore SHORTER
+            # than the shipping message -- 3 bytes short for three such
+            # characters -- so run_1039_tests measured a different, smaller
+            # string and passed its survival checks on it.
+            #
+            # Emit the character's real UTF-8 bytes, so the generated literal
+            # encodes byte-for-byte what the compiler sees.
+            out.extend(f"\\{b:03o}" for b in ch.encode("utf-8"))
         else:
             raise GenError(
                 f"message contains the non-byte codepoint {ch!r} (U+"
                 f"{cp:04X}), which this generator will not re-emit blind -- "
                 f"decide what it should become and extend c_literal()")
-    return '"' + "".join(out) + '"'
+    literal = '"' + "".join(out) + '"'
+
+    # THE INVARIANT, ASSERTED RATHER THAN ASSUMED. The whole point of this
+    # fixture is to measure the SHIPPING message against Logger's byte ceiling,
+    # so a literal that encodes a different number of bytes than the firmware
+    # string measures the wrong thing -- and does it silently, by passing.
+    # That is what the UTF-8 defect above did. `surrogateescape` is what turns
+    # round-tripped raw bytes back into the real byte sequence, so this is the
+    # firmware's own byte count, not a codepoint count.
+    want = len(text.encode("utf-8", "surrogateescape"))
+    got = c_literal_byte_len(literal)
+    if got != want:
+        raise GenError(
+            f"c_literal() changed the message's BYTE LENGTH: the literal "
+            f"encodes {got} byte(s) but the message is {want}. A fixture of a "
+            f"different length measures a different string against the "
+            f"ceiling. Message: {text!r}")
+    return literal
 
 
 def main():
