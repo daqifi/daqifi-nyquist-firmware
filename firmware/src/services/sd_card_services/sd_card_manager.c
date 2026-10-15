@@ -109,7 +109,30 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  * ways the stale one went wrong). */
 #define SD_CARD_MANAGER_BUCKET_ADVANCE_MAX (SD_CARD_MANAGER_MAX_BUCKET + 1u)
 /* #958: names the scratch walk tries before settling for the last one. */
-#define SD_CARD_MANAGER_UNIQUE_TARGET_MAX  16u
+/* #958: how many scratch-name candidates the collision walk will examine.
+ *
+ * TIED TO THE BUCKET CEILING, not a number of its own, on an operator ruling
+ * (2026-10-15). It was 16u -- an arbitrary quarter of what a bucket holds --
+ * and that bound was the ENTIRE source of the exhaustion argument this fix
+ * spent four designs on: with 17 same-stem files the walk ran out of names it
+ * was willing to try and had to choose between truncating one and refusing the
+ * operation (which reopens the `mode` double-duty teardown race). Raising it
+ * dissolves the choice for any realistic card.
+ *
+ * ⚠ WHAT THIS DOES NOT DO, stated because the stronger claim is tempting and
+ * false: it does NOT make exhaustion unreachable. MAX_DIR_FILES is the
+ * threshold at which the firmware's OWN writer rolls to a new bucket -- not a
+ * cap on what the directory can hold, since a card can be populated
+ * externally. So this raises the population required to exhaust the walk from
+ * 17 files to 65; it does not reduce it to zero. The fallback below still
+ * exists and is still reachable in principle.
+ *
+ * COST: each candidate is one SYS_FS_FileStat, i.e. a FatFs dir_find, which is
+ * O(directory size) like every other lookup here -- so the walk is bounded by
+ * (candidates x directory size) and runs ONCE per benchmark, not per write.
+ * #689's bucketing is what keeps the directory small enough for that to be
+ * cheap; the two mechanisms are deliberately sized off the same constant. */
+#define SD_CARD_MANAGER_UNIQUE_TARGET_MAX  SD_CARD_MANAGER_MAX_DIR_FILES
 /* #780: how long the pumped wait blocks between USB write pumps. Small enough
  * that a filling circular buffer is serviced promptly, large enough that the
  * wait is not a busy-spin against the SD task.
@@ -2531,8 +2554,9 @@ void sd_card_manager_ProcessState() {
                  * bucket-advance available at this point to sidestep it.
                  *
                  * So the current behaviour is: if no candidate is verified ABSENT
-                 * within the bound, or the card cannot answer, open the last
-                 * EXAMINED candidate and say so in the log. That is a knowing
+                 * within the bound -- now 65 candidates rather than 17, see the
+                 * UNIQUE_TARGET_MAX definition -- or the card cannot answer, open
+                 * the last EXAMINED candidate and say so in the log. That is a knowing
                  * trade of a possible user file against reopening a concurrency
                  * defect, and it is the OPERATOR's call rather than this comment's
                  * -- which is why the reason is stated plainly instead of being

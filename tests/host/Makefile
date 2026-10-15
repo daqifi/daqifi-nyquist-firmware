@@ -2127,8 +2127,10 @@ $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BE
 	       echo "       whatever the firmware does: a host model cannot see which"; \
 	       echo "       form shipped. THIS PIN ties the model to the source."; \
 	       exit 1; }
-	@grep -qE 'SD_CARD_MANAGER_UNIQUE_TARGET_MAX[[:space:]]+16u' $(SD_MANAGER_SRC) \
-	  || { echo "ERROR: SD_CARD_MANAGER_UNIQUE_TARGET_MAX is no longer 16u in"; \
+	@grep -qE 'SD_CARD_MANAGER_UNIQUE_TARGET_MAX[[:space:]]+SD_CARD_MANAGER_MAX_DIR_FILES' $(SD_MANAGER_SRC) \
+	  && grep -qE 'SD_CARD_MANAGER_MAX_DIR_FILES[[:space:]]+64u' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: the candidate bound is no longer tied to the bucket"; \
+	       echo "       ceiling, or MAX_DIR_FILES is no longer 64u, in"; \
 	       echo "       $(SD_MANAGER_SRC). test_958 mirrors it as"; \
 	       echo "       FW_UNIQUE_TARGET_MAX and its POPULATION argument -- the"; \
 	       echo "       seventeenth file is what makes the defect reproduce -- is"; \

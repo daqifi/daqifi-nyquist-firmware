@@ -553,6 +553,12 @@ TEST(the_counter_is_advanced_before_the_name_is_formatted)
  * in the bench.
  *
  * ⛔ POPULATION: `occupiedThrough` must be at least FW_UNIQUE_TARGET_MAX --
+ * which is now 64, so genuine exhaustion needs SIXTY-FIVE same-stem files
+ * rather than seventeen. Raising the bound did NOT make exhaustion
+ * unreachable: MAX_DIR_FILES is the threshold at which the firmware's own
+ * writer rolls buckets, not a cap on what an externally-populated card can
+ * hold. The cases below stay written in terms of the constant for that
+ * reason -- they must keep testing the boundary wherever it moves.
  * that is the base name PLUS -1 … -16, SEVENTEEN files, with the victim in
  * -16. DO NOT TRIM IT. Trimming to -1 … -15 makes the broken form's candidate
  * 16 not exist, so its open CREATES instead of TRUNCATING: the test still
@@ -560,7 +566,13 @@ TEST(the_counter_is_advanced_before_the_name_is_formatted)
  * the only reason the defect reproduces. (Derived by nq-b while calibrating a
  * hardware A/B that could not have discriminated without it.)
  * ========================================================================== */
-#define FW_UNIQUE_TARGET_MAX 16u   /* mirrors sd_card_manager.c's #define */
+/* Mirrors sd_card_manager.c, which now defines UNIQUE_TARGET_MAX as
+ * SD_CARD_MANAGER_MAX_DIR_FILES (64u) rather than a bound of its own --
+ * the arbitrary 16 was the whole source of the exhaustion argument. The
+ * Makefile pin checks BOTH halves: that the firmware ties the two
+ * constants together, and that MAX_DIR_FILES is still 64u, because this
+ * mirror and the POPULATION arguments below are derived from that value. */
+#define FW_UNIQUE_TARGET_MAX 64u
 
 /* A stat outcome, because "could not answer" is NOT "absent" -- conflating
  * them was the second of the two defects a codex audit found here. */
