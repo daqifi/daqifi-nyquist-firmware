@@ -2506,20 +2506,39 @@ void sd_card_manager_ProcessState() {
                  * in that SCPI callback fails NO_FILESYSTEM -- which cannot be
                  * told apart from "the name is free".
                  *
-                 * BEST EFFORT, and deliberately NOT a refusal. `benchmark_*` has
-                 * exactly one producer in the firmware -- this hook -- so the
-                 * only thing a collision can truncate is a stale scratch file
-                 * from an earlier benchmark run, which is throwaway by
-                 * construction and which nothing deletes today. Refusing the
-                 * benchmark to protect it would spend a real operation on
-                 * worthless bytes, and an earlier revision of this fix did
-                 * exactly that: three audit rounds then argued about how to
-                 * order the refusal's teardown, because `mode` means both "armed"
-                 * and "busy" and a terminal refusal has to say one without the
-                 * other. None of that is worth having for this. If no free name
-                 * turns up within the bound, or the card cannot answer, use the
-                 * last candidate and say so in the log -- i.e. exactly today's
-                 * behaviour, reached only in the case the walk cannot improve. */
+                 * BEST EFFORT, and deliberately NOT a refusal -- but read the
+                 * correction below before relying on the reason.
+                 *
+                 * ⛔ THE ORIGINAL JUSTIFICATION HERE WAS FALSE AND IS RETRACTED.
+                 * It said `benchmark_*` has exactly one producer in the firmware,
+                 * so a collision could only truncate a stale scratch file that is
+                 * "throwaway by construction". THREE INDEPENDENT SOURCE READS
+                 * DISPROVE THAT: `SCPI_StorageSDLoggingSet` accepts a
+                 * benchmark-shaped name for an ordinary recording, and
+                 * `SD_ValidatePathParam` rejects only an empty name, a leading
+                 * separator, control characters, '\', ':' and '.'/'..' segments
+                 * -- there is NO reserved prefix. Files can also be placed on the
+                 * card externally. So the bytes a collision destroys may be a
+                 * USER RECORDING, not a disposable scratch file. (I argued the
+                 * false version myself and used it to deflate this finding's
+                 * severity; it survived because nobody had read the accept path.)
+                 *
+                 * WHAT STILL ARGUES AGAINST A REFUSAL, on its own merits rather
+                 * than on that premise: `mode` means both "armed" and "busy", so
+                 * a terminal refusal has to say one without the other. Three
+                 * audit rounds died arguing how to order that teardown, and an
+                 * earlier revision of this fix shipped the race. There is also no
+                 * bucket-advance available at this point to sidestep it.
+                 *
+                 * So the current behaviour is: if no candidate is verified ABSENT
+                 * within the bound, or the card cannot answer, open the last
+                 * EXAMINED candidate and say so in the log. That is a knowing
+                 * trade of a possible user file against reopening a concurrency
+                 * defect, and it is the OPERATOR's call rather than this comment's
+                 * -- which is why the reason is stated plainly instead of being
+                 * dressed up as harmless. An adversarial audit asks for the
+                 * refusal (both legs, `high`/data_loss); that request is live and
+                 * unresolved, not dismissed. */
                 if (uniqueTargetAtOpen) {
                     /* WALK THE CANDIDATES. A codex audit found TWO defects here
                      * -- in BOTH legs independently, the blind one running with
