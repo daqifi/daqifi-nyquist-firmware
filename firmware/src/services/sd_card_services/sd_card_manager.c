@@ -2348,12 +2348,28 @@ void sd_card_manager_ProcessState() {
                 bool reopenExisting = false;
                 /* #958: never REOPEN a scratch name -- the pre-walk exists to
                  * find an existing part and reopen it, which is right for a
-                 * split log and pointless for scratch. */
+                 * split log and pointless for scratch.
+                 *
+                 * ⛔ SUPPRESS THE REOPEN, NOT THE WALK. An earlier revision
+                 * of this fix gated the whole branch on `!uniqueTargetAtOpen`,
+                 * which also removed its FAULT handling: both probes below
+                 * refuse the open when the card cannot ANSWER (probeFsError /
+                 * targetFsError -> SD_REFUSE_BUCKET_UNREADABLE), and a
+                 * benchmark open silently lost that refusal. An adversarial
+                 * audit found it in both legs (high/data_loss): a stat fault
+                 * in this window refused BEFORE the open at the previous head,
+                 * and afterwards fell through to the truncating WRITE_PLUS.
+                 *
+                 * The shape to recognise: the feature I wanted off (reopen)
+                 * and a guard I wanted kept (fault refusal) shared one block,
+                 * so turning the block off turned the guard off with it. Gate
+                 * the ASSIGNMENT instead -- the probes still run, so their
+                 * refusal paths still apply to a scratch open. */
                 bool uniqueTargetAtOpen;
                 taskENTER_CRITICAL();
                 uniqueTargetAtOpen = gpSDCardSettings->uniqueTarget;
                 taskEXIT_CRITICAL();
-                if (bucketOk && !uniqueTargetAtOpen) {
+                if (bucketOk) {
                     uint32_t reuseBucket = gSDCardData.curBucket;
                     char probePath[SD_CARD_MANAGER_FILE_PATH_LEN_MAX + 1];
                     for (uint32_t probe = gSDCardData.curBucket;
@@ -2393,8 +2409,13 @@ void sd_card_manager_ProcessState() {
                             break;
                         }
                         if (found) {
-                            reopenExisting = true;
-                            reuseBucket = probe;
+                            /* #958: a scratch open never reopens. The probe
+                             * still RAN, so the fault arms above still refuse;
+                             * only the reuse is suppressed. */
+                            if (!uniqueTargetAtOpen) {
+                                reopenExisting = true;
+                                reuseBucket = probe;
+                            }
                             break;
                         }
                     }
@@ -2591,11 +2612,21 @@ void sd_card_manager_ProcessState() {
                      * Absence vs fault follows sd_TargetExistsInBucketPath's
                      * existing idiom above: only NO_FILE / NO_PATH mean absent.
                      * Anything else is the card failing to ANSWER, which is not
-                     * permission to truncate -- it REFUSES the operation, via
-                     * the same idiom this case already uses for an unusable
-                     * bucket. An earlier revision only logged and opened
-                     * anyway; the comment claimed the refusal and the code did
-                     * not have it. */
+                     * permission to truncate. Here that distinction buys a
+                     * SEPARATE LOG LINE and nothing more: the open below still
+                     * happens and can still truncate. The refusal lives at the
+                     * PRE-WALK instead (see the block above it) -- that site
+                     * exits before the open through the established #689
+                     * clean-stop, which this one cannot reach.
+                     *
+                     * ⛔ THIS PARAGRAPH CLAIMED "it REFUSES the operation"
+                     * UNTIL 2026-10-16. Reverting attempt 3 took the code out
+                     * and left the claim standing, which reinstated the exact
+                     * defect the sentence that followed it criticised -- a
+                     * comment promising a guarantee the code does not have. An
+                     * adversarial audit found it in both legs. A comment is a
+                     * claim: when the code it describes is reverted, the
+                     * comment is part of what has to be reverted. */
                     bool scratchNameFree = false;
                     bool statFault = false;
                     uint32_t probes = 0u;  /* advances; EXAMINED = probes + 1 */
@@ -2675,9 +2706,20 @@ void sd_card_manager_ProcessState() {
                      * callback's cleanup tears down "the manager", not "my
                      * operation", so releasing ownership early makes its
                      * cleanup land on a stranger. A refusal is not
-                     * implementable here until that exists -- the same wall
-                     * three earlier designs hit, now measured three more
+                     * implementable AT THIS SITE until that exists -- the same
+                     * wall three earlier designs hit, now measured three more
                      * times.
+                     *
+                     * ⛔ "AT THIS SITE" IS THE WHOLE QUALIFIER, and leaving
+                     * it off cost a real guard. All three attempts built a NEW
+                     * refusal HERE, after the #689 clean-stop has been passed.
+                     * One already EXISTED at the pre-walk, before it -- and
+                     * this fix had disabled it for scratch opens as a side
+                     * effect of suppressing the reopen. So the honest claim is
+                     * narrow: a refusal cannot be built here, and the one that
+                     * could be is further up and is now restored. "Not
+                     * implementable" was measured about one site and written
+                     * about the whole problem.
                      *
                      * WHAT THIS COSTS: with every candidate in the bound
                      * occupied, or a stat the card cannot answer, the open

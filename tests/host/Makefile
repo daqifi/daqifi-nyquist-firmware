@@ -2246,6 +2246,30 @@ $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BE
 	       echo "       $(SD_MGR_HDR). test_958 copies it as FW_FILE_NAME_LEN_MAX and its"; \
 	       echo "       no-truncation case is arithmetic on that number -- update both."; \
 	       exit 1; }
+	@if grep -qE 'if[[:space:]]*\([[:space:]]*bucketOk[[:space:]]*&&[[:space:]]*!uniqueTargetAtOpen' $(SD_MANAGER_SRC); then \
+	       echo "ERROR: the bucket pre-walk in $(SD_MANAGER_SRC) is gated on"; \
+	       echo "       !uniqueTargetAtOpen again. That block carries TWO things:"; \
+	       echo "       the reopen-existing search (which a scratch open must NOT"; \
+	       echo "       do) and the probeFsError/targetFsError refusals (which it"; \
+	       echo "       MUST keep -- they exit through the #689 clean-stop BEFORE"; \
+	       echo "       the open). Gating the whole block removes the refusals: a"; \
+	       echo "       stat fault in that window then falls through to the"; \
+	       echo "       truncating WRITE_PLUS instead of refusing. An adversarial"; \
+	       echo "       audit found exactly that in BOTH legs, high/data_loss."; \
+	       echo "       Gate the reopen ASSIGNMENT instead, not the walk."; \
+	       exit 1; \
+	 fi
+	@tr -d '\n' < $(SD_MANAGER_SRC) \
+	  | grep -qE 'if[[:space:]]*\([[:space:]]*!uniqueTargetAtOpen[[:space:]]*\)[[:space:]]*[{][[:space:]]*reopenExisting = true' \
+	  || { echo "ERROR: the reopen-existing assignment in $(SD_MANAGER_SRC) is no"; \
+	       echo "       longer guarded by !uniqueTargetAtOpen. A scratch open would"; \
+	       echo "       then REOPEN an existing benchmark file, and the truncating"; \
+	       echo "       WRITE_PLUS destroys it -- the #958 defect by another route."; \
+	       echo "       Keep the pre-walk RUNNING (its fault refusals are load-"; \
+	       echo "       bearing) and suppress only the reuse. These two pins are a"; \
+	       echo "       PAIR: one refuses gating the walk, the other requires the"; \
+	       echo "       assignment be gated. Neither alone states the property."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -o $(NAME_BIN) test_958_sd_benchmark_filename_collision.c
 
 $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $(SD_BENCH_SRC) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
