@@ -2199,9 +2199,6 @@ $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BE
 	  && tr -d '\r' < $(SD_MANAGER_SRC) | tr '\n' ' ' \
 	     | grep -qE 'e == SYS_FS_ERROR_NO_FILE[[:space:]]*[|][|][[:space:]]*e == SYS_FS_ERROR_NO_PATH[^{]*[{][[:space:]]*scratchNameFree = true' \
 	  && grep -qE '(^|[^A-Za-z0-9_])statFault([^A-Za-z0-9_]|$$)' $(SD_MANAGER_SRC) \
-	  && grep -qF 'sd_AbandonRotationWindow("scratch stat unanswerable")' $(SD_MANAGER_SRC) \
-	  && tr -d '\r' < $(SD_MANAGER_SRC) | tr '\n' ' ' \
-	     | grep -qE 'SD_REFUSE_TARGET_UNVERIFIABLE;[[:space:]]*gSDCardData[.]startupDirFull = true;' \
 	  || { echo "ERROR: $(SD_MANAGER_SRC)'s uniqueness walk no longer carries"; \
 	       echo "       BOTH properties a codex audit established it needs:"; \
 	       echo "       (a) a budget of MAX ADVANCES, i.e. MAX+1 candidates"; \
@@ -2214,17 +2211,6 @@ $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BE
 	       echo "           stat error treated as a FAULT (statFault), because"; \
 	       echo "           one transient DISK_ERR read as absent let the open"; \
 	       echo "           truncate silently, with the fallback log skipped."; \
-	       echo "       (c) the stat-fault refusal must set BOTH the refuse"; \
-	       echo "           REASON and startupDirFull, ADJACENTLY. startupDirFull"; \
-	       echo "           is the startup-failure notification that ends the"; \
-	       echo "           benchmark's readiness poll (SCPIStorageSD.c:1922)."; \
-	       echo "           Omitting it leaves the poll running against an idle"; \
-	       echo "           manager, so a concurrent STR:START can claim it and"; \
-	       echo "           the abandoned benchmark writes its zero pattern into"; \
-	       echo "           that session's recording -- a HIGH data_corruption"; \
-	       echo "           defect BOTH audit legs found. A cross-task race is"; \
-	       echo "           NOT testable by the host walk model, so THIS PIN is"; \
-	       echo "           the only mechanism guarding it."; \
 	       echo "       test_958 CASES 7-10 model BOTH walks, so they pass"; \
 	       echo "       whatever the firmware does: a host model cannot see which"; \
 	       echo "       form shipped. THIS PIN ties the model to the source."; \

@@ -631,11 +631,14 @@ static WalkResult uniqueness_walk(bool legacy, int32_t occupiedThrough,
     r.foundFree = free_;
     r.statFault = fault;
     r.chosenWasExamined = ((int32_t)counter <= highestExamined);
-    /* A stat the card could not answer REFUSES: the current firmware mirrors
-     * the #689 "bucket unusable" exit (close handle, clear mode, IDLE, abandon
-     * the rotation window, give the semaphore, break) rather than opening on a
-     * guess. The legacy form only logged and opened anyway. */
-    r.refuses = (!legacy) && fault;
+    /* ⛔ NO REFUSAL. Three attempts were made and withdrawn -- see the block
+     * in sd_card_manager.c for each and why it made things worse. The missing
+     * mechanism is session identity: the benchmark's cleanup tears down "the
+     * manager" rather than "my operation", so releasing ownership early makes
+     * that cleanup land on whatever claimed it meanwhile. So BOTH forms open;
+     * what the current code buys is that the fault is LOGGED with its own
+     * message rather than passing silently as an absence. */
+    r.refuses = false;
     /* the open truncates iff it HAPPENS and the chosen candidate exists */
     r.truncates = (!r.refuses) && ((int32_t)counter <= occupiedThrough);
     return r;
@@ -699,14 +702,14 @@ TEST(a_stat_fault_is_not_an_absence)
     ASSERT_TRUE(legacy.truncates);
     ASSERT_TRUE(!legacy.refuses);
 
-    /* now: NOT free, and the operation is REFUSED rather than opened on a
-     * guess -- so nothing is truncated. Logging the loss was never enough:
-     * an earlier revision logged it and opened anyway while its own comment
-     * claimed otherwise, which a codex audit caught in both legs. */
+    /* now: NOT read as free, so the fallback fires with its OWN message and
+     * names the file. It still opens -- no refusal is implementable here (see
+     * sd_card_manager.c) -- so this asserts the DIAGNOSTIC distinction, which
+     * is what actually changed, and NOT a prevention the code does not do. */
     ASSERT_TRUE(!now.foundFree);
     ASSERT_TRUE(now.statFault);
-    ASSERT_TRUE(now.refuses);
-    ASSERT_TRUE(!now.truncates);
+    ASSERT_TRUE(!now.refuses);
+    ASSERT_TRUE(now.truncates);   /* honest: it DOES still truncate */
 }
 
 /* CASE 10: the ordinary path, which is the only one the device actually takes

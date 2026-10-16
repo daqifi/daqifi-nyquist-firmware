@@ -2646,98 +2646,68 @@ void sd_card_manager_ProcessState() {
                     const char *lostLeaf = strrchr(gSDCardData.filePath, '/');
                     lostLeaf = (lostLeaf != NULL) ? (lostLeaf + 1)
                                                   : gSDCardData.filePath;
-                    if (statFault) {
-                        /* REFUSE. The card could not tell us whether this name
-                         * is occupied, so opening it WRITE_PLUS would truncate
-                         * on a guess. An earlier revision of this block logged
-                         * that and opened anyway, while the comment above
-                         * claimed an unanswered stat "is not permission to
-                         * truncate" -- the comment described a behaviour the
-                         * code did not have, and a codex audit caught it in
-                         * both legs.
-                         *
-                         * This is NOT the refusal three earlier designs died
-                         * on. That argument was about refusing in the SCPI
-                         * callback, where `mode` means both "armed" and "busy"
-                         * so a terminal refusal cannot say one without the
-                         * other. Here we are in the SD task at OPEN_FILE, and
-                         * this case ALREADY has a complete refusal idiom for a
-                         * filesystem it cannot use -- the #689 "bucket
-                         * unusable" exit a few lines above. This mirrors it
-                         * step for step, including the pieces that are easy to
-                         * miss: the handle close, clearing `mode` so the arm is
-                         * released, the #757 rotation-window abandon (we exit
-                         * without ever reaching the open, so the encoder would
-                         * otherwise keep filling a buffer nothing drains), and
-                         * giving the completion semaphore so a waiter is not
-                         * stranded.
-                         *
-                         * The in-tree principle this follows is stated at the
-                         * bucket-count call: "An FS error must NOT be read as
-                         * 'this bucket is full' ... Refuse instead -- the
-                         * caller's clean stop is the right answer for a broken
-                         * card." A stat that cannot answer is the same class of
-                         * condition. */
-                        /* 113 B worst case, margin 12 -- measured, and the
-                         * first draft of THIS comment said 118/7, which was a
-                         * caption contradicting its own measurement. The leaf
-                         * sits at byte 11, so what truncation eats is the
-                         * reason, never the name. */
-                        LOG_E("[SD] #958 '%.51s' unverifiable"
-                              " - refused rather than truncate blind", lostLeaf);
-                        gSDCardData.lastOperationSuccess = false;
-                        if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
-                            (void)SYS_FS_FileClose(gSDCardData.fileHandle);
-                            gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
-                        }
-                        /* ⛔ THESE TWO LINES ARE THE RACE FIX, and omitting the
-                         * first is how the previous revision shipped a HIGH
-                         * data_corruption defect that BOTH audit legs found.
-                         *
-                         * I mirrored the #689 bucket-unusable exit and
-                         * deliberately skipped `startupDirFull` as
-                         * "bucket-specific". It is not. It is the
-                         * STARTUP-FAILURE NOTIFICATION, and
-                         * SCPI_StorageSD.c:1922 reads it as the early-exit of
-                         * the benchmark's five-second readiness poll. Without
-                         * it the poll kept running against a manager this
-                         * branch had just set idle -- so a concurrent
-                         * SYST:STR:START could claim it, open ITS file, and the
-                         * abandoned benchmark's IsWriteReady (which asks
-                         * whether SOME write is ready, not whether THIS one is)
-                         * would then write its zero pattern into that
-                         * recording and tear it down.
-                         *
-                         * That hazard is documented at SCPIStorageSD.c:1912 as
-                         * belonging to #739's family, closed won't-fix, with
-                         * the note that #988's latch "neither opens nor widens
-                         * it". Tearing the arm down mid-poll WIDENS it, which
-                         * is exactly what the comment warns against.
-                         *
-                         * And the reason code is not optional: sd_EnterBucket's
-                         * comment states the invariant "refused => a reason is
-                         * recorded", because otherwise the caller sets
-                         * startupDirFull while WriteRefuseText answers "no
-                         * refusal recorded". */
-                        gSDCardData.writeRefuseReason =
-                                SD_REFUSE_TARGET_UNVERIFIABLE;
-                        gSDCardData.startupDirFull = true;
-                        gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-                        gSDCardData.currentProcessState =
-                            SD_CARD_MANAGER_PROCESS_STATE_IDLE;
-                        sd_AbandonRotationWindow("scratch stat unanswerable");
-                        xSemaphoreGive(gSDCardData.opCompleteSemaphore);
-                        break;
-                    }
+                    /* ⛔ A REFUSAL WAS ATTEMPTED HERE THREE TIMES AND
+                     * WITHDRAWN. The next reader will think of it again, so
+                     * the attempts are recorded rather than the idea left
+                     * looking untried. All three were found by an independent
+                     * adversary, in both its steered and unsteered legs.
+                     *
+                     * 1. Logged the fault and opened anyway, while the comment
+                     *    claimed an unanswered stat "is not permission to
+                     *    truncate" -- a guarantee the code did not have.
+                     * 2. Refused by mirroring the #689 bucket-unusable exit.
+                     *    That releases the manager while the benchmark's
+                     *    readiness poll is still sleeping, so a concurrent
+                     *    STR:START claims it and the abandoned benchmark
+                     *    writes its zero pattern into THAT session's
+                     *    recording and tears it down.
+                     * 3. Added startupDirFull to wake the caller. Fails for
+                     *    two independent reasons: the flag is SHARED and an
+                     *    accepted START CLEARS it (SCPIInterface.c:5836)
+                     *    before the failed poll reads it; and when the caller
+                     *    does wake, its cleanup (SCPIStorageSD.c:2148-2149)
+                     *    clears `mode` and calls UpdateSettings
+                     *    UNCONDITIONALLY -- cancelling whatever operation had
+                     *    legitimately claimed the manager meanwhile. An
+                     *    in-flight SD:GET dies without delivering its file.
+                     *
+                     * THE MISSING MECHANISM IS SESSION IDENTITY: this
+                     * callback's cleanup tears down "the manager", not "my
+                     * operation", so releasing ownership early makes its
+                     * cleanup land on a stranger. A refusal is not
+                     * implementable here until that exists -- the same wall
+                     * three earlier designs hit, now measured three more
+                     * times.
+                     *
+                     * WHAT THIS COSTS: with every candidate in the bound
+                     * occupied, or a stat the card cannot answer, the open
+                     * below truncates. The bound is the bucket ceiling, so
+                     * exhaustion needs 65 same-stem files AND a benchmark at
+                     * that exact post-boot tick; the fault case needs a
+                     * transient filesystem error. Both are contrived. A
+                     * concurrent SCPI command is not, which is why every
+                     * refusal attempt was the worse trade. */
                     if (!scratchNameFree) {
                         /* Exhaustion, not a fault: every candidate within the
                          * bound was EXAMINED and found occupied. Reusing one is
                          * a decision taken on evidence, and the bound is now
                          * the bucket ceiling, so this needs 65 same-stem files
                          * rather than 17. */
-                        LOG_E("[SD] #958 lost '%.51s'"
-                              " - all %u candidate names taken",
-                              lostLeaf, (unsigned)probes + 1u);
+                        if (statFault) {
+                            /* Separate message because the REMEDIES differ: one
+                             * means the card is full of these names, the other
+                             * means the card did not answer. 103 B worst case,
+                             * margin 22 -- measured, and two earlier drafts of
+                             * this line stated a byte count that contradicted
+                             * its own measurement. It says "opening it" because
+                             * that is what happens. */
+                            LOG_E("[SD] #958 '%.51s' unverifiable"
+                                  " - opening it, may truncate", lostLeaf);
+                        } else {
+                            LOG_E("[SD] #958 lost '%.51s'"
+                                  " - all %u candidate names taken",
+                                  lostLeaf, (unsigned)probes + 1u);
+                        }
                     }
                 }
                 // Count the attempt, not the success: a failed create still costs
@@ -4564,10 +4534,6 @@ const char* sd_card_manager_WriteRefuseText(void) {
         case SD_REFUSE_BUCKET_NOT_DIR:
             return "a file is occupying a directory-bucket name - rename or "
                    "remove it, or log to a different directory";
-        case SD_REFUSE_TARGET_UNVERIFIABLE:
-            return "the target file could not be checked for existence - likely "
-                   "a card or filesystem fault; refused rather than overwrite "
-                   "blind";
         case SD_REFUSE_NONE:
         default:
             /* The enum documents NONE as "not refused", so returning a refusal
