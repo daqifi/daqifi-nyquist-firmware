@@ -319,6 +319,15 @@ extern "C" {
         SD_REFUSE_BUCKET_MKDIR,      /* the bucket directory could not be created */
         SD_REFUSE_BUCKET_UNREADABLE, /* a bucket could not be counted OR stat'd (FS fault) */
         SD_REFUSE_BUCKET_NOT_DIR,    /* a non-directory occupies the bucket name */
+        SD_REFUSE_TARGET_UNVERIFIABLE, /* #958: the TARGET FILE's stat failed for a
+                                        * reason other than absence, so whether it
+                                        * exists is unknown and a truncating open
+                                        * would be a guess. Distinct from
+                                        * BUCKET_UNREADABLE, which is about the
+                                        * DIRECTORY -- reusing that here would make
+                                        * the reported text blame the bucket, which
+                                        * is the misdirection these codes exist to
+                                        * remove. */
     } SdWriteRefuseReason;
 
     SdWriteRefuseReason sd_card_manager_WriteRefuseReason(void);

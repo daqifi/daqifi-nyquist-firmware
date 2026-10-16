@@ -2690,6 +2690,38 @@ void sd_card_manager_ProcessState() {
                             (void)SYS_FS_FileClose(gSDCardData.fileHandle);
                             gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                         }
+                        /* ⛔ THESE TWO LINES ARE THE RACE FIX, and omitting the
+                         * first is how the previous revision shipped a HIGH
+                         * data_corruption defect that BOTH audit legs found.
+                         *
+                         * I mirrored the #689 bucket-unusable exit and
+                         * deliberately skipped `startupDirFull` as
+                         * "bucket-specific". It is not. It is the
+                         * STARTUP-FAILURE NOTIFICATION, and
+                         * SCPI_StorageSD.c:1922 reads it as the early-exit of
+                         * the benchmark's five-second readiness poll. Without
+                         * it the poll kept running against a manager this
+                         * branch had just set idle -- so a concurrent
+                         * SYST:STR:START could claim it, open ITS file, and the
+                         * abandoned benchmark's IsWriteReady (which asks
+                         * whether SOME write is ready, not whether THIS one is)
+                         * would then write its zero pattern into that
+                         * recording and tear it down.
+                         *
+                         * That hazard is documented at SCPIStorageSD.c:1912 as
+                         * belonging to #739's family, closed won't-fix, with
+                         * the note that #988's latch "neither opens nor widens
+                         * it". Tearing the arm down mid-poll WIDENS it, which
+                         * is exactly what the comment warns against.
+                         *
+                         * And the reason code is not optional: sd_EnterBucket's
+                         * comment states the invariant "refused => a reason is
+                         * recorded", because otherwise the caller sets
+                         * startupDirFull while WriteRefuseText answers "no
+                         * refusal recorded". */
+                        gSDCardData.writeRefuseReason =
+                                SD_REFUSE_TARGET_UNVERIFIABLE;
+                        gSDCardData.startupDirFull = true;
                         gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
                         gSDCardData.currentProcessState =
                             SD_CARD_MANAGER_PROCESS_STATE_IDLE;
@@ -4532,6 +4564,10 @@ const char* sd_card_manager_WriteRefuseText(void) {
         case SD_REFUSE_BUCKET_NOT_DIR:
             return "a file is occupying a directory-bucket name - rename or "
                    "remove it, or log to a different directory";
+        case SD_REFUSE_TARGET_UNVERIFIABLE:
+            return "the target file could not be checked for existence - likely "
+                   "a card or filesystem fault; refused rather than overwrite "
+                   "blind";
         case SD_REFUSE_NONE:
         default:
             /* The enum documents NONE as "not refused", so returning a refusal
