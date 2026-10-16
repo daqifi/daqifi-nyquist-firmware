@@ -2462,75 +2462,6 @@ void sd_card_manager_ProcessState() {
                 // to IDLE with startupDirFull set, so SCPI_StartStreaming reports a
                 // precise error rather than a silent wedge — mirrors the #503
                 // disk-full clean-stop pattern.
-                if (!bucketOk) {
-                    /* #1029: this was a 5-substitution message (directory,
-                     * bucketPath, curBucket, MAX_DIR_FILES, MAX_BUCKET) whose
-                     * fixed text alone was already 207 bytes -- worst case
-                     * ~298 against Logger's 125-byte ceiling, cut every time,
-                     * always losing the remedy. `directory` was also
-                     * redundant with `bucketPath`: sd_BuildBucketPath() builds
-                     * the latter FROM the former, so it reads either
-                     * "<directory>" (bucket 0) or "<directory>/P<NNN>" and
-                     * carries the directory either way.
-                     *
-                     * An earlier draft of this comment justified that by
-                     * claiming the arm is reached only after the roll advanced
-                     * curBucket to SD_CARD_MANAGER_MAX_BUCKET. It is not --
-                     * that is one of four paths here; the others are the
-                     * initial sd_EnterBucket(dir, 0) above, the
-                     * reopen-existing re-enter, and the probe loop's
-                     * SD_REFUSE_BUCKET_UNREADABLE. On the first of those
-                     * bucketPath is the bare directory with no "/P<NNN>" at
-                     * all. The redundancy holds on all four paths; the
-                     * reachability claim did not, and neither the worst-case
-                     * length (the "/P<NNN>" form is the longer) nor this
-                     * message depends on it.
-                     *
-                     * The one case bucketPath carries nothing is after the
-                     * FORMAT reset further down, which clears it deliberately.
-                     * Fall back to `directory` there (Qodo /improve on this
-                     * PR, importance 8) rather than naming an empty string --
-                     * it does not cost budget: `directory` is bounded to
-                     * SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX (40), strictly
-                     * shorter than bucketPath's own 45-byte worst case, which
-                     * the budget below already accounts for.
-                     *
-                     * The three numeric
-                     * fields are compile-time constants (SD_CARD_MANAGER_
-                     * MAX_DIR_FILES == SD_CARD_MANAGER_MAX_BUCKET == 64) or a
-                     * bounded 2-digit counter -- diagnostic, not remedial;
-                     * a runtime SYST:DIAG query is the natural place for them
-                     * if ever needed (#1000's own follow-up, #1001, is the
-                     * nearest precedent for a dedicated diagnostic path).
-                     * Shortened text below: 77 fixed bytes + bucketPath's
-                     * 45-byte worst case = 122, margin 3. The remedy names the
-                     * REGISTERED path in its legal short form
-                     * (SYSTem:STORage:SD:MAXSize -> SYST:STOR:SD:MAXS): the
-                     * bare "SD:MAXSize" printed before is not a registered
-                     * command and answers -113, so the remedy was unusable.
-                     * "new dir" pays the 7 bytes the real path costs. */
-                    LOG_E("[SD] #689 bucket '%s' unusable - grow "
-                          "SYST:STOR:SD:MAXS, new dir, or clear card",
-                          gSDCardData.bucketPath[0] != '\0'
-                              ? gSDCardData.bucketPath
-                              : gpSDCardSettings->directory);
-                    gSDCardData.startupDirFull = true;
-                    gSDCardData.lastOperationSuccess = false;
-                    if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
-                        (void)SYS_FS_FileClose(gSDCardData.fileHandle);
-                        gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
-                    }
-                    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
-                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
-                    /* #757: this exits OPEN_FILE without ever reaching the
-                     * open, so the rotation window has to be closed here too --
-                     * otherwise the encoder keeps filling a buffer that nothing
-                     * will drain. */
-                    sd_AbandonRotationWindow("no writable bucket");
-                    xSemaphoreGive(gSDCardData.opCompleteSemaphore);
-                    break;
-                }
-
                 // #689: create into the ACTIVE BUCKET, not the raw configured
                 // directory. For bucket 0 these are the same string, which is why
                 // short sessions keep their existing on-card layout exactly.
@@ -2584,7 +2515,7 @@ void sd_card_manager_ProcessState() {
                  * dressed up as harmless. An adversarial audit asks for the
                  * refusal (both legs, `high`/data_loss); that request is live and
                  * unresolved, not dismissed. */
-                if (uniqueTargetAtOpen) {
+                if (bucketOk && uniqueTargetAtOpen) {
                     /* WALK THE CANDIDATES. A codex audit found TWO defects here
                      * -- in BOTH legs independently, the blind one running with
                      * no brief at all -- after an earlier version of this guard
@@ -2677,58 +2608,55 @@ void sd_card_manager_ProcessState() {
                     const char *lostLeaf = strrchr(gSDCardData.filePath, '/');
                     lostLeaf = (lostLeaf != NULL) ? (lostLeaf + 1)
                                                   : gSDCardData.filePath;
-                    /* ⛔ A REFUSAL WAS ATTEMPTED HERE THREE TIMES AND
-                     * WITHDRAWN. The next reader will think of it again, so
-                     * the attempts are recorded rather than the idea left
-                     * looking untried. All three were found by an independent
-                     * adversary, in both its steered and unsteered legs.
+                    /* ⛔ A REFUSAL WAS ATTEMPTED AT THIS SITE THREE TIMES
+                     * AND WITHDRAWN BEFORE THE ONE BELOW SHIPPED. The attempts
+                     * are recorded because the next reader will have the same
+                     * idea and should know which shapes are already dead, and
+                     * why the surviving one is not one of them. All three were
+                     * found by an independent adversary, in both its steered
+                     * and unsteered legs.
                      *
                      * 1. Logged the fault and opened anyway, while the comment
                      *    claimed an unanswered stat "is not permission to
                      *    truncate" -- a guarantee the code did not have.
-                     * 2. Refused by mirroring the #689 bucket-unusable exit.
-                     *    That releases the manager while the benchmark's
-                     *    readiness poll is still sleeping, so a concurrent
-                     *    STR:START claims it and the abandoned benchmark
-                     *    writes its zero pattern into THAT session's
+                     * 2. Refused by MIRRORING the #689 bucket-unusable exit.
+                     *    A copy of that exit releases the manager while the
+                     *    benchmark's readiness poll is still sleeping, so a
+                     *    concurrent STR:START claims it and the abandoned
+                     *    benchmark writes its zero pattern into THAT session's
                      *    recording and tears it down.
-                     * 3. Added startupDirFull to wake the caller. Fails for
-                     *    two independent reasons: the flag is SHARED and an
-                     *    accepted START CLEARS it (SCPIInterface.c:5836)
-                     *    before the failed poll reads it; and when the caller
-                     *    does wake, its cleanup (SCPIStorageSD.c:2148-2149)
-                     *    clears `mode` and calls UpdateSettings
-                     *    UNCONDITIONALLY -- cancelling whatever operation had
-                     *    legitimately claimed the manager meanwhile. An
-                     *    in-flight SD:GET dies without delivering its file.
+                     * 3. Added startupDirFull to wake the caller. Fails twice
+                     *    over: the flag is SHARED and an accepted START CLEARS
+                     *    it (SCPIInterface.c:5836) before the failed poll
+                     *    reads it; and when the caller does wake, its cleanup
+                     *    (SCPIStorageSD.c:2148-2149) clears `mode` and calls
+                     *    UpdateSettings UNCONDITIONALLY -- cancelling whatever
+                     *    operation had legitimately claimed the manager
+                     *    meanwhile. An in-flight SD:GET dies without
+                     *    delivering its file.
                      *
-                     * THE MISSING MECHANISM IS SESSION IDENTITY: this
+                     * ⭐⭐ WHAT ALL THREE SHARE: each BUILT a new exit here.
+                     * The session-identity gap (#1161) is real -- this
                      * callback's cleanup tears down "the manager", not "my
-                     * operation", so releasing ownership early makes its
-                     * cleanup land on a stranger. A refusal is not
-                     * implementable AT THIS SITE until that exists -- the same
-                     * wall three earlier designs hit, now measured three more
-                     * times.
+                     * operation" -- and it defeats every new exit, because a
+                     * new exit has to decide ownership for itself. It does NOT
+                     * defeat REACHING an exit that already exists and already
+                     * has a caller-side arm. That is what the fault branch
+                     * below does, and why moving two statements above the #689
+                     * clean-stop was the entire fix. Attempt 2 failed BECAUSE
+                     * it copied that block rather than falling into it.
                      *
-                     * ⛔ "AT THIS SITE" IS THE WHOLE QUALIFIER, and leaving
-                     * it off cost a real guard. All three attempts built a NEW
-                     * refusal HERE, after the #689 clean-stop has been passed.
-                     * One already EXISTED at the pre-walk, before it -- and
-                     * this fix had disabled it for scratch opens as a side
-                     * effect of suppressing the reopen. So the honest claim is
-                     * narrow: a refusal cannot be built here, and the one that
-                     * could be is further up and is now restored. "Not
-                     * implementable" was measured about one site and written
-                     * about the whole problem.
-                     *
-                     * WHAT THIS COSTS: with every candidate in the bound
-                     * occupied, or a stat the card cannot answer, the open
-                     * below truncates. The bound is the bucket ceiling, so
-                     * exhaustion needs 65 same-stem files AND a benchmark at
-                     * that exact post-boot tick; the fault case needs a
-                     * transient filesystem error. Both are contrived. A
-                     * concurrent SCPI command is not, which is why every
-                     * refusal attempt was the worse trade. */
+                     * WHAT THIS STILL COSTS, stated because the branch below
+                     * is not symmetric: a stat fault REFUSES, but EXHAUSTION
+                     * still opens and can truncate. That asymmetry is
+                     * deliberate. A fault means the card could not answer and
+                     * the candidate is UNKNOWN; exhaustion means every
+                     * candidate was examined and found to be a file this
+                     * feature itself wrote. Refusing the known case would wedge
+                     * SD:BENCHmark on any card holding 65 old benchmark files
+                     * until the operator cleared them by hand -- trading a
+                     * scratch overwrite for a dead feature. Refuse what you
+                     * cannot verify; proceed on what you can. */
                     if (!scratchNameFree) {
                         /* Exhaustion, not a fault: every candidate within the
                          * bound was EXAMINED and found occupied. Reusing one is
@@ -2736,15 +2664,40 @@ void sd_card_manager_ProcessState() {
                          * the bucket ceiling, so this needs 65 same-stem files
                          * rather than 17. */
                         if (statFault) {
-                            /* Separate message because the REMEDIES differ: one
-                             * means the card is full of these names, the other
-                             * means the card did not answer. 103 B worst case,
-                             * margin 22 -- measured, and two earlier drafts of
-                             * this line stated a byte count that contradicted
-                             * its own measurement. It says "opening it" because
-                             * that is what happens. */
+                            /* REFUSE. The card could not ANSWER, so this name
+                             * is unverified and must not reach the truncating
+                             * open -- that is the whole of both audit legs'
+                             * request, and the distinction this branch already
+                             * drew was previously worth only a log line.
+                             *
+                             * ⭐ NO NEW MECHANISM. It sets the same two
+                             * fields every other refusal here sets and falls
+                             * into the EXISTING #689 clean-stop a few lines
+                             * below, which closes the rotation window, clears
+                             * mode, returns to IDLE and signals
+                             * opCompleteSemaphore -- and whose arrival the
+                             * benchmark's readiness poll already has an arm
+                             * for (#690/#988 arm 3). Reaching it is why
+                             * generateFilename and this walk were moved ABOVE
+                             * that block; nothing between them needed the
+                             * order they had.
+                             *
+                             * Three earlier attempts BUILT an exit at this
+                             * site and each introduced a defect -- a released
+                             * manager mid-poll, then a shared flag an accepted
+                             * START clears. This one builds nothing, which is
+                             * the entire difference.
+                             *
+                             * Leaf first, as the sibling below: it is the one
+                             * identifying field and Logger truncates the tail
+                             * (Logger.c:398). 56 fixed + 51 leaf = 107 B worst
+                             * case against the 125-byte ceiling, margin 18 --
+                             * measured, not estimated. */
+                            gSDCardData.writeRefuseReason =
+                                    SD_REFUSE_BUCKET_UNREADABLE;
+                            bucketOk = false;
                             LOG_E("[SD] #958 '%.51s' unverifiable"
-                                  " - opening it, may truncate", lostLeaf);
+                                  " - refusing, retry or clear card", lostLeaf);
                         } else {
                             LOG_E("[SD] #958 lost '%.51s'"
                                   " - all %u candidate names taken",
@@ -2752,6 +2705,75 @@ void sd_card_manager_ProcessState() {
                         }
                     }
                 }
+                if (!bucketOk) {
+                    /* #1029: this was a 5-substitution message (directory,
+                     * bucketPath, curBucket, MAX_DIR_FILES, MAX_BUCKET) whose
+                     * fixed text alone was already 207 bytes -- worst case
+                     * ~298 against Logger's 125-byte ceiling, cut every time,
+                     * always losing the remedy. `directory` was also
+                     * redundant with `bucketPath`: sd_BuildBucketPath() builds
+                     * the latter FROM the former, so it reads either
+                     * "<directory>" (bucket 0) or "<directory>/P<NNN>" and
+                     * carries the directory either way.
+                     *
+                     * An earlier draft of this comment justified that by
+                     * claiming the arm is reached only after the roll advanced
+                     * curBucket to SD_CARD_MANAGER_MAX_BUCKET. It is not --
+                     * that is one of four paths here; the others are the
+                     * initial sd_EnterBucket(dir, 0) above, the
+                     * reopen-existing re-enter, and the probe loop's
+                     * SD_REFUSE_BUCKET_UNREADABLE. On the first of those
+                     * bucketPath is the bare directory with no "/P<NNN>" at
+                     * all. The redundancy holds on all four paths; the
+                     * reachability claim did not, and neither the worst-case
+                     * length (the "/P<NNN>" form is the longer) nor this
+                     * message depends on it.
+                     *
+                     * The one case bucketPath carries nothing is after the
+                     * FORMAT reset further down, which clears it deliberately.
+                     * Fall back to `directory` there (Qodo /improve on this
+                     * PR, importance 8) rather than naming an empty string --
+                     * it does not cost budget: `directory` is bounded to
+                     * SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX (40), strictly
+                     * shorter than bucketPath's own 45-byte worst case, which
+                     * the budget below already accounts for.
+                     *
+                     * The three numeric
+                     * fields are compile-time constants (SD_CARD_MANAGER_
+                     * MAX_DIR_FILES == SD_CARD_MANAGER_MAX_BUCKET == 64) or a
+                     * bounded 2-digit counter -- diagnostic, not remedial;
+                     * a runtime SYST:DIAG query is the natural place for them
+                     * if ever needed (#1000's own follow-up, #1001, is the
+                     * nearest precedent for a dedicated diagnostic path).
+                     * Shortened text below: 77 fixed bytes + bucketPath's
+                     * 45-byte worst case = 122, margin 3. The remedy names the
+                     * REGISTERED path in its legal short form
+                     * (SYSTem:STORage:SD:MAXSize -> SYST:STOR:SD:MAXS): the
+                     * bare "SD:MAXSize" printed before is not a registered
+                     * command and answers -113, so the remedy was unusable.
+                     * "new dir" pays the 7 bytes the real path costs. */
+                    LOG_E("[SD] #689 bucket '%s' unusable - grow "
+                          "SYST:STOR:SD:MAXS, new dir, or clear card",
+                          gSDCardData.bucketPath[0] != '\0'
+                              ? gSDCardData.bucketPath
+                              : gpSDCardSettings->directory);
+                    gSDCardData.startupDirFull = true;
+                    gSDCardData.lastOperationSuccess = false;
+                    if (gSDCardData.fileHandle != SYS_FS_HANDLE_INVALID) {
+                        (void)SYS_FS_FileClose(gSDCardData.fileHandle);
+                        gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
+                    }
+                    gpSDCardSettings->mode = SD_CARD_MANAGER_MODE_NONE;
+                    gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_IDLE;
+                    /* #757: this exits OPEN_FILE without ever reaching the
+                     * open, so the rotation window has to be closed here too --
+                     * otherwise the encoder keeps filling a buffer that nothing
+                     * will drain. */
+                    sd_AbandonRotationWindow("no writable bucket");
+                    xSemaphoreGive(gSDCardData.opCompleteSemaphore);
+                    break;
+                }
+
                 // Count the attempt, not the success: a failed create still costs
                 // a directory entry scan, and over-counting only rolls us to a
                 // fresh bucket sooner, which is the safe direction.

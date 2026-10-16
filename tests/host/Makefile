@@ -2270,6 +2270,69 @@ $(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BE
 	       echo "       PAIR: one refuses gating the walk, the other requires the"; \
 	       echo "       assignment be gated. Neither alone states the property."; \
 	       exit 1; }
+	@w=`grep -nE 'if \(bucketOk && uniqueTargetAtOpen\) \{' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 c=`grep -nE '^[[:space:]]+if \(!bucketOk\) \{' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 if [ -z "$$w" ] || [ -z "$$c" ]; then \
+	       echo "ERROR: cannot locate the #958 walk and the #689 clean-stop in"; \
+	       echo "       $(SD_MANAGER_SRC) -- one of them was renamed or removed."; \
+	       exit 1; \
+	 fi; \
+	 if [ "$$w" -ge "$$c" ]; then \
+	       echo "ERROR: the #958 collision walk (line $$w) is no longer ABOVE the"; \
+	       echo "       #689 clean-stop (line $$c) in $(SD_MANAGER_SRC)."; \
+	       echo "       ORDER IS THE WHOLE MECHANISM. The walk refuses by setting"; \
+	       echo "       bucketOk=false and FALLING INTO that block; below it the"; \
+	       echo "       assignment is DEAD and the open truncates anyway -- a"; \
+	       echo "       silent permissive failure that every existing test still"; \
+	       echo "       passes, because the model cannot see statement order."; \
+	       echo "       Three earlier attempts BUILT an exit here instead and"; \
+	       echo "       each shipped a defect; reaching the existing one is the"; \
+	       echo "       entire difference. Keep the walk above the clean-stop."; \
+	       exit 1; \
+	 fi
+	@# The statFault branch must REFUSE. Checked WITHOUT spanning a comment:
+	@# an earlier version of this pin used [^;]* between the `if` and the
+	@# assignment, and a semicolon in the comment's own PROSE broke it -- a
+	@# check whose correctness depended on comment punctuation. These three
+	@# are code-only and state the property together.
+	@# SITE-SCOPED to the walk. An unscoped version of this grep matched the
+	@# PRE-WALK's identical writeRefuseReason/bucketOk pair ~150 lines above
+	@# and so passed with the walk's refusal deleted -- it was vacuous, and
+	@# only the A/B mutation found it. Extract the walk's own line range
+	@# first; the adjacency is then unambiguous.
+	@w=`grep -nE 'if \(bucketOk && uniqueTargetAtOpen\) \{' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 c=`grep -nE '^[[:space:]]+if \(!bucketOk\) \{' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 if [ -z "$$w" ] || [ -z "$$c" ] || [ "$$w" -ge "$$c" ]; then \
+	       echo "ERROR: cannot delimit the #958 walk in $(SD_MANAGER_SRC)"; \
+	       echo "       (walk='$$w' clean-stop='$$c'). The ordering pin below"; \
+	       echo "       explains why the two must both exist, in that order."; \
+	       exit 1; \
+	 fi; \
+	 sed -n "$$w,$$c p" $(SD_MANAGER_SRC) | tr -d '\n' \
+	   | grep -qE 'writeRefuseReason[[:space:]]*=[[:space:]]*SD_REFUSE_BUCKET_UNREADABLE[[:space:]]*;[[:space:]]*bucketOk = false' \
+	   || { echo "ERROR: the collision walk's statFault branch in"; \
+	        echo "       $(SD_MANAGER_SRC) no longer REFUSES. Inside the walk"; \
+	        echo "       itself (lines $$w-$$c) it must set writeRefuseReason"; \
+	        echo "       AND bucketOk=false, adjacently, so the existing #689"; \
+	        echo "       clean-stop skips the truncating open. A card that"; \
+	        echo "       cannot ANSWER leaves the candidate UNKNOWN; both audit"; \
+	        echo "       legs filed this high/data_loss."; \
+	        exit 1; }
+	@grep -qF -- '- refusing, retry or clear card' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: the #958 stat-fault message in $(SD_MANAGER_SRC) no"; \
+	       echo "       longer says it REFUSES. The message and the behaviour"; \
+	       echo "       are checked separately on purpose: a comment or a log"; \
+	       echo "       line claiming a guarantee the code does not have is the"; \
+	       echo "       defect this PR shipped once already."; \
+	       exit 1; }
+	@if grep -qF -- '- opening it, may truncate' $(SD_MANAGER_SRC); then \
+	       echo "ERROR: the pre-refusal #958 stat-fault message is back in"; \
+	       echo "       $(SD_MANAGER_SRC). That wording belongs to the behaviour"; \
+	       echo "       where an unverifiable candidate reached the truncating"; \
+	       echo "       open. If it is back, so is the data_loss both audit legs"; \
+	       echo "       filed -- fix the firmware, do not relax this guard."; \
+	       exit 1; \
+	 fi
 	$(CC) $(CFLAGS) -o $(NAME_BIN) test_958_sd_benchmark_filename_collision.c
 
 $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $(SD_BENCH_SRC) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)

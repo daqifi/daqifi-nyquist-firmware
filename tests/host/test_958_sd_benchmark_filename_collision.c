@@ -631,14 +631,26 @@ static WalkResult uniqueness_walk(bool legacy, int32_t occupiedThrough,
     r.foundFree = free_;
     r.statFault = fault;
     r.chosenWasExamined = ((int32_t)counter <= highestExamined);
-    /* ⛔ NO REFUSAL. Three attempts were made and withdrawn -- see the block
-     * in sd_card_manager.c for each and why it made things worse. The missing
-     * mechanism is session identity: the benchmark's cleanup tears down "the
-     * manager" rather than "my operation", so releasing ownership early makes
-     * that cleanup land on whatever claimed it meanwhile. So BOTH forms open;
-     * what the current code buys is that the fault is LOGGED with its own
-     * message rather than passing silently as an absence. */
-    r.refuses = false;
+    /* THE REFUSAL IS ASYMMETRIC, and the asymmetry is the property under test.
+     *
+     * A FAULT refuses: the card could not answer, so the candidate is UNKNOWN
+     * and must not reach the truncating open. The firmware does this by
+     * setting writeRefuseReason + bucketOk and falling into the EXISTING #689
+     * clean-stop, which sits a few lines below the walk -- it builds no new
+     * exit, which is what defeated the three withdrawn attempts (session
+     * identity, #1161, defeats a NEW exit; it does not defeat reaching one
+     * that already has a caller-side arm).
+     *
+     * EXHAUSTION does NOT refuse: every candidate was examined and found to be
+     * a file this feature itself wrote, so refusing would wedge SD:BENCHmark
+     * on any card holding FW_UNIQUE_TARGET_MAX+1 old benchmark files until an
+     * operator cleared them by hand. Refuse what you cannot verify; proceed on
+     * what you can.
+     *
+     * The LEGACY form refuses nothing -- it is the pre-audit walk and is kept
+     * so every case below is a differential rather than an assertion about
+     * whatever shipped. */
+    r.refuses = (!legacy) && fault;
     /* the open truncates iff it HAPPENS and the chosen candidate exists */
     r.truncates = (!r.refuses) && ((int32_t)counter <= occupiedThrough);
     return r;
@@ -702,14 +714,41 @@ TEST(a_stat_fault_is_not_an_absence)
     ASSERT_TRUE(legacy.truncates);
     ASSERT_TRUE(!legacy.refuses);
 
-    /* now: NOT read as free, so the fallback fires with its OWN message and
-     * names the file. It still opens -- no refusal is implementable here (see
-     * sd_card_manager.c) -- so this asserts the DIAGNOSTIC distinction, which
-     * is what actually changed, and NOT a prevention the code does not do. */
+    /* now: NOT read as free, and the open is REFUSED rather than merely
+     * annotated. Earlier revisions of this case asserted `now.truncates` and
+     * were honest when written -- the code did truncate, and the assertion
+     * said so rather than claiming a prevention that did not exist. The
+     * refusal landed once it was found that it needed no new exit, only an
+     * earlier one: the walk moved ABOVE the #689 clean-stop and sets the same
+     * two fields every other refusal there sets. */
     ASSERT_TRUE(!now.foundFree);
     ASSERT_TRUE(now.statFault);
-    ASSERT_TRUE(!now.refuses);
-    ASSERT_TRUE(now.truncates);   /* honest: it DOES still truncate */
+    ASSERT_TRUE(now.refuses);
+    ASSERT_TRUE(!now.truncates);
+
+    /* \u2b50 THE DIFFERENTIAL IS THE POINT: same population, same injected
+     * fault, opposite outcome. The legacy leg truncates SILENTLY (no
+     * diagnostic, because the name read free); this one destroys nothing. */
+    ASSERT_TRUE(legacy.truncates && !now.truncates);
+
+    /* A fault on a LATER candidate refuses too -- this is the population both
+     * audit legs named, where candidate 0 is present and answers, and the
+     * fault lands on candidate 1. The pre-walk's own refusal cannot cover it:
+     * that walk stops once it has found candidate 0. */
+    WalkResult deep = uniqueness_walk(false, 1, 1);
+    ASSERT_TRUE(deep.statFault);
+    ASSERT_TRUE(deep.refuses);
+    ASSERT_TRUE(!deep.truncates);
+
+    /* NEGATIVE CONTROL, without which the three above prove only that
+     * something refuses: EXHAUSTION with no fault must still open. The
+     * asymmetry is deliberate -- refusing a card full of this feature's own
+     * scratch files would wedge SD:BENCHmark until cleared by hand. A guard
+     * that refused both would pass every assertion above and be wrong. */
+    WalkResult exhausted = uniqueness_walk(false, (int32_t)FW_UNIQUE_TARGET_MAX, -1);
+    ASSERT_TRUE(!exhausted.statFault);
+    ASSERT_TRUE(!exhausted.refuses);
+    ASSERT_TRUE(exhausted.truncates);
 }
 
 /* CASE 10: the ordinary path, which is the only one the device actually takes
