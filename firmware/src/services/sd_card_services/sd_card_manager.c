@@ -2635,16 +2635,39 @@ void sd_card_manager_ProcessState() {
                      *    meanwhile. An in-flight SD:GET dies without
                      *    delivering its file.
                      *
-                     * ⭐⭐ WHAT ALL THREE SHARE: each BUILT a new exit here.
-                     * The session-identity gap (#1161) is real -- this
-                     * callback's cleanup tears down "the manager", not "my
-                     * operation" -- and it defeats every new exit, because a
-                     * new exit has to decide ownership for itself. It does NOT
-                     * defeat REACHING an exit that already exists and already
-                     * has a caller-side arm. That is what the fault branch
-                     * below does, and why moving two statements above the #689
-                     * clean-stop was the entire fix. Attempt 2 failed BECAUSE
-                     * it copied that block rather than falling into it.
+                     * ⛔ A FOURTH CLAIM WAS WRONG HERE, AND THIS IS IT
+                     * CORRECTED. The fault branch below reaches the EXISTING
+                     * #689 clean-stop instead of building an exit, and the
+                     * comment that shipped with it claimed that this "avoids
+                     * the ownership race because the exit already has a
+                     * caller-side arm". IT DOES NOT. Both audit legs showed
+                     * why: that arm (SCPIStorageSD.c:2148-2149) clears `mode`
+                     * and calls UpdateSettings UNCONDITIONALLY, so it tears
+                     * down whatever claimed the manager while the benchmark
+                     * slept -- an accepted SD:GET dies mid-download. The arm
+                     * is not a mitigation; the arm IS the bug, and it is the
+                     * same one attempt 3 hit from the other side.
+                     *
+                     * ⭐⭐ WHAT ACTUALLY DIFFERS, stated as a measurement
+                     * rather than a mechanism: the race is PRE-EXISTING and
+                     * this branch is a FOURTH DOOR INTO IT, not a new race.
+                     * At the pre-#958 head the same clean-stop was already
+                     * reachable by a benchmark through three other conditions
+                     * -- buckets exhausted, bucket mkdir failed, bucket
+                     * unreadable -- with no mode gating anywhere near it, and
+                     * the unconditional teardown is base code
+                     * (SCPIStorageSD.c:506, :1149, :1642). Attempts 1-3 each
+                     * added a NEW defect; this one adds an entry condition to
+                     * an old one.
+                     *
+                     * So reverting it does NOT buy a race-free benchmark --
+                     * three doors stay open and the data loss comes back. On
+                     * this path the trade is: an aborted SD:GET the operator
+                     * can retry, against a destroyed recording they cannot.
+                     * That is why it stays, and why the race is carried as a
+                     * residual against #1161 rather than patched here: the fix
+                     * is session identity, which is a structural change and
+                     * not this PR's to make.
                      *
                      * WHAT THIS STILL COSTS, stated because the branch below
                      * is not symmetric: a stat fault REFUSES, but EXHAUSTION
