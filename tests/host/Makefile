@@ -48,6 +48,42 @@ AD7609_BIN := run_ad7609_tests
 BENCH_BIN := run_943_tests
 SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 
+# #971: the under-claim settle order of a REFUSED SD arm. Same file, same
+# reason as #943 -- SCPIStorageSD.c is not host-includable -- so this is also
+# a model rather than the real code, and it also needs a way to fail loudly
+# when what it models moves underneath it.
+#
+# The guard here is a CONTENT HASH of the modelled function, not a grep for
+# the property. That is deliberate. PR #976 spent three review rounds finding
+# fifteen ways an honest refactor slips past a textual assertion about this
+# exact function, and `tools/lint/scpi_sd_arm_path.py` is being narrowed for
+# over-claiming on the strength of it; a second, cruder copy of that
+# assertion here would give false comfort. A hash claims only "this text is
+# unchanged", which is all a build recipe can honestly know, and no refactor
+# can slip past it. When it fires, re-read ~8 lines of C against the model in
+# test_971_sd_arm_refusal_order.c and update the hash -- it is a tripwire
+# asking for a review, not a verdict on whether the code is right.
+#
+# Hashed: the function from its `static bool <name>(` line to its closing
+# brace, with comments removed BY TOKEN and whitespace collapsed. So rewording
+# a comment does not fire, and any change to the code does.
+#
+# BY TOKEN, not by line shape, and that distinction is the whole point (#976
+# pre-merge audit). The first version deleted any line STARTING with `/*`, `*`
+# or `//`. `*(&cfg->mode) = SD_CARD_MANAGER_MODE_NONE;` is an ordinary C
+# pointer-deref assignment that starts with `*`, so it was silently deleted
+# before hashing -- adding one left the pin byte-identical. Measured, not
+# argued: a probe function containing that line hashed the same with and
+# without it. A guard whose whole claim is "any edit to this code forces a
+# review" must not have a spelling of edit that it cannot see.
+#
+# The strip is regex-based and NOT string-aware, so the recipe refuses outright
+# if the function ever contains a string literal rather than hashing text it
+# might have mangled. It contains none today (pure control flow).
+ARM_BIN := run_971_tests
+SD_ARM_HELPER := SD_ArmOrRefuseWithCleanup
+SD_ARM_HELPER_SHA := 48fc182fdf552b9a5cb860d7dc16821212874f734d9504d68fd110c75c97ee9f
+
 # #953: SD:BENCHmark's "file never opened" diagnosis. Same file as BENCH_BIN
 # and, for the same reason, the same technique -- no UUT copy, no stubs, the
 # decision cascade re-implemented against injected values.
@@ -347,6 +383,33 @@ HELP_BIN := run_1004_tests
 SCPI_IFACE_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
 FW_RTOS_CFG := ../../firmware/src/config/default/FreeRTOSConfig.h
 
+# #958: SD:BENCHmark's scratch FILENAME. Third target on the same
+# non-host-compilable file as BENCH_BIN and SUSPEND_BIN, same technique for the
+# same reason: the name generation is re-implemented against injected tick
+# values rather than included.
+#
+# It copies BOTH a format string and a length constant, and it also depends on
+# two DEFECTS being absent, so the recipe carries eight guards. Three are about
+# the text being right: the post-fix format expression must be present (checked
+# with newlines squashed, because it wraps), the field length must still be 40,
+# and the masked 16-bit form -- the original #958 defect -- must NOT be back.
+#
+# The other three are about the SEQUENCE field, added after Qodo found that the
+# whole 32-bit tick still repeats after 49.7 days of uptime. A format pin alone
+# would prove the field is in the name and nothing more, so the recipe also
+# requires that the counter is ADVANCED once per run, that the advance happens
+# BEFORE the format (the pre-merge audit reproduced a swap of those two steps
+# passing every other guard and the whole host suite, while every name carried
+# the counter's initial value), that the LOCAL copy is assigned exactly once
+# outside its declaration (position alone is not enough -- a second
+# assignment after the advance restores the initial value with the order pin
+# still satisfied, which the pre-merge audit reproduced), that the global is
+# NEVER assigned anywhere but its definition (a reset reopens the collision),
+# and that the tick-only form has not come back. Each fails loudly and names
+# what to re-read.
+NAME_BIN := run_958_tests
+SD_MGR_HDR := ../../firmware/src/services/sd_card_services/sd_card_manager.h
+
 # #1000: the #942 SD-log-arm refusal's LOG_E line, measured against the ceiling
 # Logger actually cuts at. Same host-testability constraint as HELP_BIN above
 # -- SCPIInterface.c is not includable here -- but the subject is a LENGTH, not
@@ -474,13 +537,20 @@ LOGCEIL_SRC1 := ../../firmware/src/app_freertos.c
 LOGCEIL_SRC2 := ../../firmware/src/services/SCPI/SCPIADC.c
 LOGCEIL_SRC3 := ../../firmware/src/services/wifi_services/wifi_manager.c
 
-# Every binary depends on this file as well as on its sources. Two of the
+# Every binary depends on this file as well as on its sources. 19 of the
 # targets below carry GUARDS in their recipes -- greps that fail the build when
 # the firmware text they model has moved -- and a guard that is only re-run when
 # a source changes is not re-run when the GUARD itself changes. CI is unaffected
 # either way (Actions checks out clean, so `make run` always builds from
 # nothing); this is for the local incremental build, where the binary outliving
 # an edited recipe is exactly how a guard goes quiet. Qodo, PR #983.
+#
+# The count moves every time a guarded suite is added and it has been wrong
+# more than once -- it read "Two" while four targets were guarded, then
+# "Four" on one branch and "Two" on another, which is how this merge found
+# it. Guarded now: BENCH_BIN, SUSPEND_BIN, HELP_BIN, NAME_BIN, SDLOG_BIN.
+# Naming them rather than only counting them makes the next drift visible
+# instead of arithmetic.
 RECIPES := Makefile
 
 # #980: DAC7718 error-path honesty (lock ownership in DAC7718_ReadWriteReg,
@@ -703,6 +773,48 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	       echo "       Update FW_STALL_POLL_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
+
+# Two separate failures with two separate messages: the function is GONE
+# (renamed/moved -- the model has lost its subject) vs the function is there
+# and its CODE CHANGED (the model may have gone stale). Collapsing them would
+# report "hash mismatch" for a rename, sending the reader to diff a function
+# that is no longer in the file.
+# $(RECIPES) is a prerequisite because SD_ARM_HELPER and SD_ARM_HELPER_SHA live
+# in the Makefile and CONTROL this target's guard: without it, editing either
+# pin left an already-built binary up to date and make ran the stale one
+# without the revised validation (#976 audit). Uses the shared RECIPES
+# variable (#983) rather than a literal "Makefile", same as every other
+# target below.
+# `$(CDEF)` is a prerequisite because the definition RULE lives there now,
+# not in hash_function.py: without it an edit to the rule would leave this
+# binary up to date and the guard would run the previous rule, which is the
+# same defect `$(RECIPES)` was added for one level down (#976).
+CDEF := ../../tools/lint/cdef.py
+$(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) hash_function.py $(CDEF) $(RECIPES)
+	@python3 hash_function.py --find $(SD_BENCH_SRC) $(SD_ARM_HELPER) >/dev/null 2>&1 \
+	  || { python3 hash_function.py --find $(SD_BENCH_SRC) $(SD_ARM_HELPER); \
+	       echo "ERROR: $(SD_ARM_HELPER)() is not a single definition in $(SD_BENCH_SRC)."; \
+	       echo "       test_971_sd_arm_refusal_order.c models that function, and the"; \
+	       echo "       hash below extracts it from that line to its closing brace. If"; \
+	       echo "       it was renamed, moved, or its signature reformatted, re-read it"; \
+	       echo "       against the model and update SD_ARM_HELPER / SD_ARM_HELPER_SHA."; \
+	       exit 1; }
+	@python3 hash_function.py --self-test >/dev/null \
+	  || { echo "ERROR: hash_function.py's own self-test fails, so the drift pin"; \
+	       echo "       below cannot be trusted to see an edit. Fix the hasher"; \
+	       echo "       before reading its verdict."; \
+	       python3 hash_function.py --self-test; exit 1; }
+	@got=$$(python3 hash_function.py $(SD_BENCH_SRC) 'static bool $(SD_ARM_HELPER)(') || exit 1; \
+	 [ "$$got" = "$(SD_ARM_HELPER_SHA)" ] \
+	  || { echo "ERROR: the CODE of $(SD_ARM_HELPER)() in $(SD_BENCH_SRC) has changed."; \
+	       echo "         expected sha256 $(SD_ARM_HELPER_SHA)"; \
+	       echo "         got      sha256 $$got"; \
+	       echo "       This is a tripwire, not a verdict: the change may be perfectly"; \
+	       echo "       correct. Re-read that function against the model in"; \
+	       echo "       test_971_sd_arm_refusal_order.c -- if the model still describes"; \
+	       echo "       it, update SD_ARM_HELPER_SHA; if it does not, fix the model."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(ARM_BIN) test_971_sd_arm_refusal_order.c
 
 $(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE_SRC) $(FREERTOS_CONFIG_SRC)
 	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_INTERFACE_SRC) \
@@ -1528,6 +1640,16 @@ $(FAILNEXT_REAL_BIN): test_981_sd_failnext_real_consume.head.c test_981_sd_failn
 # All three of this branch's own variables (FAILNEXT_BIN, FAILNEXT_REAL_BIN,
 # SD_MANAGER_SRC) were verified defined on this head and absent from main, i.e.
 # genuine additions rather than names main has renamed or retired -- the fw#976 trap.
+
+# $(RECIPES) is main's (#983) fix and applies to SPI913_BIN too, because it
+# carries grep guards: a guard re-run only when its SOURCE changes is not
+# re-run when the GUARD changes.
+#
+# This used to open with a count of the binaries and a merge ordinal, both of
+# which went stale the moment the next branch landed -- it still said "seven"
+# and "Third merge" while the list above `run` had reached twelve and the
+# eighth. A count belongs in exactly one place, and that place is the banner
+# over `run`, which is the line a resolution actually has to touch.
 # #1121: the same three guards as $(SUSPEND_BIN), against the OTHER file.
 #
 # GUARD 1 -- THE FIVE-ARM ORDER. This site's cascade is
@@ -2045,6 +2167,205 @@ $(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(HELP_BIN) test_1004_help_write_abort.c
 
+$(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BENCH_SRC) $(SD_MANAGER_SRC) $(SD_MGR_HDR) $(RECIPES)
+	@tr -d '\r' < $(SD_BENCH_SRC) | tr '\n' ' ' \
+	  | grep -qE '"benchmark_%lu_%lu\.dat",[[:space:]]*\(unsigned long\)xTaskGetTickCount\(\),[[:space:]]*\(unsigned long\)benchNameSeq' \
+	  || { echo "ERROR: the SD:BENCHmark scratch name in $(SD_BENCH_SRC) is no"; \
+	       echo "       longer built from the tick AND the per-boot sequence as"; \
+	       echo "       '\"benchmark_%lu_%lu.dat\", tick, benchNameSeq'."; \
+	       echo "       test_958_sd_benchmark_filename_collision.c re-implements THAT"; \
+	       echo "       format and asserts the names it produces -- update"; \
+	       echo "       new_bench_name() and re-read the header's uniqueness argument"; \
+	       echo "       before changing either. Newlines are squashed first, so the"; \
+	       echo "       expression may wrap however it likes -- only the text matters."; \
+	       exit 1; }
+	@grep -qE 'benchNameSeq[[:space:]]*=[[:space:]]*\+\+gBenchNameSeq[[:space:]]*;' $(SD_BENCH_SRC) \
+	  || { echo "ERROR: $(SD_BENCH_SRC) no longer advances gBenchNameSeq per run."; \
+	       echo "       The format pin above only proves the FIELD is in the name;"; \
+	       echo "       this proves the field changes. A sequence left at its initial"; \
+	       echo "       value prints the same digits every run, which is the 65.5 s"; \
+	       echo "       collision again with a longer name."; \
+	       exit 1; }
+	@if grep -vE '^static uint32_t gBenchNameSeq' $(SD_BENCH_SRC) \
+	     | grep -qE 'gBenchNameSeq[[:space:]]*=[^=]'; then \
+	       echo "ERROR: gBenchNameSeq is assigned somewhere other than its"; \
+	       echo "       definition in $(SD_BENCH_SRC). Its whole contract is that it"; \
+	       echo "       is NEVER reset while the board is up -- that is what makes the"; \
+	       echo "       scratch name unique within a boot (test_958 CASE 5). A reset,"; \
+	       echo "       anywhere, reopens the collision it closes."; \
+	       exit 1; \
+	 fi
+	@inc=`grep -n 'benchNameSeq = ++gBenchNameSeq;' $(SD_BENCH_SRC) | wc -l`; \
+	 fmt=`grep -n '"benchmark_%lu_%lu.dat"' $(SD_BENCH_SRC) | wc -l`; \
+	 [ "$$inc" -eq 1 ] && [ "$$fmt" -eq 1 ] \
+	   || { echo "ERROR: cannot locate the #958 naming steps uniquely in"; \
+	        echo "       $(SD_BENCH_SRC) (advance=$$inc, format=$$fmt; want 1 each)."; \
+	        echo "       The order pin below compares their positions and needs"; \
+	        echo "       exactly one of each to mean anything."; \
+	        exit 1; }; \
+	 i=`grep -n 'benchNameSeq = ++gBenchNameSeq;' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 f=`grep -n '"benchmark_%lu_%lu.dat"' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 [ "$$i" -lt "$$f" ] \
+	   || { echo "ERROR: $(SD_BENCH_SRC) formats the scratch name at line $$f BEFORE"; \
+	        echo "       advancing gBenchNameSeq at line $$i."; \
+	        echo "       Every name then carries the counter's INITIAL value, so two"; \
+	        echo "       runs at one tick collide exactly as they did before #958 --"; \
+	        echo "       the field is present and does nothing. A format pin cannot"; \
+	        echo "       see this; the pre-merge audit reproduced it passing all six"; \
+	        echo "       of the other guards and the whole host suite."; \
+	        exit 1; }
+	@n=`grep -vE '^[[:space:]]*uint32_t[[:space:]]+benchNameSeq' $(SD_BENCH_SRC) \
+	      | grep -cE 'benchNameSeq[[:space:]]*=[^=]'`; \
+	 [ "$$n" -eq 1 ] \
+	   || { echo "ERROR: benchNameSeq is assigned $$n times in $(SD_BENCH_SRC)"; \
+	        echo "       outside its declaration; exactly 1 is required."; \
+	        echo "       The order pin above compares the POSITIONS of the advance"; \
+	        echo "       and the format, which a SECOND assignment defeats: put"; \
+	        echo "       'benchNameSeq = 0;' after the advance and every name"; \
+	        echo "       carries 0 again, with the order pin still satisfied. The"; \
+	        echo "       pre-merge audit reproduced exactly that, passing all seven"; \
+	        echo "       other guards and the whole host suite."; \
+	        exit 1; }
+	@grep -qE 'probes[[:space:]]*>=[[:space:]]*SD_CARD_MANAGER_UNIQUE_TARGET_MAX' $(SD_MANAGER_SRC) \
+	  && tr -d '\r' < $(SD_MANAGER_SRC) | tr '\n' ' ' \
+	     | grep -qE 'e == SYS_FS_ERROR_NO_FILE[[:space:]]*[|][|][[:space:]]*e == SYS_FS_ERROR_NO_PATH[^{]*[{][[:space:]]*scratchNameFree = true' \
+	  && grep -qE '(^|[^A-Za-z0-9_])statFault([^A-Za-z0-9_]|$$)' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC)'s uniqueness walk no longer carries"; \
+	       echo "       BOTH properties a codex audit established it needs:"; \
+	       echo "       (a) a budget of MAX ADVANCES, i.e. MAX+1 candidates"; \
+	       echo "           EXAMINED, so it never stops while an unexamined"; \
+	       echo "           candidate is still in budget. An earlier guard"; \
+	       echo "           stopped one short and TRUNCATED an occupied name"; \
+	       echo "           while the next candidate was FREE -- a regression"; \
+	       echo "           against the code it replaced."; \
+	       echo "       (b) NO_FILE/NO_PATH treated as absence and every other"; \
+	       echo "           stat error treated as a FAULT (statFault), because"; \
+	       echo "           one transient DISK_ERR read as absent let the open"; \
+	       echo "           truncate silently, with the fallback log skipped."; \
+	       echo "       test_958 CASES 7-10 model BOTH walks, so they pass"; \
+	       echo "       whatever the firmware does: a host model cannot see which"; \
+	       echo "       form shipped. THIS PIN ties the model to the source."; \
+	       exit 1; }
+	@grep -qE 'SD_CARD_MANAGER_UNIQUE_TARGET_MAX[[:space:]]+SD_CARD_MANAGER_MAX_DIR_FILES' $(SD_MANAGER_SRC) \
+	  && grep -qE 'SD_CARD_MANAGER_MAX_DIR_FILES[[:space:]]+64u' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: the candidate bound is no longer tied to the bucket"; \
+	       echo "       ceiling, or MAX_DIR_FILES is no longer 64u, in"; \
+	       echo "       $(SD_MANAGER_SRC). test_958 mirrors it as"; \
+	       echo "       FW_UNIQUE_TARGET_MAX and its POPULATION argument -- the"; \
+	       echo "       seventeenth file is what makes the defect reproduce -- is"; \
+	       echo "       derived from that number. Update the mirror together with"; \
+	       echo "       the constant or CASE 7 silently stops testing exhaustion."; \
+	       exit 1; }
+	@if grep -qF '"benchmark_%lu.dat"' $(SD_BENCH_SRC); then \
+	       echo "ERROR: the tick-ONLY benchmark filename is back in $(SD_BENCH_SRC)."; \
+	       echo "       TickType_t is 32-bit here, so that name repeats after 49.7"; \
+	       echo "       days of uptime and the truncating open destroys the earlier"; \
+	       echo "       run's file -- the 16-bit defect again, on a longer period."; \
+	       echo "       test_958 CASE 5 is that scenario. Keep the sequence field."; \
+	       exit 1; \
+	 fi
+	@if grep -qE 'benchmark_%d\.dat|xTaskGetTickCount\(\)[[:space:]]*&[[:space:]]*0xFFFF' $(SD_BENCH_SRC); then \
+	       echo "ERROR: the 16-bit MASKED benchmark filename is back in $(SD_BENCH_SRC)."; \
+	       echo "       That is the #958 defect itself: the name then repeats every"; \
+	       echo "       65536 ticks (65.5 s) and the truncating open destroys the"; \
+	       echo "       earlier run's file silently. test_958's whole premise is that"; \
+	       echo "       the mask is gone -- fix the firmware, do not relax this guard."; \
+	       exit 1; \
+	 fi
+	@grep -qE '^#define[[:space:]]+SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX[[:space:]]+40[[:space:]]*$$' $(SD_MGR_HDR) \
+	  || { echo "ERROR: SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX is no longer '40' in"; \
+	       echo "       $(SD_MGR_HDR). test_958 copies it as FW_FILE_NAME_LEN_MAX and its"; \
+	       echo "       no-truncation case is arithmetic on that number -- update both."; \
+	       exit 1; }
+	@if grep -qE 'if[[:space:]]*\([[:space:]]*bucketOk[[:space:]]*&&[[:space:]]*!uniqueTargetAtOpen' $(SD_MANAGER_SRC); then \
+	       echo "ERROR: the bucket pre-walk in $(SD_MANAGER_SRC) is gated on"; \
+	       echo "       !uniqueTargetAtOpen again. That block carries TWO things:"; \
+	       echo "       the reopen-existing search (which a scratch open must NOT"; \
+	       echo "       do) and the probeFsError/targetFsError refusals (which it"; \
+	       echo "       MUST keep -- they exit through the #689 clean-stop BEFORE"; \
+	       echo "       the open). Gating the whole block removes the refusals: a"; \
+	       echo "       stat fault in that window then falls through to the"; \
+	       echo "       truncating WRITE_PLUS instead of refusing. An adversarial"; \
+	       echo "       audit found exactly that in BOTH legs, high/data_loss."; \
+	       echo "       Gate the reopen ASSIGNMENT instead, not the walk."; \
+	       exit 1; \
+	 fi
+	@tr -d '\n' < $(SD_MANAGER_SRC) \
+	  | grep -qE 'if[[:space:]]*\([[:space:]]*!uniqueTargetAtOpen[[:space:]]*\)[[:space:]]*[{][[:space:]]*reopenExisting = true' \
+	  || { echo "ERROR: the reopen-existing assignment in $(SD_MANAGER_SRC) is no"; \
+	       echo "       longer guarded by !uniqueTargetAtOpen. A scratch open would"; \
+	       echo "       then REOPEN an existing benchmark file, and the truncating"; \
+	       echo "       WRITE_PLUS destroys it -- the #958 defect by another route."; \
+	       echo "       Keep the pre-walk RUNNING (its fault refusals are load-"; \
+	       echo "       bearing) and suppress only the reuse. These two pins are a"; \
+	       echo "       PAIR: one refuses gating the walk, the other requires the"; \
+	       echo "       assignment be gated. Neither alone states the property."; \
+	       exit 1; }
+	@w=`grep -nE 'if \(bucketOk && uniqueTargetAtOpen\) \{' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 c=`grep -nE '^[[:space:]]+if \(!bucketOk\) \{' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 if [ -z "$$w" ] || [ -z "$$c" ]; then \
+	       echo "ERROR: cannot locate the #958 walk and the #689 clean-stop in"; \
+	       echo "       $(SD_MANAGER_SRC) -- one of them was renamed or removed."; \
+	       exit 1; \
+	 fi; \
+	 if [ "$$w" -ge "$$c" ]; then \
+	       echo "ERROR: the #958 collision walk (line $$w) is no longer ABOVE the"; \
+	       echo "       #689 clean-stop (line $$c) in $(SD_MANAGER_SRC)."; \
+	       echo "       ORDER IS THE WHOLE MECHANISM. The walk refuses by setting"; \
+	       echo "       bucketOk=false and FALLING INTO that block; below it the"; \
+	       echo "       assignment is DEAD and the open truncates anyway -- a"; \
+	       echo "       silent permissive failure that every existing test still"; \
+	       echo "       passes, because the model cannot see statement order."; \
+	       echo "       Three earlier attempts BUILT an exit here instead and"; \
+	       echo "       each shipped a defect; reaching the existing one is the"; \
+	       echo "       entire difference. Keep the walk above the clean-stop."; \
+	       exit 1; \
+	 fi
+	@# The statFault branch must REFUSE. Checked WITHOUT spanning a comment:
+	@# an earlier version of this pin used [^;]* between the `if` and the
+	@# assignment, and a semicolon in the comment's own PROSE broke it -- a
+	@# check whose correctness depended on comment punctuation. These three
+	@# are code-only and state the property together.
+	@# SITE-SCOPED to the walk. An unscoped version of this grep matched the
+	@# PRE-WALK's identical writeRefuseReason/bucketOk pair ~150 lines above
+	@# and so passed with the walk's refusal deleted -- it was vacuous, and
+	@# only the A/B mutation found it. Extract the walk's own line range
+	@# first; the adjacency is then unambiguous.
+	@w=`grep -nE 'if \(bucketOk && uniqueTargetAtOpen\) \{' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 c=`grep -nE '^[[:space:]]+if \(!bucketOk\) \{' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 if [ -z "$$w" ] || [ -z "$$c" ] || [ "$$w" -ge "$$c" ]; then \
+	       echo "ERROR: cannot delimit the #958 walk in $(SD_MANAGER_SRC)"; \
+	       echo "       (walk='$$w' clean-stop='$$c'). The ordering pin below"; \
+	       echo "       explains why the two must both exist, in that order."; \
+	       exit 1; \
+	 fi; \
+	 sed -n "$$w,$$c p" $(SD_MANAGER_SRC) | tr -d '\n' \
+	   | grep -qE 'writeRefuseReason[[:space:]]*=[[:space:]]*SD_REFUSE_BUCKET_UNREADABLE[[:space:]]*;[[:space:]]*bucketOk = false' \
+	   || { echo "ERROR: the collision walk's statFault branch in"; \
+	        echo "       $(SD_MANAGER_SRC) no longer REFUSES. Inside the walk"; \
+	        echo "       itself (lines $$w-$$c) it must set writeRefuseReason"; \
+	        echo "       AND bucketOk=false, adjacently, so the existing #689"; \
+	        echo "       clean-stop skips the truncating open. A card that"; \
+	        echo "       cannot ANSWER leaves the candidate UNKNOWN; both audit"; \
+	        echo "       legs filed this high/data_loss."; \
+	        exit 1; }
+	@grep -qF -- '- refusing, retry or clear card' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: the #958 stat-fault message in $(SD_MANAGER_SRC) no"; \
+	       echo "       longer says it REFUSES. The message and the behaviour"; \
+	       echo "       are checked separately on purpose: a comment or a log"; \
+	       echo "       line claiming a guarantee the code does not have is the"; \
+	       echo "       defect this PR shipped once already."; \
+	       exit 1; }
+	@if grep -qF -- '- opening it, may truncate' $(SD_MANAGER_SRC); then \
+	       echo "ERROR: the pre-refusal #958 stat-fault message is back in"; \
+	       echo "       $(SD_MANAGER_SRC). That wording belongs to the behaviour"; \
+	       echo "       where an unverifiable candidate reached the truncating"; \
+	       echo "       open. If it is back, so is the data_loss both audit legs"; \
+	       echo "       filed -- fix the firmware, do not relax this guard."; \
+	       exit 1; \
+	 fi
+	$(CC) $(CFLAGS) -o $(NAME_BIN) test_958_sd_benchmark_filename_collision.c
+
 $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $(SD_BENCH_SRC) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
 	@grep -qF 'return "SD quarantined after a bus jam - reseat the card, "' $(SD_BENCH_SRC) \
 	  && grep -qF '"then SYST:STOR:SD:ENAble 1";' $(SD_BENCH_SRC) \
@@ -2416,6 +2737,27 @@ $(SCAN1112_BIN): test_1112_scan_list_snapshot_race.c test_framework.h $(MC12BADC
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SCAN1112_BIN) test_1112_scan_list_snapshot_race.c
 
+# Every suite, and every one of the TWENTY-FOUR binaries. Another additive collision
+# in this long-running block -- fw#958's $(NAME_BIN) against everything main
+# accumulated while this branch sat parked. Resolved the same way as every one
+# before it: each side's target rule kept INTACT and only `run` and `clean`
+# unioned. Dropping a rule loses a suite silently; duplicating one silently
+# shadows the other.
+#
+# THE BINARY COUNT IS DERIVED, NOT ASSERTED -- counted from the `run` recipe
+# list below, which this merge did not conflict and which therefore already
+# carried the union. NINE separate "every one of the N binaries" claims live in
+# this file with nine different N, and all but one are stale.
+#
+# AND THE ORDINAL IS DELIBERATELY OMITTED, which departs from the eight
+# comments above that each assert one. It CANNOT be computed correctly on a
+# branch: every branch derives "next" from main, so two branches refreshed in
+# parallel both claim the same ordinal and whichever merges second is wrong.
+# That is happening right now -- fw#1110's refresh claims FIFTEENTH and main's
+# highest is FOURTEENTH, so this branch would have had to claim FIFTEENTH too.
+# The ordinal was never the load-bearing part; the convention it introduces is,
+# and that is stated above without a number that cannot be kept true.
+#
 # #1108 RETIRED $(DAC1057_BIN) here (run_1057_tests, built from
 # test_1057_dac7718_wait_stat.c, which this same block's history recorded
 # across EIGHT prior additive collisions -- fw#961 vs fw#983, fw#913 vs
@@ -2426,6 +2768,21 @@ $(SCAN1112_BIN): test_1112_scan_list_snapshot_race.c test_framework.h $(MC12BADC
 # is a prerequisite of that target, see above), so there is no copy left for a
 # guard to pin. Same move #1056 made retiring the analogous grep guard that
 # used to stand in for spi_WaitStat/uart_WaitSta/i2c_WaitMif.
+# Every suite, and every one of the FIFTEEN binaries below. A new suite
+# always touches this same `run:`/`clean:` pair, so any two branches that add
+# a suite around the same time collide here. History, each resolved the same
+# way (keep each side's target rule INTACT, union only `run` and `clean` --
+# dropping a rule loses a suite silently, duplicating one silently shadows
+# the other): fw#961 JSONESC_BIN vs fw#983 SUSPEND_BIN; fw#1012 vs fw#958;
+# fw#913 vs fw#1004 HELP_BIN; fw#958 vs fw#1000 SDLOG_BIN; fw#980 DAC980_BIN
+# landing on main alongside fw#1004 HELP_BIN and fw#1000 SDLOG_BIN; fw#958's
+# NAME_BIN vs main's DAC980_BIN; fw#913 vs fw#1004/fw#1000/fw#980/fw#985
+# (SPI913_BIN, SUSPENDREASON_BIN) landing together on main; fw#958's NAME_BIN
+# with SPI913_BIN, SUSPENDREASON_BIN (#985) and DAC1057_BIN (#1057); fw#999's
+# SCPI999_BIN vs fw#985 and vs fw#1057 on main; fw#958's NAME_BIN vs
+# fw#999's SCPI999_BIN; and now fw#958's NAME_BIN vs fw#947's SYSINFO_BIN
+# landing on main. Each branch numbered these collisions on its own, so
+# two of them both claimed "NINTH"; the list is the record, not an ordinal.
 
 # Four separate failures with four separate messages, because they send the
 # reader to four different places: the slice is GONE or DUPLICATED (the model
@@ -2573,25 +2930,32 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 	$(CC) $(CFLAGS) -I$(BTL_SYSCFG_DIR) -I$(BTL_SYSCFG_DIR)/framework/bootloader/src \
 	      -o $(HEXWIN_BIN) test_1141_hex_record_upper_panel_error.c
 
-# Every suite, and every one of the eleven binaries. SEVENTH additive
-
-# Every suite, and every one of the FOURTEEN binaries. ELEVENTH additive
-# collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
-# fw#1000, fw#913 vs fw#980, fw#913 vs fw#985, fw#999 vs fw#985, fw#999 vs
-# fw#1057, and now fw#1039 vs fw#1108 -- the first of these where one side
-# APPENDS a line (LOG1039_BIN, for test_1039_log_message_budget.c) while the
-# other RETIRES one from the same line (DAC1057_BIN, folded onto WaitLoop.h --
-# see the comment above). Resolved the same way regardless of shape: keep
-# each side's target rule intact (DAC1057_BIN's own target is gone, per
-# #1108's resolution above; LOG1039_BIN's stays, below) and union only `run`
-# and `clean` -- net +1 here, not +2, because one side's addition is the
-# other side's removal. Dropping a rule loses a suite silently; duplicating
-# one silently shadows the other.
+# Every suite, and every one of the binaries named in `run` below. Additive
+# collisions in this block as a LINEAGE rather than an ordinal -- main replaced the
+# ordinal deliberately, because each branch numbered its own collisions, the ordinals
+# disagreed (#971 said EIGHTH, main said NINTH), and three stale copies of this
+# banner with three different counts had accumulated:
+#   fw#961 vs fw#983; fw#913 vs fw#1004/fw#1000/fw#980/fw#985; fw#999 vs
+#   fw#985/fw#1057; fw#971's ARM_BIN vs each of those as it landed; fw#971 vs
+#   fw#947 (SYSINFO_BIN); fw#1039 vs fw#1108 (the first where one side APPENDS while
+#   the other RETIRES from the same line); and now fw#1039 vs fw#958 (fw#1027,
+#   merged 4ecb59e64), which brought $(ARM_BIN) and $(NAME_BIN).
+# Resolved the same way every time: keep each side's target rule INTACT and union
+# only `run` and `clean`. Dropping a rule loses a suite silently; duplicating one
+# silently shadows the other.
 #
-# #1026 is the ticket to stop this, and PR #1040 implements it by moving each
+# #1026 is the ticket to stop this and PR #1040 implements it, moving each
 # target into tests/host/tests/<issue>-<slug>.mk so a new suite appends to an
 # accumulator instead of editing a shared line. Whichever lands first, the rest
 # re-express their target as a fragment -- a mechanical move of one recipe,
+# NOT A PLAIN UNION, and the exception is the point. This branch's `run`/`clean`
+# lists are 40 commits stale and name two binaries that NO LONGER EXIST on main:
+#   $(SPI913_BIN)  -- RENAMED to $(WAITLOOP_BIN) by fw#1056.
+#   $(DAC1057_BIN) -- RETIRED by fw#1108 together with run_1057_tests and
+#                     test_1057_dac7718_wait_stat.c, both deleted on main.
+# Unioning them in would reference two undefined variables and resurrect a
+# deleted test. So main's list is taken whole and only this branch's OWN
+# addition is added to it: $(ARM_BIN) := run_971_tests. TWENTY-FOUR binaries.
 # which is strictly cheaper than this resolution has been nine times running.
 #
 # Every suite, and every one of the SIXTEEN binaries: main's fifteen plus
@@ -2617,12 +2981,11 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # #1013's $(FAILNEXT_BIN)/$(FAILNEXT_REAL_BIN), which main gained on
 # 2026-10-12 while this row sat at its reviewed head.
 #
-# THE COUNT IS DERIVED, NOT ASSERTED. Ours said TWENTY-FOUR and main's comment
-# still said TWENTY-THREE while main's own list had already grown to TWENTY-FIVE
-# -- #1013 appended two binaries and left the stated count untouched, which is
-# exactly the trap the thirteenth collision recorded and the fourteenth restated.
-# TWENTY-SIX is counted from the resolved prerequisite list below by the
-# resolver, not written by hand.
+# THE COUNT IS DERIVED, NOT ASSERTED -- 28 binaries in `run`, counted from
+# the resolved prerequisite list below by the resolver rather than written by hand.
+# Both sides' stated counts were stale for this result (ours TWENTY-SIX, main's
+# TWENTY-FOUR, each right about its own side) -- the trap the thirteenth collision
+# recorded and every one since has restated.
 #
 # ALSO FIXED HERE, and NOT a union: the `clean:` recipe's $(SDLOG1029_GEN).tmp
 # line was missing its line-continuation backslash, so make parsed the
@@ -2633,23 +2996,25 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # only `make run`, never `clean`, so no gate on this row could observe it.
 #
 # $(LOG1039_BIN)/$(LOG1039_GEN) carry the 1039 suffix so they cannot shadow
-# #1029's $(SDLOG1029_BIN)/$(SDLOG1029_GEN) -- two different generated headers
-# from two different generators, both of which exist in this tree. #1013's
-# $(FAILNEXT_BIN)/$(FAILNEXT_REAL_BIN) are main's side of this collision.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) \
-     $(DAC980_BIN) $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) \
-     $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) \
-     $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(LOG1039_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN)
+# #1029's $(SDLOG1029_BIN)/$(SDLOG1029_GEN); #1029's in turn carry 1029 so they
+# cannot shadow #1000's $(SDLOG_BIN)/$(GEN_1000). main's side of THIS collision is
+# $(ARM_BIN) and $(NAME_BIN), from fw#958/fw#1027.
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
+     $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) \
+     $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) \
+     $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) \
+     $(SDLOG1029_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(LOG1039_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
+	./$(ARM_BIN)
 	./$(JSONESC_BIN)
 	./$(SYSINFO_BIN)
 	./$(SUSPEND_BIN)
 	./$(DAC980_BIN)
 	./$(HELP_BIN)
+	./$(NAME_BIN)
 	./$(WAITLOOP_BIN)
 	./$(SDLOG_BIN)
 	./$(SCPI999_BIN)
@@ -2669,11 +3034,11 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(FAILNEXT_REAL_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-	      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) \
-	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp \
-	      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) \
-	      $(LOG1039_BIN) $(LOG1039_GEN)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
+	      $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) \
+	      $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) \
+	      $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(DACREINIT_BIN) \
+	      $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(NAME_BIN) $(SDLOG1029_GEN).tmp \
+	      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(LOG1039_BIN) $(LOG1039_GEN)
 
 .PHONY: run clean

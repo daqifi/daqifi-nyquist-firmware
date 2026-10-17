@@ -93,6 +93,12 @@ extern "C" {
         // and rejects with SCPI -200 if the card has fewer than this
         // many bytes free.  0 = no pre-start check (legacy behavior).
         uint64_t minFreeBytes;
+        /* #958: the WRITE target is SD:BENCHmark's scratch name. Prefer a name
+         * no file already uses, instead of truncating whatever is there.
+         * Not a rule for every WRITE: ordinary logging opens an existing
+         * target DELIBERATELY (the #689 pre-walk reopens a split part in
+         * place). Default false. */
+        bool uniqueTarget;
     } sd_card_manager_settings_t;
 
 
