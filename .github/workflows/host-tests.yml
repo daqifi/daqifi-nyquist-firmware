@@ -51,6 +51,16 @@ name: host-tests
 # which the glob added in the same commit plainly matches. Caught by #941's
 # round-2 pre-merge audit.
 #
+#   - test_958_sd_benchmark_filename_collision.c: greps SCPIStorageSD.c for the
+#     scratch-name format (covered by the SCPI/ entry above) AND
+#     sd_card_services/sd_card_manager.h for SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX
+#     being 40, which its no-truncation case is arithmetic on. That header had
+#     no entry here, so a PR changing ONLY the length constant matched no path
+#     and the guard did not run -- a guard that cannot fire for the file it
+#     guards. Listed by file, not by directory: sd_card_manager.c is large and
+#     changes often, and no host test reads it. (Its dependence on
+#     FreeRTOSConfig.h's tick width is covered by the test_1004 bullet below --
+#     see the note appended there.)
 #   - test_1056_wait_loop.c (#1056, was test_913_spi_wait_stat.c): compiles
 #     firmware/src/HAL/WaitLoop.h directly -- the ONE spin-then-yield wait loop
 #     UserSpi.c, UserUart.c and UserI2c.c now share. That header gets its own
@@ -135,6 +145,11 @@ name: host-tests
 #     Found by PR #976's adversarial audit (#1062) and filed rather than
 #     folded into that PR, which only added tools/lint/cdef.py to this
 #     workflow and picked this gap up from a merge with main.
+#
+#     test_958_sd_benchmark_filename_collision.c's uniqueness argument also
+#     rests on this same 32-bit tick width -- a 16-bit tick would make its
+#     sequence field the only discriminator -- so this entry is load-bearing
+#     for two suites, not one.
 #   - test_1039_log_message_ceiling.c (#1039, PR #1116): hardcodes the four
 #     LOG_E messages #1039 shortened and measures them against Logger's real
 #     truncation, the same technique as test_1000_sd_log_arm_budget.c but
@@ -253,12 +268,35 @@ name: host-tests
 #     this file at 72fba8c68c4dd28b6c6612ffdc7b28f1d64bd191, zero hits).
 #     Found by the #1147 pre-merge adversarial audit round 2 (disposition
 #     fix_now).
+#   - test_981_sd_failnext_hook.c (#981): sd_card_manager.c is now ALSO one of
+#     the "unrelated services/ files" the paragraph above named as correctly
+#     excluded -- until now. This test greps it for four properties of the
+#     FAILNext one-shot arm/consume shape (the flag's declaration, the
+#     POSITION -- not just presence -- of the critical-sectioned
+#     test-and-clear and its UNMOUNT_DISK safety gate, the #409 reset-scrub
+#     ordering, and the setter's plain-store shape) and fails the BUILD, not
+#     just the test, if any has moved. Scoped to that one file by name, same
+#     reasoning as JSON_StringEscape.h's entry directly above -- not the whole
+#     services/sd_card_services/ directory, which this file is the only
+#     member of a host test reads.
+#     test_981_sd_failnext_real_consume.{head,tail}.c (same issue, added on a
+#     PR #1013 audit finding that the grep-only checks above could not fail on
+#     two real mutations of sd_card_manager.c): extracts the real consume
+#     snippet from sd_card_manager.c verbatim and compiles + RUNS it, so the
+#     behaviour is checked, not just the shape. Both files live directly under
+#     tests/host/, already covered by the 'tests/host/**' entry below.
 
 on:
   pull_request:
     branches: [main]
     paths:
       - 'tests/host/**'
+      # `tests/host/hash_function.py` imports this, so the drift pin
+      # reaches OUTSIDE `tests/host/**` and a change to the rule would
+      # otherwise never re-run the suite that depends on it (#976
+      # audit, round 5) -- the same gap this file's own header says it
+      # was built to close for AD7609Scale.h.
+      - 'tools/lint/cdef.py'
       - 'firmware/src/Util/CircularBuffer.c'
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
@@ -277,6 +315,7 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
       # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its
       # three consumers. WaitLoop.h sits directly in HAL/, which the HAL/ADC/**
@@ -319,6 +358,12 @@ on:
     branches: [main]
     paths:
       - 'tests/host/**'
+      # `tests/host/hash_function.py` imports this, so the drift pin
+      # reaches OUTSIDE `tests/host/**` and a change to the rule would
+      # otherwise never re-run the suite that depends on it (#976
+      # audit, round 5) -- the same gap this file's own header says it
+      # was built to close for AD7609Scale.h.
+      - 'tools/lint/cdef.py'
       - 'firmware/src/Util/CircularBuffer.c'
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
@@ -337,6 +382,7 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
       # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its
       # three consumers. WaitLoop.h sits directly in HAL/, which the HAL/ADC/**
