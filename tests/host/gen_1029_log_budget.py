@@ -296,7 +296,14 @@ SITES = [
          conv="s",
          what="site 1 -- the bucket name is taken by a non-directory"),
     dict(key="BUCKET_UNUSABLE",
-         anchor="gSDCardData.startupDirFull = true;",
+         # TWO statements, because #958 added a SECOND startup-failure
+        # notification to this same function body (the stat-fault refusal
+        # at the scratch-name walk). A one-statement anchor became
+        # ambiguous and this generator correctly refused rather than
+        # guessing which LOG_E it was measuring. The follow-on statement
+        # is what distinguishes the #689 site: it sets
+        # lastOperationSuccess, the #958 site sets mode.
+        anchor="gSDCardData.startupDirFull = true;\n                    gSDCardData.lastOperationSuccess = false;",
          conv="s",
          what="site 2 -- no writable bucket remains"),
     dict(key="WRITES_HANG",

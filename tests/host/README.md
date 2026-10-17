@@ -57,6 +57,47 @@ Because the test re-implements rather than includes, the two firmware timeout
 constants are a copy. The Makefile target greps them out of `SCPIStorageSD.c`
 and **fails the build** if either drifts, so a stale copy cannot pass silently.
 
+`test_971_sd_arm_refusal_order.c` covers the under-claim settle order of a
+**refused** SD arm — `SD_ArmOrRefuseWithCleanup()` in the same
+`SCPIStorageSD.c` (issue #971). Six SCPI commands arm through it; on refusal
+it must put `mode` back to `MODE_NONE`, run the caller's retraction (FORmat's
+only), and **then** release the claim, because the release is what lets the
+competing SCPI transport in. Getting that order wrong is a bug lineage, not a
+hypothetical: #955 (the clear ran past the release), #964 (the retraction
+did), #942/#974 (the verdict was ignored).
+
+Like `test_943` it does **not** include any firmware source — same file, same
+reason — so it is a **model** of that ~8-line function, exercised through
+stubbed primitives that record an event trace. Covered: the refusal trace is
+exactly clear → retract → release; a snapshot taken *inside* the release stub
+shows both cleanups already done at the instant ownership is handed over; the
+five-caller shape (`onRefused == NULL`) still clears and releases and invokes
+nothing; and the success path releases while touching neither `mode` nor the
+retraction. It then runs a cooperative two-owner simulation that offers the
+competing transport the CPU at every step boundary, and requires the
+production order to survive all of them **and both historical defect orders
+to fail at one** — a model no wrong ordering can fail would establish nothing.
+
+Two limits are stated at length in the file's own header and are worth
+repeating here. It does not reproduce concurrency: the interleavings are
+hand-enumerated step boundaries in a single-threaded program, so it can show
+an ordering is unsound but not that one is safe under FreeRTOS on PIC32MZ.
+And its link to the firmware is a **content hash**, not a property check: the
+Makefile hashes that function's code (whole-line comments stripped,
+whitespace collapsed) and fails the build when it changes, with a separate
+message for "the function is gone". That pin claims only "this text is
+unchanged" — deliberately, because PR #976 catalogued fifteen ways an honest
+refactor slips past a *textual* assertion about this exact function, and a
+crude second copy of that assertion here would give false comfort. When it
+fires, re-read the C against the model and update the hash.
+
+Not covered, and explained in the file rather than faked: that each of the six
+arm sites *ends* on refusal instead of falling through to its readiness poll.
+Its callers are 60-150 line libscpi callbacks in the same non-host-includable
+file, and re-implementing their shapes would assert only that the copies in
+the test behave as written. The header names the smallest seam that would make
+it testable.
+
 `test_953_bench_suspend_diagnosis.c` covers the branch a little further down
 the same function (issues #953 **and #988**): the one that has to say *why* the
 benchmark's file never opened. Same technique as `test_943` and for the same
@@ -346,6 +387,88 @@ reply-content change), and the deadline's tick-counter-wrap safety.
 Three firmware constants are a copy here (the two shared `SCPI_WriteWithRetry`
 retry constants, plus the new per-callback budget). The Makefile target greps
 all three out of `SCPIInterface.c` and **fails the build** if any drifts.
+
+`test_958_sd_benchmark_filename_collision.c` covers the *filename* the same
+command builds (issue #958) — third suite on `SCPIStorageSD.c` and, for the
+same reason, the same technique: the name generation is re-implemented against
+injected tick values rather than included. Until #958 the scratch name came
+from a **16-bit** slice of the tick (`benchmark_%d.dat`, `tick & 0xFFFF`), so
+it repeated every 65536 ticks — 65.5 s at the 1 kHz tick — and the open it is
+armed against truncates, so two benchmarks that far apart destroyed the
+earlier one's file with no error and no log line. The fix uses the tick whole and
+pairs it with a per-boot sequence (`benchmark_%lu_%lu.dat`).
+
+The **sequence** is what makes the name unique within a boot: `gBenchNameSeq`
+is advanced once per named run and never reset while the board is up. The tick
+alone cannot do it, and this suite's first revision said it could — `TickType_t`
+is 32-bit here, so it wraps after 49.7 days of uptime and two runs exactly one
+wrap apart would share a value. Qodo found that on the PR's first review. What
+the original argument does establish, and it still holds, is the narrower claim
+that *consecutive* runs cannot share a tick: the callback's last step is a
+drain-and-close wait whose loop cannot exit without entering (the
+`mode = MODE_NONE` + `UpdateSettings()` above it forces the manager to DEINIT,
+and `IsIdle()` is IDLE-or-INIT only), so every run costs at least one
+`vTaskDelay(10)` — and the `testInProgress` interlock stops the next run from
+naming its file before this one returns. That says nothing about two runs a
+wrap apart. The tick stays as the leading field because the companion test
+reads it, and its advance is the arm that discriminates pre-#958 firmware.
+
+Covered: the headline wrap collision (pre-fix names equal, post-fix distinct,
+swept over several bases and several whole multiples of the wrap), injectivity
+over a boundary-value tick table, the `benchmark_*.dat` prefix/suffix contract
+the python suite's snapshot-and-diff depends on, and that the widened field
+still fits `SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX` without truncation (a cut
+name could collide again — the worst case is now 35 characters of 40). Then the
+49.7-day wrap itself: same tick, different sequence, distinct names. That case
+is the mirror of the headline one — there the sequence is held fixed so only
+the tick can separate two names, here the tick is held fixed so only the
+sequence can, and neither case can pass by measuring the wrong field. Last, the
+ordering: a counter advanced *then* formatted, driven through a wrapper rather
+than by injecting a sequence, because an injected value cannot be stale.
+
+Not covered, deliberately: the reboot half of #958. A reboot restarts the
+sequence at 1 and the tick at 0, so neither field distinguishes one boot from
+another and a post-reboot run can land on a pre-reboot file's name. Being
+precise, because an earlier revision of this paragraph was not: it is **not**
+that every boot's first run shares one name. The tick is sampled at *naming*
+time, not at boot, so two first-runs collide only when they arrive at the same
+post-boot offset — `benchmark_5000_1.dat` and `benchmark_10000_1.dat` are
+different names. A coincidence nothing prevents, which is all the defect needs.
+No counter held in RAM can close it; only asking the card can.
+
+It is **not** pinned as a test case. A review round added one that compared two
+calls to the same pure helper with identical arguments and claimed it would
+fail once the follow-up lands; the pre-merge audit threw it out, correctly. It
+could not fail for any implementation, and the follow-up resolves the candidate
+path inside the SD task without ever reaching that helper. A green case a
+maintainer reads as "the boundary is still guarded" is worse than no case.
+Closing that
+needs the candidate stat-ed before it is armed, which cannot be done in
+`SCPI_StorageSDBenchmark` — the FAT volume is mounted only inside an SD-task
+session and unmounted at the end of one, so a stat from that callback fails
+with an unmounted-volume error rather than "absent". See the file header for
+the exact error/line citations; the follow-up on #958 tracks it.
+
+Eight greps guard this target. Three are about the text being right: the
+post-fix format expression must be present (matched with newlines squashed,
+since it wraps across two lines), the field-length constant must still be 40,
+and the masked pre-fix form must **not** be back (a suite whose premise is "the
+mask is gone" has to fail if it returns). Five are about the sequence field,
+which a format pin alone would only prove is *present*: the counter must be
+advanced once per run, the advance must happen **before** the format, it must
+never be assigned anywhere but its definition (a reset reopens the collision),
+the local copy that carries the advanced value into the format call must
+itself be assigned exactly once outside its own declaration (otherwise a
+second write to that copy — after the advance, before the format — defeats
+the order pin while leaving the two lines' positions it checks unchanged),
+and the tick-only form must not return either.
+
+The order pin exists because the pre-merge audit reproduced a swap of those two
+steps passing every other guard and the whole host suite, while every name
+carried the counter's initial value — the field present and doing nothing.
+CASE 6 drives the same property through a wrapper that advances a counter and
+then formats, so the requirement is expressed in the test as well as in a grep.
+
 `test_999_scpi_context_storage_isolation.c` covers `CreateSCPIContext()`
 (`firmware/src/services/SCPI/SCPIInterface.c`, issue #999): USB and TCP used
 to be handed the SAME file-scope input-buffer and error-queue arrays, so
@@ -589,6 +712,79 @@ boot-area/config-word skip branch is still present exactly once) still
 matches what the model assumes, and that `system_config.h` still defines
 `APP_FLASH_PFM_END_ADDRESS` as `(APP_FLASH_END_ADDRESS +
 APP_FLASH_UPPER_PANEL_SIZE)`.
+
+`test_981_sd_failnext_hook.c` covers the one-shot arm/consume contract behind
+`SYSTem:STORage:SD:FAILNext` (issue #981) — a bench/test-only hook that forces
+ONE real SD write, issued during the next teardown drain, to fail once, so the
+write-failure accounting paths fixed by #825/#838/#915/#979 can be
+regression-tested without running the bench card out of space.
+`sd_card_manager.c` is not includable on the host (FreeRTOS + Harmony's
+`SYS_FS` + the whole SD state machine), so — same technique as
+`test_943`/`test_953` — this re-implements just the flag/consume shape against
+a mock and the Makefile greps the real source for four properties the model
+depends on: the flag's declaration, the POSITION (not just presence) of the
+critical-sectioned test-and-clear and its `currentProcessState ==
+UNMOUNT_DISK` safety gate at the consume site, the `#409` reset-scrub landing
+immediately before the `isInitDone` guard, and the setter being a plain store
+with no critical section of its own (the atomicity argument the firmware PR's
+design review settled). Any of the four moving fails the **build**, not just
+the test. Covers: starts disarmed, arm-then-consume is one-shot,
+disarm-without-consuming leaves the next write clean, re-arming after a
+consume works again, and disarming an already-idle hook is a no-op.
+
+The consume-site guard checks POSITION rather than four independent
+presence-only greps because an adversarial audit on PR #1013 found the
+presence-only version could not fail on two real mutations of the source:
+moving `taskEXIT_CRITICAL()` to before the armed test (every token still
+present, atomicity destroyed), and flipping the real
+`injectWriteFailure = true;` to `= false;` (a token the old guard never even
+looked for). `test_981_sd_failnext_real_consume.head.c` / `.tail.c` close the
+remaining gap a textual check — however positional — cannot: the Makefile
+splices **all of `SDCardWrite()`**, signature through closing brace, verbatim
+out of the real source and into a tiny compiled-and-RUN harness (no-op
+critical-section and `LOG_E` stand-ins, the five `gSDCardData` fields the
+function touches, and a **mock `SYS_FS_FileWrite` that counts its calls** and
+returns a byte count that is never `-1`). Nothing about the function is
+hand-typed there.
+
+It asserts the EFFECT, on two observables: **fired** → the function's real
+`int` return is `-1` **and zero calls reached the filesystem**; **not fired**
+→ the return is the mock's byte count **and exactly one call** did. Its first
+case is a control that asserts the write *is* reachable, so the "zero writes"
+assertions cannot pass vacuously. Covers: the `injectWriteFailure` mutation
+above, the `UNMOUNT_DISK` gate itself (armed-but-elsewhere must not fire, and
+the write must go through untouched), one-shot consumption, and an arm that
+survives a refused attempt firing at its next opportunity.
+
+That whole-function splice is round **three** of the same defect. Round two
+extracted only as far as `taskEXIT_CRITICAL();` and let the tail close the
+fragment with a hand-written `return injectWriteFailure;` — so the payload
+(`if (injectWriteFailure) { LOG_E(…); writeLen = -1; goto __exit; }`, the real
+write it must skip, and `__exit: return writeLen;`) was never compiled or run,
+and the assertion was on a **local bool**: the same proxy-not-effect shape the
+first two rounds were spent on. Deleting **only** the `goto __exit;` from the
+real source left all eight binaries green while, on hardware, the hook cleared
+its arm, logged "consumed", set `writeLen = -1`, then fell through into the
+real write, which succeeded and overwrote it — fault injection entirely dead,
+a "failed" write silently succeeding, nothing red anywhere. That mutation now
+fails this binary with the return value and the write count in the message.
+Its build-time sanity check on the extraction is deliberately a loose bound
+(a plausible line count, last line `}`) rather than an exact one, because an
+exact count would fail the *build* on the very mutations this binary exists to
+catch by *running* the code — turning a precise behavioural verdict back into
+a text-shape one.
+
+It still does not attempt the ordering mutation — a single-threaded host run
+cannot observe a concurrency property — which stays the positional grep's job.
+
+None of this exercises the real device or hardware timing. Only two of
+`SDCardWrite()`'s five call sites may consume a given arm in practice — the
+two that run inside a teardown already in progress — by design (the other
+three can trigger the pre-existing `ERROR → UNMOUNT_DISK → INIT →
+OPEN_FILE(WRITE_PLUS)` remount, which truncates the log file; see
+`gFailNextWrite`'s block comment in `sd_card_manager.c`). Real-hardware
+validation of the SCPI-to-drain path is `test_981_sd_failnext_hook.py`
+(daqifi-python-test-suite)'s job.
 
 ## Framework
 
