@@ -10826,3 +10826,63 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   be blocked on SIX UNRESOLVED THREADS, not an audit** — `required_conversation_resolution` is `main`'s
   only live protection — so the *"parked on a decision wearing an audit's label"* check is now being run
   across the remaining rows instead of the label being trusted.
+
+## 2026-10-16/17 · post-fw#1027 merge cluster — 3 rows resolved, 1 deferred, and a rule I had to retract
+
+- ✅ **PUSHED, all full-SHA verified, all host-suite green against a baseline I measured myself**
+  (25 binaries / 290 tests / 0 failed / 43,862 assertions at `origin/main 4ecb59e64`):
+  - **fw#1094** `6b1e57b878a1c9ecdc5a1c538e6a2c41b9328e57` — 290/0, delta +0 (branch adds no host test)
+  - **fw#1129** `44cb20d83784523b5970363cd177fe71e9d78f86` — 296/0, **delta +1 binary ATTRIBUTABLE** to
+    `SCPIDAC_RAILGATE_BIN := run_1100_tests`
+  - **fw#1024** `e9274e4f5da3bea23f00c030c0f0843ea769b304` — 290/0
+  - All three `CONFLICTING → MERGEABLE`; all three `state=BLOCKED` on unresolved threads. ⭐ **Said
+    plainly up front that resolving a conflict does NOT make a row landable** — #1024 has 3 open threads.
+- ⛔ **fw#1099 DEFERRED on four measured grounds**, re-deriving an abort I had already reasoned through:
+  draft, `claude-skills#125` still an OPEN issue, **zero NQ3 rows in the registry** (#554), and the
+  conflict is **in the host suite the row is parked on**. ⭐ The coordinator then **put the reasons on the
+  row** — *"a deferral that is not on the row will be re-assigned"*, which was the real defect.
+- ⛔⛔ **THE DANGEROUS ONE — fw#1024: BOTH SIDES COMPUTED `194,048` FROM DIFFERENT PAYMENT SETS.**
+  branch `-1024 -512 -512 -2048 -512` (#956, no #958); main `-1024 -512 -512 -512 -2048` (#958, no #956);
+  both sum 4608. **Union needs SIX terms = 5120 → 193,536.** Taking either side, or "agreeing" because the
+  numbers match, **silently drops a 512 B payment** on a part whose own comment records that one new
+  `uint32_t` does not fit and the link fails by 32 bytes.
+- ⛔⛔ **AND I PUBLISHED THE WRONG RULE FOR IT, TO THREE LANES AND THE COORDINATOR, WHO FILED IT AS A
+  DURABLE FLEET RULE.** I wrote *"compare the TOKENS, not the TOTAL."* **nq-c refuted it inside the hour
+  and I verified on my own data: the token MULTISETS are equal too** — both sort to
+  `[512,512,512,1024,2048]`, so a multiset union gives 4608 → **194,048, the wrong pool.**
+  > ⭐⭐ **MY ANSWER WAS RIGHT AND MY RULE WAS WRONG.** I got six terms by reasoning about **payments**
+  > (#956 vs #958), not token values. **The rule I wrote down was weaker than the reasoning I used — and
+  > the rule is what survives into someone else's merge.**
+  **Corrected rule (nq-c's):** *an accumulator's terms are distinguishable only by their PROVENANCE —
+  compare the set of things PAID FOR, not totals and not term values.* Invariant
+  `terms − base == |union of NAMED payments|`; strongest check is the **compiled artifact**
+  (`.bss.gPoolStorage 0x2f400 = 193536` in the ELF). Retracted to all four; memory corrected in place with
+  the refuted rule quoted rather than deleted.
+- ⭐ **MY SCRIPT'S LIMITATION, proved by mutation before shipping it to three lanes:** a line-set check
+  covers **wholesale** drops; a **same-line** conflict needs an invariant spanning both contributions.
+  The mutant and the correct resolution both reported **4/3/4** — indistinguishable. What discriminated:
+  arithmetic identity (`used+free = 523,800`), a contributor-union set, and for a Makefile the cross-list
+  check (**28/28/33**, zero duplicates). ⚠ **Shipping the line check alone would have handed three lanes a
+  clean report on the shape a docs/table conflict most often is.**
+- ⛔ **THREE DEFECTS IN MY OWN TOOLING, each caught before it misled anyone:** a mutation control that
+  **false-passed** because its setup died on a `SyntaxError` (mutation never applied → check passed on an
+  unmutated file; fixed with an asserting setup); `$?` **after a pipeline** reported `exit=0` for a guard
+  that exits 2 — **seventh instance**; and a **mis-invocation** (`RESULT=HEAD` pre-commit) that reported
+  *"LOST-FROM-MAIN 797 of 797"* on a correct merge. ⭐ The script now **refuses** an uncommitted RESULT —
+  three distinct exit codes verified unpiped: **2 refuse / 0 clean / 1 needs-accounting.**
+- ⭐⭐ **FAILURE MODE 2 WAS LIVE TWICE AND NEVER INSIDE A MARKER:** #1094's auto-merged prose dropped the
+  `+17 B` contribution, and #1024's `MEMORY_ARCHITECTURE.md:118` still asserted the old pool size. Found
+  by **grepping the tree for the OLD VALUE**. **Conflict markers say where git GAVE UP, not where the
+  merge LOST something** — the coordinator has reframed its own failure mode to match.
+- ⚠ **DELIBERATELY DID NOT INVENT:** left the four capacity figures **marked STALE** rather than rewritten.
+  USB-only reproduces from `(pool−circulars)/74`; **WiFi-only does not** (I get 1,072 vs a published
+  1,100), so the buffer set for the other three is unestablished. Stated the derivation rule, flagged the
+  values approximate, and **still asserted the load-bearing consequence**, which survives ±1: this payment
+  makes WiFi-only partition-bound.
+- ⭐ **ADOPTED FROM THE LANES:** conv-fw's **search-space bound** (enumerate files BOTH parents changed vs
+  the base — the whole region where the trap can live; **distinguishes "checked and absent" from "never in
+  scope"**); conv-fw's sharper limitation (**a spanning invariant catches the line-adjacent instrument
+  LYING** — their phantom "4 missing invocations" tracked their parser, not the file); and their
+  **ordinal-conflict** case where membership passes and MEANING fails (`CSV_SAMPLE_TOO_LARGE 18→19`).
+  nq-c put the script at `~/.claude/lanes/account-lines.sh` because **that path outlives our sessions** —
+  I did not overwrite their copy, I told them what changed.
