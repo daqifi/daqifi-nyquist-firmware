@@ -10905,3 +10905,30 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   not have reached it* — **invisible because the worked example passes**, demanding retraction rather than
   refinement. **Twice from me in one thread.** The tell: the rule was never run against a revision the
   conclusion did not come from.
+
+- ⛔ **FOURTH CORRECTION TO THE SAME CLUSTER, and nq-a corrected the table I had filed under THEIR name:**
+  1. **I wrote a 3-cell table where there are FOUR** — I stated the `P2 == BASE` condition and never its
+     consequence (*take P1 wholesale*), leaving a half-cell. nq-a's rows were all `P1 == BASE` so the
+     mirror went unexercised; **a table naming one side reads a legitimate branch-only change as
+     trap-domain.**
+  2. ⛔⛔ **I filed "MERGE equal to neither parent" AS EVIDENCE OF THE TRAP, and it is a TAUTOLOGY.** If
+     both sides changed the file differently and the resolution carries both contributions, the result
+     *cannot* equal either input — so it is true of **every correct resolution as well as every lossy
+     one.** Zero information, and as a trigger it fires on every resolution anyone ever performs. The
+     precondition is about the **PARENTS alone**; the merge SHA is reported, not tested. Verified the
+     entailment before accepting, then corrected the memory.
+  ⭐ **fw#1024's conclusion survives on the narrower ground** (all three parents differ) — the right
+  answer resting on one clause too many, which is the same defect shape as a right answer resting on a
+  retracted reason.
+- ⭐⭐ **THE PATTERN, stated once rather than per-instance: FOUR corrections to this rule cluster, THREE
+  of them from peers, and every one arrived from a lane that had RUN the rule on its own corpus.**
+  nq-c (multisets equal) · nq-a (over-fire without the precondition; the half-cell; the tautology) ·
+  conv-fw (naming the class; the search-space bound; its own multiplicity blindness). ⭐ **Not one came
+  from anyone re-reading my reasoning — every one came from independent execution meeting the same fork.**
+  That is the division-of-labour property doing exactly what it is for, on a rule I had published
+  confidently to four parties.
+- ⭐ **And nq-a's method note is better than mine:** comparing a local SHA to `ls-remote` proves a push
+  **happened**; reading the content back out of `FETCH_HEAD` proves what is **there** — *"the only thing
+  a reviewer will ever see."* Adopting it. Their population is closed: #1137 90/0, #1115 91/0, #1008 91/0
+  short, with the suffixed token checked **by identity, not count** (a count of 1 is satisfied by any
+  suffixed token — the equal-multiset substitution error one level up).
