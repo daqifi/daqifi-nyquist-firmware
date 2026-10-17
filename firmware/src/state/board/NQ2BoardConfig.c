@@ -1,3 +1,12 @@
+// NOTE: this file is NOT part of any build. `firmware/daqifi.X/nbproject/configurations.xml`
+// excludes it (`<item path="../src/state/board/NQ2BoardConfig.c" ex="true" overriding="false">`)
+// in BOTH the `default` (NQ1) configuration item list and the `Nq3` configuration item list --
+// there is no configuration that compiles it. It would not compile even if included: it
+// references `AIn_AD7173` 17 times below, and that enumerator is commented out of `AInType`
+// (`firmware/src/state/board/AInConfig.h`). In practice "NQ2/NQ3" in this codebase means NQ3
+// only -- see issue #554 ("NQ2: no board configuration exists in the tree"). So everything
+// below describes an intended-but-unbuilt variant, not shipped behaviour, and must not be
+// cited as evidence of what any built firmware does. See issue #1136 for the full history.
 #include "BoardConfig.h"
 #include "CommonBoardPinDefs.h"
 #include "CommonBoardConfig.h"
