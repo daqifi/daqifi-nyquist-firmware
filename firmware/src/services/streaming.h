@@ -215,14 +215,37 @@ static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2us
          * the 1-channel and multi-channel points spends nearly all of the
          * 1-channel headroom to reach the others.
          *
-         * JSON IS EXCLUDED and keeps the #563 law. It shares this branch, and
-         * at USB 1ch the additive is its BINDING term (10589, below its own
-         * #529/#831 transport single of 11000) -- so raising this branch would
-         * lift JSON's enforced cap on the strength of a CSV measurement, and
-         * JSON has never been characterised at precision 4. Its own precision-4
-         * basis is #529 follow-up work. CsvCompact IS included: it emits
-         * strictly fewer bytes per row than CSV (#619), so a CSV-fitted cap is
-         * never-over for it. */
+         * JSON IS EXCLUDED from THIS branch at every precision -- the
+         * `isJson == 0u` guard above means JSON (isJson=1) never enters it.
+         * JSON now has a precision-4 basis of its own, the #920 grid (USB,
+         * precision 4, OBDiag off, real ADC, 600 s at-cap per step, board
+         * 7E2837886201026A, crc32 EDF83A67, atcap_20260915_112212.csv), and
+         * two JSON-only branches built on it sit between this one and the
+         * final `else`:
+         *   - pure-T1, nT1 <= 1                     -> 8602 Hz
+         *   - armed, OBDiag off, any channel count  -> 7442..1416 Hz (T2-ramp
+         *     refit, #920 2026-09-15: this branch originally covered 11..16ch
+         *     only, at 2335..1440 Hz; the T2-ramp grid then found 3/5/8/11xT2
+         *     over ceiling too, so it widened to every armed count)
+         * Every other JSON config -- 2..5 pure-T1 channels, and every
+         * OBDiag-on config -- still falls through to the final `else`,
+         * unchanged. What changed at 1ch: before #920 the
+         * shared `else` term, 800e6/(71000+4550) = 10589, was JSON's BINDING
+         * one (below its #529/#831 transport single of 11000). The grid
+         * measured 10589 dropping data at precision 4, so that config now
+         * takes the 8602 branch. The shared `else` still yields 10589 for 1xT1
+         * CSV above precision 4, which is the case the precision-set guard in
+         * SCPIInterface.c cites. For JSON it no longer applies.
+         *
+         * STILL THE RULE for the JSON cells the #920 branches leave as
+         * follow-ups: a JSON-specific change is a NEW isJson-gated branch
+         * inserted before the final `else`, never an edit to the shared `else`
+         * itself. That `else` also serves armed CSV and over-precision CSV, so
+         * changing it would move their measured caps on the strength of a
+         * JSON-only measurement. A guessed coefficient here has already
+         * dropped data at its own advertised cap once (#714/#715). CsvCompact
+         * IS included in THIS branch: it emits strictly fewer bytes per row
+         * than CSV (#619), so a CSV-fitted cap is never-over for it. */
         /* PRECISION-GATED. The basis is precision 4, and precision changes how
          * much work csv_encoder does per value, so the raise may only be
          * applied where the encoder is no more expensive than it was when
@@ -253,6 +276,184 @@ static inline uint32_t Streaming_AdcAdditiveCap_NQ1(uint32_t nT1, uint32_t nT2us
             period_ns = 71000ULL + 4550ULL*nT1;
         }
         num = 800000000ULL;   /* 1e9 * 0.80 (CSV; transport min'd downstream) */
+    } else if (armed == 0u && isJson != 0u && nT1 <= 1u) {
+        /* #920 (2026-09-15): JSON, one pure-T1 channel (no MODULE7 scan).
+         * Before #920 this config took the final `else`: 800e6/(71000+4550) =
+         * 10589 Hz. That was the BINDING term (the USB/NQ1 JSON transport
+         * single is 11000), and no precision-4 measurement backed it.
+         *
+         * BASIS (#920 grid: USB, JSON, precision PINNED to 4, OBDiag off, real
+         * ADC, 600 s at-cap per step, freeze-aware -- T1ArdyMisses and
+         * ScanStaleDropped count as loss -- walk-down -12.5% per failed step;
+         * board 7E2837886201026A, fw crc32 EDF83A67, atcap_20260915_112212.csv):
+         *   1xT1  FAIL  10589  QueueDroppedSamples 115171, T1ArdyMisses 2152,
+         *                      10333 samples/s streamed
+         *   1xT1  clean  9250  9243 samples/s, 0 drops
+         * 9250 is ONE walk-down step from 10589 (the harness takes
+         * floor(0.875 * rate) down to a multiple of 25). It is the highest
+         * rate measured clean, not a located ceiling. The true ceiling lies
+         * in [9250, 10589).
+         *
+         * ENCODER CPU, NOT BANDWIDTH -- the same finding #832 made for CSV. At
+         * 10589 Hz this cell moves ~530 KB/s (#920). That is below the 563
+         * KB/s #529 held clean at 1ch, and the cell still drops. At precision
+         * >= 1, JSON_Encoder.c formats every value through "%.*f".
+         *
+         * 93001 ns -> 800e6/93001 = 8602 Hz = floor(0.93 * 9250 = 8602.5), the
+         * #832 never-over rule. Periods 92991..93001 all floor to 8602.
+         * 93001, the longest, is the conservative choice.
+         *
+         * NOT PRECISION-GATED, unlike the #832 branch, and on purpose. That
+         * gate exists because #832 RAISES a cap. This branch LOWERS one
+         * (10589 -> 8602, -18.8%), and the law it replaces was applied to JSON
+         * at EVERY precision. So it is no looser than before at any precision:
+         *   0      integer millivolts through "%d" (raw mode, CONF:ADC:USECal
+         *          2, likewise emits integers). No "%.*f", so structurally
+         *          cheaper than the basis. Not separately measured for JSON.
+         *   1..4   the same "%.*f" path with fewer or equal digits.
+         *   5..10  MORE digits per value, UNMEASURED. Safety there is NOT
+         *          proven, only that this cap is below the one those
+         *          precisions already had.
+         *
+         * NOT MOVED (stay on the final `else`, unchanged):
+         *   2..4 pure-T1  UNMEASURED at precision 4. The transport term binds
+         *                 them (8000/6400/5333, below the additive's
+         *                 9987/9450/8968). Follow-up.
+         *   5 pure-T1     clean at its transport-bound cap 4571 (same grid).
+         * nT1 == 0 with armed == 0 is a zero-channel config. The caller never
+         * passes it (Streaming_ComputeMaxFreqTermsForConfigIface gates on
+         * total > 0), and `<= 1u` mirrors the #832 branch's shape. */
+        period_ns = 93001ULL;
+        num = 800000000ULL;   /* the 0.93 margin is in period_ns, not in num */
+    } else if (isJson != 0u && armed != 0u && nMon == 0u) {
+        /* #920 (2026-09-15): JSON, scan armed, OBDiag off -- ALL such configs,
+         * with NO channel-count threshold. This replaces the earlier
+         * (nT1+nT2user) >= 11 branch, whose 300075 + 42516*(n-10) law had seen
+         * only the 11ch and 16ch points and left every armed config of 1..10
+         * user channels on the shared additive law + the #529 transport curve.
+         * The T2-ramp grid below measured those lower counts dropping data at
+         * their own enforced caps, so they were over ceiling too.
+         *
+         * WHY T2 IS ITS OWN TERM: a T2 (MODULE7 scan) channel costs more CPU
+         * per tick than a T1 channel. The shared #563 law prices them
+         * 4550 vs 15190 ns and the #529 JSON transport curve 32000/(2+n) is
+         * channel-type-BLIND -- both under-price T2 at precision 4. That is
+         * why 3xT2..11xT2 are over ceiling on `main` today, not only under the
+         * n>=11 branch being replaced here.
+         *
+         * BASIS (#920 T2-ramp grid: USB, JSON, CONFigure:VOLTage:PRECision 4,
+         * OBDiag off, real ADC, 600 s at the enforced cap per step,
+         * freeze-aware -- T1ArdyMisses and ScanStaleDropped count as loss --
+         * walk-down -12.5% per failed step, max 4 steps; board
+         * 7E2837886201026A, fw crc32 3AA36CA7 (the branch above, unmodified
+         * below 11ch, merged with main 69e6a6ff); atcap_20260915_132400,
+         * _141756, _142827, _144923, _151019.csv, with _112212.csv the earlier
+         * grid. Issue #920 comment 5688902145 holds the full table):
+         *   3xT2      FAIL  5802  222428 drops (6%)       clean 5075
+         *   5xT2      FAIL  4571  432895 drops (15%)      clean 3975
+         *   8xT2      FAIL  3200  260039 drops (13%)      clean 2800
+         *   11xT2     FAIL  2335  103635 drops (7%)       clean 2025
+         *   5T1+5T2   clean 2666  0 drops                 (never failed)
+         *   5T1+11T2  FAIL  1777   37261 drops (3.5%)     clean 1550
+         * The FAIL rate in each row is that config's ENFORCED cap before this
+         * fix -- what the device actually let a user select -- and the rates
+         * come from three different terms, which matters when reading them:
+         * 5802 is the shared additive law (transport would have allowed 6400
+         * there); 4571, 3200 and 1777 ARE the transport curve 32000/(2+n);
+         * 2335 is the n>=11 branch this one replaces (transport there was
+         * 2461, so the curve's own 11ch value was never directly tested).
+         * Every "clean" figure is a walk-down step, i.e. the highest rate
+         * measured clean, NOT a located ceiling -- each true ceiling lies in
+         * [clean, FAIL). 5T1+11T2 was separately soak-validated clean at 1440
+         * (test_920, patterns 0 and 3, 600 s, 0 drops). 5T1+5T2 never failed;
+         * its 2666 bounds the fit from above and is not a failure constraint.
+         *
+         * THE LAW: period_ns = 73576 + 27921*nT1 + 31975*nT2user. Linear in
+         * PERIOD, the form of this whole additive model (each channel adds a
+         * fixed per-tick cost), with T1 and T2 priced separately because the
+         * grid shows they are not interchangeable. Fitted to land at or under
+         * 93% of each measured-clean figure -- the #832 never-over rule -- at
+         * the two points that bind, and further under it elsewhere:
+         *
+         *   nT1 nT2  period_ns    Hz   was   clean  Hz/clean  32000/(2+n)
+         *    0   1     107490*  7442  7442     --      --        11000
+         *    0   3     169501   4719  5802    5075    93.0% <-    6400
+         *    0   5     233451   3426  4571    3975    86.2%       4571
+         *    0   8     329376   2428  3200    2800    86.7%       3200
+         *    0  11     425301   1881  2335    2025    92.9% <-    2461
+         *    5   5     373056   2144  2666    2666    80.4%       2666
+         *    5  11     564906   1416  1440    1550    91.4%       1777
+         *   (* the shared-else period won at 1xT2; see NEVER RAISES below.)
+         * 0.93*5075 = 4719.75 and 0.93*2025 = 1883.25, so 4719 and 1881 are
+         * on the safe side of both binding points by construction.
+         *
+         * BELOW TRANSPORT EVERYWHERE, not just at the rows above. This term's
+         * period is compared against the transport curve's equivalent period,
+         * 800e6/(32000/(2+n)) = 25000*(2+n):
+         *   fit - transportEquiv = 23576 + 2921*nT1 + 6975*nT2user
+         * which is positive for every nT1 and nT2user. So this branch's period
+         * is always the longer one and its Hz always the lower: the #529 curve
+         * is dormant across this branch's whole domain (swept nT1 0..5 x
+         * nT2user 1..11, NQ1's full public channel set -- no exceptions).
+         *
+         * NEVER RAISES A CAP. The branch takes the LONGER of its own period
+         * and the period the final `else` would have produced, which under
+         * this guard (armed == 1, nMon == 0) reduces to
+         * 92300 + 4550*nT1 + 15190*nT2user. That max() is load-bearing, not
+         * decorative: at nT1=0, nT2user=1 the fit alone gives 105551 ns =
+         * 7579 Hz against today's enforced 7442 -- a RAISE of +1.8% on a
+         * config with NO precision-4 measurement behind it. The shared-else
+         * period 107490 ns wins there and 1xT2 is left exactly as it was.
+         * Solving fit - sharedElse = -18724 + 23371*nT1 + 16785*nT2user < 0
+         * over the domain shows 1xT2 is the ONLY config where shared-else
+         * wins (armed with nMon == 0 implies nT2user >= 1, so nT2user == 0
+         * never reaches here).
+         *
+         * INTERPOLATED, NOT MEASURED: every (nT1, nT2user) not in the table --
+         * e.g. 1T1+1T2 -> 5993 Hz, 2T1+1T2 -> 4956, 5T1+1T2 -> 3263. Two
+         * coefficients fitted from six points; the law is a straight line in
+         * each channel type and the true cost surface is not known to be
+         * linear. What IS guaranteed for those cells is the direction: the
+         * max() above means none of them can end up above what was enforced
+         * before. Measuring the mixed low-count cells is the follow-up, the
+         * way #596's fine-grain grid was for PB.
+         *
+         * COST AT A CLEAN POINT: 5T1+5T2 measured clean at 2666 and this law
+         * gives it 2144, 80% of clean. That is the price of one two-term law
+         * over six points and it is accepted deliberately -- no failure was
+         * ever observed at 10ch, so 2144 is conservative there, not
+         * corrective. Bending the law to hug 10ch would have to give up
+         * margin at 3xT2 or 11xT2, which are the points that actually failed.
+         *
+         * NOT PRECISION-GATED, for the reason the two sibling branches above
+         * give: this only LOWERS caps, and the laws it replaces were applied
+         * to JSON at EVERY precision. 0 emits integers (no "%.*f"), 1..4 are
+         * the same float path with fewer or equal digits, 5..10 emit MORE
+         * digits and are UNMEASURED -- no worse than before, not proven safe.
+         *
+         * NOT MOVED / NOT COVERED:
+         *   OBDiag on (nMon > 0)  UNMEASURED for JSON at precision 4. The
+         *                         guard requires nMon == 0, so these stay on
+         *                         the final `else` + transport, unchanged.
+         *                         OBDiag ON is the shipped default
+         *                         (CommonRuntimeDefaults.h), and there
+         *                         5T1+11T2 still sits at transport 1777 --
+         *                         the rate that FAILED with OBDiag off.
+         *                         Follow-up.
+         *   NQ2/NQ3               Untouched. Different ADC and timing; this
+         *                         function is NQ1-only.
+         *
+         * STILL UNMEASURED beyond this branch's scope: OBDiag ON for JSON at
+         * precision 4 (see above); precisions 5-10 (see NOT PRECISION-GATED);
+         * NQ2/NQ3 (a different ADC/timing model entirely, out of scope of
+         * this NQ1-only function). */
+        uint64_t sharedElsePeriod_ns = 92300ULL + 4550ULL*nT1 + 15190ULL*nT2user;
+        period_ns = 73576ULL + 27921ULL*nT1 + 31975ULL*nT2user;
+        if (sharedElsePeriod_ns > period_ns) {
+            /* Take the LONGER period == the LOWER Hz. Only bites at 1xT2. */
+            period_ns = sharedElsePeriod_ns;
+        }
+        num = 800000000ULL;   /* the >=93% margin is in period_ns, not in num */
     } else {
         period_ns = 71000ULL + 21300ULL*armed + 4550ULL*nT1 + 15190ULL*nT2user + 2680ULL*nMon;
         num = 800000000ULL;   /* 1e9 * 0.80 (CSV; transport min'd downstream) */
@@ -428,9 +629,49 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
                  *   5ch (5xT1 OBD=OFF)  7000 Hz  951 KB/s
                  *  10ch (5T1+5T2)       3000 Hz  737 KB/s
                  *  16ch (5T1+11T2)      2000 Hz  755 KB/s
-                 * single 11000 and 32000/(2+n) sit at 89% of measured at n=1,
-                 * 10 and 16 -- inside the 86-100% tightness band the other
-                 * transport fits use.
+                 * single 11000 is 92% of the 1ch figure (11000/12000 = 91.7%),
+                 * and 32000/(2+n) is 89% of it at n=10 (2666) and n=16 (1777)
+                 * -- inside the 86-100% tightness band the other transport
+                 * fits use. (An earlier revision said 89% at n=1 as well.)
+                 *
+                 * THAT SWEEP'S PRECISION WAS NEVER RECORDED, so the table is a
+                 * set of ceilings at an UNKNOWN CONFigure:VOLTage:PRECision.
+                 * The #920 grid pinned precision 4, the NQ1 shipped default
+                 * (USB, OBDiag off, real ADC, 600 s at-cap, board
+                 * 7E2837886201026A, crc32 EDF83A67, atcap_20260915_112212.csv):
+                 *   1ch   clean 9250, FAIL 10589      (table: 12000 Hz, 563 KB/s)
+                 *   5ch   clean at this curve's 4571   (5xT1 -- 5xT2 FAILS here,
+                 *                                       see the T2-ramp grid below)
+                 *  10ch   clean at this curve's 2666   (5T1+5T2)
+                 *  16ch   clean 1550, FAIL 1777 = this curve's own n=16 value
+                 *                                     (table: 2000 Hz, 755 KB/s)
+                 * So at precision 4 the "measured-safe" reading does NOT hold
+                 * for the single 11000, which is above the 10589 that already
+                 * failed. The #920 T2-ramp grid (2026-09-15, same board, crc32
+                 * 3AA36CA7, atcap_20260915_132400/_141756/_142827/_144923/
+                 * _151019.csv; issue #920 comment 5688902145) then showed it
+                 * does not hold for T2-HEAVY configs either. Which points that
+                 * grid actually tested matters, so read them separately:
+                 *   TESTED AT THIS CURVE'S OWN VALUE, AND FAILED:
+                 *     n=5   5xT2      4571 = 32000/7   -> 432895 drops (15%)
+                 *     n=8   8xT2      3200 = 32000/10  -> 260039 drops (13%)
+                 *     n=16  5T1+11T2  1777 = 32000/18  ->  37261 drops (3.5%)
+                 *   NOT TESTED AT THIS CURVE'S VALUE -- a LOWER rate was the
+                 *   enforced cap and failed, so the curve's own figure is
+                 *   INFERRED unsafe, not measured:
+                 *     n=3   3xT2      curve 6400, but the shared additive law
+                 *                     bound the config to 5802, and 5802
+                 *                     failed (222428 drops, 6%). 6400 > 5802.
+                 *     n=11  11xT2     curve 2461, but the (now-replaced) n>=11
+                 *                     armed branch bound it to 2335, and 2335
+                 *                     failed (103635 drops, 7%). 2461 > 2335.
+                 * The curve's 10ch value 2666 held, at the 5T1+5T2 mix, in both
+                 * grids -- but its 5ch value held only at 5xT1 and FAILED at
+                 * 5xT2 at the SAME n. This curve is channel-type-BLIND, and a
+                 * T2 (MODULE7 scan) channel costs more CPU per tick than a T1
+                 * channel, so a hold at one mix is not evidence for another
+                 * mix at the same n. Whether the table's 7000 and 3000 Hz
+                 * ceilings hold at precision 4 is still unmeasured.
                  *
                  * n=5 lands at 65%, deliberately. No A/(B+n) can pass through
                  * both 7000@5 and 2000@16 with positive B (solving gives
@@ -440,17 +681,38 @@ static inline uint32_t Streaming_TransportMaxFreq(StreamingInterface interface,
                  * 5ch headroom is real but unreachable through this curve,
                  * the same way CsvCompact's is.
                  *
-                 * NOTE the single (n=1) value is currently DORMANT. The
-                 * enforced cap is min(additive, transport), and for JSON the
-                 * additive model runs its CSV-class branch (isProtoBuf=0,
-                 * x0.80 envelope): 1xT1 gives 800e6/(71000+4550) = 10589 Hz,
-                 * below this 11000, so the additive binds and the single never
-                 * applies. Confirmed on the bench -- the device reports exactly
-                 * 10589 for that config. It is set to the measured-safe
-                 * transport value anyway (<= the 12000 ceiling) so it is
-                 * correct if a JSON-specific ADDITIVE fit later lifts that
-                 * bound; characterising the additive for JSON is the follow-up
-                 * that would unlock the remaining 1-channel headroom.
+                 * DORMANT ACROSS THE WHOLE ARMED/OBDIAG-OFF DOMAIN, not just
+                 * where #920 first measured a failure. The enforced cap is
+                 * min(additive, transport), and Streaming_AdcAdditiveCap_NQ1's
+                 * JSON branches (#920) sit BELOW this term everywhere they
+                 * cover:
+                 *   n=1 pure-T1:   8602 < 11000 (the single)
+                 *   armed, OBDiag off, ANY channel count (T2-ramp refit,
+                 *     2026-09-15): that branch's period is
+                 *     73576 + 27921*nT1 + 31975*nT2user, and this term's
+                 *     equivalent period is 800e6/(32000/(2+n)) = 25000*(2+n).
+                 *     The difference, 23576 + 2921*nT1 + 6975*nT2user, is
+                 *     positive for every nT1/nT2user in NQ1's public channel
+                 *     set, so the additive branch's period is always the
+                 *     longer and its Hz always the lower. At the #920 T2-ramp
+                 *     points: 4719 3426 2428 1881 2144 1416 against this
+                 *     term's own 6400 4571 3200 2461 2666 1777.
+                 * The single was dormant before #920 too: the additive's
+                 * shared law gave 1xT1 800e6/(71000+4550) = 10589 < 11000, and
+                 * the device reported exactly 10589 for that config before
+                 * this fix (re-verified 2026-09-15 on crc32 EDF83A67, #920).
+                 * #920 lowers it further, to 8602. n=11..16 were NEWLY dormant
+                 * at #920's first (11..16ch-only) branch; the T2-ramp refit
+                 * extends that down through every armed channel count,
+                 * including the n=2..10 configs that used to reach this curve
+                 * directly. Everywhere else -- unarmed 2..5 pure-T1 channels,
+                 * and every OBDiag-on config -- JSON's cap is
+                 * min(shared additive, this term) exactly as before.
+                 *
+                 * Do not read the dormant values above as measured-safe, and
+                 * do not raise the single on the table's strength. The JSON
+                 * additive branches bind there now, and lifting any of it
+                 * needs a precision-4 measurement first.
                  *
                  * NQ2/NQ3 are NOT covered: their wider ADC codes cost more
                  * bytes/sample, so an NQ1-fitted Hz cap would over-cap them.

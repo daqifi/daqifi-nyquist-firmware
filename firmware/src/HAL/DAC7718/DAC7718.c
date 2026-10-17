@@ -10,6 +10,7 @@
 #include "peripheral/gpio/plib_gpio.h"
 #include "peripheral/spi/spi_master/plib_spi2_master.h"
 #include "peripheral/coretimer/plib_coretimer.h"
+#include "HAL/WaitLoop.h"
 #include "Util/Logger.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -313,17 +314,38 @@ bool DAC7718_Init(uint8_t id, uint8_t range)
 /* Wait for a SPI2STAT bit to reach @p want (true = wait for set, false =
  * wait for clear), YIELDING so a stuck SPI2 peripheral does not busy-spin at
  * the caller's (SCPI command) task priority for the whole budget (#913's
- * twin, #1057). Mirrors UserSpi.c's spi_WaitStat exactly, including the
- * ordering that a status change during the final yield is not lost: the
- * condition is tested BEFORE the deadline is ever consulted, on every pass,
- * and the deadline branch takes a FRESH read rather than trusting the
- * immediately-preceding check -- this task can be preempted in the gap
- * between them (an opus review of #913 caught this same gap for UserSpi;
- * the same reasoning applies here since it is the same scheduler). See
- * UserSpi.c's spi_WaitStat for the full derivation -- not re-derived here to
- * avoid a fourth copy of the same reasoning drifting out of sync (#1056
- * tracks collapsing UserSpi.c/UserUart.c/UserI2c.c's three existing copies,
- * and now this one, into a single shared definition).
+ * twin, #1057).
+ *
+ * THE LOOP ITSELF LIVES IN HAL/WaitLoop.h (#1108, finishing what #1056
+ * started), one definition shared with spi_WaitStat, uart_WaitSta and
+ * i2c_WaitMif rather than a fourth copy of the same shape. #913's ordering
+ * guarantee -- the status is read before the budget is ever consulted, and
+ * ONCE MORE, freshly, at expiry, so a bit that set while this task was
+ * preempted still counts as success -- is stated and EXERCISED there:
+ * tests/host/test_1056_wait_loop.c compiles that header for real, which is
+ * what retires the grep guard + modelled copy (test_1057_dac7718_wait_stat.c)
+ * that stood in for it here. What stays below is what is specific to SPI2:
+ * the status read, the tick budget, and the spin bound.
+ *
+ * WHY THIS CALLS WaitLoop_HoistedSpinThenYield, NOT WaitLoop_SpinThenYield.
+ * #1057 deliberately moved the fast spin OUTSIDE the retry loop -- one spin
+ * at entry, then a retry loop doing a SINGLE status read per 1 ms wake --
+ * answering a Qodo /improve finding that re-spinning 8000 times per wake buys
+ * no extra detection for a level-sensitive bit: once the fast path has
+ * missed, SPI2 is genuinely not responding, and a single register read per
+ * tick detects that exactly as reliably as an 8000-iteration re-spin would,
+ * for a fraction of the CPU cost. #1108's first attempt folded this onto the
+ * three OTHER drivers' shape (WaitLoop_SpinThenYield, which spins INSIDE its
+ * retry loop and re-pays the spin on every wake) as though DAC7718 were a
+ * fourth instance of that shape. It is not, and PR #1109 shipped that
+ * regression: measured at +316 B against main versus -35 B for #1056's fold
+ * of the three drivers that really do share a shape (detail on #1109 comment
+ * 5697480428 and the #1108 correction, comment 5697483101). This call site
+ * now names WaitLoop_HoistedSpinThenYield -- see that function's doc comment
+ * in WaitLoop.h for the full derivation -- which keeps the loop shared with
+ * the other three drivers' HEADER while restoring DAC7718's own retry shape,
+ * proven for real by tests/host/test_1056_wait_loop.c the same way
+ * WaitLoop_SpinThenYield is.
  *
  * The one shape this collapses that the other three drivers don't have:
  * DAC7718's "shift register empty" wait was previously expressed via the
@@ -339,42 +361,46 @@ bool DAC7718_Init(uint8_t id, uint8_t range)
  * and inverting the sense, lets all three of this driver's wait shapes
  * (TX-buffer-empty, RX-buffer-not-empty, shift-register-empty) route
  * through this one helper instead of two different waiting idioms -- the
- * design choice this PR makes over routing this one condition through
+ * design choice #1057 made over routing this one condition through
  * SPI2_IsTransmitterBusy() and keeping two wait idioms (Qodo /agentic_review,
  * declined with rationale on the PR). */
+typedef struct {
+    uint32_t   mask;
+    bool       want;
+    TickType_t start;
+    TickType_t timeoutTicks;
+} Dac7718WaitCtx_t;
+
+static bool dac7718_WaitBitMet(void* ctx) {
+    const Dac7718WaitCtx_t* w = (const Dac7718WaitCtx_t*)ctx;
+    return ((SPI2STAT & w->mask) != 0u) == w->want;
+}
+
+static bool dac7718_WaitBudgetSpent(void* ctx) {
+    const Dac7718WaitCtx_t* w = (const Dac7718WaitCtx_t*)ctx;
+    /* Rollover-safe: unsigned (now - start) is the true elapsed count even
+     * across a tick-counter wrap, unlike an absolute-deadline compare. */
+    return (TickType_t)(xTaskGetTickCount() - w->start) >= w->timeoutTicks;
+}
+
+static void dac7718_WaitYield(void* ctx) {
+    (void)ctx;
+    vTaskDelay(1);
+}
+
 static bool dac7718_WaitStat(uint32_t mask, bool want,
-                              TickType_t start, TickType_t timeoutTicks)
+                             TickType_t start, TickType_t timeoutTicks)
 {
-    /* The fast spin runs ONCE, not once per retry -- it exists to cover the
-     * common fast-completion case with zero context switches, not to be
-     * re-paid on every wake from vTaskDelay(1). Once it has missed, the
-     * condition is being waited on for real, and a single register read per
-     * 1ms tick detects a level-sensitive status bit exactly as reliably as
-     * an 8000-iteration re-spin would (there is nothing here that could flip
-     * and flip back between one tick and the next). Re-spinning per retry
-     * was flagged by Qodo /improve on this PR: it burns ~8000 extra register
-     * reads per tick for the whole fault-path duration for no additional
-     * detection value -- the inherited shape in UserSpi.c's spi_WaitStat /
-     * UserUart.c's uart_WaitSta / UserI2c.c's i2c_WaitMif has the identical
-     * per-retry re-spin (see the comment left on #1056, which tracks
-     * consolidating all four into one shared definition -- that
-     * consolidation should use THIS hoisted shape, not the original). */
-    for (uint32_t s = 0; s < DAC7718_SPI_FAST_SPIN_COUNT; ++s) {
-        if (((SPI2STAT & mask) != 0u) == want) { return true; }
-    }
-    for (;;) {
-        if (((SPI2STAT & mask) != 0u) == want) { return true; }
-        /* Rollover-safe: unsigned (now - start) is the true elapsed count
-         * even across a tick-counter wrap, unlike an absolute-deadline
-         * compare. */
-        if ((TickType_t)(xTaskGetTickCount() - start) >= timeoutTicks) {
-            /* Fresh read, not a reuse of the check above: this task can be
-             * preempted between that check and this one, and a bit that set
-             * during the preemption must still count as success. */
-            return (((SPI2STAT & mask) != 0u) == want);
-        }
-        vTaskDelay(1);
-    }
+    Dac7718WaitCtx_t w = { mask, want, start, timeoutTicks };
+    /* Named directly, never through a variable, so the optimiser's
+     * inline -> constant-propagate -> devirtualise chain applies and the
+     * spin keeps costing one register read per iteration (WaitLoop.h's
+     * "COST" paragraph). HoistedSpinThenYield, not SpinThenYield: see the
+     * doc comment above this function for why the two are not
+     * interchangeable here (#1109). */
+    return WaitLoop_HoistedSpinThenYield(dac7718_WaitBitMet, dac7718_WaitBudgetSpent,
+                                         dac7718_WaitYield, &w,
+                                         DAC7718_SPI_FAST_SPIN_COUNT);
 }
 
 uint32_t DAC7718_ReadWriteReg(uint8_t id, uint8_t RW, uint8_t Reg, uint16_t Data)

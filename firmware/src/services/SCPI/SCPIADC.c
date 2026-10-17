@@ -6,6 +6,7 @@
 // General
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>   /* #1154: isfinite, for AdcCalCoefficientFinite below */
 
 // Harmony
 #include "configuration.h"
@@ -83,6 +84,53 @@ static bool AdcChannelArgInRange(scpi_t * context, int channel, const char * cmd
         return true;
     }
     LOG_E("%s: channel %d out of range (max 255)", cmd, channel);
+    SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+    return false;
+}
+
+// #1154: CONFigure:ADC:chanCALM / chanCALB took ANY double for the
+// calibration coefficient, including one that overflows to +-inf --
+// `CONF:ADC:chanCALB 0,1e400` stored `inf` and SYST:ERR? read
+// 0,"No error" (measured on an NQ1, serial 7E2837886201026A). volts =
+// m*counts + b is then not computable and nothing tells the client.
+//
+// SCOPE: #1154 is a decision ticket and deliberately declines to set a
+// magnitude bound -- what the legitimate coefficient range is, and whether
+// USECal 2 (raw) or the factory-vs-user split narrows it further, is left
+// open for a future ticket. This guard answers only the one question the
+// ticket itself already settles: "at minimum, non-finite should be
+// rejected -- there is no calibration workflow that wants inf, and it is
+// the case with no defensible reading." A finite value, however large, is
+// accepted exactly as before this fix.
+//
+// -222 (SCPI_ERROR_DATA_OUT_OF_RANGE) matches AdcChannelArgInRange above,
+// the other bounded-argument guard this pair of setters already has.
+//
+// SETTER-SIDE ONLY, on purpose: daqifi_settings_LoadADCCalSettings
+// (daqifi_settings.c) copies NVM straight into the runtime array with a
+// plain field assignment and never calls this helper or
+// ADCChanCalmSetClaimed/ADCChanCalbSetClaimed -- so a board that already
+// has inf stored (from before this fix, or from #908's boot re-stamping
+// path, tracked as its own ticket/PR at #1077) keeps LOADing it exactly as
+// before. Checked by reading daqifi_settings.c, not assumed: neither
+// LoadADCCalSettings nor SaveADCCalSettings references this function or
+// either ...Claimed callback. A setter-side-only guard therefore cannot
+// make an already-stored out-of-range value unloadable, which answers
+// #1154's third open question (does rejecting break SAVEcal/LOADcal
+// round-trip?) -- no, because the load path never runs through here.
+//
+// Deliberately NOT the same fix as #1149/#1144's CapJsonDouble
+// (SCPIInterface.c), which spells a non-finite calibration double as JSON
+// null in CONF:CAP:JSON? rather than refusing it -- that emitter-side fix
+// is not made redundant by this one, since #908's boot re-stamping path can
+// still put inf into CalM/CalB with no setter call at all, so the emitter
+// still has to stay robust regardless of this guard.
+static bool AdcCalCoefficientFinite(scpi_t * context, double value, const char * cmd)
+{
+    if (isfinite(value)) {
+        return true;
+    }
+    LOG_E("%s: coefficient is not finite (NaN/inf rejected)", cmd);
     SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
     return false;
 }
@@ -181,6 +229,13 @@ scpi_result_t SCPI_ADCVoltageGet(scpi_t * context) {
 }
 
 static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context);
+
+/* #1112 round 3: the widest user-channel span the one-argument mask form can
+ * touch. maxUserChannel below is 7 (NQ3) or 15 (every other variant), so 16
+ * entries is the hard ceiling on how many per-channel writes ONE
+ * CONF:ADC:CHANnel <mask> can stage -- and the staging arrays are sized from
+ * this, so the loop bound and the array capacity cannot drift apart. */
+#define ADC_MASK_MAX_USER_CHANNELS 16u
 
 /* #847: the claim is taken HERE and released on the single path out, so no
  * error return inside the body can leak it. The body is 259 lines with twelve
@@ -295,9 +350,29 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
             // count (user + monitoring), not the settable channel-id range,
             // which is sparse (NQ1 user 0..15, monitoring 248..255; NQ3 0..7).
             // A numeric range here would be wrong per-variant (#630 review).
-            LOG_E("CONF:ADC:CHAN: channel %d not addressable (not a settable "
-                  "analog channel). The two-arg form is <channel>,<state>; use "
-                  "the one-arg <mask> form to enable channels by bitmask.",
+            /* #1039 (#1000 class): the old text was 170 fixed bytes plus one
+             * %d (11 at the 32-bit worst case, "-2147483648"), a 181-byte
+             * worst case against Logger's 125-byte effective ceiling
+             * (LOG_MESSAGE_SIZE 128, minus vsnprintf's 2-byte and the clamp's
+             * 3-byte reservation in LogMessageFormatImpl) -- so the tail was
+             * cut on every firing, and the tail was the remedy naming the
+             * one-arg <mask> form. The text below is 109 fixed bytes, worst
+             * case 109+11 = 120, margin 5.
+             *
+             * What was dropped is the parenthetical gloss "(not a settable
+             * analog channel)", which restates "not addressable"; both legal
+             * argument forms -- the actionable half -- are kept. The command
+             * path is spelled out in full, CONFigure:ADC:CHANnel, copied
+             * verbatim from its registration (SCPIInterface.c:8768) rather
+             * than printed as the short form CONF:ADC:CHAN this message used
+             * to carry: both are legal spellings a device accepts
+             * (utils.c's matchPattern/compareStr), but a diagnostic whose text
+             * differs from the registered string cannot be kept in sync with
+             * a later rename mechanically -- only a verbatim copy can (PR
+             * #1110 review item 5, worker ruling 2026-09-16). */
+            LOG_E("CONFigure:ADC:CHANnel: channel %d not addressable; "
+                  "two-arg form is <channel>,<state>, one-arg form is a "
+                  "<mask>.",
                   param1);
             // Push a specific error (not the libscpi-default generic -200) so
             // the failure is classifiable via SYST:ERR? too — consistent with
@@ -368,7 +443,46 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
         // Channel mask - board variant-aware bulk enable
         uint8_t boardVariant = pBoardConfig->BoardVariant;
         uint8_t maxUserChannel = (boardVariant == 3) ? 7 : 15; // NQ3: 0-7, others: 0-15
-        
+
+        /* #1112 round 3 -- STAGE THE MASK, THEN APPLY IT ATOMICALLY.
+         *
+         * Each IsEnabled is a properly-aligned bool, so one store is already
+         * atomic on PIC32MZ (CLAUDE.md atomicity rules) -- which is why the
+         * single-channel branch above needs no section. What is NOT atomic is
+         * this COMMAND: the mask form writes up to 16 of them in ascending
+         * channel order, and the enabled-set the operator asked for exists only
+         * once the last one has landed. Preempted mid-loop, the array holds an
+         * intermediate that was never commanded -- `CONF:ADC:CHAN 1` followed by
+         * `CONF:ADC:CHAN 2` passes through {0}, {}, {1}, and
+         * `CONF:ADC:CHAN 3` -> `CONF:ADC:CHAN 514` passes through {0,1}, {1},
+         * ..., {1,9}. A reader on the OTHER SCPI transport that samples there
+         * describes a device configuration that never existed as a commanded
+         * one: CONF:CAP:JSON? reports a scan list, and per-channel
+         * scan_offset_ticks derived from it, for the intermediate.
+         *
+         * MC12b_ComputeScanList (HAL/ADC/MC12bADC.c) is that reader, and #1112
+         * round 3 gives it its own critical section so its <=48 flag reads are
+         * one snapshot. That half alone only NARROWS this window -- it stops
+         * the reader STRADDLING this loop, not the reader landing inside it --
+         * so both halves ship together, the same pairing #1048/#1054 make for
+         * CalM/CalB and #1086 makes for the AD7609 Range (ADCChanRangeSetClaimed
+         * / SCPI_ADCChanRangeGet below): neither half is sufficient alone.
+         *
+         * The resolve pass keeps ADC_FindChannelIndex/ADC_FindModule and the
+         * variant switch OUTSIDE the section, so what runs with interrupts
+         * masked is <=16 byte stores -- not ~16 table searches. The arms below
+         * are otherwise untouched: each one's `channelRuntimeConfig->IsEnabled =
+         * value;` became `maskTargets[index] = channelRuntimeConfig;`, so which
+         * channels a variant may write is decided by exactly the same code as
+         * before. A NULL slot means "this variant does not write this channel".
+         *
+         * The claim the wrapper holds does not substitute for this. It keeps a
+         * STREAM out; it does not keep out the readers that deliberately take no
+         * claim and reach this array from the other transport -- CONF:CAP:JSON?,
+         * SYST:SYSInfoPB?, and the streaming-cap terms. */
+        AInRuntimeConfig* maskTargets[ADC_MASK_MAX_USER_CHANNELS] = { NULL };
+        bool maskValues[ADC_MASK_MAX_USER_CHANNELS] = { false };
+
         for (size_t index = 0; index <= maxUserChannel; ++index) {
             size_t channelIndex = ADC_FindChannelIndex((uint8_t) index);
             if (channelIndex < pBoardConfigAInChannels->Size) {
@@ -378,31 +492,44 @@ static scpi_result_t ADCChanEnableSetClaimed(scpi_t * context) {
                 const AInModule* module = ADC_FindModule(channel->Type);
                 bool value = (bool) ((param1 & (1 << index)) > 0);
 
+                maskValues[index] = value;
+
                 switch (boardVariant) {
                     case 1: // NQ1: MC12bADC user channels 0-15
                         if (module->Type == AIn_MC12bADC && channel->Config.MC12b.IsPublic) {
-                            channelRuntimeConfig->IsEnabled = value;
+                            maskTargets[index] = channelRuntimeConfig;
                         }
                         break;
-                        
+
                     case 3: // NQ3: AD7609 user channels 0-7
                         if (module->Type == AIn_AD7609) {
-                            channelRuntimeConfig->IsEnabled = value;
+                            maskTargets[index] = channelRuntimeConfig;
                         }
                         break;
-                        
+
                     default: // NQ2 or legacy
                         if (module->Type == AIn_MC12bADC) {
                             if (channel->Config.MC12b.IsPublic) {
-                                channelRuntimeConfig->IsEnabled = value;
+                                maskTargets[index] = channelRuntimeConfig;
                             }
                         } else {
-                            channelRuntimeConfig->IsEnabled = value;
+                            maskTargets[index] = channelRuntimeConfig;
                         }
                         break;
                 }
             }
         }
+
+        /* Holds the stores and nothing else -- no lookup, no logging, no
+         * blocking call, the constraint #1086's section states in full. Task
+         * context only: this is a SCPI callback. */
+        taskENTER_CRITICAL();
+        for (size_t index = 0; index <= maxUserChannel; ++index) {
+            if (maskTargets[index] != NULL) {
+                maskTargets[index]->IsEnabled = maskValues[index];
+            }
+        }
+        taskEXIT_CRITICAL();
         // Note: Monitoring channels (>maxUserChannel) are always enabled and not user-controllable
     }
     uint16_t activeType1ChannelCount = 0;
@@ -1144,7 +1271,7 @@ scpi_result_t SCPI_ADCChanCalmSet(scpi_t * context) {
     if (claim != STREAM_CFG_CLAIM_OK) {
         return SCPI_RejectCfgClaim(context,
                                    claim == STREAM_CFG_CLAIM_BUSY,
-                                   "CONF:ADC:chanCALM");
+                                   "CONF:ADC:CHANCALM");
     }
     scpi_result_t result = ADCChanCalmSetClaimed(context);
     Streaming_EndConfigChange();
@@ -1170,9 +1297,15 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // #1154: reject a non-finite coefficient before it reaches the runtime
+    // array -- see AdcCalCoefficientFinite.
+    if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {
+        return SCPI_RES_ERR;
+    }
+
     // #877: reject before the (uint8_t) narrowing -- see
     // AdcChannelArgInRange.
-    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALM")) {
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:CHANCALM")) {
         return SCPI_RES_ERR;
     }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
@@ -1194,7 +1327,7 @@ scpi_result_t SCPI_ADCChanCalbSet(scpi_t * context) {
     if (claim != STREAM_CFG_CLAIM_OK) {
         return SCPI_RejectCfgClaim(context,
                                    claim == STREAM_CFG_CLAIM_BUSY,
-                                   "CONF:ADC:chanCALB");
+                                   "CONF:ADC:CHANCALB");
     }
     scpi_result_t result = ADCChanCalbSetClaimed(context);
     Streaming_EndConfigChange();
@@ -1218,9 +1351,15 @@ static scpi_result_t ADCChanCalbSetClaimed(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    // #1154: reject a non-finite coefficient before it reaches the runtime
+    // array -- see AdcCalCoefficientFinite.
+    if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {
+        return SCPI_RES_ERR;
+    }
+
     // #877: reject before the (uint8_t) narrowing -- see
     // AdcChannelArgInRange.
-    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALB")) {
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:CHANCALB")) {
         return SCPI_RES_ERR;
     }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
@@ -1245,7 +1384,7 @@ scpi_result_t SCPI_ADCChanCalmGet(scpi_t * context) {
 
     // #877: reject before the (uint8_t) narrowing -- see
     // AdcChannelArgInRange.
-    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALM?")) {
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:CHANCALM?")) {
         return SCPI_RES_ERR;
     }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
@@ -1270,7 +1409,7 @@ scpi_result_t SCPI_ADCChanCalbGet(scpi_t * context) {
 
     // #877: reject before the (uint8_t) narrowing -- see
     // AdcChannelArgInRange.
-    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:chanCALB?")) {
+    if (!AdcChannelArgInRange(context, param1, "CONF:ADC:CHANCALB?")) {
         return SCPI_RES_ERR;
     }
     size_t index = ADC_FindChannelIndex((uint8_t) param1);
