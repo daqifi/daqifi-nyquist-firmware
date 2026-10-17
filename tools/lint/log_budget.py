@@ -217,48 +217,83 @@ class ToolError(Exception):
     """The tool cannot produce a trustworthy verdict. Always exit 2, never 0."""
 
 
-RESERVE_TERM_RE = re.compile(r"\s*-\s*(\d+)")
+def reserve_after(impl, prefix_re, where, gone_msg):
+    r"""Total subtracted from LOG_MESSAGE_SIZE in the argument after `prefix_re`.
 
+    THE THIRD VERSION OF THIS FUNCTION, and the first two failed the same way
+    from opposite ends (codex audit on #1110, twice):
 
-def reserved_total(expr, where):
-    r"""Sum EVERY constant subtracted from LOG_MESSAGE_SIZE in `expr`.
+        `LOG_MESSAGE_SIZE\s*-\s*(\d+)`   read `- 2 - 10` as 2
+        `LOG_MESSAGE_SIZE([^,)]*)`       read `(LOG_MESSAGE_SIZE - 3) - 10` as 3,
+                                         because it stops at the closing paren
 
-    A PREFIX MATCH IS THE DEFECT THIS EXISTS TO REPLACE (codex audit on
-    #1110). The previous form captured `LOG_MESSAGE_SIZE\s*-\s*(\d+)` and so
-    read `LOG_MESSAGE_SIZE - 2 - 10` as a reservation of 2, deriving a ceiling
-    of 125 where the truth is 115 -- and then every message in the tree was
-    measured against the wrong number while the gate exited 0. The ceiling is
-    the quantity all the other checks are expressed in, so a silent error here
-    is not one wrong answer, it is every answer being about the wrong thing.
+    Both traded one prefix for another. So this does not pattern-match the
+    expression at all: it walks the argument with paren DEPTH, then accounts
+    for every character of it.
 
-    So this consumes the WHOLE expression and REFUSES anything it cannot
-    account for, rather than taking what it recognises and discarding the
-    rest. `expr` is the text between `LOG_MESSAGE_SIZE` and the end of its
-    argument, which the caller's `[^,)]*` cannot read past.
+    `(` after the first `-` is REFUSED rather than stripped, and that is not
+    fussiness: paren-stripping is sound for `(A - b) - c` because subtraction
+    is left-associative, and WRONG for `A - (b - c)`, which it would read as
+    `A - b - c` -- the opposite sign on c. Refusing is the only safe reading.
     """
-    pos = 0
-    terms = []
-    while pos < len(expr):
-        m = RESERVE_TERM_RE.match(expr, pos)
-        if not m:
+    m = re.search(prefix_re + r"(?=\(*\s*LOG_MESSAGE_SIZE)", impl)
+    if not m:
+        raise ToolError(f"{gone_msg} -- re-derive the ceiling by hand and "
+                        f"update read_ceiling()")
+    # Walk the argument: from here to the depth-0 ',' or the ')' that closes
+    # the enclosing call.
+    i, depth, start = m.end(), 0, m.end()
+    while i < len(impl):
+        c = impl[i]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            if depth == 0:
+                break
+            depth -= 1
+        elif c == "," and depth == 0:
             break
-        terms.append(int(m.group(1)))
-        pos = m.end()
-    rest = expr[pos:].strip()
-    if rest:
-        raise ToolError(
-            f"cannot account for {rest!r} in {where} "
-            f"(`LOG_MESSAGE_SIZE{expr}`). This tool only understands a "
-            f"subtraction of integer constants; anything else -- a macro, a "
-            f"`+`, a multiplication, a parenthesised sub-expression -- has to "
-            f"be read by a human, because guessing here mis-sets the ceiling "
-            f"every other check is measured against. Re-derive it and update "
-            f"read_ceiling().")
+        i += 1
+    arg = impl[start:i]
+    j = arg.find("LOG_MESSAGE_SIZE")
+    if j < 0:
+        raise ToolError(f"{where}'s argument {arg.strip()!r} does not mention "
+                        f"LOG_MESSAGE_SIZE")
+    rest = arg[j + len("LOG_MESSAGE_SIZE"):]
+    terms, k, seen_minus = [], 0, False
+    while k < len(rest):
+        ch = rest[k]
+        if ch.isspace():
+            k += 1
+            continue
+        if ch == ")":
+            # closes a paren opened BEFORE LOG_MESSAGE_SIZE, e.g. the `(` in
+            # `min((LOG_MESSAGE_SIZE - 3) - 10, size)`. It carries no value;
+            # a `(` here is refused below, so this cannot flatten `A - (b - c)`.
+            k += 1
+            continue
+        if ch == "(":
+            raise ToolError(
+                f"{where}'s argument {arg.strip()!r} parenthesises a term "
+                f"AFTER a subtraction. `A - (b - c)` is not `A - b - c`, so "
+                f"this cannot be flattened safely -- re-derive the ceiling by "
+                f"hand and update read_ceiling().")
+        mm = re.compile(r"-\s*(\d+)").match(rest, k)
+        if not mm:
+            raise ToolError(
+                f"cannot account for {rest[k:].strip()!r} in {where} "
+                f"(argument {arg.strip()!r}). Only a subtraction of integer "
+                f"constants is understood; a macro, a '+', a multiplication or "
+                f"anything else must be read by a human, because guessing here "
+                f"mis-sets the ceiling every other check is measured against.")
+        seen_minus = True
+        terms.append(int(mm.group(1)))
+        k = mm.end()
     if not terms:
         raise ToolError(
-            f"{where} subtracts nothing from LOG_MESSAGE_SIZE "
-            f"(`LOG_MESSAGE_SIZE{expr}`) -- the reservation is read from "
-            f"source and must not be assumed")
+            f"{where} subtracts nothing from LOG_MESSAGE_SIZE (argument "
+            f"{arg.strip()!r}) -- the reservation is read from source and must "
+            f"not be assumed")
     return sum(terms)
 
 
@@ -279,6 +314,16 @@ def read_ceiling(logger_h_text, logger_c_text):
     ceiling the firmware no longer has -- the one failure this gate must not
     have.
     """
+    # COMMENTS ARE MASKED FIRST. A commented-out or historical line mentioning
+    # `vsnprintf(buffer, LOG_MESSAGE_SIZE - 99, ...)` otherwise WINS the search
+    # and sets the ceiling every message in the tree is measured against --
+    # measured: such a comment produced a ceiling of 28. Found by the blind leg
+    # of the codex audit on #1110. `mask_comments` preserves offsets and
+    # newlines, so every regex below is unaffected except for no longer being
+    # able to match comment text.
+    logger_h_text = mask_comments(logger_h_text)
+    logger_c_text = mask_comments(logger_c_text)
+
     m = re.search(r"^\s*#define\s+LOG_MESSAGE_SIZE\s+(\d+)\s*$",
                   logger_h_text, re.M)
     if not m:
@@ -295,22 +340,14 @@ def read_ceiling(logger_h_text, logger_c_text):
             "the buffer reservations are read from it and must not be assumed")
     impl = body.group(1)
 
-    m1 = re.search(
-        r"vsnprintf\s*\(\s*\w+\s*,\s*LOG_MESSAGE_SIZE([^,)]*)", impl)
-    if not m1:
-        raise ToolError(
-            "LogMessageFormatImpl no longer calls "
-            "vsnprintf(buf, LOG_MESSAGE_SIZE - N, ...) -- re-derive the "
-            "ceiling by hand and update read_ceiling()")
-    m2 = re.search(r"min\s*\(\s*\(?\s*LOG_MESSAGE_SIZE([^,)]*)", impl)
-    if not m2:
-        raise ToolError(
-            "LogMessageFormatImpl no longer clamps with "
-            "min((LOG_MESSAGE_SIZE - N), ...) -- re-derive the ceiling by hand "
-            "and update read_ceiling()")
-
-    vsn_reserve = reserved_total(m1.group(1), "vsnprintf's size argument")
-    clamp_reserve = reserved_total(m2.group(1), "the min() clamp")
+    vsn_reserve = reserve_after(impl, r"vsnprintf\s*\(\s*\w+\s*,\s*",
+                                "vsnprintf's size argument",
+                                "LogMessageFormatImpl no longer calls "
+                                "vsnprintf(buf, LOG_MESSAGE_SIZE - N, ...)")
+    clamp_reserve = reserve_after(impl, r"min\s*\(\s*",
+                                  "the min() clamp",
+                                  "LogMessageFormatImpl no longer clamps with "
+                                  "min((LOG_MESSAGE_SIZE - N), ...)")
     ceiling = min(size - vsn_reserve - 1, size - clamp_reserve)
     if ceiling <= 0:
         raise ToolError(
@@ -898,6 +935,27 @@ def escape_for_record(text):
                 .replace("\n", "\\n").replace("\t", "\\t"))
 
 
+def ambiguous_annotation(src_lines, line, n_calls):
+    """True when one annotation on `line` would bound SEVERAL calls there.
+
+    An annotation names a bound for A call; a line holding two cannot say
+    which, and the old behaviour applied it to BOTH -- so a single `max=1`
+    silenced a neighbour that could truncate (codex audit on #1110, both
+    legs). Refusing costs a split line; guessing costs a silent overflow that
+    the unchanged baseline then blesses as accepted.
+
+    Extracted from scan_file purely so it can be pinned: inline, the condition
+    was only reachable by building a source tree, and an untestable branch is
+    how the previous two rounds' near-misses survived.
+    """
+    if n_calls <= 1:
+        return False
+    idx = line - 1
+    if not (0 <= idx < len(src_lines)):
+        return False
+    return ANNOTATION_RE.search(src_lines[idx]) is not None
+
+
 def scan_file(path, rel, macros, ceiling):
     src = path.read_text(encoding="utf-8", errors="surrogateescape")
     src_lines = src.splitlines()
@@ -909,8 +967,25 @@ def scan_file(path, rel, macros, ceiling):
     # find_annotation() derive it per call site would be quadratic in a file
     # with many LOG_E sites.
     cmap = comment_only_map(src_lines)
-    for macro, pos, args, _call in find_calls(masked, macros):
+    calls = list(find_calls(masked, macros))
+    # How many log-macro calls share each line. An annotation on a line holding
+    # MORE THAN ONE call cannot say which call it bounds, and the old behaviour
+    # was to apply it to every one of them -- so a single `max=1` silenced a
+    # neighbour that could truncate (codex audit on #1110, both legs). A bound
+    # whose subject is ambiguous is refused rather than guessed: refusing costs
+    # a split line, guessing costs a silent overflow the baseline then blesses.
+    calls_on_line = collections.Counter(
+        pos_to_line(src, orig_pos, p) for _m, p, _a, _c in calls)
+    for macro, pos, args, _call in calls:
         line = pos_to_line(src, orig_pos, pos)
+        if ambiguous_annotation(src_lines, line, calls_on_line[line]):
+            found.append(Finding(
+                rel, line,
+                f"ambiguous annotation: {calls_on_line[line]} log calls share "
+                f"this line and one /* log_budget: max=N */ -- it cannot say "
+                f"which call it bounds. Put each call on its own line",
+                ""))
+            continue
         fmt_index = macros[macro]
         if len(args) <= fmt_index:
             found.append(Finding(rel, line, f"{macro} has no format argument",
@@ -1643,6 +1718,34 @@ SELF_TEST_GATE_CASES = [
      "the same in the other direction"),
 ]
 
+# ambiguous_annotation(): one bound, several calls on the line -> refuse.
+# Each case is (name, src_lines, line, n_calls, expected, why).
+SELF_TEST_AMBIGUITY_CASES = [
+    ("two calls and one annotation on the line",
+     ['LOG_E("a %s", s); LOG_E("%s", big); /* log_budget: max=1 */'], 1, 2,
+     True,
+     "the audit's case: the bound was applied to BOTH, so the second was "
+     "reported clean while it could truncate"),
+    ("two calls and NO annotation",
+     ['LOG_E("a %s", s); LOG_E("%s", big);'], 1, 2, False,
+     "nothing to misattribute -- both are measured unbounded, which is the "
+     "stricter reading and already correct"),
+    ("one call with its own annotation",
+     ['LOG_E("%s", s); /* log_budget: max=1 */'], 1, 1, False,
+     "the unambiguous form must keep working -- this is the shape the "
+     "annotation feature exists for"),
+    ("one call, annotation on the line above",
+     ['/* log_budget: max=1 */', 'LOG_E("%s", s);'], 2, 1, False,
+     "six of the eight annotations in firmware/src/ have this shape"),
+    ("three calls and one annotation",
+     ['LOG_E("%s",a); LOG_E("%s",b); LOG_E("%s",c); /* log_budget: max=1 */'],
+     1, 3, True, "the count is reported, so the message names the real shape"),
+    ("a line number out of range is not a crash",
+     ['LOG_E("%s", s);'], 99, 2, False,
+     "pos_to_line and the source list must not be able to raise here -- a "
+     "scanner that crashes on a malformed file reports nothing at all"),
+]
+
 # find_annotation() must bind an annotation to ITS OWN call and to no other.
 # The codex audit on #1110 found it leaking forward: a code line carrying a
 # trailing block comment also ends with "*/", so the walk upward from the NEXT
@@ -1864,6 +1967,54 @@ def self_test():
                   f"A prefix match reads '- 2 - 10' as 2 and mis-sets the "
                   f"number every other measurement is made against")
 
+        # ARITHMETIC AFTER A CLOSING PAREN. Round 2's fix captured
+        # `LOG_MESSAGE_SIZE([^,)]*)`, which stops AT the paren -- so
+        # `min((LOG_MESSAGE_SIZE - 3) - 10, size)` read as a reservation of 3
+        # and derived 125 where the truth is 115. The first fix took a prefix
+        # of the integer, the second took a prefix of the expression; both
+        # were prefixes. reserve_after() walks the argument by paren depth
+        # instead (codex audit on #1110, round 3, both legs).
+        paren_c = ("static int LogMessageFormatImpl(const char* f, va_list a)"
+                   "\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f,"
+                   " a);\n    size = min((LOG_MESSAGE_SIZE - 3) - 10, size);"
+                   "\n}\n")
+        got, _, r_v, r_c = read_ceiling(h, paren_c)
+        if (got, r_v, r_c) != (115, 2, 13):
+            failures += 1
+            print(f"  FAIL [ceiling: after a paren]: derived {got} with "
+                  f"{r_v}/{r_c}, expected 115 with 2/13 -- `(LMS - 3) - 10` "
+                  f"reserves 13, and stopping at the ')' reads 3")
+
+        # A COMMENT MUST NOT SET THE CEILING. Found by the blind leg: the
+        # regexes searched raw Logger.c, so a commented-out or historical line
+        # won the search. Measured: a comment saying `- 99` produced 28.
+        cmt_c = ("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+                 "{\n    /* was vsnprintf(buffer, LOG_MESSAGE_SIZE - 99, f, a)"
+                 "; */\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, "
+                 "a);\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n")
+        got, _, r_v, _ = read_ceiling(h, cmt_c)
+        if (got, r_v) != (125, 2):
+            failures += 1
+            print(f"  FAIL [ceiling: comment wins]: derived {got} with "
+                  f"vsnprintf reserve {r_v}, expected 125 with 2 -- a comment "
+                  f"set the number every message is measured against")
+
+        # A PAREN AFTER A SUBTRACTION MUST REFUSE, NOT FLATTEN. `A - (b - c)`
+        # is NOT `A - b - c` -- the sign on c inverts -- so a reader that
+        # strips parens to cope with `(A - b) - c` would silently mis-derive
+        # this one. Refusing is the only safe reading.
+        neg_c = ("static int LogMessageFormatImpl(const char* f, va_list a)\n"
+                 "{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - (3 - 10),"
+                 " f, a);\n    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n")
+        try:
+            read_ceiling(h, neg_c)
+            failures += 1
+            print("  FAIL [ceiling: paren after a minus]: did not raise -- "
+                  "`A - (3 - 10)` reserves -7, not 13, and flattening the "
+                  "parens inverts the sign")
+        except ToolError:
+            pass
+
         # ... and an expression this tool cannot account for must RAISE, not
         # contribute whatever part of it happens to be recognisable.
         for label, expr_c in (
@@ -1926,6 +2077,14 @@ def self_test():
             failures += 1
             print(f"  FAIL [waiver: {name}]: kept {len(kept)}/suppressed "
                   f"{suppressed}, expected {want_kept}/{want_suppressed} "
+                  f"-- {why}")
+
+    # ambiguous_annotation(): a bound with several candidate calls is refused.
+    for name, src, line, n, expected, why in SELF_TEST_AMBIGUITY_CASES:
+        got = ambiguous_annotation(src, line, n)
+        if got != expected:
+            failures += 1
+            print(f"  FAIL [ambiguity: {name}]: {got}, expected {expected} "
                   f"-- {why}")
 
     # comment_only_map(): the predicate find_annotation's walk rests on.
@@ -1997,7 +2156,7 @@ def self_test():
         print(f"\n::error::log_budget: {failures} self-test(s) failed")
         return 1
     print(f"log_budget self-test: {len(SELF_TEST_CASES)}/"
-          f"{len(SELF_TEST_CASES)} extraction cases + 8/8 ceiling cases + "
+          f"{len(SELF_TEST_CASES)} extraction cases + 11/11 ceiling cases + "
           f"{len(SELF_TEST_SUPPRESSION_CASES)}/"
           f"{len(SELF_TEST_SUPPRESSION_CASES)} suppression cases + "
           f"{len(SELF_TEST_WAIVER_CASES)}/{len(SELF_TEST_WAIVER_CASES)} "
@@ -2005,6 +2164,8 @@ def self_test():
           f"{len(SELF_TEST_GATE_CASES)}/{len(SELF_TEST_GATE_CASES)} gate "
           f"cases + {len(SELF_TEST_COMMENT_MAP_CASES)}/"
           f"{len(SELF_TEST_COMMENT_MAP_CASES)} comment-map cases + "
+          f"{len(SELF_TEST_AMBIGUITY_CASES)}/"
+          f"{len(SELF_TEST_AMBIGUITY_CASES)} ambiguity cases + "
           f"{len(SELF_TEST_ANNOTATION_CASES)}/"
           f"{len(SELF_TEST_ANNOTATION_CASES)} annotation-binding cases + "
           f"1/1 IO-error case pass")
