@@ -97,6 +97,17 @@ SD_ARM_HELPER_SHA := 48fc182fdf552b9a5cb860d7dc16821212874f734d9504d68fd110c75c9
 # and should be looked at rather than skipped.
 SUSPEND_BIN := run_953_tests
 
+# #995: SCPI_GetCommandHistory's shared-buffer write-abort bound. Same shape
+# as BENCH_BIN above and #947's own host test -- SCPIInterface.c is not
+# includable on the host (libscpi + FreeRTOS + the whole board/driver graph),
+# so this re-implements the pre-fix and post-fix loop shapes against a mock
+# clock and compares their verdicts. The three firmware constants it depends
+# on are a COPY; the recipe greps them (plus the tick-rate/width assumption,
+# same as #947's grep) and refuses to build on drift.
+CMDHIST_BIN := run_995_tests
+SCPI_IFACE_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
+FW_RTOS_CFG := ../../firmware/src/config/default/FreeRTOSConfig.h
+
 # #981: SYSTem:STORage:SD:FAILNext's one-shot arm/consume contract.
 # `sd_card_manager.c` is not includable on the host (FreeRTOS + Harmony's
 # SYS_FS + the whole SD state machine), so this re-implements only the
@@ -2407,6 +2418,26 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 	 printf '#endif\n' >> $(GEN_1000)
 	$(CC) $(CFLAGS) -o $(SDLOG_BIN) test_1000_sd_log_arm_budget.c
 
+$(CMDHIST_BIN): test_995_cmdhistory_write_abort.c test_framework.h $(SCPI_IFACE_SRC) $(FW_RTOS_CFG) $(RECIPES)
+	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_WRITE_MAX_RETRIES is no longer '200' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_WRITE_MAX_RETRIES in test_995_cmdhistory_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+SCPI_WRITE_RETRY_DELAY_MS[[:space:]]+5[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_WRITE_RETRY_DELAY_MS is no longer '5' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_WRITE_RETRY_DELAY_MS in test_995_cmdhistory_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+SCPI_CMDHISTORY_WRITE_BUDGET_MS[[:space:]]+2000U[[:space:]]*$$' $(SCPI_IFACE_SRC) \
+	  || { echo "ERROR: SCPI_CMDHISTORY_WRITE_BUDGET_MS is no longer '2000U' in $(SCPI_IFACE_SRC)."; \
+	       echo "       Update FW_CMDHISTORY_BUDGET_MS in test_995_cmdhistory_write_abort.c and re-derive its numbers."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_RATE_HZ[[:space:]]+\( \( TickType_t \) 1000 \)[[:space:]]*$$' $(FW_RTOS_CFG) \
+	  || { echo "ERROR: configTICK_RATE_HZ is no longer 1000 Hz in $(FW_RTOS_CFG) -- re-derive test_995's ms<->tick assumption."; \
+	       exit 1; }
+	@grep -qE '^#define[[:space:]]+configTICK_TYPE_WIDTH_IN_BITS[[:space:]]+TICK_TYPE_WIDTH_32_BITS[[:space:]]*$$' $(FW_RTOS_CFG) \
+	  || { echo "ERROR: configTICK_TYPE_WIDTH_IN_BITS is no longer 32-bit in $(FW_RTOS_CFG) -- re-derive test_995's wrap tests."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(CMDHIST_BIN) test_995_cmdhistory_write_abort.c
 # #1039: see the LOGCEIL_BIN comment block above for what this proves and
 # why it is deliberately independent of the parked #1110 tooling.
 $(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
@@ -2953,11 +2984,17 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 #
 # #1029's names carry the 1029 suffix so they cannot shadow #1000's
 # $(SDLOG_BIN)/$(GEN_1000).
+# Every suite, and every one of the TWENTY-EIGHT binaries: the twenty-seven above
+# plus this PR's own #995 $(CMDHIST_BIN). FIFTEENTH additive collision in this
+# block, resolved the same way as the fourteen before it: each side's target rule
+# kept INTACT and only `run` and `clean` unioned. Main's count of TWENTY-THREE was
+# right for main; the union is TWENTY-EIGHT, corrected here rather than carried,
+# because a stale count in a comment is simply false to the next reader.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
      $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) \
-     $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN)
+     $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) \
+     $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) \
+     $(SDLOG1029_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(CMDHIST_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -2971,6 +3008,7 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SY
 	./$(NAME_BIN)
 	./$(WAITLOOP_BIN)
 	./$(SDLOG_BIN)
+	./$(CMDHIST_BIN)
 	./$(SCPI999_BIN)
 	./$(SUSPENDREASON_BIN)
 	./$(LOGCEIL_BIN)
@@ -2988,10 +3026,9 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SY
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) \
-	      $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) \
-	      $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) \
-	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(NAME_BIN) $(SDLOG1029_GEN).tmp $(FAILNEXT_BIN) \
-	      $(FAILNEXT_REAL_BIN) $(ARM_BIN)
+	     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) \
+	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
+	      $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(SDLOG1029_GEN).tmp $(NAME_BIN) \
+	      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(CMDHIST_BIN)
 
 .PHONY: run clean
