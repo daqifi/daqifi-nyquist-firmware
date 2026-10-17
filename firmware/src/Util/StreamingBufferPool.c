@@ -106,21 +106,72 @@
  * transports from corrupting each other's in-flight command text and error
  * queues (#999), and 512 is already pinned by #100/#263.
  *
- * BOTH PAYMENTS ARE IN THIS DEFINITION, so the column figures in the two
- * paragraphs above are each one payment stale: #958's were computed before
- * #999's 2048 B landed, #999's before #958's 512 B. With both, the pool is
- * 194048 B and at 16 channels the partitioned capacities are USB-only 1551,
- * WiFi-only 1100, SD-only 1911 and USB+SD 1053 -- (pool - (USB + WiFi + SD
- * + encoder circulars)) / 74 over docs/MEMORY_ARCHITECTURE.md's own buffer
- * values: arithmetic, not a bench measurement at this size.
+ * Trimmed a further 512 B (#956). This is the LAST token in the macro: the
+ * THIRD -512U and the FIFTH trim overall, after #665's -1024U, #824's and
+ * #925's -512U, and #999's -2048U. The tokens stay in the order the trims
+ * landed on main, which is the order of these paragraphs, so a new trim
+ * APPENDS and never renumbers one above it. Said explicitly because this
+ * line has been miscounted twice: once as "the fourth -512U" (there are
+ * three), and once as "the fourth trim overall" -- true on the branch it was
+ * written on, stale the moment #999's -2048U merged ahead of it. Count
+ * against the macro, not against the previous revision of this comment.
  *
- * Two consequences. USB+SD stays below the 1100-slot queue, so every payment
- * costs usable slots there -- ~7 per 512 B and ~28 for #999's 2048 B, which
- * the #999 paragraph's USB-only framing does not show. And WiFi-only now sits
- * AT the 1100-slot queue depth with 8 bytes to spare: the next payment makes
- * the pool the binding constraint in that column too, so count that column
- * before paying again. */
-#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U - 512U - 2048U)
+ * It pays for wifiTcpOverBytesExtra and wifiTcpInflightOverflow, two uint32_t
+ * added to the client struct inside the static gTcpServerContext -- eight
+ * bytes before alignment, paid at the same 512 B granularity as #824's and
+ * #925's single scalars. Consistency with those beats exactness: it was sized
+ * by that precedent, not from a link report. It does not double-pay #999:
+ * different objects (a struct member here, two ScpiContextStorage there), and
+ * each trim was sized on a tree without the other's statics, so the pool owes
+ * both. Nor does it contradict #999's "512 B would STILL FAIL" (I): that
+ * rejected 512 B against a MEASURED 32-byte shortfall, where the pessimistic
+ * 24/546 reading recovers ~23 B; eight added bytes fit inside ~23 even
+ * costed byte-for-byte. No margin is measured here either -- the link is the
+ * arbiter.
+ *
+ * Cost: 512/74 = ~7 slots at 16 channels. USB-only goes 1558 -> 1551
+ * partitioned against the 1100 usable depth, so nil there -- and USB-only is
+ * what the slack claims above were computed for (#824's "~500" is USB-only's
+ * 1600 - 1100; #999 names USB-only outright). It is NOT universal, and an
+ * earlier revision of this paragraph implied it was. By the same arithmetic
+ * (the buffer table in docs/MEMORY_ARCHITECTURE.md; not re-measured) USB+SD
+ * goes 1060 -> 1053, already below the 1100-slot boot queue, and when the
+ * partition is the smaller, AInSampleList_InitializeExternal keeps the queue
+ * and sets poolCapacity to the partition -- so in USB+SD these 7 slots come
+ * off the USABLE depth (~0.7%). WiFi-only goes 1107 -> 1100, exactly meeting
+ * the queue: the next trim of any size makes it partition-bound as well.
+ * BOTH SIDES OF THIS MERGE COMPUTED 194048 FROM DIFFERENT PAYMENTS, and that is
+ * why this definition now has SIX tokens. This branch's five were #665's -1024U,
+ * #824's and #925's -512U, #999's -2048U and its own #956 -512U -- with no #958.
+ * main's five were the same four plus #958's -512U -- with no #956. Each summed to
+ * 4608 and each printed 194048, so taking either side, or 'agreeing' on 194048,
+ * silently DROPS one 512 B payment and leaves a static unpaid for. The union is
+ * 5120 and the pool is 193536.
+ *
+ * So #956's is the FOURTH -512U (#824, #925, #958, #956) and the SIXTH trim overall,
+ * not the third and fifth this branch recorded -- stale the moment #958's -512U
+ * merged ahead of it, which is the third time this one line has been miscounted and
+ * exactly the failure its own paragraph predicted. Count against the macro.
+ * Token ORDER follows this branch's stated rule: trims appear in the order they
+ * landed on main, so #956's stays LAST and nothing above it renumbers.
+ *
+ * ⚠ COLUMN FIGURES BELOW AND IN docs/MEMORY_ARCHITECTURE.md ARE ONE PAYMENT STALE
+ * AGAIN. Both sides' were computed at 194048; this merge makes the pool 193536. By
+ * the file's own arithmetic (512/74 = ~7 slots at 16 channels) each column drops ~7
+ * from the figures published at 194048: USB-only ~1551->~1544, WiFi-only ~1100->
+ * ~1093, SD-only ~1911->~1904, USB+SD ~1053->~1046. DERIVED BY THAT RULE FROM THE
+ * PUBLISHED FIGURES, not recomputed from the buffer table and not measured -- the
+ * USB-only column reproduces from (pool - circulars)/74 exactly, the WiFi-only one
+ * does not with the buffer set documented here, so the set for the other three is
+ * not established and these four are approximate. Recompute from the buffer table
+ * before relying on any of them.
+ *
+ * THE LOAD-BEARING CONSEQUENCE IS ROBUST TO THAT +/-1: main's side recorded
+ * WiFi-only sitting AT the 1100-slot queue depth 'with 8 bytes to spare: the next
+ * payment makes the pool the binding constraint in that column too'. THIS MERGE IS
+ * THAT NEXT PAYMENT. WiFi-only is now partition-bound, joining USB+SD, which was
+ * already below the queue and where every payment costs USABLE slots. */
+#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U - 512U - 2048U - 512U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
 /* The overcommit fallback below carves these four minimums and expects the
