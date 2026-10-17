@@ -476,6 +476,37 @@ SDLOG1029_GEN := gen_1029_log_budget.h
 SD_MGR_SRC    := ../../firmware/src/services/sd_card_services/sd_card_manager.c
 SD_MGR_HDR    := ../../firmware/src/services/sd_card_services/sd_card_manager.h
 PYTHON        ?= python3
+# #1039: four more LOG_E messages cut by the SAME Util/Logger.c message frame
+# $(SDLOG_BIN) above measures #1000's site against -- in app_freertos.c,
+# SCPIADC.c and wifi_manager.c. Same host-testability situation (none of those
+# three is includable here, and neither is Logger.c, which pulls in FreeRTOS),
+# so this test also mirrors LogMessageFormatImpl and runs the REAL texts
+# through it. Independent of $(SDLOG_BIN)/$(GEN_1000): different sites,
+# separate extraction, its own mirror -- a mistake in one does not become the
+# other's baseline.
+#
+# The extraction is a Python generator rather than the sed/grep pipeline
+# $(SDLOG_BIN) uses, because three of these four format strings are
+# concatenated across physical lines and a shell one-liner cannot reassemble
+# one without risking a FRAGMENT -- and a fragment understates a message's
+# length, which passes every assertion in the test while checking nothing.
+# gen_1039_log_budget.py anchors each site on the CODE that gates it (never on
+# the message text: a re-word must re-MEASURE, not fail the build), requires
+# the anchor to be unique, refuses a literal run that is not followed by ','
+# or ')', and pins each site's conversion signature so a changed substitution
+# count re-derives the worst case instead of being measured with stale
+# arguments. It exits non-zero with a named diagnostic on any of that.
+#
+# It deliberately does NOT reuse tools/lint/log_budget.py's parser: that tool
+# is the static gate this same PR adds, and it MODELS the truncation. The
+# value of this test is that it does not share the model, so the model's
+# extractor must not sit on both sides of the check either.
+LOG1039_BIN := run_1039_tests
+LOG1039_GEN := gen_1039_log_budget.h
+FW_APP_SRC  := ../../firmware/src/app_freertos.c
+FW_ADC_SCPI := ../../firmware/src/services/SCPI/SCPIADC.c
+FW_WIFI_SRC := ../../firmware/src/services/wifi_services/wifi_manager.c
+PYTHON      ?= python3
 
 # #1039 (PR #1116, split from the parked #1110): the four LOG_E messages
 # #1039 shortened, measured against the SAME ceiling $(SDLOG_BIN) measures --
@@ -2407,6 +2438,20 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 	 printf '#endif\n' >> $(GEN_1000)
 	$(CC) $(CFLAGS) -o $(SDLOG_BIN) test_1000_sd_log_arm_budget.c
 
+$(LOG1039_GEN): gen_1039_log_budget.py $(FW_APP_SRC) $(FW_ADC_SCPI) \
+                $(FW_WIFI_SRC) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
+	# The generator's own invariants run FIRST, so a defect in the
+	# extractor fails the build rather than producing a fixture that
+	# measures a different string than the firmware ships (codex audit on
+	# #1110: UTF-8 shrank the literal; a prefix match mis-read the ceiling;
+	# backslash-newline was spliced after escapes instead of before).
+	$(PYTHON) gen_1039_log_budget.py --self-test
+	$(PYTHON) gen_1039_log_budget.py --out $(LOG1039_GEN)
+
+$(LOG1039_BIN): test_1039_log_message_budget.c test_framework.h \
+                $(LOG1039_GEN) $(RECIPES)
+	$(CC) $(CFLAGS) -o $(LOG1039_BIN) test_1039_log_message_budget.c
+
 # #1039: see the LOGCEIL_BIN comment block above for what this proves and
 # why it is deliberately independent of the parked #1110 tooling.
 $(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
@@ -2885,20 +2930,19 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 	$(CC) $(CFLAGS) -I$(BTL_SYSCFG_DIR) -I$(BTL_SYSCFG_DIR)/framework/bootloader/src \
 	      -o $(HEXWIN_BIN) test_1141_hex_record_upper_panel_error.c
 
-# Every suite, and every one of the FIFTEEN binaries. Additive collisions in
-# this block so far: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs fw#1000,
-# fw#913 vs fw#980, fw#913 vs fw#985, fw#999 vs fw#985, fw#999 vs fw#1057, and
-# fw#971's own ARM_BIN colliding with fw#913/fw#980/fw#1000/fw#985 and then
-# fw#999/fw#1057 as each landed on main, and now fw#971 vs fw#947 (SYSINFO_BIN,
-# main's independent branch) as this PR re-merges main a second time -- every
-# one of them two branches appending a line to these same two lists. The
-# lineage replaces an ordinal
-# because each branch numbered its own collisions and the ordinals disagreed
-# (#971 said EIGHTH, main said NINTH), and three stale copies of this banner
-# with three different counts had accumulated here. Resolved the same way every
-# time: keep each side's target rule INTACT and union only `run` and `clean`.
-# Dropping a rule loses a suite silently; duplicating one silently shadows the
-# other. Update the count above whenever a resolution touches `run`.
+# Every suite, and every one of the binaries named in `run` below. Additive
+# collisions in this block as a LINEAGE rather than an ordinal -- main replaced the
+# ordinal deliberately, because each branch numbered its own collisions, the ordinals
+# disagreed (#971 said EIGHTH, main said NINTH), and three stale copies of this
+# banner with three different counts had accumulated:
+#   fw#961 vs fw#983; fw#913 vs fw#1004/fw#1000/fw#980/fw#985; fw#999 vs
+#   fw#985/fw#1057; fw#971's ARM_BIN vs each of those as it landed; fw#971 vs
+#   fw#947 (SYSINFO_BIN); fw#1039 vs fw#1108 (the first where one side APPENDS while
+#   the other RETIRES from the same line); and now fw#1039 vs fw#958 (fw#1027,
+#   merged 4ecb59e64), which brought $(ARM_BIN) and $(NAME_BIN).
+# Resolved the same way every time: keep each side's target rule INTACT and union
+# only `run` and `clean`. Dropping a rule loses a suite silently; duplicating one
+# silently shadows the other.
 #
 # #1026 is the ticket to stop this and PR #1040 implements it, moving each
 # target into tests/host/tests/<issue>-<slug>.mk so a new suite appends to an
@@ -2930,34 +2974,36 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # the same way as every earlier collision: keep each side's target rule INTACT
 # and union only `run` and `clean`.
 #
-# Every suite, and every one of the EIGHTEEN binaries: the seventeen above plus
-# #1098's $(REPLYBUF_BIN) (the Take/Give pairing of the four SCPI reply
-# callbacks moved off the stack onto the shared response buffer). ELEVENTH
-# additive collision in this block -- resolved the same way as every earlier
-# one: keep each side's target rule INTACT and union only `run` and `clean`.
+# Every suite, and every one of the TWENTY-SIX binaries. SIXTEENTH additive
+# collision in this block, resolved the same way as the fifteen before it:
+# each side's target rule kept INTACT and only `run` and `clean` unioned.
+# This refresh unions #1110's $(LOG1039_BIN) (the log-budget lint tool) with
+# #1013's $(FAILNEXT_BIN)/$(FAILNEXT_REAL_BIN), which main gained on
+# 2026-10-12 while this row sat at its reviewed head.
 #
-# Every suite, and every one of the TWENTY-FOUR binaries: the nineteen above
-# plus $(LOGONCE_BIN), $(DACREINIT_BIN), $(CALFINITE_BIN) and $(SDLOG1029_BIN).
+# THE COUNT IS DERIVED, NOT ASSERTED -- 28 binaries in `run`, counted from
+# the resolved prerequisite list below by the resolver rather than written by hand.
+# Both sides' stated counts were stale for this result (ours TWENTY-SIX, main's
+# TWENTY-FOUR, each right about its own side) -- the trap the thirteenth collision
+# recorded and every one since has restated.
 #
-# FOURTEENTH additive collision in this block, resolved the same way as the
-# thirteen before it: each side's target rule kept INTACT and only `run` and
-# `clean` unioned. This branch adds #1029's $(SDLOG1029_BIN) (three
-# sd_card_manager.c LOG_E remedies measured against Logger's 125-byte ceiling)
-# while main added #1125's $(LOGONCE_BIN) via fw#1126, merged 2026-09-29.
+# ALSO FIXED HERE, and NOT a union: the `clean:` recipe's $(SDLOG1029_GEN).tmp
+# line was missing its line-continuation backslash, so make parsed the
+# following tab-indented line as a SECOND recipe command and tried to EXECUTE
+# `run_1039_tests gen_1039_log_budget.h` instead of deleting the two files.
+# `make clean` therefore failed with "No such file or directory" / Error 127 at
+# the reviewed head, and the two 1039 artifacts were never removed. CI runs
+# only `make run`, never `clean`, so no gate on this row could observe it.
 #
-# BOTH SIDES' COUNTS WERE STALE FOR THE RESULT -- ours said TWENTY-ONE, main's
-# said TWENTY-TWO, and each was right about its own side. The union is
-# TWENTY-SEVEN. Corrected here rather than carried, for the reason the
-# thirteenth collision already recorded: a stale count in a comment is simply
-# false to the next reader.
-#
-# #1029's names carry the 1029 suffix so they cannot shadow #1000's
-# $(SDLOG_BIN)/$(GEN_1000).
+# $(LOG1039_BIN)/$(LOG1039_GEN) carry the 1039 suffix so they cannot shadow
+# #1029's $(SDLOG1029_BIN)/$(SDLOG1029_GEN); #1029's in turn carry 1029 so they
+# cannot shadow #1000's $(SDLOG_BIN)/$(GEN_1000). main's side of THIS collision is
+# $(ARM_BIN) and $(NAME_BIN), from fw#958/fw#1027.
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
      $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) \
-     $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN)
+     $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) \
+     $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) \
+     $(SDLOG1029_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(LOG1039_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -2983,15 +3029,16 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SY
 	./$(DACREINIT_BIN)
 	./$(CALFINITE_BIN)
 	./$(SDLOG1029_BIN)
+	./$(LOG1039_BIN)
 	./$(FAILNEXT_BIN)
 	./$(FAILNEXT_REAL_BIN)
 
 clean:
-	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) \
-	      $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) \
-	      $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) \
-	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(NAME_BIN) $(SDLOG1029_GEN).tmp $(FAILNEXT_BIN) \
-	      $(FAILNEXT_REAL_BIN) $(ARM_BIN)
+	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
+	      $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) \
+	      $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) \
+	      $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(DACREINIT_BIN) \
+	      $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(NAME_BIN) $(SDLOG1029_GEN).tmp \
+	      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(LOG1039_BIN) $(LOG1039_GEN)
 
 .PHONY: run clean
