@@ -919,6 +919,42 @@ void app_SystemInit() {
         daqifi_settings_SaveToNvm(&tmpTopLevelSettings);
     }
 
+    /* #909: the bootloader now preserves the settings pages across an in-app
+     * update (it erases only the lower flash panel), so a LOADED TopLevel page
+     * still carries the PREVIOUS build's revision strings. InitBoardConfig
+     * copies those straight into the live board config, and that is what
+     * CONF:CAPabilities:JSON?'s identity.firmware_rev reports -- so without
+     * this the device would report its old version forever after an update.
+     *
+     * Before #909 the revision advanced only as a SIDE EFFECT of the
+     * whole-flash erase destroying this page, which forced the factory-default
+     * branch above; that branch stamps the current revision itself, so on that
+     * path this call re-stamps the same values it already holds.
+     *
+     * IN MEMORY ONLY -- this deliberately does NOT write NVM.
+     *
+     * An earlier revision of this change persisted the refreshed revision here.
+     * That was wrong in the one way this PR must not be wrong:
+     * daqifi_settings_SaveToNvm ERASES the TopLevel page before writing the new
+     * row, so a failed row write leaves the page BLANK, and the next boot then
+     * takes the factory-default branch above and loses the user's voltage
+     * precision, calibration selection, friendly name and USB auto-power -- the
+     * exact loss #909 exists to prevent, introduced by #909's own fix, on the
+     * very boot that follows a firmware update.
+     *
+     * Nothing needs the write. boardFirmwareRev reaches the outside world only
+     * through InitBoardConfig -> boardConfig (BoardConfig.c), which is seeded
+     * from this in-memory struct on EVERY boot, so re-stamping here makes
+     * CONF:CAPabilities:JSON? report the running build's revision every time.
+     * The NVM copy simply lags until the next ordinary TopLevel save, and
+     * daqifi_settings_SaveToNvm re-stamps both revision strings itself on any
+     * such save, so it self-heals with no code here.
+     *
+     * Placed before InitBoardConfig so the live config is correct on the FIRST
+     * boot after an update rather than one boot later. */
+    daqifi_settings_RefreshTopLevelRevisions(
+            &tmpTopLevelSettings.settings.topLevelSettings);
+
     // Load board config structures with the correct board variant values
     InitBoardConfig(&tmpTopLevelSettings.settings.topLevelSettings);
     InitBoardRuntimeConfig(tmpTopLevelSettings.settings.topLevelSettings.boardVariant);
@@ -964,7 +1000,7 @@ void app_SystemInit() {
     daqifi_settings_SeedFriendlyName(
             tmpTopLevelSettings.settings.topLevelSettings.friendlyDeviceName);
 
-    // Try to load WiFiSettings from NVM - if this fails, store default 
+    // Try to load WiFiSettings from NVM - if this fails, store default
     // settings to NVM (first run after a program)
 
 

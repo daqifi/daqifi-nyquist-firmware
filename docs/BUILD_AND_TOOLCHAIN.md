@@ -48,3 +48,52 @@ Re-apply or re-verify every row after any upgrade of the named library.
 The XC32 linker script (`p32MZ2048EFM144.ld`) uses a "best-fit allocator" for `.bss.*` sections. At O2+ with `-fdata-sections`, this can place variables at two addresses (`.sbss` GP-relative vs `.bss.*` best-fit), causing dual-address bugs. This was the original symptom that triggered investigation of the O2 FreeRTOS crash, but the actual fix landed elsewhere: defining `configLIST_VOLATILE volatile` in `FreeRTOSConfig.h` forces the kernel's list-item link fields to be volatile, preventing the reorder of `listINSERT_END` stores that was the real cause. With that macro defined, `FreeRTOS_tasks.c` is *intended* to build at -O3 alongside the rest of the firmware — see the ⚠️ above for why it currently does not, in `default`. The linker script is left at Microchip default.
 
 **When upgrading XC32 or third-party libraries**, try removing source patches 1 and 3 (under "Source Patches for -O2/-O3" above) and rebuild with -Werror. If the build passes clean, the patches can be deleted. The `configLIST_VOLATILE` define should be kept regardless of compiler version — it's the upstream FreeRTOS-blessed pattern, not a workaround.
+
+---
+
+### Building the USB bootloader (`bootloader/firmware/usb_bootloader.X`)
+
+The bootloader is a **separate project with a separate compiler** from the
+application, and it is the only thing in this repo that a firmware update cannot
+reach. Both facts surprise people, so they are written down here.
+
+**Recipe:** MPLAB X **v6.30** + XC32 **v2.50** (`C:\Program Files\Microchip\xc32\v2.50`),
+configuration `usbdevice_pic32mz_ef_sk`. The version is pinned in
+`bootloader/firmware/usb_bootloader.X/nbproject/configurations.xml` and is *not*
+the v4.60 the application uses: this is Harmony 2.06 code, and #65 (closed) was
+opened because it does not compile under XC32 v4.60 (inline-function and
+const-qualifier errors). Do not "upgrade" it casually — check out #65 first.
+
+Flags that matter, all from that `configurations.xml`: `-O1`, warnings on, and
+**warnings-as-errors**. A new warning fails the build.
+
+**Distribution — the part that drives scheduling.** The bootloader lives in boot
+flash (`0x1FC00000`–`0x1FC0FFF3` in the shipped hex) and **cannot update
+itself**: the in-app updater can only write program flash, and
+`old_hv2_bootld.ld` discards the application's own config words at link, so a
+bootloader change reaches
+
+  - newly manufactured units **immediately**, and
+  - fielded units **only via PICkit or RMA**.
+
+A fix that must reach existing customers therefore has to live in the
+application, even when the bootloader is where the bug is. #908 (application
+side) and #909 (bootloader side) were split for exactly this reason.
+
+Two consequences worth keeping in mind:
+
+- **DEVCFG3 comes from the bootloader, not the application.** Whatever
+  `bootloader/.../system_init.c` sets is what a fielded device runs under —
+  erratum 45 (DS80000663R, RTSP of Configuration Words, *work around: None*)
+  makes config words immutable in the field. `IOL1WAY`/`PMDL1WAY` are set OFF
+  there (#764 item 4) to match the application's own settings.
+- **The application must fit in the lower 1 MB flash panel.** `APP_FlashErase`
+  issues a lower-panel erase rather than a whole-PFM erase (#909) so that an
+  in-app update preserves the NVM settings pages at `0x9D1E0000` — WiFi
+  credentials, voltage precision and both ADC calibration slots. That is only
+  correct while the app stays under `0x100000` (~72% on a standalone build of
+  main measured 2026-09-08 — indicative only; `tools/release/cut_release.sh`
+  measures the actual release build and fails if it reaches the bound).
+  If the app genuinely outgrows the panel, the documented fallback is the
+  page-erase path (`USE_PAGE_ERASE`), weighed against #532 (a bootloader
+  watchdog/USB-servicing timeout during programming).
