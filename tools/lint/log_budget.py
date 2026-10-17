@@ -707,6 +707,44 @@ def unescape(body):
     return "".join(out)
 
 
+# ---------------------------------------------------------------------------
+# ⛔ NOT IMPLEMENTED, AND THE MEASUREMENT SAYS WHY -- read this before adding a
+# "the stated byte count must equal the measured one" check.
+#
+# The idea is sound and it would have caught real defects: four comments in
+# this tree have overclaimed their own byte budget, one of them inside a
+# sentence asserting "measured, not estimated" (sd_card_manager.c, corrected
+# by this PR: 56/107/18 where the truth is 57/108/17). The blocker is not the
+# comparison. It is that THE ASSOCIATION BETWEEN A STATED COUNT AND ITS CALL
+# IS NOT RELIABLY DERIVABLE FROM POSITION, proven in both directions on
+# 2026-10-16:
+#
+#   STRICT (the contiguous comment run above the call, i.e. what
+#   find_annotation already walks): 8 LOG_E sites tree-wide state a count, and
+#   all 8 AGREE. The check would be INERT -- and it misses the one real
+#   discrepancy, because at sd_card_manager.c the "margin 18" comment is
+#   separated from its LOG_E by three lines of code (an assignment, an enum,
+#   a flag), so the walk correctly stops and never reaches it.
+#
+#   LOOSE (nearest call within a character window): finds that one, and
+#   MISPAIRS -- it produced a second "mismatch" that was the instrument
+#   pairing a comment with the wrong call, not a defect.
+#
+# A feature whose strict form is inert and whose loose form fabricates is not
+# a tuning problem. So the fix is to make the claim checkable WHERE IT IS
+# MADE, by carrying the number in the annotation itself:
+#
+#     /* log_budget: max=51 worst=108 */
+#
+# Then the association is exact, the gate verifies `worst=N` when present and
+# is silent otherwise -- zero findings today, zero baseline churn, no false
+# pairings -- and the class is closed for anyone who opts in. Deliberately not
+# built on this PR: it had taken a finding on its own previous fix in three
+# consecutive audit rounds, and growing scope was the best-measured way to
+# keep it from landing.
+# ---------------------------------------------------------------------------
+
+
 def comment_only_map(src_lines):
     """Per line: True iff it carries comment text and NO code.
 

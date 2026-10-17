@@ -2729,9 +2729,20 @@ void sd_card_manager_ProcessState() {
                              *
                              * Leaf first, as the sibling below: it is the one
                              * identifying field and Logger truncates the tail
-                             * (Logger.c:398). 56 fixed + 51 leaf = 107 B worst
-                             * case against the 125-byte ceiling, margin 18 --
-                             * measured, not estimated. */
+                             * (Logger.c:398). 57 fixed + 51 leaf = 108 B worst
+                             * case against the 125-byte ceiling, margin 17 --
+                             * measured, and this time actually measured: the
+                             * figures were 56/107/18 until #1110's audit
+                             * checked them. The literal
+                             * "[SD] #958 '%.51s' unverifiable - refusing,
+                             * retry or clear card" is 62 chars, less the
+                             * 5-char "%.51s" = 57 fixed, so the worst case is
+                             * 108 and the margin 17. One byte, and the margin
+                             * is still positive so nothing truncates -- but
+                             * the sentence asserting "measured, not
+                             * estimated" was the wrong one to be wrong in,
+                             * which is why the derivation is spelled out here
+                             * rather than just corrected. */
                             gSDCardData.writeRefuseReason =
                                     SD_REFUSE_BUCKET_UNREADABLE;
                             bucketOk = false;
