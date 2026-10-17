@@ -2,13 +2,17 @@ run_tests
 run_fmt_tests
 run_ad7609_tests
 run_943_tests
+run_971_tests
 run_953_tests
 run_999_tests
+run_981_tests
+run_981_real_consume
 run_json_escape_tests
 run_947_tests
 run_1056_tests
 run_980_tests
 run_1004_tests
+run_958_tests
 run_1000_tests
 run_995_tests
 run_985_tests
