@@ -1213,9 +1213,28 @@ static wifi_manager_stateMachineReturnStatus_t MainState(stateMachineInst_t * co
                                 // whose DAT0 driver never tri-states crushes the
                                 // WINC's replies to mid-rail - invisible to every
                                 // probe, cured only by removal.
-                                LOG_E("WiFi unreachable and an SD card IS present on the shared bus - the card is likely bus-incompatible; remove it (wiki: SD-Card-Compatibility)");
+                                /* #1039 (#1000 class): 139 fixed bytes with NO
+                                 * substitutions against Logger's 125-byte
+                                 * effective ceiling (LOG_MESSAGE_SIZE 128,
+                                 * minus vsnprintf's 2-byte and the clamp's
+                                 * 3-byte reservation in LogMessageFormatImpl).
+                                 * With nothing interpolated there is no input
+                                 * that makes it fit, so it truncated
+                                 * IDENTICALLY on every firing, always cutting
+                                 * the "(wiki: SD-Card-Compatibility)" pointer
+                                 * that tells the operator where to check the
+                                 * card. Now 120 fixed bytes, worst case 120,
+                                 * margin 5. */
+                                LOG_E("WiFi down and an SD card IS present on the shared bus - likely bus-incompatible; remove it (wiki: SD-Card-Compatibility)");
                             } else {
-                                LOG_E("WiFi unreachable but SPI4 probes read CLEAR - if an SD card is inserted, try removing it (transfer-speed interference is not probe-visible)");
+                                /* #1039 twin of the arm above: also 139 fixed
+                                 * bytes with no substitutions, so also cut
+                                 * every firing -- losing the clause that says
+                                 * the interference is invisible to the probe,
+                                 * i.e. the reason to pull a card the probe
+                                 * just called clean. Now 107 fixed bytes,
+                                 * worst case 107, margin 18. */
+                                LOG_E("WiFi down but SPI4 probes read CLEAR - remove any SD card; transfer-speed interference is not probe-visible");
                             }
                         }
                         if (busState == SPI_BUS_JAMMED) {

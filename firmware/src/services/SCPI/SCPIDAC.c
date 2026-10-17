@@ -100,6 +100,12 @@ static const tDAC7718Config dacConfig = {
     .RST_Pin = GPIO_PIN_RJ13,   // CLR/RST on RJ13
 };
 
+// Forward declarations: defined below (with gDacCommandMutex's own
+// documentation), but DAC_EnsureHardwareInitialized needs them too -- see
+// #1034's use of them further down this function.
+static bool SCPIDAC_LockCommand(void);
+static void SCPIDAC_UnlockCommand(bool lockHeld);
+
 // Helper function to ensure DAC hardware is initialized when power is up
 static bool DAC_EnsureHardwareInitialized(void) {
     // #980 item 3: the power precondition is now checked on EVERY call,
@@ -186,6 +192,58 @@ static bool DAC_EnsureHardwareInitialized(void) {
         dacInstanceId = newInstanceId;
     }
 
+    // #1034 (Qodo /agentic_review round 1 -- two BLOCKING findings against
+    // the first shape of this fix, both real, fixed together here):
+    //
+    // 1. "Reset can erase a successful voltage": the first shape called
+    //    DAC7718_Init() BEFORE taking gDacCommandMutex, and only took the
+    //    lock for the invalidation loop afterward. SCPI_DACVoltageSet /
+    //    SCPI_DACUpdate check readiness (this function) BEFORE they
+    //    themselves take gDacCommandMutex, and never re-check it once
+    //    they have the lock -- so a setter that had ALREADY passed its own
+    //    (earlier) readiness check could win SCPIDAC_LockCommand() in the
+    //    gap between DAC7718_Init() returning here and this function's own
+    //    (then-later) lock attempt, publish a genuinely fresh and correct
+    //    voltage, and have THIS invalidation loop wipe it a moment later.
+    // 2. "Lock contention revives stale voltages": if SCPIDAC_LockCommand()
+    //    then failed (its 2 s timeout, under contention), the hardware had
+    //    ALREADY been reset -- so the function returned false with the
+    //    cache still reporting pre-reset voltages as current, a WORSE
+    //    cache/hardware divergence than the one #1034 exists to fix.
+    //
+    // Fix: take gDacCommandMutex BEFORE DAC7718_Init() and hold it through
+    // invalidation, releasing right after the invalidation loop below (the
+    // SAME release point the pre-#1034 code already used for its own,
+    // narrower lock -- deliberately NOT widened to also cover the
+    // pre-publish power re-check a few lines further down, which is
+    // untouched by this fix and belongs to PR #1129's open hunk; nothing
+    // BOARDDATA_AOUT_LATEST-shaped happens in that re-check, so it does not
+    // need this lock). This makes "physically reset" and "cache
+    // invalidated" one atomic operation with respect to SCPI_DACVoltageSet /
+    // SCPI_DACUpdate's own register-write + BoardData-publish sequence,
+    // which take the SAME lock -- so a setter racing this sequence now
+    // either completes entirely BEFORE the reset (its publish is correctly
+    // wiped by the invalidation that follows, because the reset really did
+    // just make it stale) or entirely AFTER invalidation (its publish is
+    // the freshest state and is never touched). It also means a
+    // lock-acquisition failure now happens BEFORE DAC7718_Init() ever runs,
+    // so a failure here leaves the hardware untouched and the cache still
+    // describing it correctly -- closing finding 2 by construction rather
+    // than by a second check.
+    //
+    // No new deadlock: DAC7718_Init() and DAC7718_ReadWriteReg()/
+    // UpdateLatch() each take gDAC7718_Mutex internally for their own SPI
+    // framing (see that mutex's own docs), so gDacCommandMutex (outer) and
+    // gDAC7718_Mutex (inner) still nest in the ONE fixed order
+    // gDacCommandMutex's declaration comment documents -- unchanged by
+    // moving where the outer lock is first taken.
+    if (!SCPIDAC_LockCommand()) {
+        LOG_E("DAC_EnsureHardwareInitialized: could not claim command lock "
+              "before reinitializing hardware");
+        dacInitInProgress = false;
+        return false;
+    }
+
     // #980 item 1: propagate DAC7718_Init()'s actual outcome instead of
     // assuming success. On failure, dacInstanceId is retained above (NOT
     // reset to 0xFF) so the NEXT call retries DAC7718_Init() on this SAME
@@ -193,7 +251,47 @@ static bool DAC_EnsureHardwareInitialized(void) {
     // the one-slot allocator's table-full sentinel and brick the DAC
     // permanently. DAC7718_Init()'s sequence starts with the RST pulse, so
     // re-running it on a previously-failed id is safe to repeat.
-    if (!DAC7718_Init(dacInstanceId, 1)) {
+    //
+    // #1034 (Qodo /improve round 2, importance 10, "Invalidate cache after
+    // failed resets"): the outcome is captured rather than branched on
+    // immediately, because the invalidation below must run BEFORE this
+    // function returns even when DAC7718_Init() fails. Its only failure
+    // paths AFTER the RST pulse -- the configuration-register write and
+    // DAC7718_UpdateLatch(), both inside DAC7718.c -- leave the hardware
+    // ALREADY physically reset, exactly like the success path this
+    // invalidation exists for; its failure paths BEFORE the pulse (invalid
+    // config id, mutex not created, DAC7718_Lock() timeout) never touch
+    // hardware. DAC7718_Init() reports one bool, not which path failed, so
+    // there is no way to tell them apart from here -- invalidating
+    // unconditionally is correct whenever the reset actually ran, and on
+    // the rare pre-reset failure paths merely discards an already-valid
+    // cache (informative, not wrong). Matches this project's own principle:
+    // never publish a voltage that might not be true.
+    bool initSucceeded = DAC7718_Init(dacInstanceId, 1);
+
+    // #1034: DAC7718_Init() above just pulsed reset and re-latched every
+    // physical output to its hardware reset state (including on a REINIT
+    // after a power cycle, not just first boot -- dacHardwareInitialized was
+    // cleared by the top-of-function power check on the way down). Nothing
+    // in this file can say what voltage that reset state corresponds to
+    // (bipolar/unipolar config and full-scale range are HAL/board facts not
+    // available here, and this ticket is provable from source only -- no
+    // NQ3 bench to confirm one empirically). So: invalidate every channel's
+    // cached commanded voltage instead of leaving the pre-reinit value
+    // standing or guessing a replacement -- a readback that confidently
+    // claims a voltage the pin no longer holds is exactly the failure this
+    // ticket exists to close (see AOutSample.h's Timestamp field and
+    // SCPI_DACVoltageGet's staleness check below). gDacCommandMutex is
+    // already held (taken above, before DAC7718_Init()) -- see that comment
+    // for why the lock now spans reset AND invalidation as one operation,
+    // regardless of DAC7718_Init()'s outcome.
+    const AOutSample invalidatedSample = {0};
+    for (size_t i = 0; i < MAX_AOUT_CHANNEL; i++) {
+        BoardData_Set(BOARDDATA_AOUT_LATEST, i, &invalidatedSample);
+    }
+    SCPIDAC_UnlockCommand(true);
+
+    if (!initSucceeded) {
         LOG_E("DAC_EnsureHardwareInitialized: DAC7718_Init failed (id=%u); "
               "slot retained, retry permitted", (unsigned)dacInstanceId);
         dacInitInProgress = false;
@@ -327,6 +425,21 @@ static void SCPIDAC_UnlockCommand(bool lockHeld) {
     }
 }
 
+// #1034 (Qodo /agentic_review round 1, "Valid voltage writes can read as
+// unknown"): AOutSample.Timestamp uses 0 as the "not known" sentinel
+// (AOutSample.h), but xTaskGetTickCount() legitimately RETURNS 0 -- at
+// scheduler startup (FreeRTOS's tick count starts at 0) and again every time
+// the wrapping 32-bit tick counter completes a cycle. A command that happens
+// to execute on tick 0 would otherwise be stored as its own sentinel and
+// immediately read back as unknown. Both writers (below) call this instead
+// of xTaskGetTickCount() directly, so the substitution exists in exactly one
+// place rather than being repeated -- and risking drifting apart -- at each
+// call site.
+static uint32_t SCPIDAC_ValidTimestamp(void) {
+    TickType_t tick = xTaskGetTickCount();
+    return (tick == 0) ? 1u : (uint32_t)tick;
+}
+
 scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
     int channel;
     double voltage;
@@ -370,6 +483,17 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
     // together with dacInitInProgress, which claims a different, one-time
     // region (see gDacCommandMutex's declaration comment).
     scpi_result_t result = SCPI_RES_OK;
+    // #1065: both SCPI_ErrorPush and SCPI_ExecutionError reach the transport
+    // (SCPI_ErrorEmit -> interface->error -> SCPI_WriteWithRetry's ~1s-per-
+    // call retry budget against a stalled reader), so none of this
+    // function's five error sites below may emit while gDacCommandMutex is
+    // held -- the same defect PR #1063 fixed for SCPI_DACVoltageGet.
+    // Declared here, before the lock is even taken, so a future `goto
+    // cleanup` added above this point can never jump past these
+    // initializers. At most one of the two is ever set -- every site below
+    // sets exactly one before its `goto cleanup`, never both.
+    int16_t deferredErrorCode = 0;            // raw SCPI_ErrorPush code, if any
+    const char *deferredErrorMessage = NULL;  // SCPI_ExecutionError message, if any
     if (!SCPIDAC_LockCommand()) {
         SCPI_ExecutionError(context, "SOUR:VOLT:LEV: DAC command busy, try again");
         return SCPI_RES_ERR;
@@ -405,7 +529,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // the resolved-index path's -200 to -222.
         if (!(voltage >= 0.0 && voltage <= 255.0)) {
             LOG_E("SOUR:VOLT:LEV: channel out of range (max 255)");
-            SCPI_ErrorPush(context, SCPI_ERROR_DATA_OUT_OF_RANGE);
+            // #1065: deferred -- see the declaration comment above.
+            deferredErrorCode = SCPI_ERROR_DATA_OUT_OF_RANGE;
             result = SCPI_RES_ERR;
             goto cleanup;
         }
@@ -441,7 +566,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // ALREADY staged (stale data, not the requested voltage) --
         // report the failure instead.
         if (DAC7718_ReadWriteReg(dacInstanceId, 0, dacRegister, counts16) == UINT32_MAX) {
-            SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to write DAC register");
+            // #1065: deferred -- see the declaration comment above.
+            deferredErrorMessage = "SOUR:VOLT:LEV: Failed to write DAC register";
             result = SCPI_RES_ERR;
             goto cleanup;
         }
@@ -458,14 +584,19 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // failure, and do NOT touch BoardData -- the old commanded value
         // is still what is physically on the pin.
         if (!DAC7718_UpdateLatch(dacInstanceId)) {
-            SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to update DAC latch");
+            // #1065: deferred -- see the declaration comment above.
+            deferredErrorMessage = "SOUR:VOLT:LEV: Failed to update DAC latch";
             result = SCPI_RES_ERR;
             goto cleanup;
         }
 
         // Store commanded voltage in BoardData for readback -- only reached
         // once the latch update above confirms the value is actually live.
-        AOutSample sample = {.Channel = (uint8_t)channel, .Voltage = voltage};
+        // #1034: stamp Timestamp so this entry reads back as known-good
+        // until the next DAC_EnsureHardwareInitialized() reinit clears it.
+        // SCPIDAC_ValidTimestamp(), not a bare tick read -- see its own
+        // comment for why a raw xTaskGetTickCount() is unsafe here.
+        AOutSample sample = {.Timestamp = SCPIDAC_ValidTimestamp(), .Channel = (uint8_t)channel, .Voltage = voltage};
         BoardData_Set(BOARDDATA_AOUT_LATEST, index, &sample);
 
     } else {
@@ -607,7 +738,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
         // fire even when every write failed.
         if (!DAC7718_UpdateLatch(dacInstanceId)) {
             // Nothing is known to be live; publish nothing.
-            SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to update DAC latches");
+            // #1065: deferred -- see the declaration comment above.
+            deferredErrorMessage = "SOUR:VOLT:LEV: Failed to update DAC latches";
             result = SCPI_RES_ERR;
             goto cleanup;
         }
@@ -621,7 +753,9 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
                 continue;
             }
             uint8_t channelId = pBoardConfigAOutChannels->Data[i].DaqifiDacChannelId;
-            AOutSample sample = {.Channel = channelId, .Voltage = voltage};
+            // #1034: see the single-channel branch above for why Timestamp
+            // is stamped here via SCPIDAC_ValidTimestamp().
+            AOutSample sample = {.Timestamp = SCPIDAC_ValidTimestamp(), .Channel = channelId, .Voltage = voltage};
             BoardData_Set(BOARDDATA_AOUT_LATEST, i, &sample);
         }
 
@@ -632,7 +766,8 @@ scpi_result_t SCPI_DACVoltageSet(scpi_t * context) {
             // BoardData/channel-list index, matching SOUR:VOLT:LEV? ordering.
             LOG_E("SOUR:VOLT:LEV: %u of %u channels not set (index mask 0x%02X); the rest are live at the new voltage",
                   (unsigned)failedCount, (unsigned)nChannels, (unsigned)failedMask);
-            SCPI_ExecutionError(context, "SOUR:VOLT:LEV: Failed to write DAC register (some channels not set)");
+            // #1065: deferred -- see the declaration comment above.
+            deferredErrorMessage = "SOUR:VOLT:LEV: Failed to write DAC register (some channels not set)";
             result = SCPI_RES_ERR;
             goto cleanup;
         }
@@ -643,6 +778,18 @@ cleanup:
     // return is SCPIDAC_LockCommand()'s own failure, above, which returns
     // directly without giving a lock it never took).
     SCPIDAC_UnlockCommand(true);
+
+    // #1065: every transport write happens here, after the lock is
+    // released -- SCPI_ErrorPush/SCPI_ExecutionError both reach the wire
+    // (SCPI_ErrorEmit -> interface->error -> SCPI_WriteWithRetry), so
+    // emitting either while still holding gDacCommandMutex would be the
+    // same defect PR #1063 fixed for SCPI_DACVoltageGet. At most one of the
+    // two locals was ever set (see the declaration comment above).
+    if (deferredErrorCode != 0) {
+        SCPI_ErrorPush(context, deferredErrorCode);
+    } else if (deferredErrorMessage != NULL) {
+        SCPI_ExecutionError(context, deferredErrorMessage);
+    }
     return result;
 }
 
@@ -763,7 +910,24 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
         // Read last commanded voltage from BoardData into a local -- no
         // transport write yet.
         AOutSample* pSample = (AOutSample*)BoardData_Get(BOARDDATA_AOUT_LATEST, index);
-        singleVoltage = (pSample != NULL) ? pSample->Voltage : 0.0;
+        // #1034: Timestamp==0 means "not known" -- never commanded, or
+        // invalidated by DAC_EnsureHardwareInitialized() on the DAC7718's
+        // most recent reinit (a power cycle resets every physical output;
+        // see AOutSample.h). Error rather than answer with a voltage the pin
+        // may no longer hold. The all-channel form below now applies the
+        // IDENTICAL check for the IDENTICAL reason -- see its own comment for
+        // why an earlier revision answered 0.0 instead, and why that was
+        // wrong. deferredError/goto cleanup because gDacCommandMutex may
+        // still be held here (see the lock discussion above) and
+        // SCPI_ErrorPush is a transport write.
+        if ((pSample == NULL) || (pSample->Timestamp < 1)) {
+            LOG_E("SOUR:VOLT:LEV?: channel %d not known (DAC reinitialised "
+                  "since last commanded)", channel);
+            deferredError = SCPI_ERROR_EXECUTION_ERROR;
+            result = SCPI_RES_ERR;
+            goto cleanup;
+        }
+        singleVoltage = pSample->Voltage;
     } else {
         // Get all channels. Bound by the AOutArray's own capacity, not just
         // its live Size, so `allVoltages[]` is provably in range regardless
@@ -774,7 +938,53 @@ scpi_result_t SCPI_DACVoltageGet(scpi_t * context) {
         }
         for (size_t i = 0; i < nChannels; i++) {
             AOutSample* pSample = (AOutSample*)BoardData_Get(BOARDDATA_AOUT_LATEST, i);
-            allVoltages[i] = (pSample != NULL) ? pSample->Voltage : 0.0;
+            // #1034 audit correction (adversarial audit on PR #1147,
+            // disposition fix_now): a channel whose Timestamp is still 0
+            // ("not known" -- never commanded, or invalidated by
+            // DAC_EnsureHardwareInitialized() on the DAC7718's most recent
+            // reinit) must ERROR here, exactly like the single-channel form
+            // just above -- NOT answer 0.0. 0.0 is a value indistinguishable
+            // from a genuine 0V reading, so substituting it here reintroduces
+            // the fabricated-voltage class #1034 exists to remove, merely
+            // relocated from "the stale pre-reinit voltage" to "zero volts":
+            // CONF:DAC:UPDATE, then SOUR:VOLT:LEV 0,5, then SOUR:VOLT:LEV?
+            // would otherwise answer 5,0,0,0,0,0,0,0 -- presenting seven
+            // genuinely UNKNOWN physical outputs as a definite 0V.
+            //
+            // The comment this replaced claimed "the all-channel form cannot
+            // error mid-reply". That was wrong, and demonstrably so: every
+            // value here is buffered into allVoltages[] and nothing reaches
+            // the transport until `cleanup` below, which writes a result only
+            // when result == SCPI_RES_OK. An early return-with-error is fully
+            // achievable -- this is that early return, and it is the same
+            // shape SCPI_DACVoltageSet's own all-channel branch already uses
+            // (a per-channel failure aborts the reply via `goto cleanup`
+            // rather than fabricating a value for the failed channel).
+            //
+            // SCPIADC.c's MEAS:VOLT:DC? 0.0 substitution is NOT a precedent
+            // for this, and this fix does not lean on it as one -- the
+            // justification is internal consistency with the single-channel
+            // form immediately above, full stop. For the record, since an
+            // earlier revision of this comment mischaracterised it:
+            // SCPIADC.c substitutes 0.0 for BOTH a user-disabled AIN channel
+            // AND a genuinely never-known one (Timestamp < 1 in its
+            // all-channel form at :170-172; a NULL BoardData_Get result in
+            // its single-channel form at :150-153) -- it does not error on
+            // "never known" anywhere. Its one error path (:134-139) is a
+            // DIFFERENT condition: a monitoring channel (ID >= 248) that IS
+            // known but is not currently being refreshed, because OBDiag is
+            // disabled while streaming is running. That is staleness of a
+            // known value, not absence of one, and SCPIADC.c is out of scope
+            // for this fix regardless (see the PR body).
+            if ((pSample == NULL) || (pSample->Timestamp < 1)) {
+                LOG_E("SOUR:VOLT:LEV?: channel %u not known (DAC reinitialised "
+                      "since last commanded)",
+                      (unsigned)pBoardConfigAOutChannels->Data[i].DaqifiDacChannelId);
+                deferredError = SCPI_ERROR_EXECUTION_ERROR;
+                result = SCPI_RES_ERR;
+                goto cleanup;
+            }
+            allVoltages[i] = pSample->Voltage;
         }
     }
 
@@ -826,6 +1036,11 @@ scpi_result_t SCPI_DACUpdate(scpi_t * context) {
     // comment there warns can surface another command's uncommitted shadow
     // state mid-sequence.
     scpi_result_t result = SCPI_RES_OK;
+    // #1065: declared before the lock is taken, same reason and pattern as
+    // SCPI_DACVoltageSet's deferredErrorMessage above -- SCPI_ExecutionError
+    // reaches the transport, so it must not fire while gDacCommandMutex is
+    // held.
+    const char *deferredErrorMessage = NULL;
     if (!SCPIDAC_LockCommand()) {
         SCPI_ExecutionError(context, "CONF:DAC:UPDATE: DAC command busy, try again");
         return SCPI_RES_ERR;
@@ -835,9 +1050,16 @@ scpi_result_t SCPI_DACUpdate(scpi_t * context) {
     // entire purpose IS the latch update (same check as both SCPI_DACVoltageSet
     // branches above, added for the same reason -- see their comments).
     if (!DAC7718_UpdateLatch(dacInstanceId)) {
-        SCPI_ExecutionError(context, "CONF:DAC:UPDATE: Failed to update DAC latches");
+        // #1065: deferred -- see the declaration comment above.
+        deferredErrorMessage = "CONF:DAC:UPDATE: Failed to update DAC latches";
         result = SCPI_RES_ERR;
     }
     SCPIDAC_UnlockCommand(true);
+
+    // #1065: emitted only after the unlock -- see SCPI_DACVoltageSet's
+    // cleanup epilogue for why.
+    if (deferredErrorMessage != NULL) {
+        SCPI_ExecutionError(context, deferredErrorMessage);
+    }
     return result;
 }
