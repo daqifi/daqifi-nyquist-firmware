@@ -10886,3 +10886,22 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   **ordinal-conflict** case where membership passes and MEANING fails (`CSV_SAMPLE_TOO_LARGE 18→19`).
   nq-c put the script at `~/.claude/lanes/account-lines.sh` because **that path outlives our sessions** —
   I did not overwrite their copy, I told them what changed.
+
+- ⭐⭐⭐ **THE RULE REACHED ITS CORRECT FORM AFTER THREE RETRACTIONS, AND NONE OF THEM WERE MINE TO MAKE
+  ALONE.** My *"compare the tokens"* → refuted by nq-c (multisets equal). My *"grep the payment tickets"*
+  → refuted by my own A/B (window under-reports and misses the branch's OWN payment; delimited block
+  over-reports mentions; a payment-specific predicate is **incomplete on 2 of 4 shipped revisions**
+  because the prose simply does not name every payment). **Final form is nq-a's BLOB IDENTITY** — four
+  SHAs at base/P1/P2/merge; only `P1≠BASE ∧ P2≠BASE ∧ P1≠P2` can carry the trap, verified on fw#1024
+  where all four differ. It dominates conv-fw's name-only bound, which fires on identical changes.
+  ⚠ **And the provenance rule OVER-fires without that precondition** — nq-a measured a phantom 4-payment
+  loss where main had merely rewritten the comment.
+- ⭐⭐ **nq-a generalised my retraction past accumulators and it caught them**: their `clean:` token union
+  was a DISTINCT-SET comparison, **multiplicity-blind** — 83 of 91 tokens repeat, one 63× — and it caught
+  a dropped `.tmp` only because that token had multiplicity 1. Redone as per-token max-of-parents: 0
+  short. **Where provenance IS the token → multiplicity; where it is not in the expression → read both
+  sides and verify the compiled artifact.**
+- ⭐ **And the named failure class, conv-fw's**: *a correct conclusion generalised into a rule that would
+  not have reached it* — **invisible because the worked example passes**, demanding retraction rather than
+  refinement. **Twice from me in one thread.** The tell: the rule was never run against a revision the
+  conclusion did not come from.
