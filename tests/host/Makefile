@@ -2965,17 +2965,29 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 	        exit 1; }; \
 	 l=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,' | cut -d: -f1`; \
 	 n=`printf '%s\n' "$$body" | grep -n 'tmpTopLevelSettings\.type = DaqifiSettings_TopLevelSettings;' | cut -d: -f1`; \
+	 v=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_ValidateADCCalBank(calType)' | cut -d: -f1`; \
 	 i=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)' | cut -d: -f1`; \
 	 s=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_SaveToNvm(&tmpTopLevelSettings)' | cut -d: -f1`; \
-	 test -n "$$l" && test -n "$$i" && test -n "$$s" \
-	   && test "$$l" -lt "$$n" && test "$$n" -lt "$$i" && test "$$i" -lt "$$s" \
+	 test -n "$$l" && test -n "$$n" && test -n "$$v" && test -n "$$i" && test -n "$$s" \
+	   && test "$$l" -lt "$$n" && test "$$n" -lt "$$v" \
+	   && test "$$v" -lt "$$s" && test "$$s" -lt "$$i" \
 	   || { echo "ERROR: ADCUseCalSetClaimed() in $(SCPIADC_SRC) no longer runs"; \
-	        echo "       load -> normalize -> install -> save in that order"; \
-	        echo "       (load='$$l' normalize='$$n' install='$$i' save='$$s')."; \
-	        echo "       Normalizing BELOW the save does nothing; normalizing below the"; \
-	        echo "       install leaves the window #1152 closes -- the coefficients go"; \
-	        echo "       live and then the persist fails. Both would still satisfy the"; \
-	        echo "       presence check above, which is why this one is positional."; \
+	        echo "       load -> normalize -> validate -> save -> install in that order"; \
+	        echo "       (load='$$l' normalize='$$n' validate='$$v' save='$$s'"; \
+	        echo "        install='$$i')."; \
+	        echo "       Each adjacency carries a defect if it inverts:"; \
+	        echo "         normalize below the save does nothing -- SaveToNvm would see"; \
+	        echo "           the type NVM held, not the one we asked for;"; \
+	        echo "         install ABOVE the save is the audited #1152 r1 defect -- the"; \
+	        echo "           coefficients go live and then the persist fails, leaving"; \
+	        echo "           USECal? reporting a selector that disagrees with what"; \
+	        echo "           acquisition is using, with NO indication (a write-protected"; \
+	        echo "           page leaves the old record VALID, and any later"; \
+	        echo "           CONF:VOLT:SAVE erases the invalid-record indication);"; \
+	        echo "         validate below the save re-opens #1148 -- a selector would"; \
+	        echo "           persist for a bank that cannot be loaded."; \
+	        echo "       All of these still satisfy the presence check above, which is"; \
+	        echo "       why this one is positional."; \
 	        echo "       If the body was legitimately restructured, re-read it against"; \
 	        echo "       the model in test_1152_usecal_type_trust.c."; \
 	        exit 1; }

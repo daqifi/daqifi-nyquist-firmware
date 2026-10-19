@@ -1690,23 +1690,43 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      * residual's scope rather than covered by it. With the type normalized,
      * this residual is reachable from no argument the caller can send -- unlike
      * the reload failure, which any board with an unwritten User bank
-     * reproduces on every `USECal 1`. The command answers -200, and `USECal?`
-     * does NOT keep reporting the previous selection: with the TOP_LEVEL
-     * record CRC-invalid, its own daqifi_settings_LoadFromNvm call fails the
-     * same checksum check, so SCPI_ADCUseCalGet (below) returns SCPI_RES_ERR
-     * instead of a cached value and answers the same bare -200. The next
-     * boot's LoadFromNvm failure on that same record takes the
-     * factory-default branch instead (app_freertos.c:916-919), which persists
-     * calVals = 0 and so skips the user-cal reload (app_freertos.c:1035-1039)
-     * -- landing on factory, which may not match what was live before the
-     * fault. That is still the safe direction; it is not the clean self-heal
-     * this paragraph used to claim. A rollback would be worse than the residual:
+     * reproduces on every `USECal 1`. The command answers -200 and the LOG_E
+     * below makes the fault retrievable through SYST:LOG?.
+     *
+     * ⛔ THIS PARAGRAPH PREVIOUSLY CLAIMED A PROTECTION THAT DOES NOT EXIST,
+     * and the claim is recorded here because it is the reason the save now
+     * happens BEFORE the install rather than after. It said a failed save
+     * leaves the TOP_LEVEL record CRC-invalid, so SCPI_ADCUseCalGet's own
+     * LoadFromNvm fails the same checksum and USECal? answers -200 rather than
+     * a stale selection -- i.e. that the split state was self-reporting. Two
+     * independent audit legs disproved it:
+     *
+     *   1. A WRITE-PROTECTED page leaves the OLD record INTACT AND VALID.
+     *      nvm_ErasePage returns true even when the erase is refused, and the
+     *      row write then fails its readback comparison. Nothing is
+     *      CRC-invalid, so USECal? cheerfully reports the OLD selector while
+     *      acquisition runs the NEW coefficients. The getter does not expose
+     *      the divergence; it conceals it.
+     *   2. Even when the record IS left invalid, the indication is erasable by
+     *      ordinary use. The next CONF:VOLT:SAVE (SCPI_SaveDataPrecision)
+     *      loads the invalid record, falls back to factory defaults
+     *      (calVals = 0) and persists them SUCCESSFULLY -- without touching
+     *      the runtime coefficients. USECal? then reports 0 while the user
+     *      bank is live, reporting twice the factory-calibrated voltage.
+     *
+     * So a save failure after an install was silent wrong DATA, not a
+     * self-reporting residual. The order below (validate -> save -> install)
+     * removes the state rather than reporting it: every failure before the
+     * save leaves BOTH the runtime array and NVM untouched. A rollback was the
+     * other candidate and was rejected because it only TRADES the defect --
      * the runtime array is not a copy of any NVM bank (CONF:ADC:chanCALM /
      * chanCALB edit it in place), so re-loading the old bank would discard
-     * uncommitted per-channel edits, and a faithful rollback would mean
-     * snapshotting Size*2 doubles onto this callback's stack on every call,
-     * successful ones included. The LOG_E below makes the fault retrievable
-     * through SYST:LOG? instead.
+     * uncommitted per-channel edits, silently, and a faithful snapshot costs
+     * MAX_AIN_RUNTIME_CHANNEL*2 doubles (768 B) on this callback's stack on
+     * every call, successful ones included. Validating first costs neither:
+     * the scratch record lives in daqifi_settings_ValidateADCCalBank's own
+     * frame, which is sequential with the install's, so the peak is max() and
+     * not sum().
      *
      * Each of the three failures below gets its own LOG_E because all three
      * surface to the caller as the same bare -200 (libscpi pushes
@@ -1727,12 +1747,19 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      * address. A record can therefore carry an out-of-enum type with a
      * payload that still validates. daqifi_settings_SaveToNvm below switches
      * on settings->type and hits `default: return false` for a value it does
-     * not recognize -- and reached from tmpTopLevelSettings.type as LOADED,
-     * that failure would land AFTER daqifi_settings_LoadADCCalSettings below
-     * has already installed the new coefficients into the runtime array:
-     * -200 back to the caller with the new bank already live and USECal?
-     * still reporting the old selection. Silent wrong data, not the
-     * documented flash-I/O residual below.
+     * not recognize -- so reached from tmpTopLevelSettings.type as LOADED, an
+     * out-of-enum stored type makes every save against that record fail, and
+     * an in-enum-but-wrong one erases and rewrites a DIFFERENT page (the WiFi
+     * settings, or a calibration bank) and returns OK. Normalizing removes
+     * both.
+     *
+     * This normalization is now belt AND braces with respect to the runtime
+     * array: because the save happens BEFORE the install below, a save that
+     * failed on a bad stored type would return with nothing installed anyway.
+     * It is still required -- without it the command fails on a record whose
+     * payload is perfectly good, permanently, and the in-enum case still
+     * corrupts another page -- but it is no longer the only thing standing
+     * between a corrupt type byte and silently live coefficients.
      *
      * Trust the type WE asked for, not the type NVM claims to hold -- we
      * requested DaqifiSettings_TopLevelSettings above, so that is what
@@ -1743,26 +1770,23 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      * DaqifiSettings_TopLevelSettings` right after the load. This call site
      * had simply omitted it.
      *
-     * A snapshot-and-restore of the runtime coefficients was considered
-     * instead (copying pRuntimeAInChannels onto this stack before the reload
-     * and putting it back if SaveToNvm still fails) and rejected -- but not
-     * for the reason the residual paragraph above gives against RE-LOADING the
-     * old bank. Those are two different proposals and only the second loses
-     * data: a stack copy restores exactly what was there, uncommitted
-     * CONF:ADC:chanCALM/chanCALB edits included, so the discard-the-edits
-     * objection does not reach it.
+     * Two rollback designs were considered for the post-install save failure
+     * and both were rejected, because each TRADES the defect rather than
+     * removing it. RE-LOADING the old bank discards uncommitted
+     * CONF:ADC:chanCALM/chanCALB edits, silently -- the runtime array is not a
+     * copy of any NVM bank. SNAPSHOTTING the array first preserves those
+     * edits, but costs MAX_AIN_RUNTIME_CHANNEL*2 doubles (768 B) on this
+     * callback's stack on every call including successful ones, and both share
+     * the deeper problem that a restore path can itself fail, leaving a third
+     * state nobody has reasoned about.
      *
-     * What a rollback does not do is remove a cause. It makes a failed save
-     * leave no trace, which is correct behaviour and also permanent: a record
-     * carrying a corrupted stored type makes this SaveToNvm fail on EVERY
-     * USECal call against it, so the rollback fires every time and the command
-     * becomes a no-op that answers -200 forever, on a board whose payload is
-     * perfectly good. It is also exactly the "faithful rollback" that
-     * paragraph prices at Size*2 doubles of stack per call, successful ones
-     * included. Normalizing the type removes the cause instead: the save takes
-     * the TopLevelSettings branch, the command SUCCEEDS, and there is nothing
-     * to roll back. What is left is the flash-I/O fault -- the residual above,
-     * whose own argument against rolling back is untouched by this. */
+     * Validating before persisting removes the state instead of repairing it,
+     * and costs neither: see daqifi_settings_ValidateADCCalBank, whose scratch
+     * record lives in its own frame. Ordering is therefore load -> normalize ->
+     * validate -> save -> install, and the tests/host guard pins exactly that
+     * sequence by line number rather than by presence, because a validate that
+     * drifted below the save, or an install that drifted above it, would each
+     * satisfy a bare grep while reopening the window. */
     tmpTopLevelSettings.type = DaqifiSettings_TopLevelSettings;
 
     DaqifiSettingsType calType;
@@ -1783,19 +1807,39 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
             return SCPI_RES_ERR;
     }
 
-    //  Update runtime values FIRST -- this validates the bank being selected
-    if (!daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)) {
+    /* VALIDATE the bank without installing it. This keeps #1148's guarantee --
+     * never persist a selector whose bank cannot be loaded -- while leaving the
+     * runtime array untouched, so the one remaining fallible step below cannot
+     * find anything to leave half-applied. */
+    if (!daqifi_settings_ValidateADCCalBank(calType)) {
         LOG_E("CONF:ADC:USECal %d: %s cal bank failed validation "
               "(blank or corrupt); selection unchanged", param1,
               (param1 == 1) ? "user" : "factory");
         return SCPI_RES_ERR;
     }
 
-    //  Only now persist the selector the reload has proved loadable
+    //  Persist the selector the validation has proved loadable
     tmpTopLevelSettings.settings.topLevelSettings.calVals = param1;
     if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) {
-        LOG_E("CONF:ADC:USECal %d: NVM write failed; the coefficients are "
-              "live but the selection did not persist", param1);
+        LOG_E("CONF:ADC:USECal %d: NVM write failed; selection unchanged and "
+              "the live coefficients are untouched", param1);
+        return SCPI_RES_ERR;
+    }
+
+    /* INSTALL last, so no failure above can leave the runtime coefficients and
+     * the persisted selector disagreeing. The copy inside
+     * daqifi_settings_LoadADCCalSettings cannot fail; its only failure is
+     * re-reading the record this function validated moments ago, i.e. a
+     * transient flash READ fault between two adjacent reads of the same
+     * address. If that happens the selector IS persisted and valid, the live
+     * coefficients are still the previous bank, and the next boot reloads the
+     * persisted selection (app_freertos.c:1035-1039) onto a bank already
+     * proved loadable -- so the divergence is bounded by a reboot and
+     * USECal? reports the selection that will be in force, not a stale one. */
+    if (!daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)) {
+        LOG_E("CONF:ADC:USECal %d: selection persisted, but re-reading the cal "
+              "bank failed; the live coefficients remain the PREVIOUS bank "
+              "until the next boot applies the persisted selection", param1);
         return SCPI_RES_ERR;
     }
 

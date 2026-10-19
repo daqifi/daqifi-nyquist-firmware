@@ -249,6 +249,36 @@ extern "C" {
     bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig);
 
     /**
+     * Answers whether an ADC calibration bank is loadable, WITHOUT installing
+     * it into any runtime array.
+     *
+     * This is the first half of daqifi_settings_LoadADCCalSettings: that
+     * function validates the stored record (daqifi_settings_LoadFromNvm) and
+     * resolves the bank, then copies CalM/CalB into the caller's array in a
+     * loop that cannot fail. Splitting the validation out lets a caller prove
+     * a bank is good BEFORE it mutates anything, so a later step that can fail
+     * -- persisting a selector to NVM -- cannot leave the runtime array and
+     * NVM disagreeing.
+     *
+     * Deliberately a separate function rather than a NULL `channelRuntimeConfig`
+     * overload on LoadADCCalSettings: a NULL passed by accident would silently
+     * skip the install and still return true, which is the silent-permissive
+     * shape this file should not grow.
+     *
+     * Its DaqifiSettings scratch lives in this function's own frame, so a
+     * caller that validates and then installs pays max(), not sum(), of the two
+     * frames -- unlike a scratch buffer held in the caller across both steps,
+     * which costs MAX_AIN_RUNTIME_CHANNEL*2 doubles (768 B) for the whole call
+     * including every successful one.
+     *
+     * @param type The calibration bank to check (FactAInCalParams or
+     *             UserAInCalParams; any other type answers false)
+     * @return True if the bank's stored record validates and the type names a
+     *         calibration bank, false otherwise
+     */
+    bool daqifi_settings_ValidateADCCalBank(DaqifiSettingsType type);
+
+    /**
      * Saves the ADC calibration settings
      * @param type The type of settings to save
      * @param channelRuntimeConfig Channel config from which to save the settings

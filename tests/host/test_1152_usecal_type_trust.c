@@ -421,15 +421,42 @@ static bool model_LoadADCCalSettings(const ModelNvm *nvm, uint32_t calType,
     return true;
 }
 
+/* daqifi_settings_ValidateADCCalBank(), modelled.
+ *
+ * Deliberately the SAME two checks as model_LoadADCCalSettings above, in the
+ * same order, and NOTHING ELSE -- no ModelRuntimeArray parameter at all, so it
+ * is not merely that this function does not touch `installs`: it CANNOT. A
+ * version that took rt and simply chose not to write it would leave the
+ * r2 flash-fault assertions below resting on discipline rather than on the
+ * signature. */
+static bool model_ValidateADCCalBank(const ModelNvm *nvm, uint32_t calType)
+{
+    ModelSettings tmp;
+
+    memset(&tmp, 0, sizeof(tmp));
+    if (!model_LoadFromNvm(nvm, calType, &tmp)) {
+        return false;
+    }
+    return (calType == MODEL_TYPE_FACT_CAL || calType == MODEL_TYPE_USER_CAL);
+}
+
 /* ==========================================================================
- * ADCUseCalSetClaimed(), in its two shapes
+ * ADCUseCalSetClaimed(), in its three shapes
  * ========================================================================== */
 
 typedef enum { RES_OK = 0, RES_ERR } ModelScpiResult;
 
 typedef enum {
     USECAL_PREFIX = 0,   /* dc967c9e1: the loaded type is reused for the save */
-    USECAL_POSTFIX       /* #1152: the type is normalized right after the load */
+    USECAL_POSTFIX,      /* #1152 r1: the type is normalized right after the load,
+                          * but the bank is still INSTALLED before the save. The
+                          * r1 adversarial audit found that a save failure then
+                          * leaves the coefficients live and the selector stale,
+                          * with no indication -- see USECAL_R2. Kept as the
+                          * historical shape, not as the current firmware. */
+    USECAL_R2            /* #1152 r2 (CURRENT): validate -> save -> install, so no
+                          * failure can leave the runtime array and NVM
+                          * disagreeing. This is the shape production runs. */
 } UseCalShape;
 
 typedef struct {
@@ -474,8 +501,8 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
     }
     run.loadOk = true;
 
-    /* --- #1152, and the ONLY difference between the two shapes ----------- */
-    if (shape == USECAL_POSTFIX) {
+    /* --- #1152's normalization: present in both r1 and r2 ---------------- */
+    if (shape == USECAL_POSTFIX || shape == USECAL_R2) {
         tmp.type = MODEL_TYPE_TOP_LEVEL;
     }
 
@@ -485,21 +512,50 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
     default: run.result = RES_ERR; return run;   /* unreachable, kept as in situ */
     }
 
-    /* --- step 2: validate the bank by INSTALLING it ---------------------- */
-    run.installAttempted = true;
-    if (!model_LoadADCCalSettings(nvm, calType, rt)) {
-        run.result = RES_ERR;
-        return run;
-    }
+    if (shape == USECAL_R2) {
+        /* --- r2 step 2: VALIDATE without installing ---------------------- */
+        /* daqifi_settings_ValidateADCCalBank: the same LoadFromNvm check
+         * LoadADCCalSettings performs internally, without the copy loop that
+         * cannot fail. `installs` must NOT move here -- that is the whole
+         * property, and the flash-fault cases below assert it. */
+        if (!model_ValidateADCCalBank(nvm, calType)) {
+            run.result = RES_ERR;
+            return run;
+        }
 
-    /* --- step 3: only now persist the selector --------------------------- */
-    tmp.settings.topLevelSettings.calVals = (uint8_t)param1;
-    run.saveAttempted = true;
-    run.typeHandedToSave = tmp.type;
-    run.saveOutcome = model_SaveToNvm(nvm, &tmp);
-    if (run.saveOutcome != SAVE_OK) {
-        run.result = RES_ERR;
-        return run;
+        /* --- r2 step 3: persist the selector ---------------------------- */
+        tmp.settings.topLevelSettings.calVals = (uint8_t)param1;
+        run.saveAttempted = true;
+        run.typeHandedToSave = tmp.type;
+        run.saveOutcome = model_SaveToNvm(nvm, &tmp);
+        if (run.saveOutcome != SAVE_OK) {
+            run.result = RES_ERR;
+            return run;          /* runtime array untouched -- no divergence */
+        }
+
+        /* --- r2 step 4: install LAST ------------------------------------ */
+        run.installAttempted = true;
+        if (!model_LoadADCCalSettings(nvm, calType, rt)) {
+            run.result = RES_ERR;
+            return run;
+        }
+    } else {
+        /* --- r1/pre-fix step 2: validate the bank by INSTALLING it ------- */
+        run.installAttempted = true;
+        if (!model_LoadADCCalSettings(nvm, calType, rt)) {
+            run.result = RES_ERR;
+            return run;
+        }
+
+        /* --- r1/pre-fix step 3: only now persist the selector ------------ */
+        tmp.settings.topLevelSettings.calVals = (uint8_t)param1;
+        run.saveAttempted = true;
+        run.typeHandedToSave = tmp.type;
+        run.saveOutcome = model_SaveToNvm(nvm, &tmp);
+        if (run.saveOutcome != SAVE_OK) {
+            run.result = RES_ERR;
+            return run;
+        }
     }
 
     run.rawOutputMode = false;
@@ -961,7 +1017,51 @@ TEST(a_bank_that_fails_validation_still_refuses_before_install_or_persist)
  * unpersisted, identically in both shapes. #1152 removes a NON-hardware way
  * into this state; it does not claim the hardware one.
  * ========================================================================== */
-TEST(a_flash_fault_still_leaves_the_coefficients_live_in_both_shapes)
+/* r2: the same two faults, and the coefficients must NOT be live.
+ *
+ * This is the property the r1 adversarial audit asked for, asserted as a shape
+ * rather than as an error return: both shapes above answer RES_ERR too, so the
+ * return value does not distinguish them. `installs` does.
+ *
+ * ⛔ Note what the test below this one asserts, and why it is NOT a regression:
+ * in the two historical shapes a write fault leaves installs == 1. That was the
+ * defect. Keeping both assertions side by side is the point -- the pair is what
+ * shows the fix changed the state and not just the wording. */
+TEST(r2_a_flash_fault_leaves_the_coefficients_untouched)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    /* write fault: the erase lands, the row write fails its readback */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.writeFails = true;
+    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.saveOutcome, SAVE_WRITE_FAILED);
+    ASSERT_EQ(rt.installs, 0);              /* NOT live -- the whole fix */
+    ASSERT_EQ(rt.installedBank, MODEL_NO_BANK);
+    ASSERT_EQ(run.installAttempted, false); /* install never even reached */
+    ASSERT_EQ(nvm.writes[MODEL_TYPE_TOP_LEVEL], 1);  /* the attempt happened */
+
+    /* erase fault: fails earlier, same requirement */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.eraseFails = true;
+    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.saveOutcome, SAVE_ERASE_FAILED);
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(rt.installedBank, MODEL_NO_BANK);
+    ASSERT_EQ(nvm.writes[MODEL_TYPE_TOP_LEVEL], 0);
+    ASSERT_EQ(persisted_selector(&nvm), 0);
+
+    /* And the selector did not move either, so NVM and runtime still agree --
+     * which is the property neither historical shape can state. */
+    ASSERT_EQ(persisted_selector(&nvm), 0);
+    ASSERT_EQ(rt.installedBank, MODEL_NO_BANK);
+}
+
+TEST(a_flash_fault_leaves_the_coefficients_live_in_the_two_historical_shapes)
 {
     UseCalShape shapes[2] = { USECAL_PREFIX, USECAL_POSTFIX };
     unsigned s;
@@ -1155,10 +1255,16 @@ int main(void)
     RUN(pre_fix_stored_type_two_overwrites_the_factory_cal_bank_it_just_selected);
     RUN(post_fix_persists_correctly_for_every_stored_type_value);
 
+    /* r2: the r1 audit's finding, closed. The pair is deliberate -- the
+     * historical shapes leave the coefficients LIVE on a flash fault, r2
+     * leaves them UNTOUCHED, and only both assertions together show the fix
+     * changed the reachable state rather than the wording. */
+    RUN(r2_a_flash_fault_leaves_the_coefficients_untouched);
+    RUN(a_flash_fault_leaves_the_coefficients_live_in_the_two_historical_shapes);
+
     /* What must NOT have moved */
     RUN(a_healthy_record_is_byte_for_byte_unchanged_by_the_fix);
     RUN(a_bank_that_fails_validation_still_refuses_before_install_or_persist);
-    RUN(a_flash_fault_still_leaves_the_coefficients_live_in_both_shapes);
     RUN(raw_mode_and_out_of_range_reach_no_nvm_in_either_shape);
 
     /* The headline */
