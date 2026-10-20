@@ -11149,3 +11149,21 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   most stale row in the population. Three states (covered / uncovered / **unmeasurable**) behind two arms.
   ⭐ **The empty string compares cleanly against anything and means "I did not measure this."** Re-ran
   testing emptiness FIRST and failing closed into a reported UNKNOWN bucket.
+
+- ⛔⛔⛔ **DREW THE CONSEQUENCE FOR MY OWN MERGE AUTHORITY, which is the one thing in this exchange that is
+  mine to act on: ZERO OPEN QODO THREADS IS NOT "THE QODO LEG SATISFIED."** Crossed the coverage partition
+  against unresolved Qodo threads on all 18 rows:
+  `>=1 unresolved` **9 rows** (visibly not converged, safe) · `0 unresolved` **6 rows** — `#1008 #1048
+  #1092 #1110 #1137 #1152`, **ALL SIX UNCOVERED** · `0 unresolved AND covered` **0 rows**.
+  > ⛔⛔ **Every row that has reached zero open Qodo threads is a row whose code postdates its last read.**
+  > Not one is at zero because it was reviewed clean at its head. **Thread resolution turned a VISIBLE
+  > blocker into an INVISIBLE one, 6 for 6** — the hazard is concentrated *exactly where the row looks
+  > best*, produced by the lanes that worked hardest on their threads.
+- ⭐⭐ **EXPOSURE TODAY IS ZERO AND ENTIRELY UNPROTECTED.** All 6 carry a visible hold — `parked` ×3,
+  `blocked`, draft, `audit-stale` ×2 — and **every one exists for a reason unrelated to Qodo coverage.**
+  Nothing couples them. Accidental protection: real today, load-bearing by coincidence.
+  > ⛔⛔ **Which inverts the decision-starved framing: UNPARKING IS THE DANGEROUS ACTION, and 12 of 18 rows
+  > wait on exactly that.** The decision the fleet is blocked on is also the thing that removes the only
+  > barrier. Lift one park and the row is clean, unlabelled, zero-threads and unmeasured, with nothing left.
+- ✅ **ADOPTED, for myself:** the Qodo leg is satisfied only when the last **real** read (excluding any
+  billing-block comment) is at or after the head being merged. Never the thread count alone.
