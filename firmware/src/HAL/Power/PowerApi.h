@@ -137,10 +137,21 @@ typedef struct sPowerData{
      * STANDBY while USB stays plugged in, so the manual power-offs write
      * it: SYSTem:POWer:STATe 0 (SCPI_SetPowerState) sets it
      * unconditionally, and a button long-press (Button_Tasks, UI.c; #1084)
-     * sets it to whether USB is present, since without USB there is no
-     * session to suppress.  Also set by a #1071 reboot restore, which
-     * powers the board up on its own without going through the
-     * auto-promote. */
+     * sets it only WHEN USB is present and otherwise leaves it untouched,
+     * since without USB there is no session to suppress and clearing here
+     * would drop a suppression this function's own re-arm already owns.
+     * Also set by a #1071 reboot restore, which powers the board up on its
+     * own without going through the auto-promote.
+     *
+     * ⛔ EVERY WRITER OF THIS FIELD WRITES A CONSTANT, and that is load
+     * bearing rather than incidental.  An earlier revision of the button
+     * path assigned the cached `BQ24297Data.status.pgStat` directly, so a
+     * stale-false reading CLEARED a valid suppression and the STANDBY pass
+     * then auto-promoted the board straight back up -- cancelling the very
+     * button shutdown #1084 exists to make stick (audit on #1092, blind
+     * leg).  Clearing belongs to Power_HandleStandbyState()'s re-arm, which
+     * reads VBUS in its own fresh context; a caller working from the cache
+     * may DELAY the suppression but must never undo it. */
     bool autoPromotedThisVbusSession;
 
     tBQ24297Data BQ24297Data;
