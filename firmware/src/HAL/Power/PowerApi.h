@@ -144,14 +144,28 @@ typedef struct sPowerData{
      * own without going through the auto-promote.
      *
      * ⛔ EVERY WRITER OF THIS FIELD WRITES A CONSTANT, and that is load
-     * bearing rather than incidental.  An earlier revision of the button
-     * path assigned the cached `BQ24297Data.status.pgStat` directly, so a
-     * stale-false reading CLEARED a valid suppression and the STANDBY pass
-     * then auto-promoted the board straight back up -- cancelling the very
-     * button shutdown #1084 exists to make stick (audit on #1092, blind
-     * leg).  Clearing belongs to Power_HandleStandbyState()'s re-arm, which
-     * reads VBUS in its own fresh context; a caller working from the cache
-     * may DELAY the suppression but must never undo it. */
+     * bearing rather than incidental.  The writers, BY NAME because line
+     * numbers in these two files do not survive a rebase:
+     *
+     *   Power_ConsumeRebootRestore()  = true   (#1071 replay)
+     *   Power_HandleStandbyState()    = false  (re-arm, VBUS absent)
+     *                                 = true   (on issuing the auto promote)
+     *   SCPI_SetPowerState()          = true   (STATe 0)
+     *   SCPI_SetAutoPowerOnUsb()      = false
+     *   SCPI_LoadAutoPowerOnUsb()     = false  (re-arm)
+     *   Button_Tasks() (UI.c, #1084)  = true, ONLY when VBUS is present
+     *
+     * An earlier revision of the button path assigned the cached
+     * `BQ24297Data.status.pgStat` directly, which made it the only writer
+     * able to produce EITHER value -- and therefore the only one able to
+     * drop a suppression another writer had legitimately set.  A stale-false
+     * reading cleared it, and the STANDBY pass then auto-promoted the board
+     * straight back up, cancelling the very button shutdown #1084 exists to
+     * make stick (audit on #1092, blind leg).
+     *
+     * Clearing belongs to Power_HandleStandbyState()'s re-arm, which reads
+     * VBUS in its own fresh context.  A caller working from the cache may
+     * DELAY the suppression but must never undo it. */
     bool autoPromotedThisVbusSession;
 
     tBQ24297Data BQ24297Data;
