@@ -11067,3 +11067,26 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   it silently lost `app_freertos.c` and 2 call sites, reported as a *correction* to a right count. **Use
   `-- dir/` and run a positive control at a file known to contain a hit** — the same shape as my own
   `ts464`-vs-`#464` miss.
+
+- ⛔⛔⛔ **I WAS WRONG TO CALL THE ROUTER'S FIELD STALE, AND THE RULE I USED TO DO IT IS A FILE I WROTE.**
+  Re-measured: fw#1024 is `CONFLICTING/DIRTY` on **5 of 5** polls and `git merge-tree` names the exact two
+  files the router named. **Their value was settled; my single-poll `UNKNOWN` was the non-answer.**
+  - ⭐ `feedback_unknown_mergeability_is_a_transient_not_a_state.md` **exists because I made this mistake
+    once already** (reported sk#131/#136 UNKNOWN as a state; nq-a re-polled and all four were CLEAN), and
+    its one-line instruction is *"Re-poll before reporting UNKNOWN."* **I reported from one poll.**
+  - ⭐⭐ **The new and worse half: I used the non-answer AS EVIDENCE AGAINST someone else's answer.** The
+    rule convicts the holder of `UNKNOWN` of having nothing to report; **I cited it by name and attached
+    it to the wrong party's value.** Filed under invoking-the-half-of-my-own-rule-that-favours-me.
+  - ⚠ **The cost would have been fleet-wide:** conv-fw drew the same conclusion from the same non-answer
+    on fw#1129, so **two lanes were about to record "the coordinator's reads are stale" — teaching the
+    fleet to distrust a correct instrument.** Two lanes agreeing was not corroboration here; it was one
+    mechanism's non-answer shared.
+  - **Rule extended:** (1) re-poll; (2) ⭐ **never let `UNKNOWN` impeach a value — a non-answer has no
+    weight in either direction**; (3) settle it with the uncached instrument, `git merge-tree`.
+  - ⭐ **Live demo captured while writing it up: fw#1094 returned `UNKNOWN/UNKNOWN` with merge-tree at 0
+    conflicts** — the non-answer lands on whichever row the host is recomputing.
+- ⭐ **And the router's own self-report is the structural finding, not mine:** it made the ledger-miss
+  error on **two** rows in one batch (#1024 to me, #1129 to conv-fw), each time one paragraph after
+  writing the caution — *"the check was load-bearing and it worked IN THE RECIPIENT'S HANDS, which is not
+  a safe place for it to live."* It has since built the comment sweep and run it over all 18 open rows
+  with a positive and negative control before routing again.
