@@ -4829,7 +4829,49 @@ void sd_card_manager_ProcessState() {
             break;
 
         case SD_CARD_MANAGER_PROCESS_STATE_IDLE:
-
+            /* #924 (round-2 audit HIGH): THE SINGLE TERMINATOR for the
+             * manifest handle. Measured rather than recalled: this file has
+             * TWELVE assignments of PROCESS_STATE_IDLE and ONE call to
+             * sd_CloseSessionManifest(). Three successive fixes to this
+             * lifecycle each enumerated the exits their author could see, and
+             * each list agreed with the previous one and with nothing else --
+             * so a fourth enumeration is the arm with the worse prior.
+             *
+             * This is a CHOKE POINT instead. Every path to IDLE, present or
+             * future, is dispatched through this case on the next tick, so a
+             * new exit added later inherits the close without anyone
+             * remembering to add it. That is the property the enumerations
+             * could not have.
+             *
+             * IT ALWAYS CLEARS, which is why it does not call
+             * sd_CloseSessionManifest(): that function RETAINS the handle on a
+             * failed close so UNMOUNT_DISK can retry it, and retrying from
+             * here would re-attempt every tick forever and log each time.
+             * There is no session left to retain for at IDLE, and holding the
+             * handle is what blocks the NEXT session's manifest -- the defect
+             * the retention itself introduced. So: attempt the close, report
+             * what happened, release unconditionally. Bounded by construction,
+             * because after one pass the guard below is false.
+             *
+             * The two specific releases (the successful unmount, and the #603
+             * forced clear) are deliberately KEPT rather than replaced: they
+             * act at the moment the fact is known, and this arm is the
+             * backstop for every exit that reaches IDLE without passing
+             * either. Stated that way rather than claiming the choke point
+             * made them redundant -- it does not prove the #603 path reaches
+             * IDLE, and this arm does not need it to. */
+            if (gSDCardData.manifestHandle != SYS_FS_HANDLE_INVALID) {
+                if (SYS_FS_FileClose(gSDCardData.manifestHandle)
+                        == SYS_FS_RES_FAILURE) {
+                    LOG_E("[SD] #924 manifest unclosed at IDLE (err=%d) - one "
+                          "file slot leaked", (int)SYS_FS_Error());
+                } else {
+                    LOG_I("[SD] #924 manifest closed at session exit: %u "
+                          "file(s) recorded",
+                          (unsigned)gSDCardData.manifestLines);
+                }
+                gSDCardData.manifestHandle = SYS_FS_HANDLE_INVALID;
+            }
             break;
         case SD_CARD_MANAGER_PROCESS_STATE_DEINIT:
             gSDCardData.currentProcessState = SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK;

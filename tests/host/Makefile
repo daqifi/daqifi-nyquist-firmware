@@ -810,6 +810,29 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       both layers; clearing the handle discards the only reference"; \
 	       echo "       and burns one of SYS_FS_MAX_FILES (10) slots permanently."; \
 	       exit 1; }
+	@awk '/case SD_CARD_MANAGER_PROCESS_STATE_IDLE:/{f=1;a=""} \
+	      f{a=a $$0 "\n"} \
+	      f&&/^[[:space:]]*break;/{if(a ~ /manifestHandle = SYS_FS_HANDLE_INVALID;/) ok=1; f=0} \
+	      END{exit ok?0:1}' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: no PROCESS_STATE_IDLE arm in $(SD_MANAGER_SRC) releases"; \
+	       echo "       manifestHandle (#924 round-2 audit HIGH)."; \
+	       echo "       THIS IS A CHOKE-POINT PIN, and it is scoped for two reasons."; \
+	       echo "       (1) This file has SIX 'manifestHandle = SYS_FS_HANDLE_INVALID;'"; \
+	       echo "           sites, so an unscoped grep is satisfied by any of them and"; \
+	       echo "           asserts nothing -- the way an earlier pin here was satisfied"; \
+	       echo "           by sd_CloseSessionManifest()'s invalid-handle GUARD return."; \
+	       echo "       (2) There are THREE 'case ...PROCESS_STATE_IDLE:' lines; two are"; \
+	       echo "           in other switches (one just returns the string \"IDLE\"), so"; \
+	       echo "           this accepts ANY such arm containing the release rather than"; \
+	       echo "           assuming which one comes first."; \
+	       echo "       WHY A CHOKE POINT: this file has TWELVE assignments of"; \
+	       echo "       PROCESS_STATE_IDLE and ONE sd_CloseSessionManifest() call."; \
+	       echo "       Three successive fixes each enumerated the exits their author"; \
+	       echo "       could see and each list agreed with the previous one and with"; \
+	       echo "       nothing else. The IDLE arm is where every exit is dispatched on"; \
+	       echo "       the next tick, so a new exit inherits the close without anyone"; \
+	       echo "       remembering. Do not replace this with another exit list."; \
+	       exit 1; }
 	@awk '/if \(SYS_FS_Unmount\(SD_CARD_MANAGER_DISK_MOUNT_NAME\) == 0\)/{f=1;d=0} \
 	      f{print; d+=gsub(/\{/,"{"); d-=gsub(/\}/,"}"); if(d==0 && NR>1 && f) exit}' \
 	   $(SD_MANAGER_SRC) > /tmp/.sd924_umnt.$$$$; \
