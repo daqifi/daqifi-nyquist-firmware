@@ -795,7 +795,10 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 
-$(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SRC) $(STREAMING_HDR) $(JSON_ENC_SRC) $(NANOPB_ENC_SRC) $(CSV_ENC_SRC) $(RECIPES)
+$(BIN970): check_ci_path_filters.py ../../.github/workflows/host-tests.yml \
+           test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SRC) $(STREAMING_HDR) $(JSON_ENC_SRC) $(NANOPB_ENC_SRC) $(CSV_ENC_SRC) $(RECIPES)
+	@python3 check_ci_path_filters.py >/dev/null \
+	  || { python3 check_ci_path_filters.py; exit 1; }
 	@for fld in encoderDroppedSamples encoderDroppedSamplesSteady; do \
 	   n=`grep -oE "gStreamStats\.$$fld[[:space:]]*(\+\+|\+=|-=|=[^=])" $(STREAMING_SRC) | wc -l`; \
 	   [ "$$n" -eq 1 ] \

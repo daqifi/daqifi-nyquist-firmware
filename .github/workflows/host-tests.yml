@@ -323,6 +323,13 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      # #970 / PR #991 round-2 audit: csv_encoder.c was absent from BOTH
+      # filters while JSON_Encoder.c was in both -- the same JSON-present/
+      # CSV-absent pairing as the code gap and the $(BIN970) pin gap. Without
+      # it a change to csv_encoder.c does not trigger this job, so the pin
+      # that guards that file never runs for it: a green gate constrains only
+      # what the gate RUNS.
+      - 'firmware/src/services/csv_encoder.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
       # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its
@@ -393,6 +400,13 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      # #970 / PR #991 round-2 audit: csv_encoder.c was absent from BOTH
+      # filters while JSON_Encoder.c was in both -- the same JSON-present/
+      # CSV-absent pairing as the code gap and the $(BIN970) pin gap. Without
+      # it a change to csv_encoder.c does not trigger this job, so the pin
+      # that guards that file never runs for it: a green gate constrains only
+      # what the gate RUNS.
+      - 'firmware/src/services/csv_encoder.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
       # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its
