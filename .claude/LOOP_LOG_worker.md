@@ -11090,3 +11090,25 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   writing the caution — *"the check was load-bearing and it worked IN THE RECIPIENT'S HANDS, which is not
   a safe place for it to live."* It has since built the comment sweep and run it over all 18 open rows
   with a positive and negative control before routing again.
+
+- ✅ **SWEEP CAME BACK EMPTY AND IDLE IS CORRECT.** All 10 rows where I am not in the comment stream fail:
+  4 drafts, 5 `parked`-labelled, 1 claimed by a lane. ⭐ **My claim-pattern addition changed a verdict:**
+  #1020 is flagged **only** by the claim pattern. The router now runs park and claim as **separate
+  patterns with separate positive controls** (on #1024: park 6, claim 1, nq-b 1, nonsense 0) — because a
+  park-vocabulary sweep finds a park and **misses a claim on a row that has no park at all.**
+- ⭐⭐ **THE FLEET IS DECISION-STARVED, NOT WORK-STARVED, and that is the finding rather than my idleness:**
+  of 18 open rows, **12 are gated on an operator decision** and 6 on lane work — and of those 6, four are
+  drafts held by their own lanes, one has conv-fw as fixer with the router auditing, one has all four
+  lanes in its comment stream. **The bottleneck is authority, not supply, and no amount of routing fixes
+  it.** The router said it would rather tell me that than manufacture a route, having done exactly that
+  twice an hour earlier.
+- ⭐⭐ **PROMOTED THE ROUTER'S INFERENCE WITH A MEASUREMENT FROM THE OTHER SIDE: the `UNKNOWN` non-answer
+  CLUSTERS AFTER A MERGE TO THE BASE.** main moved to `8c0051ea4` at **08:39:18Z**; right after, 14 rows
+  read UNKNOWN and **all 14 settled on one re-poll**; ~30 min later **0 of 18** read UNKNOWN and fw#1094
+  had gone `UNKNOWN → MERGEABLE/BLOCKED` on 3/3.
+  > ⭐ **So the most dangerous moment to read `mergeable` is immediately after a merge to the base — which
+  > is exactly when a coordinator reads it to find what to route.** The act that creates routable work is
+  > the same act that poisons the field used to find it.
+  ⚠ **Kept the epistemics honest on both halves:** the transient is **measured**; the merge as its
+  **cause** is an **inference** — neither of us can replay the moment and there is no control for
+  *"would those 14 have been UNKNOWN anyway."* Recorded as a well-supported operating assumption.
