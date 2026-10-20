@@ -810,6 +810,29 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       both layers; clearing the handle discards the only reference"; \
 	       echo "       and burns one of SYS_FS_MAX_FILES (10) slots permanently."; \
 	       exit 1; }
+	@awk '/if \(SYS_FS_Unmount\(SD_CARD_MANAGER_DISK_MOUNT_NAME\) == 0\)/{f=1;d=0} \
+	      f{print; d+=gsub(/\{/,"{"); d-=gsub(/\}/,"}"); if(d==0 && NR>1 && f) exit}' \
+	   $(SD_MANAGER_SRC) > /tmp/.sd924_umnt.$$$$; \
+	 n=`grep -c 'manifestHandle = SYS_FS_HANDLE_INVALID;' /tmp/.sd924_umnt.$$$$`; \
+	 rm -f /tmp/.sd924_umnt.$$$$; \
+	 test "$$n" -ge 1 \
+	  || { echo "ERROR: the SUCCESSFUL-unmount branch in $(SD_MANAGER_SRC) no longer"; \
+	       echo "       releases manifestHandle (#924 round-2 audit HIGH). got $$n."; \
+	       echo "       SCOPE MATTERS HERE: this file has several"; \
+	       echo "       'manifestHandle = SYS_FS_HANDLE_INVALID;' sites, so the pin"; \
+	       echo "       extracts ONLY the 'if (SYS_FS_Unmount(...) == 0) { ... }'"; \
+	       echo "       block by brace depth. An unscoped grep would be satisfied by"; \
+	       echo "       sd_CloseSessionManifest()'s own clear and assert nothing --"; \
+	       echo "       the way an earlier pin here was satisfied by the function's"; \
+	       echo "       invalid-handle GUARD return."; \
+	       echo "       WHY: SYS_FS_Unmount clears inUse for every file object on the"; \
+	       echo "       disk, but ONLY on success (sys_fs.c:725-731). A handle retained"; \
+	       echo "       past that point is stale, its slot is already back, and"; \
+	       echo "       SYS_FS_FileClose refuses it on the inUse==false guard"; \
+	       echo "       (sys_fs.c:923-927) -- so sd_OpenSessionManifest would decline a"; \
+	       echo "       manifest for every later session. Bounded leak -> permanent"; \
+	       echo "       feature loss, which is worse than the defect the retention fixed."; \
+	       exit 1; }
 	@awk '/^static void sd_OpenSessionManifest\(void\) \{/{f=1} f{print} f&&/^\}/{exit}' \
 	   $(SD_MANAGER_SRC) > /tmp/.sd924_open.$$$$; \
 	 cls=`grep -n 'SYS_FS_FileClose(' /tmp/.sd924_open.$$$$ | head -1 | cut -d: -f1`; \

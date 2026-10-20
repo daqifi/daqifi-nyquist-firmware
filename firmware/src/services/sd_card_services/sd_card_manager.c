@@ -2557,6 +2557,26 @@ void sd_card_manager_ProcessState() {
                 gSDCardData.discMounted = false;
                 gLoggedUnmountFail = false;
                 LOG_D("[SD] Unmounted successfully\r\n");
+                /* #924 (round-2 audit HIGH): A SUCCESSFUL UNMOUNT IS A THIRD
+                 * OWNER OF THIS HANDLE'S VALIDITY, and it invalidates it.
+                 * SYS_FS_Unmount clears `inUse` for EVERY file object on the
+                 * disk -- but only when the unmount itself SUCCEEDED
+                 * (sys_fs.c:725-731). So here the retained handle is already
+                 * stale AND its slot is already reclaimed: keeping it buys
+                 * nothing and costs everything. sd_OpenSessionManifest would
+                 * try to close it, SYS_FS_FileClose would refuse on its
+                 * `inUse == false` guard (sys_fs.c:923-927), and the open would
+                 * then decline a manifest for THIS session and every session
+                 * after it -- turning a bounded one-slot leak into a PERMANENT
+                 * loss of the feature, strictly worse than the defect the
+                 * retention fixed.
+                 *
+                 * The retention is still right for the case it was written for:
+                 * a close that fails while the volume is STILL MOUNTED, which
+                 * the #603 branch below re-enters and retries. It is the
+                 * SUCCESSFUL unmount that has to END the retention, because
+                 * after it there is nothing left to retry against. */
+                gSDCardData.manifestHandle = SYS_FS_HANDLE_INVALID;
             }
             if (gSDCardData.discMounted == true) {
                 /* #603: retrying "untill success" wedged the manager forever
@@ -2576,6 +2596,26 @@ void sd_card_manager_ProcessState() {
                     gSDCardData.discMounted = false;
                     gSDCardData.unmountRetryCount = 0;
                     gLoggedUnmountFail = false;
+                    /* #924 (round-2 audit HIGH): and release it here too, for
+                     * the OPPOSITE reason. This arm is reached with the unmount
+                     * FAILED, so sys_fs.c:725 never ran and the file object is
+                     * still in use -- the handle is a genuine reference to a
+                     * still-open file. But we are giving up on the volume (card
+                     * absent, or the retry bound spent), so the close can never
+                     * succeed either, and holding the handle would block every
+                     * future session's manifest.
+                     *
+                     * Clearing it here DOES leak one of SYS_FS_MAX_FILES (10)
+                     * slots, and that is the deliberate trade: one slot in the
+                     * genuinely unrecoverable case -- which is exactly the
+                     * behaviour before the retention fix, and tolerable -- versus
+                     * a permanent manifest outage. Logged so the leak is visible
+                     * rather than inferred. */
+                    if (gSDCardData.manifestHandle != SYS_FS_HANDLE_INVALID) {
+                        LOG_E("[SD] #924 manifest handle released unclosed - one "
+                              "file slot leaked until reboot");
+                        gSDCardData.manifestHandle = SYS_FS_HANDLE_INVALID;
+                    }
                     /* fall through to the cleanup branch below on next pass */
                     break;
                 }
