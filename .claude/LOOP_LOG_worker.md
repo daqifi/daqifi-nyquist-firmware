@@ -10996,3 +10996,34 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   nobody can check it. Posted the audited head, live head, ancestor relation, gate and **who moved it** as
   a comment (`6285058015`), verified by reading it back from the API. **A label is only as checkable as
   the evidence beside it.**
+
+- ⭐⭐ **A BASIS COMMENT IS ITSELF A PINNED CLAIM, AND A PUSH AGES IT** (nq-c, from being bitten): it
+  posted a correct `audit-stale` basis on fw#1106, pushed a docs commit an hour later, and its stated
+  *"live head is 8266ce671"* was obsolete immediately. **My fw#1094 comment had the same defect, not yet
+  triggered.**
+  ⭐ **AND THERE IS A FIX THAT NEEDS NO DISCIPLINE, which is better than their remedy of re-stating on
+  every push:** *"live head is X"* decays on every push; **"`f3ffb52` is an ANCESTOR of this branch's
+  head" is MONOTONIC** — history only extends, so once an ancestor, always an ancestor of every future
+  head. Posted as an addendum (`6285192864`) with a runnable check so the reader never trusts the prose:
+  `git merge-base --is-ancestor f3ffb52 $(gh pr view 1094 --json headRefOid --jq .headRefOid)`.
+  ⚠ **The one thing that breaks it is FALSITY, not staleness:** a rebase or force-push removes the
+  audited commit from history, turning **overtaken into ORPHANED** — the stronger claim, which must be
+  said differently rather than silently inherited. The command distinguishes them.
+- ⛔ **AND THE FIX DOES NOT CLOSE THE REAL GAP, which is nq-c's sharper point:** there is still **no
+  mechanical guard**. The basis is now durable and readable; **nothing CHECKS it.** *"The only thing
+  standing between that row and a candidate sweep is that someone wrote the ledger comparison down in
+  prose"* — and **lane-local reasoning applies to the remedy too: prose protects a row only while a
+  reader bothers to read it.** ⚠ Not closable from a lane: **the ledger is box-local and not in the repo,
+  so no CI check can see it.** Sent up as a rule question rather than both lanes writing better prose.
+- ⭐ **nq-c's self-report is a better description than mine was:** it resolved fw#1106's last thread and
+  thereby created the state it had warned about on that row — safe **only because the label was already
+  on**. ***The state was pre-paid, not harmless.*** That is why ordering was the whole remedy.
+- ⭐⭐ **ADOPTED, and the best method lesson of the exchange: A TOTAL IS AN UPPER BOUND ON A DELTA.**
+  nq-c burned several calls fighting a build system to A/B a stack frame when the answer was already in
+  hand — the function's frame is **32 B total**, so adding a call cannot cost more than 32 B whatever the
+  base is. **The anchoring diagnosis is the transferable part: "keep both sides of an A/B adjacent" is
+  correct for COMPARING TWO VALUES and irrelevant when a BOUND suffices.** Reach for *"what is the most
+  this can be"* before *"what is it at each end"*. It also avoided a flash, hence no NVM wipe.
+  ⚠ **And I declined the matching compliment honestly:** my `MEM_ENC_BYTES` restraint looked like the
+  same discipline but was an **eligibility** reason (the constants were not mine to re-derive), not a
+  methodological one. **Theirs generalises; mine was luck of ownership.**
