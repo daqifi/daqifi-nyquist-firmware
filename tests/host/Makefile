@@ -786,6 +786,45 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       itself will refuse, silently losing the whole session's"; \
 	       echo "       integrity records with no diagnostic."; \
 	       exit 1; }
+	@awk '/^static void sd_CloseSessionManifest\(void\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	   $(SD_MANAGER_SRC) > /tmp/.sd924_close.$$$$; \
+	 n=`grep -c 'manifestHandle = SYS_FS_HANDLE_INVALID;' /tmp/.sd924_close.$$$$`; \
+	 clr=`grep -n 'manifestHandle = SYS_FS_HANDLE_INVALID;' /tmp/.sd924_close.$$$$ | head -1 | cut -d: -f1`; \
+	 ret=`grep -n '^        return;' /tmp/.sd924_close.$$$$ | sed -n 2p | cut -d: -f1`; \
+	 rm -f /tmp/.sd924_close.$$$$; \
+	 test -n "$$clr" && test -n "$$ret" && test "$$n" -eq 1 && test "$$ret" -lt "$$clr" \
+	  || { echo "ERROR: sd_CloseSessionManifest() in $(SD_MANAGER_SRC) no longer keeps"; \
+	       echo "       the handle when SYS_FS_FileClose() FAILS (#924 round-2"; \
+	       echo "       finding 4). This pin checks POSITION, not presence: the"; \
+	       echo "       failure branch must 'return;' BEFORE the single"; \
+	       echo "       'manifestHandle = ...' clear. The anchor is the SECOND"; \
+	       echo "       'return;' -- the FIRST is the invalid-handle guard at the"; \
+	       echo "       top, which precedes the clear in the BROKEN version too, so"; \
+	       echo "       anchoring on it made this pin pass its own mutant."; \
+	       echo "       'manifestHandle = SYS_FS_HANDLE_INVALID;' on the success path."; \
+	       echo "       got: $$n clear(s), first clear at line $$clr, first return at $$ret."; \
+	       echo "       WHY IT MATTERS, from the vendor source: SYS_FS_FileClose clears"; \
+	       echo "       fileObj->inUse ONLY on success (sys_fs.c:951-960), and FatFs"; \
+	       echo "       f_close skips 'fp->obj.fs = 0' when its leading f_sync fails"; \
+	       echo "       (ff.c:4226-4242). So a failed close leaves the file OPEN in"; \
+	       echo "       both layers; clearing the handle discards the only reference"; \
+	       echo "       and burns one of SYS_FS_MAX_FILES (10) slots permanently."; \
+	       exit 1; }
+	@awk '/^static void sd_OpenSessionManifest\(void\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	   $(SD_MANAGER_SRC) > /tmp/.sd924_open.$$$$; \
+	 cls=`grep -n 'SYS_FS_FileClose(' /tmp/.sd924_open.$$$$ | head -1 | cut -d: -f1`; \
+	 opn=`grep -n 'SYS_FS_FileOpen(' /tmp/.sd924_open.$$$$ | head -1 | cut -d: -f1`; \
+	 rm -f /tmp/.sd924_open.$$$$; \
+	 test -n "$$cls" && test -n "$$opn" && test "$$cls" -lt "$$opn" \
+	  || { echo "ERROR: sd_OpenSessionManifest() in $(SD_MANAGER_SRC) no longer retries"; \
+	       echo "       a surviving close BEFORE opening (#924 round-2 finding 4)."; \
+	       echo "       Position pin: a SYS_FS_FileClose( must precede the"; \
+	       echo "       SYS_FS_FileOpen( that assigns manifestHandle."; \
+	       echo "       got: first close at line $$cls, first open at line $$opn."; \
+	       echo "       Without it the open OVERWRITES a handle kept for retry, which"; \
+	       echo "       is where a pending leak becomes a permanent one -- and the"; \
+	       echo "       leak stops being bounded at one slot for the whole boot."; \
+	       exit 1; }
 	@test $$(grep -c 'sd_ManifestPathSafeToOverwrite(' $(SD_MANAGER_SRC)) -ge 3 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) calls sd_ManifestPathSafeToOverwrite fewer"; \
 	       echo "       than 3 times (its own definition plus 2 call sites: the primary"; \

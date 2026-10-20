@@ -2020,6 +2020,31 @@ static void sd_OpenSessionManifest(void) {
         LOG_I("[SD] #924 manifest goes to '%s'", path);
     }
 
+    /* #924 (Qodo round 2, finding 4): A HANDLE MAY HAVE SURVIVED A FAILED
+     * CLOSE, and the assignment below OVERWRITES it -- which is where a leak
+     * became permanent rather than merely pending. sd_CloseSessionManifest
+     * now keeps the handle so UNMOUNT_DISK can retry, but those retries are
+     * bounded (#603 forces the state clear and breaks out), so a handle can
+     * still outlive the session that opened it. Retry the close once here,
+     * and if it still fails REFUSE to open a manifest for this session rather
+     * than dropping the reference.
+     *
+     * That bounds total leakage at ONE slot for the life of the boot instead
+     * of one per failed close: a persistently failing card costs the manifest
+     * feature, not the ten-slot file table. The session itself continues --
+     * the file list is unaffected and only the manifest is absent, which is
+     * the same degradation this function's other give-up arms already take.
+     */
+    if (gSDCardData.manifestHandle != SYS_FS_HANDLE_INVALID) {
+        if (SYS_FS_FileClose(gSDCardData.manifestHandle) == SYS_FS_RES_FAILURE) {
+            LOG_E("[SD] #924 no manifest: prior handle still will not close "
+                  "(err=%d)", (int)SYS_FS_Error());
+            return;
+        }
+        gSDCardData.manifestHandle = SYS_FS_HANDLE_INVALID;
+        LOG_I("[SD] #924 recovered a manifest handle from a failed close");
+    }
+
     gSDCardData.manifestHandle = SYS_FS_FileOpen(path,
                                                  SYS_FS_FILE_OPEN_WRITE);
     if (gSDCardData.manifestHandle == SYS_FS_HANDLE_INVALID) {
@@ -2113,12 +2138,40 @@ static void sd_CloseSessionManifest(void) {
         return;
     }
     if (SYS_FS_FileClose(gSDCardData.manifestHandle) == SYS_FS_RES_FAILURE) {
-        LOG_E("[SD] #924 failed to close manifest (err=%d)",
-              (int)SYS_FS_Error());
-    } else {
-        LOG_I("[SD] #924 manifest closed: %u file(s) recorded",
-              (unsigned)gSDCardData.manifestLines);
+        /* #924 (Qodo round 2, finding 4): KEEP THE HANDLE. A FAILED CLOSE
+         * LEAVES THE FILE OPEN IN BOTH LAYERS, so clearing the handle here
+         * discarded the only reference to a live filesystem object and
+         * consumed one of SYS_FS_MAX_FILES (10) slots with no way to retry.
+         *
+         * Why both layers still hold it, read from the vendor source rather
+         * than assumed:
+         *   - SYS_FS_FileClose sets `fileObj->inUse = false` ONLY on success
+         *     (sys_fs.c:951-960); on failure the Harmony file object stays in
+         *     use, so this handle is still VALID and a retry is well-defined.
+         *   - it delegates to FatFs f_close, whose first act is f_sync
+         *     ("Flush cached data", ff.c:4226); when that sync FAILS,
+         *     `res != FR_OK` and the block doing `fp->obj.fs = 0` is SKIPPED
+         *     (ff.c:4227-4242), so the FIL is not invalidated either.
+         *
+         * ⚠ THE SAME VENDOR FACT REFUTES THE ADJACENT FINDING AND CONFIRMS
+         * THIS ONE. Round 2's finding 5 said a FileSync was needed before
+         * this FileClose; it is not, because f_close syncs first -- and that
+         * sync's FAILURE path is precisely what leaves the handle live here.
+         * A reader who finds only that refutation will conclude this area is
+         * clean. It is the same two lines and the opposite conclusion.
+         *
+         * Returning with the handle held is safe because this function's ONE
+         * call site is in UNMOUNT_DISK, which the #603 branch below re-enters
+         * on a failed unmount -- so the close is retried, and bounded by
+         * SD_UNMOUNT_MAX_RETRIES rather than retried forever. The function
+         * stays idempotent, which that call site's comment already relies on.
+         */
+        LOG_E("[SD] #924 manifest close failed (err=%d) - handle kept for "
+              "retry", (int)SYS_FS_Error());
+        return;
     }
+    LOG_I("[SD] #924 manifest closed: %u file(s) recorded",
+          (unsigned)gSDCardData.manifestLines);
     gSDCardData.manifestHandle = SYS_FS_HANDLE_INVALID;
 }
 
