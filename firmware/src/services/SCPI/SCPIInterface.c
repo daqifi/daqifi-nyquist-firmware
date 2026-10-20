@@ -10198,6 +10198,63 @@ void SCPI_DrainDeferredSdError(scpi_t *context) {
     const uint32_t generation = isTcp ? wifi_tcp_server_GetConnGeneration() : 0u;
     const int32_t err = sd_card_manager_TakeAsyncError(target, generation);
     if (err != 0) {
+        /* ⛔ QUEUE-ONLY. A bare SCPI_ErrorPush here CORRUPTED THE NEXT
+         * SUCCESSFUL DOWNLOAD (codex audit on #1106, HIGH, both legs).
+         *
+         * SCPI_ErrorPush is not queue-only in this firmware: SCPI_ErrorPushEx
+         * calls SCPI_ErrorEmit (error.c:193 -> :78-84), which synchronously
+         * calls context->interface->error(context, err) whenever that callback
+         * is non-NULL -- and BOTH transports register one (UsbCdc.c
+         * .error = SCPI_USB_Error, wifi_tcp_server.c .error = SCPI_TCP_Error)
+         * that formats "**ERROR: %d, \"%s\"\r\n" and writes it straight to the
+         * wire. Because this runs at the command boundary, that write lands
+         * immediately BEFORE the next command's response:
+         *
+         *   SYST:STOR:SD:GET "missing.bin"   -> __END_OF_FILE__   (error latched)
+         *   SYST:STOR:SD:GET "good.bin"      -> **ERROR: -256, "File name not
+         *                                       found"\r\nABC__END_OF_FILE__
+         *
+         * A marker-delimited binary receiver then stores the error line as the
+         * leading bytes of good.bin, or rejects a valid download on a size/CRC
+         * mismatch. No pipelining and no race required, and it falsified this
+         * PR's own claim that deferring to a command boundary keeps errors out
+         * of the data stream: it moved the corruption from THIS download to
+         * the NEXT one.
+         *
+         * ⭐ The remedy is this file's own established pattern, not a new one:
+         * #965 hit exactly this (SCPIInterface.c:3927 documents it, naming the
+         * same two callbacks and the same format string) and fixed it by
+         * swapping context->interface for a stack-local copy with .error
+         * nulled. SCPI_ErrorPushEx still updates the error queue, the ESR bits
+         * and cmd_error unconditionally (error.c:179-199) -- none of which
+         * reads context->interface -- so SYSTem:ERR? still reports -256
+         * exactly as before, with no transport write.
+         *
+         * .control is deliberately left pointing at the real callback, for the
+         * reason #965 records: SCPI_ErrorEmit also sets STB_QMA, and
+         * SCPI_RegSet's STB/SRE handling can reach interface->control(...)
+         * (ieee488.c:170-186). Both registered .control callbacks are no-ops
+         * in this firmware -- SCPI_TCP_Control and SCPI_USB_Control each
+         * return SCPI_RES_OK with every write commented out, re-verified here
+         * -- so nulling .error alone covers every transport-writing path we
+         * actually have. ⚠ If either .control is ever made to write, this swap
+         * must null it too, or move to a fully-NULL local interface.
+         *
+         * Bounded under one critical section: info is NULL, so
+         * SCPI_ErrorAddInternal never calls SCPIDEFINE_strndup -- one fifo_add
+         * plus a few register writes, no allocation.
+         *
+         * cmd_error needs no save/restore: processCommand() clears it on entry
+         * (parser.c:137) and this runs BEFORE SCPI_Input, which is the same
+         * placement argument the comment above already rests on. */
+        scpi_interface_t * const realInterface = context->interface;
+        scpi_interface_t queueOnlyInterface;
+        taskENTER_CRITICAL();
+        queueOnlyInterface = *realInterface;
+        queueOnlyInterface.error = NULL;
+        context->interface = &queueOnlyInterface;
         SCPI_ErrorPush(context, (int16_t)err);
+        context->interface = realInterface;
+        taskEXIT_CRITICAL();
     }
 }

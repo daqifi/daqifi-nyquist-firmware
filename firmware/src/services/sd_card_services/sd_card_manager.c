@@ -3249,6 +3249,15 @@ void sd_card_manager_ProcessState() {
                      * error logging function and are never sent out in the
                      * stream", CLAUDE.md Standing Rules).
                      *
+                     * ⚠ That rule is satisfied by the DRAIN BEING QUEUE-ONLY,
+                     * which it was not when first written: the push emitted
+                     * "**ERROR:" through the transport callback, so this
+                     * comment cited the rule while the code broke it one
+                     * command later (audit HIGH, both legs). The invariant is
+                     * load-bearing, not stylistic -- see
+                     * SCPI_DrainDeferredSdError in SCPIInterface.c before
+                     * changing how the error is pushed.
+                     *
                      * An earlier revision of this fix sent __TRANSFER_ERROR__
                      * here so an open failure and a mid-transfer read error
                      * would share one wire vocabulary. That is wrong for THIS
@@ -3324,14 +3333,29 @@ void sd_card_manager_ProcessState() {
                          * Latching first makes the marker's visibility imply
                          * the error is already recorded.
                          *
-                         * The converse is NOT guaranteed and cannot be: the
-                         * announcement is bound to a COMMAND boundary, not to a
-                         * position in the GET reply, so a host that pipelines
-                         * its next command may see the "**ERROR:" line ahead of
-                         * the marker. That is ordering noise, not loss; binding
-                         * the two would mean pushing from this task, which is
-                         * exactly what sd_card_manager_LatchAsyncError
-                         * documents as unsafe.
+                         * ⛔ AN EARLIER REVISION OF THIS PARAGRAPH SAID a host
+                         * that pipelines its next command "may see the
+                         * '**ERROR:' line ahead of the marker. That is ordering
+                         * noise, not loss." BOTH HALVES WERE WRONG, and the
+                         * audit found the consequence as a HIGH: there is no
+                         * ordering to reason about, because the drain must not
+                         * put an "**ERROR:" line on the wire AT ALL. It used
+                         * to, and because the drain runs at a command boundary
+                         * the line landed immediately before the NEXT
+                         * command's response -- prefixing a subsequent
+                         * successful SD:GET with error text, which a
+                         * marker-delimited receiver stores as file content.
+                         * Not noise: corruption, and it needed no pipelining.
+                         *
+                         * SCPI_DrainDeferredSdError is now queue-only (see its
+                         * comment in SCPIInterface.c), so the error reaches the
+                         * client through SYSTem:ERR? and the log, never as
+                         * bytes in a reply -- which is the project rule this
+                         * paragraph had been quietly describing an exception
+                         * to. The latch-before-marker ordering above still
+                         * matters and is unchanged; binding the push to this
+                         * task remains unsafe for the reason
+                         * sd_card_manager_LatchAsyncError documents.
                          *
                          * Both operands are read into locals before the call
                          * for the same reason. The #829 claim is still held
