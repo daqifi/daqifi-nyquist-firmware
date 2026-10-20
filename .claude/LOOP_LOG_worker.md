@@ -11131,3 +11131,21 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   four minutes after the block.** The audit half is sound (codex, separate engine, unaffected). A reader
   combining it with "no new Qodo findings" concludes converged — and **the Qodo half of that is not
   knowable from the row.** Flagged rather than cleared.
+
+- ⛔⛔ **CORRECTED MY OWN RULE AND THE ANSWER GOT WORSE: a READ DATE IS NOT A STALENESS TEST.** The router
+  dated all 18 open rows' Qodo surfaces and concluded a month of fleet-wide silence. I refined it — a read
+  is stale only **relative to the head it was read at**, so the test is `last_read` vs `head commit date`,
+  not the read date alone — expecting to EXONERATE most rows as benignly quiet. Measured instead:
+  **3 covered (`#1077`, `#1078`, `#1099`), 15 with code that landed AFTER the last read.**
+  > ⛔⛔ **15 of 18 open rows carry code no reviewer has ever looked at.** `#991` head 2026-10-20 vs read
+  > 2026-09-11; `#704` head post-dates its read by **17 minutes** and has sat so since July.
+  > ⭐ **The billing block did not cause this — the block is TODAY and the uncovered code landed over five
+  > weeks.** A credits action restores the instrument, not the coverage. And the 3 covered rows are covered
+  > because a review fired ~14 min after their last push and nothing has been pushed since: **coverage here
+  > is an artifact of a row going quiet, not of anyone checking.**
+- ⛔ **AND MY OWN CHECK FAILED OPEN ON THE FIRST RUN, same class I corrected a peer for an hour earlier.**
+  `#704`'s head date came back **empty**, and `[[ "" > "2026-07-18T20:38:48Z" ]]` is false in bash, so my
+  two-armed `if` put the row I had *failed to measure* into the **pass** arm — printing `✅ COVERS` for the
+  most stale row in the population. Three states (covered / uncovered / **unmeasurable**) behind two arms.
+  ⭐ **The empty string compares cleanly against anything and means "I did not measure this."** Re-ran
+  testing emptiness FIRST and failing closed into a reported UNKNOWN bucket.
