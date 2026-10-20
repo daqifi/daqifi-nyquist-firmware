@@ -1309,7 +1309,13 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
         
         // Log the SCPI command received
         LOG_D("SCPI CMD: %.*s\r\n", commandLen, command);
-        
+
+        // #914: drain any deferred SD-task failure into THIS context before
+        // dispatching the next command -- must run before SCPI_Input (see
+        // SCPI_DrainDeferredSdError's own comment for why the ordering
+        // matters).
+        SCPI_DrainDeferredSdError(&gRunTimeUsbSttings.scpiContext);
+
         int result = SCPI_Input(
                 &gRunTimeUsbSttings.scpiContext,
                 command,
