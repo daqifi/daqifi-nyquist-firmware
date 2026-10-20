@@ -11027,3 +11027,43 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   ⚠ **And I declined the matching compliment honestly:** my `MEM_ENC_BYTES` restraint looked like the
   same discipline but was an **eligibility** reason (the constants were not mine to re-derive), not a
   methodological one. **Theirs generalises; mine was luck of ownership.**
+
+## 2026-10-20 · fw#1024 routed to me and DECLINED — parked, claimed, and awaiting a ruling
+
+- ⛔⛔ **DECLINED. The routing said "no hold label, no park … nobody is mid-flight on it." All three false.**
+  - **PARKED in a comment** (`5725959976`, 2026-09-18): *"PARKED at the round cap — awaiting a ruling, not
+    an audit … six adversarial audits already … a seventh needs an explicit cap exception from the
+    coordinator or operator."* Reaffirmed 2026-09-22: *"The judgement about whether to spend it remains
+    with the coordinator or operator."*
+  - ⭐ **The router WROTE the check and did not run it**, two paragraphs earlier in the same message:
+    *"a MISS in the ledger is not a clearance — check the row's own comments for a park or a claim that
+    never became a label. We have been bitten by a park that lived only in a comment."* **Third instance
+    of that shape tonight.**
+  - **CLAIMED by conv-fw** 2026-09-18T05:40:22Z. Not taking a row another lane holds.
+  - **I am partly disqualified**: 22 LOOP_LOG hits, 6 evidence files, **my merge commit is in the
+    branch's history**, and two of its threads comment on the pool value my merge set.
+- ⛔⛔ **AND THE DECISIVE HARM: resolving the conflict would PRE-EMPT THE PENDING DECISION.** The park's
+  own order is *"run the bench … flashed at THIS head … then audit at whatever head actually merges."*
+  A resolution moves the head, voids *"this head"*, and changes the shape of the ruling being asked for —
+  the refresh-pre-empts-a-decision exclusion class I catalogued for fw#1152/#1129, here with the decision
+  actually outstanding. **Three decisions are stacked on this row and none is mine.**
+- ⚠ **The state field read `UNKNOWN/UNKNOWN`, not `CONFLICTING`** — an unknown mergeability is a
+  transient, so the router's field was stale. ⭐ **Their CONCLUSION was right and I verified it the
+  authoritative way**: `git merge-tree origin/main <head>` → 2 conflict lines, so main moved again after
+  my 2026-10-16 merge. **Right answer, wrong instrument** — worth separating, because the next reader of
+  that cached field may get the opposite error.
+- ⭐⭐ **HONEST CORRECTION TO MY OWN ACCUMULATOR FINDING: conv-fw recorded a collision on this exact macro
+  a MONTH before I presented the class as new** — *"this PR's '- 512U' trim now stacks on an independent
+  '- 2048U' that main added since, so the static pool is 2.5 KB smaller than either change intended."*
+  ⚠ **Precise rather than self-flagellating, because the difference is the whole value of the rule:**
+  theirs was `-2048` vs `-512` — **UNEQUAL values, visible by inspecting the expression.** Mine was
+  `-512` (#958) vs `-512` (#956) — **EQUAL values with EQUAL MULTISETS, invisible to any inspection of
+  the expression or the total.** So the sharper half is genuinely new; **the specific collision on this
+  row was a rediscovery.** Both belong in the record.
+- ⭐ **ADOPTED from the router:** (a) **a state read tells you the state; only the TIMELINE EVENT LOG
+  attributes it to a call** — and *"retry until confirmed" is more writes as the cure for a write race*,
+  where the remedy is **one writer**: whoever moves the head owns the label for that transition;
+  (b) ⛔ **`'dir/**/*.c'` cannot match files directly in `dir/`** — `**/` needs at least one segment, and
+  it silently lost `app_freertos.c` and 2 call sites, reported as a *correction* to a right count. **Use
+  `-- dir/` and run a positive control at a file known to contain a hit** — the same shape as my own
+  `ts464`-vs-`#464` miss.
