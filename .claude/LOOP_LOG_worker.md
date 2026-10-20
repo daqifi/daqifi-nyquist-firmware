@@ -11112,3 +11112,22 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   ⚠ **Kept the epistemics honest on both halves:** the transient is **measured**; the merge as its
   **cause** is an **inference** — neither of us can replay the moment and there is no control for
   *"would those 14 have been UNKNOWN anyway."* Recorded as a well-supported operating assumption.
+
+- ⛔⛔ **RE-DATED THE QODO CLAIM ON MY OWN TWO ROWS, because my stated blocker was "needs code for LIVE
+  Qodo findings" and a billing block makes "live" unknowable.** Measured rather than assumed:
+  `#1094` findings **2026-09-16** (0 bugs / 4 rule violations), no marker, **nothing at all after the
+  block** → findings REAL and no false-clean. `#1129` findings **2026-09-18** (1 bug / 4), marker at
+  **10:42:43Z today** → findings REAL, surface now unknowable.
+  > ⭐⭐ **The block does not invalidate the findings — it removes the CONFIRMATION PATH.** Writing the fix
+  > is still correct work; what I can no longer do is produce a fresh clean Qodo surface to prove it
+  > landed. So convergence on these rows has to rest on a **pinned, posted disposition**, not on a clean
+  > read. **That reclassifies both rows from "needs lane work" to "needs lane work AND a credits action."**
+- ⛔ **CORRECTED THE SCOPE I WAS GIVEN: the marker is on THREE rows — `#1129`, `#1124`, `#1077` — not two.**
+  ⛔ And **"0 markers on #991" is not "#991 unaffected"**: 0 markers but **10 qodo comments, last read
+  2026-09-11, ~6 weeks stale.** A marker is a POSITIVE signal; its absence has three causes (ran fine /
+  never triggered / blocked silently). #991 is **unmeasured, not cleared** — the failed-grep shape applied
+  to a marker instead of a pattern.
+- ⚠ **A COMPOSITE READ HAZARD ON MY OWN ROW:** `#1129`'s adversarial audit posted **FULL PASS at 10:47Z,
+  four minutes after the block.** The audit half is sound (codex, separate engine, unaffected). A reader
+  combining it with "no new Qodo findings" concludes converged — and **the Qodo half of that is not
+  knowable from the row.** Flagged rather than cleared.
