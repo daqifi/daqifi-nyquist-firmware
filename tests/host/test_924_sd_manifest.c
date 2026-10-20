@@ -499,6 +499,47 @@ TEST(first_line_check_accepts_a_real_rendered_line)
     ASSERT_TRUE(SdManifest_FirstLineLooksLikeManifest(twoLines, (size_t)n1));
 }
 
+/* #924 round-4 audit: THE WRITER GAINED A FOURTH FIELD AND THE READER DID NOT.
+ * A format grew `,PARTIAL`, sd_card_manager.c was updated, and this -- the ONE
+ * in-repo reader of a manifest line -- was not. A manifest whose FIRST line was
+ * a PARTIAL record then stopped looking like a manifest, so the overwrite probe
+ * declined and the session silently ran with no manifest.
+ *
+ * THIS TEST IS A ROUND TRIP ON PURPOSE. Asserting a hand-written string would
+ * re-create the same failure the moment the marker's spelling changes: the
+ * writer and the test would drift together and the reader would be left behind
+ * again. Feeding FormatLine's OWN output to the reader makes writer/reader
+ * divergence fail the build, which is the only form that cannot rot. */
+TEST(first_line_check_accepts_a_rendered_PARTIAL_line)
+{
+    char line[128];
+    int n = SdManifest_FormatLine(line, sizeof(line), "experiment-3.csv",
+                                  20480u, 0x1A2B3C4Du, true);
+    ASSERT_TRUE(n > 0);
+    /* the marker really is present -- otherwise this passes vacuously by
+     * testing the three-field line a second time */
+    ASSERT_TRUE(strstr(line, SD_MANIFEST_PREFIX_MARK) != NULL);
+    ASSERT_TRUE(SdManifest_FirstLineLooksLikeManifest(line, (size_t)n));
+
+    /* NEGATIVE CONTROLS. The arm accepts THE marker, not any fourth field --
+     * otherwise it would wave through a corrupt or foreign line that merely has
+     * a comma after the CRC, which is precisely the data-file case the probe
+     * exists to catch. */
+    static const char wrongMark[] = "exp.csv,20480,0x1A2B3C4D,WRONGMARK\n";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(
+        wrongMark, sizeof(wrongMark) - 1u));
+
+    static const char truncated[] = "exp.csv,20480,0x1A2B3C4D,PART\n";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(
+        truncated, sizeof(truncated) - 1u));
+
+    /* the mark present but the newline missing: the line is unterminated, so
+     * the record is not complete and must not be trusted */
+    static const char noNewline[] = "exp.csv,20480,0x1A2B3C4D,PARTIAL";
+    ASSERT_FALSE(SdManifest_FirstLineLooksLikeManifest(
+        noNewline, sizeof(noNewline) - 1u));
+}
+
 TEST(first_line_check_accepts_empty_content)
 {
     /* Nothing there to be destroyed either way -- an empty existing file
@@ -674,6 +715,7 @@ int main(void)
     RUN(paths_equal_case_insensitive_rejects_real_differences);
     RUN(paths_equal_case_insensitive_null_safety);
     RUN(first_line_check_accepts_a_real_rendered_line);
+    RUN(first_line_check_accepts_a_rendered_PARTIAL_line);
     RUN(first_line_check_accepts_empty_content);
     RUN(first_line_check_rejects_unrelated_data);
     RUN(first_line_check_rejects_near_misses);

@@ -281,7 +281,43 @@ static inline bool SdManifest_FirstLineLooksLikeManifest(const char *data,
     }
     i += 8u;
 
-    return data[i] == '\n';
+    /* #924 (round-4 audit): THE OPTIONAL FOURTH FIELD. A record written after a
+     * faulted write carries SD_MANIFEST_PREFIX_MARK before the newline.
+     *
+     * This is the ONE in-repo reader of a manifest line, DERIVED rather than
+     * recalled: SdManifest.h declares five functions and this is the only one
+     * that parses the line's shape, reached from exactly one call site (the
+     * overwrite-safety probe in sd_card_manager.c). Without this arm, a
+     * manifest whose FIRST line is a PARTIAL record stops looking like a
+     * manifest, the probe declines to overwrite it, and the session silently
+     * continues with no manifest at all.
+     *
+     * IT FAILS CLOSED, which is why adding the field DEGRADED rather than
+     * corrupted: an unrecognised line makes the probe refuse, and refusing when
+     * unsure is that probe's whole job. Had the marker altered one of the first
+     * three fields in place, an un-updated reader would have MIS-PARSED instead
+     * of declining -- the fourth-field shape is what bounded the blast radius
+     * of its own incomplete rollout.
+     *
+     * Length from sizeof(SD_MANIFEST_PREFIX_MARK), never a literal: the
+     * marker's width is already a named term of SD_MANIFEST_LINE_MAX, and a
+     * second hand-copied constant is the one that goes stale. */
+    if (data[i] == '\n') {
+        return true;
+    }
+    {
+        const size_t markLen = sizeof(SD_MANIFEST_PREFIX_MARK) - 1u;
+        size_t k;
+        if (i + markLen >= len) {
+            return false;   /* no room for the mark AND its newline */
+        }
+        for (k = 0u; k < markLen; k++) {
+            if (data[i + k] != SD_MANIFEST_PREFIX_MARK[k]) {
+                return false;
+            }
+        }
+        return data[i + markLen] == '\n';
+    }
 }
 
 /**
