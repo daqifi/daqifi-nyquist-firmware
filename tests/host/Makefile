@@ -522,6 +522,30 @@ LOGCEIL_SRC3 := ../../firmware/src/services/wifi_services/wifi_manager.c
 # instead of arithmetic.
 RECIPES := Makefile
 
+# #924: the per-session SD integrity manifest. Same category as AD7609_BIN and
+# JSONESC_BIN -- the pure text operations were split into
+# firmware/src/Util/SdManifest.h so this test compiles the REAL header rather
+# than a copy of its shape (sd_card_manager.c is not includable on a host:
+# Harmony, FreeRTOS, FatFs and the whole board graph). CRC32.c is LINKED IN
+# for the same reason it needs no stub -- it includes nothing but its own
+# header -- so the accumulation claims are made against the real implementation
+# too, not a reference one.
+#
+# It DOES carry grep guards, and they pin something the two targets above have
+# no equivalent of. The suite proves the two pieces are correct; it cannot see
+# whether sd_card_manager.c still USES them. Two things would silently void the
+# whole feature while leaving every assertion here green:
+#   - the running CRC stops being folded in SDCardWrite(), the single funnel
+#     every stream-file byte passes through, so the recorded CRC covers only
+#     part of the file;
+#   - lines stop being rendered through SdManifest_FormatLine, so the format
+#     this suite pins is no longer the format written to the card.
+# Both are exactly the "test passes against a model the firmware no longer
+# has" failure the guards elsewhere in this file exist for, so they fail the
+# BUILD rather than being left to the bench.
+MANIFEST_BIN := run_924_tests
+SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
+
 # #980: DAC7718 error-path honesty (lock ownership in DAC7718_ReadWriteReg,
 # init-failure propagation + slot retention in DAC_EnsureHardwareInitialized).
 # Like BENCH_BIN, neither DAC7718.c (Harmony GPIO/SPI/coretimer + FreeRTOS
@@ -731,6 +755,151 @@ $(AD7609_BIN): test_ad7609_scale.c test_framework.h $(FW_ADC)/AD7609Scale.h $(RE
 
 $(JSONESC_BIN): test_json_string_escape.c test_framework.h $(FW_SVC)/JSON_StringEscape.h $(RECIPES)
 	$(CC) $(CFLAGS) -I$(FW_SVC) -o $(JSONESC_BIN) test_json_string_escape.c
+
+$(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h \
+                 $(FW_UTIL)/CRC32.h $(FW_UTIL)/CRC32.c $(SD_MANAGER_SRC) $(RECIPES)
+	@grep -q 'CRC32_Update(gSDCardData.fileCrcRunning' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer folds the write-path running"; \
+	       echo "       CRC (expected 'CRC32_Update(gSDCardData.fileCrcRunning')."; \
+	       echo "       #924's manifest records a CRC accumulated as the bytes are"; \
+	       echo "       WRITTEN; without that fold the recorded value covers only"; \
+	       echo "       part of each file and test_924_sd_manifest.c can no longer"; \
+	       echo "       say anything about it. Re-derive both before proceeding."; \
+	       exit 1; }
+	@grep -q 'SdManifest_FormatLine' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer renders manifest lines through"; \
+	       echo "       SdManifest_FormatLine, so the line format pinned by"; \
+	       echo "       test_924_sd_manifest.c is not the one written to the card."; \
+	       exit 1; }
+	@grep -q 'SdManifest_RelativeName' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer derives the recorded name through"; \
+	       echo "       SdManifest_RelativeName. The manifest's names must stay"; \
+	       echo "       relative to the configured directory -- that is the spelling"; \
+	       echo "       SYST:STOR:SD:CRC? and :GET take as their operand."; \
+	       exit 1; }
+	@grep -q 'SdManifest_PathsEqualCaseInsensitive' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer compares the manifest path against"; \
+	       echo "       the session's own stream file through"; \
+	       echo "       SdManifest_PathsEqualCaseInsensitive (#924 post-merge audit,"; \
+	       echo "       defect 2). FatFs's own duplicate-open lock (FF_FS_LOCK) is"; \
+	       echo "       case-insensitive; a plain strcmp here misses a collision FatFs"; \
+	       echo "       itself will refuse, silently losing the whole session's"; \
+	       echo "       integrity records with no diagnostic."; \
+	       exit 1; }
+	@awk '/^static void sd_CloseSessionManifest\(void\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	   $(SD_MANAGER_SRC) > /tmp/.sd924_close.$$$$; \
+	 n=`grep -c 'manifestHandle = SYS_FS_HANDLE_INVALID;' /tmp/.sd924_close.$$$$`; \
+	 clr=`grep -n 'manifestHandle = SYS_FS_HANDLE_INVALID;' /tmp/.sd924_close.$$$$ | head -1 | cut -d: -f1`; \
+	 ret=`grep -n '^        return;' /tmp/.sd924_close.$$$$ | sed -n 2p | cut -d: -f1`; \
+	 rm -f /tmp/.sd924_close.$$$$; \
+	 test -n "$$clr" && test -n "$$ret" && test "$$n" -eq 1 && test "$$ret" -lt "$$clr" \
+	  || { echo "ERROR: sd_CloseSessionManifest() in $(SD_MANAGER_SRC) no longer keeps"; \
+	       echo "       the handle when SYS_FS_FileClose() FAILS (#924 round-2"; \
+	       echo "       finding 4). This pin checks POSITION, not presence: the"; \
+	       echo "       failure branch must 'return;' BEFORE the single"; \
+	       echo "       'manifestHandle = ...' clear. The anchor is the SECOND"; \
+	       echo "       'return;' -- the FIRST is the invalid-handle guard at the"; \
+	       echo "       top, which precedes the clear in the BROKEN version too, so"; \
+	       echo "       anchoring on it made this pin pass its own mutant."; \
+	       echo "       'manifestHandle = SYS_FS_HANDLE_INVALID;' on the success path."; \
+	       echo "       got: $$n clear(s), first clear at line $$clr, first return at $$ret."; \
+	       echo "       WHY IT MATTERS, from the vendor source: SYS_FS_FileClose clears"; \
+	       echo "       fileObj->inUse ONLY on success (sys_fs.c:951-960), and FatFs"; \
+	       echo "       f_close skips 'fp->obj.fs = 0' when its leading f_sync fails"; \
+	       echo "       (ff.c:4226-4242). So a failed close leaves the file OPEN in"; \
+	       echo "       both layers; clearing the handle discards the only reference"; \
+	       echo "       and burns one of SYS_FS_MAX_FILES (10) slots permanently."; \
+	       exit 1; }
+	@awk '/case SD_CARD_MANAGER_PROCESS_STATE_IDLE:/{f=1;a=""} \
+	      f{a=a $$0 "\n"} \
+	      f&&/^[[:space:]]*break;/{if(a ~ /manifestHandle = SYS_FS_HANDLE_INVALID;/) ok=1; f=0} \
+	      END{exit ok?0:1}' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: no PROCESS_STATE_IDLE arm in $(SD_MANAGER_SRC) releases"; \
+	       echo "       manifestHandle (#924 round-2 audit HIGH)."; \
+	       echo "       THIS IS A CHOKE-POINT PIN, and it is scoped for two reasons."; \
+	       echo "       (1) This file has SIX 'manifestHandle = SYS_FS_HANDLE_INVALID;'"; \
+	       echo "           sites, so an unscoped grep is satisfied by any of them and"; \
+	       echo "           asserts nothing -- the way an earlier pin here was satisfied"; \
+	       echo "           by sd_CloseSessionManifest()'s invalid-handle GUARD return."; \
+	       echo "       (2) There are THREE 'case ...PROCESS_STATE_IDLE:' lines; two are"; \
+	       echo "           in other switches (one just returns the string \"IDLE\"), so"; \
+	       echo "           this accepts ANY such arm containing the release rather than"; \
+	       echo "           assuming which one comes first."; \
+	       echo "       WHY A CHOKE POINT: this file has TWELVE assignments of"; \
+	       echo "       PROCESS_STATE_IDLE and ONE sd_CloseSessionManifest() call."; \
+	       echo "       Three successive fixes each enumerated the exits their author"; \
+	       echo "       could see and each list agreed with the previous one and with"; \
+	       echo "       nothing else. The IDLE arm is where every exit is dispatched on"; \
+	       echo "       the next tick, so a new exit inherits the close without anyone"; \
+	       echo "       remembering. Do not replace this with another exit list."; \
+	       exit 1; }
+	@awk '/if \(SYS_FS_Unmount\(SD_CARD_MANAGER_DISK_MOUNT_NAME\) == 0\)/{f=1;d=0} \
+	      f{print; d+=gsub(/\{/,"{"); d-=gsub(/\}/,"}"); if(d==0 && NR>1 && f) exit}' \
+	   $(SD_MANAGER_SRC) > /tmp/.sd924_umnt.$$$$; \
+	 n=`grep -c 'manifestHandle = SYS_FS_HANDLE_INVALID;' /tmp/.sd924_umnt.$$$$`; \
+	 rm -f /tmp/.sd924_umnt.$$$$; \
+	 test "$$n" -ge 1 \
+	  || { echo "ERROR: the SUCCESSFUL-unmount branch in $(SD_MANAGER_SRC) no longer"; \
+	       echo "       releases manifestHandle (#924 round-2 audit HIGH). got $$n."; \
+	       echo "       SCOPE MATTERS HERE: this file has several"; \
+	       echo "       'manifestHandle = SYS_FS_HANDLE_INVALID;' sites, so the pin"; \
+	       echo "       extracts ONLY the 'if (SYS_FS_Unmount(...) == 0) { ... }'"; \
+	       echo "       block by brace depth. An unscoped grep would be satisfied by"; \
+	       echo "       sd_CloseSessionManifest()'s own clear and assert nothing --"; \
+	       echo "       the way an earlier pin here was satisfied by the function's"; \
+	       echo "       invalid-handle GUARD return."; \
+	       echo "       WHY: SYS_FS_Unmount clears inUse for every file object on the"; \
+	       echo "       disk, but ONLY on success (sys_fs.c:725-731). A handle retained"; \
+	       echo "       past that point is stale, its slot is already back, and"; \
+	       echo "       SYS_FS_FileClose refuses it on the inUse==false guard"; \
+	       echo "       (sys_fs.c:923-927) -- so sd_OpenSessionManifest would decline a"; \
+	       echo "       manifest for every later session. Bounded leak -> permanent"; \
+	       echo "       feature loss, which is worse than the defect the retention fixed."; \
+	       exit 1; }
+	@awk '/^static void sd_OpenSessionManifest\(void\) \{/{f=1} f{print} f&&/^\}/{exit}' \
+	   $(SD_MANAGER_SRC) > /tmp/.sd924_open.$$$$; \
+	 cls=`grep -n 'SYS_FS_FileClose(' /tmp/.sd924_open.$$$$ | head -1 | cut -d: -f1`; \
+	 opn=`grep -n 'SYS_FS_FileOpen(' /tmp/.sd924_open.$$$$ | head -1 | cut -d: -f1`; \
+	 rm -f /tmp/.sd924_open.$$$$; \
+	 test -n "$$cls" && test -n "$$opn" && test "$$cls" -lt "$$opn" \
+	  || { echo "ERROR: sd_OpenSessionManifest() in $(SD_MANAGER_SRC) no longer retries"; \
+	       echo "       a surviving close BEFORE opening (#924 round-2 finding 4)."; \
+	       echo "       Position pin: a SYS_FS_FileClose( must precede the"; \
+	       echo "       SYS_FS_FileOpen( that assigns manifestHandle."; \
+	       echo "       got: first close at line $$cls, first open at line $$opn."; \
+	       echo "       Without it the open OVERWRITES a handle kept for retry, which"; \
+	       echo "       is where a pending leak becomes a permanent one -- and the"; \
+	       echo "       leak stops being bounded at one slot for the whole boot."; \
+	       exit 1; }
+	@test $$(grep -c 'sd_ManifestPathSafeToOverwrite(' $(SD_MANAGER_SRC)) -ge 3 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) calls sd_ManifestPathSafeToOverwrite fewer"; \
+	       echo "       than 3 times (its own definition plus 2 call sites: the primary"; \
+	       echo "       manifest path and the collision fallback path). #924's"; \
+	       echo "       post-merge audit defect 1 (round 2) requires BOTH candidate"; \
+	       echo "       paths checked before a truncating SYS_FS_FILE_OPEN_WRITE --"; \
+	       echo "       checking only the primary leaves the fallback name as a second"; \
+	       echo "       undefended way to destroy an unrelated file."; \
+	       exit 1; }
+	@grep -q 'SdManifest_FirstLineLooksLikeManifest' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer inspects an existing file's first"; \
+	       echo "       line through SdManifest_FirstLineLooksLikeManifest (#924"; \
+	       echo "       post-merge audit, defect 1). Without it, a manifest open would"; \
+	       echo "       truncate whatever already sits at the manifest path, no matter"; \
+	       echo "       what it is."; \
+	       exit 1; }
+	@test $$(grep -c 'SdManifest_FreshFileAccounting(' $(SD_MANAGER_SRC)) -ge 2 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) calls SdManifest_FreshFileAccounting fewer"; \
+	       echo "       than 2 times. OPEN_FILE must reset currentFileBytes/"; \
+	       echo "       fileCrcRunning through it at BOTH places a new file becomes"; \
+	       echo "       current -- the normal open, and an ABORTED rotation-open (the"; \
+	       echo "       one #924's post-merge audit defect 3 found missing: without"; \
+	       echo "       it, UNMOUNT_DISK's unconditional manifest line for the new,"; \
+	       echo "       empty file it just closed carries the OLD file's byte count"; \
+	       echo "       and CRC instead). If a real refactor legitimately drops one"; \
+	       echo "       call site, re-derive whether the abort arm still resets before"; \
+	       echo "       lowering this count."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -I$(FW_UTIL) -o $(MANIFEST_BIN) test_924_sd_manifest.c $(FW_UTIL)/CRC32.c
 
 $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
 	@grep -qE '^#define[[:space:]]+SCPI_SD_BENCH_STALL_TIMEOUT_MS[[:space:]]+10000U[[:space:]]*$$' $(SD_BENCH_SRC) \
@@ -1573,7 +1742,8 @@ $(FAILNEXT_BIN): test_981_sd_failnext_hook.c test_framework.h $(SD_MANAGER_SRC) 
 # `$(SD_MANAGER_SRC)` is a prerequisite so an edit to the real snippet
 # re-triggers this; the head/tail files are prerequisites so an edit to the
 # assertions does too.
-$(FAILNEXT_REAL_BIN): test_981_sd_failnext_real_consume.head.c test_981_sd_failnext_real_consume.tail.c $(SD_MANAGER_SRC) $(RECIPES)
+$(FAILNEXT_REAL_BIN): test_981_sd_failnext_real_consume.head.c test_981_sd_failnext_real_consume.tail.c \
+                     $(FW_UTIL)/CRC32.h $(FW_UTIL)/CRC32.c $(SD_MANAGER_SRC) $(RECIPES)
 	@sed -n '/static int SDCardWrite() {/,/^}/p' $(SD_MANAGER_SRC) > /tmp/.fw981_real_body.$$$$; \
 	 lines=`wc -l < /tmp/.fw981_real_body.$$$$ | tr -d ' '`; \
 	 last=`tail -1 /tmp/.fw981_real_body.$$$$ | tr -d '[:space:]'`; \
@@ -1594,7 +1764,7 @@ $(FAILNEXT_REAL_BIN): test_981_sd_failnext_real_consume.head.c test_981_sd_failn
 	       exit 1; }; \
 	 cat test_981_sd_failnext_real_consume.head.c /tmp/.fw981_real_body.$$$$ test_981_sd_failnext_real_consume.tail.c > /tmp/.fw981_real_gen.$$$$.c; \
 	 rm -f /tmp/.fw981_real_body.$$$$; \
-	 $(CC) $(CFLAGS) -o $(FAILNEXT_REAL_BIN) /tmp/.fw981_real_gen.$$$$.c; \
+	 $(CC) $(CFLAGS) -I$(FW_UTIL) -o $(FAILNEXT_REAL_BIN) /tmp/.fw981_real_gen.$$$$.c $(FW_UTIL)/CRC32.c; \
 	 status=$$?; \
 	 rm -f /tmp/.fw981_real_gen.$$$$.c; \
 	 exit $$status
@@ -2957,7 +3127,7 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SY
      $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) \
      $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN)
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(MANIFEST_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -2977,6 +3147,7 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SY
 	./$(SCAN1112_BIN)
 	./$(STARTARM_BIN)
 	./$(START_BIN)
+	./$(MANIFEST_BIN)
 	./$(REPLYBUF_BIN)
 	./$(HEXWIN_BIN)
 	./$(LOGONCE_BIN)
@@ -2992,6 +3163,6 @@ clean:
 	      $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) \
 	      $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) \
 	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(NAME_BIN) $(SDLOG1029_GEN).tmp $(FAILNEXT_BIN) \
-	      $(FAILNEXT_REAL_BIN) $(ARM_BIN)
+	      $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(MANIFEST_BIN)
 
 .PHONY: run clean

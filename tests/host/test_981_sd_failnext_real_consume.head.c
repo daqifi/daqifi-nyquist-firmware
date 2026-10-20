@@ -90,6 +90,14 @@
 #include <stdint.h>
 #include <stdio.h>
 
+/* #924 x #981 MERGE: the spliced SDCardWrite() now folds what landed into the
+ * file's running CRC, so the extraction references CRC32_Update(). The REAL
+ * CRC32.c is linked in by $(FAILNEXT_REAL_BIN) rather than stubbed -- a stub
+ * returning a constant would compile and silently stand in for the one call
+ * this fixture cannot vouch for, and #924's own suite (run_924_tests) is what
+ * actually tests the CRC. Here it only has to be the real function. */
+#include "CRC32.h"
+
 /* Single-threaded host: no-ops. See the closing paragraph above for why the
  * atomicity these delimit is checked structurally instead, not here. */
 #define taskENTER_CRITICAL() ((void)0)
@@ -162,7 +170,7 @@ typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK,
 } sd_card_manager_processState_t;
 
-/* The five fields of sd_card_manager_context_t that SDCardWrite() touches,
+/* The seven fields of sd_card_manager_context_t that SDCardWrite() touches,
  * with the real types (sd_card_manager.c's `typedef struct { ... }
  * sd_card_manager_context_t`). A field the function starts touching that is
  * missing here is a compile error, not a silent gap. */
@@ -172,6 +180,14 @@ static struct {
     uint8_t *writeBuffer;
     uint16_t sdCardWriteBufferOffset;
     size_t writeBufferLength;
+    /* #924: folded in SDCardWrite() after a successful write. uint32_t to
+     * match sd_card_manager.c's real field exactly. */
+    uint32_t fileCrcRunning;
+    /* #924 round-3: set by SDCardWrite() when a write returns an error, so the
+     * file's manifest record is marked as covering a PREFIX. Second time this
+     * fixture has needed a field because the spliced function grew one -- which
+     * is the fixture working as its own comment above promises. */
+    bool fileRecordIsPrefix;
 } gSDCardData;
 
 /* Real backing store for gSDCardData.writeBuffer: the extracted code forms
