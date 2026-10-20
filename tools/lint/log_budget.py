@@ -745,8 +745,13 @@ def unescape(body):
 # ---------------------------------------------------------------------------
 
 
-def comment_only_map(src_lines):
-    """Per line: True iff it carries comment text and NO code.
+def split_code_comments(src_lines):
+    """Per line: (surviving code, comment text), from ONE forward walk.
+
+    Two views are derived from this and nothing re-walks: comment_only_map()
+    asks whether any code survives, and comment_text() asks what the comments
+    on a line actually say. They were separate before, and the gap between
+    them was a finding -- see comment_text().
 
     COMMENT-ONLY-NESS IS NOT DECIDABLE LINE BY LINE, and two rounds of trying
     produced two rounds of near-misses (codex audit on #1110, reopened). The
@@ -770,24 +775,34 @@ def comment_only_map(src_lines):
     one today, but the previous two attempts were also correct on today's
     corpus.
 
-    Annotations on the macro's OWN line never depend on this: find_annotation
-    reads that line directly rather than through the walk.
+    ⛔ A PREVIOUS REVISION OF THIS DOCSTRING ENDED: "Annotations on the macro's
+    OWN line never depend on this: find_annotation reads that line directly
+    rather than through the walk." That sentence WAS the defect, stated as a
+    design note (codex audit on #1110 r4, both legs). Reading the line directly
+    meant `LOG_E("log_budget: max=1 %s", big)` had its FORMAT STRING read as an
+    annotation -- no comment on the line at all -- so the gate accepted a
+    message needing 144 bytes against a ceiling of 125. The walk already knew
+    that text was a string literal; find_annotation just was not asking it.
     """
     out = []
     in_block = False
     for raw in src_lines:
         code = []
+        cmt = []
         i = 0
         n = len(raw)
         while i < n:
             if in_block:
                 j = raw.find("*/", i)
                 if j < 0:
+                    cmt.append(raw[i:])
                     break                      # rest of the line is comment
+                cmt.append(raw[i:j])
                 in_block = False
                 i = j + 2
                 continue
             if raw.startswith("//", i):
+                cmt.append(raw[i + 2:])
                 break                          # rest of the line is comment
             if raw.startswith("/*", i):
                 in_block = True
@@ -808,25 +823,63 @@ def comment_only_map(src_lines):
                 continue
             code.append(ch)
             i += 1
-        out.append(not "".join(code).strip())
+        out.append(("".join(code), " ".join(cmt)))
     return out
 
 
-def find_annotation(src_lines, line, cmap=None):
+def comment_only_map(src_lines, split=None):
+    """Per line: True iff it carries comment text and NO code."""
+    if split is None:
+        split = split_code_comments(src_lines)
+    return [not code.strip() for code, _cmt in split]
+
+
+def comment_text(src_lines, idx, split=None):
+    """The COMMENT text on line `idx` (0-based), with code and literals gone.
+
+    This is the half find_annotation was missing. An annotation is a comment,
+    so it is looked for in comment text and nowhere else; a `log_budget: max=N`
+    appearing inside a format string is message text that happens to read like
+    a marker, and treating it as a bound is how the gate blessed a 144-byte
+    message (codex audit on #1110 r4). Derived from the same walk as
+    comment_only_map so the two cannot disagree about what a comment is.
+    """
+    if split is None:
+        split = split_code_comments(src_lines)
+    if not (0 <= idx < len(split)):
+        return ""
+    return split[idx][1]
+
+
+def find_annotation(src_lines, line, split=None):
     """Return the widths declared by a /* log_budget: max=N[,N...] */ marker.
 
     Searched on the macro's own line and across the contiguous run of comment
     lines immediately above it, because the house style for this class of fix
     puts a multi-line block comment there and an annotation naturally belongs
     inside it.
+
+    ⛔ SEARCHED IN COMMENT TEXT ONLY, never in the raw line. The raw line also
+    holds the call's own format string, and `LOG_E("log_budget: max=1 %s", big)`
+    then reads as an annotation although the file contains no such comment --
+    the gate's own ceiling defeated by message text shaped like a marker
+    (codex audit on #1110 r4, both legs). comment_text() comes off the same
+    walk as comment_only_map(), so "what is a comment" has one answer here.
     """
-    if cmap is None:
-        cmap = comment_only_map(src_lines)
+    if split is None:
+        split = split_code_comments(src_lines)
+    cmap = comment_only_map(src_lines, split)
     idx = line - 1
-    texts = [src_lines[idx]] if 0 <= idx < len(src_lines) else []
+    # A line number past EOF has no annotation and, importantly, must not fall
+    # through to the backward scan -- that would read the comment block at the
+    # END of the file as this line's. ambiguous_annotation() used to carry this
+    # bound check itself; it delegates here now, so the check lives here.
+    if not (0 <= idx < len(split)):
+        return None
+    texts = [comment_text(src_lines, idx, split)]
     k = idx - 1
     while k >= 0 and cmap[k]:
-        texts.append(src_lines[k])
+        texts.append(comment_text(src_lines, k, split))
         k -= 1
     for text in texts:
         m = ANNOTATION_RE.search(text)
@@ -973,7 +1026,7 @@ def escape_for_record(text):
                 .replace("\n", "\\n").replace("\t", "\\t"))
 
 
-def ambiguous_annotation(src_lines, line, n_calls):
+def ambiguous_annotation(src_lines, line, n_calls, split=None):
     """True when one annotation on `line` would bound SEVERAL calls there.
 
     An annotation names a bound for A call; a line holding two cannot say
@@ -985,13 +1038,20 @@ def ambiguous_annotation(src_lines, line, n_calls):
     Extracted from scan_file purely so it can be pinned: inline, the condition
     was only reachable by building a source tree, and an untestable branch is
     how the previous two rounds' near-misses survived.
+
+    ⛔ IT ASKS find_annotation RATHER THAN RE-DERIVING THE SCOPE. It used to
+    search only the calls' OWN line, while find_annotation also honours the
+    contiguous comment block ABOVE -- so a `/* log_budget: max=1 */` on the
+    preceding line was applied to BOTH calls and refused by neither, which is
+    precisely the silence this guard exists to prevent (codex audit on #1110
+    r4, both legs). A guard whose scope is NARROWER than the thing it guards
+    passes exactly the cases that matter, so the two now share one definition
+    of "an annotation is in scope for this line" by construction, not by two
+    implementations that happen to agree.
     """
     if n_calls <= 1:
         return False
-    idx = line - 1
-    if not (0 <= idx < len(src_lines)):
-        return False
-    return ANNOTATION_RE.search(src_lines[idx]) is not None
+    return find_annotation(src_lines, line, split) is not None
 
 
 def scan_file(path, rel, macros, ceiling):
@@ -1000,11 +1060,11 @@ def scan_file(path, rel, macros, ceiling):
     spliced, orig_pos = splice_continuations(src)
     masked = mask_comments(spliced)
     found = []
-    # Computed ONCE per file: comment_only_map() is a forward scan from the top
+    # Computed ONCE per file: split_code_comments() is a forward scan from the top
     # (block state cannot be recovered from a line in isolation), so letting
     # find_annotation() derive it per call site would be quadratic in a file
     # with many LOG_E sites.
-    cmap = comment_only_map(src_lines)
+    split = split_code_comments(src_lines)
     calls = list(find_calls(masked, macros))
     # How many log-macro calls share each line. An annotation on a line holding
     # MORE THAN ONE call cannot say which call it bounds, and the old behaviour
@@ -1016,7 +1076,7 @@ def scan_file(path, rel, macros, ceiling):
         pos_to_line(src, orig_pos, p) for _m, p, _a, _c in calls)
     for macro, pos, args, _call in calls:
         line = pos_to_line(src, orig_pos, pos)
-        if ambiguous_annotation(src_lines, line, calls_on_line[line]):
+        if ambiguous_annotation(src_lines, line, calls_on_line[line], split):
             found.append(Finding(
                 rel, line,
                 f"ambiguous annotation: {calls_on_line[line]} log calls share "
@@ -1036,7 +1096,7 @@ def scan_file(path, rel, macros, ceiling):
                 f"unresolvable: {macro}'s format argument is not a string "
                 f"literal", ""))
             continue
-        worst, reason = measure(fmt, find_annotation(src_lines, line, cmap))
+        worst, reason = measure(fmt, find_annotation(src_lines, line, split))
         if reason is not None:
             found.append(Finding(rel, line, reason, escape_for_record(fmt)))
         elif worst > ceiling:
@@ -1778,6 +1838,27 @@ SELF_TEST_AMBIGUITY_CASES = [
     ("three calls and one annotation",
      ['LOG_E("%s",a); LOG_E("%s",b); LOG_E("%s",c); /* log_budget: max=1 */'],
      1, 3, True, "the count is reported, so the message names the real shape"),
+    # ⛔ r4 FINDING 1. This guard checked only the calls' OWN line while
+    # find_annotation also honours the comment block ABOVE, so this exact
+    # shape was refused by neither and one max=1 bounded both calls.
+    ("two calls and the annotation on the line ABOVE",
+     ['/* log_budget: max=1 */', 'LOG_E("%s", "x"); LOG_E("%s", big);'], 2, 2,
+     True,
+     "r4 both legs: a guard whose scope is NARROWER than the finder's passes "
+     "exactly the cases that matter. It delegates to find_annotation now, so "
+     "the two cannot drift apart again"),
+    ("two calls under a MULTI-LINE comment block holding the annotation",
+     ['/* why this bound is safe:', ' * log_budget: max=1', ' */',
+      'LOG_E("%s", "x"); LOG_E("%s", big);'], 4, 2, True,
+     "the house-style shape -- six of the eight real annotations live in a "
+     "block like this, so the leak was reachable from the dominant form"),
+    ("two calls, annotation-looking text only in a STRING above",
+     ['puts("log_budget: max=1");', 'LOG_E("%s", "x"); LOG_E("%s", big);'],
+     2, 2, False,
+     "a walk-termination guard, NOT a discriminator -- measured against the "
+     "pre-fix predicate it passes there too, because the line above is code "
+     "so the backward scan stopped before it either way. Kept to pin that "
+     "termination; it is not coverage of the finding"),
     ("a line number out of range is not a crash",
      ['LOG_E("%s", s);'], 99, 2, False,
      "pos_to_line and the source list must not be able to raise here -- a "
@@ -1817,6 +1898,27 @@ SELF_TEST_ANNOTATION_CASES = [
      "code and never reached the annotation. Kept because it pins that "
      "termination, but it discriminates nothing and must not be counted as "
      "coverage of the leak"),
+    # --- ⛔ r4 FINDING 2: the marker must be COMMENT text, never message text
+    ("a marker inside the FORMAT STRING is not an annotation",
+     ['LOG_E("log_budget: max=1 %s", big);'], 1, None,
+     "r4 both legs: there is no comment on this line at all. Searching the "
+     "raw line let a message's own text bound it, and the gate blessed a "
+     "144-byte message against a ceiling of 125 -- the gate's whole purpose "
+     "defeated by text shaped like a marker"),
+    ("a marker in a non-format string argument is not an annotation",
+     ['LOG_E("%s", "log_budget: max=1");'], 1, None,
+     "same defect through an argument rather than the format -- the raw-line "
+     "search could not tell the two apart because it never parsed either"),
+    ("a REAL comment annotation wins over marker-shaped message text",
+     ['LOG_E("log_budget: max=99 %s", big); /* log_budget: max=7 */'], 1, [7],
+     "both appear on one line; only the comment is an annotation. Pins WHICH "
+     "one is read, not merely that one is"),
+    ("a marker in a string on the line above does not bind",
+     ['puts("log_budget: max=1");', 'LOG_E("%s", big);'], 2, None,
+     "a walk-termination guard, NOT a discriminator -- measured, it passes on "
+     "the pre-fix raw-line search too, since that line is code and the walk "
+     "stopped before it. Kept because it pins the termination for the SECOND "
+     "route into this defect; it is not coverage of the finding"),
     # --- the regression a careless fix causes: these MUST keep binding
     ("comment-only line above still binds",
      ['/* log_budget: max=1 */',
