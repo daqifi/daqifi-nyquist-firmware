@@ -11167,3 +11167,22 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   > barrier. Lift one park and the row is clean, unlabelled, zero-threads and unmeasured, with nothing left.
 - ✅ **ADOPTED, for myself:** the Qodo leg is satisfied only when the last **real** read (excluding any
   billing-block comment) is at or after the head being merged. Never the thread count alone.
+
+- ⛔ **MY CAVEAT WAS WRONG, AND IN THE OPPOSITE DIRECTION FROM MY GUESS — corrected in the durable file.**
+  I flagged `#1110`/`#1152`'s `audit-stale` as possibly baseless, on the strength of having once found that
+  label on never-audited rows. Verified in the ledger by **exact `repo#pr` field**, not a loose grep:
+  **#1110 has 7 rounds, #1152 has 3, every one a BLOCK.** Both labels valid.
+  > ⭐ **Dropping the caveat SHARPENS the finding.** The weakness was never "the label might be false" — it
+  > is that **all six holds are about a DIFFERENT LEG than the one that is unmeasured**, which holds even
+  > when every label is perfectly true: *a guard that is real, valid, load-bearing, and pointed at
+  > something else.*
+  ⚠ Method note on my own check: my first tightened `awk` returned **nothing** for both rows, because the
+  field is `daqifi/daqifi-nyquist-firmware#1110`, not `fw#1110`. I did not read that as absence — I read it
+  as my field test being wrong, resolved the real format, and only then counted. Loose and exact then
+  AGREED at 7 and 3, which is what makes the count usable.
+- ⛔⛔ **AND THE LEDGER SHOWS `#1110` IS PAST THE ROUND CAP — raising it, not acting on it.** Its last three
+  rounds are all **2026-10-20**: `codex-r4` 06:13Z, `codex-r5` 06:51Z, `codex-r6` 07:22Z, **all BLOCK**,
+  7 ledger rows total. The standing cap is **5**, with "file the residue combine-first and PARK explicitly."
+  The row is labelled `audit-stale`, not `parked`. ⭐ So #1110's label does not merely point at the wrong
+  leg — **it UNDERSTATES its hold**: the row reads as stale when it is an active round-6 BLOCK. Not my row
+  (I declined this audit; the coordinator runs it), so flagged to them.
