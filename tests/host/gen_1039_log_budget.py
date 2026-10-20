@@ -24,15 +24,32 @@ read out of the sources at build time and written into a generated header.
 Re-word a message and this test re-measures the new words; grow one past the
 ceiling and it FAILS, rather than asking to be updated.
 
-WHY THIS DOES NOT SIMPLY CALL tools/lint/log_budget.py
+WHAT IS SHARED WITH tools/lint/log_budget.py, AND WHAT MUST NEVER BE
 
-That tool is the static gate the same PR adds, and it MODELS the truncation:
-it sums a format string's fixed bytes and a conservative per-specifier width.
-This test's whole value is that it does not share that model -- it runs the
-real strings through real `vsnprintf` and the real clamp. Reusing the gate's
-parser here would put the gate's own extractor on both sides of the check, so
-the scanning below is deliberately separate, small, and written to fail loudly
-rather than to be clever.
+⛔ AN EARLIER REVISION OF THIS SECTION SAID THIS MODULE SHARES NOTHING WITH THE
+GATE, on the grounds that "reusing the gate's parser here would put the gate's
+own extractor on both sides of the check". That was right about one half and
+wrong about the other, and the wrong half cost a finding (codex audit on #1110
+r4). The distinction the old text missed:
+
+  * THE MEASUREMENT IS NOT SHARED, and must never be. The gate MODELS
+    truncation -- it sums a format string's fixed bytes plus a conservative
+    per-specifier width. This test's whole value is that it does NOT share that
+    model: it runs the real strings through real `vsnprintf` and the real
+    clamp. Two independent models of the same thing is the point.
+
+  * THE CEILING IS SHARED, and must be. `LOG_MESSAGE_SIZE - 2` and
+    `min((LOG_MESSAGE_SIZE - 3), ...)` are not a model of anything -- they are
+    two integers transcribed out of Logger.c. There is one right answer, so two
+    readers can only agree or be wrong, and "independently transcribed" buys
+    nothing.
+
+What it cost: the ceiling reader existed twice, the gate's was fixed to walk by
+paren DEPTH, and this copy kept the `[^,)]*` regex the gate had just discarded.
+Measured on `min((LOG_MESSAGE_SIZE - 3) - 10, size)` the gate read 13 and this
+module read 3 -- a silent 10-byte disagreement, with nothing anywhere comparing
+the two. So the independence delivered no detection, only divergence; the
+reader is now imported (see `_reserved_after`) and there is one of it.
 
 HOW A SITE IS IDENTIFIED, AND WHY NOT BY ITS MESSAGE TEXT
 
@@ -67,6 +84,7 @@ Usage:
     python3 gen_1039_log_budget.py --out gen_1039_log_budget.h
 """
 import argparse
+import importlib.util
 import re
 import sys
 from pathlib import Path
@@ -76,9 +94,57 @@ FW = Path("../../firmware/src")
 LOGGER_H = FW / "Util/Logger.h"
 LOGGER_C = FW / "Util/Logger.c"
 
+#: The gate, located from THIS FILE rather than the cwd. The Makefile runs the
+#: generator with tests/host as the working directory, but a developer running
+#: it from the repo root should not get a different answer.
+GATE_PY = Path(__file__).resolve().parents[2] / "tools/lint/log_budget.py"
+
 
 class GenError(Exception):
     """Something could not be extracted. Always fails the build, by name."""
+
+
+_gate_mod = None
+
+
+def _gate():
+    """tools/lint/log_budget.py, loaded by path and cached.
+
+    Loaded lazily so that a missing or broken gate fails only the extraction
+    that needs it, with this module's own error type, rather than making
+    `--help` unavailable.
+    """
+    global _gate_mod
+    if _gate_mod is None:
+        if not GATE_PY.is_file():
+            raise GenError(
+                f"cannot find the ceiling reader at {GATE_PY} -- it is shared "
+                f"with the gate on purpose (see this module's docstring). "
+                f"Restore it rather than re-implementing the walk here.")
+        try:
+            spec = importlib.util.spec_from_file_location("_log_budget_gate",
+                                                          GATE_PY)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        except Exception as e:
+            raise GenError(f"cannot load {GATE_PY}: {e}") from e
+        _gate_mod = mod
+    return _gate_mod
+
+
+def _reserved_after(impl, prefix_re, where, gone_msg):
+    """The gate's reserve_after(), with its ToolError renamed to GenError.
+
+    THE ONE SEAM. Everything about reading `LOG_MESSAGE_SIZE - N` lives in the
+    gate; this adds nothing but the error type, so there is no second
+    implementation to drift. See the module docstring for why this particular
+    thing is shared when the MEASUREMENT deliberately is not.
+    """
+    gate = _gate()
+    try:
+        return gate.reserve_after(impl, prefix_re, where, gone_msg)
+    except gate.ToolError as e:
+        raise GenError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -326,33 +392,16 @@ def read_literal_group(masked, start, where):
     return "".join(pieces), i
 
 
-def _reserved(expr, where):
-    r"""Sum every constant subtracted from LOG_MESSAGE_SIZE, or refuse.
+def _clamp_of(impl):
+    """The clamp reservation in `impl`, via the shared walk. Self-test only.
 
-    Mirrors log_budget.py's reserved_total(). Kept as a small local copy
-    rather than an import because this generator is run standalone from the
-    Makefile recipe with no package context -- but the two must agree, and
-    they are tested against the same expressions.
+    A one-line wrapper so the cases below read as source text rather than as
+    bare expression fragments -- the fragment form is what let the previous
+    local copy be tested green while the REGEX THAT FED IT was the broken
+    half. The cases now start from text shaped like Logger.c.
     """
-    pos, terms = 0, []
-    while pos < len(expr):
-        m = re.compile(r"\s*-\s*(\d+)").match(expr, pos)
-        if not m:
-            break
-        terms.append(int(m.group(1)))
-        pos = m.end()
-    rest = expr[pos:].strip()
-    if rest:
-        raise GenError(
-            f"cannot account for {rest!r} in {where} "
-            f"(`LOG_MESSAGE_SIZE{expr}`). Only a subtraction of integer "
-            f"constants is understood; guessing here measures the fixture "
-            f"against the wrong ceiling. Re-derive it by hand.")
-    if not terms:
-        raise GenError(
-            f"{where} subtracts nothing from LOG_MESSAGE_SIZE "
-            f"(`LOG_MESSAGE_SIZE{expr}`) -- read from source, never assumed")
-    return sum(terms)
+    return _reserved_after(impl, r"min\s*\(\s*", "the min() clamp",
+                           "no min() clamp of LOG_MESSAGE_SIZE in this text")
 
 
 def splice_continuations(src):
@@ -463,21 +512,34 @@ def read_ceiling():
                        "test_1039_log_message_budget.c models that function, "
                        "so a reshape must be re-read by hand, not assumed")
     impl = body.group(1)
-    m1 = re.search(r"vsnprintf\s*\(\s*\w+\s*,\s*LOG_MESSAGE_SIZE([^,)]*)", impl)
-    m2 = re.search(r"min\s*\(\s*\(?\s*LOG_MESSAGE_SIZE([^,)]*)", impl)
-    if not m1 or not m2:
-        raise GenError(
-            "LogMessageFormatImpl no longer bounds vsnprintf at "
-            "LOG_MESSAGE_SIZE - N and clamps with min((LOG_MESSAGE_SIZE - N), "
-            "...). The mirror models both; re-derive it before re-enabling "
-            "this test.")
-    # Consume the WHOLE expression, not its first integer. The same prefix
-    # defect the gate had: `LOG_MESSAGE_SIZE - 2 - 10` read as 2, so the
-    # fixture would have been measured against a ceiling 10 bytes too
-    # generous. Refuses anything it cannot account for rather than
-    # contributing the recognisable part.
-    return size, _reserved(m1.group(1), "vsnprintf's size argument"), \
-        _reserved(m2.group(1), "the min() clamp")
+    # ⛔ READ BY THE GATE'S PAREN-DEPTH WALK, NOT BY A REGEX. This was
+    # `LOG_MESSAGE_SIZE([^,)]*)` -- the EXACT pattern the gate had already
+    # replaced, in the same PR, with a comment explaining why it was wrong.
+    # It stops at the first `)`, so the shipping shape
+    # `min((LOG_MESSAGE_SIZE - 3), size)` read correctly by luck (nothing
+    # follows the paren) while `min((LOG_MESSAGE_SIZE - 3) - 10, size)` read
+    # as 3 instead of 13 (codex audit on #1110 r4, both legs).
+    #
+    # That was not a cosmetic difference: the generated header's
+    # FW_LOG_CLAMP_RESERVE feeds test_1039's own
+    # `#define LOG_BUDGET (FW_LOG_MESSAGE_SIZE - FW_LOG_CLAMP_RESERVE)`, so a
+    # reserve read 10 bytes short makes the C mirror clamp at 125 where the
+    # device clamps at 115 -- the fixture then PASSES while asserting a
+    # ceiling the firmware does not have. The existing
+    # `ASSERT_TRUE(FW_LOG_CLAMP_RESERVE > FW_LOG_VSNPRINTF_RESERVE)` does not
+    # catch it either: 3 > 2 and 13 > 2 both hold.
+    return (
+        size,
+        _reserved_after(impl, r"vsnprintf\s*\(\s*\w+\s*,\s*",
+                        "vsnprintf's size argument",
+                        "LogMessageFormatImpl no longer bounds vsnprintf at "
+                        "LOG_MESSAGE_SIZE - N. The mirror models it; "
+                        "re-derive before re-enabling this test"),
+        _reserved_after(impl, r"min\s*\(\s*", "the min() clamp",
+                        "LogMessageFormatImpl no longer clamps with "
+                        "min((LOG_MESSAGE_SIZE - N), ...). The mirror models "
+                        "it; re-derive before re-enabling this test"),
+    )
 
 
 def c_literal_byte_len(literal):
@@ -603,22 +665,45 @@ GEN_SELF_TESTS = [
     ("splice: a lone backslash is untouched",
      lambda: splice_continuations('"a\\\\b"'), '"a\\\\b"',
      "an escaped backslash is not a continuation"),
-    ("reserved: every term is summed",
-     lambda: _reserved(" - 2 - 10", "t"), 12,
+    # The clamp reader is the gate's paren-depth walk, reached through the one
+    # seam in _reserved_after(). These cases run the SHARED code, so they also
+    # pin that the import still works and still raises GenError.
+    ("clamp: every term is summed",
+     lambda: _clamp_of("size = min(LOG_MESSAGE_SIZE - 2 - 10, size);"), 12,
      "the prefix defect: '- 2 - 10' read as 2 measured the fixture against a "
      "ceiling 10 bytes too generous"),
-    ("reserved: a single term still works",
-     lambda: _reserved(" - 3", "t"), 3,
-     "the shape that actually ships"),
-    ("reserved: a macro term refuses",
-     lambda: _reserved(" - PAD", "t"), GenError,
+    ("clamp: the shipping shape still reads 3",
+     lambda: _clamp_of("size = min((LOG_MESSAGE_SIZE - 3), size);"), 3,
+     "what Logger.c:405 actually says today -- this must not move while the "
+     "reader underneath it changes"),
+    # ⛔ r4 FINDING 3. The regex this replaced stopped at the first `)` and
+    # returned 3 here. 13 is the real reservation, and the 10-byte gap went
+    # straight into test_1039's LOG_BUDGET as a ceiling the device lacks.
+    ("clamp: arithmetic AFTER the closing paren is counted",
+     lambda: _clamp_of("size = min((LOG_MESSAGE_SIZE - 3) - 10, size);"), 13,
+     "r4 both legs: `LOG_MESSAGE_SIZE([^,)]*)` read this as 3. The gate had "
+     "already fixed exactly this pattern in the same PR; the generator kept "
+     "the broken twin, so the fix and the defect shipped together"),
+    ("clamp: a parenthesised term after a minus REFUSES",
+     lambda: _clamp_of("size = min(LOG_MESSAGE_SIZE - (3 - 1), size);"),
+     GenError,
+     "`A - (b - c)` is not `A - b - c`; flattening it would flip c's sign, so "
+     "the only safe reading is to refuse. Inherited from the gate's walk "
+     "rather than re-argued here"),
+    ("clamp: a macro term refuses",
+     lambda: _clamp_of("size = min(LOG_MESSAGE_SIZE - PAD, size);"), GenError,
      "an expression this reader cannot account for must stop the build, not "
      "contribute the part it recognises"),
-    ("reserved: an addition refuses",
-     lambda: _reserved(" - 2 + 1", "t"), GenError, "same, other direction"),
-    ("reserved: nothing subtracted refuses",
-     lambda: _reserved("", "t"), GenError,
+    ("clamp: an addition refuses",
+     lambda: _clamp_of("size = min(LOG_MESSAGE_SIZE - 2 + 1, size);"),
+     GenError, "same, other direction"),
+    ("clamp: nothing subtracted refuses",
+     lambda: _clamp_of("size = min(LOG_MESSAGE_SIZE, size);"), GenError,
      "a reservation of zero is a reading, not a default"),
+    ("clamp: no clamp at all refuses by NAME",
+     lambda: _clamp_of("size = other(LOG_MESSAGE_SIZE - 3, size);"), GenError,
+     "the mirror models a min() clamp; if that shape is gone the build must "
+     "stop rather than extract a number from whatever replaced it"),
     ("c_literal: UTF-8 keeps its byte length",
      lambda: c_literal("\u00e9"), '"\\303\\251"',
      "e-acute is TWO bytes in a UTF-8 source; one octal escape made the "
