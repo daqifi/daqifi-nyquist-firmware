@@ -573,6 +573,7 @@ STREAMING_SRC := ../../firmware/src/services/streaming.c
 STREAMING_HDR := ../../firmware/src/services/streaming.h
 JSON_ENC_SRC  := ../../firmware/src/services/JSON_Encoder.c
 NANOPB_ENC_SRC := ../../firmware/src/services/DaqifiPB/NanoPB_Encoder.c
+CSV_ENC_SRC   := ../../firmware/src/services/csv_encoder.c
 # #980: DAC7718 error-path honesty (lock ownership in DAC7718_ReadWriteReg,
 # init-failure propagation + slot retention in DAC_EnsureHardwareInitialized).
 # Like BENCH_BIN, neither DAC7718.c (Harmony GPIO/SPI/coretimer + FreeRTOS
@@ -794,7 +795,7 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 
-$(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SRC) $(STREAMING_HDR) $(JSON_ENC_SRC) $(NANOPB_ENC_SRC) $(RECIPES)
+$(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SRC) $(STREAMING_HDR) $(JSON_ENC_SRC) $(NANOPB_ENC_SRC) $(CSV_ENC_SRC) $(RECIPES)
 	@for fld in encoderDroppedSamples encoderDroppedSamplesSteady; do \
 	   n=`grep -oE "gStreamStats\.$$fld[[:space:]]*(\+\+|\+=|-=|=[^=])" $(STREAMING_SRC) | wc -l`; \
 	   [ "$$n" -eq 1 ] \
@@ -818,7 +819,7 @@ $(BIN970): test_970_encoder_consume_accounting.c test_framework.h $(STREAMING_SR
 	       echo "       ADC-loop treatment). Update the guard or re-derive the DIO half of"; \
 	       echo "       test_970_encoder_consume_accounting.c."; \
 	       exit 1; }
-	@set -- "$(JSON_ENC_SRC)" 1 "$(NANOPB_ENC_SRC)" 2; \
+	@set -- "$(JSON_ENC_SRC)" 1 "$(NANOPB_ENC_SRC)" 2 "$(CSV_ENC_SRC)" 1; \
 	 while [ $$# -gt 0 ]; do \
 	   f=$$1; want=$$2; shift 2; \
 	   grep -qE '^[[:space:]]*#[[:space:]]*if[[:space:]]+0([[:space:]]|$$)' "$$f" \
