@@ -369,6 +369,24 @@ bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
     return status;
 }
 
+bool daqifi_settings_ValidateADCCalBank(DaqifiSettingsType type)
+{
+    DaqifiSettings tmpSettings;
+    memset(&tmpSettings,0,sizeof(DaqifiSettings));
+    if(!daqifi_settings_LoadFromNvm(type, &tmpSettings)) return false;
+
+    /* Admissibility mirrors daqifi_settings_LoadADCCalSettings's switch above:
+     * only these two types name a calibration bank it can resolve. Stated as a
+     * predicate rather than sharing that switch because the switch's job there
+     * is to pick a pointer, which this function has no use for. If a third
+     * cal bank is ever added, LoadADCCalSettings gains a case and this does
+     * not -- so this answers false for a bank that function would accept, and
+     * the caller fails CLOSED. That is the safe direction for a drift, but it
+     * is a drift: add the type here too. */
+    return (type == DaqifiSettings_FactAInCalParams ||
+            type == DaqifiSettings_UserAInCalParams);
+}
+
 bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig)
 {
     bool status = true;
