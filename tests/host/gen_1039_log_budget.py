@@ -132,17 +132,22 @@ def _gate():
     return _gate_mod
 
 
-def _reserved_after(impl, prefix_re, where, gone_msg):
-    """The gate's reserve_after(), with its ToolError renamed to GenError.
+def _gate_read_ceiling(h_text, c_text):
+    """The gate's read_ceiling(), with its ToolError renamed to GenError.
 
-    THE ONE SEAM. Everything about reading `LOG_MESSAGE_SIZE - N` lives in the
-    gate; this adds nothing but the error type, so there is no second
-    implementation to drift. See the module docstring for why this particular
-    thing is shared when the MEASUREMENT deliberately is not.
+    THE ONE SEAM, and it is deliberately the WHOLE derivation rather than just
+    the arithmetic walk: masking the comments, locating LogMessageFormatImpl's
+    body, and applying the walk to both reservations. r4 shared only the walk
+    and left this module preparing its own unmasked input, which reproduced the
+    very divergence the sharing was supposed to end (r5 finding 2).
+
+    ⭐ The rule that cost two rounds to learn: A SEAM MUST START WHERE THE
+    INPUT IS PREPARED, not where the parsing begins. Sharing a parser fed by
+    two different pipelines shares nothing that matters.
     """
     gate = _gate()
     try:
-        return gate.reserve_after(impl, prefix_re, where, gone_msg)
+        return gate.read_ceiling(h_text, c_text)
     except gate.ToolError as e:
         raise GenError(str(e)) from e
 
@@ -392,16 +397,152 @@ def read_literal_group(masked, start, where):
     return "".join(pieces), i
 
 
-def _clamp_of(impl):
-    """The clamp reservation in `impl`, via the shared walk. Self-test only.
+def dependency_registration_problems():
+    r"""Why the imported gate is not a declared build input. [] when it is.
 
-    A one-line wrapper so the cases below read as source text rather than as
-    bare expression fragments -- the fragment form is what let the previous
-    local copy be tested green while the REGEX THAT FED IT was the broken
-    half. The cases now start from text shaped like Logger.c.
+    ⛔ A SEAM IS A NEW EDGE, AND EVERY DEPENDENCY LIST THAT TRACKED THE OLD
+    COPIES MUST NOW TRACK IT. When read_ceiling stopped being local and became
+    an import, this module gained a build input that nothing knew about: it was
+    in neither the generated-header prerequisites nor host-tests.yml's path
+    filters. Renaming `reserve_after` in the checker left the checker's OWN
+    self-tests green while breaking this module's external call, a PR touching
+    only that file queued no host tests, and an incremental make kept the stale
+    fixture and binary -- so the breakage surfaced on someone else's later
+    clean build (codex audit on #1110 r5).
+
+    ⭐ Derived from `GATE_PY` -- the path actually imported -- rather than from
+    a list written by hand, because a hand-maintained list is exactly what
+    dropped this edge. If the import moves, this check follows it.
+
+    ⚠ It asserts the Makefile PREREQUISITE, not the mere presence of the
+    string: that string already appeared twice in prose comments while the
+    edge was missing, so a `grep -q` would have reported this registered the
+    whole time. Presence is not semantics.
+
+    Scoped deliberately: this answers "is MY import registered?", not "is
+    every host-test input registered?". The general form -- deriving the whole
+    set of firmware files the host targets read and failing on any absent from
+    a CI filter -- is a repo-wide instrument and belongs in its own change,
+    not copied in here.
     """
-    return _reserved_after(impl, r"min\s*\(\s*", "the min() clamp",
-                           "no min() clamp of LOG_MESSAGE_SIZE in this text")
+    repo = Path(__file__).resolve().parents[2]
+    rel = GATE_PY.relative_to(repo).as_posix()
+    here = Path(__file__).resolve().parent
+    problems = []
+
+    mk_path = here / "Makefile"
+    try:
+        mk = mk_path.read_text(encoding="utf-8")
+    except OSError as e:
+        return [f"cannot read {mk_path}: {e}"]
+
+    # Resolve the variable, then confirm the generated-header rule actually
+    # DEPENDS on it. Two separate questions, both required.
+    var = re.search(r"^(\w+)\s*:=\s*\.\./\.\./" + re.escape(rel) + r"\s*$",
+                    mk, re.M)
+    if not var:
+        problems.append(
+            f"tests/host/Makefile has no variable assigned to ../../{rel}; "
+            f"add one (see LOG_BUDGET_GATE) and list it as a prerequisite of "
+            f"$(LOG1039_GEN)")
+    else:
+        rule = re.search(r"^\$\(LOG1039_GEN\):((?:[^\n\\]*\\\n)*[^\n]*)",
+                         mk, re.M)
+        if not rule:
+            problems.append(
+                "tests/host/Makefile has no $(LOG1039_GEN): rule to check")
+        elif f"$({var.group(1)})" not in rule.group(1):
+            problems.append(
+                f"$({var.group(1)}) is defined but is NOT a prerequisite of "
+                f"$(LOG1039_GEN), so an incremental make keeps the old "
+                f"fixture when only {rel} changes")
+
+    wf_path = repo / ".github/workflows/host-tests.yml"
+    try:
+        wf = wf_path.read_text(encoding="utf-8")
+    except OSError as e:
+        problems.append(f"cannot read {wf_path}: {e}")
+        return problems
+
+    # Count the `paths:` blocks and require an entry in each, so adding a
+    # trigger block later cannot leave this edge half-registered.
+    blocks = len(re.findall(r"^\s*paths:\s*$", wf, re.M))
+    entries = len(re.findall(r"^\s*-\s*'" + re.escape(rel) + r"'\s*$",
+                             wf, re.M))
+    if blocks == 0:
+        problems.append(f"{wf_path} declares no paths: filter to check")
+    elif entries < blocks:
+        problems.append(
+            f".github/workflows/host-tests.yml lists '{rel}' in {entries} of "
+            f"{blocks} paths: blocks; a PR touching only that file queues no "
+            f"host tests from the block(s) missing it")
+    return problems
+
+
+def conversion_signature(text, where):
+    r"""Every conversion in `text`, REFUSING any '%' it cannot parse.
+
+    ⛔ IT ACCOUNTS FOR EVERY PERCENT SIGN, because omitting one is not a
+    cosmetic gap here -- it is a wild store. SPEC_RE's conversion class is
+    `[diouxXeEfgGaAcsp%]`, which excludes `n`. A plain `finditer` therefore
+    SKIPS `%n` silently, so a format that gained one still compared equal to
+    the recorded `['%u', '%u']` signature, and the renderer went on supplying
+    exactly two UINT32_MAX values. `snprintf` then treats the first as `%n`'s
+    `int *` destination and writes through it -- the audit reproduced a
+    SIGSEGV from the accepted format and the renderer's own arguments (codex
+    audit on #1110 r5, memory_safety).
+
+    So this anchors SPEC_RE AT each '%' rather than searching for the next one
+    it happens to like. Anything unmatched stops the build. Same discipline as
+    the gate's `reserve_after` ("account for every character, refuse the rest")
+    and its `literal_bytes` ("a surviving '%' is not literal text") -- the gate
+    already refused this class and only the generator did not.
+
+    `%%` is a conversion for parsing purposes and is excluded from the
+    signature, since it consumes no argument.
+    """
+    specs, i = [], 0
+    while True:
+        j = text.find("%", i)
+        if j < 0:
+            return specs
+        m = SPEC_RE.match(text, j)
+        if not m:
+            raise GenError(
+                f"{where}: cannot parse the conversion at offset {j} "
+                f"({text[j:j + 8]!r}) in {text!r}. Only "
+                f"{'[diouxXeEfgGaAcsp%]'} conversions are understood, and an "
+                f"unparsed one must NOT be dropped: "
+                f"test_1039_log_message_budget.c substitutes a fixed argument "
+                f"list for the recognised signature, so a conversion omitted "
+                f"here consumes an argument that was never supplied. `%n` in "
+                f"particular writes through whatever that argument is. "
+                f"Re-derive the worst case by hand.")
+        if m.group(1) != "%":
+            specs.append(m.group(0))
+        i = m.end()
+
+
+def _clamp_of(clamp_src, extra=""):
+    """The clamp reservation the PRODUCTION path derives. Self-test only.
+
+    Runs `clamp_src` through the same `_gate_read_ceiling` that read_ceiling()
+    uses, inside a synthetic LogMessageFormatImpl body -- so a case here
+    exercises comment masking and body location too, not merely the arithmetic.
+
+    That matters: r4's cases called the walk directly on expression fragments,
+    passed green, and could not see that the text reaching the walk in
+    production was unmasked. ⚠ A self-test that enters the pipeline downstream
+    of the defect is green by construction, so these enter at the top.
+
+    `extra` goes ABOVE the clamp line, for cases about surrounding source.
+    """
+    h = "#define LOG_MESSAGE_SIZE 128\n"
+    c = ("void LogMessageFormatImpl(const char *f, va_list a)\n{\n"
+         "    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);\n"
+         + (extra + "\n" if extra else "")
+         + clamp_src + "\n}\n")
+    return _gate_read_ceiling(h, c)[3]          # (ceiling, size, vsn, clamp)
 
 
 def splice_continuations(src):
@@ -476,8 +617,7 @@ def extract_site(site):
     # test_1039_log_message_budget.c hand-substitutes for the signature
     # (Qodo /improve, PR #1110, importance 9, "Preserve complete format
     # conversion signatures").
-    specs = [m.group(0) for m in SPEC_RE.finditer(text)
-             if m.group(1) != "%"]
+    specs = conversion_signature(text, where)
     if specs != site["specs"]:
         raise GenError(
             f"{where}: conversion signature is {specs}, expected "
@@ -500,46 +640,42 @@ def read_ceiling():
     except OSError as e:
         raise GenError(f"cannot read Logger.h / Logger.c: {e}") from e
 
-    m = re.search(r"^\s*#define\s+LOG_MESSAGE_SIZE\s+(\d+)\s*$", h, re.M)
-    if not m:
-        raise GenError("no '#define LOG_MESSAGE_SIZE <n>' in Logger.h")
-    size = int(m.group(1))
-
-    body = re.search(r"LogMessageFormatImpl\s*\([^)]*\)\s*\{(.*?)\n\}", c, re.S)
-    if not body:
-        raise GenError("could not find the body of LogMessageFormatImpl in "
-                       "Logger.c -- the mirror in "
-                       "test_1039_log_message_budget.c models that function, "
-                       "so a reshape must be re-read by hand, not assumed")
-    impl = body.group(1)
-    # ⛔ READ BY THE GATE'S PAREN-DEPTH WALK, NOT BY A REGEX. This was
-    # `LOG_MESSAGE_SIZE([^,)]*)` -- the EXACT pattern the gate had already
-    # replaced, in the same PR, with a comment explaining why it was wrong.
-    # It stops at the first `)`, so the shipping shape
-    # `min((LOG_MESSAGE_SIZE - 3), size)` read correctly by luck (nothing
-    # follows the paren) while `min((LOG_MESSAGE_SIZE - 3) - 10, size)` read
-    # as 3 instead of 13 (codex audit on #1110 r4, both legs).
+    # ⛔ THE WHOLE DERIVATION IS THE GATE'S, INPUT PREPARATION INCLUDED.
     #
-    # That was not a cosmetic difference: the generated header's
-    # FW_LOG_CLAMP_RESERVE feeds test_1039's own
-    # `#define LOG_BUDGET (FW_LOG_MESSAGE_SIZE - FW_LOG_CLAMP_RESERVE)`, so a
-    # reserve read 10 bytes short makes the C mirror clamp at 125 where the
-    # device clamps at 115 -- the fixture then PASSES while asserting a
-    # ceiling the firmware does not have. The existing
-    # `ASSERT_TRUE(FW_LOG_CLAMP_RESERVE > FW_LOG_VSNPRINTF_RESERVE)` does not
-    # catch it either: 3 > 2 and 13 > 2 both hold.
-    return (
-        size,
-        _reserved_after(impl, r"vsnprintf\s*\(\s*\w+\s*,\s*",
-                        "vsnprintf's size argument",
-                        "LogMessageFormatImpl no longer bounds vsnprintf at "
-                        "LOG_MESSAGE_SIZE - N. The mirror models it; "
-                        "re-derive before re-enabling this test"),
-        _reserved_after(impl, r"min\s*\(\s*", "the min() clamp",
-                        "LogMessageFormatImpl no longer clamps with "
-                        "min((LOG_MESSAGE_SIZE - N), ...). The mirror models "
-                        "it; re-derive before re-enabling this test"),
-    )
+    # r4 shared only the paren-depth walk (`reserve_after`) and kept this
+    # module's own `#define` regex, its own LogMessageFormatImpl body regex,
+    # and -- the defect -- its own UNMASKED source. r5 showed that sharing a
+    # parser prevents nothing while each side feeds it different text: with
+    #
+    #     /* Previously: size = min((LOG_MESSAGE_SIZE - 3), size); */
+    #     size = min((LOG_MESSAGE_SIZE - 13), size);
+    #
+    # the gate (which masks comments first) read 13 and this module read 3 --
+    # the SAME divergence as r4, relocated from the parser to its input, and
+    # my r4 note claiming the shared walk had closed the class was wrong
+    # (codex audit on #1110 r5, both legs).
+    #
+    # So the seam is now the gate's `read_ceiling`, which masks both texts,
+    # locates the body, and applies the walk twice. Three duplicated readers
+    # deleted, not one.
+    #
+    # Why it matters beyond tidiness: FW_LOG_CLAMP_RESERVE feeds test_1039's
+    # own `#define LOG_BUDGET (FW_LOG_MESSAGE_SIZE - FW_LOG_CLAMP_RESERVE)`,
+    # so a reserve read short makes the C mirror clamp at 125 where the device
+    # clamps at 115 -- the fixture PASSES while asserting a ceiling the
+    # firmware does not have. `ASSERT_TRUE(CLAMP > VSNPRINTF)` cannot catch
+    # it: 3 > 2 and 13 > 2 both hold.
+    #
+    # ⭐ What is still NOT shared is the MEASUREMENT: the gate models
+    # truncation, this test runs the real strings through real vsnprintf. That
+    # independence is the point and must stay. The ceiling is a transcription
+    # of two integers out of Logger.c, which is why it may not.
+    gate = _gate()
+    try:
+        _ceiling, size, vsn, clamp = gate.read_ceiling(h, c)
+    except gate.ToolError as e:
+        raise GenError(str(e)) from e
+    return size, vsn, clamp
 
 
 def c_literal_byte_len(literal):
@@ -704,6 +840,48 @@ GEN_SELF_TESTS = [
      lambda: _clamp_of("size = other(LOG_MESSAGE_SIZE - 3, size);"), GenError,
      "the mirror models a min() clamp; if that shape is gone the build must "
      "stop rather than extract a number from whatever replaced it"),
+    # ⛔ r5 FINDING 1: an unparsed '%' is a wild store, not a cosmetic gap.
+    ("signature: %n is REFUSED, not silently dropped",
+     lambda: conversion_signature("clock %n is %u Hz, pll %u", "t"), GenError,
+     "r5, memory_safety: SPEC_RE excludes 'n', so finditer skipped it and the "
+     "format still matched the recorded ['%u','%u']. The renderer supplied "
+     "two UINT32_MAX values and snprintf wrote through the first as %n's "
+     "int* -- the audit reproduced a SIGSEGV"),
+    ("signature: a clean format is unchanged",
+     lambda: conversion_signature("clock %u Hz, pll %u", "t"), ["%u", "%u"],
+     "the shape that ships -- the refusal must not cost the ordinary case"),
+    ("signature: %% consumes no argument and is not in the signature",
+     lambda: conversion_signature("100%% of %u", "t"), ["%u"],
+     "parsed, so it does not trip the refusal, but excluded from the "
+     "signature because it takes no argument"),
+    ("signature: a length modifier is preserved",
+     lambda: conversion_signature("%llu and %u", "t"), ["%llu", "%u"],
+     "'ll' widens on this target, so losing it would measure the OLD worst "
+     "case -- the reason the signature check exists at all"),
+    ("signature: a trailing bare %% is refused",
+     lambda: conversion_signature("value %u pct %", "t"), GenError,
+     "a '%' at end-of-string parses as nothing; dropping it silently is the "
+     "same hole as %n with a different ending"),
+    # ⛔ r5 FINDING 2. The historical expression in a comment WINS a plain
+    # search, and this module used to run one over unmasked source.
+    ("clamp: a commented-out PREVIOUS clamp does not win",
+     lambda: _clamp_of(
+         "    size = min((LOG_MESSAGE_SIZE - 13), size);",
+         extra="    /* Previously: size = min((LOG_MESSAGE_SIZE - 3), size); */"),
+     13,
+     "r5 both legs: unmasked, this read 3 while the gate read 13 -- so the "
+     "fixture accepted 119/120-byte messages against 125 while the firmware "
+     "truncated them at 115. It disproved r4's claim that sharing the walk "
+     "had ended ceiling-reader divergence: the shared walk was being fed "
+     "different text on each side"),
+    ("clamp: a commented-out clamp ALONE refuses rather than being read",
+     lambda: _clamp_of(
+         "    size = size;",
+         extra="    /* Previously: size = min((LOG_MESSAGE_SIZE - 3), size); */"),
+     GenError,
+     "the other direction, and the one that matters if the clamp is ever "
+     "removed: with the live clamp gone the masked text has none, so this "
+     "must STOP rather than quietly adopt the historical 3"),
     ("c_literal: UTF-8 keeps its byte length",
      lambda: c_literal("\u00e9"), '"\\303\\251"',
      "e-acute is TWO bytes in a UTF-8 source; one octal escape made the "
@@ -741,12 +919,26 @@ def self_test():
         if got != expected:
             failures += 1
             print(f"  FAIL [{name}]: {got!r}, expected {expected!r} -- {why}")
+    # The imported gate must be a declared build input in BOTH places. Run
+    # here rather than as a table case because it reads the repo rather than a
+    # fixture, and because the Makefile recipe calls --self-test before
+    # generating, so a dropped edge fails the build at the point it matters.
+    dep_problems = dependency_registration_problems()
+    for problem in dep_problems:
+        failures += 1
+        print(f"  FAIL [dependency registration]: {problem}")
     if failures:
         print(f"ERROR: gen_1039_log_budget.py: {failures} self-test(s) failed",
               file=sys.stderr)
         return 1
+    # The dependency check is named in the clean verdict too. A pass that
+    # mentions only the case count reads as "20 things were checked", and the
+    # registration edge -- the one that was silently missing -- would not be
+    # among them as far as any reader could tell.
     print(f"gen_1039_log_budget.py self-test: {len(GEN_SELF_TESTS)}/"
-          f"{len(GEN_SELF_TESTS)} extraction-invariant cases pass")
+          f"{len(GEN_SELF_TESTS)} extraction-invariant cases pass; the "
+          f"imported ceiling reader ({GATE_PY.name}) is a declared "
+          f"prerequisite and is in every host-tests.yml paths: filter")
     return 0
 
 

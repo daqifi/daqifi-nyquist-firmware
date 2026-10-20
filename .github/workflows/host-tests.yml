@@ -297,6 +297,7 @@ on:
       # audit, round 5) -- the same gap this file's own header says it
       # was built to close for AD7609Scale.h.
       - 'tools/lint/cdef.py'
+      - 'tools/lint/log_budget.py'
       - 'firmware/src/Util/CircularBuffer.c'
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'
@@ -373,6 +374,7 @@ on:
       # audit, round 5) -- the same gap this file's own header says it
       # was built to close for AD7609Scale.h.
       - 'tools/lint/cdef.py'
+      - 'tools/lint/log_budget.py'
       - 'firmware/src/Util/CircularBuffer.c'
       - 'firmware/src/Util/CircularBuffer.h'
       - 'firmware/src/Util/FixedPointFmt.h'

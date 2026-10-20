@@ -1060,11 +1060,26 @@ def scan_file(path, rel, macros, ceiling):
     spliced, orig_pos = splice_continuations(src)
     masked = mask_comments(spliced)
     found = []
+    # ⛔ THE ANNOTATION VIEW READS THE SAME SPLICED TEXT AS THE CALL VIEW.
+    # It used to read the RAW physical lines while find_calls() read the
+    # spliced text, so the two halves of one question saw different source
+    # (codex audit on #1110 r5, both legs). C translation phase 2 deletes
+    # backslash-newline BEFORE tokens exist, so
+    #
+    #     puts("a\
+    #     /* log_budget: max=1 */"); LOG_E("%s", big);
+    #
+    # is ONE logical line whose marker is STRING CONTENT. Reading the physical
+    # lines made line 2 look like a comment line and bound a max=1 to the
+    # LOG_E, silencing a message that truncates. ⭐ Sharing a parser is not
+    # enough when each side PREPARES ITS OWN INPUT -- that is where this
+    # round's divergence moved after the readers were unified.
+    spliced_lines = spliced.splitlines()
     # Computed ONCE per file: split_code_comments() is a forward scan from the top
     # (block state cannot be recovered from a line in isolation), so letting
     # find_annotation() derive it per call site would be quadratic in a file
     # with many LOG_E sites.
-    split = split_code_comments(src_lines)
+    split = split_code_comments(spliced_lines)
     calls = list(find_calls(masked, macros))
     # How many log-macro calls share each line. An annotation on a line holding
     # MORE THAN ONE call cannot say which call it bounds, and the old behaviour
@@ -1072,16 +1087,27 @@ def scan_file(path, rel, macros, ceiling):
     # neighbour that could truncate (codex audit on #1110, both legs). A bound
     # whose subject is ambiguous is refused rather than guessed: refusing costs
     # a split line, guessing costs a silent overflow the baseline then blesses.
-    calls_on_line = collections.Counter(
-        pos_to_line(src, orig_pos, p) for _m, p, _a, _c in calls)
+    # Keyed by SPLICED line, because that is the line an annotation can bind
+    # to after phase 2 -- two calls joined by a continuation share one logical
+    # line even though they occupy two physical ones. Reported line numbers
+    # stay ORIGINAL (see `line` below); only the lookup key is spliced.
+    def spliced_line(p):
+        return spliced.count("\n", 0, p) + 1
+
+    calls_on_sline = collections.Counter(
+        spliced_line(p) for _m, p, _a, _c in calls)
     for macro, pos, args, _call in calls:
-        line = pos_to_line(src, orig_pos, pos)
-        if ambiguous_annotation(src_lines, line, calls_on_line[line], split):
+        line = pos_to_line(src, orig_pos, pos)   # for REPORTING: physical line
+        sline = spliced_line(pos)                # for LOOKUP: logical line
+        if ambiguous_annotation(spliced_lines, sline, calls_on_sline[sline],
+                                split):
             found.append(Finding(
                 rel, line,
-                f"ambiguous annotation: {calls_on_line[line]} log calls share "
-                f"this line and one /* log_budget: max=N */ -- it cannot say "
-                f"which call it bounds. Put each call on its own line",
+                f"ambiguous annotation: {calls_on_sline[sline]} log calls "
+                f"share this logical line and one /* log_budget: max=N */ is "
+                f"in scope for it (on the line, or in the comment block above) "
+                f"-- it cannot say which call it bounds. Put each call on its "
+                f"own line",
                 ""))
             continue
         fmt_index = macros[macro]
@@ -1096,7 +1122,8 @@ def scan_file(path, rel, macros, ceiling):
                 f"unresolvable: {macro}'s format argument is not a string "
                 f"literal", ""))
             continue
-        worst, reason = measure(fmt, find_annotation(src_lines, line, split))
+        worst, reason = measure(fmt, find_annotation(spliced_lines, sline,
+                                                     split))
         if reason is not None:
             found.append(Finding(rel, line, reason, escape_for_record(fmt)))
         elif worst > ceiling:
@@ -1320,6 +1347,28 @@ SELF_TEST_CASES = [
         '/* log_budget: max=40 */\nLOG_E("SD start refused (#689): %s", why);',
         0,
         "30 fixed + 40 declared = 70",
+    ),
+    # ⛔ r5 FINDING 3, and reachable ONLY end-to-end: the defect was in how
+    # scan_file PREPARES the two views, so nothing at find_annotation's own
+    # level could see it. Both halves now read the spliced text.
+    (
+        "a marker inside a SPLICED string literal is not an annotation",
+        'puts("a\\\n/* log_budget: max=1 */"); LOG_E("%s", big);',
+        1,
+        "r5 both legs: valid C -- phase 2 deletes the backslash-newline "
+        "BEFORE tokens exist, so this is ONE logical line whose marker is "
+        "STRING CONTENT. Reading the raw physical lines made line 2 look "
+        "like a comment and bound max=1 to the LOG_E, reporting 0 findings "
+        "for a message that truncates. Sharing a parser does not help when "
+        "each side prepares its own input",
+    ),
+    (
+        "the same two lines WITHOUT the continuation really do bind",
+        'puts("a");\n/* log_budget: max=1 */\nLOG_E("%s", big);',
+        0,
+        "the control that makes the case above a discriminator rather than a "
+        "blanket refusal: with no splice the marker IS a comment line, the "
+        "bound is honoured, and the call measures inside the ceiling",
     ),
     (
         "unannotated %s",

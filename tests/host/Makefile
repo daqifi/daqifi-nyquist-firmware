@@ -497,15 +497,34 @@ PYTHON        ?= python3
 # count re-derives the worst case instead of being measured with stale
 # arguments. It exits non-zero with a named diagnostic on any of that.
 #
-# It deliberately does NOT reuse tools/lint/log_budget.py's parser: that tool
-# is the static gate this same PR adds, and it MODELS the truncation. The
-# value of this test is that it does not share the model, so the model's
-# extractor must not sit on both sides of the check either.
+# WHAT IT SHARES WITH tools/lint/log_budget.py, AND WHAT IT MUST NOT.
+#
+# ⛔ An earlier revision of this comment said it "deliberately does NOT reuse
+# tools/lint/log_budget.py's parser". That stopped being true, on purpose, and
+# the comment outlived the decision -- so read the split precisely:
+#
+#   * the MEASUREMENT is not shared, and must never be. That tool is the
+#     static gate, and it MODELS truncation; this test's value is running the
+#     real strings through real vsnprintf. The model must not sit on both
+#     sides of the check.
+#   * the CEILING READER is shared, and must be. `LOG_MESSAGE_SIZE - 2` and
+#     the min() clamp are two integers transcribed out of Logger.c, with one
+#     right answer, so two readers can only agree or be wrong -- and they
+#     silently disagreed twice (codex audit on #1110 r4 and r5).
+#
+# $(LOG_BUDGET_GATE) is therefore a REAL BUILD INPUT of $(LOG1039_GEN), not a
+# neighbouring tool. It is listed as a prerequisite below and in
+# host-tests.yml's path filters; `gen_1039_log_budget.py --self-test` asserts
+# both of those registrations still exist, so the edge cannot be dropped
+# silently the way it was when the seam was first added (r5 finding 4).
 LOG1039_BIN := run_1039_tests
 LOG1039_GEN := gen_1039_log_budget.h
 FW_APP_SRC  := ../../firmware/src/app_freertos.c
 FW_ADC_SCPI := ../../firmware/src/services/SCPI/SCPIADC.c
 FW_WIFI_SRC := ../../firmware/src/services/wifi_services/wifi_manager.c
+# Imported by gen_1039_log_budget.py at run time (see _gate()). Same shape as
+# $(CDEF) below: a tools/lint module a host-test target genuinely reads.
+LOG_BUDGET_GATE := ../../tools/lint/log_budget.py
 PYTHON      ?= python3
 
 # #1039 (PR #1116, split from the parked #1110): the four LOG_E messages
@@ -2438,8 +2457,9 @@ $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $
 	 printf '#endif\n' >> $(GEN_1000)
 	$(CC) $(CFLAGS) -o $(SDLOG_BIN) test_1000_sd_log_arm_budget.c
 
-$(LOG1039_GEN): gen_1039_log_budget.py $(FW_APP_SRC) $(FW_ADC_SCPI) \
-                $(FW_WIFI_SRC) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
+$(LOG1039_GEN): gen_1039_log_budget.py $(LOG_BUDGET_GATE) $(FW_APP_SRC) \
+                $(FW_ADC_SCPI) $(FW_WIFI_SRC) $(FW_LOG_H) $(FW_LOG_C) \
+                $(RECIPES)
 	# The generator's own invariants run FIRST, so a defect in the
 	# extractor fails the build rather than producing a fixture that
 	# measures a different string than the firmware ships (codex audit on
