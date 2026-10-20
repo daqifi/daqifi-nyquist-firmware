@@ -261,6 +261,27 @@ typedef struct {
     unsigned writes[MODEL_TYPE_COUNT];   /* nvm_WriteRowtoAddr calls, per page */
     bool     eraseFails;                 /* injected flash fault */
     bool     writeFails;                 /* injected flash fault */
+
+    /* ⛔ FIDELITY 5 and 6, added after the r2 audit found the model could not
+     * represent either of its reproducers.
+     *
+     * eraseRefused: the page is WRITE-PROTECTED. nvm_ErasePage reads back one
+     *   word, finds it is not 0xFFFFFFFF, and returns TRUE ANYWAY (nvm.c:45-54
+     *   -- the failure branch's only action is a commented-out log). So the old
+     *   record survives intact and the caller is told the erase succeeded. This
+     *   is why `eraseFails` below models a path PRODUCTION CANNOT REACH: the
+     *   HAL has no way to report an erase failure at all.
+     *
+     * writeLandsButReadbackFails: the flash write SUCCEEDS and
+     *   nvm_WriteRowtoAddr still returns false, because its success test is a
+     *   readback comparison (nvm.c:132) against the SHARED staging buffer
+     *   gTempFflashBuffer (daqifi_settings.c:305). Any concurrent settings
+     *   writer on another transport -- SCPI_LANSettingsSave takes no config
+     *   claim -- can overwrite that buffer between the memcpy and the compare.
+     *   NO FLASH FAULT IS INVOLVED; this is ordinary concurrent USB/WiFi
+     *   configuration. */
+    bool     eraseRefused;
+    bool     writeLandsButReadbackFails;
 } ModelNvm;
 
 static unsigned nvm_total(const unsigned *counts)
@@ -280,6 +301,15 @@ static void nvm_read_page(const ModelNvm *nvm, uint32_t type, ModelSettings *out
 static void nvm_store_page(ModelNvm *nvm, uint32_t type, const ModelSettings *rec)
 {
     memcpy(nvm->page[type], rec, sizeof(*rec));
+}
+
+/* An erased page. 0xFF because that is what erased NOR flash reads as, and
+ * because nvm_ErasePage's own success test is `readByte == 0xFFFFFFFF`. A
+ * blanked page cannot validate: CRC32 over all-0xFF will not match the
+ * all-0xFF checksum field, and the pad-must-be-zero test fails too. */
+static void nvm_blank_page(ModelNvm *nvm, uint32_t type)
+{
+    memset(nvm->page[type], 0xFF, sizeof(ModelSettings));
 }
 
 /* ==========================================================================
@@ -352,7 +382,22 @@ static ModelSaveOutcome model_SaveToNvm(ModelNvm *nvm, ModelSettings *rec)
     /* daqifi_settings_ClearNvm(settings->type) -> nvm_ErasePage(address) */
     nvm->erases[type]++;
     if (nvm->eraseFails) {
+        /* ⚠ MODELS A PATH PRODUCTION CANNOT REACH. nvm_ErasePage returns true
+         * on both branches (nvm.c:45-54), so the settings layer is never told
+         * an erase failed. Kept because the pre-r2 tests assert through it and
+         * removing it would silently drop their coverage of the earlier
+         * shapes -- but a real erase failure presents as `eraseRefused`
+         * below, NOT as this. */
         return SAVE_ERASE_FAILED;
+    }
+
+    /* ERASE INVALIDATION -- the fidelity the r2 audit found missing. A real
+     * erase that is not refused destroys the committed record BEFORE the
+     * replacement is written, so a write that then fails leaves NO valid
+     * record at this address. The model used to leave the old record in place
+     * here, which made every save-failure case look recoverable. */
+    if (!nvm->eraseRefused) {
+        nvm_blank_page(nvm, type);
     }
 
     /* [crc(4) | zero(12)], computed over the arm's OWN dataSize. */
@@ -362,6 +407,14 @@ static ModelSaveOutcome model_SaveToNvm(ModelNvm *nvm, ModelSettings *rec)
 
     nvm->writes[type]++;
     if (nvm->writeFails) {
+        return SAVE_WRITE_FAILED;
+    }
+    if (nvm->writeLandsButReadbackFails) {
+        /* The write LANDED. Only nvm_WriteRowtoAddr's readback comparison
+         * failed, because the shared staging buffer was overwritten under it.
+         * So the medium now holds the NEW record and the caller is told the
+         * save FAILED -- the worst of both, and the r2 reproducer. */
+        nvm_store_page(nvm, type, rec);
         return SAVE_WRITE_FAILED;
     }
     nvm_store_page(nvm, type, rec);
@@ -454,9 +507,29 @@ typedef enum {
                           * leaves the coefficients live and the selector stale,
                           * with no indication -- see USECAL_R2. Kept as the
                           * historical shape, not as the current firmware. */
-    USECAL_R2            /* #1152 r2 (CURRENT): validate -> save -> install, so no
-                          * failure can leave the runtime array and NVM
-                          * disagreeing. This is the shape production runs. */
+    USECAL_R2            /* #1152 r2 (CURRENT): validate -> save -> install.
+                          *
+                          * ⛔ DO NOT RESTORE THE CLAIM THIS COMMENT USED TO
+                          * MAKE -- that "no failure can leave the runtime array
+                          * and NVM disagreeing". The r2 audit disproved it. The
+                          * reorder changes WHICH SIDE goes stale; it does not
+                          * remove the divergence:
+                          *
+                          *   r1 (install first): save fails -> new coefficients
+                          *     live, OLD selector stored.
+                          *   r2 (save first): the flash write LANDS but its
+                          *     readback comparison fails -> NEW selector
+                          *     stored, OLD coefficients live, and USECal?
+                          *     reads the selector straight from NVM.
+                          *
+                          * r2's failure needs no hardware fault at all: the
+                          * readback compares against the SHARED staging buffer
+                          * gTempFflashBuffer, which any concurrent settings
+                          * writer on another transport can overwrite. See
+                          * r2_erase_invalidation_* below, which model it.
+                          *
+                          * What r2 does buy: the common case -- a bank that
+                          * fails validation -- touches nothing at all. */
 } UseCalShape;
 
 typedef struct {
@@ -1061,6 +1134,98 @@ TEST(r2_a_flash_fault_leaves_the_coefficients_untouched)
     ASSERT_EQ(rt.installedBank, MODEL_NO_BANK);
 }
 
+/* ==========================================================================
+ * THE r2 AUDIT'S TWO REPRODUCERS. Both were invisible to this model before
+ * erase invalidation and the readback-interleaving case were added, which is
+ * why the suite went green over the r2 reorder.
+ *
+ * ⛔ THESE ASSERT THE CURRENT, DEFECTIVE BEHAVIOUR, deliberately. They are the
+ * open hazard pinned so it cannot go quiet again -- not a specification of
+ * what the firmware should do. When a real fix lands (failure-safe replacement
+ * in the settings layer, an NVM HAL that can report an erase failure, and a
+ * claim discipline covering every settings writer) these assertions must FLIP,
+ * and this comment is how the next reader knows that is the intended outcome
+ * rather than a regression.
+ * ========================================================================== */
+TEST(r2_erase_invalidation_destroys_the_stored_selector)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.writeFails = true;            /* real erase, then the row write fails */
+    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt);
+
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.saveOutcome, SAVE_WRITE_FAILED);
+    ASSERT_EQ(nvm.erases[MODEL_TYPE_TOP_LEVEL], 1);
+    ASSERT_EQ(nvm.writes[MODEL_TYPE_TOP_LEVEL], 1);
+
+    /* The runtime array is untouched -- that part of r2 does hold. */
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(rt.installedBank, MODEL_NO_BANK);
+
+    /* ⛔ But the COMMITTED RECORD IS GONE. The erase landed before the write
+     * was attempted, so there is no valid TOP_LEVEL record any more: USECal?
+     * answers -200, and the next boot takes the factory-default branch and
+     * persists calVals = 0 -- which need not match what was live. The old
+     * comment claiming "selection unchanged" on this path was false. */
+    ASSERT_EQ(persisted_selector(&nvm), -1);
+}
+
+TEST(r2_a_concurrent_settings_write_diverges_with_no_flash_fault)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    /* No flash fault. A concurrent writer on another transport overwrites the
+     * shared staging buffer, so the readback comparison fails over a write
+     * that LANDED. */
+    nvm.writeLandsButReadbackFails = true;
+    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt);
+
+    ASSERT_EQ(run.result, RES_ERR);          /* the caller is told it failed */
+    ASSERT_EQ(run.saveOutcome, SAVE_WRITE_FAILED);
+
+    /* ⛔ THE DIVERGENCE, AND NOTHING WAS INJECTED BUT CONCURRENCY.
+     * NVM holds the NEW selector; the live coefficients are the OLD bank. */
+    ASSERT_EQ(persisted_selector(&nvm), 1);              /* USECal? says USER */
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(rt.CalM[0], FACT_M);                       /* acquisition: FACTORY */
+
+    /* Stated as the comparison that matters: the selector and the live bank
+     * disagree, which is exactly what the r1 fix claimed to make unreachable. */
+    ASSERT_EQ(persisted_selector(&nvm), 1);
+    ASSERT_EQ(rt.installedBank, MODEL_NO_BANK);
+}
+
+TEST(r2_a_write_protected_page_is_the_one_consistent_failure)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.eraseRefused = true;   /* nvm_ErasePage reports success regardless */
+    nvm.writeFails   = true;
+    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt);
+
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.saveOutcome, SAVE_WRITE_FAILED);
+
+    /* The old record survived the refused erase, and r2 never installed, so
+     * BOTH sides are the previous state: the only save failure under r2 that
+     * leaves the device self-consistent. It is also the case the r1 audit used
+     * to disprove r1 -- under r1 this same scenario diverged, because r1 had
+     * already installed. */
+    ASSERT_EQ(persisted_selector(&nvm), 0);
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(rt.CalM[0], FACT_M);
+}
+
 TEST(a_flash_fault_leaves_the_coefficients_live_in_the_two_historical_shapes)
 {
     UseCalShape shapes[2] = { USECAL_PREFIX, USECAL_POSTFIX };
@@ -1261,6 +1426,12 @@ int main(void)
      * changed the reachable state rather than the wording. */
     RUN(r2_a_flash_fault_leaves_the_coefficients_untouched);
     RUN(a_flash_fault_leaves_the_coefficients_live_in_the_two_historical_shapes);
+
+    /* r2's own OPEN hazard, pinned. These assert the defective behaviour on
+     * purpose -- see the block comment above them. */
+    RUN(r2_erase_invalidation_destroys_the_stored_selector);
+    RUN(r2_a_concurrent_settings_write_diverges_with_no_flash_fault);
+    RUN(r2_a_write_protected_page_is_the_one_consistent_failure);
 
     /* What must NOT have moved */
     RUN(a_healthy_record_is_byte_for_byte_unchanged_by_the_fix);

@@ -1821,25 +1821,55 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
     //  Persist the selector the validation has proved loadable
     tmpTopLevelSettings.settings.topLevelSettings.calVals = param1;
     if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) {
-        LOG_E("CONF:ADC:USECal %d: NVM write failed; selection unchanged and "
-              "the live coefficients are untouched", param1);
+        /* Deliberately does NOT say "selection unchanged": the erase has
+         * already run (daqifi_settings.c ClearNvm -> nvm_ErasePage) and the
+         * stored selector may be destroyed, blank, or -- if only the READBACK
+         * failed -- already updated to the new value. The live coefficients
+         * are the one thing this path can state. */
+        LOG_E("CONF:ADC:USECal %d: persisting the selector failed; the live "
+              "coefficients are UNCHANGED, but the STORED selector may be "
+              "destroyed or already updated -- read it back with USECal?",
+              param1);
         return SCPI_RES_ERR;
     }
 
-    /* INSTALL last, so no failure above can leave the runtime coefficients and
-     * the persisted selector disagreeing. The copy inside
-     * daqifi_settings_LoadADCCalSettings cannot fail; its only failure is
-     * re-reading the record this function validated moments ago, i.e. a
-     * transient flash READ fault between two adjacent reads of the same
-     * address. If that happens the selector IS persisted and valid, the live
-     * coefficients are still the previous bank, and the next boot reloads the
-     * persisted selection (app_freertos.c:1035-1039) onto a bank already
-     * proved loadable -- so the divergence is bounded by a reboot and
-     * USECal? reports the selection that will be in force, not a stale one. */
+    /* ⛔ DO NOT RESTORE THE PREVIOUS CLAIM HERE. This block used to assert
+     * that "no failure above can leave the runtime coefficients and the
+     * persisted selector disagreeing". That is FALSE, and the r2 adversarial
+     * audit demonstrated it without any hardware fault:
+     *
+     *   daqifi_settings_SaveToNvm stages the record into the SHARED global
+     *   gTempFflashBuffer (daqifi_settings.c:305) and then calls
+     *   nvm_WriteRowtoAddr, whose success test is a READBACK COMPARISON
+     *   against that same buffer (nvm.c:132). A concurrent configuration
+     *   writer on another transport -- SCPI_LANSettingsSave is a real one, and
+     *   it takes no config claim -- can overwrite gTempFflashBuffer between
+     *   the memcpy and the comparison. The flash write LANDED; only the
+     *   comparison failed. So SaveToNvm returns false, the install above is
+     *   skipped, and the NEW selector is in NVM while the PREVIOUS
+     *   coefficients are live. SCPI_ADCUseCalGet reads the selector straight
+     *   out of NVM (:1866), so USECal? reports the new selection while
+     *   acquisition converts with the old bank. Ordinary concurrent USB/WiFi
+     *   configuration reaches this; no flash fault is required.
+     *
+     * nvm_ErasePage cannot help either: it returns true on BOTH branches
+     * (nvm.c:45-54 -- the failure branch's only action is a commented-out
+     * log), so an unsuccessful erase is not merely unhandled, it is
+     * UNREPORTABLE to this layer.
+     *
+     * The ordering below is therefore NOT a fix for the divergence; it moves
+     * which side goes stale. A correct fix is failure-safe replacement in the
+     * settings layer -- retain the committed record until its replacement
+     * verifies -- plus an NVM HAL that can report an erase failure, plus a
+     * claim discipline covering every settings writer. All three are outside
+     * this PR; see the row for the parked transaction question. What this
+     * ordering does buy is that the common case -- a bank that fails
+     * validation -- still touches nothing at all. */
     if (!daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)) {
-        LOG_E("CONF:ADC:USECal %d: selection persisted, but re-reading the cal "
-              "bank failed; the live coefficients remain the PREVIOUS bank "
-              "until the next boot applies the persisted selection", param1);
+        LOG_E("CONF:ADC:USECal %d: the selector was persisted but the cal bank "
+              "could not be re-read; the live coefficients remain the PREVIOUS "
+              "bank, so USECal? and acquisition DISAGREE until the next boot "
+              "applies the stored selection", param1);
         return SCPI_RES_ERR;
     }
 
