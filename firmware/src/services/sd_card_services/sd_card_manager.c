@@ -136,7 +136,8 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  * silently make this too small. A line that does not fit is REFUSED by
  * SdManifest_FormatLine and logged, never truncated -- see that header. */
 #define SD_MANIFEST_LINE_MAX  (SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX \
-                               + 8u + 5u + 21u + 12u + 1u)
+                               + 8u + 5u + 21u + 12u + 1u \
+                               + (sizeof(SD_MANIFEST_PREFIX_MARK) - 1u))
 
 /* #924: how many SYS_FS_FileWrite calls one manifest line may take. A short
  * write has already put bytes on the card, so abandoning the line leaves a
@@ -570,6 +571,12 @@ typedef struct {
      * or a helper it calls, so no volatile and no critical section -- exactly
      * the reasoning the `crcRunning` comment below records. */
     uint32_t fileCrcRunning;
+    /* #924 (round-3 audit HIGH): true once a write to THIS file returned an
+     * error, so its manifest record describes a PREFIX. Lives inside
+     * gSDCardData, which is already allocated, so this adds NO new static and
+     * needs no STATIC_POOL_SIZE payment -- stated explicitly because a sibling
+     * row's audit finding is exactly an unpaid new BSS object. */
+    bool fileRecordIsPrefix;
 
     /* #924: the session's manifest. ONE file per streaming session, opened at
      * the session's first stream-file open and closed in UNMOUNT_DISK, so the
@@ -762,6 +769,24 @@ static int SDCardWrite() {
     writeLen = SYS_FS_FileWrite(gSDCardData.fileHandle, (const void *) src,
             gSDCardData.writeBufferLength);
     SD_CheckFsOpDuration(startTick, "FileWrite", writeLen);
+    if (writeLen <= 0) {
+        /* #924 (round-3 audit HIGH): ONE site, deliberately. This is the only
+         * place that knows a real SYS_FS_FileWrite failed, and it is the same
+         * function that owns the "fileCrcRunning covers precisely the bytes in
+         * currentFileBytes" invariant -- so the fault is recorded where the
+         * invariant is maintained rather than in each caller's error arm. The
+         * callers' arms are several and enumerating them is the mistake this
+         * file has already made three times.
+         *
+         * WHY A FLAG AND NOT A CORRECTED COUNT: the committed byte count is
+         * UNKNOWABLE here. FatFs f_write accumulates `*bw` as it writes and
+         * keeps it across ABORT (ff.c:4041), but Harmony overwrites it with
+         * 0xFFFFFFFF on any error (sys_fs.c:2442-2448) before returning. So
+         * bytes may be on the card that nothing can count, and the honest
+         * record is "this CRC covers the first N bytes and the file may be
+         * longer". */
+        gSDCardData.fileRecordIsPrefix = true;
+    }
 
     /* #924: fold what LANDED into this file's running CRC, HERE, because this
      * is the one funnel every stream-file byte passes through.
@@ -2073,7 +2098,8 @@ static void sd_AppendManifestLine(void) {
     uint32_t crc = CRC32_Finalize(gSDCardData.fileCrcRunning);
     char line[SD_MANIFEST_LINE_MAX];
     int lineLen = SdManifest_FormatLine(line, sizeof(line), relName,
-                                        gSDCardData.currentFileBytes, crc);
+                                        gSDCardData.currentFileBytes, crc,
+                                        gSDCardData.fileRecordIsPrefix);
     if (lineLen <= 0) {
         LOG_E("[SD] #924 manifest line did not fit for '%s' - line omitted",
               gSDCardData.filePath);
@@ -3589,7 +3615,8 @@ void sd_card_manager_ProcessState() {
                      * never written to before the session was torn down --
                      * not a placeholder standing in for missing data. */
                     SdManifest_FreshFileAccounting(&gSDCardData.currentFileBytes,
-                                                   &gSDCardData.fileCrcRunning);
+                                                   &gSDCardData.fileCrcRunning,
+                                                   &gSDCardData.fileRecordIsPrefix);
                     LOG_I("[SD] open aborted: session torn down mid-open "
                           "(mode=%s)", sd_card_manager_GetModeName());
                     break;
@@ -3611,7 +3638,8 @@ void sd_card_manager_ProcessState() {
                  * which is exactly right: each file's CRC covers that file
                  * and nothing before it. */
                 SdManifest_FreshFileAccounting(&gSDCardData.currentFileBytes,
-                                               &gSDCardData.fileCrcRunning);
+                                               &gSDCardData.fileCrcRunning,
+                                               &gSDCardData.fileRecordIsPrefix);
                 gSDCardData.lastFlushMillis = pdTICKS_TO_MS(xTaskGetTickCount());
 
                 if (gSDCardData.fileHandle == SYS_FS_HANDLE_INVALID) {

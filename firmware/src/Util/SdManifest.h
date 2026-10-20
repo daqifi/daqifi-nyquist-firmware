@@ -60,9 +60,16 @@ extern "C" {
  * @param crc     FINALIZED CRC-32 of that file (post CRC32_Finalize).
  * @return Number of characters written (excluding the NUL), or -1.
  */
+/* #924 (round-3 audit HIGH): the marker appended when the record describes a
+ * PREFIX of the file rather than the whole file. See `isPrefix` below. Its
+ * length is a named term of SD_MANIFEST_LINE_MAX in sd_card_manager.c -- do not
+ * change one without the other. */
+#define SD_MANIFEST_PREFIX_MARK  ",PARTIAL"
+
 static inline int SdManifest_FormatLine(char *out, size_t outLen,
                                         const char *name,
-                                        uint64_t bytes, uint32_t crc)
+                                        uint64_t bytes, uint32_t crc,
+                                        bool isPrefix)
 {
     int n;
 
@@ -74,8 +81,26 @@ static inline int SdManifest_FormatLine(char *out, size_t outLen,
     /* '\n' only, not "\r\n": the manifest is a machine-read sidecar, not one
      * of the device's CSV payloads, and a bare LF is what `str.splitlines()` /
      * `csv.reader` / `wc -l` all agree on. */
-    n = snprintf(out, outLen, "%s,%llu,0x%08X\n", name,
-                 (unsigned long long)bytes, (unsigned)crc);
+    /* #924 (round-3 audit HIGH): `isPrefix` says "crc is the CRC32 of the FIRST
+     * `bytes` bytes of this file, and the file may be LONGER". It is appended
+     * as a FOURTH field rather than by altering the first three, so a reader
+     * indexing [0..2] is unaffected and the CRC stays VERIFIABLE -- truncate to
+     * `bytes` and the value still matches. That is the property a bare
+     * "invalid" marker would have thrown away.
+     *
+     * It is reached when a write to the data file returned an error: Harmony's
+     * SYS_FS_FileWrite overwrites FatFs's partial byte count with
+     * 0xFFFFFFFF on any error (sys_fs.c:2442-2448) even though f_write
+     * accumulates `*bw` as it goes and keeps it across ABORT (ff.c:4041), so
+     * THE COMMITTED COUNT IS DESTROYED BEFORE THE FIRMWARE CAN SEE IT. Counting
+     * the OFFERED bytes instead would be a CRC over bytes that may not be on
+     * the card; omitting the line would make the manifest disagree with the
+     * file list, which this file's append site already argues against. A
+     * truthful prefix record is the only one of the three that is both correct
+     * and checkable. */
+    n = snprintf(out, outLen, "%s,%llu,0x%08X%s\n", name,
+                 (unsigned long long)bytes, (unsigned)crc,
+                 isPrefix ? SD_MANIFEST_PREFIX_MARK : "");
     if (n < 0 || (size_t)n >= outLen) {
         out[0] = '\0';
         return -1;
@@ -289,13 +314,21 @@ static inline bool SdManifest_FirstLineLooksLikeManifest(const char *data,
  *                 is the CRC of an empty byte range (0x00000000).
  */
 static inline void SdManifest_FreshFileAccounting(uint64_t *bytesOut,
-                                                   uint32_t *crcOut)
+                                                   uint32_t *crcOut,
+                                                   bool *isPrefixOut)
 {
     if (bytesOut != NULL) {
         *bytesOut = 0u;
     }
     if (crcOut != NULL) {
         *crcOut = CRC32_Init();
+    }
+    /* #924 (round-3 audit HIGH): cleared with the other two, HERE, because this
+     * is already the one place per-file accounting is reset. A separate reset
+     * site would be a second thing to remember, and this file's lifecycle has
+     * now cost three rounds to exactly that. */
+    if (isPrefixOut != NULL) {
+        *isPrefixOut = false;
     }
 }
 

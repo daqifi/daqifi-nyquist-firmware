@@ -227,25 +227,57 @@ TEST(line_format_is_exact)
     int n;
 
     n = SdManifest_FormatLine(line, sizeof(line), "experiment.csv",
-                              20480u, 0x1A2B3C4Du);
+                              20480u, 0x1A2B3C4Du, false);
     ASSERT_TRUE(n > 0);
     ASSERT_EQ(strcmp(line, "experiment.csv,20480,0x1A2B3C4D\n"), 0);
 
     /* A rotated part inside a #689 bucket. */
     n = SdManifest_FormatLine(line, sizeof(line), "P001/experiment-65.csv",
-                              1u, 0xFFFFFFFFu);
+                              1u, 0xFFFFFFFFu, false);
     ASSERT_TRUE(n > 0);
     ASSERT_EQ(strcmp(line, "P001/experiment-65.csv,1,0xFFFFFFFF\n"), 0);
+
+    /* #924 round-3 audit HIGH: THE PREFIX MARKER.
+     *
+     * A write that returns an error may still have put bytes on the card, and
+     * the committed count is UNKNOWABLE -- Harmony's SYS_FS_FileWrite
+     * overwrites FatFs's partial `*bw` with 0xFFFFFFFF on any error
+     * (sys_fs.c:2442-2448) even though f_write keeps it across ABORT
+     * (ff.c:4041). So the record describes a PREFIX of the file, and says so.
+     *
+     * The marker is a FOURTH field, which is the property that matters: a
+     * reader indexing [0..2] is unaffected, and the CRC stays VERIFIABLE --
+     * truncate the file to `bytes` and the value still matches. A bare
+     * "invalid" marker would have thrown that away. */
+    n = SdManifest_FormatLine(line, sizeof(line), "experiment.csv",
+                              20480u, 0x1A2B3C4Du, true);
+    ASSERT_TRUE(n > 0);
+    ASSERT_EQ(strcmp(line, "experiment.csv,20480,0x1A2B3C4D,PARTIAL\n"), 0);
+
+    /* NEGATIVE CONTROL, and it is the backward-compatibility claim: the SAME
+     * arguments with isPrefix=false must render the UNCHANGED three-field line.
+     * Without this, a marker that was emitted unconditionally would pass the
+     * assertion above and silently change every record on the card. */
+    n = SdManifest_FormatLine(line, sizeof(line), "experiment.csv",
+                              20480u, 0x1A2B3C4Du, false);
+    ASSERT_TRUE(n > 0);
+    ASSERT_EQ(strcmp(line, "experiment.csv,20480,0x1A2B3C4D\n"), 0);
+
+    /* The marker must also be accounted for in the line budget: a
+     * maximum-width name plus the marker must still fit SD_MANIFEST_LINE_MAX,
+     * which is why that macro carries sizeof(SD_MANIFEST_PREFIX_MARK)-1 as its
+     * own named term rather than a rounded-up constant. */
+    ASSERT_TRUE(strlen(SD_MANIFEST_PREFIX_MARK) == 8u);
 }
 
 TEST(small_crc_is_zero_padded)
 {
     char line[128];
 
-    ASSERT_TRUE(SdManifest_FormatLine(line, sizeof(line), "a.csv", 0u, 0u) > 0);
+    ASSERT_TRUE(SdManifest_FormatLine(line, sizeof(line), "a.csv", 0u, 0u, false) > 0);
     ASSERT_EQ(strcmp(line, "a.csv,0,0x00000000\n"), 0);
 
-    ASSERT_TRUE(SdManifest_FormatLine(line, sizeof(line), "a.csv", 0u, 0xABu) > 0);
+    ASSERT_TRUE(SdManifest_FormatLine(line, sizeof(line), "a.csv", 0u, 0xABu, false) > 0);
     ASSERT_EQ(strcmp(line, "a.csv,0,0x000000AB\n"), 0);
 }
 
@@ -256,18 +288,18 @@ TEST(byte_count_is_64_bit)
     char line[128];
 
     ASSERT_TRUE(SdManifest_FormatLine(line, sizeof(line), "big.csv",
-                                      4294967296ull, 0x00000001u) > 0);
+                                      4294967296ull, 0x00000001u, false) > 0);
     ASSERT_EQ(strcmp(line, "big.csv,4294967296,0x00000001\n"), 0);
 
     ASSERT_TRUE(SdManifest_FormatLine(line, sizeof(line), "big.csv",
-                                      18446744073709551615ull, 0u) > 0);
+                                      18446744073709551615ull, 0u, false) > 0);
     ASSERT_EQ(strcmp(line, "big.csv,18446744073709551615,0x00000000\n"), 0);
 }
 
 TEST(line_lengths_are_reported)
 {
     char line[128];
-    int n = SdManifest_FormatLine(line, sizeof(line), "x.csv", 5u, 0u);
+    int n = SdManifest_FormatLine(line, sizeof(line), "x.csv", 5u, 0u, false);
 
     ASSERT_TRUE(n > 0);
     ASSERT_EQ((size_t)n, strlen(line));
@@ -284,7 +316,7 @@ TEST(truncation_is_all_or_nothing)
 
     /* "verylongname.csv,20480,0x1A2B3C4D\n" needs 34 + NUL. */
     n = SdManifest_FormatLine(line, sizeof(line), "verylongname.csv",
-                              20480u, 0x1A2B3C4Du);
+                              20480u, 0x1A2B3C4Du, false);
     ASSERT_EQ(n, -1);
     ASSERT_EQ(line[0], '\0');
 
@@ -293,10 +325,10 @@ TEST(truncation_is_all_or_nothing)
         char tight[sizeof("a.csv,1,0x00000002\n")];   /* == needed size */
         char cramped[sizeof("a.csv,1,0x00000002\n") - 1u];
 
-        ASSERT_TRUE(SdManifest_FormatLine(tight, sizeof(tight), "a.csv", 1u, 2u) > 0);
+        ASSERT_TRUE(SdManifest_FormatLine(tight, sizeof(tight), "a.csv", 1u, 2u, false) > 0);
         ASSERT_EQ(strcmp(tight, "a.csv,1,0x00000002\n"), 0);
 
-        ASSERT_EQ(SdManifest_FormatLine(cramped, sizeof(cramped), "a.csv", 1u, 2u), -1);
+        ASSERT_EQ(SdManifest_FormatLine(cramped, sizeof(cramped), "a.csv", 1u, 2u, false), -1);
         ASSERT_EQ(cramped[0], '\0');
     }
 }
@@ -305,9 +337,9 @@ TEST(format_line_null_safety)
 {
     char line[64];
 
-    ASSERT_EQ(SdManifest_FormatLine(NULL, sizeof(line), "a", 0u, 0u), -1);
-    ASSERT_EQ(SdManifest_FormatLine(line, 0u, "a", 0u, 0u), -1);
-    ASSERT_EQ(SdManifest_FormatLine(line, sizeof(line), NULL, 0u, 0u), -1);
+    ASSERT_EQ(SdManifest_FormatLine(NULL, sizeof(line), "a", 0u, 0u, false), -1);
+    ASSERT_EQ(SdManifest_FormatLine(line, 0u, "a", 0u, 0u, false), -1);
+    ASSERT_EQ(SdManifest_FormatLine(line, sizeof(line), NULL, 0u, 0u, false), -1);
 }
 
 /* ------------------------------------------------------- relative names */
@@ -386,10 +418,10 @@ TEST(session_shape_round_trips)
 
     ASSERT_TRUE(SdManifest_FormatLine(l0, sizeof(l0),
                     SdManifest_RelativeName("DAQiFi/exp.csv", "DAQiFi"),
-                    sizeof(file0), c0) > 0);
+                    sizeof(file0), c0, false) > 0);
     ASSERT_TRUE(SdManifest_FormatLine(l1, sizeof(l1),
                     SdManifest_RelativeName("DAQiFi/exp-1.csv", "DAQiFi"),
-                    sizeof(file1), c1) > 0);
+                    sizeof(file1), c1, false) > 0);
 
     snprintf(expect0, sizeof(expect0), "exp.csv,%u,0x%08X\n",
              (unsigned)sizeof(file0), (unsigned)c0);
@@ -454,7 +486,7 @@ TEST(first_line_check_accepts_a_real_rendered_line)
 {
     char line[128];
     int n = SdManifest_FormatLine(line, sizeof(line), "experiment-3.csv",
-                                  20480u, 0x1A2B3C4Du);
+                                  20480u, 0x1A2B3C4Du, false);
     ASSERT_TRUE(n > 0);
     ASSERT_TRUE(SdManifest_FirstLineLooksLikeManifest(line, (size_t)n));
 
@@ -575,7 +607,8 @@ TEST(fresh_file_accounting_is_zero_bytes_and_empty_crc)
     uint64_t bytes = 123456789ull;   /* stale, as if left by a retired file */
     uint32_t crc = 0xDEADBEEFu;      /* stale running CRC of that same file */
 
-    SdManifest_FreshFileAccounting(&bytes, &crc);
+    bool isPrefix924 = true;   /* #924 round-3: must be CLEARED by the reset */
+    SdManifest_FreshFileAccounting(&bytes, &crc, &isPrefix924);
 
     ASSERT_EQ(bytes, 0ull);
     /* Finalizing a freshly-armed running CRC must equal the CRC of an empty
@@ -593,9 +626,10 @@ TEST(fresh_file_accounting_renders_as_the_empty_file_it_describes)
     uint32_t crc = 0x11111111u;
     char line[64];
 
-    SdManifest_FreshFileAccounting(&bytes, &crc);
+    bool isPrefix924 = true;   /* #924 round-3: must be CLEARED by the reset */
+    SdManifest_FreshFileAccounting(&bytes, &crc, &isPrefix924);
     ASSERT_TRUE(SdManifest_FormatLine(line, sizeof(line), "exp-2.csv", bytes,
-                                      CRC32_Finalize(crc)) > 0);
+                                      CRC32_Finalize(crc), false) > 0);
     ASSERT_EQ(strcmp(line, "exp-2.csv,0,0x00000000\n"), 0);
 }
 
@@ -607,13 +641,13 @@ TEST(fresh_file_accounting_null_safety)
     /* Neither pointer may be dereferenced when NULL -- both call sites in
      * sd_card_manager.c pass real struct-member addresses, but a defensive
      * helper must not assume that forever. */
-    SdManifest_FreshFileAccounting(NULL, &crc);
+    SdManifest_FreshFileAccounting(NULL, &crc, NULL);
     ASSERT_EQ(CRC32_Finalize(crc), CRC32_Compute("", 0));
 
-    SdManifest_FreshFileAccounting(&bytes, NULL);
+    SdManifest_FreshFileAccounting(&bytes, NULL, NULL);
     ASSERT_EQ(bytes, 0ull);
 
-    SdManifest_FreshFileAccounting(NULL, NULL);   /* must not crash */
+    SdManifest_FreshFileAccounting(NULL, NULL, NULL);   /* must not crash */
 }
 
 int main(void)

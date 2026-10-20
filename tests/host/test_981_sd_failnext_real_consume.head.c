@@ -170,7 +170,7 @@ typedef enum {
     SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK,
 } sd_card_manager_processState_t;
 
-/* The six fields of sd_card_manager_context_t that SDCardWrite() touches,
+/* The seven fields of sd_card_manager_context_t that SDCardWrite() touches,
  * with the real types (sd_card_manager.c's `typedef struct { ... }
  * sd_card_manager_context_t`). A field the function starts touching that is
  * missing here is a compile error, not a silent gap. */
@@ -183,6 +183,11 @@ static struct {
     /* #924: folded in SDCardWrite() after a successful write. uint32_t to
      * match sd_card_manager.c's real field exactly. */
     uint32_t fileCrcRunning;
+    /* #924 round-3: set by SDCardWrite() when a write returns an error, so the
+     * file's manifest record is marked as covering a PREFIX. Second time this
+     * fixture has needed a field because the spliced function grew one -- which
+     * is the fixture working as its own comment above promises. */
+    bool fileRecordIsPrefix;
 } gSDCardData;
 
 /* Real backing store for gSDCardData.writeBuffer: the extracted code forms
