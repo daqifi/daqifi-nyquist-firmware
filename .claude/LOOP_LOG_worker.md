@@ -10980,3 +10980,19 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   #1129, which have NO ledger round at all.** Their claim is *"never audited"* and **the label set has no
   value for it**. Inventing one would repeat the `blocked:operator-decision` failure — a label asserting
   something not checkable from the row. ⭐ **Reported the label-set gap instead of filling it.**
+
+- ⛔ **CORRECTED MY OWN LABEL DECISION — applied `audit-stale` to fw#1094.** I had declined it reasoning
+  *"the window never opens because I am resolving nothing"*: **lane-local reasoning about a state no lane
+  controls.** Whoever clears its remaining thread opens the window, and would not know the audit was stale
+  **because the lane that knew declined to say so.** ⭐ nq-c's observation is the general form: **the
+  hazard is created by PUSHING A FIX, not at sweep time, by the person who knows** — their own fw#1110
+  push did it to them within an hour of writing up the fw#1106 case. **And "I authored the merge so
+  someone else should label it" inverts the duty: authoring the staleness is why it is mine to declare.**
+  Verified before labelling — `f3ffb52` IS an ancestor of the live head, which my merge produced
+  (`6b1e57b87`), gate BLOCK → **overtaken, not orphaned**; control confirms it would be FALSE on #1024 and
+  #1129, which have no audit at all.
+- ⭐ **AND A REFINEMENT I OWED: "checkable from the row" needs the VALUES on the row.** `audit-stale`'s
+  basis is the ledger at `~/.claude/lanes/` — **box-local, not in the repo** — so from the row alone
+  nobody can check it. Posted the audited head, live head, ancestor relation, gate and **who moved it** as
+  a comment (`6285058015`), verified by reading it back from the API. **A label is only as checkable as
+  the evidence beside it.**
