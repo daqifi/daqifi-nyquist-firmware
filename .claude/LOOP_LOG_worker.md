@@ -11186,3 +11186,29 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   The row is labelled `audit-stale`, not `parked`. ⭐ So #1110's label does not merely point at the wrong
   leg — **it UNDERSTATES its hold**: the row reads as stale when it is an active round-6 BLOCK. Not my row
   (I declined this audit; the coordinator runs it), so flagged to them.
+
+- ⛔⛔⛔ **sk#236 BLOCKED ON MY OWN TOOL, AND THE HIGH IS A CASE MY OWN DOC NAMES TWO SECTIONS BEFORE THE
+  CEILING I LED WITH.** `show()` ended `| sort -u`, reducing all four sides to **distinct sets**, so a
+  dropped **repeated** line was invisible. Reproduced to the worst possible output: `MAIN added 0 lines
+  vs base` and `### ACCOUNTING-RC=0 (0 = no parent's addition was dropped)` **over a dropped payment.**
+  > ⚠ **My first reproduction did not reproduce it** — I dropped a multiplicity-1 line, which was caught
+  > correctly, and a mutation of the wrong shape **passes and reads as exoneration.** The blind spot needs
+  > a line that already exists in base. Second attempt asserted the precondition first.
+- ✅ **FIXED as v4, 9 cases, a control on every one, 8/8 then 9/9.** Dropped `comm`/`sort -u` for per-line
+  counts with **two bounds** (same-change floor, independent-change target) and — the part that makes the
+  label sound — **`git merge-tree` to ask whether git auto-merged the path**: CLEAN path ⇒ a shortfall is
+  human editing (DEFINITE LOSS); CONFLICTED path ⇒ it may be SUPERSEDED (needs a read). The ceiling is now
+  a **named band on the exact lines** instead of a silence. Also closed both MEDIUMs and a false alarm the
+  audit did not name (one side deletes, the other leaves it untouched).
+- ⛔ **I INTRODUCED THREE DEFECTS WHILE FIXING THREE, AND EVERY ONE WAS CAUGHT BY A CONTROL:**
+  (1) `-v mode="$MODE"` **never landed** — I asserted 5 of 6 `.replace()` anchors and the bare one
+  silently matched nothing, printing an empty `[ path]`;
+  (2) `max(m,r)` false-alarmed on a legitimately **modified** line, fixed by respecting delta signs;
+  (3) an **apostrophe** in the comment *"one side's addition"* closed the single-quoted awk program.
+  > ⛔ And `bash -n … && echo "syntax OK"` printed **nothing** on failure while my matrix ran on anyway —
+  > **7 failures that were all one syntax error.** A guard whose failure merely withholds a message is not
+  > a guard. `|| exit 1`.
+  ⚠ Also found: **`git rev-parse <sha>:<deleted-path>` does not fail** — it printed `<sha>:gone.md`, making
+  a deleted file look modified. `--verify --quiet` is required.
+- ⏸ **NOT PUSHED.** v4 and the writeup are on `lane/nq-b`; landing them on `cptkoolbeenz/claude-skills`
+  is a **cross-repo write and ask-first**, so it waits for the operator regardless of the open PR.
