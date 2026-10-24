@@ -290,7 +290,13 @@ extern "C" {
      * the medium independently -- LoadFromNvm into this function's own local,
      * never through the staging buffer -- and requires checksum validation, the
      * expected top-level type (which rides out of LoadFromNvm uncovered by the
-     * checksum), and payload equality.
+     * checksum), and equality of the SELECTOR FIELD `calVals`.
+     *
+     * ⛔ Deliberately NOT whole-payload equality. Other fields of this record
+     * have other legitimate owners, and SaveToNvm auto-captures
+     * voltagePrecision and friendlyDeviceName on every save, so a payload
+     * comparison answers a strictly stronger question than the caller asks and
+     * is false whenever anyone else writes.
      *
      * ⛔ THIS IS NOT TRANSACTION SAFETY, and a caller must not claim it is.
      * Another top-level writer can overwrite the record after this returns; a

@@ -283,6 +283,13 @@ typedef struct {
     bool     eraseRefused;
     bool     writeLandsButReadbackFails;
     bool     commitForeignSelector;      /* a competing writer's record lands */
+    /* FIDELITY 7: a concurrent LEGITIMATE writer changes an UNRELATED field of
+     * the same record -- SYST:DEVICE:NAME:SAVE's friendlyDeviceName, or the
+     * voltagePrecision that SaveToNvm auto-captures on every save -- while the
+     * selector we intended is committed correctly. This is what the ACCEPTING
+     * arm needs, and its absence is why r5's one-armed `refuses` test passed
+     * over an over-broad predicate. */
+    bool     commitUnrelatedFieldChange;
 } ModelNvm;
 
 static unsigned nvm_total(const unsigned *counts)
@@ -415,7 +422,19 @@ static ModelSaveOutcome model_SaveToNvm(ModelNvm *nvm, ModelSettings *rec)
          * failed, because the shared staging buffer was overwritten under it.
          * So the medium now holds the NEW record and the caller is told the
          * save FAILED -- the worst of both, and the r2 reproducer. */
-        if (nvm->commitForeignSelector) {
+        if (nvm->commitUnrelatedFieldChange) {
+            /* A LEGITIMATE concurrent writer: our selector lands correctly, but
+             * its save stamped a different voltagePrecision (SaveToNvm
+             * auto-captures that field on every TopLevelSettings save). The
+             * record is VALID and its calVals is exactly what we intended. */
+            ModelSettings other = *rec;
+            uint32_t c;
+            other.settings.topLevelSettings.voltagePrecision = 0x5A;
+            c = CRC32_Compute(&other.settings, model_data_size(other.type));
+            memset(other.checksum, 0, sizeof(other.checksum));
+            memcpy(other.checksum, &c, sizeof(c));
+            nvm_store_page(nvm, type, &other);
+        } else if (nvm->commitForeignSelector) {
             /* A competing writer's record lands instead of ours. Still VALID,
              * so only a payload comparison can tell them apart. */
             ModelSettings other = *rec;
@@ -515,9 +534,10 @@ static bool model_TopLevelMatchesCommitted(const ModelNvm *nvm,
     if (committed.type != MODEL_TYPE_TOP_LEVEL) {
         return false;
     }
-    return (memcmp(&committed.settings.topLevelSettings,
-                   &expected->settings.topLevelSettings,
-                   sizeof(committed.settings.topLevelSettings)) == 0);
+    /* The SELECTOR FIELD alone -- see the production comment. A whole-payload
+     * comparison here was the r5 defect. */
+    return (committed.settings.topLevelSettings.calVals ==
+            expected->settings.topLevelSettings.calVals);
 }
 
 static bool model_ValidateADCCalBank(const ModelNvm *nvm, uint32_t calType)
@@ -766,6 +786,18 @@ static void fixture_board(ModelNvm *nvm, ModelRuntimeArray *rt,
 
 /* What USECal? would answer: the persisted selector, read back the way
  * SCPI_ADCUseCalGet reads it. Returns -1 if the page no longer validates. */
+/* The committed voltagePrecision, so the ACCEPTING arm can prove the unrelated
+ * field really did differ. Without this the arm could pass vacuously. */
+static int persisted_precision(const ModelNvm *nvm)
+{
+    ModelSettings rec;
+    memset(&rec, 0, sizeof(rec));
+    if (!model_LoadFromNvm(nvm, MODEL_TYPE_TOP_LEVEL, &rec)) {
+        return -1;
+    }
+    return (int)rec.settings.topLevelSettings.voltagePrecision;
+}
+
 static int persisted_selector(const ModelNvm *nvm)
 {
     ModelSettings rec;
@@ -1206,6 +1238,40 @@ TEST(r2_a_flash_fault_leaves_the_coefficients_untouched)
  * and this comment is how the next reader knows that is the intended outcome
  * rather than a regression.
  * ========================================================================== */
+/* ⭐⭐ THE ACCEPTING ARM -- the half r5 was missing.
+ *
+ * r5 shipped `r5_refuses_a_valid_record_that_is_not_the_intended_one`, which was
+ * mutation-proven and still missed an over-broad predicate, because ONE ARM
+ * PROVES SENSITIVITY OR SPECIFICITY, NEVER BOTH: a `refuses` test passes MORE
+ * convincingly the broader the comparison gets. This is its twin. It varies only
+ * what the predicate must IGNORE, and it FAILS against r5's whole-payload
+ * comparison and PASSES against the narrowed one. */
+TEST(r6_accepts_the_intended_selector_despite_a_concurrent_unrelated_write)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.writeLandsButReadbackFails = true;   /* the readback is corrupted */
+    nvm.commitUnrelatedFieldChange = true;   /* ...by a legitimate other writer */
+    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt);
+
+    /* NOT VACUOUS: the unrelated field really did change under us. Assert that
+     * FIRST -- if it had not, everything below would pass for the wrong reason. */
+    ASSERT_EQ(persisted_precision(&nvm), 0x5A);
+
+    /* And the selector we intended IS committed, so recovery must ACCEPT. */
+    ASSERT_EQ(persisted_selector(&nvm), 1);
+    ASSERT_EQ(run.result, RES_OK);
+    ASSERT_EQ(run.recoveredAfterReportedFailure, true);
+
+    /* ...and therefore install, so the two sides agree. */
+    ASSERT_EQ(rt.installs, 1);
+    ASSERT_EQ(rt.installedBank, MODEL_TYPE_USER_CAL);
+    ASSERT_EQ(rt.CalM[0], USER_M);
+}
+
 TEST(r5_the_concurrent_write_divergence_is_closed)
 {
     ModelNvm nvm;
@@ -1560,6 +1626,7 @@ int main(void)
 
     /* r2's own OPEN hazard, pinned. These assert the defective behaviour on
      * purpose -- see the block comment above them. */
+    RUN(r6_accepts_the_intended_selector_despite_a_concurrent_unrelated_write);
     RUN(r5_the_concurrent_write_divergence_is_closed);
     RUN(r5_does_not_rescue_a_genuine_write_failure);
     RUN(r5_refuses_a_valid_record_that_is_not_the_intended_one);

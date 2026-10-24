@@ -396,9 +396,20 @@ bool daqifi_settings_TopLevelMatchesCommitted(const DaqifiSettings* expected)
         return false;
     }
 
-    return (memcmp(&committed.settings.topLevelSettings,
-                   &expected->settings.topLevelSettings,
-                   sizeof (TopLevelSettings)) == 0);
+    /* ⛔ THE SELECTOR FIELD ALONE, not the payload. Round 5 compared
+     * sizeof(TopLevelSettings) -- all seven fields -- and the r5 audit showed
+     * that makes every other legitimate writer a false negative: a concurrent
+     * SYST:DEVICE:NAME:SAVE or CONF:VOLT:SAVE changes friendlyDeviceName or
+     * voltagePrecision (SaveToNvm AUTO-CAPTURES both on every TopLevelSettings
+     * save), the comparison fails over a record whose calVals is exactly what
+     * was intended, and the caller gives up without installing -- reinstating
+     * the very divergence this recovery exists to prevent.
+     *
+     * The recovery's question is "did the selector I intended actually land?".
+     * "Is the entire payload unchanged?" is a strictly stronger question, it is
+     * not the one being asked, and it is FALSE whenever anyone else writes. */
+    return (committed.settings.topLevelSettings.calVals ==
+            expected->settings.topLevelSettings.calVals);
 }
 
 bool daqifi_settings_ValidateADCCalBank(DaqifiSettingsType type)
