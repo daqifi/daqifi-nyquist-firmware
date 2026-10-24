@@ -2968,13 +2968,17 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 	 v=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_ValidateADCCalBank(calType)' | cut -d: -f1`; \
 	 i=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)' | cut -d: -f1`; \
 	 s=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_SaveToNvm(&tmpTopLevelSettings)' | cut -d: -f1`; \
-	 test -n "$$l" && test -n "$$n" && test -n "$$v" && test -n "$$i" && test -n "$$s" \
+	 r=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_TopLevelMatchesCommitted(&tmpTopLevelSettings)' | cut -d: -f1`; \
+	 test -n "$$l" && test -n "$$n" && test -n "$$v" && test -n "$$r" \
+	   && test -n "$$i" && test -n "$$s" \
 	   && test "$$l" -lt "$$n" && test "$$n" -lt "$$v" \
-	   && test "$$v" -lt "$$s" && test "$$s" -lt "$$i" \
+	   && test "$$v" -lt "$$s" && test "$$s" -lt "$$r" \
+	   && test "$$r" -lt "$$i" \
 	   || { echo "ERROR: ADCUseCalSetClaimed() in $(SCPIADC_SRC) no longer runs"; \
-	        echo "       load -> normalize -> validate -> save -> install in that order"; \
+	        echo "       load -> normalize -> validate -> save -> VERIFY-COMMITTED"; \
+	        echo "       -> install in that order"; \
 	        echo "       (load='$$l' normalize='$$n' validate='$$v' save='$$s'"; \
-	        echo "        install='$$i')."; \
+	        echo "        verify='$$r' install='$$i')."; \
 	        echo "       Each adjacency carries a defect if it inverts:"; \
 	        echo "         normalize below the save does nothing -- SaveToNvm would see"; \
 	        echo "           the type NVM held, not the one we asked for;"; \
@@ -2984,6 +2988,11 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 	        echo "           acquisition is using, with NO indication (a write-protected"; \
 	        echo "           page leaves the old record VALID, and any later"; \
 	        echo "           CONF:VOLT:SAVE erases the invalid-record indication);"; \
+	        echo "         a MISSING or misplaced verify-committed step re-opens the"; \
+	        echo "           r2 finding: SaveToNvm reports failure over a write that"; \
+	        echo "           LANDED (its success test is a readback comparison against"; \
+	        echo "           the shared staging buffer), so giving up there leaves the"; \
+	        echo "           NEW selector stored and the OLD coefficients live;"; \
 	        echo "         validate below the save re-opens #1148 -- a selector would"; \
 	        echo "           persist for a bank that cannot be loaded."; \
 	        echo "       All of these still satisfy the presence check above, which is"; \

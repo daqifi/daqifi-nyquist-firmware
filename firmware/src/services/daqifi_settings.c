@@ -369,6 +369,38 @@ bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
     return status;
 }
 
+bool daqifi_settings_TopLevelMatchesCommitted(const DaqifiSettings* expected)
+{
+    DaqifiSettings committed;
+
+    if (expected == NULL) {
+        return false;
+    }
+
+    /* Read the medium independently. LoadFromNvm copies flash into its OWN
+     * local and validates that copy, so nothing here goes through
+     * gTempFflashBuffer -- which is the shared buffer whose corruption makes
+     * SaveToNvm report a failure over a write that landed. `committed` lives in
+     * THIS frame and expires on return, so no snapshot is held across the
+     * caller's subsequent work. */
+    memset(&committed, 0, sizeof(DaqifiSettings));
+    if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,
+                                     &committed)) {
+        return false;                   /* no valid record at that address */
+    }
+
+    /* The stored `type` rides out of LoadFromNvm UNCOVERED by the checksum --
+     * that is #1152's whole premise -- so it is checked explicitly here rather
+     * than trusted because the payload validated. */
+    if (committed.type != DaqifiSettings_TopLevelSettings) {
+        return false;
+    }
+
+    return (memcmp(&committed.settings.topLevelSettings,
+                   &expected->settings.topLevelSettings,
+                   sizeof (TopLevelSettings)) == 0);
+}
+
 bool daqifi_settings_ValidateADCCalBank(DaqifiSettingsType type)
 {
     DaqifiSettings tmpSettings;

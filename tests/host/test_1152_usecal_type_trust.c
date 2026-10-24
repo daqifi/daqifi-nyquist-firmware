@@ -282,6 +282,7 @@ typedef struct {
      *   configuration. */
     bool     eraseRefused;
     bool     writeLandsButReadbackFails;
+    bool     commitForeignSelector;      /* a competing writer's record lands */
 } ModelNvm;
 
 static unsigned nvm_total(const unsigned *counts)
@@ -414,7 +415,19 @@ static ModelSaveOutcome model_SaveToNvm(ModelNvm *nvm, ModelSettings *rec)
          * failed, because the shared staging buffer was overwritten under it.
          * So the medium now holds the NEW record and the caller is told the
          * save FAILED -- the worst of both, and the r2 reproducer. */
-        nvm_store_page(nvm, type, rec);
+        if (nvm->commitForeignSelector) {
+            /* A competing writer's record lands instead of ours. Still VALID,
+             * so only a payload comparison can tell them apart. */
+            ModelSettings other = *rec;
+            uint32_t c;
+            other.settings.topLevelSettings.calVals = 0u;
+            c = CRC32_Compute(&other.settings, model_data_size(other.type));
+            memset(other.checksum, 0, sizeof(other.checksum));
+            memcpy(other.checksum, &c, sizeof(c));
+            nvm_store_page(nvm, type, &other);
+        } else {
+            nvm_store_page(nvm, type, rec);
+        }
         return SAVE_WRITE_FAILED;
     }
     nvm_store_page(nvm, type, rec);
@@ -482,6 +495,31 @@ static bool model_LoadADCCalSettings(const ModelNvm *nvm, uint32_t calType,
  * version that took rt and simply chose not to write it would leave the
  * r2 flash-fault assertions below resting on discipline rather than on the
  * signature. */
+/* daqifi_settings_TopLevelMatchesCommitted(), modelled.
+ *
+ * Reads the medium independently -- never the staging buffer -- and requires a
+ * valid record, the expected stored type (uncovered by the checksum, so checked
+ * explicitly), and payload equality. Its record is local and expires on return. */
+static bool model_TopLevelMatchesCommitted(const ModelNvm *nvm,
+                                           const ModelSettings *expected)
+{
+    ModelSettings committed;
+
+    if (expected == NULL) {
+        return false;
+    }
+    memset(&committed, 0, sizeof(committed));
+    if (!model_LoadFromNvm(nvm, MODEL_TYPE_TOP_LEVEL, &committed)) {
+        return false;
+    }
+    if (committed.type != MODEL_TYPE_TOP_LEVEL) {
+        return false;
+    }
+    return (memcmp(&committed.settings.topLevelSettings,
+                   &expected->settings.topLevelSettings,
+                   sizeof(committed.settings.topLevelSettings)) == 0);
+}
+
 static bool model_ValidateADCCalBank(const ModelNvm *nvm, uint32_t calType)
 {
     ModelSettings tmp;
@@ -507,7 +545,8 @@ typedef enum {
                           * leaves the coefficients live and the selector stale,
                           * with no indication -- see USECAL_R2. Kept as the
                           * historical shape, not as the current firmware. */
-    USECAL_R2            /* #1152 r2 (CURRENT): validate -> save -> install.
+    USECAL_R2            /* #1152 r2 (HISTORICAL -- r5 below is what production
+                          * runs): validate -> save -> install.
                           *
                           * ⛔ DO NOT RESTORE THE CLAIM THIS COMMENT USED TO
                           * MAKE -- that "no failure can leave the runtime array
@@ -529,7 +568,19 @@ typedef enum {
                           * r2_erase_invalidation_* below, which model it.
                           *
                           * What r2 does buy: the common case -- a bank that
-                          * fails validation -- touches nothing at all. */
+                          * fails validation -- touches nothing at all. */,
+    USECAL_R5            /* #1152 r5 (CURRENT): r2, plus -- when SaveToNvm
+                          * REPORTS failure -- an independent verification of
+                          * the committed record before giving up. Closes the
+                          * r2 reproducer where the write LANDED and only the
+                          * readback comparison failed.
+                          *
+                          * ⚠ NOT transaction safety, and this comment must
+                          * not grow into claiming it: another writer can
+                          * overwrite after the check, a save prepared
+                          * elsewhere can land later, the install still
+                          * re-reads the bank, and a HUNG save never reaches
+                          * the check. One interleaving, closed. */
 } UseCalShape;
 
 typedef struct {
@@ -539,6 +590,7 @@ typedef struct {
     bool             saveAttempted;   /* step 3 was reached */
     uint32_t         typeHandedToSave;/* what SaveToNvm's switch actually saw */
     ModelSaveOutcome saveOutcome;
+    bool             recoveredAfterReportedFailure; /* r5 verified and continued */
     bool             rawOutputMode;
 } UseCalRun;
 
@@ -585,7 +637,7 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
     default: run.result = RES_ERR; return run;   /* unreachable, kept as in situ */
     }
 
-    if (shape == USECAL_R2) {
+    if (shape == USECAL_R2 || shape == USECAL_R5) {
         /* --- r2 step 2: VALIDATE without installing ---------------------- */
         /* daqifi_settings_ValidateADCCalBank: the same LoadFromNvm check
          * LoadADCCalSettings performs internally, without the copy loop that
@@ -602,8 +654,15 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
         run.typeHandedToSave = tmp.type;
         run.saveOutcome = model_SaveToNvm(nvm, &tmp);
         if (run.saveOutcome != SAVE_OK) {
-            run.result = RES_ERR;
-            return run;          /* runtime array untouched -- no divergence */
+            /* r5: a REPORTED failure is not proof the write failed. Read the
+             * medium independently and continue only on an exact match. r2
+             * has no such check and gives up here. */
+            if (shape != USECAL_R5 ||
+                !model_TopLevelMatchesCommitted(nvm, &tmp)) {
+                run.result = RES_ERR;
+                return run;
+            }
+            run.recoveredAfterReportedFailure = true;
         }
 
         /* --- r2 step 4: install LAST ------------------------------------ */
@@ -1147,6 +1206,78 @@ TEST(r2_a_flash_fault_leaves_the_coefficients_untouched)
  * and this comment is how the next reader knows that is the intended outcome
  * rather than a regression.
  * ========================================================================== */
+TEST(r5_the_concurrent_write_divergence_is_closed)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.writeLandsButReadbackFails = true;   /* no flash fault; concurrency */
+    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt);
+
+    /* The command SUCCEEDS, because the intended record is in fact committed. */
+    ASSERT_EQ(run.result, RES_OK);
+    ASSERT_EQ(run.saveOutcome, SAVE_WRITE_FAILED);   /* it still REPORTED failure */
+    ASSERT_EQ(run.recoveredAfterReportedFailure, true);
+
+    /* ⭐ AND THE TWO SIDES AGREE -- this is the r2 divergence, closed. */
+    ASSERT_EQ(persisted_selector(&nvm), 1);
+    ASSERT_EQ(rt.installs, 1);
+    ASSERT_EQ(rt.installedBank, MODEL_TYPE_USER_CAL);
+    ASSERT_EQ(rt.CalM[0], USER_M);
+}
+
+TEST(r5_does_not_rescue_a_genuine_write_failure)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    /* The write really did not land, so the erase has destroyed the record and
+     * there is nothing to verify against. The recovery must NOT fire. */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.writeFails = true;
+    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt);
+
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.recoveredAfterReportedFailure, false);
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(persisted_selector(&nvm), -1);
+
+    /* And the write-protected case: the OLD record survived, so it does not
+     * match the intended one either. Recovery must not fire on a stale match. */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.eraseRefused = true;
+    nvm.writeFails   = true;
+    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt);
+
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.recoveredAfterReportedFailure, false);
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(persisted_selector(&nvm), 0);   /* still the OLD selector */
+}
+
+/* Proves the payload equality actually DISCRIMINATES, rather than passing
+ * because the record merely validates. A concurrent writer commits a VALID
+ * top-level record carrying a DIFFERENT selector; recovery must refuse it. */
+TEST(r5_refuses_a_valid_record_that_is_not_the_intended_one)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.writeLandsButReadbackFails = true;
+    nvm.commitForeignSelector      = true;   /* someone else's value lands */
+    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt);
+
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.recoveredAfterReportedFailure, false);
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(persisted_selector(&nvm), 0);   /* the foreign value, not 1 */
+}
+
 TEST(r2_erase_invalidation_destroys_the_stored_selector)
 {
     ModelNvm nvm;
@@ -1429,6 +1560,9 @@ int main(void)
 
     /* r2's own OPEN hazard, pinned. These assert the defective behaviour on
      * purpose -- see the block comment above them. */
+    RUN(r5_the_concurrent_write_divergence_is_closed);
+    RUN(r5_does_not_rescue_a_genuine_write_failure);
+    RUN(r5_refuses_a_valid_record_that_is_not_the_intended_one);
     RUN(r2_erase_invalidation_destroys_the_stored_selector);
     RUN(r2_a_concurrent_settings_write_diverges_with_no_flash_fault);
     RUN(r2_a_write_protected_page_is_the_one_consistent_failure);

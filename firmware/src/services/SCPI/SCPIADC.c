@@ -1821,16 +1821,39 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
     //  Persist the selector the validation has proved loadable
     tmpTopLevelSettings.settings.topLevelSettings.calVals = param1;
     if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) {
-        /* Deliberately does NOT say "selection unchanged": the erase has
-         * already run (daqifi_settings.c ClearNvm -> nvm_ErasePage) and the
-         * stored selector may be destroyed, blank, or -- if only the READBACK
-         * failed -- already updated to the new value. The live coefficients
-         * are the one thing this path can state. */
-        LOG_E("CONF:ADC:USECal %d: persisting the selector failed; the live "
-              "coefficients are UNCHANGED, but the STORED selector may be "
-              "destroyed or already updated -- read it back with USECal?",
-              param1);
-        return SCPI_RES_ERR;
+        /* A reported save failure does NOT mean the write failed. SaveToNvm
+         * stages into the shared global gTempFflashBuffer and
+         * nvm_WriteRowtoAddr's success test is a READBACK COMPARISON against
+         * that same buffer (nvm.c:132), so a concurrent settings writer on
+         * another transport -- SCPI_LANSettingsSave takes no config claim --
+         * can corrupt the comparison over a write that LANDED. So verify
+         * against the medium instead of trusting the return value.
+         *
+         * ⚠ SCOPE, and do not let this comment grow past it: this closes the
+         * ONE demonstrated interleaving. It is NOT transaction safety. Another
+         * top-level writer can overwrite after the check; a save prepared
+         * elsewhere can land after this command returns; the install below
+         * still re-reads the cal bank; and a save that HANGS never reaches
+         * here at all. The settings-layer transaction, an NVM HAL that can
+         * report an erase failure, and a claim discipline over every settings
+         * writer are tracked separately -- see the row. */
+        if (!daqifi_settings_TopLevelMatchesCommitted(&tmpTopLevelSettings)) {
+            /* Deliberately does NOT say "selection unchanged": the erase has
+             * already run, so the stored selector may be destroyed or blank. */
+            LOG_E("CONF:ADC:USECal %d: persisting the selector failed and the "
+                  "committed record does not match the intended one; the live "
+                  "coefficients are UNCHANGED, but the STORED selector may be "
+                  "destroyed -- read it back with USECal?", param1);
+            return SCPI_RES_ERR;
+        }
+        /* The intended record IS committed. Fall through and install, so the
+         * live coefficients and the stored selector agree. Logged because a
+         * save that reports failure and is then found to have succeeded is
+         * evidence of a competing writer, which is worth retrieving later
+         * through SYST:LOG? even though this command now succeeds. */
+        LOG_E("CONF:ADC:USECal %d: the save reported failure but the committed "
+              "record matches the intended one -- a concurrent settings write "
+              "corrupted the readback comparison; continuing", param1);
     }
 
     /* ⛔ DO NOT RESTORE THE PREVIOUS CLAIM HERE. This block used to assert

@@ -279,6 +279,36 @@ extern "C" {
     bool daqifi_settings_ValidateADCCalBank(DaqifiSettingsType type);
 
     /**
+     * Answers whether the COMMITTED top-level record in NVM already equals the
+     * record a caller intended to persist.
+     *
+     * Exists because daqifi_settings_SaveToNvm can report failure over a write
+     * that LANDED: it stages into the shared global gTempFflashBuffer and
+     * nvm_WriteRowtoAddr's success test is a readback comparison against that
+     * same buffer, so any concurrent settings writer on another transport can
+     * make the comparison fail without touching the flash. This function reads
+     * the medium independently -- LoadFromNvm into this function's own local,
+     * never through the staging buffer -- and requires checksum validation, the
+     * expected top-level type (which rides out of LoadFromNvm uncovered by the
+     * checksum), and payload equality.
+     *
+     * ⛔ THIS IS NOT TRANSACTION SAFETY, and a caller must not claim it is.
+     * Another top-level writer can overwrite the record after this returns; a
+     * save prepared earlier elsewhere can land after the caller has returned;
+     * the caller's own subsequent work may still re-read other pages; and a
+     * save that HANGS never reaches this check at all. What it closes is the
+     * specific demonstrated interleaving: a readback comparison corrupted by a
+     * concurrent writer, over a write that succeeded.
+     *
+     * @param expected The record the caller handed to SaveToNvm. Its
+     *                 `settings.topLevelSettings` payload is the comparand.
+     * @return True only if a valid top-level record is committed and its
+     *         payload matches `expected`. False on NULL, on no valid record, on
+     *         an unexpected stored type, or on any payload difference.
+     */
+    bool daqifi_settings_TopLevelMatchesCommitted(const DaqifiSettings* expected);
+
+    /**
      * Saves the ADC calibration settings
      * @param type The type of settings to save
      * @param channelRuntimeConfig Channel config from which to save the settings
