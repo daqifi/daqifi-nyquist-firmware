@@ -105,6 +105,16 @@ extern "C" {
                              ScpiContextStorage* storage);
 
     /**
+     * @brief #914: drain a deferred SD-task failure into THIS transport's
+     *        own error queue, if one is pending for it. Call once per command
+     *        boundary, BEFORE SCPI_Input -- see the definition for why that
+     *        ordering (relative to libscpi's cmd_error reset) is required.
+     * @param context This transport's own SCPI context (never another
+     *        transport's -- #999 keeps these deliberately separate).
+     */
+    void SCPI_DrainDeferredSdError(scpi_t *context);
+
+    /**
      * Size of the shared SCPI response scratch buffer. Sized to hold the
      * largest known SCPI response (DaqifiOutMessage protobuf, currently
      * 2008 bytes). All callers that need ≥256 B of scratch should use this

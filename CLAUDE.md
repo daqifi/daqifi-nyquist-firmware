@@ -205,7 +205,7 @@ Services Layer
    - Modules: SCPIADC, SCPIDIO, SCPILAN, SCPIStorageSD
    - Used for device configuration and control
    - **SCPI Abbreviation Rule**: each node has exactly **two** legal spellings — the **full** node, or the node **truncated at its first lowercase letter**. Nothing in between. Per node, `UPPERCASElowercase` accepts `UPPERCASElowercase` and `UPPERCASE` only:
-     - `SYST:COMM:LAN:NETMode` → `SYST:COMM:LAN:NETM` ✅ (short form)
+     - `SYST:COMM:LAN:NETType` → `SYST:COMM:LAN:NETT` ✅ (short form)
      - `SYSTem:STReam:STOP` → `SYST:STR:STOP` ✅ (`STOP` is all-caps, so it has only ONE spelling — itself)
      - ⚠️ **A node with NO lowercase has exactly one legal spelling.** `SYSTem:COMMunicate:LAN:APPLY` is registered all-caps (`SCPIInterface.c`), so `APPL` is **`-113`**, not a short form. An earlier revision of this file used `APPLy → APPL` as the worked example here, which does not match what the firmware registers — verified on the device 2026-08-21. Check the pattern before abbreviating.
      - `CONFigure:ADC:OBDiag` → `CONF:ADC:OBD`, `CONF:ADC:OBDiag`, `CONFigure:ADC:OBD` … ✅ (each node independently full or short)

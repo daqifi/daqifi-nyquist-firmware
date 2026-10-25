@@ -566,6 +566,17 @@ DACREINIT_BIN := run_1034_tests
 # re-stamping path are deliberately NOT this guard's job).
 CALFINITE_BIN := run_1154_tests
 
+# #1100: DAC_EnsureHardwareInitialized()'s caller-level power check missed the
+# 5/10V rail's own commanded enable (PowerWriteVars.EN_5_10V_Val) -- the same
+# blind spot #1099 closed one call site over, at the HAL level in
+# DAC7718_ReadWriteReg(). A separate binary/target from $(DAC980_BIN) rather
+# than a new Part in that file, deliberately: $(DAC980_BIN)'s own source file
+# is held by PR #1099's in-flight EN_5_10V_Val work (a new Part there, plus
+# RegMockEnv additions near the top), so editing the same lines from a second
+# PR would race it. This target only reads $(SCPIDAC_SRC) (grep guards) and
+# never touches test_980_dac7718_error_paths.c.
+SCPIDAC_RAILGATE_BIN := run_1100_tests
+
 # #1057 (#913's twin) folded dac7718_WaitStat's SPI2 busy-spins onto the same
 # bounded-spin-then-vTaskDelay(1) shape #913 gave UserSpi.c's spi_XferByte;
 # #1108 then finished what #1056 started and moved dac7718_WaitStat itself
@@ -1378,6 +1389,41 @@ $(CALFINITE_BIN): test_1154_adc_cal_coefficient_finite.c test_framework.h $(SCPI
 	        echo "       preprocessor directive that this preprocessed copy strips."; \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(CALFINITE_BIN) test_1154_adc_cal_coefficient_finite.c
+
+$(SCPIDAC_RAILGATE_BIN): test_1100_scpidac_rail_enable_gate.c test_framework.h $(SCPIDAC_SRC) $(RECIPES)
+	@grep -qE '^[[:space:]]*if \(pPowerState->powerState != POWERED_UP\) \{' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: DAC_EnsureHardwareInitialized's top-of-function powerState gate is gone"; \
+	       echo "       from $(SCPIDAC_SRC). test_1100_scpidac_rail_enable_gate.c's model assumes"; \
+	       echo "       the #1100 rail-enable gate sits immediately after this exact check -- re-derive."; \
+	       exit 1; }
+	@test "$$(grep -c 'BOARDRUNTIME_POWER_WRITE_VARIABLES' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: BOARDRUNTIME_POWER_WRITE_VARIABLES lookup count in $(SCPIDAC_SRC) changed"; \
+	       echo "       from 2 (added by #1100). The fix needs BOTH the top-of-function rail-enable"; \
+	       echo "       gate AND a second, FRESH read immediately before publishing"; \
+	       echo "       dacHardwareInitialized=true -- exactly the same two-checkpoint shape #980"; \
+	       echo "       pass 3 established for powerState (see the sibling guard on \$$(DAC980_BIN))."; \
+	       echo "       If this count is no longer 2, one checkpoint may have been removed -- re-derive."; \
+	       exit 1; }
+	@test "$$(grep -c 'pPowerWriteVars->EN_5_10V_Val' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: pPowerWriteVars->EN_5_10V_Val reference count in $(SCPIDAC_SRC) changed"; \
+	       echo "       from 2 (the top-of-function gate + the pre-publish re-check) -- #1100's"; \
+	       echo "       rail-enable gate may have moved or lost a checkpoint. Re-derive the test."; \
+	       exit 1; }
+	@g1=`grep -nF 'pPowerWriteVars->EN_5_10V_Val' $(SCPIDAC_SRC) | head -1 | cut -d: -f1`; \
+	 g2=`grep -nF 'pPowerWriteVars->EN_5_10V_Val' $(SCPIDAC_SRC) | tail -1 | cut -d: -f1`; \
+	 i=`grep -nE 'DAC7718_Init\(dacInstanceId, 1\)' $(SCPIDAC_SRC) | head -1 | cut -d: -f1`; \
+	 p=`grep -nF 'dacHardwareInitialized = true;' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 test -n "$$g1" && test -n "$$g2" && test -n "$$i" && test -n "$$p" \
+	   && test "$$g1" -lt "$$i" && test "$$i" -lt "$$g2" && test "$$g2" -lt "$$p" \
+	   || { echo "ERROR: #1100's two rail-enable checkpoints are no longer ordered"; \
+	        echo "       gate1 < DAC7718_Init < gate2 < publish in $(SCPIDAC_SRC)"; \
+	        echo "       (found gate1='$$g1' init='$$i' gate2='$$g2' publish='$$p')."; \
+	        echo "       The count guard above proves BOTH reads exist; this proves the SECOND is a"; \
+	        echo "       FRESH re-read taken AFTER DAC7718_Init() returns and BEFORE the publish."; \
+	        echo "       Hoisting both above Init would restore the mid-init rail-drop bug while"; \
+	        echo "       leaving every occurrence count at 2 -- which is what this guard catches."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(SCPIDAC_RAILGATE_BIN) test_1100_scpidac_rail_enable_gate.c
 
 # #988 added a FOURTH arm (the torn-down latch) between the live suspend reason
 # and the card advisory, so this guard now pins four markers, not three. The
@@ -3142,13 +3188,27 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 # thirteenth collision already recorded: a stale count in a comment is simply
 # false to the next reader.
 #
+#
+# FIFTEENTH additive collision in this block, resolved the same way as the
+# fourteen before it: each side's target rule kept INTACT and only `run` and
+# `clean` unioned. This branch adds #1100's $(SCPIDAC_RAILGATE_BIN) (the
+# DAC_EnsureHardwareInitialized rail-enable gate) while main added $(ARM_BIN),
+# $(NAME_BIN), $(FAILNEXT_BIN) and $(FAILNEXT_REAL_BIN) via the fw#1027 merge.
+#
+# COUNTS, DERIVED FROM THE LISTS RATHER THAN CARRIED: main's side had
+# TWENTY-SEVEN run prerequisites and this branch's had TWENTY-FOUR, each right
+# about itself. The union is TWENTY-EIGHT -- main's twenty-seven plus this
+# branch's one. Verified by cross-check rather than by eye: every one of the 28
+# prerequisites has a `./$(X)` recipe line and an entry in `clean` (28/28/33),
+# with no duplicates -- the check that catches a dropped or doubled entry, which
+# is the failure this block's own history keeps recording.
 # #1029's names carry the 1029 suffix so they cannot shadow #1000's
 # $(SDLOG_BIN)/$(GEN_1000).
 run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) \
      $(DAC980_BIN) $(HELP_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) \
      $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) \
      $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(USECALTYPE_BIN) $(ARM_BIN) \
-     $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN)
+     $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -3177,6 +3237,7 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(SDLOG1029_BIN)
 	./$(FAILNEXT_BIN)
 	./$(FAILNEXT_REAL_BIN)
+	./$(SCPIDAC_RAILGATE_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
@@ -3184,6 +3245,6 @@ clean:
 	      $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) \
 	      $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) $(SDLOG1029_GEN) \
 	      $(SDLOG1029_GEN).tmp $(USECALTYPE_BIN) $(NAME_BIN) $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) \
-	      $(ARM_BIN)
+	      $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN)
 
 .PHONY: run clean
