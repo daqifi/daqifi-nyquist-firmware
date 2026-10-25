@@ -109,15 +109,11 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  * more than the time it saves (see the fileCounter==0 branch for the three
  * ways the stale one went wrong). */
 #define SD_CARD_MANAGER_BUCKET_ADVANCE_MAX (SD_CARD_MANAGER_MAX_BUCKET + 1u)
-/* #924: extension of the per-session integrity manifest. Distinct from every
- * payload extension the device writes (.csv / .pb / .json) on purpose -- host
- * tooling that globs for stream files (download_sd_files.py,
- * analyze_split_files.py) must not pick it up, and its own name must not be
- * mistakable for a split part. The base name is the SESSION's base name, so
- * `experiment.csv` logs to `experiment.mfst` alongside `experiment.csv`,
- * `experiment-1.csv`, ... -- and a session logging under a different base
- * gets its own manifest rather than overwriting this one. */
-#define SD_MANIFEST_EXT                    ".mfst"
+/* #924 (round-5 audit): SD_MANIFEST_EXT moved to Util/SdManifest.h, beside
+ * SD_MANIFEST_PREFIX_MARK. Both are format constants, and the host suite must
+ * be able to see the extension to assert the operand-limit BOUNDARY -- a test
+ * that hardcoded 5 would drift from the real extension exactly as a
+ * hand-written format string drifts from its writer. */
 
 /* #924: worst-case rendered manifest line, DERIVED from the bounds that
  * actually constrain it rather than picked round:
@@ -1945,6 +1941,52 @@ static void sd_OpenSessionManifest(void) {
               "(',' CR or LF) that the manifest format cannot represent",
               gpSDCardSettings->file);
         return;
+    }
+
+    /* #924 (round-5 audit): REFUSE A MANIFEST NOBODY COULD FETCH.
+     *
+     * The manifest's own basename is `<base>.mfst`, and every command that
+     * retrieves a file -- SD:GET, SD:CRC?, SD:DELete -- validates its operand
+     * against SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX (the `fileValid` check in
+     * sd_card_manager_ProcessState). `base` is the configured FILE with its
+     * extension stripped, itself capped at that same 40. So a 40-char FILE
+     * ending in ".csv" gives a 36-char base and a 41-char manifest name: ONE
+     * over the cap, and THE MANIFEST THIS FEATURE WRITES CANNOT BE FETCHED BY
+     * THE COMMAND THAT EXISTS TO FETCH IT. The configured directory supplies no
+     * headroom, because the operand is validated after the directory is
+     * stripped off.
+     *
+     * Derived, not a literal: the budget is the operand cap minus the
+     * extension, so changing either constant moves this gate with it.
+     *
+     * WHY THIS REFUSES THE MANIFEST AND NOT THE `FILE`, which was the real
+     * decision here:
+     *   - Rejecting the FILE at set time would be the stronger guarantee, and
+     *     it would BREAK WORKING CONFIGURATIONS: a 40-char FILE is legal today
+     *     and has nothing to do with this feature. Narrowing a pre-existing
+     *     accepted input to serve a new sidecar is a regression for every user
+     *     who does not want the sidecar.
+     *   - TRUNCATING the manifest name to fit would make two FILEs sharing a
+     *     35-char prefix collide on one manifest, and the record would no
+     *     longer be named after the file it describes -- trading an unfetchable
+     *     record for a wrong one.
+     *   - Refusing just the manifest is what this function ALREADY does for
+     *     every other unusable name, and it is this file's stated contract:
+     *     "integrity bookkeeping must never be able to stop a logging
+     *     session." The session proceeds; the data file is untouched; the loss
+     *     is confined to the new feature and it is logged.
+     */
+    {
+        const size_t baseLen = strlen(gSDCardData.baseFilename);
+        if (!SdManifest_NameFitsOperand(
+                baseLen, sizeof(SD_MANIFEST_EXT) - 1u,
+                SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX)) {
+            LOG_E("[SD] #924 no manifest: name needs %u chars, SD:GET takes "
+                  "%u - shorten FILE",
+                  (unsigned)(baseLen + sizeof(SD_MANIFEST_EXT) - 1u),
+                  (unsigned)SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX);
+            return;
+        }
     }
 
     /* #924 (Qodo round 1): a stream named '<base>.mfst' resolves to the SAME

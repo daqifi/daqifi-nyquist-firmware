@@ -64,7 +64,48 @@ extern "C" {
  * PREFIX of the file rather than the whole file. See `isPrefix` below. Its
  * length is a named term of SD_MANIFEST_LINE_MAX in sd_card_manager.c -- do not
  * change one without the other. */
+/* #924: extension of the per-session integrity manifest. Distinct from every
+ * payload extension the device writes (.csv / .pb / .json) on purpose -- host
+ * tooling that globs for stream files (download_sd_files.py,
+ * analyze_split_files.py) must not pick it up, and its own name must not be
+ * mistakable for a split part. The base name is the SESSION's base name, so
+ * `experiment.csv` logs to `experiment.mfst` alongside `experiment.csv`,
+ * `experiment-1.csv`, ... -- and a session logging under a different base
+ * gets its own manifest rather than overwriting this one. */
+#define SD_MANIFEST_EXT                    ".mfst"
+
 #define SD_MANIFEST_PREFIX_MARK  ",PARTIAL"
+
+/**
+ * @brief Will a manifest named `<base><ext>` fit the operand every retrieval
+ *        command validates against?
+ *
+ * #924 (round-5 audit): SD:GET, SD:CRC? and SD:DELete all validate their
+ * operand against SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX, and the manifest's
+ * basename is the stream file's base plus this module's extension. A 40-char
+ * FILE ending ".csv" gives a 36-char base and a 41-char manifest name -- ONE
+ * over -- so the manifest the feature writes could not be fetched by the
+ * command that exists to fetch it.
+ *
+ * THE POINT OF PUTTING THE ARITHMETIC HERE is that the defect was an
+ * OFF-BY-ONE in reasoning, not a missing check, and an off-by-one is only
+ * really fixed once its BOUNDARY is asserted. Inside sd_OpenSessionManifest()
+ * this would be unreachable from the host suite (a static function needing
+ * SYS_FS); here test_924 nails baseLen == budget and budget + 1 directly.
+ *
+ * `<=` is deliberate: a name exactly AT the cap is fetchable, because the
+ * operand check is itself `<=`. Addition is done so it cannot wrap: extLen is
+ * compared against the cap first, so baseLen + extLen is never formed when the
+ * extension alone would already exceed it.
+ */
+static inline bool SdManifest_NameFitsOperand(size_t baseLen, size_t extLen,
+                                              size_t operandCap)
+{
+    if (extLen > operandCap) {
+        return false;   /* no base, however short, could fit */
+    }
+    return baseLen <= (operandCap - extLen);
+}
 
 static inline int SdManifest_FormatLine(char *out, size_t outLen,
                                         const char *name,

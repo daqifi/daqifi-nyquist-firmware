@@ -540,6 +540,39 @@ TEST(first_line_check_accepts_a_rendered_PARTIAL_line)
         noNewline, sizeof(noNewline) - 1u));
 }
 
+/* #924 round-5 audit: THE OPERAND-LIMIT BOUNDARY, asserted AT the boundary.
+ *
+ * The defect was an off-by-one in reasoning: a 40-char FILE ending ".csv" gives
+ * a 36-char base, so `<base>.mfst` is 41 and SD:GET/SD:CRC?/SD:DELete validate
+ * their operand at <= 40. The manifest the feature writes could not be fetched
+ * by the command that exists to fetch it.
+ *
+ * An off-by-one is only fixed once its boundary is pinned, so this asserts BOTH
+ * SIDES of the exact threshold rather than one comfortable case either side. */
+TEST(manifest_name_must_fit_the_retrieval_operand)
+{
+    const size_t cap = 40u;                       /* SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX */
+    const size_t ext = sizeof(SD_MANIFEST_EXT) - 1u;   /* ".mfst" == 5 */
+    ASSERT_EQ(ext, 5u);                           /* else the numbers below mean nothing */
+
+    /* AT the budget: fits, because the operand check is itself `<=`. */
+    ASSERT_TRUE(SdManifest_NameFitsOperand(cap - ext, ext, cap));   /* 35 -> "…….mfst" == 40 */
+    /* ONE over: refused. This is the case the audit found. */
+    ASSERT_FALSE(SdManifest_NameFitsOperand(cap - ext + 1u, ext, cap)); /* 36 -> 41 */
+
+    /* THE AUDIT'S OWN EXAMPLE, end to end: a 40-char FILE "aaa….csv" strips to
+     * a 36-char base, which must be refused. */
+    ASSERT_FALSE(SdManifest_NameFitsOperand(36u, ext, 40u));
+
+    /* Degenerate inputs, because the subtraction must not wrap: an extension
+     * alone longer than the cap has no base short enough to rescue it, and
+     * must not underflow into a huge budget that accepts everything. */
+    ASSERT_FALSE(SdManifest_NameFitsOperand(0u, 41u, 40u));
+    ASSERT_FALSE(SdManifest_NameFitsOperand(1000u, 41u, 40u));
+    ASSERT_TRUE(SdManifest_NameFitsOperand(0u, 40u, 40u));   /* exactly consumes it */
+    ASSERT_TRUE(SdManifest_NameFitsOperand(0u, 0u, 0u));     /* nothing fits nothing */
+}
+
 TEST(first_line_check_accepts_empty_content)
 {
     /* Nothing there to be destroyed either way -- an empty existing file
@@ -716,6 +749,7 @@ int main(void)
     RUN(paths_equal_case_insensitive_null_safety);
     RUN(first_line_check_accepts_a_real_rendered_line);
     RUN(first_line_check_accepts_a_rendered_PARTIAL_line);
+    RUN(manifest_name_must_fit_the_retrieval_operand);
     RUN(first_line_check_accepts_empty_content);
     RUN(first_line_check_rejects_unrelated_data);
     RUN(first_line_check_rejects_near_misses);
