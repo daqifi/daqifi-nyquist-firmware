@@ -7882,18 +7882,59 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
         (unsigned)0x04D8,   /* Microchip VID (matches usb_device_init_data) */
         (unsigned)0xF794);  /* DAQiFi Nyquist PID */
 
-    /* #908: factory-cal provenance -- true from boot's factory-cal NVM load,
-     * or as soon as a CONF:ADC:SAVEFcal succeeds (SCPIADC.c's CalSaveCommon
-     * clears it immediately, so this need not wait for a reboot to catch up).
-     * "factory" = the factory slot is populated; "identity" = it is
-     * blank/invalid and the CalM=1/CalB=0 defaults are in use. Reports the
-     * factory baseline only: USECal 1 or chanCALM/chanCALB can overlay it.
+    /* #908: factory-cal provenance. TWO KEYS ANSWERING TWO DIFFERENT
+     * QUESTIONS -- they were both derived from one boolean, which is the
+     * defect Qodo reported as item 3 ("failed saves report identity
+     * defaults").
+     *
+     *   factory_present : is the factory NVM SLOT populated? True from boot's
+     *                     factory-cal load, or as soon as a CONF:ADC:SAVEFcal
+     *                     succeeds (CalSaveCommon clears the flag
+     *                     immediately, so this need not wait for a reboot).
+     *                     Unchanged -- the flag answers this correctly.
+     *
+     *   source          : which coefficients are IN EFFECT. The flag does not
+     *                     answer this, and using it to do so claimed
+     *                     "identity" after a FAILED SAVEFcal while the
+     *                     unchanged non-identity coefficients were still
+     *                     being applied to every reading.
+     *
+     * ⭐ source is now derived from the live runtime array plus the bank the
+     * last successful load came from, and it has THREE values. Two cannot
+     * cover the reachable states -- enumerating {slot populated?, bank
+     * selected, live coefficients identity?} gives 8 reachable combinations,
+     * of which the old flag-only scheme misreported 5 and a live-derived
+     * factory|identity pair still misreported 2: with USECal 1 and real user
+     * coefficients, "factory" is false and "identity" is false, so a
+     * two-valued key has no legal value for the state and must collapse it
+     * into a wrong one. Adding "user" is APPENDING a value to an existing
+     * key, per this project's command-surface rule -- not a rename -- and a
+     * consumer matching == "factory" correctly stops matching when user
+     * coefficients are live, where it is currently told "factory".
+     *
+     *   "identity" : live CalM==1/CalB==0 on every channel, whatever the
+     *                selection -- readings are unscaled. Note this is the
+     *                honest answer for a factory bank that loaded fine and
+     *                CONTAINS identity, which is the state of both bench
+     *                boards on this station.
+     *   "user"     : non-identity coefficients from the USER bank (USECal 1).
+     *   "factory"  : non-identity coefficients from the FACTORY bank.
+     *
+     * ⚠ chanCALM/chanCALB can still overlay individual channels after a load;
+     * source then names the bank the overlay was applied on top of, which is
+     * the closest true statement a single key can make about provenance.
      * The second closing brace closes identity{}. */
     const bool factoryCalMissing = daqifi_settings_FactoryCalIsMissing();
+    const char * calSource = "identity";
+    if (!daqifi_settings_CalIsIdentity(&rt->AInChannels)) {
+        calSource = (daqifi_settings_GetActiveCalBank()
+                        == DaqifiSettings_UserAInCalParams)
+                  ? "user" : "factory";
+    }
     scpi_printf(context,
         "\"cal\":{\"factory_present\":%s,\"source\":\"%s\"}},",
         factoryCalMissing ? "false" : "true",
-        factoryCalMissing ? "identity" : "factory");
+        calSource);
 
     /* ---- channels[] array (flat, kind-grouped) ----
      * Order: all analog-input first (sorted by DaqifiAdcChannelId

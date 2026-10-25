@@ -1481,18 +1481,35 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
 
     // Values 0/1 select the calibration coefficient set and emit calibrated
     // volts (leaving raw mode).
-    pRunTimeStreamConfig->RawOutputMode = false;
 
     //  Load existing settings
     if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) return SCPI_RES_ERR;
 
-    //  Update calVals setting
-    tmpTopLevelSettings.settings.topLevelSettings.calVals = param1;
-
-    //  Store to NVM
-    if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) return SCPI_RES_ERR;
-
-    //  Update runtime values
+    /* #908: LOAD THE COEFFICIENTS BEFORE PERSISTING THE SELECTION.
+     *
+     * The #620 comment ~20 lines above states the principle this ordering
+     * used to violate: "reject an out-of-range value BEFORE any state
+     * mutation ... a command that returns an error would otherwise persist a
+     * wrong calibration selection (loaded as USER cal on the next reboot)."
+     * #620 fixed that for the out-of-range case and left it for the
+     * load-failure case, which sat directly below the comment forbidding it:
+     * SaveToNvm persisted calVals and only THEN was the coefficient load
+     * attempted, so a failed load returned SCPI_RES_ERR with the new
+     * selection already in NVM, and the next boot loaded a bank holding no
+     * valid coefficients.
+     *
+     * That load was harmless before this PR only by accident: boot's
+     * factory-cal self-stamp meant it never failed. Removing the self-stamp
+     * -- the point of #908 -- removes the accident, so on a never-calibrated
+     * board the load can now fail and the ordering becomes reachable.
+     *
+     * The reorder is safe because the load is atomic with respect to the
+     * runtime array: daqifi_settings_LoadADCCalSettings reads NVM into a
+     * LOCAL DaqifiSettings and returns early on failure, touching
+     * channelRuntimeConfig only in a final copy loop that cannot fail. So a
+     * failed load leaves the runtime coefficients exactly as they were, and
+     * returning here mutates nothing at all.
+     */
     switch (param1) {
         case 0:
             if (!daqifi_settings_LoadADCCalSettings(
@@ -1512,6 +1529,26 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
             return SCPI_RES_ERR;
             break;
     }
+
+    //  The coefficients are in effect; only now persist the selection.
+    tmpTopLevelSettings.settings.topLevelSettings.calVals = param1;
+
+    /* ⚠ Residual, stated rather than buried: a successful load followed by a
+     * FAILED SaveToNvm leaves the runtime coefficients updated while the
+     * selection stays unpersisted until the next reboot re-derives it. That
+     * is strictly better than the inverse -- persisting a selection whose
+     * bank holds nothing loadable -- and it mirrors the deliberate fail-safe
+     * choice CalSaveCommon documents above rather than carrying a second
+     * AInRuntimeArray-sized rollback buffer on this task's stack for a
+     * rarely-hit path. SCPI_RES_ERR tells the caller the command failed. */
+    if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) return SCPI_RES_ERR;
+
+    /* Leaving raw mode is the LAST mutation, so a command that failed above
+     * leaves the streaming wire format exactly as it found it. Previously
+     * this was cleared first, so a failed load both dropped raw mode and
+     * persisted the wrong selection. */
+    pRunTimeStreamConfig->RawOutputMode = false;
+
     return SCPI_RES_OK;
 }
 

@@ -30,6 +30,26 @@ static char gFriendlyDeviceName[FRIENDLY_DEVICE_NAME_SIZE] = {0};
  * that read it are created on the boot path. */
 static bool gFactoryCalMissing = false;
 
+/* #908 (Qodo item 3): WHICH BANK the live coefficients were last loaded from.
+ *
+ * gFactoryCalMissing answers "is the factory NVM SLOT populated?". It was also
+ * being used to answer "which coefficients are IN EFFECT?", and those are two
+ * different questions -- the defect Qodo reported as "failed saves report
+ * identity defaults": a failed SAVEFcal sets the missing flag, the emitter
+ * translated that straight into source:"identity", and measurements carried on
+ * using the unchanged non-identity coefficients. One value cannot answer both,
+ * and nothing could detect the mismatch.
+ *
+ * Tracked HERE, inside the load, rather than at the four call sites (boot's
+ * factory and user loads in app_freertos.c, CalLoadCommon, and
+ * ADCUseCalSetClaimed): the load is the single choke point every selection
+ * passes through, so recording it here cannot be forgotten by a new caller.
+ *
+ * Defaults to the factory bank because that is what boot attempts first. Never
+ * persisted -- it is re-derived from a real load outcome on every boot, like
+ * gFactoryCalMissing, and written only from task context. */
+static DaqifiSettingsType gActiveCalBank = DaqifiSettings_FactAInCalParams;
+
 /* #625: the friendly name is emitted UNESCAPED into the JSON info message
  * ("friendlyName":"%s") and copied into the PB info message, so it must be
  * printable ASCII with no JSON-structural characters. Reject control chars
@@ -84,6 +104,40 @@ void daqifi_settings_ClearFactoryCalMissing(void) {
 
 bool daqifi_settings_FactoryCalIsMissing(void) {
     return gFactoryCalMissing;
+}
+
+DaqifiSettingsType daqifi_settings_GetActiveCalBank(void) {
+    return gActiveCalBank;
+}
+
+/* #908 (Qodo item 3): are the coefficients actually IN EFFECT identity?
+ *
+ * This is a question about the runtime array, not about NVM, and it is the one
+ * the capability emitter's "source" key is named after. It cannot be inferred
+ * from gActiveCalBank: a bank can load successfully and still contain identity
+ * -- both bench boards on this station are exactly that, factory cal equal to
+ * identity -- so "a load succeeded" and "calibration is in effect" are
+ * different facts.
+ *
+ * Exact float comparison is correct here rather than an epsilon: the identity
+ * defaults are ASSIGNED as 1.0f/0.0f, so a value that has never been through a
+ * calibration is bit-identical to them. An epsilon would instead answer "is
+ * the calibration nearly identity", which is a different and weaker claim --
+ * a real coefficient legitimately close to unity would then be reported as no
+ * calibration at all.
+ *
+ * An empty array reads as identity: no channel carries calibration. */
+bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig) {
+    if (channelRuntimeConfig == NULL) {
+        return true;
+    }
+    for (uint8_t x = 0; x < channelRuntimeConfig->Size; x++) {
+        if (channelRuntimeConfig->Data[x].CalM != 1.0f
+                || channelRuntimeConfig->Data[x].CalB != 0.0f) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool daqifi_settings_LoadFromNvm(DaqifiSettingsType type, DaqifiSettings* settings) {
@@ -360,7 +414,14 @@ bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
         channelRuntimeConfig->Data[x].CalM = calArray->Data[x].CalM;
         channelRuntimeConfig->Data[x].CalB = calArray->Data[x].CalB;
     }
-    
+
+    /* #908 (Qodo item 3): record the bank only AFTER the copy loop, so the
+     * tracked bank can never name a load that did not reach the runtime
+     * array. Every early return above leaves it at its previous value, which
+     * is correct: a failed load changes no coefficients, so it changes
+     * nothing about which bank is in effect. */
+    gActiveCalBank = type;
+
     return status;
 }
 

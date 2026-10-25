@@ -260,6 +260,44 @@ extern "C" {
     bool daqifi_settings_FactoryCalIsMissing(void);
 
     /**
+     * #908 (Qodo item 3): which calibration bank the live coefficients were
+     * last successfully loaded from.
+     *
+     * ⚠ This answers a DIFFERENT question from
+     * daqifi_settings_FactoryCalIsMissing, which reports whether the factory
+     * NVM slot is populated. Conflating the two is the defect Qodo reported:
+     * a failed SAVEFcal sets the missing flag, and reporting that as
+     * source:"identity" claimed the device was uncalibrated while it carried
+     * on measuring with unchanged non-identity coefficients.
+     *
+     * ⚠ Nor does it imply calibration is in effect -- a bank can load
+     * successfully and contain identity. Pair it with
+     * daqifi_settings_CalIsIdentity to answer that.
+     *
+     * @return DaqifiSettings_FactAInCalParams or
+     *         DaqifiSettings_UserAInCalParams (factory until a load succeeds)
+     */
+    DaqifiSettingsType daqifi_settings_GetActiveCalBank(void);
+
+    /**
+     * #908 (Qodo item 3): true when every channel's live coefficients are the
+     * identity pair (CalM == 1.0f, CalB == 0.0f), i.e. no calibration is in
+     * effect and readings are unscaled.
+     *
+     * A question about the RUNTIME ARRAY, not about NVM, and the one the
+     * CONF:CAP:JSON? "source" key is named after. Uses exact float comparison
+     * deliberately: the identity defaults are assigned as 1.0f/0.0f, so an
+     * uncalibrated channel is bit-identical to them, whereas an epsilon would
+     * answer the weaker "is it nearly identity" and misreport a real
+     * coefficient close to unity as no calibration at all.
+     *
+     * @param channelRuntimeConfig the live AIn runtime array; NULL or empty
+     *        reads as identity, since no channel then carries calibration
+     * @return true if no calibration is in effect
+     */
+    bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig);
+
+    /**
      * #14: Sets the runtime device friendly name cache. The value is
      * persisted to NVM only on the next TopLevelSettings save (which
      * captures this cache automatically). Truncated to fit
