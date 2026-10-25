@@ -549,6 +549,54 @@ TEST(first_line_check_accepts_a_rendered_PARTIAL_line)
  *
  * An off-by-one is only fixed once its boundary is pinned, so this asserts BOTH
  * SIDES of the exact threshold rather than one comfortable case either side. */
+/* #924 round-5 audit (:1969): FatFs NORMALISES, SO THE COMPARATOR MUST TOO.
+ *
+ * ff.c:2895-2901 inside create_name(), which every open goes through, snips a
+ * segment's trailing spaces and dots. So `FILE "foo.mfst "` -- a trailing
+ * space, which SD_ValidatePathParam accepts -- opens as `foo.mfst`, and this
+ * session's manifest candidate is also `foo.mfst`. A raw byte compare called
+ * them unequal, the self-collision guard passed, the overwrite probe saw a
+ * zero-size file and permitted it, and the write-open then failed: the silent
+ * no-manifest outcome the guard exists to prevent, reachable by one space. */
+TEST(paths_equal_normalises_the_way_fatfs_does)
+{
+    /* THE AUDIT'S CASE */
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQiFi/foo.mfst ",
+                                                     "DAQiFi/foo.mfst"));
+    /* dots are snipped with spaces -- same vendor loop, same condition */
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQiFi/foo.", "DAQiFi/foo"));
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("foo. . ", "foo"));
+    /* PER SEGMENT, not over the whole string: create_name() runs once per
+     * component, so a trailing space on a DIRECTORY name counts too. */
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQiFi /foo.csv",
+                                                     "DAQiFi/foo.csv"));
+    /* normalisation composes with the case-insensitivity already tested above */
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQIFI /FOO.MFST.",
+                                                     "daqifi/foo.mfst"));
+
+    /* ===== NEGATIVE CONTROLS ===== */
+
+    /* THE ONE THAT MATTERS MOST: the guard's whole job is to tell a stream file
+     * from its own manifest. If normalisation made these equal, every session
+     * would refuse its manifest. */
+    ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive("DAQiFi/foo.csv",
+                                                      "DAQiFi/foo.mfst"));
+    /* only TRAILING runs are snipped -- an embedded space is part of the name */
+    ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive("foo bar", "foobar"));
+    /* ...and so is a LEADING one. The vendor loop only decrements the END
+     * index (ff.c:2898 `di--`), never advances the start, so the LFN keeps its
+     * leading characters. create_name()'s leading-space removal at :2904 is in
+     * the 8.3 SFN-generation path and sets NS_LOSS, which is what makes the LFN
+     * authoritative -- it does not change the long name's identity. */
+    ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive(" foo", "foo"));
+    /* segment COUNT still matters */
+    ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive("a/b", "a/b/c"));
+    ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive("a/b", "a"));
+    /* an all-snipped segment must not equal a real name */
+    ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive("foo/   ", "foo/bar"));
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("foo/   ", "foo/..."));
+}
+
 TEST(manifest_name_must_fit_the_retrieval_operand)
 {
     const size_t cap = 40u;                       /* SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX */
@@ -749,6 +797,7 @@ int main(void)
     RUN(paths_equal_case_insensitive_null_safety);
     RUN(first_line_check_accepts_a_real_rendered_line);
     RUN(first_line_check_accepts_a_rendered_PARTIAL_line);
+    RUN(paths_equal_normalises_the_way_fatfs_does);
     RUN(manifest_name_must_fit_the_retrieval_operand);
     RUN(first_line_check_accepts_empty_content);
     RUN(first_line_check_rejects_unrelated_data);

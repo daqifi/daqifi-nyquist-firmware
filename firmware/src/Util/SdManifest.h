@@ -220,22 +220,72 @@ static inline bool SdManifest_PathsEqualCaseInsensitive(const char *a,
     if (a == NULL || b == NULL) {
         return a == b;
     }
-    while (*a != '\0' && *b != '\0') {
-        char ca = *a;
-        char cb = *b;
-        if (ca >= 'A' && ca <= 'Z') {
-            ca = (char)(ca - 'A' + 'a');
-        }
-        if (cb >= 'A' && cb <= 'Z') {
-            cb = (char)(cb - 'A' + 'a');
-        }
-        if (ca != cb) {
+    /* #924 (round-5 audit, :1969): COMPARE THE WAY FatFs DOES, which means
+     * snipping each segment's trailing spaces and dots before comparing.
+     *
+     * VENDOR SOURCE, verbatim -- ff.c:2895-2901 inside create_name(), which
+     * every open goes through:
+     *
+     *     while (di) {              // Snip off trailing spaces and dots
+     *         wc = lfn[di - 1];
+     *         if (wc != ' ' && wc != '.') break;
+     *         di--;
+     *     }
+     *     lfn[di] = 0;
+     *     if (di == 0) return FR_INVALID_NAME;   // Reject null name
+     *
+     * So `FILE "foo.mfst "` -- a trailing space, which SD_ValidatePathParam
+     * accepts -- opens the data file as `foo.mfst`, and this session's manifest
+     * candidate is ALSO `foo.mfst`. A raw byte compare called them unequal, so
+     * the self-collision guard passed, the overwrite probe saw a zero-size file
+     * and permitted it, and the write-open then failed -- the exact silent
+     * no-manifest outcome the guard exists to prevent, reachable by one
+     * trailing space.
+     *
+     * PER SEGMENT, not over the whole string, because create_name() runs once
+     * per path component -- so "a /b" and "a/b" name the same file too, and a
+     * whole-string trim would miss that.
+     *
+     * Only '/' is treated as a separator: SD_ValidatePathParam rejects '\\',
+     * so a backslash cannot reach here. If that validator is ever relaxed,
+     * FatFs's IsSeparator() accepts both and this needs to as well.
+     *
+     * An all-snipped segment ("   ", "...") is left comparing EQUAL to another
+     * all-snipped one and unequal to anything else. FatFs rejects such a name
+     * outright (FR_INVALID_NAME), so the open fails either way; this function
+     * only has to avoid calling it equal to a REAL name, which it does. */
+    for (;;) {
+        /* segment extents */
+        size_t na = 0u, nb = 0u;
+        while (a[na] != '\0' && a[na] != '/') { na++; }
+        while (b[nb] != '\0' && b[nb] != '/') { nb++; }
+        /* snip trailing ' ' and '.' exactly as create_name() does */
+        size_t ea = na, eb = nb;
+        while (ea > 0u && (a[ea - 1u] == ' ' || a[ea - 1u] == '.')) { ea--; }
+        while (eb > 0u && (b[eb - 1u] == ' ' || b[eb - 1u] == '.')) { eb--; }
+        if (ea != eb) {
             return false;
         }
-        a++;
-        b++;
+        for (size_t i = 0u; i < ea; i++) {
+            char ca = a[i];
+            char cb = b[i];
+            if (ca >= 'A' && ca <= 'Z') {
+                ca = (char)(ca - 'A' + 'a');
+            }
+            if (cb >= 'A' && cb <= 'Z') {
+                cb = (char)(cb - 'A' + 'a');
+            }
+            if (ca != cb) {
+                return false;
+            }
+        }
+        /* both must end, or both must continue with a separator */
+        if (a[na] == '\0' || b[nb] == '\0') {
+            return a[na] == '\0' && b[nb] == '\0';
+        }
+        a += na + 1u;
+        b += nb + 1u;
     }
-    return (*a == '\0') && (*b == '\0');
 }
 
 /**
