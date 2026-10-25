@@ -574,6 +574,40 @@ TEST(paths_equal_normalises_the_way_fatfs_does)
     ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQIFI /FOO.MFST.",
                                                      "daqifi/foo.mfst"));
 
+    /* ===== E2: DUPLICATED separators collapse (ff.c:2878) =====
+     * REACHABLE FROM CONFIG ALONE: the path is built dir + '/' + file, so a
+     * `directory` ending in '/' produces this with no user error, and
+     * SD_ValidatePathParam's segment checks only test lengths 1 and 2, so a
+     * zero-length segment passes. Round 6's finding 1. */
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQiFi//foo.csv",
+                                                     "DAQiFi/foo.csv"));
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQiFi///foo.csv",
+                                                     "DAQiFi/foo.csv"));
+
+    /* ===== E3: a TERMINATING separator is ignored (ff.c:2880) ===== */
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQiFi/foo.csv/",
+                                                     "DAQiFi/foo.csv"));
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQiFi/foo.csv//",
+                                                     "DAQiFi/foo.csv"));
+
+    /* ===== E4: LEADING separators are stripped (ff.c:3069) =====
+     * NOT reachable through SD_ValidatePathParam, which rejects absolute
+     * paths -- asserted so the function stays correct independent of callers. */
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("/DAQiFi/foo.csv",
+                                                     "DAQiFi/foo.csv"));
+
+    /* combined: every equivalence at once must still collapse to equal */
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("//DAQIFI //FOO.CSV. /",
+                                                     "daqifi/foo.csv"));
+
+    /* ===== N1: '\\' is a separator to FatFs but NOT here =====
+     * ff.c:51 IsSeparator accepts both, and SD_ValidatePathParam rejects '\\'
+     * outright, so it cannot reach this function. Pinned as NOT normalised so
+     * the decision is visible: if that validator is ever relaxed, this
+     * assertion is the one that must change, deliberately. */
+    ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive("DAQiFi\\foo.csv",
+                                                      "DAQiFi/foo.csv"));
+
     /* ===== NEGATIVE CONTROLS ===== */
 
     /* THE ONE THAT MATTERS MOST: the guard's whole job is to tell a stream file
@@ -595,6 +629,13 @@ TEST(paths_equal_normalises_the_way_fatfs_does)
     /* an all-snipped segment must not equal a real name */
     ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive("foo/   ", "foo/bar"));
     ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("foo/   ", "foo/..."));
+    /* ⚠ AND THE DISTINCTION ROUND 5's COMMENT GOT WRONG: a segment that is
+     * EMPTY AFTER SNIPPING is not the same thing as a separator RUN.
+     * "foo/   /bar" has a real middle segment that snips to nothing --
+     * FR_INVALID_NAME at ff.c:2901 -- whereas "foo//bar" has no segment there
+     * at all and opens foo/bar. They must not compare equal. */
+    ASSERT_FALSE(SdManifest_PathsEqualCaseInsensitive("foo/   /bar", "foo/bar"));
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("foo//bar", "foo/bar"));
 }
 
 TEST(manifest_name_must_fit_the_retrieval_operand)

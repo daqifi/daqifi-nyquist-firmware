@@ -810,6 +810,25 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       both layers; clearing the handle discards the only reference"; \
 	       echo "       and burns one of SYS_FS_MAX_FILES (10) slots permanently."; \
 	       exit 1; }
+	@g=`$(CC) -fpreprocessed -dD -E $(SD_MANAGER_SRC) 2>/dev/null | grep -c 'SdManifest_NameFitsOperand'`; \
+	 n=`$(CC) -fpreprocessed -dD -E $(SD_MANAGER_SRC) 2>/dev/null | grep -c 'SD_MANIFEST_EXT,'`; \
+	 test "$$g" = "$$n" \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) builds $$n manifest name(s) but length-"; \
+	       echo "       checks $$g of them (#924 round-6 finding 2)."; \
+	       echo "       EVERY path that produces a manifest name must pass through"; \
+	       echo "       SdManifest_NameFitsOperand. Round 5 added that guard at the"; \
+	       echo "       PRIMARY site and nowhere else, and the FALLBACK -- which keeps"; \
+	       echo "       the whole filename, so it is LONGER by the extension -- went"; \
+	       echo "       unguarded. Buffer capacity and RETRIEVAL capacity are"; \
+	       echo "       different limits; the 'written >= sizeof(path)' check is the"; \
+	       echo "       first and does not imply the second."; \
+	       echo "       This pin is a COUNT EQUALITY, deliberately: a position pin"; \
+	       echo "       cannot see a site that does not exist yet, and the whole"; \
+	       echo "       defect was a THIRD path appearing without the guard."; \
+	       echo "       Both counts are taken comment-STRIPPED (\$$(CC)"; \
+	       echo "       -fpreprocessed), because the explanatory comments name both"; \
+	       echo "       symbols -- a raw grep would be satisfied by prose."; \
+	       exit 1; }
 	@awk '/case SD_CARD_MANAGER_PROCESS_STATE_IDLE:/{f=1;a=""} \
 	      f{a=a $$0 "\n"} \
 	      f&&/^[[:space:]]*break;/{if(a ~ /manifestHandle = SYS_FS_HANDLE_INVALID;/) ok=1; f=0} \

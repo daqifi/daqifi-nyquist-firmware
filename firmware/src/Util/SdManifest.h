@@ -220,53 +220,95 @@ static inline bool SdManifest_PathsEqualCaseInsensitive(const char *a,
     if (a == NULL || b == NULL) {
         return a == b;
     }
-    /* #924 (round-5 audit, :1969): COMPARE THE WAY FatFs DOES, which means
-     * snipping each segment's trailing spaces and dots before comparing.
+    /* #924: COMPARE PATHS THE WAY FatFs RESOLVES THEM.
      *
-     * VENDOR SOURCE, verbatim -- ff.c:2895-2901 inside create_name(), which
-     * every open goes through:
+     * ⛔ ROUND 6 FOUND THIS MODELLED create_name()'s SNIPPING AND NOT ITS
+     * SEGMENTATION. The lesson is not "read more": a citation bounds the claim
+     * to the question that retrieved it. Round 5 asked "how does FatFs
+     * NORMALISE a name?" and quoted ff.c:2895-2901 correctly. The unasked
+     * question -- "how does FatFs SEGMENT a path?" -- is answered fifteen lines
+     * ABOVE those. So the equivalences are now ENUMERATED ONCE, from
+     * follow_path() and create_name() TOGETHER, with reachability stated per
+     * line, and each line has its own test. Add to the list, not to the code.
      *
-     *     while (di) {              // Snip off trailing spaces and dots
-     *         wc = lfn[di - 1];
-     *         if (wc != ' ' && wc != '.') break;
-     *         di--;
-     *     }
-     *     lfn[di] = 0;
-     *     if (di == 0) return FR_INVALID_NAME;   // Reject null name
+     *   E1  trailing SPACES and DOTS, per segment          ff.c:2895-2899
+     *       "foo.mfst " == "foo.mfst" == "foo."
+     *       REACHABLE: SD_ValidatePathParam accepts both.
+     *   E2  DUPLICATED separators collapse                 ff.c:2878
+     *       "DAQiFi//foo" == "DAQiFi/foo"
+     *       REACHABLE FROM CONFIG ALONE: the path is built dir + '/' + file,
+     *       so a `directory` ending in '/' produces it with no user error, and
+     *       the validator's segment checks only test length 1 and 2, so a
+     *       zero-length segment passes.
+     *   E3  a TERMINATING separator is ignored             ff.c:2880
+     *       "DAQiFi/foo/" == "DAQiFi/foo"
+     *       Not produced by our own two snprintf sites; implemented because
+     *       the other operand (filePath) is built elsewhere and this is free.
+     *   E4  LEADING separators are stripped                ff.c:3069
+     *       "/DAQiFi/foo" == "DAQiFi/foo"
+     *       NOT REACHABLE: SD_ValidatePathParam rejects a leading '/' or '\\'
+     *       (absolute paths). Implemented anyway so this function is correct
+     *       independent of its callers.
+     *   E5  case-insensitive                               FF_FS_LOCK compare
+     *       REACHABLE; this is the post-merge defect-2 fix.
      *
-     * So `FILE "foo.mfst "` -- a trailing space, which SD_ValidatePathParam
-     * accepts -- opens the data file as `foo.mfst`, and this session's manifest
-     * candidate is ALSO `foo.mfst`. A raw byte compare called them unequal, so
-     * the self-collision guard passed, the overwrite probe saw a zero-size file
-     * and permitted it, and the write-open then failed -- the exact silent
-     * no-manifest outcome the guard exists to prevent, reachable by one
-     * trailing space.
+     * ⚠ DELIBERATELY NOT MODELLED, each because the validator makes it
+     * unreachable -- if SD_ValidatePathParam is ever relaxed, these become
+     * live and belong on the list above:
+     *   N1  '\\' is also a separator to FatFs (IsSeparator, ff.c:51). The
+     *       validator rejects '\\' outright, so only '/' is handled here.
+     *   N2  "." and ".." are dot segments (ff.c:2885, live because
+     *       FF_FS_RPATH==2). The validator rejects them as whole segments.
      *
-     * PER SEGMENT, not over the whole string, because create_name() runs once
-     * per path component -- so "a /b" and "a/b" name the same file too, and a
-     * whole-string trim would miss that.
+     * ⛔ AND WHAT IS *NOT* NORMALISED, which the tests pin because getting it
+     * wrong is worse than the bug: LEADING spaces and dots are SIGNIFICANT.
+     * The snip loop only decrements the END index (ff.c:2898 `di--`) and never
+     * advances the start, so the LFN keeps its leading characters.
+     * create_name()'s leading-space removal at :2904 is in the 8.3
+     * SFN-generation path and sets NS_LOSS -- which is what makes the LFN
+     * authoritative -- and does not change the long name's identity. So " foo"
+     * and "foo" are DIFFERENT files.
      *
-     * Only '/' is treated as a separator: SD_ValidatePathParam rejects '\\',
-     * so a backslash cannot reach here. If that validator is ever relaxed,
-     * FatFs's IsSeparator() accepts both and this needs to as well.
-     *
-     * An all-snipped segment ("   ", "...") is left comparing EQUAL to another
-     * all-snipped one and unequal to anything else. FatFs rejects such a name
-     * outright (FR_INVALID_NAME), so the open fails either way; this function
-     * only has to avoid calling it equal to a REAL name, which it does. */
+     * ⚠ A CORRECTION TO ROUND 5's OWN COMMENT, which asserted the opposite of
+     * the vendor source: it said an all-snipped or trailing-separator segment
+     * yields FR_INVALID_NAME so "the open fails either way". ff.c:2880 says
+     * `/* Ignore terminating separator *` + `/` -- the open SUCCEEDS on the
+     * real file. That false claim is what made the gap read as deliberate.
+     * FR_INVALID_NAME (ff.c:2901) applies only to a segment that is EMPTY
+     * AFTER SNIPPING and is not merely a separator run, e.g. "foo/   /bar". */
     for (;;) {
-        /* segment extents */
-        size_t na = 0u, nb = 0u;
+        size_t na, nb, ea, eb, i;
+
+        /* E4: leading separators, and E2: any run between segments */
+        while (*a == '/') { a++; }
+        while (*b == '/') { b++; }
+
+        /* E3: a run of separators at the very end terminates both sides */
+        if (*a == '\0' || *b == '\0') {
+            return *a == '\0' && *b == '\0';
+        }
+
+        /* ⛔ LOOP TERMINATION DEPENDS ON THE SKIP ABOVE, and that dependency
+         * was implicit until a mutation test HUNG for 200 s instead of
+         * failing. After the separator skip, `*a` is neither '/' nor NUL, so
+         * na >= 1 and the `a += na` below ADVANCES. Remove or reorder the skip
+         * and na becomes 0 on a path like "a//b", `a += 0` spins, and this
+         * function never returns -- on the SCPI task, which is worse than any
+         * wrong answer it could give. If you restructure this loop, keep a
+         * guaranteed advance of at least one character per iteration. */
+        na = 0u; nb = 0u;
         while (a[na] != '\0' && a[na] != '/') { na++; }
         while (b[nb] != '\0' && b[nb] != '/') { nb++; }
-        /* snip trailing ' ' and '.' exactly as create_name() does */
-        size_t ea = na, eb = nb;
+
+        /* E1: snip trailing ' ' and '.' exactly as create_name() does */
+        ea = na; eb = nb;
         while (ea > 0u && (a[ea - 1u] == ' ' || a[ea - 1u] == '.')) { ea--; }
         while (eb > 0u && (b[eb - 1u] == ' ' || b[eb - 1u] == '.')) { eb--; }
+
         if (ea != eb) {
             return false;
         }
-        for (size_t i = 0u; i < ea; i++) {
+        for (i = 0u; i < ea; i++) {                 /* E5 */
             char ca = a[i];
             char cb = b[i];
             if (ca >= 'A' && ca <= 'Z') {
@@ -279,12 +321,8 @@ static inline bool SdManifest_PathsEqualCaseInsensitive(const char *a,
                 return false;
             }
         }
-        /* both must end, or both must continue with a separator */
-        if (a[na] == '\0' || b[nb] == '\0') {
-            return a[na] == '\0' && b[nb] == '\0';
-        }
-        a += na + 1u;
-        b += nb + 1u;
+        a += na;
+        b += nb;
     }
 }
 

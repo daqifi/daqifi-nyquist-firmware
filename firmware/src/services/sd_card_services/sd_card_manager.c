@@ -2059,6 +2059,36 @@ static void sd_OpenSessionManifest(void) {
          *
          * The buffer already holds it: dir + '/' + file + ".mfst" + NUL is
          * 40 + 1 + 40 + 5 + 1 = 87 against the 88 sized above. */
+        /* #924 (round-6 audit): THE FALLBACK NEEDS THE LENGTH GUARD TOO, and
+         * needs it MORE than the primary does. The primary name is
+         * `<base>.mfst` -- the configured FILE with its extension stripped --
+         * but this one keeps the WHOLE filename, so `<file>.mfst` is longer by
+         * the extension: a 40-char FILE yields 45, five over the 40-char
+         * operand cap that SD:GET / SD:CRC? / SD:DELete validate against.
+         *
+         * Round 5 added SdManifest_NameFitsOperand at the primary site and
+         * nowhere else -- one call site in the file, two snprintf sites that
+         * produce a manifest name. BUFFER CAPACITY AND RETRIEVAL CAPACITY ARE
+         * DIFFERENT LIMITS: the `written >= sizeof(path)` check below is the
+         * first and was already here, and :1916's entire finding was that the
+         * second exists and is smaller. The comment below this block said the
+         * fallback gets "the SAME safety check as the primary one" -- true of
+         * the COLLISION check, and that is corrected there.
+         *
+         * Exit criterion for a guard added by a round: EVERY PATH PRODUCING
+         * THE GUARDED VALUE, enumerated. Here that is two snprintf sites, and
+         * two lines of grep would have found the second. */
+        if (!SdManifest_NameFitsOperand(
+                strlen(gpSDCardSettings->file), sizeof(SD_MANIFEST_EXT) - 1u,
+                SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX)) {
+            LOG_E("[SD] #924 no manifest: fallback name needs %u chars, "
+                  "SD:GET takes %u",
+                  (unsigned)(strlen(gpSDCardSettings->file)
+                             + sizeof(SD_MANIFEST_EXT) - 1u),
+                  (unsigned)SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX);
+            return;
+        }
+
         written = snprintf(path, sizeof(path), "%s/%s" SD_MANIFEST_EXT,
                            gpSDCardSettings->directory,
                            gpSDCardSettings->file);
@@ -2070,7 +2100,11 @@ static void sd_OpenSessionManifest(void) {
         }
 
         /* #924 (post-merge audit, defect 1, round 2): the fallback name gets
-         * the SAME safety check as the primary one -- reachable via
+         * the same COLLISION check as the primary one. ⚠ Round 6: this said
+         * "the SAME safety check", which was true of collision and FALSE of
+         * length -- the length guard is added above, and a claim of sameness
+         * across two different checks is how the gap stayed invisible. It is
+         * reachable via
          * configured filenames alone (an earlier session logging its DATA
          * straight to `<file>.mfst`, no collision of its own involved), and
          * without this the fallback would just be a second undefended path
