@@ -180,6 +180,39 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
 #define SD_PRESENCE_RECHECK_BOUND_MS   500U
 #define SD_PRESENCE_RECHECK_POLL_MS    25U
 
+/* #1094 (round-3 audit HIGH): THE USB PUMP CADENCE, which is NOT the card-poll
+ * cadence. Round 2's finding was categorical -- a 500 ms park on the USB task
+ * loses acquired samples permanently. Round 2's fix pumped once per card poll,
+ * which made the remedy QUANTITATIVE: it divided the starvation window by 20,
+ * to 25 ms. A quantitative remedy closes a categorical finding only if the new
+ * quantity is under a MEASURED threshold, and 25 ms is not: CLAUDE.md's own A/B
+ * (line 452) measures ">=1 ms read cadence = zero loss; a 500 ms poller dropped
+ * 1 MB in the same 16ch@3kHz A/B that a 1 ms reader survived clean." 25 ms is
+ * 25x slower than the measured zero-loss cadence.
+ *
+ * ⛔ AND THE CAUSE OF THE 25 WAS THAT ONE CONSTANT WAS IN SCOPE.
+ * SD_PRESENCE_RECHECK_POLL_MS is the cadence for re-checking whether a CARD IS
+ * PRESENT; it has nothing to do with how often USB must be drained. TWO
+ * UNRELATED CLOCKS SHARING ONE CONSTANT GET TUNED FOR WHICHEVER ONE SOMEONE IS
+ * THINKING ABOUT -- nobody will ever raise the card-poll interval to 100 ms and
+ * ask what it does to USB. So they are separate constants now, each justified by
+ * its own evidence: this one by the measurement above, that one by how fast a
+ * card insertion needs noticing.
+ *
+ * 1 ms is representable: configTICK_RATE_HZ is 1000 (FreeRTOSConfig.h:58), so
+ * pdMS_TO_TICKS(1) is one tick. At a lower tick rate it would floor to 0 and
+ * vTaskDelay(0) would merely yield -- check that before changing either. */
+#define SD_PRESENCE_PUMP_MS            1U
+
+/* Pumps per card sample -- DERIVED, so changing either cadence above cannot
+ * silently retune the other. Ceiling division, so it is >= 1 even if the poll
+ * interval is ever set below the pump interval; a value of 0 would leave the
+ * inner loop neither pumping nor delaying, i.e. a busy spin on a priority-7
+ * task. */
+#define SD_PRESENCE_PUMPS_PER_SAMPLE                                          \
+    ((SD_PRESENCE_RECHECK_POLL_MS + SD_PRESENCE_PUMP_MS - 1U)                 \
+     / SD_PRESENCE_PUMP_MS)
+
 /* ************************************************************************** */
 /* ************************************************************************** */
 /* Section: File Scope or Global Data                                         */
@@ -601,8 +634,20 @@ static bool SCPI_CheckSDCardPresent(scpi_t *context) {
              * FinalizeRead, never with BeginWrite on the stack. Pumping before
              * the delay bounds the ring's starvation at one poll interval
              * (SD_PRESENCE_RECHECK_POLL_MS, 25 ms) instead of the full 500. */
-            UsbCdc_PumpWrite();
-            vTaskDelay(pdMS_TO_TICKS(SD_PRESENCE_RECHECK_POLL_MS));
+            /* Pump at the USB cadence; the card is sampled by the OUTER
+             * loop at its own. The bound is re-tested inside so the total
+             * wait stays SD_PRESENCE_RECHECK_BOUND_MS regardless of how the
+             * two cadences divide into it -- wrap-safe (now - start) < window
+             * per the project rule. */
+            for (unsigned pump = 0u; pump < SD_PRESENCE_PUMPS_PER_SAMPLE;
+                 pump++) {
+                UsbCdc_PumpWrite();
+                vTaskDelay(pdMS_TO_TICKS(SD_PRESENCE_PUMP_MS));
+                if ((TickType_t)(xTaskGetTickCount() - startTick) >=
+                        pdMS_TO_TICKS(SD_PRESENCE_RECHECK_BOUND_MS)) {
+                    break;
+                }
+            }
         }
         /* #756 round 3: the loop above samples, THEN delays -- so the
          * deadline can be reached mid-delay with that last delay's own

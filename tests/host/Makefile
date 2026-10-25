@@ -737,34 +737,40 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	  || { echo "ERROR: SCPI_SD_BENCH_STALL_TIMEOUT_MS is no longer '10000U' in $(SD_BENCH_SRC)."; \
 	       echo "       Update FW_STALL_TIMEOUT_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
 	       exit 1; }
-	@w=`grep -nE '^[[:space:]]*while \(\(TickType_t\)\(xTaskGetTickCount\(\) - startTick\)' $(SD_BENCH_SRC) | head -1 | cut -d: -f1`; \
-	 p=`grep -nE '^[[:space:]]*UsbCdc_PumpWrite\(\);' $(SD_BENCH_SRC) | head -1 | cut -d: -f1`; \
-	 d=`grep -nF 'vTaskDelay(pdMS_TO_TICKS(SD_PRESENCE_RECHECK_POLL_MS));' $(SD_BENCH_SRC) | head -1 | cut -d: -f1`; \
-	 test -n "$$w" && test -n "$$p" && test -n "$$d" \
-	   && test "$$w" -lt "$$p" && test "$$p" -lt "$$d" \
-	  || { echo "ERROR: the SD presence-recheck wait in $(SD_BENCH_SRC) no longer pumps"; \
-	       echo "       USB writes before its delay (#1094 round-2 audit HIGH)."; \
-	       echo "       got: bound=$$w pump=$$p delay=$$d; need bound < pump < delay."; \
-	       echo "       WHY: over USB this runs ON the USB task -- SCPI is dispatched"; \
-	       echo "       inline from UsbCdc_ProcessState -> UsbCdc_FinalizeRead -- so"; \
-	       echo "       every tick in that delay is a tick not spent in"; \
-	       echo "       UsbCdc_BeginWrite. With SD enabled, NO CARD, and a USB-only"; \
-	       echo "       stream, SD:LISt?/SPACe? parks the task for up to 500 ms: the"; \
-	       echo "       ring fills, Streaming_WriteWithRetry blocks the encoder, and"; \
-	       echo "       the sample pool overflows -- ACQUIRED SAMPLES LOST."; \
-	       echo "       UsbCdc_PumpWrite() is #781's remedy for the identical hazard"; \
-	       echo "       (MERGED, #780); sd_card_manager.c's WaitForCompletion already"; \
-	       echo "       uses it. This is the second caller, not a new mechanism."; \
-	       echo "       ANCHOR NOTE: the pump line is matched as a STATEMENT"; \
-	       echo "       ('^[[:space:]]*UsbCdc_PumpWrite();') because the explanatory"; \
-	       echo "       comment above it also names the function -- a bare grep -c"; \
-	       echo "       returns 2 where the comment-stripped count is 1, so a"; \
-	       echo "       presence check here would be satisfied by prose."; \
-	       echo "       SAME FOR THE BOUND ANCHOR: it matches the loop's own 'while'"; \
-	       echo "       STATEMENT, not 'SD_PRESENCE_RECHECK_BOUND_MS)'. An earlier"; \
-	       echo "       version of this pin grepped that macro and took the LAST"; \
-	       echo "       match, which is a COMMENT 570 lines further down -- so the"; \
-	       echo "       pin failed on correct code. Anchor on statements here."; \
+	@w=`grep -cE '^[[:space:]]*while \(\(TickType_t\)\(xTaskGetTickCount\(\) - startTick\)' $(SD_BENCH_SRC)`; \
+	 pc=`grep -cE '^[[:space:]]*UsbCdc_PumpWrite\(\);' $(SD_BENCH_SRC)`; \
+	 dc=`grep -cF 'vTaskDelay(pdMS_TO_TICKS(SD_PRESENCE_PUMP_MS));' $(SD_BENCH_SRC)`; \
+	 test "$$w" = 1 && test "$$pc" = 1 && test "$$dc" = 1 \
+	  || { echo "ERROR: $(SD_BENCH_SRC): the presence-wait pin's anchors are not"; \
+	       echo "       UNIQUE -- while=$$w pump=$$pc pumpDelay=$$dc, each must be 1."; \
+	       echo "       COUNT IS ASSERTED BEFORE POSITION on purpose: a non-unique"; \
+	       echo "       anchor otherwise resolves silently to the first or last hit"; \
+	       echo "       and the pin then fails later as a FALSE NEGATIVE on correct"; \
+	       echo "       code. An earlier version of this pin did exactly that -- it"; \
+	       echo "       matched a COMMENT 570 lines away."; \
+	       exit 1; }
+	@w=`grep -nE '^[[:space:]]*while \(\(TickType_t\)\(xTaskGetTickCount\(\) - startTick\)' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 p=`grep -nE '^[[:space:]]*UsbCdc_PumpWrite\(\);' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 d=`grep -nF 'vTaskDelay(pdMS_TO_TICKS(SD_PRESENCE_PUMP_MS));' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 test "$$w" -lt "$$p" && test "$$p" -lt "$$d" \
+	  || { echo "ERROR: the SD presence-recheck wait in $(SD_BENCH_SRC) no longer"; \
+	       echo "       pumps USB at the PUMP cadence before delaying"; \
+	       echo "       (#1094 rounds 2-3). got: while=$$w pump=$$p delay=$$d;"; \
+	       echo "       need while < pump < delay."; \
+	       echo "       WHY: over USB this runs ON the USB task, so every tick in"; \
+	       echo "       that delay is a tick not spent in UsbCdc_BeginWrite. With SD"; \
+	       echo "       enabled, NO CARD, and a USB-only stream, SD:LISt?/SPACe?"; \
+	       echo "       parks the task: the ring fills, the encoder blocks, and the"; \
+	       echo "       sample pool overflows -- ACQUIRED SAMPLES LOST."; \
+	       echo "       ⚠ THE DELAY MUST BE SD_PRESENCE_PUMP_MS, NOT THE CARD-POLL"; \
+	       echo "       INTERVAL. Round 2 pumped once per card poll, which left a"; \
+	       echo "       25 ms starvation window against CLAUDE.md's measured >=1 ms"; \
+	       echo "       zero-loss cadence (line 452). Two unrelated clocks sharing"; \
+	       echo "       one constant get tuned for whichever one someone is thinking"; \
+	       echo "       about, so this pin names the one it means."; \
+	       echo "       ANCHOR NOTE: pump is matched as a STATEMENT because the"; \
+	       echo "       explanatory comments name the function too -- grep -c gives"; \
+	       echo "       more than the comment-stripped count."; \
 	       exit 1; }
 	@grep -qE '^#define[[:space:]]+SCPI_SD_BENCH_STALL_POLL_MS[[:space:]]+5U[[:space:]]*$$' $(SD_BENCH_SRC) \
 	  || { echo "ERROR: SCPI_SD_BENCH_STALL_POLL_MS is no longer '5U' in $(SD_BENCH_SRC)."; \
