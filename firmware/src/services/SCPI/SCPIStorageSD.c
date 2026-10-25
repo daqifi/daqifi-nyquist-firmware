@@ -569,6 +569,39 @@ static bool SCPI_CheckSDCardPresent(scpi_t *context) {
                       "(was stale-DETACHED)\r\n");
                 return true;
             }
+            /* #1094 (round-2 audit HIGH): PUMP USB WRITES WHILE WE WAIT.
+             *
+             * Over USB this whole function runs ON the USB task -- SCPI is
+             * dispatched inline from UsbCdc_ProcessState -> UsbCdc_FinalizeRead
+             * -- so every tick spent in the vTaskDelay below is a tick the task
+             * does not spend in UsbCdc_BeginWrite. With SD enabled, NO CARD
+             * present and a USB-only stream running, a SYST:STOR:SD:LISt? or
+             * SPACe? passes every canWait condition above and parks the task
+             * here for up to SD_PRESENCE_RECHECK_BOUND_MS (500 ms). The
+             * transport ring fills, Streaming_WriteWithRetry blocks the
+             * encoder, and the sample pool overflows -- ACQUIRED SAMPLES ARE
+             * LOST PERMANENTLY. Before this loop existed the absent-card check
+             * returned immediately, so the wait is what introduced it.
+             *
+             * This is not a new remedy: #781 (MERGED) built UsbCdc_PumpWrite()
+             * for the same hazard -- "pump USB writes while a SCPI SD reply
+             * waits, breaking a self-deadlock" (#780) -- and
+             * sd_card_manager.c's WaitForCompletion already uses it. This loop
+             * was written without it. Same pattern, second caller.
+             *
+             * NO `toUsb` GUARD IS NEEDED HERE, unlike #781's call site: canWait
+             * above already requires !wifi_tcp_server_ContextIsTcp(context), so
+             * a TCP-origin request never enters this loop at all. The only
+             * waiter is a USB one, which is exactly who needs pumping -- and
+             * that is why the check #781 needs would be dead code here.
+             *
+             * PumpWrite is a no-op unless the CDC is in PROCESS state with no
+             * transfer in flight, and its own header documents it as safe from
+             * inside a SCPI callback; over USB the callback runs inside
+             * FinalizeRead, never with BeginWrite on the stack. Pumping before
+             * the delay bounds the ring's starvation at one poll interval
+             * (SD_PRESENCE_RECHECK_POLL_MS, 25 ms) instead of the full 500. */
+            UsbCdc_PumpWrite();
             vTaskDelay(pdMS_TO_TICKS(SD_PRESENCE_RECHECK_POLL_MS));
         }
         /* #756 round 3: the loop above samples, THEN delays -- so the
