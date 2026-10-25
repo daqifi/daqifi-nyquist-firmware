@@ -1485,6 +1485,13 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
     //  Load existing settings
     if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) return SCPI_RES_ERR;
 
+    /* The selection NVM still names, captured before it is overwritten. This
+     * one bool is the whole rollback state the save-failure path below needs
+     * -- the bank it names is still in NVM, so the runtime array can be
+     * restored by re-reading it rather than by snapshotting 768 B of
+     * coefficients. */
+    const bool prevCalVals = tmpTopLevelSettings.settings.topLevelSettings.calVals;
+
     /* #908: LOAD THE COEFFICIENTS BEFORE PERSISTING THE SELECTION.
      *
      * The #620 comment ~20 lines above states the principle this ordering
@@ -1533,15 +1540,53 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
     //  The coefficients are in effect; only now persist the selection.
     tmpTopLevelSettings.settings.topLevelSettings.calVals = param1;
 
-    /* ⚠ Residual, stated rather than buried: a successful load followed by a
-     * FAILED SaveToNvm leaves the runtime coefficients updated while the
-     * selection stays unpersisted until the next reboot re-derives it. That
-     * is strictly better than the inverse -- persisting a selection whose
-     * bank holds nothing loadable -- and it mirrors the deliberate fail-safe
-     * choice CalSaveCommon documents above rather than carrying a second
-     * AInRuntimeArray-sized rollback buffer on this task's stack for a
-     * rarely-hit path. SCPI_RES_ERR tells the caller the command failed. */
-    if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) return SCPI_RES_ERR;
+    /* #908 (codex-r1 HIGH): ROLL THE RUNTIME BACK IF THE SAVE FAILS.
+     *
+     * An earlier revision of this fix left this state as a documented
+     * residual, arguing it was "strictly better than the inverse". True, and
+     * not sufficient -- the audit was right to rate it HIGH, and I had
+     * disclosed it without ever trying it:
+     *
+     *   1. the command returns SCPI_RES_ERR, so the caller concludes the
+     *      change did NOT take;
+     *   2. every reading from that moment is scaled by the NEW bank anyway;
+     *   3. the next reboot re-derives the selection from NVM and the
+     *      coefficients silently revert.
+     *
+     * Readings change twice and the user is told about neither. That is the
+     * #620 principle at the top of this function -- an error must not leave
+     * state changed -- applied to the runtime array instead of to NVM.
+     *
+     * The rollback needs NO scratch buffer. The audit costed a snapshot at
+     * 768 B (MAX_AIN_CHANNEL 48 x CalM+CalB, both double -- the only two
+     * fields the load writes), but the PREVIOUS bank is still in NVM
+     * untouched, so re-reading it restores the runtime array from the
+     * authoritative source. One bool of saved state, and the extra NVM read
+     * happens only on the failure path.
+     *
+     * If that restoring load ALSO fails, the previous bank was unloadable --
+     * which means the coefficients at entry were boot's identity defaults, so
+     * identity is precisely the state to return to. Writing it explicitly
+     * keeps the "nothing changed" guarantee total rather than
+     * best-effort. gActiveCalBank needs no repair in that branch: with
+     * identity coefficients live, daqifi_settings_CalIsIdentity reports
+     * source:"identity" whatever bank is named. */
+    if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) {
+        const DaqifiSettingsType prevBank = prevCalVals
+                ? DaqifiSettings_UserAInCalParams
+                : DaqifiSettings_FactAInCalParams;
+        if (!daqifi_settings_LoadADCCalSettings(prevBank, pRuntimeAInChannels)) {
+            for (uint8_t ch = 0; ch < pRuntimeAInChannels->Size; ch++) {
+                pRuntimeAInChannels->Data[ch].CalM = 1.0;
+                pRuntimeAInChannels->Data[ch].CalB = 0.0;
+            }
+            /* Remedy FIRST: Logger truncates the TAIL at 125 B silently, so a
+             * message that opens with the diagnosis loses the action. */
+            LOG_E("USECal: re-run when NVM is healthy -- save failed, prev "
+                  "cal bank unreloadable, identity restored.");
+        }
+        return SCPI_RES_ERR;
+    }
 
     /* Leaving raw mode is the LAST mutation, so a command that failed above
      * leaves the streaming wire format exactly as it found it. Previously

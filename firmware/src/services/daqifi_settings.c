@@ -119,8 +119,13 @@ DaqifiSettingsType daqifi_settings_GetActiveCalBank(void) {
  * identity -- so "a load succeeded" and "calibration is in effect" are
  * different facts.
  *
- * Exact float comparison is correct here rather than an epsilon: the identity
- * defaults are ASSIGNED as 1.0f/0.0f, so a value that has never been through a
+ * CalM/CalB are DOUBLE (AInRuntimeConfig.h), so the literals are written 1.0 /
+ * 0.0 rather than 1.0f / 0.0f -- the float forms promote to exactly the same
+ * values, but reading a float literal against a double field invites a
+ * precision question that does not exist here.
+ *
+ * Exact comparison is correct rather than an epsilon: the identity
+ * defaults are ASSIGNED as 1.0/0.0, so a value that has never been through a
  * calibration is bit-identical to them. An epsilon would instead answer "is
  * the calibration nearly identity", which is a different and weaker claim --
  * a real coefficient legitimately close to unity would then be reported as no
@@ -132,8 +137,8 @@ bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig) 
         return true;
     }
     for (uint8_t x = 0; x < channelRuntimeConfig->Size; x++) {
-        if (channelRuntimeConfig->Data[x].CalM != 1.0f
-                || channelRuntimeConfig->Data[x].CalB != 0.0f) {
+        if (channelRuntimeConfig->Data[x].CalM != 1.0
+                || channelRuntimeConfig->Data[x].CalB != 0.0) {
             return false;
         }
     }
