@@ -101,7 +101,7 @@ bool wifi_tcp_server_ProcessReceivedBuff(void);
  * and clears any pending data in the client's buffers.
  */
 void wifi_tcp_server_CloseClientSocket(void);
-static bool TcpServerFlush() {
+static bool TcpServerFlush(void) {
     int16_t sockRet;
     bool funRet = false;
     if (gpServerData->client.clientSocket < 0) {
@@ -306,6 +306,11 @@ static int microrl_commandComplete(microrl_t* context, size_t commandLen, const 
     }
 
     if (command != NULL && commandLen > 0) {
+        // #914: drain any deferred SD-task failure into THIS context before
+        // dispatching the next command -- must run before SCPI_Input (see
+        // SCPI_DrainDeferredSdError's own comment for why the ordering
+        // matters).
+        SCPI_DrainDeferredSdError(&client->scpiContext);
         return SCPI_Input(&client->scpiContext, command, commandLen);
     }
 
@@ -336,7 +341,7 @@ static int CircularBufferToTcpWrite(uint8_t* buf, uint32_t len) {
 
     // Return number of bytes written on success, negative on error
     // Circular buffer expects this API: return >= 0 (bytes written) or < 0 (error)
-    bool flushResult = TcpServerFlush(&gpServerData->client);
+    bool flushResult = TcpServerFlush();
     return flushResult ? (int)len : -1;
 }
 //==========================External Apis==========================

@@ -45,7 +45,7 @@ The PIC32MZ ADCHS peripheral has two classes of ADC channels with different read
 3. EOS fires at full-scan completion → `MC12bADC_EosInterruptTask` reads monitoring channels (OBDiag=1 sessions and idle)
 4. Software-trigger path (`MC12b_TriggerConversion`) remains for idle polling and non-HW-trigger modes
 
-**What a sample's timestamp means (#729):** the stamp is the acquisition **trigger** instant (`baseTS + N × periodTicks` since #722), not the conversion instant. `baseTS` is a *software* read of TMR6 at TIMER_5 ISR entry, not a hardware capture at the compare match, so every stamp carries one fixed, unmeasured µs-scale session-wide offset — inter-tick spacing is exact, absolute anchoring is not. T1 channels on the ARDY-direct path are same-tick *in steady state* (see the catch-up caveat below, which applies to them too). **Cached-path channels can carry an older conversion**, for two different reasons: NQ1 Type 2 because the shared MODULE7 scan armed at tick N completes *after* the tick-N deferred task has already read `BOARDDATA_AIN_LATEST`; NQ3 AD7609 because it has no MODULE7 scan at all — `ADC_HandleAD7609Interrupt` (`firmware/src/HAL/ADC.c:64`) publishes into LATEST (`ADC.c:89`) when its BSY deferred task runs, independently of the streaming tick. In **steady state** that skew is fixed and uniform; under **deferred-task catch-up** it is not — the stamp is counter-derived while the value is read live from the one-deep slot, so a backlogged iteration can emit a value *newer* than its own stamp (#722 fixed the stamp side only). It is still the only self-consistent choice given one `Timestamp` per packet, and it matches the `ScanStaleDropped` freshness model (#557/#563: data one scan behind is *defined* as valid current-tick data). Δt between samples is exact regardless; only absolute phase alignment against an external event needs to account for it. The per-config offset is not currently reported and has not been measured — see `docs/ADC_HW_SEMANTICS.md` § "Timestamp semantics".
+**What a sample's timestamp means (#729):** the stamp is the acquisition **trigger** instant (`baseTS + N × periodTicks` since #722), not the conversion instant. `baseTS` is a *software* read of TMR6 at TIMER_5 ISR entry, not a hardware capture at the compare match, so every stamp carries one fixed, unmeasured µs-scale session-wide offset — inter-tick spacing is exact, absolute anchoring is not. T1 channels on the ARDY-direct path are same-tick *in steady state* (see the catch-up caveat below, which applies to them too). **Cached-path channels can carry an older conversion**, for two different reasons: NQ1 Type 2 because the shared MODULE7 scan armed at tick N completes *after* the tick-N deferred task has already read `BOARDDATA_AIN_LATEST`; NQ3 AD7609 because it has no MODULE7 scan at all — `ADC_HandleAD7609Interrupt` (`firmware/src/HAL/ADC.c:64`) publishes into LATEST (`ADC.c:89`) when its BSY deferred task runs, independently of the streaming tick. In **steady state** that skew is fixed and uniform; under **deferred-task catch-up** it is not — the stamp is counter-derived while the value is read live from the one-deep slot, so a backlogged iteration can emit a value *newer* than its own stamp (#722 fixed the stamp side only). It is still the only self-consistent choice given one `Timestamp` per packet, and it matches the `ScanStaleDropped` freshness model (#557/#563: data one scan behind is *defined* as valid current-tick data). Δt between samples is exact regardless; only absolute phase alignment against an external event needs to account for it. A third, finer offset is the **intra-scan** one: Type-2 inputs convert sequentially within one scan, in ascending AN order, so input *k* at scan position *p* is captured `[p × (SAMC+16) + (SAMC+2)] × TAD7` after the trigger — every position, including the first, carries its own `(SAMC+2) × TAD7` shared-S&H acquisition aperture (it is not captured *at* the trigger the way a Type 1 input is), on top of the `(SAMC+16) × TAD7` slots the channels ahead of it consumed (#1112 round-2; round-1 had folded the aperture into position 0 only and left later positions short by that same amount). That one is deterministic and **is** reported, since **#267**, as `channels[].scan_offset_ticks` in `CONF:CAP:JSON?` (timestamp-timer ticks, the `timing.timestamp_hz` domain; 0 only for simultaneous or not-scanned channels — every scanned Type-2 channel, including the first, is nonzero). The whole-scan cache lag and the session-wide seed offset above are still neither reported nor measured — see `docs/ADC_HW_SEMANTICS.md` § "Timestamp semantics".
 
 **Key files:**
 - `services/streaming.c` — deferred task T1 direct read, session CSS rebuild, scan-bound cap term
@@ -181,12 +181,34 @@ SYSTem:STReam:STATS:CLEar  # Reset all counters
 | `SampleLossPercent` | uint32 | `QueueDroppedSamples / (Total + Dropped) * 100` |
 | `ByteLossPercent` | uint32 | `(USB + WiFi + SD dropped) / TotalBytesStreamed * 100` |
 | `WindowLossPercent` | uint32 | Sliding-window sample loss % (0-100), updated every N samples |
+| `ReadLoopMaxNs` | uint64 | #251: longest single tick of the per-channel read loop in `_Streaming_Deferred_Interrupt_Task`, in ns. **Wall time**, so an interrupt that preempts the loop is counted inside it: this is the worst tick seen, not the loop's own worst case. Present only in a `READ_LOOP_PROFILE` build (the default); `-DREAD_LOOP_PROFILE=0` removes both `ReadLoop*` fields. |
+| `ReadLoopMeanNs` | uint64 | #251: mean per-tick time of that loop in ns, over every tick that reached it since the last clear. Divide by the enabled channel count for a per-channel figure (the ADC-side term of the NQ1 cap, which `streaming.h` states in the same unit), and compare T1-only against T2-only configs to separate the ARDY-direct branch from the LATEST-cache branch. Integer ns, not µs, because a one-channel loop is under a microsecond. Resolution is one core-timer count, 1e9 / (SYSCLK/2): 7.94 ns on the 252 MHz build. The conversion assumes the clock the build targets. |
 
 **Distinguishing failure modes** with the ISR counter (#265):
 - `TimerISRCalls < freq × duration` → timer is rate-limited (PIC32MZ ~90 kHz hardware ceiling)
 - `TimerISRCalls == TotalSamples + QueueDropped` → every ISR is accounted for; nothing lost between ISR and deferred task (should always hold)
 - `QueueDroppedSamples > 0` → sample pool exhausted (encoder/output too slow for the rate the timer is firing)
 - `UsbDroppedBytes / SdDroppedBytes > 0` → encoder is fine but transport can't keep up
+
+**One byte-drop cause is NOT back-pressure (#1021).** A `*DroppedBytes` rise
+whose `SYST:LOG?` carries `packet <n> B exceeds smallest active ring <m> B`
+means the encoded packet was **larger than the ring's total capacity**, not that
+the ring was momentarily full: the transport writes are all-or-nothing against
+`CircularBuf_NumBytesFree()`, whose maximum is the ring's `buf_size`, so such a
+write fails identically on an empty ring and there is no rate at which it starts
+succeeding. It is reachable because all three encoders fill whatever room they
+are handed and the first encode of a wake is handed the **whole** encoder buffer
+(that is deliberate — it is what lets `JSON_Encoder.c` recognise a sample that
+fits no buffer at all, #164/#961), while the smallest *legal* ring is smaller
+than the default encoder buffer: `STREAMING_WIFI_MIN` 1,400 and
+`STREAMING_SD_CIRCULAR_MIN` 4,096 against 8,192. So it needs a queue backlog
+plus a hand-set `SYSTem:MEMory:{WIFI,SD}:BUFfer` near its floor, not an exotic
+channel count. Before #1021 each such packet also cost the full
+`STREAM_WRITE_TIMEOUT_MS` (10 s) of retrying with the encoder task blocked, so
+the queue behind it overflowed and the visible loss was mostly
+`QueueDroppedSamples` from the stall rather than the packet itself; the packet
+is now dropped immediately and the counters reflect only it. **Remedy:** raise
+the named interface's buffer, or lower `SYSTem:MEMory:ENCoder:BUFfer` below it.
 
 **Thread safety:** `TotalSamplesStreamed`, `TotalBytesStreamed`, and `TimerISRCalls` are 64-bit counters (safe for million-year sessions). The first two are protected by `taskENTER_CRITICAL`/`taskEXIT_CRITICAL` on each increment and during snapshot reads. Drop counters remain 32-bit (atomic on PIC32MZ). `TimerISRCalls` lives in a separate `static volatile uint64_t gTimerISRCalls` global, incremented in true ISR context (TIMER_5 — the 32-bit TMR4/5 streaming-timer pair's vector, priority 3, ≤ max-syscall 4) by a single writer (no critical section needed because same-source can't preempt itself); the snapshot read uses `taskENTER_CRITICAL` which raises the syscall priority above the kernel-managed ISR threshold and blocks the timer, making the non-atomic 64-bit read coherent.
 
@@ -263,11 +285,36 @@ The firmware computes a maximum safe streaming frequency as a `min()` of an **AD
 The last two additive arguments are **#832** and both exist to keep a raise
 inside the conditions it was measured under. `isJson` excludes JSON from the
 pure-T1 CSV refit — it shares that branch and is *additive-bound* at USB 1ch,
-so a CSV-measured raise would silently lift JSON's cap; it keeps the #563 law
-until it has a precision-4 basis of its own (#529 follow-up).
-`voltagePrecision` gates the refit to `<= 4`: 0 is `int_to_str` and 1..4 emit
-fewer or equal characters than the precision-4 basis, while 5..10 emit **more**
-and were never measured, so they fall through to the #563 law.
+so a CSV-measured raise would silently lift JSON's cap. JSON now has its own
+precision-4 basis (**#920**, 2026-09-15): two JSON-only branches sit ahead of
+the shared `else` — pure-T1 at 1 channel (8602 Hz, was 10589, set at 93% of a
+measured-clean ceiling), and **armed/OBDiag-off at ANY channel count**
+(7442 down to 1416 Hz). That second branch originally covered 11–16 channels
+only (2335 down to 1440 Hz); a same-day **T2-ramp refit** widened it to every
+armed count after the initial grid's follow-up run found 3×T2/5×T2/8×T2/11×T2
+also over ceiling — a T2 (MODULE7 scan) channel costs more CPU per tick than a
+T1 channel. The shared `#563` law already prices them differently (4550 ns/T1
+vs 15190 ns/T2 in its armed form) but not differently ENOUGH at precision 4;
+the `#529` transport curve `32000/(2+n)` is channel-type-**blind** (same cost
+per channel regardless of type) and is wrong for the opposite reason. Both
+under-priced T2 at precision 4 on `main` even where this PR's own original
+branch didn't reach. The refit law
+(`period_ns = 73576 + 27921·nT1 + 31975·nT2user`) is applied as
+`max(this, the shared `else` period)` so it can only lower a config's cap,
+never raise one — load-bearing at 1×T2, where the raw law alone would have
+raised 7442→7579 Hz. It lands at or under 93% of every measured-clean ceiling,
+tighter (~93%) at the two points that bind (3×T2, 11×T2) and looser (~80–92%)
+elsewhere, including a clean-but-never-failed point (5T1+5T2, 2666→2144 Hz)
+that only bounds the fit from above. Both branches are NOT gated by
+`voltagePrecision` — see the streaming.h comment for why a cap that only
+*lowers* JSON's rate cannot be less safe at any precision than the law it
+replaces. Every other JSON config (2–5 pure-T1 channels, any OBDiag-on
+config) still keeps the #563 law via the shared `else`, unmeasured at
+precision 4 and tracked as follow-ups; so is JSON at precisions 5–10, and
+JSON on NQ2/NQ3.
+`voltagePrecision` gates the **CSV** refit to `<= 4`: 0 is `int_to_str` and
+1..4 emit fewer or equal characters than the precision-4 basis, while 5..10
+emit **more** and were never measured, so they fall through to the #563 law.
 `CONFigure:VOLTage:PRECision` and `CONFigure:VOLTage:LOAD` are both
 rejected while streaming
 (same idiom as the `CONF:ADC:CHANnel` #116 guard) so a session cannot move onto

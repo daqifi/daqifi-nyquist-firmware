@@ -131,6 +131,10 @@ Each is opt-in, disabled by default, and releases its pins when disabled.
 - **Mid-stream SD-logging stop is reported (#752)** — in `OPER` and in `STATS`.
 - **Over-high caps lowered where they caused at-cap silent loss** — pure-T1 PB
   (#714/#715) and USB+SD CSV 1ch (#719/#721).
+- **`DIO:PORt:ENAble` mid-stream CSV desync (#1005/#1011)** — the setter now takes the
+  same pre-parse streaming-config claim as the other cap-input setters and is refused
+  while a stream is armed or running, instead of silently changing the CSV column count
+  under a header that was already sent.
 
 ### SD card
 
@@ -289,12 +293,6 @@ nothing is corrupted (daqifi-desktop#835).
   `QueueDroppedSamples`.
 
 **Streaming**
-- **OUTPUT CORRUPTION — `DIO:PORt:ENAble` toggled mid-stream desynchronises CSV framing.**
-  It has no streaming guard, and `csv_Encode()` reads the flag live, so enabling or
-  disabling DIO after the header has been sent adds or removes the `dio_ts,dio_val`
-  columns from subsequent rows while the header still describes the old shape. Rows then
-  no longer match their header. Pre-existing — set the DIO enable state before starting a
-  stream.
 - The JSON transport caps (#529) were fitted at the precision a device actually boots with
   (**0** — see #910, where the declared default of 4 is never applied). Explicitly raising
   precision to 4+ costs roughly 10% more encoder time, against a fit margin of about the

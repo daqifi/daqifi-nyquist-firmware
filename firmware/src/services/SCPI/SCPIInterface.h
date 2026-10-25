@@ -105,6 +105,16 @@ extern "C" {
                              ScpiContextStorage* storage);
 
     /**
+     * @brief #914: drain a deferred SD-task failure into THIS transport's
+     *        own error queue, if one is pending for it. Call once per command
+     *        boundary, BEFORE SCPI_Input -- see the definition for why that
+     *        ordering (relative to libscpi's cmd_error reset) is required.
+     * @param context This transport's own SCPI context (never another
+     *        transport's -- #999 keeps these deliberately separate).
+     */
+    void SCPI_DrainDeferredSdError(scpi_t *context);
+
+    /**
      * Size of the shared SCPI response scratch buffer. Sized to hold the
      * largest known SCPI response (DaqifiOutMessage protobuf, currently
      * 2008 bytes). All callers that need ≥256 B of scratch should use this
@@ -346,16 +356,29 @@ extern "C" {
      * report as "streaming is active", so add a parameter here at the same
      * time rather than letting it fall through.
      *
+     * #977 is the first exercise of that warning, and it is resolved the other
+     * way round: the interlock did NOT add a third enum value. A config change
+     * refused because a SESSION START holds the interlocked claim reports
+     * STREAM_CFG_CLAIM_BUSY, so it lands on the `busy` arm below, whose wording
+     * is therefore widened to name both holders. The caller's remedy is
+     * identical (retry), and the PRECISE holder is logged by
+     * Streaming_BeginConfigChange itself one line earlier -- so SYSTem:LOG?
+     * still distinguishes them without a parameter here, and none of the
+     * thirteen call sites had to change. The warning above stays live for a
+     * reason that is genuinely a third OUTCOME rather than a second spelling of
+     * "someone else holds it".
+     *
      * @param context SCPI context
      * @param busy    true when the claim was refused because ANOTHER config
-     *                change holds it, false when a session is armed/running
+     *                change -- or, since #977, a session start -- holds the
+     *                interlocked claim; false when a session is armed/running
      * @param what    the command name, e.g. "CONF:ADC:CHANnel"
      */
     static inline scpi_result_t SCPI_RejectCfgClaim(scpi_t *context, bool busy,
                                                     const char *what) {
         if (busy) {
-            LOG_E("%s rejected: another streaming config change is in flight "
-                  "(retry)", what);
+            LOG_E("%s rejected: another streaming config change or session "
+                  "start is in flight (retry)", what);
         } else {
             LOG_E("%s rejected: streaming is active (stop streaming first)",
                   what);
