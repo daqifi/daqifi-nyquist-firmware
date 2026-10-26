@@ -106,21 +106,58 @@
  * transports from corrupting each other's in-flight command text and error
  * queues (#999), and 512 is already pinned by #100/#263.
  *
- * BOTH PAYMENTS ARE IN THIS DEFINITION, so the column figures in the two
- * paragraphs above are each one payment stale: #958's were computed before
- * #999's 2048 B landed, #999's before #958's 512 B. With both, the pool is
- * 194048 B and at 16 channels the partitioned capacities are USB-only 1551,
- * WiFi-only 1100, SD-only 1911 and USB+SD 1053 -- (pool - (USB + WiFi + SD
- * + encoder circulars)) / 74 over docs/MEMORY_ARCHITECTURE.md's own buffer
- * values: arithmetic, not a bench measurement at this size.
+ * Trimmed a further 512 B (#914) to pay for sd_card_manager.c's
+ * gSdAsyncError[], a 2-element array (one per SD reply target: USB, WiFi-TCP)
+ * of {int32_t code; uint32_t generation;} used to hand a GET open-failure's
+ * deferred SCPI error from the SD task to the owning transport at its next
+ * command boundary. The array itself is 16 B (2 * 8 B, no padding -- both
+ * fields are already 4-byte aligned); same mechanism as #824/#925/#999/#958,
+ * and paid at the same 512 B quantum those used rather than a byte-exact
+ * amount, because (as #999's comment already states) BSS growth does not map
+ * 1:1 onto stack-region "available" -- the link is the arbiter, not the
+ * arithmetic. Verified with a real link AT THE MERGED SIZE, which is the one
+ * that matters: neither parent ever linked 193536 -- both of their defines
+ * evaluate to 194048 (five subtrahends summing 4608 each), and only the union
+ * of the two payments reaches six terms. Measured on this merge, 2026-10-16,
+ * after `rm -rf build dist` so it is a genuine relink:
  *
- * Two consequences. USB+SD stays below the 1100-slot queue, so every payment
- * costs usable slots there -- ~7 per 512 B and ~28 for #999's 2048 B, which
- * the #999 paragraph's USB-only framing does not show. And WiFi-only now sits
- * AT the 1100-slot queue depth with 8 bytes to spare: the next payment makes
- * the pool the binding constraint in that column too, so count that column
- * before paying again. */
-#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U - 512U - 2048U)
+ *     rc=0, hex produced (2,280,675 B)
+ *     .bss.gPoolStorage  0x2f400 = 193536      <- both payments in the image
+ *     stack  0x2ba8 = 11176 B reserved  vs  _min_stack_size 0x2000 = 8192
+ *                                        => 2984 B of slack
+ *
+ * #958 recorded 504 B of slack at its own base; this merge has 2984, because
+ * it trims 512 B more BSS than either parent. The direction is also why the
+ * resolution cannot newly break the link: net BSS falls 496 B against main and
+ * 508 B against #914's own branch, and the failure mode both paragraphs
+ * describe is BSS GROWTH starving the stack region. Raise the trim if a future
+ * link fails with "Not enough memory for stack".
+ *
+ * FOUR PAYMENTS ARE NOW IN THIS DEFINITION (#824/#925 512 each, #999 2048,
+ * #958 512, #914 512), so every per-payment column figure in the paragraphs
+ * above is stale by however many landed after it was written -- #914's own
+ * "1558 -> 1551" was computed before #958's 512 B. The figures below are the
+ * only current ones.
+ *
+ * ⚠ AND #958's COMMENT ASKED WHOEVER PAID NEXT TO COUNT THE WiFi-ONLY COLUMN,
+ * because it had come to rest exactly AT the queue depth. This is that
+ * payment, and the answer is that the column crosses. At 16 channels, by
+ * #958's own method -- (pool - (USB + WiFi + SD + encoder circulars)) / 74
+ * over docs/MEMORY_ARCHITECTURE.md's buffer values, arithmetic rather than a
+ * bench measurement -- the pool goes 194048 -> 193536 B and:
+ *
+ *     USB-only   1551 -> 1544   queue-bound, unchanged in practice
+ *     WiFi-only  1100 -> 1093   WAS AT the 1100-slot clamp, NOW POOL-BOUND
+ *     SD-only    1911 -> 1904   queue-bound, unchanged in practice
+ *     USB+SD     1053 -> 1046   already pool-bound, -7 usable slots
+ *
+ * So TWO of the four columns are now pool-bound rather than one, and this
+ * payment costs 7 USABLE slots in each of them -- not the "nil in practice"
+ * the #824/#925 paragraphs claim and #958 already corrected. It remains the
+ * right trade (7 slots of burst absorption against a link that fails to
+ * build) but it is a trade, and WiFi-only is no longer the column with
+ * headroom. The next payment costs usable slots in two columns, not one. */
+#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U - 512U - 2048U - 512U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
 /* The overcommit fallback below carves these four minimums and expects the
