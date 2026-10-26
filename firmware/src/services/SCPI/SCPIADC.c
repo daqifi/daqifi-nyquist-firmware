@@ -1328,15 +1328,29 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context) {
      * -- SCPI_ADCChanCalmGet below, MC12b_ConvertToVoltage's per-conversion
      * read, and the protobuf system message.
      *
-     * Of those three, only the getter is closed. An atomic store stops a
-     * reader seeing a HALF-WRITTEN coefficient; it does not stop a reader
-     * that straddles a COMPLETED one, loading the old low half and then the
-     * new high half, so each reader needs its own section too. The getters
-     * have one. The per-conversion reader and the metadata encoders do not,
-     * and still assemble torn values -- tracked as #1054, deliberately not
-     * fixed here: that reader runs per channel per sample, so a critical
-     * section in it is a hot-path change needing the enforced cap
-     * re-validated on hardware rather than reasoned about.
+     * All three of those readers are already closed -- #1054, the read half
+     * of #904, is in the tree. An atomic store stops a reader seeing a
+     * HALF-WRITTEN coefficient; it does not stop a reader that straddles a
+     * COMPLETED one, loading the old low half and then the new high half, so
+     * each reader needs its own section too, and each has one:
+     *
+     *   - the getters below;
+     *   - MC12b_ConvertToVoltage (MC12bADC.c) and the AD7609 twin
+     *     (AD7609.c), which copy CalM, CalB and the module Range together
+     *     under ONE section and scale outside it;
+     *   - the protobuf system message (NanoPB_Encoder.c).
+     *
+     * ⚠ With one difference worth keeping straight, because "guarded" is not
+     * one property here. The two conversion paths snapshot the PAIR, so they
+     * see slope and offset at a single instant. The encoder takes a separate
+     * section per coefficient, which closes the torn-double read but NOT a
+     * straddle across a bulk load: a message can still carry CalM from
+     * before a LOADcal/USECal and CalB from after it. That is a pair-
+     * coherence gap, not a torn 64-bit value, and it is not this store's to
+     * close -- this comment used to assert the per-conversion reader was
+     * unguarded and the fix was deferred for hot-path reasons, which was
+     * simply out of date: #1054 landed it, holding only the loads inside the
+     * section, which is what made the per-sample cost acceptable.
      *
      * Task context only, which every caller satisfies: the SCPI callbacks,
      * and LOADcal's boot-time twin in daqifi_settings_LoadADCCalSettings,

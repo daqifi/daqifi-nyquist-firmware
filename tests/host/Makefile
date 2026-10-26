@@ -3138,17 +3138,34 @@ TEAR904_BIN := run_904_tests
 # (`make -np | grep '^run_904_tests:'`), which must name this file.
 SETTINGS_SRC_904 := ../../firmware/src/services/daqifi_settings.c
 
-$(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h $(SETTINGS_SRC_904) $(SCPIADC_SRC) $(RECIPES)
-	@for pair in "daqifi_settings_LoadADCCalSettings:$(SETTINGS_SRC_904)" \
-	             "daqifi_settings_SaveADCCalSettings:$(SETTINGS_SRC_904)"; do \
-	   fn=`echo $$pair | cut -d: -f1`; src=`echo $$pair | cut -d: -f2`; \
-	   sed -n "/^bool $$fn/,/^}/p" $$src > /tmp/.fw904_fn.$$$$; \
-	   e=`grep -c 'taskENTER_CRITICAL' /tmp/.fw904_fn.$$$$`; \
-	   m=`grep -c '\.CalM' /tmp/.fw904_fn.$$$$`; \
-	   rm -f /tmp/.fw904_fn.$$$$; \
-	   test "$$e" -ge 1 && test "$$m" -ge 1 \
-	     || { echo "ERROR: $$fn in $$src no longer guards its 64-bit CalM/CalB"; \
-	          echo "       copy loop (taskENTER_CRITICAL=$$e, CalM refs=$$m)."; \
+# Comment-stripper for the order guard below. `-fpreprocessed` is what makes
+# this work on a Harmony .c: it does NOT resolve the #includes (nothing on this
+# station can) and does NOT expand macros, so taskENTER_CRITICAL() is seen as
+# written -- it only removes comments, which is the whole requirement.
+STRIP904 := $(CC) -fpreprocessed -E -P
+
+# ⚠ cal_order_904.awk IS A PREREQUISITE BELOW because the guards READ it.
+# A guard that reads a file it does not depend on does not re-run when that
+# file changes -- make reuses the binary and the check is silently skipped.
+# That is the defect this row was pulled up on one round earlier; it applies
+# to the checker itself exactly as it applied to the sources it checks.
+$(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h cal_order_904.awk $(SETTINGS_SRC_904) $(SCPIADC_SRC) $(RECIPES)
+	@for spec in "daqifi_settings_LoadADCCalSettings:$(SETTINGS_SRC_904):EMBX" \
+	             "daqifi_settings_SaveADCCalSettings:$(SETTINGS_SRC_904):EMBX" \
+	             "ADCChanCalmSetClaimed:$(SCPIADC_SRC):EMX" \
+	             "ADCChanCalbSetClaimed:$(SCPIADC_SRC):EBX"; do \
+	   fn=`echo $$spec | cut -d: -f1`; src=`echo $$spec | cut -d: -f2`; \
+	   want=`echo $$spec | cut -d: -f3`; \
+	   got=`$(STRIP904) $$src 2>/dev/null | awk -v fn=$$fn -f cal_order_904.awk`; \
+	   test "$$got" = "$$want" \
+	     || { echo "ERROR: $$fn in $$src no longer brackets its 64-bit cal"; \
+	          echo "       access in a critical section IN ORDER."; \
+	          echo "       event sequence: got '$$got', want '$$want'"; \
+	          echo "         E=taskENTER_CRITICAL  M=.CalM  B=.CalB  X=taskEXIT_CRITICAL"; \
+	          echo "       A missing letter is a missing (or COMMENTED-OUT) call;"; \
+	          echo "       a reordered one means a store sits OUTSIDE the section"; \
+	          echo "       -- and that case has the same token COUNTS as a correct"; \
+	          echo "       one, which is why this checks order, not counts."; \
 	          echo "       #1054 guards the READERS, so an unguarded WRITER does"; \
 	          echo "       not leave a symmetric gap -- it hands a protected"; \
 	          echo "       reader a TORN pair, which the critical section then"; \
@@ -3156,27 +3173,31 @@ $(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h $(SETTINGS_SRC_904) $(
 	          echo "       test_904_cal_pair_tear.c: neither half suffices alone."; \
 	          exit 1; }; \
 	 done
-	@for fn in ADCChanCalmSetClaimed ADCChanCalbSetClaimed; do \
-	   n=`$(call CNT_IN_FN_DEF_904,$(SCPIADC_SRC),$$fn,taskENTER_CRITICAL)`; \
-	   test "$$n" -ge 1 \
-	     || { echo "ERROR: $$fn in $(SCPIADC_SRC) stores a 64-bit cal"; \
-	          echo "       coefficient with no critical section (found $$n)."; \
-	          echo "       These are two of #904's three writer sites."; \
-	          exit 1; }; \
-	 done
+#	⚠ NEGATIVE ARM -- the guard proves it CAN FAIL, on every build.
+#	The guard this replaced passed with both critical-section calls commented
+#	out, and nothing in the build would ever have said so. A positive check
+#	alone cannot distinguish "the code is correct" from "the check is inert",
+#	so the inverse is asserted here rather than left to a commit message:
+#	comment out the real ENTER, re-run the SAME pipe, and require a different
+#	verdict. If this ever passes, the guard above has gone vacuous.
+	@neg=`sed 's|taskENTER_CRITICAL();|/* taskENTER_CRITICAL(); */|' $(SETTINGS_SRC_904) \
+	        | $(STRIP904) -x c - 2>/dev/null \
+	        | awk -v fn=daqifi_settings_LoadADCCalSettings -f cal_order_904.awk`; \
+	 test "$$neg" != "EMBX" \
+	   || { echo "ERROR: the #904 order guard is VACUOUS -- a commented-out"; \
+	        echo "       taskENTER_CRITICAL still produced the accepted"; \
+	        echo "       sequence 'EMBX', so the guard above cannot fail and"; \
+	        echo "       is not a guard. Check that $(STRIP904) still strips"; \
+	        echo "       comments and that cal_order_904.awk still parses."; \
+	        exit 1; }
 	$(CC) $(CFLAGS) -o $(TEAR904_BIN) test_904_cal_pair_tear.c
 
-# Definition-anchored counter. ⚠ The generic CNT_IN_FN anchors on the first
-# "^(static )?scpi_result_t <fn>[(]" and exits at the next one, so for a
-# FORWARD-DECLARED function it starts at the prototype and exits immediately,
-# returning 0 for a body that plainly contains the pattern. Both
-# ADCChanCalm/CalbSetClaimed are forward-declared. A guard expecting a nonzero
-# count fails loudly on that 0; one expecting ABSENCE would pass VACUOUSLY.
-CNT_IN_FN_DEF_904 = awk -v fn="$(2)" -v pat='$(3)' \
-	'$$0 ~ "^(static )?scpi_result_t " fn "[(]" && /{[[:space:]]*$$/ { f=1; next } \
-	 f && /^(static )?scpi_result_t .*{[[:space:]]*$$/                { exit } \
-	 f && index($$0, pat)                                             { n++ } \
-	 END { print n+0 }' $(1)
+# CNT_IN_FN_DEF_904 lived here and is GONE: the order guard replaced its only
+# two call sites, so it was a definition nothing called. Its lesson -- that the
+# shared CNT_IN_FN returns 0 for a FORWARD-DECLARED function, because it
+# anchors on the prototype and exits at the next match, so a guard expecting
+# ABSENCE passes VACUOUSLY on that false 0 -- is kept in cal_order_904.awk's
+# header, where the definition-vs-prototype rule is actually implemented.
 
 run: $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
      $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) \
