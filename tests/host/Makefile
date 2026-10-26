@@ -1192,6 +1192,113 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       call site, re-derive whether the abort arm still resets before"; \
 	       echo "       lowering this count."; \
 	       exit 1; }
+	@# ⛔ #1124 r11 finding 3: the #924 manifest gate must read a SNAPSHOT of
+	@# gWriteSessionIsStreamingLog taken in the #782 critical section, never the
+	@# live global.
+	@#
+	@# SCPI is priority 7 and the SD task 5, so a SYST:STR:STOP landing after
+	@# that critical section clears the global -- and the gate sits ~200 lines
+	@# below it, past the header SYS_FS_FileWrite. Reading the global there
+	@# means a session that DID open its first stream file and write its header
+	@# silently gets no manifest. openAborted already covers a STOP arriving
+	@# BEFORE the section; this covers the window after it. The adjacent header
+	@# write (openNeedsStreamHeader) has always snapshotted for exactly this
+	@# reason -- the manifest gate just had not followed suit.
+	@#
+	@# COUNT BEFORE POSITION. The count is what makes the position meaningful:
+	@# with exactly one assignment and exactly one use, "the assignment is
+	@# inside the critical section and the use is after it" describes THE pair,
+	@# not merely some pair. Pinning order alone would pass a second, live read
+	@# added anywhere.
+	@#
+	@# AND THE ASSIGNMENT IS PINNED BY ITS EXACT FORM, both sides. A mutant
+	@# measured during this pin's own development proves why: with
+	@# `bool openIsStreamingLog = openNeedsStreamHeader;` the count is still 1,
+	@# the order still holds and no live global is read in the success arm --
+	@# every weaker arm of this guard passes -- yet openNeedsStreamHeader is
+	@# ALSO gated on gSdRotating, false for the session's FIRST file, so the
+	@# manifest would never open at all. A position-and-count pin cannot see
+	@# which value it counted; only the exact form can.
+	@#
+	@# ⚠ ORDER, NOT LINE NUMBERS. `-fpreprocessed -E` deletes comment LINES
+	@# (6406 -> 3589 here), so absolute numbering does NOT survive it; the
+	@# existing "preserves the geometry" note above is about continuation lines
+	@# WITHIN a statement, which is a different claim. Relative order does
+	@# survive -- the preprocessor never reorders code -- and relative order is
+	@# all this needs.
+	@#
+	@# A missing anchor FAILS. If the #782 critical section is refactored away
+	@# this cannot evaluate its invariant, and "could not evaluate" must not
+	@# read as "holds" (the third-state lesson this file's -Wall gate records).
+	@#
+	@# EACH FAILURE MODE EMITS ITS OWN FIRST `ERROR:` LINE, deliberately.
+	@# pin1124_mutate.sh matches on the FIRST ^ERROR line, so one shared
+	@# message would let every r11 mutant satisfy the same substring -- proving
+	@# only that SOMETHING fired, never that the right arm did. A control that
+	@# matches on both sides is not a control.
+	@#
+	@# ⚠ And the checks below are shell `if`s inside ONE backslash-continued
+	@# command, so they carry NO inline comments: the continuation joins every
+	@# line, and a `#` anywhere in it would comment out all the checks that
+	@# follow. Explanation belongs here, above the command, not inside it.
+	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null > /tmp/.sd1124r11.$$$$; \
+	 n_snap=`grep -cF 'bool openIsStreamingLog = gWriteSessionIsStreamingLog;' /tmp/.sd1124r11.$$$$`; \
+	 n_use=`grep -c 'if (openIsStreamingLog' /tmp/.sd1124r11.$$$$`; \
+	 ord=`awk '/taskENTER_CRITICAL/{e=NR} \
+	           /openAborted = \(gpSDCardSettings->mode/{a=NR; enter=e} \
+	           /bool openIsStreamingLog *=/{s=NR} \
+	           /taskEXIT_CRITICAL/{if(a&&!x)x=NR} \
+	           /if \(openIsStreamingLog/{g=NR} \
+	           END{if(!a||!enter||!x){print "ANCHOR"; exit} \
+	               if(!s||!g){print "PARTIAL"; exit} \
+	               print (enter<s && s<x && x<g) ? "OK" : "ORDER"}' \
+	          /tmp/.sd1124r11.$$$$`; \
+	 stale=`awk '/openAborted = \(gpSDCardSettings->mode/{a=1} \
+	             a&&/taskEXIT_CRITICAL/{x=1} \
+	             x&&/if \(openIsStreamingLog/{exit} \
+	             x&&/gWriteSessionIsStreamingLog/{c++} \
+	             END{print c+0}' /tmp/.sd1124r11.$$$$`; \
+	 rm -f /tmp/.sd1124r11.$$$$; \
+	 if [ "$$ord" = ANCHOR ]; then \
+	   echo "ERROR: #1124 r11's snapshot invariant was NOT EVALUATED -- the #782"; \
+	   echo "       critical section or the #924 gate is no longer where this guard"; \
+	   echo "       can find it in $(SD_MANAGER_SRC)."; \
+	   echo "       'Could not evaluate' must never read as 'holds'. Re-derive the"; \
+	   echo "       anchors and this guard together."; \
+	   exit 1; fi; \
+	 if [ "$$n_snap" -ne 1 ]; then \
+	   echo "ERROR: #1124 r11's latch snapshot is missing or not in its exact form"; \
+	   echo "       in $(SD_MANAGER_SRC) (found $$n_snap, expected exactly 1 of"; \
+	   echo "       'bool openIsStreamingLog = gWriteSessionIsStreamingLog;')."; \
+	   echo "       BOTH SIDES are pinned: a snapshot of openNeedsStreamHeader sits"; \
+	   echo "       in the right place with the right count and still breaks the"; \
+	   echo "       feature outright -- that one is ALSO gated on gSdRotating, which"; \
+	   echo "       is false for the session's FIRST file, so no manifest would ever"; \
+	   echo "       open. Measured as a surviving mutant; hence the exact-form key."; \
+	   exit 1; fi; \
+	 if [ "$$n_use" -ne 1 ]; then \
+	   echo "ERROR: the #924 manifest gate in $(SD_MANAGER_SRC) no longer reads the"; \
+	   echo "       openIsStreamingLog snapshot (found $$n_use 'if (openIsStreamingLog',"; \
+	   echo "       expected exactly 1) -- #1124 r11."; \
+	   echo "       Reading the live global here is the defect itself: SCPI clears it"; \
+	   echo "       at priority 7 while this task runs at 5, so a session that opened"; \
+	   echo "       its first stream file would silently get no manifest."; \
+	   exit 1; fi; \
+	 if [ "$$ord" != OK ]; then \
+	   echo "ERROR: #1124 r11's latch snapshot is taken OUTSIDE the #782 critical"; \
+	   echo "       section in $(SD_MANAGER_SRC) (order check: $$ord)."; \
+	   echo "       Required: taskENTER_CRITICAL < snapshot < taskEXIT_CRITICAL <"; \
+	   echo "       the #924 gate. Outside it, the snapshot can be taken after a"; \
+	   echo "       priority-7 SYST:STR:STOP has already cleared the latch, which is"; \
+	   echo "       the exact race the snapshot exists to close."; \
+	   exit 1; fi; \
+	 if [ "$$stale" -ne 0 ]; then \
+	   echo "ERROR: a LIVE gWriteSessionIsStreamingLog read is back in the OPEN_FILE"; \
+	   echo "       success arm of $(SD_MANAGER_SRC) ($$stale found between the #782"; \
+	   echo "       critical section and the #924 gate) -- #1124 r11."; \
+	   echo "       Everything in that arm must use the snapshot; the global is"; \
+	   echo "       clearable by SCPI at priority 7 while this task runs at 5."; \
+	   exit 1; fi
 	$(CC) $(CFLAGS) -I$(FW_UTIL) -o $(MANIFEST_BIN) test_924_sd_manifest.c $(FW_UTIL)/CRC32.c
 
 $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)

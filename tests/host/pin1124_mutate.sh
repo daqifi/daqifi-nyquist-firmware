@@ -234,6 +234,87 @@ else
 fi
 restore
 
+echo "== R7: THE DEFECT ITSELF (r11 finding 3). The #924 manifest gate reads the =="
+echo "==     LIVE gWriteSessionIsStreamingLog instead of the critical-section    =="
+echo "==     snapshot, so a priority-7 SYST:STR:STOP landing after the #782      =="
+echo "==     section silently costs a started session its whole manifest.        =="
+if sub "$F" 'if (openIsStreamingLog' 'if (gWriteSessionIsStreamingLog'; then
+    expect "R7 gate reads the live global" "no longer reads the"
+else
+    echo "  FAIL R7 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R8: the snapshot is still taken, and still read, but OUTSIDE the #782  =="
+echo "==     critical section -- which reintroduces the race wholesale. Count   =="
+echo "==     and exact-form arms both pass; only the ORDER arm sees it.         =="
+if sub "$F" '                bool openIsStreamingLog = gWriteSessionIsStreamingLog;
+                if (!openAborted) {
+                    gSdRotating = false;
+                }
+                taskEXIT_CRITICAL();' '                if (!openAborted) {
+                    gSdRotating = false;
+                }
+                taskEXIT_CRITICAL();
+                bool openIsStreamingLog = gWriteSessionIsStreamingLog;'; then
+    expect "R8 snapshot outside the critical section" "taken OUTSIDE the #782 critical"
+else
+    echo "  FAIL R8 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R9: THE THIRD STATE. The #782 anchor is renamed away, so the guard      =="
+echo "==     CANNOT evaluate its invariant. It must FAIL, not pass: 'could not   =="
+echo "==     evaluate' collapsing into 'holds' is the defect that made four      =="
+echo "==     earlier false passes in this very harness invisible.                =="
+if sub "$F" 'openAborted = (gpSDCardSettings->mode' 'openWasAborted = (gpSDCardSettings->mode'; then
+    expect "R9 anchor gone, invariant unevaluated" "NOT EVALUATED"
+else
+    echo "  FAIL R9 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R10: THE MUTANT THAT SURVIVES COUNT, ORDER AND THE STALE SWEEP.         =="
+echo "==      The snapshot is in the right place and the gate reads it -- but it =="
+echo "==      snapshots openNeedsStreamHeader, which is ALSO gated on            =="
+echo "==      gSdRotating (false for the session's FIRST file), so no manifest   =="
+echo "==      would EVER open. Measured: this passed until the pin was keyed on  =="
+echo "==      BOTH SIDES of the assignment. A pin cannot see which value it      =="
+echo "==      counted.                                                          =="
+if sub "$F" 'bool openIsStreamingLog = gWriteSessionIsStreamingLog;' \
+            'bool openIsStreamingLog = openNeedsStreamHeader;'; then
+    expect "R10 snapshot of the wrong value" "missing or not in its exact form"
+else
+    echo "  FAIL R10 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R11: a live read creeps back INTO the success arm while the snapshot    =="
+echo "==      stays correct. Order and exact-form arms pass; the stale sweep is  =="
+echo "==      the only arm that sees it.                                         =="
+if sub "$F" '                    if (openIsStreamingLog' \
+            '                    if (gWriteSessionIsStreamingLog) { (void)0; }
+                    if (openIsStreamingLog'; then
+    expect "R11 live read inside the success arm" "LIVE gWriteSessionIsStreamingLog read is back"
+else
+    echo "  FAIL R11 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R12: NEGATIVE CONTROL for the r11 arms. A read of the latch placed      =="
+echo "==      BEFORE the #782 critical section is outside the guarded window and =="
+echo "==      must NOT fire. Without this arm the stale sweep could be a plain   =="
+echo "==      identifier-presence detector -- which would also 'catch' every     =="
+echo "==      mutant above, for the wrong reason.                                =="
+if sub "$F" '                bool openAborted;' \
+            '                (void)gWriteSessionIsStreamingLog;
+                bool openAborted;'; then
+    expect "R12 read outside the guarded window (control)" CLEAN
+else
+    echo "  FAIL R12 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
 echo "== restored =="
 expect "post-restore baseline" CLEAN
 

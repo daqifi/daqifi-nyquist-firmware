@@ -4016,6 +4016,26 @@ void sd_card_manager_ProcessState() {
                  * session entirely, rotations included (see its definition). */
                 bool openNeedsStreamHeader = gSdRotating
                                           && gWriteSessionIsStreamingLog;
+                /* #1124 r11: and snapshot the latch ON ITS OWN, for the #924
+                 * manifest gate further down.
+                 *
+                 * It cannot read the global there. SCPI runs at priority 7 and
+                 * this task at 5, so a SYST:STR:STOP arriving after this
+                 * critical section reaches sd_UpdateSettingsImpl's teardown
+                 * branch and clears gWriteSessionIsStreamingLog -- and the
+                 * manifest gate is ~200 lines below us, on the far side of the
+                 * header SYS_FS_FileWrite. A session that opened its first
+                 * stream file and wrote its header would then get NO manifest,
+                 * because the answer changed between the open and the gate.
+                 *
+                 * openAborted already covers a STOP that lands BEFORE this
+                 * section: the open is abandoned to DEINIT and must not
+                 * produce a manifest (it would also burn manifestOpenAttempted
+                 * on a file with no content). This snapshot covers the window
+                 * AFTER it, which is the half nothing was holding. Same reason
+                 * openNeedsStreamHeader above is a snapshot and not a live
+                 * read; the manifest gate simply had not followed suit. */
+                bool openIsStreamingLog = gWriteSessionIsStreamingLog;
                 if (!openAborted) {
                     gSdRotating = false;
                 }
@@ -4207,15 +4227,30 @@ void sd_card_manager_ProcessState() {
                      * nothing about the manifest can delay or perturb the
                      * file the session is actually logging to.
                      *
-                     * gWriteSessionIsStreamingLog, read directly rather than
-                     * through openNeedsStreamHeader: that one is ALSO gated on
-                     * gSdRotating, which is false for the session's first file
-                     * -- the very open this runs at. The latch alone is the
-                     * right question here ("is this write session a streaming
-                     * log?"), and it is what keeps SYST:STOR:SD:BENCHmark,
-                     * which shares this whole state, from producing a manifest
-                     * (#824 audit round 5's case, in its #924 shape). */
-                    if (gWriteSessionIsStreamingLog
+                     * openIsStreamingLog, NOT the gWriteSessionIsStreamingLog
+                     * global and NOT openNeedsStreamHeader:
+                     *
+                     *   - the global is stale by the time we get here. A STOP
+                     *     between the #782 critical section and this line
+                     *     clears it, and a session that did open its first
+                     *     stream file would silently get no manifest (#1124
+                     *     r11). openIsStreamingLog is that global captured in
+                     *     the same critical section that decided openAborted,
+                     *     so the gate answers the question as it stood when
+                     *     this open was dispatched.
+                     *   - openNeedsStreamHeader is ALSO gated on gSdRotating,
+                     *     which is false for the session's first file -- the
+                     *     very open this runs at -- so it is the wrong
+                     *     snapshot, which is why a second one exists.
+                     *
+                     * The latch alone is the right question here ("is this
+                     * write session a streaming log?"), and it is what keeps
+                     * SYST:STOR:SD:BENCHmark, which shares this whole state,
+                     * from producing a manifest (#824 audit round 5's case, in
+                     * its #924 shape) -- a benchmark arms via the plain-write
+                     * wrapper, so the latch is false at arm time and the
+                     * snapshot carries that false forward unchanged. */
+                    if (openIsStreamingLog
                         && !gSDCardData.manifestOpenAttempted) {
                         gSDCardData.manifestOpenAttempted = true;
                         sd_OpenSessionManifest();
