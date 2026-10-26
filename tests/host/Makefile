@@ -737,40 +737,54 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	  || { echo "ERROR: SCPI_SD_BENCH_STALL_TIMEOUT_MS is no longer '10000U' in $(SD_BENCH_SRC)."; \
 	       echo "       Update FW_STALL_TIMEOUT_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
 	       exit 1; }
-	@w=`grep -cE '^[[:space:]]*while \(\(TickType_t\)\(xTaskGetTickCount\(\) - startTick\)' $(SD_BENCH_SRC)`; \
-	 pc=`grep -cE '^[[:space:]]*UsbCdc_PumpWrite\(\);' $(SD_BENCH_SRC)`; \
-	 dc=`grep -cF 'vTaskDelay(pdMS_TO_TICKS(SD_PRESENCE_PUMP_MS));' $(SD_BENCH_SRC)`; \
-	 test "$$w" = 1 && test "$$pc" = 1 && test "$$dc" = 1 \
-	  || { echo "ERROR: $(SD_BENCH_SRC): the presence-wait pin's anchors are not"; \
-	       echo "       UNIQUE -- while=$$w pump=$$pc pumpDelay=$$dc, each must be 1."; \
-	       echo "       COUNT IS ASSERTED BEFORE POSITION on purpose: a non-unique"; \
-	       echo "       anchor otherwise resolves silently to the first or last hit"; \
-	       echo "       and the pin then fails later as a FALSE NEGATIVE on correct"; \
-	       echo "       code. An earlier version of this pin did exactly that -- it"; \
-	       echo "       matched a COMMENT 570 lines away."; \
-	       exit 1; }
-	@w=`grep -nE '^[[:space:]]*while \(\(TickType_t\)\(xTaskGetTickCount\(\) - startTick\)' $(SD_BENCH_SRC) | cut -d: -f1`; \
-	 p=`grep -nE '^[[:space:]]*UsbCdc_PumpWrite\(\);' $(SD_BENCH_SRC) | cut -d: -f1`; \
-	 d=`grep -nF 'vTaskDelay(pdMS_TO_TICKS(SD_PRESENCE_PUMP_MS));' $(SD_BENCH_SRC) | cut -d: -f1`; \
-	 test "$$w" -lt "$$p" && test "$$p" -lt "$$d" \
-	  || { echo "ERROR: the SD presence-recheck wait in $(SD_BENCH_SRC) no longer"; \
-	       echo "       pumps USB at the PUMP cadence before delaying"; \
-	       echo "       (#1094 rounds 2-3). got: while=$$w pump=$$p delay=$$d;"; \
-	       echo "       need while < pump < delay."; \
-	       echo "       WHY: over USB this runs ON the USB task, so every tick in"; \
-	       echo "       that delay is a tick not spent in UsbCdc_BeginWrite. With SD"; \
-	       echo "       enabled, NO CARD, and a USB-only stream, SD:LISt?/SPACe?"; \
-	       echo "       parks the task: the ring fills, the encoder blocks, and the"; \
-	       echo "       sample pool overflows -- ACQUIRED SAMPLES LOST."; \
-	       echo "       ⚠ THE DELAY MUST BE SD_PRESENCE_PUMP_MS, NOT THE CARD-POLL"; \
-	       echo "       INTERVAL. Round 2 pumped once per card poll, which left a"; \
-	       echo "       25 ms starvation window against CLAUDE.md's measured >=1 ms"; \
-	       echo "       zero-loss cadence (line 452). Two unrelated clocks sharing"; \
-	       echo "       one constant get tuned for whichever one someone is thinking"; \
-	       echo "       about, so this pin names the one it means."; \
-	       echo "       ANCHOR NOTE: pump is matched as a STATEMENT because the"; \
-	       echo "       explanatory comments name the function too -- grep -c gives"; \
-	       echo "       more than the comment-stripped count."; \
+	@# ⛔ #756 item 4 -> A (operator 2026-10-25): THIS PIN'S POLARITY IS INVERTED
+	@# from what it was. It used to assert the presence WAIT existed and that it
+	@# pumped USB before delaying (while < pump < delay). The wait is withdrawn,
+	@# so that pin is not merely obsolete -- deleting it would leave the NEW
+	@# invariant unguarded, and the new invariant is the safety-relevant one:
+	@#
+	@#   SCPI_CheckSDCardPresent() MUST NOT BLOCK.
+	@#
+	@# Over USB this function runs ON the USB task. A 500 ms park there filled
+	@# the ring, blocked the encoder and overflowed the sample pool: ACQUIRED
+	@# SAMPLES LOST. Pumping inside the wait divided the window by 20 and left
+	@# the defect the same KIND, which is what the round-3 HIGH said. So the
+	@# thing worth pinning is the absence of any wait, not the shape of one.
+	@#
+	@# ⚠ READ ON COMMENT-STRIPPED SOURCE, scoped to this ONE function.
+	@#   - Stripped, because the call site necessarily EXPLAINS the withdrawn
+	@#     wait, and that prose contains the words "while", "delay" and
+	@#     "UsbCdc_PumpWrite". Measured: the raw count was 1 and the code count
+	@#     0, the single hit being the word "while" in the new explanation. A
+	@#     raw-text pin here would be re-broken by every future author who
+	@#     documents WHY the wait is gone -- i.e. by doing the right thing.
+	@#   - Scoped, because other functions in this file delay legitimately
+	@#     (SD:BENCHmark's stall loop below is one), so a file-wide absence
+	@#     check would be false on correct code.
+	@#   - And the awk anchor matches the FULL SIGNATURE, not a name prefix.
+	@#     Measured: with a prefix anchor, renaming the function to
+	@#     SCPI_CheckSDCardPresentX STILL MATCHED, so the extraction still
+	@#     succeeded and the vacuity guard below could never fire. An
+	@#     unanchored pattern makes its own guard unreachable, and the mutant
+	@#     that was supposed to prove the guard is what exposed it.
+	@$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null \
+	   | awk '/^static bool SCPI_CheckSDCardPresent\(scpi_t \*context\) \{$$/{f=1} f{print} f&&/^\}/{exit}' \
+	   > /tmp/.sd756_fn.$$$$; \
+	 n=`grep -c . /tmp/.sd756_fn.$$$$`; \
+	 blk=`grep -cE 'vTaskDelay|UsbCdc_PumpWrite|while[[:space:]]*\(|for[[:space:]]*\(' /tmp/.sd756_fn.$$$$`; \
+	 kick=`grep -c 'DRV_SDSPI_DetectPollExpireNow' /tmp/.sd756_fn.$$$$`; \
+	 rm -f /tmp/.sd756_fn.$$$$; \
+	 test "$$n" -gt 4 && test "$$blk" -eq 0 && test "$$kick" -eq 1 \
+	  || { echo "ERROR: SCPI_CheckSDCardPresent() in $(SD_BENCH_SRC) no longer"; \
+	       echo "       matches #756's withdrawn-wait invariant."; \
+	       echo "         function lines extracted: $$n (must be > 4, else the"; \
+	       echo "           extraction found nothing and this check is vacuous)"; \
+	       echo "         blocking constructs:      $$blk (must be 0)"; \
+	       echo "         detect-poll kicks:        $$kick (must be 1)"; \
+	       echo "       A delay, pump or loop here parks the USB task and loses"; \
+	       echo "       ACQUIRED SAMPLES (round-2/3 HIGHs). The kick must stay:"; \
+	       echo "       without it a stale-DETACHED read is never corrected and"; \
+	       echo "       the next query is as wrong as this one."; \
 	       exit 1; }
 	@grep -qE '^#define[[:space:]]+SCPI_SD_BENCH_STALL_POLL_MS[[:space:]]+5U[[:space:]]*$$' $(SD_BENCH_SRC) \
 	  || { echo "ERROR: SCPI_SD_BENCH_STALL_POLL_MS is no longer '5U' in $(SD_BENCH_SRC)."; \
