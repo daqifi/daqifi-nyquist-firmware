@@ -786,6 +786,79 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       itself will refuse, silently losing the whole session's"; \
 	       echo "       integrity records with no diagnostic."; \
 	       exit 1; }
+	@#1124: every path construction must go through the ONE canonicalising
+	@# accessor, so no site can emit "dir//file" when the configured directory
+	@# ends in '/'. KEYED ON THE FORMAT PREFIX, and read from the PREPROCESSED
+	@# translation unit, for two measured reasons:
+	@#   - an OPERAND key cannot work. `gpSDCardSettings->directory` sits on the
+	@#     CONTINUATION line at 4 of the 8 sites, and 2 more never name it at all
+	@#     (they receive a `directory` parameter), so an identifier grep found
+	@#     2 of 8. `cc -E` does NOT fix that: it resolves the semantics and
+	@#     PRESERVES THE GEOMETRY -- a newline inside parens is not a line
+	@#     continuation and is never joined by any text pass.
+	@#   - the FORMAT literal, unlike the operand, is on the snprintf( line at
+	@#     every site. That is the one textual property that survives
+	@#     continuation lines, so it is what this keys on.
+	@# `-fpreprocessed` is here only to strip COMMENTS (verified: an operand
+	@# inside a comment contributes 0), so prose quoting a format cannot count.
+	@$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null > /tmp/.sd1124_pp.$$$$; \
+	 raw=`grep -c '"%s/' /tmp/.sd1124_pp.$$$$`; \
+	 canon=`grep -cF '"%.*s/' /tmp/.sd1124_pp.$$$$`; \
+	 acc=`grep -c 'SdManifest_CanonicalDirLen(' /tmp/.sd1124_pp.$$$$`; \
+	 rm -f /tmp/.sd1124_pp.$$$$; \
+	 test "$$raw" -eq 0 && test "$$canon" -eq 8 && test "$$acc" -eq 8 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC)'s path construction is no longer"; \
+	       echo "       uniformly canonical (#1124)."; \
+	       echo "         raw \"%s/ joins:        $$raw (must be 0)"; \
+	       echo "         canonical \"%.*s/ joins: $$canon (expected 8)"; \
+	       echo "         accessor calls:        $$acc (expected 8)"; \
+	       echo "       A raw \"%s/ join emits 'dir//file' whenever the configured"; \
+	       echo "       directory ends in '/', which is reachable from config alone."; \
+	       echo "       Route the new site through SdManifest_CanonicalDirLen() and"; \
+	       echo "       build it with \"%.*s/\", or re-derive these counts if a site"; \
+	       echo "       was deliberately added or removed."; \
+	       exit 1; }
+	@# The two sites a FORMAT key is structurally blind to, pinned BY NAME:
+	@# both write a bare "%.*s" with no separator, so no join-shaped pattern can
+	@# see them -- and both are PROPAGATION points. sd_BuildBucketPath's
+	@# bucket==0 arm copies the directory into bucketPath, which generateFilename
+	@# then joins onto without ever naming the settings field; the walk root
+	@# seeds every deeper path the directory listing builds.
+	@# BOTH arms of sd_BuildBucketPath, by exact form. A presence check that the
+	@# function merely CALLS the accessor is not enough, and this was measured:
+	@# reverting ONLY the bucket==0 arm to `"%s", dir` leaves raw=0 (no slash to
+	@# key on), canon=8, accessor=8 and the call still present -- every count arm
+	@# above passes while the propagation point is live again. That mutation is
+	@# also caught by gen_1029_log_budget.py, which pins the same line for its own
+	@# reasons, but relying on THAT would make this hole depend on a pin belonging
+	@# to another ticket. Checked here so the two are independent.
+	@awk '/^static bool sd_BuildBucketPath\(/{f=1} f{print} f&&/^\}/{exit}' \
+	   $(SD_MANAGER_SRC) > /tmp/.sd1124_bb.$$$$; \
+	 acc=`grep -c 'SdManifest_CanonicalDirLen(' /tmp/.sd1124_bb.$$$$`; \
+	 cp0=`grep -cF '"%.*s", dirLen, dir' /tmp/.sd1124_bb.$$$$`; \
+	 jn=`grep -cF '"%.*s/"' /tmp/.sd1124_bb.$$$$`; \
+	 rm -f /tmp/.sd1124_bb.$$$$; \
+	 test "$$acc" -eq 1 && test "$$cp0" -eq 1 && test "$$jn" -eq 1 \
+	  || { echo "ERROR: sd_BuildBucketPath() in $(SD_MANAGER_SRC) no longer"; \
+	       echo "       canonicalises BOTH arms (#1124)."; \
+	       echo "         accessor calls:              $$acc (expected 1)"; \
+	       echo "         bucket==0 canonical copy:    $$cp0 (expected 1)"; \
+	       echo "         bucket!=0 canonical join:    $$jn (expected 1)"; \
+	       echo "       The bucket==0 arm copies the directory into bucketPath, and"; \
+	       echo "       generateFilename() joins onto that buffer WITHOUT naming the"; \
+	       echo "       settings field -- so a trailing slash surviving here resurfaces"; \
+	       echo "       as 'dir//file' two hops away, where no format-shaped or"; \
+	       echo "       identifier-shaped check can see it."; \
+	       exit 1; }
+	@awk '/^static ListDirResult ListFilesInDirectoryChunked\(/{f=1} f{print} f&&/^\}/{exit}' \
+	   $(SD_MANAGER_SRC) | grep -q 'SdManifest_CanonicalDirLen(' \
+	  || { echo "ERROR: ListFilesInDirectoryChunked() in $(SD_MANAGER_SRC) no longer"; \
+	       echo "       canonicalises its walk ROOT (#1124). The root is seeded from"; \
+	       echo "       sd_ListDirTarget(), i.e. opDirectory or directory, and every"; \
+	       echo "       deeper path is built by joining onto that frame -- which is why"; \
+	       echo "       the join in this function is NOT the false positive it was"; \
+	       echo "       first ruled to be."; \
+	       exit 1; }
 	@awk '/^static void sd_CloseSessionManifest\(void\) \{/{f=1} f{print} f&&/^\}/{exit}' \
 	   $(SD_MANAGER_SRC) > /tmp/.sd924_close.$$$$; \
 	 n=`grep -c 'manifestHandle = SYS_FS_HANDLE_INVALID;' /tmp/.sd924_close.$$$$`; \

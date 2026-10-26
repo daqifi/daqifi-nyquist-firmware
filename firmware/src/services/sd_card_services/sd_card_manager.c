@@ -1092,7 +1092,12 @@ static ListDirResult ListFilesInDirectoryChunked(const char* dirPath, uint8_t *p
 
     sp = 0;
     gListDirStack[sp].handle = rootHandle;
-    int rootPn = snprintf(gListDirStack[sp].path, sizeof(gListDirStack[sp].path), "%s", dirPath);
+    /* #1124: canonicalise the walk ROOT. Every deeper path is built by joining
+     * onto this frame, so a trailing slash here reaches the join below -- the
+     * reason that join is not the false positive it was first ruled. dirPath
+     * arrives from sd_ListDirTarget(), i.e. opDirectory or directory. */
+    int rootPn = snprintf(gListDirStack[sp].path, sizeof(gListDirStack[sp].path), "%.*s",
+                          (int)SdManifest_CanonicalDirLen(dirPath), dirPath);
     if (rootPn < 0 || (size_t)rootPn >= sizeof(gListDirStack[sp].path)) {
         LOG_E("[SD] ListFiles: Root path too long, aborting list");
         if (SYS_FS_DirClose(rootHandle) == SYS_FS_RES_FAILURE) {
@@ -1210,7 +1215,8 @@ static ListDirResult ListFilesInDirectoryChunked(const char* dirPath, uint8_t *p
             continue;
         }
 
-        int pn = snprintf(newPath, sizeof(newPath), "%s/%s",
+        int pn = snprintf(newPath, sizeof(newPath), "%.*s/%s",
+                          (int)SdManifest_CanonicalDirLen(gListDirStack[sp].path),
                           gListDirStack[sp].path, stat.fname);
         if (pn < 0 || (size_t)pn >= sizeof(newPath)) {
             LOG_E("[SD] ListFiles: Path too long, skipping '%s/%s'",
@@ -1475,12 +1481,19 @@ static void extractBaseFilename(const char* filename) {
  * a session that never fills one bucket produces exactly the pre-#689 paths. */
 static bool sd_BuildBucketPath(char* out, size_t outLen, const char* dir,
                                uint32_t bucket) {
+    /* #1124: canonicalise HERE, at the source of bucketPath. generateFilename()
+     * joins onto this buffer and never names the settings field, so a trailing
+     * slash surviving this function becomes "dir//file" two hops later --
+     * which is why an identifier-keyed check of the settings field cannot see
+     * it. The bucket == 0 arm is a verbatim copy today and is the propagation
+     * step, so it needs the strip as much as the bucket path does. */
+    const int dirLen = (int)SdManifest_CanonicalDirLen(dir);
     int written;
     if (bucket == 0u) {
-        written = snprintf(out, outLen, "%s", dir);
+        written = snprintf(out, outLen, "%.*s", dirLen, dir);
     } else {
-        written = snprintf(out, outLen, "%s/" SD_CARD_MANAGER_BUCKET_PREFIX "%03u",
-                           dir, (unsigned)bucket);
+        written = snprintf(out, outLen, "%.*s/" SD_CARD_MANAGER_BUCKET_PREFIX "%03u",
+                           dirLen, dir, (unsigned)bucket);
     }
     if (written < 0 || (size_t)written >= outLen) {
         LOG_E("[%s:%d]Bucket path too long: dir='%s' bucket=%u (max %zu)",
@@ -1593,8 +1606,13 @@ static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
     const char* ext = strrchr(originalFilename, '.');
     const char* useExt = (ext != NULL) ? ext : "";
 
-    // Pre-validate length to avoid truncation
-    size_t dirLen = strlen(directory);
+    /* #1124: the CANONICAL length, so the budget check below and the
+     * construction agree on how many bytes the directory contributes. With
+     * strlen() a trailing slash made the check one byte pessimistic and the
+     * construction emit "dir//file". `directory` is bucketPath here, already
+     * canonical at its source -- this is idempotent, and keeps the site correct
+     * if a future caller passes a raw settings field. */
+    size_t dirLen = SdManifest_CanonicalDirLen(directory);
     size_t baseLen = strlen(baseFilename);
     size_t origLen = strlen(originalFilename);
     if (counter == 0) {
@@ -1615,9 +1633,11 @@ static void generateFilename(char* outPath, size_t maxLen, uint32_t counter,
 
     int written;
     if (counter == 0) {
-        written = snprintf(outPath, maxLen, "%s/%s", directory, originalFilename);
+        written = snprintf(outPath, maxLen, "%.*s/%s", (int)dirLen, directory,
+                           originalFilename);
     } else {
-        written = snprintf(outPath, maxLen, "%s/%s-%u%s", directory, baseFilename, counter, useExt);
+        written = snprintf(outPath, maxLen, "%.*s/%s-%u%s", (int)dirLen, directory,
+                           baseFilename, counter, useExt);
     }
 
     if (written < 0 || (size_t)written >= maxLen) {
@@ -1909,7 +1929,8 @@ static void sd_OpenSessionManifest(void) {
     char path[SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX
               + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX
               + sizeof(SD_MANIFEST_EXT) + 2u];
-    int written = snprintf(path, sizeof(path), "%s/%s" SD_MANIFEST_EXT,
+    int written = snprintf(path, sizeof(path), "%.*s/%s" SD_MANIFEST_EXT,
+                           (int)SdManifest_CanonicalDirLen(gpSDCardSettings->directory),
                            gpSDCardSettings->directory,
                            gSDCardData.baseFilename);
     if (written < 0 || (size_t)written >= sizeof(path)) {
@@ -2089,7 +2110,8 @@ static void sd_OpenSessionManifest(void) {
             return;
         }
 
-        written = snprintf(path, sizeof(path), "%s/%s" SD_MANIFEST_EXT,
+        written = snprintf(path, sizeof(path), "%.*s/%s" SD_MANIFEST_EXT,
+                           (int)SdManifest_CanonicalDirLen(gpSDCardSettings->directory),
                            gpSDCardSettings->directory,
                            gpSDCardSettings->file);
         if (written < 0 || (size_t)written >= sizeof(path)) {
@@ -3837,7 +3859,8 @@ void sd_card_manager_ProcessState() {
                        gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_COMPUTE_CRC) {
                 // READ/CRC: construct filename directly from settings (no splitting).
                 // #724: open the transient operand (opFile), not the logging target.
-                snprintf(gSDCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%s/%s",
+                snprintf(gSDCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%.*s/%s",
+                        (int)SdManifest_CanonicalDirLen(gpSDCardSettings->directory),
                         gpSDCardSettings->directory, gpSDCardSettings->opFile);
                 LOG_D("[SD] Opening file for read: '%s'\r\n", gSDCardData.filePath);
 
@@ -3888,11 +3911,11 @@ void sd_card_manager_ProcessState() {
                 // DELETE mode - construct file path and delete the specified file
                 // Initialize to false to prevent reading stale success from previous operation
                 gSDCardData.lastOperationSuccess = false;
-                // Strip trailing slash from directory to avoid double slashes
-                size_t dirLen = strlen(gpSDCardSettings->directory);
-                while (dirLen > 0 && gpSDCardSettings->directory[dirLen - 1] == '/') {
-                    dirLen--;
-                }
+                /* #1124: this inline strip was the ONLY one in the file, and it
+                 * was correct the whole time -- it just propagated to nothing.
+                 * That is the empirical case against fixing each construction
+                 * site on its own, and the reason it is now one accessor. */
+                size_t dirLen = SdManifest_CanonicalDirLen(gpSDCardSettings->directory);
                 // #724: delete the transient operand (opFile), not the logging target.
                 int pathLen = snprintf(gSDCardData.filePath, SD_CARD_MANAGER_FILE_PATH_LEN_MAX, "%.*s/%s",
                         (int)dirLen, gpSDCardSettings->directory, gpSDCardSettings->opFile);

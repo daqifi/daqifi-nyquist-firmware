@@ -813,6 +813,103 @@ TEST(fresh_file_accounting_null_safety)
     SdManifest_FreshFileAccounting(NULL, NULL, NULL);   /* must not crash */
 }
 
+/* ==========================================================================
+ * #1124: the ONE canonicalising accessor.
+ *
+ * This is the POSITIVE proof that construction is canonical. The alternative
+ * on the table was to delete the comparator's separator-collapsing arms and
+ * observe that nothing broke -- but that proves a gap by ABSENCE, and an
+ * absence cannot distinguish "unreachable" from "reachable and untested".
+ * Asserting what the constructor EMITS is the claim itself.
+ * ========================================================================== */
+
+TEST(canonical_dir_len_strips_a_trailing_separator_run)
+{
+    /* the ordinary case contributes its whole length */
+    ASSERT_EQ(SdManifest_CanonicalDirLen("DAQiFi"), 6u);
+
+    /* one separator, and a RUN of them, both collapse to the same answer --
+     * the defect is reachable from config alone, so "dir/" is the realistic
+     * input and "dir///" is what a careless edit leaves behind */
+    ASSERT_EQ(SdManifest_CanonicalDirLen("DAQiFi/"), 6u);
+    ASSERT_EQ(SdManifest_CanonicalDirLen("DAQiFi///"), 6u);
+
+    /* BOUNDARIES: a directory that is nothing but separators, and the root.
+     * 0 yields an absolute "/name", which is the same path "/" + name denotes
+     * -- the only sensible reading of a directory naming the root. */
+    ASSERT_EQ(SdManifest_CanonicalDirLen("/"), 0u);
+    ASSERT_EQ(SdManifest_CanonicalDirLen("///"), 0u);
+    ASSERT_EQ(SdManifest_CanonicalDirLen(""), 0u);
+    ASSERT_EQ(SdManifest_CanonicalDirLen(NULL), 0u);
+
+    /* an interior separator is NOT touched -- only the trailing run is */
+    ASSERT_EQ(SdManifest_CanonicalDirLen("a/b"), 3u);
+    ASSERT_EQ(SdManifest_CanonicalDirLen("a/b/"), 3u);
+
+    /* idempotent: feeding back the canonical prefix changes nothing. This is
+     * what makes applying it at a site whose input is already canonical
+     * (generateFilename's bucketPath) safe rather than merely harmless. */
+    ASSERT_EQ(SdManifest_CanonicalDirLen("DAQiFi"),
+              SdManifest_CanonicalDirLen("DAQiFi/"));
+}
+
+TEST(every_construction_shape_is_slash_safe_with_a_trailing_slash_dir)
+{
+    /* The four format shapes sd_card_manager.c actually builds paths with.
+     * Each is exercised with a directory ending in '/', which before #1124
+     * produced "DAQiFi//..." at every one of them. A doubled separator
+     * anywhere in the result fails the test. */
+    char out[128];
+    const char *dir = "DAQiFi/";
+    const int dl = (int)SdManifest_CanonicalDirLen(dir);
+
+    /* plain join -- generateFilename counter == 0, the READ/CRC path, :1213 */
+    (void)snprintf(out, sizeof(out), "%.*s/%s", dl, dir, "data.csv");
+    ASSERT_TRUE(strstr(out, "//") == NULL);
+    ASSERT_BYTES(out, "DAQiFi/data.csv", sizeof("DAQiFi/data.csv"));
+
+    /* rotated part -- generateFilename counter != 0 */
+    (void)snprintf(out, sizeof(out), "%.*s/%s-%u%s", dl, dir, "data", 10u, ".csv");
+    ASSERT_TRUE(strstr(out, "//") == NULL);
+    ASSERT_BYTES(out, "DAQiFi/data-10.csv", sizeof("DAQiFi/data-10.csv"));
+
+    /* the manifest's own name */
+    (void)snprintf(out, sizeof(out), "%.*s/%s" SD_MANIFEST_EXT, dl, dir, "data");
+    ASSERT_TRUE(strstr(out, "//") == NULL);
+    ASSERT_BYTES(out, "DAQiFi/data" SD_MANIFEST_EXT, sizeof("DAQiFi/data" SD_MANIFEST_EXT));
+
+    /* the bucket path -- sd_BuildBucketPath, bucket != 0 */
+    (void)snprintf(out, sizeof(out), "%.*s/P%03u", dl, dir, 7u);
+    ASSERT_TRUE(strstr(out, "//") == NULL);
+    ASSERT_BYTES(out, "DAQiFi/P007", sizeof("DAQiFi/P007"));
+
+    /* and the bucket == 0 arm, which is a COPY and so has no slash for a
+     * format-shaped check to key on -- the reason the Makefile pins that one
+     * by function name instead */
+    (void)snprintf(out, sizeof(out), "%.*s", dl, dir);
+    ASSERT_BYTES(out, "DAQiFi", sizeof("DAQiFi"));
+
+    /* a root directory stays absolute rather than losing its separator */
+    (void)snprintf(out, sizeof(out), "%.*s/%s",
+                   (int)SdManifest_CanonicalDirLen("/"), "/", "data.csv");
+    ASSERT_BYTES(out, "/data.csv", sizeof("/data.csv"));
+}
+
+TEST(canonical_construction_agrees_with_the_fatfs_comparator)
+{
+    /* The comparator collapses separator runs because FatFs does (E2). With
+     * construction canonical, the two paths it is handed at
+     * sd_card_manager.c:2032 are BOTH canonical, so that arm is no longer
+     * reachable from our own construction -- but the comparator still has to
+     * agree with FatFs, which is why the arm stays. These assert both halves:
+     * the canonical pair matches, and so does the doubled one it would have
+     * been handed before. */
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQiFi/data" SD_MANIFEST_EXT,
+                                                     "DAQiFi/data" SD_MANIFEST_EXT));
+    ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQiFi//data" SD_MANIFEST_EXT,
+                                                     "DAQiFi/data" SD_MANIFEST_EXT));
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
@@ -847,5 +944,8 @@ int main(void)
     RUN(fresh_file_accounting_is_zero_bytes_and_empty_crc);
     RUN(fresh_file_accounting_renders_as_the_empty_file_it_describes);
     RUN(fresh_file_accounting_null_safety);
+    RUN(canonical_dir_len_strips_a_trailing_separator_run);
+    RUN(every_construction_shape_is_slash_safe_with_a_trailing_slash_dir);
+    RUN(canonical_construction_agrees_with_the_fatfs_comparator);
     return TEST_SUMMARY();
 }

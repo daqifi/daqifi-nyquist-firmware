@@ -107,6 +107,47 @@ static inline bool SdManifest_NameFitsOperand(size_t baseLen, size_t extLen,
     return baseLen <= (operandCap - extLen);
 }
 
+/*
+ * #1124: the ONE canonicalising accessor every path construction goes through.
+ *
+ * Returns the length of `dir` with trailing '/' stripped, for use as
+ *   snprintf(out, n, "%.*s/%s", (int)SdManifest_CanonicalDirLen(d), d, name)
+ * so no construction can emit "dir//name" whatever the configured directory
+ * ends with.
+ *
+ * ⛔ CANONICALISES AT USE, NOT AT ENTRY. Normalising in the SCPI setter was
+ * rejected because it misses every other writer: an NVM restore populates the
+ * settings struct directly, and `opDirectory` is written by the operand path.
+ * Normalising where the value is CONSUMED covers all writers by construction.
+ *
+ * ⛔ TAKES THE DIRECTORY AS A PARAMETER rather than reading the settings
+ * global, because the sources are not one field. Measured on
+ * sd_card_manager.c: `gpSDCardSettings->directory` (4 sites),
+ * `gpSDCardSettings->opDirectory` (via sd_ListDirTarget), the walk stack's
+ * `gListDirStack[].path` (seeded from either), and `gSDCardData.bucketPath`
+ * (built from `directory`, which is how generateFilename inherits a slash
+ * without ever naming the field). An accessor reading the global would have
+ * covered 4 of 9 join sites.
+ *
+ * A run of trailing slashes collapses: "d///" and "d" both give 1 for "d".
+ * An all-slash directory gives 0, which yields an absolute "/name" -- the same
+ * path "/" + name denotes, and the only sensible reading of a directory that
+ * names the root.
+ */
+static inline size_t SdManifest_CanonicalDirLen(const char *dir)
+{
+    size_t len;
+
+    if (dir == NULL) {
+        return 0u;
+    }
+    len = strlen(dir);
+    while (len > 0u && dir[len - 1u] == '/') {
+        len--;
+    }
+    return len;
+}
+
 static inline int SdManifest_FormatLine(char *out, size_t outLen,
                                         const char *name,
                                         uint64_t bytes, uint32_t crc,
