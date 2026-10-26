@@ -11288,3 +11288,37 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
 - ✅ **Relayed to the fire with a byte-count assertion over ALL SIX messages, not just the three over** —
   so a later edit that lengthens a healthy one fails a test instead of truncating. Test comment cites
   `Logger.h:361` and `Logger.c:398/:405` so the 125 is traceable, not magic.
+
+- ✅ **fw#1152 ROUND 8 PUSHED — `13f64b658eba79b410ad27d87fce34363af2be40`**, a FAST-FORWARD (ancestry
+  checked before pushing; no force), base refresh + fix in ONE push as asked. merge-tree now reports **0
+  conflicts**. Companion test verified on its own remote: `fw1152-round8-usecal-raw-mode-independence`
+  `1000beada6dffb48fd13041a5e8034274b03974d`. Re-measured by me on a **pinned clean tree**: host suite
+  **28 / 326 / 0 / 44,631**, cppcheck 0 against the empty baseline, guard mutation-tested by hand.
+- ⛔⛔ **I NEARLY PUBLISHED A FALSE ACCUSATION AGAINST THE FIRE'S WORK, using the exact error my own
+  LIMITATIONS.md warns about in bold.** I measured the LOG_E byte counts from a working tree I had not
+  confirmed clean — `git checkout -B` had carried STAGED old content — and got 214/171/217, concluding
+  "NOT FIXED". Read from the **object**, the pushed messages are 74/53/120/116/107/104: **zero over
+  limit.** The fire was right.
+  > ⭐ **READ GIT OBJECTS, NEVER WORKING-TREE FILES** — my own tool's rule #2, and
+  > *pinning a worktree means checking it is clean.* ⚠ And the direction matters: this was a measurement
+  > that made **someone else** look worse, which is the direction that escapes the re-check I would have
+  > given a flattering one.
+- ⛔ **THREE MORE OF MY OWN CHECKS FALSE-ALARMED IN THE SAME VERIFICATION PASS, each from a cause already
+  in my notes:** the LOG_E read (dirty tree); `diff <(git show) <working file>` reporting the revert as
+  failed (**CRLF** — the object is LF, the tree CRLF); and a cppcheck "2 findings" that was the script's
+  own summary header. Every one erred toward *something is wrong*.
+- ⭐⭐ **AND A REAL FLEET FINDING FELL OUT OF CHECKING MY OWN CHECK: `bash tools/lint/cppcheck.sh` CANNOT
+  FAIL.** `OUT="${1:-tools/lint/cppcheck-baseline.txt}"` — the **documented** local verification command
+  *regenerates the file it is checked against*. Proven with a control: an injected `malloc` leak gave
+  **rc=0** and was **silently adopted into the baseline**, while the CI form (explicit out path + `diff`)
+  failed and named it. So a lane running the documented command before committing would **launder a new
+  finding into the accepted set**. CLAUDE.md documents the self-certifying form. Filing separately.
+- ✅ **Corrected a stale COMMENT the fire left** claiming "the two pre-existing LOG_E calls ... this round
+  does not touch" — all three were rewritten and all three are PR-introduced. ⚠ My first two attempts at
+  that edit were refused by their own anchor asserts (wrong indent, then **CRLF** vs `\n`), and the
+  verification I ran after the second failure was therefore measuring **unedited** code. Gated the re-run
+  on the edit landing.
+- ⛔ **DID NOT TRIGGER QODO, and corrected my own promise on the row.** Measured: **0 real Qodo reviews
+  fleet-wide in the 6 days since the block**, against 3 block notices — and the 3 notices are the positive
+  control that makes the 0 a measured zero. Triggering would post a block notice that a later reader could
+  read as a review next to a clean thread list. Stated the row as **Qodo: NOT READ** instead.
