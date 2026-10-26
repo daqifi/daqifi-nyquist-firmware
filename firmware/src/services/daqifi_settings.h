@@ -331,6 +331,38 @@ extern "C" {
     bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig);
 
     /**
+     * #908 (codex-r3): capture the WHOLE live calibration state so a failed
+     * operation can put it back -- the channels' CalM/CalB *and* the active
+     * bank that daqifi_settings_LoadADCCalSettings records internally.
+     *
+     * ⚠ The bank is the reason this is a pair rather than a caller-side
+     * snapshot. A caller can save and restore the coefficients it can see;
+     * it cannot restore the module-private bank the load also writes, so a
+     * caller-side rollback left the coefficients old and the bank name new
+     * -- provenance naming a bank that was not live.
+     *
+     * ⚠ ONE snapshot slot. Every SCPI writer of this state takes the same
+     * Streaming_BeginConfigChange() claim, so these calls cannot nest; that
+     * discipline is the precondition, not an assumption about timing.
+     *
+     * @param channelRuntimeConfig the live AIn runtime array; NULL captures
+     *        the bank only and an empty snapshot
+     */
+    void daqifi_settings_SnapshotActiveCal(const AInRuntimeArray* channelRuntimeConfig);
+
+    /**
+     * #908 (codex-r3): put back what daqifi_settings_SnapshotActiveCal
+     * captured -- coefficients and active bank. Cannot fail: it restores from
+     * RAM, which is why the rollback path needs no error handling of its own.
+     *
+     * Restores only as many channels as were captured, so a runtime array
+     * that changed Size in between cannot be walked past its end.
+     *
+     * @param channelRuntimeConfig the live AIn runtime array to restore into
+     */
+    void daqifi_settings_RestoreActiveCal(AInRuntimeArray* channelRuntimeConfig);
+
+    /**
      * #14: Sets the runtime device friendly name cache. The value is
      * persisted to NVM only on the next TopLevelSettings save (which
      * captures this cache automatically). Truncated to fit

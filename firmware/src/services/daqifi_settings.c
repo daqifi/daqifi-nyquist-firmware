@@ -145,6 +145,67 @@ bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig) 
     return true;
 }
 
+/* #908 (codex-r3): THE UNDO LIVES NEXT TO THE DO.
+ *
+ * A rollback must restore every write the forward path performs, including
+ * writes hidden inside a callee. daqifi_settings_LoadADCCalSettings writes
+ * TWO things: the caller's CalM/CalB, which the caller can see, and
+ * gActiveCalBank, which is static to this file and which the caller cannot
+ * see or restore. An earlier revision snapshotted only the coefficients in
+ * SCPIADC.c, so after a failed save the coefficients were old while the bank
+ * name was new -- provenance naming a bank that was not live. Reachable
+ * whenever both banks hold non-identity coefficients, i.e. a calibrated
+ * board (with an identity bank, CalIsIdentity short-circuits the bank name
+ * away and hides it).
+ *
+ * Exposing a gActiveCalBank setter would have fixed the symptom and
+ * reopened the reason it is set inside the load in the first place: a new
+ * caller cannot forget what it cannot reach. So the snapshot/restore pair
+ * lives here, keeping this file the only writer, and the caller asks for
+ * "the whole cal state" rather than assembling it from parts it can see.
+ *
+ * ⚠ ONE snapshot slot, deliberately: every SCPI writer of this state takes
+ * the same Streaming_BeginConfigChange() claim, so these cannot nest. A
+ * second concurrent snapshot is impossible rather than merely unlikely --
+ * and if that claim discipline ever changes, this comment is the thing that
+ * should stop the change.
+ *
+ * 768 B of .bss (MAX_AIN_CHANNEL x CalM+CalB, both double), not stack: this
+ * runs on a SCPI task. */
+static struct {
+    double CalM;
+    double CalB;
+} gCalSnapshot[MAX_AIN_CHANNEL];
+static uint8_t gCalSnapshotCount = 0;
+static DaqifiSettingsType gCalSnapshotBank = DaqifiSettings_FactAInCalParams;
+
+void daqifi_settings_SnapshotActiveCal(const AInRuntimeArray* channelRuntimeConfig) {
+    gCalSnapshotCount = 0;
+    gCalSnapshotBank = gActiveCalBank;
+    if (channelRuntimeConfig == NULL) {
+        return;
+    }
+    gCalSnapshotCount = (channelRuntimeConfig->Size < MAX_AIN_CHANNEL)
+            ? (uint8_t) channelRuntimeConfig->Size : (uint8_t) MAX_AIN_CHANNEL;
+    for (uint8_t x = 0; x < gCalSnapshotCount; x++) {
+        gCalSnapshot[x].CalM = channelRuntimeConfig->Data[x].CalM;
+        gCalSnapshot[x].CalB = channelRuntimeConfig->Data[x].CalB;
+    }
+}
+
+void daqifi_settings_RestoreActiveCal(AInRuntimeArray* channelRuntimeConfig) {
+    if (channelRuntimeConfig == NULL) {
+        return;
+    }
+    for (uint8_t x = 0; x < gCalSnapshotCount
+            && x < channelRuntimeConfig->Size; x++) {
+        channelRuntimeConfig->Data[x].CalM = gCalSnapshot[x].CalM;
+        channelRuntimeConfig->Data[x].CalB = gCalSnapshot[x].CalB;
+    }
+    /* The write the caller could not reach, and the whole point of this pair. */
+    gActiveCalBank = gCalSnapshotBank;
+}
+
 bool daqifi_settings_LoadFromNvm(DaqifiSettingsType type, DaqifiSettings* settings) {
 
     

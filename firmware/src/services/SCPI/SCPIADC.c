@@ -1667,23 +1667,19 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
     //  Load existing settings
     if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) return SCPI_RES_ERR;
 
-    /* #908 (codex-r2 HIGH): snapshot the LIVE coefficients before the load, so
-     * a failed save can put back exactly what was in effect on entry --
-     * including CHANCALM/CHANCALB edits that were never persisted. See the
-     * rollback block below for why re-reading NVM is not equivalent.
+    /* #908 (codex-r2 HIGH, extended by codex-r3): snapshot the LIVE cal state
+     * before the load, so a failed save can put back exactly what was in
+     * effect on entry -- including CHANCALM/CHANCALB edits that were never
+     * persisted. See the rollback block below for why re-reading NVM is not
+     * equivalent.
      *
-     * Static, and safe as such because every SCPI writer of these fields takes
-     * the same Streaming_BeginConfigChange() claim as this command, so none can
-     * interleave or re-enter. Sized to the array's capacity; only the live
-     * Size entries are captured and restored. */
-    static struct { double CalM; double CalB; } sCalSnapshot[MAX_AIN_CHANNEL];
-    const uint8_t snapshotCount =
-            (pRuntimeAInChannels->Size < MAX_AIN_CHANNEL)
-            ? (uint8_t)pRuntimeAInChannels->Size : (uint8_t)MAX_AIN_CHANNEL;
-    for (uint8_t ch = 0; ch < snapshotCount; ch++) {
-        sCalSnapshot[ch].CalM = pRuntimeAInChannels->Data[ch].CalM;
-        sCalSnapshot[ch].CalB = pRuntimeAInChannels->Data[ch].CalB;
-    }
+     * ⚠ This takes the WHOLE state, not just the coefficients. An earlier
+     * revision snapshotted CalM/CalB here, in this file, and missed that
+     * LoadADCCalSettings also writes a module-private "active bank" that this
+     * file cannot reach -- so a rollback left old coefficients under a new
+     * bank name. The snapshot/restore pair therefore lives in
+     * daqifi_settings.c beside the state it owns. */
+    daqifi_settings_SnapshotActiveCal(pRuntimeAInChannels);
 
     /* #908: LOAD THE COEFFICIENTS BEFORE PERSISTING THE SELECTION.
      *
@@ -1785,13 +1781,10 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      * safety without the substance, and would make #1166 harder to reason
      * about by leaving one protected writer among unprotected ones. */
     if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) {
-        for (uint8_t ch = 0; ch < snapshotCount; ch++) {
-            pRuntimeAInChannels->Data[ch].CalM = sCalSnapshot[ch].CalM;
-            pRuntimeAInChannels->Data[ch].CalB = sCalSnapshot[ch].CalB;
-        }
+        daqifi_settings_RestoreActiveCal(pRuntimeAInChannels);
         /* Remedy FIRST: Logger truncates the TAIL at 125 B silently, so a
          * message opening with the diagnosis loses the action. */
-        LOG_E("USECal: retry; NVM save failed, prior coefficients restored.");
+        LOG_E("USECal: retry; NVM save failed, prior cal state restored.");
         return SCPI_RES_ERR;
     }
 
