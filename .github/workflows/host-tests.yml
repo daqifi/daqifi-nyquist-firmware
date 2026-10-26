@@ -315,6 +315,24 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      # #908: test_908_cal_source_seqlock.c greps daqifi_settings.c for the
+      # cal-write bracket ORDER (Begin before the coefficient copy, End after
+      # the bank is published) and for the reader's bounded yield, failing the
+      # BUILD if either has moved. SCPIADC.c, which it also greps for the two
+      # setters' brackets, is already covered by the SCPI/** entry above --
+      # but daqifi_settings.c is matched by NOTHING here, so before this entry
+      # a PR editing only the file the seqlock lives in queued no job at all.
+      # Confirmed unreachable rather than assumed: zero hits for
+      # 'daqifi_settings' in this file at 94b5a17a4, and no host test on
+      # origin/main reads that source -- test_908 is the first, so this is the
+      # #941/AD7609Scale.h gap again (a suite wired up without its trigger),
+      # introduced by the same PR that adds the test.
+      # Scoped to the one file, not services/: that directory holds
+      # streaming.c, wifi_manager.c and the whole SCPI/ subtree, none of which
+      # this test reads, and the guards fail the build BY NAME if the bracket
+      # or the yield moves, so a refactor cannot step out of a file-scoped
+      # trigger silently.
+      - 'firmware/src/services/daqifi_settings.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
       # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its
@@ -382,6 +400,24 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      # #908: test_908_cal_source_seqlock.c greps daqifi_settings.c for the
+      # cal-write bracket ORDER (Begin before the coefficient copy, End after
+      # the bank is published) and for the reader's bounded yield, failing the
+      # BUILD if either has moved. SCPIADC.c, which it also greps for the two
+      # setters' brackets, is already covered by the SCPI/** entry above --
+      # but daqifi_settings.c is matched by NOTHING here, so before this entry
+      # a PR editing only the file the seqlock lives in queued no job at all.
+      # Confirmed unreachable rather than assumed: zero hits for
+      # 'daqifi_settings' in this file at 94b5a17a4, and no host test on
+      # origin/main reads that source -- test_908 is the first, so this is the
+      # #941/AD7609Scale.h gap again (a suite wired up without its trigger),
+      # introduced by the same PR that adds the test.
+      # Scoped to the one file, not services/: that directory holds
+      # streaming.c, wifi_manager.c and the whole SCPI/ subtree, none of which
+      # this test reads, and the guards fail the build BY NAME if the bracket
+      # or the yield moves, so a refactor cannot step out of a file-scoped
+      # trigger silently.
+      - 'firmware/src/services/daqifi_settings.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
       # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its

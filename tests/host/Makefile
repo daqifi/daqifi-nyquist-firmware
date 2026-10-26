@@ -3051,7 +3051,12 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 SETTINGS_SRC := ../../firmware/src/services/daqifi_settings.c
 SEQ908_BIN := run_908_tests
 
-$(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(RECIPES)
+# ⚠ BOTH sources are prerequisites because BOTH are read by the guards below:
+# SETTINGS_SRC for the load-order and reader-yield checks, SCPIADC_SRC for the
+# setter-bracket check. A guard that reads a file it does not depend on does
+# not run when that file changes -- make reuses the binary and the check is
+# silently skipped, which is a guard that cannot fail rather than a guard.
+$(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(SCPIADC_SRC) $(RECIPES)
 	@sed -n '/^bool daqifi_settings_LoadADCCalSettings/,/^}/p' $(SETTINGS_SRC) \
 	   > /tmp/.fw908_load.$$$$; \
 	 n=`grep -cE 'daqifi_settings_(Begin|End)CalWrite' /tmp/.fw908_load.$$$$`; \
