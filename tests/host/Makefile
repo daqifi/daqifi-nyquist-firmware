@@ -827,8 +827,25 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@# ⛔ #1124 r8 finding 1: SdManifest.h did not COMPILE under -Wall -Werror.
 	@# A nested `/`+`*` inside a comment is -Wcomment, which is -Werror in the
 	@# firmware build -- so the header broke that build while this host suite
-	@# stayed green, because the suite never compiled it under those flags and
-	@# this lane owns no board to run XC32 on. The warning was seen and
+	@# stayed green, because the suite never compiled it under those flags.
+	@#
+	@# ⭐ MEASURED, not inferred, and the differential is why it is load-bearing:
+	@# a clean build of the FIXED commit cannot distinguish "the fix closed a
+	@# break" from "there was never a break", so both legs were run with the
+	@# real compiler -- XC32 v4.60 (pic32m-gcc 8.3.1), -Wall -Werror
+	@# -fsyntax-only -mprocessor=32MZ2048EFM144, same flags, same minute:
+	@#     eef645af9 (pre-fix)  rc=1  SdManifest.h:329:9: error: "/*" within
+	@#                                comment [-Werror=comment]
+	@#     c4b01b04a (post-fix) rc=0  clean
+	@# -Wcomment was separately confirmed to be inside XC32's OWN -Wall, rather
+	@# than assuming gcc 8.3 matches the host's gcc 13. That agreement across
+	@# both compilers, on this warning class, is the ONLY thing that licenses
+	@# the cheap host check below as a proxy for the expensive one -- the proxy
+	@# can claim no more than the classes it has been measured to agree on.
+	@# A bench-free lane can run that check itself: xc32-gcc is at
+	@# /opt/microchip/xc32/v4.60/bin/ on this station, no board required.
+	@#
+	@# The warning was seen and
 	@# dismissed as pre-existing; the baseline checked was MY BRANCH's HEAD,
 	@# which already contained the PR's own earlier commits. Against origin/main
 	@# the header does not exist at all. One command, no board, ~1 s:
