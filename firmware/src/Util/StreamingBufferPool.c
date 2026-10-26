@@ -39,6 +39,39 @@
  * payment. Cost as above: ~7 more slots off a
  * partitioned capacity that is not the binding constraint.
  *
+ * Trimmed a further 512 B (#958) to pay for SCPIStorageSD.c's
+ * gBenchNameSeq, the per-boot discriminator in SYST:STOR:SD:BENCHmark's
+ * scratch filename. Third payment, same mechanism, same nil cost.
+ *
+ * WHAT WAS OBSERVED THIS TIME, because it differs from the two above and
+ * the difference is the reason this comment insists on the rule anyway:
+ * the link SUCCEEDED without the payment. On the #958 branch head the map
+ * reported `stack 0x8007dde8 0x21f8 8696  Reserved for stack` against a
+ * _min_stack_size of 8192, i.e. 504 bytes of slack, so the 4-byte static
+ * fitted with room to spare.
+ *
+ * The payment is made regardless, and not as ceremony. 504 bytes is slack
+ * on ONE branch base at ONE moment; the merge target is main plus whatever
+ * else lands first, and the paragraph above records a head where a single
+ * uint32_t did not fit at all. A static that is funded cannot be the one
+ * that breaks someone else's link.
+ *
+ * AND THE COST IS NOT NIL IN EVERY CONFIGURATION, which the two paragraphs
+ * above say and the pre-merge audit on #1027 showed to be false. The "~7
+ * slots nobody can use" argument holds only where the PARTITIONED capacity
+ * exceeds the FreeRTOS sample queue's depth, because the usable depth is the
+ * lesser of the two (#828). At 16 channels that is USB-only (1579), WiFi-only
+ * (1127) and SD-only (1939), all above the 1100-slot default queue.
+ *
+ * USB+SD is the exception: 1081, BELOW 1100, so there the pool is the binding
+ * constraint and every one of these three payments cost 7 USABLE slots, ~21
+ * between them. The earlier two paragraphs claimed nil cost for #824 and #925
+ * as well, and were wrong in that column for the same reason. It is still the
+ * right trade -- 21 slots of burst absorption against a link that fails to
+ * build -- but it is a trade, not a free lunch, and the number belongs here
+ * rather than being discovered by whoever next wonders why USB+SD reports a
+ * lower SamplePoolCount than the other three.
+ *
  * Trimmed a further 2048 B (#999) to pay for the two per-transport
  * ScpiContextStorage instances -- UsbCdc.c's gUsbScpiStorage and
  * wifi_tcp_server.c's gTcpScpiStorage, 546 B each -- that replace the single
@@ -71,8 +104,60 @@
  * (#828). Do NOT pay for a future static by shrinking SCPI_INPUT_BUFFER_LENGTH
  * or SCPI_ERROR_QUEUE_SIZE instead: those sizes are what keep the two
  * transports from corrupting each other's in-flight command text and error
- * queues (#999), and 512 is already pinned by #100/#263. */
-#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U - 2048U)
+ * queues (#999), and 512 is already pinned by #100/#263.
+ *
+ * Trimmed a further 512 B (#914) to pay for sd_card_manager.c's
+ * gSdAsyncError[], a 2-element array (one per SD reply target: USB, WiFi-TCP)
+ * of {int32_t code; uint32_t generation;} used to hand a GET open-failure's
+ * deferred SCPI error from the SD task to the owning transport at its next
+ * command boundary. The array itself is 16 B (2 * 8 B, no padding -- both
+ * fields are already 4-byte aligned); same mechanism as #824/#925/#999/#958,
+ * and paid at the same 512 B quantum those used rather than a byte-exact
+ * amount, because (as #999's comment already states) BSS growth does not map
+ * 1:1 onto stack-region "available" -- the link is the arbiter, not the
+ * arithmetic. Verified with a real link AT THE MERGED SIZE, which is the one
+ * that matters: neither parent ever linked 193536 -- both of their defines
+ * evaluate to 194048 (five subtrahends summing 4608 each), and only the union
+ * of the two payments reaches six terms. Measured on this merge, 2026-10-16,
+ * after `rm -rf build dist` so it is a genuine relink:
+ *
+ *     rc=0, hex produced (2,280,675 B)
+ *     .bss.gPoolStorage  0x2f400 = 193536      <- both payments in the image
+ *     stack  0x2ba8 = 11176 B reserved  vs  _min_stack_size 0x2000 = 8192
+ *                                        => 2984 B of slack
+ *
+ * #958 recorded 504 B of slack at its own base; this merge has 2984, because
+ * it trims 512 B more BSS than either parent. The direction is also why the
+ * resolution cannot newly break the link: net BSS falls 496 B against main and
+ * 508 B against #914's own branch, and the failure mode both paragraphs
+ * describe is BSS GROWTH starving the stack region. Raise the trim if a future
+ * link fails with "Not enough memory for stack".
+ *
+ * FOUR PAYMENTS ARE NOW IN THIS DEFINITION (#824/#925 512 each, #999 2048,
+ * #958 512, #914 512), so every per-payment column figure in the paragraphs
+ * above is stale by however many landed after it was written -- #914's own
+ * "1558 -> 1551" was computed before #958's 512 B. The figures below are the
+ * only current ones.
+ *
+ * ⚠ AND #958's COMMENT ASKED WHOEVER PAID NEXT TO COUNT THE WiFi-ONLY COLUMN,
+ * because it had come to rest exactly AT the queue depth. This is that
+ * payment, and the answer is that the column crosses. At 16 channels, by
+ * #958's own method -- (pool - (USB + WiFi + SD + encoder circulars)) / 74
+ * over docs/MEMORY_ARCHITECTURE.md's buffer values, arithmetic rather than a
+ * bench measurement -- the pool goes 194048 -> 193536 B and:
+ *
+ *     USB-only   1551 -> 1544   queue-bound, unchanged in practice
+ *     WiFi-only  1100 -> 1093   WAS AT the 1100-slot clamp, NOW POOL-BOUND
+ *     SD-only    1911 -> 1904   queue-bound, unchanged in practice
+ *     USB+SD     1053 -> 1046   already pool-bound, -7 usable slots
+ *
+ * So TWO of the four columns are now pool-bound rather than one, and this
+ * payment costs 7 USABLE slots in each of them -- not the "nil in practice"
+ * the #824/#925 paragraphs claim and #958 already corrected. It remains the
+ * right trade (7 slots of burst absorption against a link that fails to
+ * build) but it is a trade, and WiFi-only is no longer the column with
+ * headroom. The next payment costs usable slots in two columns, not one. */
+#define STATIC_POOL_SIZE ((194U * 1024U) - 1024U - 512U - 512U - 512U - 2048U - 512U)
 static uint8_t gPoolStorage[STATIC_POOL_SIZE];
 
 /* The overcommit fallback below carves these four minimums and expects the

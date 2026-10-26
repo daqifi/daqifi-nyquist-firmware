@@ -48,6 +48,44 @@ AD7609_BIN := run_ad7609_tests
 BENCH_BIN := run_943_tests
 SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 
+# #971: the under-claim settle order of a REFUSED SD arm. Same file, same
+# reason as #943 -- SCPIStorageSD.c is not host-includable -- so this is also
+# a model rather than the real code, and it also needs a way to fail loudly
+# when what it models moves underneath it.
+#
+# The guard here is a CONTENT HASH of the modelled function, not a grep for
+# the property. That is deliberate. PR #976 spent three review rounds finding
+# fifteen ways an honest refactor slips past a textual assertion about this
+# exact function, and `tools/lint/scpi_sd_arm_path.py` is being narrowed for
+# over-claiming on the strength of it; a second, cruder copy of that
+# assertion here would give false comfort. A hash claims only "this text is
+# unchanged", which is all a build recipe can honestly know, and no refactor
+# can slip past it. When it fires, re-read ~8 lines of C against the model in
+# test_971_sd_arm_refusal_order.c and update the hash -- it is a tripwire
+# asking for a review, not a verdict on whether the code is right.
+#
+# Hashed: the function from its `static bool <name>(` line to its closing
+# brace, with comments removed BY TOKEN and whitespace collapsed. So rewording
+# a comment does not fire, and any change to the code does.
+#
+# BY TOKEN, not by line shape, and that distinction is the whole point (#976
+# pre-merge audit). The first version deleted any line STARTING with `/*`, `*`
+# or `//`. `*(&cfg->mode) = SD_CARD_MANAGER_MODE_NONE;` is an ordinary C
+# pointer-deref assignment that starts with `*`, so it was silently deleted
+# before hashing -- adding one left the pin byte-identical. Measured, not
+# argued: a probe function containing that line hashed the same with and
+# without it. A guard whose whole claim is "any edit to this code forces a
+# review" must not have a spelling of edit that it cannot see.
+#
+# The strip is regex-based and NOT string-aware, so the recipe refuses outright
+# if the function ever contains a string literal rather than hashing text it
+# might have mangled. It contains none today (pure control flow).
+ARM_BIN := run_971_tests
+FORCEGATE_BIN := run_756_tests
+SDSPI_DRV_SRC := ../../firmware/src/config/default/driver/sdspi/src/drv_sdspi.c
+SD_ARM_HELPER := SD_ArmOrRefuseWithCleanup
+SD_ARM_HELPER_SHA := 48fc182fdf552b9a5cb860d7dc16821212874f734d9504d68fd110c75c97ee9f
+
 # #953: SD:BENCHmark's "file never opened" diagnosis. Same file as BENCH_BIN
 # and, for the same reason, the same technique -- no UUT copy, no stubs, the
 # decision cascade re-implemented against injected values.
@@ -61,6 +99,77 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # and should be looked at rather than skipped.
 SUSPEND_BIN := run_953_tests
 
+# #981: SYSTem:STORage:SD:FAILNext's one-shot arm/consume contract.
+# `sd_card_manager.c` is not includable on the host (FreeRTOS + Harmony's
+# SYS_FS + the whole SD state machine), so this re-implements only the
+# one-shot flag/consume shape against a mock, same technique as BENCH_BIN and
+# SUSPEND_BIN above. Four properties of the real source make the model valid;
+# the guard greps for all four and refuses to build if any has moved:
+#   1. the flag `gFailNextWrite` still exists;
+#   2. its consume site is, IN THIS ORDER, taskENTER_CRITICAL() ->
+#      `if (gFailNextWrite && ...UNMOUNT_DISK) { gFailNextWrite = false;
+#      injectWriteFailure = true; }` -> taskEXIT_CRITICAL() -- a positional
+#      check (line numbers within the bounded block), not four independent
+#      "is this token present anywhere" checks. An adversarial audit on PR
+#      #1013 found that the four-independent-greps version could not fail on
+#      two real mutations: moving taskEXIT_CRITICAL() before the armed test
+#      (every token still present, atomicity destroyed), and flipping the
+#      real `injectWriteFailure = true;` to `= false;` (the old guard never
+#      even looked for that token);
+#   3. `sd_card_manager_Init()` still scrubs it to false (the #409 rail: a
+#      reset must always clear an outstanding arm);
+#   4. `sd_card_manager_SetFailNextWrite()`'s body is still a PLAIN store
+#      with no critical section of its own (the atomicity argument for #981:
+#      a store that reads nothing first is not an RMW).
+#
+# That fixes the STRUCTURAL/textual side, but a textual check -- however
+# positional -- is still a PROXY: it proves the shape of the source, not that
+# running it does the right thing. $(FAILNEXT_REAL_BIN) below is the other
+# half: it compiles and RUNS the whole real SDCardWrite(), verbatim (no
+# hand-typed model), and asserts on its actual return value and on whether
+# the filesystem write was reached -- which is what catches the
+# `injectWriteFailure = true/false` mutation, and the deletion of the payload
+# block's `goto __exit;`, BEHAVIOURALLY rather than by noticing a token went
+# missing.
+FAILNEXT_BIN := run_981_tests
+SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
+
+# #981 (post-audit): compiles and RUNS the ENTIRE real SDCardWrite() --
+# signature through closing brace, extracted verbatim from $(SD_MANAGER_SRC)
+# at build time, never hand-typed -- against host stand-ins in
+# test_981_sd_failnext_real_consume.head.c (no-op critical-section macros and
+# LOG_E, `gFailNextWrite`, the five `gSDCardData` fields the function touches,
+# and a MOCK SYS_FS_FileWrite that counts its calls and returns a byte count
+# that is never -1). This is a BEHAVIOURAL check, not a textual one:
+# $(FAILNEXT_BIN) above proves the source has the right SHAPE, this proves
+# that shape, when actually executed, produces the right EFFECT.
+#
+# It extracts the whole function because extracting less did not work. The
+# first revision of this target stopped the extraction at
+# `taskEXIT_CRITICAL();` and let the tail file close the spliced fragment with
+# a hand-written `return injectWriteFailure;` -- so the payload
+# (`if (injectWriteFailure) { LOG_E(...); writeLen = -1; goto __exit; }`, the
+# real SYS_FS_FileWrite() it must skip, and the `__exit: return writeLen;`)
+# was never compiled or run, and the assertion was on a LOCAL BOOL. Deleting
+# ONLY the `goto __exit;` from the real source left all eight binaries green
+# while, on hardware, the hook consumed the arm, logged, set writeLen = -1 and
+# then fell through into the real write, which succeeded and overwrote it --
+# fault injection dead, nothing red. Nothing short of compiling the function's
+# actual return path can see that, so now nothing short of it is compiled.
+#
+# The two observables the tail asserts are the function's real int return and
+# the mock's call counter: fired => -1 with ZERO filesystem writes; not fired
+# => the mock's byte count with exactly one. Its first case is a CONTROL that
+# asserts the write IS reachable, so "zero writes" cannot pass vacuously.
+#
+# The stand-ins no longer need per-symbol grep guards the way the old bounded
+# snippet did: with the whole function spliced in, any symbol it gains that is
+# not stubbed is a compile error in the generated file. See the head file for
+# the stubs' fidelity notes (one is load-bearing: the mock must never return
+# -1), and for why the ORDERING mutation is deliberately NOT this file's job
+# (a single-threaded host run cannot observe a concurrency property; that
+# stays $(FAILNEXT_BIN)'s).
+FAILNEXT_REAL_BIN := run_981_real_consume
 # #985: SD_SuspendReasonText() itself -- the function the cascade above calls.
 # Third target on SCPIStorageSD.c and, for the same reason as the two above,
 # the same technique: no UUT copy, no stubs, both decision SHAPES (pre-fix and
@@ -276,6 +385,33 @@ HELP_BIN := run_1004_tests
 SCPI_IFACE_SRC := ../../firmware/src/services/SCPI/SCPIInterface.c
 FW_RTOS_CFG := ../../firmware/src/config/default/FreeRTOSConfig.h
 
+# #958: SD:BENCHmark's scratch FILENAME. Third target on the same
+# non-host-compilable file as BENCH_BIN and SUSPEND_BIN, same technique for the
+# same reason: the name generation is re-implemented against injected tick
+# values rather than included.
+#
+# It copies BOTH a format string and a length constant, and it also depends on
+# two DEFECTS being absent, so the recipe carries eight guards. Three are about
+# the text being right: the post-fix format expression must be present (checked
+# with newlines squashed, because it wraps), the field length must still be 40,
+# and the masked 16-bit form -- the original #958 defect -- must NOT be back.
+#
+# The other three are about the SEQUENCE field, added after Qodo found that the
+# whole 32-bit tick still repeats after 49.7 days of uptime. A format pin alone
+# would prove the field is in the name and nothing more, so the recipe also
+# requires that the counter is ADVANCED once per run, that the advance happens
+# BEFORE the format (the pre-merge audit reproduced a swap of those two steps
+# passing every other guard and the whole host suite, while every name carried
+# the counter's initial value), that the LOCAL copy is assigned exactly once
+# outside its declaration (position alone is not enough -- a second
+# assignment after the advance restores the initial value with the order pin
+# still satisfied, which the pre-merge audit reproduced), that the global is
+# NEVER assigned anywhere but its definition (a reset reopens the collision),
+# and that the tick-only form has not come back. Each fails loudly and names
+# what to re-read.
+NAME_BIN := run_958_tests
+SD_MGR_HDR := ../../firmware/src/services/sd_card_services/sd_card_manager.h
+
 # #1000: the #942 SD-log-arm refusal's LOG_E line, measured against the ceiling
 # Logger actually cuts at. Same host-testability constraint as HELP_BIN above
 # -- SCPIInterface.c is not includable here -- but the subject is a LENGTH, not
@@ -312,6 +448,37 @@ GEN_1000  := gen_1000_log_budget.h
 FW_LOG_H  := $(FW_UTIL)/Logger.h
 FW_LOG_C  := $(FW_UTIL)/Logger.c
 
+# #1029: the three sd_card_manager.c LOG_E messages whose tails -- and so
+# whose operator-facing remedies -- were cut by the SAME Util/Logger.c 128-byte
+# message frame #1000 (above) measures against. Same "not includable on the
+# host" situation (sd_card_manager.c pulls in Harmony's file system, FreeRTOS
+# and the board graph; Logger.c pulls in FreeRTOS), so this test also mirrors
+# LogMessageFormatImpl and measures the REAL message texts through it --
+# independently of $(SDLOG_BIN)/$(GEN_1000) above, which is #1000's own site.
+# Named SDLOG1029_BIN/SDLOG1029_GEN (not SDLOG_BIN/SDLOG_GEN) specifically to
+# avoid colliding with #1000's identically-shaped names when both PRs'
+# Makefile hunks landed in the same window (#1025 merged first).
+#
+# Everything it measures -- LOG_MESSAGE_SIZE, both of Logger.c's reservations,
+# the SD directory/bucket constants, sd_BuildBucketPath's format string and the
+# three live LOG_E format strings -- is EXTRACTED at build time by
+# gen_1029_log_budget.py rather than grepped-and-then-hand-copied. The greps
+# above pin a value the test duplicates; a concatenated multi-line C string
+# literal cannot be pinned that way (and a "does it still say X" grep on a
+# message is the wrong guard anyway -- rewording a message must re-measure it,
+# not fail the build). So the generator IS the guard: it anchors each LOG_E on
+# the statement that follows it, requires that anchor exactly once, decodes the
+# literal group, and round-trips it back into the source bytes -- exiting
+# non-zero with a named diagnostic on anything it cannot find, finds twice, or
+# cannot reproduce. Nothing is hand-copied except the three PRE-FIX message
+# texts, which are frozen in the test (the fix deleted them from the source, so
+# they cannot be extracted) and exist to prove the test can fail.
+SDLOG1029_BIN := run_1029_tests
+SDLOG1029_GEN := gen_1029_log_budget.h
+SD_MGR_SRC    := ../../firmware/src/services/sd_card_services/sd_card_manager.c
+SD_MGR_HDR    := ../../firmware/src/services/sd_card_services/sd_card_manager.h
+PYTHON        ?= python3
+
 # #1039 (PR #1116, split from the parked #1110): the four LOG_E messages
 # #1039 shortened, measured against the SAME ceiling $(SDLOG_BIN) measures --
 # Logger's real truncation, not an arithmetic estimate of it. Deliberately
@@ -341,13 +508,20 @@ LOGCEIL_SRC1 := ../../firmware/src/app_freertos.c
 LOGCEIL_SRC2 := ../../firmware/src/services/SCPI/SCPIADC.c
 LOGCEIL_SRC3 := ../../firmware/src/services/wifi_services/wifi_manager.c
 
-# Every binary depends on this file as well as on its sources. Two of the
+# Every binary depends on this file as well as on its sources. 19 of the
 # targets below carry GUARDS in their recipes -- greps that fail the build when
 # the firmware text they model has moved -- and a guard that is only re-run when
 # a source changes is not re-run when the GUARD itself changes. CI is unaffected
 # either way (Actions checks out clean, so `make run` always builds from
 # nothing); this is for the local incremental build, where the binary outliving
 # an edited recipe is exactly how a guard goes quiet. Qodo, PR #983.
+#
+# The count moves every time a guarded suite is added and it has been wrong
+# more than once -- it read "Two" while four targets were guarded, then
+# "Four" on one branch and "Two" on another, which is how this merge found
+# it. Guarded now: BENCH_BIN, SUSPEND_BIN, HELP_BIN, NAME_BIN, SDLOG_BIN.
+# Naming them rather than only counting them makes the next drift visible
+# instead of arithmetic.
 RECIPES := Makefile
 
 # #980: DAC7718 error-path honesty (lock ownership in DAC7718_ReadWriteReg,
@@ -378,6 +552,32 @@ RECIPES := Makefile
 DAC980_BIN := run_980_tests
 DAC7718_SRC := ../../firmware/src/HAL/DAC7718/DAC7718.c
 SCPIDAC_SRC := ../../firmware/src/services/SCPI/SCPIDAC.c
+AOUTSAMPLE_SRC := ../../firmware/src/state/data/AOutSample.h
+
+# #1034: DAC_EnsureHardwareInitialized's reinit path never reconciled
+# BOARDDATA_AOUT_LATEST, so SOUR:VOLT:LEV? kept confidently reporting a
+# pre-power-loss voltage after a power cycle reset every physical output.
+DACREINIT_BIN := run_1034_tests
+
+# #1154: CONFigure:ADC:chanCALM / chanCALB accepted ANY double for the
+# calibration coefficient, including one that overflows to +-inf, and stored
+# it with no SCPI error (`CONF:ADC:chanCALB 0,1e400` -> `chanCALB? 0` reads
+# `inf`, SYST:ERR? reads clean -- measured on an NQ1, serial
+# 7E2837886201026A). See test_1154_adc_cal_coefficient_finite.c's header for
+# the fix's scope (setter-only; the magnitude/range question and #908's boot
+# re-stamping path are deliberately NOT this guard's job).
+CALFINITE_BIN := run_1154_tests
+
+# #1100: DAC_EnsureHardwareInitialized()'s caller-level power check missed the
+# 5/10V rail's own commanded enable (PowerWriteVars.EN_5_10V_Val) -- the same
+# blind spot #1099 closed one call site over, at the HAL level in
+# DAC7718_ReadWriteReg(). A separate binary/target from $(DAC980_BIN) rather
+# than a new Part in that file, deliberately: $(DAC980_BIN)'s own source file
+# is held by PR #1099's in-flight EN_5_10V_Val work (a new Part there, plus
+# RegMockEnv additions near the top), so editing the same lines from a second
+# PR would race it. This target only reads $(SCPIDAC_SRC) (grep guards) and
+# never touches test_980_dac7718_error_paths.c.
+SCPIDAC_RAILGATE_BIN := run_1100_tests
 
 # #1057 (#913's twin) folded dac7718_WaitStat's SPI2 busy-spins onto the same
 # bounded-spin-then-vTaskDelay(1) shape #913 gave UserSpi.c's spi_XferByte;
@@ -550,11 +750,143 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	  || { echo "ERROR: SCPI_SD_BENCH_STALL_TIMEOUT_MS is no longer '10000U' in $(SD_BENCH_SRC)."; \
 	       echo "       Update FW_STALL_TIMEOUT_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
 	       exit 1; }
+	@# ⛔ #756 item 4 -> A (operator 2026-10-25): THIS PIN'S POLARITY IS INVERTED
+	@# from what it was. It used to assert the presence WAIT existed and that it
+	@# pumped USB before delaying (while < pump < delay). The wait is withdrawn,
+	@# so that pin is not merely obsolete -- deleting it would leave the NEW
+	@# invariant unguarded, and the new invariant is the safety-relevant one:
+	@#
+	@#   SCPI_CheckSDCardPresent() MUST NOT BLOCK.
+	@#
+	@# Over USB this function runs ON the USB task. A 500 ms park there filled
+	@# the ring, blocked the encoder and overflowed the sample pool: ACQUIRED
+	@# SAMPLES LOST. Pumping inside the wait divided the window by 20 and left
+	@# the defect the same KIND, which is what the round-3 HIGH said. So the
+	@# thing worth pinning is the absence of any wait, not the shape of one.
+	@#
+	@# ⚠ READ ON COMMENT-STRIPPED SOURCE, scoped to this ONE function.
+	@#   - Stripped, because the call site necessarily EXPLAINS the withdrawn
+	@#     wait, and that prose contains the words "while", "delay" and
+	@#     "UsbCdc_PumpWrite". Measured: the raw count was 1 and the code count
+	@#     0, the single hit being the word "while" in the new explanation. A
+	@#     raw-text pin here would be re-broken by every future author who
+	@#     documents WHY the wait is gone -- i.e. by doing the right thing.
+	@#   - Scoped, because other functions in this file delay legitimately
+	@#     (SD:BENCHmark's stall loop below is one), so a file-wide absence
+	@#     check would be false on correct code.
+	@#   - And the awk anchor matches the FULL SIGNATURE, not a name prefix.
+	@#     Measured: with a prefix anchor, renaming the function to
+	@#     SCPI_CheckSDCardPresentX STILL MATCHED, so the extraction still
+	@#     succeeded and the vacuity guard below could never fire. An
+	@#     unanchored pattern makes its own guard unreachable, and the mutant
+	@#     that was supposed to prove the guard is what exposed it.
+	@$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null \
+	   | awk '/^static bool SCPI_CheckSDCardPresent\(scpi_t \*context\) \{$$/{f=1} f{print} f&&/^\}/{exit}' \
+	   > /tmp/.sd756_fn.$$$$; \
+	 n=`grep -c . /tmp/.sd756_fn.$$$$`; \
+	 blk=`grep -cE 'vTaskDelay|UsbCdc_PumpWrite|while[[:space:]]*\(|for[[:space:]]*\(' /tmp/.sd756_fn.$$$$`; \
+	 kick=`grep -c 'DRV_SDSPI_DetectPollExpireNow' /tmp/.sd756_fn.$$$$`; \
+	 rm -f /tmp/.sd756_fn.$$$$; \
+	 test "$$n" -gt 4 && test "$$blk" -eq 0 && test "$$kick" -eq 1 \
+	  || { echo "ERROR: SCPI_CheckSDCardPresent() in $(SD_BENCH_SRC) no longer"; \
+	       echo "       matches #756's withdrawn-wait invariant."; \
+	       echo "         function lines extracted: $$n (must be > 4, else the"; \
+	       echo "           extraction found nothing and this check is vacuous)"; \
+	       echo "         blocking constructs:      $$blk (must be 0)"; \
+	       echo "         detect-poll kicks:        $$kick (must be 1)"; \
+	       echo "       A delay, pump or loop here parks the USB task and loses"; \
+	       echo "       ACQUIRED SAMPLES (round-2/3 HIGHs). The kick must stay:"; \
+	       echo "       without it a stale-DETACHED read is never corrected and"; \
+	       echo "       the next query is as wrong as this one."; \
+	       exit 1; }
 	@grep -qE '^#define[[:space:]]+SCPI_SD_BENCH_STALL_POLL_MS[[:space:]]+5U[[:space:]]*$$' $(SD_BENCH_SRC) \
 	  || { echo "ERROR: SCPI_SD_BENCH_STALL_POLL_MS is no longer '5U' in $(SD_BENCH_SRC)."; \
 	       echo "       Update FW_STALL_POLL_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
+
+# Two separate failures with two separate messages: the function is GONE
+# (renamed/moved -- the model has lost its subject) vs the function is there
+# and its CODE CHANGED (the model may have gone stale). Collapsing them would
+# report "hash mismatch" for a rename, sending the reader to diff a function
+# that is no longer in the file.
+# $(RECIPES) is a prerequisite because SD_ARM_HELPER and SD_ARM_HELPER_SHA live
+# in the Makefile and CONTROL this target's guard: without it, editing either
+# pin left an already-built binary up to date and make ran the stale one
+# without the revised validation (#976 audit). Uses the shared RECIPES
+# variable (#983) rather than a literal "Makefile", same as every other
+# target below.
+# `$(CDEF)` is a prerequisite because the definition RULE lives there now,
+# not in hash_function.py: without it an edit to the rule would leave this
+# binary up to date and the guard would run the previous rule, which is the
+# same defect `$(RECIPES)` was added for one level down (#976).
+CDEF := ../../tools/lint/cdef.py
+# #756 r6 (audit MEDIUM, both legs): DRV_SDSPI_DetectPollExpireNow samples the
+# time OUTSIDE its critical section, so a caller preempted between its sample
+# and the lock can see a NEWER published detectForceAt, underflow the unsigned
+# subtraction, pass the interval gate, and double-force an exclusive SPI4
+# detection -- then rewind detectForceAt and mis-gate the next caller too.
+#
+# drv_sdspi.c is not host-compilable (Harmony/OSAL/SYS_TIME), so the test
+# re-implements the gate's two shapes, same technique as $(BENCH_BIN) and
+# $(BIN970). These greps are what stop the model from drifting away from the
+# real one -- without them the test measures its own copy of the logic.
+$(FORCEGATE_BIN): test_756_detect_force_rate_limit.c test_framework.h $(SDSPI_DRV_SRC) $(RECIPES)
+	@# the STALE-SAMPLE ARM must be present, by exact form. This is the fix;
+	@# if it goes, the test still passes (it models both shapes itself) while
+	@# the firmware is broken again -- which is the whole failure mode a
+	@# re-implementation test has.
+	@grep -qF 'if (dObj->detectForceEver && (nowCount < dObj->detectForceAt))' $(SDSPI_DRV_SRC) \
+	  || { echo "ERROR: $(SDSPI_DRV_SRC) no longer refuses a STALE time sample in"; \
+	       echo "       DRV_SDSPI_DetectPollExpireNow (#756 r6)."; \
+	       echo "       nowCount is sampled OUTSIDE the critical section, so without"; \
+	       echo "       this arm a caller preempted before the lock computes"; \
+	       echo "       nowCount - detectForceAt as an unsigned UNDERFLOW, passes the"; \
+	       echo "       pollingIntervalMs gate, forces a second back-to-back exclusive"; \
+	       echo "       SPI4 detection, and moves detectForceAt BACKWARDS."; \
+	       echo "       test_756_detect_force_rate_limit.c models both shapes, so it"; \
+	       echo "       keeps passing without this -- which is why the pin exists."; \
+	       exit 1; }
+	@# and the sample must still be taken outside the section: if someone
+	@# "fixes" this by moving it inside, the arm above becomes dead and the
+	@# test's premise is gone. Both facts, or neither is meaningful.
+	@n=`grep -c 'const uint64_t nowCount = SYS_TIME_Counter64Get();' $(SDSPI_DRV_SRC)`; \
+	 c=`grep -c 'critState = OSAL_CRIT_Enter(OSAL_CRIT_TYPE_HIGH);' $(SDSPI_DRV_SRC)`; \
+	 test "$$n" -eq 1 && test "$$c" -ge 1 \
+	  || { echo "ERROR: $(SDSPI_DRV_SRC)'s detect-force gate no longer has the"; \
+	       echo "       shape test_756 models: nowCount samples=$$n (expected 1),"; \
+	       echo "       OSAL_CRIT_Enter sites=$$c (expected >= 1)."; \
+	       echo "       If the sample moved INSIDE the section the stale-sample arm"; \
+	       echo "       is dead code and this test is measuring nothing -- re-derive"; \
+	       echo "       both before changing this pin."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(FORCEGATE_BIN) test_756_detect_force_rate_limit.c
+
+$(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) hash_function.py $(CDEF) $(RECIPES)
+	@python3 hash_function.py --find $(SD_BENCH_SRC) $(SD_ARM_HELPER) >/dev/null 2>&1 \
+	  || { python3 hash_function.py --find $(SD_BENCH_SRC) $(SD_ARM_HELPER); \
+	       echo "ERROR: $(SD_ARM_HELPER)() is not a single definition in $(SD_BENCH_SRC)."; \
+	       echo "       test_971_sd_arm_refusal_order.c models that function, and the"; \
+	       echo "       hash below extracts it from that line to its closing brace. If"; \
+	       echo "       it was renamed, moved, or its signature reformatted, re-read it"; \
+	       echo "       against the model and update SD_ARM_HELPER / SD_ARM_HELPER_SHA."; \
+	       exit 1; }
+	@python3 hash_function.py --self-test >/dev/null \
+	  || { echo "ERROR: hash_function.py's own self-test fails, so the drift pin"; \
+	       echo "       below cannot be trusted to see an edit. Fix the hasher"; \
+	       echo "       before reading its verdict."; \
+	       python3 hash_function.py --self-test; exit 1; }
+	@got=$$(python3 hash_function.py $(SD_BENCH_SRC) 'static bool $(SD_ARM_HELPER)(') || exit 1; \
+	 [ "$$got" = "$(SD_ARM_HELPER_SHA)" ] \
+	  || { echo "ERROR: the CODE of $(SD_ARM_HELPER)() in $(SD_BENCH_SRC) has changed."; \
+	       echo "         expected sha256 $(SD_ARM_HELPER_SHA)"; \
+	       echo "         got      sha256 $$got"; \
+	       echo "       This is a tripwire, not a verdict: the change may be perfectly"; \
+	       echo "       correct. Re-read that function against the model in"; \
+	       echo "       test_971_sd_arm_refusal_order.c -- if the model still describes"; \
+	       echo "       it, update SD_ARM_HELPER_SHA; if it does not, fix the model."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(ARM_BIN) test_971_sd_arm_refusal_order.c
 
 $(SYSINFO_BIN): test_947_sysinfo_write_abort.c test_framework.h $(SCPI_INTERFACE_SRC) $(FREERTOS_CONFIG_SRC)
 	@grep -qE '^#define[[:space:]]+SCPI_WRITE_MAX_RETRIES[[:space:]]+200[[:space:]]*$$' $(SCPI_INTERFACE_SRC) \
@@ -794,6 +1126,397 @@ $(DAC980_BIN): test_980_dac7718_error_paths.c test_framework.h $(DAC7718_SRC) $(
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(DAC980_BIN) test_980_dac7718_error_paths.c
 
+$(DACREINIT_BIN): test_1034_dac_aout_invalidated_on_reinit.c test_framework.h $(SCPIDAC_SRC) $(AOUTSAMPLE_SRC) $(RECIPES)
+	@grep -qE '^[[:space:]]*uint32_t Timestamp;' $(AOUTSAMPLE_SRC) \
+	  || { echo "ERROR: AOutSample no longer has a 'uint32_t Timestamp;' field in $(AOUTSAMPLE_SRC)."; \
+	       echo "       test_1034's MockAOutSample mirrors this exact field -- re-derive the test."; \
+	       exit 1; }
+	@test "$$(grep -c '\.Timestamp = SCPIDAC_ValidTimestamp()' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: '.Timestamp = SCPIDAC_ValidTimestamp()' count in $(SCPIDAC_SRC) changed from 2."; \
+	       echo "       SCPI_DACVoltageSet's single-channel AND all-channel branches must both stamp"; \
+	       echo "       Timestamp on every successful publish -- test_1034's set_shape() models both."; \
+	       echo "       If this count changed, one branch may have stopped stamping, or reverted to a"; \
+	       echo "       bare xTaskGetTickCount() call (round-1 Qodo finding: tick 0 is a legitimate"; \
+	       echo "       return value and collides with the Timestamp==0 unknown sentinel) -- re-derive."; \
+	       exit 1; }
+	@grep -qF 'return (tick == 0) ? 1u : (uint32_t)tick;' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: SCPIDAC_ValidTimestamp's tick-zero substitution is gone from $(SCPIDAC_SRC)."; \
+	       echo "       test_1034's set_shape() models this exact remap -- re-derive the test if it moved."; \
+	       exit 1; }
+	@test "$$(grep -c 'pSample->Timestamp < 1' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: 'pSample->Timestamp < 1' count in $(SCPIDAC_SRC) changed from 2."; \
+	       echo "       Audit correction on PR #1147 (disposition fix_now) made the all-channel"; \
+	       echo "       form of SCPI_DACVoltageGet use the IDENTICAL staleness check as the"; \
+	       echo "       single-channel form (both now error a channel whose Timestamp is still 0,"; \
+	       echo "       instead of the all-channel form substituting a fabricated 0.0V). test_1034's"; \
+	       echo "       get_single_FIXED() and get_all_FIXED() both mirror this exact check --"; \
+	       echo "       re-derive both if this moved, and re-derive the whole test file if only one"; \
+	       echo "       of the two branches still uses it (that would reopen the asymmetry #1147"; \
+	       echo "       exists to close)."; \
+	       exit 1; }
+	@grep -qF 'const AOutSample invalidatedSample = {0};' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: DAC_EnsureHardwareInitialized's post-reinit invalidation local"; \
+	       echo "       ('invalidatedSample') is gone from $(SCPIDAC_SRC). test_1034's"; \
+	       echo "       reinit_invalidate_shape() mirrors this loop -- re-derive the test."; \
+	       exit 1; }
+	@i=`grep -nF 'bool initSucceeded = DAC7718_Init(dacInstanceId, 1);' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 v=`grep -nF 'const AOutSample invalidatedSample = {0};' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 f=`grep -nF 'if (!initSucceeded) {' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 p=`grep -nF 'dacHardwareInitialized = true;   // publish READY ...' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 test -n "$$i" && test -n "$$v" && test -n "$$f" && test -n "$$p" \
+	   && test "$$i" -lt "$$v" && test "$$v" -lt "$$f" && test "$$f" -lt "$$p" \
+	   || { echo "ERROR: #1034's invalidation step is no longer ordered AFTER DAC7718_Init() runs,"; \
+	        echo "       BEFORE the initSucceeded failure check, and BEFORE dacHardwareInitialized"; \
+	        echo "       is published true in $(SCPIDAC_SRC) (init='$$i' invalidate='$$v'"; \
+	        echo "       fail-check='$$f' publish='$$p')."; \
+	        echo "       Invalidating before the reset actually happens, or skipping invalidation"; \
+	        echo "       on a DAC7718_Init() FAILURE (round-2 Qodo finding, importance 10 --"; \
+	        echo "       DAC7718_Init()'s post-reset-pulse failure paths still leave the hardware"; \
+	        echo "       physically reset), or invalidating after READY is already published, all"; \
+	        echo "       reopen the confidently-wrong readback #1034 exists to close -- re-derive"; \
+	        echo "       the test against the new placement."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(DACREINIT_BIN) test_1034_dac_aout_invalidated_on_reinit.c
+
+# #1154: build-time guard that the real SCPIADC.c still rejects a non-finite
+# CONF:ADC:chanCALM/chanCALB coefficient -- see the comment above
+# $(CALFINITE_BIN)'s definition and test_1154_adc_cal_coefficient_finite.c's
+# header for what this fix is (and is deliberately not) in scope for.
+#
+# Tightened per PR #1157 review (worker pre-audit comment, 2026-09-21): the
+# original guard was presence-only (`grep -qF`, no counts, no negative-form
+# check, no comment-stripping), and TWO mutants of SCPIADC.c passed it AND
+# the host test outright: (A) `if (isfinite(value))` -> `if (!isfinite(value))`
+# -- accepts inf/NaN and rejects every finite value, worse than the #1154
+# defect -- and (B) `if (!AdcCalCoefficientFinite(...)) {` ->
+# `(void)AdcCalCoefficientFinite(...); if (0) {` -- reinstates the #1154
+# defect exactly, since the helper is still called (and still logs) but its
+# return value is discarded. Mirrors $(SCAN1112_BIN)'s technique in this
+# SAME file: strip comment lines first, pin exact counts (not mere
+# presence), pin an explicit negative-form's absence, and pin ordering.
+#
+# Tightened AGAIN, same PR, adversarial audit round 2 (2026-09-21): presence
+# + count + ORDER still cannot see NESTING. Moving the closing brace of
+# `if (isfinite(value)) {` down to sit right before `return true;` --
+#     if (isfinite(value)) {
+#     }
+#     return true;             /* now unconditional */
+#     LOG_E(...); SCPI_ErrorPush(...); return false;   /* both dead */
+# -- keeps npos/nneg/nerr/nt/nf at 1/0/1/1/1 and keeps isfinite-line <
+# true-line < false-line, so it passed every check above outright and is
+# the #1154 defect again (accepts inf/NaN unconditionally). Setter-side
+# guards (mbody/bbody below) were ALREADY immune to this exact trick --
+# they pin that `return SCPI_RES_ERR;` is the line IMMEDIATELY after the
+# call, i.e. adjacency, not just ordering. This gives the accept arm the
+# same treatment: `if (isfinite(value)) {`, `return true;` and the closing
+# `}` must be three CONSECUTIVE lines, checked the same line-oriented way
+# (no parser) by indexing p+1/p+2 off the isfinite line already found above.
+#
+# That still isn't enough on its own: a `/* */` block comment or a
+# `#if 0`/`#endif` span, with the delimiters on their own lines, hides the
+# pinned text from a human and from the CPU while leaving it perfectly
+# intact for `grep -v '^[[:space:]]*[*/]'` to find (that filter only drops
+# lines that themselves OPEN with `*` or `/`, not a comment SPAN) -- so
+# `if (isfinite(value)) { return true; }` sitting dead inside either wrapper
+# still satisfies every check above, including the new adjacency one,
+# while the compiler never runs it. Rather than hand-roll a second
+# comment/preprocessor state machine (this project's own history is
+# explicit that a hand-rolled parser-substitute is the wrong tool -- build
+# the oracle from the reference implementation), this re-extracts the SAME
+# range through the real C preprocessor (`$(CC) -E -P -xc -`, no headers
+# included, so no macro surprises) and re-pins presence + the same
+# adjacency triple against ITS output. Comments and disabled `#if 0` spans
+# vanish under real preprocessing the way they vanish at actual compile
+# time; live code does not, so this is a strict tightening, not a
+# different check -- verified byte-identical to the plain-text extraction
+# on the real (unmutated) source.
+#
+# Extended AGAIN, same PR (PR #1157 review comment
+# https://github.com/daqifi/daqifi-nyquist-firmware/pull/1157#issuecomment-5764273765):
+# the same comment/`#if 0` hiding trick reproduces against the CALM and CALB
+# SETTER guards (mbody/bbody below) exactly as it did against the helper --
+# `grep -v '^[[:space:]]*[*/]'` strips only the `/*`/`*/` delimiter lines
+# themselves, not the guarded call-shape text between them, so wrapping
+# either setter's `if (!AdcCalCoefficientFinite(...)) { return SCPI_RES_ERR;
+# }` in a block comment or `#if 0`/`#endif` still satisfies every plain-text
+# check below (presence, write-count, and check-before-write adjacency)
+# while the compiler discards it, reinstating #1154 on that channel's
+# setter. mbody/bbody now get the SAME preprocessor re-extraction and
+# re-pin (call-shape presence + immediate `return SCPI_RES_ERR;` adjacency)
+# against their own `$(CC) -E -P -xc -` output, right after each one's
+# existing plain-text checks -- same instrument, same technique, applied to
+# all three guarded bodies in this rule rather than fbody alone. Every
+# existing plain-text check on mbody/bbody is unchanged; this only adds a
+# second, stricter pass on top, per "keep every existing check that already
+# works."
+#
+# KNOWN, ACCEPTED RESIDUAL (adversarial audit round on PR #1157, 2026-09-21,
+# CONFIRMED and reproduced independently): every check below -- presence,
+# counts, ordering, adjacency, and the preprocessor re-extraction above -- is
+# a text/preprocessor scan, so none of it can observe RUNTIME control flow.
+# Wrapping a setter's WHOLE `if (!AdcCalCoefficientFinite(...)) { return
+# SCPI_RES_ERR; }` block in a runtime `if (0) { ... }` -- not the
+# preprocessor's `#if 0`, which the pass above DOES catch -- leaves the
+# guarded text, its ordering and its adjacency to the write completely
+# intact, so it satisfies every check in this rule outright while the
+# compiler never executes the block: the mutated setter accepts and stores a
+# non-finite coefficient with no SCPI error, reinstating #1154 exactly, and
+# this whole suite still reports green (`run_1154_tests` still passes 6
+# tests / 18 assertions, because that binary only ever exercises its own
+# re-implemented model, never this file). This is NOT a hypothetical --
+# reproduced against the real source at this PR's head.
+#
+# This is intentionally NOT closed with a fourth special-cased text pattern.
+# Arbitrary C admits unboundedly many ways to make matched text ineffective
+# (this is the third or fourth shape found in this rule alone), and this
+# guard is already ~190 Makefile lines pinning a 6-line helper -- the
+# durable fix is not another pattern here but to stop proving firmware
+# contracts by splicing and grepping, which is tracked project-wide as
+# firmware issue #1033
+# (https://github.com/daqifi/daqifi-nyquist-firmware/issues/1033) and is
+# where this residual is recorded, not silently.
+#
+# Because this guard cannot close that class, it is NOT the authoritative
+# proof that a non-finite coefficient is rejected on real firmware -- it is
+# a fast, host-side check that the source has not visibly regressed in the
+# shapes a text scan can see. The authoritative behavioural regression is
+# daqifi-python-test-suite PR #464
+# (https://github.com/daqifi/daqifi-python-test-suite/pull/464),
+# test_1154_adc_cal_coefficient_finite.py, which drives the real BUILT
+# firmware over SCPI on hardware and so catches every mutation class above,
+# the runtime `if (0)` bypass included, because it observes what the device
+# actually does rather than what its source text says. Bench-verified 8
+# PASS / 0 FAIL at firmware crc32 `553E07E4`, built from firmware commit
+# `39d1381a8` on this same branch; SCPIADC.c is byte-identical from that
+# commit through this rule's own PR head. That test-suite regression is NOT
+# run in CI (it needs a physical board), so in CI this Makefile guard is the
+# ONLY continuously-enforced check of this behaviour, and it is the weaker
+# of the two.
+$(CALFINITE_BIN): test_1154_adc_cal_coefficient_finite.c test_framework.h $(SCPIADC_SRC) $(RECIPES)
+	@fbody=`sed -n '/^static bool AdcCalCoefficientFinite(/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$fbody" \
+	   || { echo "ERROR: AdcCalCoefficientFinite() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0 -- the guards below can see"; \
+	        echo "       nothing, and a guard that examines nothing must fail."; \
+	        exit 1; }; \
+	 npos=`printf '%s\n' "$$fbody" | grep -cF 'if (isfinite(value)) {'`; \
+	 nneg=`printf '%s\n' "$$fbody" | grep -cF '!isfinite'`; \
+	 nerr=`printf '%s\n' "$$fbody" | grep -cF 'SCPI_ERROR_DATA_OUT_OF_RANGE'`; \
+	 nt=`printf '%s\n' "$$fbody" | grep -cE 'return[[:space:]]+true;'`; \
+	 nf=`printf '%s\n' "$$fbody" | grep -cE 'return[[:space:]]+false;'`; \
+	 test "$$npos" -eq 1 && test "$$nneg" -eq 0 && test "$$nerr" -eq 1 \
+	   && test "$$nt" -eq 1 && test "$$nf" -eq 1 \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC) no longer has"; \
+	        echo "       exactly the shape this guard pins (positive 'if (isfinite(value))"; \
+	        echo "       {' occurrences=$$npos, negated '!isfinite' occurrences=$$nneg,"; \
+	        echo "       SCPI_ERROR_DATA_OUT_OF_RANGE=$$nerr, return true=$$nt,"; \
+	        echo "       return false=$$nf; want 1 0 1 1 1). An inverted branch"; \
+	        echo "       (isfinite -> !isfinite) accepts inf/NaN and rejects every"; \
+	        echo "       finite value -- worse than the #1154 defect -- and it used to"; \
+	        echo "       pass this guard outright; test_1154's SetCalCoefficient()"; \
+	        echo "       models the correct polarity and would pass regardless."; \
+	        exit 1; }; \
+	 p=`printf '%s\n' "$$fbody" | grep -nF 'if (isfinite(value)) {' | cut -d: -f1`; \
+	 t=`printf '%s\n' "$$fbody" | grep -nE 'return[[:space:]]+true;' | cut -d: -f1`; \
+	 f=`printf '%s\n' "$$fbody" | grep -nE 'return[[:space:]]+false;' | cut -d: -f1`; \
+	 test "$$p" -lt "$$t" && test "$$t" -lt "$$f" \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC) no longer returns"; \
+	        echo "       true INSIDE the isfinite() branch and false afterward"; \
+	        echo "       (isfinite-line='$$p' return-true='$$t' return-false='$$f';"; \
+	        echo "       want isfinite < true < false)."; \
+	        exit 1; }; \
+	 tadj=`printf '%s\n' "$$fbody" | sed -n "$$((p+1))p"`; \
+	 badj=`printf '%s\n' "$$fbody" | sed -n "$$((p+2))p"`; \
+	 printf '%s\n' "$$tadj" | grep -qE '^[[:space:]]*return[[:space:]]+true;[[:space:]]*$$' \
+	   && printf '%s\n' "$$badj" | grep -qE '^[[:space:]]*}[[:space:]]*$$' \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC) no longer has"; \
+	        echo "       'return true;' and the closing brace as the two lines"; \
+	        echo "       IMMEDIATELY following 'if (isfinite(value)) {' (line"; \
+	        echo "       $$p+1 got '$$tadj', line $$p+2 got '$$badj'; want"; \
+	        echo "       'return true;' then '}')."; \
+	        echo "       The count and ordering checks above pin PRESENCE and"; \
+	        echo "       ORDER but not NESTING: moving the closing brace down to"; \
+	        echo "       sit just above an unconditional 'return true;' still"; \
+	        echo "       satisfies every one of them while turning the isfinite()"; \
+	        echo "       test into a no-op that accepts inf/NaN unconditionally --"; \
+	        echo "       this IS the #1154 defect, reinstated through the one"; \
+	        echo "       shape those checks cannot see."; \
+	        exit 1; }; \
+	 fbodycpp=`sed -n '/^static bool AdcCalCoefficientFinite(/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | $(CC) -E -P -xc - 2>/dev/null`; \
+	 pc=`printf '%s\n' "$$fbodycpp" | grep -cF 'if (isfinite(value)) {'`; \
+	 test "$$pc" -eq 1 \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC): the"; \
+	        echo "       'if (isfinite(value)) {' this guard pins survives the plain"; \
+	        echo "       comment-stripping grep above (npos=1) but DISAPPEARS when the"; \
+	        echo "       body is run through the real C preprocessor (occurrences=$$pc,"; \
+	        echo "       want 1) -- that only happens when it is dead text: inside a"; \
+	        echo "       /* block comment */ whose delimiters sit on their own lines, or"; \
+	        echo "       inside a '#if 0' / '#endif' span. Either shape still SHOWS the"; \
+	        echo "       check to every line-oriented grep above while the compiler"; \
+	        echo "       discards it -- so the check never runs and a non-finite"; \
+	        echo "       coefficient reaches the runtime array again. This IS the #1154"; \
+	        echo "       defect, reinstated by disabling the guard rather than editing it."; \
+	        exit 1; }; \
+	 pc1=`printf '%s\n' "$$fbodycpp" | grep -nF 'if (isfinite(value)) {' | cut -d: -f1`; \
+	 tadjc=`printf '%s\n' "$$fbodycpp" | sed -n "$$((pc1+1))p"`; \
+	 badjc=`printf '%s\n' "$$fbodycpp" | sed -n "$$((pc1+2))p"`; \
+	 printf '%s\n' "$$tadjc" | grep -qE '^[[:space:]]*return[[:space:]]+true;[[:space:]]*$$' \
+	   && printf '%s\n' "$$badjc" | grep -qE '^[[:space:]]*}[[:space:]]*$$' \
+	   || { echo "ERROR: AdcCalCoefficientFinite() in $(SCPIADC_SRC): after real"; \
+	        echo "       preprocessing, 'return true;' and the closing brace are no"; \
+	        echo "       longer the two lines immediately following"; \
+	        echo "       'if (isfinite(value)) {' (line $$pc1+1 got '$$tadjc', line"; \
+	        echo "       $$pc1+2 got '$$badjc') -- same defect as the plain-text adjacency"; \
+	        echo "       check above, surviving because of an intervening comment or"; \
+	        echo "       preprocessor directive that this preprocessed copy strips."; \
+	        exit 1; }
+	@mbody=`sed -n '/^static scpi_result_t ADCChanCalmSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$mbody" \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0."; \
+	        exit 1; }; \
+	 nc=`printf '%s\n' "$$mbody" | grep -cF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {'`; \
+	 nw=`printf '%s\n' "$$mbody" | grep -cF '.CalM = param2;'`; \
+	 test "$$nc" -eq 1 && test "$$nw" -eq 1 \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC) no longer calls"; \
+	        echo "       AdcCalCoefficientFinite() in the exact guarded-call shape this"; \
+	        echo "       guard pins, or CalM is written more/fewer than once (call-shape"; \
+	        echo "       occurrences=$$nc, CalM writes=$$nw; want 1 1). Discarding the"; \
+	        echo "       call's return value (e.g. '(void)Adc...; if (0) {') still calls"; \
+	        echo "       the helper and still logs, but reinstates the #1154 defect"; \
+	        echo "       exactly -- a non-finite coefficient reaches the runtime array"; \
+	        echo "       again. A second, unguarded CalM write is the same defect by a"; \
+	        echo "       different door."; \
+	        exit 1; }; \
+	 c=`printf '%s\n' "$$mbody" | grep -nF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {' | cut -d: -f1`; \
+	 w=`printf '%s\n' "$$mbody" | grep -nF '.CalM = param2;' | cut -d: -f1`; \
+	 nextline=`printf '%s\n' "$$mbody" | sed -n "$$((c+1))p"`; \
+	 test "$$c" -lt "$$w" \
+	   && printf '%s\n' "$$nextline" | grep -qE 'return[[:space:]]+SCPI_RES_ERR;' \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC) no longer returns"; \
+	        echo "       SCPI_RES_ERR; as the line right after the finite-check, before"; \
+	        echo "       the CalM write (check='$$c' CalM-write='$$w', next line after"; \
+	        echo "       check='$$nextline'). An emptied-out if-block still shows the"; \
+	        echo "       call but falls through to the write on a non-finite value --"; \
+	        echo "       this IS the #1154 defect."; \
+	        exit 1; }
+	@mbodycpp=`sed -n '/^static scpi_result_t ADCChanCalmSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | $(CC) -E -P -xc - 2>/dev/null`; \
+	 ncc=`printf '%s\n' "$$mbodycpp" | grep -cF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {'`; \
+	 test "$$ncc" -eq 1 \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC): the guarded-call"; \
+	        echo "       shape this guard pins survives the plain comment-stripping grep"; \
+	        echo "       above (nc=1) but DISAPPEARS when the body is run through the real"; \
+	        echo "       C preprocessor (occurrences=$$ncc, want 1) -- that only happens"; \
+	        echo "       when it is dead text: inside a /* block comment */ whose"; \
+	        echo "       delimiters sit on their own lines, or inside a '#if 0' / '#endif'"; \
+	        echo "       span. Either shape still SHOWS the check to every line-oriented"; \
+	        echo "       grep above while the compiler discards it -- so the check never"; \
+	        echo "       runs and a non-finite CALM coefficient reaches the runtime array"; \
+	        echo "       again. This IS the #1154 defect, reinstated by disabling the"; \
+	        echo "       guard rather than editing it."; \
+	        exit 1; }; \
+	 cc=`printf '%s\n' "$$mbodycpp" | grep -nF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALM")) {' | cut -d: -f1`; \
+	 nextlinec=`printf '%s\n' "$$mbodycpp" | sed -n "$$((cc+1))p"`; \
+	 printf '%s\n' "$$nextlinec" | grep -qE 'return[[:space:]]+SCPI_RES_ERR;' \
+	   || { echo "ERROR: ADCChanCalmSetClaimed() in $(SCPIADC_SRC): after real"; \
+	        echo "       preprocessing, 'return SCPI_RES_ERR;' is no longer the line"; \
+	        echo "       immediately following the finite-check (line $$cc+1 got"; \
+	        echo "       '$$nextlinec') -- same defect as the plain-text adjacency check"; \
+	        echo "       above, surviving because of an intervening comment or"; \
+	        echo "       preprocessor directive that this preprocessed copy strips."; \
+	        exit 1; }
+	@bbody=`sed -n '/^static scpi_result_t ADCChanCalbSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$bbody" \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() was not found in $(SCPIADC_SRC),"; \
+	        echo "       or no longer opens at column 0."; \
+	        exit 1; }; \
+	 nc=`printf '%s\n' "$$bbody" | grep -cF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {'`; \
+	 nw=`printf '%s\n' "$$bbody" | grep -cF '.CalB = param2;'`; \
+	 test "$$nc" -eq 1 && test "$$nw" -eq 1 \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC) no longer calls"; \
+	        echo "       AdcCalCoefficientFinite() in the exact guarded-call shape this"; \
+	        echo "       guard pins, or CalB is written more/fewer than once (call-shape"; \
+	        echo "       occurrences=$$nc, CalB writes=$$nw; want 1 1). Discarding the"; \
+	        echo "       call's return value (e.g. '(void)Adc...; if (0) {') still calls"; \
+	        echo "       the helper and still logs, but reinstates the #1154 defect"; \
+	        echo "       exactly -- a non-finite coefficient reaches the runtime array"; \
+	        echo "       again. A second, unguarded CalB write is the same defect by a"; \
+	        echo "       different door."; \
+	        exit 1; }; \
+	 c=`printf '%s\n' "$$bbody" | grep -nF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {' | cut -d: -f1`; \
+	 w=`printf '%s\n' "$$bbody" | grep -nF '.CalB = param2;' | cut -d: -f1`; \
+	 nextline=`printf '%s\n' "$$bbody" | sed -n "$$((c+1))p"`; \
+	 test "$$c" -lt "$$w" \
+	   && printf '%s\n' "$$nextline" | grep -qE 'return[[:space:]]+SCPI_RES_ERR;' \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC) no longer returns"; \
+	        echo "       SCPI_RES_ERR; as the line right after the finite-check, before"; \
+	        echo "       the CalB write (check='$$c' CalB-write='$$w', next line after"; \
+	        echo "       check='$$nextline'). An emptied-out if-block still shows the"; \
+	        echo "       call but falls through to the write on a non-finite value --"; \
+	        echo "       this IS the #1154 defect."; \
+	        exit 1; }
+	@bbodycpp=`sed -n '/^static scpi_result_t ADCChanCalbSetClaimed(scpi_t \* context) {/,/^}/p' $(SCPIADC_SRC) | tr -d '\r' | $(CC) -E -P -xc - 2>/dev/null`; \
+	 nccb=`printf '%s\n' "$$bbodycpp" | grep -cF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {'`; \
+	 test "$$nccb" -eq 1 \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC): the guarded-call"; \
+	        echo "       shape this guard pins survives the plain comment-stripping grep"; \
+	        echo "       above (nc=1) but DISAPPEARS when the body is run through the real"; \
+	        echo "       C preprocessor (occurrences=$$nccb, want 1) -- that only happens"; \
+	        echo "       when it is dead text: inside a /* block comment */ whose"; \
+	        echo "       delimiters sit on their own lines, or inside a '#if 0' / '#endif'"; \
+	        echo "       span. Either shape still SHOWS the check to every line-oriented"; \
+	        echo "       grep above while the compiler discards it -- so the check never"; \
+	        echo "       runs and a non-finite CALB coefficient reaches the runtime array"; \
+	        echo "       again. This IS the #1154 defect, reinstated by disabling the"; \
+	        echo "       guard rather than editing it."; \
+	        exit 1; }; \
+	 ccb=`printf '%s\n' "$$bbodycpp" | grep -nF 'if (!AdcCalCoefficientFinite(context, param2, "CONF:ADC:chanCALB")) {' | cut -d: -f1`; \
+	 nextlinecb=`printf '%s\n' "$$bbodycpp" | sed -n "$$((ccb+1))p"`; \
+	 printf '%s\n' "$$nextlinecb" | grep -qE 'return[[:space:]]+SCPI_RES_ERR;' \
+	   || { echo "ERROR: ADCChanCalbSetClaimed() in $(SCPIADC_SRC): after real"; \
+	        echo "       preprocessing, 'return SCPI_RES_ERR;' is no longer the line"; \
+	        echo "       immediately following the finite-check (line $$ccb+1 got"; \
+	        echo "       '$$nextlinecb') -- same defect as the plain-text adjacency check"; \
+	        echo "       above, surviving because of an intervening comment or"; \
+	        echo "       preprocessor directive that this preprocessed copy strips."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(CALFINITE_BIN) test_1154_adc_cal_coefficient_finite.c
+
+$(SCPIDAC_RAILGATE_BIN): test_1100_scpidac_rail_enable_gate.c test_framework.h $(SCPIDAC_SRC) $(RECIPES)
+	@grep -qE '^[[:space:]]*if \(pPowerState->powerState != POWERED_UP\) \{' $(SCPIDAC_SRC) \
+	  || { echo "ERROR: DAC_EnsureHardwareInitialized's top-of-function powerState gate is gone"; \
+	       echo "       from $(SCPIDAC_SRC). test_1100_scpidac_rail_enable_gate.c's model assumes"; \
+	       echo "       the #1100 rail-enable gate sits immediately after this exact check -- re-derive."; \
+	       exit 1; }
+	@test "$$(grep -c 'BOARDRUNTIME_POWER_WRITE_VARIABLES' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: BOARDRUNTIME_POWER_WRITE_VARIABLES lookup count in $(SCPIDAC_SRC) changed"; \
+	       echo "       from 2 (added by #1100). The fix needs BOTH the top-of-function rail-enable"; \
+	       echo "       gate AND a second, FRESH read immediately before publishing"; \
+	       echo "       dacHardwareInitialized=true -- exactly the same two-checkpoint shape #980"; \
+	       echo "       pass 3 established for powerState (see the sibling guard on \$$(DAC980_BIN))."; \
+	       echo "       If this count is no longer 2, one checkpoint may have been removed -- re-derive."; \
+	       exit 1; }
+	@test "$$(grep -c 'pPowerWriteVars->EN_5_10V_Val' $(SCPIDAC_SRC))" = "2" \
+	  || { echo "ERROR: pPowerWriteVars->EN_5_10V_Val reference count in $(SCPIDAC_SRC) changed"; \
+	       echo "       from 2 (the top-of-function gate + the pre-publish re-check) -- #1100's"; \
+	       echo "       rail-enable gate may have moved or lost a checkpoint. Re-derive the test."; \
+	       exit 1; }
+	@g1=`grep -nF 'pPowerWriteVars->EN_5_10V_Val' $(SCPIDAC_SRC) | head -1 | cut -d: -f1`; \
+	 g2=`grep -nF 'pPowerWriteVars->EN_5_10V_Val' $(SCPIDAC_SRC) | tail -1 | cut -d: -f1`; \
+	 i=`grep -nE 'DAC7718_Init\(dacInstanceId, 1\)' $(SCPIDAC_SRC) | head -1 | cut -d: -f1`; \
+	 p=`grep -nF 'dacHardwareInitialized = true;' $(SCPIDAC_SRC) | cut -d: -f1`; \
+	 test -n "$$g1" && test -n "$$g2" && test -n "$$i" && test -n "$$p" \
+	   && test "$$g1" -lt "$$i" && test "$$i" -lt "$$g2" && test "$$g2" -lt "$$p" \
+	   || { echo "ERROR: #1100's two rail-enable checkpoints are no longer ordered"; \
+	        echo "       gate1 < DAC7718_Init < gate2 < publish in $(SCPIDAC_SRC)"; \
+	        echo "       (found gate1='$$g1' init='$$i' gate2='$$g2' publish='$$p')."; \
+	        echo "       The count guard above proves BOTH reads exist; this proves the SECOND is a"; \
+	        echo "       FRESH re-read taken AFTER DAC7718_Init() returns and BEFORE the publish."; \
+	        echo "       Hoisting both above Init would restore the mid-init rail-drop bug while"; \
+	        echo "       leaving every occurrence count at 2 -- which is what this guard catches."; \
+	        exit 1; }
+	$(CC) $(CFLAGS) -o $(SCPIDAC_RAILGATE_BIN) test_1100_scpidac_rail_enable_gate.c
+
 # #988 added a FOURTH arm (the torn-down latch) between the live suspend reason
 # and the card advisory, so this guard now pins four markers, not three. The
 # order it pins IS the design decision the test asserts: dirFull -> suspend ->
@@ -881,6 +1604,159 @@ $(SUSPEND_BIN): test_953_bench_suspend_diagnosis.c test_framework.h $(SD_BENCH_S
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SUSPEND_BIN) test_953_bench_suspend_diagnosis.c
 
+$(FAILNEXT_BIN): test_981_sd_failnext_hook.c test_framework.h $(SD_MANAGER_SRC) $(SD_BENCH_SRC) $(RECIPES)
+	@grep -qF 'static volatile bool gFailNextWrite = false;' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: gFailNextWrite is no longer declared in $(SD_MANAGER_SRC)."; \
+	       echo "       test_981_sd_failnext_hook.c models its one-shot semantics; re-read both."; \
+	       exit 1; }
+	@# #1013: the ARM is USB-ONLY. This hook exists to make an SD write fail,
+	@# and SCPI over TCP has no authentication, so arming must cost physical
+	@# presence at the bench. Nothing else in the host suite can see this: the
+	@# C tests above drive sd_card_manager's arm/consume contract directly and
+	@# never go through the SCPI handler, so removing the gate leaves every one
+	@# of them green. Checked as a SHAPE inside the setter's own body rather
+	@# than anywhere in the file -- a ContextIsTcp call in some other handler
+	@# (there are two, for #598) must not satisfy this.
+	@sed -n '/^scpi_result_t SCPI_StorageSDFailNextSet(/,/^}/p' $(SD_BENCH_SRC) \
+	  | grep -qF 'wifi_tcp_server_ContextIsTcp(context)' \
+	  || { echo "ERROR: SCPI_StorageSDFailNextSet no longer refuses the TCP transport."; \
+	       echo "       #1013 gated this ARM to USB because the command's purpose is to"; \
+	       echo "       cause a write failure and TCP SCPI is unauthenticated. If this is"; \
+	       echo "       deliberate, the wiki row and that decision need updating together."; \
+	       exit 1; }
+	@# ... and that the refusal PRECEDES the parameter read, so a refused
+	@# command does no work and leaves no state behind.
+	@sed -n '/^scpi_result_t SCPI_StorageSDFailNextSet(/,/^}/p' $(SD_BENCH_SRC) \
+	  | grep -nE 'ContextIsTcp|SCPI_ParamInt32' | head -2 \
+	  | awk -F: 'NR==1 && $$2 !~ /ContextIsTcp/ { exit 1 }' \
+	  || { echo "ERROR: the #1013 TCP refusal no longer precedes SCPI_ParamInt32 in"; \
+	       echo "       SCPI_StorageSDFailNextSet. A command that will not be honoured"; \
+	       echo "       must not consume its argument first."; \
+	       exit 1; }
+	@# The QUERY is deliberately NOT gated (health visibility). If a future
+	@# edit gates it too, that is a decision about hiding an armed hazard from
+	@# a remote operator and belongs in review, not in a silent diff.
+	@sed -n '/^scpi_result_t SCPI_StorageSDFailNextGet(/,/^}/p' $(SD_BENCH_SRC) \
+	  | grep -qF 'wifi_tcp_server_ContextIsTcp' \
+	  && { echo "ERROR: SCPI_StorageSDFailNextGet is now transport-gated."; \
+	       echo "       #1013 left the QUERY reachable on purpose: it answers 'is a fault"; \
+	       echo "       injector armed on this device', which is health visibility a remote"; \
+	       echo "       operator should have. Gating it hides the hazard instead of the arm."; \
+	       exit 1; } || true
+	@# #981 post-audit (PR #1013 BLOCKING finding 2): the four independent
+	@# `grep -qF ... || ok=0` checks this replaced only proved every TOKEN was
+	@# present somewhere in the block -- not that they occurred in the right
+	@# ORDER or that the arm actually gets consumed. An audit mutated the real
+	@# source in memory (moving taskEXIT_CRITICAL() before the armed test, and
+	@# separately flipping the real `injectWriteFailure = true;` to `= false;`)
+	@# and every one of the four old checks kept passing. This is a POSITIONAL
+	@# check (line numbers within the bounded block, strictly increasing) and
+	@# it now also checks for `injectWriteFailure = true;`, which the old
+	@# version never looked for at all -- that omission is exactly what let
+	@# the second mutation above through silently. Positional, not just
+	@# present, also means the UNMOUNT_DISK gate token below cannot be
+	@# reordered to after the clear/inject without failing this too.
+	@sed -n '/bool injectWriteFailure = false;/,/if (injectWriteFailure) {/p' $(SD_MANAGER_SRC) > /tmp/.fw981_block.$$$$; \
+	 enter=`grep -nF 'taskENTER_CRITICAL();' /tmp/.fw981_block.$$$$ | head -1 | cut -d: -f1`; \
+	 gatestart=`grep -nF 'if (gFailNextWrite &&' /tmp/.fw981_block.$$$$ | head -1 | cut -d: -f1`; \
+	 gatestate=`grep -nF 'SD_CARD_MANAGER_PROCESS_STATE_UNMOUNT_DISK) {' /tmp/.fw981_block.$$$$ | head -1 | cut -d: -f1`; \
+	 clear=`grep -nF 'gFailNextWrite = false;' /tmp/.fw981_block.$$$$ | head -1 | cut -d: -f1`; \
+	 inject=`grep -nF 'injectWriteFailure = true;' /tmp/.fw981_block.$$$$ | head -1 | cut -d: -f1`; \
+	 exitc=`grep -nF 'taskEXIT_CRITICAL();' /tmp/.fw981_block.$$$$ | head -1 | cut -d: -f1`; \
+	 rm -f /tmp/.fw981_block.$$$$; \
+	 test -n "$$enter" && test -n "$$gatestart" && test -n "$$gatestate" \
+	   && test -n "$$clear" && test -n "$$inject" && test -n "$$exitc" \
+	   && test "$$enter" -lt "$$gatestart" && test "$$gatestart" -lt "$$gatestate" \
+	   && test "$$gatestate" -lt "$$clear" && test "$$clear" -lt "$$inject" \
+	   && test "$$inject" -lt "$$exitc" \
+	  || { echo "ERROR: the FAILNext consume site in $(SD_MANAGER_SRC) is no"; \
+	       echo "       longer, IN THIS ORDER: taskENTER_CRITICAL() ->"; \
+	       echo "       if(gFailNextWrite && ...UNMOUNT_DISK){ clear;"; \
+	       echo "       inject=true } -> taskEXIT_CRITICAL(). Token PRESENCE"; \
+	       echo "       alone is not enough -- moving taskEXIT_CRITICAL before"; \
+	       echo "       the test still has every token present but destroys the"; \
+	       echo "       read-modify-write atomicity, and dropping the"; \
+	       echo "       UNMOUNT_DISK gate re-opens the truncation this hook was"; \
+	       echo "       corrected to close (enter=$$enter gatestart=$$gatestart"; \
+	       echo "       gatestate=$$gatestate clear=$$clear inject=$$inject"; \
+	       echo "       exit=$$exitc)."; \
+	       echo "       test_981_sd_failnext_hook.c models exactly this shape;"; \
+	       echo "       re-read both before changing either."; \
+	       exit 1; }
+	@a=`grep -nF 'gFailNextWrite = false;' $(SD_MANAGER_SRC) | tail -1 | cut -d: -f1`; \
+	 b=`grep -nF 'static bool isInitDone = false;' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 test -n "$$a" && test -n "$$b" && test "$$a" -lt "$$b" && test $$(($$b - $$a)) -lt 10 \
+	  || { echo "ERROR: the #409 reset-scrub of gFailNextWrite in"; \
+	       echo "       sd_card_manager_Init() is no longer immediately before the"; \
+	       echo "       isInitDone guard in $(SD_MANAGER_SRC) (a='$$a' b='$$b') --"; \
+	       echo "       a reboot may no longer clear an outstanding arm."; \
+	       exit 1; }
+	@sed -n '/void sd_card_manager_SetFailNextWrite(bool arm) {/,/bool sd_card_manager_FailNextWriteArmed(void) {/p' $(SD_MANAGER_SRC) > /tmp/.fw981_setter.$$$$; \
+	 ok=1; \
+	 grep -qF 'gFailNextWrite = arm;' /tmp/.fw981_setter.$$$$ || ok=0; \
+	 grep -qF 'taskENTER_CRITICAL();' /tmp/.fw981_setter.$$$$ && ok=0; \
+	 rm -f /tmp/.fw981_setter.$$$$; \
+	 test "$$ok" = 1 \
+	  || { echo "ERROR: sd_card_manager_SetFailNextWrite() in $(SD_MANAGER_SRC) is"; \
+	       echo "       no longer a plain store (either the store moved, or a critical"; \
+	       echo "       section was added) -- the #981 atomicity argument depends on"; \
+	       echo "       this being a plain store; re-verify it before changing either."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(FAILNEXT_BIN) test_981_sd_failnext_hook.c
+
+# #981 (post-audit): the BEHAVIOURAL half -- see FAILNEXT_REAL_BIN's comment
+# above. Extracts the whole real SDCardWrite() verbatim, splices it between
+# the checked-in head/tail scaffolding, compiles the result, and RUNS it; a
+# non-zero exit fails the build exactly like any other test binary here.
+# `$(SD_MANAGER_SRC)` is a prerequisite so an edit to the real snippet
+# re-triggers this; the head/tail files are prerequisites so an edit to the
+# assertions does too.
+$(FAILNEXT_REAL_BIN): test_981_sd_failnext_real_consume.head.c test_981_sd_failnext_real_consume.tail.c $(SD_MANAGER_SRC) $(RECIPES)
+	@sed -n '/static int SDCardWrite() {/,/^}/p' $(SD_MANAGER_SRC) > /tmp/.fw981_real_body.$$$$; \
+	 lines=`wc -l < /tmp/.fw981_real_body.$$$$ | tr -d ' '`; \
+	 last=`tail -1 /tmp/.fw981_real_body.$$$$ | tr -d '[:space:]'`; \
+	 test "$$lines" -ge 20 && test "$$lines" -le 300 && test "$$last" = "}" \
+	  || { echo "ERROR: could not extract SDCardWrite() from $(SD_MANAGER_SRC)."; \
+	       echo "       The range is 'static int SDCardWrite() {' through the"; \
+	       echo "       next line starting in column 0 with '}', i.e. the WHOLE"; \
+	       echo "       function; got $$lines lines ending in '$$last'. Either"; \
+	       echo "       the signature was reworded (0 lines), or the closing"; \
+	       echo "       brace is no longer in column 0 so the range ran to EOF."; \
+	       echo "       DELIBERATELY a loose sanity bound, not an exact count:"; \
+	       echo "       a tight count would fail the BUILD on the very source"; \
+	       echo "       mutations this binary is supposed to catch by RUNNING"; \
+	       echo "       the code, turning a precise behavioural verdict back"; \
+	       echo "       into a text-shape one. See the head file's round-2/3"; \
+	       echo "       history for why that distinction cost two rounds."; \
+	       rm -f /tmp/.fw981_real_body.$$$$; \
+	       exit 1; }; \
+	 cat test_981_sd_failnext_real_consume.head.c /tmp/.fw981_real_body.$$$$ test_981_sd_failnext_real_consume.tail.c > /tmp/.fw981_real_gen.$$$$.c; \
+	 rm -f /tmp/.fw981_real_body.$$$$; \
+	 $(CC) $(CFLAGS) -o $(FAILNEXT_REAL_BIN) /tmp/.fw981_real_gen.$$$$.c; \
+	 status=$$?; \
+	 rm -f /tmp/.fw981_real_gen.$$$$.c; \
+	 exit $$status
+
+# Every suite, and every one of the eight binaries. Merge conflict (fw#961
+# JSONESC_BIN vs fw#983 SUSPEND_BIN, both merging around the same time)
+# resolved by keeping each side's target intact and merging only `run` and
+# `clean` -- a duplicated rule here would silently shadow one of them.
+# Every suite, and every one of the TWENTY-FIVE binaries: main's twenty-three plus
+# this PR's own #981 $(FAILNEXT_BIN) and $(FAILNEXT_REAL_BIN). Resolved as this block
+# always is -- every side's target rule kept INTACT, only `run` and `clean` unioned.
+# All three of this branch's own variables (FAILNEXT_BIN, FAILNEXT_REAL_BIN,
+# SD_MANAGER_SRC) were verified defined on this head and absent from main, i.e.
+# genuine additions rather than names main has renamed or retired -- the fw#976 trap.
+
+# $(RECIPES) is main's (#983) fix and applies to SPI913_BIN too, because it
+# carries grep guards: a guard re-run only when its SOURCE changes is not
+# re-run when the GUARD changes.
+#
+# This used to open with a count of the binaries and a merge ordinal, both of
+# which went stale the moment the next branch landed -- it still said "seven"
+# and "Third merge" while the list above `run` had reached twelve and the
+# eighth. A count belongs in exactly one place, and that place is the banner
+# over `run`, which is the line a resolution actually has to touch.
 # #1121: the same three guards as $(SUSPEND_BIN), against the OTHER file.
 #
 # GUARD 1 -- THE FIVE-ARM ORDER. This site's cascade is
@@ -1398,6 +2274,205 @@ $(HELP_BIN): test_1004_help_write_abort.c test_framework.h $(SCPI_IFACE_SRC) \
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(HELP_BIN) test_1004_help_write_abort.c
 
+$(NAME_BIN): test_958_sd_benchmark_filename_collision.c test_framework.h $(SD_BENCH_SRC) $(SD_MANAGER_SRC) $(SD_MGR_HDR) $(RECIPES)
+	@tr -d '\r' < $(SD_BENCH_SRC) | tr '\n' ' ' \
+	  | grep -qE '"benchmark_%lu_%lu\.dat",[[:space:]]*\(unsigned long\)xTaskGetTickCount\(\),[[:space:]]*\(unsigned long\)benchNameSeq' \
+	  || { echo "ERROR: the SD:BENCHmark scratch name in $(SD_BENCH_SRC) is no"; \
+	       echo "       longer built from the tick AND the per-boot sequence as"; \
+	       echo "       '\"benchmark_%lu_%lu.dat\", tick, benchNameSeq'."; \
+	       echo "       test_958_sd_benchmark_filename_collision.c re-implements THAT"; \
+	       echo "       format and asserts the names it produces -- update"; \
+	       echo "       new_bench_name() and re-read the header's uniqueness argument"; \
+	       echo "       before changing either. Newlines are squashed first, so the"; \
+	       echo "       expression may wrap however it likes -- only the text matters."; \
+	       exit 1; }
+	@grep -qE 'benchNameSeq[[:space:]]*=[[:space:]]*\+\+gBenchNameSeq[[:space:]]*;' $(SD_BENCH_SRC) \
+	  || { echo "ERROR: $(SD_BENCH_SRC) no longer advances gBenchNameSeq per run."; \
+	       echo "       The format pin above only proves the FIELD is in the name;"; \
+	       echo "       this proves the field changes. A sequence left at its initial"; \
+	       echo "       value prints the same digits every run, which is the 65.5 s"; \
+	       echo "       collision again with a longer name."; \
+	       exit 1; }
+	@if grep -vE '^static uint32_t gBenchNameSeq' $(SD_BENCH_SRC) \
+	     | grep -qE 'gBenchNameSeq[[:space:]]*=[^=]'; then \
+	       echo "ERROR: gBenchNameSeq is assigned somewhere other than its"; \
+	       echo "       definition in $(SD_BENCH_SRC). Its whole contract is that it"; \
+	       echo "       is NEVER reset while the board is up -- that is what makes the"; \
+	       echo "       scratch name unique within a boot (test_958 CASE 5). A reset,"; \
+	       echo "       anywhere, reopens the collision it closes."; \
+	       exit 1; \
+	 fi
+	@inc=`grep -n 'benchNameSeq = ++gBenchNameSeq;' $(SD_BENCH_SRC) | wc -l`; \
+	 fmt=`grep -n '"benchmark_%lu_%lu.dat"' $(SD_BENCH_SRC) | wc -l`; \
+	 [ "$$inc" -eq 1 ] && [ "$$fmt" -eq 1 ] \
+	   || { echo "ERROR: cannot locate the #958 naming steps uniquely in"; \
+	        echo "       $(SD_BENCH_SRC) (advance=$$inc, format=$$fmt; want 1 each)."; \
+	        echo "       The order pin below compares their positions and needs"; \
+	        echo "       exactly one of each to mean anything."; \
+	        exit 1; }; \
+	 i=`grep -n 'benchNameSeq = ++gBenchNameSeq;' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 f=`grep -n '"benchmark_%lu_%lu.dat"' $(SD_BENCH_SRC) | cut -d: -f1`; \
+	 [ "$$i" -lt "$$f" ] \
+	   || { echo "ERROR: $(SD_BENCH_SRC) formats the scratch name at line $$f BEFORE"; \
+	        echo "       advancing gBenchNameSeq at line $$i."; \
+	        echo "       Every name then carries the counter's INITIAL value, so two"; \
+	        echo "       runs at one tick collide exactly as they did before #958 --"; \
+	        echo "       the field is present and does nothing. A format pin cannot"; \
+	        echo "       see this; the pre-merge audit reproduced it passing all six"; \
+	        echo "       of the other guards and the whole host suite."; \
+	        exit 1; }
+	@n=`grep -vE '^[[:space:]]*uint32_t[[:space:]]+benchNameSeq' $(SD_BENCH_SRC) \
+	      | grep -cE 'benchNameSeq[[:space:]]*=[^=]'`; \
+	 [ "$$n" -eq 1 ] \
+	   || { echo "ERROR: benchNameSeq is assigned $$n times in $(SD_BENCH_SRC)"; \
+	        echo "       outside its declaration; exactly 1 is required."; \
+	        echo "       The order pin above compares the POSITIONS of the advance"; \
+	        echo "       and the format, which a SECOND assignment defeats: put"; \
+	        echo "       'benchNameSeq = 0;' after the advance and every name"; \
+	        echo "       carries 0 again, with the order pin still satisfied. The"; \
+	        echo "       pre-merge audit reproduced exactly that, passing all seven"; \
+	        echo "       other guards and the whole host suite."; \
+	        exit 1; }
+	@grep -qE 'probes[[:space:]]*>=[[:space:]]*SD_CARD_MANAGER_UNIQUE_TARGET_MAX' $(SD_MANAGER_SRC) \
+	  && tr -d '\r' < $(SD_MANAGER_SRC) | tr '\n' ' ' \
+	     | grep -qE 'e == SYS_FS_ERROR_NO_FILE[[:space:]]*[|][|][[:space:]]*e == SYS_FS_ERROR_NO_PATH[^{]*[{][[:space:]]*scratchNameFree = true' \
+	  && grep -qE '(^|[^A-Za-z0-9_])statFault([^A-Za-z0-9_]|$$)' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC)'s uniqueness walk no longer carries"; \
+	       echo "       BOTH properties a codex audit established it needs:"; \
+	       echo "       (a) a budget of MAX ADVANCES, i.e. MAX+1 candidates"; \
+	       echo "           EXAMINED, so it never stops while an unexamined"; \
+	       echo "           candidate is still in budget. An earlier guard"; \
+	       echo "           stopped one short and TRUNCATED an occupied name"; \
+	       echo "           while the next candidate was FREE -- a regression"; \
+	       echo "           against the code it replaced."; \
+	       echo "       (b) NO_FILE/NO_PATH treated as absence and every other"; \
+	       echo "           stat error treated as a FAULT (statFault), because"; \
+	       echo "           one transient DISK_ERR read as absent let the open"; \
+	       echo "           truncate silently, with the fallback log skipped."; \
+	       echo "       test_958 CASES 7-10 model BOTH walks, so they pass"; \
+	       echo "       whatever the firmware does: a host model cannot see which"; \
+	       echo "       form shipped. THIS PIN ties the model to the source."; \
+	       exit 1; }
+	@grep -qE 'SD_CARD_MANAGER_UNIQUE_TARGET_MAX[[:space:]]+SD_CARD_MANAGER_MAX_DIR_FILES' $(SD_MANAGER_SRC) \
+	  && grep -qE 'SD_CARD_MANAGER_MAX_DIR_FILES[[:space:]]+64u' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: the candidate bound is no longer tied to the bucket"; \
+	       echo "       ceiling, or MAX_DIR_FILES is no longer 64u, in"; \
+	       echo "       $(SD_MANAGER_SRC). test_958 mirrors it as"; \
+	       echo "       FW_UNIQUE_TARGET_MAX and its POPULATION argument -- the"; \
+	       echo "       seventeenth file is what makes the defect reproduce -- is"; \
+	       echo "       derived from that number. Update the mirror together with"; \
+	       echo "       the constant or CASE 7 silently stops testing exhaustion."; \
+	       exit 1; }
+	@if grep -qF '"benchmark_%lu.dat"' $(SD_BENCH_SRC); then \
+	       echo "ERROR: the tick-ONLY benchmark filename is back in $(SD_BENCH_SRC)."; \
+	       echo "       TickType_t is 32-bit here, so that name repeats after 49.7"; \
+	       echo "       days of uptime and the truncating open destroys the earlier"; \
+	       echo "       run's file -- the 16-bit defect again, on a longer period."; \
+	       echo "       test_958 CASE 5 is that scenario. Keep the sequence field."; \
+	       exit 1; \
+	 fi
+	@if grep -qE 'benchmark_%d\.dat|xTaskGetTickCount\(\)[[:space:]]*&[[:space:]]*0xFFFF' $(SD_BENCH_SRC); then \
+	       echo "ERROR: the 16-bit MASKED benchmark filename is back in $(SD_BENCH_SRC)."; \
+	       echo "       That is the #958 defect itself: the name then repeats every"; \
+	       echo "       65536 ticks (65.5 s) and the truncating open destroys the"; \
+	       echo "       earlier run's file silently. test_958's whole premise is that"; \
+	       echo "       the mask is gone -- fix the firmware, do not relax this guard."; \
+	       exit 1; \
+	 fi
+	@grep -qE '^#define[[:space:]]+SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX[[:space:]]+40[[:space:]]*$$' $(SD_MGR_HDR) \
+	  || { echo "ERROR: SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX is no longer '40' in"; \
+	       echo "       $(SD_MGR_HDR). test_958 copies it as FW_FILE_NAME_LEN_MAX and its"; \
+	       echo "       no-truncation case is arithmetic on that number -- update both."; \
+	       exit 1; }
+	@if grep -qE 'if[[:space:]]*\([[:space:]]*bucketOk[[:space:]]*&&[[:space:]]*!uniqueTargetAtOpen' $(SD_MANAGER_SRC); then \
+	       echo "ERROR: the bucket pre-walk in $(SD_MANAGER_SRC) is gated on"; \
+	       echo "       !uniqueTargetAtOpen again. That block carries TWO things:"; \
+	       echo "       the reopen-existing search (which a scratch open must NOT"; \
+	       echo "       do) and the probeFsError/targetFsError refusals (which it"; \
+	       echo "       MUST keep -- they exit through the #689 clean-stop BEFORE"; \
+	       echo "       the open). Gating the whole block removes the refusals: a"; \
+	       echo "       stat fault in that window then falls through to the"; \
+	       echo "       truncating WRITE_PLUS instead of refusing. An adversarial"; \
+	       echo "       audit found exactly that in BOTH legs, high/data_loss."; \
+	       echo "       Gate the reopen ASSIGNMENT instead, not the walk."; \
+	       exit 1; \
+	 fi
+	@tr -d '\n' < $(SD_MANAGER_SRC) \
+	  | grep -qE 'if[[:space:]]*\([[:space:]]*!uniqueTargetAtOpen[[:space:]]*\)[[:space:]]*[{][[:space:]]*reopenExisting = true' \
+	  || { echo "ERROR: the reopen-existing assignment in $(SD_MANAGER_SRC) is no"; \
+	       echo "       longer guarded by !uniqueTargetAtOpen. A scratch open would"; \
+	       echo "       then REOPEN an existing benchmark file, and the truncating"; \
+	       echo "       WRITE_PLUS destroys it -- the #958 defect by another route."; \
+	       echo "       Keep the pre-walk RUNNING (its fault refusals are load-"; \
+	       echo "       bearing) and suppress only the reuse. These two pins are a"; \
+	       echo "       PAIR: one refuses gating the walk, the other requires the"; \
+	       echo "       assignment be gated. Neither alone states the property."; \
+	       exit 1; }
+	@w=`grep -nE 'if \(bucketOk && uniqueTargetAtOpen\) \{' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 c=`grep -nE '^[[:space:]]+if \(!bucketOk\) \{' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 if [ -z "$$w" ] || [ -z "$$c" ]; then \
+	       echo "ERROR: cannot locate the #958 walk and the #689 clean-stop in"; \
+	       echo "       $(SD_MANAGER_SRC) -- one of them was renamed or removed."; \
+	       exit 1; \
+	 fi; \
+	 if [ "$$w" -ge "$$c" ]; then \
+	       echo "ERROR: the #958 collision walk (line $$w) is no longer ABOVE the"; \
+	       echo "       #689 clean-stop (line $$c) in $(SD_MANAGER_SRC)."; \
+	       echo "       ORDER IS THE WHOLE MECHANISM. The walk refuses by setting"; \
+	       echo "       bucketOk=false and FALLING INTO that block; below it the"; \
+	       echo "       assignment is DEAD and the open truncates anyway -- a"; \
+	       echo "       silent permissive failure that every existing test still"; \
+	       echo "       passes, because the model cannot see statement order."; \
+	       echo "       Three earlier attempts BUILT an exit here instead and"; \
+	       echo "       each shipped a defect; reaching the existing one is the"; \
+	       echo "       entire difference. Keep the walk above the clean-stop."; \
+	       exit 1; \
+	 fi
+	@# The statFault branch must REFUSE. Checked WITHOUT spanning a comment:
+	@# an earlier version of this pin used [^;]* between the `if` and the
+	@# assignment, and a semicolon in the comment's own PROSE broke it -- a
+	@# check whose correctness depended on comment punctuation. These three
+	@# are code-only and state the property together.
+	@# SITE-SCOPED to the walk. An unscoped version of this grep matched the
+	@# PRE-WALK's identical writeRefuseReason/bucketOk pair ~150 lines above
+	@# and so passed with the walk's refusal deleted -- it was vacuous, and
+	@# only the A/B mutation found it. Extract the walk's own line range
+	@# first; the adjacency is then unambiguous.
+	@w=`grep -nE 'if \(bucketOk && uniqueTargetAtOpen\) \{' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 c=`grep -nE '^[[:space:]]+if \(!bucketOk\) \{' $(SD_MANAGER_SRC) | cut -d: -f1`; \
+	 if [ -z "$$w" ] || [ -z "$$c" ] || [ "$$w" -ge "$$c" ]; then \
+	       echo "ERROR: cannot delimit the #958 walk in $(SD_MANAGER_SRC)"; \
+	       echo "       (walk='$$w' clean-stop='$$c'). The ordering pin below"; \
+	       echo "       explains why the two must both exist, in that order."; \
+	       exit 1; \
+	 fi; \
+	 sed -n "$$w,$$c p" $(SD_MANAGER_SRC) | tr -d '\n' \
+	   | grep -qE 'writeRefuseReason[[:space:]]*=[[:space:]]*SD_REFUSE_BUCKET_UNREADABLE[[:space:]]*;[[:space:]]*bucketOk = false' \
+	   || { echo "ERROR: the collision walk's statFault branch in"; \
+	        echo "       $(SD_MANAGER_SRC) no longer REFUSES. Inside the walk"; \
+	        echo "       itself (lines $$w-$$c) it must set writeRefuseReason"; \
+	        echo "       AND bucketOk=false, adjacently, so the existing #689"; \
+	        echo "       clean-stop skips the truncating open. A card that"; \
+	        echo "       cannot ANSWER leaves the candidate UNKNOWN; both audit"; \
+	        echo "       legs filed this high/data_loss."; \
+	        exit 1; }
+	@grep -qF -- '- refusing, retry or clear card' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: the #958 stat-fault message in $(SD_MANAGER_SRC) no"; \
+	       echo "       longer says it REFUSES. The message and the behaviour"; \
+	       echo "       are checked separately on purpose: a comment or a log"; \
+	       echo "       line claiming a guarantee the code does not have is the"; \
+	       echo "       defect this PR shipped once already."; \
+	       exit 1; }
+	@if grep -qF -- '- opening it, may truncate' $(SD_MANAGER_SRC); then \
+	       echo "ERROR: the pre-refusal #958 stat-fault message is back in"; \
+	       echo "       $(SD_MANAGER_SRC). That wording belongs to the behaviour"; \
+	       echo "       where an unverifiable candidate reached the truncating"; \
+	       echo "       open. If it is back, so is the data_loss both audit legs"; \
+	       echo "       filed -- fix the firmware, do not relax this guard."; \
+	       exit 1; \
+	 fi
+	$(CC) $(CFLAGS) -o $(NAME_BIN) test_958_sd_benchmark_filename_collision.c
+
 $(SDLOG_BIN): test_1000_sd_log_arm_budget.c test_framework.h $(SCPI_IFACE_SRC) $(SD_BENCH_SRC) $(FW_LOG_H) $(FW_LOG_C) $(RECIPES)
 	@grep -qF 'return "SD quarantined after a bus jam - reseat the card, "' $(SD_BENCH_SRC) \
 	  && grep -qF '"then SYST:STOR:SD:ENAble 1";' $(SD_BENCH_SRC) \
@@ -1553,6 +2628,86 @@ $(LOGCEIL_BIN): test_1039_log_message_ceiling.c test_framework.h \
 	       echo "       re-derive its length against LOG_BUDGET."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(LOGCEIL_BIN) test_1039_log_message_ceiling.c
+# #1125: gLogOneShot's bit claim (LOG_x_ONCE, ISR-callable) must be an atomic
+# test-and-set, not a bare `|=` -- a preemption between an unguarded |='s load
+# and store lets another context (task, or a higher-priority ISR) win its own
+# bit, and the resumed store writes back the stale snapshot and ERASES it,
+# re-arming that call site for a second fire and defeating the "at most once"
+# contract the ISR flood-guard use depends on. Logger.c is not includable on
+# the host as a whole (xc.h, SYSKEY, PIC32 __builtin_* intrinsics, Harmony's
+# clock_config.h -- same reason $(SDLOG_BIN) above extracts rather than
+# includes), so this extracts Logger_OneShotClaim's body VERBATIM -- the real
+# function, not a re-implementation -- and compiles it against mocked
+# taskENTER_CRITICAL[_FROM_ISR]/taskEXIT_CRITICAL[_FROM_ISR] in
+# test_1125_log_once_claim.c.
+#
+# A single-threaded host test cannot literally interleave two contexts inside
+# one function call, so what the guard below proves is STRUCTURAL rather than
+# behavioural, mirroring tools/lint/scpi_claim_path.py's own "exactly one
+# opener, one closer, test+set positioned between them" reasoning for this
+# identical class of property (a claim granted outside its critical section):
+# exactly one task-context and one ISR-context critical-section pair, and
+# both of the function's test-and-set pairs positioned strictly BETWEEN their
+# matching enter/exit -- refused, not silently passed, on any other count or a
+# torn positional order. That is what rules the race out: a real critical
+# section makes the interleaving unrepresentable, which is a claim about
+# POSITION in the source, not something a host thread can exercise.
+LOGONCE_BIN := run_1125_tests
+GEN_1125    := gen_1125_log_once_claim.h
+
+$(LOGONCE_BIN): test_1125_log_once_claim.c test_framework.h $(FW_LOG_C) $(RECIPES)
+	@body=`sed -n '/^bool Logger_OneShotClaim(uint32_t bit) {/,/^}/p' $(FW_LOG_C) | tr -d '\r'`; \
+	 test -n "$$body" \
+	   || { echo "ERROR: Logger_OneShotClaim(uint32_t bit) was not found in $(FW_LOG_C),"; \
+	        echo "       or no longer opens at column 0 with that exact signature -- the"; \
+	        echo "       extraction below can see nothing, and a guard that examines"; \
+	        echo "       nothing must fail rather than pass vacuously."; \
+	        exit 1; }; \
+	 n_enter_task=`printf '%s\n' "$$body" | grep -cF 'taskENTER_CRITICAL();'`; \
+	 n_exit_task=`printf '%s\n' "$$body"  | grep -cF 'taskEXIT_CRITICAL();'`; \
+	 n_enter_isr=`printf '%s\n' "$$body"  | grep -cF 'taskENTER_CRITICAL_FROM_ISR();'`; \
+	 n_exit_isr=`printf '%s\n' "$$body"   | grep -cF 'taskEXIT_CRITICAL_FROM_ISR(saved);'`; \
+	 n_test=`printf '%s\n' "$$body" | grep -cF 'if ((gLogOneShot & mask) == 0u) {'`; \
+	 n_set=`printf '%s\n' "$$body"  | grep -cF 'gLogOneShot |= mask;'`; \
+	 if [ "$$n_enter_task" != "1" ] || [ "$$n_exit_task" != "1" ] || \
+	    [ "$$n_enter_isr" != "1" ] || [ "$$n_exit_isr" != "1" ] || \
+	    [ "$$n_test" != "2" ] || [ "$$n_set" != "2" ]; then \
+	   echo "ERROR: Logger_OneShotClaim's critical-section shape has changed"; \
+	   echo "       (enter_task=$$n_enter_task exit_task=$$n_exit_task"; \
+	   echo "        enter_isr=$$n_enter_isr exit_isr=$$n_exit_isr"; \
+	   echo "        test=$$n_test set=$$n_set -- each wants 1/1/1/1/2/2)."; \
+	   echo "       test_1125_log_once_claim.c's mocks and the positional check"; \
+	   echo "       below assume exactly one task-context and one ISR-context"; \
+	   echo "       critical-section pair, each guarding exactly one test-and-set."; \
+	   exit 1; \
+	 fi; \
+	 enter_isr_ln=`printf '%s\n' "$$body" | grep -nF 'taskENTER_CRITICAL_FROM_ISR();' | cut -d: -f1`; \
+	 exit_isr_ln=`printf '%s\n' "$$body"  | grep -nF 'taskEXIT_CRITICAL_FROM_ISR(saved);' | cut -d: -f1`; \
+	 enter_task_ln=`printf '%s\n' "$$body" | grep -nF 'taskENTER_CRITICAL();' | cut -d: -f1`; \
+	 exit_task_ln=`printf '%s\n' "$$body"  | grep -nF 'taskEXIT_CRITICAL();' | cut -d: -f1`; \
+	 test_lns=`printf '%s\n' "$$body" | grep -nF 'if ((gLogOneShot & mask) == 0u) {' | cut -d: -f1`; \
+	 set_lns=`printf '%s\n' "$$body"  | grep -nF 'gLogOneShot |= mask;' | cut -d: -f1`; \
+	 isr_test_ln=`printf '%s\n' "$$test_lns" | awk -v lo="$$enter_isr_ln" -v hi="$$exit_isr_ln" '$$1>lo && $$1<hi'`; \
+	 isr_set_ln=`printf '%s\n' "$$set_lns"  | awk -v lo="$$enter_isr_ln" -v hi="$$exit_isr_ln" '$$1>lo && $$1<hi'`; \
+	 task_test_ln=`printf '%s\n' "$$test_lns" | awk -v lo="$$enter_task_ln" -v hi="$$exit_task_ln" '$$1>lo && $$1<hi'`; \
+	 task_set_ln=`printf '%s\n' "$$set_lns"  | awk -v lo="$$enter_task_ln" -v hi="$$exit_task_ln" '$$1>lo && $$1<hi'`; \
+	 if [ -z "$$isr_test_ln" ] || [ -z "$$isr_set_ln" ] || \
+	    [ -z "$$task_test_ln" ] || [ -z "$$task_set_ln" ]; then \
+	   echo "ERROR: Logger_OneShotClaim's test-and-set is no longer POSITIONED"; \
+	   echo "       inside its matching critical-section pair (ISR test@[$$isr_test_ln]"; \
+	   echo "       set@[$$isr_set_ln] between $$enter_isr_ln/$$exit_isr_ln; task"; \
+	   echo "       test@[$$task_test_ln] set@[$$task_set_ln] between"; \
+	   echo "       $$enter_task_ln/$$exit_task_ln) -- a claim outside its critical"; \
+	   echo "       section is exactly the race this function exists to close."; \
+	   exit 1; \
+	 fi; \
+	 printf '/* GENERATED at build time by tests/host/Makefile ($(LOGONCE_BIN)).\n' > $(GEN_1125); \
+	 printf ' * Do not edit, do not commit -- see tests/host/.gitignore.\n' >> $(GEN_1125); \
+	 printf ' * Verbatim body of Logger_OneShotClaim() extracted from $(FW_LOG_C). */\n' >> $(GEN_1125); \
+	 printf '#ifndef GEN_1125_LOG_ONCE_CLAIM_H\n#define GEN_1125_LOG_ONCE_CLAIM_H\n' >> $(GEN_1125); \
+	 printf '%s\n' "$$body" >> $(GEN_1125); \
+	 printf '#endif\n' >> $(GEN_1125)
+	$(CC) $(CFLAGS) -o $(LOGONCE_BIN) test_1125_log_once_claim.c
 
 # #985: build-time guard over SD_SuspendReasonText() -- see the merge-history
 # comment above `run:` below for how this target's registration in run/clean
@@ -1675,6 +2830,27 @@ $(SCAN1112_BIN): test_1112_scan_list_snapshot_race.c test_framework.h $(MC12BADC
 	        exit 1; }
 	$(CC) $(CFLAGS) -o $(SCAN1112_BIN) test_1112_scan_list_snapshot_race.c
 
+# Every suite, and every one of the TWENTY-FOUR binaries. Another additive collision
+# in this long-running block -- fw#958's $(NAME_BIN) against everything main
+# accumulated while this branch sat parked. Resolved the same way as every one
+# before it: each side's target rule kept INTACT and only `run` and `clean`
+# unioned. Dropping a rule loses a suite silently; duplicating one silently
+# shadows the other.
+#
+# THE BINARY COUNT IS DERIVED, NOT ASSERTED -- counted from the `run` recipe
+# list below, which this merge did not conflict and which therefore already
+# carried the union. NINE separate "every one of the N binaries" claims live in
+# this file with nine different N, and all but one are stale.
+#
+# AND THE ORDINAL IS DELIBERATELY OMITTED, which departs from the eight
+# comments above that each assert one. It CANNOT be computed correctly on a
+# branch: every branch derives "next" from main, so two branches refreshed in
+# parallel both claim the same ordinal and whichever merges second is wrong.
+# That is happening right now -- fw#1110's refresh claims FIFTEENTH and main's
+# highest is FOURTEENTH, so this branch would have had to claim FIFTEENTH too.
+# The ordinal was never the load-bearing part; the convention it introduces is,
+# and that is stated above without a number that cannot be kept true.
+#
 # #1108 RETIRED $(DAC1057_BIN) here (run_1057_tests, built from
 # test_1057_dac7718_wait_stat.c, which this same block's history recorded
 # across EIGHT prior additive collisions -- fw#961 vs fw#983, fw#913 vs
@@ -1685,6 +2861,21 @@ $(SCAN1112_BIN): test_1112_scan_list_snapshot_race.c test_framework.h $(MC12BADC
 # is a prerequisite of that target, see above), so there is no copy left for a
 # guard to pin. Same move #1056 made retiring the analogous grep guard that
 # used to stand in for spi_WaitStat/uart_WaitSta/i2c_WaitMif.
+# Every suite, and every one of the FIFTEEN binaries below. A new suite
+# always touches this same `run:`/`clean:` pair, so any two branches that add
+# a suite around the same time collide here. History, each resolved the same
+# way (keep each side's target rule INTACT, union only `run` and `clean` --
+# dropping a rule loses a suite silently, duplicating one silently shadows
+# the other): fw#961 JSONESC_BIN vs fw#983 SUSPEND_BIN; fw#1012 vs fw#958;
+# fw#913 vs fw#1004 HELP_BIN; fw#958 vs fw#1000 SDLOG_BIN; fw#980 DAC980_BIN
+# landing on main alongside fw#1004 HELP_BIN and fw#1000 SDLOG_BIN; fw#958's
+# NAME_BIN vs main's DAC980_BIN; fw#913 vs fw#1004/fw#1000/fw#980/fw#985
+# (SPI913_BIN, SUSPENDREASON_BIN) landing together on main; fw#958's NAME_BIN
+# with SPI913_BIN, SUSPENDREASON_BIN (#985) and DAC1057_BIN (#1057); fw#999's
+# SCPI999_BIN vs fw#985 and vs fw#1057 on main; fw#958's NAME_BIN vs
+# fw#999's SCPI999_BIN; and now fw#958's NAME_BIN vs fw#947's SYSINFO_BIN
+# landing on main. Each branch numbered these collisions on its own, so
+# two of them both claimed "NINTH"; the list is the record, not an ordinal.
 
 # Four separate failures with four separate messages, because they send the
 # reader to four different places: the slice is GONE or DUPLICATED (the model
@@ -1750,6 +2941,12 @@ $(START_BIN): test_998_start_streaming_claimed_order.c test_framework.h $(START_
 	       echo "       if it does not, fix the model."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(START_BIN) test_998_start_streaming_claimed_order.c
+
+$(SDLOG1029_GEN): gen_1029_log_budget.py $(SD_MGR_SRC) $(SD_MGR_HDR) $(FW_UTIL)/Logger.c $(FW_UTIL)/Logger.h $(RECIPES)
+	$(PYTHON) gen_1029_log_budget.py --out $(SDLOG1029_GEN)
+
+$(SDLOG1029_BIN): test_1029_sd_card_manager_log_budget.c test_framework.h $(SDLOG1029_GEN) $(RECIPES)
+	$(CC) $(CFLAGS) -o $(SDLOG1029_BIN) test_1029_sd_card_manager_log_budget.c
 
 # #1141 (fix/909-bootloader-lower-panel-erase): APP_ProgramHexRecord's
 # per-chunk address bounds test in the bootloader's nvm.c. The FIRST
@@ -1826,26 +3023,33 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 	$(CC) $(CFLAGS) -I$(BTL_SYSCFG_DIR) -I$(BTL_SYSCFG_DIR)/framework/bootloader/src \
 	      -o $(HEXWIN_BIN) test_1141_hex_record_upper_panel_error.c
 
-# Every suite, and every one of the eleven binaries. SEVENTH additive
-# collision in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs
-# fw#1000, fw#913 vs fw#980, and now fw#913 vs fw#985 -- every one of them
-# two branches appending a line to these same two lists. Resolved the same
-# way every time: keep each side's target rule INTACT and union only `run`
-# and `clean`. Dropping a rule loses a suite silently; duplicating one
-# silently shadows the other.
-
-# Every suite, and every one of the THIRTEEN binaries. NINTH additive collision
-# in this block: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs fw#1000,
-# fw#913 vs fw#980, fw#913 vs fw#985, fw#999 vs fw#985, and now fw#999 vs
-# fw#1057 -- every one of them two branches appending a line to these same two
-# lists. Resolved the same way every time: keep each side's target rule INTACT
-# and union only `run` and `clean`. Dropping a rule loses a suite silently;
-# duplicating one silently shadows the other.
+# Every suite, and every one of the FIFTEEN binaries. Additive collisions in
+# this block so far: fw#961 vs fw#983, fw#913 vs fw#1004, fw#913 vs fw#1000,
+# fw#913 vs fw#980, fw#913 vs fw#985, fw#999 vs fw#985, fw#999 vs fw#1057, and
+# fw#971's own ARM_BIN colliding with fw#913/fw#980/fw#1000/fw#985 and then
+# fw#999/fw#1057 as each landed on main, and now fw#971 vs fw#947 (SYSINFO_BIN,
+# main's independent branch) as this PR re-merges main a second time -- every
+# one of them two branches appending a line to these same two lists. The
+# lineage replaces an ordinal
+# because each branch numbered its own collisions and the ordinals disagreed
+# (#971 said EIGHTH, main said NINTH), and three stale copies of this banner
+# with three different counts had accumulated here. Resolved the same way every
+# time: keep each side's target rule INTACT and union only `run` and `clean`.
+# Dropping a rule loses a suite silently; duplicating one silently shadows the
+# other. Update the count above whenever a resolution touches `run`.
 #
-# #1026 is the ticket to stop this, and PR #1040 implements it by moving each
+# #1026 is the ticket to stop this and PR #1040 implements it, moving each
 # target into tests/host/tests/<issue>-<slug>.mk so a new suite appends to an
 # accumulator instead of editing a shared line. Whichever lands first, the rest
 # re-express their target as a fragment -- a mechanical move of one recipe,
+# NOT A PLAIN UNION, and the exception is the point. This branch's `run`/`clean`
+# lists are 40 commits stale and name two binaries that NO LONGER EXIST on main:
+#   $(SPI913_BIN)  -- RENAMED to $(WAITLOOP_BIN) by fw#1056.
+#   $(DAC1057_BIN) -- RETIRED by fw#1108 together with run_1057_tests and
+#                     test_1057_dac7718_wait_stat.c, both deleted on main.
+# Unioning them in would reference two undefined variables and resurrect a
+# deleted test. So main's list is taken whole and only this branch's OWN
+# addition is added to it: $(ARM_BIN) := run_971_tests. TWENTY-FOUR binaries.
 # which is strictly cheaper than this resolution has been nine times running.
 #
 # Every suite, and every one of the SIXTEEN binaries: main's fifteen plus
@@ -1870,20 +3074,54 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # additive collision in this block -- resolved the same way as every earlier
 # one: keep each side's target rule INTACT and union only `run` and `clean`.
 #
-# Every suite, and every one of the NINETEEN binaries: the eighteen above plus
-# #1141's $(HEXWIN_BIN) -- the first bootloader coverage in this suite.
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-     $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-     $(REPLYBUF_BIN) $(HEXWIN_BIN)
+# Every suite, and every one of the TWENTY-FOUR binaries: the nineteen above
+# plus $(LOGONCE_BIN), $(DACREINIT_BIN), $(CALFINITE_BIN) and $(SDLOG1029_BIN).
+#
+# FOURTEENTH additive collision in this block, resolved the same way as the
+# thirteen before it: each side's target rule kept INTACT and only `run` and
+# `clean` unioned. This branch adds #1029's $(SDLOG1029_BIN) (three
+# sd_card_manager.c LOG_E remedies measured against Logger's 125-byte ceiling)
+# while main added #1125's $(LOGONCE_BIN) via fw#1126, merged 2026-09-29.
+#
+# BOTH SIDES' COUNTS WERE STALE FOR THE RESULT -- ours said TWENTY-ONE, main's
+# said TWENTY-TWO, and each was right about its own side. The union is
+# TWENTY-SEVEN. Corrected here rather than carried, for the reason the
+# thirteenth collision already recorded: a stale count in a comment is simply
+# false to the next reader.
+#
+#
+# FIFTEENTH additive collision in this block, resolved the same way as the
+# fourteen before it: each side's target rule kept INTACT and only `run` and
+# `clean` unioned. This branch adds #1100's $(SCPIDAC_RAILGATE_BIN) (the
+# DAC_EnsureHardwareInitialized rail-enable gate) while main added $(ARM_BIN),
+# $(NAME_BIN), $(FAILNEXT_BIN) and $(FAILNEXT_REAL_BIN) via the fw#1027 merge.
+#
+# COUNTS, DERIVED FROM THE LISTS RATHER THAN CARRIED: main's side had
+# TWENTY-SEVEN run prerequisites and this branch's had TWENTY-FOUR, each right
+# about itself. The union is TWENTY-EIGHT -- main's twenty-seven plus this
+# branch's one. Verified by cross-check rather than by eye: every one of the 28
+# prerequisites has a `./$(X)` recipe line and an entry in `clean` (29/29/34),
+# with no duplicates -- the check that catches a dropped or doubled entry, which
+# is the failure this block's own history keeps recording.
+# #1029's names carry the 1029 suffix so they cannot shadow #1000's
+# $(SDLOG_BIN)/$(GEN_1000).
+run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
+     $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) \
+     $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
+     $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) \
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
+	./$(ARM_BIN)
+	./$(FORCEGATE_BIN)
 	./$(JSONESC_BIN)
 	./$(SYSINFO_BIN)
 	./$(SUSPEND_BIN)
 	./$(DAC980_BIN)
 	./$(HELP_BIN)
+	./$(NAME_BIN)
 	./$(WAITLOOP_BIN)
 	./$(SDLOG_BIN)
 	./$(SCPI999_BIN)
@@ -1894,10 +3132,20 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) 
 	./$(START_BIN)
 	./$(REPLYBUF_BIN)
 	./$(HEXWIN_BIN)
+	./$(LOGONCE_BIN)
+	./$(DACREINIT_BIN)
+	./$(CALFINITE_BIN)
+	./$(SDLOG1029_BIN)
+	./$(FAILNEXT_BIN)
+	./$(FAILNEXT_REAL_BIN)
+	./$(SCPIDAC_RAILGATE_BIN)
 
 clean:
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
-	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
-	      $(REPLYBUF_BIN) $(HEXWIN_BIN)
+	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) \
+	      $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) \
+	      $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) \
+	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(NAME_BIN) $(SDLOG1029_GEN).tmp $(FAILNEXT_BIN) \
+	      $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN)
 
 .PHONY: run clean
