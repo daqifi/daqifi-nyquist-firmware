@@ -50,10 +50,44 @@ inside {
     depth += n
     if (n > 0) brace_seen = 1
 
-    if ($0 ~ /taskENTER_CRITICAL/) seq = seq "E"
-    if ($0 ~ /\.CalM/)             seq = seq "M"
-    if ($0 ~ /\.CalB/)             seq = seq "B"
-    if ($0 ~ /taskEXIT_CRITICAL/)  seq = seq "X"
+    # ⚠ BY COLUMN, NOT BY RULE ORDER. Four separate `if`s tested in a fixed
+    # sequence emit in THE CHECKER'S order, not the SOURCE's, so every event
+    # on one line came out E,M,B,X whatever the line actually said:
+    #
+    #     cell.CalM = v; taskENTER_CRITICAL(); cell.CalB = v; taskEXIT_CRITICAL();
+    #
+    # is M,E,B,X in source order -- the CalM store sits OUTSIDE the section --
+    # and the old form scored it EMBX and PASSED it. An order checker that
+    # imposed its own order: the defect it exists to catch, one level down.
+    #
+    # match() returns the LEFTMOST match, so consuming the line and repeating
+    # walks the events in column order. Alternatives cannot overlap, so no
+    # longest-match tie-breaking is involved.
+    #
+    # BOTH `.CalM` and `->CalM` count as an access. The four guarded writers
+    # all use the `.` form today and the `->` form appears only in the #1054
+    # readers, so this changes no verdict here -- it is so that a writer
+    # refactored to a channel pointer (`chan->CalM = v`) stays VISIBLE. The
+    # narrow form failed CLOSED on that refactor (no token, so the sequence
+    # mismatched and the build broke), which is the safe direction but a
+    # spurious failure rather than a real check.
+    rest = $0
+    while (match(rest, /taskENTER_CRITICAL|taskEXIT_CRITICAL|(\.|->)CalM|(\.|->)CalB/)) {
+        tok = substr(rest, RSTART, RLENGTH)
+        if      (tok == "taskENTER_CRITICAL") ch = "E"
+        else if (tok == "taskEXIT_CRITICAL")  ch = "X"
+        else if (tok ~ /CalM$/)               ch = "M"
+        else                                  ch = "B"
+        # ADJACENT REPEATS COLLAPSE. `a.CalM = b.CalM;` names the field TWICE
+        # on one line, and both accesses need the section -- but emitting MM
+        # would make the expected string depend on how many times a statement
+        # happens to name the field, so `x = y.CalM` vs a temp would change it
+        # for no change in safety. Only TRANSITIONS carry the property: a
+        # second access that fell OUTSIDE the section would land on the other
+        # side of an E or X and still alter the sequence (E M X M, not E M X).
+        if (ch != last) { seq = seq ch; last = ch }
+        rest = substr(rest, RSTART + RLENGTH)
+    }
 
     depth -= gsub(/\}/, "}")
     if (brace_seen && depth <= 0) inside = 0

@@ -3149,7 +3149,7 @@ STRIP904 := $(CC) -fpreprocessed -E -P
 # file changes -- make reuses the binary and the check is silently skipped.
 # That is the defect this row was pulled up on one round earlier; it applies
 # to the checker itself exactly as it applied to the sources it checks.
-$(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h cal_order_904.awk $(SETTINGS_SRC_904) $(SCPIADC_SRC) $(RECIPES)
+$(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h cal_order_904.awk cal_order_904_cases.c $(SETTINGS_SRC_904) $(SCPIADC_SRC) $(RECIPES)
 	@for spec in "daqifi_settings_LoadADCCalSettings:$(SETTINGS_SRC_904):EMBX" \
 	             "daqifi_settings_SaveADCCalSettings:$(SETTINGS_SRC_904):EMBX" \
 	             "ADCChanCalmSetClaimed:$(SCPIADC_SRC):EMX" \
@@ -3173,23 +3173,37 @@ $(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h cal_order_904.awk $(SE
 	          echo "       test_904_cal_pair_tear.c: neither half suffices alone."; \
 	          exit 1; }; \
 	 done
-#	⚠ NEGATIVE ARM -- the guard proves it CAN FAIL, on every build.
+#	⚠ THE GUARD'S OWN ARMS -- it proves it can ACCEPT and REJECT, every build.
 #	The guard this replaced passed with both critical-section calls commented
 #	out, and nothing in the build would ever have said so. A positive check
 #	alone cannot distinguish "the code is correct" from "the check is inert",
-#	so the inverse is asserted here rather than left to a commit message:
-#	comment out the real ENTER, re-run the SAME pipe, and require a different
-#	verdict. If this ever passes, the guard above has gone vacuous.
-	@neg=`sed 's|taskENTER_CRITICAL();|/* taskENTER_CRITICAL(); */|' $(SETTINGS_SRC_904) \
-	        | $(STRIP904) -x c - 2>/dev/null \
-	        | awk -v fn=daqifi_settings_LoadADCCalSettings -f cal_order_904.awk`; \
-	 test "$$neg" != "EMBX" \
-	   || { echo "ERROR: the #904 order guard is VACUOUS -- a commented-out"; \
-	        echo "       taskENTER_CRITICAL still produced the accepted"; \
-	        echo "       sequence 'EMBX', so the guard above cannot fail and"; \
-	        echo "       is not a guard. Check that $(STRIP904) still strips"; \
-	        echo "       comments and that cal_order_904.awk still parses."; \
-	        exit 1; }
+#	so both directions are asserted here rather than claimed in a commit
+#	message, against the named shapes in cal_order_904_cases.c.
+#
+#	The two ACCEPT rows are load-bearing, not padding: a checker tightened
+#	until it rejects everything is not a checker, and `oneline_correct` exists
+#	because the fix for the one-line defect could easily have become "reject
+#	anything with several events on one line".
+	@fail=0; \
+	 for case in case_multiline_correct:EMBX \
+	             case_oneline_correct:EMBX \
+	             case_oneline_store_outside:MEBX \
+	             case_enter_commented:MBX \
+	             case_missing_exit:EMB \
+	             case_reordered_multiline:MEBX \
+	             case_access_after_exit:EMBXM; do \
+	   fn=`echo $$case | cut -d: -f1`; want=`echo $$case | cut -d: -f2`; \
+	   got=`$(STRIP904) -x c cal_order_904_cases.c 2>/dev/null \
+	          | awk -v fn=$$fn -f cal_order_904.awk`; \
+	   test "$$got" = "$$want" || { \
+	     echo "ERROR: the #904 order guard's own arm '$$fn' is wrong:"; \
+	     echo "       got '$$got', want '$$want'."; \
+	     echo "       The guard above cannot be trusted until this passes --"; \
+	     echo "       an arm that no longer behaves means the checker, not the"; \
+	     echo "       firmware, has changed. See cal_order_904_cases.c."; \
+	     fail=1; }; \
+	 done; \
+	 test "$$fail" -eq 0
 	$(CC) $(CFLAGS) -o $(TEAR904_BIN) test_904_cal_pair_tear.c
 
 # CNT_IN_FN_DEF_904 lived here and is GONE: the order guard replaced its only

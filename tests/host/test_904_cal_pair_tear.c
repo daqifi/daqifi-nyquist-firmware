@@ -167,18 +167,35 @@ TEST(the_chosen_operands_make_a_tear_observable)
 
     /* And as NUMBERS, not just bit patterns -- the point of choosing operands
      * whose low halves differ is that a torn result is a value an instrument
-     * would actually report. These are 1.0999996185302734 and
-     * 1.2000003814697267: close enough to look plausible in a reading, which
-     * is what makes a silent tear dangerous rather than obvious. */
+     * would actually report. Each mix named with its own value, because the
+     * two are easy to swap:
+     *
+     *     t1 = mixed1 = hi(VAL_NEW) | lo(VAL_OLD) = 1.2000003814697267
+     *     t2 = mixed2 = hi(VAL_OLD) | lo(VAL_NEW) = 1.0999996185302734
+     */
     const double t1 = double_of(mixed1);
     const double t2 = double_of(mixed2);
     ASSERT_TRUE(t1 != VAL_OLD && t1 != VAL_NEW);
     ASSERT_TRUE(t2 != VAL_OLD && t2 != VAL_NEW);
     ASSERT_TRUE(t1 != t2);
-    /* Plausible-looking: both land inside the interval the two real values
-     * span, so no range check on a reading would reject them. */
-    ASSERT_TRUE(t1 > VAL_OLD - 1.0 && t1 < VAL_NEW + 1.0);
-    ASSERT_TRUE(t2 > VAL_OLD - 1.0 && t2 < VAL_NEW + 1.0);
+    /* ⚠ THEY DO NOT LAND INSIDE [VAL_OLD, VAL_NEW] -- THEY BRACKET IT.
+     * t1 sits ABOVE VAL_NEW and t2 BELOW VAL_OLD, each by ~3.815e-07.
+     *
+     * An earlier revision of this comment claimed they land "inside the
+     * interval the two real values span", and the assertion under it allowed
+     * +/-1.0 -- so the prose stated something false and the check tested
+     * something far weaker, and neither was the property that matters.
+     *
+     * CONTAINMENT WAS NEVER THE POINT; PROXIMITY IS. Each torn value is
+     * ~4e-7 from a real coefficient, far inside any tolerance an instrument
+     * would apply to a reading, so no range check can reject it. That is what
+     * makes a silent tear dangerous rather than obvious -- and it is a
+     * STRONGER statement than the one it replaces, which is why the exact
+     * bracketing is pinned here rather than smoothed over. */
+    ASSERT_TRUE(t1 > VAL_NEW);              /* above the interval, not in it */
+    ASSERT_TRUE(t2 < VAL_OLD);              /* below the interval, not in it */
+    ASSERT_TRUE(t1 - VAL_NEW < 1e-6);       /* but indistinguishably close */
+    ASSERT_TRUE(VAL_OLD - t2 < 1e-6);
 }
 
 TEST(the_pairs_this_fleet_reached_for_first_would_have_been_vacuous)
