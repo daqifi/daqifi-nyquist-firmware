@@ -77,20 +77,43 @@ pattern_is_unsafe() {
     return 1
 }
 
-# Force a rebuild so a stale binary can never answer for a mutant (isolation 3).
+# Force a rebuild so a stale binary can never answer for a mutant (isolation 3),
+# and report THREE outcomes, never two.
+#
+# ⛔ ISOLATION 4, and the fifth false pass this harness produced. The previous
+# version was `make run | grep -m1 '^ERROR' || echo "<<NO ERROR>>"`. If make
+# failed any OTHER way -- a compile error, the timeout, a crash -- there is no
+# ^ERROR line, so it emitted "<<NO ERROR>>" and the CLEAN arm PASSED. "Did not
+# run" collapsed into "ran clean", which is the same two-valued defect that
+# makes a -fsyntax-only check print ok over an aborted compile. It only
+# surfaces when something unrelated breaks, which is why the four earlier
+# false passes never exposed it. The pipeline's exit status is the missing
+# third state, so take it from PIPESTATUS before anything else touches it.
 first_error() {
+    local out rc err
     rm -f run_924_tests
-    timeout 600 make run 2>&1 | grep -m1 '^ERROR' || echo "<<NO ERROR>>"
+    out=$(timeout 600 make run 2>&1); rc=$?
+    err=$(printf '%s\n' "$out" | grep -m1 '^ERROR')
+    if [ -n "$err" ]; then
+        printf '%s' "$err"
+    elif [ "$rc" -ne 0 ]; then
+        # No diagnostic of ours, but the build did not succeed: that is NOT a
+        # clean run and must never satisfy a CLEAN expectation.
+        printf '<<DID NOT RUN: make exited %s with no ERROR line>>' "$rc"
+    else
+        printf '<<NO ERROR>>'
+    fi
 }
 
 expect() { # expect <label> <PATTERN|CLEAN>
     local label="$1" want="$2" got
     got="$(first_error)"
     if [ "$want" = CLEAN ]; then
+        # EXACT match: "<<DID NOT RUN ...>>" must never satisfy CLEAN.
         if [ "$got" = "<<NO ERROR>>" ]; then
-            echo "  OK   $label (clean, as required)"; pass=$((pass+1))
+            echo "  OK   $label (ran, and clean)"; pass=$((pass+1))
         else
-            echo "  FAIL $label expected no error, got: $got"; fail=$((fail+1))
+            echo "  FAIL $label expected a clean RUN, got: $got"; fail=$((fail+1))
         fi
     elif pattern_is_unsafe "$want"; then
         echo "  FAIL $label: the expect pattern itself would match anything."
