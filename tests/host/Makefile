@@ -3725,11 +3725,120 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # is the failure this block's own history keeps recording.
 # #1029's names carry the 1029 suffix so they cannot shadow #1000's
 # $(SDLOG_BIN)/$(GEN_1000).
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
+# ---------------------------------------------------------------------------
+# PR firmware#1048 (issue #904): the CalM/CalB 64-bit pair, BOTH halves.
+#
+# This row was `blocked` on an operator ruling that it is "UNVALIDATABLE on
+# this station's hardware" -- every board here holds IDENTITY coefficients, and
+# a torn read of 1.0 / 0.0 is indistinguishable from a clean one. The ruling
+# named two exits: a calibrated board, or a host-level test injecting the pair
+# directly. test_904_cal_pair_tear.c is the second, so this target is what
+# discharges the block.
+#
+# The guards below pin the WRITE half across all three writer sites, because
+# the model cannot see the firmware. #1054 shipped the read half; #1086's
+# read-side comment states the rule the matrix encodes -- "neither half is
+# sufficient alone".
+TEAR904_BIN := run_904_tests
+
+# ⚠ THIS DEFINITION MUST STAY ABOVE THE RULE BELOW. make expands a
+# PREREQUISITE list when it READS the rule, so a variable defined later in
+# the file expands to NOTHING there and the dependency silently disappears.
+# It was defined below `run:` and did exactly that: daqifi_settings.c was not
+# a dependency of run_904_tests, so an edit to the file the guards grep
+# reused the stale binary and the guards did not run.
+#
+# The recipe's uses were unaffected, which is what made it invisible -- recipe
+# lines expand at EXECUTION time, after the whole file is parsed, so the greps
+# always had the right path. Correct recipe, absent dependency.
+#
+# And do not verify this by printing the variable: `make -np` reports
+# SETTINGS_SRC_904 as a valid path even while broken, because that dump also
+# happens after the parse. The only evidence is the EXPANDED RULE line
+# (`make -np | grep '^run_904_tests:'`), which must name this file.
+SETTINGS_SRC_904 := ../../firmware/src/services/daqifi_settings.c
+
+# Comment-stripper for the order guard below. `-fpreprocessed` is what makes
+# this work on a Harmony .c: it does NOT resolve the #includes (nothing on this
+# station can) and does NOT expand macros, so taskENTER_CRITICAL() is seen as
+# written -- it only removes comments, which is the whole requirement.
+STRIP904 := $(CC) -fpreprocessed -E -P
+
+# ⚠ cal_order_904.awk IS A PREREQUISITE BELOW because the guards READ it.
+# A guard that reads a file it does not depend on does not re-run when that
+# file changes -- make reuses the binary and the check is silently skipped.
+# That is the defect this row was pulled up on one round earlier; it applies
+# to the checker itself exactly as it applied to the sources it checks.
+$(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h cal_order_904.awk cal_order_904_cases.c $(SETTINGS_SRC_904) $(SCPIADC_SRC) $(RECIPES)
+	@for spec in "daqifi_settings_LoadADCCalSettings:$(SETTINGS_SRC_904):EMBX" \
+	             "daqifi_settings_SaveADCCalSettings:$(SETTINGS_SRC_904):EMBX" \
+	             "ADCChanCalmSetClaimed:$(SCPIADC_SRC):EMX" \
+	             "ADCChanCalbSetClaimed:$(SCPIADC_SRC):EBX"; do \
+	   fn=`echo $$spec | cut -d: -f1`; src=`echo $$spec | cut -d: -f2`; \
+	   want=`echo $$spec | cut -d: -f3`; \
+	   got=`$(STRIP904) $$src 2>/dev/null | awk -v fn=$$fn -f cal_order_904.awk`; \
+	   test "$$got" = "$$want" \
+	     || { echo "ERROR: $$fn in $$src no longer brackets its 64-bit cal"; \
+	          echo "       access in a critical section IN ORDER."; \
+	          echo "       event sequence: got '$$got', want '$$want'"; \
+	          echo "         E=taskENTER_CRITICAL  M=.CalM  B=.CalB  X=taskEXIT_CRITICAL"; \
+	          echo "       A missing letter is a missing (or COMMENTED-OUT) call;"; \
+	          echo "       a reordered one means a store sits OUTSIDE the section"; \
+	          echo "       -- and that case has the same token COUNTS as a correct"; \
+	          echo "       one, which is why this checks order, not counts."; \
+	          echo "       #1054 guards the READERS, so an unguarded WRITER does"; \
+	          echo "       not leave a symmetric gap -- it hands a protected"; \
+	          echo "       reader a TORN pair, which the critical section then"; \
+	          echo "       makes it confident in. See the 2x2 matrix in"; \
+	          echo "       test_904_cal_pair_tear.c: neither half suffices alone."; \
+	          exit 1; }; \
+	 done
+#	⚠ THE GUARD'S OWN ARMS -- it proves it can ACCEPT and REJECT, every build.
+#	The guard this replaced passed with both critical-section calls commented
+#	out, and nothing in the build would ever have said so. A positive check
+#	alone cannot distinguish "the code is correct" from "the check is inert",
+#	so both directions are asserted here rather than claimed in a commit
+#	message, against the named shapes in cal_order_904_cases.c.
+#
+#	The two ACCEPT rows are load-bearing, not padding: a checker tightened
+#	until it rejects everything is not a checker, and `oneline_correct` exists
+#	because the fix for the one-line defect could easily have become "reject
+#	anything with several events on one line".
+	@fail=0; \
+	 for case in case_multiline_correct:EMBX \
+	             case_oneline_correct:EMBX \
+	             case_oneline_store_outside:MEBX \
+	             case_enter_commented:MBX \
+	             case_missing_exit:EMB \
+	             case_reordered_multiline:MEBX \
+	             case_access_after_exit:EMBXM; do \
+	   fn=`echo $$case | cut -d: -f1`; want=`echo $$case | cut -d: -f2`; \
+	   got=`$(STRIP904) -x c cal_order_904_cases.c 2>/dev/null \
+	          | awk -v fn=$$fn -f cal_order_904.awk`; \
+	   test "$$got" = "$$want" || { \
+	     echo "ERROR: the #904 order guard's own arm '$$fn' is wrong:"; \
+	     echo "       got '$$got', want '$$want'."; \
+	     echo "       The guard above cannot be trusted until this passes --"; \
+	     echo "       an arm that no longer behaves means the checker, not the"; \
+	     echo "       firmware, has changed. See cal_order_904_cases.c."; \
+	     fail=1; }; \
+	 done; \
+	 test "$$fail" -eq 0
+	$(CC) $(CFLAGS) -o $(TEAR904_BIN) test_904_cal_pair_tear.c
+
+# CNT_IN_FN_DEF_904 lived here and is GONE: the order guard replaced its only
+# two call sites, so it was a definition nothing called. Its lesson -- that the
+# shared CNT_IN_FN returns 0 for a FORWARD-DECLARED function, because it
+# anchors on the prototype and exits at the next match, so a guard expecting
+# ABSENCE passes VACUOUSLY on that false 0 -- is kept in cal_order_904.awk's
+# header, where the definition-vs-prototype rule is actually implemented.
+
+run: $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
      $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) \
      $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN) $(MANIFEST_BIN)
+	./$(TEAR904_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -3762,6 +3871,7 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SY
 	./$(SCPIDAC_RAILGATE_BIN)
 
 clean:
+	rm -f $(TEAR904_BIN)
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) \
 	      $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) \
