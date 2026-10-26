@@ -1043,6 +1043,74 @@ TEST(the_directory_half_strips_where_the_name_half_refuses)
     ASSERT_EQ(SdManifest_CanonicalDirLen("DAQiFi"), 6u);
 }
 
+/* extractBaseFilename's logic, copied verbatim from sd_card_manager.c:1469 so
+ * this file can exercise it (that .c drags in Harmony/FreeRTOS/FatFs). If the
+ * real one changes, the Makefile's grep guard on it fails the BUILD. */
+static void test_extract_base(char *out, size_t outSize, const char *filename)
+{
+    char *ext;
+
+    strncpy(out, filename, outSize - 1u);
+    out[outSize - 1u] = '\0';
+    ext = strrchr(out, '.');
+    if (ext != NULL) {
+        *ext = '\0';
+    }
+}
+
+TEST(the_manifest_name_is_usable_however_the_file_is_spelled)
+{
+    /* ⛔ r10 finding 2, and the reason sd_OpenSessionManifest carries NO
+     * trailing-separator check. The manifest name is always <base> + ".mfst",
+     * so the COMPLETED name ends in the extension and cannot end in '/'
+     * whatever the base looks like.
+     *
+     * r9 validated the stripped INTERMEDIATE instead, and got it wrong BOTH
+     * ways. This asserts the measured table, so re-adding that check fails
+     * here rather than silently refusing legal configurations. */
+    static const struct {
+        const char *file;        /* what SD:FILE was set to        */
+        const char *base;        /* what extractBaseFilename yields */
+        bool baseLooksUsable;    /* what r9's check said about it   */
+    } cases[] = {
+        { "log.csv",     "log",     true  },
+        /* ⛔ THE CASE r9 WAS WRITTEN FOR, AND IT PASSED r9's CHECK: strrchr
+         * truncates at the dot and takes the trailing slash with it. */
+        { "log.csv/",    "log",     true  },
+        /* ⛔ THREE LEGAL CONFIGURATIONS r9 REFUSED. */
+        { ".csv",        "",        false },
+        { "sub/.csv",    "sub/",    false },
+        { "noext/",      "noext/",  false },
+        { "sub/log.csv", "sub/log", true  },
+        { "noext",       "noext",   true  },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        /* 64 > the firmware's 40-byte cap on this field. The exact cap is in
+         * sd_card_manager.h, which is not host-includable (Harmony), and it is
+         * irrelevant here: every input below is far shorter, and what is under
+         * test is the string logic, not the bound. */
+        char base[64];
+        char manifest[sizeof(base) + sizeof(SD_MANIFEST_EXT) + 1];
+
+        test_extract_base(base, sizeof(base), cases[i].file);
+
+        /* the derivation is what the table says it is */
+        ASSERT_BYTES(base, cases[i].base, strlen(cases[i].base) + 1u);
+
+        /* r9's check on the intermediate -- recorded so the two columns that
+         * disagree are visible, not so the behaviour is wanted */
+        ASSERT_EQ(SdManifest_NameIsUsable(base) ? 1 : 0,
+                  cases[i].baseLooksUsable ? 1 : 0);
+
+        /* ⭐ THE INVARIANT THAT ACTUALLY HOLDS: the completed manifest name is
+         * usable in EVERY row, including the three r9 refused. */
+        (void)snprintf(manifest, sizeof(manifest), "%s" SD_MANIFEST_EXT, base);
+        ASSERT_TRUE(SdManifest_NameIsUsable(manifest));
+    }
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
@@ -1083,5 +1151,6 @@ int main(void)
     RUN(relative_name_canonicalises_the_directory_it_slices);
     RUN(a_file_name_must_not_end_in_a_separator);
     RUN(the_directory_half_strips_where_the_name_half_refuses);
+    RUN(the_manifest_name_is_usable_however_the_file_is_spelled);
     return TEST_SUMMARY();
 }

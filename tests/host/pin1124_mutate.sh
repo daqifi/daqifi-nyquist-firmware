@@ -31,6 +31,13 @@
 # string -- a clean-bill generator. That exact mistake produced false pass
 # number three here, so the pattern is now validated before it is used.
 #
+# R5 was REMOVED at r10. Its subject -- sd_OpenSessionManifest's own name
+# checks -- was deleted by r10 finding 2, because validating the stripped
+# intermediate refused three legal configurations (.csv, sub/.csv, noext/) while
+# MISSING log.csv/, the case it was written for. ⭐ The harness reported
+# "anchor absent" rather than passing, which is the behaviour to preserve: a
+# mutant whose target no longer exists must fail loudly, not silently succeed.
+#
 # And false pass number four, in the other direction: each expected substring
 # must appear on the FIRST ^ERROR line, because that is all first_error()
 # captures. A substring taken from the diagnostic's second line never matches
@@ -191,26 +198,39 @@ else
 fi
 restore
 
-echo "== R3: a FILE setter site loses its isFileName flag (arm 3) =="
+echo "== R3: a FILE setter site loses its isFileName flag (role table) =="
 if sub "$S" 'SD_ValidatePathParam(pBuff, fileLen, true)' \
             'SD_ValidatePathParam(pBuff, fileLen, false)'; then
-    expect "R3 setter-flag split arm" "call sites no longer"
+    expect "R3 role-table arm" "role table is violated"
 else
     echo "  FAIL R3 anchor absent -- source drifted."; fail=$((fail+1))
 fi
 restore
 
-echo "== R5: THE MUTANT THAT PASSES EVERY COUNT ARM. sd_OpenSessionManifest   =="
-echo "==     checks baseFilename TWICE, so ->file is never validated. Measured =="
-echo "==     identical to baseline on: raw 0, canonical 8, accessor 8,         =="
-echo "==     NameIsUsable 3, directory refs 20, wrong-half 0. A count cannot   =="
-echo "==     see WHICH argument it counted, so only the exact-operand arm      =="
-echo "==     catches it -- and before that arm existed, NOTHING did.           =="
-if sub "$F" '|| !SdManifest_NameIsUsable(gpSDCardSettings->file)) {' \
-            '|| !SdManifest_NameIsUsable(gSDCardData.baseFilename)) {'; then
-    expect "R5 exact-operand arm" "does not"
+echo "== R4: the LIST operand's flag flipped back to file (r10 finding 1) =========="
+echo "==     SCPI_StorageSDListDir fills opDirectory while its length variable  =="
+echo "==     is called fileLen. r9 classified by that NAME and refused          =="
+echo "==     LISt? \"DAQiFi/\". The role table keys on the callback, not a count. =="
+if sub "$S" 'SD_ValidatePathParam(pBuff, fileLen, false)) {   /* #612 */' \
+            'SD_ValidatePathParam(pBuff, fileLen, true)) {   /* #612 */'; then
+    expect "R4 role table, directory site" "role table is violated"
 else
-    echo "  FAIL R5 anchor absent -- source drifted."; fail=$((fail+1))
+    echo "  FAIL R4 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R6: THE MUTANT THAT PASSES THE COUNT ARM (r10 finding 3). Keeps THREE  =="
+echo "==     fileRecordIsPrefix assignments but moves one OUT of its failure    =="
+echo "==     branch, so the unmount record is no longer marked when its bytes   =="
+echo "==     are in doubt. Only the POSITION arm sees it.                       =="
+if sub "$F" '                         * unmount below can discard them. */
+                        gSDCardData.fileRecordIsPrefix = true;
+                    }' '                         * unmount below can discard them. */
+                    }
+                    gSDCardData.fileRecordIsPrefix = true;'; then
+    expect "R6 finding-3 position arm" "finding 3 --"
+else
+    echo "  FAIL R6 anchor absent -- source drifted."; fail=$((fail+1))
 fi
 restore
 

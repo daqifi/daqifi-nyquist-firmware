@@ -567,11 +567,31 @@ typedef struct {
      * or a helper it calls, so no volatile and no critical section -- exactly
      * the reasoning the `crcRunning` comment below records. */
     uint32_t fileCrcRunning;
-    /* #924 (round-3 audit HIGH): true once a write to THIS file returned an
-     * error, so its manifest record describes a PREFIX. Lives inside
+    /* #924 (round-3 audit HIGH): true once this file's manifest record can no
+     * longer be claimed to describe the file EXACTLY. Lives inside
      * gSDCardData, which is already allocated, so this adds NO new static and
      * needs no STATIC_POOL_SIZE payment -- stated explicitly because a sibling
-     * row's audit finding is exactly an unpaid new BSS object. */
+     * row's audit finding is exactly an unpaid new BSS object.
+     *
+     * ⚠ #1124 r10 finding 3 BROADENED WHAT THIS MEANS, and the two causes point
+     * in OPPOSITE directions. It was documented as "the record describes a
+     * PREFIX", i.e. the file may be LONGER than the record. That is still true
+     * of the original cause, but not of the new one:
+     *
+     *   a write returned an error (#924)   -> bytes may be on the card that
+     *                                         nothing counted; the FILE MAY BE
+     *                                         LONGER than the record says
+     *   sync or close failed at unmount    -> counted bytes may still be in
+     *     (#1124 r10)                        FatFs's sector cache when the
+     *                                         unmount discards them; the FILE
+     *                                         MAY BE SHORTER than the record
+     *
+     * So the flag now means "record and file may disagree, in EITHER
+     * direction" and SD_MANIFEST_PREFIX_MARK is the single signal for both.
+     * The wire format is unchanged deliberately -- it is a contract with the
+     * companion test's parser, and a second marker would break every reader to
+     * express a distinction no reader acts on. A consumer must treat ",PARTIAL"
+     * as "do not expect an exact match", NOT as "expect a prefix". */
     bool fileRecordIsPrefix;
 
     /* #924: the session's manifest. ONE file per streaming session, opened at
@@ -1922,28 +1942,32 @@ static bool sd_ManifestPathSafeToOverwrite(const char *path) {
  * without a manifest: integrity bookkeeping must never be able to stop a
  * logging session. */
 static void sd_OpenSessionManifest(void) {
-    /* ⛔ #1124 r9: THIS FUNCTION CHECKS ITS OWN OPERANDS, and that is not
-     * redundant with the guard in PROCESS_STATE_OPEN_FILE even though that
-     * guard is this function's only caller today.
+    /* ⛔ #1124 r10 finding 2: NO TRAILING-SEPARATOR CHECK BELONGS HERE, and
+     * r9's was actively harmful. The manifest name is always `<something>` +
+     * SD_MANIFEST_EXT, so the COMPLETED name cannot end in a separator however
+     * the base is spelled -- it ends in the extension's last character.
      *
-     * Relying on a caller's validation is precisely how r9's finding happened:
-     * the directory operand of these two joins was canonicalised while the
-     * NAME operand beside it was not, because coverage was assumed to flow
-     * from somewhere else. Nothing couples a caller's check to a callee's
-     * requirement, so the callee states its own.
+     * r9 validated the stripped INTERMEDIATE instead of the completed name,
+     * which got it wrong in both directions. Measured against the real
+     * extractBaseFilename():
      *
-     * `baseFilename` is DERIVED -- extractBaseFilename(gpSDCardSettings->file)
-     * copies and strips the extension -- so it is checked here rather than
-     * trusted: a derivation is a place a property can be lost, not a place it
-     * is guaranteed to survive. `file` is checked because the fallback arm
-     * below builds from it directly. */
-    if (!SdManifest_NameIsUsable(gSDCardData.baseFilename)
-        || !SdManifest_NameIsUsable(gpSDCardSettings->file)) {
-        /* Remedy first; Logger truncates the tail at 125 B. */
-        LOG_E("[SD] #1124 no manifest: name must not end in '/' ('%s')",
-              gSDCardData.baseFilename);
-        return;
-    }
+     *   SD:FILE      base      r9's check   manifest name   actually valid
+     *   ".csv"       ""        REFUSED      ".mfst"         yes
+     *   "sub/.csv"   "sub/"    REFUSED      "sub/.mfst"     yes
+     *   "noext/"     "noext/"  REFUSED      "noext/.mfst"   yes
+     *   "log.csv/"   "log"     passed       "log.mfst"      yes
+     *
+     * Three valid names refused -- and the one case r9 was written FOR,
+     * "log.csv/", sailed through, because strrchr('.') truncates at the dot
+     * and takes the trailing slash away with the extension. A check that
+     * rejects what is legal while missing what it targeted is worse than no
+     * check: it is the appearance of one.
+     *
+     * The real protection is at the point where a user-supplied name becomes a
+     * STREAM-FILE path -- the PROCESS_STATE_OPEN_FILE guard -- because
+     * "<dir>/log.csv/" names no file. That is where "log.csv/" is refused, and
+     * it is the only place the question arises. Appending an extension answers
+     * it here by construction, so stating that is the honest guard. */
     /* directory (<= 40) + '/' + base (<= 40) + ".mfst" + NUL. Sized from the
      * settings struct's own caps rather than from
      * SD_CARD_MANAGER_FILE_PATH_LEN_MAX (511), which would be a needlessly
@@ -2667,12 +2691,21 @@ void sd_card_manager_ProcessState() {
                         LOG_D("[SD] Flushed pending data before unmount\r\n");
                     } else {
                         LOG_E("[%s:%d]Error flushing before unmount", __FILE__, __LINE__);
+                        /* ⛔ #1124 r10 finding 3: THE RECORD IS NOW SUSPECT.
+                         * FF_FS_TINY is 0 (ffconf.h:226), so FatFs holds a
+                         * per-file sector cache; a FileSync that failed leaves
+                         * counted bytes possibly still in that cache, and the
+                         * unmount below can discard them. */
+                        gSDCardData.fileRecordIsPrefix = true;
                     }
                 }
 
                 LOG_D("[SD] Closing file '%s'\r\n", gSDCardData.filePath);
                 if (SYS_FS_FileClose(gSDCardData.fileHandle) == SYS_FS_RES_FAILURE) {
                     LOG_E("[SD] Failed to close file during unmount: '%s', error=%d", gSDCardData.filePath, SYS_FS_Error());
+                    /* #1124 r10 finding 3: a close that FAILED did not flush
+                     * the cache either, so the same doubt applies. */
+                    gSDCardData.fileRecordIsPrefix = true;
                 }
                 gSDCardData.fileHandle = SYS_FS_HANDLE_INVALID;
                 /* #924: the SESSION'S LAST FILE gets its line here. The
@@ -2683,12 +2716,23 @@ void sd_card_manager_ProcessState() {
                  * rather than the one-line one #924 requires.
                  *
                  * Deliberately AFTER the close and deliberately NOT gated on
-                 * the close succeeding. The drains and the FileSync above have
-                 * already run, so the bytes counted are the bytes sent to the
-                 * card either way, and a close failure here is reported on its
-                 * own line. Withholding the record would make the manifest
-                 * disagree with the file list in exactly the case a reader
-                 * most needs it to agree. (The rotation path's close-failure
+                 * the close succeeding: withholding the record would make the
+                 * manifest disagree with the file list in exactly the case a
+                 * reader most needs it to agree. A close failure is reported on
+                 * its own line AND now marks the record (see below).
+                 *
+                 * ⛔ #1124 r10 finding 3 CORRECTS THIS COMMENT. It used to say
+                 * "the drains and the FileSync above have already run, so the
+                 * bytes counted are the bytes sent to the card either way".
+                 * That is false precisely when the FileSync FAILED. FF_FS_TINY
+                 * is 0 (ffconf.h:226), so FatFs keeps a per-file sector cache;
+                 * if the sync returned -1, or the close returned FAILURE,
+                 * counted bytes may still be sitting in that cache when the
+                 * unmount below discards them. The record would then OVERSTATE
+                 * the bytes and carry a CRC over data the card never received
+                 * -- the one failure mode a manifest exists to rule out.
+                 * Both arms now set fileRecordIsPrefix, so the line is marked.
+                 * (The rotation path's close-failure
                  * arm leaves fileHandle VALID and routes to ERROR ->
                  * UNMOUNT_DISK, so that file reaches this line instead of the
                  * rotation's -- it gets exactly one record either way, never

@@ -944,11 +944,17 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@# site here is what makes "we validated it in the setter" insufficient.
 	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
 	    | grep -c 'SdManifest_NameIsUsable('`; \
-	 test "$$n" -eq 3 \
+	 test "$$n" -eq 1 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) calls SdManifest_NameIsUsable() $$n"; \
-	       echo "       time(s), expected 3 (#1124 r9)."; \
-	       echo "       1 at the PROCESS_STATE_OPEN_FILE guard, 2 in"; \
-	       echo "       sd_OpenSessionManifest() for its own operands."; \
+	       echo "       time(s), expected 1 (#1124 r10)."; \
+	       echo "       ONE call, at the PROCESS_STATE_OPEN_FILE guard, where a"; \
+	       echo "       user-supplied name becomes a STREAM-FILE path."; \
+	       echo "       r9 had three. The two in sd_OpenSessionManifest were"; \
+	       echo "       removed at r10: the manifest appends SD_MANIFEST_EXT, so"; \
+	       echo "       its completed name cannot end in a separator, and"; \
+	       echo "       checking the stripped intermediate refused three legal"; \
+	       echo "       names (.csv, sub/.csv, noext/) while MISSING log.csv/,"; \
+	       echo "       the case it was written for. Do not re-add them."; \
 	       echo "       ⛔ This must hold IN THIS FILE, not only in the SCPI"; \
 	       echo "       setter: an NVM restore populates the settings struct"; \
 	       echo "       directly and never reaches SD_ValidatePathParam, which"; \
@@ -956,34 +962,38 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       directory half. A refusal that only exists in the setter"; \
 	       echo "       is not a refusal."; \
 	       exit 1; }
-	@# ⛔⛔ ARM 1b -- WHICH OPERANDS, not how many checks. Found by mutation,
-	@# not by reasoning: changing sd_OpenSessionManifest()'s second check from
-	@# `gpSDCardSettings->file` to a second `gSDCardData.baseFilename` -- the
-	@# ordinary copy-paste slip -- leaves `->file` NEVER VALIDATED and is caught
-	@# by NOTHING. Measured: raw 0, canonical 8, accessor 8, NameIsUsable 3,
-	@# directory refs 20, wrong-half 0. Every count identical to baseline, by
-	@# construction, because a count cannot see which argument it counted.
+	@# ⛔⛔ #1124 r10 finding 3 (HIGH): THE UNMOUNT RECORD MUST BE MARKED WHEN
+	@# ITS BYTES ARE IN DOUBT. FF_FS_TINY is 0 (ffconf.h:226), so FatFs keeps a
+	@# per-file sector cache. If the unmount FileSync returned -1, or the close
+	@# returned FAILURE, counted bytes may still be in that cache when the
+	@# unmount discards them -- so the record would OVERSTATE the bytes and
+	@# carry a CRC over data the card never received, which is the one failure
+	@# mode a manifest exists to rule out. The code used to justify appending
+	@# unmarked with "the bytes counted are the bytes sent either way"; that is
+	@# false exactly when the sync failed.
 	@#
-	@# Same lesson as r8's sd_BuildBucketPath arms one level along: a by-name
-	@# pin answers "does this function comply somewhere?", a count answers "how
-	@# many times?", and neither answers "for each operand that needs it?".
-	@# So both operands are pinned by exact form.
-	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
-	     | awk '/^static void sd_OpenSessionManifest\(void\) \{$$/{f=1} f{print} f&&/^\}/{exit}'`; \
-	 nl=`printf '%s\n' "$$pp" | grep -c .`; \
-	 nb=`printf '%s\n' "$$pp" | grep -cF 'SdManifest_NameIsUsable(gSDCardData.baseFilename)'`; \
-	 nf=`printf '%s\n' "$$pp" | grep -cF 'SdManifest_NameIsUsable(gpSDCardSettings->file)'`; \
-	 test "$$nl" -gt 4 && test "$$nb" -eq 1 && test "$$nf" -eq 1 \
-	  || { echo "ERROR: sd_OpenSessionManifest() in $(SD_MANAGER_SRC) does not"; \
-	       echo "       validate BOTH of its name operands (#1124 r9)."; \
-	       echo "         function lines extracted:        $$nl (must be > 4, else"; \
-	       echo "           the extraction found nothing and this is vacuous)"; \
-	       echo "         NameIsUsable(baseFilename):      $$nb (expected 1)"; \
-	       echo "         NameIsUsable(->file):            $$nf (expected 1)"; \
-	       echo "       It builds from `baseFilename` (derived) on the primary arm"; \
-	       echo "       and from ->file on the fallback arm, so BOTH need checking."; \
-	       echo "       Checking one of them twice leaves the other unvalidated and"; \
-	       echo "       changes no count anywhere -- which is why this arm exists."; \
+	@# BOTH ARMS BY POSITION, not by count: a count of three assignments cannot
+	@# see WHICH branch each one is in -- the r9 arm-1b lesson. Each failure
+	@# LOG_E must be followed by the marker within a few lines.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 n=`printf '%s\n' "$$pp" | grep -c 'fileRecordIsPrefix = true'`; \
+	 sl=`printf '%s\n' "$$pp" | grep -n 'Error flushing before unmount' | head -1 | cut -d: -f1`; \
+	 cl=`printf '%s\n' "$$pp" | grep -n 'Failed to close file during unmount' | head -1 | cut -d: -f1`; \
+	 sm=0; cm=0; \
+	 if [ -n "$$sl" ]; then sm=`printf '%s\n' "$$pp" | sed -n "$$sl,$$((sl+6))p" | grep -c 'fileRecordIsPrefix = true'`; fi; \
+	 if [ -n "$$cl" ]; then cm=`printf '%s\n' "$$pp" | sed -n "$$cl,$$((cl+6))p" | grep -c 'fileRecordIsPrefix = true'`; fi; \
+	 test "$$n" -eq 3 && test "$$sm" -ge 1 && test "$$cm" -ge 1 \
+	  || { echo "ERROR: #1124 r10 finding 3 -- the unmount manifest record is no"; \
+	       echo "       longer marked when its byte count is in doubt."; \
+	       echo "         fileRecordIsPrefix = true assignments: $$n (expected 3)"; \
+	       echo "         within 6 lines of the SYNC failure LOG_E:  $$sm (need >= 1)"; \
+	       echo "         within 6 lines of the CLOSE failure LOG_E: $$cm (need >= 1)"; \
+	       echo "       FF_FS_TINY is 0, so a failed sync or close can leave"; \
+	       echo "       counted bytes in FatFs's sector cache for the unmount to"; \
+	       echo "       discard. An unmarked record then OVERSTATES the bytes and"; \
+	       echo "       its CRC covers data the card never received."; \
+	       echo "       Position is asserted, not just the count: three"; \
+	       echo "       assignments in the wrong branches satisfy a count."; \
 	       exit 1; }
 	@# ARM 2 -- the asymmetry is not interchangeable. If someone ever "unifies"
 	@# the two predicates, these go non-zero and this fails. That is the whole
@@ -1185,23 +1195,63 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	@# A pin that reads a file its target does not depend on passes STALE:
 	@# the file changes, the target is still up to date, the check never
 	@# re-runs. Same reason $(RECIPES) is a prerequisite elsewhere here.
-	@# ARM 3 -- the setter states which half it is validating. The flag exists
-	@# so a NEW call site cannot inherit whichever answer was hard-coded; before
-	@# it was parameterised, adding the trailing-'/' test unconditionally would
-	@# have rejected SD:DIR "DAQiFi/" and regressed #1124's own directory half.
-	@t=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null \
-	    | grep -c 'SD_ValidatePathParam(pBuff, fileLen, true)'`; \
-	 f=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null \
-	    | grep -c 'SD_ValidatePathParam(pBuff, pathLen, false)'`; \
-	 test "$$t" -eq 5 && test "$$f" -eq 1 \
-	  || { echo "ERROR: #1124 r9 -- SD_ValidatePathParam's call sites no longer"; \
-	       echo "       split 5 file / 1 directory in $(SD_BENCH_SRC)."; \
-	       echo "         isFileName=true  (file params):      $$t (expected 5)"; \
-	       echo "         isFileName=false (directory param):  $$f (expected 1)"; \
-	       echo "       A new call site must STATE which half it validates. If"; \
-	       echo "       one was added, decide strip-vs-reject for it and update"; \
-	       echo "       this count; if one lost its flag, the trailing-'/' test"; \
-	       echo "       is now applying to the wrong half."; \
+	@# ⛔⛔ ARM 3 (REPLACED at r10) -- THE ROLE TABLE, PER CALLBACK, NOT A COUNT.
+	@# r9's version asserted the call sites split "5 file / 1 directory" and it
+	@# locked in a WRONG classification: SCPI_StorageSDListDir fills
+	@# opDirectory, but its length variable is named `fileLen`, so it was
+	@# counted as a file operand and given isFileName=true. LISt? "DAQiFi/" was
+	@# then refused -- the exact directory-half regression the parameterisation
+	@# existed to prevent, arriving through the one site whose variable name
+	@# lies about its destination.
+	@#
+	@# ⭐ A COUNT CANNOT CARRY A CLASSIFICATION. "Five of these are file
+	@# operands" is true of any five, so the count passed while the wrong five
+	@# were chosen. Same family as r9's arm 1b ("a count cannot see which
+	@# argument it counted"), one level up: here it could not see which SITE.
+	@# So each callback is named, with the role its subject requires:
+	@#
+	@#   SCPI_StorageSDLoggingSet    -> file        the logging target
+	@#   SCPI_StorageSDCrcStart      -> file        CRC of one stored file
+	@#   SCPI_StorageSDGetData       -> file        retrieve one file
+	@#   SCPI_StorageSDDelete        -> file        delete one file
+	@#   SCPI_StorageSDListDir       -> DIRECTORY   lists a directory (opDirectory)
+	@#   SCPI_StorageSDDirectorySet  -> DIRECTORY   sets the working directory
+	@#
+	@# A new caller fails this until it is added here WITH its role decided,
+	@# which is the point: the decision is strip-vs-reject and it cannot be
+	@# inferred from the surrounding variable names.
+	@#
+	@# ⚠ The extraction uses awk's index() against the FULL signature, not a
+	@# dynamic regex. The first version passed `^scpi_result_t NAME\\(` through
+	@# make -> shell -> awk and every escaping layer had its own opinion; all
+	@# six extractions silently returned nothing. It FAILED CLOSED only because
+	@# the test is `calls -ne 1`, which catches 0 -- had it been `-gt 0` or a
+	@# flag-only comparison, a broken extraction would have passed six empty
+	@# bodies as compliant. index($$0,nm)==1 has no metacharacters to lose.
+	@pp=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null`; \
+	 bad=""; \
+	 for spec in LoggingSet:true CrcStart:true GetData:true Delete:true \
+	             ListDir:false DirectorySet:false; do \
+	   cb=SCPI_StorageSD`echo "$$spec" | cut -d: -f1`; \
+	   want=`echo "$$spec" | cut -d: -f2`; \
+	   body=`printf '%s\n' "$$pp" | awk -v nm="scpi_result_t $$cb(scpi_t * context)" 'index($$0,nm)==1{g=1} g{print} g&&/^\}/{exit}'`; \
+	   n=`printf '%s\n' "$$body" | grep -c 'SD_ValidatePathParam('`; \
+	   got=`printf '%s\n' "$$body" | grep -oE 'SD_ValidatePathParam\([^)]*, (true|false)\)' | grep -oE '(true|false)' | head -1`; \
+	   if [ "$$n" -ne 1 ] || [ "$$got" != "$$want" ]; then \
+	     bad="$$bad $$cb(calls=$$n,flag=$$got,want=$$want)"; \
+	   fi; \
+	 done; \
+	 test -z "$$bad" \
+	  || { echo "ERROR: #1124 r10 -- SD_ValidatePathParam's role table is violated"; \
+	       echo "       in $(SD_BENCH_SRC):"; \
+	       for b in $$bad; do echo "         $$b"; done; \
+	       echo "       Each callback must validate its operand as the half its"; \
+	       echo "       SUBJECT requires -- file operands reject a trailing '/',"; \
+	       echo "       directory operands accept and strip it. ⛔ Do NOT infer the"; \
+	       echo "       role from the length variable's name: SCPI_StorageSDListDir"; \
+	       echo "       writes opDirectory while its variable is called fileLen,"; \
+	       echo "       and reading that name instead of the destination is what"; \
+	       echo "       broke LISt? \"DAQiFi/\" at r9."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 

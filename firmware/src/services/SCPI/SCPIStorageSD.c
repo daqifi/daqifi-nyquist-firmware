@@ -1121,7 +1121,18 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        if (!SD_ValidatePathParam(pBuff, fileLen, true)) {   /* #612 */
+        /* ⛔ #1124 r10 finding 1: THIS IS A DIRECTORY OPERAND, despite the
+         * length variable being called `fileLen`. It fills opDirectory (see
+         * the sizeof() above), so LISt? "DAQiFi/" must be ACCEPTED and
+         * stripped at use, not refused.
+         *
+         * r9 passed `true` here because the six call sites were classified by
+         * the NAME of their length variable instead of by the FIELD they write.
+         * Five said `fileLen`, so five were called file operands; this one is
+         * misnamed. Classifying by a name rather than by a destination is what
+         * produced the very regression r9 had parameterised the validator to
+         * avoid. The pin now keys on the role TABLE below, not on the count. */
+        if (!SD_ValidatePathParam(pBuff, fileLen, false)) {   /* #612 */
             sd_card_manager_ReleaseClaim();  /* #829 release */
             SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             result = SCPI_RES_ERR;
