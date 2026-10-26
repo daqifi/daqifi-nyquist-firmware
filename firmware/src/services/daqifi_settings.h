@@ -331,36 +331,39 @@ extern "C" {
     bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig);
 
     /**
-     * #908 (codex-r3): capture the WHOLE live calibration state so a failed
-     * operation can put it back -- the channels' CalM/CalB *and* the active
-     * bank that daqifi_settings_LoadADCCalSettings records internally.
+     * #908 (codex-r5): STAGE a calibration bank -- read it from NVM into this
+     * module's staging slot WITHOUT touching the live array.
      *
-     * ⚠ The bank is the reason this is a pair rather than a caller-side
-     * snapshot. A caller can save and restore the coefficients it can see;
-     * it cannot restore the module-private bank the load also writes, so a
-     * caller-side rollback left the coefficients old and the bank name new
-     * -- provenance naming a bank that was not live.
+     * The first half of stage -> persist -> publish. It replaced a rollback:
+     * because staging touches nothing live, a failure here means nothing
+     * happened and there is no undo to get wrong. Callers that must persist a
+     * selection between staging and publishing (ADCUseCalSetClaimed) call this
+     * and daqifi_settings_PublishStagedCal separately; callers with nothing to
+     * persist use daqifi_settings_LoadADCCalSettings, which is both.
      *
-     * ⚠ ONE snapshot slot. Every SCPI writer of this state takes the same
-     * Streaming_BeginConfigChange() claim, so these calls cannot nest; that
+     * ⚠ ONE staging slot. Every SCPI writer of this state takes the same
+     * Streaming_BeginConfigChange() claim, so these cannot nest; that
      * discipline is the precondition, not an assumption about timing.
      *
-     * @param channelRuntimeConfig the live AIn runtime array; NULL captures
-     *        the bank only and an empty snapshot
+     * @param type DaqifiSettings_FactAInCalParams or
+     *             DaqifiSettings_UserAInCalParams; anything else fails
+     * @return true if the bank was read and staged
      */
-    void daqifi_settings_SnapshotActiveCal(const AInRuntimeArray* channelRuntimeConfig);
+    bool daqifi_settings_StageADCCalSettings(DaqifiSettingsType type);
 
     /**
-     * #908 (codex-r3): put back what daqifi_settings_SnapshotActiveCal
-     * captured -- coefficients and active bank. Cannot fail: it restores from
-     * RAM, which is why the rollback path needs no error handling of its own.
+     * #908 (codex-r5): PUBLISH the staged bank into the live runtime array.
      *
-     * Restores only as many channels as were captured, so a runtime array
-     * that changed Size in between cannot be walked past its end.
+     * Cannot fail on anything the caller can influence: it copies RAM to RAM
+     * under per-pair critical sections (#904's write half, pairing with
+     * #1054's readers) and records the active bank. Recording the bank HERE,
+     * at publish, is what makes it impossible for the bank name to describe a
+     * bank that is not live.
      *
-     * @param channelRuntimeConfig the live AIn runtime array to restore into
+     * @param channelRuntimeConfig the live AIn runtime array
+     * @return false only if nothing is staged, or the array is NULL
      */
-    void daqifi_settings_RestoreActiveCal(AInRuntimeArray* channelRuntimeConfig);
+    bool daqifi_settings_PublishStagedCal(AInRuntimeArray* channelRuntimeConfig);
 
     /**
      * #14: Sets the runtime device friendly name cache. The value is

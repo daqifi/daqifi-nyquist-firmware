@@ -146,76 +146,120 @@ bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig) 
     return true;
 }
 
-/* #908 (codex-r3): THE UNDO LIVES NEXT TO THE DO.
+/* #908 (codex-r5): STAGE -> PERSIST -> PUBLISH, which is why there is no
+ * rollback here any more.
  *
- * A rollback must restore every write the forward path performs, including
- * writes hidden inside a callee. daqifi_settings_LoadADCCalSettings writes
- * TWO things: the caller's CalM/CalB, which the caller can see, and
- * gActiveCalBank, which is static to this file and which the caller cannot
- * see or restore. An earlier revision snapshotted only the coefficients in
- * SCPIADC.c, so after a failed save the coefficients were old while the bank
- * name was new -- provenance naming a bank that was not live. Reachable
- * whenever both banks hold non-identity coefficients, i.e. a calibrated
- * board (with an identity bank, CalIsIdentity short-circuits the bank name
- * away and hides it).
+ * Rounds r1-r4 each patched a rollback: add one, snapshot live values instead
+ * of NVM, also restore the hidden bank, then protect its writes. None of them
+ * asked whether there should BE a rollback. There should not: the only reason
+ * one was needed is that the new coefficients went LIVE before the selection
+ * was persisted, so a failed persist had something to undo.
  *
- * Exposing a gActiveCalBank setter would have fixed the symptom and
- * reopened the reason it is set inside the load in the first place: a new
- * caller cannot forget what it cannot reach. So the snapshot/restore pair
- * lives here, keeping this file the only writer, and the caller asks for
- * "the whole cal state" rather than assembling it from parts it can see.
+ * daqifi_settings_LoadADCCalSettings already had the seam -- it reads NVM into
+ * a LOCAL and touches the live array only in a final copy loop. Splitting it
+ * there gives:
  *
- * ⚠ ONE snapshot slot, deliberately: every SCPI writer of this state takes
- * the same Streaming_BeginConfigChange() claim, so these cannot nest. A
- * second concurrent snapshot is impossible rather than merely unlikely --
- * and if that claim discipline ever changes, this comment is the thing that
- * should stop the change.
+ *   Stage    reads NVM into this module's staging slot. CAN FAIL. Touches
+ *            nothing live, so a failure needs no undo.
+ *   Persist  the caller's own SaveToNvm. CAN FAIL -- and if it does, the
+ *            caller simply returns: staging is discarded by never being
+ *            published.
+ *   Publish  copies staging into the live array under per-pair critical
+ *            sections and records the bank. CANNOT FAIL.
  *
- * 768 B of .bss (MAX_AIN_CHANNEL x CalM+CalB, both double), not stack: this
- * runs on a SCPI task. */
+ * That deletes the snapshot, the restore, the snapshot slot, and r3's
+ * hidden-state problem -- gActiveCalBank is now written at PUBLISH time, so it
+ * can never name a bank that is not live. It also removes an arm that could
+ * not be verified on hardware (nothing makes SaveToNvm fail), because the arm
+ * no longer exists.
+ *
+ * ⚠ One residual, stated: between persist and publish, NVM names the new
+ * selection while the live array still holds the old coefficients. It is
+ * brief, it cannot fail, and it is self-consistent -- a reboot in that window
+ * loads exactly what was persisted. Strictly better than publishing a
+ * selection that may not persist.
+ *
+ * The staging slot REUSES the 768 B of .bss the snapshot occupied
+ * (MAX_AIN_CHANNEL x CalM+CalB, both double) rather than adding a caller-side
+ * buffer: LoadADCCalSettings already spends that much stack on its local
+ * DaqifiSettings, so staging in the caller's frame would have grown the SCPI
+ * task's peak instead. ONE slot, for the same reason the snapshot had one --
+ * every SCPI writer of this state takes the same
+ * Streaming_BeginConfigChange() claim, so these cannot nest. That claim
+ * discipline is the precondition, and this comment is what a change to it
+ * should trip over. */
 static struct {
     double CalM;
     double CalB;
-} gCalSnapshot[MAX_AIN_CHANNEL];
-static uint8_t gCalSnapshotCount = 0;
-static DaqifiSettingsType gCalSnapshotBank = DaqifiSettings_FactAInCalParams;
+} gCalStaging[MAX_AIN_CHANNEL];
+static uint8_t gCalStagingCount = 0;
+static DaqifiSettingsType gCalStagingBank = DaqifiSettings_FactAInCalParams;
+static bool gCalStagingValid = false;
 
-void daqifi_settings_SnapshotActiveCal(const AInRuntimeArray* channelRuntimeConfig) {
-    gCalSnapshotCount = 0;
-    gCalSnapshotBank = gActiveCalBank;
-    if (channelRuntimeConfig == NULL) {
-        return;
+/* The staging slot is sized by MAX_AIN_CHANNEL and filled from an AInCalArray,
+ * which is sized by MAX_AIN_RUNTIME_CHANNEL. Equal today (48 each) and defined
+ * in different headers, so a future change to one is exactly the kind that
+ * lands silently. Build error instead. */
+_Static_assert(MAX_AIN_RUNTIME_CHANNEL == MAX_AIN_CHANNEL,
+        "#908: cal staging assumes AInCalArray and the AIn runtime array have "
+        "the same channel capacity");
+
+bool daqifi_settings_StageADCCalSettings(DaqifiSettingsType type) {
+    DaqifiSettings tmpSettings;
+    const AInCalArray* calArray;
+
+    gCalStagingValid = false;
+    gCalStagingCount = 0;
+
+    memset(&tmpSettings, 0, sizeof (DaqifiSettings));
+    if (!daqifi_settings_LoadFromNvm(type, &tmpSettings)) {
+        return false;
     }
-    gCalSnapshotCount = (channelRuntimeConfig->Size < MAX_AIN_CHANNEL)
-            ? (uint8_t) channelRuntimeConfig->Size : (uint8_t) MAX_AIN_CHANNEL;
-    for (uint8_t x = 0; x < gCalSnapshotCount; x++) {
-        /* Per-channel, mirroring #1054's readers: take the pair coherently so
-         * a snapshot can never capture a half-updated channel. */
-        taskENTER_CRITICAL();
-        gCalSnapshot[x].CalM = channelRuntimeConfig->Data[x].CalM;
-        gCalSnapshot[x].CalB = channelRuntimeConfig->Data[x].CalB;
-        taskEXIT_CRITICAL();
+
+    switch (type) {
+        case DaqifiSettings_FactAInCalParams:
+            calArray = &(tmpSettings.settings.factAInCalParams);
+            break;
+        case DaqifiSettings_UserAInCalParams:
+            calArray = &(tmpSettings.settings.userAInCalParams);
+            break;
+        default:
+            return false;
     }
+
+    /* Bounded by the SOURCE array's capacity, not the staging slot's. These
+     * are two separate constants (AInCalArray is MAX_AIN_RUNTIME_CHANNEL,
+     * AInConfig.h defines MAX_AIN_CHANNEL) that happen to be equal today, and
+     * reading the destination's bound out of the source is how that stops
+     * being true silently. The _Static_assert above fails the build if they
+     * ever diverge; this bound keeps the copy correct even if someone removes
+     * it. */
+    for (uint8_t x = 0; x < (uint8_t) MAX_AIN_RUNTIME_CHANNEL; x++) {
+        gCalStaging[x].CalM = calArray->Data[x].CalM;
+        gCalStaging[x].CalB = calArray->Data[x].CalB;
+    }
+    gCalStagingCount = (uint8_t) MAX_AIN_RUNTIME_CHANNEL;
+    gCalStagingBank = type;
+    gCalStagingValid = true;
+    return true;
 }
 
-void daqifi_settings_RestoreActiveCal(AInRuntimeArray* channelRuntimeConfig) {
-    if (channelRuntimeConfig == NULL) {
-        return;
+bool daqifi_settings_PublishStagedCal(AInRuntimeArray* channelRuntimeConfig) {
+    if (!gCalStagingValid || channelRuntimeConfig == NULL) {
+        return false;
     }
-    for (uint8_t x = 0; x < gCalSnapshotCount
-            && x < channelRuntimeConfig->Size; x++) {
-        /* #904's WRITE half, for this path. See the copy loop in
-         * daqifi_settings_LoadADCCalSettings for the full reasoning: the
-         * conversion readers already take this exact section (#1054), so an
-         * UNPROTECTED writer is what defeats them -- the reader atomically
-         * snapshots a TORN pair. */
+    for (uint8_t x = 0; x < channelRuntimeConfig->Size
+            && x < gCalStagingCount; x++) {
+        /* #904's write half: the conversion readers take this exact section
+         * (#1054), so an unprotected writer would hand them a torn pair. */
         taskENTER_CRITICAL();
-        channelRuntimeConfig->Data[x].CalM = gCalSnapshot[x].CalM;
-        channelRuntimeConfig->Data[x].CalB = gCalSnapshot[x].CalB;
+        channelRuntimeConfig->Data[x].CalM = gCalStaging[x].CalM;
+        channelRuntimeConfig->Data[x].CalB = gCalStaging[x].CalB;
         taskEXIT_CRITICAL();
     }
-    /* The write the caller could not reach, and the whole point of this pair. */
-    gActiveCalBank = gCalSnapshotBank;
+    /* Recorded at PUBLISH, so it cannot name a bank that is not live. */
+    gActiveCalBank = gCalStagingBank;
+    return true;
 }
 
 bool daqifi_settings_LoadFromNvm(DaqifiSettingsType type, DaqifiSettings* settings) {
@@ -488,78 +532,21 @@ bool daqifi_settings_ClearNvm(DaqifiSettingsType type) {
     return nvm_ErasePage(address);
 }
 
+/* #908 (codex-r5): now just Stage + Publish, so the two callers that want the
+ * combined behaviour keep their signature.
+ *
+ * Boot (app_freertos.c) and CalLoadCommon (CONF:ADC:LOADcal / LOADFcal) have
+ * nothing to persist, so for them "load" IS stage-then-publish and a failure
+ * genuinely means "nothing happened" -- the stage touches nothing live.
+ * ADCUseCalSetClaimed is the one caller that must persist BETWEEN the two, so
+ * it calls them separately. */
 bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig)
 {
-    bool status = true;
-    uint8_t x = 0;
-    AInCalArray* calArray;
-    DaqifiSettings tmpSettings;
-    memset(&tmpSettings,0,sizeof(DaqifiSettings));
-    status = daqifi_settings_LoadFromNvm(type, &tmpSettings);
-    if(!status) return status;
-            
-    switch(type)
-    {
-        case DaqifiSettings_FactAInCalParams:
-        {
-            calArray = &(tmpSettings.settings.factAInCalParams);
-            break;
-        }
-        case DaqifiSettings_UserAInCalParams:
-        {
-            calArray = &(tmpSettings.settings.userAInCalParams);
-            break;
-        }
-        default:
-            status = false;
-            break;
+    if (!daqifi_settings_StageADCCalSettings(type)) {
+        return false;
     }
-    
-    if(!status) return status;    
-    
-    /* #904's WRITE half -- and the reason this belongs with #908 rather than
-     * waiting: the READ half already shipped as #1054, so these writes are the
-     * missing side of a pair that is otherwise complete.
-     *
-     * CalM and CalB are 64-bit doubles, two 32-bit stores each on PIC32MZ.
-     * MC12b_ConvertToVoltage, AD7609_ConvertToVoltage and NanoPB_Encoder all
-     * take taskENTER_CRITICAL() around their CalM/CalB reads (#1054), so an
-     * unprotected writer here does not merely leave a gap -- it DEFEATS those
-     * readers: the writer stores CalM, is preempted, and the reader then
-     * atomically snapshots a torn pair (new CalM, old CalB). A protected
-     * reader against an unprotected writer is not half-safe, it is unsafe.
-     *
-     * Consequence that makes it more than cosmetic: VBATT is a channel in this
-     * same array (ADC_CHANNEL_VBATT -> ADC_FindChannelIndex ->
-     * ADC_ConvertToVoltageByIndex reads gpBoardRuntimeConfig->AInChannels),
-     * and this loop writes EVERY index up to Size. A torn VBATT pair yields a
-     * wrong battVoltage -> wrong chargePct -> and Power_UpdateState acts on
-     * `battVoltageValid && chargePct < BATT_EXT_DOWN_TH` with no averaging or
-     * hysteresis on the VALUE (#564 gates only a STALE reading at cold boot).
-     * So a single torn sample can force a spurious POWERED_UP_EXT_DOWN.
-     *
-     * Per-channel rather than around the whole loop: each conversion needs
-     * only its own channel's pair to be coherent, so this keeps every critical
-     * section a few instructions instead of holding one across up to
-     * MAX_AIN_CHANNEL iterations. Same shape as the readers it pairs with. */
-    for(x=0;x<channelRuntimeConfig->Size;x++)
-    {
-        taskENTER_CRITICAL();
-        channelRuntimeConfig->Data[x].CalM = calArray->Data[x].CalM;
-        channelRuntimeConfig->Data[x].CalB = calArray->Data[x].CalB;
-        taskEXIT_CRITICAL();
-    }
-
-    /* #908 (Qodo item 3): record the bank only AFTER the copy loop, so the
-     * tracked bank can never name a load that did not reach the runtime
-     * array. Every early return above leaves it at its previous value, which
-     * is correct: a failed load changes no coefficients, so it changes
-     * nothing about which bank is in effect. */
-    gActiveCalBank = type;
-
-    return status;
+    return daqifi_settings_PublishStagedCal(channelRuntimeConfig);
 }
-
 bool daqifi_settings_SaveADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig)
 {
     bool status = true;

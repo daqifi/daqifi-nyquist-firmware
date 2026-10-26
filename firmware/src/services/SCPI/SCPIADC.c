@@ -1667,131 +1667,58 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
     //  Load existing settings
     if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) return SCPI_RES_ERR;
 
-    /* #908 (codex-r2 HIGH, extended by codex-r3): snapshot the LIVE cal state
-     * before the load, so a failed save can put back exactly what was in
-     * effect on entry -- including CHANCALM/CHANCALB edits that were never
-     * persisted. See the rollback block below for why re-reading NVM is not
-     * equivalent.
+    /* #908 (codex-r5): STAGE -> PERSIST -> PUBLISH. There is no rollback,
+     * because nothing goes live until after the selection is persisted.
      *
-     * ⚠ This takes the WHOLE state, not just the coefficients. An earlier
-     * revision snapshotted CalM/CalB here, in this file, and missed that
-     * LoadADCCalSettings also writes a module-private "active bank" that this
-     * file cannot reach -- so a rollback left old coefficients under a new
-     * bank name. The snapshot/restore pair therefore lives in
-     * daqifi_settings.c beside the state it owns. */
-    daqifi_settings_SnapshotActiveCal(pRuntimeAInChannels);
+     * Rounds r1-r4 each patched a rollback -- add one, snapshot live values
+     * rather than NVM, also restore the hidden active bank, then protect its
+     * writes. None asked whether there should BE one. There should not: a
+     * rollback was only ever needed because the new coefficients went LIVE
+     * before the persist, so a failed persist had something to undo. Between
+     * those two points VBATT was converted with coefficients for a selection
+     * that might not persist -- and no rollback can undo an EXT_DOWN that has
+     * already dropped the 5/10 V rail.
+     *
+     * Reordered, each step can only fail where failure is free:
+     *
+     *   STAGE    reads the bank from NVM into daqifi_settings' staging slot.
+     *            CAN FAIL -- and touches nothing live, so returning here
+     *            leaves the device exactly as it was.
+     *   PERSIST  SaveToNvm. CAN FAIL -- staging is simply never published.
+     *   PUBLISH  copies staging into the live array under per-pair critical
+     *            sections and records the active bank. CANNOT FAIL.
+     *
+     * ⚠ One residual, stated rather than buried: between PERSIST and PUBLISH,
+     * NVM names the new selection while the live array still holds the old
+     * coefficients. It is a few instructions, it cannot fail, and it is
+     * self-consistent -- a reboot in that window loads precisely what was
+     * persisted. That is strictly better than publishing a selection that may
+     * not persist, which is what every previous round was patching around.
+     *
+     * The #620 comment above states the principle all of this serves: a
+     * command that returns an error must not leave state changed. */
+    const DaqifiSettingsType bank = (param1 == 0)
+            ? DaqifiSettings_FactAInCalParams
+            : DaqifiSettings_UserAInCalParams;
 
-    /* #908: LOAD THE COEFFICIENTS BEFORE PERSISTING THE SELECTION.
-     *
-     * The #620 comment ~20 lines above states the principle this ordering
-     * used to violate: "reject an out-of-range value BEFORE any state
-     * mutation ... a command that returns an error would otherwise persist a
-     * wrong calibration selection (loaded as USER cal on the next reboot)."
-     * #620 fixed that for the out-of-range case and left it for the
-     * load-failure case, which sat directly below the comment forbidding it:
-     * SaveToNvm persisted calVals and only THEN was the coefficient load
-     * attempted, so a failed load returned SCPI_RES_ERR with the new
-     * selection already in NVM, and the next boot loaded a bank holding no
-     * valid coefficients.
-     *
-     * That load was harmless before this PR only by accident: boot's
-     * factory-cal self-stamp meant it never failed. Removing the self-stamp
-     * -- the point of #908 -- removes the accident, so on a never-calibrated
-     * board the load can now fail and the ordering becomes reachable.
-     *
-     * The reorder is safe because the load is atomic with respect to the
-     * runtime array: daqifi_settings_LoadADCCalSettings reads NVM into a
-     * LOCAL DaqifiSettings and returns early on failure, touching
-     * channelRuntimeConfig only in a final copy loop that cannot fail. So a
-     * failed load leaves the runtime coefficients exactly as they were, and
-     * returning here mutates nothing at all.
-     */
-    switch (param1) {
-        case 0:
-            if (!daqifi_settings_LoadADCCalSettings(
-                    DaqifiSettings_FactAInCalParams,
-                    pRuntimeAInChannels)) {
-                return SCPI_RES_ERR;
-            }
-            break;
-        case 1:
-            if (!daqifi_settings_LoadADCCalSettings(
-                    DaqifiSettings_UserAInCalParams,
-                    pRuntimeAInChannels)) {
-                return SCPI_RES_ERR;
-            }
-            break;
-        default:
-            return SCPI_RES_ERR;
-            break;
+    if (!daqifi_settings_StageADCCalSettings(bank)) {
+        return SCPI_RES_ERR;
     }
 
-    //  The coefficients are in effect; only now persist the selection.
     tmpTopLevelSettings.settings.topLevelSettings.calVals = param1;
-
-    /* #908 (codex-r1 HIGH): ROLL THE RUNTIME BACK IF THE SAVE FAILS.
-     *
-     * An earlier revision of this fix left this state as a documented
-     * residual, arguing it was "strictly better than the inverse". True, and
-     * not sufficient -- the audit was right to rate it HIGH, and I had
-     * disclosed it without ever trying it:
-     *
-     *   1. the command returns SCPI_RES_ERR, so the caller concludes the
-     *      change did NOT take;
-     *   2. every reading from that moment is scaled by the NEW bank anyway;
-     *   3. the next reboot re-derives the selection from NVM and the
-     *      coefficients silently revert.
-     *
-     * Readings change twice and the user is told about neither. That is the
-     * #620 principle at the top of this function -- an error must not leave
-     * state changed -- applied to the runtime array instead of to NVM.
-     *
-     * ⛔ RESTORED FROM A SNAPSHOT OF THE LIVE VALUES, not by re-reading NVM.
-     *
-     * An earlier revision of this fix rolled back by re-loading the bank NVM
-     * still named, on the argument that NVM is authoritative and no buffer is
-     * therefore needed. **NVM is authoritative for the SELECTION; it is not
-     * authoritative for the live coefficients.** CONF:ADC:CHANCALM and
-     * CHANCALB write pRunTimeAInChannels->Data[i].CalM/CalB and return
-     * SCPI_RES_OK with NO persist -- verified, they are RAM-only. So a user
-     * who tunes a channel and then issues a USECal that fails would have had
-     * their unpersisted edit silently discarded by the "rollback": the
-     * command would error AND change state, which is the very thing this
-     * block exists to prevent.
-     *
-     * Snapshotting the live CalM/CalB is therefore not the expensive option,
-     * it is the only correct one -- it captures what is actually in effect,
-     * RAM-only edits included. Restoring from RAM also cannot fail, so the
-     * double-failure arm the NVM version needed disappears.
-     *
-     * STATIC, not stack: 768 B (MAX_AIN_CHANNEL x CalM+CalB, both double) is
-     * a lot of stack on a SCPI task, and a static is safe here because every
-     * SCPI writer of these fields takes the SAME claim --
-     * SCPI_ADCUseCalSet, SCPI_ADCChanCalmSet and SCPI_ADCChanCalbSet each
-     * wrap their ...Claimed() body in Streaming_BeginConfigChange() /
-     * EndConfigChange(), so they cannot interleave and cannot re-enter this
-     * function. (Verified, not assumed: that was the reentrancy question the
-     * r1 audit left open.)
-     *
-     * ⚠ The restore writes 64-bit doubles with no critical section, matching
-     * every other writer of these fields. That is the pre-existing tear
-     * documented in #1166, deliberately not half-fixed here: a tear needs
-     * BOTH sides protected, so guarding this one writer while the emitter's
-     * reads and the other writers stay unguarded would add the appearance of
-     * safety without the substance, and would make #1166 harder to reason
-     * about by leaving one protected writer among unprotected ones. */
     if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) {
-        daqifi_settings_RestoreActiveCal(pRuntimeAInChannels);
-        /* Remedy FIRST: Logger truncates the TAIL at 125 B silently, so a
-         * message opening with the diagnosis loses the action. */
-        LOG_E("USECal: retry; NVM save failed, prior cal state restored.");
+        /* Remedy FIRST: Logger truncates the TAIL at 125 B silently. Nothing
+         * to restore -- staging was never published. */
+        LOG_E("USECal: retry; NVM save failed, nothing was changed.");
+        return SCPI_RES_ERR;
+    }
+
+    if (!daqifi_settings_PublishStagedCal(pRuntimeAInChannels)) {
         return SCPI_RES_ERR;
     }
 
     /* Leaving raw mode is the LAST mutation, so a command that failed above
-     * leaves the streaming wire format exactly as it found it. Previously
-     * this was cleared first, so a failed load both dropped raw mode and
-     * persisted the wrong selection. */
+     * leaves the streaming wire format exactly as it found it. */
     pRunTimeStreamConfig->RawOutputMode = false;
 
     return SCPI_RES_OK;
