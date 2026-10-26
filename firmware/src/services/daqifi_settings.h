@@ -331,41 +331,6 @@ extern "C" {
     bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig);
 
     /**
-     * #908 (codex-r5): STAGE a calibration bank -- read it from NVM into this
-     * module's staging slot WITHOUT touching the live array.
-     *
-     * The first half of stage -> persist -> publish. It replaced a rollback:
-     * because staging touches nothing live, a failure here means nothing
-     * happened and there is no undo to get wrong. Callers that must persist a
-     * selection between staging and publishing (ADCUseCalSetClaimed) call this
-     * and daqifi_settings_PublishStagedCal separately; callers with nothing to
-     * persist use daqifi_settings_LoadADCCalSettings, which is both.
-     *
-     * ⚠ ONE staging slot. Every SCPI writer of this state takes the same
-     * Streaming_BeginConfigChange() claim, so these cannot nest; that
-     * discipline is the precondition, not an assumption about timing.
-     *
-     * @param type DaqifiSettings_FactAInCalParams or
-     *             DaqifiSettings_UserAInCalParams; anything else fails
-     * @return true if the bank was read and staged
-     */
-    bool daqifi_settings_StageADCCalSettings(DaqifiSettingsType type);
-
-    /**
-     * #908 (codex-r5): PUBLISH the staged bank into the live runtime array.
-     *
-     * Cannot fail on anything the caller can influence: it copies RAM to RAM
-     * under per-pair critical sections (#904's write half, pairing with
-     * #1054's readers) and records the active bank. Recording the bank HERE,
-     * at publish, is what makes it impossible for the bank name to describe a
-     * bank that is not live.
-     *
-     * @param channelRuntimeConfig the live AIn runtime array
-     * @return false only if nothing is staged, or the array is NULL
-     */
-    bool daqifi_settings_PublishStagedCal(AInRuntimeArray* channelRuntimeConfig);
-
-    /**
      * #14: Sets the runtime device friendly name cache. The value is
      * persisted to NVM only on the next TopLevelSettings save (which
      * captures this cache automatically). Truncated to fit

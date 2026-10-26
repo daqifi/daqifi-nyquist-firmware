@@ -1663,64 +1663,37 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
 
     // Values 0/1 select the calibration coefficient set and emit calibrated
     // volts (leaving raw mode).
+    pRunTimeStreamConfig->RawOutputMode = false;
 
     //  Load existing settings
     if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) return SCPI_RES_ERR;
 
-    /* #908 (codex-r5): STAGE -> PERSIST -> PUBLISH. There is no rollback,
-     * because nothing goes live until after the selection is persisted.
-     *
-     * Rounds r1-r4 each patched a rollback -- add one, snapshot live values
-     * rather than NVM, also restore the hidden active bank, then protect its
-     * writes. None asked whether there should BE one. There should not: a
-     * rollback was only ever needed because the new coefficients went LIVE
-     * before the persist, so a failed persist had something to undo. Between
-     * those two points VBATT was converted with coefficients for a selection
-     * that might not persist -- and no rollback can undo an EXT_DOWN that has
-     * already dropped the 5/10 V rail.
-     *
-     * Reordered, each step can only fail where failure is free:
-     *
-     *   STAGE    reads the bank from NVM into daqifi_settings' staging slot.
-     *            CAN FAIL -- and touches nothing live, so returning here
-     *            leaves the device exactly as it was.
-     *   PERSIST  SaveToNvm. CAN FAIL -- staging is simply never published.
-     *   PUBLISH  copies staging into the live array under per-pair critical
-     *            sections and records the active bank. CANNOT FAIL.
-     *
-     * ⚠ One residual, stated rather than buried: between PERSIST and PUBLISH,
-     * NVM names the new selection while the live array still holds the old
-     * coefficients. It is a few instructions, it cannot fail, and it is
-     * self-consistent -- a reboot in that window loads precisely what was
-     * persisted. That is strictly better than publishing a selection that may
-     * not persist, which is what every previous round was patching around.
-     *
-     * The #620 comment above states the principle all of this serves: a
-     * command that returns an error must not leave state changed. */
-    const DaqifiSettingsType bank = (param1 == 0)
-            ? DaqifiSettings_FactAInCalParams
-            : DaqifiSettings_UserAInCalParams;
-
-    if (!daqifi_settings_StageADCCalSettings(bank)) {
-        return SCPI_RES_ERR;
-    }
-
+    //  Update calVals setting
     tmpTopLevelSettings.settings.topLevelSettings.calVals = param1;
-    if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) {
-        /* Remedy FIRST: Logger truncates the TAIL at 125 B silently. Nothing
-         * to restore -- staging was never published. */
-        LOG_E("USECal: retry; NVM save failed, nothing was changed.");
-        return SCPI_RES_ERR;
+
+    //  Store to NVM
+    if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) return SCPI_RES_ERR;
+
+    //  Update runtime values
+    switch (param1) {
+        case 0:
+            if (!daqifi_settings_LoadADCCalSettings(
+                    DaqifiSettings_FactAInCalParams,
+                    pRuntimeAInChannels)) {
+                return SCPI_RES_ERR;
+            }
+            break;
+        case 1:
+            if (!daqifi_settings_LoadADCCalSettings(
+                    DaqifiSettings_UserAInCalParams,
+                    pRuntimeAInChannels)) {
+                return SCPI_RES_ERR;
+            }
+            break;
+        default:
+            return SCPI_RES_ERR;
+            break;
     }
-
-    if (!daqifi_settings_PublishStagedCal(pRuntimeAInChannels)) {
-        return SCPI_RES_ERR;
-    }
-
-    /* Leaving raw mode is the LAST mutation, so a command that failed above
-     * leaves the streaming wire format exactly as it found it. */
-    pRunTimeStreamConfig->RawOutputMode = false;
-
     return SCPI_RES_OK;
 }
 

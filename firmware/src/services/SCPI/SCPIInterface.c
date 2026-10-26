@@ -8923,8 +8923,8 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      *                     Unchanged -- the flag answers this correctly.
      *
      *   source          : which coefficients are IN EFFECT. The flag does not
-     *                     answer this, and using it to do so claimed
-     *                     "identity" after a FAILED SAVEFcal while the
+     *                     answer this, and using it to do so reported NO
+     *                     CALIBRATION after a FAILED SAVEFcal while the
      *                     unchanged non-identity coefficients were still
      *                     being applied to every reading.
      *
@@ -8932,16 +8932,23 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * last successful load came from, and it has THREE values. Two cannot
      * cover the reachable states -- enumerating {slot populated?, bank
      * selected, live coefficients identity?} gives 8 reachable combinations,
-     * of which the old flag-only scheme misreported 5 and a live-derived
-     * factory|identity pair still misreported 2: with USECal 1 and real user
-     * coefficients, "factory" is false and "identity" is false, so a
-     * two-valued key has no legal value for the state and must collapse it
-     * into a wrong one. Adding "user" is APPENDING a value to an existing
-     * key, per this project's command-surface rule -- not a rename -- and a
-     * consumer matching == "factory" correctly stops matching when user
-     * coefficients are live, where it is currently told "factory".
+     * of which the old flag-only scheme misreported 5 and a two-valued
+     * factory|none pair still misreported 2: with USECal 1 and real user
+     * coefficients, "factory" is false and "none" is false, so a two-valued
+     * key has no legal value for the state and must collapse it into a wrong
+     * one. Verified on hardware rather than argued: with the factory bank at
+     * CalM 1.25 and the user bank at 2.5, USECal 0 reports "factory" and
+     * USECal 1 reports "user" -- the row a two-valued key cannot express.
      *
-     *   "identity" : live CalM==1/CalB==0 on every channel, whatever the
+     * Operator ruling, 2026-10-25 (item 3), verbatim: "the three values are
+     * fine, but perhaps identity should be \"none\" instead." Hence "none"
+     * rather than "identity" on the wire. The internal helper keeps the name
+     * daqifi_settings_CalIsIdentity: it describes the arithmetic, not the
+     * reported value. The rename costs no compatibility -- origin/main emits
+     * no source key at all, so this PR introduces it, and no client checkout
+     * here reads it.
+     *
+     *   "none"     : live CalM==1/CalB==0 on every channel, whatever the
      *                selection -- readings are unscaled. Note this is the
      *                honest answer for a factory bank that loaded fine and
      *                CONTAINS identity, which is the state of both bench
@@ -8954,7 +8961,7 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * the closest true statement a single key can make about provenance.
      * The second closing brace closes identity{}. */
     const bool factoryCalMissing = daqifi_settings_FactoryCalIsMissing();
-    const char * calSource = "identity";
+    const char * calSource = "none";
     if (!daqifi_settings_CalIsIdentity(&rt->AInChannels)) {
         calSource = (daqifi_settings_GetActiveCalBank()
                         == DaqifiSettings_UserAInCalParams)
