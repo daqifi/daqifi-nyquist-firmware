@@ -1313,7 +1313,13 @@ static scpi_result_t ADCChanCalmSetClaimed(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #908 (codex-r8): bracket the store so a concurrent
+     * CONF:CAP:JSON? identity scan cannot splice this write together
+     * with another setter's into a composite that never existed. One
+     * setter alone yields a genuine before-or-after; two do not. */
+    daqifi_settings_BeginCalWrite();
     pRunTimeAInChannels->Data[index].CalM = param2;
+    daqifi_settings_EndCalWrite();
     return SCPI_RES_OK;
 }
 
@@ -1367,7 +1373,13 @@ static scpi_result_t ADCChanCalbSetClaimed(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
+    /* #908 (codex-r8): bracket the store so a concurrent
+     * CONF:CAP:JSON? identity scan cannot splice this write together
+     * with another setter's into a composite that never existed. One
+     * setter alone yields a genuine before-or-after; two do not. */
+    daqifi_settings_BeginCalWrite();
     pRuntimeAInChannels->Data[index].CalB = param2;
+    daqifi_settings_EndCalWrite();
     return SCPI_RES_OK;
 }
 

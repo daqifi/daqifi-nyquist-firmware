@@ -276,6 +276,92 @@ TEST(the_bound_is_three_and_the_fallback_understates)
     ASSERT_EQ(reader_run(&st, SHAPE_SEQLOCK), SRC_NONE);
 }
 
+/* ==========================================================================
+ * r8 finding 2: TWO setters manufacture a view that held at no instant
+ * ========================================================================== */
+
+/* An early-exiting identity scan, decomposed so a setter can land between two
+ * channel reads. Returns what the scan CONCLUDES. */
+static bool scan_with_interleaved_setters(CalState *st, bool bracket)
+{
+    /* channel 0 identity, channel 2 NOT -- so a clean scan concludes
+     * "not all identity". */
+    st->identity[0] = true;
+    st->identity[1] = true;
+    st->identity[2] = false;
+    st->identity[3] = true;
+
+    bool allIdentity = true;
+    for (unsigned i = 0; i < MODEL_CHANNELS; i++) {
+        if (i == 2u) {
+            /* Two independent setters land here, between channel reads:
+             * one CLEARS channel 2, the other SETS channel 0. */
+            if (bracket) { st->generation++; }
+            st->identity[2] = true;      /* setter A: clear a later channel */
+            if (bracket) { st->generation++; }
+            if (bracket) { st->generation++; }
+            st->identity[0] = false;     /* setter B: set an earlier one */
+            if (bracket) { st->generation++; }
+        }
+        if (!st->identity[i]) {
+            allIdentity = false;
+            break;                        /* early exit, as the firmware does */
+        }
+    }
+    return allIdentity;
+}
+
+TEST(two_unbracketed_setters_make_the_scan_conclude_a_state_that_never_held)
+{
+    CalState st;
+    state_init_factory_identity(&st);
+    st.bank = BANK_FACTORY;
+
+    const bool concluded = scan_with_interleaved_setters(&st, false);
+
+    /* The scan says "all identity"... */
+    ASSERT_TRUE(concluded);
+    /* ...but channel 0 is non-identity by the time it finishes, and channel 2
+     * was non-identity when it started. "All identity" held at no instant. */
+    ASSERT_FALSE(st.identity[0]);
+}
+
+TEST(bracketing_both_setters_lets_the_reader_detect_the_interleave)
+{
+    CalState st;
+    state_init_factory_identity(&st);
+    st.bank = BANK_FACTORY;
+
+    const uint32_t g0 = st.generation;
+    (void)scan_with_interleaved_setters(&st, true);
+
+    /* Four increments -- two setters, bracketed -- so a seqlock reader that
+     * sampled g0 before the scan sees a changed generation and discards the
+     * conclusion rather than reporting it. That is the only mechanism that
+     * can reject it: the conclusion itself looks perfectly ordinary. */
+    ASSERT_TRUE(st.generation != g0);
+    ASSERT_EQ((st.generation - g0) % 2u, 0u);   /* all brackets closed */
+}
+
+TEST(one_setter_alone_really_is_harmless_which_is_why_this_looked_exempt)
+{
+    /* The r7 argument, preserved as a test so the reasoning is visible: with a
+     * SINGLE setter, whatever the scan sees is a state the device genuinely
+     * had. The r8 finding is not that the argument was wrong -- it is that it
+     * does not extend to two. */
+    CalState st;
+    state_init_factory_identity(&st);
+    st.identity[2] = false;
+
+    bool allIdentity = true;
+    for (unsigned i = 0; i < MODEL_CHANNELS; i++) {
+        if (i == 2u) { st.identity[3] = false; }   /* one setter, later channel */
+        if (!st.identity[i]) { allIdentity = false; break; }
+    }
+    /* Concludes "not all identity", which was true before AND after. */
+    ASSERT_FALSE(allIdentity);
+}
+
 int main(void)
 {
     printf("#908 round 8 -- identity.cal.source composite coherence\n");
@@ -287,5 +373,8 @@ int main(void)
     RUN(an_untouched_uncalibrated_board_reads_none_in_every_shape);
     RUN(dropping_the_pre_copy_increment_reopens_the_defect);
     RUN(the_bound_is_three_and_the_fallback_understates);
+    RUN(two_unbracketed_setters_make_the_scan_conclude_a_state_that_never_held);
+    RUN(bracketing_both_setters_lets_the_reader_detect_the_interleave);
+    RUN(one_setter_alone_really_is_harmless_which_is_why_this_looked_exempt);
     return TEST_SUMMARY();
 }

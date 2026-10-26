@@ -6,6 +6,7 @@
 #include "state/board/NQ3BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/CRC32.h"   /* #306: settings integrity checksum (severs wolfSSL) */
+#include "task.h"         /* #908 r9: vTaskDelay, so the reader yields */
 
 uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16)));
 
@@ -65,11 +66,18 @@ static DaqifiSettingsType gActiveCalBank = DaqifiSettings_FactAInCalParams;
  * reordered around the scan between them; aligned 32-bit accesses are atomic
  * on PIC32MZ, so the counter itself needs no critical section.
  *
- * ⚠ Bumped ONLY by the bank load, which changes both facts together.
- * CONF:ADC:chanCALM / chanCALB change coefficients without changing the bank,
- * and are deliberately not covered: either value a reader sees across one of
- * those is a state the device genuinely had, so retrying would buy nothing.
- * It is only the CROSS of two banks that is fiction. */
+ * ⚠ Bumped by EVERY writer of the live coefficients -- the bank load and both
+ * CONF:ADC:chanCALM / chanCALB setters -- via
+ * daqifi_settings_BeginCalWrite/EndCalWrite.
+ *
+ * An earlier revision of this comment said the setters were "deliberately not
+ * covered", on the argument that either value a reader sees across ONE setter
+ * is a state the device genuinely had. That is true of one setter and false of
+ * two, which is what the r8 audit caught: an early-exiting identity scan reads
+ * channel 0 as identity and moves on; one setter then CLEARS a later channel
+ * while another SETS channel 0; the scan reads the later channel as identity
+ * and concludes ALL identity -- a view that held at no instant. The argument
+ * was about a single writer and the hazard needs only two. */
 static volatile uint32_t gCalGeneration = 0u;
 
 /* #625: the friendly name is emitted UNESCAPED into the JSON info message
@@ -130,6 +138,27 @@ bool daqifi_settings_FactoryCalIsMissing(void) {
 
 DaqifiSettingsType daqifi_settings_GetActiveCalBank(void) {
     return gActiveCalBank;
+}
+
+/* #908 (codex-r8 finding 2): the generation bracket, exposed so EVERY writer
+ * of the live coefficients can mark its update -- while gCalGeneration itself
+ * stays private to this file, so a caller cannot forget to pair them or set
+ * the counter directly.
+ *
+ * ⚠ r7 argued CHANCALM/CHANCALB need not participate, because either value a
+ * reader sees across ONE setter is a state the device genuinely had. That is
+ * true of one setter and FALSE of two, which the audit caught. Concretely:
+ * channel 0 identity, channel 5 non-identity; the scan reads channel 0 as
+ * identity and moves on; one setter then CLEARS channel 5 while another SETS
+ * channel 0; the scan reads channel 5 as identity and concludes ALL identity
+ * -- a view that held at no instant, because channel 0 was non-identity by
+ * then. An early-exiting scan plus two independent writers is enough. */
+void daqifi_settings_BeginCalWrite(void) {
+    gCalGeneration++;   /* -> ODD */
+}
+
+void daqifi_settings_EndCalWrite(void) {
+    gCalGeneration++;   /* -> EVEN */
 }
 
 /* #908 (Qodo item 3): are the coefficients actually IN EFFECT identity?
@@ -209,6 +238,17 @@ bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig) 
  */
 DaqifiCalSource daqifi_settings_GetCalSource(const AInRuntimeArray* channelRuntimeConfig) {
     for (uint8_t attempt = 0; attempt < 3u; attempt++) {
+        /* ⛔ YIELD FIRST on every retry. This runs on a SCPI transport task at
+         * priority 7; a bank load runs at priority 2. Spinning here would be a
+         * priority inversion -- the writer we are waiting for cannot run,
+         * every attempt observes the same odd generation, and a SUSPENDED load
+         * would turn real calibration into a permanent `none`. One tick is
+         * enough: the writer only needs to be scheduled, and the whole bound
+         * is 2 ticks on a query path. */
+        if (attempt > 0u) {
+            vTaskDelay(1);
+        }
+
         const uint32_t genBefore = gCalGeneration;
         if ((genBefore & 1u) != 0u) {
             continue;   /* a load is mid-flight; nothing read now is coherent */
@@ -535,7 +575,7 @@ bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
     /* -> ODD: from here until the bank is published, the coefficients and
      * gActiveCalBank disagree. A reader that samples an odd generation, or a
      * changed one, discards what it saw. */
-    gCalGeneration++;
+    daqifi_settings_BeginCalWrite();
 
     for(x=0;x<channelRuntimeConfig->Size;x++)
     {
@@ -554,7 +594,7 @@ bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
      * operator ruling 8 = A (2026-10-25) gives the whole tear -- both halves,
      * all three writers -- to #1048. Context at #1166. */
     gActiveCalBank = type;
-    gCalGeneration++;   /* -> EVEN: coefficients and bank now agree */
+    daqifi_settings_EndCalWrite();   /* -> EVEN: coefficients and bank agree */
 
     return status;
 }

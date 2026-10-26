@@ -313,6 +313,24 @@ extern "C" {
     DaqifiSettingsType daqifi_settings_GetActiveCalBank(void);
 
     /**
+     * #908: bracket a write to the live CalM/CalB so a concurrent
+     * CONF:CAP:JSON? cannot report a composite that never existed.
+     *
+     * EVERY writer of the live coefficients must call Begin before its first
+     * store and End after its last -- the bank load, CONF:ADC:chanCALM and
+     * chanCALB. ⚠ Two independent setters are sufficient to manufacture a
+     * fiction even though one is not: an early-exiting identity scan can read
+     * channel 0 as identity, then one setter clears a later channel while
+     * another sets channel 0, and the scan concludes "all identity" -- a view
+     * that held at no instant.
+     *
+     * The counter itself is private, so a caller can neither forget to pair
+     * these nor set it directly.
+     */
+    void daqifi_settings_BeginCalWrite(void);
+    void daqifi_settings_EndCalWrite(void);
+
+    /**
      * #908 (Qodo item 3): true when every channel's live coefficients are the
      * identity pair (CalM == 1.0f, CalB == 0.0f), i.e. no calibration is in
      * effect and readings are unscaled.

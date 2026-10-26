@@ -1752,6 +1752,20 @@ $(STARTARM_BIN): test_1121_start_streaming_arm_cascade.c test_framework.h \
 # `grep -c` could not distinguish. index() is literal, so `()` and `;` in the
 # patterns need no regex escaping.
 #   $(1)=source file   $(2)=function name   $(3)=literal pattern
+# #908 (r9): like CNT_IN_FN but anchored on the DEFINITION, not the first
+# declaration. CNT_IN_FN matches "^(static )?scpi_result_t <fn>[(]" and then
+# exits at the next such line -- so for a function with a FORWARD DECLARATION
+# it starts at the prototype and exits immediately, counting 0. Both
+# ADCChanCalm/CalbSetClaimed are forward-declared, so the generic helper
+# reports 0 for a body that plainly contains the pattern.
+# ⚠ A guard that expects ABSENCE would PASS vacuously on that 0, so this is
+# worth knowing beyond this row.
+CNT_IN_FN_DEF = awk -v fn="$(2)" -v pat='$(3)' \
+	'$$0 ~ "^(static )?scpi_result_t " fn "[(]" && /{[[:space:]]*$$/ { f=1; next } \
+	 f && /^(static )?scpi_result_t .*{[[:space:]]*$$/                { exit } \
+	 f && index($$0, pat)                                             { n++ } \
+	 END { print n+0 }' $(1)
+
 CNT_IN_FN = awk -v fn="$(2)" -v pat='$(3)' \
 	'$$0 ~ "^(static )?scpi_result_t " fn "[(]" { f=1; next } \
 	 f && /^(static )?scpi_result_t /           { exit } \
@@ -3040,18 +3054,18 @@ SEQ908_BIN := run_908_tests
 $(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(RECIPES)
 	@sed -n '/^bool daqifi_settings_LoadADCCalSettings/,/^}/p' $(SETTINGS_SRC) \
 	   > /tmp/.fw908_load.$$$$; \
-	 n=`grep -c 'gCalGeneration++' /tmp/.fw908_load.$$$$`; \
-	 gen1=`grep -n 'gCalGeneration++' /tmp/.fw908_load.$$$$ | head -1 | cut -d: -f1`; \
+	 n=`grep -cE 'daqifi_settings_(Begin|End)CalWrite' /tmp/.fw908_load.$$$$`; \
+	 gen1=`grep -n 'daqifi_settings_BeginCalWrite' /tmp/.fw908_load.$$$$ | head -1 | cut -d: -f1`; \
 	 cpy=`grep -n '\.CalM = calArray' /tmp/.fw908_load.$$$$ | head -1 | cut -d: -f1`; \
 	 bank=`grep -n 'gActiveCalBank = type' /tmp/.fw908_load.$$$$ | head -1 | cut -d: -f1`; \
-	 gen2=`grep -n 'gCalGeneration++' /tmp/.fw908_load.$$$$ | tail -1 | cut -d: -f1`; \
+	 gen2=`grep -n 'daqifi_settings_EndCalWrite' /tmp/.fw908_load.$$$$ | tail -1 | cut -d: -f1`; \
 	 rm -f /tmp/.fw908_load.$$$$; \
 	 test "$$n" = "2" && test -n "$$gen1" && test -n "$$cpy" && test -n "$$bank" \
 	   && test "$$gen1" -lt "$$cpy" && test "$$gen2" -gt "$$bank" \
 	  || { echo "ERROR: daqifi_settings_LoadADCCalSettings in $(SETTINGS_SRC) no"; \
-	       echo "       longer brackets its composite update with exactly two"; \
-	       echo "       gCalGeneration++ -- the first BEFORE the coefficient copy"; \
-	       echo "       and the second AFTER gActiveCalBank is published."; \
+	       echo "       longer brackets its composite update with exactly one"; \
+	       echo "       daqifi_settings_BeginCalWrite BEFORE the coefficient copy"; \
+	       echo "       and one EndCalWrite AFTER gActiveCalBank is published."; \
 	       echo "       (found n=$$n gen1=$$gen1 copy=$$cpy bank=$$bank gen2=$$gen2)"; \
 	       echo "       Without the PRE-copy increment the generation never goes"; \
 	       echo "       odd, so a reader cannot see an update IN PROGRESS and"; \
@@ -3073,6 +3087,34 @@ $(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(
 	       echo "       during the scan, and the unchanged check misses one"; \
 	       echo "       already in flight when the scan begins."; \
 	       exit 1; }
+	@sed -n '/^DaqifiCalSource daqifi_settings_GetCalSource/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_yield.$$$$; \
+	 y=`grep -c 'vTaskDelay' /tmp/.fw908_yield.$$$$`; \
+	 rm -f /tmp/.fw908_yield.$$$$; \
+	 test "$$y" -ge 1 \
+	  || { echo "ERROR: daqifi_settings_GetCalSource in $(SETTINGS_SRC) retries"; \
+	       echo "       without yielding. It runs on a SCPI transport task at"; \
+	       echo "       priority 7; a bank load runs at priority 2, so spinning is"; \
+	       echo "       a priority inversion -- the writer it waits for cannot be"; \
+	       echo "       scheduled, every attempt sees the same odd generation, and"; \
+	       echo "       a suspended load turns real calibration into a permanent"; \
+	       echo "       source:\"none\". Yield (bounded) between attempts."; \
+	       exit 1; }
+	@for fn in ADCChanCalmSetClaimed ADCChanCalbSetClaimed; do \
+	   b=`$(call CNT_IN_FN_DEF,$(SCPIADC_SRC),$$fn,daqifi_settings_BeginCalWrite)`; \
+	   e=`$(call CNT_IN_FN_DEF,$(SCPIADC_SRC),$$fn,daqifi_settings_EndCalWrite)`; \
+	   test "$$b" = "1" && test "$$e" = "1" \
+	     || { echo "ERROR: $$fn in $(SCPIADC_SRC) does not bracket its CalM/CalB"; \
+	          echo "       store with daqifi_settings_BeginCalWrite/EndCalWrite"; \
+	          echo "       (found begin=$$b end=$$e, want 1 and 1)."; \
+	          echo "       ONE setter alone yields a genuine before-or-after, so"; \
+	          echo "       this looks exempt and is not: TWO setters let an"; \
+	          echo "       early-exiting identity scan read channel 0 as identity,"; \
+	          echo "       then one clears a later channel while the other sets"; \
+	          echo "       channel 0, and the scan concludes ALL identity -- a view"; \
+	          echo "       that held at no instant. See test_908's two-setter case."; \
+	          exit 1; }; \
+	 done
 	$(CC) $(CFLAGS) -o $(SEQ908_BIN) test_908_cal_source_seqlock.c
 
 run: $(SEQ908_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
@@ -3080,6 +3122,7 @@ run: $(SEQ908_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSO
      $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN)
+	./$(SEQ908_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
