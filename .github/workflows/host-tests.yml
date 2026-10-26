@@ -354,6 +354,10 @@ on:
       # above matches firmware/src/state/data/.
       - 'firmware/src/state/data/AOutSample.h'
       - '.github/workflows/host-tests.yml'
+      # #756 r7: test_756_detect_force_rate_limit.c's Makefile pins grep this
+      # driver for the detect-force gate's shape, so a DRIVER-ONLY PR must run
+      # the guard. Without this the pin existed and CI never reached it.
+      - 'firmware/src/config/default/driver/sdspi/src/drv_sdspi.c'
   push:
     branches: [main]
     paths:
@@ -406,6 +410,10 @@ on:
       # #1034: see the matching entry under pull_request above.
       - 'firmware/src/state/data/AOutSample.h'
       - '.github/workflows/host-tests.yml'
+      # #756 r7: test_756_detect_force_rate_limit.c's Makefile pins grep this
+      # driver for the detect-force gate's shape, so a DRIVER-ONLY PR must run
+      # the guard. Without this the pin existed and CI never reached it.
+      - 'firmware/src/config/default/driver/sdspi/src/drv_sdspi.c'
 
 permissions:
   contents: read   # checkout + gcc build + run only, no writes

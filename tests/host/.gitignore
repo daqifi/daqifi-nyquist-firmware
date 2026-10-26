@@ -36,3 +36,19 @@ gen_1029_log_budget.h
 gen_1029_log_budget.h.tmp
 gen_1125_log_once_claim.h
 *.o
+
+# ⛔ #756 r7: PATTERN, not another hand-maintained line. Every binary above was
+# added individually, so a new host test had to remember to come here -- and
+# run_756_tests was committed (mode 100644) because that step was missed. From
+# a git-archive tree make then SKIPS the recipe (the file exists and looks up
+# to date), ./run_756_tests gives "Permission denied", and the whole suite
+# aborts. The list above is kept so the history stays readable; this is what
+# makes the next one impossible.
+#
+# Sources are test_*.c and generators are *.py, so nothing legitimate matches
+# run_* -- verified: `git ls-files | grep '(^|/)run_'` returns only binaries.
+# The negations are belt-and-braces in case that convention ever changes.
+run_*
+!run_*.c
+!run_*.h
+!run_*.py

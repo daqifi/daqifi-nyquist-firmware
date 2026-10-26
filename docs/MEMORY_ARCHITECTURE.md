@@ -50,16 +50,16 @@ The firmware uses four distinct memory regions, each with different properties:
 | FreeRTOS Heap | 74,000 | Static BSS |
 | Coherent Pool | 126,976 | Static coherent (KSEG1) |
 | USB coherent struct | ~2,000 | Static coherent |
-| Other BSS/data (globals) | ~30,550 | Static BSS — includes #999's **net +546 B** (two 546 B `ScpiContextStorage` instances replacing one shared 546 B pair) and #958's 4 B `gBenchNameSeq` |
+| Other BSS/data (globals) | ~30,567 | Static BSS — includes #999's **net +546 B** (two 546 B `ScpiContextStorage` instances replacing one shared 546 B pair), #958's 4 B `gBenchNameSeq`, and #1094's **net +17 B** (≤24 B once the `uint64_t` forces alignment padding): `detectForceReq`/`detectForceAck`/`detectForceAt`/`detectForceEver` added to `DRV_SDSPI_OBJ`, and `DRV_SDSPI_INSTANCES_NUMBER` is `1U`, so the struct growth is counted once |
 | ISR stack | 8,192 | Linker-allocated |
-| **Total used** | **~436,790** | |
-| **Free (linker headroom)** | **~87,010** | |
+| **Total used** | **~436,807** | |
+| **Free (linker headroom)** | **~86,993** | |
 
 > The `~` rows are approximations, so the column does **not** add up to `Total
 > used` exactly and never has — adding the rows as printed gives ~435,766. What
 > this table tracks is the **delta** against the previously documented figures,
 > not an exact accounting: pre-#999 it read 196,608 / ~438,800 / ~85,000, and
-> #999 moves that by −1,502 B net (−2,048 pool, +546 storage), and #958 by a further −508 B net (−512 pool, +4 for `gBenchNameSeq`). Do not "fix" the
+> #999 moves that by −1,502 B net (−2,048 pool, +546 storage), #958 by a further −508 B net (−512 pool, +4 for `gBenchNameSeq`), and #1094 by **+17 B** (no pool trim; see the row above). Do not "fix" the
 > column to sum; re-derive it from a real link if you need an exact number.
 
 ### Heap Allocation Map (74KB total, ~62KB used at boot)

@@ -31,6 +31,7 @@
 #include "../wifi_services/wifi_tcp_server.h"  /* #598 ContextIsTcp */
 #include "../wifi_services/wifi_manager.h"     /* #589 FW-update owner */
 #include "app_freertos.h"                       /* #589 live SPI-owner test */
+#include "state/data/BoardData.h"                /* #756 round 3: WAIT_POWER_UP gate */
 #include "../../state/runtime/BoardRuntimeConfig.h"
 #include "system/fs/sys_fs_media_manager.h"
 #include "system/fs/sys_fs.h"
@@ -72,6 +73,17 @@ bool __attribute__((weak)) DRV_SDSPI_GetCID(uint8_t* cidBuffer, size_t bufLen) {
  * than one. */
 #define SCPI_SD_BENCH_STALL_TIMEOUT_MS 10000U
 #define SCPI_SD_BENCH_STALL_POLL_MS    5U
+
+/* #756 item 4 -> A (operator 2026-10-25): the bounded presence-recheck WAIT and
+ * its USB pump cadence are WITHDRAWN, so SD_PRESENCE_RECHECK_BOUND_MS,
+ * SD_PRESENCE_RECHECK_POLL_MS, SD_PRESENCE_PUMP_MS and the derived
+ * SD_PRESENCE_PUMPS_PER_SAMPLE are gone with them rather than left defined and
+ * unused -- a dead constant reads as a live one, and these four carried a long
+ * justification that would have outlived the mechanism it justified.
+ *
+ * The reasoning they held is not lost: it is on the call site in
+ * SCPI_CheckSDCardPresent(), stated as why the wait went, and the Makefile pins
+ * that the function can no longer block. */
 
 /* ************************************************************************** */
 /* ************************************************************************** */
@@ -366,15 +378,80 @@ static bool SD_RefuseIfSuspended(scpi_t *context, const char *cmd)
  * @brief Check if SD card media is present
  * @param context SCPI context for error reporting
  * @return true if present, false if not (error already pushed to context)
+ *
+ * #756 Part A: a negative read here can be STALE, not just false. The SDSPI
+ * detect FSM polls at a fast 1 s cadence normally, but backs off to as much as
+ * 5 s after DRV_SDSPI_DETECT_BACKOFF_AFTER_POLLS (10) consecutive no-card
+ * polls, so a card inserted during the backoff can read DETACHED for seconds.
+ *
+ * SO THIS KICKS THE DETECT POLL AND DOES NOT WAIT. The kick
+ * (DRV_SDSPI_DetectPollExpireNow) expires the backoff immediately, so the next
+ * query sees the true state; this call answers from what is known NOW.
+ *
+ * ⛔ A BOUNDED RE-CHECK WAIT WAS TRIED HERE OVER THREE ROUNDS AND WITHDRAWN --
+ * operator ruling 2026-10-25 (item 4 -> A), recorded on PR #1094 and on #756.
+ * It is worth saying why, because "just wait a bit for the card" is the obvious
+ * design and it is wrong:
+ *
+ *   - Over USB this function runs ON the USB task, so every tick waited is a
+ *     tick not spent draining the CDC. With SD enabled, no card, and a USB
+ *     stream running, SD:LISt?/SPACe? parked that task: the ring filled, the
+ *     encoder blocked, and the sample pool overflowed. ACQUIRED SAMPLES LOST.
+ *     Pumping USB inside the wait reduced the window 20x and did not change
+ *     the kind of defect -- a smaller permanent loss is still permanent, which
+ *     is what the round-3 HIGH said.
+ *   - The wait re-entered the SCPI layer, so SD:FILE ownership had to be
+ *     revalidated after it: the wait created the invariant it then had to
+ *     defend (round-4 HIGH).
+ *   - It was gated to exclude TCP, and #756's originally reported symptom came
+ *     in over TCP -- and the issue's own first line records that symptom as not
+ *     reproducible on main. The wait never covered the case that motivated it.
+ *
+ * The client retries both SDKs already perform (SD_LIST_MAX_RETRIES,
+ * SdCardOperations.cs:53) are what cover a slow init, not a longer bound here.
+ *
+ * ⚠ The remaining question -- "is this answer FRESH?" -- is deliberately NOT
+ * answered by this call, and is not meant to be. It belongs to the two tickets
+ * this ruling filed: one for a free-space reading during an SD logging run, one
+ * for a status query that reports the AGE of its presence answer. A caller that
+ * needs freshness should use that, not a call that blocks to manufacture it.
+ *
+ * Pinned in tests/host/Makefile: this function must contain no delay, no USB
+ * pump and no loop, checked on COMMENT-STRIPPED source -- so that explaining
+ * the withdrawal here cannot trip the pin that enforces it.
  */
 static bool SCPI_CheckSDCardPresent(scpi_t *context) {
-    if (!SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
-        LOG_E("SD - No SD card detected\r\n");
-        context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
-        SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
-        return false;
+    if (SYS_FS_MEDIA_MANAGER_MediaStatusGet(SD_CARD_MANAGER_DISK_DEV_NAME)) {
+        return true;
     }
-    return true;
+
+    /* ⛔ #756 item 4 -> A, OPERATOR RULING 2026-10-25 (recorded on this PR and
+     * on #756): the bounded re-check WAIT is WITHDRAWN. The kick stays; nothing
+     * blocks. A negative answer may therefore be the last-known state, and the
+     * NEXT query sees the kicked result.
+     *
+     * Why the wait went, in the order the evidence arrived:
+     *   - r3 HIGH, both legs: the pump REDUCES the stale window; the finding was
+     *     that the loss is PERMANENT, and a smaller permanent window is still
+     *     permanent. Shrinking it was never the fix.
+     *   - r4 HIGH, both legs: the wait re-entered the SCPI layer, so SD:FILE
+     *     ownership had to be revalidated after it -- the wait created the
+     *     invariant it then had to defend.
+     *   - #756's own first line records the originally reported symptom as NOT
+     *     reproducible on main, and it was reported over WiFi/TCP, which the
+     *     wait had already excluded. So the wait was never covering the case it
+     *     was asked to cover.
+     *
+     * This also makes USB and TCP behave identically, which they did not while
+     * the withdrawn gate excluded only TCP. "Is it fresh?" is a question for
+     * the two follow-up tickets this ruling filed, not a property of this call:
+     * one for a free-space reading during a logging run, one for a status query
+     * that reports the AGE of its presence answer. */
+    DRV_SDSPI_DetectPollExpireNow(0);
+    LOG_E("SD - No SD card detected\r\n");
+    context->interface->write(context, SD_CARD_NOT_PRESENT_ERROR_MSG, strlen(SD_CARD_NOT_PRESENT_ERROR_MSG));
+    SCPI_ErrorPush(context, SCPI_ERROR_EXECUTION_ERROR);
+    return false;
 }
 
 
@@ -896,7 +973,22 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
      * reads, so a card inserted during a WiFi stream still reads DETACHED --
      * and answering "No SD Card Detected" sends the user after a card that is
      * sitting in the slot. "SD suspended" is both true and actionable; the
-     * stale probe is neither. */
+     * stale probe is neither.
+     *
+     * #756: this USED to hold the #829 claim across
+     * SCPI_CheckSDCardPresent's bounded re-check, so every other SD command
+     * from either transport saw a spurious "SD card busy" for up to 500 ms.
+     *
+     * The re-check was WITHDRAWN (operator ruling 2026-10-25, item 4 -> A),
+     * so the presence check no longer blocks and the claim is now held only
+     * for the work itself. The hazard this paragraph described is retired.
+     *
+     * The ordering it was accepted under is UNCHANGED and still deliberate:
+     * the #829 claim-before-operand ordering this file depends on makes
+     * checking presence before the claim its own hazard (a malformed request
+     * would then also disturb a cached CRC, which is exactly what the comment
+     * above this block exists to avoid). That stands on its own merits, not
+     * because a blocking window forced it. */
     if (!SCPI_CheckSDCardPresent(context)) {
         sd_card_manager_ReleaseClaim();  /* #829 release */
         return SCPI_RES_ERR;
