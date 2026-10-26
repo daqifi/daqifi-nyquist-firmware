@@ -575,10 +575,19 @@ TEST(paths_equal_normalises_the_way_fatfs_does)
                                                      "daqifi/foo.mfst"));
 
     /* ===== E2: DUPLICATED separators collapse (ff.c:2878) =====
-     * REACHABLE FROM CONFIG ALONE: the path is built dir + '/' + file, so a
-     * `directory` ending in '/' produces this with no user error, and
-     * SD_ValidatePathParam's segment checks only test lengths 1 and 2, so a
-     * zero-length segment passes. Round 6's finding 1. */
+     * Round 6's finding 1. ⛔ WAS reachable from config alone and is NO LONGER,
+     * as of #1124: the path was built dir + '/' + file, so a `directory` ending
+     * in '/' produced this with no user error (SD_ValidatePathParam's segment
+     * checks only test lengths 1 and 2, so a zero-length segment passes).
+     * Construction is now canonical, so our own caller cannot produce it.
+     *
+     * These assertions stay because the function promises equivalence the way
+     * FatFs computes it, not over whatever its current single caller passes --
+     * see the E2 note in SdManifest.h for why narrowing it would be unsafe and
+     * silent. They are no longer a regression test for the constructor; THAT is
+     * every_construction_shape_is_slash_safe_with_a_trailing_slash_dir below,
+     * which asserts what the constructor emits rather than inferring it from
+     * these still passing. */
     ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQiFi//foo.csv",
                                                      "DAQiFi/foo.csv"));
     ASSERT_TRUE(SdManifest_PathsEqualCaseInsensitive("DAQiFi///foo.csv",

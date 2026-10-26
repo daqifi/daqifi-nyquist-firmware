@@ -277,10 +277,23 @@ static inline bool SdManifest_PathsEqualCaseInsensitive(const char *a,
      *       REACHABLE: SD_ValidatePathParam accepts both.
      *   E2  DUPLICATED separators collapse                 ff.c:2878
      *       "DAQiFi//foo" == "DAQiFi/foo"
-     *       REACHABLE FROM CONFIG ALONE: the path is built dir + '/' + file,
-     *       so a `directory` ending in '/' produces it with no user error, and
-     *       the validator's segment checks only test length 1 and 2, so a
-     *       zero-length segment passes.
+     *       ⛔ WAS reachable from config alone, and is NO LONGER, as of #1124:
+     *       the path was built dir + '/' + file, so a `directory` ending in
+     *       '/' produced it with no user error (the validator's segment checks
+     *       only test length 1 and 2, so a zero-length segment passes). Every
+     *       construction now goes through SdManifest_CanonicalDirLen(), so
+     *       both operands this comparator is handed at sd_card_manager.c are
+     *       canonical and this arm is unreachable FROM OUR OWN CONSTRUCTION.
+     *
+     *       It is kept deliberately, and not as dead weight: what this function
+     *       promises is equivalence THE WAY FatFs COMPUTES IT, not equivalence
+     *       over the strings our current single caller happens to pass. Nothing
+     *       couples "construction is canonical" to "the comparator may assume
+     *       it", so narrowing the comparator would make a second caller unsafe
+     *       with no check firing -- and the failure is silent, costing a whole
+     *       session's integrity records with no diagnostic. The loop's
+     *       termination invariant also depends on the separator skip (see
+     *       below); removing it reintroduces a hang, not just a wrong answer.
      *   E3  a TERMINATING separator is ignored             ff.c:2880
      *       "DAQiFi/foo/" == "DAQiFi/foo"
      *       Not produced by our own two snprintf sites; implemented because
