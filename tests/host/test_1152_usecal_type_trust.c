@@ -540,6 +540,23 @@ static bool model_TopLevelMatchesCommitted(const ModelNvm *nvm,
             expected->settings.topLevelSettings.calVals);
 }
 
+/* r9 only: the independent re-read on a GENUINE mismatch (TopLevelMatchesCommitted
+ * already returned false), asking a narrower question than that function does --
+ * not "does it match what I intended" but "is there a trustworthy record here at
+ * all". Same two checks as model_TopLevelMatchesCommitted (a valid checksum and the
+ * expected stored type), deliberately without the payload comparison, because by
+ * the time this runs the caller already knows the comparison failed. */
+static bool model_TopLevelCommittedReadable(const ModelNvm *nvm)
+{
+    ModelSettings committed;
+
+    memset(&committed, 0, sizeof(committed));
+    if (!model_LoadFromNvm(nvm, MODEL_TYPE_TOP_LEVEL, &committed)) {
+        return false;
+    }
+    return (committed.type == MODEL_TYPE_TOP_LEVEL);
+}
+
 static bool model_ValidateADCCalBank(const ModelNvm *nvm, uint32_t calType)
 {
     ModelSettings tmp;
@@ -604,8 +621,9 @@ typedef enum {
                           *
                           * Kept as the historical shape round 8 changed TWO
                           * things about: see USECAL_R8. */
-    USECAL_R8            /* #1152 round 8 (CURRENT), operator ruling 9=A, on
-                          * top of r5's save-verification:
+    USECAL_R8,           /* #1152 round 8 (HISTORICAL -- r9 below is what
+                          * production runs), operator ruling 9=A, on top of
+                          * r5's save-verification:
                           *
                           *   1. RawOutputMode (modelled here as rawOutputMode,
                           *      threaded through via rawModeIn/run.rawOutputMode
@@ -618,6 +636,8 @@ typedef enum {
                           *      board with no populated cal bank unable to
                           *      ever leave raw mode (USECal 2 -> USECal 0/1
                           *      against a blank bank -> -200, still raw).
+                          *      r9 keeps this change unmodified -- it is not
+                          *      part of what r9 fixes.
                           *   2. On the TopLevelMatchesCommitted MISMATCH
                           *      branch (genuine divergence, not r5's
                           *      recovered-concurrent-write case), round 7's
@@ -628,7 +648,53 @@ typedef enum {
                           *      bank was already PROVEN loadable by
                           *      ValidateADCCalBank. r8 installs the intended
                           *      bank on this branch before still returning
-                          *      RES_ERR. */
+                          *      RES_ERR.
+                          *
+                          *      r8's OWN premise for (2) is FALSE, and an
+                          *      adversarial audit demonstrated it with no
+                          *      hardware fault: nvm_ErasePage returns TRUE on
+                          *      BOTH branches (nvm.c ~:14-54), so a
+                          *      WRITE-PROTECTED page is never actually
+                          *      erased -- the OLD, valid record survives, and
+                          *      r8's install then runs anyway, installing
+                          *      the NEW bank over coefficients that already
+                          *      matched the surviving OLD selector. Kept as
+                          *      the historical (defective) shape -- see
+                          *      USECAL_R9. */
+    USECAL_R9            /* #1152 round 9 (CURRENT): r8, with change 2 fixed.
+                          * The committed record's OWN content decides whether
+                          * installing on a mismatch is safe, not the bare
+                          * fact that it differs from what was intended:
+                          *
+                          *   (a) a VALID record naming a DIFFERENT selector
+                          *       (the write-protected-page repro, or any
+                          *       other writer's record landing instead of
+                          *       ours) -- do NOT install. The committed
+                          *       selector and the live coefficients (still
+                          *       whatever was loaded before this call)
+                          *       already agree with EACH OTHER; installing
+                          *       would break that, not restore it.
+                          *   (b) a VALID record naming the INTENDED selector
+                          *       -- unchanged from r5/r8: the write landed
+                          *       and only the readback comparison was
+                          *       corrupted by a concurrent writer. Install,
+                          *       so live and stored agree.
+                          *   (c) NO valid record at all (checksum fails, or
+                          *       the stored type no longer names
+                          *       TopLevelSettings) -- do NOT install. There
+                          *       is no previous selection left to protect,
+                          *       but neither is there proof the new one
+                          *       landed.
+                          *
+                          * (a) and (c) are behaviourally identical in this
+                          * model -- both refuse to install -- because the
+                          * only thing production does differently between
+                          * them is which LOG_E fires, which this model does
+                          * not represent. `committedReadableOnMismatch`
+                          * below exposes WHICH of the two sub-cases the run
+                          * took, purely so a1/c1 tests can assert the correct
+                          * one fired without over-claiming a behavioural
+                          * difference the model does not have. */
 } UseCalShape;
 
 typedef struct {
@@ -640,6 +706,15 @@ typedef struct {
     ModelSaveOutcome saveOutcome;
     bool             recoveredAfterReportedFailure; /* r5 verified and continued */
     bool             rawOutputMode;
+    /* r9 only: on a genuine TopLevelMatchesCommitted mismatch, which of the
+     * two sub-cases the independent re-read found -- true for (a) a VALID
+     * record naming a different selector, false for (c) no valid record at
+     * all. Meaningless (left false) on every shape other than r9, and on r9
+     * itself unless the mismatch branch was actually entered -- callers
+     * gate reading it on run.result == RES_ERR && !run.recoveredAfterReportedFailure
+     * && run.saveAttempted, which is exactly "SaveToNvm was attempted,
+     * reported failure, and the independent verify did not recover it". */
+    bool             committedReadableOnMismatch;
 } UseCalRun;
 
 static UseCalRun model_usecal_set(UseCalShape shape, int param1,
@@ -683,7 +758,7 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
      * hardware repro exposed: a board with no populated bank could call
      * USECal 0/1 forever and never leave raw mode, because every one of
      * those calls fails before reaching the bottom. */
-    if (shape == USECAL_R8) {
+    if (shape == USECAL_R8 || shape == USECAL_R9) {
         run.rawOutputMode = false;
     } else {
         run.rawOutputMode = rawModeIn;
@@ -710,7 +785,8 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
     default: run.result = RES_ERR; return run;   /* unreachable, kept as in situ */
     }
 
-    if (shape == USECAL_R2 || shape == USECAL_R5 || shape == USECAL_R8) {
+    if (shape == USECAL_R2 || shape == USECAL_R5 || shape == USECAL_R8 ||
+        shape == USECAL_R9) {
         /* --- r2 step 2: VALIDATE without installing ---------------------- */
         /* daqifi_settings_ValidateADCCalBank: the same LoadFromNvm check
          * LoadADCCalSettings performs internally, without the copy loop that
@@ -733,10 +809,12 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
              * `recovers` is false for it, which short-circuits the `||`
              * below so model_TopLevelMatchesCommitted is never even called,
              * matching production having no such call in r2. */
-            bool recovers = (shape == USECAL_R5 || shape == USECAL_R8);
+            bool recovers = (shape == USECAL_R5 || shape == USECAL_R8 ||
+                              shape == USECAL_R9);
             if (!recovers || !model_TopLevelMatchesCommitted(nvm, &tmp)) {
-                /* round 8 (Change 2): on a GENUINE mismatch -- as opposed to
-                 * r5/r8's recovered-concurrent-write case just above --
+                /* round 8 (Change 2, HISTORICAL -- see USECAL_R9 above for
+                 * why this was wrong): on a GENUINE mismatch -- as opposed to
+                 * r5/r8/r9's recovered-concurrent-write case just above --
                  * round 7's audit found returning here WITHOUT installing
                  * leaves the PREVIOUS bank live while the stored selector is
                  * already destroyed by the erase that already ran either
@@ -745,10 +823,23 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
                  * r5 do NOT -- that is the pre-round-8 shape the
                  * `..._refuses_a_valid_record_that_is_not_the_intended_one`
                  * and `r2_*` tests below pin with `rt.installs == 0` on this
-                 * exact branch, and must keep passing unchanged. */
+                 * exact branch, and must keep passing unchanged.
+                 *
+                 * r9 ALSO does not install here -- r8's premise ("the erase
+                 * already ran either way") is false, demonstrated by the
+                 * write-protected-page repro, so r9 instead reads the
+                 * committed record again, independently, to tell apart (a) a
+                 * VALID record naming a different selector from (c) no
+                 * valid record at all. Both refuse to install; the model
+                 * exposes which sub-case fired purely for the a1/c1 tests
+                 * below, which is why this sits inside the mismatch branch
+                 * rather than after it. */
                 if (shape == USECAL_R8) {
                     run.installAttempted = true;
                     (void)model_LoadADCCalSettings(nvm, calType, rt);
+                } else if (shape == USECAL_R9) {
+                    run.committedReadableOnMismatch =
+                            model_TopLevelCommittedReadable(nvm);
                 }
                 run.result = RES_ERR;
                 return run;
@@ -782,10 +873,11 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
     }
 
     /* Historical shapes clear here, on success, for the first time in this
-     * call. r8 already cleared it at the top (unconditionally) -- this is a
-     * no-op for r8, kept unconditional rather than `if (shape != USECAL_R8)`
-     * because both branches land on the same value and a conditional here
-     * would claim a distinction that does not exist. */
+     * call. r8 and r9 already cleared it at the top (unconditionally) --
+     * this is a no-op for both, kept unconditional rather than
+     * `if (shape != USECAL_R8 && shape != USECAL_R9)` because every shape
+     * lands on the same value here and a conditional would claim a
+     * distinction that does not exist. */
     run.rawOutputMode = false;
     run.result = RES_OK;
     return run;
@@ -1842,6 +1934,194 @@ TEST(round8_fw1077_r6_sequence_does_not_strand_a_mismatched_selector)
 }
 
 /* ==========================================================================
+ * ROUND 9 -- fw#1152 round 9, fixing round 8's own regression above. The
+ * audit's finding: round 8's premise for installing on a GENUINE mismatch
+ * ("the erase already ran either way") is FALSE. nvm_ErasePage returns TRUE
+ * on BOTH branches (nvm.c ~:14-54), so a WRITE-PROTECTED page is never
+ * actually erased -- the OLD, valid record survives completely intact, and
+ * round 8's install then ran anyway, installing the NEW bank over live
+ * coefficients that already matched the surviving OLD selector.
+ *
+ * Three cases, both param1 directions each:
+ *   (a) a VALID committed record naming a DIFFERENT selector (the
+ *       write-protected-page repro) -- refuse, do NOT install.
+ *   (b) a VALID committed record naming the INTENDED selector (the write
+ *       landed, only the readback comparison was corrupted) -- unchanged
+ *       from r5/r8: install, so live and stored agree.
+ *   (c) NO valid committed record at all (checksum fails outright) --
+ *       refuse, do NOT install.
+ * ========================================================================== */
+
+/* CASE (a): the audit's exact repro. A write-protected TOP_LEVEL page means
+ * nvm_ErasePage reports success without erasing (eraseRefused), so the row
+ * write that follows fails its OWN readback against the untouched old
+ * record (writeFails) -- the old record survives, valid, naming the OLD
+ * selector. Asserted on coefficient VALUES and the persisted selector, not
+ * merely install counts, per the task's instruction: a count alone would
+ * still pass if the WRONG bank got installed. */
+TEST(round9_case_a_valid_old_record_refuses_without_installing)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    /* direction: USER -> FACTORY (param1 0). Committed selector is
+     * overridden to USER (1) so it genuinely DIFFERS from the intended
+     * FACTORY (0) -- fixture_board's own default (committed calVals=0)
+     * would coincide with param1==0 and never reach a genuine mismatch. */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    fixture_top_level(&nvm, MODEL_TYPE_TOP_LEVEL, 1u);
+    runtime_init(&rt, USER_M, USER_B);   /* live coefficients already USER,
+                                          * consistent with the committed
+                                          * selector that is about to survive */
+    nvm.eraseRefused = true;   /* nvm_ErasePage reports success regardless */
+    nvm.writeFails   = true;   /* the row write then fails its own readback */
+    run = model_usecal_set(USECAL_R9, 0, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.recoveredAfterReportedFailure, false);
+    ASSERT_EQ(run.committedReadableOnMismatch, true);   /* case (a): valid */
+    ASSERT_EQ(run.installAttempted, false);             /* THE FIX */
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(rt.CalM[0], USER_M);              /* unchanged -- still USER */
+    ASSERT_EQ(persisted_selector(&nvm), 1);     /* the surviving OLD selector */
+
+    /* direction: FACTORY -> USER (param1 1). fixture_board's default
+     * committed calVals=0 already differs from the intended 1 -- no
+     * override needed. */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.eraseRefused = true;
+    nvm.writeFails   = true;
+    run = model_usecal_set(USECAL_R9, 1, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.committedReadableOnMismatch, true);
+    ASSERT_EQ(run.installAttempted, false);
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(rt.CalM[0], FACT_M);
+    ASSERT_EQ(persisted_selector(&nvm), 0);
+}
+
+/* CASE (c): the erase genuinely runs (eraseRefused left false, the default)
+ * and the write that follows never lands -- the page ends up blanked
+ * (0xFF), which fails the checksum outright regardless of calVals. No
+ * valid record survives at all. */
+TEST(round9_case_c_unreadable_record_refuses_without_installing)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    /* direction: USER -> FACTORY (param1 0) */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    runtime_init(&rt, USER_M, USER_B);
+    nvm.writeFails = true;
+    run = model_usecal_set(USECAL_R9, 0, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.recoveredAfterReportedFailure, false);
+    ASSERT_EQ(run.committedReadableOnMismatch, false);  /* case (c): unreadable */
+    ASSERT_EQ(run.installAttempted, false);             /* THE FIX */
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(rt.CalM[0], USER_M);              /* unchanged -- still USER */
+    ASSERT_EQ(persisted_selector(&nvm), -1);    /* no readable selector */
+
+    /* direction: FACTORY -> USER (param1 1) */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.writeFails = true;
+    run = model_usecal_set(USECAL_R9, 1, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.committedReadableOnMismatch, false);
+    ASSERT_EQ(run.installAttempted, false);
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(rt.CalM[0], FACT_M);
+    ASSERT_EQ(persisted_selector(&nvm), -1);
+}
+
+/* CASE (b): unchanged from r5/r8. The write LANDS our own intended record;
+ * only nvm_WriteRowtoAddr's readback comparison is corrupted. The committed
+ * selector matches what we intended, so this never reaches round 9's fixed
+ * branch at all -- it recovers at the SAME point r5/r8 did, which is why
+ * committedReadableOnMismatch stays at its zero-value default (false) on
+ * this path: the mismatch branch (and the field it populates) was never
+ * entered. Two independent concurrent-writer flavours, one per direction,
+ * matching round8_mismatch_from_a_landed_write_also_installs' sibling. */
+TEST(round9_case_b_landed_write_still_installs)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    /* direction: FACTORY -> USER (param1 1): our own record lands, verbatim. */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.writeLandsButReadbackFails = true;
+    run = model_usecal_set(USECAL_R9, 1, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_OK);
+    ASSERT_EQ(run.recoveredAfterReportedFailure, true);
+    ASSERT_EQ(run.committedReadableOnMismatch, false);  /* r9's branch not entered */
+    ASSERT_EQ(rt.installs, 1);
+    ASSERT_EQ(rt.installedBank, MODEL_TYPE_USER_CAL);
+    ASSERT_EQ(rt.CalM[0], USER_M);
+    ASSERT_EQ(persisted_selector(&nvm), 1);
+
+    /* direction: USER -> FACTORY (param1 0): a legitimate concurrent writer
+     * lands a DIFFERENT unrelated field (voltagePrecision) on top of our own
+     * correctly-landed selector -- still a match on calVals, so this also
+     * recovers and installs. persisted_precision proves the unrelated field
+     * really did change, so this arm cannot pass vacuously. */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    runtime_init(&rt, USER_M, USER_B);
+    nvm.writeLandsButReadbackFails = true;
+    nvm.commitUnrelatedFieldChange = true;
+    run = model_usecal_set(USECAL_R9, 0, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_OK);
+    ASSERT_EQ(run.recoveredAfterReportedFailure, true);
+    ASSERT_EQ(run.committedReadableOnMismatch, false);
+    ASSERT_EQ(rt.installs, 1);
+    ASSERT_EQ(rt.installedBank, MODEL_TYPE_FACT_CAL);
+    ASSERT_EQ(rt.CalM[0], FACT_M);
+    ASSERT_EQ(persisted_selector(&nvm), 0);
+    ASSERT_EQ(persisted_precision(&nvm), 0x5A);
+}
+
+/* THE DIRECT REGRESSION PROOF: identical fixture, identical param1,
+ * identical failure injection, run through r8 and r9 side by side. Both
+ * report the same SCPI outcome (-200) -- but r8 installs the new bank over
+ * live coefficients that already matched the surviving old selector, and r9
+ * does not. This is round 9's entire fix, shown as a diff rather than
+ * asserted against each shape in isolation. */
+TEST(round9_differs_from_round8_only_by_not_installing_on_a_genuine_mismatch)
+{
+    ModelNvm nvmR8, nvmR9;
+    ModelRuntimeArray rtR8, rtR9;
+    UseCalRun runR8, runR9;
+
+    fixture_board(&nvmR8, &rtR8, MODEL_TYPE_TOP_LEVEL, true);
+    fixture_top_level(&nvmR8, MODEL_TYPE_TOP_LEVEL, 1u);
+    runtime_init(&rtR8, USER_M, USER_B);
+    nvmR8.eraseRefused = true;
+    nvmR8.writeFails   = true;
+
+    fixture_board(&nvmR9, &rtR9, MODEL_TYPE_TOP_LEVEL, true);
+    fixture_top_level(&nvmR9, MODEL_TYPE_TOP_LEVEL, 1u);
+    runtime_init(&rtR9, USER_M, USER_B);
+    nvmR9.eraseRefused = true;
+    nvmR9.writeFails   = true;
+
+    runR8 = model_usecal_set(USECAL_R8, 0, &nvmR8, &rtR8, false);
+    runR9 = model_usecal_set(USECAL_R9, 0, &nvmR9, &rtR9, false);
+
+    ASSERT_EQ(runR8.result, RES_ERR);
+    ASSERT_EQ(runR9.result, RES_ERR);
+    ASSERT_EQ(runR8.installAttempted, true);    /* r8: the regression */
+    ASSERT_EQ(runR9.installAttempted, false);   /* r9: the fix */
+    ASSERT_EQ(rtR8.installs, 1);
+    ASSERT_EQ(rtR9.installs, 0);
+    ASSERT_EQ(rtR8.CalM[0], FACT_M);   /* r8: switched live to FACTORY anyway */
+    ASSERT_EQ(rtR9.CalM[0], USER_M);   /* r9: stayed on the surviving selection */
+    ASSERT_EQ(persisted_selector(&nvmR8), 1);   /* both leave the old selector */
+    ASSERT_EQ(persisted_selector(&nvmR9), 1);   /* intact -- r8's divergence is */
+                                                  /* USECal?==1 while live==FACTORY */
+}
+
+/* ==========================================================================
  * CASE 10 -- THE HEADLINE, in test_1112's shape: sweep the whole fixture
  * matrix and show that the two shapes differ in EXACTLY the cells where the
  * stored type is wrong AND the run got as far as the save.
@@ -1990,6 +2270,12 @@ int main(void)
     RUN(round8_mismatch_branch_installs_the_intended_bank);
     RUN(round8_mismatch_from_a_landed_write_also_installs);
     RUN(round8_fw1077_r6_sequence_does_not_strand_a_mismatched_selector);
+
+    /* Round 9: fixing round 8's own regression above. */
+    RUN(round9_case_a_valid_old_record_refuses_without_installing);
+    RUN(round9_case_c_unreadable_record_refuses_without_installing);
+    RUN(round9_case_b_landed_write_still_installs);
+    RUN(round9_differs_from_round8_only_by_not_installing_on_a_genuine_mismatch);
 
     /* The headline */
     RUN(the_two_shapes_differ_in_exactly_the_wrong_stored_type_cells);

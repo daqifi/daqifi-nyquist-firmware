@@ -1871,56 +1871,76 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
          * report an erase failure, and a claim discipline over every settings
          * writer are tracked separately -- see the row. */
         if (!daqifi_settings_TopLevelMatchesCommitted(&tmpTopLevelSettings)) {
-            /* #1152 round 8: round 7's adversarial audit found this branch
-             * returning here WITHOUT installing, and proved it is the WORSE
-             * of the two choices, not the safer one. The erase above has
+            /* #1152 round 9: round 8 installed the just-validated bank on
+             * EVERY mismatch here, on the premise that "the erase above has
              * already run either way, so the stored selector is damaged
-             * (destroyed or blank) whether or not this branch installs --
-             * returning early does not protect the stored side, it only
-             * leaves the PREVIOUS bank's coefficients live while the
-             * selector the caller asked for sits half-written. With user
-             * cal previously selected, a later CONF:VOLT:SAVE
-             * (SCPI_SaveDataPrecision) then loads that damaged record,
-             * falls back to calVals=0 and persists THAT successfully --
-             * without touching runtime calibration -- so USECal? goes on to
-             * report 0 while acquisition still applies the user slope,
-             * i.e. roughly twice the factory-calibrated voltage, with no
-             * indication anything is wrong.
+             * either way". That premise is FALSE, and an adversarial audit
+             * demonstrated it without any hardware fault:
              *
-             * daqifi_settings_ValidateADCCalBank(calType) above has already
-             * PROVEN the target bank loads cleanly, so installing it here
-             * cannot make the stored side any worse (it was already
-             * damaged) and can only make the LIVE side match the selection
-             * the caller actually asked for, instead of leaving whatever was
-             * live before this call. This command still returns
-             * SCPI_RES_ERR -- the persist genuinely failed, the stored
-             * selector is still unreliable, and the caller still needs to
-             * know -- but now the failure path leaves the live coefficients
-             * matching the intended bank rather than a stale one.
+             * nvm_ErasePage (HAL/NVM/nvm.c ~:14-54) reads the target word
+             * back and returns TRUE on BOTH branches -- the erased case and
+             * the WRITE-PROTECTED, erase-refused case (whose only other
+             * action is a commented-out log). So a write-protected page is
+             * never actually erased: the OLD, checksum-valid record survives
+             * completely intact, selector and all, and the row write that
+             * follows then fails ITS OWN readback (nvm.c ~:132) against that
+             * unmolested page. Round 8 still ran its install here, over live
+             * coefficients that already matched the surviving OLD selector --
+             * manufacturing the exact divergence this whole recovery exists
+             * to prevent, rather than any longer-standing one. Bench repro:
+             * write-protect TOP_LEVEL, `USECal 1` -> erase refused (reports
+             * success), row write fails its readback, the old record
+             * (selector 0) survives valid; USECal? then reads 0 while round
+             * 8 had just installed the USER slope underneath it -- doubled
+             * readings, with no error state.
              *
-             * -200 reaches the caller WITHOUT an explicit SCPI_ErrorPush
-             * here: parser.c:143-146 pushes SCPI_ERROR_EXECUTION_ERROR
-             * itself for any callback returning non-OK while
-             * context->cmd_error is still false, so an added push here would
-             * be a redundant second entry, not a missing first one.
-             *
-             * LOG_E message, remedy-first and measured: LOG_MESSAGE_SIZE is
-             * 128 (Logger.h:361) and LogMessageFormatImpl's own vsnprintf
-             * call size-clamps to LOG_MESSAGE_SIZE-3 = 125 usable bytes
-             * (Logger.c:398,405) with the tail silently dropped past that --
-             * so the remedy ("read back with USECal?") is stated FIRST and
-             * the whole message is kept well under 125 bytes in both %s
-             * substitutions. The other two over-length messages in this
-             * function were rewritten the same way in this round. All three
-             * were introduced by THIS PR -- main's ADCUseCalSetClaimed has no
-             * LOG_E at all (verified at b72cc6c57) -- so they are this row's
-             * to fix rather than inherited. Measured byte counts, before and
-             * after, are in the round-8 PR comment. */
-            bool installedIntended = daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels);
-            LOG_E("CONF:ADC:USECal %d: selector may be destroyed - read back "
-                  "w/ USECal?. Live coeffs: %s", param1,
-                  installedIntended ? "intended bank (installed)"
-                                     : "previous bank, install also failed");
+             * So the committed record's OWN content decides whether
+             * installing is safe here, not the bare fact that it differs
+             * from what this call intended. Read it again, independently of
+             * the match test above -- same technique as
+             * daqifi_settings_TopLevelMatchesCommitted itself: a fresh
+             * LoadFromNvm into a LOCAL, never the shared gTempFflashBuffer
+             * whose corruption is what made THIS SaveToNvm call report
+             * failure in the first place. */
+            DaqifiSettings committedSettings;
+            memset(&committedSettings, 0, sizeof(committedSettings));
+            bool committedReadable = daqifi_settings_LoadFromNvm(
+                    DaqifiSettings_TopLevelSettings, &committedSettings) &&
+                    committedSettings.type == DaqifiSettings_TopLevelSettings;
+
+            if (committedReadable) {
+                /* A VALID record is committed, and -- because the match test
+                 * above already failed -- it names a selector OTHER than the
+                 * one intended: the write-protected-page repro above, or any
+                 * other writer whose record landed in place of ours. Either
+                 * way the committed selector and the live coefficients
+                 * (still whatever was loaded before this call -- the install
+                 * below has not run) already AGREE with each other; only the
+                 * caller's request did not land. Installing here would break
+                 * that agreement instead of restoring it, so this returns
+                 * without touching the runtime array -- the pre-round-8
+                 * shape, now reached for the right reason. */
+                LOG_E("CONF:ADC:USECal %d: selection unchanged - prior "
+                      "record intact, see USECal?", param1);
+            } else {
+                /* No valid record survives at all -- the erase genuinely ran
+                 * and the replacement never landed (or landed corrupt), so
+                 * the selector is unreadable rather than merely stale. There
+                 * is no previous selection left here to protect, but neither
+                 * is there any proof the NEW one landed, so this still does
+                 * not install. The same unreadable record makes app_freertos
+                 * .c's own TopLevelSettings load (~:916-919) fail the same
+                 * way on the next boot, which falls back to
+                 * daqifi_settings_LoadFactoryDeafult and persists calVals=0
+                 * -- i.e. a reboot settles on factory. (If the record is
+                 * instead checksum-valid but type-mismatched, boot's
+                 * existing calVals-gated reload at app_freertos.c:1035-1039
+                 * discards daqifi_settings_LoadADCCalSettings's return value,
+                 * so that path's worst case is no better than factory-live
+                 * either.) */
+                LOG_E("CONF:ADC:USECal %d: selection unreadable - reboot "
+                      "loads factory, see USECal?", param1);
+            }
             return SCPI_RES_ERR;
         }
         /* The intended record IS committed. Fall through and install, so the

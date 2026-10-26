@@ -3105,26 +3105,27 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 	 n=`printf '%s\n' "$$body" | grep -n 'tmpTopLevelSettings\.type = DaqifiSettings_TopLevelSettings;' | cut -d: -f1`; \
 	 v=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_ValidateADCCalBank(calType)' | cut -d: -f1`; \
 	 ni=`printf '%s\n' "$$body" | grep -c 'daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)'`; \
-	 i1=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)' | head -1 | cut -d: -f1`; \
-	 i2=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)' | tail -1 | cut -d: -f1`; \
+	 i=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)' | cut -d: -f1`; \
 	 s=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_SaveToNvm(&tmpTopLevelSettings)' | cut -d: -f1`; \
 	 r=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_TopLevelMatchesCommitted(&tmpTopLevelSettings)' | cut -d: -f1`; \
+	 cr=`printf '%s\n' "$$body" | grep -n 'bool committedReadable = daqifi_settings_LoadFromNvm(' | cut -d: -f1`; \
+	 cb=`printf '%s\n' "$$body" | grep -n 'LOG_E("CONF:ADC:USECal %d: continuing - committed rec matches "' | cut -d: -f1`; \
 	 nrc=`printf '%s\n' "$$body" | grep -c 'pRunTimeStreamConfig->RawOutputMode = false;'`; \
 	 rc=`printf '%s\n' "$$body" | grep -n 'pRunTimeStreamConfig->RawOutputMode = false;' | head -1 | cut -d: -f1`; \
 	 test -n "$$l" && test -n "$$n" && test -n "$$v" && test -n "$$r" \
-	   && test -n "$$i1" && test -n "$$i2" && test -n "$$s" && test -n "$$rc" \
-	   && test "$$ni" -eq 2 && test "$$nrc" -eq 1 \
+	   && test -n "$$cr" && test -n "$$cb" && test -n "$$i" && test -n "$$s" && test -n "$$rc" \
+	   && test "$$ni" -eq 1 && test "$$nrc" -eq 1 \
 	   && test "$$rc" -lt "$$l" \
 	   && test "$$l" -lt "$$n" && test "$$n" -lt "$$v" \
 	   && test "$$v" -lt "$$s" && test "$$s" -lt "$$r" \
-	   && test "$$r" -lt "$$i1" && test "$$i1" -lt "$$i2" \
+	   && test "$$r" -lt "$$cr" && test "$$cr" -lt "$$cb" && test "$$cb" -lt "$$i" \
 	   || { echo "ERROR: ADCUseCalSetClaimed() in $(SCPIADC_SRC) no longer runs"; \
 	        echo "       RAW-MODE-CLEAR -> load -> normalize -> validate -> save ->"; \
-	        echo "       VERIFY-COMMITTED -> MISMATCH-INSTALL -> final-install, in that"; \
-	        echo "       order"; \
+	        echo "       VERIFY-COMMITTED -> re-read-committed -> CONTINUING-fallthrough ->"; \
+	        echo "       final-install, in that order"; \
 	        echo "       (rawClear='$$rc' nRawClear=$$nrc load='$$l' normalize='$$n'"; \
-	        echo "        validate='$$v' save='$$s' verify='$$r'"; \
-	        echo "        mismatchInstall='$$i1' finalInstall='$$i2' nInstall=$$ni)."; \
+	        echo "        validate='$$v' save='$$s' verify='$$r' reread='$$cr'"; \
+	        echo "        continuing='$$cb' finalInstall='$$i' nInstall=$$ni)."; \
 	        echo "       Each adjacency carries a defect if it inverts:"; \
 	        echo "         the raw-mode clear anywhere but FIRST (before the load) is"; \
 	        echo "           #1152 round 8's regression -- ruling 9=A requires USECal"; \
@@ -3149,16 +3150,29 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 	        echo "           NEW selector stored and the OLD coefficients live;"; \
 	        echo "         validate below the save re-opens #1148 -- a selector would"; \
 	        echo "           persist for a bank that cannot be loaded;"; \
-	        echo "         a missing or misordered MISMATCH-INSTALL (nInstall != 2, or"; \
-	        echo "           the first LoadADCCalSettings call not strictly between"; \
-	        echo "           verify and the final install) reopens round 7's finding on"; \
-	        echo "           the TopLevelMatchesCommitted mismatch branch: returning"; \
-	        echo "           without installing leaves the PREVIOUS bank live while the"; \
-	        echo "           stored selector is already destroyed by the erase that ran"; \
-	        echo "           either way -- a later CONF:VOLT:SAVE then persists calVals=0"; \
-	        echo "           without touching runtime calibration, so USECal? reads 0"; \
-	        echo "           while acquisition still applies the user slope (roughly 2x"; \
-	        echo "           the factory-calibrated voltage)."; \
+	        echo "         a MISSING re-read of the committed record (reread not strictly"; \
+	        echo "           between verify and continuing), or a second occurrence of"; \
+	        echo "           the install call (nInstall != 1), reopens round 8's own"; \
+	        echo "           regression: round 8 installed the validated bank on EVERY"; \
+	        echo "           TopLevelMatchesCommitted mismatch, on the false premise that"; \
+	        echo "           the erase already ran either way -- it had not, on a"; \
+	        echo "           write-protected page the OLD valid record survives, and"; \
+	        echo "           round 8's install then overwrote live coefficients that"; \
+	        echo "           already agreed with that surviving OLD selector. Round 9"; \
+	        echo "           reads the committed record again and installs ONLY when it"; \
+	        echo "           is reached via 'continuing' (the fallthrough for a record"; \
+	        echo "           that DOES carry the intended selector) -- an install line"; \
+	        echo "           that drifted back inside the mismatch branch (before"; \
+	        echo "           'continuing') satisfies nInstall==1 but fails the"; \
+	        echo "           cb < finalInstall ordering below, which is why that ordering"; \
+	        echo "           is checked and not just presence;"; \
+	        echo "         a missing or misordered final-install (final install not"; \
+	        echo "           strictly after verify, re-read and continuing) reopens"; \
+	        echo "           round 7's finding on the TopLevelMatchesCommitted mismatch"; \
+	        echo "           branch -- returning without installing on a MATCHING"; \
+	        echo "           (landed) record leaves the PREVIOUS bank live while the"; \
+	        echo "           NEW selector is already committed, so USECal? reports the"; \
+	        echo "           new selection while acquisition still applies the old slope."; \
 	        echo "       All of these still satisfy the presence check above, which is"; \
 	        echo "       why this one is positional."; \
 	        echo "       If the body was legitimately restructured, re-read it against"; \
@@ -3234,6 +3248,65 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 	        echo "       onto its NVM page by that same value -- adding, renumbering"; \
 	        echo "       or reordering a type invalidates all three."; \
 	        exit 1; }
+# #1152 round 9: every LOG_E in ADCUseCalSetClaimed() must render at or under
+# the 125-byte usable payload (LOG_MESSAGE_SIZE 128, Logger.h:361, clamped to
+# LOG_MESSAGE_SIZE-3 in LogMessageFormatImpl, Logger.c:398,405 -- the tail past
+# that is silently dropped). Unlike $(LOGCEIL_BIN)'s check_log_block, which
+# pins an exact expected copy, this extracts the REAL text from $(SCPIADC_SRC)
+# and measures IT -- a message can be edited freely as long as it still fits,
+# which is the actual constraint, rather than frozen verbatim. Each call finds
+# its LOG_E's opening line (asserted unique and present), walks forward to the
+# statement's closing '");' or ');', and concatenates every pure
+# string-literal continuation line (one whose first non-blank character is
+# '"') -- deliberately skipping lines like '(param1 == 1) ? "user" :
+# "factory");' whose quotes are substitution ARGUMENTS, not format text, which
+# a naive one-quote-pair-per-line extraction would misread as part of the
+# message. %d is always a single digit here (param1 is 0 or 1 by this point),
+# so its widening is fixed at one char; %s widens to whichever named argument
+# renders longest (checked against validation_fail's "factory" vs "user").
+	@check_usecal_log_len() { \
+	  f="$$1"; anchor="$$2"; dwide="$$3"; swide="$$4"; label="$$5"; \
+	  start=$$(grep -n "$$anchor" "$$f" | tr -d '\r' | head -1 | cut -d: -f1); \
+	  if [ -z "$$start" ]; then \
+	    echo "ERROR: $$label's LOG_E anchor was not found in $$f -- either"; \
+	    echo "       it was edited, removed, or no longer opens on its own"; \
+	    echo "       line, and the byte-budget check below can measure"; \
+	    echo "       nothing. anchor=[$$anchor]"; \
+	    return 1; \
+	  fi; \
+	  end=$$(awk -v s="$$start" 'NR>=s { line=$$0; gsub(/\r$$/,"",line); if (line ~ /\);/) { print NR; exit } }' "$$f"); \
+	  block=$$(sed -n "$${start},$${end}p" "$$f" | tr -d '\r'); \
+	  anchorline=$$(printf '%s\n' "$$block" | head -1); \
+	  piece1=$$(printf '%s' "$$anchorline" | sed -n 's/^[^"]*"\(.*\)"[^"]*$$/\1/p'); \
+	  rest=$$(printf '%s\n' "$$block" | tail -n +2); \
+	  contlines=$$(printf '%s\n' "$$rest" | grep '^[[:space:]]*"' || true); \
+	  pieces2=""; \
+	  if [ -n "$$contlines" ]; then \
+	    pieces2=$$(printf '%s\n' "$$contlines" | sed -n 's/^[[:space:]]*"\(.*\)"[^"]*$$/\1/p' | tr -d '\n'); \
+	  fi; \
+	  text="$${piece1}$${pieces2}"; \
+	  wide=$$(printf '%s' "$$text" | sed "s/%d/$$dwide/g; s/%s/$$swide/g"); \
+	  len=$$(printf '%s' "$$wide" | wc -c); \
+	  if [ "$$len" -gt 125 ]; then \
+	    echo "ERROR: $$label's LOG_E in $$f renders to $$len usable bytes"; \
+	    echo "       with the widest substitution, over the 125-byte ceiling"; \
+	    echo "       (LOG_MESSAGE_SIZE 128, Logger.h:361, clamped -3 in"; \
+	    echo "       LogMessageFormatImpl, Logger.c:398,405). Rendered text:"; \
+	    echo "       [$$wide]"; \
+	    echo "       Shorten it -- the tail past byte 125 is silently"; \
+	    echo "       dropped, so whatever falls past there never reaches a"; \
+	    echo "       log reader. Remedy-first wording survives truncation"; \
+	    echo "       best; keep it at the front of the message."; \
+	    return 1; \
+	  fi; \
+	}; \
+	check_usecal_log_len $(SCPIADC_SRC) 'LOG_E("CONF:ADC:USECal %d: top-level settings NVM read failed; "' 1 '' top_level_read_fail || exit 1; \
+	check_usecal_log_len $(SCPIADC_SRC) 'LOG_E("CONF:ADC:USECal %d: no calibration bank for this value",' 1 '' unreachable_bank || exit 1; \
+	check_usecal_log_len $(SCPIADC_SRC) 'LOG_E("CONF:ADC:USECal %d: %s cal bank failed validation "' 1 factory validation_fail || exit 1; \
+	check_usecal_log_len $(SCPIADC_SRC) 'LOG_E("CONF:ADC:USECal %d: selection unchanged - prior "' 1 '' round9_case_a_selection_unchanged || exit 1; \
+	check_usecal_log_len $(SCPIADC_SRC) 'LOG_E("CONF:ADC:USECal %d: selection unreadable - reboot "' 1 '' round9_case_c_selection_unreadable || exit 1; \
+	check_usecal_log_len $(SCPIADC_SRC) 'LOG_E("CONF:ADC:USECal %d: continuing - committed rec matches "' 1 '' case_b_continuing || exit 1; \
+	check_usecal_log_len $(SCPIADC_SRC) 'LOG_E("CONF:ADC:USECal %d: reboot or re-select - bank re-read "' 1 '' reload_fail || exit 1
 	$(CC) $(CFLAGS) -I$(FW_UTIL) -o $(USECALTYPE_BIN) \
 	      test_1152_usecal_type_trust.c $(CRC32_SRC)
 
