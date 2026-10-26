@@ -36,3 +36,4 @@ gen_1029_log_budget.h
 gen_1029_log_budget.h.tmp
 gen_1125_log_once_claim.h
 *.o
+run_908_tests

@@ -354,8 +354,9 @@ extern "C" {
      * identity measured against one bank, attributed to the other.
      *
      * Detects interference rather than excluding it, so it takes no critical
-     * section: a load changes both the bank and the coefficients, so an
-     * unchanged bank across the scan proves no load completed underneath.
+     * section: a seqlock read requiring an EVEN generation that is UNCHANGED
+     * across the scan. A bank comparison is NOT sufficient -- the bank is
+     * published last, so it cannot see a load that is still in progress.
      * Bounded retries; on exhaustion reports NONE, the understating direction.
      *
      * @param channelRuntimeConfig the live AIn runtime array

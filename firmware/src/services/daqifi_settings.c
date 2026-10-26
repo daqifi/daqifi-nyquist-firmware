@@ -50,6 +50,28 @@ static bool gFactoryCalMissing = false;
  * gFactoryCalMissing, and written only from task context. */
 static DaqifiSettingsType gActiveCalBank = DaqifiSettings_FactAInCalParams;
 
+/* #908 (codex-r7): generation counter over the (coefficients, bank) pair.
+ *
+ * EVEN = stable, ODD = a load is part-way through. r6's fix compared the bank
+ * before and after the scan, which detects a load that COMPLETED but is blind
+ * to one IN PROGRESS -- because the bank is published LAST, a reader that
+ * pre-empts between the copy loop and the bank store reads the OLD bank twice
+ * while scanning the NEW coefficients, and reports a source the device never
+ * had. Publishing the bank last was itself r3's fix (so the bank can never
+ * name a load that did not land), which is precisely what makes the
+ * in-progress window invisible to a bank comparison.
+ *
+ * volatile because the reader's two loads must not be hoisted, cached or
+ * reordered around the scan between them; aligned 32-bit accesses are atomic
+ * on PIC32MZ, so the counter itself needs no critical section.
+ *
+ * ⚠ Bumped ONLY by the bank load, which changes both facts together.
+ * CONF:ADC:chanCALM / chanCALB change coefficients without changing the bank,
+ * and are deliberately not covered: either value a reader sees across one of
+ * those is a state the device genuinely had, so retrying would buy nothing.
+ * It is only the CROSS of two banks that is fiction. */
+static volatile uint32_t gCalGeneration = 0u;
+
 /* #625: the friendly name is emitted UNESCAPED into the JSON info message
  * ("friendlyName":"%s") and copied into the PB info message, so it must be
  * printable ASCII with no JSON-structural characters. Reject control chars
@@ -155,13 +177,21 @@ bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig) 
  * Introduced by this PR, because this PR is what made `source` depend on two
  * facts instead of one.
  *
- * No critical section, and deliberately so. gActiveCalBank is an enum, i.e. an
- * aligned 32-bit object, and aligned 32-bit reads are atomic on PIC32MZ -- so
- * neither read can tear. What was missing is not atomicity but COHERENCE
- * between them, and the fix for that is to detect interference rather than to
- * exclude it: read the bank, scan, read the bank again. A LOADcal/LOADFcal
- * changes BOTH the bank and the coefficients, so an unchanged bank across the
- * scan is sufficient evidence that no load completed underneath it.
+ * No critical section, and deliberately so. The counter and the bank are both
+ * aligned 32-bit objects, so no single read can tear on PIC32MZ. What is
+ * missing is not atomicity but COHERENCE across the scan, and the fix detects
+ * interference rather than excluding it -- a seqlock read:
+ *
+ *   require an EVEN generation (odd = a load is mid-flight)
+ *   scan, read the bank
+ *   require the generation UNCHANGED (else a load started or finished)
+ *
+ * ⚠ r6 compared the BANK before and after instead, which detects a load that
+ * COMPLETED but is blind to one IN PROGRESS: the bank is published LAST, so a
+ * reader pre-empting between the copy loop and the bank store reads the OLD
+ * bank twice while scanning the NEW coefficients. Publishing the bank last is
+ * r3's fix -- it stops the bank naming a load that did not land -- so the two
+ * fixes are in tension and only a generation counter satisfies both.
  *
  * ⚠ CHANCALM/CHANCALB change coefficients WITHOUT changing the bank, and are
  * deliberately not detected here: either outcome they produce is a state the
@@ -179,17 +209,22 @@ bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig) 
  */
 DaqifiCalSource daqifi_settings_GetCalSource(const AInRuntimeArray* channelRuntimeConfig) {
     for (uint8_t attempt = 0; attempt < 3u; attempt++) {
-        const DaqifiSettingsType bankBefore = gActiveCalBank;
-        const bool isIdentity = daqifi_settings_CalIsIdentity(channelRuntimeConfig);
-        const DaqifiSettingsType bankAfter = gActiveCalBank;
-
-        if (bankBefore != bankAfter) {
-            continue;   /* a load completed under the scan; re-read */
+        const uint32_t genBefore = gCalGeneration;
+        if ((genBefore & 1u) != 0u) {
+            continue;   /* a load is mid-flight; nothing read now is coherent */
         }
+
+        const bool isIdentity = daqifi_settings_CalIsIdentity(channelRuntimeConfig);
+        const DaqifiSettingsType bank = gActiveCalBank;
+
+        if (gCalGeneration != genBefore) {
+            continue;   /* a load started or finished under the scan */
+        }
+
         if (isIdentity) {
             return DAQIFI_CAL_SOURCE_NONE;
         }
-        return (bankAfter == DaqifiSettings_UserAInCalParams)
+        return (bank == DaqifiSettings_UserAInCalParams)
                 ? DAQIFI_CAL_SOURCE_USER : DAQIFI_CAL_SOURCE_FACTORY;
     }
     return DAQIFI_CAL_SOURCE_NONE;
@@ -497,6 +532,11 @@ bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
     
     if(!status) return status;    
     
+    /* -> ODD: from here until the bank is published, the coefficients and
+     * gActiveCalBank disagree. A reader that samples an odd generation, or a
+     * changed one, discards what it saw. */
+    gCalGeneration++;
+
     for(x=0;x<channelRuntimeConfig->Size;x++)
     {
         channelRuntimeConfig->Data[x].CalM = calArray->Data[x].CalM;
@@ -514,6 +554,7 @@ bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
      * operator ruling 8 = A (2026-10-25) gives the whole tear -- both halves,
      * all three writers -- to #1048. Context at #1166. */
     gActiveCalBank = type;
+    gCalGeneration++;   /* -> EVEN: coefficients and bank now agree */
 
     return status;
 }

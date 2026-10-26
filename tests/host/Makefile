@@ -3013,7 +3013,69 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # is the failure this block's own history keeps recording.
 # #1029's names carry the 1029 suffix so they cannot shadow #1000's
 # $(SDLOG_BIN)/$(GEN_1000).
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
+# ---------------------------------------------------------------------------
+# PR firmware#1077 round 8 (issue #908): identity.cal.source composite
+# coherence. The reported source is a pair of facts -- "are the live
+# coefficients identity" and "which bank did they come from" -- and
+# daqifi_settings_LoadADCCalSettings changes them in that order, publishing
+# the bank LAST (round 3's fix, so the bank cannot name a load that did not
+# land). A reader pre-empting between the two therefore sees the OLD bank
+# while scanning the NEW coefficients.
+#
+# Round 6 compared the bank before and after the scan, which catches a
+# COMPLETED load and is blind to one IN PROGRESS. Round 8 brackets the whole
+# composite update with a generation counter and the reader takes a seqlock
+# read. test_908_cal_source_seqlock.c models all three reader shapes and
+# asserts the middle one's blindness, so the file fails if the seqlock is
+# weakened back to a bank comparison.
+#
+# The model cannot see the FIRMWARE, so the guards below pin the real thing:
+# two increments in the writer with the first BEFORE the copy, and both arms
+# of the seqlock in the reader. An order check, not a presence check -- a
+# presence check passes if someone moves the pre-copy increment after the loop,
+# which is precisely the mutation that reopens the defect.
+SETTINGS_SRC := ../../firmware/src/services/daqifi_settings.c
+SEQ908_BIN := run_908_tests
+
+$(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(RECIPES)
+	@sed -n '/^bool daqifi_settings_LoadADCCalSettings/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_load.$$$$; \
+	 n=`grep -c 'gCalGeneration++' /tmp/.fw908_load.$$$$`; \
+	 gen1=`grep -n 'gCalGeneration++' /tmp/.fw908_load.$$$$ | head -1 | cut -d: -f1`; \
+	 cpy=`grep -n '\.CalM = calArray' /tmp/.fw908_load.$$$$ | head -1 | cut -d: -f1`; \
+	 bank=`grep -n 'gActiveCalBank = type' /tmp/.fw908_load.$$$$ | head -1 | cut -d: -f1`; \
+	 gen2=`grep -n 'gCalGeneration++' /tmp/.fw908_load.$$$$ | tail -1 | cut -d: -f1`; \
+	 rm -f /tmp/.fw908_load.$$$$; \
+	 test "$$n" = "2" && test -n "$$gen1" && test -n "$$cpy" && test -n "$$bank" \
+	   && test "$$gen1" -lt "$$cpy" && test "$$gen2" -gt "$$bank" \
+	  || { echo "ERROR: daqifi_settings_LoadADCCalSettings in $(SETTINGS_SRC) no"; \
+	       echo "       longer brackets its composite update with exactly two"; \
+	       echo "       gCalGeneration++ -- the first BEFORE the coefficient copy"; \
+	       echo "       and the second AFTER gActiveCalBank is published."; \
+	       echo "       (found n=$$n gen1=$$gen1 copy=$$cpy bank=$$bank gen2=$$gen2)"; \
+	       echo "       Without the PRE-copy increment the generation never goes"; \
+	       echo "       odd, so a reader cannot see an update IN PROGRESS and"; \
+	       echo "       reports the old bank against the new coefficients --"; \
+	       echo "       the SHAPE_BANKCMP row of test_908_cal_source_seqlock.c."; \
+	       exit 1; }
+	@sed -n '/^DaqifiCalSource daqifi_settings_GetCalSource/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_rd.$$$$; \
+	 ok=1; \
+	 grep -qF '& 1u' /tmp/.fw908_rd.$$$$ || ok=0; \
+	 grep -qF 'gCalGeneration != genBefore' /tmp/.fw908_rd.$$$$ || ok=0; \
+	 rm -f /tmp/.fw908_rd.$$$$; \
+	 test "$$ok" = 1 \
+	  || { echo "ERROR: daqifi_settings_GetCalSource in $(SETTINGS_SRC) is missing"; \
+	       echo "       an arm of its seqlock read: it must REFUSE an odd"; \
+	       echo "       generation (& 1u) AND require the generation unchanged"; \
+	       echo "       across the scan. Either arm alone is insufficient --"; \
+	       echo "       the odd check misses a load that starts and finishes"; \
+	       echo "       during the scan, and the unchanged check misses one"; \
+	       echo "       already in flight when the scan begins."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(SEQ908_BIN) test_908_cal_source_seqlock.c
+
+run: $(SEQ908_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
      $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) \
      $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) \
@@ -3048,6 +3110,7 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SY
 	./$(SCPIDAC_RAILGATE_BIN)
 
 clean:
+	rm -f $(SEQ908_BIN)
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) \
 	      $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) \
