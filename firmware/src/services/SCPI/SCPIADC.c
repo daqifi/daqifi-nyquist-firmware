@@ -1910,9 +1910,12 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
              * (Logger.c:398,405) with the tail silently dropped past that --
              * so the remedy ("read back with USECal?") is stated FIRST and
              * the whole message is kept well under 125 bytes in both %s
-             * substitutions, unlike the two pre-existing LOG_E calls in this
-             * function that this round does not touch (see the #1152 round
-             * 8 PR description for their measured byte counts). */
+             * substitutions. The other two over-length messages in this
+             * function were rewritten the same way in this round. All three
+             * were introduced by THIS PR -- main's ADCUseCalSetClaimed has no
+             * LOG_E at all (verified at b72cc6c57) -- so they are this row's
+             * to fix rather than inherited. Measured byte counts, before and
+             * after, are in the round-8 PR comment. */
             bool installedIntended = daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels);
             LOG_E("CONF:ADC:USECal %d: selector may be destroyed - read back "
                   "w/ USECal?. Live coeffs: %s", param1,
