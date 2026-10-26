@@ -852,6 +852,35 @@ $(BIN970): check_ci_path_filters.py ../../.github/workflows/host-tests.yml \
 	          echo "       when a site DISAPPEARS, which is the regression it is for."; \
 	          exit 1; }; \
 	 done
+	@# ⛔ #991 PART 3's NUMBERS COME FROM THE FIRMWARE, so pin them. Part 3
+	@# asserts that one DIO+PB encode failure destroys TWO samples, and that
+	@# figure is not a modelling choice -- it is read from NanoPB_Encoder.c's
+	@# AIN-failure arm, whose own comment says "exactly one AIN sample dies
+	@# here -- plus the DIO sample when this is the message carrying it
+	@# (dioS > 0)". The count arm above proves there are >= 2 report CALLS in
+	@# that file; it says nothing about what they report. If this argument
+	@# became 1u, Part 3's expectations would be silently wrong and every
+	@# assertion would still pass against the model.
+	@#
+	@# Same shape as the #1029 generator pinning the format its own test
+	@# formats: a test that hard-codes a firmware constant must pin the
+	@# constant, or it is testing its own copy of a number nobody checks.
+	@grep -qF 'Streaming_ReportEncoderSampleLoss((dioS > 0) ? 2u : 1u);' $(NANOPB_ENC_SRC) \
+	  || { echo "ERROR: $(NANOPB_ENC_SRC)'s AIN-failure arm no longer reports"; \
+	       echo "       '(dioS > 0) ? 2u : 1u' samples destroyed (#991 Part 3)."; \
+	       echo "       Part 3 of test_970_encoder_consume_accounting.c asserts that"; \
+	       echo "       ONE DIO+PB encode failure destroys TWO samples, and it takes"; \
+	       echo "       that 2 from this expression. If the arm now reports a"; \
+	       echo "       different count, re-derive Part 3's expectNew column before"; \
+	       echo "       changing this pin -- the test would otherwise keep passing"; \
+	       echo "       against its own stale copy of the number."; \
+	       exit 1; }
+	@grep -qF 'Streaming_ReportEncoderSampleLoss(1u);' $(NANOPB_ENC_SRC) \
+	  || { echo "ERROR: $(NANOPB_ENC_SRC)'s standalone-DIO arm no longer reports"; \
+	       echo "       1 sample destroyed (#991 Part 3, the :1688 arm whose own"; \
+	       echo "       comment records that it 'previously had no else at all:"; \
+	       echo "       no counter, no log')."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BIN970) test_970_encoder_consume_accounting.c
 # Two separate failures with two separate messages: the function is GONE
 # (renamed/moved -- the model has lost its subject) vs the function is there

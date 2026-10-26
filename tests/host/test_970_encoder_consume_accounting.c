@@ -372,11 +372,117 @@ TEST(test_dio_pop_old_shape_benign_under_empty_pop) {
     ASSERT_EQ(committedNew[0], 0);
 }
 
+/* ==========================================================================
+ * PART 3 -- #991 falsifier 5: a DIO+PB session with a genuine encode failure.
+ *
+ * Operator ruling 2026-10-25 item 6 -> A: falsifier 5 is covered here, and
+ * falsifier 6 is documented unreachable in the PR body.
+ *
+ * THE FALSIFIER. Part 1 shows the pre-fix arm FABRICATED drops on retries, and
+ * the fix removes the generic `encoderDroppedSamples++`. The obvious worry is
+ * that the fix traded fabricated drops for MISSED REAL ones: if a protobuf
+ * encode failure destroys samples and nothing books them, the removal has
+ * hidden a real loss. So this drives the DIO+PB booking arm with a genuine
+ * encode failure and asserts the loss is counted.
+ *
+ * IT IS NOT A HYPOTHETICAL. NanoPB_Encoder.c has two reporting arms, and the
+ * numbers below are read from them, not invented:
+ *
+ *   :1662  AIN message encode failure. Its own comment: "exactly one AIN
+ *          sample dies here -- plus the DIO sample when this is the message
+ *          carrying it (dioS > 0)". So it reports (dioS > 0) ? 2u : 1u.
+ *   :1688  standalone DIO message encode failure -- reports 1u. Its comment
+ *          records that "this arm previously had no else at all: no counter,
+ *          no log."
+ *
+ * ⛔ AND THE PRE-FIX ARM COULD NOT HAVE COVERED THIS, which is the point the
+ * :1662 comment makes and this test turns into an assertion: that function
+ * "returns a NON-ZERO bufferOffset whenever an earlier message succeeded, so
+ * streaming.c's `encoded == 0` arm is not even reached." When an earlier
+ * message in the same batch encoded successfully, bytesReturned > 0, and the
+ * pre-fix arm books NOTHING -- the loss was not understated, it was INVISIBLE.
+ * The removed increment was never a substitute for reporting at the encoder.
+ * ========================================================================== */
+
+/* A PB batch outcome: bytes already emitted by EARLIER messages in the same
+ * call, plus what this message's failure destroyed. The existing
+ * EncodeCallOutcome models exactly this pair -- samplesDestroyed is
+ * independent of bytesReturned, which is the property under test. */
+TEST(test_part3_dio_pb_encode_failure_loss_is_counted) {
+    struct {
+        const char *what;
+        EncodeCallOutcome call;
+        uint32_t expectNew;   /* post-fix: exactly what died */
+        uint32_t expectOld;   /* pre-fix: what the generic increment booked */
+    } cases[] = {
+        /* AIN-only failure, nothing emitted earlier: dioS == 0 -> reports 1.
+         * The one case the pre-fix arm happened to get right. */
+        { "AIN fail, first message",
+          { .bytesReturned = 0, .samplesDestroyed = 1 }, 1u, 1u },
+
+        /* ⛔ AIN+DIO failure, nothing emitted earlier: dioS > 0 -> reports 2.
+         * Pre-fix books ONE for TWO destroyed samples -- understated. */
+        { "AIN+DIO fail, first message",
+          { .bytesReturned = 0, .samplesDestroyed = 2 }, 2u, 1u },
+
+        /* ⛔⛔ AIN+DIO failure AFTER an earlier message succeeded. bufferOffset
+         * is non-zero, so streaming.c's `encoded == 0` arm is never reached:
+         * pre-fix books ZERO for two destroyed samples. INVISIBLE, not merely
+         * wrong. This row is falsifier 5's core. */
+        { "AIN+DIO fail, earlier message emitted",
+          { .bytesReturned = 64, .samplesDestroyed = 2 }, 2u, 0u },
+
+        /* ⛔ standalone DIO failure after an AIN message succeeded -- the
+         * :1688 arm, which pre-fix had no else for at all. */
+        { "standalone DIO fail, earlier message emitted",
+          { .bytesReturned = 48, .samplesDestroyed = 1 }, 1u, 0u },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        MockStreamStats newStats = {0}, oldStats = {0};
+
+        new_shape_process_call(&newStats, cases[i].call);
+        old_shape_process_call(&oldStats, cases[i].call);
+
+        /* THE FALSIFIER'S QUESTION: is the real loss counted after the fix? */
+        ASSERT_EQ(newStats.encoderDroppedSamples, cases[i].expectNew);
+        /* and what the pre-fix arm would have said about the same event */
+        ASSERT_EQ(oldStats.encoderDroppedSamples, cases[i].expectOld);
+    }
+
+    /* ⭐ THE SUMMARY CLAIM, asserted rather than left to the reader: across a
+     * DIO+PB batch where every failure is a genuine multi-sample loss, the
+     * post-fix total is EXACT and the pre-fix total is short. If the fix had
+     * hidden a real loss this sum would be the other way round. */
+    {
+        MockStreamStats newTotal = {0}, oldTotal = {0};
+        uint32_t destroyed = 0;
+        size_t j;
+
+        for (j = 0; j < sizeof(cases) / sizeof(cases[0]); j++) {
+            new_shape_process_call(&newTotal, cases[j].call);
+            old_shape_process_call(&oldTotal, cases[j].call);
+            destroyed += cases[j].call.samplesDestroyed;
+        }
+        ASSERT_EQ(newTotal.encoderDroppedSamples, destroyed);  /* 6 */
+        ASSERT_TRUE(oldTotal.encoderDroppedSamples < destroyed);
+        ASSERT_EQ(oldTotal.encoderDroppedSamples, 2u);          /* 2 of 6 */
+
+        /* encoderFailures is unchanged by #970 and still moves on every zero
+         * return -- the failure stays VISIBLE even where no sample is lost,
+         * which is the half Part 1 must not have broken. */
+        ASSERT_EQ(newTotal.encoderFailures, 2u);
+        ASSERT_EQ(oldTotal.encoderFailures, 2u);
+    }
+}
+
 int main(void) {
     RUN(test_accounting_buffer_full_no_fabrication);
     RUN(test_accounting_oversize_drop_preserved);
     RUN(test_dio_pop_new_shape_never_duplicates_or_skips);
     RUN(test_dio_pop_old_shape_duplicates_under_torn_pop);
     RUN(test_dio_pop_old_shape_benign_under_empty_pop);
+    RUN(test_part3_dio_pb_encode_failure_loss_is_counted);
     return TEST_SUMMARY();
 }
