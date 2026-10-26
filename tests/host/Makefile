@@ -81,6 +81,8 @@ SD_BENCH_SRC := ../../firmware/src/services/SCPI/SCPIStorageSD.c
 # if the function ever contains a string literal rather than hashing text it
 # might have mangled. It contains none today (pure control flow).
 ARM_BIN := run_971_tests
+FORCEGATE_BIN := run_756_tests
+SDSPI_DRV_SRC := ../../firmware/src/config/default/driver/sdspi/src/drv_sdspi.c
 SD_ARM_HELPER := SD_ArmOrRefuseWithCleanup
 SD_ARM_HELPER_SHA := 48fc182fdf552b9a5cb860d7dc16821212874f734d9504d68fd110c75c97ee9f
 
@@ -819,6 +821,47 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 # binary up to date and the guard would run the previous rule, which is the
 # same defect `$(RECIPES)` was added for one level down (#976).
 CDEF := ../../tools/lint/cdef.py
+# #756 r6 (audit MEDIUM, both legs): DRV_SDSPI_DetectPollExpireNow samples the
+# time OUTSIDE its critical section, so a caller preempted between its sample
+# and the lock can see a NEWER published detectForceAt, underflow the unsigned
+# subtraction, pass the interval gate, and double-force an exclusive SPI4
+# detection -- then rewind detectForceAt and mis-gate the next caller too.
+#
+# drv_sdspi.c is not host-compilable (Harmony/OSAL/SYS_TIME), so the test
+# re-implements the gate's two shapes, same technique as $(BENCH_BIN) and
+# $(BIN970). These greps are what stop the model from drifting away from the
+# real one -- without them the test measures its own copy of the logic.
+$(FORCEGATE_BIN): test_756_detect_force_rate_limit.c test_framework.h $(SDSPI_DRV_SRC) $(RECIPES)
+	@# the STALE-SAMPLE ARM must be present, by exact form. This is the fix;
+	@# if it goes, the test still passes (it models both shapes itself) while
+	@# the firmware is broken again -- which is the whole failure mode a
+	@# re-implementation test has.
+	@grep -qF 'if (dObj->detectForceEver && (nowCount < dObj->detectForceAt))' $(SDSPI_DRV_SRC) \
+	  || { echo "ERROR: $(SDSPI_DRV_SRC) no longer refuses a STALE time sample in"; \
+	       echo "       DRV_SDSPI_DetectPollExpireNow (#756 r6)."; \
+	       echo "       nowCount is sampled OUTSIDE the critical section, so without"; \
+	       echo "       this arm a caller preempted before the lock computes"; \
+	       echo "       nowCount - detectForceAt as an unsigned UNDERFLOW, passes the"; \
+	       echo "       pollingIntervalMs gate, forces a second back-to-back exclusive"; \
+	       echo "       SPI4 detection, and moves detectForceAt BACKWARDS."; \
+	       echo "       test_756_detect_force_rate_limit.c models both shapes, so it"; \
+	       echo "       keeps passing without this -- which is why the pin exists."; \
+	       exit 1; }
+	@# and the sample must still be taken outside the section: if someone
+	@# "fixes" this by moving it inside, the arm above becomes dead and the
+	@# test's premise is gone. Both facts, or neither is meaningful.
+	@n=`grep -c 'const uint64_t nowCount = SYS_TIME_Counter64Get();' $(SDSPI_DRV_SRC)`; \
+	 c=`grep -c 'critState = OSAL_CRIT_Enter(OSAL_CRIT_TYPE_HIGH);' $(SDSPI_DRV_SRC)`; \
+	 test "$$n" -eq 1 && test "$$c" -ge 1 \
+	  || { echo "ERROR: $(SDSPI_DRV_SRC)'s detect-force gate no longer has the"; \
+	       echo "       shape test_756 models: nowCount samples=$$n (expected 1),"; \
+	       echo "       OSAL_CRIT_Enter sites=$$c (expected >= 1)."; \
+	       echo "       If the sample moved INSIDE the section the stale-sample arm"; \
+	       echo "       is dead code and this test is measuring nothing -- re-derive"; \
+	       echo "       both before changing this pin."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -o $(FORCEGATE_BIN) test_756_detect_force_rate_limit.c
+
 $(ARM_BIN): test_971_sd_arm_refusal_order.c test_framework.h $(SD_BENCH_SRC) hash_function.py $(CDEF) $(RECIPES)
 	@python3 hash_function.py --find $(SD_BENCH_SRC) $(SD_ARM_HELPER) >/dev/null 2>&1 \
 	  || { python3 hash_function.py --find $(SD_BENCH_SRC) $(SD_ARM_HELPER); \
@@ -3057,7 +3100,7 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # TWENTY-SEVEN run prerequisites and this branch's had TWENTY-FOUR, each right
 # about itself. The union is TWENTY-EIGHT -- main's twenty-seven plus this
 # branch's one. Verified by cross-check rather than by eye: every one of the 28
-# prerequisites has a `./$(X)` recipe line and an entry in `clean` (28/28/33),
+# prerequisites has a `./$(X)` recipe line and an entry in `clean` (29/29/34),
 # with no duplicates -- the check that catches a dropped or doubled entry, which
 # is the failure this block's own history keeps recording.
 # #1029's names carry the 1029 suffix so they cannot shadow #1000's
@@ -3066,12 +3109,13 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SY
      $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) \
      $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) \
-     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN)
+     $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
 	./$(BENCH_BIN)
 	./$(ARM_BIN)
+	./$(FORCEGATE_BIN)
 	./$(JSONESC_BIN)
 	./$(SYSINFO_BIN)
 	./$(SUSPEND_BIN)
@@ -3102,6 +3146,6 @@ clean:
 	      $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) \
 	      $(HEXWIN_BIN) $(LOGONCE_BIN) $(GEN_1125) $(DACREINIT_BIN) $(CALFINITE_BIN) \
 	      $(SDLOG1029_BIN) $(SDLOG1029_GEN) $(NAME_BIN) $(SDLOG1029_GEN).tmp $(FAILNEXT_BIN) \
-	      $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN)
+	      $(FAILNEXT_REAL_BIN) $(ARM_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN)
 
 .PHONY: run clean

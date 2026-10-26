@@ -3263,10 +3263,20 @@ void DRV_SDSPI_DetectPollKick(SYS_MODULE_OBJ object)
  * The rate-limiter state shares the publish's critical section rather than
  * being left best-effort. The section is mandatory for detectForceReq (a lost
  * increment is a lost request, i.e. failure (1) again), so covering the
- * timestamp compare-and-commit costs nothing extra and makes the limiter
- * exact instead of letting two concurrent callers both pass it. detectForceAt
- * is 64-bit, which is never an atomic access on PIC32MZ (mcu-hygiene section
- * 3), so it would have needed the section regardless.
+ * timestamp compare-and-commit costs nothing extra. detectForceAt is 64-bit,
+ * which is never an atomic access on PIC32MZ (mcu-hygiene section 3), so it
+ * would have needed the section regardless.
+ *
+ * ⚠ #756 r6 CORRECTS THIS PARAGRAPH. It used to claim the section "makes the
+ * limiter exact instead of letting two concurrent callers both pass it". It
+ * does not, and two concurrent callers COULD both pass it: `nowCount` is
+ * sampled outside the section, so a caller preempted between its sample and
+ * the lock sees a detectForceAt newer than its own timestamp, underflows the
+ * unsigned subtraction, and passes a gate that should have refused it. The
+ * section makes the PUBLISH indivisible; it never made the LIMITER exact,
+ * because one of the limiter's two operands is read before it is taken. The
+ * gate below now rejects a stale sample explicitly, which is what makes the
+ * limiter exact -- the section alone never could.
  *
  * HAND-EDITED. This file sits under config/default/, i.e. MCC/Harmony
  * territory: a regeneration would remove this function entirely with NO
@@ -3314,7 +3324,35 @@ void DRV_SDSPI_DetectPollExpireNow(SYS_MODULE_OBJ object)
          * enormous and the force would be ALLOWED, which is the safe
          * direction for a gate whose failure mode is refusing a present
          * card. */
-        if ((dObj->detectForceEver == false) ||
+        /* ⛔ #756 r6: OUR SAMPLE MAY BE STALE, and that is not the same hazard
+         * as the clock running backwards.
+         *
+         * nowCount is sampled above, OUTSIDE this section (deliberately -- see
+         * the note there). So a caller can be preempted between its sample and
+         * this OSAL_CRIT_Enter while ANOTHER task publishes a newer
+         * detectForceAt. When the first caller resumes, its nowCount is older
+         * than the published timestamp, `nowCount - detectForceAt` UNDERFLOWS
+         * to a huge unsigned value, the interval gate passes, and the result is
+         * a second exclusive SPI4 detection back-to-back with the first --
+         * exactly what pollingIntervalMs exists to prevent. It also assigns
+         * detectForceAt = nowCount below, moving the timestamp BACKWARDS and
+         * mis-gating the next caller too.
+         *
+         * The comment below argues that a backwards-running clock yields an
+         * enormous difference and so fails safe. That argument is about the
+         * CLOCK and it is still true; it does not cover cross-task sample
+         * REORDERING, where the stale operand is the problem rather than the
+         * counter.
+         *
+         * Refusing is lossless: detectForceAt being newer than our sample
+         * means another caller has already published a force that has not been
+         * consumed yet, so the poll this call wanted is already in flight. */
+        if (dObj->detectForceEver && (nowCount < dObj->detectForceAt))
+        {
+            /* stale sample -- a newer force is already pending. Refuse, and
+             * leave detectForceAt alone so it can never move backwards. */
+        }
+        else if ((dObj->detectForceEver == false) ||
             ((nowCount - dObj->detectForceAt) >= minCount))
         {
             dObj->detectForceAt   = nowCount;
