@@ -343,6 +343,29 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      # #904: test_904_cal_pair_tear.c's target greps daqifi_settings.c for
+      # the WRITE-half critical sections at the two writer sites it owns
+      # (LoadADCCalSettings' copy loop and SaveADCCalSettings' read-back) and
+      # fails the BUILD if either is unguarded. SCPIADC.c, grepped for the
+      # chanCALM/chanCALB setters, is already covered by the SCPI/** entry
+      # above -- daqifi_settings.c was matched by NOTHING here, so a PR
+      # editing only the file holding two of the three guarded sites queued no
+      # host-test job and the guards could not fire for their own subject.
+      # Confirmed rather than assumed: zero hits for 'daqifi_settings' in this
+      # file before this entry, and no host test on origin/main reads that
+      # source -- test_904 is among the first, so the gap is introduced by
+      # this PR. Same class as #941/AD7609Scale.h: a suite wired up without
+      # its trigger.
+      # Scoped to the one file, not services/, for the same reason
+      # JSON_StringEscape.h is: that directory holds streaming.c,
+      # wifi_manager.c and the whole SCPI/ subtree, none of which this test
+      # reads, and the guards fail the build BY NAME if a site moves.
+      #
+      # NOTE: PR #1077 (#908) adds this identical entry in its own hunk, for
+      # its own test's guards over the same file. Whichever merges second
+      # should keep ONE copy -- same situation, and same resolution, as the
+      # #1017/#1000 note further down this file.
+      - 'firmware/src/services/daqifi_settings.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
       # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its
@@ -422,6 +445,29 @@ on:
       - 'firmware/src/HAL/DAC7718/**'
       - 'firmware/src/services/JSON_StringEscape.h'
       - 'firmware/src/services/JSON_Encoder.c'
+      # #904: test_904_cal_pair_tear.c's target greps daqifi_settings.c for
+      # the WRITE-half critical sections at the two writer sites it owns
+      # (LoadADCCalSettings' copy loop and SaveADCCalSettings' read-back) and
+      # fails the BUILD if either is unguarded. SCPIADC.c, grepped for the
+      # chanCALM/chanCALB setters, is already covered by the SCPI/** entry
+      # above -- daqifi_settings.c was matched by NOTHING here, so a PR
+      # editing only the file holding two of the three guarded sites queued no
+      # host-test job and the guards could not fire for their own subject.
+      # Confirmed rather than assumed: zero hits for 'daqifi_settings' in this
+      # file before this entry, and no host test on origin/main reads that
+      # source -- test_904 is among the first, so the gap is introduced by
+      # this PR. Same class as #941/AD7609Scale.h: a suite wired up without
+      # its trigger.
+      # Scoped to the one file, not services/, for the same reason
+      # JSON_StringEscape.h is: that directory holds streaming.c,
+      # wifi_manager.c and the whole SCPI/ subtree, none of which this test
+      # reads, and the guards fail the build BY NAME if a site moves.
+      #
+      # NOTE: PR #1077 (#908) adds this identical entry in its own hunk, for
+      # its own test's guards over the same file. Whichever merges second
+      # should keep ONE copy -- same situation, and same resolution, as the
+      # #1017/#1000 note further down this file.
+      - 'firmware/src/services/daqifi_settings.c'
       - 'firmware/src/services/sd_card_services/sd_card_manager.h'
       - 'firmware/src/config/default/FreeRTOSConfig.h'
       # #1056: the shared wait loop test_1056_wait_loop.c compiles, plus its

@@ -53,3 +53,4 @@ run_*
 !run_*.c
 !run_*.h
 !run_*.py
+run_904_tests
