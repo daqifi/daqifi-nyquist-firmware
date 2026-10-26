@@ -3121,6 +3121,23 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # sufficient alone".
 TEAR904_BIN := run_904_tests
 
+# ⚠ THIS DEFINITION MUST STAY ABOVE THE RULE BELOW. make expands a
+# PREREQUISITE list when it READS the rule, so a variable defined later in
+# the file expands to NOTHING there and the dependency silently disappears.
+# It was defined below `run:` and did exactly that: daqifi_settings.c was not
+# a dependency of run_904_tests, so an edit to the file the guards grep
+# reused the stale binary and the guards did not run.
+#
+# The recipe's uses were unaffected, which is what made it invisible -- recipe
+# lines expand at EXECUTION time, after the whole file is parsed, so the greps
+# always had the right path. Correct recipe, absent dependency.
+#
+# And do not verify this by printing the variable: `make -np` reports
+# SETTINGS_SRC_904 as a valid path even while broken, because that dump also
+# happens after the parse. The only evidence is the EXPANDED RULE line
+# (`make -np | grep '^run_904_tests:'`), which must name this file.
+SETTINGS_SRC_904 := ../../firmware/src/services/daqifi_settings.c
+
 $(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h $(SETTINGS_SRC_904) $(SCPIADC_SRC) $(RECIPES)
 	@for pair in "daqifi_settings_LoadADCCalSettings:$(SETTINGS_SRC_904)" \
 	             "daqifi_settings_SaveADCCalSettings:$(SETTINGS_SRC_904)"; do \
@@ -3160,8 +3177,6 @@ CNT_IN_FN_DEF_904 = awk -v fn="$(2)" -v pat='$(3)' \
 	 f && /^(static )?scpi_result_t .*{[[:space:]]*$$/                { exit } \
 	 f && index($$0, pat)                                             { n++ } \
 	 END { print n+0 }' $(1)
-
-SETTINGS_SRC_904 := ../../firmware/src/services/daqifi_settings.c
 
 run: $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
      $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) \
