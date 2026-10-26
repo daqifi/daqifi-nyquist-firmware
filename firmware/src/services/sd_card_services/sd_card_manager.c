@@ -609,6 +609,22 @@ typedef struct {
     SYS_FS_HANDLE manifestHandle;
     bool manifestOpenAttempted;
     uint32_t manifestLines;      // lines appended this session (diagnostics)
+    /* ⛔ #1124 r11 finding 1: set when a short write left an UNTERMINATED
+     * fragment in the manifest and the newline that would have closed it also
+     * failed. Once set, nothing more is appended this session.
+     *
+     * The alternative -- appending anyway -- is the defect: FatFs does not
+     * latch a write error, so the handle stays usable, and once a truncation
+     * frees clusters the NEXT record is written directly onto the partial
+     * line. The result is one merged record that LOOKS well-formed and is
+     * wrong, which is worse than a manifest that stops early. A reader can see
+     * a missing trailing newline; it cannot see two records fused into one.
+     *
+     * A flag rather than invalidating the handle, because UNMOUNT_DISK calls
+     * sd_CloseSessionManifest() regardless -- the handle is still needed for
+     * that close to flush the directory entry. Lives in gSDCardData, already
+     * allocated, so it adds no new static and needs no STATIC_POOL payment. */
+    bool manifestFragmentPending;
 
     // Operation result tracking
     bool lastOperationSuccess;   // Result of last completed operation
@@ -1571,6 +1587,7 @@ bool sd_card_manager_Init(sd_card_manager_settings_t *pSettings) {
     gSDCardData.manifestHandle = SYS_FS_HANDLE_INVALID;
     gSDCardData.manifestOpenAttempted = false;
     gSDCardData.manifestLines = 0;
+    gSDCardData.manifestFragmentPending = false;
     /* #981: and the fault-injection arm, for the same reason plus a stronger
      * one -- this is the line that makes "a reboot always clears it" TRUE.
      * SYST:REBoot is RCON_SoftwareReset(), the same reset class #409 is about,
@@ -2367,6 +2384,13 @@ static void sd_OpenSessionManifest(void) {
         return;
     }
     gSDCardData.manifestLines = 0;
+    /* #1124 r11 finding 1: the fragment latch is a property of the OPEN FILE,
+     * not of the session, so a successful open clears it. That matters for the
+     * fallback arm above: if the primary name was unusable and this is a
+     * different file, it cannot inherit a fragment from one it never wrote to.
+     * The two session-start resets are not sufficient on their own, because an
+     * open can happen later than a session start. */
+    gSDCardData.manifestFragmentPending = false;
     LOG_D("[SD] #924 manifest '%s' open\r\n", path);
 }
 
@@ -2379,6 +2403,13 @@ static void sd_OpenSessionManifest(void) {
  * unconditional line. */
 static void sd_AppendManifestLine(void) {
     if (gSDCardData.manifestHandle == SYS_FS_HANDLE_INVALID) {
+        return;
+    }
+    /* #1124 r11 finding 1: an unterminated fragment is already in the file and
+     * could not be closed, so appending here would FUSE this record onto it.
+     * Stop for the session. The handle is deliberately left open -- UNMOUNT_DISK
+     * closes it, which is what flushes the directory entry for what DID land. */
+    if (gSDCardData.manifestFragmentPending) {
         return;
     }
 
@@ -2433,13 +2464,40 @@ static void sd_AppendManifestLine(void) {
          * newline would invent a blank line the format does not have -- a
          * second defect introduced by the recovery for the first.
          *
-         * Best effort and deliberately unchecked otherwise: this is the
-         * recovery path for a write that has already failed, so a failure HERE
-         * has no further remedy, and the loss is already logged above. */
+         * ⛔ #1124 r11 finding 1 CORRECTS THE REST OF THIS COMMENT. It said the
+         * newline was "best effort and deliberately unchecked ... a failure
+         * HERE has no further remedy, and the loss is already logged above."
+         * There IS a further remedy, and the missing one is the whole defect:
+         *
+         *   - the reason this arm runs is almost always a FULL CARD, and on a
+         *     full card this newline fails too;
+         *   - FatFs does not latch a write error, so manifestHandle stays
+         *     usable afterwards;
+         *   - so once anything frees clusters -- a truncation, a delete -- the
+         *     NEXT record is written straight onto the unterminated fragment
+         *     and the two FUSE into one line that looks well-formed and is
+         *     wrong.
+         *
+         * "The loss is already logged" was true of the SHORT WRITE and said
+         * nothing about the fragment it leaves behind. A reader can notice a
+         * missing trailing newline; nothing lets a reader notice two records
+         * fused into one, which is why that outcome is worse than a manifest
+         * that simply stops early.
+         *
+         * So: check the terminator, and if it did not land, stop appending for
+         * the rest of the session. */
+        bool terminated = true;
         if (off > 0u) {
             static const char nl = '\n';
-            (void)SYS_FS_FileWrite(gSDCardData.manifestHandle,
-                                   (const void*)&nl, sizeof(nl));
+            terminated = ((int)SYS_FS_FileWrite(gSDCardData.manifestHandle,
+                                                (const void*)&nl,
+                                                sizeof(nl)) == (int)sizeof(nl));
+        }
+        if (!terminated) {
+            gSDCardData.manifestFragmentPending = true;
+            /* Remedy first -- Logger truncates the TAIL at 125 B. */
+            LOG_E("[SD] #924 manifest stopped: fragment of %u byte(s) could not "
+                  "be terminated", (unsigned)off);
         }
         return;
     }
@@ -2984,6 +3042,7 @@ void sd_card_manager_ProcessState() {
                  * retrying a failed create at every rotation. */
                 gSDCardData.manifestOpenAttempted = false;
                 gSDCardData.manifestLines = 0;
+                gSDCardData.manifestFragmentPending = false;
                 memset(gSDCardData.baseFilename, 0, sizeof(gSDCardData.baseFilename));
                 gSDCardData.fileSplittingEnabled = false;
                 LOG_D("[SD] File splitting state reset for next session\r\n");
