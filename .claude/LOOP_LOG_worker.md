@@ -11231,3 +11231,41 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   `$?` family again. `--verify --quiet` stays, because it makes the safe path the DEFAULT.
 - ✅ **Removed the shared `/tmp/._al.$$` rather than guarding it with a trap.** A captured variable has no
   path to leak, collide, or be replaced between write and read — on a box where that hazard is *measured*.
+
+- ✅ **fw#1152 BASE REFRESH resolved and verified; side branch `nqb/1152-round8` at
+  `30c9194a65e4a2ca56616610b9998c53fd6d11d9`. PR head DELIBERATELY UNMOVED at `0503c3516`** — the router
+  asked for refresh + round 8 in ONE push, so the side branch exists only to give the fire a base.
+  ⭐ **The conflict was `tests/host/Makefile`'s `run:`/`clean:` registries — the exact multiplicity shape my
+  own LIMITATIONS.md names, with 364 repeated lines in 3,181.** Resolved by **per-token max-of-parents**:
+  region 1 ours 30 / theirs 30 / **union 31**, region 2 24/24/**25**, with exactly one token unique per
+  side (`$(USECALTYPE_BIN)` ours, `$(FORCEGATE_BIN)` theirs). Cross-list invariant **HOLDS**: 30 prereqs /
+  30 `./invocations` / 35 clean entries, no duplicates, no gaps, both new tokens in all three lists.
+  Host suite **28 binaries · 320 tests · 0 failed · 44,585 assertions**, `make rc=0`.
+  > ⚠ **v4 gave EXIT=3 with 10 UNACCOUNTED and 8 INVENTED here, and I did NOT lean on it.** I re-wrapped
+  > the continuation lines, so every old line vanished and new ones appeared. **RE-WRAPPING A CONTINUATION
+  > LIST DEFEATS LINE-LEVEL ACCOUNTING** — a domain limit, not a defect, and it belongs in LIMITATIONS
+  > because re-wrapping is the normal way these lists get resolved. The token check is load-bearing here.
+- ⛔ **THREE OF MY OWN INSTRUMENTS LIED IN ONE HOUR, all caught by disbelieving a result:**
+  (1) the cross-list check reported **VIOLATED** — 8 prereqs of 31 — because a `(?=\n[^\t\n])` lookahead
+  stopped at the first continuation line, which begins with **spaces**; joining backslash continuations
+  into logical lines first gives 30/30/35 and HOLDS. *An extraction window that is wrong measures the
+  instrument, not the file.*
+  (2) I printed "host suite GREEN" off `tail -4`, which was **one binary's** summary (6 tests, 26
+  assertions) against the suite's **320 / 44,585**. **A tail is not a total.**
+  (3) An **apostrophe inside an f-string** killed the cross-list check silently while the suite ran green
+  right after — the **second** apostrophe-in-a-quoted-program of the day after the one that closed my awk.
+- ⛔⛔ **sk#236 r2 BLOCK: the HIGH is an asymmetry MY OWN COMMENT ASSERTED AWAY.** v4 says
+  `dm<0 or dr<0 -> floor = target = max(0, b+dm+dr)  (no same-change reading to be ambiguous about)`.
+  **That parenthesis is false.** Both sides deleting the SAME occurrence *is* the same-change reading on
+  the delete side; I built a band for additions and collapsed deletions to the independent reading on the
+  strength of an assertion I never tested. Repro exits **0** on a real drop.
+  > ⭐ **A comment claiming a case cannot arise is load-bearing, and nobody tests a parenthesis.** Same
+  > family as an unasserted splice failing silently. Fix is symmetry: independent reading is the permissive
+  > end, same-change (`b - max(del)`) the strict end, the gap AMBIGUOUS. Queued behind fw#1152.
+- ✅ **Two things settled before editing that I would otherwise have got wrong:** `-200` is pushed
+  **automatically** by `parser.c:143-146` when a callback returns non-OK, so an explicit `SCPI_ErrorPush`
+  on these paths would be redundant and risk a double entry; and the 75 KB host guard references
+  `RawOutputMode` **zero times**, so the raw-mode behaviour ruling 9=A is about is entirely untested.
+- ⏳ **ONE fire running** (sonnet, isolated worktree) on the round-8 implementation: the early independent
+  raw-mode exit, the `:1847` install-before-failing fix, both `param1` directions with a mutation proof per
+  arm, the Makefile ordering guard updated without weakening, and the python companion regression.
