@@ -145,6 +145,56 @@ bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig) 
     return true;
 }
 
+/* #908 (codex-r6 findings 2+3): the COMPOSITE answer, computed coherently.
+ *
+ * The emitter used to call daqifi_settings_CalIsIdentity() and then
+ * daqifi_settings_GetActiveCalBank() as two separate reads. A higher-priority
+ * CONF:ADC:LOADcal or LOADFcal landing between them -- or part-way through the
+ * scan -- yields a pair the device never actually had: identity-ness measured
+ * against one bank's coefficients, attributed to the other bank's name.
+ * Introduced by this PR, because this PR is what made `source` depend on two
+ * facts instead of one.
+ *
+ * No critical section, and deliberately so. gActiveCalBank is an enum, i.e. an
+ * aligned 32-bit object, and aligned 32-bit reads are atomic on PIC32MZ -- so
+ * neither read can tear. What was missing is not atomicity but COHERENCE
+ * between them, and the fix for that is to detect interference rather than to
+ * exclude it: read the bank, scan, read the bank again. A LOADcal/LOADFcal
+ * changes BOTH the bank and the coefficients, so an unchanged bank across the
+ * scan is sufficient evidence that no load completed underneath it.
+ *
+ * ⚠ CHANCALM/CHANCALB change coefficients WITHOUT changing the bank, and are
+ * deliberately not detected here: either outcome they produce is a state the
+ * device genuinely had, so reporting before-or-after is honest. It is only the
+ * CROSS of two different banks that would be fiction.
+ *
+ * Bounded at three attempts rather than looping: this runs on a SCPI query
+ * path, and an unbounded retry would turn a contended moment into a stall.
+ * ⚠ On exhaustion it reports NONE, which is the UNDERSTATING direction -- a
+ * client reading "none" treats the readings as uncalibrated and distrusts
+ * absolute accuracy, which is safe. The alternative, naming a bank, is a false
+ * provenance claim, and false provenance is the whole thing #908 exists to
+ * prevent. Three consecutive races needs three load completions inside three
+ * short scans; the fallback exists to be correct, not because it is expected.
+ */
+DaqifiCalSource daqifi_settings_GetCalSource(const AInRuntimeArray* channelRuntimeConfig) {
+    for (uint8_t attempt = 0; attempt < 3u; attempt++) {
+        const DaqifiSettingsType bankBefore = gActiveCalBank;
+        const bool isIdentity = daqifi_settings_CalIsIdentity(channelRuntimeConfig);
+        const DaqifiSettingsType bankAfter = gActiveCalBank;
+
+        if (bankBefore != bankAfter) {
+            continue;   /* a load completed under the scan; re-read */
+        }
+        if (isIdentity) {
+            return DAQIFI_CAL_SOURCE_NONE;
+        }
+        return (bankAfter == DaqifiSettings_UserAInCalParams)
+                ? DAQIFI_CAL_SOURCE_USER : DAQIFI_CAL_SOURCE_FACTORY;
+    }
+    return DAQIFI_CAL_SOURCE_NONE;
+}
+
 
 
 
@@ -418,14 +468,6 @@ bool daqifi_settings_ClearNvm(DaqifiSettingsType type) {
     return nvm_ErasePage(address);
 }
 
-/* #908 (codex-r5): now just Stage + Publish, so the two callers that want the
- * combined behaviour keep their signature.
- *
- * Boot (app_freertos.c) and CalLoadCommon (CONF:ADC:LOADcal / LOADFcal) have
- * nothing to persist, so for them "load" IS stage-then-publish and a failure
- * genuinely means "nothing happened" -- the stage touches nothing live.
- * ADCUseCalSetClaimed is the one caller that must persist BETWEEN the two, so
- * it calls them separately. */
 bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray* channelRuntimeConfig)
 {
     bool status = true;

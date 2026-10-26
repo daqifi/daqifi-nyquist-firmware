@@ -331,6 +331,39 @@ extern "C" {
     bool daqifi_settings_CalIsIdentity(const AInRuntimeArray* channelRuntimeConfig);
 
     /**
+     * #908: what CONF:CAP:JSON?'s identity.cal.source reports.
+     *
+     * Operator ruling, 2026-10-25 (item 3): the wire values are
+     * {factory, user, none}. NONE means every channel's live coefficients are
+     * CalM = 1 / CalB = 0 -- no correction applied -- whichever bank was
+     * selected.
+     */
+    typedef enum eDaqifiCalSource {
+        DAQIFI_CAL_SOURCE_NONE = 0,
+        DAQIFI_CAL_SOURCE_FACTORY,
+        DAQIFI_CAL_SOURCE_USER,
+    } DaqifiCalSource;
+
+    /**
+     * #908 (codex-r6): the cal source as ONE coherent answer.
+     *
+     * ⚠ Use this rather than pairing daqifi_settings_CalIsIdentity() with
+     * daqifi_settings_GetActiveCalBank() yourself. Those are two reads, and a
+     * higher-priority CONF:ADC:LOADcal / LOADFcal between them -- or part-way
+     * through the identity scan -- produces a pair the device never had:
+     * identity measured against one bank, attributed to the other.
+     *
+     * Detects interference rather than excluding it, so it takes no critical
+     * section: a load changes both the bank and the coefficients, so an
+     * unchanged bank across the scan proves no load completed underneath.
+     * Bounded retries; on exhaustion reports NONE, the understating direction.
+     *
+     * @param channelRuntimeConfig the live AIn runtime array
+     * @return the source to report
+     */
+    DaqifiCalSource daqifi_settings_GetCalSource(const AInRuntimeArray* channelRuntimeConfig);
+
+    /**
      * #14: Sets the runtime device friendly name cache. The value is
      * persisted to NVM only on the next TopLevelSettings save (which
      * captures this cache automatically). Truncated to fit

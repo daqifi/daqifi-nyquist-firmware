@@ -8961,11 +8961,15 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * the closest true statement a single key can make about provenance.
      * The second closing brace closes identity{}. */
     const bool factoryCalMissing = daqifi_settings_FactoryCalIsMissing();
-    const char * calSource = "none";
-    if (!daqifi_settings_CalIsIdentity(&rt->AInChannels)) {
-        calSource = (daqifi_settings_GetActiveCalBank()
-                        == DaqifiSettings_UserAInCalParams)
-                  ? "user" : "factory";
+    /* ONE coherent read, not two. Pairing CalIsIdentity() with
+     * GetActiveCalBank() here let a higher-priority LOADcal/LOADFcal land
+     * between them and produce a source the device never had -- codex-r6
+     * findings 2+3. daqifi_settings_GetCalSource does both coherently. */
+    const char * calSource;
+    switch (daqifi_settings_GetCalSource(&rt->AInChannels)) {
+        case DAQIFI_CAL_SOURCE_FACTORY: calSource = "factory"; break;
+        case DAQIFI_CAL_SOURCE_USER:    calSource = "user";    break;
+        default:                        calSource = "none";    break;
     }
     scpi_printf(context,
         "\"cal\":{\"factory_present\":%s,\"source\":\"%s\"}},",
