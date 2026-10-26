@@ -3105,11 +3105,70 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 # is the failure this block's own history keeps recording.
 # #1029's names carry the 1029 suffix so they cannot shadow #1000's
 # $(SDLOG_BIN)/$(GEN_1000).
-run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
+# ---------------------------------------------------------------------------
+# PR firmware#1048 (issue #904): the CalM/CalB 64-bit pair, BOTH halves.
+#
+# This row was `blocked` on an operator ruling that it is "UNVALIDATABLE on
+# this station's hardware" -- every board here holds IDENTITY coefficients, and
+# a torn read of 1.0 / 0.0 is indistinguishable from a clean one. The ruling
+# named two exits: a calibrated board, or a host-level test injecting the pair
+# directly. test_904_cal_pair_tear.c is the second, so this target is what
+# discharges the block.
+#
+# The guards below pin the WRITE half across all three writer sites, because
+# the model cannot see the firmware. #1054 shipped the read half; #1086's
+# read-side comment states the rule the matrix encodes -- "neither half is
+# sufficient alone".
+TEAR904_BIN := run_904_tests
+
+$(TEAR904_BIN): test_904_cal_pair_tear.c test_framework.h $(SETTINGS_SRC_904) $(SCPIADC_SRC) $(RECIPES)
+	@for pair in "daqifi_settings_LoadADCCalSettings:$(SETTINGS_SRC_904)" \
+	             "daqifi_settings_SaveADCCalSettings:$(SETTINGS_SRC_904)"; do \
+	   fn=`echo $$pair | cut -d: -f1`; src=`echo $$pair | cut -d: -f2`; \
+	   sed -n "/^bool $$fn/,/^}/p" $$src > /tmp/.fw904_fn.$$$$; \
+	   e=`grep -c 'taskENTER_CRITICAL' /tmp/.fw904_fn.$$$$`; \
+	   m=`grep -c '\.CalM' /tmp/.fw904_fn.$$$$`; \
+	   rm -f /tmp/.fw904_fn.$$$$; \
+	   test "$$e" -ge 1 && test "$$m" -ge 1 \
+	     || { echo "ERROR: $$fn in $$src no longer guards its 64-bit CalM/CalB"; \
+	          echo "       copy loop (taskENTER_CRITICAL=$$e, CalM refs=$$m)."; \
+	          echo "       #1054 guards the READERS, so an unguarded WRITER does"; \
+	          echo "       not leave a symmetric gap -- it hands a protected"; \
+	          echo "       reader a TORN pair, which the critical section then"; \
+	          echo "       makes it confident in. See the 2x2 matrix in"; \
+	          echo "       test_904_cal_pair_tear.c: neither half suffices alone."; \
+	          exit 1; }; \
+	 done
+	@for fn in ADCChanCalmSetClaimed ADCChanCalbSetClaimed; do \
+	   n=`$(call CNT_IN_FN_DEF_904,$(SCPIADC_SRC),$$fn,taskENTER_CRITICAL)`; \
+	   test "$$n" -ge 1 \
+	     || { echo "ERROR: $$fn in $(SCPIADC_SRC) stores a 64-bit cal"; \
+	          echo "       coefficient with no critical section (found $$n)."; \
+	          echo "       These are two of #904's three writer sites."; \
+	          exit 1; }; \
+	 done
+	$(CC) $(CFLAGS) -o $(TEAR904_BIN) test_904_cal_pair_tear.c
+
+# Definition-anchored counter. ⚠ The generic CNT_IN_FN anchors on the first
+# "^(static )?scpi_result_t <fn>[(]" and exits at the next one, so for a
+# FORWARD-DECLARED function it starts at the prototype and exits immediately,
+# returning 0 for a body that plainly contains the pattern. Both
+# ADCChanCalm/CalbSetClaimed are forward-declared. A guard expecting a nonzero
+# count fails loudly on that 0; one expecting ABSENCE would pass VACUOUSLY.
+CNT_IN_FN_DEF_904 = awk -v fn="$(2)" -v pat='$(3)' \
+	'$$0 ~ "^(static )?scpi_result_t " fn "[(]" && /{[[:space:]]*$$/ { f=1; next } \
+	 f && /^(static )?scpi_result_t .*{[[:space:]]*$$/                { exit } \
+	 f && index($$0, pat)                                             { n++ } \
+	 END { print n+0 }' $(1)
+
+SETTINGS_SRC_904 := ../../firmware/src/services/daqifi_settings.c
+
+run: $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \
      $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) $(NAME_BIN) $(WAITLOOP_BIN) $(SDLOG_BIN) \
      $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) \
      $(REPLYBUF_BIN) $(HEXWIN_BIN) $(LOGONCE_BIN) $(DACREINIT_BIN) $(CALFINITE_BIN) $(SDLOG1029_BIN) \
      $(FAILNEXT_BIN) $(FAILNEXT_REAL_BIN) $(SCPIDAC_RAILGATE_BIN) $(FORCEGATE_BIN)
+	./$(TEAR904_BIN)
 	./$(BIN)
 	./$(FMT_BIN)
 	./$(AD7609_BIN)
@@ -3141,6 +3200,7 @@ run: $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SY
 	./$(SCPIDAC_RAILGATE_BIN)
 
 clean:
+	rm -f $(TEAR904_BIN)
 	rm -f $(BIN) $(UUT) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) $(SUSPEND_BIN) $(DAC980_BIN) $(HELP_BIN) \
 	      $(WAITLOOP_BIN) $(SDLOG_BIN) $(SCPI999_BIN) $(SUSPENDREASON_BIN) $(GEN_1000) \
 	      $(LOGCEIL_BIN) $(SCAN1112_BIN) $(STARTARM_BIN) $(START_BIN) $(REPLYBUF_BIN) \
