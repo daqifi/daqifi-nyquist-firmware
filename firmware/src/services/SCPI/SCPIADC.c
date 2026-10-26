@@ -1667,12 +1667,23 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
     //  Load existing settings
     if (!daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings, &tmpTopLevelSettings)) return SCPI_RES_ERR;
 
-    /* The selection NVM still names, captured before it is overwritten. This
-     * one bool is the whole rollback state the save-failure path below needs
-     * -- the bank it names is still in NVM, so the runtime array can be
-     * restored by re-reading it rather than by snapshotting 768 B of
-     * coefficients. */
-    const bool prevCalVals = tmpTopLevelSettings.settings.topLevelSettings.calVals;
+    /* #908 (codex-r2 HIGH): snapshot the LIVE coefficients before the load, so
+     * a failed save can put back exactly what was in effect on entry --
+     * including CHANCALM/CHANCALB edits that were never persisted. See the
+     * rollback block below for why re-reading NVM is not equivalent.
+     *
+     * Static, and safe as such because every SCPI writer of these fields takes
+     * the same Streaming_BeginConfigChange() claim as this command, so none can
+     * interleave or re-enter. Sized to the array's capacity; only the live
+     * Size entries are captured and restored. */
+    static struct { double CalM; double CalB; } sCalSnapshot[MAX_AIN_CHANNEL];
+    const uint8_t snapshotCount =
+            (pRuntimeAInChannels->Size < MAX_AIN_CHANNEL)
+            ? (uint8_t)pRuntimeAInChannels->Size : (uint8_t)MAX_AIN_CHANNEL;
+    for (uint8_t ch = 0; ch < snapshotCount; ch++) {
+        sCalSnapshot[ch].CalM = pRuntimeAInChannels->Data[ch].CalM;
+        sCalSnapshot[ch].CalB = pRuntimeAInChannels->Data[ch].CalB;
+    }
 
     /* #908: LOAD THE COEFFICIENTS BEFORE PERSISTING THE SELECTION.
      *
@@ -1739,34 +1750,48 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      * #620 principle at the top of this function -- an error must not leave
      * state changed -- applied to the runtime array instead of to NVM.
      *
-     * The rollback needs NO scratch buffer. The audit costed a snapshot at
-     * 768 B (MAX_AIN_CHANNEL 48 x CalM+CalB, both double -- the only two
-     * fields the load writes), but the PREVIOUS bank is still in NVM
-     * untouched, so re-reading it restores the runtime array from the
-     * authoritative source. One bool of saved state, and the extra NVM read
-     * happens only on the failure path.
+     * ⛔ RESTORED FROM A SNAPSHOT OF THE LIVE VALUES, not by re-reading NVM.
      *
-     * If that restoring load ALSO fails, the previous bank was unloadable --
-     * which means the coefficients at entry were boot's identity defaults, so
-     * identity is precisely the state to return to. Writing it explicitly
-     * keeps the "nothing changed" guarantee total rather than
-     * best-effort. gActiveCalBank needs no repair in that branch: with
-     * identity coefficients live, daqifi_settings_CalIsIdentity reports
-     * source:"identity" whatever bank is named. */
+     * An earlier revision of this fix rolled back by re-loading the bank NVM
+     * still named, on the argument that NVM is authoritative and no buffer is
+     * therefore needed. **NVM is authoritative for the SELECTION; it is not
+     * authoritative for the live coefficients.** CONF:ADC:CHANCALM and
+     * CHANCALB write pRunTimeAInChannels->Data[i].CalM/CalB and return
+     * SCPI_RES_OK with NO persist -- verified, they are RAM-only. So a user
+     * who tunes a channel and then issues a USECal that fails would have had
+     * their unpersisted edit silently discarded by the "rollback": the
+     * command would error AND change state, which is the very thing this
+     * block exists to prevent.
+     *
+     * Snapshotting the live CalM/CalB is therefore not the expensive option,
+     * it is the only correct one -- it captures what is actually in effect,
+     * RAM-only edits included. Restoring from RAM also cannot fail, so the
+     * double-failure arm the NVM version needed disappears.
+     *
+     * STATIC, not stack: 768 B (MAX_AIN_CHANNEL x CalM+CalB, both double) is
+     * a lot of stack on a SCPI task, and a static is safe here because every
+     * SCPI writer of these fields takes the SAME claim --
+     * SCPI_ADCUseCalSet, SCPI_ADCChanCalmSet and SCPI_ADCChanCalbSet each
+     * wrap their ...Claimed() body in Streaming_BeginConfigChange() /
+     * EndConfigChange(), so they cannot interleave and cannot re-enter this
+     * function. (Verified, not assumed: that was the reentrancy question the
+     * r1 audit left open.)
+     *
+     * ⚠ The restore writes 64-bit doubles with no critical section, matching
+     * every other writer of these fields. That is the pre-existing tear
+     * documented in #1166, deliberately not half-fixed here: a tear needs
+     * BOTH sides protected, so guarding this one writer while the emitter's
+     * reads and the other writers stay unguarded would add the appearance of
+     * safety without the substance, and would make #1166 harder to reason
+     * about by leaving one protected writer among unprotected ones. */
     if (!daqifi_settings_SaveToNvm(&tmpTopLevelSettings)) {
-        const DaqifiSettingsType prevBank = prevCalVals
-                ? DaqifiSettings_UserAInCalParams
-                : DaqifiSettings_FactAInCalParams;
-        if (!daqifi_settings_LoadADCCalSettings(prevBank, pRuntimeAInChannels)) {
-            for (uint8_t ch = 0; ch < pRuntimeAInChannels->Size; ch++) {
-                pRuntimeAInChannels->Data[ch].CalM = 1.0;
-                pRuntimeAInChannels->Data[ch].CalB = 0.0;
-            }
-            /* Remedy FIRST: Logger truncates the TAIL at 125 B silently, so a
-             * message that opens with the diagnosis loses the action. */
-            LOG_E("USECal: re-run when NVM is healthy -- save failed, prev "
-                  "cal bank unreloadable, identity restored.");
+        for (uint8_t ch = 0; ch < snapshotCount; ch++) {
+            pRuntimeAInChannels->Data[ch].CalM = sCalSnapshot[ch].CalM;
+            pRuntimeAInChannels->Data[ch].CalB = sCalSnapshot[ch].CalB;
         }
+        /* Remedy FIRST: Logger truncates the TAIL at 125 B silently, so a
+         * message opening with the diagnosis loses the action. */
+        LOG_E("USECal: retry; NVM save failed, prior coefficients restored.");
         return SCPI_RES_ERR;
     }
 
