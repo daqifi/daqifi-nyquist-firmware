@@ -11212,3 +11212,22 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   a deleted file look modified. `--verify --quiet` is required.
 - ⏸ **NOT PUSHED.** v4 and the writeup are on `lane/nq-b`; landing them on `cptkoolbeenz/claude-skills`
   is a **cross-repo write and ask-first**, so it waits for the operator regardless of the open PR.
+
+- ✅ **sk#236 v4 PUSHED under a direct operator grant, head `88210c5e270e98431d49e718490a165926e2a214`**
+  (verified by FULL SHA against `ls-remote`, mode 100755 preserved). **Script AND doc together** — shipping
+  the script alone would have left the doc publishing `0 = clean` against five exit codes, a fresh instance
+  of the doc-vs-implementation gap that WAS the HIGH. Verdict posted and round 1 explicitly voided: it
+  audited v2, and what is on the branch is a redesign.
+- ⛔ **TWO MORE SILENT-FAILURE CATCHES IN THE PUSH ITSELF, both by asserts I had added for the last one:**
+  (1) a 6-edit doc patch **aborted on anchor 6** (the text wraps across two lines) so **nothing was
+  written** — and my test matrix then ran **green on the UNPATCHED script**, `PASS=9`, which I nearly read
+  as validating the refactor. The run is now **gated on the patch step**. (2) The same abort left the tree
+  with **the new script and the old doc** — exactly the combination the operator had ruled out pushing.
+  > ⭐ **A failed step followed by a passing suite reads as success.** Same shape as `bash -n && echo`: the
+  > failure only withheld a message. Every patch now asserts an EDIT COUNT, not just per-anchor presence.
+- ⛔ **CORRECTED MY OWN `rev-parse` CLAIM, in the doc and the comment.** I wrote it "does NOT fail"; it
+  fails with **rc=128** and *also* echoes the unresolved argument to stdout. **rc is reliable, stdout is
+  not** — and I made the error by capturing stdout with `2>/dev/null` and never looking at rc, which is the
+  `$?` family again. `--verify --quiet` stays, because it makes the safe path the DEFAULT.
+- ✅ **Removed the shared `/tmp/._al.$$` rather than guarding it with a trap.** A captured variable has no
+  path to leak, collide, or be replaced between write and read — on a box where that hazard is *measured*.
