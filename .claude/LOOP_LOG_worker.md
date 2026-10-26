@@ -11269,3 +11269,22 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
 - ⏳ **ONE fire running** (sonnet, isolated worktree) on the round-8 implementation: the early independent
   raw-mode exit, the `:1847` install-before-failing fix, both `param1` directions with a mutation proof per
   arm, the Makefile ordering guard updated without weakening, and the python companion regression.
+
+- ⛔ **MY SCOPE CALL WAS WRONG ON THE AXIS THAT MATTERS, and the router caught it.** I told the fire not to
+  touch two over-length `LOG_E`s as "pre-existing" — pre-existing relative to **round 8**, but residual
+  acceptance is keyed on **INTRODUCED vs MAIN**, which I have written down and reached for late. Settled by
+  brace-matching the function out of both refs: **main body 74 lines with ZERO LOG_E; branch body 306 lines
+  with SIX.** Main's version has no logging at all, so the whole diagnostic surface is the PR's — a
+  stronger result than either of us claimed. All three rewrites are now in scope.
+- ⛔⛔ **AND ONE OF THE PROBES WAS INERT, INSIDE A CORRECT CONCLUSION.**
+  `grep -F "STORED selector may be destroyed"` → **main=0 and BRANCH=0**, where that text sits at
+  `:1843-1846`. The literal is split across source lines by C string concatenation.
+  > ⭐⭐ **When searching source for prose the unit is the STRING LITERAL, not the message.** A message is a
+  > compile-time concatenation and exists as contiguous bytes nowhere a grep can reach. Every long message
+  > here is multi-line, so this defeats the obvious search on exactly the messages worth searching for.
+  ⚠ **The conclusion was right, which is precisely when nobody re-checks the method** — an inert probe
+  inside a sound conclusion survives and gets reused. A branch-side control next to the main-side result is
+  the only reason I saw it.
+- ✅ **Relayed to the fire with a byte-count assertion over ALL SIX messages, not just the three over** —
+  so a later edit that lengthens a healthy one fails a test instead of truncating. Test comment cites
+  `Logger.h:361` and `Logger.c:398/:405` so the 125 is traceable, not magic.
