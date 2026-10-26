@@ -2269,118 +2269,168 @@ static void sd_OpenSessionManifest(void) {
         needsFallback = true;
     }
 
-    if (needsFallback) {
-        /* FALL BACK TO A NAME THAT CANNOT COLLIDE, rather than giving the
-         * session no manifest at all. Refusing here merely made the failure
-         * VISIBLE; the session still lost its integrity records, which is the
-         * outcome this feature exists to prevent.
-         *
-         * `<file>.mfst` is collision-free BY CONSTRUCTION, not by luck:
-         *   - against the first stream file `<dir>/<file>`, it is that exact
-         *     string plus a suffix, so it is strictly longer;
-         *   - against a rotated part `<dir>/<base>-N<ext>`, equality would
-         *     need `<ext>` + ".mfst" to equal "-N" + `<ext>`, and the two
-         *     differ at the first character ('.' or 'm' versus '-').
-         * Both of those are STRUCTURAL properties (a length difference, a
-         * first-character mismatch), so they hold whether the comparison is
-         * byte-exact or case-insensitive -- defect 2 changing the guard above
-         * to SdManifest_PathsEqualCaseInsensitive does not reopen this proof.
-         *
-         * The buffer already holds it: dir + '/' + file + ".mfst" + NUL is
-         * 40 + 1 + 40 + 5 + 1 = 87 against the 88 sized above. */
-        /* #924 (round-6 audit): THE FALLBACK NEEDS THE LENGTH GUARD TOO, and
-         * needs it MORE than the primary does. The primary name is
-         * `<base>.mfst` -- the configured FILE with its extension stripped --
-         * but this one keeps the WHOLE filename, so `<file>.mfst` is longer by
-         * the extension: a 40-char FILE yields 45, five over the 40-char
-         * operand cap that SD:GET / SD:CRC? / SD:DELete validate against.
-         *
-         * Round 5 added SdManifest_NameFitsOperand at the primary site and
-         * nowhere else -- one call site in the file, two snprintf sites that
-         * produce a manifest name. BUFFER CAPACITY AND RETRIEVAL CAPACITY ARE
-         * DIFFERENT LIMITS: the `written >= sizeof(path)` check below is the
-         * first and was already here, and :1916's entire finding was that the
-         * second exists and is smaller. The comment below this block said the
-         * fallback gets "the SAME safety check as the primary one" -- true of
-         * the COLLISION check, and that is corrected there.
-         *
-         * Exit criterion for a guard added by a round: EVERY PATH PRODUCING
-         * THE GUARDED VALUE, enumerated. Here that is two snprintf sites, and
-         * two lines of grep would have found the second. */
-        if (!SdManifest_NameFitsOperand(
-                strlen(gpSDCardSettings->file), sizeof(SD_MANIFEST_EXT) - 1u,
-                SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX)) {
-            LOG_E("[SD] #924 no manifest: fallback name needs %u chars, "
-                  "SD:GET takes %u",
-                  (unsigned)(strlen(gpSDCardSettings->file)
-                             + sizeof(SD_MANIFEST_EXT) - 1u),
-                  (unsigned)SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX);
-            return;
-        }
-
-        written = snprintf(path, sizeof(path), "%.*s/%s" SD_MANIFEST_EXT,
-                           (int)SdManifest_CanonicalDirLen(gpSDCardSettings->directory),
-                           gpSDCardSettings->directory,
-                           gpSDCardSettings->file);
-        if (written < 0 || (size_t)written >= sizeof(path)) {
-            LOG_E("[SD] #924 no manifest: fallback path too long for "
-                  "dir='%s' file='%s'", gpSDCardSettings->directory,
-                  gpSDCardSettings->file);
-            return;
-        }
-
-        /* #924 (post-merge audit, defect 1, round 2): the fallback name gets
-         * the same COLLISION check as the primary one. ⚠ Round 6: this said
-         * "the SAME safety check", which was true of collision and FALSE of
-         * length -- the length guard is added above, and a claim of sameness
-         * across two different checks is how the gap stayed invisible. It is
-         * reachable via
-         * configured filenames alone (an earlier session logging its DATA
-         * straight to `<file>.mfst`, no collision of its own involved), and
-         * without this the fallback would just be a second undefended path
-         * to destroy an unrelated file. One retry only: if the fallback is
-         * ALSO unsafe, this session gets no manifest, logged, exactly like
-         * every other way opening one can fail -- there is still no loop and
-         * no counter. */
-        if (!sd_ManifestPathSafeToOverwrite(path)) {
-            LOG_E("[SD] #924 no manifest: fallback path '%s' also exists and "
-                  "does not look like a manifest - giving up for this "
-                  "session", path);
-            return;
-        }
-        LOG_I("[SD] #924 manifest goes to '%s'", path);
-    }
-
-    /* #924 (Qodo round 2, finding 4): A HANDLE MAY HAVE SURVIVED A FAILED
-     * CLOSE, and the assignment below OVERWRITES it -- which is where a leak
-     * became permanent rather than merely pending. sd_CloseSessionManifest
-     * now keeps the handle so UNMOUNT_DISK can retry, but those retries are
-     * bounded (#603 forces the state clear and breaks out), so a handle can
-     * still outlive the session that opened it. Retry the close once here,
-     * and if it still fails REFUSE to open a manifest for this session rather
-     * than dropping the reference.
+    /* ⛔ #1124 r11 finding 2: RETRY ON A COLLISION THE COMPARATOR CANNOT SEE.
      *
-     * That bounds total leakage at ONE slot for the life of the boot instead
-     * of one per failed close: a persistently failing card costs the manifest
-     * feature, not the ten-slot file table. The session itself continues --
-     * the file list is unaffected and only the manifest is absent, which is
-     * the same degradation this function's other give-up arms already take.
-     */
-    if (gSDCardData.manifestHandle != SYS_FS_HANDLE_INVALID) {
-        if (SYS_FS_FileClose(gSDCardData.manifestHandle) == SYS_FS_RES_FAILURE) {
-            LOG_E("[SD] #924 no manifest: prior handle still will not close "
-                  "(err=%d)", (int)SYS_FS_Error());
+     * The guard above compares the two REQUESTED long names. FatFs matches on
+     * more than that: dir_find()'s SFN arm is
+     *     if (!(dp->fn[NSFLAG] & NS_LOSS) && !memcmp(dp->dir, dp->fn, 11)) break;
+     * so a requested name whose generated 8.3 form equals a STORED ALIAS
+     * matches that entry. The manifest path can therefore resolve to the open
+     * stream file while the two long strings differ, and FF_FS_LOCK (10,
+     * ffconf.h) then refuses the open with FR_LOCKED.
+     *
+     * sd_ManifestPathSafeToOverwrite() ALMOST covers this -- f_stat uses the
+     * same follow_path/dir_find, so it resolves the alias identically and
+     * finds the stream file, whose first line is not a manifest. But it
+     * returns TRUE early when st.fsize == 0, and this function runs right
+     * after the stream file's FIRST open, when zero length is the LIKELY
+     * state rather than the edge case. So the stat-based guard misses exactly
+     * the common instance.
+     *
+     * Reacting to the OPEN's error closes the class instead of modelling 8.3
+     * aliasing: whatever made the name resolve onto another open file,
+     * FR_LOCKED/FR_EXIST is the filesystem telling us the primary name is
+     * unusable, and the fallback name is collision-free by construction.
+     *
+     * Bounded at two attempts by construction: the retry sets needsFallback,
+     * and the guard below requires it to be false. */
+    for (unsigned nameAttempt = 0u; nameAttempt < 2u; nameAttempt++) {
+        if (needsFallback) {
+            /* FALL BACK TO A NAME THAT CANNOT COLLIDE, rather than giving the
+             * session no manifest at all. Refusing here merely made the failure
+             * VISIBLE; the session still lost its integrity records, which is the
+             * outcome this feature exists to prevent.
+             *
+             * `<file>.mfst` is collision-free BY CONSTRUCTION, not by luck:
+             *   - against the first stream file `<dir>/<file>`, it is that exact
+             *     string plus a suffix, so it is strictly longer;
+             *   - against a rotated part `<dir>/<base>-N<ext>`, equality would
+             *     need `<ext>` + ".mfst" to equal "-N" + `<ext>`, and the two
+             *     differ at the first character ('.' or 'm' versus '-').
+             * Both of those are STRUCTURAL properties (a length difference, a
+             * first-character mismatch), so they hold whether the comparison is
+             * byte-exact or case-insensitive -- defect 2 changing the guard above
+             * to SdManifest_PathsEqualCaseInsensitive does not reopen this proof.
+             *
+             * The buffer already holds it: dir + '/' + file + ".mfst" + NUL is
+             * 40 + 1 + 40 + 5 + 1 = 87 against the 88 sized above. */
+            /* #924 (round-6 audit): THE FALLBACK NEEDS THE LENGTH GUARD TOO, and
+             * needs it MORE than the primary does. The primary name is
+             * `<base>.mfst` -- the configured FILE with its extension stripped --
+             * but this one keeps the WHOLE filename, so `<file>.mfst` is longer by
+             * the extension: a 40-char FILE yields 45, five over the 40-char
+             * operand cap that SD:GET / SD:CRC? / SD:DELete validate against.
+             *
+             * Round 5 added SdManifest_NameFitsOperand at the primary site and
+             * nowhere else -- one call site in the file, two snprintf sites that
+             * produce a manifest name. BUFFER CAPACITY AND RETRIEVAL CAPACITY ARE
+             * DIFFERENT LIMITS: the `written >= sizeof(path)` check below is the
+             * first and was already here, and :1916's entire finding was that the
+             * second exists and is smaller. The comment below this block said the
+             * fallback gets "the SAME safety check as the primary one" -- true of
+             * the COLLISION check, and that is corrected there.
+             *
+             * Exit criterion for a guard added by a round: EVERY PATH PRODUCING
+             * THE GUARDED VALUE, enumerated. Here that is two snprintf sites, and
+             * two lines of grep would have found the second. */
+            if (!SdManifest_NameFitsOperand(
+                    strlen(gpSDCardSettings->file), sizeof(SD_MANIFEST_EXT) - 1u,
+                    SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX)) {
+                LOG_E("[SD] #924 no manifest: fallback name needs %u chars, "
+                      "SD:GET takes %u",
+                      (unsigned)(strlen(gpSDCardSettings->file)
+                                 + sizeof(SD_MANIFEST_EXT) - 1u),
+                      (unsigned)SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX);
+                return;
+            }
+
+            written = snprintf(path, sizeof(path), "%.*s/%s" SD_MANIFEST_EXT,
+                               (int)SdManifest_CanonicalDirLen(gpSDCardSettings->directory),
+                               gpSDCardSettings->directory,
+                               gpSDCardSettings->file);
+            if (written < 0 || (size_t)written >= sizeof(path)) {
+                LOG_E("[SD] #924 no manifest: fallback path too long for "
+                      "dir='%s' file='%s'", gpSDCardSettings->directory,
+                      gpSDCardSettings->file);
+                return;
+            }
+
+            /* #924 (post-merge audit, defect 1, round 2): the fallback name gets
+             * the same COLLISION check as the primary one. ⚠ Round 6: this said
+             * "the SAME safety check", which was true of collision and FALSE of
+             * length -- the length guard is added above, and a claim of sameness
+             * across two different checks is how the gap stayed invisible. It is
+             * reachable via
+             * configured filenames alone (an earlier session logging its DATA
+             * straight to `<file>.mfst`, no collision of its own involved), and
+             * without this the fallback would just be a second undefended path
+             * to destroy an unrelated file. One retry only: if the fallback is
+             * ALSO unsafe, this session gets no manifest, logged, exactly like
+             * every other way opening one can fail -- there is still no loop and
+             * no counter. */
+            if (!sd_ManifestPathSafeToOverwrite(path)) {
+                LOG_E("[SD] #924 no manifest: fallback path '%s' also exists and "
+                      "does not look like a manifest - giving up for this "
+                      "session", path);
+                return;
+            }
+            LOG_I("[SD] #924 manifest goes to '%s'", path);
+        }
+
+        /* #924 (Qodo round 2, finding 4): A HANDLE MAY HAVE SURVIVED A FAILED
+         * CLOSE, and the assignment below OVERWRITES it -- which is where a leak
+         * became permanent rather than merely pending. sd_CloseSessionManifest
+         * now keeps the handle so UNMOUNT_DISK can retry, but those retries are
+         * bounded (#603 forces the state clear and breaks out), so a handle can
+         * still outlive the session that opened it. Retry the close once here,
+         * and if it still fails REFUSE to open a manifest for this session rather
+         * than dropping the reference.
+         *
+         * That bounds total leakage at ONE slot for the life of the boot instead
+         * of one per failed close: a persistently failing card costs the manifest
+         * feature, not the ten-slot file table. The session itself continues --
+         * the file list is unaffected and only the manifest is absent, which is
+         * the same degradation this function's other give-up arms already take.
+         */
+        if (gSDCardData.manifestHandle != SYS_FS_HANDLE_INVALID) {
+            if (SYS_FS_FileClose(gSDCardData.manifestHandle) == SYS_FS_RES_FAILURE) {
+                LOG_E("[SD] #924 no manifest: prior handle still will not close "
+                      "(err=%d)", (int)SYS_FS_Error());
+                return;
+            }
+            gSDCardData.manifestHandle = SYS_FS_HANDLE_INVALID;
+            LOG_I("[SD] #924 recovered a manifest handle from a failed close");
+        }
+
+        gSDCardData.manifestHandle = SYS_FS_FileOpen(path,
+                                                     SYS_FS_FILE_OPEN_WRITE);
+        if (gSDCardData.manifestHandle != SYS_FS_HANDLE_INVALID) {
+            break;                      /* opened */
+        }
+        {
+            const SYS_FS_ERROR openErr = SYS_FS_Error();
+            const bool collided = (openErr == SYS_FS_ERROR_LOCKED)
+                               || (openErr == SYS_FS_ERROR_EXIST);
+            if (collided && !needsFallback) {
+                LOG_I("[SD] #924 manifest name collided (err=%d) - retrying "
+                      "with the fallback name", (int)openErr);
+                needsFallback = true;
+                continue;               /* rebuild `path` and open once more */
+            }
+            LOG_E("[SD] #924 could not open manifest '%s' (err=%d) - session "
+                  "continues without one", path, (int)openErr);
             return;
         }
-        gSDCardData.manifestHandle = SYS_FS_HANDLE_INVALID;
-        LOG_I("[SD] #924 recovered a manifest handle from a failed close");
+        /* fell through to here only on the retry-eligible error above */
     }
-
-    gSDCardData.manifestHandle = SYS_FS_FileOpen(path,
-                                                 SYS_FS_FILE_OPEN_WRITE);
+    /* ⚠ UNREACHABLE AS WRITTEN, and kept deliberately rather than left to be
+     * rediscovered: every path through the loop body above either `break`s on
+     * a successful open or `return`s, so the loop cannot exit by exhausting
+     * nameAttempt. This is a guard against a future edit adding a third path
+     * out of the body -- without it, such an edit would fall through to the
+     * success bookkeeping below with an INVALID handle. Stated as dead today
+     * so nobody reads it as a live branch and reasons from it. */
     if (gSDCardData.manifestHandle == SYS_FS_HANDLE_INVALID) {
-        LOG_E("[SD] #924 could not open manifest '%s' (err=%d) - session "
-              "continues without one", path, (int)SYS_FS_Error());
         return;
     }
     gSDCardData.manifestLines = 0;
