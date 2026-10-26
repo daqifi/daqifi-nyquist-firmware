@@ -1922,6 +1922,28 @@ static bool sd_ManifestPathSafeToOverwrite(const char *path) {
  * without a manifest: integrity bookkeeping must never be able to stop a
  * logging session. */
 static void sd_OpenSessionManifest(void) {
+    /* ⛔ #1124 r9: THIS FUNCTION CHECKS ITS OWN OPERANDS, and that is not
+     * redundant with the guard in PROCESS_STATE_OPEN_FILE even though that
+     * guard is this function's only caller today.
+     *
+     * Relying on a caller's validation is precisely how r9's finding happened:
+     * the directory operand of these two joins was canonicalised while the
+     * NAME operand beside it was not, because coverage was assumed to flow
+     * from somewhere else. Nothing couples a caller's check to a callee's
+     * requirement, so the callee states its own.
+     *
+     * `baseFilename` is DERIVED -- extractBaseFilename(gpSDCardSettings->file)
+     * copies and strips the extension -- so it is checked here rather than
+     * trusted: a derivation is a place a property can be lost, not a place it
+     * is guaranteed to survive. `file` is checked because the fallback arm
+     * below builds from it directly. */
+    if (!SdManifest_NameIsUsable(gSDCardData.baseFilename)
+        || !SdManifest_NameIsUsable(gpSDCardSettings->file)) {
+        /* Remedy first; Logger truncates the tail at 125 B. */
+        LOG_E("[SD] #1124 no manifest: name must not end in '/' ('%s')",
+              gSDCardData.baseFilename);
+        return;
+    }
     /* directory (<= 40) + '/' + base (<= 40) + ".mfst" + NUL. Sized from the
      * settings struct's own caps rather than from
      * SD_CARD_MANAGER_FILE_PATH_LEN_MAX (511), which would be a needlessly
@@ -2980,6 +3002,52 @@ void sd_card_manager_ProcessState() {
         case SD_CARD_MANAGER_PROCESS_STATE_OPEN_FILE:
             memset(gSDCardData.filePath, 0, sizeof (gSDCardData.filePath));
             LOG_D("[SD] Opening file, mode=%d\r\n", gpSDCardSettings->mode);
+            /* ⛔ #1124 r9: REFUSE A NAME THAT IS NOT A FILE NAME, AT USE.
+             *
+             * Every arm below joins the configured directory to one of two
+             * name operands, so the check belongs here -- once, before any
+             * path is built -- rather than at each join. Which operand is
+             * live depends on the mode, so the mode picks it.
+             *
+             * AT USE, not only in SD_ValidatePathParam: an NVM restore
+             * populates the settings struct directly and never reaches the
+             * SCPI setter. That route-around is what made a setter-only fix
+             * unacceptable for the directory half, and it applies identically
+             * here.
+             *
+             * REFUSE rather than strip -- the opposite of the directory half,
+             * deliberately. "log.csv/" is not a redundant spelling of a file
+             * name, it names no file, so stripping would invent a target the
+             * caller never asked for. See SdManifest_NameIsUsable().
+             *
+             * Without this, FatFs refuses the open instead (it reads
+             * "dir/log.csv/" as a directory), so the session loses its
+             * manifest and the diagnostic blames the open rather than the
+             * name. The failure was never silent; it pointed at the wrong
+             * thing, which costs more to chase than it does to prevent. */
+            {
+                const sd_card_manager_mode_t nameMode = gpSDCardSettings->mode;
+                const bool usesOperandName =
+                        (nameMode == SD_CARD_MANAGER_MODE_READ
+                         || nameMode == SD_CARD_MANAGER_MODE_COMPUTE_CRC
+                         || nameMode == SD_CARD_MANAGER_MODE_DELETE_FILE);
+                const char *const nameOperand = usesOperandName
+                        ? gpSDCardSettings->opFile
+                        : gpSDCardSettings->file;
+
+                if (!SdManifest_NameIsUsable(nameOperand)) {
+                    /* Remedy FIRST: Logger truncates the TAIL at 125 B
+                     * (Logger.c), so the actionable half must survive a long
+                     * name. 62 fixed bytes + a 40-byte name = 102 worst case. */
+                    LOG_E("[SD] #1124 name must not end in '/' - '%s' names no file",
+                          nameOperand);
+                    gSDCardData.writeRefuseReason = SD_REFUSE_NAME_NOT_A_FILE;
+                    gSDCardData.lastOperationSuccess = false;
+                    gSDCardData.currentProcessState =
+                            SD_CARD_MANAGER_PROCESS_STATE_ERROR;
+                    break;
+                }
+            }
             if (gpSDCardSettings->mode == SD_CARD_MANAGER_MODE_WRITE) {
                 // Initialize file splitting if enabled
                 /* #915: 64-bit read, same critical section as the write in

@@ -988,6 +988,61 @@ TEST(relative_name_canonicalises_the_directory_it_slices)
                  "DAQiFi/file.csv", sizeof("DAQiFi/file.csv"));
 }
 
+TEST(a_file_name_must_not_end_in_a_separator)
+{
+    /* r9 finding 1. The ordinary case. */
+    ASSERT_TRUE(SdManifest_NameIsUsable("log.csv"));
+    ASSERT_TRUE(SdManifest_NameIsUsable("data"));
+
+    /* THE DEFECT: SD:FILE "log.csv/" was accepted, and the join then produced
+     * "<dir>/log.csv/.mfst", which FatFs reads as a directory -- so the
+     * session lost its manifest and the diagnostic blamed the open. */
+    ASSERT_FALSE(SdManifest_NameIsUsable("log.csv/"));
+
+    /* a run, and a bare separator, are the same mistake */
+    ASSERT_FALSE(SdManifest_NameIsUsable("log.csv//"));
+    ASSERT_FALSE(SdManifest_NameIsUsable("/"));
+
+    /* nothing is not a file name either */
+    ASSERT_FALSE(SdManifest_NameIsUsable(""));
+    ASSERT_FALSE(SdManifest_NameIsUsable(NULL));
+
+    /* ⚠ AN INTERIOR SEPARATOR IS LEFT ALONE. SD_ValidatePathParam permits
+     * subdirectory components, and whether the LAST component names a file is
+     * a different question from whether the path has components. Rejecting
+     * these would break a legal operand. */
+    ASSERT_TRUE(SdManifest_NameIsUsable("sub/log.csv"));
+    ASSERT_TRUE(SdManifest_NameIsUsable("a/b/c.csv"));
+}
+
+TEST(the_directory_half_strips_where_the_name_half_refuses)
+{
+    /* ⛔ THE DESIGN TEST, and the reason the operand matrix had to be settled
+     * before any code was written: the SAME trailing '/' means different
+     * things on the two halves of one join, so the two halves need OPPOSITE
+     * treatments. A future "let's canonicalise every path operand uniformly"
+     * is actively wrong, and this test is what should stop it.
+     *
+     *   as a DIRECTORY, "DAQiFi/" is a redundant spelling of "DAQiFi"  -> STRIP
+     *   as a FILE NAME, "DAQiFi/" names no file at all                 -> REFUSE
+     */
+    const char *const both = "DAQiFi/";
+
+    /* directory half: accepted, and normalises to the same length as the
+     * spelling without the separator */
+    ASSERT_EQ(SdManifest_CanonicalDirLen(both), 6u);
+    ASSERT_EQ(SdManifest_CanonicalDirLen(both), SdManifest_CanonicalDirLen("DAQiFi"));
+
+    /* name half: refused outright -- NOT normalised to "DAQiFi" */
+    ASSERT_FALSE(SdManifest_NameIsUsable(both));
+
+    /* and the converse pairing, so neither predicate can be swapped for the
+     * other: a plain name is usable, and a plain name's "canonical dir length"
+     * is just its length -- the functions are not interchangeable */
+    ASSERT_TRUE(SdManifest_NameIsUsable("DAQiFi"));
+    ASSERT_EQ(SdManifest_CanonicalDirLen("DAQiFi"), 6u);
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
@@ -1026,5 +1081,7 @@ int main(void)
     RUN(every_construction_shape_is_slash_safe_with_a_trailing_slash_dir);
     RUN(canonical_construction_agrees_with_the_fatfs_comparator);
     RUN(relative_name_canonicalises_the_directory_it_slices);
+    RUN(a_file_name_must_not_end_in_a_separator);
+    RUN(the_directory_half_strips_where_the_name_half_refuses);
     return TEST_SUMMARY();
 }

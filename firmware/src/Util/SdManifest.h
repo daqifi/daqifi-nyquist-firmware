@@ -134,6 +134,44 @@ static inline bool SdManifest_NameFitsOperand(size_t baseLen, size_t extLen,
  * path "/" + name denotes, and the only sensible reading of a directory that
  * names the root.
  */
+/*
+ * #1124 r9: is this usable as the FILE-NAME half of a path join?
+ *
+ * ⛔ THE REMEDY HERE IS REJECT, NOT STRIP, AND THAT ASYMMETRY IS THE POINT.
+ * A trailing '/' on a DIRECTORY is a redundant spelling of the same directory,
+ * so SdManifest_CanonicalDirLen() strips it. A trailing '/' on a FILE NAME is
+ * not a redundant spelling of anything -- "log.csv/" does not name a file.
+ * Stripping it would silently accept a malformed operand and invent a name the
+ * caller never asked for, so this refuses instead.
+ *
+ * That is why a blanket "canonicalise every path operand" would have been
+ * actively wrong, and why the operand matrix had to be settled before any code:
+ * the two halves of one join need opposite treatments.
+ *
+ * What a trailing '/' actually costs, measured rather than assumed: FatFs
+ * refuses the resulting open ("<dir>/log.csv/.mfst" reads log.csv as a
+ * directory), so the loss is the MANIFEST plus a diagnostic that blames the
+ * open rather than the name. Not corruption -- which is exactly why rejecting
+ * at the name is worth doing: it moves the error to where the cause is.
+ *
+ * Rejects: NULL, empty, and any trailing '/' run. An INTERIOR '/' is left
+ * alone -- SD_ValidatePathParam permits subdirectory components, and that is a
+ * separate question from whether the last component names a file.
+ */
+static inline bool SdManifest_NameIsUsable(const char *name)
+{
+    size_t len;
+
+    if (name == NULL) {
+        return false;
+    }
+    len = strlen(name);
+    if (len == 0u) {
+        return false;
+    }
+    return name[len - 1u] != '/';
+}
+
 static inline size_t SdManifest_CanonicalDirLen(const char *dir)
 {
     size_t len;

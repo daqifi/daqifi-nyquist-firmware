@@ -383,13 +383,42 @@ static bool SCPI_CheckSDCardPresent(scpi_t *context) {
  * escape the configured directory (GET/DELete/CRC) and stray separators
  * or control characters produce undefined FatFS behavior. Interior '/'
  * stays legal (subdirectory paths like "DAQiFi/sub/file.csv"). */
-static bool SD_ValidatePathParam(const char *p, size_t len)
+/*
+ * @param isFileName  true when `p` must name a FILE, false when it names a
+ *                    DIRECTORY. The two differ in exactly one way and it is
+ *                    not optional -- see the trailing-separator test below.
+ */
+static bool SD_ValidatePathParam(const char *p, size_t len, bool isFileName)
 {
     if (len == 0u) {
         return false;
     }
     if (p[0] == '/' || p[0] == '\\') {
         return false;               /* absolute paths */
+    }
+    /* ⛔ #1124 r9: A TRAILING SEPARATOR IS LEGAL ON A DIRECTORY AND ILLEGAL ON
+     * A FILE NAME, so this cannot be a property of "a path param" -- it is a
+     * property of which HALF of a join the value is going to be.
+     *
+     *   SD:DIR  "DAQiFi/"   accepted; a redundant spelling of the same
+     *                       directory, stripped at use by
+     *                       SdManifest_CanonicalDirLen().
+     *   SD:FILE "log.csv/"  REFUSED; "log.csv/" does not name a file, and
+     *                       stripping would invent a name nobody asked for.
+     *
+     * Before this was parameterised, adding the test here unconditionally
+     * would have rejected SD:DIR "DAQiFi/" and regressed the behaviour #1124
+     * had just established. The flag exists so that a NEW call site has to
+     * state which half it is validating instead of inheriting whichever
+     * answer happened to be hard-coded.
+     *
+     * ⚠ This is the SETTER-side half only. It is not sufficient on its own:
+     * an NVM restore populates the settings struct directly and never reaches
+     * this function, which is the route-around that sank the setter-only
+     * option for the directory. The refusal is therefore ALSO applied at use,
+     * in sd_card_manager.c, via SdManifest_NameIsUsable(). */
+    if (isFileName && p[len - 1u] == '/') {
+        return false;
     }
     /* Reject '.' and '..' only as whole path SEGMENTS (between '/'), not as
      * substrings - Qodo #615: the old substring check false-rejected
@@ -754,7 +783,7 @@ scpi_result_t SCPI_StorageSDLoggingSet(scpi_t * context) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
+        if (!SD_ValidatePathParam(pBuff, fileLen, true)) {   /* #612 */
             SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             result = SCPI_RES_ERR;
             goto __exit_point;
@@ -848,7 +877,7 @@ scpi_result_t SCPI_StorageSDCrcStart(scpi_t * context) {
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
-    if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612: CRC was the deferred site (post-#610-merge) */
+    if (!SD_ValidatePathParam(pBuff, fileLen, true)) {   /* #612: CRC was the deferred site (post-#610-merge) */
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }
@@ -991,7 +1020,7 @@ scpi_result_t SCPI_StorageSDGetData(scpi_t * context) {
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
+        if (!SD_ValidatePathParam(pBuff, fileLen, true)) {   /* #612 */
             sd_card_manager_ReleaseClaim();  /* #829 release */
             SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             result = SCPI_RES_ERR;
@@ -1092,7 +1121,7 @@ scpi_result_t SCPI_StorageSDListDir(scpi_t * context){
             result = SCPI_RES_ERR;
             goto __exit_point;
         }
-        if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
+        if (!SD_ValidatePathParam(pBuff, fileLen, true)) {   /* #612 */
             sd_card_manager_ReleaseClaim();  /* #829 release */
             SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
             result = SCPI_RES_ERR;
@@ -2577,7 +2606,7 @@ scpi_result_t SCPI_StorageSDDelete(scpi_t * context) {
     }
 
     // Set the filename
-    if (!SD_ValidatePathParam(pBuff, fileLen)) {   /* #612 */
+    if (!SD_ValidatePathParam(pBuff, fileLen, true)) {   /* #612 */
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         goto __exit_point;
     }
@@ -2850,7 +2879,7 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    if (!SD_ValidatePathParam(pBuff, pathLen)) {   /* #612 */
+    if (!SD_ValidatePathParam(pBuff, pathLen, false)) {   /* #612 */
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
     }

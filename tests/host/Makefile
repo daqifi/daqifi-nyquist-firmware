@@ -923,6 +923,85 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	       echo "       path, so the manifest records 'DAQiFi/file.csv' where"; \
 	       echo "       SYST:STOR:SD:CRC? and :GET take a relative name as operand."; \
 	       exit 1; }
+	@# ⛔⛔ #1124 r9: THE OPERAND MATRIX. A path join has TWO user-controlled
+	@# operands and the count arm above covers only the DIRECTORY one. r9's
+	@# finding was the NAME operand on the adjacent line of the same snprintf --
+	@# the sixth instance of one generator, each round fixing the operand the
+	@# previous finding happened to NAME. So this pins the matrix, not a site
+	@# list: every operand of every join, against the rejection that applies to
+	@# ITS half.
+	@#
+	@# ⚠ THE TWO HALVES NEED OPPOSITE TREATMENTS, which is why a uniform
+	@# "canonicalise every path operand" would have been actively wrong:
+	@#     DIRECTORY + trailing '/'  = a redundant spelling   -> STRIP
+	@#     FILE NAME + trailing '/'  = names no file at all   -> REFUSE
+	@#
+	@# ARM 1 -- the NVM arm, and the one the operator called for. The refusal
+	@# must exist at USE, in sd_card_manager.c, NOT only in the SCPI setter: an
+	@# NVM restore writes the settings struct directly and never reaches
+	@# SD_ValidatePathParam. That route-around is exactly what made a
+	@# setter-only fix unacceptable for the directory half. Counting the USE
+	@# site here is what makes "we validated it in the setter" insufficient.
+	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	    | grep -c 'SdManifest_NameIsUsable('`; \
+	 test "$$n" -eq 3 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) calls SdManifest_NameIsUsable() $$n"; \
+	       echo "       time(s), expected 3 (#1124 r9)."; \
+	       echo "       1 at the PROCESS_STATE_OPEN_FILE guard, 2 in"; \
+	       echo "       sd_OpenSessionManifest() for its own operands."; \
+	       echo "       ⛔ This must hold IN THIS FILE, not only in the SCPI"; \
+	       echo "       setter: an NVM restore populates the settings struct"; \
+	       echo "       directly and never reaches SD_ValidatePathParam, which"; \
+	       echo "       is the route-around that sank a setter-only fix for the"; \
+	       echo "       directory half. A refusal that only exists in the setter"; \
+	       echo "       is not a refusal."; \
+	       exit 1; }
+	@# ⛔⛔ ARM 1b -- WHICH OPERANDS, not how many checks. Found by mutation,
+	@# not by reasoning: changing sd_OpenSessionManifest()'s second check from
+	@# `gpSDCardSettings->file` to a second `gSDCardData.baseFilename` -- the
+	@# ordinary copy-paste slip -- leaves `->file` NEVER VALIDATED and is caught
+	@# by NOTHING. Measured: raw 0, canonical 8, accessor 8, NameIsUsable 3,
+	@# directory refs 20, wrong-half 0. Every count identical to baseline, by
+	@# construction, because a count cannot see which argument it counted.
+	@#
+	@# Same lesson as r8's sd_BuildBucketPath arms one level along: a by-name
+	@# pin answers "does this function comply somewhere?", a count answers "how
+	@# many times?", and neither answers "for each operand that needs it?".
+	@# So both operands are pinned by exact form.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	     | awk '/^static void sd_OpenSessionManifest\(void\) \{$$/{f=1} f{print} f&&/^\}/{exit}'`; \
+	 nl=`printf '%s\n' "$$pp" | grep -c .`; \
+	 nb=`printf '%s\n' "$$pp" | grep -cF 'SdManifest_NameIsUsable(gSDCardData.baseFilename)'`; \
+	 nf=`printf '%s\n' "$$pp" | grep -cF 'SdManifest_NameIsUsable(gpSDCardSettings->file)'`; \
+	 test "$$nl" -gt 4 && test "$$nb" -eq 1 && test "$$nf" -eq 1 \
+	  || { echo "ERROR: sd_OpenSessionManifest() in $(SD_MANAGER_SRC) does not"; \
+	       echo "       validate BOTH of its name operands (#1124 r9)."; \
+	       echo "         function lines extracted:        $$nl (must be > 4, else"; \
+	       echo "           the extraction found nothing and this is vacuous)"; \
+	       echo "         NameIsUsable(baseFilename):      $$nb (expected 1)"; \
+	       echo "         NameIsUsable(->file):            $$nf (expected 1)"; \
+	       echo "       It builds from `baseFilename` (derived) on the primary arm"; \
+	       echo "       and from ->file on the fallback arm, so BOTH need checking."; \
+	       echo "       Checking one of them twice leaves the other unvalidated and"; \
+	       echo "       changes no count anywhere -- which is why this arm exists."; \
+	       exit 1; }
+	@# ARM 2 -- the asymmetry is not interchangeable. If someone ever "unifies"
+	@# the two predicates, these go non-zero and this fails. That is the whole
+	@# defence against the next round of this generator.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null`; \
+	 bad1=`printf '%s\n' "$$pp" | grep -cE 'SdManifest_NameIsUsable\((gpSDCardSettings->|cfg->)?(directory|opDirectory)'`; \
+	 bad2=`printf '%s\n' "$$pp" | grep -cE 'SdManifest_CanonicalDirLen\((gpSDCardSettings->|gSDCardData\.)?(file|opFile|baseFilename)'`; \
+	 test "$$bad1" -eq 0 && test "$$bad2" -eq 0 \
+	  || { echo "ERROR: #1124 r9 -- a path operand is being given the WRONG"; \
+	       echo "       half's treatment in $(SD_MANAGER_SRC)."; \
+	       echo "         NameIsUsable on a DIRECTORY field:  $$bad1 (must be 0)"; \
+	       echo "         CanonicalDirLen on a FILE field:     $$bad2 (must be 0)"; \
+	       echo "       A trailing '/' is a redundant spelling on a directory and"; \
+	       echo "       is not a file name at all, so STRIP and REFUSE are not"; \
+	       echo "       interchangeable. Refusing a directory breaks SD:DIR"; \
+	       echo "       \"DAQiFi/\"; stripping a file name invents a target the"; \
+	       echo "       caller never asked for."; \
+	       exit 1; }
 	@# BOTH arms of sd_BuildBucketPath, by exact form. A presence check that the
 	@# function merely CALLS the accessor is not enough, and this was measured:
 	@# reverting ONLY the bucket==0 arm to `"%s", dir` leaves raw=0 (no slash to
@@ -1100,6 +1179,29 @@ $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RE
 	@grep -qE '^#define[[:space:]]+SCPI_SD_BENCH_STALL_POLL_MS[[:space:]]+5U[[:space:]]*$$' $(SD_BENCH_SRC) \
 	  || { echo "ERROR: SCPI_SD_BENCH_STALL_POLL_MS is no longer '5U' in $(SD_BENCH_SRC)."; \
 	       echo "       Update FW_STALL_POLL_MS in test_943_bench_stall_bound.c and re-derive its numbers."; \
+	       exit 1; }
+	@# (#1124 r9 arm 3 lives HERE, not in $(MANIFEST_BIN)'s recipe, because
+	@# SCPIStorageSD.c is a prerequisite of THIS target and not of that one.
+	@# A pin that reads a file its target does not depend on passes STALE:
+	@# the file changes, the target is still up to date, the check never
+	@# re-runs. Same reason $(RECIPES) is a prerequisite elsewhere here.
+	@# ARM 3 -- the setter states which half it is validating. The flag exists
+	@# so a NEW call site cannot inherit whichever answer was hard-coded; before
+	@# it was parameterised, adding the trailing-'/' test unconditionally would
+	@# have rejected SD:DIR "DAQiFi/" and regressed #1124's own directory half.
+	@t=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null \
+	    | grep -c 'SD_ValidatePathParam(pBuff, fileLen, true)'`; \
+	 f=`$(CC) -fpreprocessed -E $(SD_BENCH_SRC) 2>/dev/null \
+	    | grep -c 'SD_ValidatePathParam(pBuff, pathLen, false)'`; \
+	 test "$$t" -eq 5 && test "$$f" -eq 1 \
+	  || { echo "ERROR: #1124 r9 -- SD_ValidatePathParam's call sites no longer"; \
+	       echo "       split 5 file / 1 directory in $(SD_BENCH_SRC)."; \
+	       echo "         isFileName=true  (file params):      $$t (expected 5)"; \
+	       echo "         isFileName=false (directory param):  $$f (expected 1)"; \
+	       echo "       A new call site must STATE which half it validates. If"; \
+	       echo "       one was added, decide strip-vs-reject for it and update"; \
+	       echo "       this count; if one lost its flag, the trailing-'/' test"; \
+	       echo "       is now applying to the wrong half."; \
 	       exit 1; }
 	$(CC) $(CFLAGS) -o $(BENCH_BIN) test_943_bench_stall_bound.c
 

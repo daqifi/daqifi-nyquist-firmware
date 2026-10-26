@@ -319,6 +319,7 @@ extern "C" {
         SD_REFUSE_BUCKET_MKDIR,      /* the bucket directory could not be created */
         SD_REFUSE_BUCKET_UNREADABLE, /* a bucket could not be counted OR stat'd (FS fault) */
         SD_REFUSE_BUCKET_NOT_DIR,    /* a non-directory occupies the bucket name */
+        SD_REFUSE_NAME_NOT_A_FILE,   /* #1124: the configured name ends in '/' */
     } SdWriteRefuseReason;
 
     SdWriteRefuseReason sd_card_manager_WriteRefuseReason(void);

@@ -44,7 +44,8 @@ W="$(cd "$W" && pwd -P)"
 F="$W/firmware/src/services/sd_card_services/sd_card_manager.c"
 G="$W/tests/host/gen_1029_log_budget.py"
 M="$W/tests/host/Makefile"
-for f in "$F" "$G" "$M"; do
+S="$W/firmware/src/services/SCPI/SCPIStorageSD.c"
+for f in "$F" "$G" "$M" "$S"; do
     [ -f "$f" ] || { echo "FATAL: $f missing."; exit 2; }
 done
 
@@ -52,16 +53,16 @@ echo "################################################################"
 echo "# OPERATING ON: $W"
 echo "#   HEAD $(git -C "$W" rev-parse HEAD 2>/dev/null | cut -c1-9)  branch $(git -C "$W" rev-parse --abbrev-ref HEAD 2>/dev/null)"
 echo "################################################################"
-if [ -n "$(git -C "$W" status --porcelain -- "$F" "$G" "$M" 2>/dev/null)" ]; then
+if [ -n "$(git -C "$W" status --porcelain -- "$F" "$G" "$M" "$S" 2>/dev/null)" ]; then
     echo "FATAL: uncommitted changes in the files this mutates. Commit or set them"
     echo "       aside first -- restore here is a byte copy and will not arbitrate."
     exit 2
 fi
 
-BF=$(mktemp); BG=$(mktemp)
-cp "$F" "$BF"; cp "$G" "$BG"
-restore() { cp "$BF" "$F"; cp "$BG" "$G"; }
-trap 'restore; rm -f "$BF" "$BG"' EXIT INT TERM
+BF=$(mktemp); BG=$(mktemp); BS=$(mktemp)
+cp "$F" "$BF"; cp "$G" "$BG"; cp "$S" "$BS"
+restore() { cp "$BF" "$F"; cp "$BG" "$G"; cp "$BS" "$S"; }
+trap 'restore; rm -f "$BF" "$BG" "$BS"' EXIT INT TERM
 cd "$W/tests/host" || exit 2
 
 pass=0; fail=0
@@ -179,6 +180,37 @@ if sub "$F" '/* #1124: canonicalise the walk ROOT.' \
     expect "M3 negative control" CLEAN
 else
     echo "  FAIL M3 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R1: drop the PROCESS_STATE_OPEN_FILE name guard (arm 1, the NVM arm) =="
+if sub "$F" 'if (!SdManifest_NameIsUsable(nameOperand)) {' 'if (false) {'; then
+    expect "R1 name-guard count arm" "calls SdManifest_NameIsUsable"
+else
+    echo "  FAIL R1 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R3: a FILE setter site loses its isFileName flag (arm 3) =="
+if sub "$S" 'SD_ValidatePathParam(pBuff, fileLen, true)' \
+            'SD_ValidatePathParam(pBuff, fileLen, false)'; then
+    expect "R3 setter-flag split arm" "call sites no longer"
+else
+    echo "  FAIL R3 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R5: THE MUTANT THAT PASSES EVERY COUNT ARM. sd_OpenSessionManifest   =="
+echo "==     checks baseFilename TWICE, so ->file is never validated. Measured =="
+echo "==     identical to baseline on: raw 0, canonical 8, accessor 8,         =="
+echo "==     NameIsUsable 3, directory refs 20, wrong-half 0. A count cannot   =="
+echo "==     see WHICH argument it counted, so only the exact-operand arm      =="
+echo "==     catches it -- and before that arm existed, NOTHING did.           =="
+if sub "$F" '|| !SdManifest_NameIsUsable(gpSDCardSettings->file)) {' \
+            '|| !SdManifest_NameIsUsable(gSDCardData.baseFilename)) {'; then
+    expect "R5 exact-operand arm" "does not"
+else
+    echo "  FAIL R5 anchor absent -- source drifted."; fail=$((fail+1))
 fi
 restore
 
