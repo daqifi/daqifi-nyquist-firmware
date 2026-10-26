@@ -11322,3 +11322,29 @@ all on my own records; nothing in another lane's tree touched, nothing deleted.
   fleet-wide in the 6 days since the block**, against 3 block notices — and the 3 notices are the positive
   control that makes the 0 a measured zero. Triggering would post a block notice that a later reader could
   read as a review next to a clean thread list. Stated the row as **Qodo: NOT READ** instead.
+
+- ✅ **fw#1152 ROUND 9 PUSHED AND VERIFIED — `14da33c5d6fdf52d71f71982cf1d4a5d869c6dab`**, fast-forward,
+  **0 behind main** (`02d955844` is an ancestor). Re-measured by me on a pinned clean tree: **29 binaries /
+  337 tests / 0 FAILED / 44,716 assertions**, cppcheck 0 via the CI form with the **baseline unmodified**,
+  cross-list invariant HOLDS (31 prereqs / 31 invocations / 36 clean entries, no dupes, no gaps), and **no
+  `X_BIN`-defined-after-`run:` violations** so #1048's silent-dependency class does not recur.
+- ⛔⛔ **ROUND 8's HIGH WAS MY PREMISE AND THE REFUTATION WAS IN MY HAND.** I asserted "the erase has
+  already run, so the stored selector is damaged either way." `nvm.c:14-54` returns **true on BOTH
+  branches** — a refused erase reports success — and `SCPIADC.c` already said so in a comment **I had read
+  and quoted this session**. I used the adjacent half of a fact I was holding because it resolved toward
+  the change I wanted. Round 9 is substantially a **revert** of install-on-mismatch; install now happens
+  only in the one case that existed before round 8.
+- ⛔⛔ **AND THE INVERSE OF conv-fw's FINDING, ON MY OWN WORK: the answer was right and the instrument did
+  not exist.** I asked round 8 for a byte-count assertion **"if that's cheap"**, it was not added, I
+  verified the byte counts **by hand**, and then wrote into round 9's brief that the assertion existed.
+  > ⭐⭐ **Measuring the property a guard would protect is not verifying the guard** — and a CONDITIONAL
+  > instruction came back as a COMPLETED one across one round boundary. Round 9 added the guard for real.
+- ⭐ **AN ANCHOR CAN SHADOW THE CHECK BEHIND IT.** The new guard finds each `LOG_E` by an exact first-line
+  anchor, then measures it. My first mutation changed the message text, broke the **anchor**, and failed
+  with *"anchor was not found"* — the length arithmetic **never ran**. Padding a *continuation* line instead
+  kept the anchor and fired the real check: *"renders to 165 usable bytes … over the 125-byte ceiling."*
+  **A layered guard needs one mutation per layer.**
+- ⚠ **FOURTH distinct failure of my ad-hoc Makefile extractor in one day** (lookahead stopping at a
+  space-indented continuation; `tail` read as a total; an f-string apostrophe; and now taking only the
+  `clean:` target line while its tokens live on tab-indented recipe lines → "0 clean entries"). All four
+  **false alarms**, all from **re-deriving the extractor instead of reusing the one that worked.**
