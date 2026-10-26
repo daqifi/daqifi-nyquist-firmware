@@ -6,6 +6,7 @@
 #include "state/board/NQ3BoardConfig.h"
 #include "state/runtime/BoardRuntimeConfig.h"
 #include "Util/CRC32.h"   /* #306: settings integrity checksum (severs wolfSSL) */
+#include "task.h"         /* #904 write half: taskENTER_CRITICAL for CalM/CalB */
 
 uint8_t gTempFflashBuffer[NVM_FLASH_ROWSIZE] __attribute__((coherent, aligned(16)));
 
@@ -188,8 +189,12 @@ void daqifi_settings_SnapshotActiveCal(const AInRuntimeArray* channelRuntimeConf
     gCalSnapshotCount = (channelRuntimeConfig->Size < MAX_AIN_CHANNEL)
             ? (uint8_t) channelRuntimeConfig->Size : (uint8_t) MAX_AIN_CHANNEL;
     for (uint8_t x = 0; x < gCalSnapshotCount; x++) {
+        /* Per-channel, mirroring #1054's readers: take the pair coherently so
+         * a snapshot can never capture a half-updated channel. */
+        taskENTER_CRITICAL();
         gCalSnapshot[x].CalM = channelRuntimeConfig->Data[x].CalM;
         gCalSnapshot[x].CalB = channelRuntimeConfig->Data[x].CalB;
+        taskEXIT_CRITICAL();
     }
 }
 
@@ -199,8 +204,15 @@ void daqifi_settings_RestoreActiveCal(AInRuntimeArray* channelRuntimeConfig) {
     }
     for (uint8_t x = 0; x < gCalSnapshotCount
             && x < channelRuntimeConfig->Size; x++) {
+        /* #904's WRITE half, for this path. See the copy loop in
+         * daqifi_settings_LoadADCCalSettings for the full reasoning: the
+         * conversion readers already take this exact section (#1054), so an
+         * UNPROTECTED writer is what defeats them -- the reader atomically
+         * snapshots a TORN pair. */
+        taskENTER_CRITICAL();
         channelRuntimeConfig->Data[x].CalM = gCalSnapshot[x].CalM;
         channelRuntimeConfig->Data[x].CalB = gCalSnapshot[x].CalB;
+        taskEXIT_CRITICAL();
     }
     /* The write the caller could not reach, and the whole point of this pair. */
     gActiveCalBank = gCalSnapshotBank;
@@ -505,10 +517,37 @@ bool daqifi_settings_LoadADCCalSettings(DaqifiSettingsType type, AInRuntimeArray
     
     if(!status) return status;    
     
+    /* #904's WRITE half -- and the reason this belongs with #908 rather than
+     * waiting: the READ half already shipped as #1054, so these writes are the
+     * missing side of a pair that is otherwise complete.
+     *
+     * CalM and CalB are 64-bit doubles, two 32-bit stores each on PIC32MZ.
+     * MC12b_ConvertToVoltage, AD7609_ConvertToVoltage and NanoPB_Encoder all
+     * take taskENTER_CRITICAL() around their CalM/CalB reads (#1054), so an
+     * unprotected writer here does not merely leave a gap -- it DEFEATS those
+     * readers: the writer stores CalM, is preempted, and the reader then
+     * atomically snapshots a torn pair (new CalM, old CalB). A protected
+     * reader against an unprotected writer is not half-safe, it is unsafe.
+     *
+     * Consequence that makes it more than cosmetic: VBATT is a channel in this
+     * same array (ADC_CHANNEL_VBATT -> ADC_FindChannelIndex ->
+     * ADC_ConvertToVoltageByIndex reads gpBoardRuntimeConfig->AInChannels),
+     * and this loop writes EVERY index up to Size. A torn VBATT pair yields a
+     * wrong battVoltage -> wrong chargePct -> and Power_UpdateState acts on
+     * `battVoltageValid && chargePct < BATT_EXT_DOWN_TH` with no averaging or
+     * hysteresis on the VALUE (#564 gates only a STALE reading at cold boot).
+     * So a single torn sample can force a spurious POWERED_UP_EXT_DOWN.
+     *
+     * Per-channel rather than around the whole loop: each conversion needs
+     * only its own channel's pair to be coherent, so this keeps every critical
+     * section a few instructions instead of holding one across up to
+     * MAX_AIN_CHANNEL iterations. Same shape as the readers it pairs with. */
     for(x=0;x<channelRuntimeConfig->Size;x++)
     {
+        taskENTER_CRITICAL();
         channelRuntimeConfig->Data[x].CalM = calArray->Data[x].CalM;
         channelRuntimeConfig->Data[x].CalB = calArray->Data[x].CalB;
+        taskEXIT_CRITICAL();
     }
 
     /* #908 (Qodo item 3): record the bank only AFTER the copy loop, so the
