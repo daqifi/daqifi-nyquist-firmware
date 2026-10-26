@@ -186,6 +186,63 @@ static inline size_t SdManifest_CanonicalDirLen(const char *dir)
     return len;
 }
 
+/**
+ * @brief Does `dir` name the same thing a ROTATION BUCKET would?
+ *
+ * ⛔ #1124 r11 finding 4. The manifest records each file's name RELATIVE to the
+ * configured directory, and retrieval (SD:GET / SD:CRC) accepts either that
+ * relative spelling or the directory-prefixed spelling SD:LISt? prints --
+ * SD_StripConfiguredDir reconciles them by removing ONE leading "<directory>/".
+ *
+ * Those two spellings are tellable apart only while no bucket directory can
+ * carry the configured directory's own name. Buckets are
+ * "<SD_CARD_MANAGER_BUCKET_PREFIX><%03u>", so with the directory set to "P001"
+ * a rotated file at "P001/P001/exp-64.csv" is recorded as "P001/exp-64.csv" --
+ * and feeding THAT back to SD:GET strips the leading "P001/" as though it were
+ * the configured-directory prefix, opening "P001/exp-64.csv": a different file,
+ * or none at all. The recorded name stops round-tripping, which is the single
+ * promise the manifest makes.
+ *
+ * REFUSED AT CONFIGURATION TIME, not patched at retrieval, because the
+ * ambiguity is in the NAMES: once they collide no textual rule at the
+ * retrieval end can separate the two spellings, and trying both would make the
+ * answer depend on which file happens to exist.
+ *
+ * Matches the WHOLE canonical name: `bucketPrefix` followed by one or more
+ * decimal digits and nothing else. One-or-more rather than exactly three on
+ * purpose -- SD_CARD_MANAGER_MAX_BUCKET is a derived value, and raising it past
+ * 999 widens the %03u, which must not quietly reopen this.
+ *
+ * NOT matched, and all genuinely safe: "P001x", "xP001", "P" (no digits),
+ * "P0a", "" -- and "data/P001", whose whole name is not a bucket name, so a
+ * relative "P001/f.csv" cannot be mistaken for it.
+ */
+static inline bool SdManifest_DirShadowsBucketName(const char *dir,
+                                                   const char *bucketPrefix)
+{
+    size_t dirLen, preLen, i;
+
+    if (dir == NULL || bucketPrefix == NULL) {
+        return false;
+    }
+    dirLen = SdManifest_CanonicalDirLen(dir);
+    preLen = strlen(bucketPrefix);
+    /* dirLen <= preLen leaves no room for the digit run a bucket name must
+     * have, so a bare "P" is not a bucket name and is not refused. */
+    if (preLen == 0u || dirLen <= preLen) {
+        return false;
+    }
+    if (strncmp(dir, bucketPrefix, preLen) != 0) {
+        return false;
+    }
+    for (i = preLen; i < dirLen; i++) {
+        if (dir[i] < '0' || dir[i] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
 static inline int SdManifest_FormatLine(char *out, size_t outLen,
                                         const char *name,
                                         uint64_t bytes, uint32_t crc,

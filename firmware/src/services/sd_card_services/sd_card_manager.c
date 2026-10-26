@@ -72,8 +72,12 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  * The names are deliberately 8.3-clean (uppercase, <=8 chars, no extension)
  * so FatFs stores each as a SINGLE directory entry rather than the 3 an LFN
  * name costs — the parent holds bucket entries too, and they must not become
- * the next O(N) problem. */
-#define SD_CARD_MANAGER_BUCKET_PREFIX      "P"
+ * the next O(N) problem.
+ *
+ * SD_CARD_MANAGER_BUCKET_PREFIX itself now lives in sd_card_manager.h: the
+ * SD:DIR setter has to refuse a configured directory carrying a bucket's name
+ * (#1124 r11 finding 4), and that check must read the SAME string this
+ * machinery names buckets with. */
 /* The parent holds one entry per bucket, so the bucket ceiling IS a bound on
  * the parent's size — get it wrong and creating a late bucket re-enters the
  * very O(N) scan this fix exists to avoid. Worst-case parent entry budget:
@@ -2104,6 +2108,28 @@ static bool sd_ManifestPathSafeToOverwrite(const char *path) {
  * without a manifest: integrity bookkeeping must never be able to stop a
  * logging session. */
 static void sd_OpenSessionManifest(void) {
+    /* ⛔ #1124 r11 finding 4: a configured directory carrying a ROTATION
+     * BUCKET's own name makes recorded names ambiguous, so this session gets
+     * NO manifest rather than one whose names retrieve the wrong file. See
+     * SdManifest_DirShadowsBucketName for the mechanism.
+     *
+     * The SD:DIR setter already refuses such a name, so this is the path the
+     * setter never saw: a value that was ALREADY in NVM (every flash wipes
+     * NVM, but a saved config survives reboots), or one stored before this
+     * check existed. Checking only at the setter would leave exactly those
+     * devices writing a manifest that silently misdirects retrieval.
+     *
+     * Withholding the sidecar, not the logging: the stream files are
+     * unaffected and still rotate normally. That is the proportionate half --
+     * refusing to log at all would strand a device over a directory NAME.
+     * The diagnostic leads with the remedy because Logger truncates the TAIL
+     * at 125 bytes. */
+    if (SdManifest_DirShadowsBucketName(gpSDCardSettings->directory,
+                                        SD_CARD_MANAGER_BUCKET_PREFIX)) {
+        LOG_E("[SD] #924 rename SD:DIR - '%s' is a bucket name, so this "
+              "session gets no manifest", gpSDCardSettings->directory);
+        return;
+    }
     /* ⛔ #1124 r10 finding 2: NO TRAILING-SEPARATOR CHECK BELONGS HERE, and
      * r9's was actively harmful. The manifest name is always `<something>` +
      * SD_MANIFEST_EXT, so the COMPLETED name cannot end in a separator however

@@ -546,6 +546,12 @@ RECIPES := Makefile
 # has" failure the guards elsewhere in this file exist for, so they fail the
 # BUILD rather than being left to the bench.
 MANIFEST_BIN := run_924_tests
+# #1124 r11 finding 4: the bucket-name prefix the test's guard must match, read
+# out of the REAL sd_card_manager.h at parse time. A hand-copied constant that
+# drifts keeps PASSING while checking nothing -- and this guard's correctness is
+# exactly "the prefix checked here is the prefix buckets are named with". Empty
+# is fatal in the recipe below, never a default.
+SD_BUCKET_PREFIX := $(shell sed -n 's/^#define[[:space:]]\{1,\}SD_CARD_MANAGER_BUCKET_PREFIX[[:space:]]\{1,\}\("[^"]*"\).*/\1/p' ../../firmware/src/services/sd_card_services/sd_card_manager.h | head -1)
 SD_MANAGER_SRC := ../../firmware/src/services/sd_card_services/sd_card_manager.c
 
 # #980: DAC7718 error-path honesty (lock ownership in DAC7718_ReadWriteReg,
@@ -770,7 +776,8 @@ $(JSONESC_BIN): test_json_string_escape.c test_framework.h $(FW_SVC)/JSON_String
 	$(CC) $(CFLAGS) -I$(FW_SVC) -o $(JSONESC_BIN) test_json_string_escape.c
 
 $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h \
-                 $(FW_UTIL)/CRC32.h $(FW_UTIL)/CRC32.c $(SD_MANAGER_SRC) $(RECIPES)
+                 $(FW_UTIL)/CRC32.h $(FW_UTIL)/CRC32.c $(SD_MANAGER_SRC) \
+                 $(SD_BENCH_SRC) $(SD_MGR_HDR) $(RECIPES)
 	@grep -q 'CRC32_Update(gSDCardData.fileCrcRunning' $(SD_MANAGER_SRC) \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer folds the write-path running"; \
 	       echo "       CRC (expected 'CRC32_Update(gSDCardData.fileCrcRunning')."; \
@@ -903,23 +910,31 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@# un-stripped length. Two defects cancelling; fixing one exposed the other.
 	@#
 	@# So: an ALLOWLIST BY COUNT over every raw read of the field. A new read
-	@# changes the number and forces the author to classify it here. The 20 in
+	@# changes the number and forces the author to classify it here. The 22 in
 	@# the current head, all read and classified once:
 	@#   4  the accessor's own argument                              canonical
 	@#   8  "%.*s/" join operands                                    canonical
-	@#   4  sd_EnterBucket / sd_BuildBucketPath arguments   canonicalised at callee
-	@#   3  LOG_* / "dir='%s'" message text                          cosmetic
+	@#   5  sd_EnterBucket / sd_BuildBucketPath arguments,   canonicalised at
+	@#      and sd_OpenSessionManifest's bucket-name check             callee
+	@#   4  LOG_* / "dir='%s'" message text                           cosmetic
 	@#   1  strncpy -> SYS_FS_DirectoryMake                          benign: FatFs
 	@#      create_name() ignores a terminating separator (E3, ff.c:2880), so
 	@#      f_mkdir("d/") and f_mkdir("d") name the same directory. Benign because
 	@#      of a VENDOR behaviour, not because of anything we do -- which is
 	@#      exactly why it is written down rather than left to be re-derived.
-	@#   (sd_ListDirTarget's two returns are inside that 20; its only consumer is
+	@#   (sd_ListDirTarget's two returns are inside that 22; its only consumer is
 	@#    the walk root, canonicalised there. A SECOND consumer would get a raw
 	@#    value, so it is pinned by name below.)
+	@#
+	@# 20 -> 22 at #1124 r11 finding 4, both reads in sd_OpenSessionManifest:
+	@# the SdManifest_DirShadowsBucketName argument (that predicate calls
+	@# SdManifest_CanonicalDirLen itself, so it is the callee-canonicalised
+	@# class, same as sd_EnterBucket's) and the directory named in the LOG_E
+	@# that reports why the session gets no manifest (cosmetic). NEITHER
+	@# constructs a path, which is the property this count protects.
 	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
 	    | grep -oE '(gpSDCardSettings|cfg)->(directory|opDirectory)' | wc -l`; \
-	 test "$$n" -eq 20 \
+	 test "$$n" -eq 22 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) now has $$n raw reads of ->directory /"; \
 	       echo "       ->opDirectory, not the 20 classified in this recipe (#1124)."; \
 	       echo "       The canonicalisation invariant is about every USE, not just"; \
@@ -1299,7 +1314,52 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	   echo "       Everything in that arm must use the snapshot; the global is"; \
 	   echo "       clearable by SCPI at priority 7 while this task runs at 5."; \
 	   exit 1; fi
-	$(CC) $(CFLAGS) -I$(FW_UTIL) -o $(MANIFEST_BIN) test_924_sd_manifest.c $(FW_UTIL)/CRC32.c
+	@# ⛔ #1124 r11 finding 4, part 1 of 2: the two ENFORCEMENT SITES.
+	@# A configured directory equal to a rotation bucket's name makes recorded
+	@# manifest names retrieve the wrong file (SdManifest_DirShadowsBucketName
+	@# has the mechanism). BOTH sites are required and they cover different
+	@# populations -- the setter stops it being configured, the manifest-open
+	@# check covers a value ALREADY in NVM that the setter never saw. Dropping
+	@# either one leaves a reachable path, so each is pinned by name.
+	@grep -q 'SdManifest_DirShadowsBucketName(' $(SD_BENCH_SRC) \
+	  || { echo "ERROR: $(SD_BENCH_SRC)'s SD:DIR setter no longer refuses a"; \
+	       echo "       directory that carries a rotation bucket's name (#1124 r11"; \
+	       echo "       finding 4). Without it SD:DIR \"P001\" is accepted, and every"; \
+	       echo "       manifest name a bucketed session records then retrieves a"; \
+	       echo "       DIFFERENT file through SD:GET / SD:CRC."; \
+	       exit 1; }
+	@grep -q 'SdManifest_DirShadowsBucketName(' $(SD_MANAGER_SRC) \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer refuses to open a manifest"; \
+	       echo "       under a directory carrying a bucket's name (#1124 r11"; \
+	       echo "       finding 4). The SD:DIR setter alone does NOT cover a value"; \
+	       echo "       already stored in NVM, which is exactly the population that"; \
+	       echo "       would write a silently misdirecting manifest."; \
+	       exit 1; }
+	@# ⛔ Part 2 of 2: the test MODELS SD_StripConfiguredDir, because
+	@# SCPIStorageSD.c is not host-compilable. Pin the two lines the model's
+	@# fidelity rests on -- the prefix compare and the separator-run skip -- so
+	@# the real function cannot drift into something the model no longer mirrors
+	@# while every assertion in the suite stays green.
+	@grep -q 'strncmp(p, directory, dirLen) != 0 || p\[dirLen\] != ' $(SD_BENCH_SRC) \
+	  || { echo "ERROR: SD_StripConfiguredDir's prefix compare in $(SD_BENCH_SRC)"; \
+	       echo "       changed shape. test_924_sd_manifest.c models that function to"; \
+	       echo "       test the record->retrieve round trip; re-derive the model"; \
+	       echo "       (strip_configured_dir_model) before trusting those results."; \
+	       exit 1; }
+	@# The prefix the guard must match is the one buckets are NAMED with, so the
+	@# test is handed the macro's real value rather than a hand-copied copy. Read
+	@# from sd_card_manager.h -- where #1124 r11 moved it so the setter can see
+	@# it. Extraction failing is FATAL, never a default: a guard checked against
+	@# the wrong prefix would pass while covering nothing.
+	@test -n '$(SD_BUCKET_PREFIX)' \
+	  || { echo "ERROR: could not read SD_CARD_MANAGER_BUCKET_PREFIX out of"; \
+	       echo "       $(SD_MGR_HDR). test_924_sd_manifest.c needs the REAL"; \
+	       echo "       prefix (#1124 r11 finding 4) -- a hand-copied or defaulted"; \
+	       echo "       value would let the bucket-name guard be checked against a"; \
+	       echo "       string the firmware does not use. The test also carries an"; \
+	       echo "       #error for the same reason, so neither half can default."; \
+	       exit 1; }
+	$(CC) $(CFLAGS) -I$(FW_UTIL) -DFW_SD_BUCKET_PREFIX='$(SD_BUCKET_PREFIX)' -o $(MANIFEST_BIN) test_924_sd_manifest.c $(FW_UTIL)/CRC32.c
 
 $(BENCH_BIN): test_943_bench_stall_bound.c test_framework.h $(SD_BENCH_SRC) $(RECIPES)
 	@grep -qE '^#define[[:space:]]+SCPI_SD_BENCH_STALL_TIMEOUT_MS[[:space:]]+10000U[[:space:]]*$$' $(SD_BENCH_SRC) \

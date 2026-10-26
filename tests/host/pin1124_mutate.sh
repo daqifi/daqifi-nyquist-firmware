@@ -52,7 +52,10 @@ F="$W/firmware/src/services/sd_card_services/sd_card_manager.c"
 G="$W/tests/host/gen_1029_log_budget.py"
 M="$W/tests/host/Makefile"
 S="$W/firmware/src/services/SCPI/SCPIStorageSD.c"
-for f in "$F" "$G" "$M" "$S"; do
+# #1124 r11 finding 4 moved SD_CARD_MANAGER_BUCKET_PREFIX here, and the
+# Makefile reads it out of this header, so one arm below mutates it.
+H="$W/firmware/src/services/sd_card_services/sd_card_manager.h"
+for f in "$F" "$G" "$M" "$S" "$H"; do
     [ -f "$f" ] || { echo "FATAL: $f missing."; exit 2; }
 done
 
@@ -60,16 +63,16 @@ echo "################################################################"
 echo "# OPERATING ON: $W"
 echo "#   HEAD $(git -C "$W" rev-parse HEAD 2>/dev/null | cut -c1-9)  branch $(git -C "$W" rev-parse --abbrev-ref HEAD 2>/dev/null)"
 echo "################################################################"
-if [ -n "$(git -C "$W" status --porcelain -- "$F" "$G" "$M" "$S" 2>/dev/null)" ]; then
+if [ -n "$(git -C "$W" status --porcelain -- "$F" "$G" "$M" "$S" "$H" 2>/dev/null)" ]; then
     echo "FATAL: uncommitted changes in the files this mutates. Commit or set them"
     echo "       aside first -- restore here is a byte copy and will not arbitrate."
     exit 2
 fi
 
-BF=$(mktemp); BG=$(mktemp); BS=$(mktemp)
-cp "$F" "$BF"; cp "$G" "$BG"; cp "$S" "$BS"
-restore() { cp "$BF" "$F"; cp "$BG" "$G"; cp "$BS" "$S"; }
-trap 'restore; rm -f "$BF" "$BG" "$BS"' EXIT INT TERM
+BF=$(mktemp); BG=$(mktemp); BS=$(mktemp); BH=$(mktemp)
+cp "$F" "$BF"; cp "$G" "$BG"; cp "$S" "$BS"; cp "$H" "$BH"
+restore() { cp "$BF" "$F"; cp "$BG" "$G"; cp "$BS" "$S"; cp "$BH" "$H"; }
+trap 'restore; rm -f "$BF" "$BG" "$BS" "$BH"' EXIT INT TERM
 cd "$W/tests/host" || exit 2
 
 pass=0; fail=0
@@ -312,6 +315,56 @@ if sub "$F" '                bool openAborted;' \
     expect "R12 read outside the guarded window (control)" CLEAN
 else
     echo "  FAIL R12 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R13: the SD:DIR setter stops refusing a bucket-shaped directory ======="
+echo "==      (r11 finding 4: SD:DIR \"P001\" then accepted, and every manifest  =="
+echo "==      name a bucketed session records retrieves a DIFFERENT file)       =="
+if sub "$S" 'SdManifest_DirShadowsBucketName(dirCandidate,' \
+            'SdManifest_DirShadowsBucketNameXX(dirCandidate,'; then
+    expect "R13 setter enforcement site" "SD:DIR setter no longer refuses"
+else
+    echo "  FAIL R13 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R14: the MANIFEST-OPEN check goes, leaving the setter alone to guard. =="
+echo "==      Not equivalent: the setter never sees a directory ALREADY in NVM, =="
+echo "==      which is precisely the population that would write a silently     =="
+echo "==      misdirecting manifest.                                            =="
+echo "==      RENAMED, not deleted, on purpose: the pin keys on the CALL form  =="
+echo "==      '...Name(' -- a bare-name grep would still match '...NameXX'   =="
+echo "==      and pass. That prefix trap has bitten this row before.          =="
+if sub "$F" 'if (SdManifest_DirShadowsBucketName(gpSDCardSettings->directory,' \
+            'if (SdManifest_DirShadowsBucketNameXX(gpSDCardSettings->directory,'; then
+    expect "R14 manifest-open enforcement site" "no longer refuses to open a manifest"
+else
+    echo "  FAIL R14 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R15: SD_StripConfiguredDir's prefix compare drifts. The test MODELS    =="
+echo "==      that function (SCPIStorageSD.c is not host-compilable), so a      =="
+echo "==      silent drift would leave the round-trip test measuring a shape    =="
+echo "==      the firmware no longer has -- green, and meaningless.             =="
+if sub "$S" 'strncmp(p, directory, dirLen) != 0 || p[dirLen] !=' \
+            'memcmp(p, directory, dirLen) != 0 || p[dirLen] !='; then
+    expect "R15 strip-model fidelity" "changed shape"
+else
+    echo "  FAIL R15 anchor absent -- source drifted."; fail=$((fail+1))
+fi
+restore
+
+echo "== R16: FAIL-CLOSED EXTRACTION. The prefix macro is renamed in the header, =="
+echo "==      so the Makefile cannot read it. The test must NOT fall back to a   =="
+echo "==      default: a bucket-name guard checked against the wrong string      =="
+echo "==      passes while covering nothing.                                     =="
+if sub "$H" '#define SD_CARD_MANAGER_BUCKET_PREFIX ' \
+            '#define SD_CARD_MANAGER_BUCKET_PREFIX_RENAMED '; then
+    expect "R16 prefix extraction fails closed" "could not read SD_CARD_MANAGER_BUCKET_PREFIX"
+else
+    echo "  FAIL R16 anchor absent -- source drifted."; fail=$((fail+1))
 fi
 restore
 

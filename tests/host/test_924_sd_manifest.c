@@ -1111,6 +1111,177 @@ TEST(the_manifest_name_is_usable_however_the_file_is_spelled)
     }
 }
 
+/* ==========================================================================
+ * #1124 r11 finding 4 -- a configured directory that carries a bucket's name
+ * ========================================================================== */
+
+/* FW_SD_BUCKET_PREFIX is injected by the Makefile, which reads
+ * SD_CARD_MANAGER_BUCKET_PREFIX out of the REAL sd_card_manager.h at build
+ * time and fails the build if it cannot find it. NOT hand-copied: a copied
+ * constant that drifts keeps passing while checking nothing, and this guard's
+ * whole correctness is "the prefix here is the prefix buckets are named with".
+ * sd_card_manager.h itself is not host-includable (Harmony, FreeRTOS, FatFs). */
+#ifndef FW_SD_BUCKET_PREFIX
+#error "FW_SD_BUCKET_PREFIX must be -D'd from sd_card_manager.h by the Makefile"
+#endif
+
+/* A faithful model of SCPIStorageSD.c's SD_StripConfiguredDir. That file is
+ * not host-compilable (libscpi, BoardConfig, the whole SCPI graph), so the
+ * RETRIEVAL half of the round trip below is modelled here, the same way
+ * test_943/test_970/test_756 model their subjects. The Makefile greps the real
+ * function for the shape this mirrors and fails the BUILD if it drifts -- which
+ * is what keeps this from becoming a test of its own model. */
+static const char *strip_configured_dir_model(const char *p, size_t *pLen,
+                                              const char *directory)
+{
+    size_t dirLen;
+
+    if (p == NULL || pLen == NULL || directory == NULL) {
+        return p;
+    }
+    dirLen = strlen(directory);
+    while (dirLen > 0u && directory[dirLen - 1u] == '/') {
+        dirLen--;
+    }
+    if (dirLen == 0u || *pLen <= dirLen + 1u) {
+        return p;
+    }
+    if (strncmp(p, directory, dirLen) != 0 || p[dirLen] != '/') {
+        return p;
+    }
+    *pLen -= (dirLen + 1u);
+    p += dirLen + 1u;
+    while (*pLen > 1u && *p == '/') {
+        p++;
+        (*pLen)--;
+    }
+    return p;
+}
+
+/* Record a name the way sd_AppendManifestLine does, then retrieve it the way
+ * SD:GET/SD:CRC do, and report the path that would actually be opened. The
+ * manifest's one promise is that this is the IDENTITY on the recorded file. */
+static void record_then_retrieve(const char *fullPath, const char *dir,
+                                 char *recordedOut, size_t recordedLen,
+                                 char *openedOut, size_t openedLen)
+{
+    const char *rec = SdManifest_RelativeName(fullPath, dir);
+    size_t len = strlen(rec);
+    const char *operand;
+
+    (void)snprintf(recordedOut, recordedLen, "%s", rec);
+    operand = strip_configured_dir_model(recordedOut, &len, dir);
+    (void)snprintf(openedOut, openedLen, "%.*s/%s",
+                   (int)SdManifest_CanonicalDirLen(dir), dir, operand);
+}
+
+TEST(a_recorded_name_retrieves_the_file_it_describes)
+{
+    /* ⛔ THE FINDING. "record, then retrieve, opens the same file" is the
+     * inverse property the #924 manifest exists to provide, and a configured
+     * directory equal to a BUCKET's name breaks it.
+     *
+     * Bucket 1 is named FW_SD_BUCKET_PREFIX "001" = "P001". Set
+     * SD:DIR to "P001" and the 65th file of a session lands at
+     * "P001/P001/exp-64.csv". */
+    char recorded[64], opened[64];
+
+    record_then_retrieve("P001/P001/exp-64.csv", "P001",
+                         recorded, sizeof(recorded), opened, sizeof(opened));
+
+    /* recording is correct on its own terms: relative to the configured dir */
+    ASSERT_EQ(strcmp(recorded, "P001/exp-64.csv"), 0);
+
+    /* but retrieval reads that leading "P001/" as the configured-directory
+     * prefix and strips it, so a DIFFERENT path is opened. On a clean card
+     * that file does not exist; if it does, the wrong file is returned. */
+    ASSERT_EQ(strcmp(opened, "P001/exp-64.csv"), 0);
+    ASSERT_TRUE(strcmp(opened, "P001/P001/exp-64.csv") != 0);
+
+    /* which is why the configuration is refused before it can be used */
+    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P001", "P"));
+
+    /* ✅ AND THE POSITIVE HALF, without which this test would only prove a
+     * defect exists and not that the guard's condition is the right one: with
+     * any directory the guard ADMITS, the same round trip is the identity --
+     * including over the very same bucket component. */
+    ASSERT_FALSE(SdManifest_DirShadowsBucketName("DAQiFi", "P"));
+    record_then_retrieve("DAQiFi/P001/exp-64.csv", "DAQiFi",
+                         recorded, sizeof(recorded), opened, sizeof(opened));
+    ASSERT_EQ(strcmp(recorded, "P001/exp-64.csv"), 0);
+    ASSERT_EQ(strcmp(opened, "DAQiFi/P001/exp-64.csv"), 0);
+
+    /* and on a bucket-0 file, where no bucket component appears at all */
+    record_then_retrieve("DAQiFi/exp.csv", "DAQiFi",
+                         recorded, sizeof(recorded), opened, sizeof(opened));
+    ASSERT_EQ(strcmp(recorded, "exp.csv"), 0);
+    ASSERT_EQ(strcmp(opened, "DAQiFi/exp.csv"), 0);
+}
+
+TEST(the_bucket_name_guard_matches_a_whole_bucket_name_and_nothing_else)
+{
+    /* REFUSED: the prefix followed by a digit run and nothing else. */
+    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P001", "P"));
+    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P000", "P"));
+    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P999", "P"));
+    /* one-or-more digits, not exactly three: SD_CARD_MANAGER_MAX_BUCKET is
+     * derived, and raising it past 999 widens the %03u. A guard pinned to
+     * three digits would quietly stop covering the names that then appear. */
+    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P1", "P"));
+    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P1000", "P"));
+    /* a trailing separator is a redundant spelling of the same directory, so
+     * it must not be an escape hatch */
+    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P001/", "P"));
+    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P001///", "P"));
+
+    /* ADMITTED -- none of these can equal a bucket directory's own name, and a
+     * guard that refused them would be banning legitimate configurations to
+     * look thorough. */
+    ASSERT_FALSE(SdManifest_DirShadowsBucketName("P", "P"));      /* no digits */
+    ASSERT_FALSE(SdManifest_DirShadowsBucketName("P001x", "P"));  /* trailing */
+    ASSERT_FALSE(SdManifest_DirShadowsBucketName("xP001", "P"));  /* leading  */
+    ASSERT_FALSE(SdManifest_DirShadowsBucketName("P0a", "P"));    /* non-digit */
+    ASSERT_FALSE(SdManifest_DirShadowsBucketName("p001", "P"));   /* case     */
+    ASSERT_FALSE(SdManifest_DirShadowsBucketName("DAQiFi", "P"));
+    ASSERT_FALSE(SdManifest_DirShadowsBucketName("", "P"));
+    /* ⛔ NESTED, and genuinely safe -- the reason the guard tests the WHOLE
+     * name rather than any component. With SD:DIR "data/P001" a bucketed file
+     * is "data/P001/P001/f.csv", recorded as "P001/f.csv"; the strip compares
+     * against the full "data/P001", does NOT match, and the join restores the
+     * exact recorded path. Verified as the round trip, not asserted. */
+    ASSERT_FALSE(SdManifest_DirShadowsBucketName("data/P001", "P"));
+    {
+        char recorded[64], opened[64];
+        record_then_retrieve("data/P001/P001/f.csv", "data/P001",
+                             recorded, sizeof(recorded), opened, sizeof(opened));
+        ASSERT_EQ(strcmp(recorded, "P001/f.csv"), 0);
+        ASSERT_EQ(strcmp(opened, "data/P001/P001/f.csv"), 0);
+    }
+
+    /* null safety, and a prefix of "" must not make every directory a bucket */
+    ASSERT_FALSE(SdManifest_DirShadowsBucketName(NULL, "P"));
+    ASSERT_FALSE(SdManifest_DirShadowsBucketName("P001", NULL));
+    ASSERT_FALSE(SdManifest_DirShadowsBucketName("123", ""));
+}
+
+TEST(the_guard_reads_the_same_prefix_the_bucket_machinery_uses)
+{
+    /* The guard is only correct if its prefix IS the one buckets are named
+     * with. FW_SD_BUCKET_PREFIX is SD_CARD_MANAGER_BUCKET_PREFIX, read out of
+     * the real sd_card_manager.h by the Makefile -- so this asserts that the
+     * macro the FIRMWARE compiles against really does produce the name this
+     * test reasons about. Change the prefix and this fails loudly, instead of
+     * the guard silently ceasing to cover the names buckets now carry. */
+    char bucket1[32];
+
+    (void)snprintf(bucket1, sizeof(bucket1),
+                   FW_SD_BUCKET_PREFIX "%03u", 1u);
+    ASSERT_TRUE(SdManifest_DirShadowsBucketName(bucket1,
+                                                FW_SD_BUCKET_PREFIX));
+    /* and the name really is the one the finding names */
+    ASSERT_EQ(strcmp(bucket1, "P001"), 0);
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
@@ -1152,5 +1323,8 @@ int main(void)
     RUN(a_file_name_must_not_end_in_a_separator);
     RUN(the_directory_half_strips_where_the_name_half_refuses);
     RUN(the_manifest_name_is_usable_however_the_file_is_spelled);
+    RUN(a_recorded_name_retrieves_the_file_it_describes);
+    RUN(the_bucket_name_guard_matches_a_whole_bucket_name_and_nothing_else);
+    RUN(the_guard_reads_the_same_prefix_the_bucket_machinery_uses);
     return TEST_SUMMARY();
 }

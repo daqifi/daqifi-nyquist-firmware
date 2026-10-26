@@ -18,6 +18,19 @@
 #define SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX 40
 #define SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX 40
 
+/* #689 rotation-bucket directory name prefix: buckets are
+ * "<prefix><%03u>" ("P001", "P002", ...). Deliberately 8.3-clean so FatFs
+ * stores each as ONE directory entry; the full rationale sits with the
+ * bucket machinery in sd_card_manager.c.
+ *
+ * IN THE HEADER, not that .c file, since #1124 r11 finding 4: the SD:DIR
+ * setter must refuse a configured directory that carries a bucket's own name,
+ * or the #924 manifest's recorded names stop round-tripping through
+ * SD:GET/SD:CRC. That check and this prefix have to be the SAME string --
+ * a second copy in the SCPI file is exactly the drift that would reopen the
+ * defect while every test still passed. */
+#define SD_CARD_MANAGER_BUCKET_PREFIX      "P"
+
 // File size limits for automatic splitting (FAT32 protection)
 // FAT32 max: 2^32 - 1 bytes (4GB - 1 byte)
 // Safety margin: 100MB to account for filesystem metadata and overhead

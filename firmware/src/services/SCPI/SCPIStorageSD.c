@@ -25,6 +25,11 @@
 /* ************************************************************************** */
 #include "SCPIStorageSD.h"
 #include "Util/SpiBusHealth.h"
+/* #1124 r11 finding 4: SdManifest_DirShadowsBucketName, used by the SD:DIR
+ * setter. Header-only, same text layer sd_card_manager.c builds its paths
+ * with -- so the rule the manifest relies on is enforced from the one
+ * definition, not restated here. */
+#include "Util/SdManifest.h"
 #include "services/streaming.h"
 #include "SCPIInterface.h"
 #include "../sd_card_services/sd_card_manager.h"
@@ -2996,6 +3001,30 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
     if (!SD_ValidatePathParam(pBuff, pathLen, false)) {   /* #612 */
         SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
         return SCPI_RES_ERR;
+    }
+
+    /* #1124 r11 finding 4: refuse a directory that carries a ROTATION BUCKET's
+     * own name. With SD:DIR "P001", a rotated file at "P001/P001/<name>" is
+     * recorded in the #924 manifest as "P001/<name>", and handing that back to
+     * SD:GET/SD:CRC makes SD_StripConfiguredDir above remove the leading
+     * "P001/" as if it were the configured-directory prefix -- retrieving a
+     * different file, or none. See SdManifest_DirShadowsBucketName for why this
+     * is refused here rather than untangled at retrieval.
+     *
+     * pBuff is NOT NUL-terminated at pathLen (it points into the SCPI parse
+     * buffer), so the operand is checked through a bounded local copy. The
+     * length check above already guarantees it fits. */
+    {
+        char dirCandidate[sizeof(pSDCardRuntimeConfig->directory)];
+        memcpy(dirCandidate, pBuff, pathLen);
+        dirCandidate[pathLen] = '\0';
+        if (SdManifest_DirShadowsBucketName(dirCandidate,
+                                            SD_CARD_MANAGER_BUCKET_PREFIX)) {
+            LOG_E("SD:DIRectory - pick another name: '%s' collides with a "
+                  "rotation bucket", dirCandidate);
+            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
+            return SCPI_RES_ERR;
+        }
     }
 
     /* Refuse while an SD operation owns the card -- which includes an active
