@@ -3104,20 +3104,36 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 	 l=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_LoadFromNvm(DaqifiSettings_TopLevelSettings,' | cut -d: -f1`; \
 	 n=`printf '%s\n' "$$body" | grep -n 'tmpTopLevelSettings\.type = DaqifiSettings_TopLevelSettings;' | cut -d: -f1`; \
 	 v=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_ValidateADCCalBank(calType)' | cut -d: -f1`; \
-	 i=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)' | cut -d: -f1`; \
+	 ni=`printf '%s\n' "$$body" | grep -c 'daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)'`; \
+	 i1=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)' | head -1 | cut -d: -f1`; \
+	 i2=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)' | tail -1 | cut -d: -f1`; \
 	 s=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_SaveToNvm(&tmpTopLevelSettings)' | cut -d: -f1`; \
 	 r=`printf '%s\n' "$$body" | grep -n 'daqifi_settings_TopLevelMatchesCommitted(&tmpTopLevelSettings)' | cut -d: -f1`; \
+	 nrc=`printf '%s\n' "$$body" | grep -c 'pRunTimeStreamConfig->RawOutputMode = false;'`; \
+	 rc=`printf '%s\n' "$$body" | grep -n 'pRunTimeStreamConfig->RawOutputMode = false;' | head -1 | cut -d: -f1`; \
 	 test -n "$$l" && test -n "$$n" && test -n "$$v" && test -n "$$r" \
-	   && test -n "$$i" && test -n "$$s" \
+	   && test -n "$$i1" && test -n "$$i2" && test -n "$$s" && test -n "$$rc" \
+	   && test "$$ni" -eq 2 && test "$$nrc" -eq 1 \
+	   && test "$$rc" -lt "$$l" \
 	   && test "$$l" -lt "$$n" && test "$$n" -lt "$$v" \
 	   && test "$$v" -lt "$$s" && test "$$s" -lt "$$r" \
-	   && test "$$r" -lt "$$i" \
+	   && test "$$r" -lt "$$i1" && test "$$i1" -lt "$$i2" \
 	   || { echo "ERROR: ADCUseCalSetClaimed() in $(SCPIADC_SRC) no longer runs"; \
-	        echo "       load -> normalize -> validate -> save -> VERIFY-COMMITTED"; \
-	        echo "       -> install in that order"; \
-	        echo "       (load='$$l' normalize='$$n' validate='$$v' save='$$s'"; \
-	        echo "        verify='$$r' install='$$i')."; \
+	        echo "       RAW-MODE-CLEAR -> load -> normalize -> validate -> save ->"; \
+	        echo "       VERIFY-COMMITTED -> MISMATCH-INSTALL -> final-install, in that"; \
+	        echo "       order"; \
+	        echo "       (rawClear='$$rc' nRawClear=$$nrc load='$$l' normalize='$$n'"; \
+	        echo "        validate='$$v' save='$$s' verify='$$r'"; \
+	        echo "        mismatchInstall='$$i1' finalInstall='$$i2' nInstall=$$ni)."; \
 	        echo "       Each adjacency carries a defect if it inverts:"; \
+	        echo "         the raw-mode clear anywhere but FIRST (before the load) is"; \
+	        echo "           #1152 round 8's regression -- ruling 9=A requires USECal"; \
+	        echo "           0/1 to leave raw mode UNCONDITIONALLY, independent of"; \
+	        echo "           whether the bank load below succeeds; a clear that drifted"; \
+	        echo "           back to the end of the function (the pre-round-8 shape) or"; \
+	        echo "           that got duplicated (nRawClear != 1) reopens the hardware"; \
+	        echo "           repro: USECal 2 -> USECal 0/1 against a blank bank -> -200,"; \
+	        echo "           still raw, forever, on a board with no populated cal bank;"; \
 	        echo "         normalize below the save does nothing -- SaveToNvm would see"; \
 	        echo "           the type NVM held, not the one we asked for;"; \
 	        echo "         install ABOVE the save is the audited #1152 r1 defect -- the"; \
@@ -3132,7 +3148,17 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 	        echo "           the shared staging buffer), so giving up there leaves the"; \
 	        echo "           NEW selector stored and the OLD coefficients live;"; \
 	        echo "         validate below the save re-opens #1148 -- a selector would"; \
-	        echo "           persist for a bank that cannot be loaded."; \
+	        echo "           persist for a bank that cannot be loaded;"; \
+	        echo "         a missing or misordered MISMATCH-INSTALL (nInstall != 2, or"; \
+	        echo "           the first LoadADCCalSettings call not strictly between"; \
+	        echo "           verify and the final install) reopens round 7's finding on"; \
+	        echo "           the TopLevelMatchesCommitted mismatch branch: returning"; \
+	        echo "           without installing leaves the PREVIOUS bank live while the"; \
+	        echo "           stored selector is already destroyed by the erase that ran"; \
+	        echo "           either way -- a later CONF:VOLT:SAVE then persists calVals=0"; \
+	        echo "           without touching runtime calibration, so USECal? reads 0"; \
+	        echo "           while acquisition still applies the user slope (roughly 2x"; \
+	        echo "           the factory-calibrated voltage)."; \
 	        echo "       All of these still satisfy the presence check above, which is"; \
 	        echo "       why this one is positional."; \
 	        echo "       If the body was legitimately restructured, re-read it against"; \

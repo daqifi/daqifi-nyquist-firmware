@@ -589,18 +589,46 @@ typedef enum {
                           *
                           * What r2 does buy: the common case -- a bank that
                           * fails validation -- touches nothing at all. */,
-    USECAL_R5            /* #1152 r5 (CURRENT): r2, plus -- when SaveToNvm
-                          * REPORTS failure -- an independent verification of
-                          * the committed record before giving up. Closes the
-                          * r2 reproducer where the write LANDED and only the
-                          * readback comparison failed.
+    USECAL_R5,           /* #1152 r5 (HISTORICAL -- r8 below is what production
+                          * runs): r2, plus -- when SaveToNvm REPORTS failure --
+                          * an independent verification of the committed record
+                          * before giving up. Closes the r2 reproducer where the
+                          * write LANDED and only the readback comparison failed.
                           *
                           * ⚠ NOT transaction safety, and this comment must
                           * not grow into claiming it: another writer can
                           * overwrite after the check, a save prepared
                           * elsewhere can land later, the install still
                           * re-reads the bank, and a HUNG save never reaches
-                          * the check. One interleaving, closed. */
+                          * the check. One interleaving, closed.
+                          *
+                          * Kept as the historical shape round 8 changed TWO
+                          * things about: see USECAL_R8. */
+    USECAL_R8            /* #1152 round 8 (CURRENT), operator ruling 9=A, on
+                          * top of r5's save-verification:
+                          *
+                          *   1. RawOutputMode (modelled here as rawOutputMode,
+                          *      threaded through via rawModeIn/run.rawOutputMode
+                          *      since the model has no persistent
+                          *      StreamingRuntimeConfig to mutate across calls)
+                          *      is cleared IMMEDIATELY after the param1==2
+                          *      branch, independent of whether anything below
+                          *      succeeds. Every earlier shape clears it only
+                          *      on the final success return, which left a
+                          *      board with no populated cal bank unable to
+                          *      ever leave raw mode (USECal 2 -> USECal 0/1
+                          *      against a blank bank -> -200, still raw).
+                          *   2. On the TopLevelMatchesCommitted MISMATCH
+                          *      branch (genuine divergence, not r5's
+                          *      recovered-concurrent-write case), round 7's
+                          *      audit found returning WITHOUT installing left
+                          *      the PREVIOUS bank live while the stored
+                          *      selector was already destroyed by the erase --
+                          *      strictly worse than installing, since the
+                          *      bank was already PROVEN loadable by
+                          *      ValidateADCCalBank. r8 installs the intended
+                          *      bank on this branch before still returning
+                          *      RES_ERR. */
 } UseCalShape;
 
 typedef struct {
@@ -615,7 +643,8 @@ typedef struct {
 } UseCalRun;
 
 static UseCalRun model_usecal_set(UseCalShape shape, int param1,
-                                  ModelNvm *nvm, ModelRuntimeArray *rt)
+                                  ModelNvm *nvm, ModelRuntimeArray *rt,
+                                  bool rawModeIn)
 {
     UseCalRun run;
     ModelSettings tmp;
@@ -625,8 +654,11 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
     run.typeHandedToSave = MODEL_NO_BANK;
     run.saveOutcome = SAVE_OK;
 
-    /* #620: reject an out-of-range value before ANY state mutation. */
+    /* #620: reject an out-of-range value before ANY state mutation --
+     * raw mode included, in every shape, so this reflects whatever it was
+     * BEFORE this call rather than a hardcoded false. */
     if (param1 < 0 || param1 > 2) {
+        run.rawOutputMode = rawModeIn;
         run.result = RES_ERR;
         return run;
     }
@@ -638,6 +670,25 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
         return run;
     }
 
+    /* Round 8, ruling 9=A, modelled: the real firmware's RawOutputMode is
+     * persistent FreeRTOS-task state (StreamingRuntimeConfig, held across
+     * calls via BoardRunTimeConfig_Get()), which this model does not carry
+     * internally -- callers thread it themselves via `rawModeIn` (the state
+     * BEFORE this call) and read it back via `run.rawOutputMode` (the state
+     * AFTER). r8 clears it HERE, immediately and unconditionally, before any
+     * step below that can fail. Every earlier shape does not touch it here
+     * at all -- it stays whatever `rawModeIn` was until (if) the shared
+     * success return at the bottom flips it, so a failure on those shapes
+     * leaves it exactly as it was handed in. That is the behaviour the 9=A
+     * hardware repro exposed: a board with no populated bank could call
+     * USECal 0/1 forever and never leave raw mode, because every one of
+     * those calls fails before reaching the bottom. */
+    if (shape == USECAL_R8) {
+        run.rawOutputMode = false;
+    } else {
+        run.rawOutputMode = rawModeIn;
+    }
+
     /* --- step 1 --------------------------------------------------------- */
     memset(&tmp, 0, sizeof(tmp));
     if (!model_LoadFromNvm(nvm, MODEL_TYPE_TOP_LEVEL, &tmp)) {
@@ -646,8 +697,10 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
     }
     run.loadOk = true;
 
-    /* --- #1152's normalization: present in both r1 and r2 ---------------- */
-    if (shape == USECAL_POSTFIX || shape == USECAL_R2) {
+    /* --- #1152's normalization: present in every shape except the
+     * pre-fix one it exists to replace -- production normalizes
+     * unconditionally for every in-range, non-raw param1. */
+    if (shape != USECAL_PREFIX) {
         tmp.type = MODEL_TYPE_TOP_LEVEL;
     }
 
@@ -657,7 +710,7 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
     default: run.result = RES_ERR; return run;   /* unreachable, kept as in situ */
     }
 
-    if (shape == USECAL_R2 || shape == USECAL_R5) {
+    if (shape == USECAL_R2 || shape == USECAL_R5 || shape == USECAL_R8) {
         /* --- r2 step 2: VALIDATE without installing ---------------------- */
         /* daqifi_settings_ValidateADCCalBank: the same LoadFromNvm check
          * LoadADCCalSettings performs internally, without the copy loop that
@@ -674,11 +727,29 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
         run.typeHandedToSave = tmp.type;
         run.saveOutcome = model_SaveToNvm(nvm, &tmp);
         if (run.saveOutcome != SAVE_OK) {
-            /* r5: a REPORTED failure is not proof the write failed. Read the
-             * medium independently and continue only on an exact match. r2
-             * has no such check and gives up here. */
-            if (shape != USECAL_R5 ||
-                !model_TopLevelMatchesCommitted(nvm, &tmp)) {
+            /* r5 added: a REPORTED failure is not proof the write failed.
+             * Read the medium independently and continue only on an exact
+             * match. r2 has no such check and gives up unconditionally --
+             * `recovers` is false for it, which short-circuits the `||`
+             * below so model_TopLevelMatchesCommitted is never even called,
+             * matching production having no such call in r2. */
+            bool recovers = (shape == USECAL_R5 || shape == USECAL_R8);
+            if (!recovers || !model_TopLevelMatchesCommitted(nvm, &tmp)) {
+                /* round 8 (Change 2): on a GENUINE mismatch -- as opposed to
+                 * r5/r8's recovered-concurrent-write case just above --
+                 * round 7's audit found returning here WITHOUT installing
+                 * leaves the PREVIOUS bank live while the stored selector is
+                 * already destroyed by the erase that already ran either
+                 * way. model_ValidateADCCalBank has already PROVEN calType
+                 * loads, so r8 installs it here before still failing. r2 and
+                 * r5 do NOT -- that is the pre-round-8 shape the
+                 * `..._refuses_a_valid_record_that_is_not_the_intended_one`
+                 * and `r2_*` tests below pin with `rt.installs == 0` on this
+                 * exact branch, and must keep passing unchanged. */
+                if (shape == USECAL_R8) {
+                    run.installAttempted = true;
+                    (void)model_LoadADCCalSettings(nvm, calType, rt);
+                }
                 run.result = RES_ERR;
                 return run;
             }
@@ -710,6 +781,11 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
         }
     }
 
+    /* Historical shapes clear here, on success, for the first time in this
+     * call. r8 already cleared it at the top (unconditionally) -- this is a
+     * no-op for r8, kept unconditional rather than `if (shape != USECAL_R8)`
+     * because both branches land on the same value and a conditional here
+     * would claim a distinction that does not exist. */
     run.rawOutputMode = false;
     run.result = RES_OK;
     return run;
@@ -870,7 +946,7 @@ TEST(pre_fix_installs_the_new_bank_then_cannot_persist_the_selector)
     fixture_board(&nvm, &rt, 99u, true);
     ASSERT_EQ(persisted_selector(&nvm), 0);      /* factory, before the command */
 
-    run = model_usecal_set(USECAL_PREFIX, 1, &nvm, &rt);   /* CONF:ADC:USECal 1 */
+    run = model_usecal_set(USECAL_PREFIX, 1, &nvm, &rt, false);   /* CONF:ADC:USECal 1 */
 
     /* The caller is told it failed. */
     ASSERT_EQ(run.result, RES_ERR);
@@ -908,7 +984,7 @@ TEST(post_fix_normalizes_the_type_and_the_same_record_persists)
     fixture_board(&nvm, &rt, 99u, true);
     ASSERT_EQ(persisted_selector(&nvm), 0);
 
-    run = model_usecal_set(USECAL_POSTFIX, 1, &nvm, &rt);
+    run = model_usecal_set(USECAL_POSTFIX, 1, &nvm, &rt, false);
 
     ASSERT_EQ(run.result, RES_OK);
     /* The switch saw the type we ASKED for, not the one NVM held. */
@@ -945,7 +1021,7 @@ TEST(pre_fix_in_enum_wrong_type_overwrites_the_wifi_page_and_reports_success)
 
     fixture_board(&nvm, &rt, MODEL_TYPE_WIFI, true);
 
-    run = model_usecal_set(USECAL_PREFIX, 1, &nvm, &rt);
+    run = model_usecal_set(USECAL_PREFIX, 1, &nvm, &rt, false);
 
     /* No error. Nothing to find in SYST:LOG?. */
     ASSERT_EQ(run.result, RES_OK);
@@ -966,7 +1042,7 @@ TEST(pre_fix_in_enum_wrong_type_overwrites_the_wifi_page_and_reports_success)
 
     /* Post-fix, from the same fixture: the WiFi page is not touched at all. */
     fixture_board(&nvm, &rt, MODEL_TYPE_WIFI, true);
-    run = model_usecal_set(USECAL_POSTFIX, 1, &nvm, &rt);
+    run = model_usecal_set(USECAL_POSTFIX, 1, &nvm, &rt, false);
     ASSERT_EQ(run.result, RES_OK);
     ASSERT_EQ(nvm.erases[MODEL_TYPE_WIFI], 0);
     ASSERT_EQ(nvm.writes[MODEL_TYPE_WIFI], 0);
@@ -990,7 +1066,7 @@ TEST(pre_fix_stored_type_two_overwrites_the_factory_cal_bank_it_just_selected)
     /* The factory bank is readable before the command. */
     ASSERT_TRUE(model_LoadFromNvm(&nvm, MODEL_TYPE_FACT_CAL, &bank));
 
-    run = model_usecal_set(USECAL_PREFIX, 0, &nvm, &rt);   /* CONF:ADC:USECal 0 */
+    run = model_usecal_set(USECAL_PREFIX, 0, &nvm, &rt, false);   /* CONF:ADC:USECal 0 */
 
     ASSERT_EQ(run.result, RES_OK);              /* reports success */
     ASSERT_EQ(run.typeHandedToSave, MODEL_TYPE_FACT_CAL);
@@ -1010,7 +1086,7 @@ TEST(pre_fix_stored_type_two_overwrites_the_factory_cal_bank_it_just_selected)
     /* Post-fix: the factory bank is intact and still yields FACT_M. */
     fixture_board(&nvm, &rt, MODEL_TYPE_FACT_CAL, true);
     runtime_init(&rt, USER_M, USER_B);
-    run = model_usecal_set(USECAL_POSTFIX, 0, &nvm, &rt);
+    run = model_usecal_set(USECAL_POSTFIX, 0, &nvm, &rt, false);
     ASSERT_EQ(run.result, RES_OK);
     ASSERT_EQ(nvm.erases[MODEL_TYPE_FACT_CAL], 0);
     ASSERT_TRUE(model_LoadFromNvm(&nvm, MODEL_TYPE_FACT_CAL, &bank));
@@ -1040,7 +1116,7 @@ TEST(post_fix_persists_correctly_for_every_stored_type_value)
 
         /* ---- pre-fix ---- */
         fixture_board(&nvm, &rt, storedType, true);
-        run = model_usecal_set(USECAL_PREFIX, 1, &nvm, &rt);
+        run = model_usecal_set(USECAL_PREFIX, 1, &nvm, &rt, false);
         /* The install always happens -- it precedes the save in both shapes. */
         ASSERT_EQ(rt.installs, 1);
         if (storedType == MODEL_TYPE_TOP_LEVEL) {
@@ -1069,7 +1145,7 @@ TEST(post_fix_persists_correctly_for_every_stored_type_value)
 
         /* ---- post-fix ---- */
         fixture_board(&nvm, &rt, storedType, true);
-        run = model_usecal_set(USECAL_POSTFIX, 1, &nvm, &rt);
+        run = model_usecal_set(USECAL_POSTFIX, 1, &nvm, &rt, false);
         if (run.result == RES_OK
             && run.typeHandedToSave == MODEL_TYPE_TOP_LEVEL
             && run.saveOutcome == SAVE_OK
@@ -1112,8 +1188,8 @@ TEST(a_healthy_record_is_byte_for_byte_unchanged_by_the_fix)
         fixture_board(&nvmPre,  &rtPre,  MODEL_TYPE_TOP_LEVEL, true);
         fixture_board(&nvmPost, &rtPost, MODEL_TYPE_TOP_LEVEL, true);
 
-        runPre  = model_usecal_set(USECAL_PREFIX,  param1, &nvmPre,  &rtPre);
-        runPost = model_usecal_set(USECAL_POSTFIX, param1, &nvmPost, &rtPost);
+        runPre  = model_usecal_set(USECAL_PREFIX,  param1, &nvmPre,  &rtPre, false);
+        runPost = model_usecal_set(USECAL_POSTFIX, param1, &nvmPost, &rtPost, false);
 
         ASSERT_EQ(runPre.result, RES_OK);
         ASSERT_EQ(runPost.result, runPre.result);
@@ -1156,7 +1232,7 @@ TEST(a_bank_that_fails_validation_still_refuses_before_install_or_persist)
          * which any such board hits on every `USECal 1`. */
         fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, false);
 
-        run = model_usecal_set(shapes[s], 1, &nvm, &rt);
+        run = model_usecal_set(shapes[s], 1, &nvm, &rt, false);
 
         ASSERT_EQ(run.result, RES_ERR);
         ASSERT_TRUE(run.loadOk);
@@ -1200,7 +1276,7 @@ TEST(r2_a_flash_fault_leaves_the_coefficients_untouched)
     /* write fault: the erase lands, the row write fails its readback */
     fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
     nvm.writeFails = true;
-    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt);
+    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt, false);
     ASSERT_EQ(run.result, RES_ERR);
     ASSERT_EQ(run.saveOutcome, SAVE_WRITE_FAILED);
     ASSERT_EQ(rt.installs, 0);              /* NOT live -- the whole fix */
@@ -1211,7 +1287,7 @@ TEST(r2_a_flash_fault_leaves_the_coefficients_untouched)
     /* erase fault: fails earlier, same requirement */
     fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
     nvm.eraseFails = true;
-    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt);
+    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt, false);
     ASSERT_EQ(run.result, RES_ERR);
     ASSERT_EQ(run.saveOutcome, SAVE_ERASE_FAILED);
     ASSERT_EQ(rt.installs, 0);
@@ -1255,7 +1331,7 @@ TEST(r6_accepts_the_intended_selector_despite_a_concurrent_unrelated_write)
     fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
     nvm.writeLandsButReadbackFails = true;   /* the readback is corrupted */
     nvm.commitUnrelatedFieldChange = true;   /* ...by a legitimate other writer */
-    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt);
+    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt, false);
 
     /* NOT VACUOUS: the unrelated field really did change under us. Assert that
      * FIRST -- if it had not, everything below would pass for the wrong reason. */
@@ -1280,7 +1356,7 @@ TEST(r5_the_concurrent_write_divergence_is_closed)
 
     fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
     nvm.writeLandsButReadbackFails = true;   /* no flash fault; concurrency */
-    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt);
+    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt, false);
 
     /* The command SUCCEEDS, because the intended record is in fact committed. */
     ASSERT_EQ(run.result, RES_OK);
@@ -1304,7 +1380,7 @@ TEST(r5_does_not_rescue_a_genuine_write_failure)
      * there is nothing to verify against. The recovery must NOT fire. */
     fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
     nvm.writeFails = true;
-    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt);
+    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt, false);
 
     ASSERT_EQ(run.result, RES_ERR);
     ASSERT_EQ(run.recoveredAfterReportedFailure, false);
@@ -1316,7 +1392,7 @@ TEST(r5_does_not_rescue_a_genuine_write_failure)
     fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
     nvm.eraseRefused = true;
     nvm.writeFails   = true;
-    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt);
+    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt, false);
 
     ASSERT_EQ(run.result, RES_ERR);
     ASSERT_EQ(run.recoveredAfterReportedFailure, false);
@@ -1336,7 +1412,7 @@ TEST(r5_refuses_a_valid_record_that_is_not_the_intended_one)
     fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
     nvm.writeLandsButReadbackFails = true;
     nvm.commitForeignSelector      = true;   /* someone else's value lands */
-    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt);
+    run = model_usecal_set(USECAL_R5, 1, &nvm, &rt, false);
 
     ASSERT_EQ(run.result, RES_ERR);
     ASSERT_EQ(run.recoveredAfterReportedFailure, false);
@@ -1352,7 +1428,7 @@ TEST(r2_erase_invalidation_destroys_the_stored_selector)
 
     fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
     nvm.writeFails = true;            /* real erase, then the row write fails */
-    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt);
+    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt, false);
 
     ASSERT_EQ(run.result, RES_ERR);
     ASSERT_EQ(run.saveOutcome, SAVE_WRITE_FAILED);
@@ -1382,7 +1458,7 @@ TEST(r2_a_concurrent_settings_write_diverges_with_no_flash_fault)
      * shared staging buffer, so the readback comparison fails over a write
      * that LANDED. */
     nvm.writeLandsButReadbackFails = true;
-    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt);
+    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt, false);
 
     ASSERT_EQ(run.result, RES_ERR);          /* the caller is told it failed */
     ASSERT_EQ(run.saveOutcome, SAVE_WRITE_FAILED);
@@ -1408,7 +1484,7 @@ TEST(r2_a_write_protected_page_is_the_one_consistent_failure)
     fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
     nvm.eraseRefused = true;   /* nvm_ErasePage reports success regardless */
     nvm.writeFails   = true;
-    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt);
+    run = model_usecal_set(USECAL_R2, 1, &nvm, &rt, false);
 
     ASSERT_EQ(run.result, RES_ERR);
     ASSERT_EQ(run.saveOutcome, SAVE_WRITE_FAILED);
@@ -1436,7 +1512,7 @@ TEST(a_flash_fault_leaves_the_coefficients_live_in_the_two_historical_shapes)
         /* write fault */
         fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
         nvm.writeFails = true;
-        run = model_usecal_set(shapes[s], 1, &nvm, &rt);
+        run = model_usecal_set(shapes[s], 1, &nvm, &rt, false);
         ASSERT_EQ(run.result, RES_ERR);
         ASSERT_EQ(run.saveOutcome, SAVE_WRITE_FAILED);
         ASSERT_EQ(rt.installs, 1);                    /* coefficients ARE live */
@@ -1450,7 +1526,7 @@ TEST(a_flash_fault_leaves_the_coefficients_live_in_the_two_historical_shapes)
         /* erase fault -- fails earlier, same outward shape */
         fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
         nvm.eraseFails = true;
-        run = model_usecal_set(shapes[s], 1, &nvm, &rt);
+        run = model_usecal_set(shapes[s], 1, &nvm, &rt, false);
         ASSERT_EQ(run.result, RES_ERR);
         ASSERT_EQ(run.saveOutcome, SAVE_ERASE_FAILED);
         ASSERT_EQ(rt.installs, 1);
@@ -1475,7 +1551,7 @@ TEST(raw_mode_and_out_of_range_reach_no_nvm_in_either_shape)
 
         /* value 2 -- runtime-only raw output */
         fixture_board(&nvm, &rt, 99u, true);
-        run = model_usecal_set(shapes[s], 2, &nvm, &rt);
+        run = model_usecal_set(shapes[s], 2, &nvm, &rt, false);
         ASSERT_EQ(run.result, RES_OK);
         ASSERT_TRUE(run.rawOutputMode);
         ASSERT_FALSE(run.loadOk);
@@ -1487,7 +1563,7 @@ TEST(raw_mode_and_out_of_range_reach_no_nvm_in_either_shape)
 
         /* #620 -- out of range, before any state mutation */
         fixture_board(&nvm, &rt, 99u, true);
-        run = model_usecal_set(shapes[s], 7, &nvm, &rt);
+        run = model_usecal_set(shapes[s], 7, &nvm, &rt, false);
         ASSERT_EQ(run.result, RES_ERR);
         ASSERT_FALSE(run.rawOutputMode);
         ASSERT_FALSE(run.loadOk);
@@ -1496,6 +1572,273 @@ TEST(raw_mode_and_out_of_range_reach_no_nvm_in_either_shape)
         ASSERT_EQ(nvm_total(nvm.writes), 0);
         ASSERT_EQ(persisted_selector(&nvm), 0);
     }
+}
+
+/* ==========================================================================
+ * CASE 11 -- ROUND 8 (operator ruling 9=A, and round 7's audit of the
+ * TopLevelMatchesCommitted mismatch branch).
+ *
+ * USECAL_R5 remains in the enum as the shape these tests are written
+ * AGAINST: every assertion below that is new in this round FAILS if the
+ * call site is edited to pass USECAL_R5 instead of USECAL_R8, which is this
+ * round's mutation proof (recorded, with which assertion failed, in the PR
+ * description -- swapping the shape is cheaper and more direct than editing
+ * the model's if/else chain, and exercises the exact same code paths this
+ * round added).
+ * ========================================================================== */
+
+/* CHANGE 1 + its hardware repro, both directions. USECal 2 (raw on) followed
+ * by USECal 0/1 against a BLANK bank must still leave raw mode OFF even
+ * though the command reports -200 -- and, in the same assertions, the
+ * INDEPENDENCE property in full: nothing is persisted, the live coefficients
+ * are untouched, and the command still fails. Raw mode is the one thing that
+ * unconditionally changes.
+ *
+ * Under USECAL_R5 every ASSERT_FALSE(run.rawOutputMode) below fails (r5
+ * leaves it exactly as rawModeIn found it, i.e. still TRUE) -- that is the
+ * mutation proof for this test. */
+TEST(round8_ruling_9a_leaves_raw_mode_despite_a_blank_bank)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+    bool rawMode;
+
+    /* --- direction: USECal 0 against a blank FACTORY bank --------------- */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, /*userBankValid=*/false);
+    fixture_cal_bank(&nvm, MODEL_TYPE_FACT_CAL, /*valid=*/false, FACT_M, FACT_B);
+
+    run = model_usecal_set(USECAL_R8, 2, &nvm, &rt, false);    /* USECal 2 */
+    ASSERT_EQ(run.result, RES_OK);
+    ASSERT_TRUE(run.rawOutputMode);
+    rawMode = run.rawOutputMode;
+
+    run = model_usecal_set(USECAL_R8, 0, &nvm, &rt, rawMode);  /* USECal 0 */
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_FALSE(run.rawOutputMode);           /* <-- the 9=A repro, fixed */
+    ASSERT_EQ(rt.installs, 0);                 /* nothing installed */
+    ASSERT_EQ(rt.CalM[0], FACT_M);              /* live coefficients untouched */
+    ASSERT_EQ(persisted_selector(&nvm), 0);     /* nothing persisted */
+    ASSERT_EQ(nvm_total(nvm.erases), 0);
+    ASSERT_EQ(nvm_total(nvm.writes), 0);
+
+    /* --- direction: USECal 1 against a blank USER bank ------------------ */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, /*userBankValid=*/false);
+
+    run = model_usecal_set(USECAL_R8, 2, &nvm, &rt, false);    /* USECal 2 */
+    ASSERT_EQ(run.result, RES_OK);
+    ASSERT_TRUE(run.rawOutputMode);
+    rawMode = run.rawOutputMode;
+
+    run = model_usecal_set(USECAL_R8, 1, &nvm, &rt, rawMode);  /* USECal 1 */
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_FALSE(run.rawOutputMode);           /* <-- the 9=A repro, fixed */
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(rt.CalM[0], FACT_M);
+    ASSERT_EQ(persisted_selector(&nvm), 0);
+    ASSERT_EQ(nvm_total(nvm.erases), 0);
+    ASSERT_EQ(nvm_total(nvm.writes), 0);
+}
+
+/* THE OTHER ARM of CHANGE 1's predicate pair: an out-of-range value must NOT
+ * touch raw mode either way -- #620's "no mutation before the range check"
+ * guarantee is unconditional, not narrowed by round 8. If Change 1's clear
+ * were ever hoisted ABOVE this guard, or made unconditional for ANY param1
+ * instead of only 0/1, THIS is the test that catches it;
+ * round8_ruling_9a_leaves_raw_mode_despite_a_blank_bank would NOT, since it
+ * never sends an out-of-range value -- so neither mutation is caught by both
+ * tests. */
+TEST(round8_out_of_range_does_not_touch_raw_mode)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    run = model_usecal_set(USECAL_R8, 7, &nvm, &rt, /*rawModeIn=*/true);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_TRUE(run.rawOutputMode);             /* unchanged -- still ON */
+
+    run = model_usecal_set(USECAL_R8, 7, &nvm, &rt, /*rawModeIn=*/false);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_FALSE(run.rawOutputMode);            /* unchanged -- still OFF */
+}
+
+/* CHANGE 2, arm 1 of the pair: the command still returns an ERROR on the
+ * TopLevelMatchesCommitted mismatch branch. Round 8 does not turn a genuine
+ * persist failure into success -- only the *installed bank* changes, not
+ * the result. Both directions.
+ *
+ * A mutation that accidentally treats a successful install as command
+ * success (e.g. dropping the `return SCPI_RES_ERR` after installing) is
+ * caught HERE and not by round8_mismatch_branch_installs_the_intended_bank,
+ * which does not look at run.result at all. */
+TEST(round8_mismatch_branch_still_returns_error)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    /* direction: USER -> FACTORY (param1 0) */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    runtime_init(&rt, USER_M, USER_B);    /* simulate: user cal was live */
+    nvm.writeFails = true;                /* genuine failure: erase ran, the
+                                            * write did not land, so the
+                                            * committed page is unreadable
+                                            * and TopLevelMatchesCommitted
+                                            * cannot possibly match */
+    run = model_usecal_set(USECAL_R8, 0, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.recoveredAfterReportedFailure, false);
+
+    /* direction: FACTORY -> USER (param1 1) */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.writeFails = true;
+    run = model_usecal_set(USECAL_R8, 1, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.recoveredAfterReportedFailure, false);
+}
+
+/* CHANGE 2, arm 2 of the pair: BUT the intended bank is now installed before
+ * failing, so the live coefficients match the selection the caller asked
+ * for instead of whatever was live before. Asserted on the actual
+ * coefficient VALUES, not merely rt.installs == 1 -- a count alone would
+ * still pass if the WRONG bank got installed. The USER -> FACTORY direction
+ * is the one that produced the roughly-2x voltage before round 8: it left
+ * rt.CalM[0] == USER_M (2.0) while the stored selector was destroyed, so
+ * acquisition silently kept reporting at twice the true value.
+ *
+ * A mutation that forgets to add the install call on this branch (reverting
+ * to the pre-round-8 shape) is caught HERE and not by
+ * round8_mismatch_branch_still_returns_error, which does not look at
+ * rt.installs or rt.CalM at all. */
+TEST(round8_mismatch_branch_installs_the_intended_bank)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    /* direction: USER -> FACTORY -- the 2x-voltage direction. Deliberately
+     * does NOT assert run.result -- that is
+     * round8_mismatch_branch_still_returns_error's job, so a mutation that
+     * collapses the two (e.g. treating a successful install as command
+     * success) is caught there and not vacuously passed here too. */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    runtime_init(&rt, USER_M, USER_B);
+    nvm.writeFails = true;
+    run = model_usecal_set(USECAL_R8, 0, &nvm, &rt, false);
+    ASSERT_EQ(run.installAttempted, true);
+    ASSERT_EQ(rt.installs, 1);
+    ASSERT_EQ(rt.installedBank, MODEL_TYPE_FACT_CAL);
+    ASSERT_EQ(rt.CalM[0], FACT_M);        /* NOT USER_M (2.0) any more */
+
+    /* direction: FACTORY -> USER */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.writeFails = true;
+    run = model_usecal_set(USECAL_R8, 1, &nvm, &rt, false);
+    ASSERT_EQ(run.installAttempted, true);
+    ASSERT_EQ(rt.installs, 1);
+    ASSERT_EQ(rt.installedBank, MODEL_TYPE_USER_CAL);
+    ASSERT_EQ(rt.CalM[0], USER_M);        /* NOT FACT_M any more */
+}
+
+/* Supplements the pair above with the OTHER cause of a mismatch: a write
+ * that LANDS but whose readback comparison is corrupted by a concurrent
+ * writer landing someone else's value (r2/r5's original reproducer), rather
+ * than a flat write failure. Single direction (param1 1): the fixture's
+ * `commitForeignSelector` hardcodes the foreign record's calVals to 0, which
+ * for param1 0 would coincide with our OWN intended value and read back as a
+ * MATCH rather than a mismatch -- not a bug in the fix, just a fixture that
+ * cannot produce a foreign-vs-intended mismatch when the intended value IS
+ * the fixture's hardcoded foreign one. */
+TEST(round8_mismatch_from_a_landed_write_also_installs)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.writeLandsButReadbackFails = true;
+    nvm.commitForeignSelector = true;
+    run = model_usecal_set(USECAL_R8, 1, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(rt.installs, 1);
+    ASSERT_EQ(rt.installedBank, MODEL_TYPE_USER_CAL);
+    ASSERT_EQ(rt.CalM[0], USER_M);
+    ASSERT_EQ(persisted_selector(&nvm), 0);   /* the foreign value, not 1 */
+}
+
+/* Persists the CURRENT runtime array into the USER bank -- CONF:ADC:SAVEcal,
+ * modelled. Not part of ADCUseCalSetClaimed; needed only for the fw#1077 r6
+ * sequence below, which chains it with a direct CHANCALM-style edit. */
+static void model_savecal_from_runtime(ModelNvm *nvm,
+                                       const ModelRuntimeArray *rt)
+{
+    ModelSettings rec;
+    uint32_t crc;
+    unsigned i;
+
+    memset(&rec, 0, sizeof(rec));
+    rec.settings.calParams.Size = MODEL_CHANNELS;
+    for (i = 0; i < MODEL_CHANNELS; i++) {
+        rec.settings.calParams.CalM[i] = rt->CalM[i];
+        rec.settings.calParams.CalB[i] = rt->CalB[i];
+    }
+    crc = CRC32_Compute(&rec.settings, sizeof(ModelCalArray));
+    memcpy(rec.checksum, &crc, sizeof(crc));
+    rec.type = MODEL_TYPE_USER_CAL;
+    nvm_store_page(nvm, MODEL_TYPE_USER_CAL, &rec);
+}
+
+/* THE fw#1077 ROUND-6 SEQUENCE -- becomes reachable once #1077 removes
+ * boot's own self-stamp of the TopLevel record. Modelled as: boot has
+ * already stamped a default TopLevel record (calVals=0, factory selected)
+ * over otherwise-blank NVM (neither cal bank written yet); CHANCALM 0,2
+ * edits the runtime array IN PLACE (CONF:ADC:chanCALM -- it is not routed
+ * through ADCUseCalSetClaimed at all, so it is modelled here as a direct
+ * field write, matching the production comment this file already cites
+ * elsewhere: "CONF:ADC:chanCALM / chanCALB edit it in place"); SAVEcal
+ * persists the current runtime array into the USER bank.
+ *
+ * Single direction only: the sequence as given names a specific order of
+ * SCPI commands ending in USECal 1 then USECal 0, not a general "either
+ * direction" property, so there is no natural param1-swapped twin to state
+ * here -- reported as such rather than silently narrowed. */
+TEST(round8_fw1077_r6_sequence_does_not_strand_a_mismatched_selector)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    /* "blank NVM": neither cal bank written yet. */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, /*userBankValid=*/false);
+    fixture_cal_bank(&nvm, MODEL_TYPE_FACT_CAL, /*valid=*/false, FACT_M, FACT_B);
+
+    /* CHANCALM 0,2 */
+    rt.CalM[0] = 2.0;
+
+    /* SAVEcal */
+    model_savecal_from_runtime(&nvm, &rt);
+
+    /* USECal 1 -- the just-saved USER bank now validates. */
+    run = model_usecal_set(USECAL_R8, 1, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_OK);
+    ASSERT_EQ(persisted_selector(&nvm), 1);
+    ASSERT_EQ(rt.CalM[0], 2);
+
+    /* USECal 0 -- FACTORY is blank, so this fails VALIDATION, which (#1148's
+     * guarantee, unchanged by round 8) touches NOTHING: no erase, no write,
+     * no install. */
+    run = model_usecal_set(USECAL_R8, 0, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(rt.installs, 1);   /* only the earlier USECal 1's install */
+
+    /* THE ASSERTION THIS SEQUENCE EXISTS FOR: USECal? and the live
+     * coefficients must still AGREE. The bad outcome is "ends with the user
+     * slope live while USECal? reads 0" -- selector 0 would claim FACTORY
+     * while the user slope (CalM[0]==2) is still what acquisition uses. */
+    ASSERT_EQ(persisted_selector(&nvm), 1);   /* NOT 0 */
+    ASSERT_EQ(rt.CalM[0], 2);                 /* the user slope, consistently */
 }
 
 /* ==========================================================================
@@ -1537,9 +1880,9 @@ TEST(the_two_shapes_differ_in_exactly_the_wrong_stored_type_cells)
                         nvmPre.writeFails  = nvmPost.writeFails  = (writeFault != 0u);
 
                         runPre  = model_usecal_set(USECAL_PREFIX,  param1,
-                                                   &nvmPre,  &rtPre);
+                                                   &nvmPre,  &rtPre, false);
                         runPost = model_usecal_set(USECAL_POSTFIX, param1,
-                                                   &nvmPost, &rtPost);
+                                                   &nvmPost, &rtPost, false);
 
                         cells++;
 
@@ -1638,6 +1981,15 @@ int main(void)
     RUN(a_healthy_record_is_byte_for_byte_unchanged_by_the_fix);
     RUN(a_bank_that_fails_validation_still_refuses_before_install_or_persist);
     RUN(raw_mode_and_out_of_range_reach_no_nvm_in_either_shape);
+
+    /* Round 8: ruling 9=A's raw-mode independence, and round 7's audit of
+     * the TopLevelMatchesCommitted mismatch branch now installing. */
+    RUN(round8_ruling_9a_leaves_raw_mode_despite_a_blank_bank);
+    RUN(round8_out_of_range_does_not_touch_raw_mode);
+    RUN(round8_mismatch_branch_still_returns_error);
+    RUN(round8_mismatch_branch_installs_the_intended_bank);
+    RUN(round8_mismatch_from_a_landed_write_also_installs);
+    RUN(round8_fw1077_r6_sequence_does_not_strand_a_mismatched_selector);
 
     /* The headline */
     RUN(the_two_shapes_differ_in_exactly_the_wrong_stored_type_cells);

@@ -1641,8 +1641,41 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
         return SCPI_RES_OK;
     }
 
+    /* #1152 round 8, operator ruling 9=A: USECal 0 and USECal 1 ALWAYS leave
+     * raw mode, and leaving raw mode is an INDEPENDENT result from whether
+     * the bank load below succeeds. Cleared here -- immediately after the
+     * raw-mode branch above and before any step that can fail -- rather
+     * than at the end of this function, which is where every prior round
+     * (through #1148) left it; see the end of this function for what used
+     * to be here and why this replaces it.
+     *
+     * Hardware repro cited by Ruling 9=A (board with blank cal banks):
+     * USECal 2 (raw on) -> USECal 0 against a blank Factory bank -> -200
+     * reported -- and the device was STILL in raw mode afterward. The only
+     * documented way out of raw mode is USECal 0/1, and on a board with no
+     * populated bank THAT COMMAND CANNOT SUCCEED, so the
+     * old "clear on success only" design left raw mode permanently sticky
+     * for exactly the boards most likely to need to leave it (a blank User
+     * bank is the common case right after a factory reset or before the
+     * first CONF:ADC:SAVEcal). Ruling 9=A: a caller sending USECal 0/1 is
+     * asking to stop seeing raw codes, and granting that must not depend on
+     * whether a cal bank happens to be populated.
+     *
+     * Accepted consequence: if the bank load below then fails, the device
+     * reports volts computed from whichever coefficients were live BEFORE
+     * this call (the previous selection -- possibly the factory/identity
+     * default from boot), not the bank the caller just asked for, and not
+     * raw codes either. That is weaker than "this command either fully
+     * succeeds or has no visible effect" -- which is what the pre-round-8
+     * placement bought -- but Ruling 9=A judges a stale-but-calibrated
+     * reading preferable to leaving the caller stuck in a wire format they
+     * asked to leave. The failure is still reported as -200 and the reason
+     * is still retrievable through SYST:LOG?; only the output format
+     * silently reverts to volts rather than staying raw. */
+    pRunTimeStreamConfig->RawOutputMode = false;
+
     /* Values 0/1 select the calibration coefficient set and emit calibrated
-     * volts (leaving raw mode).
+     * volts (leaving raw mode, now unconditionally handled above).
      *
      * #1148: ordered validate -> apply -> persist, so every step that can
      * fail runs before the step that cannot be undone. The pre-#1148 order
@@ -1838,22 +1871,72 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
          * report an erase failure, and a claim discipline over every settings
          * writer are tracked separately -- see the row. */
         if (!daqifi_settings_TopLevelMatchesCommitted(&tmpTopLevelSettings)) {
-            /* Deliberately does NOT say "selection unchanged": the erase has
-             * already run, so the stored selector may be destroyed or blank. */
-            LOG_E("CONF:ADC:USECal %d: persisting the selector failed and the "
-                  "committed record does not match the intended one; the live "
-                  "coefficients are UNCHANGED, but the STORED selector may be "
-                  "destroyed -- read it back with USECal?", param1);
+            /* #1152 round 8: round 7's adversarial audit found this branch
+             * returning here WITHOUT installing, and proved it is the WORSE
+             * of the two choices, not the safer one. The erase above has
+             * already run either way, so the stored selector is damaged
+             * (destroyed or blank) whether or not this branch installs --
+             * returning early does not protect the stored side, it only
+             * leaves the PREVIOUS bank's coefficients live while the
+             * selector the caller asked for sits half-written. With user
+             * cal previously selected, a later CONF:VOLT:SAVE
+             * (SCPI_SaveDataPrecision) then loads that damaged record,
+             * falls back to calVals=0 and persists THAT successfully --
+             * without touching runtime calibration -- so USECal? goes on to
+             * report 0 while acquisition still applies the user slope,
+             * i.e. roughly twice the factory-calibrated voltage, with no
+             * indication anything is wrong.
+             *
+             * daqifi_settings_ValidateADCCalBank(calType) above has already
+             * PROVEN the target bank loads cleanly, so installing it here
+             * cannot make the stored side any worse (it was already
+             * damaged) and can only make the LIVE side match the selection
+             * the caller actually asked for, instead of leaving whatever was
+             * live before this call. This command still returns
+             * SCPI_RES_ERR -- the persist genuinely failed, the stored
+             * selector is still unreliable, and the caller still needs to
+             * know -- but now the failure path leaves the live coefficients
+             * matching the intended bank rather than a stale one.
+             *
+             * -200 reaches the caller WITHOUT an explicit SCPI_ErrorPush
+             * here: parser.c:143-146 pushes SCPI_ERROR_EXECUTION_ERROR
+             * itself for any callback returning non-OK while
+             * context->cmd_error is still false, so an added push here would
+             * be a redundant second entry, not a missing first one.
+             *
+             * LOG_E message, remedy-first and measured: LOG_MESSAGE_SIZE is
+             * 128 (Logger.h:361) and LogMessageFormatImpl's own vsnprintf
+             * call size-clamps to LOG_MESSAGE_SIZE-3 = 125 usable bytes
+             * (Logger.c:398,405) with the tail silently dropped past that --
+             * so the remedy ("read back with USECal?") is stated FIRST and
+             * the whole message is kept well under 125 bytes in both %s
+             * substitutions, unlike the two pre-existing LOG_E calls in this
+             * function that this round does not touch (see the #1152 round
+             * 8 PR description for their measured byte counts). */
+            bool installedIntended = daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels);
+            LOG_E("CONF:ADC:USECal %d: selector may be destroyed - read back "
+                  "w/ USECal?. Live coeffs: %s", param1,
+                  installedIntended ? "intended bank (installed)"
+                                     : "previous bank, install also failed");
             return SCPI_RES_ERR;
         }
         /* The intended record IS committed. Fall through and install, so the
          * live coefficients and the stored selector agree. Logged because a
          * save that reports failure and is then found to have succeeded is
          * evidence of a competing writer, which is worth retrieving later
-         * through SYST:LOG? even though this command now succeeds. */
-        LOG_E("CONF:ADC:USECal %d: the save reported failure but the committed "
-              "record matches the intended one -- a concurrent settings write "
-              "corrupted the readback comparison; continuing", param1);
+         * through SYST:LOG? even though this command now succeeds.
+         *
+         * LOG_E kept remedy-first ("continuing") and under the 125-byte
+         * usable payload (LOG_MESSAGE_SIZE 128, Logger.h:361; clamped to
+         * LOG_MESSAGE_SIZE-3 in LogMessageFormatImpl, Logger.c:398,405,
+         * with the tail silently dropped past that) -- this message was
+         * 171 bytes before this round and its explanation ("corrupted the
+         * readback comparison") never reached a log reader. The full
+         * explanation lives in the comment above instead, which has no
+         * length limit. */
+        LOG_E("CONF:ADC:USECal %d: continuing - committed rec matches "
+              "intended; concurrent writer likely corrupted readback",
+              param1);
     }
 
     /* ⛔ DO NOT RESTORE THE PREVIOUS CLAIM HERE. This block used to assert
@@ -1887,21 +1970,36 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
      * claim discipline covering every settings writer. All three are outside
      * this PR; see the row for the parked transaction question. What this
      * ordering does buy is that the common case -- a bank that fails
-     * validation -- still touches nothing at all. */
+     * validation -- still touches nothing at all.
+     *
+     * LOG_E kept remedy-first ("reboot or re-select") and under the
+     * 125-byte usable payload (see the byte-budget note at the mismatch
+     * branch above for the LOG_MESSAGE_SIZE/Logger.c citations) -- this
+     * message was 217 bytes before this round, and its entire reason for
+     * existing, "USECal? and acquisition DISAGREE until the next boot",
+     * sat past byte 125 and never reached a log reader. That consequence
+     * is preserved below in short form; the full explanation stays in the
+     * comment block above, which has no length limit. */
     if (!daqifi_settings_LoadADCCalSettings(calType, pRuntimeAInChannels)) {
-        LOG_E("CONF:ADC:USECal %d: the selector was persisted but the cal bank "
-              "could not be re-read; the live coefficients remain the PREVIOUS "
-              "bank, so USECal? and acquisition DISAGREE until the next boot "
-              "applies the stored selection", param1);
+        LOG_E("CONF:ADC:USECal %d: reboot or re-select - bank re-read "
+              "failed; USECal? disagrees w/ live coeffs till then", param1);
         return SCPI_RES_ERR;
     }
 
-    /* Cleared LAST, so any failure above leaves the reported output format
-     * exactly as the caller found it. While RawOutputMode is set the encoders
-     * emit raw codes and SCPI_ADCUseCalGet answers 2, neither of which the
-     * reloaded coefficients affect -- clearing it first would have made a
-     * command that returns -200 switch the wire format anyway. */
-    pRunTimeStreamConfig->RawOutputMode = false;
+    /* #1152 round 8: RawOutputMode is NOT cleared here any more. This used
+     * to be the last line of this function, with a comment arguing the
+     * clear belonged here because "clearing it first would have made a
+     * command that returns -200 switch the wire format anyway" -- true, and
+     * Ruling 9=A (see the comment right after the `param1 == 2` branch
+     * above) knowingly accepts exactly that trade: USECal 0/1 now leaves raw
+     * mode unconditionally, before this point, independent of whether the
+     * bank load below succeeds. A board with no populated cal bank could
+     * otherwise never leave raw mode at all, which is the hardware repro
+     * Ruling 9=A cites (USECal 2 -> USECal 0 -> -200, still raw) and which
+     * this round's own tests reproduce in the fake-NVM model. The accepted
+     * consequence lives in that earlier comment:
+     * after a failed USECal 0/1 the device reports volts from the PREVIOUS
+     * (possibly factory/identity) coefficients rather than staying raw. */
     return SCPI_RES_OK;
 }
 
