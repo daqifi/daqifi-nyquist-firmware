@@ -824,6 +824,88 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@# bucket==0 arm copies the directory into bucketPath, which generateFilename
 	@# then joins onto without ever naming the settings field; the walk root
 	@# seeds every deeper path the directory listing builds.
+	@# ⛔ #1124 r8 finding 1: SdManifest.h did not COMPILE under -Wall -Werror.
+	@# A nested `/`+`*` inside a comment is -Wcomment, which is -Werror in the
+	@# firmware build -- so the header broke that build while this host suite
+	@# stayed green, because the suite never compiled it under those flags and
+	@# this lane owns no board to run XC32 on. The warning was seen and
+	@# dismissed as pre-existing; the baseline checked was MY BRANCH's HEAD,
+	@# which already contained the PR's own earlier commits. Against origin/main
+	@# the header does not exist at all. One command, no board, ~1 s:
+	@# ⛔ THIS CHECK REPORTS THREE STATES, NEVER TWO. `-fsyntax-only` on a
+	@# firmware source that includes xc.h (the XC32 device header, absent from a
+	@# host gcc) ABORTS at line 1. Collapsing that into "not an error" makes the
+	@# check vacuous while it prints success -- measured on another row, where it
+	@# reported ok for five files that had every one aborted on a missing
+	@# include. An ABORTED compile is not evidence of a clean one.
+	@#
+	@# It is a REAL check here only because SdManifest.h is self-contained. If
+	@# that stops being true the check silently stops checking, so the abort is
+	@# detected and FAILS rather than passing. sd_card_manager.c is deliberately
+	@# NOT compiled this way; the honest gate for the .c is an XC32 build.
+	@printf '#include "SdManifest.h"\nint main(void){return 0;}\n' > /tmp/.sd1124_hdr.$$$$.c; \
+	 $(CC) -Wall -Werror -fsyntax-only -I$(FW_UTIL) /tmp/.sd1124_hdr.$$$$.c \
+	   >/tmp/.sd1124_hdr.$$$$.err 2>&1; \
+	 rc=$$?; \
+	 aborted=`grep -c 'No such file or directory' /tmp/.sd1124_hdr.$$$$.err`; \
+	 if [ "$$aborted" -ne 0 ]; then \
+	   echo "ERROR: the -Wall -Werror check on $(FW_UTIL)/SdManifest.h ABORTED on a"; \
+	   echo "       missing include -- it compiled nothing and proves nothing."; \
+	   echo "       This check is only valid while that header is SELF-CONTAINED."; \
+	   echo "       Something now pulls in a device header (xc.h or similar):"; \
+	   grep 'No such file or directory' /tmp/.sd1124_hdr.$$$$.err | sed 's/^/         /' | head -4; \
+	   echo "       Either keep the header self-contained, or replace this gate"; \
+	   echo "       with an XC32 build -- do NOT let it report success."; \
+	   rm -f /tmp/.sd1124_hdr.$$$$.c /tmp/.sd1124_hdr.$$$$.err; exit 1; \
+	 elif [ "$$rc" -ne 0 ]; then \
+	   echo "ERROR: $(FW_UTIL)/SdManifest.h does not compile under -Wall -Werror,"; \
+	   echo "       which is what the firmware build uses -- so this header breaks"; \
+	   echo "       the firmware build even while this suite is green:"; \
+	   sed 's/^/         /' /tmp/.sd1124_hdr.$$$$.err | head -6; \
+	   rm -f /tmp/.sd1124_hdr.$$$$.c /tmp/.sd1124_hdr.$$$$.err; exit 1; \
+	 fi; \
+	 rm -f /tmp/.sd1124_hdr.$$$$.c /tmp/.sd1124_hdr.$$$$.err
+	@# ⛔ #1124 r8 finding 2: C's invariant is about every USE of the configured
+	@# directory, and the count arm above enumerates only JOINS. SdManifest_
+	@# RelativeName SLICES it -- strlen + strncmp, no format -- so no join-keyed
+	@# check can see it, and with a raw strlen it broke the MOMENT construction
+	@# became canonical, because the doubled separator had been paying for the
+	@# un-stripped length. Two defects cancelling; fixing one exposed the other.
+	@#
+	@# So: an ALLOWLIST BY COUNT over every raw read of the field. A new read
+	@# changes the number and forces the author to classify it here. The 20 in
+	@# the current head, all read and classified once:
+	@#   4  the accessor's own argument                              canonical
+	@#   8  "%.*s/" join operands                                    canonical
+	@#   4  sd_EnterBucket / sd_BuildBucketPath arguments   canonicalised at callee
+	@#   3  LOG_* / "dir='%s'" message text                          cosmetic
+	@#   1  strncpy -> SYS_FS_DirectoryMake                          benign: FatFs
+	@#      create_name() ignores a terminating separator (E3, ff.c:2880), so
+	@#      f_mkdir("d/") and f_mkdir("d") name the same directory. Benign because
+	@#      of a VENDOR behaviour, not because of anything we do -- which is
+	@#      exactly why it is written down rather than left to be re-derived.
+	@#   (sd_ListDirTarget's two returns are inside that 20; its only consumer is
+	@#    the walk root, canonicalised there. A SECOND consumer would get a raw
+	@#    value, so it is pinned by name below.)
+	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
+	    | grep -oE '(gpSDCardSettings|cfg)->(directory|opDirectory)' | wc -l`; \
+	 test "$$n" -eq 20 \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) now has $$n raw reads of ->directory /"; \
+	       echo "       ->opDirectory, not the 20 classified in this recipe (#1124)."; \
+	       echo "       The canonicalisation invariant is about every USE, not just"; \
+	       echo "       every join -- SdManifest_RelativeName slices the directory and"; \
+	       echo "       no join-keyed check can see it (r8 finding 2). Read the new"; \
+	       echo "       read, decide whether it needs SdManifest_CanonicalDirLen(),"; \
+	       echo "       and update the classification above with the reason."; \
+	       exit 1; }
+	@# RelativeName must use the SAME accessor as the construct side.
+	@grep -q 'dirLen = SdManifest_CanonicalDirLen(directory);' $(FW_UTIL)/SdManifest.h \
+	  || { echo "ERROR: SdManifest_RelativeName() in $(FW_UTIL)/SdManifest.h no longer"; \
+	       echo "       canonicalises the directory it slices off (#1124 r8 finding 2)."; \
+	       echo "       With strlen() a configured 'DAQiFi/' makes it return the WHOLE"; \
+	       echo "       path, so the manifest records 'DAQiFi/file.csv' where"; \
+	       echo "       SYST:STOR:SD:CRC? and :GET take a relative name as operand."; \
+	       exit 1; }
 	@# BOTH arms of sd_BuildBucketPath, by exact form. A presence check that the
 	@# function merely CALLS the accessor is not enough, and this was measured:
 	@# reverting ONLY the bucket==0 arm to `"%s", dir` leaves raw=0 (no slash to

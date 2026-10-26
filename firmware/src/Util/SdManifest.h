@@ -214,7 +214,23 @@ static inline const char *SdManifest_RelativeName(const char *fullPath,
     if (directory == NULL) {
         return fullPath;
     }
-    dirLen = strlen(directory);
+    /* ⛔ #1124 r8 finding 2: THE SAME accessor the CONSTRUCT side uses. With
+     * strlen() this was a regression the moment construction became canonical,
+     * because the two defects had been CANCELLING:
+     *
+     *   directory "DAQiFi/", before #1124: fullPath "DAQiFi//file.csv"
+     *       dirLen 7, fullPath[7] == '/'  -> "file.csv"          (worked)
+     *   directory "DAQiFi/", after  #1124: fullPath "DAQiFi/file.csv"
+     *       dirLen 7, fullPath[7] == 'f'  -> "DAQiFi/file.csv"   (BROKE)
+     *
+     * The doubled separator was paying for the un-stripped strlen. Canonical
+     * construction removed the payer, so the manifest recorded a full path
+     * where SYST:STOR:SD:CRC? and :GET take a relative name as their operand.
+     *
+     * Canonicalising HERE is the point of a single accessor: the invariant is
+     * about every USE of the directory, not only every join. A join-keyed pin
+     * cannot see this site at all -- it slices, it does not format. */
+    dirLen = SdManifest_CanonicalDirLen(directory);
     if (dirLen == 0u) {
         return fullPath;
     }
@@ -226,12 +242,28 @@ static inline const char *SdManifest_RelativeName(const char *fullPath,
     if (fullPath[dirLen] != '/') {
         return fullPath;
     }
-    /* "DAQiFi/" with nothing after it is not a file name; hand back the whole
-     * string rather than an empty one. */
-    if (fullPath[dirLen + 1u] == '\0') {
-        return fullPath;
+    {
+        /* Skip the separator RUN, not a single separator. The accessor above
+         * canonicalises the DIRECTORY side; this canonicalises the PATH side,
+         * which is the other half of the same invariant. A path built by
+         * firmware predating #1124, or handed in from outside, can still carry
+         * "dir//file" -- and answering "/file" for it would be a second sharp
+         * edge of exactly the kind r8 finding 2 was. Collapsing the run also
+         * keeps this function's answer for that input the SAME as it was
+         * before #1124, rather than trading one change of behaviour for
+         * another. */
+        const char *p = fullPath + dirLen;
+
+        while (*p == '/') {
+            p++;
+        }
+        /* "DAQiFi/" with nothing after it is not a file name; hand back the
+         * whole string rather than an empty one. */
+        if (*p == '\0') {
+            return fullPath;
+        }
+        return p;
     }
-    return fullPath + dirLen + 1u;
 }
 
 /**
@@ -325,9 +357,11 @@ static inline bool SdManifest_PathsEqualCaseInsensitive(const char *a,
      *
      * ⚠ A CORRECTION TO ROUND 5's OWN COMMENT, which asserted the opposite of
      * the vendor source: it said an all-snipped or trailing-separator segment
-     * yields FR_INVALID_NAME so "the open fails either way". ff.c:2880 says
-     * `/* Ignore terminating separator *` + `/` -- the open SUCCEEDS on the
-     * real file. That false claim is what made the gap read as deliberate.
+     * yields FR_INVALID_NAME so "the open fails either way". ff.c:2880 carries
+     * a comment reading "Ignore terminating separator" -- the open SUCCEEDS on
+     * the real file. That false claim is what made the gap read as deliberate.
+     * (The vendor comment is described rather than quoted with its delimiters:
+     * a nested opener is -Wcomment, which is -Werror in the firmware build.)
      * FR_INVALID_NAME (ff.c:2901) applies only to a segment that is EMPTY
      * AFTER SNIPPING and is not merely a separator run, e.g. "foo/   /bar". */
     for (;;) {

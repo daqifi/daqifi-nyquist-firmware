@@ -56,7 +56,24 @@
  *   - drop the `fullPath[dirLen] != '/'` separator test
  *                                                    -> 2 fail
  *     (sibling_directory_is_not_a_prefix,
- *      non_matching_prefix_falls_back_to_full_path)
+ *      relative_name_canonicalises_the_directory_it_slices)
+ *     ⚠ RE-MEASURED 2026-10-25: the second name CHANGED. It was
+ *     non_matching_prefix_falls_back_to_full_path; the #1124 r8 test now covers
+ *     the sibling case too and fails first. The COUNT being unchanged is why
+ *     this had to be re-run rather than assumed -- a stale mutation record
+ *     reads as a live measurement.
+ *
+ * Added 2026-10-25 (#1124 r8 finding 2):
+ *   - SdManifest_RelativeName's SdManifest_CanonicalDirLen -> strlen, i.e. the
+ *     finding-2 defect itself, with the Makefile's RelativeName pin NEUTERED so
+ *     the build reaches the test and the binary forced to rebuild
+ *                                                    -> 1 fails, 3 assertions
+ *     (relative_name_canonicalises_the_directory_it_slices)
+ *     ⛔ Both of those isolations were necessary and each one initially bit:
+ *     with the pin live the build aborts and nothing runs, and without the
+ *     forced rebuild `./run_924_tests` is the STALE binary and reports 0 failed.
+ *     A mutation that "passes" is worth nothing until you have shown the
+ *     binary under test was actually rebuilt from the mutant.
  *   - make CRC32_Update restart from CRC32_Init on every call
  *                                                    -> 5 fail
  *     (chunked_equals_whole, chunked_equals_whole_every_length,
@@ -919,6 +936,58 @@ TEST(canonical_construction_agrees_with_the_fatfs_comparator)
                                                      "DAQiFi/data" SD_MANIFEST_EXT));
 }
 
+TEST(relative_name_canonicalises_the_directory_it_slices)
+{
+    /* ⛔ r8 finding 2. This is a REGRESSION TEST IN THE STRICT SENSE: it fails
+     * on the previous commit of this very PR, not on some ancient baseline.
+     *
+     * RelativeName used strlen(directory). That was *invisible* while the join
+     * sites also left the separator doubled, because the two defects cancelled:
+     *   dir "DAQiFi/" + path "DAQiFi//file.csv" -> [7]=='/' -> "file.csv"  OK
+     * Canonicalising construction removed the payer and the extractor broke:
+     *   dir "DAQiFi/" + path "DAQiFi/file.csv"  -> [7]=='f' -> whole path  BAD
+     * so the manifest recorded "DAQiFi/file.csv" where SYST:STOR:SD:CRC? and
+     * :GET take a RELATIVE name as their operand. */
+    const char *const want = "file.csv";
+
+    /* the pair that used to cancel -- each half alone must now be right */
+    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi/file.csv", "DAQiFi/"),
+                 want, sizeof("file.csv"));
+    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi/file.csv", "DAQiFi"),
+                 want, sizeof("file.csv"));
+    /* a separator RUN on either side, and on both at once */
+    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi/file.csv", "DAQiFi///"),
+                 want, sizeof("file.csv"));
+    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi//file.csv", "DAQiFi/"),
+                 want, sizeof("file.csv"));
+    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi///file.csv", "DAQiFi///"),
+                 want, sizeof("file.csv"));
+
+    /* ⛔ THE GUARD THE RUN-SKIP MUST NOT BREAK: a sibling whose name merely
+     * STARTS with the directory is not inside it, and must come back whole
+     * rather than as "2/x.csv". */
+    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi2/x.csv", "DAQiFi"),
+                 "DAQiFi2/x.csv", sizeof("DAQiFi2/x.csv"));
+    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi2/x.csv", "DAQiFi/"),
+                 "DAQiFi2/x.csv", sizeof("DAQiFi2/x.csv"));
+
+    /* the directory itself names no file, however it is spelled */
+    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi/", "DAQiFi/"),
+                 "DAQiFi/", sizeof("DAQiFi/"));
+    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi//", "DAQiFi"),
+                 "DAQiFi//", sizeof("DAQiFi//"));
+
+    /* a root directory canonicalises to length 0, which returns the path
+     * unchanged rather than slicing a leading separator off it */
+    ASSERT_BYTES(SdManifest_RelativeName("file.csv", "/"),
+                 want, sizeof("file.csv"));
+
+    /* null-safety unchanged by the rewrite */
+    ASSERT_TRUE(SdManifest_RelativeName(NULL, "DAQiFi") == NULL);
+    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi/file.csv", NULL),
+                 "DAQiFi/file.csv", sizeof("DAQiFi/file.csv"));
+}
+
 int main(void)
 {
     printf("=== #924 SD session integrity manifest ===\n");
@@ -956,5 +1025,6 @@ int main(void)
     RUN(canonical_dir_len_strips_a_trailing_separator_run);
     RUN(every_construction_shape_is_slash_safe_with_a_trailing_slash_dir);
     RUN(canonical_construction_agrees_with_the_fatfs_comparator);
+    RUN(relative_name_canonicalises_the_directory_it_slices);
     return TEST_SUMMARY();
 }
