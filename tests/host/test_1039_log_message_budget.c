@@ -258,9 +258,27 @@ static const Site kSites[] = {
 };
 #define N_SITES ((int)(sizeof(kSites) / sizeof(kSites[0])))
 
-/* Roomy enough for a padded format and its rendering; the boundary sweep
- * prepends up to a ceiling's worth of filler. */
-#define WORK 512
+/* ⛔ #1110 r10: DERIVED from the generated ceiling, not a fixed 512.
+ *
+ * The largest case in mirror_cuts_exactly_where_logger_does is
+ * `LOG_BUDGET * 2` bytes of filler plus a NUL, and LOG_BUDGET comes from the
+ * real LOG_MESSAGE_SIZE. At the shipped 128 that is 251 bytes and 512 was
+ * roomy; raise LOG_MESSAGE_SIZE to 512 and the same memset writes 1019 bytes
+ * into a 512-byte stack buffer. A test whose own buffer is sized by a
+ * remembered number, while everything it measures is sized by a generated one,
+ * is a stack overrun waiting for the generated one to move.
+ *
+ * +64 covers the growth sweep, which prepends up to a ceiling's worth of
+ * filler on top of a message, and the `wanted[WORK + 4]` siblings. */
+#define WORK (LOG_BUDGET * 2 + 64)
+
+/* Fail at COMPILE time rather than corrupting the stack at run time. Both
+ * arms are what the bodies below actually need: the boundary sweep's longest
+ * memset, and the growth sweep's ceiling-plus-message. */
+_Static_assert(WORK > LOG_BUDGET * 2,
+               "WORK must hold the boundary sweep's longest filler plus a NUL");
+_Static_assert(WORK >= LOG_BUDGET + 64,
+               "WORK must hold the growth sweep's ceiling-worth of filler");
 
 /* --------------------------------------------------------------------------
  * Tests

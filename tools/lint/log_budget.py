@@ -240,8 +240,25 @@ SPEC_RE = re.compile(
 # half-matched. #1110 r9: the previous `([0-9]+...)` matched the leading 0 of
 # `max=0x80` and budgeted that %s at ZERO -- a silencing annotation nobody
 # wrote. See annotation_values().
-ANNOTATION_RE = re.compile(r"log_budget:\s*max\s*=\s*([0-9A-Za-z_]+(?:\s*,\s*[0-9A-Za-z_]+)*)")
-ANNOTATION_DECIMAL_RE = re.compile(r"^[0-9]+$")
+# ⛔ #1110 r10: the capture is as WIDE as the comment allows -- everything up
+# to the comment terminator -- and ANNOTATION_LIST_RE then has to full-match it.
+# A prefix-matching capture let `max=1+200` and `max=1<<7` read as 1, budgeting
+# a %s at ONE and silencing a message. The refusal and the parser must not
+# share a blind spot: detect broadly, accept narrowly.
+ANNOTATION_RE = re.compile(r"log_budget:\s*max\s*=\s*(.*?)\s*(?:\*/|$)", re.S)
+# A decimal list, OPTIONALLY followed by " -- <prose>".
+#
+# ⛔ MEASURED, and the reason this is not the stricter `max=(\d+)\s*\*/`: three
+# of the five annotations in this firmware carry explanatory prose after the
+# value ("max=40 -- `cmd` is a string literal naming the command"), so a
+# full-match on the comment terminator REFUSES REAL, CORRECT ANNOTATIONS. I
+# fired that refusal on the real tree before noticing.
+#
+# " -- " is the separator this codebase actually uses, and requiring it is what
+# keeps the rule narrow: `1+200`, `1<<7`, `1-5` and `1 - 5` all fail, because
+# none of them is a decimal list followed by whitespace and a DOUBLE dash.
+ANNOTATION_LIST_RE = re.compile(
+    r"([0-9]+(?:\s*,\s*[0-9]+)*)(?:\s+--(?:\s|$).*)?", re.S)
 
 SEP = " :: "
 
@@ -418,9 +435,20 @@ def read_ceiling(logger_h_text, logger_c_text):
     # first, regardless of which one the firmware compiles with. This tool does
     # not evaluate the preprocessor and must not pretend to: with more than one
     # definition there is no single right answer to read.
-    defs = re.findall(
-        r"^\s*#define\s+LOG_MESSAGE_SIZE\s+([0-9][0-9a-fA-FxXbB]*)\s*$",
-        logger_h_text, re.M)
+    # ⛔ #1110 r10: THE COUNTER USES A WIDER NET THAN THE VALUE PARSER.
+    #
+    # It used the parser's own regex, which only matches a value starting with
+    # a digit -- so `#define LOG_MESSAGE_SIZE (64)` or `118u` in an #else arm
+    # was never COUNTED, the count stayed 1, the refusal never fired, and the
+    # whole tree was gated against whichever arm the narrow net happened to
+    # read. A fail-closed guard built from the parser's own blind spots fails
+    # OPEN exactly where it is needed.
+    #
+    # The general rule, worth keeping: A REFUSAL MUST DETECT WITH A WIDER NET
+    # THAN THE PARSER ACCEPTS WITH. Detect ANY definition (any value, any
+    # `#  define` spacing), then accept only a bare decimal.
+    defs = re.findall(r"^[ \t]*#[ \t]*define[ \t]+LOG_MESSAGE_SIZE\b(.*)$",
+                      logger_h_text, re.M)
     if not defs:
         raise ToolError(
             "could not find '#define LOG_MESSAGE_SIZE <n>' in Logger.h -- the "
@@ -431,7 +459,24 @@ def read_ceiling(logger_h_text, logger_c_text):
             f"({', '.join(defs)}) -- a conditional or duplicated ceiling is "
             f"refused, not resolved. Picking one would gate every message in "
             f"the tree against a ceiling the firmware may not have.")
-    size = c_int_literal(defs[0], "LOG_MESSAGE_SIZE in Logger.h")
+    raw_size = defs[0].strip()
+    # BARE DECIMAL ONLY for this one number. It is the quantity every other
+    # check is expressed in, and r8 taught that interpreting notation here
+    # (0200 as octal, 0x80 as hex) is a surface with no upside: the firmware
+    # writes `128`, so anything else is a change worth a human reading it.
+    # c_int_literal() is still used for the RESERVATIONS, where a hex constant
+    # is plausible and the blast radius is one term.
+    # NO LEADING ZERO, which is where r8/2 and r10 meet: `0200` is all digits
+    # and so passes a naive "bare decimal" test, but in C it is OCTAL (128) --
+    # reading it as 200 is exactly the r8/2 defect reintroduced by a sloppier
+    # rule. Refusing it satisfies both rounds: never misread, never interpreted.
+    if not re.fullmatch(r"0|[1-9][0-9]*", raw_size):
+        raise ToolError(
+            f"Logger.h's LOG_MESSAGE_SIZE is {raw_size!r}, which is not a bare "
+            f"decimal integer. Parenthesised, suffixed, hex and computed values "
+            f"are refused rather than interpreted -- this is the number every "
+            f"message in the tree is measured against.")
+    size = int(raw_size)
 
     body = re.search(
         r"LogMessageFormatImpl\s*\([^)]*\)\s*\{(.*?)\n\}", logger_c_text, re.S)
@@ -992,9 +1037,20 @@ def find_annotation(src_lines, line, split=None):
     for text in texts:
         m = ANNOTATION_RE.search(text)
         if m:
-            vals = [x.strip() for x in m.group(1).split(",")]
+            raw = m.group(1).strip()
+            mv = ANNOTATION_LIST_RE.fullmatch(raw)
+            if not mv:
+                # #1110 r10: the WHOLE value must be a decimal list. See
+                # ANNOTATION_RE for why a prefix match was not enough.
+                raise ToolError(
+                    f"line {line}: /* log_budget: max={raw} */ is not a decimal "
+                    f"integer (or comma-separated list of them). Expressions, "
+                    f"hex, octal, suffixes and identifiers are refused rather "
+                    f"than interpreted -- a partial read sets a real message's "
+                    f"budget to the prefix it happened to match.")
+            vals = [x.strip() for x in mv.group(1).split(",")]
             for v in vals:
-                if not ANNOTATION_DECIMAL_RE.match(v):
+                if not re.fullmatch(r"[0-9]+", v):
                     # ⛔ #1110 r9: REFUSED, not interpreted. `max=0x80` used to
                     # match the leading `0` alone and budget that %s at ZERO --
                     # a silencing annotation the author never wrote. There is
@@ -1126,9 +1182,21 @@ def measure(fmt, annotation):
             # are ALL absent from WIDTHS, so switching to %e reports the
             # identical "no conservative width" finding. Advice that cannot
             # work is worse than none -- it sends the reader round a loop. For
-            # a float the only sound remedy is annotating the site. %p is
-            # genuinely derivable (8 hex digits on this target) and keeps the
-            # add-to-WIDTHS advice, which is why the two messages differ.
+            # a float there is no in-tool remedy at all.
+            #
+            # ⛔ THIS IS THE THIRD WORDING, and the first two were both wrong in
+            # the same way -- they offered a remedy that does not exist. r8 said
+            # "add it to WIDTHS" (no conservative constant is useful for a
+            # double); r9 said "annotate the site" (str_widths is consumed ONLY
+            # in the %s branch, so an annotation cannot bound a float at all).
+            # The honest answer is that the tool has nothing to offer here:
+            # restructure the message, or accept it in the baseline. Advice that
+            # cannot be followed is worse than none -- it sends the reader round
+            # a loop, twice now.
+            #
+            # %p keeps the add-to-WIDTHS advice, because its width really is
+            # derivable (8 hex digits on this target). That is why the two
+            # messages differ.
             #
             # ⚠ The word "maximum", not "worst case", is deliberate. The
             # over-limit finding's reason reads "worst case N bytes > ceiling
@@ -1140,14 +1208,16 @@ def measure(fmt, annotation):
             if conv in "fF":
                 return None, (
                     f"no conservative width for '{m.group(0)}' (conversion "
-                    f"'%{conv}') -- and do NOT add one to WIDTHS: a double's "
-                    f"maximum is ~310 characters (DBL_MAX is ~1.8e308, so "
-                    f"%{conv} prints ~309 integer digits plus the precision), "
-                    f"which is larger than the whole buffer. Annotate the site "
-                    f"with its real bound -- annotation is the only sound "
-                    f"remedy here, because NO floating conversion has a WIDTHS "
-                    f"entry: %e/%g/%a are absent too, so switching between them "
-                    f"reports the identical finding")
+                    f"'%{conv}') -- and there is no annotation for it either. "
+                    f"A double's maximum is ~310 characters (DBL_MAX is "
+                    f"~1.8e308, so %{conv} prints ~309 integer digits plus the "
+                    f"precision), larger than the whole buffer, so no WIDTHS "
+                    f"entry can be conservative AND useful; %e/%g/%a have no "
+                    f"entry either, so switching between them reports the "
+                    f"identical finding; and /* log_budget: max=N */ bounds "
+                    f"only %s arguments, so it cannot speak for this one. "
+                    f"RESTRUCTURE the message to drop the floating conversion, "
+                    f"or accept the finding in the baseline")
             return None, (f"no conservative width for '{m.group(0)}' "
                           f"(conversion '%{conv}') -- add it to WIDTHS in "
                           f"tools/lint/log_budget.py or annotate the site")
@@ -1571,6 +1641,20 @@ SELF_TEST_REJECTION_CASES = [
         "behaviour change is deliberate and this case records it",
     ),
     (
+        "r10: max= must be a bare decimal, not an expression prefix",
+        '/* log_budget: max=1+200 */ LOG_E("%s", s);',
+        "not a decimal",
+        "the value regex matched the leading 1 and budgeted that %s at ONE -- "
+        "the refusal used the same prefix-matching net as the parser, so an "
+        "expression slipped through both",
+    ),
+    (
+        "r10: max= must not accept a shift expression",
+        '/* log_budget: max=1<<7 */ LOG_E("%s", s);',
+        "not a decimal",
+        "same shape: 1<<7 reads as 1, silencing a message budgeted at 128",
+    ),
+    (
         "r9: an annotation may not share a line with another call's span",
         'LOG_I("a"\n      "b"); /* log_budget: max=1 */ LOG_E("%s", s);',
         "share this line",
@@ -1581,6 +1665,15 @@ SELF_TEST_REJECTION_CASES = [
 ]
 
 SELF_TEST_CASES = [
+    (
+        "r10: an annotation with trailing ' -- prose' still binds",
+        'LOG_E("%s", s);  /* log_budget: max=8 -- `s` is a short enum name */',
+        0,
+        "THREE of the five real annotations in this firmware carry prose after "
+        "the value, so the stricter full-match-on-*/ refusal would reject "
+        "correct source. Measured by firing it on the real tree. This arm is "
+        "what stops a future tightening from breaking them again",
+    ),
     (
         "r8/3: a preprocessor conditional unbalances the argument list",
         'LOG_E("a message long enough to truncate once it is measured at all, '
@@ -2488,17 +2581,58 @@ def self_test():
                   f"OUT clamp set the ceiling every message is measured "
                   f"against")
 
+        # ⛔ #1110 r10: A REFUSAL MUST DETECT WITH A WIDER NET THAN THE PARSER
+        # ACCEPTS WITH. The definition COUNTER used the parser's own narrow
+        # regex, so a second #define in any form that regex could not read was
+        # INVISIBLE -- the count stayed 1, the refusal never fired, and the
+        # tree was gated against whichever arm the narrow net happened to
+        # match. Whatever the parser misses, the refusal must still see.
+        for second, lbl in (("(64)", "parenthesised"), ("118u", "suffixed"),
+                            ("0x40", "hex"), ("  128", "re-indented")):
+            dual_h = (f"#ifdef DEBUG_BUILD\n#define LOG_MESSAGE_SIZE 128\n"
+                      f"#else\n#define LOG_MESSAGE_SIZE {second}\n#endif\n")
+            ceiling_checks += 1
+            try:
+                got, _, _, _ = read_ceiling(dual_h, c)
+            except ToolError:
+                pass                                  # the expected outcome
+            else:
+                failures += 1
+                print(f"  FAIL [ceiling: two definitions ({lbl})]: derived "
+                      f"{got} instead of refusing -- a second #define the "
+                      f"value regex cannot read was not COUNTED, so the "
+                      f"refusal never fired")
+
         # ⛔ r8/2: C INTEGER NOTATION. int('0200') is 200 in Python and 128 in
         # C, and 0x80 is 128 -- a decimal-only read makes the ceiling too
         # GENEROUS, which under-reports.
-        for lit, want in (("0200", 125), ("0x80", 125), ("128", 125)):
+        # r8/2 asked for C notation to be HONOURED here; r10 refuses anything
+        # but a bare decimal for this one number, because it is the quantity
+        # every other check is expressed in. The two meet at the LEADING ZERO:
+        # `0200` is octal in C, so reading it as 200 was the original r8/2
+        # defect and a naive all-digits rule reintroduces it. Only a plain
+        # decimal is accepted; everything else is refused, not interpreted.
+        ceiling_checks += 1
+        got, sz, _, _ = read_ceiling("#define LOG_MESSAGE_SIZE 128\n", c)
+        if (got, sz) != (125, 128):
+            failures += 1
+            print(f"  FAIL [ceiling: plain decimal]: derived {got} from size "
+                  f"{sz}, expected 125 from 128")
+        for lit, why in (("0200", "octal in C, 200 as decimal -- ambiguous"),
+                         ("0x80", "hex"),
+                         ("(128)", "parenthesised"),
+                         ("128u", "suffixed"),
+                         ("64+64", "computed")):
             ceiling_checks += 1
-            got, sz, _, _ = read_ceiling(f"#define LOG_MESSAGE_SIZE {lit}\n", c)
-            if (got, sz) != (want, 128):
+            try:
+                read_ceiling(f"#define LOG_MESSAGE_SIZE {lit}\n", c)
+            except ToolError:
+                pass                                  # the expected outcome
+            else:
                 failures += 1
-                print(f"  FAIL [ceiling: C integer {lit}]: derived ceiling "
-                      f"{got} from size {sz}, expected {want} from 128 -- C "
-                      f"integer notation was not honoured")
+                print(f"  FAIL [ceiling: {lit} not refused]: {why} -- this is "
+                      f"the number every message is measured against, so it is "
+                      f"refused rather than interpreted")
 
         ceiling_checks += 1
         ceiling, _, _, _ = read_ceiling(h, c)
