@@ -306,11 +306,18 @@ extern "C" {
      * specific demonstrated interleaving: a readback comparison corrupted by a
      * concurrent writer, over a write that succeeded.
      *
-     * @param expected The record the caller handed to SaveToNvm. Its
-     *                 `settings.topLevelSettings` payload is the comparand.
-     * @return True only if a valid top-level record is committed and its
-     *         payload matches `expected`. False on NULL, on no valid record, on
-     *         an unexpected stored type, or on any payload difference.
+     * @param expected The record the caller handed to SaveToNvm. Only its
+     *                 `settings.topLevelSettings.calVals` field is the
+     *                 comparand -- see above (and
+     *                 daqifi_settings.c:424-437, the implementation) for why
+     *                 a whole-payload compare is deliberately NOT used.
+     * @return True only if a valid top-level record is committed, its
+     *         stored type is DaqifiSettings_TopLevelSettings, and its
+     *         `calVals` equals `expected`'s. False on NULL, on no valid
+     *         record, on an unexpected stored type, or on a DIFFERENT
+     *         `calVals`. Every OTHER payload field (voltagePrecision,
+     *         friendlyDeviceName, ...) is NOT compared, by design, so a
+     *         difference there does not make this return false.
      */
     bool daqifi_settings_TopLevelMatchesCommitted(const DaqifiSettings* expected);
 

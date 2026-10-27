@@ -1981,52 +1981,88 @@ static scpi_result_t ADCUseCalSetClaimed(scpi_t * context) {
                     DaqifiSettings_TopLevelSettings, &committedSettings) &&
                     committedSettings.type == DaqifiSettings_TopLevelSettings;
 
-            if (committedReadable) {
-                /* A VALID record is committed, and -- because the match test
-                 * above already failed -- it names a selector OTHER than the
-                 * one intended: the write-protected-page repro above, or any
-                 * other writer whose record landed in place of ours. Either
-                 * way the committed selector and the live coefficients
-                 * (still whatever was loaded before this call -- the install
-                 * below has not run) already AGREE with each other; only the
-                 * caller's request did not land. Installing here would break
-                 * that agreement instead of restoring it, so this returns
-                 * without touching the runtime array -- the pre-round-8
-                 * shape, now reached for the right reason. */
-                LOG_E("CONF:ADC:USECal %d: selection unchanged - prior "
-                      "record intact, see USECal?", param1);
-            } else {
-                /* No valid record survives at all -- the erase genuinely ran
-                 * and the replacement never landed (or landed corrupt), so
-                 * the selector is unreadable rather than merely stale. There
-                 * is no previous selection left here to protect, but neither
-                 * is there any proof the NEW one landed, so this still does
-                 * not install. The same unreadable record makes app_freertos
-                 * .c's own TopLevelSettings load (~:916-919) fail the same
-                 * way on the next boot, which falls back to
-                 * daqifi_settings_LoadFactoryDeafult and persists calVals=0
-                 * -- i.e. a reboot settles on factory. (If the record is
-                 * instead checksum-valid but type-mismatched, boot's
-                 * existing calVals-gated reload at app_freertos.c:1035-1039
-                 * discards daqifi_settings_LoadADCCalSettings's return value,
-                 * so that path's worst case is no better than factory-live
-                 * either.) */
-                LOG_E("CONF:ADC:USECal %d: selection unreadable - reboot "
-                      "loads factory, see USECal?", param1);
+            /* #1152 round 10: classify THIS read by selector too, exactly as
+             * daqifi_settings_TopLevelMatchesCommitted's own read (the `if`
+             * above) already does. Round 9 classified by `committedReadable`
+             * alone and asserted, in a comment, that a valid record reaching
+             * this point "names a selector OTHER than the one intended" --
+             * that was NEVER CHECKED, and it is not established by the match
+             * test above having failed: TopLevelMatchesCommitted
+             * (daqifi_settings.c:397) and this read are two SEPARATE calls to
+             * daqifi_settings_LoadFromNvm, a few instructions apart, with no
+             * claim held across the gap. (The round 9 comment also blamed
+             * this on the shared gTempFflashBuffer; that is wrong too --
+             * LoadFromNvm reads flash directly via PA_TO_KVA1
+             * (daqifi_settings.c:95) and never touches that buffer, which is
+             * why TopLevelMatchesCommitted's own doc comment above calls its
+             * read "independent". The real hazard is ordinary task
+             * concurrency: CONF:VOLT:SAVE / SCPI_SaveDataPrecision
+             * (SCPIInterface.c:7201) writes this exact TopLevelSettings
+             * record and takes no claim at all -- see the same threat model
+             * cited at daqifi_settings.c:427-428 -- so the two reads are not
+             * guaranteed to agree.) So this read must derive its own answer
+             * rather than inherit the first read's verdict. */
+            bool committedMatchesIntended = committedReadable &&
+                    committedSettings.settings.topLevelSettings.calVals ==
+                    tmpTopLevelSettings.settings.topLevelSettings.calVals;
+
+            if (!committedMatchesIntended) {
+                if (committedReadable) {
+                    /* A VALID record is committed and its OWN calVals, just
+                     * compared above, differs from the one this call
+                     * intended: the write-protected-page repro above, or any
+                     * other writer whose record landed in place of ours.
+                     * Either way the committed selector and the live
+                     * coefficients (still whatever was loaded before this
+                     * call -- the install below has not run) already AGREE
+                     * with each other; only the caller's request did not
+                     * land. Installing here would break that agreement
+                     * instead of restoring it, so this returns without
+                     * touching the runtime array -- the pre-round-8 shape,
+                     * now reached for the right reason. */
+                    LOG_E("CONF:ADC:USECal %d: selection unchanged - prior "
+                          "record intact, see USECal?", param1);
+                } else {
+                    /* No valid record survives at all -- the erase genuinely ran
+                     * and the replacement never landed (or landed corrupt), so
+                     * the selector is unreadable rather than merely stale. There
+                     * is no previous selection left here to protect, but neither
+                     * is there any proof the NEW one landed, so this still does
+                     * not install. The same unreadable record makes app_freertos
+                     * .c's own TopLevelSettings load (~:916-919) fail the same
+                     * way on the next boot, which falls back to
+                     * daqifi_settings_LoadFactoryDeafult and persists calVals=0
+                     * -- i.e. a reboot settles on factory. (If the record is
+                     * instead checksum-valid but type-mismatched, boot's
+                     * existing calVals-gated reload at app_freertos.c:1035-1039
+                     * discards daqifi_settings_LoadADCCalSettings's return value,
+                     * so that path's worst case is no better than factory-live
+                     * either.) */
+                    LOG_E("CONF:ADC:USECal %d: selection unreadable - reboot "
+                          "loads factory, see USECal?", param1);
+                }
+                return SCPI_RES_ERR;
             }
-            return SCPI_RES_ERR;
+            /* committedMatchesIntended: the write LANDED and only the
+             * readback comparison that made SaveToNvm report failure was
+             * corrupted. Do not return -- fall through to the shared
+             * "continuing" log and the install below, exactly like the
+             * direct match this whole `if` exists to re-derive. */
         }
-        /* The intended record IS committed. Fall through and install, so the
-         * live coefficients and the stored selector agree. Logged because a
-         * save that reports failure and is then found to have succeeded is
-         * evidence of a competing writer, which is worth retrieving later
-         * through SYST:LOG? even though this command now succeeds.
+        /* The intended record IS committed -- either daqifi_settings_
+         * TopLevelMatchesCommitted said so directly above, or (on a genuine
+         * mismatch of that check) this block's own re-read just derived the
+         * same answer. Fall through and install, so the live coefficients
+         * and the stored selector agree. Logged because a save that reports
+         * failure and is then found to have succeeded is evidence of a
+         * competing writer, which is worth retrieving later through
+         * SYST:LOG? even though this command now succeeds.
          *
          * LOG_E kept remedy-first ("continuing") and under the 125-byte
          * usable payload (LOG_MESSAGE_SIZE 128, Logger.h:361; clamped to
          * LOG_MESSAGE_SIZE-3 in LogMessageFormatImpl, Logger.c:398,405,
          * with the tail silently dropped past that) -- this message was
-         * 171 bytes before this round and its explanation ("corrupted the
+         * 171 bytes before round 9 and its explanation ("corrupted the
          * readback comparison") never reached a log reader. The full
          * explanation lives in the comment above instead, which has no
          * length limit. */

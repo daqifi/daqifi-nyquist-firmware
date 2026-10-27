@@ -799,23 +799,65 @@ the full (stored type x value x bank validity x erase fault x write fault)
 matrix the two shapes differ in **exactly** the cells where the stored type is
 wrong and the run reached the save.
 
-Because it models rather than includes, the Makefile carries three guard
-blocks: that the real `ADCUseCalSetClaimed()` still normalizes the type exactly
-once and still runs load -> normalize -> install -> save **in that order**
-(positional, because a normalization that drifted below the install would
-satisfy a bare grep while reopening the window); that both of
-`daqifi_settings.c`'s validators still span `.settings`, that `LoadFromNvm`
-still copies the whole record, and that `SaveToNvm` still rejects an unknown
-type *before* the erase; and that `eDaqifiSettingsType` is still the same four
-implicitly-numbered enumerators the model maps onto pages. All were
-mutation-proven to fire (twelve mutations: a renamed function, a deleted,
-duplicated and relocated normalization, each of the four
-`daqifi_settings.c` spans widened, a removed dispatch, the rejection both
-`break`ing and moved below the erase, and a renumbered and a reordered
-enumerator), and five mutations of the model itself were proven to turn the
-suite red (the post-fix shape not normalizing -- i.e. the firmware at this PR's
-base commit -- the pre-fix shape normalizing too, normalizing to the wrong
-constant, #1148's order reverted, and a rejection that erases first).
+Rounds 2-10 moved this well past that original shape. The order as of round 10
+is RAW-MODE-CLEAR (ruling 9=A: USECal 0/1 always leaves raw output mode,
+unconditionally, before any step that can fail) -> load -> normalize ->
+validate -> save -> install, and install is no longer unconditional on a
+save failure: an earlier revision of this file said "load -> normalize ->
+install -> save **in that order**", which was the round-1 shape and stopped
+being true once the save was moved ahead of the install (round 2) to close
+the #1148 follow-up this file is named for.
+
+On a reported save failure, the function re-reads the committed record
+*twice*, and round 10's fix is that **both** reads now classify by the same
+selector field (`calVals`) that `daqifi_settings_TopLevelMatchesCommitted`
+itself compares -- not just "is a record present". That gives three cases
+rather than two:
+
+  * a valid record naming the INTENDED selector -- the write LANDED and only
+    the readback comparison (against the shared staging buffer) was
+    corrupted by a concurrent writer; install, so live and stored agree;
+  * a valid record naming a DIFFERENT selector -- some other write (or the
+    surviving old one, on a write-protected page) is what is actually
+    committed; do not install, the live coefficients already agree with it;
+  * no valid record at all -- do not install; nothing survives to protect,
+    and the next boot falls back to factory.
+
+Round 9 got the shape right but the second read wrong: it classified only
+by "is there a valid record", and asserted -- in a comment, unchecked -- that
+a valid record reaching that point must be case two. It is not: round 9's
+own first read (`TopLevelMatchesCommitted`) and the second, independent
+re-read are two separate calls a few lines apart with no claim held across
+the gap, so they are not guaranteed to agree.
+
+Because it models rather than includes, the Makefile carries five guard
+blocks: that the real `ADCUseCalSetClaimed()` still normalizes the type
+exactly once and still runs RAW-MODE-CLEAR -> load -> normalize -> validate
+-> save -> VERIFY-COMMITTED -> re-read-committed -> CONTINUING-fallthrough ->
+install, in that order (positional, because e.g. a normalization that
+drifted below the install would satisfy a bare grep while reopening the
+window, and an install that drifted back inside the mismatch branch would
+satisfy a bare presence check while reopening round 8's own regression);
+that both of `daqifi_settings.c`'s validators still span `.settings`, that
+`LoadFromNvm` still copies the whole record, and that `SaveToNvm` still
+rejects an unknown type *before* the erase; that `eDaqifiSettingsType` is
+still the same four implicitly-numbered enumerators the model maps onto
+pages; that every `LOG_E` in the function still renders at or under the
+125-byte usable payload with its widest substitution (round 9); and that
+`daqifi_settings_TopLevelMatchesCommitted`'s own body still compares
+`calVals` alone rather than the whole payload (round 10 -- added because the
+model of that function, and the ordering guard above, both only pin its
+CALL SITE by presence and position; neither exercises its own body, so a
+widened or narrowed comparison there would have passed every test in this
+file silently). The first three were mutation-proven to fire (twelve
+mutations: a renamed function, a deleted, duplicated and relocated
+normalization, each of the four `daqifi_settings.c` spans widened, a removed
+dispatch, the rejection both `break`ing and moved below the erase, and a
+renumbered and a reordered enumerator), and five mutations of the model
+itself were proven to turn the suite red (the post-fix shape not normalizing
+-- i.e. the firmware at this PR's base commit -- the pre-fix shape
+normalizing too, normalizing to the wrong constant, #1148's order reverted,
+and a rejection that erases first).
 
 ## Framework
 

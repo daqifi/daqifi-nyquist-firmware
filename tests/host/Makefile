@@ -3067,6 +3067,15 @@ $(HEXWIN_BIN): test_1141_hex_record_upper_panel_error.c test_framework.h \
 #      guard pins the four enumerators, their order, and that none of them
 #      carries an explicit value.
 #
+# Two more guards were added later, after this recipe's own coverage proved
+# incomplete, and are not part of the "three claims" above -- they pin
+# ADCUseCalSetClaimed()'s round 9+ recovery shape instead of the original
+# type-trust premise: round 9 added a per-message LOG_E byte-budget check
+# (below, near the end of this recipe), and round 10 added a check that
+# daqifi_settings_TopLevelMatchesCommitted's own body still compares calVals
+# alone (also below) -- the model and the ordering guard above only ever
+# pinned that function's CALL SITE by presence and position, never its body.
+#
 # Comment lines are stripped before any search in A and B, because the
 # firmware's own comments at both sites name these identifiers on purpose --
 # #1152's rationale block mentions daqifi_settings_SaveToNvm and
@@ -3248,6 +3257,38 @@ $(USECALTYPE_BIN): test_1152_usecal_type_trust.c test_framework.h \
 	        echo "       onto its NVM page by that same value -- adding, renumbering"; \
 	        echo "       or reordering a type invalidates all three."; \
 	        exit 1; }
+# #1152 round 10 (finding a): the host model only exercises a REIMPLEMENTATION
+# of daqifi_settings_TopLevelMatchesCommitted (model_TopLevelMatchesCommitted,
+# test_1152_usecal_type_trust.c), and the ordering guard above only pins that
+# function's CALL SITE in $(SCPIADC_SRC) by presence and position -- neither
+# touches the real function's OWN body in $(DAQIFI_SETTINGS_SRC). Pin that body
+# directly: it must keep comparing calVals alone, never the whole payload (the
+# r5 defect -- a whole-payload compare makes every OTHER legitimate TopLevel
+# writer, e.g. CONF:VOLT:SAVE / SYST:DEVICE:NAME:SAVE, a false negative; see the
+# function's own doc comment in $(DAQIFI_SETTINGS_H)).
+	@tlbody=`sed -n '/^bool daqifi_settings_TopLevelMatchesCommitted(const DaqifiSettings\* expected)/,/^}/p' $(DAQIFI_SETTINGS_SRC) | tr -d '\r' | grep -v '^[[:space:]]*[*/]'`; \
+	 test -n "$$tlbody" \
+	   || { echo "ERROR: daqifi_settings_TopLevelMatchesCommitted() was not found in"; \
+	        echo "       $(DAQIFI_SETTINGS_SRC), or no longer opens at column 0 --"; \
+	        echo "       the guard below can see nothing, so it must fail."; \
+	        exit 1; }; \
+	 printf '%s\n' "$$tlbody" | grep -qF 'committed.settings.topLevelSettings.calVals ==' \
+	   && printf '%s\n' "$$tlbody" | grep -qF 'expected->settings.topLevelSettings.calVals' \
+	   || { echo "ERROR: daqifi_settings_TopLevelMatchesCommitted() in"; \
+	        echo "       $(DAQIFI_SETTINGS_SRC) no longer compares calVals against"; \
+	        echo "       expected->...calVals. The model and the ordering guard"; \
+	        echo "       above only pin this function's CALL SITE by presence and"; \
+	        echo "       position -- neither exercises the real body, so a changed"; \
+	        echo "       comparison here would pass every test in this file"; \
+	        echo "       silently."; \
+	        exit 1; }; \
+	 if printf '%s\n' "$$tlbody" | grep -q 'memcmp'; then \
+	   echo "ERROR: daqifi_settings_TopLevelMatchesCommitted() in"; \
+	   echo "       $(DAQIFI_SETTINGS_SRC) appears to compare more than calVals"; \
+	   echo "       now (found a memcmp) -- a whole-payload comparison is the"; \
+	   echo "       r5 defect this function exists to avoid."; \
+	   exit 1; \
+	 fi
 # #1152 round 9: every LOG_E in ADCUseCalSetClaimed() must render at or under
 # the 125-byte usable payload (LOG_MESSAGE_SIZE 128, Logger.h:361, clamped to
 # LOG_MESSAGE_SIZE-3 in LogMessageFormatImpl, Logger.c:398,405 -- the tail past

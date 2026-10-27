@@ -290,6 +290,24 @@ typedef struct {
      * arm needs, and its absence is why r5's one-armed `refuses` test passed
      * over an over-broad predicate. */
     bool     commitUnrelatedFieldChange;
+    /* #1152 round 10 fixture: simulates a writer of THIS EXACT record landing
+     * in the gap between the first independent read
+     * (model_TopLevelMatchesCommitted, called in the `if` that opens the
+     * mismatch branch) and the second, separate independent read that
+     * round 10 adds inside it. Production has no claim across that gap --
+     * CONF:VOLT:SAVE / SCPI_SaveDataPrecision (SCPIInterface.c:7201) writes
+     * this exact TopLevelSettings record and takes none -- so the two reads
+     * are not guaranteed to see the same thing. When true,
+     * model_usecal_set's round-10 arm mutates the TOP_LEVEL page to hold the
+     * CALLER's own intended record (valid checksum, calVals == param1)
+     * immediately before its second read, so that read -- and ONLY that
+     * read -- sees the landed selector even though the FIRST read (used to
+     * decide whether the mismatch branch is entered at all) saw whatever
+     * the surrounding fixture set up instead. This is a deliberate model
+     * simplification: it does not claim to show HOW the race resolves this
+     * way, only that two independent reads an instant apart need not agree,
+     * which is the defect round 10 fixes. */
+    bool     recheckRevealsLandedSelector;
 } ModelNvm;
 
 static unsigned nvm_total(const unsigned *counts)
@@ -661,7 +679,8 @@ typedef enum {
                           *      matched the surviving OLD selector. Kept as
                           *      the historical (defective) shape -- see
                           *      USECAL_R9. */
-    USECAL_R9            /* #1152 round 9 (CURRENT): r8, with change 2 fixed.
+    USECAL_R9,           /* #1152 round 9 (HISTORICAL -- r10 below is what
+                          * production runs): r8, with change 2 fixed.
                           * The committed record's OWN content decides whether
                           * installing on a mismatch is safe, not the bare
                           * fact that it differs from what was intended:
@@ -695,6 +714,36 @@ typedef enum {
                           * took, purely so a1/c1 tests can assert the correct
                           * one fired without over-claiming a behavioural
                           * difference the model does not have. */
+    USECAL_R10           /* #1152 round 10 (CURRENT): r9, with its OWN second
+                          * read fixed. r9's independent re-read (the one
+                          * inside the mismatch branch, AFTER
+                          * model_TopLevelMatchesCommitted has already said
+                          * "no match") classified by committedReadable
+                          * ALONE -- valid-and-readable was treated as proof
+                          * enough that the committed record must be case
+                          * (a), a DIFFERENT selector. That was never
+                          * checked, and it is not established by the first
+                          * read having failed: the two reads are separate
+                          * calls to daqifi_settings_LoadFromNvm with no
+                          * claim held across the gap (see
+                          * recheckRevealsLandedSelector's own comment on
+                          * ModelNvm for why that gap is real, not merely
+                          * modelled in parallel universes). r10 classifies
+                          * the second read BY SELECTOR too, exactly as the
+                          * first already is:
+                          *
+                          *   (a) valid, calVals DIFFERENT from intended --
+                          *       unchanged from r9: refuse, do not install.
+                          *   (b) valid, calVals MATCHES intended -- NEW:
+                          *       the write landed after all; install, same
+                          *       as the direct-match path this whole
+                          *       recovery exists to re-derive.
+                          *   (c) not valid / wrong type -- unchanged from
+                          *       r9: refuse, do not install.
+                          *
+                          * (a) and (c) are behaviourally identical here, as
+                          * in r9 -- committedReadableOnMismatch exposes
+                          * which fired, purely for the a/c tests. */
 } UseCalShape;
 
 typedef struct {
@@ -706,14 +755,17 @@ typedef struct {
     ModelSaveOutcome saveOutcome;
     bool             recoveredAfterReportedFailure; /* r5 verified and continued */
     bool             rawOutputMode;
-    /* r9 only: on a genuine TopLevelMatchesCommitted mismatch, which of the
-     * two sub-cases the independent re-read found -- true for (a) a VALID
-     * record naming a different selector, false for (c) no valid record at
-     * all. Meaningless (left false) on every shape other than r9, and on r9
-     * itself unless the mismatch branch was actually entered -- callers
-     * gate reading it on run.result == RES_ERR && !run.recoveredAfterReportedFailure
-     * && run.saveAttempted, which is exactly "SaveToNvm was attempted,
-     * reported failure, and the independent verify did not recover it". */
+    /* r9/r10 only: on a genuine TopLevelMatchesCommitted mismatch, which of
+     * the sub-cases the independent re-read found -- true for (a) a VALID
+     * record (naming a different selector in both r9 and r10 -- r10 only
+     * reaches the (a)/(c) split in this field at all when its OWN second
+     * read also failed to match), false for (c) no valid record at all.
+     * Meaningless (left false) on every shape other than r9/r10, and on
+     * those shapes unless the mismatch branch was actually entered --
+     * callers gate reading it on run.result == RES_ERR &&
+     * !run.recoveredAfterReportedFailure && run.saveAttempted, which is
+     * exactly "SaveToNvm was attempted, reported failure, and the
+     * independent verify did not recover it". */
     bool             committedReadableOnMismatch;
 } UseCalRun;
 
@@ -758,7 +810,7 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
      * hardware repro exposed: a board with no populated bank could call
      * USECal 0/1 forever and never leave raw mode, because every one of
      * those calls fails before reaching the bottom. */
-    if (shape == USECAL_R8 || shape == USECAL_R9) {
+    if (shape == USECAL_R8 || shape == USECAL_R9 || shape == USECAL_R10) {
         run.rawOutputMode = false;
     } else {
         run.rawOutputMode = rawModeIn;
@@ -786,7 +838,7 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
     }
 
     if (shape == USECAL_R2 || shape == USECAL_R5 || shape == USECAL_R8 ||
-        shape == USECAL_R9) {
+        shape == USECAL_R9 || shape == USECAL_R10) {
         /* --- r2 step 2: VALIDATE without installing ---------------------- */
         /* daqifi_settings_ValidateADCCalBank: the same LoadFromNvm check
          * LoadADCCalSettings performs internally, without the copy loop that
@@ -810,11 +862,11 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
              * below so model_TopLevelMatchesCommitted is never even called,
              * matching production having no such call in r2. */
             bool recovers = (shape == USECAL_R5 || shape == USECAL_R8 ||
-                              shape == USECAL_R9);
+                              shape == USECAL_R9 || shape == USECAL_R10);
             if (!recovers || !model_TopLevelMatchesCommitted(nvm, &tmp)) {
                 /* round 8 (Change 2, HISTORICAL -- see USECAL_R9 above for
                  * why this was wrong): on a GENUINE mismatch -- as opposed to
-                 * r5/r8/r9's recovered-concurrent-write case just above --
+                 * r5/r8/r9/r10's recovered-concurrent-write case just above --
                  * round 7's audit found returning here WITHOUT installing
                  * leaves the PREVIOUS bank live while the stored selector is
                  * already destroyed by the erase that already ran either
@@ -833,16 +885,44 @@ static UseCalRun model_usecal_set(UseCalShape shape, int param1,
                  * valid record at all. Both refuse to install; the model
                  * exposes which sub-case fired purely for the a1/c1 tests
                  * below, which is why this sits inside the mismatch branch
-                 * rather than after it. */
+                 * rather than after it.
+                 *
+                 * r10 goes one step further: r9's own classification of
+                 * THIS read is unchecked by selector (see USECAL_R10's own
+                 * comment above), so r10 re-derives it the same way the
+                 * outer `if` already does -- by selector, not by mere
+                 * readability. `recoveredViaRecheck` lets r10 fall through
+                 * to the SAME shared `run.recoveredAfterReportedFailure =
+                 * true;` below on a case-(b) recheck, instead of returning
+                 * here like every other shape unconditionally does. */
+                bool recoveredViaRecheck = false;
                 if (shape == USECAL_R8) {
                     run.installAttempted = true;
                     (void)model_LoadADCCalSettings(nvm, calType, rt);
                 } else if (shape == USECAL_R9) {
                     run.committedReadableOnMismatch =
                             model_TopLevelCommittedReadable(nvm);
+                } else if (shape == USECAL_R10) {
+                    if (nvm->recheckRevealsLandedSelector) {
+                        /* Simulate a writer of this exact record landing in
+                         * the gap between the two independent reads -- see
+                         * the fixture field's own comment on ModelNvm. */
+                        ModelSettings landed = tmp;
+                        uint32_t crc2 = CRC32_Compute(&landed.settings,
+                                model_data_size(landed.type));
+                        memset(landed.checksum, 0, sizeof(landed.checksum));
+                        memcpy(landed.checksum, &crc2, sizeof(crc2));
+                        nvm_store_page(nvm, MODEL_TYPE_TOP_LEVEL, &landed);
+                    }
+                    run.committedReadableOnMismatch =
+                            model_TopLevelCommittedReadable(nvm);
+                    recoveredViaRecheck =
+                            model_TopLevelMatchesCommitted(nvm, &tmp);
                 }
-                run.result = RES_ERR;
-                return run;
+                if (!recoveredViaRecheck) {
+                    run.result = RES_ERR;
+                    return run;
+                }
             }
             run.recoveredAfterReportedFailure = true;
         }
@@ -2122,6 +2202,208 @@ TEST(round9_differs_from_round8_only_by_not_installing_on_a_genuine_mismatch)
 }
 
 /* ==========================================================================
+ * ROUND 10 -- fw#1152 round 10, fixing round 9's own unchecked premise.
+ *
+ * Round 9's mismatch-branch re-read (the one after
+ * model_TopLevelMatchesCommitted has already said "no match") classified by
+ * committedReadable ALONE and assumed, in a comment, that a valid record
+ * reaching that point must therefore name a DIFFERENT selector -- i.e. that
+ * it must be case (a). That is never checked. The first read
+ * (TopLevelMatchesCommitted) and the second, independent re-read are two
+ * SEPARATE calls a few lines apart with no claim held across the gap (a
+ * real, cited writer of this exact record -- CONF:VOLT:SAVE /
+ * SCPI_SaveDataPrecision, SCPIInterface.c:7201 -- takes none), so they are
+ * not guaranteed to agree. Round 10 classifies the SECOND read by selector
+ * too, exactly as the first already is -- see recheckRevealsLandedSelector's
+ * own comment on ModelNvm for how that disagreement is modelled.
+ *
+ * Three cases, both param1 directions each -- same table as round 9, with
+ * (b) now reachable from a GENUINE round-9-style mismatch rather than only
+ * from the direct match the outer `if` catches:
+ *   (a) re-read is valid, names a DIFFERENT selector -- refuse, unchanged
+ *       from round 9.
+ *   (b) re-read is valid, names the INTENDED selector -- NEW: install. This
+ *       is round 9's defect and round 10's entire fix.
+ *   (c) re-read is not valid at all -- refuse, unchanged from round 9.
+ * ========================================================================== */
+
+/* CASE (a): regression check -- round 10 must still refuse a re-read that
+ * genuinely differs, identical fixture to round9_case_a, run through
+ * USECAL_R10. recheckRevealsLandedSelector stays at its zero-value default
+ * (false), so round 10's own second read sees the SAME surviving old record
+ * round 9's first read already saw -- this is the "mutation" that round
+ * 10_case_b below flips: the one fixture bit distinguishing a genuine
+ * mismatch from a landed-but-corrupted-readback one. */
+TEST(round10_case_a_valid_old_record_refuses_without_installing)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    /* direction: USER -> FACTORY (param1 0) */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    fixture_top_level(&nvm, MODEL_TYPE_TOP_LEVEL, 1u);
+    runtime_init(&rt, USER_M, USER_B);
+    nvm.eraseRefused = true;
+    nvm.writeFails   = true;
+    run = model_usecal_set(USECAL_R10, 0, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.recoveredAfterReportedFailure, false);
+    ASSERT_EQ(run.committedReadableOnMismatch, true);   /* case (a): valid */
+    ASSERT_EQ(run.installAttempted, false);
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(rt.CalM[0], USER_M);
+    ASSERT_EQ(persisted_selector(&nvm), 1);
+
+    /* direction: FACTORY -> USER (param1 1) */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.eraseRefused = true;
+    nvm.writeFails   = true;
+    run = model_usecal_set(USECAL_R10, 1, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.committedReadableOnMismatch, true);
+    ASSERT_EQ(run.installAttempted, false);
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(rt.CalM[0], FACT_M);
+    ASSERT_EQ(persisted_selector(&nvm), 0);
+}
+
+/* CASE (c): regression check -- round 10 must still refuse when no valid
+ * record survives at all. Identical fixture to round9_case_c. */
+TEST(round10_case_c_unreadable_record_refuses_without_installing)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    /* direction: USER -> FACTORY (param1 0) */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    runtime_init(&rt, USER_M, USER_B);
+    nvm.writeFails = true;
+    run = model_usecal_set(USECAL_R10, 0, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.recoveredAfterReportedFailure, false);
+    ASSERT_EQ(run.committedReadableOnMismatch, false);  /* case (c): unreadable */
+    ASSERT_EQ(run.installAttempted, false);
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(rt.CalM[0], USER_M);
+    ASSERT_EQ(persisted_selector(&nvm), -1);
+
+    /* direction: FACTORY -> USER (param1 1) */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.writeFails = true;
+    run = model_usecal_set(USECAL_R10, 1, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_ERR);
+    ASSERT_EQ(run.committedReadableOnMismatch, false);
+    ASSERT_EQ(run.installAttempted, false);
+    ASSERT_EQ(rt.installs, 0);
+    ASSERT_EQ(rt.CalM[0], FACT_M);
+    ASSERT_EQ(persisted_selector(&nvm), -1);
+}
+
+/* CASE (b): THE WHOLE POINT. Round 9's first read (TopLevelMatchesCommitted)
+ * sees a genuine mismatch -- same write-protected-page fixture as case (a)
+ * above -- but a writer of THIS exact record (recheckRevealsLandedSelector)
+ * lands our own intended selector in the gap before round 10's second,
+ * independent re-read. Round 9 would stop at the first mismatch's
+ * diagnosis and never re-check by selector at all (see
+ * round10_differs_from_round9... below for that side-by-side proof); round
+ * 10 must install here. Asserted on coefficient VALUES and the persisted
+ * selector, not merely an install count, per the task's instruction: a
+ * count alone would still pass if the WRONG bank got installed. */
+TEST(round10_case_b_recheck_reveals_landed_selector_installs)
+{
+    ModelNvm nvm;
+    ModelRuntimeArray rt;
+    UseCalRun run;
+
+    /* direction: USER -> FACTORY (param1 0). Committed is overridden to
+     * USER (1) so the FIRST read genuinely differs from the intended
+     * FACTORY (0); recheckRevealsLandedSelector then makes the SECOND read
+     * see our own just-landed FACTORY selector instead. */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    fixture_top_level(&nvm, MODEL_TYPE_TOP_LEVEL, 1u);
+    runtime_init(&rt, USER_M, USER_B);
+    nvm.eraseRefused = true;
+    nvm.writeFails   = true;
+    nvm.recheckRevealsLandedSelector = true;
+    run = model_usecal_set(USECAL_R10, 0, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_OK);                      /* THE FIX */
+    ASSERT_EQ(run.recoveredAfterReportedFailure, true);
+    ASSERT_EQ(run.committedReadableOnMismatch, true);
+    ASSERT_EQ(run.installAttempted, true);
+    ASSERT_EQ(rt.installs, 1);
+    ASSERT_EQ(rt.installedBank, MODEL_TYPE_FACT_CAL);
+    ASSERT_EQ(rt.CalM[0], FACT_M);               /* live now matches intended */
+    ASSERT_EQ(persisted_selector(&nvm), 0);      /* stored matches intended */
+
+    /* direction: FACTORY -> USER (param1 1). fixture_board's default
+     * committed calVals=0 already differs from the intended 1. */
+    fixture_board(&nvm, &rt, MODEL_TYPE_TOP_LEVEL, true);
+    nvm.eraseRefused = true;
+    nvm.writeFails   = true;
+    nvm.recheckRevealsLandedSelector = true;
+    run = model_usecal_set(USECAL_R10, 1, &nvm, &rt, false);
+    ASSERT_EQ(run.result, RES_OK);
+    ASSERT_EQ(run.recoveredAfterReportedFailure, true);
+    ASSERT_EQ(run.committedReadableOnMismatch, true);
+    ASSERT_EQ(run.installAttempted, true);
+    ASSERT_EQ(rt.installs, 1);
+    ASSERT_EQ(rt.installedBank, MODEL_TYPE_USER_CAL);
+    ASSERT_EQ(rt.CalM[0], USER_M);
+    ASSERT_EQ(persisted_selector(&nvm), 1);
+}
+
+/* THE DIRECT REGRESSION/FIX PROOF, round 9 vs round 10: identical fixture,
+ * identical param1, identical failure injection AND identical
+ * recheckRevealsLandedSelector, run through r9 and r10 side by side. Round 9
+ * has no mechanism to even LOOK at this fixture flag -- its mismatch branch
+ * never re-checks by selector -- so it stops at the first mismatch and
+ * refuses, leaving the live coefficients on the surviving OLD selector while
+ * the NEW one is, by the fixture's own construction, already the one
+ * genuinely committed. Round 10 re-checks and installs. This is round 10's
+ * entire fix, shown as a diff rather than asserted against each shape in
+ * isolation -- same technique as round9_differs_from_round8 above. */
+TEST(round10_differs_from_round9_only_by_installing_on_a_recheck_confirmed_landed_write)
+{
+    ModelNvm nvmR9, nvmR10;
+    ModelRuntimeArray rtR9, rtR10;
+    UseCalRun runR9, runR10;
+
+    fixture_board(&nvmR9, &rtR9, MODEL_TYPE_TOP_LEVEL, true);
+    fixture_top_level(&nvmR9, MODEL_TYPE_TOP_LEVEL, 1u);
+    runtime_init(&rtR9, USER_M, USER_B);
+    nvmR9.eraseRefused = true;
+    nvmR9.writeFails   = true;
+    nvmR9.recheckRevealsLandedSelector = true;   /* r9 has no code path that
+                                                    * reads this -- included
+                                                    * to prove the fixture
+                                                    * alone does not change
+                                                    * r9's outcome. */
+
+    fixture_board(&nvmR10, &rtR10, MODEL_TYPE_TOP_LEVEL, true);
+    fixture_top_level(&nvmR10, MODEL_TYPE_TOP_LEVEL, 1u);
+    runtime_init(&rtR10, USER_M, USER_B);
+    nvmR10.eraseRefused = true;
+    nvmR10.writeFails   = true;
+    nvmR10.recheckRevealsLandedSelector = true;
+
+    runR9  = model_usecal_set(USECAL_R9,  0, &nvmR9,  &rtR9,  false);
+    runR10 = model_usecal_set(USECAL_R10, 0, &nvmR10, &rtR10, false);
+
+    ASSERT_EQ(runR9.result,  RES_ERR);
+    ASSERT_EQ(runR10.result, RES_OK);                 /* r10: the fix */
+    ASSERT_EQ(runR9.installAttempted,  false);
+    ASSERT_EQ(runR10.installAttempted, true);
+    ASSERT_EQ(rtR9.installs,  0);
+    ASSERT_EQ(rtR10.installs, 1);
+    ASSERT_EQ(rtR9.CalM[0],  USER_M);   /* r9: stuck on the stale selection */
+    ASSERT_EQ(rtR10.CalM[0], FACT_M);   /* r10: caught up with what landed */
+    ASSERT_EQ(persisted_selector(&nvmR10), 0);   /* r10: live now agrees with
+                                                    * what was already stored */
+}
+
+/* ==========================================================================
  * CASE 10 -- THE HEADLINE, in test_1112's shape: sweep the whole fixture
  * matrix and show that the two shapes differ in EXACTLY the cells where the
  * stored type is wrong AND the run got as far as the save.
@@ -2276,6 +2558,12 @@ int main(void)
     RUN(round9_case_c_unreadable_record_refuses_without_installing);
     RUN(round9_case_b_landed_write_still_installs);
     RUN(round9_differs_from_round8_only_by_not_installing_on_a_genuine_mismatch);
+
+    /* Round 10: fixing round 9's own unchecked premise. */
+    RUN(round10_case_a_valid_old_record_refuses_without_installing);
+    RUN(round10_case_c_unreadable_record_refuses_without_installing);
+    RUN(round10_case_b_recheck_reveals_landed_selector_installs);
+    RUN(round10_differs_from_round9_only_by_installing_on_a_recheck_confirmed_landed_write);
 
     /* The headline */
     RUN(the_two_shapes_differ_in_exactly_the_wrong_stored_type_cells);
