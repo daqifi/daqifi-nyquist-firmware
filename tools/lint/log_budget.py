@@ -559,6 +559,56 @@ def sole_site(text, wide_re, what, hint, depth_text=None, depth_base=0):
     return hits[0]
 
 
+def read_isr_ceiling(logger_c_text, msg_size):
+    """The ISR path's own content ceiling, READ from Logger.c -- never assumed
+    from the task formatter's.
+
+    ⛔ #1110 r15: THE ISR BOUND IS A SECOND, INDEPENDENT CONSTANT.
+
+    LogMessage()'s ISR branch does not format; it copies the format with its
+    own bound:
+
+        const size_t maxLen = LOG_MESSAGE_SIZE - 3;
+
+    r14 measured the raw format against the TASK ceiling, which happens to be
+    the same number today. It is not the same constant. Changing that line to
+    `- 13` makes the real ISR ceiling 115 while the checker still says 125 --
+    measured, and the reason this function exists.
+
+    The 17 = A fixed contract extends here: ONE named constant, a single plain
+    form, everything else refused rather than interpreted.
+
+    ⚠ `LOG_MESSAGE_SIZE - 3` is NOT unique in Logger.c -- the task path's
+    clamp uses the same expression, `size = min((LOG_MESSAGE_SIZE - 3), size)`.
+    So this keys on the ISR site's whole statement, not on the expression, or
+    sole_site() would see two hits and refuse correct source.
+    """
+    # Phase order, same as read_ceiling(): splice continuations, THEN mask
+    # comments, so a commented-out bound cannot set the ISR ceiling and a
+    # continued one is still seen.
+    logger_c_text = mask_comments(splice_continuations(logger_c_text)[0])
+    m = sole_site(
+        logger_c_text,
+        r"^[ \t]*const size_t maxLen = LOG_MESSAGE_SIZE[ \t]*-[ \t]*(.*?);[ \t]*$",
+        "'const size_t maxLen = LOG_MESSAGE_SIZE - <n>;' in Logger.c "
+        "(LogMessage's ISR branch)",
+        "the ISR path copies the format with its OWN bound, and measuring the "
+        "raw format against the task ceiling assumes the two agree")
+    raw_reserve = m.group(1).strip()
+    if not re.fullmatch(r"0|[1-9][0-9]*", raw_reserve):
+        raise ToolError(
+            f"Logger.c's ISR bound reserves {raw_reserve!r}, which is not a "
+            f"bare decimal integer. Parenthesised, suffixed, hex and computed "
+            f"values are refused rather than interpreted -- this is the number "
+            f"every ISR-context message is measured against.")
+    reserve = int(raw_reserve)
+    if reserve >= msg_size:
+        raise ToolError(
+            f"Logger.c's ISR bound reserves {reserve} of LOG_MESSAGE_SIZE "
+            f"{msg_size}, leaving no room for a message.")
+    return msg_size - reserve
+
+
 def read_ceiling(logger_h_text, logger_c_text):
     """Derive the effective ceiling from Logger.h and Logger.c.
 
@@ -1686,7 +1736,17 @@ def ambiguous_annotation(src_lines, line, n_calls, split=None):
     return find_annotation(src_lines, line, split) is not None
 
 
-def scan_file(path, rel, macros, ceiling):
+def fmt_bytes(fmt):
+    """Byte length of a decoded format, by the SAME convention measure() uses.
+
+    #1110 r15: named rather than inlined so the raw (ISR) measure and the
+    formatted (task) measure cannot drift into counting different things --
+    which is exactly what r14 did by reaching for len().
+    """
+    return len(fmt.encode("utf-8", errors="surrogateescape"))
+
+
+def scan_file(path, rel, macros, ceiling, isr_ceiling=None):
     src = path.read_text(encoding="utf-8", errors="surrogateescape")
     src_lines = split_lines_1model(src)
     spliced, orig_pos = splice_continuations(src)
@@ -1800,8 +1860,19 @@ def scan_file(path, rel, macros, ceiling):
         # "%% END" is 126 raw bytes (truncates in an ISR) but 125 formatted, so
         # the old single check passed it.
         #
-        # literal_text() already decodes C escapes -- `\n` is one byte there --
-        # so len(fmt) IS the byte count the ISR path would copy.
+        # ⛔ #1110 r15: BYTES, NOT CHARACTERS. r14 used len(fmt), which is a
+        # CHARACTER count, and the device copies BYTES: 60 x U+00E9 plus
+        # "%% END" is 66 characters and 126 UTF-8 bytes, so it truncated in an
+        # ISR while measuring as 66 and producing no finding. Measured.
+        #
+        # fmt_bytes() is the convention measure() has used all along
+        # (.encode("utf-8", errors="surrogateescape")), so this is one shared
+        # rule rather than a second one. The audit proposed REFUSING non-ASCII
+        # instead; that would have been wrong here -- the formatted path
+        # already measures multi-byte text correctly, and a self-test case
+        # asserts it (U+00B5, "the same 125 characters are over budget with one
+        # multi-byte char"), so refusing would delete working capability and
+        # break that case. Counting bytes is both smaller and more correct.
         #
         # Reported as its own finding rather than folded into a max(): the
         # failure mode and the REMEDY differ. Over the formatted ceiling means
@@ -1820,7 +1891,8 @@ def scan_file(path, rel, macros, ceiling):
             found.append(Finding(
                 rel, line, f"worst case {worst} bytes > ceiling {ceiling}",
                 escape_for_record(fmt)))
-        elif len(fmt) > ceiling:
+        elif fmt_bytes(fmt) > (ceiling if isr_ceiling is None
+                               else isr_ceiling):
             # ⛔ LAST, and only when the formatted measures stayed silent.
             #
             # My first cut reported this as an INDEPENDENT finding, before the
@@ -1838,8 +1910,9 @@ def scan_file(path, rel, macros, ceiling):
             # long message.
             found.append(Finding(
                 rel, line,
-                f"raw format {len(fmt)} bytes > ceiling {ceiling} -- the ISR "
-                f"path copies the format verbatim without formatting it",
+                f"raw format {fmt_bytes(fmt)} bytes > "
+                f"{ceiling if isr_ceiling is None else isr_ceiling} -- the "
+                f"ISR path copies the format verbatim without formatting it",
                 escape_for_record(fmt)))
     return found
 
@@ -1866,14 +1939,15 @@ def scan_file(path, rel, macros, ceiling):
 SCANNED_SUFFIXES = ("*.c",)
 
 
-def scan(root, macros, ceiling):
+def scan(root, macros, ceiling, isr_ceiling=None):
     findings, scanned = [], 0
     for path in sorted(p for s in SCANNED_SUFFIXES for p in root.rglob(s)):
         rel_in_root = path.relative_to(root).as_posix()
         if any(rel_in_root.startswith(p) for p in EXCLUDED_PREFIXES):
             continue
         scanned += 1
-        findings.extend(scan_file(path, path.as_posix(), macros, ceiling))
+        findings.extend(scan_file(path, path.as_posix(), macros, ceiling,
+                                  isr_ceiling))
     return findings, scanned
 
 
@@ -2053,6 +2127,41 @@ MICRO_SIGN = chr(0xB5)
 #
 # Each entry is (label, the LOG_MESSAGE_SIZE definition as it appears in
 # Logger.h, expected ceiling or None for "must refuse").
+# ⛔ #1110 r15: THE ISR BOUND IS UNDER THE SAME 17 = A CONTRACT.
+#
+# LogMessage()'s ISR branch carries its own bound, and r14 measured the raw
+# format against the TASK ceiling -- which happens to be the same number.
+# Change that line to `- 13` and the real ISR ceiling is 115 while the checker
+# still says 125. So it is read, under one plain form, with everything else
+# refused. (label, the Logger.c body, expected ISR ceiling or None to refuse.)
+SELF_TEST_ISR_BOUND_CASES = [
+    ("the shipped form",
+     "int LogMessage(const char* f, ...)\n{\n"
+     "    const size_t maxLen = LOG_MESSAGE_SIZE - 3;\n}\n", 125),
+    ("a DIFFERENT reserve is followed, not assumed -- the r14 defect",
+     "int LogMessage(const char* f, ...)\n{\n"
+     "    const size_t maxLen = LOG_MESSAGE_SIZE - 13;\n}\n", 115),
+    ("a commented-out bound does not set the ceiling",
+     "int LogMessage(const char* f, ...)\n{\n"
+     "    /* const size_t maxLen = LOG_MESSAGE_SIZE - 3; */\n}\n", None),
+    ("two bounds are refused rather than taking the first",
+     "int LogMessage(const char* f, ...)\n{\n"
+     "    const size_t maxLen = LOG_MESSAGE_SIZE - 3;\n"
+     "    const size_t maxLen = LOG_MESSAGE_SIZE - 13;\n}\n", None),
+    ("absent is refused, not defaulted",
+     "int LogMessage(const char* f, ...)\n{\n    size_t n = 0;\n}\n", None),
+    ("a suffixed reserve is refused, not parsed",
+     "int LogMessage(const char* f, ...)\n{\n"
+     "    const size_t maxLen = LOG_MESSAGE_SIZE - 3u;\n}\n", None),
+    ("a computed reserve is refused",
+     "int LogMessage(const char* f, ...)\n{\n"
+     "    const size_t maxLen = LOG_MESSAGE_SIZE - (1 + 2);\n}\n", None),
+    ("a reserve that leaves no room is refused",
+     "int LogMessage(const char* f, ...)\n{\n"
+     "    const size_t maxLen = LOG_MESSAGE_SIZE - 128;\n}\n", None),
+]
+
+
 SELF_TEST_CEILING_SPELLINGS = [
     # --- the one accepted form, plus the formatting it tolerates ---
     ("the shipped form: a single plain decimal #define",
@@ -2180,6 +2289,20 @@ SELF_TEST_REJECTION_CASES = [
 ]
 
 SELF_TEST_CASES = [
+    (
+        "r15: the ISR raw measure counts BYTES, not characters",
+        'LOG_E_ONCE(1, "' + '\u00e9'*60 + "%% END\");',",
+        1,
+        "⛔ r15, BOTH LEGS. r14 measured the raw format with len(), a "
+        "CHARACTER count, while the ISR path memcpy()s BYTES. 60 x U+00E9 "
+        "plus '%% END' is 66 characters and 126 UTF-8 bytes: it truncates in "
+        "an ISR and measured as 66, producing NO finding. The formatted path "
+        "had always encoded to utf-8 (see the U+00B5 case above), so this was "
+        "the raw measure disagreeing with its sibling, not a new problem -- "
+        "which is why the fix is fmt_bytes() shared by both and NOT the "
+        "non-ASCII refusal the audit proposed, that would have broken the "
+        "U+00B5 case and deleted working capability",
+    ),
     (
         "r14: the ISR path copies the format RAW, so %% can hide a truncation",
         'LOG_E_ONCE(1, "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX%% END");',
@@ -3022,6 +3145,7 @@ def self_test():
         # Makefile. Incremented BEFORE each attempt, so the cases that expect a
         # ToolError are counted too.
         ceiling_checks = 0
+        isr_checks = 0
         # ⛔ #1110 r9: THE ONE LINE MODEL, PINNED STRUCTURALLY.
         #
         # A behavioural case for this proved inert -- I could not construct a
@@ -3194,6 +3318,57 @@ def self_test():
                 failures += 1
                 print(f"  FAIL [ceiling: include guard]: derived {got}, "
                       f"expected 125")
+
+        # ⛔ #1110 r15: THE ISR BOUND'S CONTRACT, same shape as the spelling
+        # table below. Driven by a loop so a row is the only way to change the
+        # contract, and counted in the headline so a skipped run is visible.
+        for lbl, body, want in SELF_TEST_ISR_BOUND_CASES:
+            isr_checks += 1
+            try:
+                got = read_isr_ceiling(body, 128)
+            except ToolError as e:
+                if want is not None:
+                    failures += 1
+                    print(f"  FAIL [isr bound: {lbl}]: REFUSED ({e}), expected "
+                          f"the accepted form to derive {want}")
+                continue
+            except Exception as e:                       # noqa: BLE001
+                failures += 1
+                print(f"  FAIL [isr bound: {lbl}]: raised "
+                      f"{type(e).__name__}: {e} -- an unsupported form must be "
+                      f"REFUSED with a verdict, not crashed on")
+                continue
+            if want is None:
+                failures += 1
+                print(f"  FAIL [isr bound: {lbl}]: ACCEPTED and derived {got}, "
+                      f"expected a refusal -- the ISR bound is a fixed "
+                      f"contract (operator item 17 = A)")
+            elif got != want:
+                failures += 1
+                print(f"  FAIL [isr bound: {lbl}]: derived {got}, expected "
+                      f"{want}")
+
+        # ⛔ #1110 r15: AND THE RAW CHECK MUST ACTUALLY USE THAT CEILING.
+        # The table above proves the bound is READ correctly; this proves it is
+        # the number the measurement is compared against. r14 passed the task
+        # ceiling for both, so a tighter ISR bound would be read and then
+        # ignored -- which the table alone cannot see.
+        isr_checks += 1
+        with tempfile.TemporaryDirectory() as d2:
+            fp2 = Path(d2) / "isrwire.c"
+            fp2.write_text('void f(void){\nLOG_E_ONCE(1, "'
+                           + ("Z" * 120) + '");\n}\n', encoding="utf-8")
+            tight = scan_file(fp2, "isrwire.c", DEFAULT_MACROS, 125,
+                              isr_ceiling=115)
+            loose = scan_file(fp2, "isrwire.c", DEFAULT_MACROS, 125,
+                              isr_ceiling=125)
+            if len(tight) != 1 or len(loose) != 0:
+                failures += 1
+                print(f"  FAIL [isr bound: the raw check uses the ISR "
+                      f"ceiling]: 120 raw bytes gave {len(tight)} finding(s) "
+                      f"at an ISR ceiling of 115 and {len(loose)} at 125; "
+                      f"expected 1 and 0. The bound is read but not applied, "
+                      f"which is the r14 defect one level in")
 
         # ⛔ #1110 r13 (item 17 = A): THE SPELLING CONTRACT, as a table.
         # One loop, so adding a row is the only way to change the contract and
@@ -3534,7 +3709,14 @@ def self_test():
         logger_c.write_text(
             "static int LogMessageFormatImpl(const char* format, va_list a)"
             "\n{\n    size = vsnprintf(buffer, LOG_MESSAGE_SIZE - 2, f, a);\n"
-            "    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n",
+            "    size = min((LOG_MESSAGE_SIZE - 3), size);\n}\n"
+            # #1110 r15: the fixture needs the ISR bound too, because
+            # gather_inputs() now reads it. A stub Logger.c without this line
+            # made read_isr_ceiling() refuse, and this case then reported a
+            # ToolError where it wanted the real OSError -- a fixture failing
+            # for a reason the case is not about.
+            "int LogMessage(const char* format, ...)\n{\n"
+            "    const size_t maxLen = LOG_MESSAGE_SIZE - 3;\n}\n",
             encoding="utf-8")
         try:
             gather_inputs(root, logger_h, logger_c,
@@ -3576,6 +3758,7 @@ def self_test():
           # them all. A case the summary does not name cannot be audited.
           f"{len(SELF_TEST_REJECTION_CASES)}/"
           f"{len(SELF_TEST_REJECTION_CASES)} rejection cases + "
+          f"{isr_checks}/{isr_checks} ISR-bound cases + "
           f"1/1 IO-error case pass")
     return 0
 
@@ -3608,11 +3791,14 @@ def gather_inputs(root, logger_h, logger_c, suppress, baseline, macros):
     """
     if not root.exists():
         raise ToolError(f"root not found: {root}")
+    logger_c_text = logger_c.read_text(encoding="utf-8")
     ceiling, size, r1, r2 = read_ceiling(
-        logger_h.read_text(encoding="utf-8"),
-        logger_c.read_text(encoding="utf-8"))
+        logger_h.read_text(encoding="utf-8"), logger_c_text)
+    # #1110 r15: the ISR path's bound is its OWN constant -- read it, never
+    # inherit the task ceiling. See read_isr_ceiling().
+    isr_ceiling = read_isr_ceiling(logger_c_text, size)
     suppressions = load_suppressions(suppress)
-    findings, scanned = scan(root, macros, ceiling)
+    findings, scanned = scan(root, macros, ceiling, isr_ceiling)
     baseline_counter = load_baseline(baseline)
     return (ceiling, size, r1, r2, suppressions, findings, scanned,
             baseline_counter)
