@@ -148,8 +148,8 @@ restore
 echo "== M3: drop the latch term from the auto-promote gate. ⭐ THIS PIN GUARDS =="
 echo "==     THE MODEL'S OWN CORRECTION -- without that term the clear WOULD   =="
 echo "==     be the root cause and test_1092's DEFECT A section is wrong.      =="
-if sub "$P" '        } else if (!pData->autoPromotedThisVbusSession) {' \
-            '        } else if (1) {'; then
+if sub "$P" '        if (vbusPresent && !pData->autoPromotedThisVbusSession) {' \
+            '        if (vbusPresent) {'; then
     expect "M3 latch term in the gate" "no longer consults the"
 else
     echo "  FAIL M3 anchor absent."; fail=$((fail+1))
@@ -159,8 +159,10 @@ restore
 echo "== M4: drop the VBUS-absent re-arm. ⭐ ALSO GUARDS AN ARGUMENT, not just  =="
 echo "==     code: the re-arm is the ONLY reason setting the latch             =="
 echo "==     unconditionally is harmless on battery.                           =="
-if sub "$P" '            pData->autoPromotedThisVbusSession = false;' \
-            '            /* mutant: re-arm removed */'; then
+if sub "$P" '    if (!pData->BQ24297Data.status.pgStat) {
+        pData->autoPromotedThisVbusSession = false;
+    }' \
+            '    /* mutant: re-arm removed entirely */'; then
     expect "M4 standby re-arm" "no longer re-arms the latch"
 else
     echo "  FAIL M4 anchor absent."; fail=$((fail+1))
@@ -214,7 +216,7 @@ fi
 restore
 
 echo "== M9: put the re-arm back INSIDE the request gate -- the exact r3 shape. =="
-echo "==     ⭐ THIS IS THE ONE PIN 3 COULD NOT SEE: `= false` is still present =="
+echo "==     THIS IS THE ONE PIN 3 COULD NOT SEE: the = false write is still =="
 echo "==     and still a single occurrence, so only its POSITION differs.       =="
 if sub "$P" '    if (!pData->BQ24297Data.status.pgStat) {
         pData->autoPromotedThisVbusSession = false;
@@ -242,7 +244,7 @@ if sub "$P" '    Power_UpdateStatusFromGPIO();
           '    /* mutant: entry refresh removed */
 
     /* #454: Auto-power-up on VBUS-present.'; then
-    expect "M10 entry refresh precedes the re-arm" "before refreshing VBUS"
+    expect "M10 entry refresh precedes the re-arm" "decides the latch re-arm"
 else
     echo "  FAIL M10 anchor absent."; fail=$((fail+1))
 fi
