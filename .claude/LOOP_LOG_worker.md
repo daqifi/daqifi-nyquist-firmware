@@ -11607,3 +11607,42 @@ The rule describes our invocation; the deletion is the server's. Consequence for
 worktree-removal check: its `ls-remote` arm now correctly refuses EVERY merged firmware tree, so
 containment against `origin/main` plus a squash-identity proof is the only remaining arm. The rule
 cannot protect the thing it was written to protect, and nothing in the rule's text says so.
+
+## ts#458 round 6 — granted scope FIXED, new audit BLOCKS 6/0/0 (2026-10-27)
+
+Head `a5ce6857333deff3f9bee4e0fbd8f0a9cf1b84d0`. Ledger row: BLOCK, `6/0/0`,
+artifact `~/.claude/audits/audit-ts458-codex-r6.json` sha256 `458d93da...66eeaf4a`.
+Comment: https://github.com/daqifi/daqifi-python-test-suite/pull/458#issuecomment-6454159280
+
+Granted scope (round-5 findings 0 and 2) is FIXED and verified. Suite 38 -> 52 PASS, 0 FAIL.
+
+⭐⭐ **THE ONLY HIGH CAME FROM THE BLIND LEG ALONE.** `steeringSuppressed` holds exactly findings
+3, 4, 5 -- including the round's only HIGH (a shared board's calibration selector silently left
+changed). I passed NO `fixed`/`dispositions`, so there was no steering text to be suppressed BY:
+the delta is between two independent hunter passes. "Always blindLeg:true" stopped being a
+precaution and became the reason a HIGH exists. On a final gate, noise beats suppression.
+
+⭐⭐ **I VALIDATED REPORTABILITY AND INFERRED CORRECTNESS.** 5 of 6 findings are in the
+cherry-picked `test_1152_r8_usecal_raw_mode_independence.py`. I proved it could REPORT (fixed a
+summary line that made classify() score every run ERROR; added the MANIFEST entry) and ran four
+arms proving the GATE scores its output right, including that a 9=A violation reds. **None of that
+examined whether its assertions are sound** -- its central discriminator is sample amplitude vs a
+fixed 50.0 against SIGNED AD7609 codes, unsound in BOTH directions. "It can now fail" and "it fails
+for the right reasons" are different properties and I treated the first as the second. Importing an
+unreviewed file into a row already at its cap was my call and it produced most of the residue.
+
+⭐ **Finding 0 is MY claim, transcribed faithfully.** My brief said the probe is "non-destructive
+either way ... the selector is rewritten to the value it already held." True of the SELECTOR, false
+of the COEFFICIENT ARRAY -- a successful `USECal <entry>` also runs `LoadADCCalSettings` and
+discards unsaved chanCALM/chanCALB edits. Instance N of my own lens, authored in a BRIEF this time:
+a subagent cannot audit the premise it is handed, it builds on it.
+
+⛔ **Two process traps before the audit even ran** (both ledgered as `codex-r6-aborted`):
+`node adversarial-audit.js` gives `SyntaxError: Illegal return statement` -- it is a WORKFLOW
+script, not node (`node --check` passes, which is the tell), and the invocation was documented in
+five memories I did not read first. Then I launched with `repoPath` but no `worktree`, leaving the
+skeptic unpinned -- and because the audited repo is NOT this session's repo, it would have started
+in the FIRMWARE checkout and refuted every finding as unfindable. That returns PASS with zero
+findings: a FALSE CLEAN, the one outcome the gate cannot catch, since its pass condition IS an
+empty findings array. Stopped and relaunched FRESH (never resumeFromRunId -- the cached agents are
+the mispinned ones).
