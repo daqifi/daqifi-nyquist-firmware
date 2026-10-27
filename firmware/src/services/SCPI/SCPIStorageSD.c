@@ -3003,29 +3003,23 @@ scpi_result_t SCPI_StorageSDDirectorySet(scpi_t * context) {
         return SCPI_RES_ERR;
     }
 
-    /* #1124 r11 finding 4: refuse a directory that carries a ROTATION BUCKET's
-     * own name. With SD:DIR "P001", a rotated file at "P001/P001/<name>" is
-     * recorded in the #924 manifest as "P001/<name>", and handing that back to
-     * SD:GET/SD:CRC makes SD_StripConfiguredDir above remove the leading
-     * "P001/" as if it were the configured-directory prefix -- retrieving a
-     * different file, or none. See SdManifest_DirShadowsBucketName for why this
-     * is refused here rather than untangled at retrieval.
+    /* ⛔ #1124 r13 / OPERATOR ITEM 8 = B: THE BUCKET-NAME REFUSAL IS GONE.
      *
-     * pBuff is NOT NUL-terminated at pathLen (it points into the SCPI parse
-     * buffer), so the operand is checked through a bounded local copy. The
-     * length check above already guarantees it fits. */
-    {
-        char dirCandidate[sizeof(pSDCardRuntimeConfig->directory)];
-        memcpy(dirCandidate, pBuff, pathLen);
-        dirCandidate[pathLen] = '\0';
-        if (SdManifest_DirShadowsBucketName(dirCandidate,
-                                            SD_CARD_MANAGER_BUCKET_PREFIX)) {
-            LOG_E("SD:DIRectory - pick another name: '%s' collides with a "
-                  "rotation bucket", dirCandidate);
-            SCPI_ErrorPush(context, SCPI_ERROR_ILLEGAL_PARAMETER_VALUE);
-            return SCPI_RES_ERR;
-        }
-    }
+     * r11 finding 4 refused an SD:DIR carrying a rotation bucket's own name,
+     * because the manifest recorded names RELATIVE to SD:DIR: with SD:DIR
+     * "P001" a rotated file at "P001/P001/<name>" was recorded as
+     * "P001/<name>", and handing that back to SD:GET made
+     * SD_StripConfiguredDir remove the leading "P001/" as though it were the
+     * configured-directory prefix, retrieving a different file or none.
+     *
+     * Ruled B on 2026-10-27 (issuecomment-6450419546): record every file by
+     * its FULL path instead, and drop this refusal. That removes the ambiguity
+     * at its source rather than forbidding a directory name over it -- a full
+     * path is stripped exactly once, so the round trip is the identity. The
+     * two halves are ONE ruling: dropping this is safe only because
+     * sd_AppendManifestLine now records gSDCardData.filePath verbatim, and a
+     * pin in tests/host/Makefile holds both so neither reverts alone.
+     */
 
     /* Refuse while an SD operation owns the card -- which includes an active
      * logging session, since IsBusy() is true for any mode != NONE.

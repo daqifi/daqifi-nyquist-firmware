@@ -137,10 +137,10 @@ configured directory beside its stream files. It holds one line per stream
 file, appended as that file is closed:
 
 ```
-experiment.csv,20480,0x1A2B3C4D
-experiment-1.csv,20480,0x7788AA99
-P001/experiment-65.csv,9012,0x00C0FFEE
-P001/experiment-66.csv,4096,0xDEADBEEF,PARTIAL
+DAQiFi/experiment.csv,20480,0x1A2B3C4D
+DAQiFi/experiment-1.csv,20480,0x7788AA99
+DAQiFi/P001/experiment-65.csv,9012,0x00C0FFEE
+DAQiFi/P001/experiment-66.csv,4096,0xDEADBEEF,PARTIAL
 ```
 
 `<name>,<bytes>,0x<CRC32>[,PARTIAL]`, LF-terminated, no header row — so **the
@@ -218,15 +218,25 @@ reason *and the remedy first* (Logger truncates the tail at 125 bytes); the
 logging session itself continues normally. Withholding an integrity record must
 never be what stops a capture.
 
-- **A configured directory that carries a rotation bucket's name** — `P000`
-  through `P999`, i.e. `SD_CARD_MANAGER_BUCKET_PREFIX` plus a digit run
-  (#1124 r11). With `SD:DIR "P001"` a rotated file at `P001/P001/exp-64.csv` is
-  recorded as `P001/exp-64.csv`, and handing that back to `:GET`/`:CRC` makes
-  `SD_StripConfiguredDir` remove the leading `P001/` as though it were the
-  configured-directory prefix — retrieving a *different* file, or none. The
-  `SYST:STOR:SD:DIRectory` setter refuses such a name outright; this second
-  check at manifest open covers a value already in NVM that the setter never
-  saw.
+⚠️ **Removed in #1124 r13 — a bucket-named `SD:DIR` is no longer refused.**
+Through r12 this list began with *"a configured directory that carries a rotation
+bucket's name"* (`P000`–`P999`), refused both at the `SYST:STOR:SD:DIRectory`
+setter and again at manifest open for a value already in NVM. The reason was
+that names were recorded **relative** to `SD:DIR` while `:GET`/`:CRC` *also*
+strip `SD:DIR`: with `SD:DIR "P001"` a rotated file at `P001/P001/exp-64.csv`
+was recorded as `P001/exp-64.csv`, and retrieval stripped the leading `P001/` a
+second time, opening a different file or none.
+
+Operator ruling 2026-10-27 (item 8 = B,
+[issuecomment-6450419546](https://github.com/daqifi/daqifi-nyquist-firmware/pull/1124#issuecomment-6450419546)):
+record every file by its **full path** instead. One strip then happens instead of
+two, so record-then-retrieve is the identity for *every* directory name,
+including a bucket-named one — and the refusal has nothing left to guard. Both
+enforcement sites and both helpers (`SdManifest_RelativeName`,
+`SdManifest_DirShadowsBucketName`) are gone. The two halves are pinned together
+in `tests/host/Makefile`: dropping the refusal while leaving relative recording
+would be the r11 defect with its guard removed.
+
 - **A configured directory already holding `MAX_DIR_FILES` files** (#1124 r12).
   The manifest is always created in the *parent*, never in the session's #689
   bucket, so once a session rolls into `P001` nothing consults the parent's file

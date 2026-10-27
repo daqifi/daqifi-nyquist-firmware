@@ -135,7 +135,14 @@ _Static_assert(offsetof(SYS_FS_FSTAT, lfname) >= sizeof(FILINFO),
  * SD_CARD_MANAGER_MAX_BUCKET past 999 (which would widen the %03u) does not
  * silently make this too small. A line that does not fit is REFUSED by
  * SdManifest_FormatLine and logged, never truncated -- see that header. */
-#define SD_MANIFEST_LINE_MAX  (SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX \
+/* ⛔ #1124 r13 (item 8 = B): the configured DIRECTORY is now part of every
+ * recorded name, so its worst case is a term here. Without this the line stops
+ * fitting for an ordinary SD:DIR and SdManifest_FormatLine refuses it -- safe
+ * (it refuses rather than truncates) but it would silently cost the sidecar on
+ * exactly the configurations the ruling exists to support. +1u for the '/'
+ * that joins the directory to the rest. 95 -> 136 bytes. */
+#define SD_MANIFEST_LINE_MAX  (SD_CARD_MANAGER_CONF_DIR_NAME_LEN_MAX + 1u \
+                               + SD_CARD_MANAGER_CONF_FILE_NAME_LEN_MAX \
                                + 8u + 5u + 21u + 12u + 1u \
                                + (sizeof(SD_MANIFEST_PREFIX_MARK) - 1u))
 
@@ -2164,28 +2171,20 @@ static bool sd_ManifestPathSafeToOverwrite(const char *path) {
  * without a manifest: integrity bookkeeping must never be able to stop a
  * logging session. */
 static void sd_OpenSessionManifest(void) {
-    /* ⛔ #1124 r11 finding 4: a configured directory carrying a ROTATION
-     * BUCKET's own name makes recorded names ambiguous, so this session gets
-     * NO manifest rather than one whose names retrieve the wrong file. See
-     * SdManifest_DirShadowsBucketName for the mechanism.
+    /* ⛔ #1124 r13 / OPERATOR ITEM 8 = B: NO BUCKET-NAME REFUSAL HERE EITHER.
      *
-     * The SD:DIR setter already refuses such a name, so this is the path the
-     * setter never saw: a value that was ALREADY in NVM (every flash wipes
-     * NVM, but a saved config survives reboots), or one stored before this
-     * check existed. Checking only at the setter would leave exactly those
-     * devices writing a manifest that silently misdirects retrieval.
+     * r11 finding 4 withheld the manifest for a session whose configured
+     * directory carried a rotation bucket's own name, because recorded names
+     * were RELATIVE to that directory and so became ambiguous. This was that
+     * guard's second half: the path the SD:DIR setter never saw, a value
+     * already in NVM from before the check existed.
      *
-     * Withholding the sidecar, not the logging: the stream files are
-     * unaffected and still rotate normally. That is the proportionate half --
-     * refusing to log at all would strand a device over a directory NAME.
-     * The diagnostic leads with the remedy because Logger truncates the TAIL
-     * at 125 bytes. */
-    if (SdManifest_DirShadowsBucketName(gpSDCardSettings->directory,
-                                        SD_CARD_MANAGER_BUCKET_PREFIX)) {
-        LOG_E("[SD] #924 rename SD:DIR - '%s' is a bucket name, so this "
-              "session gets no manifest", gpSDCardSettings->directory);
-        return;
-    }
+     * Ruled B on 2026-10-27 (issuecomment-6450419546): full paths are
+     * recorded, so the ambiguity is gone at its source and neither half has
+     * anything left to guard. A stale NVM directory of any name now gets a
+     * manifest like every other session -- which is the point: the old
+     * behaviour silently cost those devices their sidecar.
+     */
     /* ⛔ #1124 r12 finding 1: BOUND THE MANIFEST BY THE SAME CAPACITY RULE THE
      * DATA FILES OBEY, or it re-opens the #689 create wedge this module was
      * bucketed to escape.
@@ -2594,11 +2593,26 @@ static void sd_AppendManifestLine(void) {
         return;
     }
 
-    const char* relName = SdManifest_RelativeName(gSDCardData.filePath,
-                                                  gpSDCardSettings->directory);
+    /* ⛔ #1124 r13 / OPERATOR ITEM 8 = B: EVERY FILE BY ITS FULL PATH.
+     *
+     * Ruled on this PR 2026-10-27 (issuecomment-6450419546): the session file
+     * list records every file by its full path, and the P###-folder-name
+     * refusal is dropped. So the configured directory is NO LONGER stripped --
+     * what goes in the manifest is exactly what SD:GET and SD:CRC take back.
+     *
+     * r11 recorded the name RELATIVE to SD:DIR, which is what created the
+     * ambiguity the dropped refusal guarded: retrieval ALSO strips SD:DIR, so
+     * with SD:DIR "P001" a rotated file at "P001/P001/exp-64.csv" was recorded
+     * as "P001/exp-64.csv" and the second strip opened a different file, or
+     * none. A full path is stripped exactly ONCE, so record-then-retrieve is
+     * the identity for every directory name. Dropping the refusal is safe only
+     * TOGETHER with this line -- the two are one ruling, and one pin.
+     *
+     * SdManifest_RelativeName() had no other caller and is gone. */
     uint32_t crc = CRC32_Finalize(gSDCardData.fileCrcRunning);
     char line[SD_MANIFEST_LINE_MAX];
-    int lineLen = SdManifest_FormatLine(line, sizeof(line), relName,
+    int lineLen = SdManifest_FormatLine(line, sizeof(line),
+                                        gSDCardData.filePath,
                                         gSDCardData.currentFileBytes, crc,
                                         gSDCardData.fileRecordIsPrefix);
     if (lineLen <= 0) {

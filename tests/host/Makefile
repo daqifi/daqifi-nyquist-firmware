@@ -934,6 +934,15 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@# that reports why the session gets no manifest (cosmetic). NEITHER
 	@# constructs a path, which is the property this count protects.
 	@#
+	@# 22 -> 21 at #1124 r13, OPERATOR ITEM 8 = B (issuecomment-6450419546):
+	@# THREE reads removed, not one. The ruling records every file by its FULL
+	@# path and drops the P###-folder-name refusal, which retired (a) the
+	@# SdManifest_RelativeName argument in sd_AppendManifestLine -- the record
+	@# side no longer slices the directory at all -- and (b,c) the
+	@# SdManifest_DirShadowsBucketName argument plus its diagnostic's read, both
+	@# in sd_OpenSessionManifest, which the r11-finding-4 entry above added.
+	@# The canonicalisation worry those two lines carried is GONE rather than
+	@# relocated: with full paths there is no slice to get wrong.
 	@# 22 -> 24 at #1124 r12 finding 1, both in the same function's new
 	@# occupancy guard: the CountDirEntries argument and its LOG_E.
 	@# ⚠ The CountDirEntries one is NOT callee-canonicalised -- that function
@@ -945,23 +954,28 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	@# already records a round lost to classifying a read by its variable name.
 	@n=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null \
 	    | grep -oE '(gpSDCardSettings|cfg)->(directory|opDirectory)' | wc -l`; \
-	 test "$$n" -eq 24 \
+	 test "$$n" -eq 21 \
 	  || { echo "ERROR: $(SD_MANAGER_SRC) now has $$n raw reads of ->directory /"; \
-	       echo "       ->opDirectory, not the 20 classified in this recipe (#1124)."; \
+	       echo "       ->opDirectory, not the 21 classified in this recipe (#1124)."; \
 	       echo "       The canonicalisation invariant is about every USE, not just"; \
-	       echo "       every join -- SdManifest_RelativeName slices the directory and"; \
-	       echo "       no join-keyed check can see it (r8 finding 2). Read the new"; \
-	       echo "       read, decide whether it needs SdManifest_CanonicalDirLen(),"; \
-	       echo "       and update the classification above with the reason."; \
+	       echo "       every join: a read can reach a callee that neither joins nor"; \
+	       echo "       canonicalises, and no join-keyed check sees it. (Until r13 the"; \
+	       echo "       example here was SdManifest_RelativeName slicing the directory;"; \
+	       echo "       item 8 = B deleted that function, so the example is gone but the"; \
+	       echo "       invariant is not.) Read the new read, decide whether it needs"; \
+	       echo "       SdManifest_CanonicalDirLen(), and update the classification"; \
+	       echo "       above with the reason."; \
 	       exit 1; }
-	@# RelativeName must use the SAME accessor as the construct side.
-	@grep -q 'dirLen = SdManifest_CanonicalDirLen(directory);' $(FW_UTIL)/SdManifest.h \
-	  || { echo "ERROR: SdManifest_RelativeName() in $(FW_UTIL)/SdManifest.h no longer"; \
-	       echo "       canonicalises the directory it slices off (#1124 r8 finding 2)."; \
-	       echo "       With strlen() a configured 'DAQiFi/' makes it return the WHOLE"; \
-	       echo "       path, so the manifest records 'DAQiFi/file.csv' where"; \
-	       echo "       SYST:STOR:SD:CRC? and :GET take a relative name as operand."; \
-	       exit 1; }
+	@# ⛔ #1124 r13: THE r8-FINDING-2 PIN IS RETIRED, not relaxed.
+	@# It required SdManifest_RelativeName() to canonicalise the directory it
+	@# sliced, because a strlen()-based slice returned the whole path. Operator
+	@# item 8 = B deleted that function: nothing slices the directory any more,
+	@# so there is no slice to get wrong and no accessor for the two sides to
+	@# disagree about. The property it protected is now provided by construction
+	@# rather than by a check -- the recorded name IS the constructed path.
+	@# Its replacement is the full-path pin further up, which asserts the one
+	@# line this now rests on. The absence of the function is pinned there too,
+	@# so this cannot quietly come back half-done.
 	@# ⛔⛔ #1124 r9: THE OPERAND MATRIX. A path join has TWO user-controlled
 	@# operands and the count arm above covers only the DIRECTORY one. r9's
 	@# finding was the NAME operand on the adjacent line of the same snprintf --
@@ -1339,27 +1353,59 @@ $(MANIFEST_BIN): test_924_sd_manifest.c test_framework.h $(FW_UTIL)/SdManifest.h
 	   echo "       Everything in that arm must use the snapshot; the global is"; \
 	   echo "       clearable by SCPI at priority 7 while this task runs at 5."; \
 	   exit 1; fi
-	@# ⛔ #1124 r11 finding 4, part 1 of 2: the two ENFORCEMENT SITES.
-	@# A configured directory equal to a rotation bucket's name makes recorded
-	@# manifest names retrieve the wrong file (SdManifest_DirShadowsBucketName
-	@# has the mechanism). BOTH sites are required and they cover different
-	@# populations -- the setter stops it being configured, the manifest-open
-	@# check covers a value ALREADY in NVM that the setter never saw. Dropping
-	@# either one leaves a reachable path, so each is pinned by name.
-	@grep -q 'SdManifest_DirShadowsBucketName(' $(SD_BENCH_SRC) \
-	  || { echo "ERROR: $(SD_BENCH_SRC)'s SD:DIR setter no longer refuses a"; \
-	       echo "       directory that carries a rotation bucket's name (#1124 r11"; \
-	       echo "       finding 4). Without it SD:DIR \"P001\" is accepted, and every"; \
-	       echo "       manifest name a bucketed session records then retrieves a"; \
-	       echo "       DIFFERENT file through SD:GET / SD:CRC."; \
-	       exit 1; }
-	@grep -q 'SdManifest_DirShadowsBucketName(' $(SD_MANAGER_SRC) \
-	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer refuses to open a manifest"; \
-	       echo "       under a directory carrying a bucket's name (#1124 r11"; \
-	       echo "       finding 4). The SD:DIR setter alone does NOT cover a value"; \
-	       echo "       already stored in NVM, which is exactly the population that"; \
-	       echo "       would write a silently misdirecting manifest."; \
-	       exit 1; }
+	@# ⛔ #1124 r13 / OPERATOR ITEM 8 = B: THE RULING'S TWO HALVES, PINNED
+	@# TOGETHER, because either one alone is the r11 defect again.
+	@#
+	@# Ruled 2026-10-27 (issuecomment-6450419546): record every file by its FULL
+	@# path, and drop the P###-folder-name refusal. r11 recorded names RELATIVE
+	@# to SD:DIR while retrieval ALSO strips SD:DIR, so the two strips composed
+	@# into a different file -- which is what the refusal was guarding. Full
+	@# paths mean exactly ONE strip, so the round trip is the identity for every
+	@# directory and there is nothing left to refuse.
+	@#
+	@# Keeping the refusal AND full paths would merely be redundant; keeping the
+	@# refusal and RELATIVE paths is r11; dropping the refusal while leaving
+	@# relative paths is the defect with its guard removed. Only the pair is
+	@# correct, so all three pins live in one block.
+	@#
+	@# Comments are stripped with `-fpreprocessed -E` before matching, because
+	@# both removed names are still NAMED in the explanatory comments at each
+	@# former site -- a bare literal grep would read those as live calls.
+	@#
+	@# ⚠ AND THE PREPROCESSED TEXT IS FLATTENED (`tr`), because `-E` strips
+	@# comments but PRESERVES THE GEOMETRY: the record call wraps after
+	@# `sizeof(line),` so the argument sits on the NEXT line, and grep is
+	@# line-based. The unflattened form of this pin failed on correct source --
+	@# measured, not hypothetical.
+	@pp=`$(CC) -fpreprocessed -E $(SD_MANAGER_SRC) 2>/dev/null | tr '\n' ' '`; \
+	 printf '%s' "$$pp" | grep -q 'SdManifest_FormatLine(line, sizeof(line),' \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) no longer formats the manifest line the"; \
+	       echo "       way this pin reads it (#1124 r13) -- re-read the record site"; \
+	       echo "       before trusting the two checks below."; \
+	       exit 1; }; \
+	 printf '%s' "$$pp" | grep -qE 'SdManifest_FormatLine\(line, sizeof\(line\),[[:space:]]*gSDCardData\.filePath' \
+	  || { echo "ERROR: $(SD_MANAGER_SRC) does not record the FULL path (#1124"; \
+	       echo "       r13, operator item 8 = B). sd_AppendManifestLine must pass"; \
+	       echo "       gSDCardData.filePath to SdManifest_FormatLine. Recording a"; \
+	       echo "       name relative to SD:DIR makes retrieval strip the directory"; \
+	       echo "       TWICE, which opens a different file -- and the refusal that"; \
+	       echo "       used to cover that is gone, by ruling."; \
+	       exit 1; }; \
+	 printf '%s' "$$pp" | grep -q 'SdManifest_RelativeName(' \
+	  && { echo "ERROR: $(SD_MANAGER_SRC) calls SdManifest_RelativeName again"; \
+	       echo "       (#1124 r13). The record side must not slice the configured"; \
+	       echo "       directory at all; see the full-path pin above."; \
+	       exit 1; } || true
+	@for f in $(SD_MANAGER_SRC) $(SD_BENCH_SRC); do \
+	   $(CC) -fpreprocessed -E $$f 2>/dev/null \
+	     | grep -q 'SdManifest_DirShadowsBucketName(' \
+	    && { echo "ERROR: $$f calls SdManifest_DirShadowsBucketName again (#1124"; \
+	         echo "       r13). The bucket-name refusal was DROPPED by ruling -- the"; \
+	         echo "       ambiguity it guarded is removed at source by recording"; \
+	         echo "       full paths, so re-adding it would refuse a configuration"; \
+	         echo "       that now works."; \
+	         exit 1; } || true; \
+	 done
 	@# ⛔ Part 2 of 2: the test MODELS SD_StripConfiguredDir, because
 	@# SCPIStorageSD.c is not host-compilable. Pin the two lines the model's
 	@# fidelity rests on -- the prefix compare and the separator-run skip -- so

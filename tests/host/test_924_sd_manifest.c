@@ -359,54 +359,10 @@ TEST(format_line_null_safety)
     ASSERT_EQ(SdManifest_FormatLine(line, sizeof(line), NULL, 0u, 0u, false), -1);
 }
 
-/* ------------------------------------------------------- relative names */
 
-TEST(relative_name_strips_the_directory)
-{
-    ASSERT_EQ(strcmp(SdManifest_RelativeName("DAQiFi/experiment.csv", "DAQiFi"),
-                     "experiment.csv"), 0);
-    ASSERT_EQ(strcmp(SdManifest_RelativeName("DAQiFi/experiment-7.csv", "DAQiFi"),
-                     "experiment-7.csv"), 0);
-}
 
-/* #689 bucketing puts later parts in a subdirectory. The manifest must keep
- * that subdirectory in the name, because SD:CRC? / SD:GET need it to find the
- * file (they prepend the configured directory and nothing else). */
-TEST(relative_name_keeps_the_bucket)
-{
-    ASSERT_EQ(strcmp(SdManifest_RelativeName("DAQiFi/P001/experiment-65.csv",
-                                             "DAQiFi"),
-                     "P001/experiment-65.csv"), 0);
-}
 
-/* "DAQiFi" must not be treated as a prefix of "DAQiFi2". Without the
- * separator check the name would come back as "/x.csv", which names nothing. */
-TEST(sibling_directory_is_not_a_prefix)
-{
-    const char *r = SdManifest_RelativeName("DAQiFi2/x.csv", "DAQiFi");
-    ASSERT_EQ(strcmp(r, "DAQiFi2/x.csv"), 0);
-}
 
-TEST(non_matching_prefix_falls_back_to_full_path)
-{
-    ASSERT_EQ(strcmp(SdManifest_RelativeName("other/x.csv", "DAQiFi"),
-                     "other/x.csv"), 0);
-    /* An empty directory setting cannot strip anything. */
-    ASSERT_EQ(strcmp(SdManifest_RelativeName("DAQiFi/x.csv", ""),
-                     "DAQiFi/x.csv"), 0);
-    /* Directory with no file after it is not a name. */
-    ASSERT_EQ(strcmp(SdManifest_RelativeName("DAQiFi/", "DAQiFi"),
-                     "DAQiFi/"), 0);
-    /* Exact equality, no separator at all. */
-    ASSERT_EQ(strcmp(SdManifest_RelativeName("DAQiFi", "DAQiFi"), "DAQiFi"), 0);
-}
-
-TEST(relative_name_null_safety)
-{
-    ASSERT_TRUE(SdManifest_RelativeName(NULL, "DAQiFi") == NULL);
-    ASSERT_EQ(strcmp(SdManifest_RelativeName("DAQiFi/x.csv", NULL),
-                     "DAQiFi/x.csv"), 0);
-}
 
 /* ------------------------------------------------------- end to end shape */
 
@@ -434,15 +390,16 @@ TEST(session_shape_round_trips)
     ASSERT_EQ(c1, CRC32_Compute(file1, sizeof(file1)));
 
     ASSERT_TRUE(SdManifest_FormatLine(l0, sizeof(l0),
-                    SdManifest_RelativeName("DAQiFi/exp.csv", "DAQiFi"),
+                    "DAQiFi/exp.csv",
                     sizeof(file0), c0, false) > 0);
     ASSERT_TRUE(SdManifest_FormatLine(l1, sizeof(l1),
-                    SdManifest_RelativeName("DAQiFi/exp-1.csv", "DAQiFi"),
+                    "DAQiFi/exp-1.csv",
                     sizeof(file1), c1, false) > 0);
 
-    snprintf(expect0, sizeof(expect0), "exp.csv,%u,0x%08X\n",
+    /* #1124 r13 (item 8 = B): the recorded name is the FULL path now. */
+    snprintf(expect0, sizeof(expect0), "DAQiFi/exp.csv,%u,0x%08X\n",
              (unsigned)sizeof(file0), (unsigned)c0);
-    snprintf(expect1, sizeof(expect1), "exp-1.csv,%u,0x%08X\n",
+    snprintf(expect1, sizeof(expect1), "DAQiFi/exp-1.csv,%u,0x%08X\n",
              (unsigned)sizeof(file1), (unsigned)c1);
     ASSERT_EQ(strcmp(l0, expect0), 0);
     ASSERT_EQ(strcmp(l1, expect1), 0);
@@ -936,57 +893,6 @@ TEST(canonical_construction_agrees_with_the_fatfs_comparator)
                                                      "DAQiFi/data" SD_MANIFEST_EXT));
 }
 
-TEST(relative_name_canonicalises_the_directory_it_slices)
-{
-    /* ⛔ r8 finding 2. This is a REGRESSION TEST IN THE STRICT SENSE: it fails
-     * on the previous commit of this very PR, not on some ancient baseline.
-     *
-     * RelativeName used strlen(directory). That was *invisible* while the join
-     * sites also left the separator doubled, because the two defects cancelled:
-     *   dir "DAQiFi/" + path "DAQiFi//file.csv" -> [7]=='/' -> "file.csv"  OK
-     * Canonicalising construction removed the payer and the extractor broke:
-     *   dir "DAQiFi/" + path "DAQiFi/file.csv"  -> [7]=='f' -> whole path  BAD
-     * so the manifest recorded "DAQiFi/file.csv" where SYST:STOR:SD:CRC? and
-     * :GET take a RELATIVE name as their operand. */
-    const char *const want = "file.csv";
-
-    /* the pair that used to cancel -- each half alone must now be right */
-    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi/file.csv", "DAQiFi/"),
-                 want, sizeof("file.csv"));
-    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi/file.csv", "DAQiFi"),
-                 want, sizeof("file.csv"));
-    /* a separator RUN on either side, and on both at once */
-    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi/file.csv", "DAQiFi///"),
-                 want, sizeof("file.csv"));
-    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi//file.csv", "DAQiFi/"),
-                 want, sizeof("file.csv"));
-    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi///file.csv", "DAQiFi///"),
-                 want, sizeof("file.csv"));
-
-    /* ⛔ THE GUARD THE RUN-SKIP MUST NOT BREAK: a sibling whose name merely
-     * STARTS with the directory is not inside it, and must come back whole
-     * rather than as "2/x.csv". */
-    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi2/x.csv", "DAQiFi"),
-                 "DAQiFi2/x.csv", sizeof("DAQiFi2/x.csv"));
-    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi2/x.csv", "DAQiFi/"),
-                 "DAQiFi2/x.csv", sizeof("DAQiFi2/x.csv"));
-
-    /* the directory itself names no file, however it is spelled */
-    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi/", "DAQiFi/"),
-                 "DAQiFi/", sizeof("DAQiFi/"));
-    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi//", "DAQiFi"),
-                 "DAQiFi//", sizeof("DAQiFi//"));
-
-    /* a root directory canonicalises to length 0, which returns the path
-     * unchanged rather than slicing a leading separator off it */
-    ASSERT_BYTES(SdManifest_RelativeName("file.csv", "/"),
-                 want, sizeof("file.csv"));
-
-    /* null-safety unchanged by the rewrite */
-    ASSERT_TRUE(SdManifest_RelativeName(NULL, "DAQiFi") == NULL);
-    ASSERT_BYTES(SdManifest_RelativeName("DAQiFi/file.csv", NULL),
-                 "DAQiFi/file.csv", sizeof("DAQiFi/file.csv"));
-}
 
 TEST(a_file_name_must_not_end_in_a_separator)
 {
@@ -1165,7 +1071,11 @@ static void record_then_retrieve(const char *fullPath, const char *dir,
                                  char *recordedOut, size_t recordedLen,
                                  char *openedOut, size_t openedLen)
 {
-    const char *rec = SdManifest_RelativeName(fullPath, dir);
+    /* ⛔ #1124 r13 (item 8 = B): RECORD THE FULL PATH. This single line is the
+     * whole fix -- the old `SdManifest_RelativeName(fullPath, dir)` stripped
+     * the configured directory at RECORD time, and retrieval stripped it
+     * again, so the two strips composed into a different file. */
+    const char *rec = fullPath;
     size_t len = strlen(rec);
     const char *operand;
 
@@ -1177,110 +1087,58 @@ static void record_then_retrieve(const char *fullPath, const char *dir,
 
 TEST(a_recorded_name_retrieves_the_file_it_describes)
 {
-    /* ⛔ THE FINDING. "record, then retrieve, opens the same file" is the
-     * inverse property the #924 manifest exists to provide, and a configured
-     * directory equal to a BUCKET's name breaks it.
+    /* ⛔ THE INVERSE PROPERTY the #924 manifest exists to provide: record a
+     * file, hand the recorded name back, and the SAME file opens. This test
+     * used to DOCUMENT the failure of that property and then assert the guard
+     * that forbade the configuration; operator item 8 = B removed the guard and
+     * fixed the property instead, so the test now asserts the property itself.
      *
-     * Bucket 1 is named FW_SD_BUCKET_PREFIX "001" = "P001". Set
-     * SD:DIR to "P001" and the 65th file of a session lands at
-     * "P001/P001/exp-64.csv". */
-    char recorded[64], opened[64];
+     * The mechanism, worth stating because it is why dropping the guard is safe
+     * rather than merely permitted: r11 recorded names RELATIVE to SD:DIR, and
+     * retrieval ALSO strips SD:DIR. Two strips composed. With SD:DIR "P001" the
+     * 65th file of a session lands at "P001/P001/exp-64.csv", was recorded as
+     * "P001/exp-64.csv", and retrieval stripped the leading "P001/" again and
+     * opened "P001/exp-64.csv" -- a different file, or none.
+     *
+     * Recording the FULL path means exactly ONE strip happens, so the round
+     * trip is the identity for EVERY directory, including a bucket-named one.
+     * That is a stronger statement than "the bad configuration is refused", and
+     * it is what makes the refusal unnecessary rather than merely absent. */
+    char recorded[96], opened[96];
 
+    /* (1) the configuration the old guard refused: SD:DIR equal to a bucket's
+     *     own name. Bucket 1 is FW_SD_BUCKET_PREFIX "001" = "P001". */
     record_then_retrieve("P001/P001/exp-64.csv", "P001",
                          recorded, sizeof(recorded), opened, sizeof(opened));
+    ASSERT_EQ(strcmp(recorded, "P001/P001/exp-64.csv"), 0);
+    ASSERT_EQ(strcmp(opened,   "P001/P001/exp-64.csv"), 0);
 
-    /* recording is correct on its own terms: relative to the configured dir */
-    ASSERT_EQ(strcmp(recorded, "P001/exp-64.csv"), 0);
+    /* ⛔ and the DOUBLE-STRIP outcome is now unreachable, asserted by name so a
+     *    revert to relative recording fails here and not only in the pins. */
+    ASSERT_TRUE(strcmp(opened, "P001/exp-64.csv") != 0);
 
-    /* but retrieval reads that leading "P001/" as the configured-directory
-     * prefix and strips it, so a DIFFERENT path is opened. On a clean card
-     * that file does not exist; if it does, the wrong file is returned. */
-    ASSERT_EQ(strcmp(opened, "P001/exp-64.csv"), 0);
-    ASSERT_TRUE(strcmp(opened, "P001/P001/exp-64.csv") != 0);
-
-    /* which is why the configuration is refused before it can be used */
-    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P001", "P"));
-
-    /* ✅ AND THE POSITIVE HALF, without which this test would only prove a
-     * defect exists and not that the guard's condition is the right one: with
-     * any directory the guard ADMITS, the same round trip is the identity --
-     * including over the very same bucket component. */
-    ASSERT_FALSE(SdManifest_DirShadowsBucketName("DAQiFi", "P"));
+    /* (2) an ordinary directory, over the same bucket component */
     record_then_retrieve("DAQiFi/P001/exp-64.csv", "DAQiFi",
                          recorded, sizeof(recorded), opened, sizeof(opened));
-    ASSERT_EQ(strcmp(recorded, "P001/exp-64.csv"), 0);
-    ASSERT_EQ(strcmp(opened, "DAQiFi/P001/exp-64.csv"), 0);
+    ASSERT_EQ(strcmp(recorded, "DAQiFi/P001/exp-64.csv"), 0);
+    ASSERT_EQ(strcmp(opened,   "DAQiFi/P001/exp-64.csv"), 0);
 
-    /* and on a bucket-0 file, where no bucket component appears at all */
+    /* (3) a bucket-0 file, where no bucket component appears at all */
     record_then_retrieve("DAQiFi/exp.csv", "DAQiFi",
                          recorded, sizeof(recorded), opened, sizeof(opened));
-    ASSERT_EQ(strcmp(recorded, "exp.csv"), 0);
-    ASSERT_EQ(strcmp(opened, "DAQiFi/exp.csv"), 0);
+    ASSERT_EQ(strcmp(recorded, "DAQiFi/exp.csv"), 0);
+    ASSERT_EQ(strcmp(opened,   "DAQiFi/exp.csv"), 0);
+
+    /* (4) a directory whose name is a bucket PREFIX but not a bucket, which the
+     *     old guard admitted -- kept so the identity is shown to hold across
+     *     the whole range the guard used to discriminate, not just at its ends */
+    record_then_retrieve("P/P001/exp-1.csv", "P",
+                         recorded, sizeof(recorded), opened, sizeof(opened));
+    ASSERT_EQ(strcmp(recorded, "P/P001/exp-1.csv"), 0);
+    ASSERT_EQ(strcmp(opened,   "P/P001/exp-1.csv"), 0);
 }
 
-TEST(the_bucket_name_guard_matches_a_whole_bucket_name_and_nothing_else)
-{
-    /* REFUSED: the prefix followed by a digit run and nothing else. */
-    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P001", "P"));
-    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P000", "P"));
-    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P999", "P"));
-    /* one-or-more digits, not exactly three: SD_CARD_MANAGER_MAX_BUCKET is
-     * derived, and raising it past 999 widens the %03u. A guard pinned to
-     * three digits would quietly stop covering the names that then appear. */
-    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P1", "P"));
-    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P1000", "P"));
-    /* a trailing separator is a redundant spelling of the same directory, so
-     * it must not be an escape hatch */
-    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P001/", "P"));
-    ASSERT_TRUE(SdManifest_DirShadowsBucketName("P001///", "P"));
 
-    /* ADMITTED -- none of these can equal a bucket directory's own name, and a
-     * guard that refused them would be banning legitimate configurations to
-     * look thorough. */
-    ASSERT_FALSE(SdManifest_DirShadowsBucketName("P", "P"));      /* no digits */
-    ASSERT_FALSE(SdManifest_DirShadowsBucketName("P001x", "P"));  /* trailing */
-    ASSERT_FALSE(SdManifest_DirShadowsBucketName("xP001", "P"));  /* leading  */
-    ASSERT_FALSE(SdManifest_DirShadowsBucketName("P0a", "P"));    /* non-digit */
-    ASSERT_FALSE(SdManifest_DirShadowsBucketName("p001", "P"));   /* case     */
-    ASSERT_FALSE(SdManifest_DirShadowsBucketName("DAQiFi", "P"));
-    ASSERT_FALSE(SdManifest_DirShadowsBucketName("", "P"));
-    /* ⛔ NESTED, and genuinely safe -- the reason the guard tests the WHOLE
-     * name rather than any component. With SD:DIR "data/P001" a bucketed file
-     * is "data/P001/P001/f.csv", recorded as "P001/f.csv"; the strip compares
-     * against the full "data/P001", does NOT match, and the join restores the
-     * exact recorded path. Verified as the round trip, not asserted. */
-    ASSERT_FALSE(SdManifest_DirShadowsBucketName("data/P001", "P"));
-    {
-        char recorded[64], opened[64];
-        record_then_retrieve("data/P001/P001/f.csv", "data/P001",
-                             recorded, sizeof(recorded), opened, sizeof(opened));
-        ASSERT_EQ(strcmp(recorded, "P001/f.csv"), 0);
-        ASSERT_EQ(strcmp(opened, "data/P001/P001/f.csv"), 0);
-    }
-
-    /* null safety, and a prefix of "" must not make every directory a bucket */
-    ASSERT_FALSE(SdManifest_DirShadowsBucketName(NULL, "P"));
-    ASSERT_FALSE(SdManifest_DirShadowsBucketName("P001", NULL));
-    ASSERT_FALSE(SdManifest_DirShadowsBucketName("123", ""));
-}
-
-TEST(the_guard_reads_the_same_prefix_the_bucket_machinery_uses)
-{
-    /* The guard is only correct if its prefix IS the one buckets are named
-     * with. FW_SD_BUCKET_PREFIX is SD_CARD_MANAGER_BUCKET_PREFIX, read out of
-     * the real sd_card_manager.h by the Makefile -- so this asserts that the
-     * macro the FIRMWARE compiles against really does produce the name this
-     * test reasons about. Change the prefix and this fails loudly, instead of
-     * the guard silently ceasing to cover the names buckets now carry. */
-    char bucket1[32];
-
-    (void)snprintf(bucket1, sizeof(bucket1),
-                   FW_SD_BUCKET_PREFIX "%03u", 1u);
-    ASSERT_TRUE(SdManifest_DirShadowsBucketName(bucket1,
-                                                FW_SD_BUCKET_PREFIX));
-    /* and the name really is the one the finding names */
-    ASSERT_EQ(strcmp(bucket1, "P001"), 0);
-}
 
 int main(void)
 {
@@ -1296,11 +1154,6 @@ int main(void)
     RUN(line_lengths_are_reported);
     RUN(truncation_is_all_or_nothing);
     RUN(format_line_null_safety);
-    RUN(relative_name_strips_the_directory);
-    RUN(relative_name_keeps_the_bucket);
-    RUN(sibling_directory_is_not_a_prefix);
-    RUN(non_matching_prefix_falls_back_to_full_path);
-    RUN(relative_name_null_safety);
     RUN(session_shape_round_trips);
     RUN(paths_equal_case_insensitive_matches_across_case);
     RUN(paths_equal_case_insensitive_rejects_real_differences);
@@ -1319,12 +1172,9 @@ int main(void)
     RUN(canonical_dir_len_strips_a_trailing_separator_run);
     RUN(every_construction_shape_is_slash_safe_with_a_trailing_slash_dir);
     RUN(canonical_construction_agrees_with_the_fatfs_comparator);
-    RUN(relative_name_canonicalises_the_directory_it_slices);
     RUN(a_file_name_must_not_end_in_a_separator);
     RUN(the_directory_half_strips_where_the_name_half_refuses);
     RUN(the_manifest_name_is_usable_however_the_file_is_spelled);
     RUN(a_recorded_name_retrieves_the_file_it_describes);
-    RUN(the_bucket_name_guard_matches_a_whole_bucket_name_and_nothing_else);
-    RUN(the_guard_reads_the_same_prefix_the_bucket_machinery_uses);
     return TEST_SUMMARY();
 }

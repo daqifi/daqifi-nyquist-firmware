@@ -190,63 +190,6 @@ static inline size_t SdManifest_CanonicalDirLen(const char *dir)
     return len;
 }
 
-/**
- * @brief Does `dir` name the same thing a ROTATION BUCKET would?
- *
- * ⛔ #1124 r11 finding 4. The manifest records each file's name RELATIVE to the
- * configured directory, and retrieval (SD:GET / SD:CRC) accepts either that
- * relative spelling or the directory-prefixed spelling SD:LISt? prints --
- * SD_StripConfiguredDir reconciles them by removing ONE leading "<directory>/".
- *
- * Those two spellings are tellable apart only while no bucket directory can
- * carry the configured directory's own name. Buckets are
- * "<SD_CARD_MANAGER_BUCKET_PREFIX><%03u>", so with the directory set to "P001"
- * a rotated file at "P001/P001/exp-64.csv" is recorded as "P001/exp-64.csv" --
- * and feeding THAT back to SD:GET strips the leading "P001/" as though it were
- * the configured-directory prefix, opening "P001/exp-64.csv": a different file,
- * or none at all. The recorded name stops round-tripping, which is the single
- * promise the manifest makes.
- *
- * REFUSED AT CONFIGURATION TIME, not patched at retrieval, because the
- * ambiguity is in the NAMES: once they collide no textual rule at the
- * retrieval end can separate the two spellings, and trying both would make the
- * answer depend on which file happens to exist.
- *
- * Matches the WHOLE canonical name: `bucketPrefix` followed by one or more
- * decimal digits and nothing else. One-or-more rather than exactly three on
- * purpose -- SD_CARD_MANAGER_MAX_BUCKET is a derived value, and raising it past
- * 999 widens the %03u, which must not quietly reopen this.
- *
- * NOT matched, and all genuinely safe: "P001x", "xP001", "P" (no digits),
- * "P0a", "" -- and "data/P001", whose whole name is not a bucket name, so a
- * relative "P001/f.csv" cannot be mistaken for it.
- */
-static inline bool SdManifest_DirShadowsBucketName(const char *dir,
-                                                   const char *bucketPrefix)
-{
-    size_t dirLen, preLen, i;
-
-    if (dir == NULL || bucketPrefix == NULL) {
-        return false;
-    }
-    dirLen = SdManifest_CanonicalDirLen(dir);
-    preLen = strlen(bucketPrefix);
-    /* dirLen <= preLen leaves no room for the digit run a bucket name must
-     * have, so a bare "P" is not a bucket name and is not refused. */
-    if (preLen == 0u || dirLen <= preLen) {
-        return false;
-    }
-    if (strncmp(dir, bucketPrefix, preLen) != 0) {
-        return false;
-    }
-    for (i = preLen; i < dirLen; i++) {
-        if (dir[i] < '0' || dir[i] > '9') {
-            return false;
-        }
-    }
-    return true;
-}
-
 static inline int SdManifest_FormatLine(char *out, size_t outLen,
                                         const char *name,
                                         uint64_t bytes, uint32_t crc,
@@ -316,81 +259,20 @@ static inline int SdManifest_FormatLine(char *out, size_t outLen,
     return n;
 }
 
-/**
- * @brief The part of `fullPath` that names the file relative to `directory`.
+/* ⛔ #1124 r13 / OPERATOR ITEM 8 = B: SdManifest_RelativeName() and
+ * SdManifest_DirShadowsBucketName() were REMOVED here.
  *
- * Returns a pointer INTO `fullPath` -- no copy, no allocation. When the prefix
- * does not match, the FULL path is returned rather than a guess: a manifest
- * naming a file by a path that is merely longer than expected is still usable
- * by a human and by `SD:GET`, whereas a name assembled from a wrong assumption
- * is not.
+ * The ruling (issuecomment-6450419546) records every file by its FULL path and
+ * drops the P###-folder-name refusal, which left both helpers without a caller:
+ * RelativeName existed only to slice the configured directory off a recorded
+ * name, and DirShadowsBucketName only to refuse the directory name that made
+ * that slice ambiguous. Deleted rather than left unused, because an uncalled
+ * helper with tests beside it reads as live code to the next reader -- and this
+ * module has already lost a round to exactly that.
  *
- * @param fullPath  e.g. "DAQiFi/P001/experiment-65.csv"
- * @param directory e.g. "DAQiFi"
- * @return e.g. "P001/experiment-65.csv"
- */
-static inline const char *SdManifest_RelativeName(const char *fullPath,
-                                                  const char *directory)
-{
-    size_t dirLen;
-
-    if (fullPath == NULL) {
-        return NULL;
-    }
-    if (directory == NULL) {
-        return fullPath;
-    }
-    /* ⛔ #1124 r8 finding 2: THE SAME accessor the CONSTRUCT side uses. With
-     * strlen() this was a regression the moment construction became canonical,
-     * because the two defects had been CANCELLING:
-     *
-     *   directory "DAQiFi/", before #1124: fullPath "DAQiFi//file.csv"
-     *       dirLen 7, fullPath[7] == '/'  -> "file.csv"          (worked)
-     *   directory "DAQiFi/", after  #1124: fullPath "DAQiFi/file.csv"
-     *       dirLen 7, fullPath[7] == 'f'  -> "DAQiFi/file.csv"   (BROKE)
-     *
-     * The doubled separator was paying for the un-stripped strlen. Canonical
-     * construction removed the payer, so the manifest recorded a full path
-     * where SYST:STOR:SD:CRC? and :GET take a relative name as their operand.
-     *
-     * Canonicalising HERE is the point of a single accessor: the invariant is
-     * about every USE of the directory, not only every join. A join-keyed pin
-     * cannot see this site at all -- it slices, it does not format. */
-    dirLen = SdManifest_CanonicalDirLen(directory);
-    if (dirLen == 0u) {
-        return fullPath;
-    }
-    if (strncmp(fullPath, directory, dirLen) != 0) {
-        return fullPath;
-    }
-    /* The separator must be there. Without this test "DAQiFi2/x.csv" would
-     * match the directory "DAQiFi" and be recorded as "/x.csv". */
-    if (fullPath[dirLen] != '/') {
-        return fullPath;
-    }
-    {
-        /* Skip the separator RUN, not a single separator. The accessor above
-         * canonicalises the DIRECTORY side; this canonicalises the PATH side,
-         * which is the other half of the same invariant. A path built by
-         * firmware predating #1124, or handed in from outside, can still carry
-         * "dir//file" -- and answering "/file" for it would be a second sharp
-         * edge of exactly the kind r8 finding 2 was. Collapsing the run also
-         * keeps this function's answer for that input the SAME as it was
-         * before #1124, rather than trading one change of behaviour for
-         * another. */
-        const char *p = fullPath + dirLen;
-
-        while (*p == '/') {
-            p++;
-        }
-        /* "DAQiFi/" with nothing after it is not a file name; hand back the
-         * whole string rather than an empty one. */
-        if (*p == '\0') {
-            return fullPath;
-        }
-        return p;
-    }
-}
+ * What replaced them is one line in sd_AppendManifestLine: it passes
+ * gSDCardData.filePath to SdManifest_FormatLine. Pinned in tests/host/Makefile
+ * together with the absence of both helpers, so the pair cannot drift apart. */
 
 /**
  * @brief Case-insensitive equality for two NUL-terminated ASCII paths.
