@@ -3326,7 +3326,7 @@ SEQ908_BIN := run_908_tests
 # setter-bracket check. A guard that reads a file it does not depend on does
 # not run when that file changes -- make reuses the binary and the check is
 # silently skipped, which is a guard that cannot fail rather than a guard.
-$(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(SCPIADC_SRC) $(RECIPES)
+$(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(SCPIADC_SRC) $(SCPI_IFACE_SRC) cal_compose_908.awk $(RECIPES)
 	@sed -n '/^bool daqifi_settings_LoadADCCalSettings/,/^}/p' $(SETTINGS_SRC) \
 	   > /tmp/.fw908_load.$$$$; \
 	 n=`grep -cE 'daqifi_settings_(Begin|End)CalWrite' /tmp/.fw908_load.$$$$`; \
@@ -3390,6 +3390,88 @@ $(SEQ908_BIN): test_908_cal_source_seqlock.c test_framework.h $(SETTINGS_SRC) $(
 	          echo "       that held at no instant. See test_908's two-setter case."; \
 	          exit 1; }; \
 	 done
+	@sed -n '/^DaqifiCalSource daqifi_settings_GetCalSource/,/^}/p' $(SETTINGS_SRC) \
+	   > /tmp/.fw908_unk.$$$$; \
+	 nu=`grep -c 'DAQIFI_CAL_SOURCE_UNKNOWN' /tmp/.fw908_unk.$$$$`; \
+	 lastret=`grep -n 'return ' /tmp/.fw908_unk.$$$$ | tail -1 | cut -d: -f2-`; \
+	 rm -f /tmp/.fw908_unk.$$$$; \
+	 case "$$lastret" in *DAQIFI_CAL_SOURCE_UNKNOWN*) ok=1;; *) ok=0;; esac; \
+	 test "$$ok" = 1 && test "$$nu" = "1" \
+	  || { echo "ERROR: daqifi_settings_GetCalSource in $(SETTINGS_SRC) does not"; \
+	       echo "       end by returning DAQIFI_CAL_SOURCE_UNKNOWN."; \
+	       echo "       (last return was:$$lastret ; UNKNOWN mentions=$$nu, want 1)"; \
+	       echo "       That final return is the RETRIES-EXHAUSTED path: every"; \
+	       echo "       attempt saw a load in flight, so no coherent scan"; \
+	       echo "       completed and nothing is known about the coefficients."; \
+	       echo "       Returning DAQIFI_CAL_SOURCE_NONE there -- which is what"; \
+	       echo "       it did before r10 -- is not a cautious understatement,"; \
+	       echo "       it is the POSITIVE claim \"every channel is identity,"; \
+	       echo "       readings are unscaled\", asserted by a reader that never"; \
+	       echo "       looked. The state is reachable exactly while a bank is"; \
+	       echo "       LOADING, i.e. when real coefficients are most likely"; \
+	       echo "       present, so the worst answer was reachable in the case"; \
+	       echo "       that mattered most."; \
+	       echo "       Exactly ONE mention is required so UNKNOWN stays"; \
+	       echo "       unreachable from the scan-completed paths above: if it"; \
+	       echo "       can also be returned after a successful scan, then"; \
+	       echo "       'unknown' on the wire stops meaning 'the read did not"; \
+	       echo "       complete' and the value is no longer diagnostic."; \
+	       exit 1; }
+	@sed -n '/switch (daqifi_settings_GetCalSource/,/^    }/p' $(SCPI_IFACE_SRC) \
+	   > /tmp/.fw908_sw.$$$$; \
+	 nc=`grep -c 'case DAQIFI_CAL_SOURCE_' /tmp/.fw908_sw.$$$$`; \
+	 dflt=`grep 'default:' /tmp/.fw908_sw.$$$$`; \
+	 rm -f /tmp/.fw908_sw.$$$$; \
+	 case "$$dflt" in *unknown*) dok=1;; *) dok=0;; esac; \
+	 test "$$nc" = "4" && test "$$dok" = 1 \
+	  || { echo "ERROR: the identity.cal.source switch in $(SCPI_IFACE_SRC) must"; \
+	       echo "       name all FOUR DaqifiCalSource values explicitly and its"; \
+	       echo "       default arm must answer \"unknown\"."; \
+	       echo "       (found cases=$$nc want 4; default arm:$$dflt)"; \
+	       echo "       ⚠ THIS GUARD EXISTS BECAUSE -Wswitch CANNOT CATCH IT. A"; \
+	       echo "       switch with a default arm is exhaustive by definition, so"; \
+	       echo "       adding a value to the enum produces no warning -- the new"; \
+	       echo "       value is absorbed SILENTLY by whatever default says. The"; \
+	       echo "       pre-r10 form was exactly that: FACTORY, USER, and"; \
+	       echo "       default->\"none\", which would have reported the new"; \
+	       echo "       UNKNOWN state as \"none\" and reintroduced the very"; \
+	       echo "       collapse the fourth value was added to remove, while a"; \
+	       echo "       reviewer saw a switch that handled every case."; \
+	       echo "       The default must say \"unknown\" and not \"none\" because"; \
+	       echo "       that is the fail-safe direction: an enum value this code"; \
+	       echo "       cannot interpret is something it knows nothing about."; \
+	       exit 1; }
+	@$(CC) -fpreprocessed -E -P -x c - < $(SCPIADC_SRC) > /tmp/.fw908_cmp.$$$$ 2>/dev/null; \
+	 bad=; \
+	 for fn in ADCChanCalmSetClaimed ADCChanCalbSetClaimed; do \
+	   seq=`awk -v fn=$$fn -f cal_compose_908.awk /tmp/.fw908_cmp.$$$$`; \
+	   test "$$seq" = "GEVXH" || bad="$$bad $$fn=[$$seq]"; \
+	 done; \
+	 rm -f /tmp/.fw908_cmp.$$$$; \
+	 test -z "$$bad" \
+	  || { echo "ERROR: a calibration setter in $(SCPIADC_SRC) does not COMPOSE"; \
+	       echo "       the generation bracket with the critical section as"; \
+	       echo "       G E V X H (begin / enter / store / exit / end)."; \
+	       echo "       Offending:$$bad"; \
+	       echo "       Read as: G=BeginCalWrite E=taskENTER_CRITICAL"; \
+	       echo "       V=the .CalM/.CalB store X=taskEXIT_CRITICAL"; \
+	       echo "       H=EndCalWrite, in SOURCE order, adjacent repeats"; \
+	       echo "       collapsed. An EMPTY sequence means the function"; \
+	       echo "       DEFINITION was not found, not that it is clean."; \
+	       echo "       ⚠ NEITHER EXISTING GUARD SET CAN SEE THIS, and the gap"; \
+	       echo "       was authored by the #1048 merge rather than by an edit,"; \
+	       echo "       so no diff line reveals it: cal_order_904.awk emits no"; \
+	       echo "       token for BeginCalWrite, so EVX scores the same whether"; \
+	       echo "       the bracket is outside the section, inside it, or gone;"; \
+	       echo "       and the 908 bracket check above counts begin/end without"; \
+	       echo "       regard to position. Each set is satisfied by the"; \
+	       echo "       arrangement the other was meant to exclude."; \
+	       echo "       Both orderings are load-bearing: the generation must"; \
+	       echo "       span the WHOLE write, or a reader samples an even"; \
+	       echo "       generation mid-write and believes it; and the critical"; \
+	       echo "       section must be INNERMOST around the store, or the"; \
+	       echo "       64-bit CalM/CalB pair can tear (#904)."; \
+	       exit 1; }
 	$(CC) $(CFLAGS) -o $(SEQ908_BIN) test_908_cal_source_seqlock.c
 
 run: $(SEQ908_BIN) $(TEAR904_BIN) $(BIN) $(FMT_BIN) $(AD7609_BIN) $(BENCH_BIN) $(ARM_BIN) $(JSONESC_BIN) $(SYSINFO_BIN) \

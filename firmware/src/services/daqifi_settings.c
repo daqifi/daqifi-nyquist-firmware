@@ -271,7 +271,24 @@ DaqifiCalSource daqifi_settings_GetCalSource(const AInRuntimeArray* channelRunti
         return (bank == DaqifiSettings_UserAInCalParams)
                 ? DAQIFI_CAL_SOURCE_USER : DAQIFI_CAL_SOURCE_FACTORY;
     }
-    return DAQIFI_CAL_SOURCE_NONE;
+
+    /* ⛔ RETRIES EXHAUSTED: every attempt saw a load in flight, so no coherent
+     * scan ever completed and NOTHING here is known about the coefficients.
+     *
+     * This returned DAQIFI_CAL_SOURCE_NONE until #908 r10. That was wrong in
+     * the direction that matters: NONE is a positive claim -- "every channel is
+     * identity, readings are unscaled" -- so a reader that had failed to look
+     * reported the device as uncalibrated. A client acting on that would
+     * discard real calibration, and the state is reachable precisely when the
+     * device is BUSY LOADING a bank, i.e. when coefficients are most likely to
+     * be real.
+     *
+     * UNKNOWN is the only value here, and this is the only place it is
+     * produced: every path above returns only after a scan bracketed by an
+     * even, unchanged generation. So `unknown` on the wire means exactly "the
+     * seqlock reader could not get a coherent view in 3 attempts", never
+     * "identity" and never "error". */
+    return DAQIFI_CAL_SOURCE_UNKNOWN;
 }
 
 

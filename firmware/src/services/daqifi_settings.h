@@ -355,11 +355,35 @@ extern "C" {
      * {factory, user, none}. NONE means every channel's live coefficients are
      * CalM = 1 / CalB = 0 -- no correction applied -- whichever bank was
      * selected.
+     *
+     * Operator ruling, 2026-10-27: a FOURTH value, UNKNOWN -> "unknown", for
+     * the unstable-read path ONLY.
+     *
+     * ⚠ WHY A FOURTH VALUE RATHER THAN REUSING NONE. The three above are all
+     * positive claims about the coefficients: NONE asserts that every channel
+     * is identity and readings are unscaled. The seqlock reader can exhaust
+     * its retries without ever completing a coherent scan, and it then knows
+     * NOTHING about the coefficients -- so answering NONE there states a fact
+     * the device never established, and states the one a client is most likely
+     * to act on ("this device is uncalibrated"). UNKNOWN is the absence of an
+     * answer, which is a different kind of thing from any of the three.
+     *
+     * ⛔ UNKNOWN IS NOT A SYNONYM FOR "IDENTITY" OR FOR "BUSY". It means the
+     * read did not complete. A caller that cannot handle it should retry, not
+     * substitute a value -- collapsing it into NONE is exactly the defect it
+     * exists to prevent.
+     *
+     * Appended rather than inserted, so FACTORY and USER keep their numbering
+     * (CLAUDE.md: append new values at the end, never renumber). NONE stays 0,
+     * which means a zero-initialised DaqifiCalSource still reads as NONE
+     * rather than UNKNOWN -- pre-existing, and deliberately not changed here,
+     * because moving it would renumber the other two.
      */
     typedef enum eDaqifiCalSource {
         DAQIFI_CAL_SOURCE_NONE = 0,
         DAQIFI_CAL_SOURCE_FACTORY,
         DAQIFI_CAL_SOURCE_USER,
+        DAQIFI_CAL_SOURCE_UNKNOWN,
     } DaqifiCalSource;
 
     /**

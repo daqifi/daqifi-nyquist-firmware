@@ -8929,7 +8929,7 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      *                     being applied to every reading.
      *
      * ⭐ source is now derived from the live runtime array plus the bank the
-     * last successful load came from, and it has THREE values. Two cannot
+     * last successful load came from, and it has FOUR values. Two cannot
      * cover the reachable states -- enumerating {slot populated?, bank
      * selected, live coefficients identity?} gives 8 reachable combinations,
      * of which the old flag-only scheme misreported 5 and a two-valued
@@ -8948,6 +8948,11 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * no source key at all, so this PR introduces it, and no client checkout
      * here reads it.
      *
+     * Operator ruling, 2026-10-27: a FOURTH value, "unknown", for the
+     * unstable-read path ONLY. The first three are all positive claims about
+     * the coefficients; "unknown" is the absence of a claim, and mixing it in
+     * with them is the one thing a reader of this list must not do.
+     *
      *   "none"     : live CalM==1/CalB==0 on every channel, whatever the
      *                selection -- readings are unscaled. Note this is the
      *                honest answer for a factory bank that loaded fine and
@@ -8955,6 +8960,15 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      *                boards on this station.
      *   "user"     : non-identity coefficients from the USER bank (USECal 1).
      *   "factory"  : non-identity coefficients from the FACTORY bank.
+     *   "unknown"  : the seqlock reader could not obtain a coherent view in 3
+     *                attempts, so NOTHING was established about the
+     *                coefficients. ⛔ NOT a synonym for "none" and NOT an
+     *                error: a client seeing it should re-query, never
+     *                substitute a value. Reachable only while a bank load is
+     *                in flight -- which is exactly when real coefficients are
+     *                being installed, so reporting "none" here (what this did
+     *                before r10) told a client the device was uncalibrated at
+     *                the precise moment it was becoming calibrated.
      *
      * ⚠ chanCALM/chanCALB can still overlay individual channels after a load;
      * source then names the bank the overlay was applied on top of, which is
@@ -8965,11 +8979,31 @@ static scpi_result_t SCPI_CapabilitiesJsonGet(scpi_t * context) {
      * GetActiveCalBank() here let a higher-priority LOADcal/LOADFcal land
      * between them and produce a source the device never had -- codex-r6
      * findings 2+3. daqifi_settings_GetCalSource does both coherently. */
+    /* ⚠ EVERY value spelled out, and `default` answers "unknown" -- NOT
+     * "none". Both halves of that matter, and the previous form got both
+     * wrong:
+     *
+     *   switch (...) { case FACTORY: ...; case USER: ...; default: "none"; }
+     *
+     * Adding DAQIFI_CAL_SOURCE_UNKNOWN to the enum would have been absorbed
+     * SILENTLY by that `default` and reported as "none" -- the exact collapse
+     * the new value exists to prevent -- and -Wswitch cannot warn, because a
+     * `default` arm makes the switch exhaustive by definition. A reviewer
+     * reading the enum would see four values and a switch that handles them
+     * all.
+     *
+     * So: all four named, and the unreachable fallthrough reports "unknown"
+     * because that is the fail-safe direction. An enum value this code has
+     * never heard of is a thing we know nothing about, which is what "unknown"
+     * says; "none" would assert the coefficients are identity on the strength
+     * of a value we could not interpret. */
     const char * calSource;
     switch (daqifi_settings_GetCalSource(&rt->AInChannels)) {
         case DAQIFI_CAL_SOURCE_FACTORY: calSource = "factory"; break;
         case DAQIFI_CAL_SOURCE_USER:    calSource = "user";    break;
-        default:                        calSource = "none";    break;
+        case DAQIFI_CAL_SOURCE_NONE:    calSource = "none";    break;
+        case DAQIFI_CAL_SOURCE_UNKNOWN: calSource = "unknown"; break;
+        default:                        calSource = "unknown"; break;
     }
     scpi_printf(context,
         "\"cal\":{\"factory_present\":%s,\"source\":\"%s\"}},",

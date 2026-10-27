@@ -61,8 +61,9 @@
 
 #define MODEL_CHANNELS 4
 
-/* Mirrors DaqifiCalSource. */
-typedef enum { SRC_NONE = 0, SRC_FACTORY, SRC_USER } CalSource;
+/* Mirrors DaqifiCalSource, including r10's fourth value. SRC_UNKNOWN is
+ * produced ONLY by exhausting the retry bound -- see reader_run's tail. */
+typedef enum { SRC_NONE = 0, SRC_FACTORY, SRC_USER, SRC_UNKNOWN } CalSource;
 typedef enum { BANK_FACTORY = 0, BANK_USER } Bank;
 typedef enum { SHAPE_NAIVE = 0, SHAPE_BANKCMP, SHAPE_SEQLOCK } ReaderShape;
 
@@ -148,7 +149,19 @@ static CalSource reader_run(const CalState *st, ReaderShape shape)
         }
         return classify(ident, b);
     }
-    return SRC_NONE;   /* understating direction, as in the firmware */
+    /* Retries exhausted: no coherent scan completed, so nothing is known.
+     *
+     * This returned SRC_NONE before r10, described as "the understating
+     * direction". That description was wrong, and the model inherited the
+     * firmware's error rather than catching it: NONE is not an understatement,
+     * it is a positive claim that every channel is identity. The understating
+     * answer is the one that claims nothing, which is why the firmware and this
+     * model now both report UNKNOWN here.
+     *
+     * ⚠ Reachable ONLY from here. Every `return classify(...)` above has
+     * completed a scan under an even, unchanged generation, so a test seeing
+     * SRC_UNKNOWN has proven the reader gave up rather than guessed. */
+    return SRC_UNKNOWN;
 }
 
 /* Factory bank is identity (an uncalibrated board); the user bank is real. */
@@ -206,10 +219,26 @@ TEST(seqlock_never_reports_a_pair_the_device_did_not_have)
 
         const CalSource got = reader_run(&st, SHAPE_SEQLOCK);
 
-        if (progress <= MODEL_CHANNELS) {
-            /* Mid-update: the generation is ODD, so the reader must refuse to
-             * answer from it and fall back -- never SRC_FACTORY. */
+        if (progress == 0u) {
+            /* NOT STARTED -- and this instant is categorically different from
+             * the ones below, which is why it gets its own arm. The generation
+             * is EVEN and untouched, so the scan COMPLETES and legitimately
+             * finds an identity board: SRC_NONE here is a true, fully-earned
+             * answer, not a fallback.
+             *
+             * ⭐ Before r10 this arm and the next both asserted SRC_NONE, one
+             * value standing for two incompatible meanings -- "I looked, and
+             * there is no calibration" and "I never managed to look". That
+             * conflation IS the defect the fourth value removes, and splitting
+             * this arm out is what makes the test able to tell them apart.
+             * A single-valued assertion could not have failed on the old code. */
             ASSERT_EQ(got, SRC_NONE);
+        } else if (progress <= MODEL_CHANNELS) {
+            /* Mid-update: the generation is ODD, so the reader must refuse to
+             * answer from it -- never SRC_FACTORY, and as of r10 never
+             * SRC_NONE either. Real user coefficients are part-copied here, so
+             * reporting "no calibration" would be the opposite of the truth. */
+            ASSERT_EQ(got, SRC_UNKNOWN);
         } else {
             /* Complete: user bank, non-identity coefficients. */
             ASSERT_EQ(got, SRC_USER);
@@ -260,12 +289,28 @@ TEST(dropping_the_pre_copy_increment_reopens_the_defect)
     ASSERT_TRUE(fictions > 0);
 }
 
-TEST(the_bound_is_three_and_the_fallback_understates)
+TEST(the_bound_is_three_and_an_exhausted_read_claims_nothing)
 {
     /* The model's state is frozen, so an odd generation can never resolve.
-     * The reader must therefore exhaust its bound and return the understating
-     * value rather than naming a bank -- a false provenance claim is the one
-     * outcome #908 exists to prevent. */
+     * The reader must therefore exhaust its bound and CLAIM NOTHING, rather
+     * than naming a bank -- a false provenance claim is the one outcome #908
+     * exists to prevent.
+     *
+     * ⭐ This state is the whole argument for r10's fourth value. Note what is
+     * set up below: REAL calibration is present on every channel, and the bank
+     * is the user bank. The old fallback answered SRC_NONE here -- "this board
+     * is uncalibrated, readings are unscaled" -- which is not a cautious
+     * understatement of the truth, it is the opposite of it, and it is the
+     * answer a client is most likely to act on destructively.
+     *
+     * The state is also not exotic: an odd generation means a bank load is in
+     * flight, which is exactly when real coefficients are being installed. So
+     * the worst answer was reachable precisely in the case that mattered most.
+     *
+     * SRC_UNKNOWN is reachable from nowhere else in the model (every other
+     * return has completed a scan under an even, unchanged generation), so
+     * this assertion pins the exhausted path specifically and cannot be
+     * satisfied by a reader that merely happened to return the same value. */
     CalState st;
     state_init_factory_identity(&st);
     st.generation = 1u;               /* stuck mid-update */
@@ -273,7 +318,15 @@ TEST(the_bound_is_three_and_the_fallback_understates)
         st.identity[i] = false;       /* real calibration present */
     }
     st.bank = BANK_USER;
-    ASSERT_EQ(reader_run(&st, SHAPE_SEQLOCK), SRC_NONE);
+    ASSERT_EQ(reader_run(&st, SHAPE_SEQLOCK), SRC_UNKNOWN);
+
+    /* And it must NOT be any of the three positive claims -- spelled out,
+     * because ASSERT_EQ above would still pass if SRC_UNKNOWN were ever given
+     * the same value as SRC_NONE in the enum. */
+    const CalSource got = reader_run(&st, SHAPE_SEQLOCK);
+    ASSERT_TRUE(got != SRC_NONE);
+    ASSERT_TRUE(got != SRC_FACTORY);
+    ASSERT_TRUE(got != SRC_USER);
 }
 
 /* ==========================================================================
@@ -372,7 +425,7 @@ int main(void)
     RUN(seqlock_agrees_with_the_others_when_nothing_is_in_flight);
     RUN(an_untouched_uncalibrated_board_reads_none_in_every_shape);
     RUN(dropping_the_pre_copy_increment_reopens_the_defect);
-    RUN(the_bound_is_three_and_the_fallback_understates);
+    RUN(the_bound_is_three_and_an_exhausted_read_claims_nothing);
     RUN(two_unbracketed_setters_make_the_scan_conclude_a_state_that_never_held);
     RUN(bracketing_both_setters_lets_the_reader_detect_the_interleave);
     RUN(one_setter_alone_really_is_harmless_which_is_why_this_looked_exempt);
